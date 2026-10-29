@@ -38,15 +38,21 @@ const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code
 	"E_AX_UNAVAILABLE",
 	"E_NOT_BOOTED",
 	"E_UNKNOWN_DEVICE",
-	"E_DEVICE_LOCKED",
 ]);
 
-/** A driver failure as a `warden ui` error: engine problems exit 3, a stale ref exits 4, the rest exit 1. */
+/** A phone behind a PIN / pattern / password: a person must unlock it, warden never does. */
+export const DEVICE_LOCKED_HINT = "unlock the phone, then retry";
+
+/**
+ * A driver failure as a `warden ui` error: a locked phone exits 2, engine problems exit 3, a stale ref exits 4, the
+ * rest exit 1.
+ */
 export function driverUiError(error: DriverError): UiError {
 	const message = `${error.code}: ${error.message}`;
 	if (error.code === "E_STALE_REF") {
 		return uiError("stale_ref", error.message, { hint: "run `warden ui snapshot` again" });
 	}
+	if (error.code === "E_DEVICE_LOCKED") return uiError("device_locked", message, { hint: DEVICE_LOCKED_HINT });
 	if (ENGINE_CODES.has(error.code)) return uiError("engine_unavailable", message);
 	return uiError("failed", message, { details: { driver: error.code } });
 }

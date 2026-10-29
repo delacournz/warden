@@ -153,6 +153,7 @@ describe("ensureIosRunner", () => {
 		const res = await ensureIosRunner(c, UDID, { deps });
 		if (res.success) throw new Error("expected failure");
 		expect(res.error.message).toContain("E_DEVICE_LOCKED");
+		expect(res.error.code).toBe("device_locked");
 	});
 
 	test("a runner already answering is reused, and a changed warden binary replaces it", async () => {

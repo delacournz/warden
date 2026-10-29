@@ -33,6 +33,8 @@ export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<R
 	if (androidHostFromEnv(ctx.env)) {
 		const hosted = await connectAndroidHost(ctx, device.udid);
 		if (hosted.success) return hosted;
+		// an in-process driver would probe (and wake) the same locked phone again
+		if (hosted.error.code === "device_locked") return hosted;
 		ctx.err(`warden: android host unavailable (${hosted.error.message}); driving ${device.udid} in-process`);
 	}
 	// a resident host and this driver would evict each other's `warden-uiad`, and this one's close would put the

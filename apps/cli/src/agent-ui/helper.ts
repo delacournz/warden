@@ -21,7 +21,7 @@ import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { driverUiError } from "./driver";
+import { DEVICE_LOCKED_HINT, driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
 import { androidHostDir, fsSafeId, iosRunnerDir, simdDir } from "./paths";
@@ -568,7 +568,11 @@ function unlinkQuietly(path: string): void {
 	}
 }
 
+/** A host that could not start; one that died on a locked phone is `device_locked`, which no retry can fix. */
 function unavailable(message: string, hint?: string): { success: false; error: UiError } {
+	if (message.includes("E_DEVICE_LOCKED")) {
+		return { success: false, error: uiError("device_locked", message, { hint: DEVICE_LOCKED_HINT }) };
+	}
 	return { success: false, error: uiError("engine_unavailable", message, hint === undefined ? {} : { hint }) };
 }
 

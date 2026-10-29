@@ -23,6 +23,7 @@ export const UI_ERROR_EXIT = {
 	device_busy: UI_EXIT.lease,
 	device_unauthorized: UI_EXIT.lease,
 	device_offline: UI_EXIT.lease,
+	device_locked: UI_EXIT.lease,
 	device_not_leased: UI_EXIT.lease,
 	no_device_leased: UI_EXIT.lease,
 	ambiguous_device: UI_EXIT.lease,
