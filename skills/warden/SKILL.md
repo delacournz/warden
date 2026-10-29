@@ -43,6 +43,7 @@ Open the reference file for details before acting; this file only routes.
 | a build on a device | `warden app ensure ios --udid <udid> --json [--kind dev\|simulator\|release \| --variant dev\|e2e]` · native hash: `warden app fingerprint [ios\|android]` |
 | this worktree's JS in the cached sim build (seconds) | `warden repack ios\|android [--project <dir>] [--force] [--json]` → `{ result: reused\|repacked\|fallback, baseHash, jsKey, artifact, bundleMs }`; exit 1 on `fallback` (Android images changed) or an error. Never installs. `app ensure --kind simulator` / `e2e` / `ui open --kind simulator` run it for you |
 | cached builds | `warden builds ls` · `builds rm <hash…> [--platform p] [--dry-run] [--yes]` (also forgets installs; fixes a stale dev build) · `builds prune [--max-size 20G]` · `builds import <.app\|.apk>` |
+| fingerprint / Face ID | `warden ui biometrics [status\|enroll\|unenroll\|match\|fail]` · `biometrics: true` in config or `--biometrics` for an enrolled pool (ui.md, suites.md) · specs: `device.biometrics.*` |
 | profile an app | `warden perf` (`doctor` → `record` → `report` → `query` → `diff`; see perf.md) |
 | record a `warden ui` session into a spec | `warden ui record start <id> [--helper <module#fn>]` → drive → `record note\|use <module#fn>\|undo\|status\|cancel` → `record stop [--no-verify]` (verifies on the same device) |
 | the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |

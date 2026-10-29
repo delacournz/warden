@@ -1,0 +1,62 @@
+---
+title: Biometrics
+description: Drive Face ID, Touch ID and Android fingerprint in specs and by hand - enroll, match, fail, the biometrics config key and the +bio device pool.
+icon: Fingerprint
+---
+
+Specs and [`warden ui`](/docs/agents/ui) control the simulator's biometric sensor, so the real `LAContext` / `BiometricPrompt` flow runs. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
+
+## In a spec
+
+```ts
+import { expect, test } from "@delacour/warden-e2e";
+
+test("unlocks with a matching face", async ({ app, device, screen }) => {
+	await device.biometrics.enroll();
+	await app.open();
+	await screen.getByTestId("unlock").tap();
+	await device.alert("accept");
+	await device.biometrics.match();
+	await expect(screen.getByText("Unlocked")).toBeVisible();
+});
+```
+
+| Member | Does |
+|---|---|
+| `device.biometrics.status()` | `{ enrolled, modality }` without changing anything |
+| `enroll()` / `unenroll()` | iOS only |
+| `match()` / `fail()` | present a matching / non-matching face or finger to the pending prompt. `fail()` does not end the prompt: iOS shows a "Face Not Recognized" alert (Try Face ID Again / Cancel) and Android BiometricPrompt shows "Not recognized"; the app only hears back (`user_cancel`) when the prompt is cancelled (`device.alert({ button: "Cancel" })` on iOS). A presentation sent just as the sheet appears can be dropped, so send it again when nothing changed |
+
+Each returns `BiometricState`: `{ enrolled: boolean; modality: "face" | "fingerprint" }`. Android `enroll` / `unenroll` throw `ACTION_FAILED` (driver `E_UNSUPPORTED`).
+
+## By hand
+
+```bash
+warden ui biometrics                 # status
+warden ui biometrics enroll
+warden ui biometrics match           # or fail, unenroll
+```
+
+With `--json` the answer is `result.biometrics`.
+
+## Enrolled devices: `biometrics: true`
+
+```ts
+export default defineConfig({
+	biometrics: true,
+	e2e: { login: { biometrics: false } },
+});
+```
+
+`biometrics` sits at the top level, on an `e2e.<suite>` and on a `batches.<preset>` (default `false`; the suite or preset beats the top level). `--biometrics` on `claim`, `run`, `batch` and `e2e` turns it on for one run. Such devices get the profile `<profile>+bio`: their own pool and golden, never mixed with plain devices.
+
+- **Android.** The golden snapshot is built with a fingerprint enrolled (screen-lock PIN `1111`), saved past the lock screen with the screen kept on, and the AVD gets `hw.fingerprint=yes`. A claim builds a missing snapshot inline (about 80 s); prebuild it with `warden golden ensure --platform android --profile pixel-10+bio`. A claim returns only once adb, the package manager and the unlocked screen answer; an emulator that never gets there is shut down rather than left locked. Emulators have fingerprint only.
+- **iOS.** Enrollment does not survive a reboot, so warden enrolls every `+bio` simulator on boot and again when a spec process starts, before the app is installed.
+
+## Practice
+
+- Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set.
+- The first prompt per iOS app shows "Allow X to use Face ID?": answer it with `device.alert("accept")` before `match()`.
+- Never add an app-side bypass; the point is to run the real prompt.
+
+Errors and fixes are in [Debugging](/docs/e2e/debugging).
