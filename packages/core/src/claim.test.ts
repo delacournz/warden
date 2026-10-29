@@ -1220,6 +1220,49 @@ describe("claimDevices physical", () => {
 		}
 	});
 
+	test("waiting on a named phone that is not ready says what it waits for, once, then every 30 s", async () => {
+		const offline = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "offline" } });
+		let at = NOW;
+		const lines: string[] = [];
+		const result = await claimDevices(
+			input(fakeProvider([offline]), {
+				request: request({ platform: "android", physical: { ids: ["P1"] } }),
+				waitMs: 70_000,
+				pollMs: 10_000,
+				now: () => at,
+				sleep: async (ms) => {
+					at += ms;
+				},
+				log: (line) => lines.push(line),
+			})
+		);
+		expect(result.success).toBe(false);
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("waiting");
+		expect(lines[0]).toContain("P1");
+		expect(lines[0]).toContain("offline");
+		expect(lines[0]).toContain("1m10s");
+		expect(lines[1]).toContain("still waiting");
+	});
+
+	test("waiting for any free device says so, never silently", async () => {
+		let at = NOW;
+		const lines: string[] = [];
+		await claimDevices(
+			input(fakeProvider([]), {
+				request: request({ platform: "android", physical: {} }),
+				waitMs: 10_000,
+				pollMs: 10_000,
+				now: () => at,
+				sleep: async (ms) => {
+					at += ms;
+				},
+				log: (line) => lines.push(line),
+			})
+		);
+		expect(lines[0]).toContain("waiting");
+	});
+
 	test("an unauthorized phone is listed as skipped when nothing else is ready", async () => {
 		const unauthorized = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "unauthorized" } });
 		const result = await claimDevices(

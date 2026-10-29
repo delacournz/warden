@@ -18,6 +18,7 @@ import {
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, heading, reportError, table, warn } from "../output";
+import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
 
@@ -68,10 +69,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	);
 	// after the claim: its own leases keep the background gc off the devices it just took (16-1)
 	maybeAutoGc(ctx);
-	if (!outcome.success) {
-		reportError(ctx, "claim", outcome.error);
-		return 1;
-	}
+	if (!outcome.success) return reportClaimFailure(ctx, "claim", outcome.error);
 	if (opts.slim === false) hintSlimmed(ctx, outcome.data);
 	if (shortLived) {
 		warn(

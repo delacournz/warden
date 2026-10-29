@@ -31,7 +31,8 @@ Decided once, before any lease, build or job. A picked device is then named, so 
 
 - Android: adb state `device`. `unauthorized` and `offline` are listed with a hint and never picked.
 - iOS: paired, Developer Mode on, and **reachable**: tunnel connected, wired, or a bounded `devicectl device info lockState` answers (5 s; 20 s for a phone you named with `--udid` / `physical.ids`). An answer means reachable even when locked (`passcodeRequired`): `warden devices` shows a `locked` hint. `devicectl` lists every device ever paired (an iPad in a drawer too) as available, so an unreachable one is `offline: <reason>` in `warden devices` and is never auto-picked.
-- Naming an unusable device (`--udid`/`--serial`) fails the claim with `device_offline: <id> (<name>): <label>: <hint>` (after `--wait`; add `--no-wait` to fail at once).
+- Naming an unusable device (`--udid`/`--serial`) fails the claim with `device_offline: <id> (<name>): <label>: <hint>` after `--wait` (default 30m); until then it prints `waiting for <id> (<name>): <reason> (up to …)` and `still waiting …` about every 30 s. Add `--no-wait` to fail at once.
+- **Locked iPhone:** before any lease (`claim`, `run`, `batch`, `e2e`, `ui --claim`), warden reads `lockState` of the phone it is about to take. Locked: stderr `<name> is locked: unlock it to continue (waiting up to 2m)`, poll every 10 s, a progress line about every 30 s, continue when unlocked. Still locked after 2 m, or `--no-wait`: `device_locked` (exit 2, hint `unlock the phone, then retry`; `--json` error code `device_locked`). No lease is held while waiting. An id-less claim waits only when exactly one phone qualifies. Android phones are not checked at claim time (a PIN keyguard fails `E_DEVICE_LOCKED` once `warden ui` drives it).
 
 ## Allowlist
 

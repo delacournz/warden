@@ -19,6 +19,7 @@ import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { buildCapacityDeps } from "./capacity-deps";
 import type { CommandContext } from "./context";
 import { applyPhysicalAllow, parsePhysicalIds, resolvePhysicalAllow } from "./physical-allow";
+import { awaitPhonesUnlocked } from "./physical-lock";
 import { providerFor } from "./providers";
 import {
 	autoArrangeSimWindows,
@@ -360,6 +361,8 @@ export type ClaimHideOptions = {
 	os?: NodeJS.Platform;
 	/** polled while the claim waits (queue, pool): true ends it with `CLAIM_ABORTED` */
 	abort?: () => boolean;
+	/** the wait between two `lockState` reads while a physical iPhone is locked (tests; default: real time) */
+	unlockSleep?: (ms: number) => Promise<void>;
 };
 
 /**
@@ -411,6 +414,15 @@ export async function claimWithFlags(
 	let request = allowed.data;
 	const priority = resolvePriority(flags, ctx.env);
 	if (!priority.success) return priority;
+	// a locked iPhone is waited for here, before any lease: nothing is held (or queued) while the person unlocks it
+	if (request.physical !== undefined && request.platform === "ios") {
+		const unlocked = await awaitPhonesUnlocked(ctx, owner, request, {
+			noWait: flags.waitMs === 0,
+			...(options.abort ? { abort: options.abort } : {}),
+			...(options.unlockSleep ? { sleep: options.unlockSleep } : {}),
+		});
+		if (!unlocked.success) return unlocked;
+	}
 	const capacity = await buildCapacityDeps(ctx, owner);
 	if (capacity && flags.maxDefaulted) {
 		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);

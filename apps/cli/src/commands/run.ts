@@ -35,6 +35,7 @@ import {
 	withLeaseOptions,
 } from "../lease-session";
 import { heading, note, reportError } from "../output";
+import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
 
@@ -143,7 +144,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	);
 	// after the claim: its own leases keep the background gc off the devices it just took (16-1)
 	maybeAutoGc(ctx);
-	if (!claimed.success) return fail(claimed.error);
+	if (!claimed.success) return reportClaimFailure(ctx, "run", claimed.error);
 	const { outcome, ports, env, release, leaseIds } = claimed.data;
 	const summary = { leases: claimedJson(outcome), ports, cmd };
 	// one line: the child runs on, so a reader takes the summary from the first stdout line

@@ -38,7 +38,7 @@ ios       physical  Test iPad  00008132-000A0B0C0D0E0F11  offline
 Test iPad (00008132-000A0B0C0D0E0F11): offline: The device is not connected
 ```
 
-Naming an unreachable device with `--udid` fails at once with `device_offline` and the reason. An Android phone in adb state `unauthorized` or `offline` is likewise listed with a hint (accept the USB debugging prompt, reconnect the cable) and never picked.
+Naming an unreachable device with `--udid` waits up to `--wait` (default 30m, with `waiting for …` lines about every 30 s) and then fails with `device_offline` and the reason; `--no-wait` fails at once. A locked iPhone is waited for up to 2 minutes (`<name> is locked: unlock it to continue`), then fails `device_locked` (exit 2). An Android phone in adb state `unauthorized` or `offline` is likewise listed with a hint (accept the USB debugging prompt, reconnect the cable) and never picked.
 
 ### Restrict which devices warden may take
 

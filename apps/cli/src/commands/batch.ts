@@ -106,6 +106,7 @@ import {
 	startMetro,
 } from "../metro";
 import { emit, note, reportError, warn } from "../output";
+import { isLockedClaimError, reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
@@ -2238,6 +2239,9 @@ async function abortClaim(
 	const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
 	const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
 	const reason = claimError ?? (interrupted ? INTERRUPTED : (metroError ?? INTERRUPTED));
+	if (!interrupted && claimError !== undefined && isLockedClaimError(claimError)) {
+		return { code: reportClaimFailure(ctx, name, claimError) };
+	}
 	reportError(ctx, name, reason);
 	return { code: interrupted ? 130 : 1 };
 }

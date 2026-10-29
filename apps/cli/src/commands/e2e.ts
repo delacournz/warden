@@ -477,6 +477,8 @@ async function e2e(
 	if (session.code === 130) return 130;
 	// stopped before any spec (a phone's runner would not start): the session already said why, with its own exit code
 	if (session.error) return session.code;
+	// no device was claimed: a phone that stayed locked (`device_locked`, already reported) ends the run with exit 2
+	if (session.code === 2) return 2;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
 }

@@ -4,6 +4,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { allocate } from "./allocate";
 import { addCost, type Budget, type CapacityConfig, type Cost, deviceCost, explain, fits, totalCost } from "./capacity";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
+import { formatDuration } from "./duration";
 import type { MemoryPressure } from "./host";
 import { markWardenDevices } from "./inventory";
 import { isLeaseAlive, type PidAlive } from "./liveness";
@@ -730,7 +731,39 @@ type Round = {
 	/** last queued line logged / reservation seen, so progress prints only on change */
 	queuedKey?: string;
 	queued?: Extract<Reservation, { kind: "queued" }>;
+	/** when the last "waiting for …" line was logged (undefined: none yet) */
+	waitLoggedAt?: number;
 };
+
+/** Gap between two "still waiting" lines of a claim that polls for a device. */
+export const WAIT_PROGRESS_MS = 30_000;
+
+/** What a polling claim waits for, in one line: a device that is not ready, or one that is leased. */
+function waitingFor(request: DeviceRequest, reservation: Extract<Reservation, { kind: "wait" }>): string {
+	if (!request.physical) return `all ${reservation.poolSize} warden-${request.profile} devices are leased`;
+	if (reservation.notReady.length > 0) return `${reservation.notReady.join("; ")}`;
+	const named = request.physical.ids?.length ? ` (${request.physical.ids.join(", ")})` : "";
+	return `a free ready physical ${request.platform} device${named}`;
+}
+
+/** Log that the claim is polling: right away, then about every `WAIT_PROGRESS_MS`, so a wait is never silent. */
+function logWaiting(
+	input: ClaimInput,
+	round: Round,
+	reservation: Extract<Reservation, { kind: "wait" }>,
+	remainingMs: number
+): void {
+	const now = input.now();
+	if (round.waitLoggedAt !== undefined && now - round.waitLoggedAt < WAIT_PROGRESS_MS) return;
+	const first = round.waitLoggedAt === undefined;
+	round.waitLoggedAt = now;
+	const left = formatDuration(remainingMs);
+	input.log?.(
+		first
+			? `waiting for ${waitingFor(input.request, reservation)} (up to ${left}; --no-wait fails at once)`
+			: `still waiting for ${waitingFor(input.request, reservation)} (${left} left)`
+	);
+}
 
 /** After a reservation: the final result, or undefined to go round again (after waiting, or without unhealthy devices). */
 async function settle(
@@ -766,6 +799,7 @@ async function settle(
 		}
 		return err(waitMessage(input.request, reservation.poolSize, reservation.notReady));
 	}
+	if (reservation.kind === "wait") logWaiting(input, round, reservation, remaining);
 	await pause(input, remaining);
 	return undefined;
 }

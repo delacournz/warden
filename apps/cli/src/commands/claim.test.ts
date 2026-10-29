@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
 import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
+import {
+	DEVICECTL_LOCKSTATE_LOCKED,
+	devicectlEntry,
+	devicectlJson,
+	FAKE_IPHONE_UDID,
+} from "@delacour/warden-core/providers/devicectl.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-core/sims/slim.profile";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
@@ -402,5 +408,48 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 		const resource = c.db.listLeases()[0]?.resource;
 		expect(resource?.kind === "device" && resource.id).toBe(WIFI);
 		expect(ui.events.filter((e) => e.startsWith("select:"))).toEqual([]);
+	});
+});
+
+describe("warden claim of a locked iPhone", () => {
+	const LIST = devicectlJson([
+		devicectlEntry({
+			udid: FAKE_IPHONE_UDID,
+			name: "Test iPhone",
+			deviceType: "iPhone",
+			osVersion: "27.2",
+			transportType: "wired",
+		}),
+	]);
+	const locked = (argv: string[]): TestContext =>
+		setup(
+			argv,
+			fakeSimctl(
+				[],
+				[],
+				[
+					["xcrun devicectl list devices", { stdout: LIST }],
+					["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_LOCKED }],
+				]
+			)
+		);
+
+	test("--no-wait --json: device_locked, exit 2, the hint, no lease", async () => {
+		const c = locked(["ios", "--udid", FAKE_IPHONE_UDID, "--no-wait", "--json"]);
+		expect(await claimCommand.run(c)).toBe(2);
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			ok: false,
+			command: "claim",
+			error: { code: "device_locked", message: "Test iPhone is locked", hint: "unlock the phone, then retry" },
+		});
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--no-wait in text mode: exit 2 and the hint on stderr", async () => {
+		const c = locked(["ios", "--udid", FAKE_IPHONE_UDID, "--no-wait"]);
+		expect(await claimCommand.run(c)).toBe(2);
+		expect(c.stderr.join("\n")).toContain("Test iPhone is locked");
+		expect(c.stderr.join("\n")).toContain("unlock the phone, then retry");
+		expect(c.stdout).toEqual([]);
 	});
 });
