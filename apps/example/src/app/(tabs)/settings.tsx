@@ -8,7 +8,7 @@ import { Icon } from "@/components/ui/icon";
 import { ListGroup } from "@/components/ui/list-group";
 import { Screen } from "@/components/ui/screen";
 import { Switch } from "@/components/ui/switch";
-import { IconBell, IconHand5Finger, IconMoon } from "@/lib/icons/central";
+import { IconBell, IconFingerPrint1, IconHand5Finger, IconMoon } from "@/lib/icons/central";
 import { useSession } from "@/modules/session/contexts/session.context";
 
 /** Profile card, notification + dark-mode switches, and sign out (back to welcome). */
@@ -77,6 +77,20 @@ export default function Settings() {
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Gesture playground</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Biometrics"
+						accessible
+						onPress={() => router.push("/biometrics")}
+						testID="settings-biometrics"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconFingerPrint1} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Biometrics</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>

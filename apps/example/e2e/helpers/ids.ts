@@ -42,6 +42,14 @@ export const ids = {
 		darkMode: "settings-dark-mode",
 		signOut: "settings-sign-out",
 		gestures: "settings-gestures",
+		biometrics: "settings-biometrics",
+	},
+	biometrics: {
+		screen: "bio-screen",
+		status: "bio-status",
+		error: "bio-error",
+		unlock: "bio-unlock",
+		back: "bio-back",
 	},
 	gestures: {
 		screen: "gestures-screen",

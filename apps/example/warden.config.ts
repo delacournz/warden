@@ -60,6 +60,7 @@ const AFFECTED = {
 		devtools: { entries: ["src/app/welcome.tsx"] },
 		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		biometrics: { entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 
@@ -98,6 +99,7 @@ const bench = {
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
  * warden e2e example --dev --all     # same specs on the dev client + warden's Metro
  * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
+ * warden e2e biometrics --all       # the biometrics spec alone, on +bio devices (the example suite excludes it)
  * warden affected example            # which specs this branch needs
  * warden repack ios                  # just the repacked simulator build (cached per JS)
  * warden dev ios                     # cached Debug dev client + Metro
@@ -124,6 +126,18 @@ export default {
 			spec: SPEC,
 			metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
 			jobTimeoutMs: 15 * 60_000,
+			exclude: ["biometrics"],
+			...AFFECTED,
+		},
+		biometrics: {
+			count: 1,
+			app: true,
+			slim: true,
+			biometrics: true,
+			spec: SPEC,
+			metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
+			jobTimeoutMs: 15 * 60_000,
+			include: ["biometrics"],
 			...AFFECTED,
 		},
 	},

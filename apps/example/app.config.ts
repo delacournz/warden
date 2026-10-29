@@ -18,11 +18,18 @@ const expoConfig: ExpoConfig = {
 	},
 	android: {
 		package: "nz.co.delacour.warden.example",
+		permissions: ["android.permission.USE_BIOMETRIC"],
 	},
 	plugins: [
 		"expo-router",
 		"expo-status-bar",
 		"expo-system-ui",
+		[
+			"expo-local-authentication",
+			{
+				faceIDPermission: "Allow $(PRODUCT_NAME) to use Face ID to unlock the biometrics demo.",
+			},
+		],
 		[
 			"expo-dev-client",
 			{
