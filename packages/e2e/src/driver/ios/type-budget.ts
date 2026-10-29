@@ -1,7 +1,8 @@
 /**
  * Per-request budget for the helper's `typeText`: it holds, paces and (for a repeated key) waits per character.
  * The helper's defaults (pace 5, hold 20, repeat gap 50) cost ~38 ms per character on a quiet local simulator; the
- * budget allows ~100 ms (the EAS VirtualMac ran ~3.7x the nominal sleeps) and 200 ms per repeated key.
+ * budget allows ~100 ms (the EAS VirtualMac ran ~3.7x the nominal sleeps) and 200 ms per repeated key. The one
+ * lead-in pause after the first key (60 ms) fits in the base.
  */
 export const TYPE_BASE_MS = 10_000;
 export const TYPE_PER_CHAR_MS = 100;
