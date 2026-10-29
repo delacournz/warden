@@ -65,6 +65,7 @@ const AFFECTED = {
 		"network-flaky": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"network-fault": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"location-route": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"location-denied": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"clock-trial": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
