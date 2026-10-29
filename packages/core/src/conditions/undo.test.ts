@@ -84,6 +84,39 @@ describe("undoConditions", () => {
 		expect(r).toEqual({ success: true, data: { reset: ["network"], killed: [77] } });
 	});
 
+	test("network area calls the injected proxy release; other areas do not", async () => {
+		const l = lease("ios", UDID);
+		const released: string[] = [];
+		const withRelease: UndoDeps = {
+			...deps(),
+			releaseProxy: async (id) => {
+				released.push(id);
+				return true;
+			},
+		};
+		recordCondition(store, l.id, "network", { kind: "offline" }, 1);
+		recordCondition(store, l.id, "location", { kind: "clear" }, 1);
+		const r = await undoConditions(withRelease, l);
+		expect(released).toEqual([l.id]);
+		expect(r.success).toBe(true);
+	});
+
+	test("a failing proxy release keeps the network row and is reported", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "network", { kind: "offline" }, 1);
+		const r = await undoConditions(
+			{
+				...deps(),
+				releaseProxy: async () => {
+					throw new Error("boom");
+				},
+			},
+			l
+		);
+		expect(r.success).toBe(false);
+		expect(activeConditions(store, l.id)).toHaveLength(1);
+	});
+
 	test("android network resets speed, delay, airplane mode and proxy", async () => {
 		const l = lease("android", "emulator-5554");
 		recordCondition(store, l.id, "network", { kind: "preset", preset: "edge" }, 1);

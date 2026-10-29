@@ -16,6 +16,8 @@ export type UndoDeps = {
 	pidAlive: PidAlive;
 	/** SIGTERM an owned process */
 	kill: (pid: number) => void;
+	/** stop the lease's shaping proxy, free its port lease and handle file (`releaseLeaseProxy`); injected so undo stays pure */
+	releaseProxy?: (leaseId: string) => Promise<boolean>;
 };
 
 export type UndoReport = { reset: ConditionArea[]; killed: number[] };
@@ -84,6 +86,17 @@ async function runResets(exec: Exec, cmds: readonly string[][]): Promise<string[
 	return failures;
 }
 
+/** Network area: let the injected releaser stop the proxy and free its port; a throw is a failure line. */
+async function releaseProxy(deps: UndoDeps, leaseId: string, record: ConditionRecord): Promise<string[]> {
+	if (record.area !== "network" || !deps.releaseProxy) return [];
+	try {
+		await deps.releaseProxy(leaseId);
+		return [];
+	} catch (error) {
+		return [`release proxy: ${message(error)}`];
+	}
+}
+
 /** SIGTERM the live processes `record` owns; a dead pid is skipped (already gone). */
 function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[]; failures: string[] } {
 	const out = { killed: [] as number[], failures: [] as string[] };
@@ -113,9 +126,10 @@ export async function undoConditions(deps: UndoDeps, lease: Lease): Promise<Resu
 	for (const record of activeConditions(deps.store, lease.id)) {
 		const cmds = device ? resetCommands(device.platform, device.id, record, deps) : [];
 		const resets = await runResets(deps.exec, cmds);
+		const released = await releaseProxy(deps, lease.id, record);
 		const stopped = stopOwned(deps, record);
 		report.killed.push(...stopped.killed);
-		const failures = [...resets, ...stopped.failures];
+		const failures = [...resets, ...released, ...stopped.failures];
 		if (failures.length > 0) {
 			errors.push(...failures.map((f) => `${record.area}: ${f}`));
 			continue;
