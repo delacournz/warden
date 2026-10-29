@@ -25,3 +25,16 @@ export function spawnDetachedTicker(
 	const started = spawn(detachedTickerArgv(runtime, mainPath, config));
 	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the route ticker");
 }
+
+/**
+ * Like {@link spawnDetachedTicker}, for a compiled `warden` that has no script to hand `bun`: runs
+ * `[...command, <config JSON>]` (`command` = the binary and its hidden `__route-ticker` subcommand).
+ */
+export function spawnDetachedTickerVia(
+	config: TickerConfig,
+	command: readonly string[],
+	spawn: SpawnTicker = bunSpawnDetached
+): Result<OwnedProcess> {
+	const started = spawn([...command, JSON.stringify(config)]);
+	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the route ticker");
+}

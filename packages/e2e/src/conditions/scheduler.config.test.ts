@@ -19,6 +19,13 @@ describe("parseSchedulerConfig", () => {
 		).toBe(true);
 	});
 
+	test("an ios config needs the lease whose proxy it drives", () => {
+		const ios = { platform: "ios", id: "U-1", mode: "flap", flap: { upMs: 1, downMs: 2 } };
+		expect(parse(ios).success).toBe(false);
+		const lease = { id: "L1", owner: { kind: "ci", runId: "r" }, ttlMs: 1000 };
+		expect(parse({ ...ios, lease }).success).toBe(true);
+	});
+
 	test.each([
 		["not json", "{"],
 		["not an object", "3"],

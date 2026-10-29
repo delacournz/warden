@@ -1,4 +1,5 @@
 import type { LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type { Lease } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { FlapOptions, TimelineStep } from "./scheduler";
 
@@ -13,6 +14,10 @@ export type SchedulerConfig = {
 	adb?: string;
 	/** a `results.jsonl` to append `condition` events to */
 	events?: string;
+	/** iOS only: the lease whose shaping proxy the network steps drive (`id` names its handle file; `owner` / `ttlMs` start a proxy that is not up yet) */
+	lease?: Pick<Lease, "id" | "owner" | "ttlMs">;
+	/** iOS only: the app the injected dylib state belongs to */
+	bundleId?: string;
 } & ({ mode: "flap"; flap: FlapOptions } | { mode: "timeline"; steps: TimelineStep[] });
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -45,6 +50,12 @@ function deviceProblem(value: Record<string, unknown>): string | undefined {
 	if (typeof value.id !== "string" || value.id === "") return "scheduler config needs a device id";
 	if (value.platform === "android" && typeof value.adb !== "string") return "scheduler config needs adb for android";
 	if (value.events !== undefined && typeof value.events !== "string") return "scheduler config events must be a path";
+	if (value.platform === "ios") {
+		const lease = value.lease;
+		const valid =
+			isObject(lease) && typeof lease.id === "string" && isObject(lease.owner) && typeof lease.ttlMs === "number";
+		if (!valid) return "scheduler config needs lease { id, owner, ttlMs } for ios";
+	}
 	return undefined;
 }
 

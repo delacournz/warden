@@ -24,3 +24,16 @@ export function spawnDetachedScheduler(
 	const started = spawn(detachedSchedulerArgv(runtime, mainPath, config));
 	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the condition scheduler");
 }
+
+/**
+ * Like {@link spawnDetachedScheduler}, for a compiled `warden` that has no script to hand `bun`: runs
+ * `[...command, <config JSON>]` (`command` = the binary and its hidden `__scheduler` subcommand).
+ */
+export function spawnDetachedSchedulerVia(
+	config: SchedulerConfig,
+	command: readonly string[],
+	spawn: SpawnTicker = bunSpawnDetached
+): Result<OwnedProcess> {
+	const started = spawn([...command, JSON.stringify(config)]);
+	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the condition scheduler");
+}

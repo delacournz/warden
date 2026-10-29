@@ -30,3 +30,24 @@ describe("spawnDetachedScheduler", () => {
 		expect(spawnDetachedScheduler(config, () => undefined).success).toBe(false);
 	});
 });
+
+describe("spawnDetachedSchedulerVia", () => {
+	test("runs the command prefix with the config JSON appended", async () => {
+		const { spawnDetachedSchedulerVia } = await import("./scheduler.spawn");
+		let argv: readonly string[] = [];
+		const config = {
+			platform: "android",
+			id: "emulator-5554",
+			adb: "adb",
+			mode: "flap",
+			flap: { upMs: 1000, downMs: 500 },
+		} as const;
+		const res = spawnDetachedSchedulerVia(config, ["/bin/warden", "__scheduler"], (a) => {
+			argv = a;
+			return { pid: 9 };
+		});
+		expect(res).toEqual({ success: true, data: { kind: "pid", pid: 9 } });
+		expect(argv.slice(0, 2)).toEqual(["/bin/warden", "__scheduler"]);
+		expect(JSON.parse(argv[2] as string)).toEqual(config);
+	});
+});
