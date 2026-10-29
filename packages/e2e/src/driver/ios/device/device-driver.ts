@@ -23,7 +23,7 @@ import { KEY_USAGE } from "../ios-driver";
 import { normalizeElements, toSnapshot } from "../normalize";
 import { connectSimd, type RequestOptions, type SimdClient } from "../simd-client";
 import type { AlertButtonsData, OpData } from "../simd-protocol";
-import { typeTextBudgetMs } from "../type-budget";
+import { deviceTypeTextBudgetMs } from "../type-budget";
 import { IOS_DEVICE_CAPABILITIES } from "./capabilities";
 import { createDevicectl, type Devicectl } from "./devicectl";
 import { isRunning, parseAppState } from "./runner-protocol";
@@ -309,7 +309,7 @@ export function createIosDeviceDriver(
 		pinch: async () => unsupported("pinch", "the XCUITest runner takes one finger"),
 		rotate: async () => unsupported("rotate", "the XCUITest runner takes one finger"),
 		gesture: async () => unsupported("gesture", "the XCUITest runner takes taps, swipes and drags only"),
-		typeText: (text) => sendVoid("typeText", { text }, typeTextBudgetMs(text)),
+		typeText: (text) => sendVoid("typeText", { text }, deviceTypeTextBudgetMs(text)),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		pressButton,
 		screenshot,

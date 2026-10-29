@@ -106,7 +106,7 @@ final class XCUIExecutor: CommandExecutor {
       if !text.isEmpty {
         let application = target(bundleId)
         try requireKeyboardFocus(application)
-        application.typeText(text)
+        for piece in Typing.pieces(text) { application.typeText(piece) }
       }
       return ["typed": .int(text.unicodeScalars.count)]
     case let .key(spec, bundleId):
@@ -267,6 +267,10 @@ final class XCUIExecutor: CommandExecutor {
       }
     }
     let application = target(bundleId)
+    if let typed = KeyMap.typedText(spec) {
+      application.typeText(typed)
+      return [:]
+    }
     switch spec.key {
     case let .character(character): application.typeKey(character, modifierFlags: flags)
     case let .named(named): application.typeKey(Self.keyboardKey(named), modifierFlags: flags)

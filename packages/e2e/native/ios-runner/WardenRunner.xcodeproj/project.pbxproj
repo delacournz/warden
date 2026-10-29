@@ -12,6 +12,7 @@
 		158B636DA326632B2EB60033 /* ElementTypeName.swift in Sources */ = {isa = PBXBuildFile; fileRef = E979F58F087ACEAD5849FF20 /* ElementTypeName.swift */; };
 		2266984A1D2EED1FBF77847F /* KeyMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46BE301BBC2621AB147273CF /* KeyMap.swift */; };
 		27AF5D5CE111EF5BDC090DF7 /* RoleMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F59A1F8A4E4025041FC9EEA /* RoleMap.swift */; };
+		2A4BC121571B90D8891BD544 /* Typing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 283DF44A77F4B46A30F561B1 /* Typing.swift */; };
 		3F005AA3E86116F6DEF278E4 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F02DA8BB97F8A93B60ADC53 /* RunnerTests.swift */; };
 		40188687F38C80F68DC9BA32 /* Command.swift in Sources */ = {isa = PBXBuildFile; fileRef = 248A848492ABFBC89BEEB136 /* Command.swift */; };
 		444565F92B4DFC55F6974B64 /* Wire.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9868434853F6882FFF4026A /* Wire.swift */; };
@@ -40,6 +41,7 @@
 /* Begin PBXFileReference section */
 		248A848492ABFBC89BEEB136 /* Command.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Command.swift; sourceTree = "<group>"; };
 		26424A0A03D2DDA75E82CF22 /* WardenRunnerHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WardenRunnerHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		283DF44A77F4B46A30F561B1 /* Typing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typing.swift; sourceTree = "<group>"; };
 		2A84543646B80056F960FB3A /* SnapshotEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotEncoder.swift; sourceTree = "<group>"; };
 		3C41C51660BB41B58E3A63A2 /* RunnerInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerInfo.swift; sourceTree = "<group>"; };
 		3F02DA8BB97F8A93B60ADC53 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
@@ -75,6 +77,7 @@
 				3C41C51660BB41B58E3A63A2 /* RunnerInfo.swift */,
 				56EF9DF632A4AFEEB136E0AA /* RunnerServer.swift */,
 				2A84543646B80056F960FB3A /* SnapshotEncoder.swift */,
+				283DF44A77F4B46A30F561B1 /* Typing.swift */,
 			);
 			path = RunnerCore;
 			sourceTree = "<group>";
@@ -284,6 +287,7 @@
 				12F9EF7783957397CFEDE9D1 /* RunnerServer.swift in Sources */,
 				3F005AA3E86116F6DEF278E4 /* RunnerTests.swift in Sources */,
 				7A82EC50F2227358F03E3E6D /* SnapshotEncoder.swift in Sources */,
+				2A4BC121571B90D8891BD544 /* Typing.swift in Sources */,
 				444565F92B4DFC55F6974B64 /* Wire.swift in Sources */,
 				5E227A5A7E7511D4E40D6F25 /* XCUIExecutor.swift in Sources */,
 			);
