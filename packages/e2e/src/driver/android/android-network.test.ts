@@ -239,7 +239,7 @@ describe("applyAndroidNetwork", () => {
 		const { result } = await run(d, { kind: "flap", upMs: 1, downMs: 1 });
 		if (result.success) throw new Error("expected failure");
 		expect(result.error.code).toBe("E_UNSUPPORTED");
-		expect(result.error.message).toContain("COND-6");
+		expect(result.error.message).toContain("scheduler");
 		expect(d.host.shell).toEqual([]);
 	});
 

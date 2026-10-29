@@ -140,7 +140,7 @@ async function setEmu(deps: AndroidNetworkDeps, emu: EmuNetwork): Promise<Switch
 /**
  * Put the emulator's network into `condition`. Offline: airplane mode (radios off by `svc` where the image has no
  * airplane command). Anything else: back online first, then the preset's / custom speed and delay on the console.
- * Physical devices have no console, `flap` is the scheduler's.
+ * Physical devices have no console. `flap` is the scheduler's: the driver wraps this.
  */
 export async function applyAndroidNetwork(
 	deps: AndroidNetworkDeps,
@@ -153,7 +153,10 @@ export async function applyAndroidNetwork(
 		);
 	}
 	if (condition.kind === "flap") {
-		return driverErr("E_UNSUPPORTED", "flap is run by the condition scheduler (COND-6) as online/offline transitions");
+		return driverErr(
+			"E_UNSUPPORTED",
+			"flap is started through the driver's network op (conditions/scheduler.ts), not applied directly"
+		);
 	}
 	const plan = resolveNetwork(condition);
 	if (!plan.online) {

@@ -232,7 +232,8 @@ export interface Driver {
 	/**
 	 * Put the device's network into `op` (offline / online / a preset / custom speed and latency) and return what
 	 * is now in effect. Android emulator: native, verified through `dumpsys connectivity`. iOS: `E_UNSUPPORTED`
-	 * until the per-app proxy (COND-5). `flap` is the scheduler's (COND-6) and is `E_UNSUPPORTED` here.
+	 * until the per-app proxy (COND-5). `flap` alternates the base with offline in this process
+	 * (`conditions/scheduler.ts`) until the next network op or `close()`.
 	 */
 	network(op: NetworkCondition): DriverResult<NetworkState>;
 	/**

@@ -2,8 +2,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
+import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
+import { type Scheduler, startFlap } from "../../conditions/scheduler";
 import type {
 	AlertInfo,
 	Driver,
@@ -137,6 +139,8 @@ export type AndroidDriverOptions = {
 	uiad?: boolean | UiadOptions;
 	/** pacing of in-process location routes (default real time); tests pass a fake */
 	tickerClock?: TickerClock;
+	/** told about every network flap transition (the `condition` events of `results.jsonl`) */
+	conditionSink?: ConditionSink;
 };
 
 /** What the dump-and-`input` driver reports; with the server on, `unicodeText` and `nativeSettle` are true. */
@@ -593,7 +597,40 @@ function buildDriver(
 		return { success: true, data: /Night mode:\s*yes/i.test(res.data) ? "dark" : "light" };
 	};
 
-	const network: Driver["network"] = (op) => applyAndroidNetwork({ session, exec, adb, serial, clock }, op);
+	const netDeps = { session, exec, adb, serial, clock };
+	let flapper: Scheduler | undefined;
+	const stopFlap = async (): Promise<void> => {
+		const running = flapper;
+		flapper = undefined;
+		running?.stop();
+		await running?.done;
+	};
+	/**
+	 * Any network op ends a running flap first (which puts its base back). `flap` itself applies the base, then
+	 * the scheduler alternates it with offline in this process until the next network op or `close()`.
+	 */
+	const network: Driver["network"] = async (op) => {
+		await stopFlap();
+		if (op.kind !== "flap") return applyAndroidNetwork(netDeps, op);
+		const base = op.base ?? { kind: "online" };
+		if (base.kind === "flap") return driverErr("E_BAD_REQUEST", "flap base cannot itself be a flap");
+		if (!(op.upMs > 0 && op.downMs > 0)) return driverErr("E_BAD_REQUEST", "flap needs upMs and downMs above 0");
+		const applied = await applyAndroidNetwork(netDeps, base);
+		if (!applied.success) return applied;
+		const running = startFlap(
+			{ network: (condition) => applyAndroidNetwork(netDeps, condition) },
+			{ ...op, base, applyInitial: false },
+			{
+				...(options.tickerClock ?? realTickerClock),
+				...(options.conditionSink ? { sink: options.conditionSink } : {}),
+			}
+		);
+		flapper = running;
+		void running.done.then((outcome) => {
+			if (outcome.stopped === "failed") log?.(`network flap stopped: ${outcome.error}`);
+		});
+		return { success: true, data: { ...applied.data, condition: op } };
+	};
 	let ticker: RouteTicker | undefined;
 	const stopTicker = async (): Promise<void> => {
 		const running = ticker;
@@ -705,6 +742,7 @@ function buildDriver(
 			...(options.appPackage ? { appPackage: options.appPackage } : {}),
 		}),
 		close: async () => {
+			await stopFlap();
 			await stopTicker();
 			await uiad?.stop();
 			await facts.animations.restore();
