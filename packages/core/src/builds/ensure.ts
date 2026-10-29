@@ -130,6 +130,8 @@ export type EnsureInput = ProjectContext & {
 	native?: string;
 	/** udid / serial to install onto; absent = resolve the artifact only */
 	deviceId?: string;
+	/** the device is a real phone: Android installs check the APK's ABIs against it first */
+	physical?: boolean;
 	/** false = `--no-eas` */
 	eas: boolean;
 	/** false = `--no-build` */
@@ -348,7 +350,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	if (deviceId !== undefined) {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
-		const target = { platform, deviceId };
+		const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
 		const deps = { exec: input.exec, env, ...(input.fileSize ? { fileSize: input.fileSize } : {}) };
 		steps.device = {
 			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),

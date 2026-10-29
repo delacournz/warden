@@ -123,6 +123,20 @@ describe("socketPathFor", () => {
 		expect(Buffer.byteLength(deep)).toBeLessThan(104);
 		expect(deep).toContain("wsimd-");
 	});
+
+	test("phone serials sharing their first 8 characters get different short socket paths", () => {
+		const env = { WARDEN_HOME: `/var/${"x".repeat(80)}/.warden` };
+		const a = socketPathFor({ env }, "192.168.1.20:5555");
+		const b = socketPathFor({ env }, "192.168.1.21:5555");
+		const c = socketPathFor({ env }, "adb-R5CT1111-abcdef._adb-tls-connect._tcp");
+		const d = socketPathFor({ env }, "adb-R5CT2222-abcdef._adb-tls-connect._tcp");
+		expect(new Set([a, b, c, d]).size).toBe(4);
+		for (const p of [a, b, c, d]) expect(Buffer.byteLength(p)).toBeLessThan(104);
+	});
+
+	test("a wifi serial's socket name has no colon", () => {
+		expect(socketPathFor({ env: { WARDEN_HOME: "/h" } }, "192.168.1.20:5555")).not.toContain(":");
+	});
 });
 
 describe("ensureHelper", () => {

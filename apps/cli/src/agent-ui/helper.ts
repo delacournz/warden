@@ -24,7 +24,7 @@ import type { CommandContext } from "../context";
 import { driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
-import { androidHostDir, simdDir } from "./paths";
+import { androidHostDir, fsSafeId, simdDir } from "./paths";
 import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 import { type HelperRecord, readState, type UiState, updateState } from "./state";
 
@@ -249,10 +249,12 @@ export function socketPathFor(host: Pick<CommandContext, "env">, udid: string): 
 
 /** `socketPathFor` for any helper kind: `<kind dir>/<id>.sock`, or a short `/tmp` path when that is too long. */
 export function socketPathOf(kind: HelperKind, host: Pick<CommandContext, "env">, id: string): string {
-	const preferred = join(kind.dir(host), `${id}.sock`);
+	const preferred = join(kind.dir(host), `${fsSafeId(id)}.sock`);
 	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
 	const tag = Bun.hash(wardenHome(host.env)).toString(36).slice(0, 8);
-	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `${kind.socketTag}-${tag}-${id.slice(0, 8)}.sock`);
+	// the id's own hash, not just its first 8 characters: `192.168.*` / `adb-*` serials share those
+	const idTag = `${id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8)}${id.length > 8 ? `-${Bun.hash(id).toString(36).slice(0, 8)}` : ""}`;
+	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `${kind.socketTag}-${tag}-${idTag}.sock`);
 }
 
 export type HelperInfo<C extends HelperClient = SimdClient> = {

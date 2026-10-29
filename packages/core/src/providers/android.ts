@@ -25,14 +25,60 @@ export function androidTools(env: Record<string, string | undefined>): AndroidTo
 
 export type AdbEmulator = { serial: string; port: number; state: string };
 
-/** Parse `adb devices -l`, keeping only `emulator-<port>` serials (physical devices ignored). */
+/** One `adb devices -l` row: a console emulator, or anything else (a phone, or a network emulator until `classifyOther`). */
+export type AdbListEntry =
+	| ({ kind: "emulator" } & AdbEmulator)
+	| {
+			kind: "other";
+			serial: string;
+			state: string;
+			transport: "usb" | "wifi";
+			model?: string;
+			product?: string;
+	  };
+
+/**
+ * Parse `adb devices -l`. A state may be several words (`no permissions (…); see [url]`), so the state is
+ * the first token unless the row says `no permissions`. Transport: a `usb:` attribute is usb; `ip:port` and
+ * `_adb-tls-connect._tcp` serials (and anything else without `usb:`) are wifi.
+ */
+export function parseAdbDeviceList(stdout: string): AdbListEntry[] {
+	const entries: AdbListEntry[] = [];
+	for (const raw of stdout.split("\n")) {
+		const line = raw.trim();
+		const row = /^(\S+)\s+(.+)$/.exec(line);
+		if (!row?.[1] || !row[2] || line.startsWith("List of devices") || line.startsWith("*")) continue;
+		const serial = row[1];
+		const rest = row[2];
+		const noPermissions = rest.startsWith("no permissions");
+		const state = noPermissions ? "no permissions" : (rest.split(/\s+/)[0] ?? "");
+		const emulator = /^emulator-(\d+)$/.exec(serial);
+		if (emulator?.[1]) {
+			entries.push({ kind: "emulator", serial, port: Number(emulator[1]), state });
+			continue;
+		}
+		const attributes = noPermissions ? rest.slice(rest.lastIndexOf("]") + 1) : rest.slice(state.length);
+		const attr = (key: string): string | undefined => new RegExp(`(?:^|\\s)${key}:(\\S+)`).exec(attributes)?.[1];
+		const networked = /^[^:\s]+:\d+$|_adb-tls-/.test(serial);
+		const model = attr("model");
+		const product = attr("product");
+		entries.push({
+			kind: "other",
+			serial,
+			state,
+			transport: networked ? "wifi" : "usb",
+			...(model !== undefined ? { model } : {}),
+			...(product !== undefined ? { product } : {}),
+		});
+	}
+	return entries;
+}
+
+/** Parse `adb devices -l`, keeping only `emulator-<port>` serials (phones and network emulators ignored). */
 export function parseAdbDevices(stdout: string): AdbEmulator[] {
 	const emulators: AdbEmulator[] = [];
-	for (const line of stdout.split("\n")) {
-		const match = /^(emulator-(\d+))\s+(\S+)/.exec(line.trim());
-		if (match?.[1] && match[2] && match[3]) {
-			emulators.push({ serial: match[1], port: Number(match[2]), state: match[3] });
-		}
+	for (const entry of parseAdbDeviceList(stdout)) {
+		if (entry.kind === "emulator") emulators.push({ serial: entry.serial, port: entry.port, state: entry.state });
 	}
 	return emulators;
 }
@@ -99,11 +145,42 @@ export async function listAvds(deps: ExecDeps, opts: { fresh?: boolean } = {}): 
 	return result;
 }
 
+/** Every row of `adb devices -l`: emulators, phones and network emulators. */
+export async function listAdbDevices(deps: ExecDeps): AsyncResult<AdbListEntry[]> {
+	const { adb } = androidTools(deps.env);
+	const result = await run(deps, [adb, "devices", "-l"]);
+	return result.success ? ok(parseAdbDeviceList(result.data)) : result;
+}
+
 /** Running emulators from `adb devices -l`. */
 export async function listEmulators(deps: ExecDeps): AsyncResult<AdbEmulator[]> {
 	const { adb } = androidTools(deps.env);
 	const result = await run(deps, [adb, "devices", "-l"]);
 	return result.success ? ok(parseAdbDevices(result.data)) : result;
+}
+
+export type OtherClass = { emulator: boolean; hwSerial?: string; model?: string; sdk?: string };
+
+/**
+ * Is a non-`emulator-N` adb serial a real phone? `localhost:5555` / Genymotion / a network emulator set
+ * `ro.boot.qemu` or `ro.kernel.qemu` to 1: a foreign emulator, never physical. One bounded read; a failure
+ * is an error, not a guess.
+ */
+export async function classifyOther(deps: ExecDeps, serial: string): AsyncResult<OtherClass> {
+	const { adb } = androidTools(deps.env);
+	const read = await run(deps, [adb, "-s", serial, "shell", PHONE_PROBE_SCRIPT], { timeoutMs: PROP_READ_TIMEOUT_MS });
+	if (!read.success) return read;
+	const [bootQemu, kernelQemu, hw, model, sdk] = read.data.split("\n").map((l) => l.replace(/\r$/, "").trim());
+	const info: OtherClass = { emulator: bootQemu === "1" || kernelQemu === "1" };
+	if (hw) info.hwSerial = hw;
+	if (model) info.model = model;
+	if (sdk && /^\d+$/.test(sdk)) info.sdk = sdk;
+	return ok(info);
+}
+
+/** Is `id` a console emulator serial; anything else is a phone (or a network emulator), which warden never boots, kills or writes settings to. */
+export function isEmulatorSerial(id: string): boolean {
+	return /^emulator-\d+$/.test(id);
 }
 
 /** Launch `cmd` so it outlives warden, stdout/stderr appended to `logPath`. */
@@ -142,6 +219,9 @@ export const BOOT_WAIT_SCRIPT = 'while [ "$(getprop sys.boot_completed)" != 1 ];
 const LIVENESS_POLL_MS = 500;
 /** Bound on one `getprop sys.boot_completed` read in the fallback loop. */
 const PROP_READ_TIMEOUT_MS = 5_000;
+/** One shell: qemu props (emulator tell-tales), hardware serial, model, SDK level — one value per line. */
+export const PHONE_PROBE_SCRIPT =
+	"getprop ro.boot.qemu; getprop ro.kernel.qemu; getprop ro.serialno; getprop ro.product.model; getprop ro.build.version.sdk";
 /** `create` reuses the `adb devices` listing of an `inventory` this recent. */
 const LISTING_REUSE_MS = 5_000;
 
@@ -417,6 +497,36 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 
 	const adb = (serial: string, ...args: string[]): readonly string[] => [tools.adb, "-s", serial, ...args];
 
+	/**
+	 * A non-console adb row: a phone (`physical`), or a foreign network emulator (qemu props, never physical).
+	 * Never an `emu` call. A phone that is not in adb state `device` cannot answer `getprop`, so it is not asked.
+	 */
+	async function describeOther(entry: Extract<AdbListEntry, { kind: "other" }>): Promise<InventoryDevice> {
+		const ready = entry.state === "device";
+		const classified = ready ? await classifyOther(deps, entry.serial) : undefined;
+		const info = classified?.success ? classified.data : undefined;
+		const model = info?.model ?? entry.model?.replaceAll("_", " ");
+		const device: InventoryDevice = {
+			platform: "android",
+			id: entry.serial,
+			name: model ?? entry.serial,
+			state: ready ? "booted" : "booting",
+			wardenCreated: false,
+		};
+		if (info?.sdk !== undefined) device.runtime = `android-${info.sdk}`;
+		if (info?.emulator) return device;
+		if (model !== undefined) device.profile = profileSlug(model);
+		const hwSerial = info?.hwSerial;
+		device.physical = {
+			platform: "android",
+			transport: entry.transport,
+			adbState: entry.state,
+			...(hwSerial !== undefined ? { hwSerial } : {}),
+			...(model !== undefined ? { model } : {}),
+		};
+		return device;
+	}
+
 	/** `emu avd name`, bounded; `hung` = the console did not answer in time. */
 	async function avdNameOf(serial: string): Promise<{ name?: string; hung: boolean }> {
 		const started = deps.now();
@@ -531,9 +641,13 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		platform: "android",
 
 		async inventory() {
-			const emulators = await listEmulators(deps);
-			if (!emulators.success) return emulators;
-			lastListing = { at: deps.now(), emulators: emulators.data };
+			const listed = await listAdbDevices(deps);
+			if (!listed.success) return listed;
+			const emulators: AdbEmulator[] = listed.data.flatMap((e) =>
+				e.kind === "emulator" ? [{ serial: e.serial, port: e.port, state: e.state }] : []
+			);
+			const others = listed.data.flatMap((e) => (e.kind === "other" ? [e] : []));
+			lastListing = { at: deps.now(), emulators };
 			const recorded = new Map(deps.store.listDevices("android").map((r) => [r.id, r.name]));
 			const goldenPorts = new Set(
 				deps.store
@@ -542,10 +656,12 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 						l.resource.kind === "port" && l.label?.startsWith(GOLDEN_PORT_LABEL) ? [l.resource.port] : []
 					)
 			);
-			const known = emulators.data.filter((e) => e.state === "device" || e.state === "offline");
-			return ok(
-				await Promise.all(known.map((e) => describeEmulator(e, recorded.get(e.serial), goldenPorts.has(e.port))))
-			);
+			const known = emulators.filter((e) => e.state === "device" || e.state === "offline");
+			const [described, phones] = await Promise.all([
+				Promise.all(known.map((e) => describeEmulator(e, recorded.get(e.serial), goldenPorts.has(e.port)))),
+				Promise.all(others.map(describeOther)),
+			]);
+			return ok([...described, ...phones]);
 		},
 
 		async create(name, profile, runtime) {
@@ -581,6 +697,13 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		async boot(id) {
+			if (!isEmulatorSerial(id)) {
+				const listed = await listAdbDevices(deps);
+				const state = listed.success ? listed.data.find((e) => e.serial === id)?.state : undefined;
+				if (state === "unauthorized")
+					return err(`${id} is unauthorized: accept the USB debugging prompt on the phone, then retry`);
+				return err(`${id} is a physical device: warden never boots one (state: ${state ?? "not connected"})`);
+			}
 			// A warden emulator `create` just launched may not have reached the adb server yet: poll for it.
 			const launched = deps.store.listDevices("android").some((d) => d.id === id);
 			const polls = launched ? Math.ceil(REGISTER_TIMEOUT_MS / REGISTER_POLL_MS) : 0;
@@ -597,6 +720,10 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		async waitReady(id, timeoutMs) {
+			if (!isEmulatorSerial(id)) {
+				// a phone: only wait for the OS; BOOT_SETTINGS (package verifier) are persistent and never touch one
+				return waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs);
+			}
 			const launched = launches.get(id);
 			const ready = await waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs, launched);
 			if (ready.success) await run(deps, adb(id, "shell", bootSettingsCommand()));
@@ -611,7 +738,17 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			return ready;
 		},
 
+		async verifyWarm(id) {
+			if (isEmulatorSerial(id)) return err("no warm check for emulators");
+			const prop = await run(deps, adb(id, "shell", "getprop", "sys.boot_completed"), {
+				timeoutMs: PROP_READ_TIMEOUT_MS,
+			});
+			if (!prop.success) return prop;
+			return prop.data.trim() === "1" ? ok(undefined) : err(`${id} has not finished booting`);
+		},
+
 		async shutdown(id) {
+			if (!isEmulatorSerial(id)) return err(`refusing to shut down ${id}: a physical device is never shut down`);
 			if (!deps.store.listDevices("android").some((d) => d.id === id)) {
 				return err(`refusing to shut down foreign emulator ${id}`);
 			}

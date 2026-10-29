@@ -11,6 +11,7 @@ import type { UiDevice } from "./device";
 import { fromDriver } from "./driver";
 import { connectAndroidHost, connectHelper, stopAndroidHost } from "./helper";
 import type { UiError } from "./output";
+import { ownedPackages } from "./phone";
 import { readDumpRoute, writeDumpRoute } from "./state";
 
 /** `WARDEN_ANDROID_HOST=0` drives an Android device in-process (the way before the resident host), else through it. */
@@ -60,6 +61,7 @@ export async function openAndroidInProcess(
 			adb: androidTools(ctx.env).adb,
 			exec: ctx.exec,
 			state: createAndroidStateStore({ dir: androidStateDir(wardenHome(ctx.env)) }),
+			ownedPackages: ownedPackages(ctx, serial),
 			...(uiadFromEnv(ctx.env) ? { uiad: true } : {}),
 			...(remembered ? { dumpRoute: remembered } : {}),
 			...(log ? { log } : {}),

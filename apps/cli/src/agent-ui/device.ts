@@ -1,4 +1,5 @@
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
+import { isEmulatorSerial } from "@delacour/warden-core/providers/android";
 import { PRIORITY } from "@delacour/warden-core/queue";
 import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -7,6 +8,7 @@ import type { CommandContext } from "../context";
 import { type CallerLease, ensureCallerLease } from "../device-lease";
 import { deviceTarget } from "../hooks/claude-pretool";
 import { type UiDeviceInfo, type UiError, uiError } from "./output";
+import { checkPhone, type PhoneCheck, phoneStateError } from "./phone";
 
 /** Label on leases `warden ui --claim` creates. */
 export const UI_LEASE_LABEL = "warden ui";
@@ -24,6 +26,8 @@ export type UiDeviceFlags = {
 	runtime?: string;
 	/** drive the device even while a live warden process holds the caller's lease on it */
 	force?: boolean;
+	/** with `--claim` and no device named: claim a connected phone (`warden claim --physical`) */
+	physical?: boolean;
 };
 
 /** How `resolveUiDevice` checks the lease: `exclusive` = refuse an own lease a live warden process holds. */
@@ -109,6 +113,7 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 		{
 			...(flags.profile !== undefined ? { profile: flags.profile } : {}),
 			...(flags.runtime !== undefined ? { runtime: flags.runtime } : {}),
+			...(flags.physical === true ? { physical: true } : {}),
 			label: UI_LEASE_LABEL,
 		},
 		undefined,
@@ -162,15 +167,19 @@ function pickHeld(
 }
 
 /** Prove the caller may use `candidate` (heartbeat / refuse / take over with `--claim`). */
-function leaseCandidate(
+async function leaseCandidate(
 	ctx: CommandContext,
 	owner: Owner,
 	candidate: Candidate,
 	claim: boolean,
 	check: UiLeaseCheck
-): Result<UiDevice, UiError> {
+): Promise<Result<UiDevice, UiError>> {
 	const platform = candidate.platform !== undefined ? ok(candidate.platform) : platformOf(ctx, candidate.id);
 	if (!platform.success) return fail(uiError("usage", platform.error));
+	const phone: PhoneCheck =
+		platform.data === "android" && !isEmulatorSerial(candidate.id)
+			? await checkPhone(ctx, candidate.id)
+			: { kind: "other" };
 	const pid = leasePidFor(owner);
 	const leased = ensureCallerLease(ctx.store(), owner, platform.data, candidate.id, {
 		now: ctx.now(),
@@ -179,6 +188,7 @@ function leaseCandidate(
 		label: UI_LEASE_LABEL,
 		...(pid !== undefined ? { pid } : {}),
 		exclusive: check.exclusive,
+		...(phone.kind === "phone" ? { physical: phone.physical } : {}),
 	});
 	if (!leased.success) {
 		const { code, message } = leased.error;
@@ -189,6 +199,9 @@ function leaseCandidate(
 		);
 	}
 	const { lease, action } = leased.data;
+	// the lease is kept: the user fixes the phone (accept the prompt, replug) and retries
+	const notReady = phone.kind === "phone" ? phoneStateError(candidate.id, phone.adbState) : undefined;
+	if (notReady) return fail(notReady);
 	return ok({
 		udid: candidate.id,
 		platform: platform.data,

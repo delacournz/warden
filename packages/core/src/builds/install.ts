@@ -44,8 +44,8 @@ export type InstallerDeps = {
 	fileSize?: FileSize;
 };
 
-/** A device to install onto: iOS simulator udid / Android emulator serial. */
-export type InstallTarget = { platform: Platform; deviceId: string };
+/** A device to install onto: iOS simulator udid / Android emulator or phone serial. `physical`: a real phone (ABI check before installing). */
+export type InstallTarget = { platform: Platform; deviceId: string; physical?: boolean };
 
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 
@@ -174,6 +174,56 @@ export async function installApp(
 	return done.success ? ok(undefined) : done;
 }
 
+/** ABI directories under `lib/` in `unzip -Z1` output; empty for a pure-Java APK. */
+export function apkAbis(entries: string): string[] {
+	const abis = new Set<string>();
+	for (const line of entries.split("\n")) {
+		const abi = /^lib\/([^/]+)\/./.exec(line.trim())?.[1];
+		if (abi) abis.add(abi);
+	}
+	return [...abis];
+}
+
+/**
+ * A phone only runs the ABIs in `ro.product.cpu.abilist`. An APK whose `lib/<abi>/` folders share none with them
+ * installs and then crashes on launch (`warden e2e` defaults to the `simulator` kind, x86_64 on an Intel host),
+ * so it is refused here with the way out. Best effort: an APK or ABI list that cannot be read lets the install go on.
+ */
+async function abiMismatch(deps: InstallerDeps, target: InstallTarget, appPath: string): Promise<string | undefined> {
+	const [listing, props] = await Promise.all([
+		deps.exec(["unzip", "-Z1", appPath]),
+		deps.exec([androidTools(deps.env).adb, "-s", target.deviceId, "shell", "getprop", "ro.product.cpu.abilist"]),
+	]);
+	if (listing.exitCode !== 0 || props.exitCode !== 0) return undefined;
+	const wanted = apkAbis(listing.stdout);
+	const supported = props.stdout
+		.trim()
+		.split(",")
+		.map((abi) => abi.trim())
+		.filter((abi) => abi !== "");
+	if (wanted.length === 0 || supported.length === 0 || wanted.some((abi) => supported.includes(abi))) return undefined;
+	return (
+		`abi_mismatch: ${appPath} has native code for ${wanted.join(", ")} but ${target.deviceId} runs ${supported.join(", ")}. ` +
+		"Install an arm64 build instead: use the `dev` or `release` build kind (the `simulator` kind targets the host CPU)"
+	);
+}
+
+/** The reason of an `adb install` failure; a signature clash gets its own message and is never fixed by uninstalling. */
+function installFailure(
+	argv: string[],
+	res: { exitCode: number; stdout: string; stderr: string },
+	target: InstallTarget,
+	bundleId: string
+): string {
+	if (target.platform === "android" && /INSTALL_FAILED_UPDATE_INCOMPATIBLE/.test(res.stdout + res.stderr)) {
+		return (
+			`install failed: a differently-signed copy of ${bundleId} is installed on ${target.deviceId}; ` +
+			"uninstall it yourself (warden never uninstalls it for you), then retry"
+		);
+	}
+	return `install failed: ${execError(argv, res)}`;
+}
+
 /** `installApp`, keeping what the confirming probe found (iOS: the new bundle container, 17-7). */
 export async function installAndProbe(
 	deps: InstallerDeps,
@@ -181,10 +231,14 @@ export async function installAndProbe(
 	appPath: string,
 	bundleId: string
 ): AsyncResult<InstalledApp> {
+	if (target.platform === "android" && target.physical === true) {
+		const mismatch = await abiMismatch(deps, target, appPath);
+		if (mismatch !== undefined) return err(mismatch);
+	}
 	const argv = installArgv(target, appPath, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
 	// `adb install` can exit 0 while printing `Failure [INSTALL_…]`
-	if (res.exitCode !== 0 || /Failure \[/.test(res.stdout)) return err(`install failed: ${execError(argv, res)}`);
+	if (res.exitCode !== 0 || /Failure \[/.test(res.stdout)) return err(installFailure(argv, res, target, bundleId));
 	const present = await probeApp(deps, target, bundleId);
 	if (!present.success) return present;
 	if (!present.data.present) {

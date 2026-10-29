@@ -18,6 +18,7 @@ import {
 	forgetInstall,
 	getBuild,
 	getInstall,
+	installedBundleIds,
 	kindDir,
 	kindHash,
 	listBuilds,
@@ -226,6 +227,14 @@ describe("legacy + installs + diskSize", () => {
 		expect(findLegacyArtifact(["/nope", legacy], "ios", "abc")).toBe(join(legacy, "abc", "Salient.app"));
 		expect(findLegacyArtifact([legacy], "ios", "zzz")).toBeUndefined();
 		expect(findLegacyArtifact([legacy], "android", "abc")).toBeUndefined();
+	});
+
+	test("installedBundleIds lists what warden installed on one device only", () => {
+		recordInstall(store, { platform: "android", deviceId: "R5CT", bundleId: "com.b", hash: "h", installedAt: 1 });
+		recordInstall(store, { platform: "android", deviceId: "R5CT", bundleId: "com.a", hash: "h", installedAt: 1 });
+		recordInstall(store, { platform: "android", deviceId: "OTHER", bundleId: "com.c", hash: "h", installedAt: 1 });
+		expect(installedBundleIds(store, "android", "R5CT")).toEqual(["com.a", "com.b"]);
+		expect(installedBundleIds(store, "ios", "R5CT")).toEqual([]);
 	});
 
 	test("installs upsert per device + bundle", () => {

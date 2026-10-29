@@ -551,6 +551,16 @@ export function getInstall(
 	return install;
 }
 
+/** Bundle ids warden has installed on one device (the allowlist of what it may uninstall or wipe on a phone). */
+export function installedBundleIds(store: Store, platform: Platform, deviceId: string): string[] {
+	return store.db
+		.query<{ bundle_id: string }, [string, string]>(
+			"SELECT bundle_id FROM installs WHERE platform = ? AND device_id = ? ORDER BY bundle_id"
+		)
+		.all(platform, deviceId)
+		.map((row) => row.bundle_id);
+}
+
 export function forgetInstall(store: Store, platform: Platform, deviceId: string, bundleId: string): void {
 	store.db
 		.query("DELETE FROM installs WHERE platform = ? AND device_id = ? AND bundle_id = ?")

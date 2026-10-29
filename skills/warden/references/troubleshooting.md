@@ -51,6 +51,12 @@
 | 45 | `warden e2e` ignores the suite's `metro` block (specs skip dev-client checks, no `WARDEN_METRO_URL`) | `metro` applies only with `--dev` / kind `dev` since the default build is the repacked simulator one | `warden e2e <suite> --dev`, or pin `app: { kind: "dev" }` in the suite |
 | 46 | stderr `warning: fingerprint.include "native+js" of project <p> is ignored by --kind …` | The project's kind-less JS-aware key does not apply to `dev` / `simulator` | Move `fingerprint.jsInputs` to `kinds.simulator.jsInputs`, or drop `fingerprint.include`; `--kind release` keys on JS anyway |
 | 47 | Android repack fails naming `zipalign`, `apksigner`, `aapt2`, `zip` or `unzip` | SDK build-tools or the system zip tools are missing | Install Android SDK build-tools (`sdkmanager "build-tools;<version>"`, found under `ANDROID_HOME`); `zip` / `unzip` ship with macOS |
+| 48 | `warden ui` exits 2 `device_unauthorized` on a phone | adb lists the phone as `unauthorized`/`authorizing`: the USB-debugging prompt was not accepted for this computer | Unlock the phone, accept the prompt (tick Always allow), retry. The lease is kept. `boot` on it says the same |
+| 49 | `warden ui` exits 2 `device_offline` on a phone | adb lists the phone as `offline`, `no permissions`, `recovery`, … (`details.adbState`) | Replug the cable (or `adb connect` / re-pair wireless debugging), unlock the phone, retry. The lease is kept |
+| 50 | `E_DEVICE_LOCKED` (`warden ui` exit 3 `engine_unavailable`) | The phone sits behind a PIN / pattern / password keyguard. warden wakes a sleeping phone and dismisses a keyguard with no credential, never unlocks a secure one | Unlock the phone by hand, retry. Set the phone's screen timeout long enough for the run |
+| 51 | `E_REFUSED`: `physical_protected: <pkg> was not installed by warden` | `uninstall` / `clearData` on a phone only touch `WARDEN_BUNDLE_ID` and packages in the `installs` table for that serial | Do it on the phone yourself, or install the app through warden first. There is no override |
+| 52 | Install fails `abi_mismatch: … has native code for x86_64 but <serial> runs arm64-v8a` | The `simulator` kind targets the host CPU; a phone is arm | Use the `dev` or `release` build kind for a phone |
+| 53 | Install fails `a differently-signed copy of <pkg> is installed` (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) | The phone holds the app signed with another key (a store build) | Uninstall it yourself on the phone. warden never uninstalls it for you |
 
 ## Code lookup
 
@@ -60,7 +66,7 @@
 |---|---|
 | 0 | ok |
 | 1 | `failed` `usage` `target_not_found` `no_alert` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` `helper_missing` `use_failed` `wait_target_absent` `wait_target_hidden` `wait_target_present` `wait_text_absent` `wait_not_stable` `session_active` `session_not_found` `app_not_found` `unsupported` `not_profileable` (perf codes) |
-| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` `device_unknown` |
+| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` `device_unknown` `device_unauthorized` `device_offline` |
 | 3 | `engine_unavailable` `devtools_unavailable` `tool_missing` |
 | 4 | `stale_ref` (snapshot again) |
 | 130 | `interrupted` |

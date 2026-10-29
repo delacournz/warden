@@ -27,6 +27,8 @@ export type DeviceRow = {
 	quarantined?: { reason?: string };
 	/** simulator daemons switched off by `sim slim` */
 	slimmed?: true;
+	/** a real phone (never created, booted or shut down by warden) */
+	physical?: true;
 	/** real memory (summed phys_footprint of the sim's process tree), only with `--mem` */
 	footprintMb?: number;
 	lease?: { id: string; owner: string; where?: string };
@@ -61,6 +63,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 				? { quarantined: record.quarantineReason !== undefined ? { reason: record.quarantineReason } : {} }
 				: {}),
 			...(record?.slimmedAt !== undefined ? { slimmed: true as const } : {}),
+			...(d.physical ? { physical: true as const } : {}),
 			...(lease ? { lease: leaseInfo(lease) } : {}),
 		};
 	});
@@ -92,6 +95,7 @@ function stateCell(color: ChalkInstance, r: DeviceRow): string {
 
 function wardenCell(color: ChalkInstance, r: DeviceRow, none: string): string {
 	if (r.golden) return color.yellow("golden");
+	if (r.physical) return color.magenta("physical");
 	if (!r.warden) return none;
 	const flags = [r.quarantined ? color.red("quarantined") : "", r.slimmed ? color.dim("slim") : ""].filter(Boolean);
 	return [color.green("yes"), ...flags].join(" ");

@@ -8,9 +8,20 @@ export function uiRoot(ctx: Pick<CommandContext, "env">): string {
 	return join(wardenHome(ctx.env), "ui");
 }
 
+/**
+ * A device id as one path segment. Simulator UUIDs, `XXXXXXXX-XXXXXXXXXXXXXXXX` UDIDs and `emulator-5554` are
+ * unchanged (existing state dirs stay put); a phone's `192.168.1.20:5555` or `adb-…._adb-tls-connect._tcp`
+ * gets `:` and other odd characters replaced and a hash of the original, so two ids never share a directory.
+ */
+export function fsSafeId(id: string): string {
+	const safe = id.replace(/[^A-Za-z0-9._-]/g, "_");
+	if (safe === id && id !== "." && id !== "..") return id;
+	return `${safe}-${Bun.hash(id).toString(36).slice(0, 8)}`;
+}
+
 /** `$WARDEN_HOME/ui/<udid>`: everything `warden ui` remembers about one device between invocations. */
 export function uiDir(ctx: Pick<CommandContext, "env">, udid: string): string {
-	return join(uiRoot(ctx), udid);
+	return join(uiRoot(ctx), fsSafeId(udid));
 }
 
 /** `$WARDEN_HOME/simd`: the resident `warden-simd` helpers' sockets and logs. */

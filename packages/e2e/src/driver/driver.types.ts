@@ -28,7 +28,11 @@ export type DriverErrorCode =
 	| "E_HID"
 	| "E_IO"
 	| "E_BAD_REQUEST"
-	| "E_INTERNAL";
+	| "E_INTERNAL"
+	// a physical phone is locked behind a secure keyguard: warden cannot (and must not) unlock it
+	| "E_DEVICE_LOCKED"
+	// the request would change something on a physical device that warden did not put there
+	| "E_REFUSED";
 
 export type DriverError = { code: DriverErrorCode; message: string; retryable: boolean; detail?: unknown };
 

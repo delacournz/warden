@@ -92,6 +92,86 @@ describe("installApp", () => {
 	});
 });
 
+describe("installApp on a physical phone (PHY-2.5)", () => {
+	const phone = { platform: "android" as const, deviceId: "R5CT1234ABC", physical: true };
+	const installed = {
+		"adb -s R5CT1234ABC install -r /c/app.apk": { stdout: "Success" },
+		"adb -s R5CT1234ABC shell pm path": { stdout: "package:/x" },
+	};
+	const abis = (list: string) => ({
+		"adb -s R5CT1234ABC shell getprop ro.product.cpu.abilist": { stdout: `${list}\n` },
+	});
+	const apk = (entries: string) => ({ "unzip -Z1 /c/app.apk": { stdout: entries } });
+
+	test("an APK with no matching lib/<abi>/ is abi_mismatch, with a hint, and is never installed", async () => {
+		const calls: string[] = [];
+		const e = exec(
+			{
+				...installed,
+				...abis("arm64-v8a,armeabi-v7a"),
+				...apk("classes.dex\nlib/x86_64/libfoo.so\nlib/x86/libfoo.so\n"),
+			},
+			calls
+		);
+		const res = await installApp({ exec: e, env }, phone, "/c/app.apk", "com.x");
+		expect(!res.success && res.error).toContain("abi_mismatch");
+		expect(!res.success && res.error).toContain("x86_64");
+		expect(!res.success && res.error).toContain("arm64-v8a");
+		expect(!res.success && res.error).toMatch(/dev|release/);
+		expect(calls.some((c) => c.includes(" install "))).toBe(false);
+	});
+
+	test("a matching ABI installs", async () => {
+		const e = exec({ ...installed, ...abis("arm64-v8a,armeabi-v7a"), ...apk("lib/arm64-v8a/libfoo.so\n") });
+		expect((await installApp({ exec: e, env }, phone, "/c/app.apk", "com.x")).success).toBe(true);
+	});
+
+	test("a pure-Java APK (no lib/) installs on any ABI", async () => {
+		const e = exec({ ...installed, ...abis("arm64-v8a"), ...apk("classes.dex\nAndroidManifest.xml\n") });
+		expect((await installApp({ exec: e, env }, phone, "/c/app.apk", "com.x")).success).toBe(true);
+	});
+
+	test("an APK or ABI list that cannot be read does not block the install", async () => {
+		const e = exec({ ...installed });
+		expect((await installApp({ exec: e, env }, phone, "/c/app.apk", "com.x")).success).toBe(true);
+	});
+
+	test("an emulator install makes no ABI check", async () => {
+		const calls: string[] = [];
+		const e = exec(
+			{
+				"adb -s emulator-5554 install -r /c/app.apk": { stdout: "Success" },
+				"adb -s emulator-5554 shell pm path": { stdout: "package:/x" },
+			},
+			calls
+		);
+		await installApp({ exec: e, env }, android, "/c/app.apk", "com.x");
+		expect(calls.some((c) => c.startsWith("unzip") || c.includes("abilist"))).toBe(false);
+	});
+
+	test("INSTALL_FAILED_UPDATE_INCOMPATIBLE says to uninstall it yourself and never uninstalls", async () => {
+		const calls: string[] = [];
+		const e = exec(
+			{
+				"adb -s R5CT1234ABC install -r": {
+					stdout: "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package com.x signatures do not match]",
+				},
+			},
+			calls
+		);
+		const res = await installApp({ exec: e, env }, phone, "/c/app.apk", "com.x");
+		expect(!res.success && res.error).toContain("differently-signed");
+		expect(!res.success && res.error).toContain("uninstall it yourself");
+		expect(calls.some((c) => c.includes("uninstall"))).toBe(false);
+	});
+
+	test("the same message on an emulator target", async () => {
+		const e = exec({ "adb -s emulator-5554 install -r": { stdout: "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]" } });
+		const res = await installApp({ exec: e, env }, android, "/c/app.apk", "com.x");
+		expect(!res.success && res.error).toContain("uninstall it yourself");
+	});
+});
+
 describe("uninstallApp", () => {
 	test("iOS: simctl uninstall, then confirm it is gone", async () => {
 		const calls: string[] = [];

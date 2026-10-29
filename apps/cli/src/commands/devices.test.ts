@@ -217,3 +217,25 @@ describe("warden devices", () => {
 		expect(calls.some((c) => c[0] === "pgrep")).toBe(false);
 	});
 });
+
+describe("warden devices (physical phones)", () => {
+	test("a phone is listed with physical: true and a physical WARDEN cell", async () => {
+		ctx = testContext(["android", "--json"], {
+			exec: fakeExec([
+				["adb devices -l", { stdout: "List of devices attached\nR5CT1234ABC device usb:1-1 model:SM_A546E\n\n" }],
+				["adb -s R5CT1234ABC shell getprop ro.boot.qemu", { stdout: "\n\nR5CT1234ABC\nSM-A546E\n34\n" }],
+				["emulator -list-avds", { stdout: "" }],
+			]),
+		});
+		expect(await devicesCommand.run(ctx)).toBe(0);
+		const rows: Array<{ id?: string }> = JSON.parse(ctx.stdout.join("\n"));
+		const phone = rows.find((r) => r.id === "R5CT1234ABC");
+		expect(phone).toMatchObject({
+			platform: "android",
+			name: "SM-A546E",
+			state: "booted",
+			physical: true,
+			warden: false,
+		});
+	});
+});

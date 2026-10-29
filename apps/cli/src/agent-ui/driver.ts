@@ -38,6 +38,7 @@ const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code
 	"E_AX_UNAVAILABLE",
 	"E_NOT_BOOTED",
 	"E_UNKNOWN_DEVICE",
+	"E_DEVICE_LOCKED",
 ]);
 
 /** A driver failure as a `warden ui` error: engine problems exit 3, a stale ref exits 4, the rest exit 1. */

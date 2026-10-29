@@ -41,6 +41,7 @@ Every call heartbeats your lease. Another live session's lease: `device_foreign`
 | `--udid <id>` `--serial <s>` `--lease <id>` | the device |
 | `--claim` | claim a device when none is held, or take over a stale/missing lease |
 | `--platform ios\|android` `--profile <slug>` `--runtime <rt>` | choose the device for a `--claim` with none named (default ios) |
+| `--physical` | with `--claim` and no device named: claim a connected phone (`warden claim --physical`) instead of an emulator |
 | `--timeout <ms>` | per-command deadline (default 5000) |
 | `--force` | drive the device while your running `warden e2e` / `batch` / `run` holds it (else exit 2 `device_busy`); it disturbs that run. Not needed for your own `warden dev` |
 | `--json` | one JSON document on stdout |
@@ -163,7 +164,7 @@ Debug loop: `warden dev logs --kind bundle_failed,error` (does it build?) → `u
 |---|---|
 | 0 | ok |
 | 1 | `failed` `usage` `target_not_found` `no_alert` `wait_*` `no_recording` `recording_active` `target_exists` `empty_recording` `verify_failed` `verify_unavailable` `helper_missing` `use_failed` |
-| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` `device_unknown` |
+| 2 | `device_foreign` `device_busy` `device_not_leased` `no_device_leased` `ambiguous_device` `lease_not_found` `device_unknown` `device_unauthorized` `device_offline` |
 | 3 | `engine_unavailable` `devtools_unavailable` |
 | 4 | `stale_ref` |
 | 130 | `interrupted` |
@@ -182,6 +183,7 @@ Debug loop: `warden dev logs --kind bundle_failed,error` (does it build?) → `u
 - Pinch, rotate and 2-finger `gesture path` need `warden-uiad` (default on API 26+); with `WARDEN_ANDROID_UIAD=0` they fail `E_UNSUPPORTED` (`details.driver`); 1-finger paths fall back to `input motionevent`. No clipboard, no `--metro`/`--args` on `open <bundleId>`; non-ASCII text needs the server (`E_UNSUPPORTED_TEXT` without it).
 - The first call starts the host; it exits after 10 idle minutes (`WARDEN_ANDROID_HOST_IDLE_TIMEOUT`), on `warden ui close`, or on release. `status` shows it as the helper. `WARDEN_ANDROID_HOST=0` drives in-process (each call reopens adb + uiad).
 - `back`, `home`, `screen rotate`, `screen appearance`, `screen video` work.
+- Physical phone (`--serial <adb serial>` of a phone, `ip:port` / `adb-…` for wireless debugging, or `--claim --physical`): the lease is stamped `physical`. adb state `unauthorized` exits 2 `device_unauthorized`, any other non-`device` state exits 2 `device_offline` (the lease is kept; fix the phone and retry). A sleeping phone is woken and a keyguard with no credential is dismissed; a PIN / pattern / password keyguard fails `E_DEVICE_LOCKED` (exit 3), warden never unlocks. A device whose `ro.boot.qemu` / `ro.kernel.qemu` is 1 (`localhost:5555`, Genymotion) is a foreign emulator, not a phone. Rotation, `screen appearance` and the animation scales are saved before the first change and put back on close (a crashed run's originals are restored by the next driver). `uninstall` / `clearData` only act on `WARDEN_BUNDLE_ID` and packages warden installed there (`E_REFUSED`, `physical_protected`). Install checks the APK's ABIs first (`abi_mismatch`: use the `dev` or `release` kind) and never uninstalls a differently-signed copy.
 
 ## View missing from the snapshot
 
