@@ -67,6 +67,17 @@ describe("parseWardenConfig", () => {
 		expect(parseWardenConfig({ projects, android: { nope: true } }).success).toBe(false);
 	});
 
+	test("ios.teamId / ios.runnerBundleId are optional and checked (PHY-4)", () => {
+		const projects = [{ name: "app", bundleId: { ios: "com.x.app" } }];
+		const ok = parseWardenConfig({ projects, ios: { teamId: "LN69P7N673", runnerBundleId: "com.x.runner" } });
+		expect(ok.success && ok.data.ios).toEqual({ teamId: "LN69P7N673", runnerBundleId: "com.x.runner" });
+		expect(parseWardenConfig({ projects, ios: {} }).success).toBe(true);
+		expect(parseWardenConfig({ projects, ios: { teamId: "ln69p7n673" } }).success).toBe(false);
+		expect(parseWardenConfig({ projects, ios: { teamId: "SHORT" } }).success).toBe(false);
+		expect(parseWardenConfig({ projects, ios: { runnerBundleId: "bad id" } }).success).toBe(false);
+		expect(parseWardenConfig({ projects, ios: { nope: 1 } }).success).toBe(false);
+	});
+
 	test("e2e suites alone are a valid config, with defaults", () => {
 		const res = parseWardenConfig({
 			e2e: { mobile: { specsDir: "specs", specs: { a: { entries: ["x.tsx"] } } } },

@@ -156,6 +156,22 @@ export const wardenConfigSchema = z
 			})
 			.strict()
 			.optional(),
+		/** physical iPhone settings (the signing of warden's on-device runner) */
+		ios: z
+			.object({
+				/** Apple developer team id (10 characters) that signs the runner; `WARDEN_IOS_TEAM_ID` overrides it */
+				teamId: z
+					.string()
+					.regex(/^[A-Z0-9]{10}$/, "a team id is 10 uppercase letters or digits")
+					.optional(),
+				/** bundle id of the runner app; default `nz.co.delacour.warden.runner.<team id, lower case>` */
+				runnerBundleId: z
+					.string()
+					.regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "a bundle id is letters, digits, dots and hyphens")
+					.optional(),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict()
 	.superRefine((config, issue) => {

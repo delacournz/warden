@@ -9,12 +9,14 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { bunExec } from "@delacour/warden-core/exec";
+import { RUNNER_BLOB } from "@delacour/warden-core/ios-runner/pack";
 import cliPackage from "../package.json" with { type: "json" };
 import { RUNTIME_BLOB } from "../src/e2e/e2e-runtime";
 import { RELEASE_TARGETS } from "../src/npm/platforms";
 import {
 	buildFromSource,
 	compileArgs,
+	runnerBlobArgs,
 	runtimeBlobArgs,
 	STRAY_SOURCE_MAP,
 	sourceCommit,
@@ -49,18 +51,27 @@ if (values.channel === "local") {
 	};
 	const sums: string[] = [];
 	const blob = join(dist, RUNTIME_BLOB);
+	const runnerBlob = join(dist, RUNNER_BLOB);
 	await run(runtimeBlobArgs(sourceDir, blob, cliPackage.version));
+	await run(runnerBlobArgs(sourceDir, runnerBlob));
 	for (const target of RELEASE_TARGETS) {
 		const name = `warden-${target}`;
 		const outfile = join(dist, name);
 		await run(
-			compileArgs({ entry: join(cliRoot, "src", "cli.ts"), outfile, info, target: `bun-${target}`, embed: [blob] })
+			compileArgs({
+				entry: join(cliRoot, "src", "cli.ts"),
+				outfile,
+				info,
+				target: `bun-${target}`,
+				embed: [blob, runnerBlob],
+			})
 		);
 		dropStraySourceMap();
 		sums.push(`${createHash("sha256").update(readFileSync(outfile)).digest("hex")}  ${name}`);
 		console.log(`built dist/${name}`);
 	}
 	rmSync(blob, { force: true });
+	rmSync(runnerBlob, { force: true });
 	writeFileSync(join(dist, "checksums.txt"), `${sums.join("\n")}\n`);
 	console.log(`release ${info.version}: ${RELEASE_TARGETS.length} binaries + checksums.txt`);
 } else {

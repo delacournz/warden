@@ -703,6 +703,24 @@ export interface WardenConfig {
 	perf?: WardenPerfConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
+	/** Physical iPhone settings. */
+	ios?: WardenIosSettings | undefined;
+}
+
+/** Physical iPhone settings (`ios`). */
+export interface WardenIosSettings {
+	/**
+	 * Apple developer team id (10 characters, e.g. `LN69P7N673`) that signs warden's on-device runner. Without it
+	 * (and without `WARDEN_IOS_TEAM_ID`, which wins) warden uses the team of the one `Apple Development` identity
+	 * in your keychain and fails `ios_team_ambiguous` when there are several teams.
+	 */
+	teamId?: string | undefined;
+	/**
+	 * Bundle id of the runner app (its UI-test bundle is `<id>.uitests`).
+	 *
+	 * @default "nz.co.delacour.warden.runner.<team id, lower case>"
+	 */
+	runnerBundleId?: string | undefined;
 }
 
 /** Android emulator settings (`android`). */
