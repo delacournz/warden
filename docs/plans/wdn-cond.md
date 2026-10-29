@@ -94,7 +94,7 @@ Active conditions persisted per lease in the store (`lease_conditions` table) so
 - Tests: `device.test.ts` round-trips against `driver.testing.ts` fake.
 
 ### COND-8 — ✨ feat(cli): `warden ui` verbs + skill + changeset
-- `warden ui network <online|offline|edge|3g|4g|lte|wifi|slow|lossy> [--latency ms] [--jitter ms] [--down kbps] [--up kbps] [--loss pct]`, `warden ui network flap --up 10s --down 3s`, `warden ui network fault <host> <status:503|reset|delay:2s|blackhole>`, `warden ui network status|reset`.
+- `warden ui network` is a group (user, 2026-10-29): `warden ui network log [n] [--since] [--grep]` = the existing devtools request log (old bare `warden ui network [n]` kept as a hidden deprecated alias, so the bump stays minor); `warden ui network set <online|offline|edge|3g|4g|lte|wifi|slow|lossy> [--latency ms] [--jitter ms] [--down kbps] [--up kbps] [--loss pct]`, `warden ui network flap --up 10s --down 3s`, `warden ui network fault <host> <status:503|reset|delay:2s|blackhole>`, `warden ui network status|reset`.
 - `warden ui location set <lat,lon>`, `warden ui location route <lat,lon>... [--speed m/s] [--interval s] [--loop]`, `warden ui location gpx <file>`, `warden ui location scenario <name>`, `warden ui location clear`.
 - No MCP tools (same reason as BIO-4: device verbs bypass leases).
 - Skill: `skills/warden/references/ui.md`, `specs.md`, `suites.md`, `troubleshooting.md` (append entries, never renumber) + SKILL.md quick-ref line. `.changeset/device-conditions.md` → `"@delacour/warden": minor`.
@@ -123,7 +123,7 @@ Active conditions persisted per lease in the store (`lease_conditions` table) so
 
 ## Decisions (2026-10-29)
 - iOS network = per-app proxy (dylib + per-lease proxy + NetInfo shim). No host-wide shaping by default.
-- CLI verbs under `warden ui network` / `warden ui location` (+ COND-9 verbs under `warden ui`).
+- CLI verbs under `warden ui network` (a group: `log`, `set`, `flap`, `fault`, `status`, `reset`) / `warden ui location` / `warden ui clock` (+ COND-9 verbs under `warden ui`).
 - Scope v1 = COND-1..10 + COND-12 (mock clock). COND-11 deferred.
 - Implement on `feature/driftfish`, commit per phase, no PR (user, 2026-10-29). Parallel phases in sibling worktrees `~/orca/workspaces/warden/driftfish-<phase>` made by hand at branch head, merged `--ff-only`/rebase.
 
