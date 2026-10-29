@@ -1,0 +1,264 @@
+//! The session handed over on stdin, and the stdout events going back.
+//!
+//! The first stdin line is the whole session; every later line is a token refresh. The token lives
+//! in `SessionState` and is never serialised towards the webview.
+
+use serde::{Deserialize, Serialize};
+use std::io::{BufRead, Write};
+use std::sync::RwLock;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Scope {
+    View,
+    Drive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Ios,
+    Android,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub api_url: String,
+    pub device_id: String,
+    pub token: String,
+    pub expires_at: String,
+    pub scope: Scope,
+    pub title: String,
+    pub platform: Platform,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Refresh {
+    pub token: String,
+    pub expires_at: String,
+}
+
+/// What the webview may know: everything except the token.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewerInfo {
+    pub device_id: String,
+    pub scope: Scope,
+    pub title: String,
+    pub platform: Platform,
+    pub expires_at: String,
+}
+
+/// Credentials for one outgoing request.
+#[derive(Debug, Clone)]
+pub struct Credentials {
+    pub api_url: String,
+    pub device_id: String,
+    pub token: String,
+    pub scope: Scope,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum StartError {
+    Eof,
+    Read(String),
+    Invalid(String),
+}
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StartError::Eof => write!(f, "stdin closed before the session line"),
+            StartError::Read(e) => write!(f, "could not read stdin: {e}"),
+            StartError::Invalid(e) => write!(f, "invalid session JSON: {e}"),
+        }
+    }
+}
+
+pub fn parse_session(line: &str) -> Result<Session, StartError> {
+    let session: Session =
+        serde_json::from_str(line.trim()).map_err(|e| StartError::Invalid(e.to_string()))?;
+    if session.api_url.is_empty() || session.device_id.is_empty() || session.token.is_empty() {
+        return Err(StartError::Invalid(
+            "apiUrl, deviceId and token must be non-empty".into(),
+        ));
+    }
+    Ok(session)
+}
+
+pub fn parse_refresh(line: &str) -> Result<Refresh, String> {
+    let refresh: Refresh = serde_json::from_str(line.trim()).map_err(|e| e.to_string())?;
+    if refresh.token.is_empty() {
+        return Err("refresh token is empty".into());
+    }
+    Ok(refresh)
+}
+
+/// Read the first line of `reader` as the session.
+pub fn read_start<R: BufRead>(reader: &mut R) -> Result<Session, StartError> {
+    let mut line = String::new();
+    let read = reader
+        .read_line(&mut line)
+        .map_err(|e| StartError::Read(e.to_string()))?;
+    if read == 0 {
+        return Err(StartError::Eof);
+    }
+    parse_session(&line)
+}
+
+pub struct SessionState(RwLock<Session>);
+
+impl SessionState {
+    pub fn new(session: Session) -> Self {
+        Self(RwLock::new(session))
+    }
+
+    pub fn apply_refresh(&self, refresh: Refresh) {
+        let mut session = self.0.write().unwrap_or_else(|e| e.into_inner());
+        session.token = refresh.token;
+        session.expires_at = refresh.expires_at;
+    }
+
+    pub fn info(&self) -> ViewerInfo {
+        let s = self.0.read().unwrap_or_else(|e| e.into_inner());
+        ViewerInfo {
+            device_id: s.device_id.clone(),
+            scope: s.scope,
+            title: s.title.clone(),
+            platform: s.platform,
+            expires_at: s.expires_at.clone(),
+        }
+    }
+
+    pub fn credentials(&self) -> Credentials {
+        let s = self.0.read().unwrap_or_else(|e| e.into_inner());
+        Credentials {
+            api_url: s.api_url.clone(),
+            device_id: s.device_id.clone(),
+            token: s.token.clone(),
+            scope: s.scope,
+        }
+    }
+}
+
+/// Apply every remaining line as a refresh, then call `on_eof`. A malformed line is logged and
+/// skipped so one bad refresh never ends the session.
+pub fn pump_refreshes<R: BufRead>(reader: R, state: &SessionState, on_eof: impl FnOnce()) {
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        match parse_refresh(&line) {
+            Ok(refresh) => state.apply_refresh(refresh),
+            Err(e) => log::warn!("ignoring stdin line: {e}"),
+        }
+    }
+    on_eof();
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "event", rename_all = "lowercase")]
+pub enum Event<'a> {
+    Ready,
+    Streaming,
+    Error { message: &'a str },
+}
+
+pub fn event_line(event: &Event) -> String {
+    serde_json::to_string(event).unwrap_or_else(|_| "{\"event\":\"error\"}".into())
+}
+
+/// One JSON line on stdout. The contract allows nothing else there.
+pub fn emit(event: &Event) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{}", event_line(event));
+    let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    const START: &str = r#"{"apiUrl":"https://api.warden.co.nz","deviceId":"d1","token":"wvt_a","expiresAt":"2030-01-01T00:00:00Z","scope":"drive","title":"iphone-17 · warden","platform":"ios"}"#;
+
+    #[test]
+    fn parses_the_start_line() {
+        let s = parse_session(START).unwrap();
+        assert_eq!(s.device_id, "d1");
+        assert_eq!(s.scope, Scope::Drive);
+        assert_eq!(s.platform, Platform::Ios);
+        assert_eq!(s.title, "iphone-17 · warden");
+    }
+
+    #[test]
+    fn rejects_bad_json_and_empty_fields() {
+        assert!(matches!(parse_session("nope"), Err(StartError::Invalid(_))));
+        let empty = START.replace("wvt_a", "");
+        assert!(matches!(parse_session(&empty), Err(StartError::Invalid(_))));
+        let bad_scope = START.replace("drive", "admin");
+        assert!(matches!(
+            parse_session(&bad_scope),
+            Err(StartError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn read_start_reports_eof() {
+        let mut empty = Cursor::new(Vec::new());
+        assert!(matches!(read_start(&mut empty), Err(StartError::Eof)));
+    }
+
+    #[test]
+    fn read_start_takes_only_the_first_line() {
+        let input = format!("{START}\n{{\"token\":\"wvt_b\",\"expiresAt\":\"x\"}}\n");
+        let mut cursor = Cursor::new(input.into_bytes());
+        assert!(read_start(&mut cursor).is_ok());
+        let mut rest = String::new();
+        cursor.read_line(&mut rest).unwrap();
+        assert!(rest.contains("wvt_b"));
+    }
+
+    #[test]
+    fn refresh_replaces_the_token_in_memory() {
+        let state = SessionState::new(parse_session(START).unwrap());
+        state.apply_refresh(
+            parse_refresh(r#"{"token":"wvt_b","expiresAt":"2031-01-01T00:00:00Z"}"#).unwrap(),
+        );
+        assert_eq!(state.credentials().token, "wvt_b");
+        assert_eq!(state.info().expires_at, "2031-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn pump_applies_refreshes_skips_junk_and_signals_eof() {
+        let state = SessionState::new(parse_session(START).unwrap());
+        let input = "{\"token\":\"wvt_b\",\"expiresAt\":\"e1\"}\nnot json\n\n{\"token\":\"wvt_c\",\"expiresAt\":\"e2\"}\n";
+        let mut eof = false;
+        pump_refreshes(Cursor::new(input.as_bytes()), &state, || eof = true);
+        assert!(eof);
+        assert_eq!(state.credentials().token, "wvt_c");
+    }
+
+    #[test]
+    fn info_never_serialises_the_token() {
+        let state = SessionState::new(parse_session(START).unwrap());
+        let json = serde_json::to_string(&state.info()).unwrap();
+        assert!(!json.contains("wvt_a"));
+        assert!(!json.contains("token"));
+        assert!(json.contains("\"deviceId\":\"d1\""));
+        assert!(json.contains("\"scope\":\"drive\""));
+    }
+
+    #[test]
+    fn events_serialise_to_the_contract() {
+        assert_eq!(event_line(&Event::Ready), r#"{"event":"ready"}"#);
+        assert_eq!(event_line(&Event::Streaming), r#"{"event":"streaming"}"#);
+        assert_eq!(
+            event_line(&Event::Error { message: "boom" }),
+            r#"{"event":"error","message":"boom"}"#
+        );
+    }
+}

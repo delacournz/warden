@@ -1,0 +1,32 @@
+[package]
+name = "warden-viewer"
+description = "Native viewer for a hosted warden device"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "warden_viewer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Save panel for screenshots. The plugin returns a path only; the PNG is written in session-free Rust.
+tauri-plugin-dialog = "2"
+# Rust-side logging to stderr: stdout carries the process contract and nothing else.
+tauri-plugin-log = "2"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# rustls so the bundle never links the system TLS stack.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
