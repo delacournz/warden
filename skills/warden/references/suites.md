@@ -83,6 +83,11 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
 
+### Conditions
+| Key | Default | Meaning |
+|---|---|---|
+| `conditions` | none | `{ network?, location?, clock? }` at the top level or per suite (a suite's key replaces the top-level one per area): the device state every spec starts from, applied before the app launches and put back after each spec. `network`: `"online" \| "offline"`, a preset (`edge 3g 4g lte wifi slow lossy`) or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. `location`: `{ lat, lon, altM? }` or `"city-run" \| "city-bike" \| "freeway"`. `clock`: an ISO instant (keeps running), `{ at, frozen? }` or `{ offset: "2d" }`. On iOS a declared `network` / `clock` launches the app with the network dylib, so specs can change it later. `permissions`, `locale`, `timezone`, `a11y` are accepted but not applied yet (`warden e2e` says so once). A bad value fails config load |
+
 ### App, ports, serve, setup
 | Key | Default | Meaning |
 |---|---|---|

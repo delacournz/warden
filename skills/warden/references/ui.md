@@ -67,7 +67,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 
 | Command | Args / flags | Notes |
 |---|---|---|
-| `status` | | device, lease, helper, recording in progress (name, target, step count) |
+| `status` | | device, lease, helper, recording in progress (name, target, step count), conditions set on the lease (`conditions network 3g · location 37.3,-122`) |
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
 | `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]]` | `--settle` ends with a `-`/`+` diff and `= N unchanged` |
 | `find` | `<selector>` | matches with fresh `@eN` |
@@ -100,9 +100,37 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `record cancel` | | drop the journal; a spec already written stays |
 | `record stop` | `[--no-verify] [--suite <n>] [--overwrite]` | write spec/helper, merge ids, print lints, run the spec once on this device (helpers are not run); exit 1 keeps file and journal |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets (default 20 runs; cold start, settle and open capped at 3-5); `--metro` for the tree metric; stops the device's helper: unshared device only |
-| `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only |
+| `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only (`network` here = the request log) |
+| `net` `location` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
+
+## Network and location (`net`, `location`)
+
+`warden ui net` changes the device network, `warden ui location` its GPS. (`warden ui network` is the devtools request log; the condition verb is `net`.) Both act on your lease, record what they set, and **release / gc undo it** (network back online, location cleared on iOS, the proxy, flap scheduler and route ticker stopped), so a claim is never left shaped. A spec sets the same through `device.network` / `device.location` (`specs.md`).
+
+| Command | Args / flags | Notes |
+|---|---|---|
+| `net <condition>` | `online\|offline\|edge\|3g\|4g\|lte\|wifi\|slow\|lossy [--latency ms] [--jitter ms] [--down kbps] [--up kbps] [--loss pct] [--relaunch]` | a flag on a preset overrides its value (a custom condition); on `online` it shapes an open network; on `offline` it is `usage`. Stops a running flap first. Prints `network <condition>`; result `{ action, condition, online, needsProxy, staged }` |
+| `net flap` | `--up 10s --down 3s [--jitter pct] [--seed n] [--relaunch]` | detached scheduler alternates online (up) and offline (down); `--jitter` = percent of each phase (0-100), same `--seed` = same sequence (default 1). A new `net` / `net flap` / `net reset` stops it (it puts the network back first). JSON `pid` = the scheduler |
+| `net fault` | `<host-glob> <status:503\|reset\|delay:2s\|blackhole>` | per-host fault through the lease's proxy; adds to the rules already set, the same glob replaces its rule. Refused while a flap runs |
+| `net fault --clear` | | removes every fault |
+| `net status` | | recorded condition, faults, flap pid and liveness, proxy port and counts. Reads only: no device is opened, works on a device your `warden e2e` holds |
+| `net reset` | `[--relaunch]` | stops the flap, clears faults, back online; "network was not changed" when nothing was set. The proxy stays up until release (an injected iOS app keeps routing through it) |
+| `location set` | `<lat,lon> [--alt m]` | a point |
+| `location route` | `<lat,lon>... [--speed m/s] [--interval s] [--loop]` | waypoints at `--speed` (default 20), one fix per `--interval` (default 1). iOS: `simctl` plays it; Android: a detached ticker the lease owns |
+| `location gpx` | `<file> [--speed m/s]` | a GPX track (path relative to the cwd) |
+| `location scenario` | `city-run\|city-bike\|freeway` | bundled route (`freeway` plays once, the others loop on Android) |
+| `location clear` | | iOS: `simctl location clear`. Android: stops the ticker; the emulator console cannot unset a fix, so the last one stays (warning) |
+| `location status` | | recorded location and ticker pid / liveness; reads only |
+
+Every change prints one line (`--json`: `result.action` is `net`, `net-flap`, `net-fault`, `net-reset`, `net-status`, `location-set`, `-route`, `-gpx`, `-scenario`, `-clear`, `-status`). `needsProxy` non-empty = that part was not applied (loss with no proxy); `staged: true` / warning = iOS has no running app carrying the network dylib, so it applies from the app's next launch.
+
+- iOS: a simulator shares the Mac's network, so conditions reach an app only when it was launched with warden's network dylib. A running app without it: `E_NETWORK_RELAUNCH` (exit 1, `details.driver`); retry with `--relaunch` (relaunches the app `open` started with the dylib). A flap on iOS needs the same (`net flap ... --relaunch`). Only the app's own traffic is shaped (NSURLSession); raw sockets are not.
+- Android emulator: speed, delay and offline are native (`adb emu network`, airplane mode, verified against connectivity); loss and faults go through the proxy via the system `http_proxy` (apps that honour it, e.g. React Native `fetch`; raw sockets and `Proxy.NO_PROXY` apps are not covered).
+- A `status:` fault answers plain `http://` only. HTTPS is a CONNECT tunnel warden does not decrypt, so an `https://` request to that host is **reset** instead of getting the status; a warning says so. `reset`, `delay` and `blackhole` work on both.
+- Physical devices: `E_UNSUPPORTED` (network and location need an emulator console / simulator). `location route --loop` on iOS: `E_UNSUPPORTED` (simctl has no loop).
+- Faults and a flap do not combine: `net fault` while a flap runs, or `net flap` while faults are set, is `failed`; `net reset` / `net fault --clear` first.
 
 ## Selector grammar
 

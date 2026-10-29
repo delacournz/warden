@@ -81,6 +81,34 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `devtools` | `undefined` without `WARDEN_METRO_URL` (release build) |
 | `perf` | `warden perf` from a spec, see below |
 
+### `device.network` / `location` / `clock` / `timeline` (conditions)
+
+Everything a test changes is put back when it ends, to the suite's `conditions` (`suites.md`). A change that fails throws the driver's code (`E_NETWORK_RELAUNCH`, `E_UNSUPPORTED` on a physical device). `Duration` = ms or `"10s"` / `"2m"` / `"2d"`. Each change is also a `condition` line in `results.jsonl`.
+
+| Member | Does |
+|---|---|
+| `network.set(c, { relaunch? })` | `c`: `"online"`, `"offline"`, a preset (`"edge" "3g" "4g" "lte" "wifi" "slow" "lossy"`) or `{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }`. A running flap stops first. iOS: the app must carry the network dylib: a suite that declares `conditions.network` launches it that way, otherwise it fails `E_NETWORK_RELAUNCH` until you pass `{ relaunch: true }` |
+| `network.during(c, fn, opts?)` | run `fn` under `c`, then put the previous condition (and flap) back, also when `fn` throws |
+| `network.flap({ up, down, jitterPct?, seed?, base? })` | alternates `base` (default online) and offline until `stop()` or the end of the test; resolves once the first phase is in place; returns `{ stop(), done, status() }` |
+| `network.fault(rule \| rules)` | `{ match: "api.*", action: { kind: "status", code: 503 } \| { kind: "reset" } \| { kind: "delay", ms } \| { kind: "blackhole" } }`; replaces the faults, `[]` clears; returns `{ notes }` (an `https://` request matching a `status` fault is reset, not answered) |
+| `network.status()` | `{ condition, faults, flapping }` |
+| `network.reset()` | stop the flap, clear faults, back to the suite's `conditions.network` (online without one) |
+| `location.set({ lat, lon, altM? })` | a point |
+| `location.route(points \| { gpx }, { speedMps?, intervalS?, loop? })` | waypoints `{ lat, lon }[]` or a GPX file (relative to the cwd); iOS plays it once (`loop` is `E_UNSUPPORTED`), Android ticks it until the next location call |
+| `location.scenario("city-run" \| "city-bike" \| "freeway")` | bundled route |
+| `location.clear()` | iOS clears; Android stops the ticker and keeps the last fix |
+| `clock.set(at, { frozen? })` · `advance(by)` · `during(at, fn, opts?)` · `reset()` · `status()` | wall clock (`at`: ISO string, `Date`, epoch ms; `by`: `Duration`); `E_UNSUPPORTED` on a driver with no clock |
+| `timeline([{ at, network?, location? }])` | plays steps from now (`at` = offset, a step takes a condition, not a flap); returns the same `ConditionRun` |
+
+```ts
+await device.network.during("offline", async () => {
+	await screen.getByTestId(ids.todos.add).tap();
+	await expect(screen.getByTestId(ids.banner.offline)).toBeVisible();
+});
+await device.network.fault({ match: "api.example.com", action: { kind: "status", code: 503 } });
+await device.location.route([{ lat: 37.33, lon: -122.03 }, { lat: 37.34, lon: -122.03 }], { speedMps: 5 });
+```
+
 ### `device.devtools` (dev client over Metro)
 
 With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.
