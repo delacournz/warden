@@ -4,8 +4,9 @@ import { getProxyStatus, setProxyConditions } from "@delacour/warden-core/netpro
 import { handlePath, readHandleFile } from "@delacour/warden-core/netproxy/handle-file";
 import { ensureLeaseProxy, type LeaseProxyDeps, releaseLeaseProxy } from "@delacour/warden-core/netproxy/lease-proxy";
 import { type ProxyConditions, shapingFromCondition } from "@delacour/warden-core/netproxy/shaping";
+import type { Store } from "@delacour/warden-core/store";
 import type { Lease } from "@delacour/warden-core/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 
 /** Where a lease's shaping proxy listens (always loopback on the host). */
 export type ProxyAddress = { host: string; port: number };
@@ -72,4 +73,66 @@ export function faultNotes(faults: readonly HostFault[]): string[] {
 			(f) =>
 				`status ${f.action.kind === "status" ? f.action.code : ""} for ${f.match} answers plain http:// only; https:// requests to it are reset (the proxy does not decrypt TLS)`
 		);
+}
+
+export type LazyLeaseProxyOptions = {
+	leaseId: string;
+	env: Record<string, string | undefined>;
+	now: () => number;
+	/** opens the lease store; called only when the proxy has to be started or stopped */
+	openStore: () => Result<Store>;
+	/** argv that runs the proxy process (`WARDEN_NETPROXY_COMMAND`); default: `bun netproxy.main.ts` from source */
+	command?: readonly string[] | undefined;
+	/** test seams passed through to `ensureLeaseProxy` (spawn, pid liveness, port range…) */
+	proxyDeps?: Partial<Omit<LeaseProxyDeps, "store" | "env" | "now" | "command">>;
+};
+
+/**
+ * `NetworkProxyPort` for a spec's lease that touches nothing until a network condition needs it: the store is not
+ * opened (nor the lease read) before `ensure`, so a spec that never shapes the network costs no store access or
+ * proxy. `current` / `update` / `stop` work from the lease's handle file and stay off the store while there is none.
+ */
+export function lazyLeaseNetworkProxy(o: LazyLeaseProxyOptions): NetworkProxyPort {
+	let inner: NetworkProxyPort | undefined;
+	const need = (): Result<NetworkProxyPort> => {
+		if (inner) return ok(inner);
+		const store = o.openStore();
+		if (!store.success) return store;
+		const lease = store.data.getLease(o.leaseId);
+		if (!lease) return err(`lease ${o.leaseId} is not in the warden store; its network cannot be shaped`);
+		inner = leaseNetworkProxy(
+			{
+				...o.proxyDeps,
+				store: store.data,
+				env: o.env,
+				now: o.now,
+				...(o.command === undefined ? {} : { command: o.command }),
+			},
+			lease
+		);
+		return ok(inner);
+	};
+	const hasHandle = () => readHandleFile(handlePath(o.leaseId, o.env)) !== undefined;
+	return {
+		async current() {
+			if (inner) return inner.current();
+			const file = readHandleFile(handlePath(o.leaseId, o.env));
+			return file && (await getProxyStatus(file)).success ? { host: file.host, port: file.port } : undefined;
+		},
+		async ensure(condition, conditions) {
+			const ready = need();
+			return ready.success ? ready.data.ensure(condition, conditions) : ready;
+		},
+		async update(update) {
+			const file = readHandleFile(handlePath(o.leaseId, o.env));
+			if (!file || !(await getProxyStatus(file)).success) return err("no live network proxy for this lease");
+			const applied = await setProxyConditions(file, update);
+			return applied.success ? ok(undefined) : applied;
+		},
+		async stop() {
+			if (!inner && !hasHandle()) return;
+			const ready = need();
+			if (ready.success) await ready.data.stop();
+		},
+	};
 }

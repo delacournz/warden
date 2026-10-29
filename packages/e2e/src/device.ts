@@ -24,6 +24,7 @@ import {
 	registerConditions,
 	type TimelineStepInput,
 } from "./conditions/device-conditions";
+import { type ConditionRecorder, leaseRecorderFor } from "./conditions/lease-recorder";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import {
 	isOpenInSheet,
@@ -386,12 +387,18 @@ export function createDevice({
 }
 
 /** The conditions of one attempt's device: events go to the session's `results.jsonl`, calls honour its signal. */
-export function createSessionConditions(session: FixtureSession, driver: Driver, env: E2eEnv): DeviceConditions {
+export function createSessionConditions(
+	session: FixtureSession,
+	driver: Driver,
+	env: E2eEnv,
+	recorder: ConditionRecorder | undefined = leaseRecorderFor(env)
+): DeviceConditions {
 	const sink = conditionSinkFor(session);
 	return createDeviceConditions({
 		driver,
 		env,
 		signal: () => session.signal,
 		...(sink === undefined ? {} : { sink }),
+		...(recorder === undefined ? {} : { recorder }),
 	});
 }

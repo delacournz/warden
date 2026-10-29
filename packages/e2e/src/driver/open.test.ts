@@ -8,7 +8,8 @@ import { fakeAndroidHost } from "./android/android-host.testing";
 import { memoryAndroidState } from "./android/android-state";
 import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
-import { androidOptions, defaultDriverFactory, openDriver } from "./open";
+import { fakeProxy } from "./network-proxy.testing";
+import { androidOptions, defaultDriverFactory, leaseProxyFor, openDriver } from "./open";
 
 const env = (platform: "ios" | "android", extra: Partial<E2eEnv> = {}): E2eEnv => ({
 	udid: "UDID-1",
@@ -195,5 +196,48 @@ describe("androidOptions and the resident server", () => {
 			const options = androidOptions(env("android"), { android: { uiad: false, state: memoryAndroidState() } }, false);
 			expect(options.uiad).toBe(false);
 		});
+	});
+});
+
+describe("the lease's shaping proxy", () => {
+	test("none without WARDEN_LEASE_ID: network stays unsupported, as under a bare bun test", () => {
+		expect(leaseProxyFor(env("android"))).toBeUndefined();
+		expect(androidOptions(env("android"), {}, false).networkProxy).toBeUndefined();
+	});
+
+	test("built from WARDEN_LEASE_ID for android and ios, without opening the store", async () => {
+		const opened: string[] = [];
+		const deps = {
+			openStore: () => {
+				opened.push("store");
+				return { success: false as const, error: "not here" };
+			},
+		};
+		expect(androidOptions(env("android", { leaseId: "L1" }), deps, false).networkProxy).toBeDefined();
+		expect(leaseProxyFor(env("ios", { leaseId: "L1" }), deps)).toBeDefined();
+		expect(opened).toEqual([]);
+	});
+
+	test("a caller's own proxy wins over the lease's", () => {
+		const own = fakeProxy();
+		const options = androidOptions(env("android", { leaseId: "L1" }), { android: { networkProxy: own } }, false);
+		expect(options.networkProxy).toBe(own);
+	});
+
+	test("ios driver opened under a lease gets a proxy; opening it opens no store", async () => {
+		const helper = fakeSimd(() => ({ data: null }));
+		let opened = 0;
+		const result = await openDriver(env("ios", { simd: "/x/warden-simd", leaseId: "L1" }), {
+			exec: fakeExec([["xcrun", {}]]),
+			spawn: helper.spawn,
+			exists: (path) => path === "/x/warden-simd",
+			openStore: () => {
+				opened++;
+				return { success: false, error: "not here" };
+			},
+		});
+		expect(result.success).toBe(true);
+		if (result.success) await result.data.close();
+		expect(opened).toBe(0);
 	});
 });

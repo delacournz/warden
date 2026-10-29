@@ -1,6 +1,7 @@
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { wardenHome } from "@delacour/warden-core/store";
+import { type StoreOpener, sharedStoreOpener } from "../conditions/lease-store";
 import type { E2eEnv } from "../env";
 import type { DriverFactory } from "../session";
 import { type AndroidDriverOptions, openAndroidDriver } from "./android/android-driver";
@@ -8,6 +9,7 @@ import { androidStateDir, createAndroidStateStore } from "./android/android-stat
 import { uiadFromEnv } from "./android/uiad-backend";
 import type { Driver, DriverResult } from "./driver.types";
 import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
+import { lazyLeaseNetworkProxy, type NetworkProxyPort } from "./network-proxy";
 
 /**
  * Test seams for {@link openDriver}: everything the platform openers inject except what the env supplies.
@@ -16,7 +18,24 @@ import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
 export type OpenDriverDeps = Omit<OpenIosDriverOptions, "udid" | "env" | "exec"> & {
 	exec?: Exec;
 	android?: Omit<AndroidDriverOptions, "serial" | "exec" | "log" | "adb"> & { adb?: string };
+	/** opens the lease store for the shaping proxy; default: the spec process's shared connection */
+	openStore?: StoreOpener;
 };
+
+/**
+ * The shaping proxy of the spec's lease (`WARDEN_LEASE_ID`), built lazily: nothing opens the store or starts a
+ * process until a network condition asks for it. None without a lease id, so `network` answers `E_UNSUPPORTED`.
+ */
+export function leaseProxyFor(env: E2eEnv, deps: OpenDriverDeps = {}): NetworkProxyPort | undefined {
+	if (env.leaseId === undefined) return undefined;
+	return lazyLeaseNetworkProxy({
+		leaseId: env.leaseId,
+		env: process.env,
+		now: Date.now,
+		openStore: deps.openStore ?? sharedStoreOpener(process.env),
+		command: env.netproxyCommand,
+	});
+}
 
 /** `WARDEN_E2E_DEBUG=1` logs every helper op and simctl call with its duration to stderr. */
 export const DEBUG_ENV = "WARDEN_E2E_DEBUG";
@@ -34,8 +53,10 @@ const stderrLog = (line: string): void => {
 export function androidOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean): AndroidDriverOptions {
 	const android: NonNullable<OpenDriverDeps["android"]> = deps.android ?? {};
 	const log = deps.log ?? (debug ? stderrLog : undefined);
+	const networkProxy = android.networkProxy ?? leaseProxyFor(env, deps);
 	return {
 		...android,
+		...(networkProxy === undefined ? {} : { networkProxy }),
 		serial: env.udid,
 		adb: android.adb ?? androidTools(process.env).adb,
 		exec: deps.exec ?? bunExec,
@@ -55,15 +76,18 @@ export function androidOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean
 export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): DriverResult<Driver> {
 	const debug = deps.debug ?? process.env[DEBUG_ENV] === "1";
 	switch (env.platform) {
-		case "ios":
+		case "ios": {
+			const networkProxy = deps.networkProxy ?? leaseProxyFor(env, deps);
 			return openIosDriver({
 				...deps,
+				...(networkProxy === undefined ? {} : { networkProxy }),
 				udid: env.udid,
 				env,
 				exec: deps.exec ?? bunExec,
 				debug,
 				...(deps.log ? {} : debug ? { log: stderrLog } : {}),
 			});
+		}
 		case "android":
 			return openAndroidDriver(androidOptions(env, deps, debug));
 	}

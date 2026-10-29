@@ -258,7 +258,7 @@ export function createIosDriver(
 	const noLeaseProxy = async () =>
 		driverErr(
 			"E_UNSUPPORTED",
-			"network and clock conditions on iOS need the lease's shaping proxy: open the driver with a networkProxy (warden ui / the spec runner do)"
+			"network and clock conditions on iOS need a device lease for the shaping proxy: run the spec with `warden e2e` (it sets WARDEN_LEASE_ID), or `warden ui`; a bare `bun test` has no lease"
 		);
 	// late-bound: the network helper relaunches through the driver's own `app.launch`
 	let driverRef: IosDriver | undefined;

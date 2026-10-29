@@ -217,7 +217,11 @@ export function createAndroidNetwork(deps: AndroidNetworkDeps & { proxy?: Networ
 
 	/** Point the device at the proxy with the loss and faults of the current state. */
 	const route = async (): DriverResult<void> => {
-		if (!proxy) return driverErr("E_UNSUPPORTED", "per-host faults need the lease's shaping proxy");
+		if (!proxy)
+			return driverErr(
+				"E_UNSUPPORTED",
+				"per-host faults need a device lease for the shaping proxy: run the spec with `warden e2e` (it sets WARDEN_LEASE_ID); a bare `bun test` has no lease"
+			);
 		const plan = resolveNetwork(condition);
 		const lossPct = plan.online ? plan.shaping.lossPct : 0;
 		const started = await proxy.ensure(condition, { params: lossPct > 0 ? { lossPct } : {}, faults });

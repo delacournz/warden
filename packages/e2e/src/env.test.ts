@@ -175,3 +175,23 @@ describe("perf env", () => {
 		}
 	});
 });
+
+describe("lease env", () => {
+	test("WARDEN_LEASE_ID is read as leaseId, absent otherwise", () => {
+		expect(read({ ...base, WARDEN_LEASE_ID: "lease-9" })?.leaseId).toBe("lease-9");
+		expect(read(base)?.leaseId).toBeUndefined();
+		expect(read({ ...base, WARDEN_LEASE_ID: "" })?.leaseId).toBeUndefined();
+	});
+
+	test("WARDEN_NETPROXY_COMMAND is a JSON argv; a bad value is reported by name", () => {
+		expect(read({ ...base, WARDEN_NETPROXY_COMMAND: '["/bin/warden","__netproxy"]' })?.netproxyCommand).toEqual([
+			"/bin/warden",
+			"__netproxy",
+		]);
+		expect(read(base)?.netproxyCommand).toBeUndefined();
+		const bad = readEnv({ ...base, WARDEN_NETPROXY_COMMAND: "warden __netproxy" });
+		expect(bad.success).toBe(false);
+		expect(bad.success ? "" : bad.error).toContain("WARDEN_NETPROXY_COMMAND");
+		expect(readEnv({ ...base, WARDEN_NETPROXY_COMMAND: "[]" }).success).toBe(false);
+	});
+});

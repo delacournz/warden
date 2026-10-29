@@ -19,6 +19,7 @@ import { settled, toE2eError } from "../driver/unwrap";
 import type { E2eEnv } from "../env";
 import { E2eError } from "../errors";
 import { type ConditionEvent, type ConditionSink, openConditionSink } from "./condition-events";
+import type { ConditionRecorder } from "./lease-recorder";
 import { realTickerClock, type TickerClock } from "./route-ticker";
 import {
 	type Scheduler,
@@ -152,6 +153,8 @@ export type DeviceConditionsDeps = {
 	tickerClock?: TickerClock;
 	/** notes (a restore that failed, areas not applied yet); default stderr */
 	log?: (line: string) => void;
+	/** where changes are written on the device's lease so release can undo them after a crash; default none */
+	recorder?: ConditionRecorder;
 };
 
 type ConditionChange = ConditionEvent extends infer E
@@ -246,6 +249,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	let flap: { run: ConditionRun; options: FlapOptions } | undefined;
 	const runs = new Set<ConditionRun>();
 
+	const recorder = deps.recorder;
+
 	const emit = (event: ConditionChange): void => {
 		deps.sink?.({ ...event, type: "condition", at: ticker.now() });
 	};
@@ -264,10 +269,21 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		throw error;
 	}
 
+	/** a flap or timeline step that landed is on the lease too: a crash mid-flap can be undone */
 	const target = (options?: NetworkSetOptions): SchedulerTarget => ({
-		network: (condition) =>
-			driver.network(condition, options?.relaunch === undefined ? undefined : { relaunch: options.relaunch }),
-		location: (op) => driver.location(op),
+		network: async (condition) => {
+			const result = await driver.network(
+				condition,
+				options?.relaunch === undefined ? undefined : { relaunch: options.relaunch }
+			);
+			if (result.success) recorder?.record("network", condition);
+			return result;
+		},
+		location: async (op) => {
+			const result = await driver.location(op);
+			if (result.success) recorder?.record("location", op);
+			return result;
+		},
 	});
 
 	function track(scheduler: Scheduler): ConditionRun {
@@ -298,6 +314,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		const opts = options?.relaunch === undefined ? undefined : { relaunch: options.relaunch };
 		const state = await call("network", () => driver.network(condition, opts));
 		currentNetwork = condition;
+		recorder?.record("network", condition);
 		emit({ area: "network", value: condition });
 		return state;
 	}
@@ -366,12 +383,14 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		const goal = baseline.network ?? ONLINE;
 		await applyNetwork(goal);
 		networkDirty = false;
+		recorder?.settle("network", goal, goal.kind === "online");
 	}
 
 	async function setFaults(rules: readonly HostFault[]): Promise<{ notes: readonly string[] }> {
 		networkDirty = true;
 		const result = await call("network faults", () => driver.networkFaults(rules));
 		currentFaults = rules;
+		recorder?.record("network", currentNetwork);
 		emit({ area: "faults", value: { kind: "faults", rules } });
 		return result;
 	}
@@ -407,6 +426,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	async function applyLocation(op: LocationCondition): Promise<void> {
 		locationDirty = true;
 		await call("location", () => driver.location(op));
+		recorder?.record("location", op);
 		emit({ area: "location", value: op });
 	}
 
@@ -458,6 +478,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		await call("clock", () => op.call(driver, condition));
 		currentClock = condition;
 		clockSetAt = ticker.now();
+		recorder?.record("clock", condition);
 		emit({ area: "clock", value: condition });
 	}
 
@@ -506,8 +527,10 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			return result;
 		},
 		async reset() {
-			await applyClock(baseline.clock ?? REAL_CLOCK);
+			const goal = baseline.clock ?? REAL_CLOCK;
+			await applyClock(goal);
 			clockDirty = false;
+			recorder?.settle("clock", goal, goal.kind === "real");
 		},
 		status: () => currentClock,
 	};
@@ -589,8 +612,10 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			if (networkDirty) await attempt(resetNetwork);
 			if (locationDirty) {
 				await attempt(async () => {
-					await applyLocation(baseline.location ?? { kind: "clear" });
+					const goal = baseline.location ?? { kind: "clear" };
+					await applyLocation(goal);
 					locationDirty = false;
+					recorder?.settle("location", goal, goal.kind === "clear");
 				});
 			}
 			if (clockDirty) await attempt(clockApi.reset);

@@ -7,6 +7,7 @@ import {
 	e2eMetroSchema,
 	suiteIsolation,
 } from "@delacour/warden-core/affected/affected.schema";
+import { compiledBinary } from "@delacour/warden-core/affected/graph-process";
 import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
 import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
@@ -28,7 +29,14 @@ import type { WarmConnect } from "../batch/warm-drivers";
 import { type ClaimFlagValues, parseClaimFlags, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { findBun, parsePerfFlag, runnerArgv, type SpecEnvOptions, specEnv } from "../e2e/bun-runner";
+import {
+	findBun,
+	NETPROXY_SUBCOMMAND,
+	parsePerfFlag,
+	runnerArgv,
+	type SpecEnvOptions,
+	specEnv,
+} from "../e2e/bun-runner";
 import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
@@ -625,6 +633,12 @@ const specDuration = (field: string, value: string | undefined, fallback: string
 	return ms.success ? ms : err(`e2e.spec.${field}: ${ms.error}`);
 };
 
+/** A compiled `warden` has no `netproxy.main.ts` on disk: specs start the shaping proxy as `<self> __netproxy`. */
+function netproxyEnv(): { netproxyCommand?: string[] } {
+	const self = compiledBinary();
+	return self === undefined ? {} : { netproxyCommand: [self, NETPROXY_SUBCOMMAND] };
+}
+
 /** What `specPlan` needs of `BatchDeps` (`warden ui record stop` resolves the same plan to verify a spec). */
 export type SpecPlanDeps = Pick<BatchDeps, "execPath" | "resolveModule" | "e2eVersion" | "bundledE2e" | "helperDir">;
 
@@ -676,6 +690,7 @@ export async function specPlan(
 			helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
 			version,
 			bin: selfCommand(),
+			...netproxyEnv(),
 			...(perf.data === undefined ? {} : { perf: perf.data }),
 			...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
 			...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
