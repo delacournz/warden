@@ -15,6 +15,8 @@ import { driverErr } from "../errors";
 
 const XCRUN = ["xcrun", "simctl"] as const;
 const SIMCTL_MS = 15_000;
+/** exit code of a call `Exec` killed at its timeout (SIGTERM) */
+const KILLED_BY_TIMEOUT = 143;
 
 /** Permission name to `simctl privacy` service; a name without one is skipped with the reason in `IOS_NO_SERVICE`. */
 export const IOS_PRIVACY_SERVICE: Partial<Record<PermissionName, string>> = {
@@ -147,8 +149,10 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 			: { bundleId };
 	};
 
-	async function simctl(argv: string[]): DriverResult<void> {
-		const res = await exec(argv, { timeoutMs: SIMCTL_MS });
+	/** `retryHung`: a call killed at the timeout runs once more (seen: `simctl privacy` hanging on a sim that just booted) */
+	async function simctl(argv: string[], retryHung = false): DriverResult<void> {
+		let res = await exec(argv, { timeoutMs: SIMCTL_MS });
+		if (retryHung && res.exitCode === KILLED_BY_TIMEOUT) res = await exec(argv, { timeoutMs: SIMCTL_MS });
 		return res.exitCode === 0
 			? { success: true, data: undefined }
 			: driverErr("E_IO", execError(argv, res), { detail: { udid } });
@@ -168,7 +172,7 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 					skipped.push({ permission: name, reason: IOS_NO_SERVICE[name] ?? "no simctl privacy service" });
 					continue;
 				}
-				const done = await simctl(privacyArgv(udid, state, service, bundleId));
+				const done = await simctl(privacyArgv(udid, state, service, bundleId), true);
 				if (!done.success) return done;
 				applied.push({ permission: name, state });
 			}

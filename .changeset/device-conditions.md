@@ -19,3 +19,4 @@
 - More conditions: app permissions (`device.permissions.set`, `warden ui permission`), timezone and locale, text size and contrast (`device.a11y`), battery level and charging (Android real, iOS status bar only), Android memory warnings and iOS push notifications. Each is undone when the lease is released.
 - Conditions left behind by a lease that expired or was deleted any other way (including by an older `warden`) are undone before the device is claimed again, and by `warden gc` for unleased devices.
 - On iOS, a network or clock change that cannot tell whether the app is running now fails instead of being staged silently, and another injected app still running on the simulator no longer stands in for the app under test.
+- `device.permissions.set` / `warden ui permission` on iOS retry a `simctl privacy` call that hangs on a simulator that just booted.

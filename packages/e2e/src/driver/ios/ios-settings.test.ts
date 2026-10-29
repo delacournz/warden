@@ -132,6 +132,25 @@ describe("ios permissions", () => {
 		expect(!none.success && none.error.code).toBe("E_UNSUPPORTED");
 		expect(h.calls).toHaveLength(1);
 	});
+	test("a privacy call killed by the timeout (tccd still starting) is tried once more", async () => {
+		const calls: string[][] = [];
+		const exits = [143, 0];
+		const settings = createIosSettings({
+			udid: UDID,
+			exec: async (cmd) => {
+				calls.push([...cmd]);
+				return { exitCode: exits.shift() ?? 143, stdout: "", stderr: "" };
+			},
+			lastBundle: () => undefined,
+			defaultBundle: APP,
+		});
+		const ok = await settings.permissions({ location: "denied" });
+		expect(ok.success).toBe(true);
+		expect(calls).toHaveLength(2);
+		const twice = await settings.permissions({ location: "denied" });
+		expect(!twice.success && twice.error.code).toBe("E_IO");
+		expect(calls).toHaveLength(4);
+	});
 	test("a failing simctl is E_IO with its output", async () => {
 		const h = harness({ fail: "x" });
 		const r = await h.settings.permissions({ photos: "granted" });
