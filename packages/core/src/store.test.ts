@@ -293,8 +293,9 @@ describe("build kinds migration", () => {
 	test("a database from before kinds keeps its builds as legacy, with empty kind columns", () => {
 		const old = join(dir, "old-builds.db");
 		const db = new Database(old, { create: true });
-		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
-		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
+		const beforeKinds = MIGRATIONS.findIndex((sql) => sql.includes("ADD COLUMN kind"));
+		for (const sql of MIGRATIONS.slice(0, beforeKinds)) db.exec(sql);
+		db.exec(`PRAGMA user_version = ${beforeKinds}`);
 		db.exec("INSERT INTO builds VALUES ('k', 'ios', 'p', 'H', '/c/H/A.app', 'build', 5, 1, 2)");
 		db.close();
 		const migrated = openStore(old);

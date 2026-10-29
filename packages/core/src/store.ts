@@ -102,6 +102,14 @@ export const MIGRATIONS: readonly string[] = [
 	ALTER TABLE builds ADD COLUMN js_key TEXT;
 	ALTER TABLE builds ADD COLUMN worktree TEXT;
 	ALTER TABLE builds ADD COLUMN branch TEXT;`,
+	`CREATE TABLE lease_conditions (
+		lease_id TEXT NOT NULL REFERENCES leases(id) ON DELETE CASCADE,
+		area TEXT NOT NULL,
+		json TEXT NOT NULL,
+		owned TEXT NOT NULL DEFAULT '[]',
+		set_at INTEGER NOT NULL,
+		PRIMARY KEY (lease_id, area)
+	);`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */

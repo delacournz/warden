@@ -4,6 +4,7 @@ import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { closeSimWindowsAfter, type ShutDownSim } from "./close-sim-windows-after";
 import type { CommandContext } from "./context";
 import { errorMessage } from "./hooks/json";
+import { undoLeaseConditions } from "./lease-conditions";
 import { providerFor } from "./providers";
 
 /** `kept`: devices left running because `guard` objected (not because warden never owned them). */
@@ -40,6 +41,7 @@ export async function shutdownReleasedDevices(
 			.listDevices()
 			.map((d) => `${d.platform}:${d.id}`)
 	);
+	const undoNotes: string[] = [];
 	const one = async (lease: Lease): Promise<DeviceShutdown> => {
 		const r = lease.resource;
 		if (r.kind !== "device") return { kind: "skipped" };
@@ -49,6 +51,8 @@ export async function shutdownReleasedDevices(
 		try {
 			const veto = await guard?.(lease);
 			if (veto !== undefined) return { kind: "kept", id: r.id, note: `left ${r.name} (${r.id}) running: ${veto}` };
+			// the device is about to stop answering: reset what the lease set on it first
+			undoNotes.push(...(await undoLeaseConditions(ctx, lease)));
 			const result = await providerFor(r.platform, ctx, owner).shutdown(r.id);
 			if (result.success) {
 				// a resident `warden-simd` is bound to the boot that just ended
@@ -71,6 +75,7 @@ export async function shutdownReleasedDevices(
 			outcome.notes.push(done.note);
 		} else if (done.kind !== "skipped") outcome.notes.push(done.note);
 	}
+	outcome.notes.push(...undoNotes);
 	const unclosed = await closeSimWindowsAfter(ctx, sims);
 	if (unclosed !== undefined) outcome.notes.push(`couldn't close the simulator window (${unclosed})`);
 	return outcome;
