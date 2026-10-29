@@ -1207,6 +1207,34 @@ describe("claimDevices physical", () => {
 		expect(provider.calls).toEqual([]);
 	});
 
+	test("naming an offline phone fails device_offline with the reason", async () => {
+		const offline = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "offline" } });
+		const result = await claimDevices(
+			input(fakeProvider([offline]), { request: request({ platform: "android", physical: { ids: ["P1"] } }) })
+		);
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error).toContain("device_offline");
+			expect(result.error).toContain("P1");
+			expect(result.error).toContain("offline");
+		}
+	});
+
+	test("an unauthorized phone is listed as skipped when nothing else is ready", async () => {
+		const unauthorized = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "unauthorized" } });
+		const result = await claimDevices(
+			input(fakeProvider([unauthorized]), { request: request({ platform: "android", physical: {} }) })
+		);
+		expect(!result.success && result.error).toContain("USB debugging");
+	});
+
+	test("an allowlist that matches nothing says so", async () => {
+		const result = await claimDevices(
+			input(fakeProvider([phone("P1")]), { request: request({ platform: "android", physical: { allow: ["P9"] } }) })
+		);
+		expect(!result.success && result.error).toContain("allowlist");
+	});
+
 	test("two claims get two different phones", async () => {
 		const provider = fakeProvider([phone("P1"), phone("P2")]);
 		const req = request({ platform: "android", physical: {} });

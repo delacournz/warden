@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
+import {
+	DEVICECTL_LOCKSTATE_UNLOCKED,
+	devicectlEntry,
+	devicectlJson,
+} from "@delacour/warden-core/providers/devicectl.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { InventoryDevice, Lease } from "@delacour/warden-core/types";
 import {
@@ -444,5 +451,92 @@ describe("withNamedPhysical", () => {
 		});
 		expect(named({ udid: ["U1"] })).toEqual({ physicalUdid: ["U1"] });
 		expect(named({ count: "2" })).toEqual({ count: "2" });
+	});
+});
+
+describe("physical allowlist", () => {
+	const A = "00008140-000A0B0C0D0E0F10";
+	const B = "00008132-000A0B0C0D0E0F11";
+	let actx: TestContext | undefined;
+	afterEach(() => actx?.cleanup());
+
+	/** two ready, connected iPads/iPhones; every id is made up */
+	const make = (env: Record<string, string> = {}, config?: unknown): TestContext => {
+		const list = devicectlJson(
+			[A, B].map((udid, i) =>
+				devicectlEntry({
+					udid,
+					name: `Test device ${i}`,
+					deviceType: "iPhone",
+					osVersion: "27.2",
+					transportType: "wired",
+				})
+			)
+		);
+		const exec = fakeSimctl(
+			[],
+			[],
+			[
+				["xcrun devicectl list devices", { stdout: list }],
+				["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }],
+			]
+		);
+		actx = testContext([], { exec });
+		actx.env = { ...actx.env, ...OWNER_ENV, ...env };
+		if (config !== undefined) writeFileSync(join(actx.cwd, "warden.config.json"), JSON.stringify(config));
+		return actx;
+	};
+	const claimIds = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string[]> => {
+		const flags = parseClaimFlags("ios", values, 16);
+		if (!flags.success) throw new Error(flags.error);
+		const outcome = await claimWithFlags(c, resolveOwner(c), flags.data, undefined, {});
+		if (!outcome.success) throw new Error(outcome.error);
+		return outcome.data.claimed.map((d) => d.device.id);
+	};
+	const failure = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string> => {
+		const flags = parseClaimFlags("ios", values, 16);
+		if (!flags.success) throw new Error(flags.error);
+		const outcome = await claimWithFlags(c, resolveOwner(c), { ...flags.data, waitMs: 0 }, undefined, {});
+		return outcome.success ? "claimed" : outcome.error;
+	};
+
+	test("no list: any ready physical device", async () => {
+		expect((await claimIds(make(), { physical: true })).length).toBe(1);
+	});
+
+	test("WARDEN_PHYSICAL_IDS limits an id-less claim", async () => {
+		expect(await claimIds(make({ WARDEN_PHYSICAL_IDS: B }), { physical: true })).toEqual([B]);
+	});
+
+	test("config physical.allow limits it too, and the env wins over it", async () => {
+		const config = {
+			projects: [{ name: "app", root: ".", bundleId: { ios: "com.example.app" } }],
+			physical: { allow: [A] },
+		};
+		expect(await claimIds(make({}, config), { physical: true })).toEqual([A]);
+	});
+
+	test("the env list wins over the config list", async () => {
+		const config = {
+			projects: [{ name: "app", root: ".", bundleId: { ios: "com.example.app" } }],
+			physical: { allow: [A] },
+		};
+		expect(await claimIds(make({ WARDEN_PHYSICAL_IDS: B }, config), { physical: true })).toEqual([B]);
+	});
+
+	test("naming a device beats the list", async () => {
+		expect(await claimIds(make({ WARDEN_PHYSICAL_IDS: A }), { physicalUdid: [B] })).toEqual([B]);
+	});
+
+	test("an allowlist with nothing connected on it waits and says why", async () => {
+		expect(await failure(make({ WARDEN_PHYSICAL_IDS: "00008140-000A0B0C0D0E0FFF" }), { physical: true })).toContain(
+			"allowlist"
+		);
+	});
+
+	test("an unreadable config fails the claim instead of ignoring the list", async () => {
+		const c = make();
+		writeFileSync(join(c.cwd, "warden.config.json"), "{ not json");
+		expect(await failure(c, { physical: true })).toContain("allowlist");
 	});
 });

@@ -18,6 +18,7 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { buildCapacityDeps } from "./capacity-deps";
 import type { CommandContext } from "./context";
+import { applyPhysicalAllow, parsePhysicalIds, resolvePhysicalAllow } from "./physical-allow";
 import { providerFor } from "./providers";
 import {
 	autoArrangeSimWindows,
@@ -378,6 +379,23 @@ async function resolveRequest(ctx: CommandContext, request: DeviceRequest): Asyn
 	return profile.success ? ok({ ...request, profile: profile.data }) : profile;
 }
 
+/**
+ * An id-less physical claim only picks from the allowlist (`WARDEN_PHYSICAL_IDS`, else `physical.allow` in
+ * `warden.config.ts`). A config that cannot be read fails the claim: guessing could take a device the list excludes.
+ */
+async function withPhysicalAllowlist(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
+	if (!request.physical || request.physical.ids !== undefined) return ok(request);
+	let configAllow: string[] | undefined;
+	if (parsePhysicalIds(ctx.env.WARDEN_PHYSICAL_IDS) === undefined) {
+		// loaded here only: a plain claim never pays for the config loader
+		const { findWardenConfig } = await import("@delacour/warden-core/builds/config");
+		const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
+		if (!found.success) return err(`cannot read the physical-device allowlist from warden.config: ${found.error}`);
+		configAllow = found.data?.config.physical?.allow;
+	}
+	return ok(applyPhysicalAllow(request, resolvePhysicalAllow(ctx.env, configAllow)));
+}
+
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
 export async function claimWithFlags(
 	ctx: CommandContext,
@@ -388,7 +406,9 @@ export async function claimWithFlags(
 ): AsyncResult<ClaimOutcome> {
 	const resolved = await resolveRequest(ctx, flags.request);
 	if (!resolved.success) return resolved;
-	let request = resolved.data;
+	const allowed = await withPhysicalAllowlist(ctx, resolved.data);
+	if (!allowed.success) return allowed;
+	let request = allowed.data;
 	const priority = resolvePriority(flags, ctx.env);
 	if (!priority.success) return priority;
 	const capacity = await buildCapacityDeps(ctx, owner);

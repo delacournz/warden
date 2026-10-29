@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ExecResult } from "@delacour/warden-core/exec";
+import { devicectlEntry, devicectlJson, FAKE_IPAD_UDID } from "@delacour/warden-core/providers/devicectl.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeExec, type TestContext, testContext } from "../testing";
@@ -54,16 +55,18 @@ describe("warden devices", () => {
 		expect(rows).toEqual([
 			{
 				platform: "android",
+				kind: "virtual",
 				name: "Pixel_10",
 				id: "emulator-5554",
 				state: "booted",
 				runtime: "android-35",
 				warden: false,
 			},
-			{ platform: "android", name: "Pixel_10", state: "avd", warden: false },
-			{ platform: "android", name: "Pixel_9_Pro_Store", state: "avd", warden: false },
+			{ platform: "android", kind: "virtual", name: "Pixel_10", state: "avd", warden: false },
+			{ platform: "android", kind: "virtual", name: "Pixel_9_Pro_Store", state: "avd", warden: false },
 			{
 				platform: "ios",
+				kind: "virtual",
 				name: "warden-iphone-17-1",
 				id: "U1",
 				state: "booted",
@@ -71,7 +74,15 @@ describe("warden devices", () => {
 				warden: true,
 				lease: { id: expect.any(String), owner: "agent s2", where: "warden/cowrie@main" },
 			},
-			{ platform: "ios", name: "iPhone 17 Pro", id: "U2", state: "shutdown", runtime: "iOS-26-5", warden: false },
+			{
+				platform: "ios",
+				kind: "virtual",
+				name: "iPhone 17 Pro",
+				id: "U2",
+				state: "shutdown",
+				runtime: "iOS-26-5",
+				warden: false,
+			},
 		]);
 	});
 
@@ -92,6 +103,7 @@ describe("warden devices", () => {
 		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual([
 			{
 				platform: "ios",
+				kind: "virtual",
 				name: "warden-golden-iphone-17-abc123def0",
 				id: "G",
 				state: "shutdown",
@@ -172,7 +184,7 @@ describe("warden devices", () => {
 		expect(await devicesCommand.run(c)).toBe(0);
 		const text = c.stdout.join("\n");
 		expect(text).not.toContain("LEASED BY");
-		expect(text.split("\n")[0]).toMatch(/^PLATFORM\s+NAME\s+ID\s+STATE\s+RUNTIME\s+WARDEN$/);
+		expect(text.split("\n")[0]).toMatch(/^PLATFORM\s+KIND\s+NAME\s+ID\s+STATE\s+RUNTIME\s+WARDEN$/);
 		expect(text).toMatch(/warden-iphone-17-1\s+U1\s+leased · agent s2/);
 	});
 
@@ -236,6 +248,71 @@ describe("warden devices (physical phones)", () => {
 			state: "booted",
 			physical: true,
 			warden: false,
+			kind: "physical",
+			transport: "usb",
 		});
+		expect(phone).not.toHaveProperty("hint");
+	});
+
+	const ADB_UNAUTHORIZED = "List of devices attached\nR5CT1234ABC unauthorized usb:1-1 transport_id:1\n\n";
+
+	test("an unauthorized phone is listed with a hint, in the table too", async () => {
+		const exec = fakeExec([
+			["adb devices -l", { stdout: ADB_UNAUTHORIZED }],
+			["emulator -list-avds", { stdout: "" }],
+		]);
+		ctx = testContext(["android", "--json"], { exec });
+		await devicesCommand.run(ctx);
+		const rows: Array<{ hint?: string; kind: string }> = JSON.parse(ctx.stdout.join("\n"));
+		expect(rows[0]).toMatchObject({ kind: "physical", physical: true });
+		expect(rows[0]?.hint).toContain("unauthorized: accept the USB debugging prompt");
+		ctx.cleanup();
+		ctx = testContext(["android"], { exec });
+		await devicesCommand.run(ctx);
+		const text = ctx.stdout.join("\n");
+		expect(text).toMatch(/KIND/);
+		expect(text).toMatch(/physical\s+\S*\s+R5CT1234ABC\s+unauthorized/);
+		expect(text).toContain("USB debugging");
+	});
+
+	test("an iPad devicectl lists but cannot reach is offline with a hint, never ready", async () => {
+		const list = devicectlJson([
+			devicectlEntry({
+				udid: FAKE_IPAD_UDID,
+				name: "Test iPad",
+				deviceType: "iPad",
+				osVersion: "18.7.8",
+				transportType: "localNetwork",
+				tunnelState: "disconnected",
+			}),
+		]);
+		ctx = testContext(["ios", "--json"], {
+			exec: fakeExec([
+				["xcrun simctl list devices available -j", { stdout: IOS }],
+				["xcrun devicectl list devices", { stdout: list }],
+				["xcrun devicectl device info lockState", { exitCode: 1, stderr: "The device is not connected\n" }],
+			]),
+		});
+		await devicesCommand.run(ctx);
+		const rows: Array<{ id?: string; state: string; kind: string; transport?: string; hint?: string }> = JSON.parse(
+			ctx.stdout.join("\n")
+		);
+		const ipad = rows.find((r) => r.id === FAKE_IPAD_UDID);
+		expect(ipad).toMatchObject({ kind: "physical", state: "shutdown", transport: "localNetwork" });
+		expect(ipad?.hint).toContain("offline: ");
+	});
+
+	test("--physical lists only phones and tablets", async () => {
+		ctx = testContext(["--physical", "--json"], {
+			exec: fakeExec([
+				["xcrun simctl list devices available -j", { stdout: IOS }],
+				["adb devices -l", { stdout: ADB_UNAUTHORIZED }],
+				["emulator -list-avds", { stdout: "Pixel_10\n" }],
+			]),
+		});
+		await devicesCommand.run(ctx);
+		const rows: Array<{ kind: string }> = JSON.parse(ctx.stdout.join("\n"));
+		expect(rows).toHaveLength(1);
+		expect(rows.every((r) => r.kind === "physical")).toBe(true);
 	});
 });

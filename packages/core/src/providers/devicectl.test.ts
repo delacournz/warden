@@ -7,6 +7,7 @@ import {
 	lockStateArgv,
 	parseDevicectlDevices,
 	probePhysicalIos,
+	REACHABLE_PROBE_MS,
 	readLockState,
 } from "./devicectl";
 import {
@@ -55,6 +56,7 @@ describe("parseDevicectlDevices", () => {
 				developerMode: true,
 				ddi: true,
 				tunnelIp: "fd00:1234:5678::1",
+				tunnelState: "connected",
 			},
 		});
 	});
@@ -197,5 +199,74 @@ describe("lock state", () => {
 
 	test("probe fails on unreadable output", async () => {
 		expect((await probePhysicalIos(runner({ stdout: "garbage" }), FAKE_IPHONE_UDID)).success).toBe(false);
+	});
+});
+
+describe("reachability of listed phones", () => {
+	const phone = (over: { transportType?: string; tunnelState?: string; udid?: string }) =>
+		devicectlJson([
+			devicectlEntry({
+				udid: over.udid ?? FAKE_IPAD_UDID,
+				name: "Test iPad",
+				deviceType: "iPad",
+				osVersion: "18.7.8",
+				transportType: over.transportType ?? "localNetwork",
+				tunnelState: over.tunnelState ?? "disconnected",
+			}),
+		]);
+
+	/** answers `list` with `listJson` and `lockState` with `lock` */
+	function both(listJson: string, lock: Partial<ExecResult>, calls: string[][] = []): TimedExec {
+		const exec: Exec = async (cmd) => {
+			calls.push([...cmd]);
+			const body = cmd.includes("lockState") ? lock : { stdout: listJson };
+			return { exitCode: 0, stdout: "", stderr: "", ...body };
+		};
+		return { exec, timer: realTimer };
+	}
+
+	test("a connected tunnel is reachable without a probe", async () => {
+		const calls: string[][] = [];
+		const out = await listPhysicalIos(both(phone({ tunnelState: "connected" }), { exitCode: 1 }, calls));
+		expect(out.success && out.data[0]?.state).toBe("booted");
+		expect(calls.some((c) => c.includes("lockState"))).toBe(false);
+	});
+
+	test("a wired phone is reachable without a probe", async () => {
+		const calls: string[][] = [];
+		const out = await listPhysicalIos(both(phone({ transportType: "wired" }), { exitCode: 1 }, calls));
+		expect(out.success && out.data[0]?.state).toBe("booted");
+		expect(calls.some((c) => c.includes("lockState"))).toBe(false);
+	});
+
+	test("a disconnected network phone that answers lockState is ready", async () => {
+		const out = await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_LOCKED }));
+		expect(out.success && out.data[0]?.state).toBe("booted");
+		expect(out.success && out.data[0]?.physical).not.toHaveProperty("unreachable");
+	});
+
+	test("a disconnected network phone that does not answer is unreachable and never ready", async () => {
+		const calls: string[][] = [];
+		const out = await listPhysicalIos(both(phone({}), { exitCode: 1, stderr: "The device is not connected" }, calls));
+		const device = out.success ? out.data[0] : undefined;
+		expect(device?.state).toBe("shutdown");
+		expect(device?.physical?.platform === "ios" && device.physical.unreachable).toContain("not connected");
+		const probe = calls.find((c) => c.includes("lockState")) ?? [];
+		expect(probe[probe.indexOf("--timeout") + 1]).toBe(String(REACHABLE_PROBE_MS / 1000));
+	});
+
+	test("a phone that hangs is cut off at the probe bound", async () => {
+		const exec: Exec = async (cmd) =>
+			cmd.includes("lockState") ? new Promise<ExecResult>(() => {}) : { exitCode: 0, stdout: phone({}), stderr: "" };
+		const timer = (ms: number) =>
+			ms === REACHABLE_PROBE_MS ? { promise: Promise.resolve(), cancel: () => {} } : realTimer(ms);
+		const out = await listPhysicalIos({ exec, timer });
+		expect(out.success && out.data[0]?.state).toBe("shutdown");
+	});
+
+	test("a phone that is not ready for another reason is not probed", async () => {
+		const calls: string[][] = [];
+		await listPhysicalIos(both(DEVICECTL_LIST_MIXED, { stdout: DEVICECTL_LOCKSTATE_LOCKED }, calls));
+		expect(calls.filter((c) => c.includes("lockState"))).toHaveLength(0);
 	});
 });

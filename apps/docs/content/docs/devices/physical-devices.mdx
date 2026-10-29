@@ -1,0 +1,129 @@
+---
+title: Physical devices
+description: Lease, drive and test on real Android phones and iPhones with warden claim, warden ui and warden e2e, and keep it off devices that are not yours.
+icon: Smartphone
+---
+
+warden leases real phones the same way it leases simulators, but only when you ask: `--physical`, or naming the device with `--serial` / `--udid`. A plain `warden claim` never takes a phone.
+
+```bash
+warden devices --physical                       # what warden sees, and why a device is skipped
+warden claim android --physical --json          # a connected, authorized phone
+warden claim ios --udid 00008140-000A0B0C0D0E0F10 --json
+warden ui snapshot -i --udid 00008140-000A0B0C0D0E0F10
+warden e2e smoke --physical --platform ios
+warden ui close --release
+```
+
+A physical device is never booted, created, shut down, erased or slimmed. It costs nothing in host capacity, and `warden release --shutdown` and `warden gc` leave it running.
+
+## Claim
+
+| Command | Takes |
+|---|---|
+| `warden claim android --physical` | one phone whose adb state is `device` |
+| `warden claim ios --physical` | one iPhone or iPad that is paired, has Developer Mode on and is reachable now |
+| `warden claim android --serial <serial…>` | exactly these phones (adb serial, or `ip:port` for wireless debugging) |
+| `warden claim ios --udid <udid…>` | exactly these devices (CoreDevice UDID) |
+
+`--physical` is refused together with `--count`, `--max`, `--slim`, `--headless`, `--runtime` and `--adopt`.
+
+### Only reachable devices are picked
+
+`devicectl` lists every device an Apple ID has ever paired, including ones in a drawer, as available. warden counts an iPhone or iPad as ready only when it answers: its tunnel is connected, it is on a cable, or a bounded `devicectl device info lockState` call returns within 5 seconds. Anything else is listed with a reason and never picked automatically:
+
+```text
+PLATFORM  KIND      NAME       ID                         STATE
+ios       physical  Test iPad  00008132-000A0B0C0D0E0F11  offline
+Test iPad (00008132-000A0B0C0D0E0F11): offline: The device is not connected
+```
+
+Naming an unreachable device with `--udid` fails at once with `device_offline` and the reason. An Android phone in adb state `unauthorized` or `offline` is likewise listed with a hint (accept the USB debugging prompt, reconnect the cable) and never picked.
+
+### Restrict which devices warden may take
+
+If a family member's iPad or a colleague's phone shares your machine, give `--physical` a list. Without ids, it then picks only from the list:
+
+```ts title="warden.config.ts"
+export default defineConfig({
+  physical: { allow: ["00008140-000A0B0C0D0E0F10", "R5CT123ABC"] },
+  // …
+});
+```
+
+```bash
+export WARDEN_PHYSICAL_IDS=00008140-000A0B0C0D0E0F10,R5CT123ABC   # wins over the config
+```
+
+- The list applies to `warden claim`, `warden ui --claim --physical` and `warden e2e|run|batch --physical`.
+- Naming a device with `--udid` / `--serial` always works: an explicit request beats the list.
+- A list that is set but matches nothing connected makes the claim wait and say so.
+- The setting lives in the repo config and the environment. There is no machine-wide config file: put the variable in your shell profile to cover every repo.
+
+## Drive with `warden ui`
+
+`warden ui` works on a leased phone like on a simulator: `snapshot`, `press`, `fill`, `type`, `swipe`, `screenshot`, `open`, `wait`. Single-finger input only on an iPhone: `pinch`, `rotate`, `gesture`, `press shake` and `press back` fail `E_UNSUPPORTED`.
+
+```bash
+warden ui open --claim --physical --platform android
+warden ui snapshot -i
+warden ui close --release
+```
+
+A locked phone exits 2 with `device_locked`; warden never unlocks one. Rotation, dark mode and animation scales on Android are saved before the first change and restored on close. `uninstall` and clearing data only touch your own app's bundle id and apps warden installed.
+
+## Test with `warden e2e`
+
+```bash
+warden e2e smoke --physical --platform android
+warden e2e smoke --udid 00008140-000A0B0C0D0E0F10
+```
+
+`physical: true` or `physical: { ids: […] }` on a suite or a `devices` leg does the same; the flags win. A physical run never reboots, hides windows, arranges, slims or shuts down a device, and installs the `release` build kind by default. Mark a spec that needs two fingers with `test(title, { requires: ["pinch"] }, body)` and warden skips it on an iPhone.
+
+On an iPhone `--app` (or a suite `app`) fails before anything is leased until device builds ship: install the app on the phone yourself.
+
+## iPhone signing (team)
+
+The iPhone has no simulator driver: warden builds its own XCUITest runner and installs it on the phone, which needs an Apple developer team to sign with.
+
+- Set `WARDEN_IOS_TEAM_ID=ABCDE12345` or `ios: { teamId: "ABCDE12345" }` in `warden.config.ts` (the variable wins).
+- Without either, warden uses the keychain's `Apple Development` team when there is exactly one, and fails `ios_team_ambiguous` listing the teams otherwise.
+- A paid team gives one-year profiles. A free personal team gives 7-day profiles and a manual trust step, so expect rebuilds.
+- The build is cached per team and Xcode build, and rebuilt for a new phone or when the profile ends within 24 hours. `warden doctor` shows the team, the cache and the last failure.
+
+## Android notes
+
+- Enable Developer options, then USB debugging, plug in the phone and accept the "Allow USB debugging?" prompt for this computer. Until you do, adb says `unauthorized`.
+- Keep the screen unlocked or the lock set to Swipe/None. warden wakes a sleeping phone and dismisses a keyguard with no credential; a PIN, pattern or password fails `E_DEVICE_LOCKED`.
+- Two adb servers (for example one from Android Studio and one from the SDK) make phones flicker between `offline` and `device`; `warden doctor` warns, `adb kill-server` and keep one.
+- After a sign-in Google may show **Save password to Google Password Manager?**. warden closes that sheet with Back for both `accept` and `dismiss`; it never presses Never or Continue, because those write to the Google account. Use a test account on the phone.
+- `abi_mismatch` on install means the `simulator` kind (host CPU) reached an arm phone: use the `dev` or `release` kind.
+
+## iPhone notes
+
+- Enable **Developer Mode** (Settings, Privacy & Security), then restart the phone. A paired phone with it off is listed as `developer mode off`.
+- Trust this computer when asked, and trust the developer certificate under Settings, General, VPN & Device Management on first run (`runner_untrusted`).
+- Turn on **Enable UI Automation** under Settings, Developer (`ui_automation_disabled`).
+- Keep the phone unlocked and awake while a run starts (`device_locked`).
+- One UI-test session per phone: Xcode or Appium on the same phone ends warden's runner. warden reports `device_busy` and never kills another tool's xcodebuild.
+- Speed: expect about 0.8 s per tap (XCUITest waits for the app to go idle, roughly ten times slower than a simulator), about 0.15 to 0.3 s for a snapshot and about 2.5 s to launch an app.
+- `screen appearance` is read-only on an iPhone, and `screen rotate` goes through `devicectl`.
+
+## Privacy
+
+Screenshots, snapshots, screen recordings and `results.jsonl` capture whatever is on the phone's screen: messages, notifications, names, account details. Use a test device or a clean profile, sign in with test accounts, and treat the batch directory (`screen-at-failure.txt`, screenshots, recordings) as personal data before attaching it to a CI artifact or an issue.
+
+## Diagnose
+
+```bash
+warden doctor        # ios-team, ios-devices, ios-runner and android-devices rows appear only when a phone or a team is present
+warden devices --physical
+```
+
+| Row | Shows |
+|---|---|
+| `ios-team` | the resolved team and where it came from, or `ambiguous: N teams, set WARDEN_IOS_TEAM_ID` |
+| `ios-devices` | per device: transport, pairing, Developer Mode, DDI, reachable or offline, locked |
+| `ios-runner` | the cached runner build, profile expiry and the last recorded failure |
+| `android-devices` | phones, how many are unauthorized or offline, and a second adb server |

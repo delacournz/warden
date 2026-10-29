@@ -24,7 +24,10 @@ export const listDevicesArgv = (): string[] => [
 	String(DEVICECTL_TIMEOUTS.listMs / 1000 - 5),
 ];
 
-export const lockStateArgv = (udid: string): string[] => [
+/** How long a phone that is not connected right now gets to answer `lockState` before it counts as offline (devicectl's `--timeout` floor is 5 s). */
+export const REACHABLE_PROBE_MS = 5_000;
+
+export const lockStateArgv = (udid: string, timeoutMs?: number): string[] => [
 	"xcrun",
 	"devicectl",
 	"device",
@@ -36,7 +39,7 @@ export const lockStateArgv = (udid: string): string[] => [
 	"-",
 	"--quiet",
 	"--timeout",
-	String(DEVICECTL_TIMEOUTS.probeMs / 1000 - 5),
+	String(timeoutMs === undefined ? DEVICECTL_TIMEOUTS.probeMs / 1000 - 5 : Math.max(5, Math.ceil(timeoutMs / 1000))),
 ];
 
 type JsonObject = Record<string, unknown>;
@@ -78,6 +81,7 @@ function physicalInfo(entry: JsonObject): PhysicalInfo {
 	const software = obj(obj(props, "software"), "osVersionNumber");
 	const tunnelIp = str(connection, "tunnelIPAddress") ?? str(connection, "tunnelIPAddressString");
 	const pairingState = str(connection, "pairingState") ?? "unknown";
+	const tunnelState = str(connection, "tunnelState");
 	return {
 		platform: "ios",
 		transport: str(connection, "transportType") === "wired" ? "wired" : "localNetwork",
@@ -86,6 +90,7 @@ function physicalInfo(entry: JsonObject): PhysicalInfo {
 		developerMode: developerModeOn(device?.developerModeStatus, obj(props, "state")?.developerModeStatus),
 		ddi: device?.ddiServicesAvailable === true,
 		...(tunnelIp === undefined ? {} : { tunnelIp }),
+		...(tunnelState === undefined ? {} : { tunnelState }),
 		...(pairingState === "paired" ? {} : { pairingState }),
 	};
 }
@@ -131,10 +136,33 @@ async function runDevicectl(runner: TimedExec, cmd: string[], timeoutMs: number)
 	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
 }
 
+/** Connected right now without asking: a wired transport or an up tunnel. */
+function connectedNow(d: InventoryDevice): boolean {
+	return d.physical?.platform === "ios" && (d.physical.transport === "wired" || d.physical.tunnelState === "connected");
+}
+
+/**
+ * devicectl lists every paired device, including iPads in a drawer, as available. A ready-looking phone that is not
+ * connected (no wired transport, tunnel down) must answer a bounded `lockState` to count; otherwise it is
+ * `shutdown` with the reason in `PhysicalInfo.unreachable`, so no claim ever auto-picks it.
+ */
+async function markReachability(runner: TimedExec, d: InventoryDevice): Promise<InventoryDevice> {
+	if (d.state !== "booted" || d.physical?.platform !== "ios" || connectedNow(d)) return d;
+	const answer = await execWithin(runner, lockStateArgv(d.id, REACHABLE_PROBE_MS), REACHABLE_PROBE_MS);
+	if (answer !== undefined && answer.exitCode === 0 && parseJson(answer.stdout, "lockState").success) return d;
+	const reason =
+		answer === undefined
+			? `no answer within ${REACHABLE_PROBE_MS / 1000}s (not connected)`
+			: answer.stderr.trim().split("\n")[0] || "not connected";
+	return { ...d, state: "shutdown", physical: { ...d.physical, unreachable: reason } };
+}
+
 /** Physical iPhones/iPads CoreDevice knows about. An error (no Xcode, devicectl wedged) is the caller's to ignore. */
 export async function listPhysicalIos(runner: TimedExec): AsyncResult<InventoryDevice[]> {
 	const out = await runDevicectl(runner, listDevicesArgv(), DEVICECTL_TIMEOUTS.listMs);
-	return out.success ? parseDevicectlDevices(out.data) : out;
+	if (!out.success) return out;
+	const parsed = parseDevicectlDevices(out.data);
+	return parsed.success ? ok(await Promise.all(parsed.data.map((d) => markReachability(runner, d)))) : parsed;
 }
 
 /** `devicectl device info lockState`: is a passcode needed to use the phone now. */

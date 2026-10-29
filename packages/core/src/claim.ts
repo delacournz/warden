@@ -20,6 +20,7 @@ import {
 	type Lease,
 	type Owner,
 	type Platform,
+	physicalNotReadyReason,
 	resourceKey,
 } from "./types";
 
@@ -116,7 +117,7 @@ type Reserved =
 
 type Reservation =
 	| { kind: "assign"; items: Reserved[] }
-	| { kind: "wait"; poolSize: number }
+	| { kind: "wait"; poolSize: number; notReady: string[] }
 	| { kind: "queued"; position: number; total: number; reason: string; evict: Eviction[] };
 
 const DEFAULT_POLL_MS = 2_000;
@@ -188,7 +189,7 @@ function reserve(
 		const poolSize = inventory.filter(
 			(d) => d.platform === request.platform && d.wardenCreated && d.profile === request.profile
 		).length;
-		return { kind: "wait", poolSize };
+		return { kind: "wait", poolSize, notReady: notReadyPhysical(inventory, request) };
 	}
 	if (cap) store.dequeue(cap.queueId);
 	const common = { owner, ...(input.label !== undefined ? { label: input.label } : {}) };
@@ -572,10 +573,30 @@ async function checkReady(
 	return { ok: ok({ lease, device: { ...device, state: "booted" }, action: item.action }), leaseId: lease.id };
 }
 
-function waitMessage(request: DeviceRequest, poolSize: number): string {
+/** `id (name): reason` for each physical device the request would consider that is not usable now. */
+function notReadyPhysical(inventory: InventoryDevice[], request: DeviceRequest): string[] {
+	if (!request.physical) return [];
+	const scope = request.physical.ids ?? request.physical.allow;
+	return inventory.flatMap((d) => {
+		if (d.platform !== request.platform || (scope !== undefined && !scope.includes(d.id))) return [];
+		const reason = physicalNotReadyReason(d);
+		return reason === undefined ? [] : [`${d.id} (${d.name}): ${reason}`];
+	});
+}
+
+function waitMessage(request: DeviceRequest, poolSize: number, notReady: string[] = []): string {
 	if (request.physical) {
-		const named = request.physical.ids?.length ? ` (${request.physical.ids.join(", ")})` : "";
-		return `no free ready physical ${request.platform} device${named}: connect and authorize it, or release the lease holding it (see warden devices / warden ls)`;
+		const { ids, allow } = request.physical;
+		const named = ids?.length ? ` (${ids.join(", ")})` : "";
+		const skipped = notReady.length > 0 ? `; not usable: ${notReady.join("; ")}` : "";
+		if (ids?.length && notReady.length > 0) {
+			return `device_offline: ${notReady.join("; ")}. Connect or unlock it and retry (see warden devices)`;
+		}
+		const list =
+			allow !== undefined
+				? ` in the allowlist (${allow.join(", ") || "empty"}; WARDEN_PHYSICAL_IDS / physical.allow)`
+				: "";
+		return `no free ready physical ${request.platform} device${named}${list}: connect and authorize it, or release the lease holding it (see warden devices / warden ls)${skipped}`;
 	}
 	return `all ${poolSize} warden-${request.profile} devices leased; max ${request.max} — use --wait or --max`;
 }
@@ -743,7 +764,7 @@ async function settle(
 				`timed out in the boot queue at #${reservation.position} of ${reservation.total}: ${reservation.reason}`
 			);
 		}
-		return err(waitMessage(input.request, reservation.poolSize));
+		return err(waitMessage(input.request, reservation.poolSize, reservation.notReady));
 	}
 	await pause(input, remaining);
 	return undefined;

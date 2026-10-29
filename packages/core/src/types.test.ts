@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { deviceResourceOf, type InventoryDevice, isPhysicalIosId, isPhysicalReady, resourceKey } from "./types";
+import {
+	deviceResourceOf,
+	type InventoryDevice,
+	isPhysicalIosId,
+	isPhysicalReady,
+	physicalNotReadyReason,
+	resourceKey,
+} from "./types";
 
 const base: InventoryDevice = {
 	platform: "android",
@@ -69,5 +76,42 @@ describe("isPhysicalReady", () => {
 		expect(isPhysicalReady(android("device"))).toBe(true);
 		expect(isPhysicalReady(android("unauthorized"))).toBe(false);
 		expect(isPhysicalReady(base)).toBe(false);
+	});
+});
+
+describe("physicalNotReadyReason", () => {
+	const ios = (
+		physical: Partial<Extract<NonNullable<InventoryDevice["physical"]>, { platform: "ios" }>>
+	): InventoryDevice => ({
+		...base,
+		platform: "ios",
+		state: "shutdown",
+		physical: {
+			platform: "ios",
+			transport: "localNetwork",
+			deviceType: "iPad",
+			osVersion: "18.0",
+			developerMode: true,
+			ddi: true,
+			...physical,
+		},
+	});
+
+	test("an unreachable iOS device is not ready and says offline", () => {
+		const d = ios({ unreachable: "not connected" });
+		expect(isPhysicalReady({ ...d, state: "booted" })).toBe(false);
+		expect(physicalNotReadyReason(d)).toBe("offline: not connected");
+	});
+
+	test("names the fix per cause", () => {
+		expect(physicalNotReadyReason(ios({ developerMode: false }))).toContain("developer mode off");
+		expect(physicalNotReadyReason(ios({ pairingState: "unpaired" }))).toContain("unpaired");
+		const android = (adbState: string): InventoryDevice => ({
+			...base,
+			physical: { platform: "android", transport: "usb", adbState },
+		});
+		expect(physicalNotReadyReason(android("unauthorized"))).toContain("USB debugging");
+		expect(physicalNotReadyReason(android("offline"))).toContain("offline");
+		expect(physicalNotReadyReason(android("device"))).toBeUndefined();
 	});
 });

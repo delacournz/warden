@@ -13,6 +13,10 @@ export type PhysicalInfo =
 			tunnelIp?: string;
 			/** devicectl's pairing state when it is not `paired` (the reason the device is not ready) */
 			pairingState?: string;
+			/** devicectl's `tunnelState` (`connected` = reachable now); a `localNetwork` phone is often `disconnected` until something talks to it */
+			tunnelState?: string;
+			/** why a paired phone cannot be reached right now (its `lockState` probe failed); set means never auto-picked */
+			unreachable?: string;
 	  };
 
 export type DeviceResource = {
@@ -87,7 +91,11 @@ export type DeviceRequest = {
 	/** allow allocating foreign (non-warden) devices that match the profile */
 	adopt?: boolean;
 	/** opt-in: only physical devices (optionally just these ids), never create or boot */
-	physical?: { ids?: string[] };
+	physical?: {
+		ids?: string[];
+		/** allowlist: with no `ids`, only these devices are picked (`physical.allow` / `WARDEN_PHYSICAL_IDS`); `ids` beat it */
+		allow?: string[];
+	};
 };
 
 export type AllocationStep =
@@ -180,5 +188,21 @@ export function isPhysicalDevice(d: Pick<InventoryDevice, "physical">): boolean 
 /** Is a physical device usable now: an Android phone in adb state `device`, an iOS device its provider reports `booted` (paired and available). */
 export function isPhysicalReady(d: InventoryDevice): boolean {
 	if (!d.physical) return false;
-	return d.physical.platform === "android" ? d.physical.adbState === "device" : d.state === "booted";
+	if (d.physical.platform === "android") return d.physical.adbState === "device";
+	return d.state === "booted" && d.physical.unreachable === undefined;
+}
+
+/** Why a physical device cannot be used now (undefined = ready, or not a phone), as `<label>: <hint>`; `devices` and a failed claim print it. */
+export function physicalNotReadyReason(d: InventoryDevice): string | undefined {
+	const p = d.physical;
+	if (!p || isPhysicalReady(d)) return undefined;
+	if (p.platform === "android") {
+		if (p.adbState === "unauthorized") return "unauthorized: accept the USB debugging prompt on the phone";
+		if (p.adbState === "offline") return "offline: reconnect the cable or re-run adb connect";
+		return `${p.adbState}: adb does not list it as ready`;
+	}
+	if (p.pairingState !== undefined) return `unpaired: ${p.pairingState}; pair and trust it in Xcode`;
+	if (!p.developerMode) return "developer mode off: enable it in Settings > Privacy & Security";
+	if (p.unreachable !== undefined) return `offline: ${p.unreachable}`;
+	return "not available";
 }

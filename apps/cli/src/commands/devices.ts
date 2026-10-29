@@ -2,7 +2,13 @@ import { markWardenDevices } from "@delacour/warden-core/inventory";
 import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
 import { listAvds } from "@delacour/warden-core/providers/android";
 import { measureSims } from "@delacour/warden-core/sims/slim.measure";
-import { describeOwner, type Lease, ownerLocation, type Platform } from "@delacour/warden-core/types";
+import {
+	describeOwner,
+	type Lease,
+	ownerLocation,
+	type Platform,
+	physicalNotReadyReason,
+} from "@delacour/warden-core/types";
 import type { ChalkInstance } from "chalk";
 import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
@@ -15,6 +21,8 @@ const BYTES_PER_MB = 1024 ** 2;
 
 export type DeviceRow = {
 	platform: Platform;
+	/** `physical` = a real phone/tablet (never created, booted or shut down by warden) */
+	kind: "virtual" | "physical";
 	name: string;
 	/** udid / serial; absent for an Android AVD that isn't running */
 	id?: string;
@@ -27,8 +35,12 @@ export type DeviceRow = {
 	quarantined?: { reason?: string };
 	/** simulator daemons switched off by `sim slim` */
 	slimmed?: true;
-	/** a real phone (never created, booted or shut down by warden) */
+	/** a real phone (never created, booted or shut down by warden); same as `kind: "physical"` */
 	physical?: true;
+	/** physical only: `usb` | `wifi` (Android), `wired` | `localNetwork` (iOS) */
+	transport?: string;
+	/** physical only, set when it cannot be used now: `<label>: <what to do>` (unauthorized, offline, unpaired, developer mode off) */
+	hint?: string;
 	/** real memory (summed phys_footprint of the sim's process tree), only with `--mem` */
 	footprintMb?: number;
 	lease?: { id: string; owner: string; where?: string };
@@ -51,8 +63,10 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 	const rows: DeviceRow[] = markWardenDevices(inventory.data, [...records.values()]).map((d) => {
 		const lease = leases.get(`${platform}:${d.id}`);
 		const record = records.get(d.id);
+		const hint = physicalNotReadyReason(d);
 		return {
 			platform,
+			kind: d.physical ? ("physical" as const) : ("virtual" as const),
 			name: d.name,
 			id: d.id,
 			state: d.state,
@@ -63,14 +77,17 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 				? { quarantined: record.quarantineReason !== undefined ? { reason: record.quarantineReason } : {} }
 				: {}),
 			...(record?.slimmedAt !== undefined ? { slimmed: true as const } : {}),
-			...(d.physical ? { physical: true as const } : {}),
+			...(d.physical ? { physical: true as const, transport: d.physical.transport } : {}),
+			...(hint !== undefined ? { hint } : {}),
 			...(lease ? { lease: leaseInfo(lease) } : {}),
 		};
 	});
 	if (platform === "android") {
 		const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 		if (avds.success)
-			rows.push(...avds.data.map((name): DeviceRow => ({ platform, name, state: "avd", warden: false })));
+			rows.push(
+				...avds.data.map((name): DeviceRow => ({ platform, kind: "virtual", name, state: "avd", warden: false }))
+			);
 		else warn(ctx, `android avds: skipped (${avds.error})`);
 	}
 	return rows;
@@ -87,6 +104,7 @@ function compareRows(a: DeviceRow, b: DeviceRow): number {
 /** `booted` / `shutdown` …, or `leased · <owner>` (cyan, like a running job in the batch grid) when someone holds it. */
 function stateCell(color: ChalkInstance, r: DeviceRow): string {
 	if (r.lease) return `${color.cyan("leased")} ${color.dim(`· ${r.lease.owner}`)}`;
+	if (r.hint !== undefined) return color.yellow(r.hint.split(":")[0] ?? "unavailable");
 	const { state } = r;
 	if (state === "booted") return color.green(state);
 	if (state === "booting") return color.yellow(state);
@@ -95,7 +113,7 @@ function stateCell(color: ChalkInstance, r: DeviceRow): string {
 
 function wardenCell(color: ChalkInstance, r: DeviceRow, none: string): string {
 	if (r.golden) return color.yellow("golden");
-	if (r.physical) return color.magenta("physical");
+	if (r.physical) return none;
 	if (!r.warden) return none;
 	const flags = [r.quarantined ? color.red("quarantined") : "", r.slimmed ? color.dim("slim") : ""].filter(Boolean);
 	return [color.green("yes"), ...flags].join(" ");
@@ -119,9 +137,9 @@ async function addFootprints(ctx: CommandContext, rows: DeviceRow[]): Promise<vo
 async function devices(
 	ctx: CommandContext,
 	filter: string | undefined,
-	opts: { json: boolean; mem: boolean }
+	opts: { json: boolean; mem: boolean; physical: boolean }
 ): Promise<number> {
-	const { json, mem } = opts;
+	const { json, mem, physical } = opts;
 	const { color } = ctx.ui;
 	if (filter !== undefined && filter !== "ios" && filter !== "android") {
 		reportError(ctx, "devices", `unknown platform "${filter}" (ios|android)`);
@@ -135,17 +153,19 @@ async function devices(
 		}
 	}
 	const platforms: readonly Platform[] = filter ? [filter] : PLATFORMS;
-	const rows: DeviceRow[] = [];
-	for (const platform of platforms) rows.push(...(await platformRows(ctx, platform, leases)));
+	const all: DeviceRow[] = [];
+	for (const platform of platforms) all.push(...(await platformRows(ctx, platform, leases)));
+	const rows = physical ? all.filter((r) => r.kind === "physical") : all;
 	rows.sort(compareRows);
 	if (mem) await addFootprints(ctx, rows);
 
 	const none = color.dim("-");
 	const text = table(
 		ctx,
-		["PLATFORM", "NAME", "ID", "STATE", "RUNTIME", "WARDEN", ...(mem ? ["MB"] : [])],
+		["PLATFORM", "KIND", "NAME", "ID", "STATE", "RUNTIME", "WARDEN", ...(mem ? ["MB"] : [])],
 		rows.map((r) => [
 			color.dim(r.platform),
+			r.kind === "physical" ? color.magenta(r.kind) : color.dim(r.kind),
 			r.warden || r.golden ? color.bold(r.name) : r.name,
 			r.id ?? none,
 			stateCell(color, r),
@@ -154,13 +174,17 @@ async function devices(
 			...(mem ? [r.footprintMb !== undefined ? String(r.footprintMb) : none] : []),
 		]),
 		[
-			{ column: 1, min: 18 },
-			{ column: 2, min: 9 },
+			{ column: 2, min: 18 },
+			{ column: 3, min: 9 },
 		]
 	);
 	const booted = rows.filter((r) => r.state === "booted").length;
 	const leased = rows.filter((r) => r.lease).length;
-	emit(ctx, json, rows, rows.length > 0 ? text : color.dim("no devices"), {
+	const hints = rows
+		.filter((r) => r.hint !== undefined)
+		.map((r) => color.yellow(`${r.name} (${r.id ?? "?"}): ${r.hint}`));
+	const body = rows.length > 0 ? [text, ...hints].join("\n") : color.dim("no devices");
+	emit(ctx, json, rows, body, {
 		scope: "devices",
 		detail: `${plural(rows.length, "device")} · ${booted} booted · ${leased} leased`,
 	});
@@ -176,9 +200,16 @@ export const devicesCommand = defineCommand({
 		cmd
 			.argument("[platform]", "ios | android (default: both)")
 			.option("--mem", "add each booted iOS sim's real memory (summed phys_footprint, MB)")
+			.option("--physical", "only real phones and tablets (with why an unusable one is skipped)")
 			.option("--json", "machine-readable output")
 			.action(async (platform, opts) =>
-				done(await devices(ctx, platform, { json: opts.json === true, mem: opts.mem === true }))
+				done(
+					await devices(ctx, platform, {
+						json: opts.json === true,
+						mem: opts.mem === true,
+						physical: opts.physical === true,
+					})
+				)
 			);
 	},
 });

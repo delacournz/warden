@@ -73,8 +73,9 @@ export function allocate({ inventory, leases, request, now, pidAlive, skip }: Al
 			return false;
 		}
 		if (request.physical) {
-			const { ids } = request.physical;
-			return isPhysicalReady(d) && (ids === undefined || ids.includes(d.id)) && runtimeMatches(d, request.runtime);
+			// naming devices beats the allowlist; with neither, any ready physical device
+			const pick = request.physical.ids ?? request.physical.allow;
+			return isPhysicalReady(d) && (pick === undefined || pick.includes(d.id)) && runtimeMatches(d, request.runtime);
 		}
 		return (
 			d.physical === undefined &&
