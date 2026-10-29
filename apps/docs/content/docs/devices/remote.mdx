@@ -34,6 +34,23 @@ warden release <leaseId>    # also stops the hosted device
 - `--wait` caps how long the claim waits for the device to boot (default 5 minutes). A device that never comes up is stopped and not leased.
 - `warden ls` lists hosted leases as `remote ios iphone-17 (rd_…)`.
 
+## Watch and drive
+
+`warden view` opens a hosted device in a small native window, where you see the screen and can tap, swipe and type on it.
+
+```bash
+warden view                     # your only remote lease; tap, swipe and type
+warden view --watch             # read-only
+warden view rd_… --detach       # leave the window open and return
+warden claim ios --remote --view
+```
+
+- With no argument it uses your only remote lease. With none it points you at `warden claim ios --remote`, and with several it lists them.
+- The first run downloads the viewer into `~/.warden/viewer/<version>/` and checks it against the release's `SHA256SUMS`. It is available on macOS and Windows, not on Linux yet. `WARDEN_VIEWER_URL` points the download at a mirror, and `WARDEN_VIEWER_PATH` runs a viewer you built yourself.
+- The window holds a short-lived token that works for that one device only, and `--watch` gives it no input rights. The token is handed over on stdin, never in the command line or environment, and the command refreshes it while the window is open.
+- Staying attached also keeps the lease and the hosted device alive. Closing the window (or Ctrl+C) ends the command, and the lease stays until you release it.
+- `--detach` uses one 30 minute token and stops heartbeating, so the lease TTL applies. `--json` prints `{ leaseId, remoteId, scope, detached, exitCode }`, plus `pid` when detached.
+
 ## What is not remote (yet)
 
 `warden ui`, `warden e2e` and `warden dev` drive local devices. Driving a hosted device through them is next.
