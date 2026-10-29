@@ -2226,7 +2226,6 @@ describe("warden e2e", () => {
 
 describe("warden e2e on physical devices", () => {
 	const PHONE = "R5CT1234ABC";
-	const IPHONE = "00008140-000A0B0C0D0E0F10";
 	const ADB_PHONE = `List of devices attached\n${PHONE}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2\n\n`;
 
 	/** What adb and the host answer: one phone, boot completed, no simulators; anything else is refused */
@@ -2328,16 +2327,6 @@ describe("warden e2e on physical devices", () => {
 			{ kind: "release", physical: true },
 			{ kind: "simulator", physical: true },
 		]);
-	});
-
-	test("--app on an iPhone is refused before anything is leased, naming WDN-PHY-8", async () => {
-		const calls: string[][] = [];
-		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--udid", IPHONE, "--app"], calls);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
-		expect(c.stderr.join("\n")).toContain("WDN-PHY-8");
-		expect(calls).toEqual([]);
-		expect(h.jobs()).toEqual([]);
 	});
 
 	test("--serial wins over the suite's `count`: a suite sized for simulators still runs on one phone", async () => {

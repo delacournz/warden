@@ -76,7 +76,6 @@ import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from
 import {
 	type AppFlagValues,
 	appPhaseProgress,
-	checkPhysicalIosApp,
 	claimAll,
 	exitCodeOf,
 	type ForwardedSignal,
@@ -316,8 +315,6 @@ export function parseBatchArgs(
 	if (!flags.success) return flags;
 	const app = parseAppFlags(opts);
 	if (!app.success) return app;
-	const phoneApp = checkPhysicalIosApp([flags.data], app.data);
-	if (!phoneApp.success) return phoneApp;
 	const jobs = parseJobsSource(opts, cwd, base.jobs);
 	if (!jobs.success) return jobs;
 	const limits = parseLimits(opts);

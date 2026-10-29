@@ -5,7 +5,6 @@ import type { InventoryDevice, Lease, Owner } from "@delacour/warden-core/types"
 import { type ClaimFlags, parseClaimFlags } from "./claim-flags";
 import type { EnsureOptions, PreparedApp } from "./commands/app";
 import {
-	checkPhysicalIosApp,
 	childEnv,
 	claimAll,
 	type ForwardedSignal,
@@ -532,28 +531,31 @@ describe("physical devices in a lease session", () => {
 		]);
 	});
 
-	test("an iPhone gets no install: it fails naming WDN-PHY-8, and ensure is never called", async () => {
+	test("an iPhone's install is told it is physical, like an Android phone's", async () => {
 		ctx = testContext([]);
-		let called = false;
-		const ensure: RunEnsureApp = async () => {
-			called = true;
+		const seen: Array<[string, boolean | undefined]> = [];
+		const ensure: RunEnsureApp = async (_c, _o, _p, deviceId, o) => {
+			seen.push([deviceId, o.physical]);
 			return { success: true, data: { appPath: "/c/a.app", hash: "H", source: "cache", installed: true } };
 		};
 		const res = await installLegApp(ctx, ensure, owner, { claimed: [phone("ios", IPHONE)], reclaimed: [] }, opts);
-		expect(!res.success && res.error).toContain("WDN-PHY-8");
-		expect(called).toBe(false);
+		expect(res.success).toBe(true);
+		expect(seen).toEqual([[IPHONE, true]]);
 	});
 
-	test("checkPhysicalIosApp refuses --app for a physical iOS claim up front, and nothing else", () => {
-		const flags = (platform: "ios" | "android", values: Parameters<typeof parseClaimFlags>[1]) => {
-			const parsed = parseClaimFlags(platform, values, 16);
-			if (!parsed.success) throw new Error(parsed.error);
-			return parsed.data;
-		};
-		const iphone = flags("ios", { physicalUdid: [IPHONE] });
-		expect(checkPhysicalIosApp([iphone], opts).success).toBe(false);
-		expect(checkPhysicalIosApp([iphone], undefined).success).toBe(true);
-		expect(checkPhysicalIosApp([flags("android", { physical: true })], opts).success).toBe(true);
-		expect(checkPhysicalIosApp([flags("ios", {})], opts).success).toBe(true);
+	test("sessionEnsureApp prepares a platform's phones and simulators apart (an iPhone's build is signed for a device)", async () => {
+		ctx = testContext([]);
+		const seen: Array<boolean | undefined> = [];
+		const app = sessionEnsureApp({
+			prepare: async (_c, o) => {
+				seen.push(o.physical);
+				return { success: true, data: prepared };
+			},
+			install: async () => ({ success: true, data: { appPath: "/a", hash: "H", source: "cache", installed: true } }),
+		});
+		await app.ensure(ctx, owner, "ios", IPHONE, { ...opts, physical: true });
+		await app.ensure(ctx, owner, "ios", "SIM-1", opts);
+		await app.ensure(ctx, owner, "ios", IPHONE, { ...opts, physical: true });
+		expect(seen).toEqual([true, undefined]);
 	});
 });

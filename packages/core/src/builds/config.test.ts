@@ -212,6 +212,20 @@ describe("parseWardenConfig", () => {
 });
 
 describe("loadProject", () => {
+	test("projects[].ios.device.bundleIdentifier becomes the project's device bundle id; a bad one is refused", () => {
+		write(JSON_CONFIG_FILE, {
+			projects: [{ name: "a", bundleId: { ios: "com.x.app" }, ios: { device: { bundleIdentifier: "com.me.app" } } }],
+		});
+		const res = loadProject({ start: dir, env, stopAt: dir });
+		if (!res.success) throw new Error(res.error);
+		expect(res.data.iosDeviceBundleId).toBe("com.me.app");
+		expect(res.data.bundleId.ios).toBe("com.x.app");
+		const bad = parseWardenConfig({
+			projects: [{ name: "a", bundleId: {}, ios: { device: { bundleIdentifier: "no spaces allowed" } } }],
+		});
+		expect(bad.success).toBe(false);
+	});
+
 	test("config at repo root, project picked by containing dir", () => {
 		write(JSON_CONFIG_FILE, {
 			projects: [

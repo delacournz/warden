@@ -177,6 +177,72 @@ describe("prepareKindApp", () => {
 	});
 });
 
+describe("a physical iPhone", () => {
+	const TEAM = "ABCDE12345";
+	const phone = (kind: KindAppInput["kind"], over: Partial<KindAppInput> = {}) =>
+		input(kind, { physical: true, env: { WARDEN_IOS_TEAM_ID: TEAM }, ...over });
+
+	test("release is keyed and built for the device, signed by the env team", async () => {
+		const c = calls();
+		const seen: unknown[] = [];
+		const d = deps(repacked, c);
+		d.computeKeys = async (k) => {
+			seen.push(k.device);
+			return ok(keys("release"));
+		};
+		const res = await prepareKindApp(phone("release").input, d);
+		expect(seen).toEqual([{ team: TEAM, salt: TEAM }]);
+		expect(res.success && res.data.device).toEqual({ team: TEAM, salt: TEAM });
+		expect(c.repack).toBe(0);
+	});
+
+	test("the config team is used when the env names none; an ambiguous keychain stops with the way out", async () => {
+		const seen: unknown[] = [];
+		const d = deps(repacked, calls());
+		d.computeKeys = async (k) => {
+			seen.push(k.device?.team);
+			return ok(keys("dev"));
+		};
+		await prepareKindApp(phone("dev", { env: {}, configTeamId: "ZZZZZ99999" }).input, d);
+		expect(seen).toEqual(["ZZZZZ99999"]);
+		const two = [
+			'  1) 1111111111111111111111111111111111111111 "Apple Development: A (AAAAAAAAAA)"',
+			'  2) 2222222222222222222222222222222222222222 "Apple Development: B (BBBBBBBBBB)"',
+		].join("\n");
+		const keychain: Exec = async (cmd) =>
+			cmd[1] === "find-identity" ? { exitCode: 0, stdout: two, stderr: "" } : { exitCode: 0, stdout: "", stderr: "" };
+		const res = await prepareKindApp(phone("release", { env: {}, exec: keychain }).input, deps(repacked, calls()));
+		expect(!res.success && res.error).toContain("WARDEN_IOS_TEAM_ID");
+	});
+
+	test("the simulator kind is refused: nothing is repacked or built", async () => {
+		const c = calls();
+		const res = await prepareKindApp(phone("simulator").input, deps(repacked, c));
+		expect(!res.success && res.error).toContain("simulator kind is not supported on a physical iPhone");
+		expect(c.repack + c.builds.length).toBe(0);
+	});
+
+	test("an Android phone keeps the host-built kinds", async () => {
+		const c = calls();
+		const res = await prepareKindApp(phone("simulator", { platform: "android" }).input, deps(repacked, c));
+		expect(res.success && res.data.kind).toBe("simulator");
+		expect(c.repack).toBe(1);
+	});
+
+	test("the install uses the device bundle id and the physical flag", async () => {
+		const seen: Array<{ ios: string | undefined; physical: boolean | undefined }> = [];
+		const d = deps(repacked, calls());
+		d.ensureApp = async (i) => {
+			seen.push({ ios: i.project.bundleId.ios, physical: i.physical });
+			return ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true });
+		};
+		const project = testProject({ iosDeviceBundleId: "com.me.app" });
+		const res = await ensureKindApp(phone("release", { project, deviceId: "UDID" }).input, d);
+		expect(res.success && res.data.installed).toBe(true);
+		expect(seen).toEqual([{ ios: "com.me.app", physical: true }]);
+	});
+});
+
 describe("ensureKindApp", () => {
 	test("without a device nothing is installed", async () => {
 		const c = calls();

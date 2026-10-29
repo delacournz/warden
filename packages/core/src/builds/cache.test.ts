@@ -481,3 +481,22 @@ describe("removeBuild across kinds", () => {
 		expect(listBuilds(store).map((b) => b.hash)).toEqual(["fp:j9"]);
 	});
 });
+
+describe("device-target kind keys", () => {
+	const device = { team: "ABCDE12345", salt: "ABCDE12345" };
+	const env = { WARDEN_HOME: "/w" } as Record<string, string>;
+
+	test("hash and dir carry the device salt; the simulator ones are unchanged", () => {
+		expect(kindHash({ kind: "dev", nativeFp: "fp" })).toBe("fp:dev");
+		expect(kindHash({ kind: "dev", nativeFp: "fp", device })).toBe("fp:device-ABCDE12345:dev");
+		expect(kindHash({ kind: "release", nativeFp: "fp", jsKey: "js", device })).toBe("fp:device-ABCDE12345:release:js");
+		const native = buildDir(env, "k", "ios", "fp");
+		expect(kindDir(env, "k", "ios", { kind: "dev", nativeFp: "fp", device })).toBe(
+			join(native, "device", "ABCDE12345", "dev")
+		);
+		expect(kindDir(env, "k", "ios", { kind: "release", nativeFp: "fp", jsKey: "js", device })).toBe(
+			join(native, "device", "ABCDE12345", "release", "js")
+		);
+		expect(kindDir(env, "k", "ios", { kind: "dev", nativeFp: "fp" })).toBe(join(native, "dev"));
+	});
+});

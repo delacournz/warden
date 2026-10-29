@@ -21,7 +21,6 @@ import {
 	type AppFlagValues,
 	appPhaseProgress,
 	type ChildHandle,
-	checkPhysicalIosApp,
 	claimAll,
 	exitCodeOf,
 	holdLeases,
@@ -63,8 +62,6 @@ export function parseRunArgs(platform: Platform, opts: RunOpts): Result<RunArgs>
 	if (!flags.success) return flags;
 	const app = parseAppFlags(opts);
 	if (!app.success) return app;
-	const checked = checkPhysicalIosApp([flags.data], app.data);
-	if (!checked.success) return checked;
 	const args: RunArgs = { flags: flags.data, ports: opts.port, json: opts.json === true };
 	if (app.data) args.app = app.data;
 	return ok(args);

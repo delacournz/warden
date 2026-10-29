@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
+import { findWardenConfig } from "@delacour/warden-core/builds/config";
 import { type EnsureInput, ensureApp, type ProjectContext } from "@delacour/warden-core/builds/ensure";
 import {
 	installKindApp,
@@ -15,7 +16,7 @@ import { BUILD_KINDS, type BuildKind } from "@delacour/warden-core/builds/kinds"
 import type { ApplyRepack } from "@delacour/warden-core/builds/repack.types";
 import type { AppPhase, EnsureResult } from "@delacour/warden-core/builds/resolve";
 import { processAlive } from "@delacour/warden-core/liveness";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import { isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform, resolveOwner, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
@@ -162,6 +163,12 @@ function describeKindApp(app: KindApp): string {
 		: `${app.kind} build`;
 }
 
+/** `ios.teamId` of the nearest `warden.config.*`: signs the app for a physical iPhone, after `WARDEN_IOS_TEAM_ID`. */
+function configuredTeamId(ctx: CommandContext): string | undefined {
+	const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
+	return found.success ? found.data?.config.ios?.teamId : undefined;
+}
+
 /** The input of `prepareKindApp` / `installKindApp` for one platform of a loaded project. */
 export function kindAppInput(
 	ctx: CommandContext,
@@ -195,6 +202,7 @@ export function kindAppInput(
 		...(opts.installMode !== undefined ? { installMode: opts.installMode } : {}),
 		...(opts.resetKeychain ? { resetKeychain: true } : {}),
 		...(opts.physical ? { physical: true } : {}),
+		...(opts.physical && platform === "ios" ? { configTeamId: configuredTeamId(ctx) } : {}),
 		...(opts.force ? { force: true } : {}),
 		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
 		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
@@ -211,12 +219,21 @@ export async function prepareApp(
 	deps: AppDeps = defaultAppDeps
 ): AsyncResult<PreparedApp> {
 	if (opts.kind !== undefined && opts.variant !== undefined) return err("--kind and --variant can't be combined");
+	const phone = opts.physical === true && platform === "ios";
+	if (phone && opts.kind === undefined && opts.variant !== undefined) {
+		return err("--variant builds are simulator builds: on a physical iPhone use --kind release (or dev)");
+	}
 	const project = await loadContext(ctx, opts, platform);
 	if (!project.success) return project;
-	if (opts.kind !== undefined) return prepareKind(ctx, deps, platform, project.data, opts.kind, opts);
+	// a phone runs a build made for it: without a kind, the release build (the project's kind-less build targets simulators)
+	const kind = opts.kind ?? (phone ? PHYSICAL_APP_KIND : undefined);
+	if (kind !== undefined) return prepareKind(ctx, deps, platform, project.data, kind, opts);
 	const hash = await fingerprint(ctx, project.data, platform);
 	return hash.success ? ok({ project: project.data, hash: hash.data }) : hash;
 }
+
+/** The kind a physical iPhone gets when none is asked for. */
+const PHYSICAL_APP_KIND: BuildKind = "release";
 
 /** `--kind`: build, find or repack the kind's app into the cache (once per platform for a run), no device yet. */
 async function prepareKind(
@@ -416,12 +433,14 @@ async function ensureCmd(
 	if (!device.success) return fail(ctx, "ensure", device.error);
 	const flags = ensureFlags(opts, device.data);
 	if (!flags.success) return fail(ctx, "ensure", flags.error);
+	const phone = platform.data === "ios" && device.data !== undefined && isPhysicalIosId(device.data);
 	const { install, kind } = flags.data;
 	if (!opts.json) heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
 		const result = await ensureAppFor(sctx, deps, owner, platform.data, device.data, {
 			...projectOptions(opts),
 			...(kind !== undefined ? { kind } : {}),
+			...(phone ? { physical: true } : {}),
 			eas: opts.eas,
 			build: opts.build,
 			...install,

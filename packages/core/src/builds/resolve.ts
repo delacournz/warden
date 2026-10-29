@@ -30,7 +30,12 @@ export type AppPhase =
 export type EasStepOutcome = { kind: "hit"; path: string } | { kind: "miss"; reason: string };
 
 /** What the device probe found: is the app there, and (iOS) its container so `matches` need not ask again. */
-export type InstalledApp = { present: boolean; container?: string };
+export type InstalledApp = {
+	present: boolean;
+	container?: string;
+	/** a physical iPhone: the `CFBundleVersion` devicectl reports for the installed app */
+	version?: string;
+};
 
 /** Device half of the resolver — absent when only the artifact is wanted. */
 export type DeviceSteps = {

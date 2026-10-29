@@ -166,17 +166,6 @@ export function setAfterRebootEnv(
 	else env.WARDEN_AFTER_REBOOT = JSON.stringify([...self, "arrange", "--open", "{udid}"]);
 }
 
-/** Why an app cannot be installed on a physical iPhone yet (device-target builds are WDN-PHY-8). */
-export const PHYSICAL_IOS_APP_ERROR =
-	"installing an app on a physical iPhone needs a device build (WDN-PHY-8, not built yet): --kind simulator|release build for simulators and are never installed on a phone. Install the app on the phone yourself and drop --app / the suite's `app`";
-
-/** `--app` with an iOS claim that includes physical devices: refused before anything is leased. */
-export function checkPhysicalIosApp(flags: readonly ClaimFlags[], app: EnsureOptions | undefined): Result<undefined> {
-	if (app === undefined) return ok(undefined);
-	const phone = flags.some((f) => f.request.platform === "ios" && f.request.physical !== undefined);
-	return phone ? err(PHYSICAL_IOS_APP_ERROR) : ok(undefined);
-}
-
 /** The headless and after-reboot env of a run; phones are never rebooted, so a run with only phones has nothing to reopen afterwards. */
 function setRunEnv(env: Record<string, string | undefined>, legs: readonly ClaimFlags[]): void {
 	const headless = legs.some((f) => f.headless === true);
@@ -317,8 +306,8 @@ export async function installLegApp(
 			// a device the hide could not boot again is not installed on (batch-pipeline R5)
 			if (!(await ready(c.device.id))) return undefined;
 			const phone = isPhysicalDevice(c.device);
-			if (phone && c.device.platform === "ios") return err(PHYSICAL_IOS_APP_ERROR);
-			// a phone's install checks the APK's ABIs first (adb only; `-r` over the same bundle id, never an uninstall of another app)
+			// a phone gets a build made for it: Android checks the APK's ABIs first (`-r` over the same bundle id, never an
+			// uninstall of another app); an iPhone gets the signed device build through devicectl
 			const target = phone ? { ...opts, physical: true } : opts;
 			const own = onPhase ? { ...target, onPhase: (phase: AppPhase) => onPhase(c.device.id, phase) } : target;
 			return ensure(ctx, owner, c.device.platform, c.device.id, own);
@@ -406,10 +395,12 @@ export type SessionApp = {
  * on each device (N devices used to mean N fingerprint runs).
  */
 export function sessionEnsureApp(deps: SessionAppDeps = defaultSessionAppDeps): SessionApp {
-	const prepared = new Map<Platform, AsyncResult<PreparedApp>>();
+	const prepared = new Map<string, AsyncResult<PreparedApp>>();
+	// phones and simulators of one platform install different builds (an iPhone's is signed for a device)
 	const prepare = (ctx: CommandContext, opts: EnsureOptions, platform: Platform): AsyncResult<PreparedApp> => {
-		const pending = prepared.get(platform) ?? deps.prepare(ctx, opts, platform);
-		prepared.set(platform, pending);
+		const key = `${platform}${opts.physical ? ":physical" : ""}`;
+		const pending = prepared.get(key) ?? deps.prepare(ctx, opts, platform);
+		prepared.set(key, pending);
 		return pending;
 	};
 	return {
@@ -433,9 +424,17 @@ function warmSessionApp(
 ): SessionApp | undefined {
 	if (!args.app || deps.ensureApp !== undefined) return undefined;
 	const app = sessionEnsureApp();
-	for (const platform of new Set((args.legFlags ?? [args.flags]).map((f) => f.request.platform))) {
+	const legs = args.legFlags ?? [args.flags];
+	const warmed = new Set<string>();
+	for (const { request } of legs) {
+		const { platform } = request;
+		const physical = request.physical !== undefined;
+		const key = `${platform}:${physical}`;
+		if (warmed.has(key)) continue;
+		warmed.add(key);
 		const onPhase = args.onAppPhase;
-		app.warm(ctx, onPhase ? { ...args.app, onPhase: (p) => onPhase(`prepare:${platform}`, p) } : args.app, platform);
+		const base = physical ? { ...args.app, physical: true } : args.app;
+		app.warm(ctx, onPhase ? { ...base, onPhase: (p) => onPhase(`prepare:${platform}`, p) } : base, platform);
 	}
 	return app;
 }

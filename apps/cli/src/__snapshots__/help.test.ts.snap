@@ -1467,6 +1467,7 @@ Arguments:
 
 Options:
   --mem       add each booted iOS sim's real memory (summed phys_footprint, MB)
+  --physical  only real phones and tablets (with why an unusable one is skipped)
   --json      machine-readable output
   -h, --help  display help for command"
 `;

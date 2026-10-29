@@ -2,27 +2,41 @@
 "@delacour/warden": minor
 ---
 
-- `warden claim --physical` leases a connected physical phone or tablet; `--serial <serial...>` (Android) and `--udid <udid...>` (iOS) name the devices and imply `--physical`. A plain `warden claim` never takes a physical device, even with `--adopt`.
-- `--physical` is rejected together with `--count`, `--max`, `--slim`, `--headless`, `--runtime` and `--adopt`, and `--serial` / `--udid` are rejected on the wrong platform.
-- A physical device is never booted, created, shut down or slimmed: `warden release --shutdown` and `warden gc` leave it running and say so, and it costs nothing in host capacity.
-- Leases and `warden claim --json` carry a `physical` field for real devices.
-- The `warden ui` error for an id that is no device now names physical devices.
-- `warden ui` drives Android phones: `--serial <adb serial>` (USB, `ip:port` or wireless-debugging serials) leases the phone as physical, and `warden ui --claim --physical` claims a connected one. `warden devices` marks phones `physical` and `warden ls` tags their leases.
-- `warden ui` exits 2 with `device_unauthorized` (accept the USB debugging prompt) or `device_offline` for a phone adb cannot drive yet; the lease is kept.
-- A device whose qemu properties are set (`localhost:5555`, Genymotion) is treated as a foreign emulator, never as a phone.
-- On a phone warden wakes the screen and dismisses a keyguard with no credential; a PIN, pattern or password lock fails `E_DEVICE_LOCKED` and warden never unlocks it. Rotation, dark mode and animation scales are saved before the first change and restored on close.
-- `uninstall` and `clear data` on a phone refuse any package warden did not install (`E_REFUSED`, `physical_protected`).
-- Installing an APK on a phone checks its native ABIs first and fails `abi_mismatch` with a hint to use the `dev` or `release` build kind; `INSTALL_FAILED_UPDATE_INCOMPATIBLE` says to uninstall the differently-signed copy yourself, and warden never does it for you.
-- Device sockets and state directories no longer collide for wireless-debugging serials.
-- `ios: { teamId, runnerBundleId }` in `warden.config.ts` and `WARDEN_IOS_TEAM_ID` choose the Apple team that signs the on-device runner for physical iPhones; without them warden uses the keychain's `Apple Development` team when there is exactly one and fails `ios_team_ambiguous` listing the teams otherwise.
-- The iPhone runner is built from sources embedded in warden with `xcodebuild build-for-testing -allowProvisioningUpdates`, cached per team and Xcode build, and rebuilt for a new phone or when its provisioning profile ends within 24 hours. Build failures carry a code and a hint (`no_account`, `no_team`, `bundle_id_taken`, `device_locked`, `developer_mode_off`, `runner_untrusted`, `ui_automation_disabled`, `device_busy`, `ddi_unavailable`, `unsupported_os`).
-- `warden ui` drives a physical iPhone: `--udid <iPhone udid>` (or `--claim --physical`) starts the runner host once, then `snapshot`, `press`, `fill`, `type`, `swipe`, `screenshot`, `open` and the rest talk to the phone through it. Single-finger input only: `pinch`, `rotate`, `gesture`, `press shake` and `press back` fail `E_UNSUPPORTED`; fields are cleared with counted Backspace (no select-all or paste); `settle` polls snapshot hashes.
-- The signing team must be unambiguous on a Mac whose keychain holds several `Apple Development` identities: set `WARDEN_IOS_TEAM_ID` or `ios.teamId`.
-- On an iPhone, `screen rotate` goes through `devicectl`, `screen appearance` is read-only (`E_REFUSED`), install / uninstall / pasteboard reads use `devicectl`, and `uninstall` / clearing app data only act on `WARDEN_BUNDLE_ID` and bundles warden installed (`E_REFUSED`, `physical_protected`). Clearing data reinstalls `WARDEN_APP_PATH` and keeps the app's keychain items.
-- A locked iPhone exits `warden ui` with 2 `device_locked`; `warden ui close` stops the iPhone's runner host.
-- `warden devices` lists paired physical iPhones and iPads (from `devicectl`) as `physical`; `warden claim ios --physical` and `--udid <udid>` lease one. A paired phone with Developer Mode on is `booted`, any other is `shutdown`. A plain `warden claim ios` never takes a phone, and a missing or hung `devicectl` leaves the simulator list unchanged.
-- `warden e2e`, `warden run` and `warden batch` take `--physical`, `--serial <serial...>` (Android) and `--udid <udid...>` (iOS); `physical: true | { ids }` on an e2e suite or device leg does the same, and the flags win. A physical run never reboots, hides, arranges, slims, golden-clones or shuts down a device, and a suite `setup` command still runs. `WARDEN_UDIDS` carries the adb serial / CoreDevice UDID and each job of a phone gets `WARDEN_DEVICE_KIND=physical`.
-- A physical e2e run installs the `release` build kind by default (an explicit `--kind` or the suite's `app.kind` wins), through `adb install -r` after the ABI check. `--install-mode clean|reinstall` only touches the suite's own bundle id.
-- On an iPhone, `warden e2e` starts the phone's runner host before the specs and gives every spec `WARDEN_IOS_RUNNER_SOCKET`; the iOS driver warm-up is never skipped for it. A lost runner connection restarts the host once and reruns the test: the phone is never rebooted and `simctl` never runs. `--app` (or a suite `app`) with an iPhone fails before anything is leased until device builds exist: install the app yourself.
-- `test(title, { requires: ["pinch" | "multiTouch"] }, body)` skips a spec at collection on a device whose driver is known to lack the capability (a physical iPhone has neither).
-- `test.use({ systemAlerts })` and `device.alert` recognise the Android autofill "Save password?" sheet by its `autofill_save` / `autofill_save_no` / `autofill_save_yes` ids and close it with the Back key for both `accept` and `dismiss`; warden never presses Never or Continue (they write to the Google account), and `device.alert({ button })` on it fails `ACTION_FAILED`.
+Physical devices: lease, drive and test real Android phones and iPhones/iPads.
+
+**Claiming**
+- `warden claim --physical` leases a connected phone or tablet; `--serial <serial...>` (Android) and `--udid <udid...>` (iOS) name the devices and imply `--physical`. A plain `warden claim` never takes a physical device, even with `--adopt`.
+- `--physical` is rejected together with `--count`, `--max`, `--slim`, `--headless`, `--runtime` and `--adopt`; `--serial` / `--udid` are rejected on the wrong platform. Leases and `warden claim --json` carry a `physical` field.
+- A physical device is never booted, created, shut down, erased or slimmed: `warden release --shutdown` and `warden gc` leave it running, and it costs nothing in host capacity.
+- An iPhone or iPad is picked only when it is reachable: its tunnel is connected, it is wired, or `devicectl device info lockState` answers within 5 s. Devices that are listed as available but are offline (an iPad in a drawer) are shown with a reason and never auto-picked. An Android phone that is `unauthorized` or `offline` is never auto-picked either.
+- Naming an unusable device with `--udid` / `--serial` fails `device_offline` with the reason and what to do.
+- `physical: { allow: [...] }` in `warden.config.ts` and `WARDEN_PHYSICAL_IDS` (comma-separated, wins over the config) limit what an id-less `--physical` claim may pick. Naming a device with `--udid` / `--serial` still works for any device. A `warden.config` that cannot be read fails the claim instead of ignoring the list.
+
+**Android phones**
+- `warden ui` drives Android phones: `--serial <adb serial>` (USB, `ip:port` or wireless-debugging serials) or `--claim --physical`. It exits 2 with `device_unauthorized` (accept the USB debugging prompt) or `device_offline`; the lease is kept.
+- A device with qemu properties set (`localhost:5555`, Genymotion) is a foreign emulator, never a phone.
+- warden wakes the screen and dismisses a keyguard with no credential; a PIN, pattern or password lock fails `E_DEVICE_LOCKED` and warden never unlocks it. Rotation, dark mode and animation scales are saved before the first change and restored on close.
+- `uninstall` and `clear data` refuse any package warden did not install (`E_REFUSED`, `physical_protected`). Installing an APK checks its ABIs first and fails `abi_mismatch` with a hint to use the `dev` or `release` kind; `INSTALL_FAILED_UPDATE_INCOMPATIBLE` says to uninstall the differently-signed copy yourself.
+- `test.use({ systemAlerts })` and `device.alert` close the "Save password to Google Password Manager?" sheet with Back for both `accept` and `dismiss`; warden never presses Never or Continue.
+
+**iPhones and iPads**
+- `warden claim ios --physical` and `--udid <udid>` lease paired devices listed by `devicectl`; a paired device with Developer Mode on and reachable is ready. `warden ui --udid <iPhone udid>` (or `--claim --physical`) starts an on-device XCUITest runner once, then `snapshot`, `press`, `fill`, `type`, `swipe`, `screenshot`, `open` and the rest talk to the phone through it.
+- Single-finger input only: `pinch`, `rotate`, `gesture`, `press shake` and `press back` fail `E_UNSUPPORTED`. On an iPhone `screen appearance` is read-only, `screen rotate` goes through `devicectl`, and a locked phone exits 2 with `device_locked`.
+- `ios: { teamId, runnerBundleId }` in `warden.config.ts` and `WARDEN_IOS_TEAM_ID` choose the Apple team that signs the runner; without them warden uses the keychain's `Apple Development` team when there is exactly one and fails `ios_team_ambiguous` listing the teams otherwise.
+- The runner is built with `xcodebuild build-for-testing -allowProvisioningUpdates`, cached per team and Xcode build, and rebuilt for a new phone or when its provisioning profile ends within 24 hours. Failures carry a code and a hint (`no_account`, `no_team`, `bundle_id_taken`, `device_locked`, `developer_mode_off`, `runner_untrusted`, `ui_automation_disabled`, `device_busy`, `ddi_unavailable`, `unsupported_os`).
+
+**Tests**
+- `warden e2e`, `warden run` and `warden batch` take `--physical`, `--serial` and `--udid`; `physical: true | { ids }` on an e2e suite or device leg does the same, and the flags win. A physical run never reboots, hides, arranges, slims, golden-clones or shuts down a device, and a suite `setup` command still runs. `WARDEN_UDIDS` carries the adb serial / CoreDevice UDID and each job of a phone gets `WARDEN_DEVICE_KIND=physical`.
+- A physical e2e run installs the `release` build kind by default (an explicit `--kind` or the suite's `app.kind` wins). On an iPhone, `--app` (or a suite `app`) builds the app for the device and installs it with `devicectl` (see Device builds).
+- On an iPhone, `warden e2e` starts the runner host before the specs; a lost runner connection restarts it once and reruns the test, and the phone is never rebooted.
+- `test(title, { requires: ["pinch" | "multiTouch"] }, body)` skips a spec on a device whose driver lacks the capability (a physical iPhone has neither).
+
+**Device builds**
+- `warden app ensure ios --udid <iPhone> --kind release|dev`, `warden e2e --udid <iPhone>` and `--app` on `run` / `batch` build the app signed for the phone (`xcodebuild -destination generic/platform=iOS -allowProvisioningUpdates`, team from `WARDEN_IOS_TEAM_ID`, `ios.teamId` or the keychain) and install it with `devicectl device install app`. The build is cached apart from simulator builds, keyed on the team; with no `--kind` an iPhone gets `release`. `--kind simulator` and `--variant` are refused on an iPhone.
+- `projects[].ios.device.bundleIdentifier` in `warden.config.ts` replaces the bundle id on a phone (and is the specs' `WARDEN_BUNDLE_ID` there) when your app's id belongs to another Apple team.
+- `--install-mode reinstall|clean` on an iPhone uninstalls and reinstalls (app data cannot be wiped in place); `--reset-keychain` is refused. A phone that the app's provisioning profile does not list fails `device_not_in_profile` with the fix.
+
+**Output and diagnosis**
+- `warden devices` has a `KIND` column (`virtual` or `physical`), shows why a physical device is unusable (`unauthorized`, `offline`, `unpaired`, `developer mode off`) with a hint, and takes `--physical` to list only phones and tablets; `--json` rows carry `kind`, `transport` and `hint`. `warden ls` tags physical leases.
+- `warden doctor` adds `ios-team`, `ios-devices`, `ios-runner` and `android-devices` rows, only when a phone or a signing team exists.
+- The warden skill gains a physical-devices reference.

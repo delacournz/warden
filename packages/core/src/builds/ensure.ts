@@ -30,6 +30,7 @@ import {
 	type FileSize,
 	type FileStamp,
 	installAndProbe,
+	isPhoneIos,
 	nodeResetFs,
 	probeApp,
 	type ResetFs,
@@ -37,7 +38,8 @@ import {
 	resetSimKeychain,
 	uninstallApp,
 } from "./install";
-import { projectForKind } from "./kinds";
+import { type DeviceIo, phoneAppMatches } from "./install-device";
+import { type DeviceTarget, projectForKind } from "./kinds";
 import { type PrebuildStamp, runLocalBuild } from "./local";
 import { buildLockKey, withBuildLock } from "./lock";
 import { overlayDirUnlessRepoConfig } from "./overlay";
@@ -142,6 +144,8 @@ export type EnsureInput = ProjectContext & {
 	resetKeychain?: boolean;
 	/** filesystem for `installMode: "clean"`'s data wipe (default node:fs) */
 	resetFs?: ResetFs;
+	/** the temp files of `devicectl` calls on a physical iPhone (default node:fs) */
+	deviceIo?: DeviceIo;
 	/** file sizes for the installed-app identity check (default node:fs) */
 	fileSize?: FileSize;
 	/** `ino:mtime` of the installed executable, recorded at install to skip that check (default node:fs) */
@@ -186,7 +190,10 @@ function profileOf(project: Project): string {
  * rebuilt from `postKey` alone (no alias: the next run misses once and builds again).
  */
 function postKindHash(key: KindBuildKey, postKey: string): string | undefined {
-	return key.kind === "release" ? undefined : kindHash({ kind: key.kind, nativeFp: postKey });
+	if (key.kind === "release") return undefined;
+	if (key.kind === "dev")
+		return kindHash({ kind: "dev", nativeFp: postKey, ...(key.device ? { device: key.device } : {}) });
+	return kindHash({ kind: key.kind, nativeFp: postKey });
 }
 
 /** The store's record of the native fingerprint `<root>/<platform>` was last prebuilt for (a CNG dir is per checkout). */
@@ -337,8 +344,9 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	};
 
 	const easSettings = project.eas;
-	// an EAS build is a dev or release build: it can never be the simulator base, whose point is carrying no JS bundle
-	const easApplies = input.kind?.key.kind !== "simulator-base";
+	// an EAS build is a dev or release build: it can never be the simulator base, whose point is carrying no JS bundle,
+	// nor a build signed for a phone (EAS builds are signed by EAS)
+	const easApplies = input.kind?.key.kind !== "simulator-base" && !deviceOf(input.kind?.key);
 	if (input.eas && easSettings && easApplies) steps.eas = easStep(input, easSettings, cache);
 	if (input.build) {
 		steps.build = buildStep(input, cache, (postKey) => {
@@ -351,11 +359,18 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
 		const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
-		const deps = { exec: input.exec, env, ...(input.fileSize ? { fileSize: input.fileSize } : {}) };
+		const deps = {
+			exec: input.exec,
+			env,
+			...(input.fileSize ? { fileSize: input.fileSize } : {}),
+			...(input.deviceIo ? { deviceIo: input.deviceIo } : {}),
+		};
 		steps.device = {
 			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
 			confirm: () => probeApp(deps, target, bundleId.data),
 			matches: async (cachedPath, installed) => {
+				// a phone has no container to stat: the install record named this build, devicectl names its version
+				if (isPhoneIos(target)) return ok(await phoneAppMatches(input.exec, cachedPath, installed));
 				// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
 				const record = getInstall(store, platform, deviceId, bundleId.data);
 				const container = installed.container;
@@ -396,6 +411,11 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	return resolveApp(steps);
 }
 
+/** The device target a kind key was made for, if any (only `dev` / `release` have one). */
+function deviceOf(key: KindBuildKey | undefined): DeviceTarget | undefined {
+	return key?.kind === "dev" || key?.kind === "release" ? key.device : undefined;
+}
+
 export type EnsureKindInput = Omit<EnsureInput, "hash" | "kind" | "project"> & {
 	/** the project as loaded (kind-less); `ensureKindBuild` resolves it as the kind of `key` */
 	project: Project;
@@ -414,7 +434,7 @@ export async function ensureKindBuild(input: EnsureKindInput): AsyncResult<Ensur
 	const { key, buildKey, project, ...rest } = input;
 	return ensureApp({
 		...rest,
-		project: projectForKind(project, buildKindOfKey(key)),
+		project: projectForKind(project, buildKindOfKey(key), deviceOf(key)),
 		hash: kindHash(key),
 		kind: { key, buildKey },
 	});

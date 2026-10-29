@@ -5,7 +5,7 @@ import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Store } from "../store";
 import { wardenHome } from "../store";
 import type { Platform } from "../types";
-import type { BuildKind } from "./kinds";
+import type { BuildKind, DeviceTarget } from "./kinds";
 import { safeKey } from "./project-key";
 
 /** Where a cached build came from. */
@@ -33,6 +33,8 @@ type BuildBase = {
  * - `simulator-base`: `<nativeFp>/simulator/base/`, hash `<nativeFp>:base`; Release, no JS bundle.
  * - `simulator-repack`: `<nativeFp>/simulator/repacks/<jsKey>/`, hash `<nativeFp>:<jsKey>`; a clone of a base with a bundle.
  * - `release`: `<nativeFp>/release/<jsKey>/`, hash `<nativeFp>:release:<jsKey>`.
+ * - a `dev` / `release` build for a physical iPhone (`BuildTarget` `device`) lives under `<nativeFp>/device/<team>/…` and
+ *   its hash carries `:device-<team>` after the fingerprint (`<nativeFp>:device-<team>:release:<jsKey>`).
  * `worktree` / `branch` of a repack are metadata (what `warden builds` lists), never part of a key.
  */
 export type BuildRecord =
@@ -54,10 +56,10 @@ export type SimulatorBaseRecord = Extract<BuildRecord, { kind: "simulator-base" 
 
 /** Where a build of a kind lives and what it is called; `kindHash` / `kindDir` derive both. */
 export type KindKey =
-	| { kind: "dev"; nativeFp: string }
+	| { kind: "dev"; nativeFp: string; device?: DeviceTarget }
 	| { kind: "simulator-base"; nativeFp: string }
 	| { kind: "simulator-repack"; nativeFp: string; jsKey: string }
-	| { kind: "release"; nativeFp: string; jsKey: string };
+	| { kind: "release"; nativeFp: string; jsKey: string; device?: DeviceTarget };
 
 /** The `BuildKind` a record belongs to (a `legacy` record belongs to none). */
 export function buildKindOf(record: BuildRecord): BuildKind | undefined {
@@ -174,9 +176,15 @@ export function nativeDir(env: Env, key: string, platform: Platform, nativeFp: s
 	return buildDir(env, key, platform, nativeFp);
 }
 
+/** `<nativeDir>`, or `<nativeDir>/device/<salt>` for a build signed for a physical iPhone. */
+function targetDir(env: Env, key: string, platform: Platform, nativeFp: string, device?: DeviceTarget): string {
+	const native = nativeDir(env, key, platform, nativeFp);
+	return device ? join(native, "device", device.salt) : native;
+}
+
 /** `<nativeDir>/dev`. */
-export function devDir(env: Env, key: string, platform: Platform, nativeFp: string): string {
-	return join(nativeDir(env, key, platform, nativeFp), "dev");
+export function devDir(env: Env, key: string, platform: Platform, nativeFp: string, device?: DeviceTarget): string {
+	return join(targetDir(env, key, platform, nativeFp, device), "dev");
 }
 
 /** `<nativeDir>/simulator/base`: the Release build with no JS bundle that repacks are cloned from. */
@@ -190,21 +198,33 @@ export function repackDir(env: Env, key: string, platform: Platform, nativeFp: s
 }
 
 /** `<nativeDir>/release/<jsKey>`. */
-export function releaseDir(env: Env, key: string, platform: Platform, nativeFp: string, jsKey: string): string {
-	return join(nativeDir(env, key, platform, nativeFp), "release", jsKey);
+export function releaseDir(
+	env: Env,
+	key: string,
+	platform: Platform,
+	nativeFp: string,
+	jsKey: string,
+	device?: DeviceTarget
+): string {
+	return join(targetDir(env, key, platform, nativeFp, device), "release", jsKey);
+}
+
+/** `<nativeFp>:device-<salt>` for a device build, else the fingerprint alone (what a kind's hash starts with). */
+function hashBase(key: { nativeFp: string; device?: DeviceTarget }): string {
+	return key.device ? `${key.nativeFp}:device-${key.device.salt}` : key.nativeFp;
 }
 
 /** The cache / install `hash` of a build of a kind (the `(project_key, platform, hash)` primary key). */
 export function kindHash(key: KindKey): string {
 	switch (key.kind) {
 		case "dev":
-			return `${key.nativeFp}:dev`;
+			return `${hashBase(key)}:dev`;
 		case "simulator-base":
 			return `${key.nativeFp}:base`;
 		case "simulator-repack":
 			return `${key.nativeFp}:${key.jsKey}`;
 		case "release":
-			return `${key.nativeFp}:release:${key.jsKey}`;
+			return `${hashBase(key)}:release:${key.jsKey}`;
 	}
 }
 
@@ -212,13 +232,13 @@ export function kindHash(key: KindKey): string {
 export function kindDir(env: Env, projectKey: string, platform: Platform, key: KindKey): string {
 	switch (key.kind) {
 		case "dev":
-			return devDir(env, projectKey, platform, key.nativeFp);
+			return devDir(env, projectKey, platform, key.nativeFp, key.device);
 		case "simulator-base":
 			return simulatorBaseDir(env, projectKey, platform, key.nativeFp);
 		case "simulator-repack":
 			return repackDir(env, projectKey, platform, key.nativeFp, key.jsKey);
 		case "release":
-			return releaseDir(env, projectKey, platform, key.nativeFp, key.jsKey);
+			return releaseDir(env, projectKey, platform, key.nativeFp, key.jsKey, key.device);
 	}
 }
 
@@ -467,7 +487,7 @@ export async function storeArtifact(input: StoreArtifactInput): AsyncResult<Buil
 }
 
 /** Names under a `<nativeFp>` dir that belong to the kinds, not to the legacy build sitting beside them. */
-const KIND_DIR_NAMES: ReadonlySet<string> = new Set(["dev", "simulator", "release"]);
+const KIND_DIR_NAMES: ReadonlySet<string> = new Set(["dev", "simulator", "release", "device"]);
 
 /** A legacy build's files only: its `<nativeFp>` dir also holds the kind dirs, which are other rows. */
 function removeLegacyFiles(dir: string): void {

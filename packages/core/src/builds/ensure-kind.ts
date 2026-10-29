@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { resolveTeam } from "../ios-runner/signing";
 import type { Platform } from "../types";
 import type { Project } from "./config";
 import { type EnsureKindInput, ensureApp, ensureKindBuild } from "./ensure";
-import { computeKindKey } from "./kind-key";
-import type { BuildKind } from "./kinds";
+import { computeKindKey, SIMULATOR_ON_DEVICE } from "./kind-key";
+import { type BuildKind, type DeviceTarget, deviceTarget, withDeviceBundleId } from "./kinds";
 import { type RepackInput, repackApp } from "./repack";
 import type { ApplyRepack } from "./repack.types";
 import { androidRepacker, applyAndroidRepack } from "./repack-android";
@@ -18,6 +19,8 @@ export type KindAppInput = RepackInput & {
 	kind: BuildKind;
 	/** udid / serial to install onto; absent = resolve the build into the cache only */
 	deviceId?: string;
+	/** `ios.teamId` of `warden.config.ts`: signs the build for a physical iPhone (`physical`), after `WARDEN_IOS_TEAM_ID` */
+	configTeamId?: string;
 };
 
 type KindAppBase = {
@@ -30,6 +33,8 @@ type KindAppBase = {
 	source: ResolveSource | "repack";
 	/** the app is on the device at `hash` (false without a device) */
 	installed: boolean;
+	/** set when the build is signed for a physical iPhone: its team, and the salt in `hash` */
+	device?: DeviceTarget;
 };
 
 /**
@@ -60,7 +65,15 @@ const realDeps: KindAppDeps = {
 
 /** `input` as the plain build input `ensureKindBuild` takes. */
 function buildInput(input: KindAppInput): Omit<EnsureKindInput, "key" | "buildKey"> {
-	const { kind: _kind, repackers: _repackers, force: _force, hermes: _hermes, scratchRoot: _scratch, ...rest } = input;
+	const {
+		kind: _kind,
+		repackers: _repackers,
+		force: _force,
+		hermes: _hermes,
+		scratchRoot: _scratch,
+		configTeamId: _team,
+		...rest
+	} = input;
 	return rest;
 }
 
@@ -70,10 +83,18 @@ async function buildKind(
 	kind: "dev" | "release",
 	requested: BuildKind,
 	deps: KindAppDeps,
-	fallbackReason?: string
+	fallbackReason?: string,
+	device?: DeviceTarget
 ): AsyncResult<KindApp> {
 	const { exec, project, platform } = input;
-	const keys = await deps.computeKeys({ exec, project, platform, kind, env: input.env });
+	const keys = await deps.computeKeys({
+		exec,
+		project,
+		platform,
+		kind,
+		env: input.env,
+		...(device ? { device } : {}),
+	});
 	if (!keys.success) return keys;
 	const built = await deps.ensureBuild({
 		...buildInput(input),
@@ -89,8 +110,21 @@ async function buildKind(
 		hash: built.data.hash,
 		source: built.data.source,
 		installed: false,
+		...(device ? { device } : {}),
 		...(fallbackReason !== undefined ? { fallbackReason } : {}),
 	});
+}
+
+/** The signing team of a build for a physical iPhone: `WARDEN_IOS_TEAM_ID`, `ios.teamId`, the keychain (never a guess between teams). */
+async function resolveDevice(input: KindAppInput): AsyncResult<DeviceTarget> {
+	const team = await resolveTeam({ configTeamId: input.configTeamId, env: input.env, exec: input.exec });
+	if (!team.success) {
+		const { code, message, hint } = team.error;
+		const teams =
+			team.error.code === "ios_team_ambiguous" ? ` (${team.error.teams.map((t) => t.teamId).join(", ")})` : "";
+		return err(`${code}: ${message}${teams}. ${hint}`);
+	}
+	return ok(deviceTarget(input.project, team.data.team));
 }
 
 /**
@@ -99,6 +133,13 @@ async function buildKind(
  * applied (`fallback`, e.g. Android `res/` images changed) builds the `release` kind instead and says why.
  */
 export async function prepareKindApp(input: KindAppInput, deps: KindAppDeps = realDeps): AsyncResult<KindApp> {
+	if (input.physical === true && input.platform === "ios") {
+		// v1: a phone runs a build made for it (`dev` / `release`), never a simulator build or a repack of one
+		if (input.kind === "simulator") return err(SIMULATOR_ON_DEVICE);
+		const device = await resolveDevice(input);
+		if (!device.success) return device;
+		return buildKind(input, input.kind, input.kind, deps, undefined, device.data);
+	}
 	if (input.kind !== "simulator") return buildKind(input, input.kind, input.kind, deps);
 	const packed = await deps.repack(input);
 	if (!packed.success) return packed;
@@ -130,7 +171,10 @@ export async function installKindApp(
 	deps: KindAppDeps = realDeps
 ): AsyncResult<KindApp> {
 	const { repackers: _r, force: _f, hermes: _h, scratchRoot: _s, kind: _k, ...rest } = input;
-	const installed = await deps.ensureApp({ ...rest, hash: app.hash, build: false, eas: false });
+	const { configTeamId: _team, ...ids } = rest;
+	// a build for a phone installs under the device bundle id (`projects[].ios.device.bundleIdentifier`)
+	const project = app.device ? withDeviceBundleId(ids.project) : ids.project;
+	const installed = await deps.ensureApp({ ...ids, project, hash: app.hash, build: false, eas: false });
 	if (!installed.success) return installed;
 	// `installed`: the device already ran this build, nothing was copied
 	if (installed.data.installed) {

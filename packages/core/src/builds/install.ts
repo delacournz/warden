@@ -4,6 +4,7 @@ import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { androidTools } from "../providers/android";
 import type { Platform } from "../types";
+import { type DeviceIo, installOnPhone, probePhone, uninstallFromPhone } from "./install-device";
 import type { InstalledApp } from "./resolve";
 
 /** Byte size of a file; undefined when it cannot be read. Injected so identity checks need no `stat` spawns. */
@@ -42,12 +43,19 @@ export type InstallerDeps = {
 	env: Record<string, string | undefined>;
 	/** default: `node:fs` */
 	fileSize?: FileSize;
+	/** the temp files of `devicectl` calls on a physical iPhone (default: node:fs) */
+	deviceIo?: DeviceIo;
 };
 
 /** A device to install onto: iOS simulator udid / Android emulator or phone serial. `physical`: a real phone (ABI check before installing). */
 export type InstallTarget = { platform: Platform; deviceId: string; physical?: boolean };
 
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
+
+/** A real iPhone / iPad: installed, probed and removed with `devicectl`, not `simctl`. */
+export const isPhoneIos = (target: InstallTarget): boolean => target.platform === "ios" && target.physical === true;
+
+const phoneDeps = (deps: InstallerDeps) => ({ exec: deps.exec, ...(deps.deviceIo ? { io: deps.deviceIo } : {}) });
 
 /** `xcrun simctl install <udid> <app>` / `adb -s <serial> install -r <apk>`. */
 export function installArgv(target: InstallTarget, appPath: string, env: InstallerDeps["env"]): string[] {
@@ -73,6 +81,7 @@ export async function probeApp(
 	target: InstallTarget,
 	bundleId: string
 ): AsyncResult<InstalledApp> {
+	if (isPhoneIos(target)) return probePhone(phoneDeps(deps), target.deviceId, bundleId);
 	const res = await deps.exec(probeArgv(target, bundleId, deps.env));
 	if (target.platform === "ios") {
 		const container = res.stdout.trim();
@@ -134,6 +143,7 @@ export async function appMatchesArtifact(
 	installedDir?: string
 ): AsyncResult<boolean> {
 	if (target.platform !== "ios") return ok(true);
+	if (isPhoneIos(target)) return ok(false);
 	const installedAt = installedDir ?? (await out(deps, probeArgv(target, bundleId, deps.env)));
 	if (!installedAt) return ok(false);
 	const [installed, cached] = await Promise.all([appIdentity(deps, installedAt), appIdentity(deps, artifactPath)]);
@@ -155,6 +165,13 @@ export async function uninstallApp(deps: InstallerDeps, target: InstallTarget, b
 	const present = await isAppInstalled(deps, target, bundleId);
 	if (!present.success) return present;
 	if (!present.data) return ok(undefined);
+	if (isPhoneIos(target)) {
+		const gone = await uninstallFromPhone(phoneDeps(deps), target.deviceId, bundleId);
+		if (!gone.success) return gone;
+		const left = await isAppInstalled(deps, target, bundleId);
+		if (!left.success) return left;
+		return left.data ? err(`uninstalled ${bundleId} from ${target.deviceId} but it is still there`) : ok(undefined);
+	}
 	const argv = uninstallArgv(target, bundleId, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
 	if (res.exitCode !== 0 || /Failure/.test(res.stdout)) return err(`uninstall failed: ${execError(argv, res)}`);
@@ -231,6 +248,7 @@ export async function installAndProbe(
 	appPath: string,
 	bundleId: string
 ): AsyncResult<InstalledApp> {
+	if (isPhoneIos(target)) return installOnPhone(phoneDeps(deps), target.deviceId, appPath, bundleId);
 	if (target.platform === "android" && target.physical === true) {
 		const mismatch = await abiMismatch(deps, target, appPath);
 		if (mismatch !== undefined) return err(mismatch);
@@ -337,6 +355,9 @@ async function resetIos(
 /** iOS: `simctl keychain <udid> reset` (the whole simulator's keychain; an uninstall leaves it). Android: nothing. */
 export async function resetSimKeychain(deps: InstallerDeps, target: InstallTarget): AsyncResult<void> {
 	if (target.platform !== "ios") return ok(undefined);
+	if (isPhoneIos(target)) {
+		return err("--reset-keychain is for simulators: a phone's keychain is not reset (uninstalling keeps it)");
+	}
 	const argv = ["xcrun", "simctl", "keychain", target.deviceId, "reset"];
 	const res = await deps.exec(argv);
 	return res.exitCode === 0 ? ok(undefined) : err(`keychain reset failed: ${execError(argv, res)}`);
@@ -355,6 +376,11 @@ export async function resetAppData(
 	bundleId: string,
 	opts: ResetOptions = {}
 ): AsyncResult<void> {
+	if (isPhoneIos(target)) {
+		return err(
+			`app data of ${bundleId} cannot be reset in place on a phone: warden reinstalls it (--install-mode reinstall)`
+		);
+	}
 	const present = await isAppInstalled(deps, target, bundleId);
 	if (!present.success) return present;
 	if (!present.data) return err(`${bundleId} is not installed on ${target.deviceId}`);

@@ -85,6 +85,23 @@ export const projectConfigSchema = z
 		variants: z.record(z.string().min(1), variantSchema).optional(),
 		/** per-kind overrides of the built-in `dev` / `simulator` / `release` builds (`app.kind`, `--kind`) */
 		kinds: kindsSchema.optional(),
+		/** iOS-only project settings */
+		ios: z
+			.object({
+				/** builds for a physical iPhone (`--physical`, `--udid <iPhone>`) */
+				device: z
+					.object({
+						/** replaces the bundle id on a phone (the project's own may belong to another Apple team); also what specs see as `WARDEN_BUNDLE_ID` there */
+						bundleIdentifier: z
+							.string()
+							.regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/, "a bundle id is letters, digits, dots and hyphens")
+							.optional(),
+					})
+					.strict()
+					.optional(),
+			})
+			.strict()
+			.optional(),
 		/** extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand */
 		cacheDirs: z.array(z.string().min(1)).optional(),
 	})
@@ -153,6 +170,14 @@ export const wardenConfigSchema = z
 			.object({
 				/** false = claims cold-boot the AVD instead of warden's quick-boot snapshot (`WARDEN_ANDROID_SNAPSHOT` overrides) */
 				snapshot: z.boolean().optional(),
+			})
+			.strict()
+			.optional(),
+		/** physical phones/tablets; `allow` limits what an id-less `--physical` claim may pick (`WARDEN_PHYSICAL_IDS` overrides) */
+		physical: z
+			.object({
+				/** adb serials / CoreDevice UDIDs; naming a device with `--serial` / `--udid` still works for any device */
+				allow: z.array(z.string().min(1)).optional(),
 			})
 			.strict()
 			.optional(),

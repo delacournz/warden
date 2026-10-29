@@ -43,7 +43,7 @@ import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
-import { type AppFlagValues, checkPhysicalIosApp, withLeaseOptions } from "../lease-session";
+import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
 import { currentBuild } from "../update/build-info";
 import { type AffectedOpts, explain, runAffected, selectedSpecs } from "./affected";
@@ -221,7 +221,7 @@ export function resolveRunKind(
 	if (!app.app && !opts.app) return ok({ metro: "suite" });
 	const variant = passed.has("variant") ? opts.variant : app.variant;
 	if (variant !== undefined) return ok({ variant, metro: "suite" });
-	// a repacked simulator build cannot run on a phone: a physical run installs the release APK (device builds are WDN-PHY-8)
+	// a repacked simulator build cannot run on a phone: a physical run installs the release build (a device build on an iPhone)
 	return ok(kindRun(suite, app.kind ?? (physical ? PHYSICAL_E2E_KIND : DEFAULT_E2E_KIND)));
 }
 
@@ -505,7 +505,7 @@ async function preparedRun(
 		const slim = validateProfile(slimProfile(suite.config.slim));
 		if (!slim.success) return err(`suite "${suite.name}": slim: ${slim.error}`);
 	}
-	const spec = await specPlan(ctx, deps, suite, platform, opts);
+	const spec = await specPlan(ctx, deps, suite, platform, opts, wantsPhysical(suite.config, opts, passed));
 	if (!spec.success) return spec;
 	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed, kind);
 	return run.success ? ok({ ...run.data, spec: spec.data }) : run;
@@ -616,7 +616,6 @@ async function runPlan(
 	const legs = batchLegs(platform, picked.data ?? [], legOpts);
 	if (!legs.success) return legs;
 	const claims = claimedFlags(args.data, legs.data);
-	if (!claims.success) return claims;
 	const argvOf = (files: readonly string[]) =>
 		runnerArgv({ bun: spec.bun, preload: spec.preload, specPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
 	const isolation = runIsolation(config, opts, passed);
@@ -637,15 +636,13 @@ async function runPlan(
 		shape: { ...planned.shape, ...(plan.shardOf ? { shardOf: plan.shardOf } : {}) },
 		plan,
 		argvOf,
-		physical: claims.data.every((flags) => flags.request.physical !== undefined),
+		physical: claims.every((flags) => flags.request.physical !== undefined),
 	});
 }
 
-/** The claim of each leg (else the plain claim), refused when it would install an app on a physical iPhone. */
-function claimedFlags(args: BatchArgs, legs: readonly BatchLeg[]): Result<ClaimFlags[]> {
-	const claims = legs.length > 0 ? legs.map((leg) => leg.flags) : [args.flags];
-	const phoneApp = checkPhysicalIosApp(claims, args.app);
-	return phoneApp.success ? ok(claims) : phoneApp;
+/** The claim of each leg, else the plain claim. */
+function claimedFlags(args: BatchArgs, legs: readonly BatchLeg[]): ClaimFlags[] {
+	return legs.length > 0 ? legs.map((leg) => leg.flags) : [args.flags];
 }
 
 /**
@@ -712,7 +709,9 @@ export async function specPlan(
 	deps: SpecPlanDeps,
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "perf"> = {}
+	opts: Pick<E2eOpts, "perf"> = {},
+	/** the run is on phones: an iPhone's app has the device bundle id (`projects[].ios.device.bundleIdentifier`) */
+	physical = false
 ): AsyncResult<SpecPlan> {
 	const bun = findBun(ctx.env, deps.execPath());
 	const version = currentBuild().version;
@@ -724,7 +723,7 @@ export async function specPlan(
 		stage: () => deps.bundledE2e(ctx),
 	});
 	if (!preload.success) return preload;
-	const bundleId = await specBundleId(ctx, suite, platform);
+	const bundleId = await specBundleId(ctx, suite, platform, physical);
 	if (!bundleId.success) return bundleId;
 	const perf = parsePerfFlag(opts.perf);
 	if (!perf.success) return perf;
