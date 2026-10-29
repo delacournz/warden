@@ -16,6 +16,7 @@
 apps/
   cli/                # @delacour/warden — the `warden` binary (commands, Claude hook)
   docs/               # @delacour/warden-docs — Fumadocs + TanStack Start docs site (content/docs/*.mdx), :3210
+  viewer/             # @delacour/warden-viewer — Tauri v2 window for one hosted device (`warden view`); Rust holds the scoped token; see apps/viewer/AGENTS.md
   example/            # @delacour/warden-example — Expo + Delacour UI demo app; `@delacour/warden-e2e` specs run via `warden e2e example`
 packages/
   core/               # @delacour/warden-core — lease store, allocation, device providers, build cache
