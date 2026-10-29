@@ -42,6 +42,7 @@ int main(void) {
       emit(@{
         @"defaultProxy": c.connectionProxyDictionary ?: [NSNull null],
         @"ephemeralProxy": e.connectionProxyDictionary ?: [NSNull null],
+        @"sharedProxy": NSURLSession.sharedSession.configuration.connectionProxyDictionary ?: [NSNull null],
         @"sessionProxy": s.configuration.connectionProxyDictionary ?: [NSNull null],
         @"clockMs": @((long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000),
         @"todMs": @((long long)tv.tv_sec * 1000 + tv.tv_usec / 1000),

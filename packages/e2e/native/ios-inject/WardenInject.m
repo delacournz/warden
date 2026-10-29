@@ -15,8 +15,8 @@
 // Covered: NSURLSession (default/ephemeral/background configurations and sessionWithConfiguration:*), network path
 // APIs (nw_path_get_status, nw_path_uses_interface_type, NWPathMonitor update handlers re-fired on change),
 // SCNetworkReachability (flags, callbacks re-fired on change), wall clocks (clock_gettime(CLOCK_REALTIME),
-// gettimeofday, time, CFAbsoluteTimeGetCurrent). Not covered: NSURLSession.sharedSession (system proxy settings),
-// raw sockets / NWConnection / CFStream (they bypass the proxy), monotonic clocks (left real on purpose).
+// gettimeofday, time, CFAbsoluteTimeGetCurrent). NSURLSession.sharedSession is replaced by a session on the routed
+// default configuration (sharing the shared session's cache, cookie and credential stores). Not covered: raw sockets / NWConnection / CFStream (they bypass the proxy), monotonic clocks (left real on purpose).
 #import <Foundation/Foundation.h>
 #import <Network/Network.h>
 #import <SystemConfiguration/SystemConfiguration.h>
@@ -105,6 +105,28 @@ static void install_proxy(NSString *hostPort) {
         ^NSURLSession *(id self_, NSURLSessionConfiguration *c, id d, NSOperationQueue *q) {
           return orig(self_, sel, routed(c), d, q);
         }));
+    }
+  }
+  // +sharedSession is built from the system proxy settings, not from a configuration we can patch: hand out one
+  // delegate-less session on the routed default configuration instead (same cache, cookies and credentials stores).
+  {
+    SEL sel = @selector(sharedSession);
+    Method m = class_getClassMethod(session, sel);
+    if (m) {
+      static NSURLSession *routedShared = nil;
+      static dispatch_once_t once;
+      NSURLSession *(*orig)(id, SEL) = (void *)method_getImplementation(m);
+      method_setImplementation(m, imp_implementationWithBlock(^NSURLSession *(id self_) {
+        dispatch_once(&once, ^{
+          NSURLSession *real = orig(self_, sel);
+          NSURLSessionConfiguration *c = [NSURLSessionConfiguration defaultSessionConfiguration];
+          c.URLCache = real.configuration.URLCache;
+          c.HTTPCookieStorage = real.configuration.HTTPCookieStorage;
+          c.URLCredentialStorage = real.configuration.URLCredentialStorage;
+          routedShared = [NSURLSession sessionWithConfiguration:c];
+        });
+        return routedShared;
+      }));
     }
   }
   DLOG("routing NSURLSession via %s", hostPort.UTF8String);

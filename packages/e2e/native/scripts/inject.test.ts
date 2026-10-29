@@ -26,6 +26,7 @@ type Seen = {
 	defaultProxy: Record<string, unknown> | null;
 	ephemeralProxy: Record<string, unknown> | null;
 	sessionProxy: Record<string, unknown> | null;
+	sharedProxy: Record<string, unknown> | null;
 	clockMs: number;
 	todMs: number;
 	timeS: number;
@@ -93,7 +94,7 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 		expect(built).toBe(true);
 		const h = startHarness({ WARDEN_NET_PROXY: "127.0.0.1:19123" });
 		const seen = await h.ask();
-		for (const proxy of [seen.defaultProxy, seen.ephemeralProxy, seen.sessionProxy]) {
+		for (const proxy of [seen.defaultProxy, seen.ephemeralProxy, seen.sessionProxy, seen.sharedProxy]) {
 			expect(proxy).toMatchObject({
 				HTTPEnable: 1,
 				HTTPProxy: "127.0.0.1",
@@ -112,6 +113,7 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 		const seen = await h.ask();
 		expect(seen.defaultProxy).toBeNull();
 		expect(seen.sessionProxy).toBeNull();
+		expect(seen.sharedProxy).toBeNull();
 		await h.stop();
 	});
 
