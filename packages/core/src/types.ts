@@ -11,6 +11,8 @@ export type PhysicalInfo =
 			developerMode: boolean;
 			ddi: boolean;
 			tunnelIp?: string;
+			/** devicectl's pairing state when it is not `paired` (the reason the device is not ready) */
+			pairingState?: string;
 	  };
 
 export type DeviceResource = {

@@ -42,7 +42,7 @@ function leaseInfo(lease: Lease): NonNullable<DeviceRow["lease"]> {
 /** One platform's rows: every device (booted or not) plus, for Android, every AVD. */
 async function platformRows(ctx: CommandContext, platform: Platform, leases: Map<string, Lease>): Promise<DeviceRow[]> {
 	const store = ctx.store();
-	const inventory = await providerFor(platform, ctx, resolveOwner(ctx)).inventory();
+	const inventory = await providerFor(platform, ctx, resolveOwner(ctx), { physical: true }).inventory();
 	if (!inventory.success) {
 		warn(ctx, `${platform}: skipped (${inventory.error})`);
 		return [];

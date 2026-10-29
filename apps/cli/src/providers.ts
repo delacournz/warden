@@ -20,7 +20,7 @@ export function providerFor(
 	platform: Platform,
 	ctx: CommandContext,
 	owner: Owner,
-	opts: { sleep?: Sleep; slim?: SlimProfile | false } = {}
+	opts: { sleep?: Sleep; slim?: SlimProfile | false; physical?: boolean } = {}
 ): DeviceProvider {
 	const deps: ProviderDeps = {
 		exec: ctx.exec,
@@ -36,10 +36,14 @@ export function providerFor(
 			snapshotFailed: androidSnapshotFailedHook(ctx, owner, opts.sleep),
 			snapshotLoaded: (avd) => androidSnapshotLoaded(ctx.store(), avd),
 		});
-	if (!goldenEnabled(ctx.env)) return createIosProvider(deps, opts.slim === undefined ? {} : { slim: opts.slim });
+	const base = {
+		...(opts.slim === undefined ? {} : { slim: opts.slim }),
+		...(opts.physical === true ? { physical: true } : {}),
+	};
+	if (!goldenEnabled(ctx.env)) return createIosProvider(deps, base);
 	const golden = { ...goldenDeps(ctx, owner, opts.sleep), prewarmHint: true };
 	return createIosProvider(deps, {
-		...(opts.slim === undefined ? {} : { slim: opts.slim }),
+		...base,
 		clone: async (name, profile, runtime) => {
 			const cloned = await cloneFromGolden(golden, profile, runtime, name);
 			return cloned.success

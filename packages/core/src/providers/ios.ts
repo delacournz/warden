@@ -6,7 +6,8 @@ import { disabledStoreRoot } from "../sims/disabled-store";
 import { slimSimulator } from "../sims/slim";
 import { prepareOfflineSlim, runtimeSupportsPersistentOverrides, verifyOfflineSlim } from "../sims/slim.offline";
 import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "../sims/slim.profile";
-import type { DeviceState, InventoryDevice } from "../types";
+import { type DeviceState, type InventoryDevice, isPhysicalIosId } from "../types";
+import { listPhysicalIos, probePhysicalIos } from "./devicectl";
 import { execWithin, probeIosHealth, probeIosWarm, realTimer, type TimedExec, type Timer } from "./health";
 import type { BootReady, DeviceProvider, ProviderDeps } from "./provider.types";
 
@@ -333,6 +334,11 @@ export type IosProviderOptions = {
 	 * verified once the sim is ready, with a live fallback for what did not take.
 	 */
 	slim?: SlimProfile | false;
+	/**
+	 * List paired physical iPhones/iPads (`devicectl`) in `inventory`. Off by default: it is one more process
+	 * per inventory, which a claim of a simulator should not pay. `devices` and physical claims turn it on.
+	 */
+	physical?: boolean;
 };
 
 /** How often, and how long, `boot` retries a sim that is still `Shutting Down`. */
@@ -353,7 +359,16 @@ async function bootAfterShutdown(
 	}
 }
 
-/** iOS simulators on `xcrun simctl` (default CoreSimulator set). Boots headless — never opens Simulator.app. */
+/** What every boot / shutdown / create-side call says about an iPhone or iPad: warden leases it, nothing more. */
+function physicalRefusal(verb: string, id: string): string {
+	return `refusing to ${verb} ${id}: a physical iPhone/iPad is never booted, shut down or created by warden`;
+}
+
+/**
+ * iOS simulators on `xcrun simctl` (default CoreSimulator set), plus paired physical iPhones/iPads from
+ * `xcrun devicectl` in `inventory` (leasable, probed with `lockState`, never booted or shut down).
+ * Boots headless — never opens Simulator.app.
+ */
 export function createIosProvider(deps: ProviderDeps, options: IosProviderOptions = {}): DeviceProvider {
 	const { exec } = deps;
 	const runner = timedExec(exec, deps.timer);
@@ -382,6 +397,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		return parsed.success ? parsed.data.find((d) => d.id === id)?.runtime : undefined;
 	};
 	const prepareBoot = async (id: string): Promise<void> => {
+		if (isPhysicalIosId(id)) return;
 		const target = slim === false ? undefined : slimTarget(id);
 		if (slim === false || !target) return;
 		const runtime = await runtimeOf(id, target.runtime);
@@ -390,7 +406,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		if (!prepared.success) note(`${target.name} offline slim skipped (${prepared.error})`);
 	};
 	const afterReady = async (id: string): Promise<void> => {
-		if (slim === false) return;
+		if (slim === false || isPhysicalIosId(id)) return;
 		const target = slimTarget(id);
 		if (!target) return;
 		const verified = await verifyOfflineSlim(exec, id, slim, { sleep });
@@ -422,8 +438,14 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		afterReady,
 
 		async inventory() {
-			const out = await simctl(runner, ["list", "devices", "available", "-j"], IOS_TIMEOUTS.listMs);
-			return out.success ? parseSimctlDevices(out.data) : out;
+			// phones are best effort: no Xcode, a wedged CoreDevice or a bad document leaves the simulator list as it was
+			const [out, phones] = await Promise.all([
+				simctl(runner, ["list", "devices", "available", "-j"], IOS_TIMEOUTS.listMs),
+				options.physical === true ? listPhysicalIos(runner) : Promise.resolve(ok<InventoryDevice[]>([])),
+			]);
+			if (!out.success) return out;
+			const sims = parseSimctlDevices(out.data);
+			return sims.success && phones.success ? ok([...sims.data, ...phones.data]) : sims;
 		},
 
 		async create(name, profile, runtime) {
@@ -447,9 +469,9 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			return ok(record(id, name, profile, shortRuntime(target.data.runtime.identifier)));
 		},
 
-		boot: (id) => bootAfterShutdown(runner, id, sleep),
+		boot: async (id) => (isPhysicalIosId(id) ? err(physicalRefusal("boot", id)) : bootAfterShutdown(runner, id, sleep)),
 
-		waitReady,
+		waitReady: (id, timeoutMs) => (isPhysicalIosId(id) ? probePhysicalIos(runner, id) : waitReady(id, timeoutMs)),
 
 		/**
 		 * `bootstatus -b` boots a shut-down sim itself, so a separate `simctl boot` is one CoreSimulator
@@ -458,6 +480,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		 * is left of `timeoutMs`, so the whole call stays within one ready budget.
 		 */
 		async bootReady(id, timeoutMs): Promise<BootReady> {
+			if (isPhysicalIosId(id)) return { kind: "boot-failed", error: physicalRefusal("boot", id) };
 			const started = deps.now();
 			const cmd = ["xcrun", "simctl", "bootstatus", id, "-b"];
 			const status = await runCmd(runner, cmd, timeoutMs);
@@ -478,13 +501,17 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			return ready.success ? { kind: "ready" } : { kind: "not-ready", error: ready.error };
 		},
 
-		shutdown: (id) => idempotent(runner, ["shutdown", id], "Shutdown", IOS_TIMEOUTS.shutdownMs),
+		shutdown: async (id) =>
+			isPhysicalIosId(id)
+				? err(physicalRefusal("shut down", id))
+				: idempotent(runner, ["shutdown", id], "Shutdown", IOS_TIMEOUTS.shutdownMs),
 
-		probe: (id) => probeIosHealth(runner, id),
+		/** A phone: `devicectl device info lockState` answers (locked or not). A sim: SpringBoard health. */
+		probe: (id) => (isPhysicalIosId(id) ? probePhysicalIos(runner, id) : probeIosHealth(runner, id)),
 
-		verifyWarm: (id) => probeIosWarm(runner, id),
+		verifyWarm: (id) => (isPhysicalIosId(id) ? probePhysicalIos(runner, id) : probeIosWarm(runner, id)),
 
 		/** After a `bootstatus` that saw the boot finish, launchd is up: SpringBoard running is all that is left to prove. */
-		probeBooted: (id) => probeIosWarm(runner, id),
+		probeBooted: (id) => (isPhysicalIosId(id) ? probePhysicalIos(runner, id) : probeIosWarm(runner, id)),
 	};
 }
