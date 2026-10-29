@@ -6,7 +6,7 @@ import { err, ok, type Result } from "@delacour/warden-types/result";
 type Env = Record<string, string | undefined>;
 
 /** Where warden-api lives unless `WARDEN_API_URL` says otherwise. */
-export const DEFAULT_API_URL = "https://api.warden.delacour.co.nz";
+export const DEFAULT_API_URL = "https://api.warden.co.nz";
 
 /** What `warden login` saves: the session token for one warden-api, plus who it belongs to. */
 export type Credentials = {

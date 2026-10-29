@@ -3608,7 +3608,7 @@ log in to warden cloud (remote simulators) in the browser
 
 Options:
   --api-url <url>  warden-api to log in to (default: $WARDEN_API_URL or
-                   https://api.warden.delacour.co.nz)
+                   https://api.warden.co.nz)
   --no-browser     print the approval link instead of opening it
   --json           machine-readable output
   -h, --help       display help for command"

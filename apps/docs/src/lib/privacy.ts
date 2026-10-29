@@ -150,7 +150,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "warden-cloud",
 		title: "warden cloud (hosted simulators)",
 		body: [
-			"warden cloud is optional. Nothing below happens until you run `warden login`. It runs hosted iOS simulators and Android emulators for your organization, through our own server, `api.warden.delacour.co.nz`, and a device provider, Revyl, that runs the devices for us. You never deal with Revyl directly: we create and control the workspace that holds your organization's devices.",
+			"warden cloud is optional. Nothing below happens until you run `warden login`. It runs hosted iOS simulators and Android emulators for your organization, through our own server, `api.warden.co.nz`, and a device provider, Revyl, that runs the devices for us. You never deal with Revyl directly: we create and control the workspace that holds your organization's devices.",
 		],
 		disclosures: [
 			{
