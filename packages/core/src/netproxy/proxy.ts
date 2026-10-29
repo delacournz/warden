@@ -3,7 +3,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { type ConditionsUpdate, type ProxyHandle, type ProxyStats, type ProxyStatus, serveControl } from "./control";
 import { decide } from "./decide";
 import { Pipe } from "./pipe";
-import { delayMs, NO_CONDITIONS, type ProxyConditions, type Rng } from "./shaping";
+import { delayMs, faultFor, NO_CONDITIONS, type ProxyConditions, type Rng } from "./shaping";
 
 const LOOPBACK = "127.0.0.1";
 const MAX_HEAD = 64 * 1024;
@@ -117,6 +117,8 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 	const stats: ProxyStats = { connections: 0, resets: 0, stalls: 0, faulted: 0, bytesUp: 0, bytesDown: 0 };
 	const open = new Set<Socket>();
 	const held = new Set<Socket>();
+	/** the origin host of each client socket that has sent its head, so a fault change can find its tunnels */
+	const hosts = new Map<Socket, string>();
 	const emit = options.onEvent ?? (() => {});
 
 	function track(socket: Socket): void {
@@ -125,6 +127,7 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 		socket.on("close", () => {
 			open.delete(socket);
 			held.delete(socket);
+			hosts.delete(socket);
 		});
 	}
 
@@ -202,6 +205,7 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 			respond(client, 400, parsed.reason);
 			return;
 		}
+		hosts.set(client, parsed.target.host);
 		admit(client, parsed.target, parsed.kind === "connect", () => {
 			openUpstream(client, parsed.target, (upstream) => {
 				if (parsed.kind === "connect") {
@@ -250,8 +254,20 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 	const address = server.address();
 	if (address === null || typeof address === "string") throw new Error("netproxy: no listen address");
 
+	/** Cut established connections whose host is now governed by a fault it was not governed by before. */
+	function cutChangedFaults(previous: ProxyConditions["faults"]): void {
+		for (const [socket, host] of [...hosts]) {
+			const now = faultFor(conditions.faults, host);
+			if (!now) continue;
+			const was = faultFor(previous, host);
+			if (was && JSON.stringify(was) === JSON.stringify(now)) continue;
+			socket.destroy();
+		}
+	}
+
 	function update(change: ConditionsUpdate): void {
 		const before = conditions.params.offline;
+		const previousFaults = conditions.faults;
 		conditions = {
 			params: change.params ?? conditions.params,
 			faults: change.faults ?? conditions.faults,
@@ -263,6 +279,8 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 		if (before === undefined && conditions.params.offline !== undefined) {
 			for (const socket of [...open]) socket.destroy();
 		}
+		// a fault applies per connection at open, so a tunnel that is already up (HTTP/2 keep-alive) would never see it
+		cutChangedFaults(previousFaults);
 	}
 
 	const status = (): ProxyStatus => ({ ...conditions, pid: process.pid, stats: { ...stats } });

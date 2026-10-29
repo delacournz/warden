@@ -336,6 +336,63 @@ describe("going offline", () => {
 	});
 });
 
+describe("changing faults", () => {
+	/** An open CONNECT tunnel to `host` (an echo server behind it); resolves once the tunnel answers. */
+	async function openTunnel(p: RunningProxy, host: string): Promise<{ socket: Socket; closed: () => boolean }> {
+		const socket = connect({ host: "127.0.0.1", port: p.handle.port });
+		let isClosed = false;
+		socket.on("close", () => {
+			isClosed = true;
+		});
+		socket.on("error", () => {});
+		await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+		socket.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n\r\n`);
+		await new Promise<void>((resolve) => socket.once("data", () => resolve()));
+		return { socket, closed: () => isClosed };
+	}
+
+	async function startWithEcho(): Promise<RunningProxy> {
+		const echo = createServer((s) => s.pipe(s));
+		extraServers.push(echo);
+		await new Promise<void>((r) => echo.listen(0, "127.0.0.1", r));
+		return start({}, (echo.address() as { port: number }).port);
+	}
+
+	for (const action of [{ kind: "reset" }, { kind: "blackhole" }, { kind: "delay", ms: 200 }] as const) {
+		test(`a new ${action.kind} fault cuts the matching established tunnel and leaves others up`, async () => {
+			const p = await startWithEcho();
+			const target = await openTunnel(p, "speed.test");
+			const other = await openTunnel(p, "other.test");
+			await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action }] });
+			await Bun.sleep(150);
+			expect(target.closed()).toBe(true);
+			expect(other.closed()).toBe(false);
+			other.socket.destroy();
+		});
+	}
+
+	test("a changed fault cuts the tunnel; resending the same fault does not", async () => {
+		const p = await startWithEcho();
+		await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action: { kind: "delay", ms: 10 } }] });
+		const tunnel = await openTunnel(p, "speed.test");
+		await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action: { kind: "delay", ms: 10 } }] });
+		await Bun.sleep(150);
+		expect(tunnel.closed()).toBe(false);
+		await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action: { kind: "delay", ms: 500 } }] });
+		await Bun.sleep(150);
+		expect(tunnel.closed()).toBe(true);
+	});
+
+	test("clearing faults leaves established tunnels up", async () => {
+		const p = await startWithEcho();
+		const tunnel = await openTunnel(p, "speed.test");
+		await setProxyConditions(p.handle, { faults: [] });
+		await Bun.sleep(150);
+		expect(tunnel.closed()).toBe(false);
+		tunnel.socket.destroy();
+	});
+});
+
 describe("control channel", () => {
 	test("status reports conditions, pid and counters", async () => {
 		const p = await start({ conditions: { params: { latencyMs: 5 } } });
