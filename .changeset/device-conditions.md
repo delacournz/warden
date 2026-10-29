@@ -17,3 +17,4 @@
 - New `warden ui location set|route|gpx|scenario|clear|status` and `warden ui clock set|advance|status|reset`; `warden ui status` lists the conditions active on the lease.
 - Releasing a lease also puts a still-running iOS app launched with network or clock conditions back online and on the real clock.
 - More conditions: app permissions (`device.permissions.set`, `warden ui permission`), timezone and locale, text size and contrast (`device.a11y`), battery level and charging (Android real, iOS status bar only), Android memory warnings and iOS push notifications. Each is undone when the lease is released.
+- Conditions left behind by a lease that expired or was deleted any other way (including by an older `warden`) are undone before the device is claimed again, and by `warden gc` for unleased devices.
