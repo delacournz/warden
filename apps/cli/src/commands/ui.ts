@@ -1,5 +1,6 @@
 import { registerAuthoringCommands } from "../agent-ui/authoring-register";
 import type { CloseOptionValues } from "../agent-ui/close";
+import { registerConditionCommands } from "../agent-ui/conditions-register";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { withUiOptions } from "../agent-ui/ui-options";
@@ -315,6 +316,7 @@ export function createUiCommand(deps: UiDeps): Command {
 			});
 			registerAuthoringCommands(cmd, ctx, done, deps);
 			registerDevtoolsCommands(cmd, ctx, done, deps);
+			registerConditionCommands(cmd, ctx, done, deps);
 		},
 	});
 }

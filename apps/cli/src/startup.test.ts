@@ -217,6 +217,8 @@ describe("cold start: warden ui", () => {
 		"/agent-ui/controls.ts",
 		"/agent-ui/gestures.ts",
 		"/agent-ui/ui-driver.ts",
+		"/agent-ui/conditions.ts",
+		"/agent-ui/conditions-real.ts",
 	];
 	const without = (needles: string[], skip: string) => needles.filter((needle) => needle !== skip);
 
@@ -226,6 +228,8 @@ describe("cold start: warden ui", () => {
 			["ui", "snapshot", "--help"],
 			["ui", "press", "--help"],
 			["ui", "record", "start", "--help"],
+			["ui", "net", "--help"],
+			["ui", "location", "--help"],
 		]) {
 			const files = await loadedBy(args);
 			expect(loaded(files, [...OTHERS, "/packages/e2e/", "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
@@ -249,6 +253,19 @@ describe("cold start: warden ui", () => {
 		const files = await loadedBy(["ui", "gesture", "pinch", "@e1", "2", "--json"]);
 		expect(has(files, "/agent-ui/gestures.ts")).toBe(true);
 		expect(loaded(files, [...without(OTHERS, "/agent-ui/gestures.ts"), ...DRIVERS, "/agent-ui/query.ts"])).toEqual([]);
+	});
+
+	test("`ui net` / `ui location` without a lease load conditions.ts, not its real side effects or any driver", async () => {
+		for (const args of [
+			["ui", "net", "3g", "--json"],
+			["ui", "location", "set", "1,2", "--json"],
+		]) {
+			const files = await loadedBy(args);
+			expect(has(files, "/agent-ui/conditions.ts")).toBe(true);
+			expect(
+				loaded(files, [...without(OTHERS, "/agent-ui/conditions.ts"), ...DRIVERS, "/agent-ui/actions.ts"])
+			).toEqual([]);
+		}
 	});
 
 	test("`ui status` and `ui close` read the helper record without loading a driver", async () => {

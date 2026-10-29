@@ -18,9 +18,11 @@ import type { Owner } from "@delacour/warden-core/types";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
+import type { NetworkProxyPort } from "@delacour/warden-e2e/driver/network-proxy";
 import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { selfCommand } from "../self-command";
 import { driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
@@ -421,10 +423,6 @@ export const ANDROID_HOST_KIND: HelperKind = {
 };
 
 /** argv that re-runs this warden: the compiled binary, or `bun <cli.ts>` from source (as `autogc.ts`). */
-function selfCommand(): string[] {
-	return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
-}
-
 const rowKey = (kind: HelperKind, id: string) => `${kind.rowPrefix}:${id}`;
 
 type SpawnRow = { pid: number; at: number };
@@ -870,7 +868,8 @@ export async function ensureHelperOf<C extends HelperClient>(
 export async function connectHelper(
 	ctx: CommandContext,
 	udid: string,
-	opts: EnsureHelperOptions = {}
+	opts: EnsureHelperOptions = {},
+	extras: { networkProxy?: NetworkProxyPort } = {}
 ): Promise<Result<Driver, UiError>> {
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
@@ -882,6 +881,7 @@ export async function connectHelper(
 		socketPath,
 		...(client ? { client } : {}),
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
+		...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
 		now: ctx.now,
 	});
 	if (driver.success) return driver;

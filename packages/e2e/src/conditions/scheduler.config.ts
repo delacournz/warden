@@ -18,6 +18,8 @@ export type SchedulerConfig = {
 	lease?: Pick<Lease, "id" | "owner" | "ttlMs">;
 	/** iOS only: the app the injected dylib state belongs to */
 	bundleId?: string;
+	/** iOS only: argv prefix that starts the shaping proxy when the schedule needs one (a compiled `warden`: its `__netproxy`); default `bun netproxy.main.ts` */
+	proxyCommand?: string[];
 } & ({ mode: "flap"; flap: FlapOptions } | { mode: "timeline"; steps: TimelineStep[] });
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;

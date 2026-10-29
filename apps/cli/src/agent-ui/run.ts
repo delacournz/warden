@@ -7,6 +7,9 @@ import type { UiDeps } from "./driver";
 import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, uiError } from "./output";
 import { DEFAULT_UI_TIMEOUT_MS } from "./ui-options";
 
+/** Subcommands that only read: a device a live warden process holds is reported on, not refused. */
+const READ_ONLY: ReadonlySet<string> = new Set(["status", "net status", "location status"]);
+
 /** Values `withUiOptions` parses to. */
 export type UiOptionValues = UiDeviceFlags & { timeout?: string; record: boolean; json?: true };
 
@@ -44,7 +47,7 @@ export async function runUi(
 		const timeout = parseTimeout(opts.timeout);
 		if (!timeout.success) return reportError(ctx, report, timeout.error);
 		// `status` opens no driver: it reports a busy device instead of refusing
-		const exclusive = opts.force !== true && command !== "status";
+		const exclusive = opts.force !== true && !READ_ONLY.has(command);
 		const device = await resolveUiDevice(ctx, opts, {
 			exclusive,
 			...(deps.pidAlive ? { pidAlive: deps.pidAlive } : {}),

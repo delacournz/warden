@@ -60,7 +60,10 @@ const openIosTarget: TargetOpener = (config) => {
 	const home = wardenHome(env);
 	const store = openStore(defaultDbPath(env));
 	const ios = createIosNetwork({
-		proxy: leaseNetworkProxy({ store, env, now: () => Date.now() }, lease),
+		proxy: leaseNetworkProxy(
+			{ store, env, now: () => Date.now(), ...(config.proxyCommand ? { command: config.proxyCommand } : {}) },
+			lease
+		),
 		channel: createInjectChannel({
 			statePath: injectStatePath(home, udid),
 			now: () => Date.now(),
