@@ -111,6 +111,12 @@ describe("fakeDriver", () => {
 		expect(unwrap(await d.elementAtPoint({ x: 9999, y: 9999 }))).toBeNull();
 	});
 
+	test("location is recorded and succeeds by default", async () => {
+		const d = fakeDriver({ screens: [home] });
+		expect((await d.location({ kind: "point", lat: 1, lon: 2 })).success).toBe(true);
+		expect(d.calls.at(-1)).toEqual({ method: "location", op: { kind: "point", lat: 1, lon: 2 } });
+	});
+
 	test("stateful defaults: orientation, appearance, clipboard, app lifecycle", async () => {
 		const d = fakeDriver({ screens: [home] });
 		expect(unwrap(await d.orientation())).toBe("portrait");

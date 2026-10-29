@@ -1,4 +1,4 @@
-import type { NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type { LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 
 /**
@@ -235,6 +235,12 @@ export interface Driver {
 	 * until the per-app proxy (COND-5). `flap` is the scheduler's (COND-6) and is `E_UNSUPPORTED` here.
 	 */
 	network(op: NetworkCondition): DriverResult<NetworkState>;
+	/**
+	 * Simulated location: a point, a route (waypoints or GPX, played at `speedMps`), a bundled scenario, or clear.
+	 * iOS: `simctl location` (the sim plays routes itself, no loop). Android: emulator `geo fix`, routes ticked by
+	 * warden until the next op or `close()`; `clear` keeps the last fix. Physical devices: `E_UNSUPPORTED`.
+	 */
+	location(op: LocationCondition): DriverResult<void>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }

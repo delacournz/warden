@@ -9,6 +9,8 @@ import {
 	dumpStdoutArgv,
 	dumpTtyHostArgv,
 	forceStopArgv,
+	geoFixArgv,
+	geoFixFailure,
 	gestureMotionCommand,
 	getpropArgv,
 	installArgv,
@@ -292,6 +294,27 @@ describe("device/app query argv", () => {
 	test("install/uninstall are host argv", () => {
 		expect(installArgv("adb", "s1", "/a b/app.apk")).toEqual(["adb", "-s", "s1", "install", "-r", "/a b/app.apk"]);
 		expect(uninstallArgv("adb", "s1", "com.x")).toEqual(["adb", "-s", "s1", "uninstall", "com.x"]);
+	});
+
+	test("geo fix puts LONGITUDE before latitude", () => {
+		expect(geoFixArgv("adb", "emulator-5554", { lat: 37.3318, lon: -122.0312 })).toEqual([
+			"adb",
+			"-s",
+			"emulator-5554",
+			"emu",
+			"geo",
+			"fix",
+			"-122.0312",
+			"37.3318",
+		]);
+		expect(geoFixArgv("adb", "e", { lat: -36.85, lon: 174.76 }, 12.5).slice(-3)).toEqual(["174.76", "-36.85", "12.5"]);
+	});
+
+	test("geo fix failure reads the console KO that adb exits 0 on", () => {
+		const base = { exitCode: 0, stdout: "OK\n", stderr: "" };
+		expect(geoFixFailure(base)).toBeUndefined();
+		expect(geoFixFailure({ ...base, stdout: "KO: bad arguments\n" })).toBe("emulator console: KO bad arguments");
+		expect(geoFixFailure({ exitCode: 1, stdout: "", stderr: "error: device offline" })).toContain("device offline");
 	});
 
 	test("queries and settings", () => {

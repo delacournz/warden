@@ -209,6 +209,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			appearance: (set) => call("appearance", set),
 			clipboard: (set) => call("clipboard", set),
 			network: (op) => call("network", op),
+			location: (op) => call("location", op),
 			app,
 			close,
 		};

@@ -639,6 +639,7 @@ export function createIosDriver(
 				"E_UNSUPPORTED",
 				"network conditions on iOS simulators are not available yet: they need the per-app proxy (COND-5)"
 			),
+		location: (op) => simctl.location(op),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);
