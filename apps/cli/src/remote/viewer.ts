@@ -148,7 +148,10 @@ export type OpenViewerInput = {
 	binary: string;
 	lease: Lease;
 	scope: ViewerScope;
-	/** write one token and walk away: no refresh, no heartbeats, the lease TTL applies */
+	/**
+	 * write one token and walk away: no refresh, no heartbeats, the lease TTL applies. The first stdin line says
+	 * `detached: true`, so the viewer outlives the closed stdin and exits when that token expires.
+	 */
 	detach: boolean;
 	/** aborts to close the viewer (Ctrl+C): stdin is closed, then the process is killed after `CLOSE_GRACE_MS` */
 	signal?: AbortSignal;
@@ -205,6 +208,7 @@ export async function openViewer(ctx: CommandContext, input: OpenViewerInput): A
 			scope,
 			title: `${name} · warden`,
 			platform,
+			detached: detach,
 		})
 	);
 

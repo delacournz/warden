@@ -72,6 +72,7 @@ describe("openViewer", () => {
 			scope: "drive",
 			title: "iphone-17 · warden",
 			platform: "ios",
+			detached: false,
 		});
 		const [spawned] = viewer.spawns;
 		expect(spawned?.cmd).toEqual(["/bin/viewer"]);
@@ -143,6 +144,7 @@ describe("openViewer", () => {
 		expect(result).toEqual({ success: true, data: { exitCode: 0, events: [], pid: 4242, detached: true } });
 		expect(server.viewerTokens).toEqual([{ deviceId: "rd1", scope: "drive", ttlS: DETACHED_TTL_S, token: "wvt_1" }]);
 		expect(viewer.stdin).toHaveLength(1);
+		expect(viewer.stdin[0]?.detached).toBe(true);
 		expect(viewer.stdinClosed()).toBe(true);
 		expect(viewer.released()).toBe(true);
 		expect(viewer.spawns[0]?.detached).toBe(true);
