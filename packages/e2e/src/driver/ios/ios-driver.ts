@@ -894,6 +894,7 @@ function iosNetworkFactory(
 				statePath: injectStatePath(wardenHome, o.udid),
 				now,
 				sleep,
+				bundleId: ctx.lastBundle,
 				...(o.injectFs ? { fs: o.injectFs } : {}),
 			}),
 			dylib: () =>

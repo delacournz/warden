@@ -11,7 +11,7 @@
 //
 // Control channel: the simulator shares the host filesystem, so the channel is a file. The host replaces
 // `WARDEN_INJECT_STATE` atomically (write + rename); a vnode watch on its directory fires, the new state is applied
-// and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool}` (`proxy`: launched with WARDEN_NET_PROXY). No sockets, no polling, nothing running while idle.
+// and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool,"bundle":id}` (`proxy`: launched with WARDEN_NET_PROXY; `bundle`: so the host ignores another injected app). No sockets, no polling, nothing running while idle.
 //
 // Covered: NSURLSession (default/ephemeral/background configurations and sessionWithConfiguration:*), network path
 // APIs (nw_path_get_status, nw_path_uses_interface_type, NWPathMonitor update handlers re-fired on change),
@@ -303,7 +303,8 @@ INTERPOSE(rep_cf_abs, CFAbsoluteTimeGetCurrent);
 
 static void write_ack(long long seq) {
   NSString *ack = [g_state_path stringByAppendingString:@".ack"];
-  NSString *body = [NSString stringWithFormat:@"{\"seq\":%lld,\"pid\":%d,\"proxy\":%s}", seq, getpid(), g_proxy_dict ? "true" : "false"];
+  NSString *bundle = [[NSBundle mainBundle] bundleIdentifier] ?: @"";  // reverse-DNS: nothing to escape
+  NSString *body = [NSString stringWithFormat:@"{\"seq\":%lld,\"pid\":%d,\"proxy\":%s,\"bundle\":\"%@\"}", seq, getpid(), g_proxy_dict ? "true" : "false", bundle];
   [body writeToFile:ack atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 

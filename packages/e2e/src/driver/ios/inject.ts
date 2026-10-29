@@ -24,8 +24,8 @@ export const INJECT_DYLIB_ENV = "WARDEN_INJECT_DYLIB";
  */
 export type InjectState = { seq: number; offline?: boolean; clockOffsetMs?: number; clockFrozenMs?: number };
 
-/** What the dylib answers in `<state>.ack` once it applied `seq`. */
-export type InjectAck = { seq: number; pid: number; proxy?: boolean };
+/** What the dylib answers in `<state>.ack` once it applied `seq` (`bundleId`: the app it loaded into). */
+export type InjectAck = { seq: number; pid: number; proxy?: boolean; bundleId?: string };
 
 export function encodeInjectState(state: InjectState): string {
 	return JSON.stringify({
@@ -59,7 +59,12 @@ export function parseInjectAck(text: string): InjectAck | undefined {
 	try {
 		const data: unknown = JSON.parse(text);
 		if (!isRecord(data) || typeof data.seq !== "number" || typeof data.pid !== "number") return undefined;
-		return { seq: data.seq, pid: data.pid, proxy: data.proxy === true };
+		return {
+			seq: data.seq,
+			pid: data.pid,
+			proxy: data.proxy === true,
+			...(typeof data.bundle === "string" ? { bundleId: data.bundle } : {}),
+		};
 	} catch {
 		return undefined;
 	}
@@ -209,7 +214,7 @@ export type InjectChannel = {
 	current(): InjectState;
 	/** Write the whole next state (`seq` assigned here). */
 	write(next: Omit<InjectState, "seq">): InjectState;
-	/** The injected process that answered last, when it is still alive. */
+	/** The injected process that answered last, when it is still alive and is the app under test. */
 	attached(): InjectAck | undefined;
 	/** Wait until the app acknowledged `seq`; `false` on timeout. */
 	acked(seq: number, timeoutMs: number): Promise<boolean>;
@@ -222,6 +227,8 @@ export function createInjectChannel(input: {
 	fs?: InjectFs;
 	now: () => number;
 	sleep: (ms: number) => Promise<void>;
+	/** the app under test; an ack from another app (another injected bundle still running) is ignored. None = any */
+	bundleId?: () => string | undefined;
 }): InjectChannel {
 	const fs = input.fs ?? nodeInjectFs;
 	const { statePath, now, sleep } = input;
@@ -232,7 +239,10 @@ export function createInjectChannel(input: {
 	};
 	const readAck = (): InjectAck | undefined => {
 		const text = fs.read(ackPath);
-		return text ? parseInjectAck(text) : undefined;
+		const ack = text ? parseInjectAck(text) : undefined;
+		if (!ack || !fs.pidAlive(ack.pid)) return undefined;
+		const want = input.bundleId?.();
+		return want && ack.bundleId && ack.bundleId !== want ? undefined : ack;
 	};
 	return {
 		statePath,
@@ -243,15 +253,12 @@ export function createInjectChannel(input: {
 			fs.writeAtomic(statePath, encodeInjectState(state));
 			return state;
 		},
-		attached() {
-			const ack = readAck();
-			return ack && fs.pidAlive(ack.pid) ? ack : undefined;
-		},
+		attached: readAck,
 		async acked(seq, timeoutMs) {
 			const deadline = now() + timeoutMs;
 			for (;;) {
 				const ack = readAck();
-				if (ack && ack.seq >= seq && fs.pidAlive(ack.pid)) return true;
+				if (ack && ack.seq >= seq) return true;
 				if (now() >= deadline) return false;
 				await sleep(20);
 			}

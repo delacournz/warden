@@ -174,12 +174,13 @@ function memoryFs(alive: Set<number> = new Set()) {
 }
 
 describe("createInjectChannel", () => {
-	function channel(alive: number[] = []) {
+	function channel(alive: number[] = [], bundleId?: string) {
 		const mem = memoryFs(new Set(alive));
 		let t = 1_000;
 		const ch = createInjectChannel({
 			statePath: "/s/state.json",
 			fs: mem.fs,
+			bundleId: () => bundleId,
 			now: () => t,
 			sleep: async (ms) => {
 				t += ms;
@@ -203,6 +204,27 @@ describe("createInjectChannel", () => {
 		expect(ch.attached()).toEqual({ seq: 1, pid: 77, proxy: true });
 		alive.delete(77);
 		expect(ch.attached()).toBeUndefined();
+	});
+
+	test("an ack from another app (still alive) is not the app under test", async () => {
+		const { ch, files } = channel([77], "com.example");
+		files.set("/s/state.json.ack", '{"seq":1,"pid":77,"proxy":true,"bundle":"nz.probe"}');
+		expect(ch.attached()).toBeUndefined();
+		const state = ch.write({ offline: true });
+		files.set("/s/state.json.ack", JSON.stringify({ seq: state.seq, pid: 77, bundle: "nz.probe" }));
+		expect(await ch.acked(state.seq, 100)).toBe(false);
+		files.set("/s/state.json.ack", JSON.stringify({ seq: state.seq, pid: 77, bundle: "com.example" }));
+		expect(ch.attached()).toEqual({ seq: state.seq, pid: 77, proxy: false, bundleId: "com.example" });
+		expect(await ch.acked(state.seq, 100)).toBe(true);
+	});
+
+	test("with no bundle known, or an ack without one, any live app counts", () => {
+		const { ch, files } = channel([77]);
+		files.set("/s/state.json.ack", '{"seq":1,"pid":77,"bundle":"nz.probe"}');
+		expect(ch.attached()?.pid).toBe(77);
+		const known = channel([77], "com.example");
+		known.files.set("/s/state.json.ack", '{"seq":1,"pid":77}');
+		expect(known.ch.attached()?.pid).toBe(77);
 	});
 
 	test("acked waits on the injected clock and times out", async () => {
