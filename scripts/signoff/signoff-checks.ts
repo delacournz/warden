@@ -12,7 +12,7 @@
  *
  *   `always: true`  — typecheck / check / test. Nothing can change without them being relevant, so
  *                     they run on every pull request.
- *   `always: false` — `native` (warden-simd), `cpu-guard`. Path-gated, so most pull requests never run them.
+ *   `always: false` — `native` (warden-simd), `viewer` (Tauri), `cpu-guard`. Path-gated, so most pull requests never run them.
  *
  * Only the umbrella `signoff` context is required by `develop`'s branch protection (`gh signoff
  * install`). The sub-contexts are written for the checks panel but gate nothing on their own:
@@ -113,6 +113,21 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 		],
 		// SwiftPM holds an exclusive lock on its build dir; never two Swift builds at once.
 		locks: ["swiftpm"],
+	},
+	{
+		context: "viewer",
+		label: "viewer (cargo test)",
+		always: false,
+		paths: ["apps/viewer/**"],
+		workflow: "ci.yml",
+		// The TS side (typecheck, check, bun test) is already covered by the always-on checks. Rust needs the
+		// frontend built first: tauri::generate_context! reads `frontendDist` at compile time.
+		run: [
+			{ argv: ["bun", "run", "--cwd", "apps/viewer", "build:frontend"] },
+			{ argv: ["bun", "run", "--cwd", "apps/viewer", "test:rust"] },
+		],
+		// Cargo holds an exclusive lock on its target dir; never two builds of it at once.
+		locks: ["viewer-cargo"],
 	},
 	{
 		context: "cpu-guard",

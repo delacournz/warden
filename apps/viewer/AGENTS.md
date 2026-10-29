@@ -42,6 +42,28 @@ bun run typecheck && bun run check
 
 Smoke: `echo '{"apiUrl":"http://127.0.0.1:9","deviceId":"d1","token":"wvt_x","expiresAt":"2030-01-01T00:00:00Z","scope":"drive","title":"t","platform":"ios"}' | "<bundle>/Contents/MacOS/warden-viewer"` prints `{"event":"ready"}`; closing stdin exits 0.
 
+## Release
+
+`release.yml`'s `viewer` job (matrix: `darwin-arm64`, `darwin-x64` cross-compiled on the Mac runner, `win32-x64` on `windows-latest`) runs `tauri build`, `bun run pack:asset <target>` (writes `dist-assets/warden-viewer-<target>.tgz` with `warden viewer.app/` or `warden-viewer.exe` at the archive root, via `tar` so the exec bit and symlinks survive) and uploads it. `publish` merges the three sha256 lines into the release's `SHA256SUMS` and attaches the tarballs. The CLI downloads them for tag `v<version>`.
+
+Secrets (repo, or the `release` environment the job runs in). All signing ones are optional: missing, the build is unsigned and a `::warning::` is printed.
+
+| Secret | What |
+|---|---|
+| `NPM_READ_TOKEN` | classic PAT with `read:packages`, installs `@delacournz/apogee` (required) |
+| `APPLE_CERTIFICATE` | base64 of the Developer ID Application `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` password |
+| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Name (TEAMID)` |
+| `APPLE_API_ISSUER` | App Store Connect API issuer id |
+| `APPLE_API_KEY` | App Store Connect API key id |
+| `APPLE_API_KEY_CONTENT` | the `.p8` key file's content (written to a temp file, passed to Tauri as `APPLE_API_KEY_PATH`) |
+| `WINDOWS_CERTIFICATE` | optional, base64 of an Authenticode `.pfx` |
+| `WINDOWS_CERTIFICATE_PASSWORD` | optional, the `.pfx` password |
+
+All six `APPLE_*` must be set for macOS signing; otherwise none is used. Signed builds use the hardened runtime and are notarized and stapled by Tauri. There is no entitlements file on purpose: the viewer only receives WebRTC video in WKWebView, needs no camera or microphone, and is not sandboxed. Do not enable the App Sandbox. Windows builds a bare exe (`--no-bundle`); the `windows_subsystem = "windows"` GUI process still reads the parent's piped stdin/stdout.
+
+Local pack: `bun run tauri:build -- --bundles app && bun run pack:asset darwin-arm64` (add `--profile debug` after a debug build).
+
 ## Rules
 
 - TDD: pure logic gets a failing `*.test.ts` first; Rust pure bits get `#[cfg(test)]` tests.

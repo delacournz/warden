@@ -93,12 +93,14 @@ jobs:
       - run: bun run check
       - run: bun run test
 
-  # Paths filter for the native job: does this commit touch packages/e2e/native/** against develop?
+  # Paths filter for the native and viewer jobs: does this commit touch packages/e2e/native/** or apps/viewer/**
+  # against develop?
   native-changes:
     needs: validate
     runs-on: namespace-profile-linux-small
     outputs:
       native: ${{ steps.paths.outputs.native }}
+      viewer: ${{ steps.paths.outputs.viewer }}
     steps:
       - id: paths
         env:
@@ -106,11 +108,17 @@ jobs:
           SHA: ${{ inputs.signoff-sha }}
         run: |
           # An unreadable compare runs native rather than skipping it.
-          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || printf 'packages/e2e/native/\napps/viewer/\n')
           if echo "$files" | grep -q '^packages/e2e/native/'; then
             echo "native=true" >> "$GITHUB_OUTPUT"
           else
             echo "native=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Markdown never affects the viewer's Rust (signoff-checks.ts ignores it the same way).
+          if echo "$files" | grep -q '^apps/viewer/' && echo "$files" | grep '^apps/viewer/' | grep -qv '\.md$'; then
+            echo "viewer=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "viewer=false" >> "$GITHUB_OUTPUT"
           fi
 
   # warden-simd (Swift, links idb's library package): deps + build + swift test. macOS-only, so it has its own job.
@@ -152,12 +160,43 @@ jobs:
       - run: bun run --cwd packages/e2e native:build
       - run: swift test --package-path packages/e2e/native/ios
 
+  # The viewer's Rust tests (apps/viewer, Tauri). Its TypeScript is covered by the `checks` job. Path-gated,
+  # never a required context: the umbrella still waits on it through the `signoff` job below.
+  viewer:
+    needs: native-changes
+    if: needs.native-changes.outputs.viewer == 'true'
+    runs-on: namespace-profile-mac-small
+    steps:
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+        with:
+          ref: ${{ inputs.signoff-sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # v1 (stable toolchain)
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          workspaces: apps/viewer/src-tauri -> target
+
+      # `@delacournz/apogee` (GitHub Packages) needs the read:packages token; only the viewer's closure is installed.
+      - run: bun install --frozen-lockfile --filter @delacour/warden-viewer
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_READ_TOKEN }}
+      - run: bun run --cwd apps/viewer build:frontend
+      - run: bun run --cwd apps/viewer test:rust
+
   # Writes the statuses, sub-contexts first and the required `signoff` umbrella last, only when every
   # applicable check passed. Skipped jobs count as passing for `needs`, so results are checked explicitly.
   # A failed or cancelled check settles the pending `signoff` as failure, so the PR never shows a run
   # that is still "in progress" after it ended.
   signoff:
-    needs: [pending, checks, native-changes, native]
+    needs: [pending, checks, native-changes, native, viewer]
     if: always()
     runs-on: namespace-profile-linux-small
     permissions:
@@ -168,6 +207,7 @@ jobs:
           SHA: ${{ inputs.signoff-sha }}
           CHECKS: ${{ needs.checks.result }}
           NATIVE: ${{ needs.native.result }}
+          VIEWER: ${{ needs.viewer.result }}
           NATIVE_CHANGES: ${{ needs.native-changes.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -182,6 +222,9 @@ jobs:
           # native is skipped when the commit does not touch packages/e2e/native/**.
           if [ "$NATIVE" != "success" ] && [ "$NATIVE" != "skipped" ]; then fail "native $NATIVE"; fi
 
+          # viewer is skipped when the commit does not touch apps/viewer/**.
+          if [ "$VIEWER" != "success" ] && [ "$VIEWER" != "skipped" ]; then fail "viewer $VIEWER"; fi
+
           post() {
             gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f "context=$1" \
               -f "description=GitHub Actions (ci) signed off" -f "target_url=$RUN_URL" > /dev/null
@@ -191,5 +234,8 @@ jobs:
           post signoff/test
           if [ "$NATIVE" = "success" ]; then
             post signoff/native
+          fi
+          if [ "$VIEWER" = "success" ]; then
+            post signoff/viewer
           fi
           post signoff
