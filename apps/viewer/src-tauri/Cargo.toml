@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 # Save panel for screenshots. The plugin returns a path only; the PNG is written in session-free Rust.
 tauri-plugin-dialog = "2"
 # Rust-side logging to stderr: stdout carries the process contract and nothing else.

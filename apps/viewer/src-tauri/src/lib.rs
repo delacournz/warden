@@ -13,15 +13,17 @@ fn fail(message: &str) -> ! {
     std::process::exit(1)
 }
 
-/// Detached sessions outlive stdin. Wait for the held token to expire, then tell the window to drop
-/// the stream; the process stays up until the user closes the window.
-fn hold_until_expiry(handle: &tauri::AppHandle) {
-    let state = handle.state::<SessionState>();
-    let expires_at = state.expires_at();
-    while !session::is_expired(&expires_at, OffsetDateTime::now_utc()) {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-    let _ = handle.emit("viewer-expired", ());
+/// A detached session ends by expiry, not by stdin. Poll the held token (a refresh may extend it)
+/// and tell the window to drop the stream once it expires; the process stays up until the user
+/// closes the window.
+fn watch_expiry(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let state = handle.state::<SessionState>();
+        while !session::is_expired(&state.expires_at(), OffsetDateTime::now_utc()) {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        let _ = handle.emit("viewer-expired", ());
+    });
 }
 
 pub fn run() {
@@ -53,6 +55,9 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&title);
             }
+            if app.state::<SessionState>().detached() {
+                watch_expiry(app.handle().clone());
+            }
             // The parent holds stdin open for the session; EOF means it died.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -60,7 +65,7 @@ pub fn run() {
                 session::pump_refreshes(std::io::stdin().lock(), &state, || {
                     match session::eof_action(state.detached()) {
                         EofAction::Exit => handle.exit(0),
-                        EofAction::HoldUntilExpiry => hold_until_expiry(&handle),
+                        EofAction::HoldUntilExpiry => {}
                     }
                 });
             });

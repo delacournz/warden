@@ -376,10 +376,16 @@ pub fn viewer_streaming(device: State<'_, DeviceState>) {
 }
 
 /// Resize the window so the video area has the device's aspect ratio. `chrome_height` is the
-/// toolbar's logical height; the window keeps its height and changes its width, shrinking both when
+/// logical height of everything around the video (bar and insets) and `pad_x` the horizontal
+/// insets; the window keeps its height and changes its width, shrinking both when
 /// the result would not fit the monitor.
 #[tauri::command]
-pub fn fit_window(aspect: f64, chrome_height: f64, window: tauri::WebviewWindow) -> CmdResult<()> {
+pub fn fit_window(
+    aspect: f64,
+    chrome_height: f64,
+    pad_x: f64,
+    window: tauri::WebviewWindow,
+) -> CmdResult<()> {
     if !(aspect.is_finite() && aspect > 0.0) {
         return Err(ApiError::new("BAD_ASPECT", "aspect must be positive"));
     }
@@ -389,13 +395,14 @@ pub fn fit_window(aspect: f64, chrome_height: f64, window: tauri::WebviewWindow)
     let inner = window
         .inner_size()
         .map_err(|e| ApiError::new("WINDOW", e.to_string()))?;
-    let (mut width, mut height) = fit_size(aspect, chrome_height, inner.height as f64 / scale);
+    let (mut width, mut height) =
+        fit_size(aspect, chrome_height, pad_x, inner.height as f64 / scale);
     if let Ok(Some(monitor)) = window.current_monitor() {
         let m = monitor.size();
         let (max_w, max_h) = (m.width as f64 / scale * 0.9, m.height as f64 / scale * 0.9);
         if width > max_w || height > max_h {
             let shrink = (max_w / width).min(max_h / height);
-            (width, height) = fit_size(aspect, chrome_height, height * shrink);
+            (width, height) = fit_size(aspect, chrome_height, pad_x, height * shrink);
         }
     }
     window
@@ -404,11 +411,11 @@ pub fn fit_window(aspect: f64, chrome_height: f64, window: tauri::WebviewWindow)
     Ok(())
 }
 
-/// Window size (logical) that keeps `height` and gives the video area below `chrome_height` the
-/// requested aspect ratio.
-pub fn fit_size(aspect: f64, chrome_height: f64, height: f64) -> (f64, f64) {
+/// Window size (logical) that keeps `height` and gives the video area, inside `chrome_height` of
+/// bar and insets and `pad_x` of side insets, the requested aspect ratio.
+pub fn fit_size(aspect: f64, chrome_height: f64, pad_x: f64, height: f64) -> (f64, f64) {
     let video_height = (height - chrome_height).max(1.0);
-    ((video_height * aspect).round(), height.round())
+    ((video_height * aspect + pad_x).round(), height.round())
 }
 
 #[cfg(test)]
@@ -492,7 +499,7 @@ mod tests {
 
     #[test]
     fn fit_size_keeps_height_and_derives_width() {
-        assert_eq!(fit_size(0.5, 40.0, 840.0), (400.0, 840.0));
+        assert_eq!(fit_size(0.5, 48.0, 12.0, 888.0), (432.0, 888.0));
     }
 
     #[test]
