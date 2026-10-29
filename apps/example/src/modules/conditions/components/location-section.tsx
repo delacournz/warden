@@ -15,7 +15,7 @@ export function LocationSection(): ReactElement {
 		<Card>
 			<Card.Header>
 				<Card.Title>Location</Card.Title>
-				<Card.Description>{`Geofence ${GEOFENCE.radiusM} m around ${GEOFENCE.lat}, ${GEOFENCE.lon}`}</Card.Description>
+				<Card.Description>{`${GEOFENCE.radiusM} m geofence at ${GEOFENCE.lat}, ${GEOFENCE.lon}`}</Card.Description>
 			</Card.Header>
 			<Card.Content className="gap-1">
 				<Text.Caption accessible testID="conditions-permission">

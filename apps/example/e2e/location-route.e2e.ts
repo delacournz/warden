@@ -14,14 +14,26 @@ test("a route through the geofence shows Inside, then Outside after the exit", a
 	await device.location.set(NORTH);
 	await openConditions(app, device, screen);
 
-	/** The permission outlives a run on a reused device: ask only when it is not granted already. */
+	/**
+	 * The permission outlives a run on a reused device: ask only when it is not granted already. iOS sometimes raises
+	 * no prompt for a process that asked early (nothing on screen, `canAskAgain` still true), so the second attempt
+	 * asks again from a fresh launch.
+	 */
 	const permission = screen.getByTestId(ids.conditions.permission);
-	const granted = await pollUntil(
-		() => permission.text(),
-		(text) => text === "granted",
-		3_000
-	);
-	if (granted !== "granted") await screen.getByTestId(ids.conditions.enableLocation).tap();
+	for (let attempt = 1; attempt <= 2; attempt++) {
+		await expect(permission).toBeVisible();
+		const granted = await pollUntil(
+			() => permission.text(),
+			(text) => text === "granted",
+			3_000
+		);
+		if (granted === "granted") break;
+		const enable = screen.getByTestId(ids.conditions.enableLocation);
+		await enable.scrollTo();
+		await enable.tap({ until: async () => (await permission.text()) !== "undetermined" });
+		if ((await permission.text()) !== "undetermined") break;
+		if (attempt === 1) await openConditions(app, device, screen);
+	}
 	await expect(permission).toHaveText("granted", { timeout: 15_000 });
 	await expect(screen.getByTestId(ids.conditions.geofence)).toHaveText("Outside", { timeout: 15_000 });
 	await expect(screen.getByTestId(ids.conditions.geofenceLast)).toHaveText("None");

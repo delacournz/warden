@@ -33,27 +33,31 @@ export function NetworkSection(): ReactElement {
 				<Card.Title>Network</Card.Title>
 			</Card.Header>
 			<Card.Content className="gap-1">
-				<Text.Caption accessible testID="conditions-net-connected">
-					{`connected: ${String(isConnected)}`}
-				</Text.Caption>
-				<Text.Caption accessible testID="conditions-net-reachable">
-					{`reachable: ${String(isInternetReachable)}`}
-				</Text.Caption>
-				<Text.Caption accessible testID="conditions-net-type">
-					{`type: ${type}`}
-				</Text.Caption>
+				<View className="flex-row flex-wrap gap-x-3">
+					<Text.Caption accessible testID="conditions-net-connected">
+						{`connected: ${String(isConnected)}`}
+					</Text.Caption>
+					<Text.Caption accessible testID="conditions-net-reachable">
+						{`reachable: ${String(isInternetReachable)}`}
+					</Text.Caption>
+					<Text.Caption accessible testID="conditions-net-type">
+						{`type: ${type}`}
+					</Text.Caption>
+				</View>
 				<Text.Label accessible testID="conditions-fetch-status">
 					{status}
 				</Text.Label>
-				<Text.Caption accessible testID="conditions-fetch-http">
-					{result?.status === null || result === null ? "http: -" : `http: ${result.status}`}
-				</Text.Caption>
-				<Text.Caption accessible testID="conditions-fetch-duration">
-					{result ? `duration: ${result.durationMs} ms` : "duration: -"}
-				</Text.Caption>
-				<Text.Caption accessible testID="conditions-fetch-attempts">
-					{result ? `attempts: ${result.attempts}` : "attempts: -"}
-				</Text.Caption>
+				<View className="flex-row flex-wrap gap-x-3">
+					<Text.Caption accessible testID="conditions-fetch-http">
+						{result?.status === null || result === null ? "http: -" : `http: ${result.status}`}
+					</Text.Caption>
+					<Text.Caption accessible testID="conditions-fetch-duration">
+						{result ? `duration: ${result.durationMs} ms` : "duration: -"}
+					</Text.Caption>
+					<Text.Caption accessible testID="conditions-fetch-attempts">
+						{result ? `attempts: ${result.attempts}` : "attempts: -"}
+					</Text.Caption>
+				</View>
 				<Text.Caption accessible testID="conditions-fetch-key">
 					{result ? `key: ${result.key}` : "key: -"}
 				</Text.Caption>
