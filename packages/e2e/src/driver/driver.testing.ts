@@ -1,4 +1,4 @@
-import type { LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type { HostFault, LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
@@ -29,6 +29,7 @@ import type {
 } from "./driver.types";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
+import { faultNotes } from "./network-proxy";
 import type { PastesText, SelectsAll, SetsText } from "./typing";
 
 /**
@@ -187,6 +188,7 @@ export type DriverCall =
 	| { method: "appearance"; set?: "light" | "dark" }
 	| { method: "clipboard"; set?: string }
 	| { method: "network"; op: NetworkCondition }
+	| { method: "networkFaults"; faults: readonly HostFault[] }
 	| { method: "location"; op: LocationCondition }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
@@ -458,6 +460,9 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 				net = { online: op.kind !== "offline", condition: op, needsProxy: [] };
 				return net;
 			});
+		},
+		async networkFaults(faults) {
+			return run({ method: "networkFaults", faults }, () => ({ notes: faultNotes(faults) }));
 		},
 		async location(op) {
 			return run({ method: "location", op }, () => undefined);

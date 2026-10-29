@@ -25,6 +25,7 @@ import type {
 } from "../driver.types";
 import { driverErr } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { NetworkProxyPort } from "../network-proxy";
 import type { DetectsAlerts } from "../observation-cache";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
@@ -79,7 +80,7 @@ import {
 	waitForBoot,
 } from "./android-device";
 import { createDumper, type DumpRoute } from "./android-dump";
-import { applyAndroidNetwork } from "./android-network";
+import { createAndroidNetwork } from "./android-network";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
@@ -112,6 +113,8 @@ export type AndroidDriverOptions = {
 	/** override how the resident shell is spawned (tests) */
 	spawn?: SpawnAdb;
 	log?: Logger;
+	/** the lease's shaping proxy: loss and per-host faults route through it (`createAndroidNetwork`); without it loss stays in `needsProxy` */
+	networkProxy?: NetworkProxyPort;
 	/** skip `wm size`/`wm density` */
 	screen?: ScreenInfo;
 	/** binary runner for screenshots, default {@link bunExecBinary} */
@@ -597,7 +600,14 @@ function buildDriver(
 		return { success: true, data: /Night mode:\s*yes/i.test(res.data) ? "dark" : "light" };
 	};
 
-	const netDeps = { session, exec, adb, serial, clock };
+	const { network: applyNetwork, networkFaults } = createAndroidNetwork({
+		session,
+		exec,
+		adb,
+		serial,
+		clock,
+		...(options.networkProxy ? { proxy: options.networkProxy } : {}),
+	});
 	let flapper: Scheduler | undefined;
 	const stopFlap = async (): Promise<void> => {
 		const running = flapper;
@@ -609,16 +619,16 @@ function buildDriver(
 	 * Any network op ends a running flap first (which puts its base back). `flap` itself applies the base, then
 	 * the scheduler alternates it with offline in this process until the next network op or `close()`.
 	 */
-	const network: Driver["network"] = async (op) => {
+	const network: Driver["network"] = async (op, opts) => {
 		await stopFlap();
-		if (op.kind !== "flap") return applyAndroidNetwork(netDeps, op);
+		if (op.kind !== "flap") return applyNetwork(op, opts);
 		const base = op.base ?? { kind: "online" };
 		if (base.kind === "flap") return driverErr("E_BAD_REQUEST", "flap base cannot itself be a flap");
 		if (!(op.upMs > 0 && op.downMs > 0)) return driverErr("E_BAD_REQUEST", "flap needs upMs and downMs above 0");
-		const applied = await applyAndroidNetwork(netDeps, base);
+		const applied = await applyNetwork(base, opts);
 		if (!applied.success) return applied;
 		const running = startFlap(
-			{ network: (condition) => applyAndroidNetwork(netDeps, condition) },
+			{ network: (condition) => applyNetwork(condition, opts) },
 			{ ...op, base, applyInitial: false },
 			{
 				...(options.tickerClock ?? realTickerClock),
@@ -732,6 +742,7 @@ function buildDriver(
 		appearance,
 		clipboard,
 		network,
+		networkFaults,
 		location,
 		app: createAppCommands({
 			session,

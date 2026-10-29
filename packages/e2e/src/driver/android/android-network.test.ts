@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { fakeProxy } from "../network-proxy.testing";
 import { openAdbSession } from "./adb-session";
 import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
 import {
 	airplaneArgv,
 	applyAndroidNetwork,
+	createAndroidNetwork,
 	DUMPSYS_CONNECTIVITY_ARGV,
+	EMULATOR_HOST_ALIAS,
 	emuNetworkArgv,
 	emuReplyError,
+	httpProxyPutArgv,
 	parseActiveNetwork,
 	svcArgvs,
 } from "./android-network";
@@ -258,5 +262,99 @@ describe("applyAndroidNetwork", () => {
 		const { result } = await run(d, { kind: "offline" });
 		if (result.success) throw new Error("expected failure");
 		expect(result.error.code).toBe("E_TIMEOUT");
+	});
+});
+
+describe("createAndroidNetwork: loss and faults through the lease proxy", () => {
+	/** the device model plus a `settings` store for http_proxy */
+	function proxied(opts: { proxy?: boolean; live?: boolean } = {}) {
+		const d = device();
+		let httpProxy = ":0";
+		d.host.shellRules.unshift(
+			{
+				match: "settings put global http_proxy",
+				reply: (cmd) => {
+					httpProxy = cmd.split(" ").pop() ?? "";
+					return "";
+				},
+			},
+			{ match: "settings get global http_proxy", reply: () => `${httpProxy}\n` }
+		);
+		const proxy = fakeProxy(19_555, opts.live);
+		const session = openAdbSession({ adb: "adb", serial: "emulator-5554", spawn: d.host.spawn });
+		const net = createAndroidNetwork({
+			session,
+			exec: d.host.exec,
+			adb: "adb",
+			serial: "emulator-5554",
+			clock: fakeClock(),
+			...(opts.proxy === false ? {} : { proxy }),
+		});
+		return { d, proxy, net, httpProxy: () => httpProxy, close: () => session.close() };
+	}
+
+	test("argv", () => {
+		expect(httpProxyPutArgv("10.0.2.2:19555")).toEqual(["settings", "put", "global", "http_proxy", "10.0.2.2:19555"]);
+		expect(EMULATOR_HOST_ALIAS).toBe("10.0.2.2");
+	});
+
+	test("loss routes the system proxy at the host alias and the proxy applies only the loss", async () => {
+		const r = proxied();
+		const result = await r.net.network({ kind: "preset", preset: "lossy" });
+		expect(result).toEqual({
+			success: true,
+			data: { online: true, condition: { kind: "preset", preset: "lossy" }, needsProxy: [] },
+		});
+		expect(r.httpProxy()).toBe("10.0.2.2:19555");
+		expect(r.proxy.calls[0]).toMatchObject({ op: "ensure", conditions: { params: { lossPct: 10 }, faults: [] } });
+		expect(r.d.host.host.map((a) => a.slice(3).join(" "))).toEqual([
+			"emu network speed 1000:1000",
+			"emu network delay 200:300",
+		]);
+		await r.close();
+	});
+
+	test("a condition without loss clears the system proxy again", async () => {
+		const r = proxied();
+		await r.net.network({ kind: "preset", preset: "lossy" });
+		await r.net.network({ kind: "preset", preset: "3g" });
+		expect(r.httpProxy()).toBe(":0");
+		await r.close();
+	});
+
+	test("no proxy port: loss stays in needsProxy and the device proxy is untouched", async () => {
+		const r = proxied({ proxy: false });
+		const result = await r.net.network({ kind: "preset", preset: "lossy" });
+		expect(result.success && result.data.needsProxy).toEqual(["loss"]);
+		expect(r.httpProxy()).toBe(":0");
+		await r.close();
+	});
+
+	test("faults route through the proxy and keep the current condition's loss", async () => {
+		const r = proxied();
+		await r.net.network({ kind: "online" });
+		const faults = [{ match: "api.example.com", action: { kind: "status" as const, code: 503 } }];
+		const result = await r.net.networkFaults(faults);
+		expect(result.success && result.data.notes).toHaveLength(1);
+		expect(r.httpProxy()).toBe("10.0.2.2:19555");
+		expect(r.proxy.calls.at(-1)).toMatchObject({ op: "ensure", conditions: { faults } });
+		await r.net.networkFaults([]);
+		expect(r.httpProxy()).toBe(":0");
+		await r.close();
+	});
+
+	test("faults without a proxy port are unsupported and roll back", async () => {
+		const r = proxied({ proxy: false });
+		const result = await r.net.networkFaults([{ match: "x", action: { kind: "reset" } }]);
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		await r.close();
+	});
+
+	test("a proxy setting that does not read back is an error", async () => {
+		const r = proxied();
+		r.d.host.shellRules.unshift({ match: "settings get global http_proxy", reply: "null\n" });
+		const result = await r.net.network({ kind: "preset", preset: "lossy" });
+		expect(!result.success && result.error.code).toBe("E_IO");
+		await r.close();
 	});
 });

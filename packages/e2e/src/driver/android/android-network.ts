@@ -1,8 +1,9 @@
-import type { NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type { HostFault, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { type EmuNetwork, resolveNetwork } from "@delacour/warden-core/conditions/network.presets";
 import type { Exec } from "@delacour/warden-core/exec";
-import type { DriverError, DriverResult, NetworkProxyFeature, NetworkState } from "../driver.types";
+import type { Driver, DriverError, DriverResult, NetworkProxyFeature, NetworkState } from "../driver.types";
 import { driverErr, driverError } from "../errors";
+import { faultNotes, type NetworkProxyPort } from "../network-proxy";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
 import type { Clock } from "./android-device";
@@ -170,4 +171,88 @@ export async function applyAndroidNetwork(
 	if (!emu.ok) return { success: false, error: emu.error };
 	const needsProxy: NetworkProxyFeature[] = plan.shaping.lossPct > 0 ? ["loss"] : [];
 	return { success: true, data: { online: true, condition, needsProxy } };
+}
+
+/** The emulator's alias for the host's loopback: a proxy bound to 127.0.0.1 on the host answers here. */
+export const EMULATOR_HOST_ALIAS = "10.0.2.2";
+
+/** Device shell argv: point the system HTTP(S) proxy at `value` (`host:port`, or `:0` to clear). */
+export function httpProxyPutArgv(value: string): string[] {
+	return ["settings", "put", "global", "http_proxy", value];
+}
+export const HTTP_PROXY_GET_ARGV: readonly string[] = ["settings", "get", "global", "http_proxy"];
+
+/**
+ * Android network conditions, native first: speed, delay and offline stay on the emulator (`applyAndroidNetwork`).
+ * What the console cannot do, packet loss and per-host faults, goes through the lease's shaping proxy: the system
+ * `http_proxy` setting points at it (`10.0.2.2:<port>`) and the proxy applies only `lossPct` and the faults, so the
+ * native delay and bandwidth are not applied twice. Apps that honour the system proxy (OkHttp, HttpURLConnection,
+ * Chromium WebView, therefore React Native fetch) are covered; raw sockets and apps that set `Proxy.NO_PROXY` are not.
+ * Without a proxy port a loss stays in `needsProxy`.
+ */
+export function createAndroidNetwork(deps: AndroidNetworkDeps & { proxy?: NetworkProxyPort }): {
+	network: Driver["network"];
+	networkFaults: Driver["networkFaults"];
+} {
+	const { proxy } = deps;
+	let condition: NetworkCondition = { kind: "online" };
+	let faults: readonly HostFault[] = [];
+	let routed = false;
+
+	const setProxy = async (value: string): DriverResult<void> => {
+		const put = await shell(deps, httpProxyPutArgv(value));
+		if (!put.ok) return driverErr("E_IO", `settings put global http_proxy ${value} failed`);
+		const got = await shell(deps, HTTP_PROXY_GET_ARGV);
+		return got.stdout.trim() === value
+			? { success: true, data: undefined }
+			: driverErr("E_IO", `http_proxy reads back ${JSON.stringify(got.stdout.trim())}, not ${value}`);
+	};
+
+	const unroute = async (): DriverResult<void> => {
+		if (!routed) return { success: true, data: undefined };
+		const cleared = await setProxy(":0");
+		if (cleared.success) routed = false;
+		return cleared;
+	};
+
+	/** Point the device at the proxy with the loss and faults of the current state. */
+	const route = async (): DriverResult<void> => {
+		if (!proxy) return driverErr("E_UNSUPPORTED", "per-host faults need the lease's shaping proxy");
+		const plan = resolveNetwork(condition);
+		const lossPct = plan.online ? plan.shaping.lossPct : 0;
+		const started = await proxy.ensure(condition, { params: lossPct > 0 ? { lossPct } : {}, faults });
+		if (!started.success) return driverErr("E_IO", started.error);
+		const set = await setProxy(`${EMULATOR_HOST_ALIAS}:${started.data.port}`);
+		if (set.success) routed = true;
+		return set;
+	};
+
+	return {
+		async network(op) {
+			const applied = await applyAndroidNetwork(deps, op);
+			if (!applied.success) return applied;
+			condition = op;
+			if (!applied.data.online) return applied;
+			const wantsProxy = applied.data.needsProxy.includes("loss") || faults.length > 0;
+			if (!wantsProxy) {
+				const cleared = await unroute();
+				return cleared.success ? applied : cleared;
+			}
+			if (!proxy) return applied;
+			const routedNow = await route();
+			return routedNow.success ? { success: true, data: { ...applied.data, needsProxy: [] } } : routedNow;
+		},
+		async networkFaults(next) {
+			const previous = faults;
+			faults = next;
+			const plan = resolveNetwork(condition);
+			const lossPct = plan.online ? plan.shaping.lossPct : 0;
+			const result = next.length > 0 || lossPct > 0 ? await route() : await unroute();
+			if (!result.success) {
+				faults = previous;
+				return result;
+			}
+			return { success: true, data: { notes: faultNotes(next) } };
+		},
+	};
 }

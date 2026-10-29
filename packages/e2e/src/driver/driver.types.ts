@@ -1,4 +1,4 @@
-import type { LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type { HostFault, LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 
 /**
@@ -29,6 +29,8 @@ export type DriverErrorCode =
 	| "E_HID"
 	| "E_IO"
 	| "E_BAD_REQUEST"
+	// a network / clock condition needs the app launched with the warden dylib and the app is running without it
+	| "E_NETWORK_RELAUNCH"
 	| "E_INTERNAL";
 
 export type DriverError = { code: DriverErrorCode; message: string; retryable: boolean; detail?: unknown };
@@ -164,6 +166,20 @@ export type LaunchOptions = {
 	env?: Record<string, string>;
 	/** iOS: `--terminate-running-process`; Android: `am force-stop` first. Default true. */
 	relaunch?: boolean;
+	/**
+	 * iOS: load the warden network dylib even though no condition is set yet, so `network()` can take effect later
+	 * without a relaunch (a suite that declares `conditions.network` launches this way). Conditions set before the
+	 * launch inject on their own, a plain launch pays nothing. Ignored on Android.
+	 */
+	inject?: boolean;
+};
+
+/** Options of `Driver.network`. */
+export type NetworkOptions = {
+	/** iOS: the app to check for the dylib (default: the last app this driver launched) */
+	bundleId?: string;
+	/** iOS: relaunch a running app that lacks the dylib instead of failing with `E_NETWORK_RELAUNCH` */
+	relaunch?: boolean;
 };
 
 export type DriverCapabilities = {
@@ -231,11 +247,18 @@ export interface Driver {
 	clipboard(set?: string): DriverResult<string>;
 	/**
 	 * Put the device's network into `op` (offline / online / a preset / custom speed and latency) and return what
-	 * is now in effect. Android emulator: native, verified through `dumpsys connectivity`. iOS: `E_UNSUPPORTED`
-	 * until the per-app proxy (COND-5). `flap` alternates the base with offline in this process
-	 * (`conditions/scheduler.ts`) until the next network op or `close()`.
+	 * is now in effect. Android emulator: native, verified through `dumpsys connectivity`. iOS: per app, the app
+	 * is launched with a dylib that routes it through the lease proxy (`E_NETWORK_RELAUNCH` when it runs without).
+	 * `flap` alternates the base with offline in this process (`conditions/scheduler.ts`) until the next network op
+	 * or `close()` (Android; iOS goes through the scheduler directly).
 	 */
-	network(op: NetworkCondition): DriverResult<NetworkState>;
+	network(op: NetworkCondition, opts?: NetworkOptions): DriverResult<NetworkState>;
+	/**
+	 * Replace the per-host faults (status / reset / delay / blackhole by host glob). Both platforms route the app
+	 * through the lease's shaping proxy for this. `notes` carries what the proxy cannot do as written (an https://
+	 * request matching a `status` fault is reset, the proxy does not decrypt TLS). `[]` clears them.
+	 */
+	networkFaults(faults: readonly HostFault[]): DriverResult<{ notes: readonly string[] }>;
 	/**
 	 * Simulated location: a point, a route (waypoints or GPX, played at `speedMps`), a bundled scenario, or clear.
 	 * iOS: `simctl location` (the sim plays routes itself, no loop). Android: emulator `geo fix`, routes ticked by
@@ -257,6 +280,11 @@ export type NetworkState = {
 	online: boolean;
 	condition: NetworkCondition;
 	needsProxy: readonly NetworkProxyFeature[];
+	/**
+	 * iOS: the condition is staged (proxy configured, state written) but no running app carries the dylib yet; it
+	 * reaches the app launched next. Absent = in effect now.
+	 */
+	appliesOnLaunch?: true;
 };
 
 export type Logger = (line: string) => void;
