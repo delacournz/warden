@@ -9,7 +9,7 @@ import { memoryAndroidState } from "./android/android-state";
 import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
 import { fakeProxy } from "./network-proxy.testing";
-import { androidOptions, defaultDriverFactory, leaseProxyFor, openDriver } from "./open";
+import { androidOptions, defaultDriverFactory, leaseClockRecorderFor, leaseProxyFor, openDriver } from "./open";
 
 const env = (platform: "ios" | "android", extra: Partial<E2eEnv> = {}): E2eEnv => ({
 	udid: "UDID-1",
@@ -238,6 +238,21 @@ describe("the lease's shaping proxy", () => {
 		});
 		expect(result.success).toBe(true);
 		if (result.success) await result.data.close();
+		expect(opened).toBe(0);
+	});
+});
+
+describe("the lease's clock recorder", () => {
+	test("none without a lease id; with one it is wired for android and opens no store until a clock is set", () => {
+		let opened = 0;
+		const deps = {
+			openStore: () => {
+				opened++;
+				return { success: false as const, error: "not here" };
+			},
+		};
+		expect(leaseClockRecorderFor(env("android"), deps)).toBeUndefined();
+		expect(androidOptions(env("android", { leaseId: "L1" }), deps, false).clockRecorder).toBeDefined();
 		expect(opened).toBe(0);
 	});
 });

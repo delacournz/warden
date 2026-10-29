@@ -478,7 +478,6 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		await call("clock", () => op.call(driver, condition));
 		currentClock = condition;
 		clockSetAt = ticker.now();
-		recorder?.record("clock", condition);
 		emit({ area: "clock", value: condition });
 	}
 
@@ -527,10 +526,8 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			return result;
 		},
 		async reset() {
-			const goal = baseline.clock ?? REAL_CLOCK;
-			await applyClock(goal);
+			await applyClock(baseline.clock ?? REAL_CLOCK);
 			clockDirty = false;
-			recorder?.settle("clock", goal, goal.kind === "real");
 		},
 		status: () => currentClock,
 	};

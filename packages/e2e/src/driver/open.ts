@@ -7,6 +7,7 @@ import type { DriverFactory } from "../session";
 import { type AndroidDriverOptions, openAndroidDriver } from "./android/android-driver";
 import { androidStateDir, createAndroidStateStore } from "./android/android-state";
 import { uiadFromEnv } from "./android/uiad-backend";
+import { type ClockRecorder, leaseClockRecorder } from "./clock-recorder";
 import type { Driver, DriverResult } from "./driver.types";
 import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
 import { lazyLeaseNetworkProxy, type NetworkProxyPort } from "./network-proxy";
@@ -37,6 +38,27 @@ export function leaseProxyFor(env: E2eEnv, deps: OpenDriverDeps = {}): NetworkPr
 	});
 }
 
+/**
+ * Records the clock the driver sets on the spec's lease (`leaseClockRecorder`), opening the store on the first
+ * change. Best effort: a store that fails is logged and never fails the clock call. None without a lease id.
+ */
+export function leaseClockRecorderFor(env: E2eEnv, deps: OpenDriverDeps = {}): ClockRecorder | undefined {
+	const leaseId = env.leaseId;
+	if (leaseId === undefined) return undefined;
+	const open = deps.openStore ?? sharedStoreOpener(process.env);
+	return (condition) => {
+		try {
+			const store = open();
+			if (!store.success) throw new Error(store.error);
+			leaseClockRecorder(store.data, leaseId)(condition);
+		} catch (error) {
+			stderrLog(
+				`[warden-e2e] could not record the clock condition on lease ${leaseId}: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	};
+}
+
 /** `WARDEN_E2E_DEBUG=1` logs every helper op and simctl call with its duration to stderr. */
 export const DEBUG_ENV = "WARDEN_E2E_DEBUG";
 
@@ -54,9 +76,11 @@ export function androidOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean
 	const android: NonNullable<OpenDriverDeps["android"]> = deps.android ?? {};
 	const log = deps.log ?? (debug ? stderrLog : undefined);
 	const networkProxy = android.networkProxy ?? leaseProxyFor(env, deps);
+	const clockRecorder = android.clockRecorder ?? leaseClockRecorderFor(env, deps);
 	return {
 		...android,
 		...(networkProxy === undefined ? {} : { networkProxy }),
+		...(clockRecorder === undefined ? {} : { clockRecorder }),
 		serial: env.udid,
 		adb: android.adb ?? androidTools(process.env).adb,
 		exec: deps.exec ?? bunExec,
@@ -78,9 +102,11 @@ export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): Driver
 	switch (env.platform) {
 		case "ios": {
 			const networkProxy = deps.networkProxy ?? leaseProxyFor(env, deps);
+			const clockRecorder = deps.clockRecorder ?? leaseClockRecorderFor(env, deps);
 			return openIosDriver({
 				...deps,
 				...(networkProxy === undefined ? {} : { networkProxy }),
+				...(clockRecorder === undefined ? {} : { clockRecorder }),
 				udid: env.udid,
 				env,
 				exec: deps.exec ?? bunExec,
