@@ -9,7 +9,6 @@ import { openStore, type Store } from "@delacour/warden-core/store";
 import type { Lease } from "@delacour/warden-core/types";
 import { err, ok } from "@delacour/warden-types/result";
 import { fakeDriver, snapshotOf } from "../driver/driver.testing";
-import type { Driver, DriverResult } from "../driver/driver.types";
 import type { E2eEnv } from "../env";
 import { createDeviceConditions } from "./device-conditions";
 import { createLeaseRecorder, leaseRecorderFor } from "./lease-recorder";
@@ -175,7 +174,6 @@ describe("a spec that dies mid-test", () => {
 			recorder: recorder(),
 			log: () => {},
 		});
-		(driver as Driver & { clock?: () => DriverResult<undefined> }).clock = async () => ok(undefined);
 		await conditions.network.set("offline");
 		await conditions.location.set({ lat: 1, lon: 2 });
 		await conditions.clock.set("2030-01-01T00:00:00Z");
