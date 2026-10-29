@@ -1,5 +1,10 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+	launchSettingsPath,
+	readLaunchSettings,
+	writeLaunchSettings,
+} from "@delacour/warden-core/conditions/launch-settings";
 import type { Exec } from "@delacour/warden-core/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
@@ -29,6 +34,7 @@ import type { PastesText, SelectsAll } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
 import { createIosNetwork, type IosNetwork } from "./ios-network";
 import { type SwappableClient, swappableClient } from "./ios-session";
+import { createIosSettings, type IosSettings, type StagedSettings, withStagedSettings } from "./ios-settings";
 import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
@@ -86,6 +92,10 @@ export type OpenIosDriverOptions = {
 	networkProxy?: NetworkProxyPort;
 	/** told about every successful `clock` op, so the lease records the `clock` area (`leaseClockRecorder`) */
 	clockRecorder?: ClockRecorder;
+	/** the session's app (`WARDEN_BUNDLE_ID`): the default target of permissions, push and locale */
+	bundleId?: string;
+	/** where a staged timezone / locale is kept between processes (default: `<wardenHome>/launch-settings/<udid>.json`) */
+	stagedSettings?: StagedSettings;
 	/** state-file operations of the injected dylib's control channel, injected for tests */
 	injectFs?: InjectFs;
 	/** CoreSimulator devices directory for the host-side `AutomationEnabled` check (default `~/Library/Developer/CoreSimulator/Devices`) */
@@ -246,6 +256,8 @@ export function createIosDriver(
 		log?: Logger;
 		/** told about every successful `clock` op */
 		clockRecorder?: ClockRecorder;
+		/** device settings (`ios-settings.ts`); absent: those ops answer `E_UNSUPPORTED` */
+		settings?: (ctx: { lastBundle: () => string | undefined }) => IosSettings;
 		/** per-app network conditions (`ios-network.ts`); absent: `network` answers `E_UNSUPPORTED` */
 		network?: (deps: {
 			lastBundle: () => string | undefined;
@@ -260,6 +272,9 @@ export function createIosDriver(
 			"E_UNSUPPORTED",
 			"network and clock conditions on iOS need a device lease for the shaping proxy: run the spec with `warden e2e` (it sets WARDEN_LEASE_ID), or `warden ui`; a bare `bun test` has no lease"
 		);
+	const settings = opts.settings?.({ lastBundle: () => lastLaunched });
+	const noSettings = async () =>
+		driverErr("E_UNSUPPORTED", "this iOS driver was opened without device settings support");
 	// late-bound: the network helper relaunches through the driver's own `app.launch`
 	let driverRef: IosDriver | undefined;
 	const net = opts.network?.({
@@ -688,6 +703,13 @@ export function createIosDriver(
 		network: async (op, o) => (net ? net.network(op, o) : noLeaseProxy()),
 		networkFaults: async (faults) => (net ? net.networkFaults(faults) : noLeaseProxy()),
 		location: (op) => simctl.location(op),
+		permissions: (grants, o) => (settings ? settings.permissions(grants, o) : noSettings()),
+		timezone: (tz, o) => (settings ? settings.timezone(tz, o) : noSettings()),
+		locale: (tag, o) => (settings ? settings.locale(tag, o) : noSettings()),
+		a11y: (op) => (settings ? settings.a11y(op) : noSettings()),
+		battery: (op) => (settings ? settings.battery(op) : noSettings()),
+		memoryWarning: (o) => (settings ? settings.memoryWarning(o) : noSettings()),
+		push: (payload, o) => (settings ? settings.push(payload, o) : noSettings()),
 		async clock(op, o) {
 			if (!net) return noLeaseProxy();
 			const result = await net.clock(op, o);
@@ -700,7 +722,8 @@ export function createIosDriver(
 			return copied.success ? { success: true, data: set } : copied;
 		},
 		app: {
-			launch: async (bundleId, requested) => {
+			launch: async (bundleId, plain) => {
+				const requested = settings ? withStagedSettings(plain, settings.launchSettings()) : plain;
 				const withEnv = await launchWithInjection(net, requested);
 				if (!withEnv.success) return withEnv;
 				const o = withEnv.data;
@@ -833,9 +856,23 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			sleep,
 			log,
 			...(network ? { network } : {}),
+			settings: (ctx) =>
+				createIosSettings({
+					udid: o.udid,
+					exec,
+					lastBundle: ctx.lastBundle,
+					...(o.bundleId ? { defaultBundle: o.bundleId } : {}),
+					staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? resolveWardenHome(), o.udid),
+				}),
 			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
 		}),
 	};
+}
+
+/** Timezone / locale staged in a file per device, so a later `warden ui open` (another process) launches with them. */
+function stagedSettingsFor(wardenHome: string, udid: string): StagedSettings {
+	const path = launchSettingsPath(wardenHome, udid);
+	return { read: () => readLaunchSettings(path), write: (next) => writeLaunchSettings(path, next) };
 }
 
 type NetworkFactory = NonNullable<Parameters<typeof createIosDriver>[2]["network"]>;

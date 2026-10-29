@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readConditionEvents } from "./conditions/condition-events";
+import { eventKind, readConditionEvents } from "./conditions/condition-events";
 import { conditionsOf } from "./conditions/device-conditions";
 import { createDevice } from "./device";
 import { sheetlessFor } from "./device-link";
@@ -1032,7 +1032,7 @@ describe("device conditions", () => {
 		await device.network.set("offline");
 		await device.location.set({ lat: 1, lon: 2 });
 		const events = readConditionEvents(readFileSync(path, "utf8"));
-		expect(events.map((e) => [e.area, e.value.kind])).toEqual([
+		expect(events.map((e) => [e.area, eventKind(e)])).toEqual([
 			["network", "offline"],
 			["location", "point"],
 		]);

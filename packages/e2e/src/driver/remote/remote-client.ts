@@ -212,6 +212,13 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			networkFaults: (faults) => call("networkFaults", faults),
 			location: (op) => call("location", op),
 			clock: (op, opts) => call("clock", op, opts),
+			permissions: (grants, opts) => call("permissions", grants, opts),
+			timezone: (tz, opts) => call("timezone", tz, opts),
+			locale: (tag, opts) => call("locale", tag, opts),
+			a11y: (op) => call("a11y", op),
+			battery: (op) => call("battery", op),
+			memoryWarning: (opts) => call("memoryWarning", opts),
+			push: (payload, opts) => call("push", payload, opts),
 			app,
 			close,
 		};

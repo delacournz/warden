@@ -6,15 +6,36 @@ import {
 	toNetworkCondition,
 } from "@delacour/warden-core/conditions/conditions.config";
 import type {
+	A11yCondition,
+	BatteryCondition,
 	ClockCondition,
 	HostFault,
 	LatLon,
+	LocaleCondition,
 	LocationCondition,
 	LocationScenario,
 	NetworkCondition,
+	PermissionCondition,
+	PermissionName,
+	PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
+import { resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { parseDuration } from "@delacour/warden-core/duration";
-import type { Driver, DriverResult, NetworkState } from "../driver/driver.types";
+import type {
+	A11yOp,
+	A11yState,
+	BatteryOp,
+	BatteryState,
+	Driver,
+	DriverResult,
+	LocaleState,
+	NetworkState,
+	PermissionGrants,
+	PermissionsState,
+	PushPayload,
+	SettingOptions,
+	TimezoneState,
+} from "../driver/driver.types";
 import { settled, toE2eError } from "../driver/unwrap";
 import type { E2eEnv } from "../env";
 import { E2eError } from "../errors";
@@ -113,6 +134,17 @@ export type DeviceClock = {
 	status(): ClockCondition;
 };
 
+export type DevicePermissions = {
+	/**
+	 * Sets permissions of the app, per name (`location`, `camera`, `photos`, `contacts`, `notifications`, `microphone`,
+	 * ...): `"granted"`, `"denied"` or `"unset"` (asks again). The result lists the names this platform skipped. Set
+	 * them before `app.open()`: iOS terminates a running app when its permission changes.
+	 */
+	set(grants: PermissionGrants, options?: SettingOptions): Promise<PermissionsState>;
+	/** Puts every permission this test set back to the suite's `conditions.permissions`, else `"unset"`. */
+	reset(options?: SettingOptions): Promise<void>;
+};
+
 export type TimelineStepInput = {
 	/** when, from the start of the timeline */
 	at: Duration;
@@ -138,6 +170,19 @@ export type DeviceConditions = {
 	network: DeviceNetwork;
 	location: DeviceLocation;
 	clock: DeviceClock;
+	permissions: DevicePermissions;
+	/** Device timezone (`"Asia/Tokyo"`); `null` puts it back. iOS: applies to the app launched next. */
+	timezone(tz: string | null): Promise<TimezoneState>;
+	/** The app's locale (`"fr-FR"`); `null` puts it back. iOS: applies to the app launched next. Android 13+. */
+	locale(tag: string | null, options?: SettingOptions): Promise<LocaleState>;
+	/** Text size (a name like `"accessibility-large"` or a scale like `1.5`), bold text, contrast, reduce motion; `null` resets. */
+	a11y(op: A11yOp | null): Promise<A11yState>;
+	/** Battery level and charging. Android emulators: real. iOS: the status bar only (`cosmetic: true`). `null` resets. */
+	battery(op: BatteryOp | null): Promise<BatteryState>;
+	/** Android: a critical trim-memory signal to the running app. iOS: `E_UNSUPPORTED` (no delivery mechanism works). */
+	memoryWarning(options?: SettingOptions): Promise<void>;
+	/** iOS: delivers an APNs payload (`{ aps: { alert: ... } }`) to the app. Android: `E_UNSUPPORTED`. */
+	push(payload: PushPayload, options?: SettingOptions): Promise<void>;
 	timeline(steps: readonly TimelineStepInput[]): Promise<ConditionRun>;
 	internals: ConditionsInternals;
 };
@@ -166,7 +211,11 @@ type ConditionChange = ConditionEvent extends infer E
 const ONLINE: NetworkCondition = { kind: "online" };
 const REAL_CLOCK: ClockCondition = { kind: "real" };
 
-const warnedAboutEnv = new WeakSet<E2eEnv>();
+/** The a11y op a suite's `conditions.a11y` means (its resolved `fontScale` is not an input). */
+function a11yOpOf(config: A11yCondition): A11yOp {
+	const { fontScale: _scale, ...op } = config;
+	return op;
+}
 
 const stderrLog = (line: string): void => {
 	process.stderr.write(`${line}\n`);
@@ -246,6 +295,15 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	let networkDirty = false;
 	let locationDirty = false;
 	let clockDirty = false;
+	let permissionsDirty = false;
+	let localeDirty = false;
+	let a11yDirty = false;
+	let batteryDirty = false;
+	/** permission states this test set, per name, and the app they are for */
+	const permissionStates = new Map<PermissionName, PermissionState>();
+	let permissionBundle: string | undefined;
+	let currentLocale: LocaleCondition = {};
+	let currentA11y: A11yCondition = {};
 	let flap: { run: ConditionRun; options: FlapOptions } | undefined;
 	const runs = new Set<ConditionRun>();
 
@@ -532,6 +590,126 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		status: () => currentClock,
 	};
 
+	/** a remote driver offers only the ops its server has, so a setting op can be missing at runtime */
+	function settingOp<K extends "permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push">(
+		name: K
+	): Driver[K] {
+		const op: Driver[K] | undefined = driver[name];
+		if (typeof op !== "function") {
+			throw toE2eError({ code: "E_UNSUPPORTED", message: `this driver has no ${name} op`, retryable: false }, name);
+		}
+		return op.bind(driver) as Driver[K];
+	}
+
+	const recordPermissions = (bundleId: string): void => {
+		const value: PermissionCondition = {
+			grants: [...permissionStates].map(([permission, state]) => ({ bundleId, permission, state })),
+		};
+		recorder?.record("permission", value);
+		emit({ area: "permission", value });
+	};
+
+	async function applyPermissions(grants: PermissionGrants, options?: SettingOptions): Promise<PermissionsState> {
+		permissionsDirty = true;
+		const op = settingOp("permissions");
+		const state = await call("permissions", () => op(grants, options ?? { bundleId: env.bundleId }));
+		for (const { permission, state: applied } of state.applied) permissionStates.set(permission, applied);
+		permissionBundle = state.bundleId;
+		recordPermissions(state.bundleId);
+		return state;
+	}
+
+	const permissionsApi: DevicePermissions = {
+		set: applyPermissions,
+		async reset(options) {
+			const baselinePermissions = baseline.permissions ?? {};
+			const back: PermissionGrants = {};
+			for (const name of permissionStates.keys()) back[name] = baselinePermissions[name] ?? "unset";
+			if (Object.keys(back).length === 0) return;
+			await applyPermissions(back, options ?? (permissionBundle ? { bundleId: permissionBundle } : undefined));
+			permissionsDirty = false;
+			permissionStates.clear();
+			recorder?.settle("permission", { grants: [] }, true);
+		},
+	};
+
+	function recordLocale(): void {
+		const empty = currentLocale.locale === undefined && currentLocale.timezone === undefined;
+		if (empty) recorder?.settle("locale", currentLocale, true);
+		else recorder?.record("locale", currentLocale);
+		emit({ area: "locale", value: currentLocale });
+	}
+
+	async function applyTimezone(tz: string | null): Promise<TimezoneState> {
+		localeDirty = true;
+		const op = settingOp("timezone");
+		const previous = currentLocale.previousTimezone;
+		const state = await call("timezone", () => op(tz, previous === undefined ? undefined : { previous }));
+		const { timezone: _gone, ...rest } = currentLocale;
+		currentLocale = {
+			...rest,
+			...(tz === null ? {} : { timezone: tz }),
+			...((previous ?? state.previous) ? { previousTimezone: previous ?? state.previous } : {}),
+		};
+		recordLocale();
+		return state;
+	}
+
+	async function applyLocale(tag: string | null, options?: SettingOptions): Promise<LocaleState> {
+		localeDirty = true;
+		const op = settingOp("locale");
+		const state = await call("locale", () => op(tag, options ?? { bundleId: env.bundleId }));
+		const { locale: _gone, ...rest } = currentLocale;
+		currentLocale = {
+			...rest,
+			...(tag === null ? {} : { locale: tag }),
+			...(state.bundleId === undefined ? {} : { bundleId: state.bundleId }),
+		};
+		recordLocale();
+		return state;
+	}
+
+	function checkedA11y(op: A11yOp | null): void {
+		if (op === null) return;
+		if (op.textSize !== undefined) {
+			const size = resolveTextSize(op.textSize);
+			if (!size.success) throw invalid(size.error);
+		}
+		if (Object.keys(op).length === 0)
+			throw invalid("a11y needs at least one of textSize, boldText, contrast, reduceMotion");
+	}
+
+	async function applyA11y(op: A11yOp | null): Promise<A11yState> {
+		checkedA11y(op);
+		a11yDirty = true;
+		const run = settingOp("a11y");
+		const state = await call("a11y", () => run(op));
+		const resolved = op?.textSize === undefined ? undefined : resolveTextSize(op.textSize);
+		currentA11y =
+			op === null
+				? {}
+				: {
+						...currentA11y,
+						...op,
+						...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
+					};
+		if (Object.keys(currentA11y).length === 0) recorder?.settle("a11y", currentA11y, true);
+		else recorder?.record("a11y", currentA11y);
+		emit({ area: "a11y", value: currentA11y });
+		return state;
+	}
+
+	async function applyBattery(op: BatteryOp | null): Promise<BatteryState> {
+		batteryDirty = true;
+		const run = settingOp("battery");
+		const state = await call("battery", () => run(op));
+		const value: BatteryCondition = op === null ? {} : { ...op, cosmetic: state.cosmetic };
+		if (op === null) recorder?.settle("battery", value, true);
+		else recorder?.record("battery", value);
+		emit({ area: "battery", value });
+		return state;
+	}
+
 	async function startTimelineRun(steps: readonly TimelineStepInput[]): Promise<ConditionRun> {
 		const converted: TimelineStep[] = steps.map((step, index) => {
 			const atMs = durationMs(step.at, `timeline step ${index} at`);
@@ -572,29 +750,50 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		}
 	}
 
-	const declared = baseline.network !== undefined || baseline.location !== undefined || baseline.clock !== undefined;
+	const declared =
+		baseline.network !== undefined ||
+		baseline.location !== undefined ||
+		baseline.clock !== undefined ||
+		baseline.permissions !== undefined ||
+		baseline.locale !== undefined ||
+		baseline.timezone !== undefined ||
+		baseline.a11y !== undefined;
 
 	const internals: ConditionsInternals = {
 		declared,
-		dirty: () => networkDirty || locationDirty || clockDirty || runs.size > 0,
+		dirty: () =>
+			networkDirty ||
+			locationDirty ||
+			clockDirty ||
+			permissionsDirty ||
+			localeDirty ||
+			a11yDirty ||
+			batteryDirty ||
+			runs.size > 0,
 		wantsInject: () =>
 			baseline.network !== undefined ||
 			baseline.clock !== undefined ||
 			currentNetwork.kind !== "online" ||
 			currentClock.kind !== "real",
 		async applyBaseline() {
-			if (normalized.data.unapplied.length > 0 && !warnedAboutEnv.has(env)) {
-				warnedAboutEnv.add(env);
-				log(
-					`[warden-e2e] conditions: ${normalized.data.unapplied.join(", ")} not applied yet (only network, location and clock are)`
-				);
+			if (baseline.permissions !== undefined) {
+				for (const [name, state] of Object.entries(baseline.permissions))
+					permissionStates.set(name as PermissionName, state);
+				await applyPermissions(baseline.permissions);
 			}
+			if (baseline.timezone !== undefined) await applyTimezone(baseline.timezone);
+			if (baseline.locale !== undefined) await applyLocale(baseline.locale);
+			if (baseline.a11y !== undefined) await applyA11y(a11yOpOf(baseline.a11y));
 			if (baseline.clock !== undefined) await applyClock(baseline.clock);
 			if (baseline.location !== undefined) await applyLocation(baseline.location);
 			if (baseline.network !== undefined) await applyNetwork(baseline.network, { relaunch: true });
 			networkDirty = false;
 			locationDirty = false;
 			clockDirty = false;
+			permissionsDirty = false;
+			localeDirty = false;
+			a11yDirty = false;
+			batteryDirty = false;
 		},
 		async teardown() {
 			const errors: unknown[] = [];
@@ -616,9 +815,49 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 				});
 			}
 			if (clockDirty) await attempt(clockApi.reset);
+			if (permissionsDirty) await attempt(() => permissionsApi.reset());
+			if (localeDirty) {
+				await attempt(async () => {
+					await applyTimezone(baseline.timezone ?? null);
+					await applyLocale(baseline.locale ?? null);
+					localeDirty = false;
+				});
+			}
+			if (a11yDirty) {
+				await attempt(async () => {
+					await applyA11y(null);
+					if (baseline.a11y !== undefined) await applyA11y(a11yOpOf(baseline.a11y));
+					a11yDirty = false;
+				});
+			}
+			if (batteryDirty) {
+				await attempt(async () => {
+					await applyBattery(null);
+					batteryDirty = false;
+				});
+			}
 			if (errors.length > 0) throw errors[0];
 		},
 	};
 
-	return { network: networkApi, location: locationApi, clock: clockApi, timeline: startTimelineRun, internals };
+	return {
+		network: networkApi,
+		location: locationApi,
+		clock: clockApi,
+		permissions: permissionsApi,
+		timezone: applyTimezone,
+		locale: applyLocale,
+		a11y: applyA11y,
+		battery: applyBattery,
+		memoryWarning: async (options) => {
+			const op = settingOp("memoryWarning");
+			await call("memoryWarning", () => op(options ?? { bundleId: env.bundleId }));
+		},
+		push: async (payload, options) => {
+			const op = settingOp("push");
+			await call("push", () => op(payload, options ?? { bundleId: env.bundleId }));
+		},
+		timeline: startTimelineRun,
+		internals,
+	};
 }

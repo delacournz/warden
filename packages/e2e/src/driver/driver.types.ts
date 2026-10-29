@@ -3,6 +3,9 @@ import type {
 	HostFault,
 	LocationCondition,
 	NetworkCondition,
+	PermissionName,
+	PermissionState,
+	TextSize,
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 
@@ -279,6 +282,39 @@ export interface Driver {
 	 * `relaunch: true`. Large offsets break TLS validity (HTTPS fails once the clock passes a certificate's dates).
 	 */
 	clock(op: ClockCondition, opts?: NetworkOptions): DriverResult<ClockState>;
+	/**
+	 * Set runtime permissions of an app, per name (`location`, `camera`, `photos`, `notifications`, ...): `granted`,
+	 * `denied` (revoked) or `unset` (back to asking). Names a platform has no service for are listed in `skipped`;
+	 * when none applies it is `E_UNSUPPORTED`. iOS: `simctl privacy` (terminates a running app). Android: `pm
+	 * grant|revoke` of the permissions the app declares. Apply before the first launch.
+	 */
+	permissions(grants: PermissionGrants, opts?: SettingOptions): DriverResult<PermissionsState>;
+	/**
+	 * Device timezone (IANA name); `null` puts it back. Android: `cmd alarm set-timezone`, device-wide, live. iOS: a
+	 * simulator has none per device, so it is staged and the app launched next gets it as `TZ` (`appliesOnLaunch`).
+	 * `previous` is the Android timezone to restore on `null` (default: the host's).
+	 */
+	timezone(tz: string | null, opts?: { previous?: string }): DriverResult<TimezoneState>;
+	/**
+	 * Locale of an app (BCP 47, `fr-FR`); `null` puts it back. Android 13+: per-app locale (`cmd locale
+	 * set-app-locales`), live. iOS: staged for the next launch as `-AppleLanguages` / `-AppleLocale`.
+	 */
+	locale(tag: string | null, opts?: SettingOptions): DriverResult<LocaleState>;
+	/**
+	 * Accessibility settings: text size, bold text, contrast, reduce motion; `null` puts them back. iOS: `simctl ui
+	 * content_size` / `increase_contrast` (no bold text or reduce motion: `skipped`). Android: `font_scale`,
+	 * `font_weight_adjustment` (no contrast or reduce motion: `skipped`).
+	 */
+	a11y(op: A11yOp | null): DriverResult<A11yState>;
+	/**
+	 * Battery level and charging; `null` puts the real battery back. Android emulator: `dumpsys battery`, seen by the
+	 * OS and the app. iOS: status bar override only (`cosmetic: true`): the app still reads the real battery.
+	 */
+	battery(op: BatteryOp | null): DriverResult<BatteryState>;
+	/** Android: `am send-trim-memory RUNNING_CRITICAL` to the running app. iOS: `E_UNSUPPORTED` (no way verified to reach an app). */
+	memoryWarning(opts?: SettingOptions): DriverResult<void>;
+	/** iOS: `simctl push` of an APNs payload (needs `aps`) to the app. Android: `E_UNSUPPORTED`. */
+	push(payload: PushPayload, opts?: SettingOptions): DriverResult<void>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }
@@ -300,6 +336,55 @@ export type NetworkState = {
 	 */
 	appliesOnLaunch?: true;
 };
+
+/** The app a setting is for (default: the last app this driver launched, else the one the session names). */
+export type SettingOptions = { bundleId?: string };
+
+export type PermissionGrants = Partial<Record<PermissionName, PermissionState>>;
+
+export type PermissionsState = {
+	bundleId: string;
+	applied: readonly { permission: PermissionName; state: PermissionState }[];
+	/** names this platform has no service for, with why */
+	skipped: readonly { permission: PermissionName; reason: string }[];
+};
+
+export type TimezoneState = {
+	/** the timezone in effect (or staged), absent after a reset on iOS */
+	timezone?: string;
+	/** Android: the timezone before this change */
+	previous?: string;
+	/** iOS: staged for the next launch */
+	appliesOnLaunch?: true;
+};
+
+export type LocaleState = {
+	locale?: string;
+	bundleId?: string;
+	appliesOnLaunch?: true;
+};
+
+export type A11yOp = {
+	textSize?: TextSize;
+	boldText?: boolean;
+	contrast?: "increased" | "normal";
+	reduceMotion?: boolean;
+};
+
+export type A11yState = {
+	applied: readonly string[];
+	/** asked for but this platform has no mechanism that works, with why */
+	skipped: readonly { setting: string; reason: string }[];
+	/** the Android font scale was clamped to the platform's range */
+	notes: readonly string[];
+};
+
+export type BatteryOp = { level?: number; charging?: boolean };
+
+export type BatteryState = { level?: number; charging?: boolean; cosmetic: boolean };
+
+/** An APNs payload: an object with an `aps` key (4096 bytes at most). */
+export type PushPayload = { aps: Record<string, unknown> } & Record<string, unknown>;
 
 /** What `Driver.clock` left on the device. */
 export type ClockState = {

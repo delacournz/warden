@@ -1,10 +1,14 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
+	A11yCondition,
+	BatteryCondition,
 	ClockCondition,
 	HostFault,
+	LocaleCondition,
 	LocationCondition,
 	NetworkCondition,
+	PermissionCondition,
 } from "@delacour/warden-core/conditions/conditions.types";
 
 /**
@@ -16,6 +20,10 @@ export type ConditionEvent =
 	| { type: "condition"; area: "network"; value: NetworkCondition; at: number }
 	| { type: "condition"; area: "location"; value: LocationCondition; at: number }
 	| { type: "condition"; area: "clock"; value: ClockCondition; at: number }
+	| { type: "condition"; area: "permission"; value: PermissionCondition; at: number }
+	| { type: "condition"; area: "locale"; value: LocaleCondition; at: number }
+	| { type: "condition"; area: "a11y"; value: A11yCondition; at: number }
+	| { type: "condition"; area: "battery"; value: BatteryCondition; at: number }
 	| { type: "condition"; area: "faults"; value: { kind: "faults"; rules: readonly HostFault[] }; at: number };
 
 export type ConditionSink = (event: ConditionEvent) => void;
@@ -32,6 +40,17 @@ export function openConditionSink(path: string): ConditionSink {
 	};
 }
 
+const KNOWN_AREAS: ReadonlySet<string> = new Set([
+	"network",
+	"location",
+	"clock",
+	"faults",
+	"permission",
+	"locale",
+	"a11y",
+	"battery",
+]);
+
 function parseEvent(line: string): ConditionEvent | undefined {
 	let json: unknown;
 	try {
@@ -41,7 +60,7 @@ function parseEvent(line: string): ConditionEvent | undefined {
 	}
 	if (typeof json !== "object" || json === null) return undefined;
 	const e = json as Record<string, unknown>;
-	const known = e.area === "network" || e.area === "location" || e.area === "clock" || e.area === "faults";
+	const known = KNOWN_AREAS.has(String(e.area));
 	const shaped = e.type === "condition" && typeof e.at === "number" && typeof e.value === "object" && e.value !== null;
 	return known && shaped ? (json as ConditionEvent) : undefined;
 }
@@ -77,4 +96,9 @@ export function activeConditionsAt(
 		}
 	}
 	return active;
+}
+
+/** The `kind` of an event's value (`offline`, `point`, ...); the area name for a setting that has none (`permission`, `a11y`). */
+export function eventKind(event: ConditionEvent): string {
+	return "kind" in event.value ? event.value.kind : event.area;
 }

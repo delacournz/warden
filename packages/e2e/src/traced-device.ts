@@ -11,7 +11,7 @@ import type { SpanRunner } from "./runner/span";
  */
 export function traceDevice(device: Device, span: SpanRunner | undefined): Device {
 	if (span === undefined) return device;
-	const { network, location, clock } = device;
+	const { network, location, clock, permissions } = device;
 	const traced: Device = {
 		get devtools() {
 			return device.devtools;
@@ -40,6 +40,16 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 			reset: () => span("device.clock.reset", () => clock.reset()),
 			status: () => clock.status(),
 		},
+		permissions: {
+			set: (grants, options) => span("device.permissions.set", () => permissions.set(grants, options)),
+			reset: (options) => span("device.permissions.reset", () => permissions.reset(options)),
+		},
+		timezone: (tz) => span("device.timezone", () => device.timezone(tz)),
+		locale: (tag, options) => span("device.locale", () => device.locale(tag, options)),
+		a11y: (op) => span("device.a11y", () => device.a11y(op)),
+		battery: (op) => span("device.battery", () => device.battery(op)),
+		memoryWarning: (options) => span("device.memoryWarning", () => device.memoryWarning(options)),
+		push: (payload, options) => span("device.push", () => device.push(payload, options)),
 		timeline: (steps) => span("device.timeline", () => device.timeline(steps)),
 		alert: (action) => span("device.alert", () => device.alert(action), { detail: (answered) => ({ answered }) }),
 		openLink: (url, options) => span("device.openLink", () => device.openLink(url, options)),

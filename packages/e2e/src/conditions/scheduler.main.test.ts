@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readConditionEvents } from "./condition-events";
+import { eventKind, readConditionEvents } from "./condition-events";
 
 /** The detached entry end to end: a real child process calling fake-adb, which logs each argv. */
 
@@ -41,7 +41,7 @@ describe("scheduler.main.ts", () => {
 		const geo = d.calls().filter((l) => l.includes("geo fix"));
 		expect(geo).toEqual(["-s emulator-5554 emu geo fix 2 1", "-s emulator-5554 emu geo fix 4 3"]);
 		const logged = readConditionEvents(readFileSync(events, "utf8"));
-		expect(logged.map((e) => [e.area, e.value.kind])).toEqual([
+		expect(logged.map((e) => [e.area, eventKind(e)])).toEqual([
 			["location", "point"],
 			["location", "point"],
 		]);

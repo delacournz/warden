@@ -40,7 +40,7 @@ describe("condition events in results.jsonl", () => {
 
 	test("malformed and foreign lines are skipped", () => {
 		const text = [
-			'{"type":"condition","area":"battery","value":{},"at":1}',
+			'{"type":"condition","area":"bogus","value":{},"at":1}',
 			"{",
 			"null",
 			JSON.stringify(net(3, "online")),

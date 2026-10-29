@@ -446,14 +446,14 @@ describe("suite baseline", () => {
 		expect(networkOps(driver.calls).at(-1)).toEqual({ kind: "online" });
 	});
 
-	test("areas not applied yet warn once per session, by name", async () => {
+	test("permissions, locale and a11y in a suite config are applied, not warned about", async () => {
 		const log: string[] = [];
-		const conditions = { network: "wifi", locale: "fr", a11y: {} } as const;
+		const conditions = { network: "wifi", locale: "fr", a11y: { boldText: true } } as const;
 		const first = setup({ conditions, log });
 		await first.c.internals.applyBaseline();
-		expect(log).toHaveLength(1);
-		expect(log[0]).toContain("locale, a11y");
-		expect(log[0]).toContain("not applied");
+		expect(log).toEqual([]);
+		expect(first.driver.callsOf("locale")[0]).toMatchObject({ tag: "fr" });
+		expect(first.driver.callsOf("a11y")[0]).toMatchObject({ op: { boldText: true } });
 	});
 });
 

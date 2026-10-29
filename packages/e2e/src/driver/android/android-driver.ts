@@ -83,6 +83,7 @@ import {
 } from "./android-device";
 import { createDumper, type DumpRoute } from "./android-dump";
 import { createAndroidNetwork } from "./android-network";
+import { createAndroidSettings } from "./android-settings";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
@@ -645,6 +646,11 @@ function buildDriver(
 		});
 		return { success: true, data: { ...applied.data, condition: op } };
 	};
+	const settings = createAndroidSettings({
+		session,
+		serial,
+		...(options.appPackage ? { appPackage: options.appPackage } : {}),
+	});
 	const clockOp: Driver["clock"] = async (op) => {
 		const applied = await applyAndroidClock({ session, exec, adb, serial }, op);
 		if (applied.success) options.clockRecorder?.(op);
@@ -754,6 +760,7 @@ function buildDriver(
 		networkFaults,
 		location,
 		clock: clockOp,
+		...settings,
 		app: createAppCommands({
 			session,
 			exec,

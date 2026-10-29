@@ -108,6 +108,7 @@ export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): Driver
 				...(networkProxy === undefined ? {} : { networkProxy }),
 				...(clockRecorder === undefined ? {} : { clockRecorder }),
 				udid: env.udid,
+				bundleId: env.bundleId,
 				env,
 				exec: deps.exec ?? bunExec,
 				debug,

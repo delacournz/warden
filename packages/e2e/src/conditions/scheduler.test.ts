@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
-import type { ConditionEvent } from "./condition-events";
+import { type ConditionEvent, eventKind } from "./condition-events";
 import { type SchedulerTarget, type StepResult, seededRng, startFlap, startTimeline } from "./scheduler";
 
 /** Virtual time: a sleep moves the clock forward at once (after a macrotask turn), or ends early on abort. */
@@ -199,7 +199,7 @@ describe("startTimeline", () => {
 			[1200, "location", "clear"],
 			[1500, "network", "online"],
 		]);
-		expect(events.map((e) => `${e.area}:${e.value.kind}`)).toEqual([
+		expect(events.map((e) => `${e.area}:${eventKind(e)}`)).toEqual([
 			"network:offline",
 			"location:point",
 			"location:clear",

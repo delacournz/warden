@@ -21,6 +21,7 @@ import {
 	type DeviceConditions,
 	type DeviceLocation,
 	type DeviceNetwork,
+	type DevicePermissions,
 	registerConditions,
 	type TimelineStepInput,
 } from "./conditions/device-conditions";
@@ -137,6 +138,20 @@ export type Device = {
 	readonly location: DeviceLocation;
 	/** The device's wall clock: `set`, `advance("2d")`, `during`, `reset`. Needs a driver with a clock op. */
 	readonly clock: DeviceClock;
+	/** Runtime permissions of the app: `set({ location: "denied", camera: "granted" })`, `reset`. Set before `app.open()`. */
+	readonly permissions: DevicePermissions;
+	/** Device timezone (`"Asia/Tokyo"`, `null` resets). iOS: for the app launched next. */
+	timezone: DeviceConditions["timezone"];
+	/** The app's locale (`"fr-FR"`, `null` resets). iOS: for the app launched next. Android 13+. */
+	locale: DeviceConditions["locale"];
+	/** Text size, bold text, contrast, reduce motion (`null` resets); the result names what the platform skipped. */
+	a11y: DeviceConditions["a11y"];
+	/** Battery level and charging: real on Android emulators, status bar only on iOS (`cosmetic: true`). */
+	battery: DeviceConditions["battery"];
+	/** Android: a critical trim-memory signal to the app. iOS: `E_UNSUPPORTED`. */
+	memoryWarning: DeviceConditions["memoryWarning"];
+	/** iOS: delivers an APNs payload to the app. Android: `E_UNSUPPORTED`. */
+	push: DeviceConditions["push"];
 	/** Applies network and location changes at times from now; stopped when the test ends. */
 	timeline(steps: readonly TimelineStepInput[]): Promise<ConditionRun>;
 };
@@ -277,6 +292,13 @@ export function createDevice({
 		network: conditions.network,
 		location: conditions.location,
 		clock: conditions.clock,
+		permissions: conditions.permissions,
+		timezone: conditions.timezone,
+		locale: conditions.locale,
+		a11y: conditions.a11y,
+		battery: conditions.battery,
+		memoryWarning: conditions.memoryWarning,
+		push: conditions.push,
 		timeline: (steps) => conditions.timeline(steps),
 
 		async alert(action) {

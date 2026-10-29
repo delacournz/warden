@@ -5,6 +5,7 @@ export type {
 	DeviceClock,
 	DeviceLocation,
 	DeviceNetwork,
+	DevicePermissions,
 	Duration,
 	FlapOptions,
 	LocationPoint,
