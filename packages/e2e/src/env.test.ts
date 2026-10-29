@@ -58,6 +58,7 @@ describe("readEnv", () => {
 			WARDEN_HELPER_DIR: "/h",
 			WARDEN_SIMD: "/h/warden-simd",
 			WARDEN_SIMD_SOCKET: "/s.sock",
+			WARDEN_IOS_RUNNER_SOCKET: "/r.sock",
 			WARDEN_HEADLESS: "1",
 			WARDEN_LOG_TIMESTAMPS: "true",
 			WARDEN_WORKER: "w1",
@@ -78,6 +79,7 @@ describe("readEnv", () => {
 			helperDir: "/h",
 			simd: "/h/warden-simd",
 			simdSocket: "/s.sock",
+			iosRunnerSocket: "/r.sock",
 			logTimestamps: true,
 			deviceName: "warden-iphone-17-5",
 		});

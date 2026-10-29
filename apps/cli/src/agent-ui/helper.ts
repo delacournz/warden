@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { installedBundleIds } from "@delacour/warden-core/builds/cache";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
@@ -1199,6 +1200,37 @@ export function ensureIosRunner(
 	opts: EnsureHelperOptions = {}
 ): Promise<Result<HelperInfo, UiError>> {
 	return ensureHelperOf(IOS_RUNNER_KIND, host, udid, opts.deps ?? defaultHelperDeps, opts);
+}
+
+/**
+ * The physical-iPhone `Driver` for a leased phone, over its (possibly just-spawned) runner host. The app under test is
+ * `WARDEN_BUNDLE_ID`, `WARDEN_APP_PATH` is what `clearData` reinstalls, and only bundles warden installed on this phone
+ * (`installs` table) may be uninstalled. Closing it only disconnects; the host stays resident until its idle timeout.
+ */
+export async function connectIosRunner(
+	ctx: CommandContext,
+	udid: string,
+	opts: EnsureHelperOptions = {}
+): Promise<Result<Driver, UiError>> {
+	const host = await ensureIosRunner(ctx, udid, { ...opts, keepClient: true });
+	if (!host.success) return host;
+	const { client, socketPath } = host.data;
+	const { openIosDeviceDriver } = await import("@delacour/warden-e2e/driver/ios/device/device-driver");
+	const bundleId = ctx.env.WARDEN_BUNDLE_ID?.trim();
+	const appPath = ctx.env.WARDEN_APP_PATH?.trim();
+	const driver = await openIosDeviceDriver({
+		udid,
+		exec: ctx.exec,
+		socketPath,
+		...(client ? { client } : {}),
+		...(bundleId ? { bundleId } : {}),
+		...(appPath ? { appPath } : {}),
+		ownedBundles: installedBundleIds(ctx.store(), "ios", udid),
+		now: ctx.now,
+	});
+	if (driver.success) return driver;
+	await client?.close();
+	return { success: false, error: driverUiError(driver.error) };
 }
 
 /** `stopHelper` for a physical iPhone's runner host. */

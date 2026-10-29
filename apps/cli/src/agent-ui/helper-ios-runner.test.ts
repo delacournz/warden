@@ -6,6 +6,7 @@ import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import {
+	connectIosRunner,
 	ensureIosRunner,
 	type HelperDeps,
 	helperStatus,
@@ -212,5 +213,29 @@ describe("stopping and sweeping the ios runner", () => {
 		await stopIosRunnersLazily(c, [UDID, "00008140-0000000000000000"], { load });
 		expect(loads).toBe(1);
 		expect(stopped).toEqual([UDID]);
+	});
+});
+
+describe("connectIosRunner", () => {
+	test("starts the runner host and answers the physical-iPhone driver on its client", async () => {
+		const { c, deps, requests } = setup();
+		c.env.WARDEN_BUNDLE_ID = "nz.co.x";
+		const res = await connectIosRunner(c, UDID, { deps });
+		if (!res.success) throw new Error(res.error.message);
+		expect(res.data.id).toBe(UDID);
+		expect(res.data.capabilities).toMatchObject({
+			pinch: false,
+			maxPointers: 0,
+			nativeSettle: false,
+			cheapHitTest: false,
+		});
+		await res.data.tap({ x: 1, y: 2 });
+		expect(requests).toContain("tap");
+	});
+
+	test("a runner that cannot start is the host's error (a locked phone stays device_locked)", async () => {
+		const { c, deps } = setup(10 * IOS_RUNNER_STARTUP_MS);
+		const res = await connectIosRunner(c, UDID, { deps });
+		expect(res.success).toBe(false);
 	});
 });

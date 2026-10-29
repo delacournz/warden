@@ -57,6 +57,9 @@
 | 51 | `E_REFUSED`: `physical_protected: <pkg> was not installed by warden` | `uninstall` / `clearData` on a phone only touch `WARDEN_BUNDLE_ID` and packages in the `installs` table for that serial | Do it on the phone yourself, or install the app through warden first. There is no override |
 | 52 | Install fails `abi_mismatch: … has native code for x86_64 but <serial> runs arm64-v8a` | The `simulator` kind targets the host CPU; a phone is arm | Use the `dev` or `release` build kind for a phone |
 | 53 | Install fails `a differently-signed copy of <pkg> is installed` (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) | The phone holds the app signed with another key (a store build) | Uninstall it yourself on the phone. warden never uninstalls it for you |
+| 54 | `warden ui --udid <iPhone>` exits 2 `device_locked` (the runner host log says `Unlock … to Continue`) | The iPhone is locked; XCUITest cannot start or drive it | Unlock the phone (keep it awake), retry once. warden never unlocks it |
+| 55 | `warden ui` on an iPhone fails `ios_team_ambiguous` (or the runner build fails `no_team`) | The keychain holds several `Apple Development` identities, so no signing team can be picked | Set `WARDEN_IOS_TEAM_ID=<team>` or `ios: { teamId }` in `warden.config.ts` |
+| 56 | `E_UNSUPPORTED` from `pinch`, `rotate`, `gesture` or `press shake` / `back` on an iPhone | The on-device XCUITest runner takes single-finger taps, swipes and drags only | Use `swipe` / `drag`, or run the check on a simulator |
 
 ## Code lookup
 

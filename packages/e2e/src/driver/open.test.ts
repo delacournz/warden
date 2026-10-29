@@ -10,6 +10,8 @@ import { fakeExec } from "./ios/exec.testing";
 import { fakeSimd } from "./ios/simd.testing";
 import { androidOptions, defaultDriverFactory, openDriver } from "./open";
 
+const PHONE = "00008140-000A0B0C0D0E0F10";
+
 const env = (platform: "ios" | "android", extra: Partial<E2eEnv> = {}): E2eEnv => ({
 	udid: "UDID-1",
 	platform,
@@ -37,6 +39,27 @@ describe("openDriver", () => {
 		expect(result.data.id).toBe("UDID-1");
 		expect(helper.spawns[0]?.slice(0, 3)).toEqual(["/x/warden-simd", "--udid", "UDID-1"]);
 		await result.data.close();
+	});
+
+	test("a physical iPhone udid opens the device driver, not warden-simd", async () => {
+		const helper = fakeSimd(() => ({ data: null }));
+		const result = await openDriver(env("ios", { udid: PHONE }), {
+			exec: fakeExec([]),
+			spawn: helper.spawn,
+			helperPath: "/x/warden-simd",
+		});
+		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
+		expect(!result.success && result.error.message).toContain("WARDEN_IOS_RUNNER_SOCKET");
+		expect(helper.spawns).toEqual([]);
+	});
+
+	test("a physical iPhone connects to env.iosRunnerSocket", async () => {
+		const result = await openDriver(env("ios", { udid: PHONE, iosRunnerSocket: "/nonexistent/r.sock" }), {
+			exec: fakeExec([]),
+			defaultTimeoutMs: 100,
+		});
+		expect(result.success).toBe(false);
+		expect(!result.success && result.error.message).not.toContain("WARDEN_IOS_RUNNER_SOCKET is not set");
 	});
 
 	test("WARDEN_E2E_DEBUG=1 turns the latency log on", async () => {

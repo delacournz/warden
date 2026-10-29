@@ -22,6 +22,8 @@ export const ENV_NAMES = {
 	helperDir: "WARDEN_HELPER_DIR",
 	simd: "WARDEN_SIMD",
 	simdSocket: "WARDEN_SIMD_SOCKET",
+	/** unix socket of a physical iPhone's resident runner host (`warden __ios-runner-host`): the iOS device driver connects there instead of to `warden-simd` */
+	iosRunnerSocket: "WARDEN_IOS_RUNNER_SOCKET",
 	logTimestamps: "WARDEN_LOG_TIMESTAMPS",
 	/**
 	 * JSON argv (`{udid}` is replaced) the session runs after it rebooted the sim following a lost HID connection;
@@ -80,6 +82,7 @@ const schema = z.object({
 	helperDir: z.string().optional(),
 	simd: z.string().optional(),
 	simdSocket: z.string().optional(),
+	iosRunnerSocket: z.string().optional(),
 	logTimestamps: toggle.default(false),
 	afterReboot: launchArgs.optional(),
 	version: z.string().optional(),
@@ -106,6 +109,8 @@ export type E2eEnv = {
 	helperDir?: string;
 	simd?: string;
 	simdSocket?: string;
+	/** `WARDEN_IOS_RUNNER_SOCKET`: the runner host's socket for a physical iPhone */
+	iosRunnerSocket?: string;
 	/** warden already stamps the log lines: the spec reporter prints no clock of its own */
 	logTimestamps: boolean;
 	/** `WARDEN_AFTER_REBOOT`: argv run after a HID-loss reboot, `{udid}` not yet replaced (see `runAfterReboot`) */
@@ -157,6 +162,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			helperDir: v.helperDir,
 			simd: v.simd,
 			simdSocket: v.simdSocket,
+			iosRunnerSocket: v.iosRunnerSocket,
 			wardenVersion: v.version,
 			perfBudgets: v.perfBudgets,
 		}),

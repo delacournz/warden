@@ -1,5 +1,6 @@
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { wardenHome } from "@delacour/warden-core/store";
+import { isPhysicalIosId } from "@delacour/warden-core/types";
 import { openAndroidDriver } from "@delacour/warden-e2e/driver/android/android-driver";
 import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
 import { androidStateDir, createAndroidStateStore } from "@delacour/warden-e2e/driver/android/android-state";
@@ -9,7 +10,7 @@ import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
 import { fromDriver } from "./driver";
-import { connectAndroidHost, connectHelper, stopAndroidHost } from "./helper";
+import { connectAndroidHost, connectHelper, connectIosRunner, stopAndroidHost } from "./helper";
 import type { UiError } from "./output";
 import { ownedPackages } from "./phone";
 import { readDumpRoute, writeDumpRoute } from "./state";
@@ -21,7 +22,7 @@ export function androidHostFromEnv(env: Readonly<Record<string, string | undefin
 
 /**
  * The real driver for a device. iOS: the device's `warden-simd` daemon (`connectHelper` spawns it on first
- * use, closing the driver only disconnects). Android: the device's resident host (`warden __android-host`,
+ * use, closing the driver only disconnects); a physical iPhone's runner host instead (`connectIosRunner`, same shape). Android: the device's resident host (`warden __android-host`,
  * `connectAndroidHost`), which keeps the adb shell, `warden-uiad` and the animation scales open between calls, so a
  * call pays ~10-40 ms for its op instead of ~500 ms of open and close; when the host cannot be started (or
  * `WARDEN_ANDROID_HOST=0`) an in-process driver owned by this command, as before (`openAndroidInProcess`).
@@ -29,7 +30,9 @@ export function androidHostFromEnv(env: Readonly<Record<string, string | undefin
  * (`--help`, no lease, `status`) never loads the engines.
  */
 export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
-	if (device.platform === "ios") return connectHelper(ctx, device.udid);
+	if (device.platform === "ios") {
+		return isPhysicalIosId(device.udid) ? connectIosRunner(ctx, device.udid) : connectHelper(ctx, device.udid);
+	}
 	if (androidHostFromEnv(ctx.env)) {
 		const hosted = await connectAndroidHost(ctx, device.udid);
 		if (hosted.success) return hosted;
