@@ -130,10 +130,10 @@ describe("the privacy policy's claims", () => {
 
 	test("names the hosts the CLI updates itself from", () => {
 		const registry = readFileSync(join(REPO, "apps", "cli", "src", "update", "npm-registry.ts"), "utf-8");
-		const helper = readFileSync(join(REPO, "apps", "cli", "src", "update", "fetch-helper.ts"), "utf-8");
+		const assets = readFileSync(join(REPO, "apps", "cli", "src", "update", "fetch-asset.ts"), "utf-8");
 
 		expect(registry).toContain("https://registry.npmjs.org");
-		expect(helper).toContain("/releases/download/");
+		expect(assets).toContain("/releases/download/");
 		expect(EVERYTHING).toContain("registry.npmjs.org");
 		expect(EVERYTHING).toContain("github.com/delacournz/warden/releases");
 	});

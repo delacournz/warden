@@ -127,9 +127,9 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 				why: "`warden update` asks the registry for the latest version and downloads it. The check runs only when you run the command.",
 			},
 			{
-				what: "A download of the simulator helper: your IP address and the release asset requested",
+				what: "A download of the simulator helper or the device viewer: your IP address and the release asset requested",
 				to: "GitHub, `github.com/delacournz/warden/releases`",
-				why: "`warden update` and `warden doctor --fetch-helper` fetch the native helper that drives iOS simulators, and check it against the release's published checksum.",
+				why: "`warden update` and `warden doctor --fetch-helper` fetch the native helper that drives iOS simulators, and the first `warden view` fetches the window that shows a hosted device. Each is checked against the release's published checksum.",
 			},
 			{
 				what: "Simulator, emulator and app traffic",
