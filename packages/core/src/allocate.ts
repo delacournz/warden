@@ -1,6 +1,6 @@
 import { isLeaseAlive, type PidAlive } from "./liveness";
 import type { AllocationPlan, AllocationStep, DeviceRequest, InventoryDevice, Lease } from "./types";
-import { resourceKey } from "./types";
+import { isPhysicalReady, resourceKey } from "./types";
 
 export type AllocateInput = {
 	inventory: InventoryDevice[];
@@ -60,23 +60,30 @@ const STATE_RANK: Record<InventoryDevice["state"], number> = { booted: 0, bootin
 /**
  * Pure allocation: which devices satisfy `request` given current leases. Free warden devices first
  * (booted before shutdown, newest runtime first), then pool growth up to `max`. Foreign devices are
- * only considered with `adopt`. Stale leases are ignored and returned for reclaim.
+ * only considered with `adopt`. Physical devices are never considered, even with `adopt`, unless
+ * `request.physical` asks for them: then only ready ones, no profile match, and nothing is created. Stale leases are ignored and returned for reclaim.
  */
 export function allocate({ inventory, leases, request, now, pidAlive, skip }: AllocateInput): AllocationPlan {
 	const stale = leases.filter((l) => !isLeaseAlive(l, now, pidAlive)).map((l) => l.id);
 	const staleSet = new Set(stale);
 	const held = new Set(leases.filter((l) => !staleSet.has(l.id)).map((l) => resourceKey(l.resource)));
 
-	const matching = inventory.filter(
-		(d) =>
-			d.platform === request.platform &&
-			d.golden !== true &&
-			d.quarantined !== true &&
-			skip?.has(d.id) !== true &&
+	const candidate = (d: InventoryDevice): boolean => {
+		if (d.platform !== request.platform || d.golden === true || d.quarantined === true || skip?.has(d.id) === true) {
+			return false;
+		}
+		if (request.physical) {
+			const { ids } = request.physical;
+			return isPhysicalReady(d) && (ids === undefined || ids.includes(d.id)) && runtimeMatches(d, request.runtime);
+		}
+		return (
+			d.physical === undefined &&
 			(d.wardenCreated || request.adopt === true) &&
 			profileMatches(d, request.profile) &&
 			runtimeMatches(d, request.runtime)
-	);
+		);
+	};
+	const matching = inventory.filter(candidate);
 	const free = matching
 		.filter((d) => !held.has(resourceKey({ kind: "device", platform: d.platform, id: d.id, name: d.name })))
 		.sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state] || compareRuntimeDesc(a, b));
@@ -86,11 +93,16 @@ export function allocate({ inventory, leases, request, now, pidAlive, skip }: Al
 		.map((device) => (device.state === "shutdown" ? { action: "boot", device } : { action: "reuse", device }));
 
 	const pool = inventory.filter(
-		(d) => d.platform === request.platform && d.golden !== true && d.wardenCreated && profileMatches(d, request.profile)
+		(d) =>
+			d.platform === request.platform &&
+			d.golden !== true &&
+			d.physical === undefined &&
+			d.wardenCreated &&
+			profileMatches(d, request.profile)
 	);
 	const usedNames = new Set(pool.map((d) => d.name));
 	// quarantined devices keep their names but free their pool slot so a replacement can be created
-	let room = request.max - pool.filter((d) => d.quarantined !== true).length;
+	let room = request.physical ? 0 : request.max - pool.filter((d) => d.quarantined !== true).length;
 	let index = 1;
 	while (steps.length < request.count && room > 0) {
 		while (usedNames.has(wardenDeviceName(request.profile, index))) index++;

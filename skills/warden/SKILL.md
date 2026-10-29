@@ -36,6 +36,7 @@ Open the reference file for details before acting; this file only routes.
 | Need | Command |
 |---|---|
 | one sim / emulator | `warden claim ios --json` · `warden claim android --json` (`--headless`, `--label x`, `--ttl 30m`) |
+| a physical phone / tablet | `warden claim android --physical --json` · `warden claim android --serial <adb serial…>` · `warden claim ios --udid <CoreDevice UDID…>` (naming a device implies `--physical`). Opt-in only: a plain claim never takes a phone, even with `--adopt`. Rejected with it: `--count --max --slim --headless --runtime --adopt`. JSON leases carry `physical: { transport, hwSerial? }` |
 | set a new Expo app up for warden | `warden init --bundle-id <id>` → bundle id into `app.json`, `warden.config.ts`, `e2e/smoke.e2e.ts`; names packages to install (`expo-dev-client`, `@delacour/warden-e2e`), installs nothing |
 | run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds, source }` (everything else, Metro included, is stderr); checks bundle id + `expo-dev-client` first; installs the dev build matching the native fingerprint (installed → cache → EAS only with `eas.json`/config → local build, which regenerates a git-ignored `ios/`/`android/` prebuilt for another fingerprint; `--no-build` / `--no-eas` to skip); owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases. Agents run `--json` (plain output, no dashboard); the interactive dashboard is for people, `--no-tui` forces plain output on a TTY |
 | debug the running app | `warden dev enable devtools` first (dev starts without the CDP broker or perf HUD; `disable` / `status`) · `warden dev logs --kind bundle_failed,error` (Metro) · `warden ui exceptions` · `warden ui logs --level warn` · `warden ui logpoint add src/x.tsx:42 '<expr>'` → `logpoint hits` · `warden ui eval '<expr>'` (see ui.md Devtools) |
@@ -73,6 +74,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 - gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground. It also shuts down unleased warden devices idle 20 min (`--idle`).
 - A declined `warden.config.ts` offer from `warden dev` is kept in `~/.warden/projects/<key>/`, shared by every worktree; nothing is written to the repo.
 - warden only creates, shuts down and erases `warden-<profile>-N` sims; `--adopt` opts a foreign device in.
+- A physical device is never booted, created, shut down (`release --shutdown` and `gc` leave it and say "physical device: never shut down"), erased or slimmed, and costs no host capacity. A `--physical` claim takes only a ready device (Android adb state `device`) and fails with "no free ready physical <platform> device" when none is free; it never queues for capacity.
 - The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.
 - A failed `warden e2e` leaves sims booted for inspection.

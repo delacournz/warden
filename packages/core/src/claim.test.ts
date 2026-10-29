@@ -1089,6 +1089,24 @@ describe("claim capacity queue", () => {
 		expect(store.listQueue()).toEqual([]);
 	});
 
+	test("phones cost nothing: three booted phones do not queue a sim claim", async () => {
+		const phone = (id: string): InventoryDevice => ({
+			...sim(id, { name: `iPhone ${id}`, state: "booted" }),
+			physical: {
+				platform: "ios",
+				transport: "wired",
+				deviceType: "iPhone",
+				osVersion: "27.2",
+				developerMode: true,
+				ddi: true,
+			},
+		});
+		const provider = fakeProvider([phone("P1"), phone("P2"), phone("P3"), sim("1")]);
+		const result = await claimDevices(capInput(provider, { cpu: 1, request: request({ adopt: true }) }));
+		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
+		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
+	});
+
 	test("without capacity a full host never queues", async () => {
 		const provider = fakeProvider([]);
 		const result = await claimDevices(input(provider));
@@ -1150,5 +1168,53 @@ describe("claimDevices slim hooks (SLIM-2)", () => {
 		const provider = hooked([sim("1", { state: "booted" })], { bootReady: true });
 		await claimDevices(input(provider));
 		expect(provider.calls.filter((c) => c.startsWith("prepareBoot") || c.startsWith("afterReady"))).toEqual([]);
+	});
+});
+
+describe("claimDevices physical", () => {
+	const phone = (id: string, overrides: Partial<InventoryDevice> = {}): InventoryDevice => ({
+		platform: "android",
+		id,
+		name: `Pixel ${id}`,
+		state: "booted",
+		wardenCreated: false,
+		physical: { platform: "android", transport: "usb", adbState: "device", hwSerial: `HW-${id}` },
+		...overrides,
+	});
+
+	test("leases a ready phone with a physical resource, never boots or creates it and records no device", async () => {
+		const provider = fakeProvider([phone("P1")]);
+		const result = await claimDevices(input(provider, { request: request({ platform: "android", physical: {} }) }));
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data.claimed[0]?.lease.resource).toEqual({
+			kind: "device",
+			platform: "android",
+			id: "P1",
+			name: "Pixel P1",
+			physical: { transport: "usb", hwSerial: "HW-P1" },
+		});
+		expect(result.data.claimed[0]?.action).toBe("reuse");
+		expect(provider.calls.filter((c) => /^(boot|create|shutdown)/.test(c))).toEqual([]);
+		expect(store.listDevices()).toEqual([]);
+	});
+
+	test("with no ready phone it waits instead of creating", async () => {
+		const provider = fakeProvider([]);
+		const result = await claimDevices(input(provider, { request: request({ platform: "android", physical: {} }) }));
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("physical");
+		expect(provider.calls).toEqual([]);
+	});
+
+	test("two claims get two different phones", async () => {
+		const provider = fakeProvider([phone("P1"), phone("P2")]);
+		const req = request({ platform: "android", physical: {} });
+		const a = await claimDevices(input(provider, { request: req }));
+		const b = await claimDevices(input(provider, { request: req, owner: other }));
+		expect(a.success && b.success && [a.data.claimed[0]?.device.id, b.data.claimed[0]?.device.id].sort()).toEqual([
+			"P1",
+			"P2",
+		]);
 	});
 });

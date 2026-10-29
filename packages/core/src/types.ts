@@ -1,6 +1,26 @@
 export type Platform = "ios" | "android";
 
-export type DeviceResource = { kind: "device"; platform: Platform; id: string; name: string };
+/** Facts about a real phone/tablet, from its provider. Only physical devices carry one. */
+export type PhysicalInfo =
+	| { platform: "android"; transport: "usb" | "wifi"; adbState: string; hwSerial?: string; model?: string }
+	| {
+			platform: "ios";
+			transport: "wired" | "localNetwork";
+			deviceType: string;
+			osVersion: string;
+			developerMode: boolean;
+			ddi: boolean;
+			tunnelIp?: string;
+	  };
+
+export type DeviceResource = {
+	kind: "device";
+	platform: Platform;
+	id: string;
+	name: string;
+	/** set on leases of real devices; id stays the transport id (adb serial / CoreDevice UDID) */
+	physical?: { transport: string; hwSerial?: string };
+};
 export type PortResource = { kind: "port"; port: number };
 export type BuildResource = { kind: "build"; key: string };
 export type Resource = DeviceResource | PortResource | BuildResource;
@@ -51,6 +71,8 @@ export type InventoryDevice = {
 	golden?: boolean;
 	/** reported bad: never allocated until `warden sim unquarantine` */
 	quarantined?: boolean;
+	/** a real phone/tablet: never booted, shut down, created, adopted, counted in capacity or recorded as a warden device */
+	physical?: PhysicalInfo;
 };
 
 export type DeviceRequest = {
@@ -62,6 +84,8 @@ export type DeviceRequest = {
 	max: number;
 	/** allow allocating foreign (non-warden) devices that match the profile */
 	adopt?: boolean;
+	/** opt-in: only physical devices (optionally just these ids), never create or boot */
+	physical?: { ids?: string[] };
 };
 
 export type AllocationStep =
@@ -124,3 +148,35 @@ export type QueueEntry = {
 	label?: string;
 	pid?: number;
 };
+
+/** The one constructor of a device lease resource: carries `physical` for real devices. */
+export function deviceResourceOf(d: InventoryDevice): DeviceResource {
+	const resource: DeviceResource = { kind: "device", platform: d.platform, id: d.id, name: d.name };
+	if (d.physical) {
+		resource.physical = {
+			transport: d.physical.transport,
+			...(d.physical.platform === "android" && d.physical.hwSerial !== undefined
+				? { hwSerial: d.physical.hwSerial }
+				: {}),
+		};
+	}
+	return resource;
+}
+
+const PHYSICAL_IOS_ID = /^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9a-f]{40})$/i;
+
+/** An iPhone/iPad hardware UDID: `XXXXXXXX-XXXXXXXXXXXXXXXX` or 40 hex (older devices); a simulator UUID is neither. */
+export function isPhysicalIosId(id: string): boolean {
+	return PHYSICAL_IOS_ID.test(id);
+}
+
+/** A device warden may not boot, shut down, create, erase or count in host capacity. */
+export function isPhysicalDevice(d: Pick<InventoryDevice, "physical">): boolean {
+	return d.physical !== undefined;
+}
+
+/** Is a physical device usable now: an Android phone in adb state `device`, an iOS device its provider reports `booted` (paired and available). */
+export function isPhysicalReady(d: InventoryDevice): boolean {
+	if (!d.physical) return false;
+	return d.physical.platform === "android" ? d.physical.adbState === "device" : d.state === "booted";
+}

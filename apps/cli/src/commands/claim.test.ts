@@ -270,3 +270,38 @@ describe("warden claim auto-gc (16-1)", () => {
 		expect(autoGcConsidered(c.db)).toBe(true);
 	});
 });
+
+describe("warden claim --physical", () => {
+	test("with no phone present it fails without booting or creating anything", async () => {
+		const calls: string[][] = [];
+		const c = setup(
+			["ios", "--physical", "--no-wait", "--json"],
+			fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls)
+		);
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("no free ready physical ios device");
+		expect(calls.filter((x) => ["boot", "create", "shutdown", "clone"].includes(x[2] ?? ""))).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("incompatible flags exit 1 before touching a device", async () => {
+		const calls: string[][] = [];
+		const c = setup(["android", "--physical", "--count", "2"], fakeSimctl([], calls));
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--count cannot be used with --physical");
+		expect(calls).toEqual([]);
+	});
+
+	test("--serial names android devices: on ios it is refused, on android it asks for those ids", async () => {
+		const wrong = setup(["ios", "--serial", "R5CT"], fakeSimctl([]));
+		expect(await claimCommand.run(wrong)).toBe(1);
+		expect(wrong.stderr.join("\n")).toContain("--serial is android-only");
+	});
+
+	test("WARDEN_HEADLESS in the environment does not reject --physical", async () => {
+		const c = setup(["ios", "--physical", "--no-wait"], fakeSimctl([]));
+		c.env = { ...c.env, WARDEN_HEADLESS: "1" };
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).not.toContain("cannot be used");
+	});
+});

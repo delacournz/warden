@@ -7,18 +7,20 @@ import {
 	claimedJson,
 	claimWithFlags,
 	hintSlimmed,
+	isPhysicalClaim,
 	leasePidFor,
 	parseClaimFlags,
 	resolveOwner,
 	resolvePlatform,
 	withClaimOptions,
+	withPhysicalOptions,
 } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, heading, reportError, table, warn } from "../output";
 import { withSpinner } from "../spinner-context";
 
-type ClaimOpts = ClaimFlagValues & { json?: true };
+type ClaimOpts = ClaimFlagValues & { serial?: string[]; udid?: string[]; json?: true };
 
 /** Lease, then boot / create as needed; a spinner covers the (possibly minutes-long) boot. */
 async function claim(ctx: CommandContext, platformArg: string | undefined, opts: ClaimOpts): Promise<number> {
@@ -30,10 +32,15 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	}
 	const owner = resolveOwner(ctx);
 	const shortLived = owner.kind === "agent" && opts.ttl === undefined;
-	const headless = resolveHeadless({ flag: opts.headless, env: ctx.env });
+	const named = {
+		...opts,
+		...(opts.serial ? { physicalSerial: opts.serial } : {}),
+		...(opts.udid ? { physicalUdid: opts.udid } : {}),
+	};
+	const headless = isPhysicalClaim(named) ? opts.headless : resolveHeadless({ flag: opts.headless, env: ctx.env });
 	const flags = parseClaimFlags(
 		platform.data,
-		{ ...opts, headless },
+		{ ...named, headless },
 		undefined,
 		shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS
 	);
@@ -41,11 +48,12 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		reportError(ctx, "claim", flags.error);
 		return 1;
 	}
-	const { count, profile } = flags.data.request;
-	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${profile} ×${count}`);
+	const { count, profile, physical } = flags.data.request;
+	const kind = physical ? "physical" : profile;
+	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${kind} ×${count}`);
 	const outcome = await withSpinner(
 		ctx,
-		`claiming ${count} ${profile} ${platform.data} device(s)…`,
+		`claiming ${count} ${kind} ${platform.data} device(s)…`,
 		async (sctx, spinner) => {
 			const result = await claimWithFlags(sctx, owner, flags.data, leasePidFor(owner));
 			if (result.success) spinner.succeed(`claimed ${result.data.claimed.map((c) => c.device.name).join(", ")}`);
@@ -85,8 +93,8 @@ export const claimCommand = defineCommand({
 	group: "Lease",
 	summary: "lease iOS sims / Android emulators (reuse, boot or create), booted and ready",
 	register: (cmd, ctx, done) => {
-		withClaimOptions(cmd.argument("[platform]", "ios | android (asked for when omitted in a terminal)")).action(
-			async (platform, opts) => done(await claim(ctx, platform, opts))
-		);
+		withPhysicalOptions(
+			withClaimOptions(cmd.argument("[platform]", "ios | android (asked for when omitted in a terminal)"))
+		).action(async (platform, opts) => done(await claim(ctx, platform, opts)));
 	},
 });

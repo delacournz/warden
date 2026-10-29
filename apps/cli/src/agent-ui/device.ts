@@ -41,7 +41,7 @@ export type UiDevice = UiDeviceInfo & {
 
 type Candidate = { id: string; platform?: Platform; source: UiDeviceSource };
 
-/** Platform of an id warden knows (a lease, a device record), else its shape (UDID = ios, else adb serial). */
+/** Platform of an id warden knows (a lease, a device record), else its shape (simulator UUID or physical `XXXXXXXX-XXXXXXXXXXXXXXXX` UDID = ios, else adb serial). */
 function platformOf(ctx: CommandContext, id: string): Result<Platform> {
 	const store = ctx.store();
 	const leased = store.listLeases().find((l) => l.resource.kind === "device" && l.resource.id === id);
@@ -49,7 +49,7 @@ function platformOf(ctx: CommandContext, id: string): Result<Platform> {
 	const known = store.listDevices().find((d) => d.id === id);
 	if (known) return ok(known.platform);
 	const target = deviceTarget(id);
-	return target.kind === "device" ? ok(target.platform) : err(`${id} is not a simulator or emulator`);
+	return target.kind === "device" ? ok(target.platform) : err(`${id} is not a simulator, emulator or physical device`);
 }
 
 function fromFlags(ctx: CommandContext, flags: UiDeviceFlags): Result<Candidate | undefined, UiError> {

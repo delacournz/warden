@@ -90,7 +90,9 @@ async function gcPlatform(
 		outcome.notes.push(`${platform}: skipped (${inventory.error})`);
 		return outcome;
 	}
-	const booted = new Set(inventory.data.filter((d) => d.state !== "shutdown").map((d) => d.id));
+	const booted = new Set(
+		inventory.data.filter((d) => d.state !== "shutdown" && d.physical === undefined).map((d) => d.id)
+	);
 	if (platform === "android") {
 		const listed = new Set(inventory.data.map((d) => d.id));
 		for (const r of records) {

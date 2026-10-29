@@ -59,3 +59,28 @@ describe("perf budgets", () => {
 		expect(issues({ perf: { extra: 1 } })).not.toEqual([]);
 	});
 });
+
+describe("physical", () => {
+	test("true or { ids } on a suite and on a leg; unset by default", () => {
+		expect(suite().physical).toBeUndefined();
+		expect(suite({ physical: true }).physical).toBe(true);
+		expect(suite({ physical: { ids: ["R5CT"] } }).physical).toEqual({ ids: ["R5CT"] });
+		const legs = suite({ devices: [{ profile: "pixel-8", physical: { ids: ["R5CT"] } }, { profile: "auto" }] }).devices;
+		expect(legs?.[0]?.physical).toEqual({ ids: ["R5CT"] });
+		expect(legs?.[1]?.physical).toBeUndefined();
+	});
+
+	test("false, empty ids and unknown keys are refused", () => {
+		expect(issues({ physical: false })).not.toEqual([]);
+		expect(issues({ physical: { ids: [] } })).not.toEqual([]);
+		expect(issues({ physical: { ids: ["a"], extra: 1 } })).not.toEqual([]);
+	});
+
+	test("slim and headless contradict physical", () => {
+		expect(issues({ physical: true, slim: true })).toEqual(["slim: slim cannot be used with physical devices"]);
+		expect(issues({ physical: true, headless: true })).toEqual([
+			"headless: headless cannot be used with physical devices",
+		]);
+		expect(issues({ physical: true, slim: false, headless: false })).toEqual([]);
+	});
+});

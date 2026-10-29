@@ -13,7 +13,7 @@ import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { resolveSlim, type SlimSetting } from "@delacour/warden-core/slim-policy";
-import type { DeviceRequest, Owner, Platform } from "@delacour/warden-core/types";
+import { type DeviceRequest, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "./agent-ui/stop-helper-after";
 import { buildCapacityDeps } from "./capacity-deps";
@@ -57,6 +57,20 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 		.option("--json", "machine-readable output");
 }
 
+/**
+ * `--physical` / `--serial` / `--udid`: opt in to real phones and tablets. Kept apart from
+ * `withClaimOptions` so only commands that handle a physical device (never boot, shut down or
+ * arrange it) offer them.
+ */
+export function withPhysicalOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
+	cmd: Commander<Args, Opts, Globals>
+) {
+	return cmd
+		.option("--physical", "claim a connected physical phone/tablet (never booted, shut down or created by warden)")
+		.option("--serial <serial...>", "android: claim these physical devices by adb serial (implies --physical)")
+		.option("--udid <udid...>", "ios: claim these physical devices by CoreDevice UDID (implies --physical)");
+}
+
 /** Platform from the argument, else (interactive terminal) a picker; undefined = cancelled. */
 export async function resolvePlatform(ctx: CommandContext, arg: string | undefined): Promise<Result<Platform>> {
 	if (arg !== undefined || !ctx.ui.interactive) return parsePlatform(arg);
@@ -78,6 +92,11 @@ export type ClaimFlagValues = {
 	ttl?: string;
 	label?: string;
 	adopt?: boolean;
+	/** `--physical`: only real devices, never create or boot */
+	physical?: boolean;
+	/** `--serial` (android) / `--udid` (ios): the physical devices to claim; each implies `--physical`. Not named `serial` / `udid`: `dev` and `ui` spread their own options into these values */
+	physicalSerial?: string[];
+	physicalUdid?: string[];
 	/** the run's resolved headless (callers apply `resolveHeadless` first) */
 	headless?: boolean;
 	/** `--slim` / `--no-slim` (undefined = not passed) */
@@ -87,6 +106,13 @@ export type ClaimFlagValues = {
 	/** top-level config `slim` */
 	slimTopLevel?: SlimSetting | undefined;
 };
+
+/** Does the claim ask for physical devices (`--physical`, or naming one with `--serial` / `--udid`)? */
+export function isPhysicalClaim(
+	values: Pick<ClaimFlagValues, "physical" | "physicalSerial" | "physicalUdid">
+): boolean {
+	return values.physical === true || values.physicalSerial !== undefined || values.physicalUdid !== undefined;
+}
 
 /** The layers `resolveSlim` merges for a claim. */
 export type SlimLayers = { flag?: boolean; config?: SlimSetting; topLevel?: SlimSetting };
@@ -154,6 +180,7 @@ export function parseClaimFlags(
 ): Result<ClaimFlags> {
 	const platform = parsePlatform(platformArg);
 	if (!platform.success) return platform;
+	if (isPhysicalClaim(values)) return parsePhysicalClaim(platform.data, values, defaultTtlMs, defaultPriority);
 	const count = positiveInt("count", values.count, 1);
 	if (!count.success) return count;
 	const max = positiveInt("max", values.max, Math.max(defaultMax(cores), count.data), 0);
@@ -170,6 +197,78 @@ export function parseClaimFlags(
 	if (priority) flags.priority = priority.data;
 	if (defaultPriority !== undefined) flags.defaultPriority = defaultPriority;
 	return ok(withOptionalFlags(flags, values));
+}
+
+/** Flags that make no sense on a device warden never creates, boots or arranges. */
+function physicalConflict(values: ClaimFlagValues): string | undefined {
+	const conflicts: Array<[string, boolean]> = [
+		["--count", values.count !== undefined && values.count !== "1"],
+		["--max", values.max !== undefined],
+		["--slim", values.slim === true],
+		["--headless", values.headless === true],
+		["--runtime", values.runtime !== undefined],
+		["--adopt", values.adopt === true],
+	];
+	const found = conflicts.find(([, given]) => given);
+	return found
+		? `${found[0]} cannot be used with --physical (a physical device is never created, booted or arranged)`
+		: undefined;
+}
+
+/** `--wait`, `--priority` and `--ttl`, validated: the part of a claim every kind shares. */
+function parseTiming(
+	values: ClaimFlagValues,
+	defaultTtlMs: number
+): Result<{ flags: Pick<ClaimFlags, "waitMs" | "ttlMs" | "priority"> }> {
+	const waitMs = values.wait === false ? ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
+	if (!waitMs.success) return waitMs;
+	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
+	if (priority && !priority.success) return priority;
+	const ttlMs = values.ttl === undefined ? ok(defaultTtlMs) : parseDuration(values.ttl);
+	if (!ttlMs.success) return ttlMs;
+	return ok({ flags: { waitMs: waitMs.data, ttlMs: ttlMs.data, ...(priority ? { priority: priority.data } : {}) } });
+}
+
+/** The physical ids named by `--serial` (android) / `--udid` (ios), checked against the platform. */
+function physicalIds(platform: Platform, values: ClaimFlagValues): Result<string[] | undefined> {
+	if (platform === "ios" && values.physicalSerial !== undefined)
+		return err("--serial is android-only; use --udid for iOS");
+	if (platform === "android" && values.physicalUdid !== undefined)
+		return err("--udid is ios-only; use --serial for Android");
+	const ids = platform === "android" ? values.physicalSerial : values.physicalUdid;
+	if (ids === undefined) return ok(undefined);
+	const bad = platform === "ios" ? ids.find((id) => !isPhysicalIosId(id)) : undefined;
+	if (bad !== undefined) {
+		return err(`--udid ${bad} is not a physical iOS device id (simulators are claimed without --physical)`);
+	}
+	return ok([...new Set(ids)]);
+}
+
+/** `parseClaimFlags` for a physical claim: one device per named id (else one), never created or booted. */
+function parsePhysicalClaim(
+	platform: Platform,
+	values: ClaimFlagValues,
+	defaultTtlMs: number,
+	defaultPriority: number | undefined
+): Result<ClaimFlags> {
+	const conflict = physicalConflict(values);
+	if (conflict) return err(conflict);
+	const ids = physicalIds(platform, values);
+	if (!ids.success) return ids;
+	const timing = parseTiming(values, defaultTtlMs);
+	if (!timing.success) return timing;
+	const count = ids.data?.length ?? 1;
+	const request: DeviceRequest = {
+		platform,
+		profile: values.profile ?? DEFAULT_PROFILE[platform],
+		count,
+		max: count,
+		physical: ids.data ? { ids: ids.data } : {},
+	};
+	const flags: ClaimFlags = { request, ...timing.data.flags };
+	if (defaultPriority !== undefined) flags.defaultPriority = defaultPriority;
+	if (values.label !== undefined) flags.label = values.label;
+	return ok(flags);
 }
 
 function deviceRequest(values: ClaimFlagValues, platform: Platform, count: number, max: number): DeviceRequest {
@@ -258,7 +357,7 @@ export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDe
 
 /** Android `auto` profile → the first AVD; every other request as is. */
 async function resolveRequest(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
-	if (request.platform !== "android" || request.profile !== "auto") return ok(request);
+	if (request.physical || request.platform !== "android" || request.profile !== "auto") return ok(request);
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
 	return profile.success ? ok({ ...request, profile: profile.data }) : profile;
@@ -301,7 +400,7 @@ export async function claimWithFlags(
 		...(capacity ? { capacity } : {}),
 		log: (line) => ctx.err(`warden: ${line}`),
 	});
-	if (outcome.success && request.platform === "ios") {
+	if (outcome.success && request.platform === "ios" && !request.physical) {
 		await slimReusedBooted(ctx, outcome.data, slim.data);
 		await settleIosWindows(ctx, outcome.data, flags, options);
 	}
@@ -381,6 +480,7 @@ export function claimedJson(outcome: ClaimOutcome) {
 		name: c.device.name,
 		action: c.action,
 		ttlMs: c.lease.ttlMs,
+		...(c.lease.resource.kind === "device" && c.lease.resource.physical ? { physical: c.lease.resource.physical } : {}),
 		...(c.lease.label !== undefined ? { label: c.lease.label } : {}),
 	}));
 }

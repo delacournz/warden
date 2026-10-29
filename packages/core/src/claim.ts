@@ -15,6 +15,7 @@ import {
 	type AllocationStep,
 	type DeviceRequest,
 	type DeviceResource,
+	deviceResourceOf,
 	type InventoryDevice,
 	type Lease,
 	type Owner,
@@ -123,7 +124,8 @@ const MAX_CONFLICT_RETRIES = 5;
 /** Re-claims after a device fails its health probe (so up to 3 attempts in all). */
 const MAX_HEALTH_RETRIES = 2;
 
-function deviceResource(device: { platform: Platform; id: string; name: string }): DeviceResource {
+/** Resource of a pending (being created) device: a placeholder, never physical. */
+function placeholderResource(device: { platform: Platform; id: string; name: string }): DeviceResource {
 	return { kind: "device", platform: device.platform, id: device.id, name: device.name };
 }
 
@@ -195,7 +197,7 @@ function reserve(
 			const placeholder = { platform: request.platform, id: `${PENDING_PREFIX}${step.name}`, name: step.name };
 			const lease = store.insertLease(
 				{
-					resource: deviceResource(placeholder),
+					resource: placeholderResource(placeholder),
 					...common,
 					ttlMs: Math.min(input.ttlMs, input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS),
 					pid: input.selfPid ?? process.pid,
@@ -206,7 +208,7 @@ function reserve(
 		}
 		const lease = store.insertLease(
 			{
-				resource: deviceResource(step.device),
+				resource: deviceResourceOf(step.device),
 				...common,
 				ttlMs: input.ttlMs,
 				...(input.pid !== undefined ? { pid: input.pid } : {}),
@@ -222,7 +224,7 @@ const bootedState = (d: InventoryDevice): boolean => d.state === "booted" || d.s
 
 /** Cost of everything booted or booting on the host (foreign included) plus creates not yet visible in it. */
 function hostUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<string>, slimCreates: boolean): Cost {
-	const live = cap.hostInventory.filter(bootedState);
+	const live = cap.hostInventory.filter((d) => bootedState(d) && d.physical === undefined);
 	const names = new Set(live.map((d) => d.name));
 	const pending = leases.flatMap((l) =>
 		l.resource.kind === "device" && l.resource.id.startsWith(PENDING_PREFIX) && !names.has(l.resource.name)
@@ -331,12 +333,13 @@ function pickEvictions(
 		.filter(
 			(d) =>
 				d.state === "booted" &&
+				d.physical === undefined &&
 				d.wardenCreated &&
 				d.golden !== true &&
 				d.quarantined !== true &&
 				!planned.has(d.id) &&
 				!cap.noEvict.has(d.id) &&
-				!held.has(resourceKey({ kind: "device", platform: d.platform, id: d.id, name: d.name }))
+				!held.has(resourceKey(deviceResourceOf(d)))
 		)
 		.sort((a, b) => used(a) - used(b));
 	const picked: InventoryDevice[] = [];
@@ -350,7 +353,7 @@ function pickEvictions(
 				device,
 				leaseId: store.insertLease(
 					{
-						resource: deviceResource(device),
+						resource: deviceResourceOf(device),
 						owner: input.owner,
 						label: "capacity-evict",
 						ttlMs: input.ttlMs,
@@ -496,7 +499,7 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 				store.deleteLeases([item.lease.id]);
 				return store.insertLease(
 					{
-						resource: deviceResource(device),
+						resource: deviceResourceOf(device),
 						owner: input.owner,
 						ttlMs: input.ttlMs,
 						...(input.label !== undefined ? { label: input.label } : {}),
@@ -570,6 +573,10 @@ async function checkReady(
 }
 
 function waitMessage(request: DeviceRequest, poolSize: number): string {
+	if (request.physical) {
+		const named = request.physical.ids?.length ? ` (${request.physical.ids.join(", ")})` : "";
+		return `no free ready physical ${request.platform} device${named}: connect and authorize it, or release the lease holding it (see warden devices / warden ls)`;
+	}
 	return `all ${poolSize} warden-${request.profile} devices leased; max ${request.max} — use --wait or --max`;
 }
 
