@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";
 import { useNow } from "../hooks/use-now";
@@ -6,7 +7,7 @@ import { INSTALLED_AT, isTrialExpired, TRIAL_DAYS } from "../utils/trial";
 
 /** The device clock and a 14-day trial that started when this launch did. */
 export function ClockSection(): ReactElement {
-	const now = useNow();
+	const { now, refresh } = useNow();
 	const expired = isTrialExpired(now);
 
 	return (
@@ -23,6 +24,11 @@ export function ClockSection(): ReactElement {
 					{expired ? "Expired" : "Active"}
 				</Text.Label>
 			</Card.Content>
+			<Card.Footer>
+				<Button onPress={refresh} testID="conditions-clock-refresh" variant="outline">
+					Refresh
+				</Button>
+			</Card.Footer>
 		</Card>
 	);
 }

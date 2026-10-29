@@ -12,5 +12,8 @@ test("advancing the clock 15 days expires the trial, reset makes it active again
 	await expect(screen.getByTestId(ids.conditions.trial)).toHaveText("Expired", { timeout: 15_000 });
 
 	await device.clock.reset();
+	const refresh = screen.getByTestId(ids.conditions.refreshClock);
+	await refresh.scrollTo();
+	await refresh.tap();
 	await expect(screen.getByTestId(ids.conditions.trial)).toHaveText("Active", { timeout: 15_000 });
 });

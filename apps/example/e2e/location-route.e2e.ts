@@ -1,5 +1,6 @@
 import { expect, test } from "@delacour/warden-e2e";
 import { ids } from "./helpers/ids";
+import { pollUntil } from "./helpers/poll";
 import { openConditions } from "./helpers/steps";
 
 test.use({ launch: "none", systemAlerts: "accept" });
@@ -13,8 +14,15 @@ test("a route through the geofence shows Inside, then Outside after the exit", a
 	await device.location.set(NORTH);
 	await openConditions(app, device, screen);
 
-	await screen.getByTestId(ids.conditions.enableLocation).tap();
-	await expect(screen.getByTestId(ids.conditions.permission)).toHaveText("granted", { timeout: 15_000 });
+	/** The permission outlives a run on a reused device: ask only when it is not granted already. */
+	const permission = screen.getByTestId(ids.conditions.permission);
+	const granted = await pollUntil(
+		() => permission.text(),
+		(text) => text === "granted",
+		3_000
+	);
+	if (granted !== "granted") await screen.getByTestId(ids.conditions.enableLocation).tap();
+	await expect(permission).toHaveText("granted", { timeout: 15_000 });
 	await expect(screen.getByTestId(ids.conditions.geofence)).toHaveText("Outside", { timeout: 15_000 });
 	await expect(screen.getByTestId(ids.conditions.geofenceLast)).toHaveText("None");
 

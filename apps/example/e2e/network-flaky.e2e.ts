@@ -11,7 +11,6 @@ test("a fetch that meets an outage retries once, with the same idempotency key, 
 	device,
 	screen,
 }) => {
-	await device.network.set("online", { relaunch: true });
 	await openConditions(app, device, screen);
 
 	await device.network.set("offline");
@@ -30,7 +29,6 @@ test("a fetch that meets an outage retries once, with the same idempotency key, 
 });
 
 test("flapping the network is visible in status and stops cleanly", async ({ app, device, screen }) => {
-	await device.network.set("online", { relaunch: true });
 	await openConditions(app, device, screen);
 
 	const flap = await device.network.flap({ up: "1s", down: "1s" });

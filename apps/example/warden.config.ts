@@ -93,6 +93,24 @@ const bench = {
 	fingerprint: { include: "native+js", jsInputs: JS_INPUTS },
 } satisfies WardenVariant;
 
+/** Spec ids of the device-conditions specs: they run in the `conditions` suite, not in `example`. */
+const CONDITION_SPECS = "{network-*,location-*,clock-*}";
+
+/**
+ * What the `example` and `conditions` suites share. The `conditions` suite declares `conditions.network: "online"`,
+ * which launches the app on iOS with the warden network dylib (a plain launch cannot be steered later), so its specs
+ * can change network and clock mid-test without `relaunch`; every other spec keeps the plain launch.
+ */
+const EXAMPLE_SUITE = {
+	count: 2,
+	app: true,
+	slim: true,
+	spec: SPEC,
+	metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
+	jobTimeoutMs: 15 * 60_000,
+	...AFFECTED,
+} satisfies WardenE2eSuite;
+
 /**
  * warden config for the example app, on build kinds: `warden e2e example` installs the `simulator` kind (a Release
  * build with no JS embedded, built once per native fingerprint) and repacks this worktree's JS into it in seconds
@@ -104,6 +122,7 @@ const bench = {
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
  * warden e2e example --dev --all     # same specs on the dev client + warden's Metro
  * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
+ * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
  * warden affected example            # which specs this branch needs
  * warden repack ios                  # just the repacked simulator build (cached per JS)
  * warden dev ios                     # cached Debug dev client + Metro
@@ -124,13 +143,13 @@ export default {
 	perf: { budgets: { jankPct: 5, maxCommitMs: 100, p95CpuPct: 90, peakMemoryMb: 600 } },
 	e2e: {
 		example: {
-			count: 2,
-			app: true,
-			slim: true,
-			spec: SPEC,
-			metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
-			jobTimeoutMs: 15 * 60_000,
-			...AFFECTED,
+			...EXAMPLE_SUITE,
+			exclude: [CONDITION_SPECS],
+		},
+		conditions: {
+			...EXAMPLE_SUITE,
+			include: [CONDITION_SPECS],
+			conditions: { network: "online" },
 		},
 	},
 } satisfies WardenConfig;

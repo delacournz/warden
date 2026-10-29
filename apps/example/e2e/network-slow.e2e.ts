@@ -11,7 +11,6 @@ async function durationMs(screen: Parameters<typeof readValue>[0]): Promise<numb
 }
 
 test("3g makes the fetch slower than online", async ({ app, device, screen }) => {
-	await device.network.set("online", { relaunch: true });
 	await openConditions(app, device, screen);
 
 	expect(await fetchAndSettle(screen)).toBe("success");
@@ -21,7 +20,10 @@ test("3g makes the fetch slower than online", async ({ app, device, screen }) =>
 	expect(await fetchAndSettle(screen)).toBe("success");
 	const slow = await durationMs(screen);
 
-	expect(slow).toBeGreaterThan(300);
-	expect(slow).toBeGreaterThan(online);
+	/**
+	 * The first Fetch warmed a keep-alive connection, so the 3g one pays one round trip (the preset's 100 ms) and not
+	 * the 3-4 of a cold connection: assert the ordering with a margin, not a number.
+	 */
+	expect(slow).toBeGreaterThan(online + 50);
 	await expect(screen.getByTestId(ids.conditions.offlineBanner)).toBeHidden();
 });

@@ -6,7 +6,7 @@ import { launch, openDeepLink, SPEC_OPTIONS } from "./helpers/steps";
 test.use(SPEC_OPTIONS);
 
 test("cold start offline shows the banner, going online recovers the fetch", async ({ app, device, screen }) => {
-	await device.network.set("offline", { relaunch: true });
+	await device.network.set("offline");
 	await launch(app, screen);
 	await openDeepLink(device, screen, "warden-example://conditions", ids.conditions.screen);
 

@@ -75,6 +75,7 @@ export const ids = {
 		geofenceLast: "conditions-geofence-last",
 		now: "conditions-now",
 		trial: "conditions-trial",
+		refreshClock: "conditions-clock-refresh",
 	},
 	tabs: { todos: "tab-todos", settings: "tab-settings" },
 } as const;

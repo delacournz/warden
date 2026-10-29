@@ -6,7 +6,6 @@ import { openConditions, SPEC_OPTIONS } from "./helpers/steps";
 test.use(SPEC_OPTIONS);
 
 test("a reset fault on the fetch host shows the error UI, clearing it recovers", async ({ app, device, screen }) => {
-	await device.network.set("online", { relaunch: true });
 	await openConditions(app, device, screen);
 
 	await device.network.fault({ match: "speed.cloudflare.com", action: { kind: "reset" } });
