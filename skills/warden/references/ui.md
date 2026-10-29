@@ -108,7 +108,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 
 ## Network, location and clock (`network`, `location`, `clock`)
 
-`warden ui network set` (and `flap` / `fault` / `status` / `reset`) changes the device network, `warden ui location` its GPS. (`warden ui network log` is the devtools request log; bare `network [n] --since ...` still works as a deprecated alias of it and prints one stderr note.) Both act on your lease, record what they set, and **release / gc undo it** (network back online, location cleared on iOS, the proxy, flap scheduler and route ticker stopped), so a claim is never left shaped. A spec sets the same through `device.network` / `device.location` (`specs.md`).
+`warden ui network set` (and `flap` / `fault` / `status` / `reset`) changes the device network, `warden ui location` its GPS. (`warden ui network log` is the devtools request log; bare `network [n] --since ...` still works as a deprecated alias of it and prints one stderr note.) Both act on your lease, record what they set, and **release / gc undo it** (network back online, location cleared on iOS, the proxy, flap scheduler and route ticker stopped), so a claim is never left shaped. A lease that expires or is deleted any other way (stale reclaim, an older `warden`) leaves its conditions parked on the device: the next `warden claim` / `e2e` / `run` / `ui --claim` of that device undoes them before handing it over, and `warden gc` does for unleased devices (a failed reset is kept and retried). A spec sets the same through `device.network` / `device.location` (`specs.md`).
 
 | Command | Args / flags | Notes |
 |---|---|---|
