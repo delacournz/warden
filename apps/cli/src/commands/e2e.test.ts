@@ -2340,6 +2340,15 @@ describe("warden e2e on physical devices", () => {
 		expect(h.jobs()).toEqual([]);
 	});
 
+	test("--serial wins over the suite's `count`: a suite sized for simulators still runs on one phone", async () => {
+		await resuite({ platform: "android", count: 2 });
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--serial", PHONE], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+	});
+
 	test("--physical with --count / --headless is refused like a physical claim", async () => {
 		const calls: string[][] = [];
 		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical", "--headless"], calls);

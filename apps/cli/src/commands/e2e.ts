@@ -188,7 +188,12 @@ function legPhysicalOpts(
 ): Partial<E2eOpts> {
 	const physical = cliPhysical(run.passed) ? {} : physicalOpts(run.platform, leg?.physical ?? run.config.physical);
 	if (!isPhysicalClaim(withNamedPhysical({ ...run.base, ...physical }))) return physical;
-	return { ...physical, headless: run.passed.has("headless") ? run.opts.headless : undefined };
+	// the suite's count and headless size a simulator run: only flags given here can conflict with a phone
+	return {
+		...physical,
+		headless: run.passed.has("headless") ? run.opts.headless : undefined,
+		count: run.passed.has("count") ? run.opts.count : undefined,
+	};
 }
 
 /** Does the run use physical devices: asked for on the command line, by the suite, or by one of the legs it runs? */
