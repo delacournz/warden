@@ -4,8 +4,9 @@
 //
 // Env (set by warden at launch):
 //   WARDEN_NET_PROXY=127.0.0.1:<port>   route NSURLSession HTTP+HTTPS through the lease's shaping proxy
-//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n}
+//   WARDEN_INJECT_STATE=<file>          control file, watched live: {"seq":n,"offline":bool,"clockOffsetMs":n,"clockFrozenMs":n?}
 //   WARDEN_CLOCK_OFFSET_MS=<n>          initial wall-clock offset (the state file overrides it)
+//   WARDEN_CLOCK_FROZEN_MS=<n>          initial frozen wall time, ms since the epoch (the state file overrides it)
 //   WARDEN_INJECT_DEBUG=1               log to stderr
 //
 // Control channel: the simulator shares the host filesystem, so the channel is a file. The host replaces
@@ -15,7 +16,7 @@
 // Covered: NSURLSession (default/ephemeral/background configurations and sessionWithConfiguration:*), network path
 // APIs (nw_path_get_status, nw_path_uses_interface_type, NWPathMonitor update handlers re-fired on change),
 // SCNetworkReachability (flags, callbacks re-fired on change), wall clocks (clock_gettime(CLOCK_REALTIME),
-// gettimeofday, time, CFAbsoluteTimeGetCurrent). NSURLSession.sharedSession is replaced by a session on the routed
+// gettimeofday, time, CFAbsoluteTimeGetCurrent), shifted by an offset or held at a fixed instant (`clockFrozenMs`). NSURLSession.sharedSession is replaced by a session on the routed
 // default configuration (sharing the shared session's cache, cookie and credential stores). Not covered: raw sockets / NWConnection / CFStream (they bypass the proxy), monotonic clocks (left real on purpose).
 #import <Foundation/Foundation.h>
 #import <Network/Network.h>
@@ -29,6 +30,8 @@
 
 static _Atomic int g_offline = 0;
 static _Atomic long long g_clock_offset_ms = 0;
+static _Atomic int g_clock_frozen = 0;
+static _Atomic long long g_clock_frozen_ms = 0;
 static _Atomic long long g_applied_seq = -1;
 static BOOL g_debug = NO;
 static NSString *g_state_path = nil;
@@ -233,7 +236,11 @@ static void shift(long long *sec, long long *sub, long long unit, long long off)
 static int rep_clock_gettime(clockid_t clk, struct timespec *ts) {
   int rc = clock_gettime(clk, ts);
   long long off = offset_ms();
-  if (rc == 0 && off != 0 && clk == CLOCK_REALTIME && ts) {
+  if (rc == 0 && clk == CLOCK_REALTIME && ts && atomic_load(&g_clock_frozen)) {
+    long long ms = atomic_load(&g_clock_frozen_ms);
+    ts->tv_sec = (time_t)(ms / 1000);
+    ts->tv_nsec = (long)((ms % 1000) * 1000000LL);
+  } else if (rc == 0 && off != 0 && clk == CLOCK_REALTIME && ts) {
     long long s = ts->tv_sec, n = ts->tv_nsec;
     shift(&s, &n, 1000000000LL, off);
     ts->tv_sec = (time_t)s;
@@ -246,7 +253,11 @@ INTERPOSE(rep_clock_gettime, clock_gettime);
 static int rep_gettimeofday(struct timeval *tv, void *tz) {
   int rc = gettimeofday(tv, tz);
   long long off = offset_ms();
-  if (rc == 0 && off != 0 && tv) {
+  if (rc == 0 && tv && atomic_load(&g_clock_frozen)) {
+    long long ms = atomic_load(&g_clock_frozen_ms);
+    tv->tv_sec = (time_t)(ms / 1000);
+    tv->tv_usec = (suseconds_t)((ms % 1000) * 1000);
+  } else if (rc == 0 && off != 0 && tv) {
     long long s = tv->tv_sec, u = tv->tv_usec;
     shift(&s, &u, 1000000LL, off);
     tv->tv_sec = (time_t)s;
@@ -261,6 +272,12 @@ INTERPOSE(rep_gettimeofday, gettimeofday);
 // result again would shift it twice.
 static struct timespec real_now(void) {
   struct timespec ts;
+  if (atomic_load(&g_clock_frozen)) {
+    long long ms = atomic_load(&g_clock_frozen_ms);
+    ts.tv_sec = (time_t)(ms / 1000);
+    ts.tv_nsec = (long)((ms % 1000) * 1000000LL);
+    return ts;
+  }
   clock_gettime(CLOCK_REALTIME, &ts);
   long long s = ts.tv_sec, n = ts.tv_nsec;
   shift(&s, &n, 1000000000LL, offset_ms());
@@ -303,8 +320,11 @@ static void apply_state_file(void) {
   long long off = [state[@"clockOffsetMs"] respondsToSelector:@selector(longLongValue)] ? [state[@"clockOffsetMs"] longLongValue] : 0;
   atomic_store(&g_offline, offline);
   atomic_store(&g_clock_offset_ms, off);
+  BOOL frozen = [state[@"clockFrozenMs"] respondsToSelector:@selector(longLongValue)];
+  if (frozen) atomic_store(&g_clock_frozen_ms, [state[@"clockFrozenMs"] longLongValue]);
+  atomic_store(&g_clock_frozen, frozen ? 1 : 0);
   atomic_store(&g_applied_seq, seq);
-  DLOG("state seq=%lld offline=%d clockOffsetMs=%lld", seq, offline, off);
+  DLOG("state seq=%lld offline=%d clockOffsetMs=%lld frozen=%d", seq, offline, off, frozen);
   if (wasOffline != offline) notify_connectivity_changed();
   write_ack(seq);
 }
@@ -332,6 +352,11 @@ __attribute__((constructor)) static void warden_inject_init(void) {
     g_reach = [NSMutableArray array];
     NSString *initial = env[@"WARDEN_CLOCK_OFFSET_MS"];
     if (initial) atomic_store(&g_clock_offset_ms, initial.longLongValue);
+    NSString *frozen = env[@"WARDEN_CLOCK_FROZEN_MS"];
+    if (frozen) {
+      atomic_store(&g_clock_frozen_ms, frozen.longLongValue);
+      atomic_store(&g_clock_frozen, 1);
+    }
     NSString *proxy = env[@"WARDEN_NET_PROXY"];
     if (proxy.length) install_proxy(proxy);
     NSString *state = env[@"WARDEN_INJECT_STATE"];

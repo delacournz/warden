@@ -5,6 +5,7 @@ import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
+import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
 	Driver,
@@ -83,6 +84,8 @@ export type OpenIosDriverOptions = {
 	 * a driver opened by a bare caller has no lease to hang a proxy on.
 	 */
 	networkProxy?: NetworkProxyPort;
+	/** told about every successful `clock` op, so the lease records the `clock` area (`leaseClockRecorder`) */
+	clockRecorder?: ClockRecorder;
 	/** state-file operations of the injected dylib's control channel, injected for tests */
 	injectFs?: InjectFs;
 	/** CoreSimulator devices directory for the host-side `AutomationEnabled` check (default `~/Library/Developer/CoreSimulator/Devices`) */
@@ -241,6 +244,8 @@ export function createIosDriver(
 		now: () => number;
 		sleep: (ms: number) => Promise<void>;
 		log?: Logger;
+		/** told about every successful `clock` op */
+		clockRecorder?: ClockRecorder;
 		/** per-app network conditions (`ios-network.ts`); absent: `network` answers `E_UNSUPPORTED` */
 		network?: (deps: {
 			lastBundle: () => string | undefined;
@@ -253,7 +258,7 @@ export function createIosDriver(
 	const noLeaseProxy = async () =>
 		driverErr(
 			"E_UNSUPPORTED",
-			"network conditions on iOS need the lease's shaping proxy: open the driver with a networkProxy (warden ui / the spec runner do)"
+			"network and clock conditions on iOS need the lease's shaping proxy: open the driver with a networkProxy (warden ui / the spec runner do)"
 		);
 	// late-bound: the network helper relaunches through the driver's own `app.launch`
 	let driverRef: IosDriver | undefined;
@@ -683,6 +688,12 @@ export function createIosDriver(
 		network: async (op, o) => (net ? net.network(op, o) : noLeaseProxy()),
 		networkFaults: async (faults) => (net ? net.networkFaults(faults) : noLeaseProxy()),
 		location: (op) => simctl.location(op),
+		async clock(op, o) {
+			if (!net) return noLeaseProxy();
+			const result = await net.clock(op, o);
+			if (result.success) opts.clockRecorder?.(op);
+			return result;
+		},
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);
@@ -816,7 +827,14 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 	const network = iosNetworkFactory(o, simctl, now, sleep);
 	return {
 		success: true,
-		data: createIosDriver(swap, simctl, { udid: o.udid, now, sleep, log, ...(network ? { network } : {}) }),
+		data: createIosDriver(swap, simctl, {
+			udid: o.udid,
+			now,
+			sleep,
+			log,
+			...(network ? { network } : {}),
+			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
+		}),
 	};
 }
 

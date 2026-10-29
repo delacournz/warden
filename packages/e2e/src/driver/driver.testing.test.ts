@@ -117,6 +117,22 @@ describe("fakeDriver", () => {
 		expect(d.calls.at(-1)).toEqual({ method: "location", op: { kind: "point", lat: 1, lon: 2 } });
 	});
 
+	test("clock reports offset, fixed and frozen states from the injected wall time", async () => {
+		const d = fakeDriver({ screens: [home], wallNow: () => 1_000_000 });
+		expect(unwrap(await d.clock({ kind: "offset", ms: 500 }))).toMatchObject({ offsetMs: 500, nowMs: 1_000_500 });
+		expect(unwrap(await d.clock({ kind: "fixed", at: new Date(2_000_000).toISOString() }))).toMatchObject({
+			offsetMs: 1_000_000,
+			frozen: false,
+		});
+		expect(unwrap(await d.clock({ kind: "frozen", at: new Date(3_000_000).toISOString() }))).toMatchObject({
+			frozen: true,
+			nowMs: 3_000_000,
+		});
+		expect(unwrap(await d.clock({ kind: "real" }))).toMatchObject({ offsetMs: 0, frozen: false, nowMs: 1_000_000 });
+		const bad = await d.clock({ kind: "fixed", at: "soon" });
+		expect(!bad.success && bad.error.code).toBe("E_BAD_REQUEST");
+	});
+
 	test("stateful defaults: orientation, appearance, clipboard, app lifecycle", async () => {
 		const d = fakeDriver({ screens: [home] });
 		expect(unwrap(await d.orientation())).toBe("portrait");

@@ -9,7 +9,7 @@ import type { ProxyAddress } from "../network-proxy";
  * The injected dylib for iOS simulator apps (`native/ios-inject`): routes NSURLSession through the lease's shaping
  * proxy and reports offline / a clock offset to the app, live, through a state file the dylib watches. This module is
  * the host side: where the dylib is, the launch env that loads it, and the state file protocol. COND-12 (mock clock)
- * reuses all of it and only sets `clockOffsetMs`.
+ * reuses all of it and only sets `clockOffsetMs` (shift) or `clockFrozenMs` (hold).
  */
 
 export const INJECT_DYLIB = "libwarden-inject.dylib";
@@ -18,9 +18,10 @@ export const INJECT_DYLIB_ENV = "WARDEN_INJECT_DYLIB";
 /**
  * The one message of the control channel. `seq` rises with every write (the dylib ignores a state whose `seq` it
  * already applied); a field left out means "off" (`offline` false, `clockOffsetMs` 0), so a message is always the
- * whole state, never a delta.
+ * whole state, never a delta. `clockFrozenMs` (ms since the epoch) holds the wall clocks at one instant and wins over
+ * `clockOffsetMs`; left out, they run.
  */
-export type InjectState = { seq: number; offline?: boolean; clockOffsetMs?: number };
+export type InjectState = { seq: number; offline?: boolean; clockOffsetMs?: number; clockFrozenMs?: number };
 
 /** What the dylib answers in `<state>.ack` once it applied `seq`. */
 export type InjectAck = { seq: number; pid: number; proxy?: boolean };
@@ -30,6 +31,7 @@ export function encodeInjectState(state: InjectState): string {
 		seq: state.seq,
 		offline: state.offline === true,
 		clockOffsetMs: Math.trunc(state.clockOffsetMs ?? 0),
+		...(state.clockFrozenMs === undefined ? {} : { clockFrozenMs: Math.trunc(state.clockFrozenMs) }),
 	});
 }
 
@@ -45,6 +47,7 @@ export function parseInjectState(text: string): InjectState | undefined {
 			seq: data.seq,
 			offline: data.offline === true,
 			clockOffsetMs: typeof data.clockOffsetMs === "number" ? data.clockOffsetMs : 0,
+			...(typeof data.clockFrozenMs === "number" ? { clockFrozenMs: data.clockFrozenMs } : {}),
 		};
 	} catch {
 		return undefined;
@@ -77,6 +80,7 @@ export function injectLaunchEnv(input: {
 	statePath: string;
 	proxy?: ProxyAddress;
 	clockOffsetMs?: number;
+	clockFrozenMs?: number;
 	debug?: boolean;
 }): Record<string, string> {
 	return {
@@ -84,6 +88,7 @@ export function injectLaunchEnv(input: {
 		WARDEN_INJECT_STATE: input.statePath,
 		...(input.proxy ? { WARDEN_NET_PROXY: `${input.proxy.host}:${input.proxy.port}` } : {}),
 		...(input.clockOffsetMs ? { WARDEN_CLOCK_OFFSET_MS: String(Math.trunc(input.clockOffsetMs)) } : {}),
+		...(input.clockFrozenMs === undefined ? {} : { WARDEN_CLOCK_FROZEN_MS: String(Math.trunc(input.clockFrozenMs)) }),
 		...(input.debug ? { WARDEN_INJECT_DEBUG: "1" } : {}),
 	};
 }

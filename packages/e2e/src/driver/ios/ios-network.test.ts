@@ -6,6 +6,8 @@ import { createIosNetwork, INJECT_ACK_MS } from "./ios-network";
 
 const STATE = "/s/state.json";
 const ACK = `${STATE}.ack`;
+const NOW = 1_700_000_000_000;
+const DAY = 86_400_000;
 
 /** The iOS side, faked: a state-file directory, an app that acks writes when `app` is set, and the lease proxy. */
 function rig(init: { proxyLive?: boolean; running?: string; lastBundle?: string; dylib?: boolean } = {}) {
@@ -45,6 +47,7 @@ function rig(init: { proxyLive?: boolean; running?: string; lastBundle?: string;
 				: { success: true, data: "/d/libwarden-inject.dylib" },
 		isRunning: async (bundle) => ({ success: true, data: bundle === init.running }),
 		lastBundle: () => init.lastBundle,
+		now: () => NOW,
 		relaunch: async (bundle): DriverResult<void> => {
 			relaunches.push(bundle);
 			app.injected = true;
@@ -294,5 +297,87 @@ describe("setClockOffset (COND-12 hook)", () => {
 		const result = await r.net.setClockOffset(3_600_000);
 		expect(result.success).toBe(true);
 		expect(JSON.parse(r.files.get(STATE) ?? "{}")).toMatchObject({ offline: true, clockOffsetMs: 3_600_000 });
+	});
+});
+
+describe("clock (COND-12)", () => {
+	const stateOf = (r: ReturnType<typeof rig>) => JSON.parse(r.files.get(STATE) ?? "{}") as Record<string, unknown>;
+
+	test("offset is live on an injected app and reports what the device reads", async () => {
+		const r = rig();
+		r.attach();
+		const result = await r.net.clock({ kind: "offset", ms: 2 * DAY });
+		expect(result).toEqual({
+			success: true,
+			data: { condition: { kind: "offset", ms: 2 * DAY }, offsetMs: 2 * DAY, frozen: false, nowMs: NOW + 2 * DAY },
+		});
+		expect(stateOf(r)).toMatchObject({ clockOffsetMs: 2 * DAY });
+		expect(stateOf(r).clockFrozenMs).toBeUndefined();
+	});
+
+	test("fixed computes the offset from now and lets the clock run", async () => {
+		const r = rig();
+		r.attach();
+		const at = new Date(NOW + 15 * DAY).toISOString();
+		const result = await r.net.clock({ kind: "fixed", at });
+		expect(result.success && result.data).toMatchObject({ offsetMs: 15 * DAY, frozen: false, nowMs: NOW + 15 * DAY });
+		expect(stateOf(r)).toMatchObject({ clockOffsetMs: 15 * DAY });
+	});
+
+	test("frozen holds the instant", async () => {
+		const r = rig();
+		r.attach();
+		const at = new Date(NOW - DAY).toISOString();
+		const result = await r.net.clock({ kind: "frozen", at });
+		expect(result.success && result.data).toMatchObject({ offsetMs: 0, frozen: true, nowMs: NOW - DAY });
+		expect(stateOf(r)).toMatchObject({ clockOffsetMs: 0, clockFrozenMs: NOW - DAY });
+	});
+
+	test("real puts both back", async () => {
+		const r = rig();
+		r.attach();
+		await r.net.clock({ kind: "frozen", at: new Date(NOW).toISOString() });
+		const result = await r.net.clock({ kind: "real" });
+		expect(result.success && result.data).toMatchObject({ offsetMs: 0, frozen: false, nowMs: NOW });
+		expect(stateOf(r).clockFrozenMs).toBeUndefined();
+		expect(stateOf(r).clockOffsetMs).toBe(0);
+	});
+
+	test("keeps the network state", async () => {
+		const r = rig();
+		r.attach();
+		await r.net.network({ kind: "offline" });
+		await r.net.clock({ kind: "offset", ms: DAY });
+		expect(stateOf(r)).toMatchObject({ offline: true, clockOffsetMs: DAY });
+	});
+
+	test("an app without the dylib gets it from the next launch", async () => {
+		const r = rig();
+		const result = await r.net.clock({ kind: "offset", ms: DAY });
+		expect(result.success && result.data.appliesOnLaunch).toBe(true);
+		const env = await r.net.launchEnv({});
+		expect(env.success && env.data?.WARDEN_CLOCK_OFFSET_MS).toBe(String(DAY));
+	});
+
+	test("a staged freeze reaches the launch env", async () => {
+		const r = rig();
+		await r.net.clock({ kind: "frozen", at: new Date(NOW).toISOString() });
+		const env = await r.net.launchEnv({});
+		expect(env.success && env.data?.WARDEN_CLOCK_FROZEN_MS).toBe(String(NOW));
+	});
+
+	test("relaunch: true puts the dylib into a running plain app", async () => {
+		const r = rig({ running: "com.app", lastBundle: "com.app" });
+		const result = await r.net.clock({ kind: "offset", ms: DAY }, { relaunch: true });
+		expect(r.relaunches).toEqual(["com.app"]);
+		expect(result.success && result.data.appliesOnLaunch).toBeUndefined();
+	});
+
+	test("an unreadable instant is E_BAD_REQUEST and changes nothing", async () => {
+		const r = rig();
+		r.attach();
+		const result = await r.net.clock({ kind: "fixed", at: "not a date" });
+		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
+		expect(r.files.has(STATE)).toBe(false);
 	});
 });

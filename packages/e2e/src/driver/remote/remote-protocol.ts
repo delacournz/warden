@@ -40,6 +40,7 @@ export const DRIVER_OPS = [
 	"network",
 	"networkFaults",
 	"location",
+	"clock",
 ] as const;
 export type DriverOp = (typeof DRIVER_OPS)[number];
 

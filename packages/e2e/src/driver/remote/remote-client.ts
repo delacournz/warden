@@ -211,6 +211,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			network: (op, opts) => call("network", op, opts),
 			networkFaults: (faults) => call("networkFaults", faults),
 			location: (op) => call("location", op),
+			clock: (op, opts) => call("clock", op, opts),
 			app,
 			close,
 		};

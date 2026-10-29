@@ -1,7 +1,14 @@
-import type { HostFault, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type { ClockCondition, HostFault, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { resolveNetwork } from "@delacour/warden-core/conditions/network.presets";
 import type { Result } from "@delacour/warden-types/result";
-import type { DriverError, DriverResult, LaunchOptions, NetworkOptions, NetworkState } from "../driver.types";
+import type {
+	ClockState,
+	DriverError,
+	DriverResult,
+	LaunchOptions,
+	NetworkOptions,
+	NetworkState,
+} from "../driver.types";
 import { driverErr, driverError } from "../errors";
 import { faultNotes, type NetworkProxyPort, proxyConditionsFor } from "../network-proxy";
 import { type InjectChannel, injectLaunchEnv, shouldInject } from "./inject";
@@ -31,6 +38,8 @@ export type IosNetworkDeps = {
 	/** launch `bundleId` again with the dylib (late-bound: the driver's own `app.launch`) */
 	relaunch: (bundleId: string) => DriverResult<void>;
 	debug?: boolean;
+	/** wall time, ms (default `Date.now`); `fixed` clocks are an offset from it */
+	now?: () => number;
 };
 
 export type IosNetwork = {
@@ -42,6 +51,8 @@ export type IosNetwork = {
 	confirmLoaded(): DriverResult<void>;
 	/** Wall-clock offset for the injected app (COND-12). Live when the app is injected, else staged for the next launch. */
 	setClockOffset(ms: number): DriverResult<void>;
+	/** Mock the injected app's wall clock (`Driver.clock`). Live when the app is injected, else staged for the next launch. */
+	clock(op: ClockCondition, opts?: NetworkOptions): DriverResult<ClockState>;
 };
 
 const okVoid = { success: true as const, data: undefined };
@@ -51,10 +62,22 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 	let condition: NetworkCondition = { kind: "online" };
 	let faults: readonly HostFault[] = [];
 	let clockOffsetMs = channel.current().clockOffsetMs ?? 0;
+	let clockFrozenMs: number | undefined = channel.current().clockFrozenMs;
+	const now = deps.now ?? Date.now;
 	let expectLoad = false;
 
 	const routing = () => condition.kind !== "online" || faults.length > 0;
-	const writeState = () => channel.write({ offline: condition.kind === "offline", clockOffsetMs });
+	const clockActive = () => clockOffsetMs !== 0 || clockFrozenMs !== undefined;
+	const launchClock = (): { clockOffsetMs?: number; clockFrozenMs?: number } => ({
+		...(clockOffsetMs ? { clockOffsetMs } : {}),
+		...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
+	});
+	const writeState = () =>
+		channel.write({
+			offline: condition.kind === "offline",
+			clockOffsetMs,
+			...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
+		});
 
 	/** Push the current condition + faults to the proxy and the state file. */
 	async function push(): DriverResult<{ staged: boolean; injected: boolean }> {
@@ -108,6 +131,26 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 		return { success: true, data: relaunched.data };
 	}
 
+	/** Write the clock to the state file and wait for a running injected app to apply it. */
+	async function pushClock(): DriverResult<void> {
+		const state = writeState();
+		if (!channel.attached()) return okVoid;
+		return (await channel.acked(state.seq, INJECT_ACK_MS))
+			? okVoid
+			: driverErr("E_TIMEOUT", `the injected app did not acknowledge the clock within ${INJECT_ACK_MS} ms`);
+	}
+
+	/** `relaunch: true`: a running app without the dylib is launched again with it (true = relaunched). */
+	async function relaunchForClock(opts: NetworkOptions): DriverResult<boolean> {
+		if (channel.attached()) return { success: true, data: false };
+		const bundle = opts.bundleId ?? deps.lastBundle();
+		if (!bundle) return { success: true, data: false };
+		const running = await deps.isRunning(bundle);
+		if (!running.success || !running.data) return { success: true, data: false };
+		const again = await deps.relaunch(bundle);
+		return again.success ? { success: true, data: true } : again;
+	}
+
 	return {
 		async network(op, opts) {
 			if (op.kind === "flap") {
@@ -149,7 +192,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			if (
 				!shouldInject({
 					networkActive: live !== undefined,
-					clockActive: clockOffsetMs !== 0,
+					clockActive: clockActive(),
 					requested: opts.inject === true,
 				})
 			) {
@@ -174,7 +217,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 					dylib: dylib.data,
 					statePath: channel.statePath,
 					proxy: address,
-					...(clockOffsetMs ? { clockOffsetMs } : {}),
+					...launchClock(),
 					...(deps.debug ? { debug: true } : {}),
 				}),
 			};
@@ -195,11 +238,55 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 		},
 		async setClockOffset(ms) {
 			clockOffsetMs = Math.trunc(ms);
-			const state = writeState();
-			if (!channel.attached()) return okVoid;
-			return (await channel.acked(state.seq, INJECT_ACK_MS))
-				? okVoid
-				: driverErr("E_TIMEOUT", `the injected app did not acknowledge the clock offset within ${INJECT_ACK_MS} ms`);
+			clockFrozenMs = undefined;
+			return pushClock();
+		},
+		async clock(op, opts) {
+			const target = clockTarget(op, now());
+			if (!target.success) return target;
+			const previous = { offset: clockOffsetMs, frozen: clockFrozenMs };
+			clockOffsetMs = target.data.offsetMs;
+			clockFrozenMs = target.data.frozenMs;
+			const relaunched =
+				opts?.relaunch === true ? await relaunchForClock(opts) : { success: true as const, data: false };
+			if (!relaunched.success) {
+				clockOffsetMs = previous.offset;
+				clockFrozenMs = previous.frozen;
+				return relaunched;
+			}
+			const pushed = relaunched.data ? okVoid : await pushClock();
+			if (!pushed.success) {
+				clockOffsetMs = previous.offset;
+				clockFrozenMs = previous.frozen;
+				return pushed;
+			}
+			const applied = relaunched.data || channel.attached() !== undefined;
+			return {
+				success: true,
+				data: {
+					condition: op,
+					offsetMs: clockOffsetMs,
+					frozen: clockFrozenMs !== undefined,
+					nowMs: clockFrozenMs ?? now() + clockOffsetMs,
+					...(applied ? {} : { appliesOnLaunch: true as const }),
+				},
+			};
 		},
 	};
+}
+
+/** The offset or frozen instant that puts the wall clock at `op`, given the host time `nowMs`. */
+function clockTarget(op: ClockCondition, nowMs: number): Result<{ offsetMs: number; frozenMs?: number }, DriverError> {
+	if (op.kind === "real") return { success: true, data: { offsetMs: 0 } };
+	if (op.kind === "offset") return { success: true, data: { offsetMs: Math.trunc(op.ms) } };
+	const at = Date.parse(op.at);
+	if (Number.isNaN(at)) {
+		return {
+			success: false,
+			error: driverError("E_BAD_REQUEST", `clock ${op.kind}: "${op.at}" is not an ISO 8601 date-time`),
+		};
+	}
+	return op.kind === "fixed"
+		? { success: true, data: { offsetMs: at - nowMs } }
+		: { success: true, data: { offsetMs: 0, frozenMs: at } };
 }

@@ -152,6 +152,42 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 		rmSync(stateDir, { recursive: true, force: true });
 	}, 30_000);
 
+	test("a frozen state holds every wall clock at one instant until it is lifted", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-state-"));
+		const channel = createInjectChannel({
+			statePath: join(stateDir, "state.json"),
+			now: Date.now,
+			sleep: (ms) => Bun.sleep(ms),
+		});
+		const h = startHarness(injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath }));
+		const at = Date.parse("2031-03-04T05:06:07.000Z");
+		const frozen = channel.write({ clockFrozenMs: at });
+		expect(await channel.acked(frozen.seq, 5_000)).toBe(true);
+		const first = await h.ask();
+		await Bun.sleep(1_200);
+		const second = await h.ask();
+		for (const seen of [first, second]) {
+			expect(Math.abs(seen.clockMs - at)).toBeLessThan(1);
+			expect(Math.abs(seen.todMs - at)).toBeLessThan(1);
+			expect(seen.timeS).toBe(at / 1000);
+			expect(Math.abs(seen.cfAbsS * 1000 - at)).toBeLessThan(1);
+			expect(seen.monotonicOk).toBeTruthy();
+		}
+		expect(second.clockMs).toBe(first.clockMs);
+		const lifted = channel.write({});
+		expect(await channel.acked(lifted.seq, 5_000)).toBe(true);
+		expect(Math.abs((await h.ask()).clockMs - Date.now())).toBeLessThan(2_000);
+		await h.stop();
+		rmSync(stateDir, { recursive: true, force: true });
+	}, 30_000);
+
+	test("the launch env freezes the clock before any state arrives", async () => {
+		const at = Date.parse("2030-01-02T03:04:05.000Z");
+		const h = startHarness({ WARDEN_CLOCK_FROZEN_MS: String(at) });
+		expect((await h.ask()).clockMs).toBe(at);
+		await h.stop();
+	});
+
 	test("offline makes reachability report no flags and fires the registered path monitor", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-state-"));
 		const channel = createInjectChannel({

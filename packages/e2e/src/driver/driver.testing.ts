@@ -1,9 +1,15 @@
-import type { HostFault, LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type {
+	ClockCondition,
+	HostFault,
+	LocationCondition,
+	NetworkCondition,
+} from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
 	AlertInfo,
 	AppCommands,
+	ClockState,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -190,6 +196,7 @@ export type DriverCall =
 	| { method: "network"; op: NetworkCondition }
 	| { method: "networkFaults"; faults: readonly HostFault[] }
 	| { method: "location"; op: LocationCondition }
+	| { method: "clock"; op: ClockCondition }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -210,6 +217,8 @@ export type FakeDriverOptions = {
 	screens: readonly Snapshot[] | (() => Snapshot);
 	platform?: Platform;
 	id?: string;
+	/** host wall time the fake `clock` op measures from (default `Date.now`) */
+	wallNow?: () => number;
 	capabilities?: Partial<DriverCapabilities>;
 	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
 	selectAll?: boolean;
@@ -298,6 +307,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	let current: Orientation = "portrait";
 	let theme: "light" | "dark" = "light";
 	let clip = "";
+	const wallNow = options.wallNow ?? Date.now;
 	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
 	const running = new Set<string>();
 	const installed = new Set<string>();
@@ -466,6 +476,26 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		async location(op) {
 			return run({ method: "location", op }, () => undefined);
+		},
+		async clock(op) {
+			const at = op.kind === "fixed" || op.kind === "frozen" ? Date.parse(op.at) : 0;
+			if (Number.isNaN(at)) {
+				calls.push({ method: "clock", op });
+				return {
+					success: false,
+					error: driverError("E_BAD_REQUEST", `clock ${op.kind}: not an ISO 8601 date-time`),
+				};
+			}
+			return run({ method: "clock", op }, (): ClockState => {
+				const now = wallNow();
+				const offsetMs = op.kind === "offset" ? op.ms : op.kind === "fixed" ? at - now : 0;
+				return {
+					condition: op,
+					offsetMs,
+					frozen: op.kind === "frozen",
+					nowMs: op.kind === "frozen" ? at : now + offsetMs,
+				};
+			});
 		},
 		app,
 		async close() {

@@ -1,4 +1,9 @@
-import type { HostFault, LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type {
+	ClockCondition,
+	HostFault,
+	LocationCondition,
+	NetworkCondition,
+} from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 
 /**
@@ -265,6 +270,15 @@ export interface Driver {
 	 * warden until the next op or `close()`; `clear` keeps the last fix. Physical devices: `E_UNSUPPORTED`.
 	 */
 	location(op: LocationCondition): DriverResult<void>;
+	/**
+	 * Mock the device's wall clock (monotonic clocks are never touched). `offset` shifts it from the real time,
+	 * `fixed` sets it to an instant and lets it run, `frozen` holds it there, `real` puts it back. Android emulator:
+	 * system time (`settings put global auto_time 0` + `cmd alarm set-time`), device-wide; no `frozen`
+	 * (`E_UNSUPPORTED`). iOS: the injected dylib shifts or holds the clocks of the injected app only (live, no
+	 * relaunch); an app without the dylib gets it from the next launch (`appliesOnLaunch`), or from a relaunch with
+	 * `relaunch: true`. Large offsets break TLS validity (HTTPS fails once the clock passes a certificate's dates).
+	 */
+	clock(op: ClockCondition, opts?: NetworkOptions): DriverResult<ClockState>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }
@@ -284,6 +298,18 @@ export type NetworkState = {
 	 * iOS: the condition is staged (proxy configured, state written) but no running app carries the dylib yet; it
 	 * reaches the app launched next. Absent = in effect now.
 	 */
+	appliesOnLaunch?: true;
+};
+
+/** What `Driver.clock` left on the device. */
+export type ClockState = {
+	condition: ClockCondition;
+	/** wall clock minus the host's, ms (0 for `real` and `frozen`) */
+	offsetMs: number;
+	frozen: boolean;
+	/** what the device's wall clock read when the op returned, ms since the epoch */
+	nowMs: number;
+	/** iOS: staged for the next launch of the app; absent = in effect now */
 	appliesOnLaunch?: true;
 };
 

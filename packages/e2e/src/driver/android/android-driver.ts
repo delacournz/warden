@@ -6,6 +6,7 @@ import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
 import { type Scheduler, startFlap } from "../../conditions/scheduler";
+import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
 	Driver,
@@ -68,6 +69,7 @@ import {
 	uimodeSetArgv,
 	userRotationArgv,
 } from "./android-argv";
+import { applyAndroidClock } from "./android-clock";
 import {
 	type Clock,
 	hierarchyRotation,
@@ -115,6 +117,8 @@ export type AndroidDriverOptions = {
 	log?: Logger;
 	/** the lease's shaping proxy: loss and per-host faults route through it (`createAndroidNetwork`); without it loss stays in `needsProxy` */
 	networkProxy?: NetworkProxyPort;
+	/** told about every successful `clock` op, so the lease records the `clock` area (`leaseClockRecorder`) */
+	clockRecorder?: ClockRecorder;
 	/** skip `wm size`/`wm density` */
 	screen?: ScreenInfo;
 	/** binary runner for screenshots, default {@link bunExecBinary} */
@@ -641,6 +645,11 @@ function buildDriver(
 		});
 		return { success: true, data: { ...applied.data, condition: op } };
 	};
+	const clockOp: Driver["clock"] = async (op) => {
+		const applied = await applyAndroidClock({ session, exec, adb, serial }, op);
+		if (applied.success) options.clockRecorder?.(op);
+		return applied;
+	};
 	let ticker: RouteTicker | undefined;
 	const stopTicker = async (): Promise<void> => {
 		const running = ticker;
@@ -744,6 +753,7 @@ function buildDriver(
 		network,
 		networkFaults,
 		location,
+		clock: clockOp,
 		app: createAppCommands({
 			session,
 			exec,

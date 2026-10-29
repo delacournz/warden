@@ -66,6 +66,22 @@ describe("injectLaunchEnv", () => {
 	});
 });
 
+describe("frozen clock", () => {
+	test("clockFrozenMs round-trips and is left out when the clock runs", () => {
+		const text = encodeInjectState({ seq: 3, clockFrozenMs: 1_700_000_000_123.9 });
+		expect(JSON.parse(text).clockFrozenMs).toBe(1_700_000_000_123);
+		expect(parseInjectState(text)?.clockFrozenMs).toBe(1_700_000_000_123);
+		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("clockFrozenMs");
+		expect(parseInjectState(encodeInjectState({ seq: 4 }))).not.toHaveProperty("clockFrozenMs");
+	});
+
+	test("the launch env carries the frozen instant", () => {
+		expect(
+			injectLaunchEnv({ dylib: "/d", statePath: "/s", clockFrozenMs: 1_700_000_000_000 }).WARDEN_CLOCK_FROZEN_MS
+		).toBe("1700000000000");
+	});
+});
+
 describe("shouldInject", () => {
 	test("a launch with no condition and no request stays plain", () => {
 		expect(shouldInject({ networkActive: false, clockActive: false, requested: false })).toBe(false);
