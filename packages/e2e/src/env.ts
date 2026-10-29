@@ -25,6 +25,13 @@ export const ENV_NAMES = {
 	/** unix socket of a physical iPhone's resident runner host (`warden __ios-runner-host`): the iOS device driver connects there instead of to `warden-simd` */
 	iosRunnerSocket: "WARDEN_IOS_RUNNER_SOCKET",
 	logTimestamps: "WARDEN_LOG_TIMESTAMPS",
+	/** `physical` when the job's device is a real phone/tablet (set by `warden e2e` / `batch`; absent for a simulator or emulator) */
+	deviceKind: "WARDEN_DEVICE_KIND",
+	/**
+	 * JSON argv (`{udid}` is replaced) that restarts a physical iPhone's runner host (`warden __ios-runner-restart`); the
+	 * session runs it once when the runner connection is lost, and never reboots the phone
+	 */
+	iosRunnerRestart: "WARDEN_IOS_RUNNER_RESTART",
 	/**
 	 * JSON argv (`{udid}` is replaced) the session runs after it rebooted the sim following a lost HID connection;
 	 * `warden` sets it for non-headless runs so the sim's viewer window comes back (packages/e2e cannot import apps/cli)
@@ -84,6 +91,8 @@ const schema = z.object({
 	simdSocket: z.string().optional(),
 	iosRunnerSocket: z.string().optional(),
 	logTimestamps: toggle.default(false),
+	deviceKind: z.enum(["physical"]).optional(),
+	iosRunnerRestart: launchArgs.optional(),
 	afterReboot: launchArgs.optional(),
 	version: z.string().optional(),
 	bin: z.string().optional(),
@@ -111,6 +120,10 @@ export type E2eEnv = {
 	simdSocket?: string;
 	/** `WARDEN_IOS_RUNNER_SOCKET`: the runner host's socket for a physical iPhone */
 	iosRunnerSocket?: string;
+	/** `WARDEN_DEVICE_KIND`: `physical` for a real phone/tablet, absent for a simulator or emulator */
+	deviceKind?: "physical";
+	/** `WARDEN_IOS_RUNNER_RESTART`: argv that restarts the iPhone's runner host, `{udid}` not yet replaced */
+	iosRunnerRestart?: string[];
 	/** warden already stamps the log lines: the spec reporter prints no clock of its own */
 	logTimestamps: boolean;
 	/** `WARDEN_AFTER_REBOOT`: argv run after a HID-loss reboot, `{udid}` not yet replaced (see `runAfterReboot`) */
@@ -166,6 +179,8 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			wardenVersion: v.version,
 			perfBudgets: v.perfBudgets,
 		}),
+		...(v.deviceKind === undefined ? {} : { deviceKind: v.deviceKind }),
+		...(v.iosRunnerRestart === undefined ? {} : { iosRunnerRestart: v.iosRunnerRestart }),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
 		...(v.perf === undefined

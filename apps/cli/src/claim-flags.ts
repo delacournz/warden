@@ -114,6 +114,21 @@ export function isPhysicalClaim(
 	return values.physical === true || values.physicalSerial !== undefined || values.physicalUdid !== undefined;
 }
 
+/** Commander values of `withPhysicalOptions`: `--serial` / `--udid` are named `physicalSerial` / `physicalUdid` in {@link ClaimFlagValues}. */
+export type PhysicalOptionValues = { physical?: boolean; serial?: string[]; udid?: string[] };
+
+/** `opts` with `--serial` / `--udid` (and `--physical`) moved to the claim values' names; `serial` / `udid` are dropped. */
+export function withNamedPhysical<T extends PhysicalOptionValues>(
+	opts: T
+): Omit<T, "serial" | "udid"> & Pick<ClaimFlagValues, "physicalSerial" | "physicalUdid"> {
+	const { serial, udid, ...rest } = opts;
+	return {
+		...rest,
+		...(serial ? { physicalSerial: serial } : {}),
+		...(udid ? { physicalUdid: udid } : {}),
+	};
+}
+
 /** The layers `resolveSlim` merges for a claim. */
 export type SlimLayers = { flag?: boolean; config?: SlimSetting; topLevel?: SlimSetting };
 
@@ -385,7 +400,12 @@ export async function claimWithFlags(
 	if (!slim.success) return slim;
 	const outcome = await claimDevices({
 		store: ctx.store(),
-		provider: providerFor(request.platform, ctx, owner, request.platform === "ios" ? { slim: slim.data } : {}),
+		provider: providerFor(
+			request.platform,
+			ctx,
+			owner,
+			request.platform === "ios" ? { slim: slim.data, physical: request.physical !== undefined } : {}
+		),
 		...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
 		owner,
 		request,

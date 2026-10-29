@@ -20,7 +20,7 @@ import { PRIORITY } from "@delacour/warden-core/queue";
 import { slimSimulator } from "@delacour/warden-core/sims/slim";
 import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { wardenHome } from "@delacour/warden-core/store";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
@@ -57,10 +57,14 @@ import {
 	type ClaimFlags,
 	type ClaimFlagValues,
 	detachLockFor,
+	isPhysicalClaim,
+	type PhysicalOptionValues,
 	parseClaimFlags,
 	resolveOwner,
 	resolvePlatform,
 	withClaimOptions,
+	withNamedPhysical,
+	withPhysicalOptions,
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -72,6 +76,7 @@ import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from
 import {
 	type AppFlagValues,
 	appPhaseProgress,
+	checkPhysicalIosApp,
 	claimAll,
 	exitCodeOf,
 	type ForwardedSignal,
@@ -184,7 +189,8 @@ export type BatchDeps = LeaseSessionDeps & {
 
 /** Commander option values of `warden batch`. */
 export type BatchOpts = ClaimFlagValues &
-	AppFlagValues & {
+	AppFlagValues &
+	PhysicalOptionValues & {
 		json?: true;
 		port: string[];
 		jobs?: string;
@@ -306,10 +312,12 @@ export function parseBatchArgs(
 	cwd: string,
 	base: BatchBase = {}
 ): Result<BatchArgs> {
-	const flags = parseClaimFlags(platform, opts, undefined, undefined, PRIORITY.low);
+	const flags = parseClaimFlags(platform, withNamedPhysical(opts), undefined, undefined, PRIORITY.low);
 	if (!flags.success) return flags;
 	const app = parseAppFlags(opts);
 	if (!app.success) return app;
+	const phoneApp = checkPhysicalIosApp([flags.data], app.data);
+	if (!phoneApp.success) return phoneApp;
 	const jobs = parseJobsSource(opts, cwd, base.jobs);
 	if (!jobs.success) return jobs;
 	const limits = parseLimits(opts);
@@ -391,6 +399,8 @@ async function waitReady(
 
 type Device = BatchWorker & {
 	name: string;
+	/** a real phone/tablet: never rebooted, slimmed, arranged or shut down (`WARDEN_DEVICE_KIND=physical`) */
+	physical?: true;
 	video?: string;
 	videoStartedAt?: number;
 	leg?: string;
@@ -768,9 +778,18 @@ function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHand
 const deviceNameEnv = (name: string | undefined): Record<string, string> =>
 	name === undefined ? {} : { [ENV_NAMES.deviceName]: name };
 
-/** `WARDEN_SIMD_SOCKET` for a job on a device whose helper is warm. */
-const socketEnv = (socketPath: string | undefined): Record<string, string> =>
-	socketPath === undefined ? {} : { [ENV_NAMES.simdSocket]: socketPath };
+/**
+ * The socket env for a job on a device whose helper is warm: `WARDEN_SIMD_SOCKET` (a simulator's `warden-simd`), or
+ * `WARDEN_IOS_RUNNER_SOCKET` for a physical iPhone's runner host.
+ */
+export const socketEnv = (udid: string, socketPath: string | undefined): Record<string, string> => {
+	if (socketPath === undefined) return {};
+	return { [isPhysicalIosId(udid) ? ENV_NAMES.iosRunnerSocket : ENV_NAMES.simdSocket]: socketPath };
+};
+
+/** `WARDEN_DEVICE_KIND=physical` for a job on a real phone (a mixed run's other jobs get none: `childEnv` leaves it out). */
+const deviceKindEnv = (physical: boolean): Record<string, string> =>
+	physical ? { [ENV_NAMES.deviceKind]: "physical" } : {};
 
 /**
  * The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for
@@ -820,7 +839,8 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 		const env: Record<string, string | undefined> = {
 			...o.env,
 			...o.hooks.jobEnv?.(input),
-			...socketEnv(await o.socketFor(w.udid)),
+			...socketEnv(w.udid, await o.socketFor(w.udid)),
+			...deviceKindEnv(o.live.find((d) => d.udid === w.udid)?.physical === true),
 			WARDEN_UDID: w.udid,
 			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
 			WARDEN_WORKER: String(w.worker),
@@ -1040,6 +1060,8 @@ async function prepareDevices(
 const recordedSlim =
 	(ctx: CommandContext, deps: BatchDeps, fixed?: SlimProfile) =>
 	async (udid: string, profile?: SlimProfile): AsyncResult<string[]> => {
+		// a physical iPhone has no simulator daemons to switch off
+		if (isPhysicalIosId(udid)) return ok([]);
 		const res = await deps.slim(udid, profile ?? fixed);
 		if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
 		return res;
@@ -1073,6 +1095,7 @@ function buildPools(session: LeaseSession, args: BatchArgs): Pool[] {
 				worker: worker++,
 				udid: c.device.id,
 				name: c.device.name,
+				...(isPhysicalDevice(c.device) ? { physical: true as const } : {}),
 				...(leg ? { leg: leg.name } : {}),
 			})),
 		};
@@ -2073,11 +2096,11 @@ async function batch(
 	const cmd = split.data.cmd.length > 0 ? split.data.cmd : (preset?.cmd ?? []);
 	if (cmd.length === 0) return fail("missing command after -- (warden batch ios -- <cmd…>)");
 	const merged = preset ? mergePreset(preset, opts, passed) : { opts, base: {} };
-	const headless = resolveHeadless({
-		flag: passed.has("headless") ? opts.headless : undefined,
-		config: preset?.headless,
-		env: ctx.env,
-	});
+	const explicit = passed.has("headless") ? opts.headless : undefined;
+	// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
+	const headless = isPhysicalClaim(withNamedPhysical(merged.opts))
+		? explicit
+		: resolveHeadless({ flag: explicit, config: preset?.headless, env: ctx.env });
 	const args = parseBatchArgs(
 		platform,
 		{ ...merged.opts, headless, ...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}) },
@@ -2237,7 +2260,7 @@ export async function runSession(
 		hooks.setup?.slim && platform === "ios"
 			? startEarlySlim<ClaimedDevice>({
 					slim: recordedSlim(ctx, deps, typeof hooks.setup.slim === "object" ? hooks.setup.slim : undefined),
-					skip: (c) => alreadySlimmed(ctx, c),
+					skip: (c) => isPhysicalDevice(c.device) || alreadySlimmed(ctx, c),
 				})
 			: undefined;
 	// the early warm-up closed and the early slim done, once (before a failed claim releases the devices)
@@ -2315,7 +2338,8 @@ async function elasticSplit(
 ): Promise<{ lease: BatchArgs; extra: number; setup: RunSetup["elastic"] }> {
 	const { request } = args.flags;
 	const whole = { lease: args, extra: 0, setup: undefined };
-	if (args.legs || request.count < 2) return whole;
+	// phones are not created: a physical request claims exactly the devices it names
+	if (args.legs || request.count < 2 || request.physical !== undefined) return whole;
 	const plan = await planElastic(await buildCapacityDeps(ctx, owner), request.platform, request.count);
 	if (!plan) return whole;
 	note(
@@ -2360,13 +2384,15 @@ export function createBatchCommand(deps: BatchDeps): Command {
 		register: (cmd, ctx, done) => {
 			withBatchOptions(
 				withLeaseOptions(
-					withClaimOptions(
-						cmd
-							.argument(
-								"[platform]",
-								"ios | android (asked for when omitted in a terminal), or a warden.config.ts batches preset"
-							)
-							.argument("[cmd...]", "per-job command after --; {job} {udid} {worker} {seq} are substituted")
+					withPhysicalOptions(
+						withClaimOptions(
+							cmd
+								.argument(
+									"[platform]",
+									"ios | android (asked for when omitted in a terminal), or a warden.config.ts batches preset"
+								)
+								.argument("[cmd...]", "per-job command after --; {job} {udid} {worker} {seq} are substituted")
+						)
 					)
 				)
 			)

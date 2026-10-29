@@ -74,6 +74,8 @@ export type SpecEnvOptions = {
 	version: string;
 	/** argv that re-runs this warden: `device.perf` shells out to it (`WARDEN_BIN`) */
 	bin?: readonly string[] | undefined;
+	/** argv that restarts a physical iPhone's runner host, `{udid}` replaced by the session (`WARDEN_IOS_RUNNER_RESTART`) */
+	iosRunnerRestart?: readonly string[] | undefined;
 	/** `warden e2e --perf`: the captures every attempt records (`WARDEN_PERF`) */
 	perf?: readonly string[] | undefined;
 	/** the suite's `perf.budgets` (`WARDEN_PERF_BUDGETS`) */
@@ -97,6 +99,7 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		[ENV_NAMES.helperDir]: o.helperDir,
 		[ENV_NAMES.version]: o.version,
 		...(o.bin === undefined ? {} : { [ENV_NAMES.bin]: JSON.stringify(o.bin) }),
+		...(o.iosRunnerRestart === undefined ? {} : { [ENV_NAMES.iosRunnerRestart]: JSON.stringify(o.iosRunnerRestart) }),
 		...(o.perf === undefined ? {} : { [ENV_NAMES.perf]: o.perf.join(",") }),
 		...(o.perfBudgets === undefined || Object.keys(o.perfBudgets).length === 0
 			? {}

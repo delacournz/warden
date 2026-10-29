@@ -199,6 +199,12 @@ Options:
   --no-slim              iOS: leave the simulator daemons running (config slim /
                          WARDEN_SLIM=0 also turn slimming off)
   --json                 machine-readable output
+  --physical             claim a connected physical phone/tablet (never booted,
+                         shut down or created by warden)
+  --serial <serial...>   android: claim these physical devices by adb serial
+                         (implies --physical)
+  --udid <udid...>       ios: claim these physical devices by CoreDevice UDID
+                         (implies --physical)
   --port <from:span>     lease a port from FROM..FROM+SPAN-1 (inclusive) for the
                          child (WARDEN_PORT_<i>); repeatable (default: [])
   --app                  install the project's app (fingerprint → cache → EAS →
@@ -409,6 +415,12 @@ Options:
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --json                      machine-readable output
+  --physical                  claim a connected physical phone/tablet (never
+                              booted, shut down or created by warden)
+  --serial <serial...>        android: claim these physical devices by adb
+                              serial (implies --physical)
+  --udid <udid...>            ios: claim these physical devices by CoreDevice
+                              UDID (implies --physical)
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
                               (default: [])
@@ -524,6 +536,12 @@ Options:
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --json                      machine-readable output
+  --physical                  claim a connected physical phone/tablet (never
+                              booted, shut down or created by warden)
+  --serial <serial...>        android: claim these physical devices by adb
+                              serial (implies --physical)
+  --udid <udid...>            ios: claim these physical devices by CoreDevice
+                              UDID (implies --physical)
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
                               (default: [])
@@ -593,6 +611,7 @@ Options:
 
 Examples:
   warden e2e mobile --base origin/main --count 2
+  warden e2e mobile --physical --platform android
   warden e2e mobile --dev --all
   warden e2e --dry-run --files src/modules/chat/api.ts"
 `;
@@ -3427,6 +3446,30 @@ Options:
   -h, --help                display help for command"
 `;
 
+exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
+"$ warden __ios-runner-host --help
+Usage: warden __ios-runner-host [options]
+
+resident iPhone runner host behind \`warden ui\` (internal)
+
+Options:
+  --udid <udid>
+  --socket <path>
+  --idle-timeout <seconds>
+  -h, --help                display help for command"
+`;
+
+exports[`help output warden __ios-runner-restart --help (and nested subcommands) 1`] = `
+"$ warden __ios-runner-restart --help
+Usage: warden __ios-runner-restart [options]
+
+restart an iPhone's runner host for a running e2e session (internal)
+
+Options:
+  --udid <udid>
+  -h, --help     display help for command"
+`;
+
 exports[`help output warden ui-collect --help (and nested subcommands) 1`] = `
 "$ warden ui-collect --help
 Usage: warden ui-collect [options]
@@ -3722,17 +3765,4 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 "error: unknown command 'claime'
 (Did you mean claim?)
 (add --help for usage)"
-`;
-
-exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
-"$ warden __ios-runner-host --help
-Usage: warden __ios-runner-host [options]
-
-resident iPhone runner host behind \`warden ui\` (internal)
-
-Options:
-  --udid <udid>
-  --socket <path>
-  --idle-timeout <seconds>
-  -h, --help                display help for command"
 `;

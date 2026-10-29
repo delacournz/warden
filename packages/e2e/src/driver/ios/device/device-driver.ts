@@ -6,7 +6,6 @@ import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../../alerts";
 import type {
 	AlertInfo,
 	Driver,
-	DriverCapabilities,
 	DriverError,
 	DriverResult,
 	Element,
@@ -25,6 +24,7 @@ import { normalizeElements, toSnapshot } from "../normalize";
 import { connectSimd, type RequestOptions, type SimdClient } from "../simd-client";
 import type { AlertButtonsData, OpData } from "../simd-protocol";
 import { typeTextBudgetMs } from "../type-budget";
+import { IOS_DEVICE_CAPABILITIES } from "./capabilities";
 import { createDevicectl, type Devicectl } from "./devicectl";
 import { isRunning, parseAppState } from "./runner-protocol";
 
@@ -61,17 +61,6 @@ export type OpenIosDeviceDriverOptions = {
 	/** test seams */
 	devicectl?: Devicectl;
 	writeFile?: (path: string, bytes: Uint8Array) => Promise<void>;
-};
-
-/** Capabilities exactly as the plan fixes them (WDN-PHY-6). */
-export const IOS_DEVICE_CAPABILITIES: DriverCapabilities = {
-	pinch: false,
-	maxPointers: 0,
-	unicodeText: true,
-	nativeSettle: false,
-	alerts: true,
-	reachability: true,
-	cheapHitTest: false,
 };
 
 export type IosDeviceDriver = Driver & ReadsAlertOn & ProbesFrontmost;

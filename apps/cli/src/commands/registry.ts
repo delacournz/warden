@@ -172,6 +172,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./ios-runner-host")).iosRunnerHostCommand,
 	},
 	{
+		name: "__ios-runner-restart",
+		summary: "restart an iPhone's runner host for a running e2e session (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-restart")).iosRunnerRestartCommand,
+	},
+	{
 		name: "ui-collect",
 		summary: "background console + network collector for `warden ui logs start` (internal)",
 		hidden: true,

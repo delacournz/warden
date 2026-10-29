@@ -14,6 +14,7 @@ import {
 	resolveAutoProfile,
 	resolveOwner,
 	resolvePriority,
+	withNamedPhysical,
 } from "./claim-flags";
 import type { HideStart } from "./sim-windows";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "./simctl.testing";
@@ -429,5 +430,19 @@ describe("Device Hub windows after a claim (Xcode 27)", () => {
 
 	test("headless, Device Hub running → no window opened, none touched", async () => {
 		expect(await claim("DeviceHub", true)).toEqual([]);
+	});
+});
+
+describe("withNamedPhysical", () => {
+	test("--serial / --udid become physicalSerial / physicalUdid; other values stay", () => {
+		type Values = { physical?: boolean; serial?: string[]; udid?: string[]; count?: string };
+		const named = (values: Values) => withNamedPhysical<Values>(values);
+		expect(named({ physical: true, serial: ["S1"], count: "1" })).toEqual({
+			physical: true,
+			count: "1",
+			physicalSerial: ["S1"],
+		});
+		expect(named({ udid: ["U1"] })).toEqual({ physicalUdid: ["U1"] });
+		expect(named({ count: "2" })).toEqual({ count: "2" });
 	});
 });

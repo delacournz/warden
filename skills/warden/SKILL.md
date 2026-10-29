@@ -48,6 +48,7 @@ Open the reference file for details before acting; this file only routes.
 | record a `warden ui` session into a spec | `warden ui record start <id> [--helper <module#fn>]` → drive → `record note\|use <module#fn>\|undo\|status\|cancel` → `record stop [--no-verify]` (verifies on the same device) |
 | the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
 | run them on leased devices | `warden e2e [suite] [--base main\|--all\|--specs a,b] [--count N] [--dry-run] [--devices all] [--dev \| --kind dev\|simulator\|release] [--no-shutdown] [--no-warm] [--headless] [--report f]`. Default build: the repacked `simulator` kind, no Metro. `--dev`: dev client + warden's Metro |
+| run them on a real phone | `warden e2e [suite] --physical [--platform android]` · `--serial <adb serial…>` (Android) · `--udid <CoreDevice UDID…>` (iOS) · suite/leg `physical: true\|{ ids }`; also on `run` / `batch`. No reboot, slim, arrange or shutdown; default kind `release`; an iPhone cannot get an app installed yet (WDN-PHY-8); specs needing pinch: `test(t, { requires: ["pinch"] }, …)`. See suites.md |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 [--app] -- <cmd>` |
 | independent jobs over N devices | `warden batch ios\|<preset> --count N --jobs-from <file\|-> -- <cmd {job} {udid}>` |
 | a free port | `warden port claim --json` (`--from 8091 --span 20`) · `warden port ls` · `warden port release <port…>\|--lease <id…>\|--mine` |
@@ -74,7 +75,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 - gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground. It also shuts down unleased warden devices idle 20 min (`--idle`).
 - A declined `warden.config.ts` offer from `warden dev` is kept in `~/.warden/projects/<key>/`, shared by every worktree; nothing is written to the repo.
 - warden only creates, shuts down and erases `warden-<profile>-N` sims; `--adopt` opts a foreign device in.
-- A physical device is never booted, created, shut down (`release --shutdown` and `gc` leave it and say "physical device: never shut down"), erased or slimmed, and costs no host capacity. A `--physical` claim takes only a ready device (Android adb state `device`) and fails with "no free ready physical <platform> device" when none is free; it never queues for capacity.
+- A physical device is never booted, created, shut down (`release --shutdown` and `gc` leave it and say "physical device: never shut down"), erased or slimmed, and costs no host capacity. A `--physical` claim takes only a ready device (Android adb state `device`; iPhone/iPad paired with Developer Mode on, as listed by `warden devices`) and fails with "no free ready physical <platform> device" when none is free; it never queues for capacity.
 - The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.
 - A failed `warden e2e` leaves sims booted for inspection.

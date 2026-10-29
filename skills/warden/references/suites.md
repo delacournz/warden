@@ -25,8 +25,9 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--devices default\|all\|<profile,...>` | which `devices` legs run |
 | `--no-shutdown` | keep devices up after a pass (default: shut down those warden created, locally and under CI; suite `shutdown`) |
 | `--dev` | the dev client (kind `dev`) on a Metro warden starts: the suite's `metro` block, or the defaults when it has none. Not with `--kind` / `--variant` |
-| `--kind dev\|simulator\|release` | build kind the devices get (default: the suite's `app.kind`, else `simulator`). `dev` starts Metro like `--dev` |
-| `--no-warm` | skip the iOS driver warm-up |
+| `--kind dev\|simulator\|release` | build kind the devices get (default: the suite's `app.kind`, else `simulator`; `release` on a physical run). `dev` starts Metro like `--dev` |
+| `--no-warm` | skip the iOS driver warm-up (never skipped for an iPhone: its jobs reach the runner host through it) |
+| `--physical` / `--serial <serial...>` / `--udid <udid...>` | run on physical phones/tablets, see "Physical devices". `--serial` is Android, `--udid` is iOS (CoreDevice UDID); naming devices implies `--physical`. Win over the suite's `physical` |
 | `--perf [captures]` | profile every attempt: bare = metrics, frames, logs; or `--perf=react,js`, `all` (names: `all js react native metrics frames logs`). Reports land in the attempt's `perf/` dir; suite/top-level `perf.budgets` make a breach fail the test (`PERF_BUDGET`) |
 | claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --json` (`--json` prints the e2e report) |
 | lease flags | `--port <from:span>` (repeatable), `--app --install-mode clean\|reinstall --reset-keychain --project --bundle-id --variant --kind --no-eas --no-build` |
@@ -81,6 +82,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it. Applies only with `--dev` / kind `dev`, unless the suite pins `app.variant` or `app.kind: "dev"`, or installs no app. Without Metro (kind `simulator` / `release`) its `env` is still the bundle env: `EXPO_PUBLIC_*` values land in the repacked / built JS (and its cache key), over `.env*` and the shell |
 | `headless` | off | keep Simulator.app windows closed (top-level `headless` is the default; `--headless` / `--no-headless` win) |
 | `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
+| `physical` | off | `true` = any ready physical device, `{ ids: [...] }` = exactly these (adb serials / CoreDevice UDIDs). Also per `devices` leg (a leg's wins). Not with `slim` / `headless` (config error). Command-line `--physical` / `--serial` / `--udid` win. See "Physical devices" |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
 
 ### App, ports, serve, setup
@@ -164,6 +166,16 @@ e2e: {
 },
 ```
 
+## Physical devices
+
+`warden e2e <suite> --physical [--platform android]`, `--serial <adb serial…>` (Android), `--udid <CoreDevice UDID…>` (iOS), or `physical` in the suite / a leg. `run` and `batch` take the same three flags. The leg runs on the named (else any one ready) phone, never creates or boots one, so `--count`, `--max`, `--slim`, `--headless`, `--runtime`, `--adopt` are refused with it (the device count is the number of ids).
+
+A physical leg does none of: reboot, headless hide, window arrange, slim, golden clone, shutdown on finish. A suite `setup` command still runs. `WARDEN_UDIDS` / `WARDEN_UDID` carry the adb serial / CoreDevice UDID, and each job gets `WARDEN_DEVICE_KIND=physical` (a mixed run: only the phone's jobs).
+
+- Android: the APK installs through `adb install -r` after an ABI check (`abi_mismatch`). Default kind on a physical run is `release` (not the x86_64 `simulator` repack); `--kind dev|release` or the suite's `app.kind` picks. `--install-mode clean|reinstall` only touches the suite's own bundle id; any other package is `E_REFUSED` (`physical_protected`).
+- iOS: warden starts the phone's runner host (`__ios-runner-host`, signs and builds the runner on first use) before the specs and hands each job `WARDEN_IOS_RUNNER_SOCKET`. A lost runner connection restarts the host once and reruns the test; the phone is never rebooted and `simctl` never runs. **An app cannot be installed on a phone yet** (device-target builds are WDN-PHY-8): `--app` / a suite `app` with an iPhone fails before anything is leased. Install the app by hand and run without `--app`.
+- The driver of a physical iPhone has no pinch and no multi-touch. Mark a spec that needs them `test("zoom", { requires: ["pinch"] }, ...)` (or `"multiTouch"`): it is skipped at collection on a physical iPhone and runs elsewhere. On other devices the driver decides at run time (Android without `warden-uiad` throws `INVALID_ARGUMENT`; use `platforms` there).
+
 ## Env the spec process gets
 
 Set by warden. Never export these for a suite run.
@@ -172,7 +184,8 @@ Set by warden. Never export these for a suite run.
 |---|---|
 | spec contract | `WARDEN_UDID WARDEN_PLATFORM WARDEN_BUNDLE_ID WARDEN_DEVICE_NAME WARDEN_LAUNCH_ARGS WARDEN_E2E_OUT WARDEN_E2E_TIMEOUT WARDEN_E2E_ACTION_TIMEOUT WARDEN_E2E_ASSERTION_TIMEOUT WARDEN_E2E_SPECS_DIR WARDEN_HELPER_DIR WARDEN_SIMD_SOCKET WARDEN_VERSION` |
 | batch job | `WARDEN_WORKER WARDEN_JOB WARDEN_JOB_SEQ WARDEN_PASS WARDEN_BATCH_DIR WARDEN_PORT` (first leased port; the e2e package does not read it) `WARDEN_METRO_URL` (with `metro`) `WARDEN_LEG` (with `devices`) |
-| lease | `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_PORTS WARDEN_PORT_<i> WARDEN_LEASE_IDS WARDEN_HEADLESS` |
+| lease | `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_PORTS WARDEN_PORT_<i> WARDEN_LEASE_IDS WARDEN_HEADLESS` · `WARDEN_DEVICE_KIND=physical` (all devices phones) |
+| physical iPhone | `WARDEN_IOS_RUNNER_SOCKET` (the runner host's socket) `WARDEN_IOS_RUNNER_RESTART` (JSON argv the session runs once on a lost runner connection) |
 | app / log | `WARDEN_APP_PATH WARDEN_APP_HASH` (with `app`) `WARDEN_LOG_TIMESTAMPS` |
 | runner | `BUN_BE_BUN=1` (a compiled warden runs as bun; the preload drops it, so a `warden` a spec spawns stays warden) |
 | perf | `WARDEN_BIN` (argv `device.perf` shells out to) `WARDEN_PERF` (with `--perf`) `WARDEN_PERF_BUDGETS` (with budgets) |
@@ -208,8 +221,8 @@ A failed run leaves sims booted (so does a passed one with `shutdown: "idle"`, u
 
 | Command | Env and behavior |
 |---|---|
-| `warden run <platform> -- <cmd>` | child gets `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_LEASE_IDS WARDEN_PORTS WARDEN_PORT_<i>`, `WARDEN_HEADLESS=1` when headless, `WARDEN_APP_PATH WARDEN_APP_HASH` with `--app`. `--json`: first stdout line `{ leases, ports, cmd }`, the child's stdout goes to stderr |
-| `warden batch <platform\|preset> --jobs a,b -- <cmd>` | per job `WARDEN_UDID WARDEN_WORKER WARDEN_DEVICE_NAME WARDEN_JOB WARDEN_JOB_SEQ WARDEN_PASS WARDEN_BATCH_DIR WARDEN_PORT`. `{job} {udid} {worker} {seq}` are substituted in the command; `{port} {metroUrl}` in `serve` and `serveReady`. Jobs also come from `--jobs-from <file\|->` (one per line). A job killed by `--job-timeout` exits `124` |
+| `warden run <platform> -- <cmd>` | `--physical` / `--serial` / `--udid` run it on phones (`WARDEN_DEVICE_KIND=physical`). Child gets `WARDEN_UDIDS WARDEN_UDID_<i> WARDEN_LEASE_IDS WARDEN_PORTS WARDEN_PORT_<i>`, `WARDEN_HEADLESS=1` when headless, `WARDEN_APP_PATH WARDEN_APP_HASH` with `--app`. `--json`: first stdout line `{ leases, ports, cmd }`, the child's stdout goes to stderr |
+| `warden batch <platform\|preset> --jobs a,b -- <cmd>` | `--physical` / `--serial` / `--udid` as for `run`; a phone's jobs also get `WARDEN_DEVICE_KIND=physical` (an iPhone's `WARDEN_IOS_RUNNER_SOCKET`). Per job `WARDEN_UDID WARDEN_WORKER WARDEN_DEVICE_NAME WARDEN_JOB WARDEN_JOB_SEQ WARDEN_PASS WARDEN_BATCH_DIR WARDEN_PORT`. `{job} {udid} {worker} {seq}` are substituted in the command; `{port} {metroUrl}` in `serve` and `serveReady`. Jobs also come from `--jobs-from <file\|->` (one per line). A job killed by `--job-timeout` exits `124` |
 
 `warden batch <name>` runs the `batches.<name>` preset of `warden.config.ts` (`ios` / `android` are reserved names); flags passed alongside override it. Preset keys: `platform` (required) `cmd` (required) `project count max profile runtime label ttl wait ports app headless slim retry passes env serve serveReady serveTimeout jobs jobsFrom record logs`. At most one of `jobs` / `jobsFrom` (`jobsFrom`: a file, `-`, or `{ command }`).
 

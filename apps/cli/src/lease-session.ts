@@ -8,7 +8,7 @@ import { CLAIM_ABORTED, type ClaimOutcome } from "@delacour/warden-core/claim";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
 import { processAlive } from "@delacour/warden-core/liveness";
 import { claimPorts, parsePortSpec } from "@delacour/warden-core/ports";
-import type { Owner, Platform } from "@delacour/warden-core/types";
+import { isPhysicalDevice, type Owner, type Platform } from "@delacour/warden-core/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { phaseTracker } from "./app-phase";
 import { selfCommand } from "./autogc";
@@ -130,6 +130,10 @@ export function childEnv(
 	udids.forEach((udid, i) => {
 		env[`WARDEN_UDID_${i}`] = udid;
 	});
+	// a run on phones only says so; a mixed run is told per device by the jobs' own env (batch / e2e)
+	if (outcome.claimed.length > 0 && outcome.claimed.every((c) => isPhysicalDevice(c.device))) {
+		env.WARDEN_DEVICE_KIND = "physical";
+	} else delete env.WARDEN_DEVICE_KIND;
 	env.WARDEN_LEASE_IDS = [...outcome.claimed.map((c) => c.lease.id), ...ports.map((p) => p.leaseId)].join(",");
 	if (ports.length > 0) {
 		env.WARDEN_PORTS = ports.map((p) => p.port).join(",");
@@ -160,6 +164,25 @@ export function setAfterRebootEnv(
 ): void {
 	if (headless || os !== "darwin") delete env.WARDEN_AFTER_REBOOT;
 	else env.WARDEN_AFTER_REBOOT = JSON.stringify([...self, "arrange", "--open", "{udid}"]);
+}
+
+/** Why an app cannot be installed on a physical iPhone yet (device-target builds are WDN-PHY-8). */
+export const PHYSICAL_IOS_APP_ERROR =
+	"installing an app on a physical iPhone needs a device build (WDN-PHY-8, not built yet): --kind simulator|release build for simulators and are never installed on a phone. Install the app on the phone yourself and drop --app / the suite's `app`";
+
+/** `--app` with an iOS claim that includes physical devices: refused before anything is leased. */
+export function checkPhysicalIosApp(flags: readonly ClaimFlags[], app: EnsureOptions | undefined): Result<undefined> {
+	if (app === undefined) return ok(undefined);
+	const phone = flags.some((f) => f.request.platform === "ios" && f.request.physical !== undefined);
+	return phone ? err(PHYSICAL_IOS_APP_ERROR) : ok(undefined);
+}
+
+/** The headless and after-reboot env of a run; phones are never rebooted, so a run with only phones has nothing to reopen afterwards. */
+function setRunEnv(env: Record<string, string | undefined>, legs: readonly ClaimFlags[]): void {
+	const headless = legs.some((f) => f.headless === true);
+	setHeadlessEnv(env, headless);
+	setAfterRebootEnv(env, headless);
+	if (legs.every((f) => f.request.physical !== undefined)) delete env.WARDEN_AFTER_REBOOT;
 }
 
 /** `--app` family option values shared by `run` and `batch`. */
@@ -280,7 +303,7 @@ type InstalledApp = { deviceId: string; result: EnsureResult };
  * `--app`: ensure the app on every device of one claim in parallel (waits for all, then reports the first
  * failure); each device's install starts once `ready` says the device is up (16-8).
  */
-async function installLegApp(
+export async function installLegApp(
 	ctx: CommandContext,
 	ensure: RunEnsureApp,
 	owner: Owner,
@@ -293,7 +316,11 @@ async function installLegApp(
 		claim.claimed.map(async (c) => {
 			// a device the hide could not boot again is not installed on (batch-pipeline R5)
 			if (!(await ready(c.device.id))) return undefined;
-			const own = onPhase ? { ...opts, onPhase: (phase: AppPhase) => onPhase(c.device.id, phase) } : opts;
+			const phone = isPhysicalDevice(c.device);
+			if (phone && c.device.platform === "ios") return err(PHYSICAL_IOS_APP_ERROR);
+			// a phone's install checks the APK's ABIs first (adb only; `-r` over the same bundle id, never an uninstall of another app)
+			const target = phone ? { ...opts, physical: true } : opts;
+			const own = onPhase ? { ...target, onPhase: (phase: AppPhase) => onPhase(c.device.id, phase) } : target;
 			return ensure(ctx, owner, c.device.platform, c.device.id, own);
 		})
 	);
@@ -616,9 +643,7 @@ export async function claimAll(
 		});
 	};
 	const env = childEnv(ctx.env, outcome, ports.data);
-	const headless = (args.legFlags ?? [args.flags]).some((f) => f.headless === true);
-	setHeadlessEnv(env, headless);
-	setAfterRebootEnv(env, headless);
+	setRunEnv(env, args.legFlags ?? [args.flags]);
 	const failed = legsFailure(runs, outcome, lost);
 	if (failed) {
 		await args.beforeRelease?.();

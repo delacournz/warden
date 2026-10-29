@@ -6,10 +6,14 @@ import { maybeAutoGc } from "../autogc";
 import {
 	type ClaimFlagValues,
 	claimedJson,
+	isPhysicalClaim,
+	type PhysicalOptionValues,
 	parseClaimFlags,
 	resolveOwner,
 	resolvePlatform,
 	withClaimOptions,
+	withNamedPhysical,
+	withPhysicalOptions,
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -17,6 +21,7 @@ import {
 	type AppFlagValues,
 	appPhaseProgress,
 	type ChildHandle,
+	checkPhysicalIosApp,
 	claimAll,
 	exitCodeOf,
 	holdLeases,
@@ -43,7 +48,8 @@ export type RunDeps = LeaseSessionDeps & {
 
 /** Commander option values of `warden run` (claim options + `--port` / `--app` family). */
 export type RunOpts = ClaimFlagValues &
-	AppFlagValues & {
+	AppFlagValues &
+	PhysicalOptionValues & {
 		json?: true;
 		port: string[];
 	};
@@ -52,10 +58,13 @@ type RunArgs = LeaseArgs & { json: boolean };
 
 /** Validated run args from the resolved platform + option values. */
 export function parseRunArgs(platform: Platform, opts: RunOpts): Result<RunArgs> {
-	const flags = parseClaimFlags(platform, opts);
+	const named = withNamedPhysical(opts);
+	const flags = parseClaimFlags(platform, named);
 	if (!flags.success) return flags;
 	const app = parseAppFlags(opts);
 	if (!app.success) return app;
+	const checked = checkPhysicalIosApp([flags.data], app.data);
+	if (!checked.success) return checked;
 	const args: RunArgs = { flags: flags.data, ports: opts.port, json: opts.json === true };
 	if (app.data) args.app = app.data;
 	return ok(args);
@@ -98,9 +107,11 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (!target.success) return fail(target.error);
 	const platform = await resolvePlatform(ctx, target.data.platformArg);
 	if (!platform.success) return fail(platform.error);
+	// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
+	const physical = isPhysicalClaim(withNamedPhysical(opts));
 	const args = parseRunArgs(platform.data, {
 		...opts,
-		headless: resolveHeadless({ flag: opts.headless, env: ctx.env }),
+		headless: physical ? opts.headless : resolveHeadless({ flag: opts.headless, env: ctx.env }),
 	});
 	if (!args.success) return fail(args.error);
 	const { cmd } = target.data;
@@ -144,10 +155,12 @@ export function createRunCommand(deps: RunDeps): Command {
 		summary: "claim devices, run a command with WARDEN_UDIDS set, release on exit",
 		register: (cmd, ctx, done) => {
 			withLeaseOptions(
-				withClaimOptions(
-					cmd
-						.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
-						.argument("[cmd...]", "the command to run, after --")
+				withPhysicalOptions(
+					withClaimOptions(
+						cmd
+							.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
+							.argument("[cmd...]", "the command to run, after --")
+					)
 				)
 			)
 				.addHelpText("after", "\nExample:\n  warden run ios --count 2 --port 8091:20 -- bun e2e")

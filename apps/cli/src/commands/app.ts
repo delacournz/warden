@@ -68,6 +68,8 @@ export type EnsureOptions = {
 	force?: boolean;
 	/** a missing variant falls back to the project's own build (`warden dev`) */
 	variantOptional?: boolean;
+	/** the device is a real phone: an Android install checks the APK's ABIs first (`abi_mismatch`); set per device by the lease session */
+	physical?: boolean;
 	/** progress for a spinner: what the resolve is doing (`AppPhase`) */
 	onPhase?: (phase: AppPhase) => void;
 	/** a local build's own output, line by line, while it runs (`warden dev`'s dashboard); unset = only the failure summary */
@@ -170,7 +172,7 @@ export function kindAppInput(
 	kind: BuildKind,
 	opts: Pick<
 		EnsureOptions,
-		"eas" | "build" | "buildOutput" | "installMode" | "resetKeychain" | "force" | "onPhase" | "bundleEnv"
+		"eas" | "build" | "buildOutput" | "installMode" | "resetKeychain" | "force" | "onPhase" | "bundleEnv" | "physical"
 	>
 ): KindAppInput {
 	return {
@@ -192,6 +194,7 @@ export function kindAppInput(
 		build: opts.build,
 		...(opts.installMode !== undefined ? { installMode: opts.installMode } : {}),
 		...(opts.resetKeychain ? { resetKeychain: true } : {}),
+		...(opts.physical ? { physical: true } : {}),
 		...(opts.force ? { force: true } : {}),
 		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
 		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
@@ -281,6 +284,7 @@ export async function ensurePreparedApp(
 		build: opts.build,
 		...(opts.installMode !== undefined ? { installMode: opts.installMode } : {}),
 		...(opts.resetKeychain ? { resetKeychain: true } : {}),
+		...(opts.physical ? { physical: true } : {}),
 		...(deviceId !== undefined ? { deviceId } : {}),
 		...(deps.easPollMs !== undefined ? { easPollMs: deps.easPollMs } : {}),
 		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),

@@ -3,6 +3,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
+import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { jsonl, result } from "../batch/results.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
@@ -2219,5 +2221,129 @@ describe("warden e2e", () => {
 			expect(r.asked).toEqual([]);
 			expect(r.metro).toBe(true);
 		});
+	});
+});
+
+describe("warden e2e on physical devices", () => {
+	const PHONE = "R5CT1234ABC";
+	const IPHONE = "00008140-000A0B0C0D0E0F10";
+	const ADB_PHONE = `List of devices attached\n${PHONE}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2\n\n`;
+
+	/** What adb and the host answer: one phone, boot completed, no simulators; anything else is refused */
+	function androidPhoneReply(cmd: readonly string[]): Awaited<ReturnType<Exec>> {
+		const line = cmd.slice(1).join(" ");
+		const reply = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" });
+		if (line === "devices -l") return reply(ADB_PHONE);
+		if (cmd.at(-1) === PHONE_PROBE_SCRIPT) return reply(PHONE_PROPS);
+		if (line.endsWith("getprop sys.boot_completed")) return reply("1\n");
+		// host reads that are not device actions: the simulator list, memory pressure
+		if (cmd[0] === "xcrun" && line === "simctl list devices available -j") return reply('{"devices":{}}');
+		if (cmd[0] === "sysctl" || cmd[0] === "memory_pressure") return reply("1\n");
+		return { exitCode: 1, stdout: "", stderr: "unexpected" };
+	}
+
+	/** adb sees one Android phone; every other command is recorded and refused, so a stray `emu` / `reboot` / `kill` shows up */
+	function phoneSetup(argv: string[], calls: string[][]): TestContext {
+		const exec: Exec = async (cmd, opts) => {
+			if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return bunExec(cmd, opts);
+			calls.push([...cmd]);
+			return androidPhoneReply(cmd);
+		};
+		ctx = testContext(argv, { exec });
+		ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HEADLESS: "1" };
+		ctx.cwd = dir;
+		return ctx;
+	}
+
+	const argvs = (calls: string[][]) => calls.map((call) => call.slice(1).join(" "));
+
+	test("--physical --platform android: the phone is the only device, with no reboot / emu / kill / shutdown argv", async () => {
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical"], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const [job] = h.jobs();
+		expect(job?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+		expect(job?.opts.env.WARDEN_UDID).toBe(PHONE);
+		expect(job?.opts.env.WARDEN_DEVICE_KIND).toBe("physical");
+		expect(job?.opts.env.WARDEN_HEADLESS).toBeUndefined();
+		expect(job?.opts.env.WARDEN_AFTER_REBOOT).toBeUndefined();
+		const FORBIDDEN = new Set(["emu", "reboot", "kill", "shutdown", "boot", "-avd", "erase", "put", "disable"]);
+		const forbidden = calls.filter(
+			(call) =>
+				call[0] === "emulator" ||
+				call.slice(1).some((arg) => FORBIDDEN.has(arg)) ||
+				(call[1] === "simctl" && call[2] !== "list")
+		);
+		expect(forbidden).toEqual([]);
+		expect(h.slimmed).toEqual([]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--serial names the phone and implies --physical; the suite's headless setting does not conflict", async () => {
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--serial", PHONE], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+	});
+
+	test("the suite's `physical: { ids }` is honoured with no flag at all", async () => {
+		await resuite({ platform: "android", physical: { ids: [PHONE] } });
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx"], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+		expect(h.jobs()[0]?.opts.env.WARDEN_DEVICE_KIND).toBe("physical");
+	});
+
+	test("a leg with `physical: true` runs on the phone and boots no emulator", async () => {
+		await resuite({ platform: "android", devices: [{ profile: "pixel-8", physical: true }] });
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx"], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
+		expect(argvs(calls).some((line) => /emulator|-avd/.test(line))).toBe(false);
+	});
+
+	test("a physical leg installs the release kind by default, flagged physical; an explicit --kind still wins", async () => {
+		const seen: Array<{ kind?: string; physical?: boolean }> = [];
+		const withEnsure = (h: Harness): Harness["deps"] => ({
+			...h.deps,
+			ensureApp: async (_c, _o, _p, _id, o) => {
+				seen.push({ ...(o.kind ? { kind: o.kind } : {}), ...(o.physical ? { physical: true } : {}) });
+				return { success: true, data: { appPath: "/c/a.apk", hash: "H", source: "cache", installed: true } };
+			},
+		});
+		const run = async (argv: string[]) => {
+			const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", ...argv], []);
+			const code = await createE2eCommand(withEnsure(harness())).run(c);
+			expect(code).toBe(0);
+		};
+		await run(["--physical", "--app"]);
+		await run(["--physical", "--app", "--kind", "simulator"]);
+		expect(seen).toEqual([
+			{ kind: "release", physical: true },
+			{ kind: "simulator", physical: true },
+		]);
+	});
+
+	test("--app on an iPhone is refused before anything is leased, naming WDN-PHY-8", async () => {
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--udid", IPHONE, "--app"], calls);
+		const h = harness();
+		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("WDN-PHY-8");
+		expect(calls).toEqual([]);
+		expect(h.jobs()).toEqual([]);
+	});
+
+	test("--physical with --count / --headless is refused like a physical claim", async () => {
+		const calls: string[][] = [];
+		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical", "--headless"], calls);
+		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--headless cannot be used with --physical");
 	});
 });

@@ -85,6 +85,21 @@ describe("readEnv", () => {
 		});
 	});
 
+	test("WARDEN_DEVICE_KIND=physical and the runner restart argv are read; anything else is rejected", () => {
+		const env = readEnv({
+			...base,
+			WARDEN_DEVICE_KIND: "physical",
+			WARDEN_IOS_RUNNER_RESTART: JSON.stringify(["warden", "__ios-runner-restart", "--udid", "{udid}"]),
+		});
+		expect(env.success && env.data).toMatchObject({
+			deviceKind: "physical",
+			iosRunnerRestart: ["warden", "__ios-runner-restart", "--udid", "{udid}"],
+		});
+		expect(readEnv({ ...base, WARDEN_DEVICE_KIND: "emulator" }).success).toBe(false);
+		const plain = readEnv(base);
+		expect(plain.success && plain.data?.deviceKind).toBeUndefined();
+	});
+
 	test("WARDEN_HEADLESS and WARDEN_WORKER are for the spec's own tools: never validated, never parsed", () => {
 		const result = readEnv({ ...base, WARDEN_HEADLESS: "maybe", WARDEN_WORKER: "w1" });
 		expect(result.success).toBe(true);
