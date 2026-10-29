@@ -22,6 +22,13 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 		back: () => span("device.back", () => device.back()),
 		orientation: (set) => span("device.orientation", () => device.orientation(set)),
 		appearance: (set) => span("device.appearance", () => device.appearance(set)),
+		biometrics: {
+			status: () => span("device.biometrics.status", () => device.biometrics.status()),
+			enroll: () => span("device.biometrics.enroll", () => device.biometrics.enroll()),
+			unenroll: () => span("device.biometrics.unenroll", () => device.biometrics.unenroll()),
+			match: () => span("device.biometrics.match", () => device.biometrics.match()),
+			fail: () => span("device.biometrics.fail", () => device.biometrics.fail()),
+		},
 		clipboard: () => span("device.clipboard", () => device.clipboard()),
 		setClipboard: (text) => span("device.setClipboard", () => device.setClipboard(text)),
 		hideKeyboard: () => span("device.hideKeyboard", () => device.hideKeyboard()),

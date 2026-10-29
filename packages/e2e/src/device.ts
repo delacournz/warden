@@ -24,7 +24,16 @@ import {
 	whileLinkInFlight,
 } from "./device-link";
 import { canProbeFrontmost } from "./driver/alerts";
-import type { AlertInfo, Driver, Element, Orientation, Platform, Snapshot } from "./driver/driver.types";
+import type {
+	AlertInfo,
+	BiometricOp,
+	BiometricState,
+	Driver,
+	Element,
+	Orientation,
+	Platform,
+	Snapshot,
+} from "./driver/driver.types";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -67,6 +76,27 @@ export type SettleOptions = {
 	timeout?: number;
 };
 
+export type { BiometricState };
+
+/**
+ * Simulated Face ID / Touch ID / fingerprint (simulators and emulators only). Every method answers the state after the op.
+ * iOS: the first prompt per app shows an "Allow X to use Face ID?" alert; answer it with `device.alert("accept")`.
+ * Enroll before installing or launching the app: a new enrollment invalidates biometry-bound keys.
+ * Android: `enroll` / `unenroll` throw `ACTION_FAILED` (driver `E_UNSUPPORTED`); enrollment comes from the golden snapshot, so set
+ * the profile's `biometrics: true`.
+ */
+export type DeviceBiometrics = {
+	status(): Promise<BiometricState>;
+	/** iOS: enrolls Face ID / Touch ID. Android: unsupported, use profile `biometrics: true`. */
+	enroll(): Promise<BiometricState>;
+	/** iOS: removes the enrollment. Android: unsupported. */
+	unenroll(): Promise<BiometricState>;
+	/** Presents a matching face / finger to the pending prompt. */
+	match(): Promise<BiometricState>;
+	/** Presents a non-matching face / finger to the pending prompt. */
+	fail(): Promise<BiometricState>;
+};
+
 export type Device = {
 	/**
 	 * Answers the system alert / sheet on top. `accept` presses the first present of OK, Allow, Open,
@@ -88,6 +118,8 @@ export type Device = {
 	back(): Promise<void>;
 	orientation(set?: Orientation): Promise<Orientation>;
 	appearance(set?: "light" | "dark"): Promise<"light" | "dark">;
+	/** Simulated biometrics: `status`, `enroll`, `unenroll`, `match`, `fail`; see {@link DeviceBiometrics}. */
+	readonly biometrics: DeviceBiometrics;
 	clipboard(): Promise<string>;
 	setClipboard(text: string): Promise<void>;
 	/**
@@ -151,6 +183,13 @@ function androidButton(buttons: readonly Element[], ids: readonly string[]): Ele
 
 /** The button `device.alert(action)` presses; undefined = none to press. Android `accept`/`dismiss` go by the permission
  * prompt's ids, then the names, then `AlertDialog`'s `button1`/`button2` (React Native fills those by position). */
+const ALERT_PRESS_ATTEMPTS = 3;
+const ALERT_PRESS_SETTLE_MS = 250;
+
+function buttonNames(info: AlertInfo): string {
+	return info.buttons.map((b) => nameOf(b) ?? "?").join(", ");
+}
+
 function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
 	if (action === "accept") {
@@ -185,12 +224,36 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 	const issued = new Map<string, number>();
 	// the signal is read per call: the runner swaps it for every attempt
 	const signal = (): AbortSignal | undefined => session.signal;
+	const biometric = (op: BiometricOp): Promise<BiometricState> =>
+		unwrap(() => driver.biometrics(op), `biometrics ${op}`, signal());
 
 	const pressAlertButton = async (button: Element, action: string): Promise<void> => {
 		await unwrap(() => driver.tap(centre(button)), action, signal());
 	};
 
 	const readAlert = createAlertReader({ driver, clock, signal });
+
+	/**
+	 * A press on an iOS sheet that is still animating in (LocalAuthentication's "Face Not Recognized") lands on nothing and
+	 * reports success, so `answered` is only true once the alert is gone or has become a different one. Presses again
+	 * (`ALERT_PRESS_ATTEMPTS` in all) while the same buttons show; `ACTION_FAILED` when they never leave.
+	 */
+	const confirmAlertGone = async (shown: AlertInfo, pressed: Element): Promise<void> => {
+		let target = pressed;
+		for (let attempt = 1; ; attempt += 1) {
+			await clock.sleep(ALERT_PRESS_SETTLE_MS);
+			const now = await readAlert("axbridge", 0);
+			if (now === null || buttonNames(now) !== buttonNames(shown)) return;
+			if (attempt >= ALERT_PRESS_ATTEMPTS) {
+				throw new E2eError(
+					"ACTION_FAILED",
+					`alert still showing after pressing "${nameOf(pressed) ?? "?"}" ${ALERT_PRESS_ATTEMPTS} times (buttons: ${buttonNames(now)})`
+				);
+			}
+			target = now.buttons.find((b) => nameOf(b) === nameOf(pressed)) ?? target;
+			await pressAlertButton(target, "press alert button again");
+		}
+	};
 
 	/** Whether the app under test is in front; `undefined` when the driver (or the bundle id) cannot say. */
 	const appInFront = async (): Promise<boolean | undefined> => {
@@ -252,6 +315,7 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
+			if (driver.platform === "ios") await confirmAlertGone(info, target);
 			return true;
 		},
 
@@ -295,6 +359,14 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 
 		appearance(set) {
 			return unwrap(() => driver.appearance(set), "appearance", signal());
+		},
+
+		biometrics: {
+			status: () => biometric("status"),
+			enroll: () => biometric("enroll"),
+			unenroll: () => biometric("unenroll"),
+			match: () => biometric("match"),
+			fail: () => biometric("fail"),
 		},
 
 		clipboard() {

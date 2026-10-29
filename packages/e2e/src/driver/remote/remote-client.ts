@@ -208,6 +208,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			alert: () => call<AlertInfo | null>("alert"),
 			appearance: (set) => call("appearance", set),
 			clipboard: (set) => call("clipboard", set),
+			biometrics: (op) => call("biometrics", op),
 			app,
 			close,
 		};

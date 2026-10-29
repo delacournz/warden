@@ -143,6 +143,12 @@ export type KeyName = "Enter" | "Backspace" | "Tab" | "Space" | "Escape" | "Dele
 
 export type Modifier = "shift" | "cmd" | "alt" | "ctrl";
 
+/** What `Driver.biometrics` does: read the enrollment, (un)enroll, or present a matching / non-matching biometric. */
+export type BiometricOp = "status" | "enroll" | "unenroll" | "match" | "fail";
+
+/** `modality`: what the device scans, iOS Face ID (`face`) or Touch ID and Android (`fingerprint`). */
+export type BiometricState = { enrolled: boolean; modality: "face" | "fingerprint" };
+
 export type AlertInfo = { title?: string; message?: string; buttons: Element[] };
 
 export type HealthInfo = {
@@ -228,6 +234,8 @@ export interface Driver {
 	alert(): DriverResult<AlertInfo | null>;
 	appearance(set?: "light" | "dark"): DriverResult<"light" | "dark">;
 	clipboard(set?: string): DriverResult<string>;
+	/** Simulated biometrics (simulators / emulators only, else `E_UNSUPPORTED`); answers the state after the op. */
+	biometrics(op: BiometricOp): DriverResult<BiometricState>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }

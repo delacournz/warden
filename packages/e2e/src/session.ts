@@ -272,6 +272,18 @@ export function createSession(opts: SessionOptions = {}): Session {
 		return true;
 	}
 
+	/**
+	 * A biometrics iOS sim is enrolled again when the session opens, before any app install: a reused booted sim
+	 * is left unenrolled by a spec that called `unenroll`. Best effort and idempotent; Android keeps its enrollment
+	 * in the golden snapshot.
+	 */
+	async function reenroll(driver: Driver): Promise<Driver> {
+		if (resolved.biometrics !== true || resolved.platform !== "ios") return driver;
+		const state = await driver.biometrics("enroll");
+		if (!state.success) note(`biometrics enroll failed: ${state.error.code}: ${state.error.message}`);
+		return driver;
+	}
+
 	const session: Session = {
 		env: resolved,
 		out,
@@ -305,7 +317,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 						throw new E2eError("DRIVER", `${code}: ${message}`);
 					}
 					current = cacheObservations(traceDriver(result.data, { trace: () => attempt?.trace }));
-					return current;
+					return reenroll(current);
 				},
 				(cause: unknown) => {
 					opened = undefined;

@@ -36,6 +36,8 @@ export const ENV_NAMES = {
 	perf: "WARDEN_PERF",
 	/** JSON of the suite's `perf.budgets`; a breach fails the test with `PERF_BUDGET` */
 	perfBudgets: "WARDEN_PERF_BUDGETS",
+	/** `1` when the suite's devices are biometrics devices: the session enrolls an iOS sim again before the app is installed */
+	biometrics: "WARDEN_BIOMETRICS",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -86,6 +88,7 @@ const schema = z.object({
 	bin: z.string().optional(),
 	perf: z.string().optional(),
 	perfBudgets: z.string().optional(),
+	biometrics: toggle.optional(),
 });
 
 export type E2eEnv = {
@@ -118,6 +121,8 @@ export type E2eEnv = {
 	perf?: string[];
 	/** `WARDEN_PERF_BUDGETS`: raw JSON of the suite's budgets */
 	perfBudgets?: string;
+	/** `WARDEN_BIOMETRICS`: this is a biometrics device (profile `<p>+bio`); iOS enrollment does not survive a reboot or a spec's `unenroll` */
+	biometrics?: boolean;
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -160,6 +165,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			wardenVersion: v.version,
 			perfBudgets: v.perfBudgets,
 		}),
+		...(v.biometrics === true ? { biometrics: true } : {}),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
 		...(v.perf === undefined

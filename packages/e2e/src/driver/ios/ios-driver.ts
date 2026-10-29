@@ -634,6 +634,7 @@ export function createIosDriver(
 		alertOn,
 		isFrontmost,
 		appearance: (set) => simctl.appearance(set),
+		biometrics: (op) => simctl.biometrics(op),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);

@@ -66,6 +66,36 @@ function factory() {
 	return { open, calls, fake };
 }
 
+describe("Session biometrics", () => {
+	const scripted = (platform: "ios" | "android", biometrics: boolean) => {
+		const fake = scriptedDriver({ platform, screens: [] });
+		const session = createSession({
+			env: { ...envIn(tmp()), platform, ...(biometrics ? { biometrics: true } : {}) },
+			driverFactory: async () => ({ success: true, data: fake }),
+			exitHook: false,
+		});
+		return { fake, session };
+	};
+
+	test("a biometrics iOS session enrolls when the driver opens", async () => {
+		const { fake, session } = scripted("ios", true);
+		await session.driver();
+		await session.driver();
+		expect(fake.callsOf("biometrics")).toEqual([{ method: "biometrics", op: "enroll" }]);
+	});
+
+	test("plain iOS and Android sessions do not", async () => {
+		for (const [platform, bio] of [
+			["ios", false],
+			["android", true],
+		] as const) {
+			const { fake, session } = scripted(platform, bio);
+			await session.driver();
+			expect(fake.callsOf("biometrics")).toEqual([]);
+		}
+	});
+});
+
 describe("Session", () => {
 	test("driver factory is not called until the first driver()", async () => {
 		const f = factory();

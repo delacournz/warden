@@ -127,6 +127,15 @@ describe("fakeDriver", () => {
 		expect(unwrap(await d.app.isRunning("com.x"))).toBe(false);
 	});
 
+	test("biometrics: enrollment is stateful, match and fail leave it alone", async () => {
+		const d = fakeDriver({ screens: [home] });
+		expect(unwrap(await d.biometrics("status"))).toEqual({ enrolled: false, modality: "face" });
+		expect(unwrap(await d.biometrics("enroll")).enrolled).toBe(true);
+		expect(unwrap(await d.biometrics("match")).enrolled).toBe(true);
+		expect(unwrap(await d.biometrics("unenroll")).enrolled).toBe(false);
+		expect(d.calls.filter((c) => c.method === "biometrics")).toHaveLength(4);
+	});
+
 	test("health, settle, screenshot and alert defaults", async () => {
 		const withAlert = snapshotOf([
 			el("alert", {

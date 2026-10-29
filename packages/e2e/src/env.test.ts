@@ -147,6 +147,13 @@ describe("WARDEN_VERSION", () => {
 });
 
 describe("perf env", () => {
+	test("WARDEN_BIOMETRICS", () => {
+		expect(readEnv({ ...base, WARDEN_BIOMETRICS: "1" })).toMatchObject({ data: { biometrics: true } });
+		const off = readEnv({ ...base, WARDEN_BIOMETRICS: "0" });
+		expect(off.success && off.data && "biometrics" in off.data).toBe(false);
+		expect(readEnv(base)).toMatchObject({ success: true });
+	});
+
 	test("WARDEN_BIN, WARDEN_PERF and WARDEN_PERF_BUDGETS", () => {
 		const r = readEnv({
 			...base,
