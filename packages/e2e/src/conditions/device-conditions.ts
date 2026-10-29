@@ -160,9 +160,6 @@ type ConditionChange = ConditionEvent extends infer E
 		: never
 	: never;
 
-/** The optional clock op (COND-12) a driver may offer. */
-type ClockDriver = { clock?(op: ClockCondition): DriverResult<unknown> };
-
 const ONLINE: NetworkCondition = { kind: "online" };
 const REAL_CLOCK: ClockCondition = { kind: "real" };
 
@@ -449,9 +446,10 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	};
 
 	async function applyClock(condition: ClockCondition): Promise<void> {
-		const op = (driver as Driver & ClockDriver).clock;
+		// a remote driver offers only the ops its server has, so `clock` can be missing at runtime
+		const op: Driver["clock"] | undefined = driver.clock;
 		clockDirty = true;
-		if (op === undefined) {
+		if (typeof op !== "function") {
 			throw toE2eError(
 				{ code: "E_UNSUPPORTED", message: "this driver has no clock condition", retryable: false },
 				"clock"

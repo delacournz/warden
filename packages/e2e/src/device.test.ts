@@ -1038,9 +1038,10 @@ describe("device conditions", () => {
 		]);
 	});
 
-	test("clock needs a driver clock op", async () => {
-		const { device } = setup();
-		await expect(device.clock.advance("2d")).rejects.toThrow("E_UNSUPPORTED");
+	test("clock goes to the driver's clock op", async () => {
+		const { driver, device } = setup();
+		await device.clock.advance("2d");
+		expect(driver.callsOf("clock")).toHaveLength(1);
 	});
 
 	test("the call honours the attempt's signal", async () => {

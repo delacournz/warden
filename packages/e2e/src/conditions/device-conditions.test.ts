@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ClockCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { ok } from "@delacour/warden-types/result";
 import { type DriverCall, fakeDriver, snapshotOf } from "../driver/driver.testing";
-import type { Driver, DriverResult, Platform } from "../driver/driver.types";
+import type { Driver, Platform } from "../driver/driver.types";
 import type { E2eEnv } from "../env";
 import type { E2eError } from "../errors";
 import type { ConditionEvent } from "./condition-events";
@@ -35,8 +35,6 @@ function stuckClock(): TickerClock & { time: number } {
 	return clock;
 }
 
-type ClockCapable = { clock(op: ClockCondition): DriverResult<undefined> };
-
 function setup(
 	opts: { platform?: Platform; conditions?: E2eEnv["conditions"]; clockOp?: boolean; log?: string[] } = {}
 ): {
@@ -49,10 +47,12 @@ function setup(
 	const platform = opts.platform ?? "ios";
 	const driver = fakeDriver({ screens: [snapshotOf([], { platform })], platform });
 	const ops: ClockCondition[] = [];
-	if (opts.clockOp !== false) {
-		(driver as Driver & Partial<ClockCapable>).clock = async (op) => {
+	if (opts.clockOp === false) {
+		(driver as { clock?: Driver["clock"] }).clock = undefined;
+	} else {
+		driver.clock = async (op) => {
 			ops.push(op);
-			return ok(undefined);
+			return ok({ condition: op, offsetMs: 0, frozen: op.kind === "frozen", nowMs: 0 });
 		};
 	}
 	const events: ConditionEvent[] = [];
