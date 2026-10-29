@@ -10,7 +10,9 @@ const NOW = 1_700_000_000_000;
 const DAY = 86_400_000;
 
 /** The iOS side, faked: a state-file directory, an app that acks writes when `app` is set, and the lease proxy. */
-function rig(init: { proxyLive?: boolean; running?: string; lastBundle?: string; dylib?: boolean } = {}) {
+function rig(
+	init: { proxyLive?: boolean; running?: string; lastBundle?: string; dylib?: boolean; runningFails?: boolean } = {}
+) {
 	const files = new Map<string, string>();
 	const alive = new Set<number>();
 	const fs: InjectFs = {
@@ -45,7 +47,10 @@ function rig(init: { proxyLive?: boolean; running?: string; lastBundle?: string;
 			init.dylib === false
 				? { success: false, error: { code: "E_HELPER_MISSING", message: "no dylib", retryable: false } }
 				: { success: true, data: "/d/libwarden-inject.dylib" },
-		isRunning: async (bundle) => ({ success: true, data: bundle === init.running }),
+		isRunning: async (bundle) =>
+			init.runningFails
+				? { success: false, error: { code: "E_IO", message: "simctl spawn launchctl failed", retryable: true } }
+				: { success: true, data: bundle === init.running },
 		lastBundle: () => init.lastBundle,
 		now: () => NOW,
 		relaunch: async (bundle): DriverResult<void> => {
@@ -166,6 +171,19 @@ describe("network before the app has the dylib", () => {
 		const result = await r.net.network({ kind: "online" }, { bundleId: "com.example", relaunch: true });
 		expect(result.success).toBe(true);
 		expect(r.relaunches).toEqual(["com.example"]);
+	});
+
+	test("an isRunning that fails is the error, never a silent stage", async () => {
+		const r = rig({ lastBundle: "com.example", runningFails: true });
+		const result = await r.net.network({ kind: "preset", preset: "3g" });
+		expect(!result.success && result.error.code).toBe("E_IO");
+		expect(r.relaunches).toEqual([]);
+	});
+
+	test("relaunch: true for the clock surfaces a failed isRunning too", async () => {
+		const r = rig({ runningFails: true });
+		const result = await r.net.clock({ kind: "offset", ms: DAY }, { bundleId: "com.example", relaunch: true });
+		expect(!result.success && result.error.code).toBe("E_IO");
 	});
 
 	test("an app launched with the dylib but no proxy address needs the relaunch too", async () => {

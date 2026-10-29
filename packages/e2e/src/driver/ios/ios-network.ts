@@ -107,7 +107,8 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 		const bundle = opts?.bundleId ?? deps.lastBundle();
 		if (!bundle) return { success: true, data: false };
 		const running = await deps.isRunning(bundle);
-		if (!running.success || !running.data) return { success: true, data: false };
+		if (!running.success) return running;
+		if (!running.data) return { success: true, data: false };
 		if (opts?.relaunch) {
 			const again = await deps.relaunch(bundle);
 			return again.success ? { success: true, data: true } : again;
@@ -146,7 +147,8 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 		const bundle = opts.bundleId ?? deps.lastBundle();
 		if (!bundle) return { success: true, data: false };
 		const running = await deps.isRunning(bundle);
-		if (!running.success || !running.data) return { success: true, data: false };
+		if (!running.success) return running;
+		if (!running.data) return { success: true, data: false };
 		const again = await deps.relaunch(bundle);
 		return again.success ? { success: true, data: true } : again;
 	}
