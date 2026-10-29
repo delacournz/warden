@@ -30,8 +30,17 @@ impl ApiError {
 
 impl From<reqwest::Error> for ApiError {
     fn from(e: reqwest::Error) -> Self {
-        let code = if e.is_timeout() { "TIMEOUT" } else { "NETWORK" };
-        Self::new(code, e.without_url().to_string())
+        let unreachable = e.is_connect() || e.is_timeout();
+        network_error(unreachable, &e.without_url().to_string())
+    }
+}
+
+/// A connect or timeout failure reads as "unreachable"; anything else keeps its own text.
+fn network_error(unreachable: bool, message: &str) -> ApiError {
+    if unreachable {
+        ApiError::new("UNREACHABLE", "can't reach warden cloud; retrying")
+    } else {
+        ApiError::new("NETWORK", message)
     }
 }
 
@@ -120,20 +129,28 @@ struct ErrorBody {
     code: Option<String>,
 }
 
-/// Map a non-2xx response to `{code, message}`, preferring warden-api's `{success:false,error,code}`.
-async fn failure(response: reqwest::Response) -> ApiError {
-    let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-    match serde_json::from_str::<ErrorBody>(&text) {
+/// Map a non-2xx status and body to `{code, message}`: 401 means the token expired, otherwise
+/// warden-api's `{success:false,error,code}` wins over the bare status.
+fn error_for_status(status: u16, body: &str) -> ApiError {
+    if status == 401 {
+        return ApiError::new("EXPIRED", "access expired, run warden view again");
+    }
+    match serde_json::from_str::<ErrorBody>(body) {
         Ok(ErrorBody {
             error: Some(message),
             code,
-        }) => ApiError::new(
-            &code.unwrap_or_else(|| format!("HTTP_{}", status.as_u16())),
-            message,
+        }) => ApiError::new(&code.unwrap_or_else(|| format!("HTTP_{status}")), message),
+        _ => ApiError::new(
+            &format!("HTTP_{status}"),
+            format!("request failed ({status})"),
         ),
-        _ => ApiError::new(&format!("HTTP_{}", status.as_u16()), status.to_string()),
     }
+}
+
+async fn failure(response: reqwest::Response) -> ApiError {
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap_or_default();
+    error_for_status(status, &text)
 }
 
 async fn ok_or_failure(response: reqwest::Response) -> CmdResult<reqwest::Response> {
@@ -476,6 +493,38 @@ mod tests {
     #[test]
     fn fit_size_keeps_height_and_derives_width() {
         assert_eq!(fit_size(0.5, 40.0, 840.0), (400.0, 840.0));
+    }
+
+    #[test]
+    fn connect_and_timeout_errors_read_as_unreachable() {
+        let e = network_error(true, "error sending request");
+        assert_eq!(e.code, "UNREACHABLE");
+        assert_eq!(e.message, "can't reach warden cloud; retrying");
+        assert_eq!(network_error(false, "bad body").code, "NETWORK");
+    }
+
+    #[test]
+    fn a_401_means_the_token_expired() {
+        let e = error_for_status(
+            401,
+            r#"{"success":false,"error":"nope","code":"UNAUTHORIZED"}"#,
+        );
+        assert_eq!(e.code, "EXPIRED");
+        assert_eq!(e.message, "access expired, run warden view again");
+    }
+
+    #[test]
+    fn other_statuses_prefer_the_server_error_body() {
+        let e = error_for_status(
+            403,
+            r#"{"success":false,"error":"read-only","code":"SCOPE"}"#,
+        );
+        assert_eq!(
+            (e.code.as_str(), e.message.as_str()),
+            ("SCOPE", "read-only")
+        );
+        let e = error_for_status(502, "<html>");
+        assert_eq!(e.code, "HTTP_502");
     }
 
     #[test]
