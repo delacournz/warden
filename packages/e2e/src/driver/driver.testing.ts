@@ -1,3 +1,4 @@
+import type { NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
@@ -14,6 +15,7 @@ import type {
 	KeyName,
 	LaunchOptions,
 	Modifier,
+	NetworkState,
 	Orientation,
 	Platform,
 	Point,
@@ -184,6 +186,7 @@ export type DriverCall =
 	| { method: "isFrontmost"; bundleId: string }
 	| { method: "appearance"; set?: "light" | "dark" }
 	| { method: "clipboard"; set?: string }
+	| { method: "network"; op: NetworkCondition }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -292,6 +295,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	let current: Orientation = "portrait";
 	let theme: "light" | "dark" = "light";
 	let clip = "";
+	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
 	const running = new Set<string>();
 	const installed = new Set<string>();
 
@@ -446,6 +450,12 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "clipboard", ...(set !== undefined && { set }) }, () => {
 				if (set !== undefined) clip = set;
 				return clip;
+			});
+		},
+		async network(op) {
+			return run({ method: "network", op }, () => {
+				net = { online: op.kind !== "offline", condition: op, needsProxy: [] };
+				return net;
 			});
 		},
 		app,

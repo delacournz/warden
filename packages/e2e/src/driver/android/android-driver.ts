@@ -72,6 +72,7 @@ import {
 	waitForBoot,
 } from "./android-device";
 import { createDumper, type DumpRoute } from "./android-dump";
+import { applyAndroidNetwork } from "./android-network";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
@@ -584,6 +585,8 @@ function buildDriver(
 		return { success: true, data: /Night mode:\s*yes/i.test(res.data) ? "dark" : "light" };
 	};
 
+	const network: Driver["network"] = (op) => applyAndroidNetwork({ session, exec, adb, serial, clock }, op);
+
 	const clipboard: Driver["clipboard"] = async () =>
 		driverErr("E_UNSUPPORTED", "Android has no public shell clipboard access; type ASCII with typeText");
 
@@ -638,6 +641,7 @@ function buildDriver(
 		alertIn: (snapshot) => detectAlert(snapshot.flat),
 		appearance,
 		clipboard,
+		network,
 		app: createAppCommands({
 			session,
 			exec,

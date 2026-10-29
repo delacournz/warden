@@ -17,7 +17,7 @@ import type {
 	Orientation,
 	Snapshot,
 } from "../driver.types";
-import { driverError } from "../errors";
+import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
 import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
@@ -634,6 +634,11 @@ export function createIosDriver(
 		alertOn,
 		isFrontmost,
 		appearance: (set) => simctl.appearance(set),
+		network: async () =>
+			driverErr(
+				"E_UNSUPPORTED",
+				"network conditions on iOS simulators are not available yet: they need the per-app proxy (COND-5)"
+			),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);

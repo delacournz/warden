@@ -1,3 +1,4 @@
+import type { NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 
 /**
@@ -228,8 +229,27 @@ export interface Driver {
 	alert(): DriverResult<AlertInfo | null>;
 	appearance(set?: "light" | "dark"): DriverResult<"light" | "dark">;
 	clipboard(set?: string): DriverResult<string>;
+	/**
+	 * Put the device's network into `op` (offline / online / a preset / custom speed and latency) and return what
+	 * is now in effect. Android emulator: native, verified through `dumpsys connectivity`. iOS: `E_UNSUPPORTED`
+	 * until the per-app proxy (COND-5). `flap` is the scheduler's (COND-6) and is `E_UNSUPPORTED` here.
+	 */
+	network(op: NetworkCondition): DriverResult<NetworkState>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }
+
+/** Parts of a network condition no native mechanism does; the per-lease shaping proxy (COND-4) carries them. */
+export type NetworkProxyFeature = "loss";
+
+/**
+ * What `Driver.network` left on the device. `online` is what the OS reports (verified, not assumed);
+ * `needsProxy` lists the asked-for parts that were NOT applied because they need the shaping proxy.
+ */
+export type NetworkState = {
+	online: boolean;
+	condition: NetworkCondition;
+	needsProxy: readonly NetworkProxyFeature[];
+};
 
 export type Logger = (line: string) => void;

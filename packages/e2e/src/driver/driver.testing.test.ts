@@ -119,6 +119,12 @@ describe("fakeDriver", () => {
 		expect(unwrap(await d.appearance("dark"))).toBe("dark");
 		expect(unwrap(await d.clipboard("copied"))).toBe("copied");
 		expect(unwrap(await d.clipboard())).toBe("copied");
+		expect(unwrap(await d.network({ kind: "offline" }))).toEqual({
+			online: false,
+			condition: { kind: "offline" },
+			needsProxy: [],
+		});
+		expect(unwrap(await d.network({ kind: "preset", preset: "3g" })).online).toBe(true);
 		expect(unwrap(await d.app.isRunning("com.x"))).toBe(false);
 		await d.app.launch("com.x");
 		expect(unwrap(await d.app.isRunning("com.x"))).toBe(true);

@@ -37,6 +37,7 @@ export const DRIVER_OPS = [
 	"alert",
 	"appearance",
 	"clipboard",
+	"network",
 ] as const;
 export type DriverOp = (typeof DRIVER_OPS)[number];
 
