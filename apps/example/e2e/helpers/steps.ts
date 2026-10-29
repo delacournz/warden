@@ -109,6 +109,16 @@ export async function openGestures(
 	await openDeepLink(device, screen, "warden-example://gestures", ids.gestures.screen);
 }
 
+/** Fresh launch, then the conditions screen through its deep link (it has no sign-in gate). */
+export async function openConditions(
+	app: Pick<App, "open">,
+	device: Pick<Device, "openLink">,
+	screen: Screen
+): Promise<void> {
+	await launch(app, screen);
+	await openDeepLink(device, screen, "warden-example://conditions", ids.conditions.screen);
+}
+
 /** Fresh launch, signed in as `email`, on the todos tab. */
 export async function signedIn(app: Pick<App, "open">, screen: Screen, email = "ada@example.com"): Promise<void> {
 	await openSignIn(app, screen);

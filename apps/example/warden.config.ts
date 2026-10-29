@@ -60,6 +60,12 @@ const AFFECTED = {
 		devtools: { entries: ["src/app/welcome.tsx"] },
 		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		"network-offline": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"network-slow": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"network-flaky": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"network-fault": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"location-route": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"clock-trial": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 
