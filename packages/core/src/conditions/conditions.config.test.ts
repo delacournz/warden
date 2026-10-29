@@ -76,7 +76,6 @@ describe("normalizeConditions", () => {
 					location: { kind: "point", lat: -36.8, lon: 174.7, altM: 10 },
 					clock: { kind: "fixed", at: "2026-03-01T00:00:00.000Z" },
 				},
-				unapplied: [],
 			},
 		});
 	});
@@ -91,14 +90,29 @@ describe("normalizeConditions", () => {
 		expect(b.success && b.data.conditions.clock).toEqual({ kind: "offset", ms: 172_800_000 });
 	});
 
-	test("areas not applied yet are listed, not dropped silently", () => {
-		const res = normalizeConditions({ network: "wifi", permissions: { camera: "denied" }, locale: "fr", a11y: {} });
-		expect(res.success && res.data.unapplied).toEqual(["permissions", "locale", "a11y"]);
-		expect(res.success && res.data.conditions).toEqual({ network: { kind: "preset", preset: "wifi" } });
+	test("permissions, locale, timezone and a11y become conditions, a text size resolved", () => {
+		const res = normalizeConditions({
+			permissions: { camera: "denied", location: "granted" },
+			locale: "fr-FR",
+			timezone: "Asia/Tokyo",
+			a11y: { textSize: "accessibility-large", boldText: true },
+		});
+		expect(res.success && res.data.conditions).toEqual({
+			permissions: { camera: "denied", location: "granted" },
+			locale: "fr-FR",
+			timezone: "Asia/Tokyo",
+			a11y: { textSize: "accessibility-large", fontScale: 1.9, boldText: true },
+		});
+	});
+
+	test("an unknown permission name or text size is rejected by the schema", () => {
+		expect(conditionsConfigSchema.safeParse({ permissions: { wifi: "granted" } }).success).toBe(false);
+		expect(conditionsConfigSchema.safeParse({ a11y: { textSize: "huge" } }).success).toBe(false);
+		expect(conditionsConfigSchema.safeParse({ a11y: { textSize: 1.4, contrast: "increased" } }).success).toBe(true);
 	});
 
 	test("nothing declared", () => {
-		expect(normalizeConditions({})).toEqual({ success: true, data: { conditions: {}, unapplied: [] } });
+		expect(normalizeConditions({})).toEqual({ success: true, data: { conditions: {} } });
 	});
 });
 

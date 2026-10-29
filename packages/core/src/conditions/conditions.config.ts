@@ -1,8 +1,19 @@
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { parseDuration } from "../duration";
-import type { ClockCondition, LocationCondition, NetworkCondition, NetworkPreset } from "./conditions.types";
+import {
+	type A11yCondition,
+	type ClockCondition,
+	type LocationCondition,
+	type NetworkCondition,
+	type NetworkPreset,
+	PERMISSION_NAMES,
+	type PermissionName,
+	type PermissionState,
+	TEXT_SIZE_NAMES,
+} from "./conditions.types";
 import { NETWORK_PRESET_NAMES } from "./network.presets";
+import { resolveTextSize } from "./text-size";
 
 const NETWORK_WORDS = ["online", "offline", ...NETWORK_PRESET_NAMES] as const;
 
@@ -24,10 +35,22 @@ const offsetDuration = z
 	.string()
 	.refine((v) => parseDuration(v).success, { message: "invalid duration (use e.g. 2d)" });
 
+const textSize = z.union([z.enum(TEXT_SIZE_NAMES), z.number().positive().finite()]);
+
+/** `a11y`: text size (a category name or a font scale), bold text, contrast and reduce motion. */
+const a11yConfigSchema = z
+	.object({
+		textSize: textSize.optional(),
+		boldText: z.boolean().optional(),
+		contrast: z.enum(["increased", "normal"]).optional(),
+		reduceMotion: z.boolean().optional(),
+	})
+	.strict();
+
 /**
  * `conditions` (top level, or per `e2e.<suite>`): what every spec of the suite starts from. `network`, `location`
- * and `clock` are applied before the app launches and put back after each spec; the rest are accepted so a config
- * can be written once, and `warden e2e` says they are not applied yet.
+ * and `clock` are applied before the app launches and put back after each spec, as are `permissions`, `locale`,
+ * `timezone` and `a11y`.
  */
 export const conditionsConfigSchema = z
 	.object({
@@ -54,21 +77,17 @@ export const conditionsConfigSchema = z
 				z.object({ offset: offsetDuration }).strict(),
 			])
 			.optional(),
-		/** not applied yet */
-		permissions: z.record(z.string().min(1), z.enum(["granted", "denied", "unset"])).optional(),
-		/** not applied yet */
+		/** permission name to state, granted to the suite's app before it launches */
+		permissions: z.partialRecord(z.enum(PERMISSION_NAMES), z.enum(["granted", "denied", "unset"])).optional(),
+		/** a BCP 47 tag (`fr-FR`) for the suite's app */
 		locale: z.string().min(1).optional(),
-		/** not applied yet */
+		/** an IANA timezone (`Asia/Tokyo`) */
 		timezone: z.string().min(1).optional(),
-		/** not applied yet */
-		a11y: z.record(z.string().min(1), z.unknown()).optional(),
+		a11y: a11yConfigSchema.optional(),
 	})
 	.strict();
 
 export type ConditionsConfig = z.input<typeof conditionsConfigSchema>;
-
-/** The areas a config can name that nothing applies yet. */
-const UNAPPLIED = ["permissions", "locale", "timezone", "a11y"] as const;
 
 /** What a spec's `device.network.set` takes: a condition, or its word. */
 export type NetworkInput = NetworkCondition | "online" | "offline" | NetworkPreset;
@@ -104,12 +123,18 @@ function toClock(input: NonNullable<ConditionsConfig["clock"]>): ClockCondition 
 	return input.frozen === true ? { kind: "frozen", at } : { kind: "fixed", at };
 }
 
-export type SuiteConditions = { network?: NetworkCondition; location?: LocationCondition; clock?: ClockCondition };
+export type SuiteConditions = {
+	network?: NetworkCondition;
+	location?: LocationCondition;
+	clock?: ClockCondition;
+	permissions?: Partial<Record<PermissionName, PermissionState>>;
+	locale?: string;
+	timezone?: string;
+	a11y?: A11yCondition;
+};
 
-/** The applicable part of a config as conditions, and the names of the areas that nothing applies yet. */
-export function normalizeConditions(
-	config: ConditionsConfig
-): Result<{ conditions: SuiteConditions; unapplied: string[] }> {
+/** A config as conditions: shaped values, with a text size resolved. */
+export function normalizeConditions(config: ConditionsConfig): Result<{ conditions: SuiteConditions }> {
 	const conditions: SuiteConditions = {};
 	if (config.network !== undefined) {
 		const network = toNetworkCondition(config.network);
@@ -118,7 +143,19 @@ export function normalizeConditions(
 	}
 	if (config.location !== undefined) conditions.location = toLocation(config.location);
 	if (config.clock !== undefined) conditions.clock = toClock(config.clock);
-	return ok({ conditions, unapplied: UNAPPLIED.filter((key) => config[key] !== undefined) });
+	if (config.permissions !== undefined) conditions.permissions = config.permissions;
+	if (config.locale !== undefined) conditions.locale = config.locale;
+	if (config.timezone !== undefined) conditions.timezone = config.timezone;
+	if (config.a11y !== undefined) {
+		const a11y: A11yCondition = { ...config.a11y };
+		if (config.a11y.textSize !== undefined) {
+			const size = resolveTextSize(config.a11y.textSize);
+			if (!size.success) return size;
+			a11y.fontScale = size.data.scale;
+		}
+		conditions.a11y = a11y;
+	}
+	return ok({ conditions });
 }
 
 /** The suite's `conditions` over the top-level ones, per area; undefined when neither sets any. */

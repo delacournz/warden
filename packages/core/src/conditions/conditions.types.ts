@@ -32,16 +32,70 @@ export type ClockCondition =
 
 export type PermissionState = "granted" | "denied" | "unset";
 
-/** Runtime permission grants applied to apps on the device; later phases may extend. */
+/** The permission names a spec, `warden ui permission` and a suite's `conditions.permissions` use; each maps to platform services in the driver. */
+export const PERMISSION_NAMES = [
+	"location",
+	"locationAlways",
+	"camera",
+	"photos",
+	"photosAdd",
+	"contacts",
+	"contactsLimited",
+	"notifications",
+	"microphone",
+	"calendar",
+	"reminders",
+	"motion",
+	"mediaLibrary",
+	"siri",
+] as const;
+export type PermissionName = (typeof PERMISSION_NAMES)[number];
+
+export const isPermissionName = (v: string): v is PermissionName => (PERMISSION_NAMES as readonly string[]).includes(v);
+
+/** Runtime permission grants applied to apps on the device. */
 export type PermissionCondition = {
-	grants: readonly { bundleId: string; permission: string; state: PermissionState }[];
+	grants: readonly { bundleId: string; permission: PermissionName; state: PermissionState }[];
 };
 
-export type LocaleCondition = { locale?: string; timezone?: string };
+/** Locale applies to one app (`bundleId`); timezone to the device (Android) or the next launch (iOS). */
+export type LocaleCondition = {
+	locale?: string;
+	timezone?: string;
+	bundleId?: string;
+	/** Android: the timezone before the first change, put back on release */
+	previousTimezone?: string;
+};
 
-export type A11yCondition = { fontScale?: number; reduceMotion?: boolean; boldText?: boolean };
+/** A named text size (iOS content size categories) or a font scale where 1 is the default. */
+export type TextSize = (typeof TEXT_SIZE_NAMES)[number] | number;
 
-export type BatteryCondition = { level?: number; charging?: boolean };
+export const TEXT_SIZE_NAMES = [
+	"extra-small",
+	"small",
+	"medium",
+	"large",
+	"extra-large",
+	"extra-extra-large",
+	"extra-extra-extra-large",
+	"accessibility-medium",
+	"accessibility-large",
+	"accessibility-extra-large",
+	"accessibility-extra-extra-large",
+	"accessibility-extra-extra-extra-large",
+] as const;
+
+export type A11yCondition = {
+	textSize?: TextSize;
+	/** resolved font scale of `textSize` (1 = default) */
+	fontScale?: number;
+	reduceMotion?: boolean;
+	boldText?: boolean;
+	contrast?: "increased" | "normal";
+};
+
+/** `cosmetic`: the status bar says so, the OS and the app still see the real battery (iOS simulators) */
+export type BatteryCondition = { level?: number; charging?: boolean; cosmetic?: boolean };
 
 /** Everything a lease can have set on its device, one slot per area. */
 export type ConditionValues = {

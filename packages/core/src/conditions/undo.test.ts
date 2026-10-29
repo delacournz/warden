@@ -7,6 +7,7 @@ import { openStore, type Store } from "../store";
 import type { Lease, Owner } from "../types";
 import { activeConditions, recordCondition } from "./conditions";
 import { injectStatePath } from "./inject-state";
+import { launchSettingsPath, writeLaunchSettings } from "./launch-settings";
 import { type UndoDeps, undoConditions } from "./undo";
 
 const owner: Owner = { kind: "agent", sessionId: "s1", cwd: "/tmp" };
@@ -140,8 +141,56 @@ describe("undoConditions", () => {
 			[...ADB, "shell", "settings", "put", "global", "auto_time", "1"],
 			[...ADB, "shell", "cmd", "alarm", "set-time", "5000"],
 			[...ADB, "shell", "settings", "put", "system", "font_scale", "1.0"],
+			[...ADB, "shell", "settings", "put", "secure", "font_weight_adjustment", "0"],
 			[...ADB, "shell", "dumpsys", "battery", "reset"],
 		]);
+	});
+
+	test("android locale puts the timezone back to the recorded one and clears the app locale", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"locale",
+			{ timezone: "Asia/Tokyo", previousTimezone: "Europe/London", locale: "fr-FR", bundleId: "x.y" },
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls).toEqual([
+			[...ADB, "shell", "cmd", "alarm", "set-timezone", "Europe/London"],
+			[...ADB, "shell", "cmd", "locale", "set-app-locales", "x.y", "--locales", "''"],
+		]);
+	});
+
+	test("android timezone without a recorded previous one goes to the host's", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "locale", { timezone: "Asia/Tokyo" }, 1);
+		await undoConditions({ ...deps(), hostTimezone: () => "Pacific/Auckland" }, l);
+		expect(calls).toEqual([[...ADB, "shell", "cmd", "alarm", "set-timezone", "Pacific/Auckland"]]);
+	});
+
+	test("ios a11y and battery resets", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "a11y", { textSize: "accessibility-large" }, 1);
+		recordCondition(store, l.id, "battery", { level: 5, cosmetic: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls).toEqual([
+			["xcrun", "simctl", "ui", UDID, "content_size", "large"],
+			["xcrun", "simctl", "ui", UDID, "increase_contrast", "disabled"],
+			["xcrun", "simctl", "status_bar", UDID, "clear"],
+		]);
+	});
+
+	test("ios locale removes the staged launch settings", async () => {
+		const home = join(dir, "home");
+		const path = launchSettingsPath(home, UDID);
+		writeLaunchSettings(path, { timezone: "Asia/Tokyo", locale: "fr-FR" });
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "locale", { timezone: "Asia/Tokyo", locale: "fr-FR" }, 1);
+		const r = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(r.success).toBe(true);
+		expect(existsSync(path)).toBe(false);
+		expect(calls).toEqual([]);
 	});
 
 	test("only active areas are reset", async () => {

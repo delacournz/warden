@@ -8,6 +8,7 @@ import type { Lease, Platform } from "../types";
 import { activeConditions, clearCondition } from "./conditions";
 import type { ConditionArea, ConditionRecord } from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
+import { launchSettingsPath, writeLaunchSettings } from "./launch-settings";
 
 export type UndoDeps = {
 	store: Store;
@@ -19,6 +20,8 @@ export type UndoDeps = {
 	kill: (pid: number) => void;
 	/** stop the lease's shaping proxy, free its port lease and handle file (`releaseLeaseProxy`); injected so undo stays pure */
 	releaseProxy?: (leaseId: string) => Promise<boolean>;
+	/** the host's timezone, for an Android timezone whose previous value was not recorded (default: `Intl`) */
+	hostTimezone?: () => string;
 };
 
 export type UndoReport = { reset: ConditionArea[]; killed: number[] };
@@ -31,7 +34,7 @@ function resetCommands(
 	platform: Platform,
 	serial: string,
 	record: ConditionRecord,
-	deps: Pick<UndoDeps, "env" | "now">
+	deps: Pick<UndoDeps, "env" | "now" | "hostTimezone">
 ): string[][] {
 	if (platform === "ios") {
 		switch (record.area) {
@@ -39,6 +42,13 @@ function resetCommands(
 				return [["xcrun", "simctl", "location", serial, "clear"]];
 			case "permission":
 				return [["xcrun", "simctl", "privacy", serial, "reset", "all"]];
+			case "a11y":
+				return [
+					["xcrun", "simctl", "ui", serial, "content_size", "large"],
+					["xcrun", "simctl", "ui", serial, "increase_contrast", "disabled"],
+				];
+			case "battery":
+				return [["xcrun", "simctl", "status_bar", serial, "clear"]];
 			default:
 				return [];
 		}
@@ -61,12 +71,35 @@ function resetCommands(
 		case "permission":
 			return [[...base, "shell", "pm", "reset-permissions"]];
 		case "a11y":
-			return [[...base, "shell", "settings", "put", "system", "font_scale", "1.0"]];
+			return [
+				[...base, "shell", "settings", "put", "system", "font_scale", "1.0"],
+				[...base, "shell", "settings", "put", "secure", "font_weight_adjustment", "0"],
+			];
+		case "locale":
+			return androidLocaleResets(base, record, deps);
 		case "battery":
 			return [[...base, "shell", "dumpsys", "battery", "reset"]];
 		default:
 			return [];
 	}
+}
+
+/** Android: the timezone back to what it was (or the host's), and the app's locale override removed. */
+function androidLocaleResets(
+	base: readonly string[],
+	record: Extract<ConditionRecord, { area: "locale" }>,
+	deps: Pick<UndoDeps, "hostTimezone">
+): string[][] {
+	const cmds: string[][] = [];
+	const { timezone, previousTimezone, locale, bundleId } = record.value;
+	if (timezone !== undefined) {
+		const host = deps.hostTimezone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+		cmds.push([...base, "shell", "cmd", "alarm", "set-timezone", previousTimezone ?? host]);
+	}
+	if (locale !== undefined && bundleId !== undefined) {
+		cmds.push([...base, "shell", "cmd", "locale", "set-app-locales", bundleId, "--locales", "''"]);
+	}
+	return cmds;
 }
 
 function message(error: unknown): string {
@@ -130,6 +163,11 @@ export async function undoConditions(deps: UndoDeps, lease: Lease): Promise<Resu
 		// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock
 		if (device?.platform === "ios" && (record.area === "clock" || record.area === "network")) {
 			const failed = neutralizeInjectState(injectStatePath(wardenHome(deps.env), device.id));
+			if (failed) resets.push(failed);
+		}
+		// iOS has no device-side timezone or locale: only the staged launch settings go
+		if (device?.platform === "ios" && record.area === "locale") {
+			const failed = writeLaunchSettings(launchSettingsPath(wardenHome(deps.env), device.id), {});
 			if (failed) resets.push(failed);
 		}
 		const released = await releaseProxy(deps, lease.id, record);
