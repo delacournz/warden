@@ -13,3 +13,6 @@
 - iOS: apps using `NSURLSession.sharedSession` are shaped too, and changing a host fault cuts connections already open to that host.
 - Mock clock: shift (`offset`), set (`fixed`) or freeze (iOS) the wall clock an app sees; monotonic clocks are untouched. Android emulators set the device time; frozen time is iOS only.
 - Specs know their lease (`WARDEN_LEASE_ID`): network and clock conditions work under `warden e2e` on iOS, and every condition a spec sets is recorded, so a crashed spec process is still undone when the lease is released.
+- `warden ui network` is now a group: `network log` shows the request log (the old `warden ui network [n]` still works and points to it), and `network set <preset>`, `network flap`, `network fault`, `network status`, `network reset` set conditions on the device.
+- New `warden ui location set|route|gpx|scenario|clear|status` and `warden ui clock set|advance|status|reset`; `warden ui status` lists the conditions active on the lease.
+- Releasing a lease also puts a still-running iOS app launched with network or clock conditions back online and on the real clock.
