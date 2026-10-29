@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import { handlePath, writeHandleFile } from "@delacour/warden-core/netproxy/handle-file";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import type { DeviceResource, Owner } from "@delacour/warden-core/types";
 import { blockMessage, busyMessage, ensureCallerLease, releaseDevices } from "./device-lease";
@@ -218,6 +219,30 @@ describe("releaseDevices", () => {
 		expect(notes).toHaveLength(1);
 		expect(notes[0]).toContain("location");
 		expect(store.listLeases()).toHaveLength(0);
+		expect(activeConditions(store, dev.id)).toEqual([]);
+	});
+
+	test("a network condition's proxy is stopped and its port lease freed on release", async () => {
+		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		const port = store.insertLease({ resource: { kind: "port", port: 19_080 }, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
+		recordCondition(store, dev.id, "network", { kind: "offline" }, now);
+		const env = { WARDEN_HOME: dir };
+		const path = handlePath(dev.id, env);
+		writeHandleFile(path, {
+			leaseId: dev.id,
+			portLeaseId: port.id,
+			pid: 999_999_999,
+			host: "127.0.0.1",
+			port: 19_080,
+			controlPort: 1,
+			token: "t",
+		});
+		await releaseDevices(
+			{ store: () => store, now: () => now, env, exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
+			[dev.id]
+		);
+		expect(existsSync(path)).toBe(false);
+		expect(store.getLease(port.id)).toBeUndefined();
 		expect(activeConditions(store, dev.id)).toEqual([]);
 	});
 

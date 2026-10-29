@@ -24,14 +24,23 @@ export function hasConditions(host: ConditionHost, lease: Lease): boolean {
  */
 export async function undoLeaseConditions(host: ConditionHost, lease: Lease): Promise<string[]> {
 	if (!hasConditions(host, lease)) return [];
+	const store = host.store();
+	const env = host.env ?? process.env;
+	const kill = (pid: number) => process.kill(pid, "SIGTERM");
 	const done = await undoConditions(
 		{
-			store: host.store(),
+			store,
 			exec: host.exec ?? bunExec,
-			env: host.env ?? process.env,
+			env,
 			now: host.now,
 			pidAlive: processAlive,
-			kill: (pid) => process.kill(pid, "SIGTERM"),
+			kill,
+			// imported only when a network condition is set, so release/gc stay light
+			releaseProxy: async (id) =>
+				(await import("@delacour/warden-core/netproxy/lease-proxy")).releaseLeaseProxy(
+					{ store, env, kill, pidAlive: processAlive },
+					id
+				),
 		},
 		lease
 	);
