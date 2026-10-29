@@ -4,7 +4,7 @@ import {
 	type CommandUnknownOpts,
 	type HelpConfiguration,
 } from "@commander-js/extra-typings";
-import type { CommandContext } from "./context";
+import type { CommandContext, FailureExtra } from "./context";
 import { SYMBOLS, type Ui } from "./ui";
 
 /**
@@ -85,7 +85,11 @@ function usageError(ui: Ui, argv: readonly string[], names: ReadonlySet<string>,
  * What a failed `--json` run prints when the command left stdout empty, in the `warden ui` envelope's shape:
  * `usage` for commander's errors (unknown option, missing argument), `failed` for the rest.
  */
-export type JsonFailure = { ok: false; command: string; error: { code: "usage" | "failed"; message: string } };
+export type JsonFailure = {
+	ok: false;
+	command: string;
+	error: { code: "usage" | "failed"; message: string } | ({ message: string } & FailureExtra);
+};
 
 /** `ui snapshot` from `["ui", "snapshot", "--json"]`: the command words of `argv`, as registered. */
 function commandPath(program: CommandUnknownOpts, argv: readonly string[]): string {
@@ -126,9 +130,9 @@ export async function runProgram(
 			ctx.out(line);
 		},
 		failure: {
-			record: (message) => {
-				failure ??= { code: "failed", message };
-				ctx.failure?.record(message);
+			record: (message, extra) => {
+				failure ??= extra ? { message, ...extra } : { code: "failed", message };
+				ctx.failure?.record(message, extra);
 			},
 		},
 	};

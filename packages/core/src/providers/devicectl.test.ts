@@ -5,6 +5,7 @@ import {
 	listDevicesArgv,
 	listPhysicalIos,
 	lockStateArgv,
+	NAMED_PROBE_MS,
 	parseDevicectlDevices,
 	probePhysicalIos,
 	REACHABLE_PROBE_MS,
@@ -268,5 +269,75 @@ describe("reachability of listed phones", () => {
 		const calls: string[][] = [];
 		await listPhysicalIos(both(DEVICECTL_LIST_MIXED, { stdout: DEVICECTL_LOCKSTATE_LOCKED }, calls));
 		expect(calls.filter((c) => c.includes("lockState"))).toHaveLength(0);
+	});
+	const probeTimeout = (calls: string[][]) => {
+		const probe = calls.find((c) => c.includes("lockState")) ?? [];
+		return probe[probe.indexOf("--timeout") + 1];
+	};
+
+	test("a phone named by the caller gets the longer bounded wait; an auto-picked one the short probe", async () => {
+		const named: string[][] = [];
+		await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, named), {
+			named: [FAKE_IPAD_UDID],
+		});
+		expect(probeTimeout(named)).toBe(String(NAMED_PROBE_MS / 1000));
+		const auto: string[][] = [];
+		await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, auto), { named: ["someone-else"] });
+		expect(probeTimeout(auto)).toBe(String(REACHABLE_PROBE_MS / 1000));
+		expect(NAMED_PROBE_MS).toBeGreaterThan(REACHABLE_PROBE_MS);
+	});
+
+	test("a named phone that hangs is cut off at the named bound", async () => {
+		const exec: Exec = async (cmd) =>
+			cmd.includes("lockState") ? new Promise<ExecResult>(() => {}) : { exitCode: 0, stdout: phone({}), stderr: "" };
+		const timer = (ms: number) =>
+			ms === NAMED_PROBE_MS ? { promise: Promise.resolve(), cancel: () => {} } : realTimer(ms);
+		const out = await listPhysicalIos({ exec, timer }, { named: [FAKE_IPAD_UDID] });
+		expect(out.success && out.data[0]?.state).toBe("shutdown");
+		const why = out.success && out.data[0]?.physical?.platform === "ios" && out.data[0].physical.unreachable;
+		expect(why).toContain(`${NAMED_PROBE_MS / 1000}s`);
+	});
+
+	test("several unreachable-looking phones are probed in parallel, not one after another", async () => {
+		const two = devicectlJson([
+			devicectlEntry({
+				udid: FAKE_IPAD_UDID,
+				name: "A",
+				deviceType: "iPad",
+				osVersion: "18.7.8",
+				transportType: "localNetwork",
+				tunnelState: "disconnected",
+			}),
+			devicectlEntry({
+				udid: FAKE_IPHONE_UDID,
+				name: "B",
+				deviceType: "iPhone",
+				osVersion: "27.2",
+				transportType: "localNetwork",
+				tunnelState: "disconnected",
+			}),
+		]);
+		let inFlight = 0;
+		let peak = 0;
+		const exec: Exec = async (cmd) => {
+			if (!cmd.includes("lockState")) return { exitCode: 0, stdout: two, stderr: "" };
+			inFlight++;
+			peak = Math.max(peak, inFlight);
+			await Bun.sleep(5);
+			inFlight--;
+			return { exitCode: 0, stdout: DEVICECTL_LOCKSTATE_UNLOCKED, stderr: "" };
+		};
+		await listPhysicalIos({ exec, timer: realTimer });
+		expect(peak).toBe(2);
+	});
+
+	test("a probe that answers records whether the phone is locked (reachable either way)", async () => {
+		const locked = await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_LOCKED }));
+		const unlocked = await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }));
+		const lockedOf = (o: typeof locked) =>
+			o.success && o.data[0]?.physical?.platform === "ios" ? o.data[0].physical.locked : "?";
+		expect(lockedOf(locked)).toBe(true);
+		expect(lockedOf(unlocked)).toBe(false);
+		expect(locked.success && locked.data[0]?.state).toBe("booted");
 	});
 });

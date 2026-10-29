@@ -32,6 +32,7 @@ import {
 	isPhysicalClaim,
 	type PhysicalOptionValues,
 	parseClaimFlags,
+	resolveOwner,
 	withClaimOptions,
 	withNamedPhysical,
 	withPhysicalOptions,
@@ -45,6 +46,7 @@ import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
+import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { currentBuild } from "../update/build-info";
 import { type AffectedOpts, explain, runAffected, selectedSpecs } from "./affected";
 import {
@@ -105,6 +107,8 @@ export type E2eReport = {
 	only?: string[];
 	/** per-device setup outcomes, when the suite has a `setup` */
 	setup?: DeviceSetup[];
+	/** the run stopped before any spec: a phone's runner would not start (`device_locked`, ...) */
+	error?: { code: string; message: string; udid: string };
 };
 
 /** The suite's run settings as option values (CLI flags passed explicitly win). */
@@ -441,7 +445,13 @@ async function e2e(
 	}
 	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
 	if (!run.success) return fail(run.error);
-	const { args, shape, plan: jobs, argvOf, spec, physical } = run.data;
+	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
+	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.data.args, {
+		prompt: canPrompt(ctx, { json: opts.json }),
+	});
+	if (picked.kind !== "ok") return reportPick(ctx, "e2e", picked);
+	const { shape, plan: jobs, argvOf, spec, physical } = run.data;
+	const { args } = picked;
 	const runs = shardRuns(jobs, { argvOf, readFile: deps.readFile });
 	const session = await runSession(
 		ctx,
@@ -465,6 +475,8 @@ async function e2e(
 	const report = buildReport(base, headless, shape.shardOf === undefined ? "spec" : "device", session, result);
 	await publish(ctx, deps, opts, report);
 	if (session.code === 130) return 130;
+	// stopped before any spec (a phone's runner would not start): the session already said why, with its own exit code
+	if (session.error) return session.code;
 	printVerdict(ctx, report);
 	return result.ok ? 0 : 1;
 }
@@ -486,6 +498,7 @@ function buildReport(
 		specs: result.specs,
 		...(result.only.length > 0 ? { only: result.only } : {}),
 		...(session.setups ? { setup: session.setups } : {}),
+		...(session.error ? { error: session.error } : {}),
 	};
 }
 

@@ -78,7 +78,7 @@ export function describePhoneFailure(what: string, res: ExecResult): string {
 	const text = `${res.stderr}\n${res.stdout}`.trim();
 	if (LOCKED.test(text)) return `${what} failed: device_locked: unlock the phone and run the command again`;
 	if (NOT_IN_PROFILE.test(text)) {
-		return `${what} failed: device_not_in_profile: the app's provisioning profile does not list this phone. Run \`warden ui open --udid <phone>\` once (it builds the runner for this phone, which registers it with your team), then \`warden builds rm\` the device build and retry`;
+		return `${what} failed: device_not_in_profile: the app's provisioning profile does not list this phone. warden registers a phone with a build for it when it can; if this stays, check the phone is listed in your team's Devices, then \`warden builds rm\` the device build and retry`;
 	}
 	const known = classifyRunnerOutput(text);
 	if (known) return `${what} failed: ${known.code}: ${known.message}. ${known.hint}`;

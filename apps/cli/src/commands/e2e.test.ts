@@ -2344,4 +2344,55 @@ describe("warden e2e on physical devices", () => {
 		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--headless cannot be used with --physical");
 	});
+
+	describe("with two phones connected", () => {
+		const SECOND = "192.168.1.20:5555";
+		const ADB_TWO = `List of devices attached\n${PHONE}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2\n${SECOND}      device product:husky model:Pixel_8_Pro device:husky transport_id:5\n\n`;
+
+		function twoPhones(argv: string[], calls: string[][]): TestContext {
+			const exec: Exec = async (cmd, opts) => {
+				if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return bunExec(cmd, opts);
+				calls.push([...cmd]);
+				if (cmd.slice(1).join(" ") === "devices -l") return { exitCode: 0, stdout: ADB_TWO, stderr: "" };
+				if (cmd.at(-1) === PHONE_PROBE_SCRIPT)
+					return { exitCode: 0, stdout: cmd.includes(SECOND) ? "\n\nHW2\nPixel 8 Pro\n35\n" : PHONE_PROPS, stderr: "" };
+				return androidPhoneReply(cmd);
+			};
+			ctx = testContext(argv, { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HEADLESS: "1" };
+			ctx.cwd = dir;
+			return ctx;
+		}
+
+		test("--physical --json fails ambiguous_device (exit 2) before any lease, build or job", async () => {
+			let ensured = 0;
+			const h = harness();
+			const deps: Harness["deps"] = {
+				...h.deps,
+				ensureApp: async () => {
+					ensured++;
+					return { success: true, data: { appPath: "/c/a.apk", hash: "H", source: "cache", installed: true } };
+				},
+			};
+			const c = twoPhones(
+				["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical", "--app", "--json"],
+				[]
+			);
+			expect(await createE2eCommand(deps).run(c)).toBe(2);
+			const doc = JSON.parse(c.stdout.join("\n"));
+			expect(doc).toMatchObject({ ok: false, command: "e2e", error: { code: "ambiguous_device" } });
+			expect(doc.error.details.candidates.map((x: { id: string }) => x.id)).toEqual([PHONE, SECOND]);
+			expect(ensured).toBe(0);
+			expect(h.jobs()).toEqual([]);
+			expect(c.db.listLeases()).toEqual([]);
+		});
+
+		test("in a terminal the picker chooses the device the run uses", async () => {
+			const c = twoPhones(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical"], []);
+			c.ui = scriptedUi({ interactive: true, select: [SECOND] });
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(SECOND);
+		});
+	});
 });

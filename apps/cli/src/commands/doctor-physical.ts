@@ -45,6 +45,7 @@ async function describeIos(ctx: CommandContext, d: InventoryDevice, facts: IosFa
 		facts.ddi ? "DDI yes" : "DDI no",
 	];
 	if (facts.unreachable !== undefined) parts.push(`offline (${facts.unreachable})`);
+	else if (isReady(d) && facts.locked !== undefined) parts.push(`reachable, ${facts.locked ? "locked" : "unlocked"}`);
 	else if (isReady(d)) {
 		const lock = await readLockState({ exec: ctx.exec, timer: realTimer }, d.id);
 		parts.push(lock.success ? `reachable, ${lock.data.locked ? "locked" : "unlocked"}` : "reachable");

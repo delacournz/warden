@@ -30,7 +30,10 @@ export type CommandContext = {
 };
 
 /** Collects the failures a command reports; `runProgram` keeps the first. */
-export type FailureSink = { record: (message: string) => void };
+export type FailureSink = { record: (message: string, extra?: FailureExtra) => void };
+
+/** What a failure adds to the `--json` envelope beyond its message: a machine code, a fix and structured details. */
+export type FailureExtra = { code: "ambiguous_device"; hint: string; details: Record<string, unknown> };
 
 /** Line writes to a process stream that remember backpressure, so the process can wait for them before exiting. */
 export type LineWriter = {

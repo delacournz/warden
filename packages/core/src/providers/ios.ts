@@ -339,6 +339,8 @@ export type IosProviderOptions = {
 	 * per inventory, which a claim of a simulator should not pay. `devices` and physical claims turn it on.
 	 */
 	physical?: boolean;
+	/** phones the caller named: a longer reachability wait than an auto-pick gets */
+	namedPhysical?: readonly string[];
 };
 
 /** How often, and how long, `boot` retries a sim that is still `Shutting Down`. */
@@ -441,7 +443,9 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			// phones are best effort: no Xcode, a wedged CoreDevice or a bad document leaves the simulator list as it was
 			const [out, phones] = await Promise.all([
 				simctl(runner, ["list", "devices", "available", "-j"], IOS_TIMEOUTS.listMs),
-				options.physical === true ? listPhysicalIos(runner) : Promise.resolve(ok<InventoryDevice[]>([])),
+				options.physical === true
+					? listPhysicalIos(runner, { named: options.namedPhysical ?? [] })
+					: Promise.resolve(ok<InventoryDevice[]>([])),
 			]);
 			if (!out.success) return out;
 			const sims = parseSimctlDevices(out.data);

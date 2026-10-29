@@ -7,6 +7,7 @@ import { claimWithFlags, leasePidFor, parseClaimFlags, parsePlatform, resolveOwn
 import type { CommandContext } from "../context";
 import { type CallerLease, ensureCallerLease } from "../device-lease";
 import { deviceTarget } from "../hooks/claude-pretool";
+import { AMBIGUOUS_HINT, ambiguousMessage, pickPhysical } from "../physical-pick";
 import { type UiDeviceInfo, type UiError, uiError } from "./output";
 import { checkPhone, type PhoneCheck, phoneStateError } from "./phone";
 
@@ -121,7 +122,19 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 		PRIORITY.high
 	);
 	if (!parsed.success) return fail(uiError("usage", parsed.error));
-	const outcome = await claimWithFlags(ctx, owner, parsed.data, leasePidFor(owner));
+	// `warden ui` is for agents: never a prompt, several usable phones are the caller's to choose between
+	const picked = await pickPhysical(ctx, owner, [parsed.data], { prompt: false });
+	if (picked.kind === "ambiguous") {
+		return fail(
+			uiError("ambiguous_device", ambiguousMessage(picked.platform, picked.candidates), {
+				hint: AMBIGUOUS_HINT,
+				details: { candidates: picked.candidates },
+			})
+		);
+	}
+	if (picked.kind !== "ok")
+		return fail(uiError("failed", `claim failed: ${picked.kind === "failed" ? picked.message : "cancelled"}`));
+	const outcome = await claimWithFlags(ctx, owner, picked.flags[0] ?? parsed.data, leasePidFor(owner));
 	if (!outcome.success) return fail(uiError("failed", `claim failed: ${outcome.error}`));
 	const claimed = outcome.data.claimed[0];
 	if (!claimed) return fail(uiError("failed", "claim returned no device"));

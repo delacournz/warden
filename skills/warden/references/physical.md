@@ -13,10 +13,24 @@ Real Android phones and iPhones/iPads are leased like sims, but only on request.
 
 Rejected with `--physical`: `--count --max --slim --headless --runtime --adopt`. `--serial` is Android only, `--udid` iOS only.
 
+### Several usable devices
+
+An id-less physical claim (`claim --physical`, `ui --claim --physical`, `e2e` / `run` / `batch` with `--physical` or suite `physical: true`) never silently picks between phones. Usable = ready, reachable, not leased, on the allowlist (below).
+
+| Candidates | Result |
+|---|---|
+| exactly one | picked, as before |
+| several, human terminal (not `--json`) | a picker (name, model, OS, transport); cancel = `Aborted.`, exit 1 |
+| several, otherwise (agent, `--json`, `ui`) | exit 2 `ambiguous_device`; `--json`: `error.details.candidates: [{id, name, platform, model, osVersion, transport}]`, hint `pass --udid <id> (iOS) / --serial <id> (Android), or set WARDEN_PHYSICAL_IDS`; text: a table on stderr |
+
+Decided once, before any lease, build or job. A picked device is then named, so a device taken in between fails the claim.
+
+**As an agent:** on `ambiguous_device` ask the user which device, listing the candidate names, unless they already said any device is fine. Then claim with `--udid <id>` (iOS) / `--serial <id>` (Android) and say which you picked. Never pick a device the user said is someone else's. To make a run unambiguous for good, set `WARDEN_PHYSICAL_IDS` or `physical.allow`.
+
 ## What counts as usable
 
 - Android: adb state `device`. `unauthorized` and `offline` are listed with a hint and never picked.
-- iOS: paired, Developer Mode on, and **reachable**: tunnel connected, wired, or a bounded `devicectl device info lockState` answers (5 s). `devicectl` lists every device ever paired (an iPad in a drawer too) as available, so an unreachable one is `offline: <reason>` in `warden devices` and is never auto-picked.
+- iOS: paired, Developer Mode on, and **reachable**: tunnel connected, wired, or a bounded `devicectl device info lockState` answers (5 s; 20 s for a phone you named with `--udid` / `physical.ids`). An answer means reachable even when locked (`passcodeRequired`): `warden devices` shows a `locked` hint. `devicectl` lists every device ever paired (an iPad in a drawer too) as available, so an unreachable one is `offline: <reason>` in `warden devices` and is never auto-picked.
 - Naming an unusable device (`--udid`/`--serial`) fails the claim with `device_offline: <id> (<name>): <label>: <hint>` (after `--wait`; add `--no-wait` to fail at once).
 
 ## Allowlist

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
+import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-core/sims/slim.profile";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
-import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
+import { fakeExec, type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
 
 let ctx: TestContext | undefined;
@@ -303,5 +305,102 @@ describe("warden claim --physical", () => {
 		c.env = { ...c.env, WARDEN_HEADLESS: "1" };
 		expect(await claimCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).not.toContain("cannot be used");
+	});
+});
+
+describe("warden claim --physical with several phones", () => {
+	const USB = "R5CT1234ABC";
+	const WIFI = "192.168.1.20:5555";
+	const ADB_TWO = `List of devices attached
+${USB}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2
+${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
+
+`;
+
+	function twoPhones(argv: string[], ui: ScriptedUi = scriptedUi(), calls: string[][] = []): TestContext {
+		ctx = testContext(argv, {
+			ui,
+			exec: fakeExec(
+				[
+					["adb devices -l", { stdout: ADB_TWO }],
+					[`adb -s ${USB} shell ${PHONE_PROBE_SCRIPT}`, { stdout: PHONE_PROPS }],
+					[`adb -s ${WIFI} shell ${PHONE_PROBE_SCRIPT}`, { stdout: "\n\nHW2\nPixel 8 Pro\n35\n" }],
+					["adb -s", { stdout: "1\n" }],
+				],
+				calls
+			),
+		});
+		ctx.env = { ...ctx.env, ...OWNER_ENV };
+		return ctx;
+	}
+
+	test("--json: ambiguous_device, exit 2, candidates in the error, no lease", async () => {
+		const c = twoPhones(["android", "--physical", "--no-wait", "--json"], scriptedUi({ interactive: true }));
+		expect(await claimCommand.run(c)).toBe(2);
+		const doc = JSON.parse(c.stdout.join("\n"));
+		expect(doc).toMatchObject({
+			ok: false,
+			command: "claim",
+			error: {
+				code: "ambiguous_device",
+				hint: "pass --udid <id> (iOS) / --serial <id> (Android), or set WARDEN_PHYSICAL_IDS",
+			},
+		});
+		expect(doc.error.details.candidates).toEqual([
+			{ id: USB, name: "SM-A546E", platform: "android", model: "SM-A546E", osVersion: "API 34", transport: "usb" },
+			{
+				id: WIFI,
+				name: "Pixel 8 Pro",
+				platform: "android",
+				model: "Pixel 8 Pro",
+				osVersion: "API 35",
+				transport: "wifi",
+			},
+		]);
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("not a terminal: plain text lists the candidates as a table, exit 2", async () => {
+		const c = twoPhones(["android", "--physical", "--no-wait"]);
+		expect(await claimCommand.run(c)).toBe(2);
+		const err = c.stderr.join("\n");
+		expect(err).toContain("several physical android devices are available");
+		expect(err).toMatch(/ID\s+NAME\s+MODEL\s+OS\s+TRANSPORT/);
+		expect(err).toContain(WIFI);
+		expect(err).toContain("WARDEN_PHYSICAL_IDS");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("a terminal: the picker's second choice is the one claimed", async () => {
+		const ui = scriptedUi({ interactive: true, select: [WIFI] });
+		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
+		expect(await claimCommand.run(c)).toBe(0);
+		const resource = c.db.listLeases()[0]?.resource;
+		expect(resource?.kind === "device" && resource.id).toBe(WIFI);
+	});
+
+	test("cancelling the picker exits 1 with Aborted. and takes nothing", async () => {
+		const ui = scriptedUi({ interactive: true, select: [undefined] });
+		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(ui.events).toContain("cancelled: Aborted.");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--serial names one: no question even with two phones", async () => {
+		const ui = scriptedUi({ interactive: true });
+		const c = twoPhones(["android", "--serial", USB, "--no-wait"], ui);
+		expect(await claimCommand.run(c)).toBe(0);
+		expect(ui.events.filter((e) => e.startsWith("select:"))).toEqual([]);
+	});
+
+	test("WARDEN_PHYSICAL_IDS narrowing to one claims it without asking", async () => {
+		const ui = scriptedUi({ interactive: true });
+		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
+		c.env = { ...c.env, WARDEN_PHYSICAL_IDS: WIFI };
+		expect(await claimCommand.run(c)).toBe(0);
+		const resource = c.db.listLeases()[0]?.resource;
+		expect(resource?.kind === "device" && resource.id).toBe(WIFI);
+		expect(ui.events.filter((e) => e.startsWith("select:"))).toEqual([]);
 	});
 });

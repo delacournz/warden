@@ -18,6 +18,7 @@ import {
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, heading, reportError, table, warn } from "../output";
+import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
 
 type ClaimOpts = ClaimFlagValues & { serial?: string[]; udid?: string[]; json?: true };
@@ -48,14 +49,18 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		reportError(ctx, "claim", flags.error);
 		return 1;
 	}
-	const { count, profile, physical } = flags.data.request;
+	// before the spinner and any lease: several usable phones are asked about, or refused (ambiguous_device, exit 2)
+	const picked = await pickPhysical(ctx, owner, [flags.data], { prompt: canPrompt(ctx, { json: opts.json }) });
+	if (picked.kind !== "ok") return reportPick(ctx, "claim", picked);
+	const claimFlags = picked.flags[0] ?? flags.data;
+	const { count, profile, physical } = claimFlags.request;
 	const kind = physical ? "physical" : profile;
 	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${kind} ×${count}`);
 	const outcome = await withSpinner(
 		ctx,
 		`claiming ${count} ${kind} ${platform.data} device(s)…`,
 		async (sctx, spinner) => {
-			const result = await claimWithFlags(sctx, owner, flags.data, leasePidFor(owner));
+			const result = await claimWithFlags(sctx, owner, claimFlags, leasePidFor(owner));
 			if (result.success) spinner.succeed(`claimed ${result.data.claimed.map((c) => c.device.name).join(", ")}`);
 			else spinner.fail(`claim failed`);
 			return result;

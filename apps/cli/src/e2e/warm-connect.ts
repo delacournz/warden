@@ -1,7 +1,13 @@
 import { isPhysicalIosId } from "@delacour/warden-core/types";
 import { err, ok } from "@delacour/warden-types/result";
+import type { UiError } from "../agent-ui/output";
 import type { WarmConnect } from "../batch/warm-drivers";
 import type { CommandContext } from "../context";
+
+/** A runner host's start-up failure as the warm step's error text: `<code>: <message> (<hint>)`, the code `warmGate` stops the run on. */
+export function runnerWarmError(error: UiError): string {
+	return `${error.code}: ${error.message}${error.hint ? ` (${error.hint})` : ""}`;
+}
 
 /**
  * The warm step's default `connect`: start (or attach to) the device's socket helper with
@@ -58,7 +64,7 @@ async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmCon
 	const { ensureIosRunner, stopIosRunner } = await import("../agent-ui/helper");
 	const { openIosDeviceDriver } = await import("@delacour/warden-e2e/driver/ios/device/device-driver");
 	const host = await ensureIosRunner(ctx, udid, { keepClient: true });
-	if (!host.success) return err(`${host.error.message}${host.error.hint ? ` (${host.error.hint})` : ""}`);
+	if (!host.success) return err(runnerWarmError(host.error));
 	const { client, socketPath } = host.data;
 	const driver = await openIosDeviceDriver({
 		udid,
@@ -69,7 +75,8 @@ async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmCon
 	});
 	if (!driver.success) {
 		await client?.close();
-		return err(`${driver.error.code}: ${driver.error.message}`);
+		const { driverUiError } = await import("../agent-ui/driver");
+		return err(runnerWarmError(driverUiError(driver.error)));
 	}
 	return ok({
 		socketPath,

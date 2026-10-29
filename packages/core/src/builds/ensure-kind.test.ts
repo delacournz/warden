@@ -243,6 +243,80 @@ describe("a physical iPhone", () => {
 	});
 });
 
+describe("a phone the provisioning profile does not list", () => {
+	const TEAM = "ABCDE12345";
+	const UDID = "00008140-000A0B0C0D0E0F10";
+	const NOT_IN_PROFILE =
+		"devicectl install app failed: device_not_in_profile: the app's provisioning profile does not list this phone";
+
+	/** the first install of each run answers `first`, the next ones succeed */
+	function flow(first: string[]) {
+		const c = calls();
+		const queue = [...first];
+		const d = deps(repacked, c);
+		d.ensureApp = async (i) => {
+			c.installs.push({ hash: i.hash, deviceId: i.deviceId, build: i.build });
+			const failure = queue.shift();
+			return failure === undefined
+				? ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true })
+				: err(failure);
+		};
+		const commands: string[] = [];
+		const run = input("release", {
+			physical: true,
+			deviceId: UDID,
+			env: { WARDEN_IOS_TEAM_ID: TEAM, WARDEN_HOME: dir },
+			exec: async (cmd) => {
+				commands.push(cmd.join(" "));
+				return { exitCode: 0, stdout: "", stderr: "" };
+			},
+		});
+		return { c, d, commands, run };
+	}
+
+	test("registers the phone with a build for its destination, rebuilds and installs once more", async () => {
+		const { c, d, commands, run } = flow([NOT_IN_PROFILE]);
+		const res = await ensureKindApp(run.input, d);
+		expect(res.success && res.data.installed).toBe(true);
+		const registering = commands.filter((cmd) => cmd.includes("xcodebuild"));
+		expect(registering).toHaveLength(1);
+		expect(registering[0]).toContain(`-destination id=${UDID}`);
+		expect(registering[0]).not.toContain("generic/platform=iOS");
+		expect(registering[0]).toContain("-allowProvisioningUpdates");
+		expect(c.builds).toEqual(["release", "release"]);
+		expect(c.installs).toHaveLength(2);
+		expect(run.logs.join("\n")).toContain(UDID);
+	});
+
+	test("a phone registered before is not registered again: the install error stands", async () => {
+		const { c, d, commands, run } = flow([NOT_IN_PROFILE]);
+		const first = await ensureKindApp(run.input, d);
+		expect(first.success).toBe(true);
+		const again = flow([NOT_IN_PROFILE]);
+		const second = await ensureKindApp(again.run.input, again.d);
+		expect(!second.success && second.error).toContain("device_not_in_profile");
+		expect(again.commands.filter((cmd) => cmd.includes("xcodebuild"))).toHaveLength(0);
+		expect(commands.filter((cmd) => cmd.includes("xcodebuild"))).toHaveLength(1);
+		expect(c.installs).toHaveLength(2);
+	});
+
+	test("the registration build failing reports why, with the original code", async () => {
+		const { d, run } = flow([NOT_IN_PROFILE]);
+		run.input.exec = async () => ({ exitCode: 65, stdout: "", stderr: "error: No account for team" });
+		const res = await ensureKindApp(run.input, d);
+		expect(!res.success && res.error).toContain("device_not_in_profile");
+		expect(!res.success && res.error).toContain("No account for team");
+	});
+
+	test("any other install failure is not retried", async () => {
+		const { c, d, commands, run } = flow(["devicectl install app failed: device_locked: unlock"]);
+		const res = await ensureKindApp(run.input, d);
+		expect(!res.success && res.error).toContain("device_locked");
+		expect(commands).toEqual([]);
+		expect(c.installs).toHaveLength(1);
+	});
+});
+
 describe("ensureKindApp", () => {
 	test("without a device nothing is installed", async () => {
 		const c = calls();

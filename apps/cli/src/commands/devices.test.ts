@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ExecResult } from "@delacour/warden-core/exec";
-import { devicectlEntry, devicectlJson, FAKE_IPAD_UDID } from "@delacour/warden-core/providers/devicectl.fixtures";
+import {
+	DEVICECTL_LOCKSTATE_LOCKED,
+	devicectlEntry,
+	devicectlJson,
+	FAKE_IPAD_UDID,
+} from "@delacour/warden-core/providers/devicectl.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeExec, type TestContext, testContext } from "../testing";
@@ -300,6 +305,31 @@ describe("warden devices (physical phones)", () => {
 		const ipad = rows.find((r) => r.id === FAKE_IPAD_UDID);
 		expect(ipad).toMatchObject({ kind: "physical", state: "shutdown", transport: "localNetwork" });
 		expect(ipad?.hint).toContain("offline: ");
+	});
+
+	test("a disconnected phone whose probe answers locked: reachable (booted) with a locked hint", async () => {
+		const list = devicectlJson([
+			devicectlEntry({
+				udid: FAKE_IPAD_UDID,
+				name: "Test iPad",
+				deviceType: "iPad",
+				osVersion: "18.7.8",
+				transportType: "localNetwork",
+				tunnelState: "disconnected",
+			}),
+		]);
+		ctx = testContext(["ios", "--json"], {
+			exec: fakeExec([
+				["xcrun simctl list devices available -j", { stdout: IOS }],
+				["xcrun devicectl list devices", { stdout: list }],
+				["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_LOCKED }],
+			]),
+		});
+		await devicesCommand.run(ctx);
+		const rows: Array<{ id?: string; state: string; hint?: string }> = JSON.parse(ctx.stdout.join("\n"));
+		const ipad = rows.find((r) => r.id === FAKE_IPAD_UDID);
+		expect(ipad?.state).toBe("booted");
+		expect(ipad?.hint).toContain("locked");
 	});
 
 	test("--physical lists only phones and tablets", async () => {

@@ -27,6 +27,9 @@ export const listDevicesArgv = (): string[] => [
 /** How long a phone that is not connected right now gets to answer `lockState` before it counts as offline (devicectl's `--timeout` floor is 5 s). */
 export const REACHABLE_PROBE_MS = 5_000;
 
+/** The wait for a phone the caller named (`--udid`, `physical.ids`, `WARDEN_UDID`): an idle phone may need that long to bring its CoreDevice tunnel up. */
+export const NAMED_PROBE_MS = 20_000;
+
 export const lockStateArgv = (udid: string, timeoutMs?: number): string[] => [
 	"xcrun",
 	"devicectl",
@@ -146,23 +149,39 @@ function connectedNow(d: InventoryDevice): boolean {
  * connected (no wired transport, tunnel down) must answer a bounded `lockState` to count; otherwise it is
  * `shutdown` with the reason in `PhysicalInfo.unreachable`, so no claim ever auto-picks it.
  */
-async function markReachability(runner: TimedExec, d: InventoryDevice): Promise<InventoryDevice> {
+async function markReachability(runner: TimedExec, d: InventoryDevice, probeMs: number): Promise<InventoryDevice> {
 	if (d.state !== "booted" || d.physical?.platform !== "ios" || connectedNow(d)) return d;
-	const answer = await execWithin(runner, lockStateArgv(d.id, REACHABLE_PROBE_MS), REACHABLE_PROBE_MS);
-	if (answer !== undefined && answer.exitCode === 0 && parseJson(answer.stdout, "lockState").success) return d;
+	const answer = await execWithin(runner, lockStateArgv(d.id, probeMs), probeMs);
+	const parsed = answer !== undefined && answer.exitCode === 0 ? parseJson(answer.stdout, "lockState") : undefined;
+	if (parsed?.success) {
+		// an answer means reachable even when locked; `passcodeRequired` is true while the phone is locked
+		const passcodeRequired = obj(parsed.data, "result")?.passcodeRequired;
+		return typeof passcodeRequired === "boolean" ? { ...d, physical: { ...d.physical, locked: passcodeRequired } } : d;
+	}
 	const reason =
 		answer === undefined
-			? `no answer within ${REACHABLE_PROBE_MS / 1000}s (not connected)`
+			? `no answer within ${probeMs / 1000}s (not connected)`
 			: answer.stderr.trim().split("\n")[0] || "not connected";
 	return { ...d, state: "shutdown", physical: { ...d.physical, unreachable: reason } };
 }
 
 /** Physical iPhones/iPads CoreDevice knows about. An error (no Xcode, devicectl wedged) is the caller's to ignore. */
-export async function listPhysicalIos(runner: TimedExec): AsyncResult<InventoryDevice[]> {
+export async function listPhysicalIos(
+	runner: TimedExec,
+	opts: { named?: readonly string[] } = {}
+): AsyncResult<InventoryDevice[]> {
 	const out = await runDevicectl(runner, listDevicesArgv(), DEVICECTL_TIMEOUTS.listMs);
 	if (!out.success) return out;
 	const parsed = parseDevicectlDevices(out.data);
-	return parsed.success ? ok(await Promise.all(parsed.data.map((d) => markReachability(runner, d)))) : parsed;
+	return parsed.success
+		? ok(
+				await Promise.all(
+					parsed.data.map((d) =>
+						markReachability(runner, d, opts.named?.includes(d.id) ? NAMED_PROBE_MS : REACHABLE_PROBE_MS)
+					)
+				)
+			)
+		: parsed;
 }
 
 /** `devicectl device info lockState`: is a passcode needed to use the phone now. */

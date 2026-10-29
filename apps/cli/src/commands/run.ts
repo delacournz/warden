@@ -35,6 +35,7 @@ import {
 	withLeaseOptions,
 } from "../lease-session";
 import { heading, note, reportError } from "../output";
+import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
 
 /** Where the child's stdout goes: the terminal, or stderr under `--json` so stdout stays the one JSON line. */
@@ -113,7 +114,13 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (!args.success) return fail(args.error);
 	const { cmd } = target.data;
 	const owner = resolveOwner(ctx);
-	const { count, profile } = args.data.flags.request;
+	// before the spinner and any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
+	const picked = await pickPhysical(ctx, owner, [args.data.flags], {
+		prompt: canPrompt(ctx, { json: args.data.json }),
+	});
+	if (picked.kind !== "ok") return reportPick(ctx, "run", picked);
+	const flags = picked.flags[0] ?? args.data.flags;
+	const { count, profile } = flags.request;
 	if (!args.data.json) heading(ctx, "run", `${platform.data} · ${profile} ×${count} · ${cmd.join(" ")}`);
 	const claimed = await withSpinner(
 		ctx,
@@ -124,6 +131,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 			const onAppPhase = appPhaseProgress(spinner, app);
 			const result = await claimAll(sctx, deps, owner, {
 				...args.data,
+				flags,
 				...(onLeased ? { onLeased } : {}),
 				...(onAppPhase ? { onAppPhase } : {}),
 			});

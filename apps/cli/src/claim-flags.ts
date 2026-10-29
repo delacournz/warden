@@ -383,7 +383,7 @@ async function resolveRequest(ctx: CommandContext, request: DeviceRequest): Asyn
  * An id-less physical claim only picks from the allowlist (`WARDEN_PHYSICAL_IDS`, else `physical.allow` in
  * `warden.config.ts`). A config that cannot be read fails the claim: guessing could take a device the list excludes.
  */
-async function withPhysicalAllowlist(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
+export async function withPhysicalAllowlist(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
 	if (!request.physical || request.physical.ids !== undefined) return ok(request);
 	let configAllow: string[] | undefined;
 	if (parsePhysicalIds(ctx.env.WARDEN_PHYSICAL_IDS) === undefined) {
@@ -424,7 +424,13 @@ export async function claimWithFlags(
 			request.platform,
 			ctx,
 			owner,
-			request.platform === "ios" ? { slim: slim.data, physical: request.physical !== undefined } : {}
+			request.platform === "ios"
+				? {
+						slim: slim.data,
+						physical: request.physical !== undefined,
+						...(request.physical?.ids ? { namedPhysical: request.physical.ids } : {}),
+					}
+				: {}
 		),
 		...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
 		owner,

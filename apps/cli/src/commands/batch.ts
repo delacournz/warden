@@ -24,6 +24,7 @@ import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@d
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
+import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
@@ -51,6 +52,7 @@ import {
 	withRunners,
 } from "../batch/tui";
 import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
+import { warmGate } from "../batch/warm-gate";
 import { buildCapacityDeps } from "../capacity-deps";
 import {
 	bootedByClaim,
@@ -104,6 +106,7 @@ import {
 	startMetro,
 } from "../metro";
 import { emit, note, reportError, warn } from "../output";
+import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
@@ -953,6 +956,8 @@ export type SessionResult = {
 	devices?: Array<{ worker: number; udid: string; name: string; leg?: string }>;
 	/** per-device setup outcomes, when the session ran a setup */
 	setups?: DeviceSetup[] | undefined;
+	/** why the run stopped before any job: a phone whose runner would not start (`device_locked`, ...) */
+	error?: { code: string; message: string; udid: string };
 };
 
 /** Extras for callers building on batch (`warden e2e`). */
@@ -1901,6 +1906,13 @@ async function supervise(
 			const failedLogs = (setups ?? []).filter((d) => !d.ok).map((d) => d.log ?? d.error);
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
+		// a phone's jobs reach its runner only through the warm socket: no runner, no specs
+		const phones = run.warm ? r.devices.map((d) => d.udid).filter(isPhysicalIosId) : [];
+		const stopped = run.warm && phones.length > 0 ? await warmGate(phones, run.warm) : undefined;
+		if (stopped) {
+			const failed = fail(`${stopped.udid}: ${stopped.code}: ${stopped.message}`, { batchDir, error: stopped });
+			return failed.code === 130 ? failed : { ...failed, code: warmStopExit(stopped.code) };
+		}
 		const socketFor = deviceSockets(ctx, r, run.warm, run.warm ? undefined : hooks.residentSocket, say);
 		const toQueue = queueMaker(ctx, deps, args, r, {
 			jobs,
@@ -2107,7 +2119,17 @@ async function batch(
 	if (!args.success) return fail(args.error);
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);
-	return (await runSession(ctx, deps, args.data, jobs.data, cmd)).code;
+	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
+	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), args.data, {
+		prompt: canPrompt(ctx, { json: args.data.json }),
+	});
+	if (picked.kind !== "ok") return reportPick(ctx, "batch", picked);
+	return (await runSession(ctx, deps, picked.args, jobs.data, cmd)).code;
+}
+
+/** The exit code of a run stopped by a phone's failed warm-up: the `warden ui` code's (a locked phone exits 2), else 1. */
+function warmStopExit(code: string): number {
+	return code in UI_ERROR_EXIT ? UI_ERROR_EXIT[code as UiErrorCode] : 1;
 }
 
 /** A warm-up the run never collected (the claim failed, a signal): stop waiting for it and close what came up. */

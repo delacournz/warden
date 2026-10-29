@@ -17,6 +17,8 @@ export type PhysicalInfo =
 			tunnelState?: string;
 			/** why a paired phone cannot be reached right now (its `lockState` probe failed); set means never auto-picked */
 			unreachable?: string;
+			/** `lockState.passcodeRequired` from the reachability probe (true = locked); only set when that probe ran and answered */
+			locked?: boolean;
 	  };
 
 export type DeviceResource = {

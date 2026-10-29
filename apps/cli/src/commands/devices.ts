@@ -4,6 +4,7 @@ import { listAvds } from "@delacour/warden-core/providers/android";
 import { measureSims } from "@delacour/warden-core/sims/slim.measure";
 import {
 	describeOwner,
+	type InventoryDevice,
 	type Lease,
 	ownerLocation,
 	type Platform,
@@ -51,6 +52,13 @@ function leaseInfo(lease: Lease): NonNullable<DeviceRow["lease"]> {
 	return { id: lease.id, owner: describeOwner(lease.owner), ...(where ? { where } : {}) };
 }
 
+/** A phone whose reachability probe answered `passcodeRequired`: reachable, but `warden ui` reports `device_locked` until it is unlocked. */
+function lockedHint(d: InventoryDevice): string | undefined {
+	return d.physical?.platform === "ios" && d.physical.locked === true
+		? "locked: unlock the phone to drive it"
+		: undefined;
+}
+
 /** One platform's rows: every device (booted or not) plus, for Android, every AVD. */
 async function platformRows(ctx: CommandContext, platform: Platform, leases: Map<string, Lease>): Promise<DeviceRow[]> {
 	const store = ctx.store();
@@ -63,7 +71,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 	const rows: DeviceRow[] = markWardenDevices(inventory.data, [...records.values()]).map((d) => {
 		const lease = leases.get(`${platform}:${d.id}`);
 		const record = records.get(d.id);
-		const hint = physicalNotReadyReason(d);
+		const hint = physicalNotReadyReason(d) ?? lockedHint(d);
 		return {
 			platform,
 			kind: d.physical ? ("physical" as const) : ("virtual" as const),

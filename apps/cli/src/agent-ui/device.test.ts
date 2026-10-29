@@ -102,9 +102,22 @@ describe("resolveUiDevice on Android phones", () => {
 	});
 
 	test("--claim --physical with no device named claims a connected phone", async () => {
-		const result = await resolveUiDevice(phoneSetup(), { claim: true, physical: true, platform: "android" });
+		const c = phoneSetup();
+		c.env = { ...c.env, WARDEN_PHYSICAL_IDS: PHONE };
+		const result = await resolveUiDevice(c, { claim: true, physical: true, platform: "android" });
 		expect(result.success && result.data.udid).toBe(PHONE);
 		const resource = ctx?.db.listLeases()[0]?.resource;
 		expect(resource?.kind === "device" && resource.physical?.transport).toBe("usb");
+	});
+
+	test("--claim --physical with several ready phones is ambiguous_device with the candidates, and leases nothing", async () => {
+		const result = await resolveUiDevice(phoneSetup(), { claim: true, physical: true, platform: "android" });
+		expect(!result.success && result.error.code).toBe("ambiguous_device");
+		if (result.success) return;
+		expect(result.error.hint).toContain("WARDEN_PHYSICAL_IDS");
+		const candidates = result.error.details?.candidates as Array<{ id: string }>;
+		expect(candidates.map((c) => c.id)).toContain(PHONE);
+		expect(candidates.length).toBeGreaterThan(1);
+		expect(ctx?.db.listLeases()).toEqual([]);
 	});
 });
