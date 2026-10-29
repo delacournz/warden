@@ -24,7 +24,7 @@ import type { CommandContext } from "../context";
 import { driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
-import { androidHostDir, fsSafeId, simdDir } from "./paths";
+import { androidHostDir, fsSafeId, iosRunnerDir, simdDir } from "./paths";
 import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 import { type HelperRecord, readState, type UiState, updateState } from "./state";
 
@@ -318,7 +318,7 @@ export function androidHostEnvKey(env: Readonly<Record<string, string | undefine
 }
 
 /** The `state.json` field a kind's record lives in. */
-type RecordField = "helper" | "androidHost";
+type RecordField = "helper" | "androidHost" | "iosRunner";
 
 /**
  * One kind of resident per-device helper process: everything that differs between iOS's `warden-simd` and Android's
@@ -353,6 +353,12 @@ export type HelperKind = {
 	command: (input: { binary: string; id: string; socket: string; idleSeconds: number; self: string[] }) => string[];
 	/** what to suggest when it dies before it is ready */
 	hint: string;
+	/**
+	 * how long a start may take (ms): the wait for its ready line, how long its spawn row stays live, and the most
+	 * an `ensureHelper` call waits in all. Default `SPAWN_LIVE_WAIT_MS`; the iPhone runner builds, installs and
+	 * launches on a phone first
+	 */
+	startupMs?: number;
 };
 
 export const SIMD_KIND: HelperKind = {
@@ -427,6 +433,61 @@ function selfCommand(): string[] {
 	return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
 }
 
+/** `WARDEN_IOS_*` names that only steer the client (which socket to use): left out of `iosRunnerEnvKey`. */
+const IOS_RUNNER_CLIENT_ONLY_ENV = new Set(["WARDEN_IOS_RUNNER_SOCKET"]);
+
+/** `simdEnvKey` for the iPhone runner host: the `WARDEN_IOS_*` knobs it and its builder read (idle timeout, signing team…). */
+export function iosRunnerEnvKey(env: Readonly<Record<string, string | undefined>>): string {
+	const entries = Object.entries(env)
+		.filter((entry): entry is [string, string] => entry[0].startsWith("WARDEN_IOS_") && entry[1] !== undefined)
+		.filter(([name]) => !IOS_RUNNER_CLIENT_ONLY_ENV.has(name))
+		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	return Bun.hash(JSON.stringify(entries)).toString(36);
+}
+
+/** `$WARDEN_IOS_RUNNER_IDLE_TIMEOUT` overrides the iPhone runner host's idle timeout (default 10 min). */
+export const IOS_RUNNER_IDLE_TIMEOUT_ENV = "WARDEN_IOS_RUNNER_IDLE_TIMEOUT";
+
+/** The hidden subcommand that serves a physical iPhone's runner (`commands/ios-runner-host.ts`). */
+export const IOS_RUNNER_SUBCOMMAND = "__ios-runner-host";
+
+/** build + install + launch of the runner on a phone: 15-30 s warm, much longer on a first install */
+export const IOS_RUNNER_STARTUP_MS = 150_000;
+
+export const IOS_RUNNER_KIND: HelperKind = {
+	label: "warden iOS runner host",
+	platform: "ios",
+	rowPrefix: "ios_runner_spawn",
+	dir: iosRunnerDir,
+	socketTag: "wirun",
+	field: "iosRunner",
+	envKey: iosRunnerEnvKey,
+	idleEnv: IOS_RUNNER_IDLE_TIMEOUT_ENV,
+	marks: (udid, socket) => [`--udid ${udid}`, `--socket ${socket}`],
+	locate: (_host, _udid, _opts, deps) => {
+		const self = (deps.self ?? selfCommand)();
+		const binary = self[self.length - 1];
+		return binary === undefined
+			? {
+					success: false,
+					error: { code: "E_HELPER_MISSING", message: "cannot tell how to re-run warden", retryable: false },
+				}
+			: ok(binary);
+	},
+	command: ({ id, socket, idleSeconds, self }) => [
+		...self,
+		IOS_RUNNER_SUBCOMMAND,
+		"--udid",
+		id,
+		"--socket",
+		socket,
+		"--idle-timeout",
+		String(idleSeconds),
+	],
+	hint: "unlock the phone and run `warden doctor`; the last lines of the log say why the runner did not start",
+	startupMs: IOS_RUNNER_STARTUP_MS,
+};
+
 const rowKey = (kind: HelperKind, id: string) => `${kind.rowPrefix}:${id}`;
 
 type SpawnRow = { pid: number; at: number };
@@ -456,7 +517,8 @@ function claimSpawnRow(
 	return store.transaction(() => {
 		const current = parseRow(store.getMeta(rowKey(kind, udid)));
 		const now = deps.now();
-		const live = current !== undefined && now - current.at < ROW_STALE_MS && deps.pidAlive(current.pid);
+		const live =
+			current !== undefined && now - current.at < (kind.startupMs ?? ROW_STALE_MS) && deps.pidAlive(current.pid);
 		if (live) return false;
 		store.setMeta(rowKey(kind, udid), JSON.stringify({ pid: deps.pid, at: now } satisfies SpawnRow));
 		return true;
@@ -602,7 +664,7 @@ function spawnHelper(
 	const self = (deps.self ?? selfCommand)();
 	const cmd = kind.command({ binary: located.data, id: udid, socket: socketPath, idleSeconds: idle.data, self });
 	unlinkQuietly(socketPath);
-	const spawned = deps.spawnDetached({ cmd, logPath, signalMs: SIGNAL_WAIT_MS });
+	const spawned = deps.spawnDetached({ cmd, logPath, signalMs: kind.startupMs ?? SIGNAL_WAIT_MS });
 	const binary = realPath(deps, located.data);
 	const mtimeMs = deps.mtime?.(binary);
 	const lease = currentLease(host.store(), kind, udid);
@@ -846,17 +908,15 @@ export async function ensureHelperOf<C extends HelperClient>(
 	if (!made.success) return made;
 	const a = made.data;
 	const { socketPath, logPath, started } = a;
+	const liveWaitMs = kind.startupMs ?? SPAWN_LIVE_WAIT_MS;
 	try {
 		for (;;) {
 			const step = await attempt(a);
 			if (step.kind === "done") return step.result;
 			if (step.kind === "retry") continue;
-			if (deps.now() - started >= SPAWN_LIVE_WAIT_MS) {
+			if (deps.now() - started >= liveWaitMs) {
 				if (a.spawned !== undefined) abandonSpawn(a, a.spawned);
-				return unavailable(
-					`${kind.label} did not answer on ${socketPath} within ${SPAWN_LIVE_WAIT_MS} ms`,
-					`see ${logPath}`
-				);
+				return unavailable(`${kind.label} did not answer on ${socketPath} within ${liveWaitMs} ms`, `see ${logPath}`);
 			}
 			await deps.sleep(POLL_MS);
 		}
@@ -1078,7 +1138,7 @@ export function sweepDeadHelpers(
 	return removed;
 }
 
-const HELPER_KINDS: readonly HelperKind[] = [SIMD_KIND, ANDROID_HOST_KIND];
+const HELPER_KINDS: readonly HelperKind[] = [SIMD_KIND, ANDROID_HOST_KIND, IOS_RUNNER_KIND];
 
 export const defaultAndroidHostDeps: HelperDeps<RemoteClient> = {
 	...defaultHelperDeps,
@@ -1122,4 +1182,26 @@ export function stopAndroidHost(
 	opts: { socketPath?: string; deps?: HelperDeps<RemoteClient> } = {}
 ): Promise<StopOutcome> {
 	return stopHelperOf(ANDROID_HOST_KIND, host, serial, opts.deps ?? defaultAndroidHostDeps, opts);
+}
+
+/**
+ * `ensureHelper` for a physical iPhone: its resident `warden __ios-runner-host`, which keeps `xcodebuild` running the
+ * XCUITest runner on the phone and proxies its wire to `$WARDEN_HOME/ios-runner/<udid>.sock`. The socket speaks the
+ * `warden-simd` protocol, so the client is the same `SimdClient`.
+ */
+export function ensureIosRunner(
+	host: HelperHost & Required<Pick<HelperHost, "store">>,
+	udid: string,
+	opts: EnsureHelperOptions = {}
+): Promise<Result<HelperInfo, UiError>> {
+	return ensureHelperOf(IOS_RUNNER_KIND, host, udid, opts.deps ?? defaultHelperDeps, opts);
+}
+
+/** `stopHelper` for a physical iPhone's runner host. */
+export function stopIosRunner(
+	host: StopHost,
+	udid: string,
+	opts: { socketPath?: string; deps?: HelperDeps } = {}
+): Promise<StopOutcome> {
+	return stopHelperOf(IOS_RUNNER_KIND, host, udid, opts.deps ?? defaultHelperDeps, opts);
 }

@@ -3723,3 +3723,16 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 (Did you mean claim?)
 (add --help for usage)"
 `;
+
+exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
+"$ warden __ios-runner-host --help
+Usage: warden __ios-runner-host [options]
+
+resident iPhone runner host behind \`warden ui\` (internal)
+
+Options:
+  --udid <udid>
+  --socket <path>
+  --idle-timeout <seconds>
+  -h, --help                display help for command"
+`;

@@ -166,6 +166,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./android-host")).androidHostCommand,
 	},
 	{
+		name: "__ios-runner-host",
+		summary: "resident iPhone runner host behind `warden ui` (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-host")).iosRunnerHostCommand,
+	},
+	{
 		name: "ui-collect",
 		summary: "background console + network collector for `warden ui logs start` (internal)",
 		hidden: true,

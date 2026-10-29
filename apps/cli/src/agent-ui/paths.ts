@@ -43,6 +43,11 @@ export function helperRoutesFile(ctx: Pick<CommandContext, "env">, module: strin
 	);
 }
 
+/** `$WARDEN_HOME/ios-runner`: the resident `warden __ios-runner-host` processes' sockets (`<udid>.sock`) and logs. */
+export function iosRunnerDir(host: Pick<CommandContext, "env">): string {
+	return join(wardenHome(host.env), "ios-runner");
+}
+
 /** `$WARDEN_HOME/android-host`: the resident `warden __android-host` processes' sockets and logs. */
 export function androidHostDir(host: Pick<CommandContext, "env">): string {
 	return join(wardenHome(host.env), "android-host");
