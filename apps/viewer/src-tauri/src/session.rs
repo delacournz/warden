@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 use std::sync::RwLock;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -31,6 +32,9 @@ pub struct Session {
     pub scope: Scope,
     pub title: String,
     pub platform: Platform,
+    /// The parent will not keep stdin open: EOF no longer ends the session, expiry does.
+    #[serde(default)]
+    pub detached: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +53,8 @@ pub struct ViewerInfo {
     pub title: String,
     pub platform: Platform,
     pub expires_at: String,
+    pub detached: bool,
+    pub expired: bool,
 }
 
 /// Credentials for one outgoing request.
@@ -129,7 +135,17 @@ impl SessionState {
             title: s.title.clone(),
             platform: s.platform,
             expires_at: s.expires_at.clone(),
+            detached: s.detached,
+            expired: is_expired(&s.expires_at, OffsetDateTime::now_utc()),
         }
+    }
+
+    pub fn detached(&self) -> bool {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).detached
+    }
+
+    pub fn expires_at(&self) -> String {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).expires_at.clone()
     }
 
     pub fn credentials(&self) -> Credentials {
@@ -159,6 +175,31 @@ pub fn pump_refreshes<R: BufRead>(reader: R, state: &SessionState, on_eof: impl 
     on_eof();
 }
 
+/// True once `expires_at` (RFC 3339) is not after `now`. An unparseable value counts as expired, so
+/// a malformed token never keeps a detached window live.
+pub fn is_expired(expires_at: &str, now: OffsetDateTime) -> bool {
+    match OffsetDateTime::parse(expires_at, &Rfc3339) {
+        Ok(at) => at <= now,
+        Err(_) => true,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EofAction {
+    /// The parent died: close the window and exit 0.
+    Exit,
+    /// Detached: keep the token we hold until it expires.
+    HoldUntilExpiry,
+}
+
+pub fn eof_action(detached: bool) -> EofAction {
+    if detached {
+        EofAction::HoldUntilExpiry
+    } else {
+        EofAction::Exit
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "event", rename_all = "lowercase")]
 pub enum Event<'a> {
@@ -183,7 +224,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    const START: &str = r#"{"apiUrl":"https://api.warden.co.nz","deviceId":"d1","token":"wvt_a","expiresAt":"2030-01-01T00:00:00Z","scope":"drive","title":"iphone-17 · warden","platform":"ios"}"#;
+    const START: &str = r#"{"apiUrl":"https://api.warden.co.nz","deviceId":"d1","token":"wvt_a","expiresAt":"2030-01-01T00:00:00Z","scope":"drive","title":"iphone-17 · warden","platform":"ios","detached":false}"#;
 
     #[test]
     fn parses_the_start_line() {
@@ -250,6 +291,38 @@ mod tests {
         assert!(!json.contains("token"));
         assert!(json.contains("\"deviceId\":\"d1\""));
         assert!(json.contains("\"scope\":\"drive\""));
+    }
+
+    #[test]
+    fn detached_defaults_to_false_and_parses_true() {
+        assert!(!parse_session(START).unwrap().detached);
+        let detached = START.replace("\"detached\":false", "\"detached\":true");
+        assert!(parse_session(&detached).unwrap().detached);
+        assert!(SessionState::new(parse_session(&detached).unwrap()).detached());
+    }
+
+    #[test]
+    fn eof_closes_when_attached_and_holds_when_detached() {
+        assert_eq!(eof_action(false), EofAction::Exit);
+        assert_eq!(eof_action(true), EofAction::HoldUntilExpiry);
+    }
+
+    #[test]
+    fn expiry_is_judged_against_the_clock() {
+        let now = OffsetDateTime::parse("2030-01-01T00:00:00Z", &Rfc3339).unwrap();
+        assert!(!is_expired("2030-01-01T00:00:01Z", now));
+        assert!(is_expired("2030-01-01T00:00:00Z", now));
+        assert!(is_expired("2029-12-31T23:59:59Z", now));
+        assert!(is_expired("not a date", now));
+    }
+
+    #[test]
+    fn info_reports_expired_and_detached() {
+        let past = START.replace("2030-01-01T00:00:00Z", "2001-01-01T00:00:00Z");
+        let info = SessionState::new(parse_session(&past).unwrap()).info();
+        assert!(info.expired);
+        assert!(!info.detached);
+        assert!(!SessionState::new(parse_session(START).unwrap()).info().expired);
     }
 
     #[test]

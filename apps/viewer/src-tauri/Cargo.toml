@@ -19,6 +19,7 @@ tauri-plugin-dialog = "2"
 # Rust-side logging to stderr: stdout carries the process contract and nothing else.
 tauri-plugin-log = "2"
 log = "0.4"
+time = { version = "0.3", features = ["parsing"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # rustls so the bundle never links the system TLS stack.

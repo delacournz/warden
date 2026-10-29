@@ -1,7 +1,9 @@
 mod device;
 mod session;
 
-use session::{emit, Event, SessionState};
+use session::{emit, EofAction, Event, SessionState};
+use tauri::Emitter;
+use time::OffsetDateTime;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
@@ -9,6 +11,17 @@ use tauri_plugin_log::{Target, TargetKind};
 fn fail(message: &str) -> ! {
     emit(&Event::Error { message });
     std::process::exit(1)
+}
+
+/// Detached sessions outlive stdin. Wait for the held token to expire, then tell the window to drop
+/// the stream; the process stays up until the user closes the window.
+fn hold_until_expiry(handle: &tauri::AppHandle) {
+    let state = handle.state::<SessionState>();
+    let expires_at = state.expires_at();
+    while !session::is_expired(&expires_at, OffsetDateTime::now_utc()) {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    let _ = handle.emit("viewer-expired", ());
 }
 
 pub fn run() {
@@ -44,7 +57,12 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let state = handle.state::<SessionState>();
-                session::pump_refreshes(std::io::stdin().lock(), &state, || handle.exit(0));
+                session::pump_refreshes(std::io::stdin().lock(), &state, || {
+                    match session::eof_action(state.detached()) {
+                        EofAction::Exit => handle.exit(0),
+                        EofAction::HoldUntilExpiry => hold_until_expiry(&handle),
+                    }
+                });
             });
             Ok(())
         })

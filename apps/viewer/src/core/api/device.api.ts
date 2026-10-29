@@ -10,6 +10,8 @@ export type ViewerInfo = {
 	title: string;
 	platform: Platform;
 	expiresAt: string;
+	detached: boolean;
+	expired: boolean;
 };
 
 export class DeviceError extends Error {

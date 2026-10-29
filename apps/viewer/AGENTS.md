@@ -10,9 +10,10 @@ Tauri v2, Vite, React 19, TanStack Router (file routes, `__root` + `index`), Tai
 
 - Launch: the binary with no args. Nothing secret on argv or env.
 - stdin, JSON lines:
-  - First: `{"apiUrl","deviceId","token":"wvt_…","expiresAt","scope":"view"|"drive","title","platform":"ios"|"android"}`
+  - First: `{"apiUrl","deviceId","token":"wvt_…","expiresAt","scope":"view"|"drive","title","platform":"ios"|"android","detached":boolean}`
   - Later: `{"token","expiresAt"}` replaces the token in memory.
-  - EOF: the parent died; close the window, exit 0.
+  - EOF with `detached:false`: the parent died; close the window, exit 0.
+  - EOF with `detached:true`: keep the held token and the window. When `expiresAt` passes, Rust emits `viewer-expired`; the window drops the stream and shows "Access expired, run warden view again". Exit 0 when the user closes the window.
 - stdout, JSON lines only: `{"event":"ready"}` (window up), `{"event":"streaming"}` (first frame, once), `{"event":"error","message"}` (fatal). Logs go to stderr.
 - Exit: 0 on window close or stdin EOF, 1 on a fatal startup error (bad first line, unsupported OS).
 
