@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import * as device from "../../core/api/device.api.ts";
 import { useDeviceInput } from "../input/use-device-input.ts";
+import { actionAvailability } from "../toolbar/availability.ts";
 import { CHROME_HEIGHT, CHROME_WIDTH, SCREEN_INSET } from "../toolbar/layout.ts";
 import { Titlebar } from "../toolbar/titlebar.tsx";
 import { StreamState } from "./stream-state.tsx";
@@ -100,6 +101,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 	};
 
 	const unreachable = error?.code === "UNREACHABLE";
+	const availability = actionAvailability(status, unreachable);
 	const ring = canDrive ? "ring-1 ring-primary/50" : "ring-1 ring-border";
 
 	return (
@@ -110,6 +112,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 				driving={driving}
 				onDrivingChange={setDriving}
 				status={status}
+				availability={availability}
 				pinned={pinned}
 				onPinnedChange={onPinnedChange}
 				onOpenUrl={(url) => void run(device.openUrl(url))}

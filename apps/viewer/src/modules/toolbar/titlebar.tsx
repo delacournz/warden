@@ -1,14 +1,10 @@
-import { Button } from "@delacournz/apogee/button";
-import { Input } from "@delacournz/apogee/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@delacournz/apogee/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@delacournz/apogee/tooltip";
-import { Camera, Eye, HandPointing, Link, Minus, PushPin, X } from "@phosphor-icons/react";
-import { type FormEvent, useState } from "react";
+import { Camera, Eye, HandPointing, Minus, PushPin, X } from "@phosphor-icons/react";
 import type { Scope } from "../../core/api/device.api.ts";
 import type { StreamStatus } from "../stream/whep-session.ts";
+import type { Availability } from "./availability.ts";
 import { IconButton, IconToggle } from "./icon-button.tsx";
 import { TITLEBAR_HEIGHT } from "./layout.ts";
-import { normalizeUrl } from "./url.ts";
+import { OpenUrlAction } from "./open-url-action.tsx";
 
 const STATUS = {
 	connecting: { dot: "bg-warning animate-pulse motion-reduce:animate-none", label: "Connecting" },
@@ -23,6 +19,7 @@ type TitlebarProps = {
 	driving: boolean;
 	onDrivingChange: (driving: boolean) => void;
 	status: StreamStatus;
+	availability: Availability;
 	pinned: boolean;
 	onPinnedChange: (pinned: boolean) => void;
 	onOpenUrl: (url: string) => void;
@@ -44,6 +41,7 @@ export function Titlebar({
 	driving,
 	onDrivingChange,
 	status,
+	availability,
 	pinned,
 	onPinnedChange,
 	onOpenUrl,
@@ -51,18 +49,7 @@ export function Titlebar({
 	onMinimize,
 	onClose,
 }: TitlebarProps) {
-	const [url, setUrl] = useState("");
-	const [open, setOpen] = useState(false);
 	const state = STATUS[status];
-	const target = normalizeUrl(url);
-
-	const submit = (event: FormEvent) => {
-		event.preventDefault();
-		if (!target) return;
-		onOpenUrl(target);
-		setUrl("");
-		setOpen(false);
-	};
 
 	return (
 		<header
@@ -80,53 +67,8 @@ export function Titlebar({
 				aria-label="Device actions"
 				className="flex items-center gap-0.5 opacity-60 transition-opacity duration-150 group-focus-within/bar:opacity-100 group-hover/bar:opacity-100 motion-reduce:transition-none"
 			>
-				{scope === "drive" && (
-					<Popover open={open} onOpenChange={setOpen}>
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<PopoverTrigger
-										render={
-											<Button
-												variant="ghost"
-												size="icon-xs"
-												aria-label="Open URL on device"
-												className="text-muted-foreground hover:text-foreground"
-											/>
-										}
-									/>
-								}
-							>
-								<Link />
-							</TooltipTrigger>
-							<TooltipContent side="bottom">Open URL on device</TooltipContent>
-						</Tooltip>
-						<PopoverContent align="end" sideOffset={8}>
-							<form className="flex w-72 flex-col gap-2" onSubmit={submit}>
-								<label htmlFor="open-url" className="text-xs font-medium">
-									Open a URL on the device
-								</label>
-								<div className="flex gap-2">
-									<Input
-										id="open-url"
-										size="sm"
-										placeholder="example.com or app://path"
-										value={url}
-										onChange={(e) => setUrl(e.target.value)}
-										autoComplete="off"
-										autoCorrect="off"
-										spellCheck={false}
-										autoFocus
-									/>
-									<Button type="submit" size="sm" disabled={!target}>
-										Open
-									</Button>
-								</div>
-							</form>
-						</PopoverContent>
-					</Popover>
-				)}
-				<IconButton label="Save screenshot" onClick={onScreenshot}>
+				{scope === "drive" && <OpenUrlAction onOpenUrl={onOpenUrl} disabledReason={availability.reason} />}
+				<IconButton label="Save screenshot" onClick={onScreenshot} disabledReason={availability.reason}>
 					<Camera />
 				</IconButton>
 				{scope === "drive" && (
@@ -134,6 +76,7 @@ export function Titlebar({
 						label={driving ? "Driving. Switch to watching" : "Watching. Switch to driving"}
 						pressed={driving}
 						onPressedChange={onDrivingChange}
+						disabledReason={availability.reason}
 					>
 						{driving ? <HandPointing /> : <Eye />}
 					</IconToggle>
