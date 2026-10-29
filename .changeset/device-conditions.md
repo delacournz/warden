@@ -16,3 +16,4 @@
 - `warden ui network` is now a group: `network log` shows the request log (the old `warden ui network [n]` still works and points to it), and `network set <preset>`, `network flap`, `network fault`, `network status`, `network reset` set conditions on the device.
 - New `warden ui location set|route|gpx|scenario|clear|status` and `warden ui clock set|advance|status|reset`; `warden ui status` lists the conditions active on the lease.
 - Releasing a lease also puts a still-running iOS app launched with network or clock conditions back online and on the real clock.
+- More conditions: app permissions (`device.permissions.set`, `warden ui permission`), timezone and locale, text size and contrast (`device.a11y`), battery level and charging (Android real, iOS status bar only), Android memory warnings and iOS push notifications. Each is undone when the lease is released.
