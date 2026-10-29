@@ -145,7 +145,11 @@ impl SessionState {
     }
 
     pub fn expires_at(&self) -> String {
-        self.0.read().unwrap_or_else(|e| e.into_inner()).expires_at.clone()
+        self.0
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .expires_at
+            .clone()
     }
 
     pub fn credentials(&self) -> Credentials {
@@ -322,7 +326,11 @@ mod tests {
         let info = SessionState::new(parse_session(&past).unwrap()).info();
         assert!(info.expired);
         assert!(!info.detached);
-        assert!(!SessionState::new(parse_session(START).unwrap()).info().expired);
+        assert!(
+            !SessionState::new(parse_session(START).unwrap())
+                .info()
+                .expired
+        );
     }
 
     #[test]

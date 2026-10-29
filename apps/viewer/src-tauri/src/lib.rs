@@ -3,9 +3,9 @@ mod session;
 
 use session::{emit, EofAction, Event, SessionState};
 use tauri::Emitter;
-use time::OffsetDateTime;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
+use time::OffsetDateTime;
 
 /// Report a fatal startup error on the stdout contract and exit 1.
 fn fail(message: &str) -> ! {
