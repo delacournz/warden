@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readEnv } from "@delacour/warden-e2e/env";
 import { findBun, helperDir, parsePerfFlag, runnerArgv, shardSpecs, specEnv } from "./bun-runner";
 
 describe("runnerArgv", () => {
@@ -126,6 +127,32 @@ describe("specEnv perf", () => {
 	test("absent unless asked for; empty budgets are not exported", () => {
 		const env = specEnv({ ...base, perfBudgets: {} });
 		expect(Object.keys(env).filter((k) => k.includes("PERF") || k === "WARDEN_BIN")).toEqual([]);
+	});
+});
+
+describe("specEnv conditions", () => {
+	const base = {
+		platform: "ios" as const,
+		bundleId: "com.x.app",
+		launchArgs: [],
+		out: "/o",
+		timeouts: { timeoutMs: 1, actionTimeoutMs: 1, assertionTimeoutMs: 1 },
+		specsDir: "/f",
+		helperDir: "/h",
+		version: "1",
+	};
+
+	test("WARDEN_CONDITIONS is the suite's conditions as JSON and the spec process reads it back", () => {
+		const conditions = { network: "3g", location: { lat: 1, lon: 2 } } as const;
+		const env = specEnv({ ...base, conditions });
+		expect(env.WARDEN_CONDITIONS).toBe(JSON.stringify(conditions));
+		const read = readEnv({ WARDEN_UDID: "u", WARDEN_BUNDLE_ID: "b", ...env });
+		expect(read.success && read.data?.conditions).toEqual(conditions);
+	});
+
+	test("absent when the suite sets none", () => {
+		expect("WARDEN_CONDITIONS" in specEnv(base)).toBe(false);
+		expect("WARDEN_CONDITIONS" in specEnv({ ...base, conditions: {} })).toBe(false);
 	});
 });
 

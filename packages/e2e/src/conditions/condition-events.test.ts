@@ -40,7 +40,7 @@ describe("condition events in results.jsonl", () => {
 
 	test("malformed and foreign lines are skipped", () => {
 		const text = [
-			'{"type":"condition","area":"clock","value":{},"at":1}',
+			'{"type":"condition","area":"battery","value":{},"at":1}',
 			"{",
 			"null",
 			JSON.stringify(net(3, "online")),
@@ -56,5 +56,18 @@ describe("condition events in results.jsonl", () => {
 			location: { kind: "point", lat: 7, lon: 0 },
 		});
 		expect(activeConditionsAt(events, 100).network).toEqual({ kind: "online" });
+	});
+
+	test("clock and fault events are read back; the clock is an active area", () => {
+		const clock: ConditionEvent = { type: "condition", area: "clock", value: { kind: "offset", ms: 5 }, at: 2 };
+		const faults: ConditionEvent = {
+			type: "condition",
+			area: "faults",
+			value: { kind: "faults", rules: [{ match: "a", action: { kind: "reset" } }] },
+			at: 3,
+		};
+		const text = [clock, faults].map((e) => JSON.stringify(e)).join("\n");
+		expect(readConditionEvents(text)).toEqual([clock, faults]);
+		expect(activeConditionsAt([clock, faults], 9)).toEqual({ clock: { kind: "offset", ms: 5 } });
 	});
 });

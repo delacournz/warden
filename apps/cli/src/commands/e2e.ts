@@ -678,6 +678,7 @@ export async function specPlan(
 			bin: selfCommand(),
 			...(perf.data === undefined ? {} : { perf: perf.data }),
 			...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
+			...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
 		},
 	});
 }

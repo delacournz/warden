@@ -59,3 +59,13 @@ describe("perf budgets", () => {
 		expect(issues({ perf: { extra: 1 } })).not.toEqual([]);
 	});
 });
+
+describe("e2e.<suite>.conditions", () => {
+	test("network, location and clock, strict keys", () => {
+		expect(
+			suite({ conditions: { network: "3g", location: { lat: 1, lon: 2 }, clock: "2026-01-01T00:00:00Z" } }).conditions
+		).toEqual({ network: "3g", location: { lat: 1, lon: 2 }, clock: "2026-01-01T00:00:00Z" });
+		expect(issues({ conditions: { network: "5g" } })).not.toEqual([]);
+		expect(issues({ conditions: { battery: 1 } })).not.toEqual([]);
+	});
+});

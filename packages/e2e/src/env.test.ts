@@ -162,4 +162,16 @@ describe("perf env", () => {
 		const plain = readEnv(base);
 		expect(plain.success && plain.data && "perf" in plain.data).toBe(false);
 	});
+
+	test("WARDEN_CONDITIONS is the suite's conditions as JSON; a bad value is reported by name", () => {
+		const config = { network: "3g", location: { lat: 1, lon: 2 }, clock: "2026-01-01T00:00:00Z" } as const;
+		expect(read({ ...base, WARDEN_CONDITIONS: JSON.stringify(config) })?.conditions).toEqual(config);
+		const plain = readEnv(base);
+		expect(plain.success && plain.data && "conditions" in plain.data).toBe(false);
+		for (const bad of ["{", '{"network":"5g"}']) {
+			const res = readEnv({ ...base, WARDEN_CONDITIONS: bad });
+			expect(res.success).toBe(false);
+			expect(res.success ? "" : res.error).toContain("WARDEN_CONDITIONS");
+		}
+	});
 });

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { conditionsOf } from "./conditions/device-conditions";
 import { createDevice, type Device } from "./device";
 import { el, fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { E2eEnv } from "./env";
@@ -55,6 +56,41 @@ describe("traceDevice", () => {
 			"device.hideKeyboard",
 		]);
 		expect(spans().every((s) => s.ok)).toBe(true);
+	});
+
+	test("condition calls are device.network.* / location.* / clock.* / timeline spans", async () => {
+		const { device, spans } = setup();
+		await device.network.set("offline");
+		await device.network.during("3g", async () => undefined);
+		await device.network.fault([]);
+		await device.network.status();
+		await device.network.reset();
+		await device.location.set({ lat: 1, lon: 2 });
+		await device.location.scenario("freeway");
+		await device.location.clear();
+		await device.timeline([]);
+		expect(spans().map((s) => s.op)).toEqual([
+			"device.network.set",
+			"device.network.during",
+			"device.network.fault",
+			"device.network.status",
+			"device.network.reset",
+			"device.location.set",
+			"device.location.scenario",
+			"device.location.clear",
+			"device.timeline",
+		]);
+	});
+
+	test("a failing condition call is an ok:false span", async () => {
+		const { device, spans } = setup();
+		await expect(device.network.set("5g" as "3g")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+		expect(spans()[0]).toMatchObject({ op: "device.network.set", ok: false, code: "INVALID_ARGUMENT" });
+	});
+
+	test("the wrapped device keeps its runner hooks", () => {
+		const { device } = setup();
+		expect(conditionsOf(device)).toBeDefined();
 	});
 
 	test("results and arguments pass through", async () => {

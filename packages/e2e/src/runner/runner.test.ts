@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readConditionEvents } from "../conditions/condition-events";
 import { readResults, type TestResult } from "./results";
 import { readTrace } from "./trace";
 
@@ -362,6 +363,27 @@ describe("launch", () => {
 			'before launches=1 args=["--initialUrl","http://x"]',
 			'after launches=2 args=["--initialUrl","http://x","--extra"]',
 		]);
+	});
+});
+
+describe("conditions", () => {
+	test("the suite baseline is applied before the launch and each test starts from it again", async () => {
+		const run = await runSpec("conditions", { WARDEN_CONDITIONS: '{"network":"3g"}' });
+		expect(run.exitCode).toBe(0);
+		expect(run.log).toEqual([
+			"first inject=true nets=3g",
+			"second inject=true nets=3g,offline,3g,3g,3g flapping=false",
+			"locations=point,clear",
+		]);
+		const events = readConditionEvents(readFileSync(join(run.out, "results.jsonl"), "utf8"));
+		expect(events.map((e) => e.area)).toContain("location");
+		expect(events.some((e) => e.area === "network" && e.value.kind === "offline")).toBe(true);
+	});
+
+	test("without conditions the launch is plain and an untouched test makes no condition call", async () => {
+		const run = await runSpec("conditions");
+		expect(run.exitCode).toBe(0);
+		expect(run.log[0]).toBe("first inject=false nets=");
 	});
 });
 

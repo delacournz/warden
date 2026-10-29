@@ -1,6 +1,11 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { LocationCondition, NetworkCondition } from "@delacour/warden-core/conditions/conditions.types";
+import type {
+	ClockCondition,
+	HostFault,
+	LocationCondition,
+	NetworkCondition,
+} from "@delacour/warden-core/conditions/conditions.types";
 
 /**
  * One applied condition transition, the evidence line that lets a failure show which network/location was
@@ -9,7 +14,9 @@ import type { LocationCondition, NetworkCondition } from "@delacour/warden-core/
  */
 export type ConditionEvent =
 	| { type: "condition"; area: "network"; value: NetworkCondition; at: number }
-	| { type: "condition"; area: "location"; value: LocationCondition; at: number };
+	| { type: "condition"; area: "location"; value: LocationCondition; at: number }
+	| { type: "condition"; area: "clock"; value: ClockCondition; at: number }
+	| { type: "condition"; area: "faults"; value: { kind: "faults"; rules: readonly HostFault[] }; at: number };
 
 export type ConditionSink = (event: ConditionEvent) => void;
 
@@ -34,7 +41,7 @@ function parseEvent(line: string): ConditionEvent | undefined {
 	}
 	if (typeof json !== "object" || json === null) return undefined;
 	const e = json as Record<string, unknown>;
-	const known = e.area === "network" || e.area === "location";
+	const known = e.area === "network" || e.area === "location" || e.area === "clock" || e.area === "faults";
 	const shaped = e.type === "condition" && typeof e.at === "number" && typeof e.value === "object" && e.value !== null;
 	return known && shaped ? (json as ConditionEvent) : undefined;
 }
@@ -51,10 +58,11 @@ export function readConditionEvents(text: string): ConditionEvent[] {
 export function activeConditionsAt(
 	events: readonly ConditionEvent[],
 	at: number
-): { network?: NetworkCondition; location?: LocationCondition } {
-	const active: { network?: NetworkCondition; location?: LocationCondition } = {};
+): { network?: NetworkCondition; location?: LocationCondition; clock?: ClockCondition } {
+	const active: { network?: NetworkCondition; location?: LocationCondition; clock?: ClockCondition } = {};
 	let networkAt = Number.NEGATIVE_INFINITY;
 	let locationAt = Number.NEGATIVE_INFINITY;
+	let clockAt = Number.NEGATIVE_INFINITY;
 	for (const e of events) {
 		if (e.at > at) continue;
 		if (e.area === "network" && e.at >= networkAt) {
@@ -63,6 +71,9 @@ export function activeConditionsAt(
 		} else if (e.area === "location" && e.at >= locationAt) {
 			active.location = e.value;
 			locationAt = e.at;
+		} else if (e.area === "clock" && e.at >= clockAt) {
+			active.clock = e.value;
+			clockAt = e.at;
 		}
 	}
 	return active;

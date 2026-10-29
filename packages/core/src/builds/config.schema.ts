@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES, slimConfigSchema } from "../batch/preset.schema";
+import { conditionsConfigSchema } from "../conditions/conditions.config";
 import { validateProfile } from "../sims/slim.profile";
 import type { AppOption } from "./app-option.schema";
 import { DEFAULT_EAS_PROFILE } from "./builds.defaults";
@@ -148,6 +149,8 @@ export const wardenConfigSchema = z
 		slim: topLevelSlimSchema.optional(),
 		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */
 		perf: perfConfigSchema.optional(),
+		/** device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area) */
+		conditions: conditionsConfigSchema.optional(),
 		/** Android emulator settings */
 		android: z
 			.object({

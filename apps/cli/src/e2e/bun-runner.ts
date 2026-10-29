@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import type { ConditionsConfig } from "@delacour/warden-core/conditions/conditions.config";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -78,6 +79,8 @@ export type SpecEnvOptions = {
 	perf?: readonly string[] | undefined;
 	/** the suite's `perf.budgets` (`WARDEN_PERF_BUDGETS`) */
 	perfBudgets?: Readonly<Record<string, number>> | undefined;
+	/** the suite's `conditions` (`WARDEN_CONDITIONS`): what every spec starts from */
+	conditions?: ConditionsConfig | undefined;
 };
 
 /**
@@ -101,6 +104,9 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		...(o.perfBudgets === undefined || Object.keys(o.perfBudgets).length === 0
 			? {}
 			: { [ENV_NAMES.perfBudgets]: JSON.stringify(o.perfBudgets) }),
+		...(o.conditions === undefined || Object.keys(o.conditions).length === 0
+			? {}
+			: { [ENV_NAMES.conditions]: JSON.stringify(o.conditions) }),
 		BUN_BE_BUN: "1",
 	};
 }
