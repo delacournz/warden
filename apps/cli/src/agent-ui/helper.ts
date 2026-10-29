@@ -22,6 +22,7 @@ import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { readServedIdentity } from "../ios-runner/served-identity";
 import { DEVICE_LOCKED_HINT, driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
@@ -111,7 +112,27 @@ export type HelperDeps<C extends HelperClient = SimdClient> = {
 	command?: ProcessCommand;
 	/** argv that re-runs this warden (the Android host is warden itself). Absent: `selfCommand()` */
 	self?: () => string[];
+	/** the iPhone runner host's build identity (`IosRunnerIdentityDeps`). Absent: a resident host is never replaced for it */
+	runner?: IosRunnerIdentityDeps;
 };
+
+/**
+ * What `ensureIosRunner` needs to tell whether the resident `__ios-runner-host` serves the runner the current sources
+ * would build. Injected so tests never touch xcodebuild or the keychain.
+ */
+export type IosRunnerIdentityDeps = {
+	/** the build identity the current sources, team and Xcode would give; undefined: cannot be told, leave the host */
+	expected: () => Promise<string | undefined>;
+	/** the identity the host on `socketPath` serves; undefined: none recorded (a host that predates identities) */
+	served: (socketPath: string) => string | undefined;
+	/** `ownerKey` of the calling session, to tell a lease of its own from someone else's */
+	caller: () => Promise<string | undefined>;
+	/** the one stderr line when a host is replaced */
+	note: (line: string) => void;
+};
+
+/** The stderr note when a changed runner makes `ensureIosRunner` replace the host. */
+export const RUNNER_CHANGED_NOTE = "runner changed; restarting the iPhone runner host";
 
 /**
  * Watch a spawned helper's stdout for the line that says its socket is accepting: the helper's own `ready` event
@@ -737,18 +758,53 @@ async function answered<C extends HelperClient>(a: Attempt<C>, client: C): Promi
 
 /** Something answers on the socket: use it, unless it is stale and this caller may replace it. */
 async function onAnswer<C extends HelperClient>(a: Attempt<C>, client: C): Promise<Step<C>> {
-	const stale =
-		a.spawned === undefined && !a.replaced ? staleReason(a.host, a.kind, a.udid, a.opts, a.deps) : undefined;
-	if (stale === undefined) return answered(a, client);
+	const checkable = a.spawned === undefined && !a.replaced;
+	const runner = checkable ? await runnerChange(a) : "same";
+	if (runner === "blocked") {
+		await client.close();
+		return { kind: "done", result: { success: false, error: runnerBusy(a) } };
+	}
+	const stale = checkable && runner === "changed" ? "the runner changed" : undefined;
+	const other = checkable && stale === undefined ? staleReason(a.host, a.kind, a.udid, a.opts, a.deps) : undefined;
+	if (stale === undefined && other === undefined) return answered(a, client);
 	await client.close();
 	if (!a.held && !claimSpawnRow(a.host, a.kind, a.udid, a.deps)) return WAIT;
 	a.held = true;
 	a.replaced = true;
+	if (stale !== undefined) a.deps.runner?.note(RUNNER_CHANGED_NOTE);
 	const pid = readState(a.host, a.udid)[a.kind.field]?.pid;
 	const stop = await stopRecorded(a.host, a.kind, a.udid, { socketPath: a.socketPath, deps: a.deps });
 	// a helper that could not be stopped is still the recorded one: `spawnHelper` refuses to start beside it
 	if (stop.warning === undefined) a.stopped = pid;
 	return RETRY;
+}
+
+/**
+ * Whether the iPhone runner host answering on the socket serves another runner build than the current sources would
+ * give. `same`: it does not (or this kind has no identity, or it cannot be told). `changed`: replace it. `blocked`:
+ * it changed, but the phone is leased to a different session, whose run must not be killed under it. A host with no
+ * recorded identity (older warden) counts as changed. The check comes before the lease exemption of `staleReason`:
+ * a run that holds the lease is exactly the one that started the old runner.
+ */
+async function runnerChange<C extends HelperClient>(a: Attempt<C>): Promise<"same" | "changed" | "blocked"> {
+	const runner = a.deps.runner;
+	if (runner === undefined || a.kind.field !== "iosRunner") return "same";
+	const expected = await runner.expected();
+	if (expected === undefined || runner.served(a.socketPath) === expected) return "same";
+	const lease = currentLease(a.host.store(), a.kind, a.udid);
+	if (lease === undefined) return "changed";
+	const caller = await runner.caller();
+	return caller !== undefined && caller === lease.owner ? "changed" : "blocked";
+}
+
+function runnerBusy<C extends HelperClient>(a: Attempt<C>): UiError {
+	return uiError(
+		"device_busy",
+		`the iPhone runner changed (new warden or edited runner sources), but ${a.udid} is leased to another session whose run uses the old runner host`,
+		{
+			hint: "wait for that session to finish or release the phone, then run again: the host is restarted on the next call",
+		}
+	);
 }
 
 /** The recorded helper's pid when it is alive (and not reused by another program), else undefined. */
@@ -1195,11 +1251,30 @@ export function stopAndroidHost(
  * `warden-simd` protocol, so the client is the same `SimdClient`.
  */
 export function ensureIosRunner(
-	host: HelperHost & Required<Pick<HelperHost, "store">>,
+	host: CommandContext,
 	udid: string,
 	opts: EnsureHelperOptions = {}
 ): Promise<Result<HelperInfo, UiError>> {
-	return ensureHelperOf(IOS_RUNNER_KIND, host, udid, opts.deps ?? defaultHelperDeps, opts);
+	return ensureHelperOf(IOS_RUNNER_KIND, host, udid, opts.deps ?? iosRunnerDeps(host), opts);
+}
+
+/**
+ * `defaultHelperDeps` plus the runner identity: a resident host that serves an older runner build (new warden, edited
+ * runner sources) is replaced by the next client, unless the phone is leased to another session (`device_busy`).
+ */
+function iosRunnerDeps(host: CommandContext): HelperDeps {
+	return {
+		...defaultHelperDeps,
+		runner: {
+			expected: async () => (await import("../ios-runner/identity")).expectedRunnerIdentity(host),
+			served: (socketPath) => readServedIdentity(socketPath),
+			caller: async () => {
+				const { resolveOwner } = await import("../claim-flags");
+				return ownerKey(resolveOwner(host));
+			},
+			note: (line) => host.err(line),
+		},
+	};
 }
 
 /**

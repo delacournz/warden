@@ -4,6 +4,7 @@ import type { CommandContext } from "../context";
 import { createRunnerBuild } from "../ios-runner/build-port";
 import { startProxy } from "../ios-runner/proxy";
 import { devicectlList, type RouteDeps } from "../ios-runner/route";
+import { removeServedIdentity, writeServedIdentity } from "../ios-runner/served-identity";
 import { type SessionDeps, type SessionEnd, startSession } from "../ios-runner/session";
 import type { RunnerBuildPort, RunnerFault, SpawnRunner } from "../ios-runner/types";
 import { reportError } from "../output";
@@ -76,6 +77,8 @@ async function host(ctx: CommandContext, deps: IosRunnerHostDeps, opts: HostOpti
 		reportError(ctx, "__ios-runner-host", `${code}: ${message}`);
 		return EXIT_ENGINE;
 	};
+	// a leftover file from an earlier host must never vouch for this one
+	removeServedIdentity(socket);
 	const built = await (deps.build ?? createRunnerBuild(ctx)).ensure({ udid, env: ctx.env });
 	if (!built.success) return die(built.error.code, built.error.message);
 
@@ -118,6 +121,8 @@ async function host(ctx: CommandContext, deps: IosRunnerHostDeps, opts: HostOpti
 		}
 	}, deps.pollMs ?? 1000);
 
+	// which build this host serves: clients replace a host whose runner differs from the current sources
+	writeServedIdentity(socket, built.data.derivedData);
 	// the one stdout line of a healthy host: the spawner (`helper.ts` `watchStart`) connects the moment it reads it
 	ctx.out(JSON.stringify({ event: "ready", socket, pid: process.pid }));
 	const end = await finished;
@@ -130,6 +135,7 @@ async function host(ctx: CommandContext, deps: IosRunnerHostDeps, opts: HostOpti
 	}
 	await session.stop();
 	await proxy.data.close();
+	removeServedIdentity(socket);
 	return end.kind === "fault" ? EXIT_ENGINE : 0;
 }
 
@@ -140,7 +146,8 @@ async function host(ctx: CommandContext, deps: IosRunnerHostDeps, opts: HostOpti
  * until `shutdown`, SIGTERM, or `--idle-timeout` seconds with no client (default 600). A runner that cannot start
  * prints one `fatal` event on stdout (code `E_DEVICE_LOCKED`, `E_TUNNEL_DOWN`, `E_INSTALL_FAILED`, …) and exits 3; one
  * that dies later sends the same event to connected clients. Spawned and recorded by `agent-ui/helper.ts`
- * (`ensureIosRunner`), never run by hand. Exit 0 ended · 1 bad arguments · 3 runner not started or died.
+ * (`ensureIosRunner`), never run by hand. While it runs, `<socket>.build.json` names the runner build it serves
+ * (`ios-runner/identity.ts`), which is how a client notices that the runner sources changed. Exit 0 ended · 1 bad arguments · 3 runner not started or died.
  */
 export function createIosRunnerHostCommand(deps: IosRunnerHostDeps = {}) {
 	return defineCommand({

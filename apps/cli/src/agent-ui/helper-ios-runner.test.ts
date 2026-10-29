@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Owner } from "@delacour/warden-core/types";
 import type { DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
 import type { Result } from "@delacour/warden-types/result";
@@ -237,5 +238,117 @@ describe("connectIosRunner", () => {
 		const { c, deps } = setup(10 * IOS_RUNNER_STARTUP_MS);
 		const res = await connectIosRunner(c, UDID, { deps });
 		expect(res.success).toBe(false);
+	});
+});
+
+const BUILD_OLD = "/h/ios-runner/LN69P7N673/27A9275-aaaaaaaaaa/dd";
+const BUILD_NEW = "/h/ios-runner/LN69P7N673/27A9275-bbbbbbbbbb/dd";
+const agentA: Owner = { kind: "agent", sessionId: "A", cwd: "/w" };
+const agentB: Owner = { kind: "agent", sessionId: "B", cwd: "/w" };
+
+/**
+ * `setup` plus the runner-identity deps: `build.expected` is what a client computes from the sources now, and a
+ * spawned host serves whatever that was when it started (`build.served`; undefined = a host that predates identities).
+ */
+function identitySetup(caller: Owner = agentA) {
+	const base = setup();
+	const build = { expected: BUILD_OLD as string | undefined, served: undefined as string | undefined, writes: true };
+	const notes: string[] = [];
+	const spawn = base.deps.spawnDetached;
+	base.deps.spawnDetached = (spec) => {
+		const spawned = spawn(spec);
+		build.served = build.writes ? build.expected : undefined;
+		return spawned;
+	};
+	base.deps.runner = {
+		expected: async () => build.expected,
+		served: () => build.served,
+		caller: async () => `${caller.kind}:${caller.kind === "agent" ? caller.sessionId : ""}`,
+		note: (line) => notes.push(line),
+	};
+	return { ...base, build, notes };
+}
+
+function leaseFor(c: TestContext, owner: Owner): void {
+	c.db.insertLease(
+		{ resource: { kind: "device", platform: "ios", id: UDID, name: "iPhone" }, owner, ttlMs: 3_600_000 },
+		c.now()
+	);
+}
+
+describe("ensureIosRunner: a runner that changed", () => {
+	test("a host serving the build the sources still describe is reused, with no note", async () => {
+		const { c, deps, spawns, notes } = identitySetup();
+		await ensureIosRunner(c, UDID, { deps });
+		await ensureIosRunner(c, UDID, { deps });
+		expect(spawns).toHaveLength(1);
+		expect(notes).toEqual([]);
+	});
+
+	test("changed runner sources replace the host once, with one note", async () => {
+		const { c, deps, spawns, requests, notes, build } = identitySetup();
+		await ensureIosRunner(c, UDID, { deps });
+		build.expected = BUILD_NEW;
+		const res = await ensureIosRunner(c, UDID, { deps });
+		expect(res.success).toBe(true);
+		expect(requests).toContain("shutdown");
+		expect(spawns).toHaveLength(2);
+		expect(notes).toEqual(["runner changed; restarting the iPhone runner host"]);
+		expect(build.served).toBe(BUILD_NEW);
+		await ensureIosRunner(c, UDID, { deps });
+		expect(spawns).toHaveLength(2);
+	});
+
+	test("a host that predates identities (serves none) counts as changed", async () => {
+		const { c, deps, spawns, notes, build } = identitySetup();
+		build.writes = false;
+		await ensureIosRunner(c, UDID, { deps });
+		build.writes = true;
+		await ensureIosRunner(c, UDID, { deps });
+		expect(spawns).toHaveLength(2);
+		expect(notes).toHaveLength(1);
+	});
+
+	test("an identity that cannot be computed (no team, no Xcode) leaves the host alone", async () => {
+		const { c, deps, spawns, build } = identitySetup();
+		await ensureIosRunner(c, UDID, { deps });
+		build.expected = undefined;
+		const res = await ensureIosRunner(c, UDID, { deps });
+		expect(res.success).toBe(true);
+		expect(spawns).toHaveLength(1);
+	});
+
+	test("two clients seeing the change at once restart the host once", async () => {
+		const { c, deps, spawns, notes, build } = identitySetup();
+		await ensureIosRunner(c, UDID, { deps });
+		build.expected = BUILD_NEW;
+		const [a, b] = await Promise.all([ensureIosRunner(c, UDID, { deps }), ensureIosRunner(c, UDID, { deps })]);
+		expect(a.success && b.success).toBe(true);
+		expect(spawns).toHaveLength(2);
+		expect(notes).toHaveLength(1);
+	});
+
+	test("the caller's own lease does not stop the restart", async () => {
+		const { c, deps, spawns, build } = identitySetup(agentA);
+		leaseFor(c, agentA);
+		await ensureIosRunner(c, UDID, { deps });
+		build.expected = BUILD_NEW;
+		await ensureIosRunner(c, UDID, { deps });
+		expect(spawns).toHaveLength(2);
+	});
+
+	test("a phone leased to another session keeps its host: device_busy, nothing stopped, nothing spawned", async () => {
+		const first = identitySetup(agentB);
+		leaseFor(first.c, agentB);
+		await ensureIosRunner(first.c, UDID, { deps: first.deps });
+		first.build.expected = BUILD_NEW;
+		first.deps.runner = { ...(first.deps.runner as NonNullable<HelperDeps["runner"]>), caller: async () => "agent:A" };
+		const res = await ensureIosRunner(first.c, UDID, { deps: first.deps });
+		if (res.success) throw new Error("expected device_busy");
+		expect(res.error.code).toBe("device_busy");
+		expect(res.error.message).toContain("runner changed");
+		expect(first.requests).not.toContain("shutdown");
+		expect(first.spawns).toHaveLength(1);
+		expect(first.notes).toEqual([]);
 	});
 });

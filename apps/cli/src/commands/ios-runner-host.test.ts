@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
+import { readServedIdentity } from "../ios-runner/served-identity";
 import { type FakeProc, fakeProc, fakeRoute, manualTimers, UDID } from "../ios-runner/session.testing";
 import type { RunnerBuildPort } from "../ios-runner/types";
 import { type TestContext, testContext } from "../testing";
@@ -85,6 +87,28 @@ describe("warden __ios-runner-host", () => {
 		procs[0]?.exit(0);
 		expect(await done).toBe(0);
 		expect(c.stdout).toHaveLength(1);
+	});
+
+	test("records the derived data it serves next to the socket before ready, and removes it on exit", async () => {
+		const port = await tcpRunner();
+		const { c, socket, procs, done } = run({
+			script: (p) => p.emit(`WARDEN_RUNNER_READY {"event":"ready","port":${port}}`),
+		});
+		await waitFor(() => c.stdout[0]);
+		expect(readServedIdentity(socket)).toBe("/c/dd");
+		procs[0]?.exit(0);
+		expect(await done).toBe(0);
+		expect(readServedIdentity(socket)).toBeUndefined();
+		expect(existsSync(`${socket}.build.json`)).toBe(false);
+	});
+
+	test("a build failure leaves no identity behind", async () => {
+		const failing: RunnerBuildPort = {
+			ensure: async () => ({ success: false, error: { code: "E_NO_TEAM", message: "no signing team" } }),
+		};
+		const { socket, done } = run({ build: failing });
+		expect(await done).toBe(3);
+		expect(readServedIdentity(socket)).toBeUndefined();
 	});
 
 	test("a locked phone prints one fatal event E_DEVICE_LOCKED and exits 3", async () => {

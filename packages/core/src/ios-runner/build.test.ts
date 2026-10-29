@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { ok } from "@delacour/warden-types/result";
@@ -7,7 +7,7 @@ import type { BuildLockDeps } from "../builds/lock";
 import type { Exec, ExecOptions, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
 import type { Owner } from "../types";
-import { buildRunnerArgv, ensureRunnerBuild } from "./build";
+import { buildRunnerArgv, ensureRunnerBuild, expectedRunnerDerivedData } from "./build";
 import { readRunnerMeta } from "./cache";
 import type { EnsureRunnerBuildInput, RunnerBuildError } from "./runner-build.types";
 import { certificatesFromPem, sha1Hex } from "./signing";
@@ -298,5 +298,42 @@ describe("ensureRunnerBuild", () => {
 		const staged = join(dir, "ios-runner", "src");
 		const hash = basename(dirname(res.data.derivedData)).split("-")[1];
 		expect(readFileSync(join(staged, `0.7.0-${hash}`, "ios-runner/Host/App.swift"), "utf8")).toBe("app");
+	});
+});
+
+describe("expectedRunnerDerivedData", () => {
+	test("names the derived data ensureRunnerBuild uses, without building or staging", async () => {
+		const tools = fakeTools();
+		const expected = await expectedRunnerDerivedData(input(tools));
+		const built = await ensureRunnerBuild(input(tools));
+		if (!expected.success || !built.success) throw new Error("expected both to succeed");
+		expect(expected.data).toBe(built.data.derivedData);
+	});
+
+	test("runs no xcodebuild and writes nothing", async () => {
+		const tools = fakeTools();
+		const expected = await expectedRunnerDerivedData(input(tools));
+		expect(expected.success).toBe(true);
+		expect(tools.builds()).toHaveLength(0);
+		expect(existsSync(join(dir, "ios-runner", "src"))).toBe(false);
+	});
+
+	test("changes with the runner sources, the Xcode build and the team", async () => {
+		const tools = fakeTools();
+		const base = await expectedRunnerDerivedData(input(tools));
+		const edited = await expectedRunnerDerivedData(
+			input(tools, { loadSources: async () => ok({ ...SOURCES, "ios-runner/Host/App.swift": "app2" }) })
+		);
+		const otherTeam = await expectedRunnerDerivedData(
+			input(tools, { env: { DEVELOPER_DIR: "/x", WARDEN_IOS_TEAM_ID: "ABCDE12345" } })
+		);
+		if (!base.success || !edited.success || !otherTeam.success) throw new Error("expected success");
+		expect(edited.data).not.toBe(base.data);
+		expect(otherTeam.data).not.toBe(base.data);
+	});
+
+	test("a source set without the project fails like the build", async () => {
+		const res = await expectedRunnerDerivedData(input(fakeTools(), { loadSources: async () => ok({ a: "b" }) }));
+		expect(res.success).toBe(false);
 	});
 });

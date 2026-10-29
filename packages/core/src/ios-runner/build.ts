@@ -15,7 +15,7 @@ import {
 import { classifyRunnerOutput, outputTail, UNLOCK_LINE } from "./classify";
 import type { EnsureRunnerBuildInput, RunnerBuild, RunnerBuildError } from "./runner-build.types";
 import { resolveRunnerBundleId, resolveTeam } from "./signing";
-import { stageRunnerSources } from "./stage";
+import { runnerSourceHash, stageRunnerSources } from "./stage";
 
 export const RUNNER_SCHEME = "WardenRunner";
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
@@ -94,6 +94,31 @@ async function runBuild(argv: string[], input: EnsureRunnerBuildInput): Promise<
 		built: false,
 		error: known ?? buildFailed(execError(argv.slice(0, 2), result), outputTail(output)),
 	};
+}
+
+/**
+ * The derived-data directory `ensureRunnerBuild` would use for the current team, Xcode build and runner sources,
+ * without staging, building or taking the build lease: one Xcode version probe, the team lookup and a hash of the
+ * sources. It is the identity of a runner build; a resident host that serves another directory serves an old runner.
+ */
+export async function expectedRunnerDerivedData(
+	input: Pick<EnsureRunnerBuildInput, "team" | "configTeamId" | "env" | "home" | "exec" | "loadSources">
+): AsyncResult<string, RunnerBuildError> {
+	const home = input.home ?? wardenHome(input.env);
+	const xcode = await readXcode(input.exec, input.env);
+	if (!xcode.success) return failed(buildFailed(`no usable Xcode: ${xcode.error}`));
+	const team = await resolveTeam({
+		explicit: input.team,
+		configTeamId: input.configTeamId,
+		env: input.env,
+		exec: input.exec,
+	});
+	if (!team.success) return team;
+	const loaded = await input.loadSources();
+	if (!loaded.success) return failed(buildFailed(loaded.error));
+	const project = "ios-runner/WardenRunner.xcodeproj/project.pbxproj";
+	if (!(project in loaded.data)) return failed(buildFailed(`the iOS runner sources lack ${project}`));
+	return ok(derivedDataDir(runnerCacheDir(home, team.data.team, xcode.data.build, runnerSourceHash(loaded.data))));
 }
 
 /**

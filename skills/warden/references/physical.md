@@ -56,6 +56,7 @@ Boot, create, shut down, erase or slim a phone; `release --shutdown` and `gc` le
 - Signing team: `WARDEN_IOS_TEAM_ID` > `ios.teamId` > the keychain when it holds one team; several → `ios_team_ambiguous`.
 - Runner build failures carry a code: `no_account no_team ios_team_ambiguous bundle_id_taken device_locked developer_mode_off runner_untrusted ui_automation_disabled device_busy ddi_unavailable unsupported_os build_failed` (see troubleshooting 55, 54).
 - Single finger only: `pinch rotate gesture press shake press back` → `E_UNSUPPORTED`. Specs: `test(t, { requires: ["pinch"] }, …)` skips on a phone.
+- The runner host stays resident (10 min idle). When the runner changes (new warden, edited `packages/e2e/native/ios-runner`) the next `warden ui` / `warden e2e` replaces it by itself (stderr: `runner changed; restarting the iPhone runner host`); no manual `__ios-runner-restart`. If the phone is leased to another session it fails `device_busy` (exit 2) and leaves their host alone: wait or release, then run again.
 - Speed: tap ≈ 0.8 s, snapshot 0.15–0.3 s, launch ≈ 2.5 s. Do not shorten waits to compensate; use `wait`.
 - No app install through warden yet (`--app` fails before leasing): install the app by hand.
 - Needs on the phone: Developer Mode, trusted computer and developer certificate, Enable UI Automation, unlocked while the run starts.
