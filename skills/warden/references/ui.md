@@ -101,7 +101,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `record stop` | `[--no-verify] [--suite <n>] [--overwrite]` | write spec/helper, merge ids, print lints, run the spec once on this device (helpers are not run); exit 1 keeps file and journal |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets (default 20 runs; cold start, settle and open capped at 3-5); `--metro` for the tree metric; stops the device's helper: unshared device only |
 | `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only (`network` here = the request log) |
-| `net` `location` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
+| `net` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
 
@@ -131,6 +131,20 @@ Every change prints one line (`--json`: `result.action` is `net`, `net-flap`, `n
 - A `status:` fault answers plain `http://` only. HTTPS is a CONNECT tunnel warden does not decrypt, so an `https://` request to that host is **reset** instead of getting the status; a warning says so. `reset`, `delay` and `blackhole` work on both.
 - Physical devices: `E_UNSUPPORTED` (network and location need an emulator console / simulator). `location route --loop` on iOS: `E_UNSUPPORTED` (simctl has no loop).
 - Faults and a flap do not combine: `net fault` while a flap runs, or `net flap` while faults are set, is `failed`; `net reset` / `net fault --clear` first.
+
+### Clock (`clock`)
+
+`warden ui clock` mocks the device wall clock; recorded on your lease, undone on release.
+
+| Command | Args | Does |
+|---|---|---|
+| `clock set` | `<iso> [--frozen] [--relaunch]` | clock reads `<iso>` (ticks on); `--frozen` holds it |
+| `clock advance` | `<dur> [--relaunch]` | move the clock forward `<dur>` (`2d`, `1h`) from where it is now |
+| `clock status` | | recorded offset / frozen instant; reads only |
+| `clock reset` | `[--relaunch]` | real time back |
+
+- Android: `--frozen` is `E_UNSUPPORTED` (the emulator clock cannot stop). iOS: only the app launched with warden's dylib sees the clock; without it the clock applies from the next launch, or pass `--relaunch`.
+- A large offset breaks HTTPS (certificates look expired or not yet valid): `advance` warns; `clock reset` before network work.
 
 ## Selector grammar
 

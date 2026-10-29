@@ -5,10 +5,16 @@ import { ensureLeaseProxy } from "@delacour/warden-core/netproxy/lease-proxy";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-e2e/conditions/route-ticker.spawn";
 import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-e2e/conditions/scheduler.spawn";
+import { leaseClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import { driverErr } from "@delacour/warden-e2e/driver/errors";
-import { leaseNetworkProxy, proxyConditionsFor } from "@delacour/warden-e2e/driver/network-proxy";
+import {
+	lazyLeaseNetworkProxy,
+	leaseNetworkProxy,
+	proxyConditionsFor,
+} from "@delacour/warden-e2e/driver/network-proxy";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
 import { compiledSubcommand } from "../self-command";
 import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import type { UiDevice } from "./device";
@@ -19,14 +25,29 @@ import { processCommand } from "./process-identity";
 const GEO_FIX_MS = 10_000;
 
 function proxyDeps(ctx: CommandContext) {
-	const command = compiledSubcommand("__netproxy");
+	const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
 	return { store: ctx.store(), env: ctx.env, now: ctx.now, ...(command ? { command } : {}) };
+}
+
+/** What a `warden ui` driver gets for the caller's lease: its shaping proxy (touched only when a condition needs it) and the clock recorder. */
+export function leaseDriverExtras(ctx: CommandContext, device: UiDevice) {
+	const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
+	return {
+		networkProxy: lazyLeaseNetworkProxy({
+			leaseId: device.lease.id,
+			env: ctx.env,
+			now: ctx.now,
+			openStore: () => ({ success: true, data: ctx.store() }),
+			...(command ? { command } : {}),
+		}),
+		clockRecorder: leaseClockRecorder(ctx.store(), device.lease.id, ctx.now),
+	};
 }
 
 /** iOS: the device helper's driver, with the lease's shaping proxy so `network` / `networkFaults` work. */
 async function openIos(ctx: CommandContext, device: UiDevice): Promise<Result<ConditionsPort, UiError>> {
 	const { connectHelper } = await import("./helper");
-	return connectHelper(ctx, device.udid, {}, { networkProxy: leaseNetworkProxy(proxyDeps(ctx), device.lease) });
+	return connectHelper(ctx, device.udid, {}, leaseDriverExtras(ctx, device));
 }
 
 /**
@@ -34,13 +55,19 @@ async function openIos(ctx: CommandContext, device: UiDevice): Promise<Result<Co
  * `adb emu geo fix` for a point. A moving location is the route ticker's job.
  */
 async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Result<ConditionsPort, UiError>> {
-	const [{ openAdbSession }, { createAndroidNetwork }, { geoFixArgv, geoFixFailure }, { realClock }] =
-		await Promise.all([
-			import("@delacour/warden-e2e/driver/android/adb-session"),
-			import("@delacour/warden-e2e/driver/android/android-network"),
-			import("@delacour/warden-e2e/driver/android/android-argv"),
-			import("@delacour/warden-e2e/driver/android/android-device"),
-		]);
+	const [
+		{ openAdbSession },
+		{ createAndroidNetwork },
+		{ geoFixArgv, geoFixFailure },
+		{ realClock },
+		{ applyAndroidClock },
+	] = await Promise.all([
+		import("@delacour/warden-e2e/driver/android/adb-session"),
+		import("@delacour/warden-e2e/driver/android/android-network"),
+		import("@delacour/warden-e2e/driver/android/android-argv"),
+		import("@delacour/warden-e2e/driver/android/android-device"),
+		import("@delacour/warden-e2e/driver/android/android-clock"),
+	]);
 	const serial = device.udid;
 	const { adb } = androidTools(ctx.env);
 	const session = openAdbSession({ adb, serial });
@@ -67,6 +94,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 			const failure = geoFixFailure(res);
 			return failure === undefined ? { success: true, data: undefined } : driverErr("E_IO", failure);
 		},
+		clock: (op) => applyAndroidClock({ session, exec: ctx.exec, adb, serial }, op),
 		close: () => session.close(),
 	});
 }

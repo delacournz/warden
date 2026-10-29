@@ -15,6 +15,7 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
+import type { ClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
@@ -869,7 +870,7 @@ export async function connectHelper(
 	ctx: CommandContext,
 	udid: string,
 	opts: EnsureHelperOptions = {},
-	extras: { networkProxy?: NetworkProxyPort } = {}
+	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
 ): Promise<Result<Driver, UiError>> {
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
@@ -882,6 +883,7 @@ export async function connectHelper(
 		...(client ? { client } : {}),
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
 		...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
+		...(extras.clockRecorder ? { clockRecorder: extras.clockRecorder } : {}),
 		now: ctx.now,
 	});
 	if (driver.success) return driver;

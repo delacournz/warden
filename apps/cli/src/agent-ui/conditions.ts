@@ -1,19 +1,21 @@
 import { resolve } from "node:path";
 import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type {
+	ClockCondition,
 	ConditionRecord,
 	HostFault,
 	LocationCondition,
 	NetworkCondition,
 	OwnedProcess,
 } from "@delacour/warden-core/conditions/conditions.types";
-import { formatDuration } from "@delacour/warden-core/duration";
+import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
 import type { Lease } from "@delacour/warden-core/types";
 import type { SchedulerConfig } from "@delacour/warden-e2e/conditions/scheduler.config";
-import type { NetworkState } from "@delacour/warden-e2e/driver/driver.types";
+import type { ClockState, NetworkState } from "@delacour/warden-e2e/driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
 import { compiledSubcommand } from "../self-command";
 import { describeLocation, describeNetwork } from "./condition-text";
 import {
@@ -238,7 +240,7 @@ function schedulerConfig(
 ): SchedulerConfig {
 	const { lease } = device;
 	const bundleId = readState(ctx, device.udid).app;
-	const proxyCommand = compiledSubcommand("__netproxy");
+	const proxyCommand = compiledSubcommand(NETPROXY_SUBCOMMAND);
 	return {
 		platform: device.platform,
 		id: device.udid,
@@ -687,6 +689,172 @@ export function uiLocation(
 				return locationStatus(ctx, env, device);
 			default:
 				return fail("usage", `unknown location action "${action}"`, "set, route, gpx, scenario, clear or status");
+		}
+	});
+}
+
+export type ClockOptionValues = UiOptionValues & { frozen?: true; relaunch?: true };
+
+const LARGE_OFFSET_MS = 86_400_000;
+
+/** The wall-clock shift a recorded clock means now: `fixed` runs on from when it was set, `frozen` holds. */
+function recordedClock(record: Extract<ConditionRecord, { area: "clock" }> | undefined, now: number) {
+	const value: ClockCondition = record?.value ?? { kind: "real" };
+	switch (value.kind) {
+		case "real":
+			return { condition: value, offsetMs: 0, frozen: false, nowMs: now };
+		case "offset":
+			return { condition: value, offsetMs: value.ms, frozen: false, nowMs: now + value.ms };
+		case "fixed": {
+			const offsetMs = Date.parse(value.at) - (record?.setAt ?? now);
+			return { condition: value, offsetMs, frozen: false, nowMs: now + offsetMs };
+		}
+		case "frozen":
+			return { condition: value, offsetMs: 0, frozen: true, nowMs: Date.parse(value.at) };
+	}
+}
+
+function describeClock(state: ReturnType<typeof recordedClock>): string {
+	const at = new Date(state.nowMs).toISOString();
+	if (state.condition.kind === "real") return "clock real";
+	return `clock ${state.frozen ? "frozen at" : "now"} ${at}${state.frozen ? "" : ` (offset ${state.offsetMs >= 0 ? "+" : "-"}${formatDuration(Math.abs(state.offsetMs))})`}`;
+}
+
+function clockWarnings(offsetMs: number, state?: ClockState): string[] {
+	return [
+		...(Math.abs(offsetMs) >= LARGE_OFFSET_MS
+			? ["a large clock offset breaks HTTPS: certificates fail once the clock passes their dates"]
+			: []),
+		...(state?.appliesOnLaunch ? ["staged: no running app carries the dylib; it applies from the next launch"] : []),
+	];
+}
+
+async function applyClock(
+	ctx: CommandContext,
+	deps: Required<ConditionsDeps>,
+	device: UiDevice,
+	action: string,
+	condition: ClockCondition,
+	opts: ClockOptionValues
+): Promise<Result<UiSuccess, UiError>> {
+	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
+		const applied = fromDriver(await port.clock(condition, networkOptions(ctx, device, opts as NetOptionValues)));
+		if (!applied.success) return applied;
+		if (condition.kind === "real") clearCondition(ctx.store(), device.lease.id, "clock");
+		else {
+			const saved = recordCondition(ctx.store(), device.lease.id, "clock", condition, ctx.now());
+			if (!saved.success) return fail("failed", `could not record the clock condition: ${saved.error}`);
+		}
+		const state = applied.data;
+		return ok({
+			device: deviceInfo(device),
+			result: {
+				action,
+				condition,
+				offsetMs: state.offsetMs,
+				frozen: state.frozen,
+				nowMs: state.nowMs,
+				staged: state.appliesOnLaunch === true,
+			},
+			text:
+				condition.kind === "real"
+					? "clock real"
+					: `clock ${state.frozen ? "frozen at" : "now"} ${new Date(state.nowMs).toISOString()}`,
+			...(clockWarnings(state.offsetMs, state).length > 0 ? { warnings: clockWarnings(state.offsetMs, state) } : {}),
+		});
+	});
+}
+
+/** `advance <dur>`: from what is recorded (an offset adds, frozen moves its instant, none starts an offset). */
+function advancedClock(
+	ctx: CommandContext,
+	record: Extract<ConditionRecord, { area: "clock" }> | undefined,
+	by: number
+): ClockCondition {
+	const now = recordedClock(record, ctx.now());
+	if (now.frozen) return { kind: "frozen", at: new Date(now.nowMs + by).toISOString() };
+	return { kind: "offset", ms: now.offsetMs + by };
+}
+
+function clockSet(
+	ctx: CommandContext,
+	deps: Required<ConditionsDeps>,
+	device: UiDevice,
+	arg: string | undefined,
+	opts: ClockOptionValues
+) {
+	const at = arg === undefined ? Number.NaN : Date.parse(arg);
+	if (Number.isNaN(at)) {
+		return fail("usage", `clock set needs an ISO 8601 time, got "${arg ?? ""}"`, "2026-01-31T09:00:00Z");
+	}
+	const condition: ClockCondition = { kind: opts.frozen ? "frozen" : "fixed", at: new Date(at).toISOString() };
+	return applyClock(ctx, deps, device, "clock-set", condition, opts);
+}
+
+function clockReset(
+	ctx: CommandContext,
+	deps: Required<ConditionsDeps>,
+	device: UiDevice,
+	record: Extract<ConditionRecord, { area: "clock" }> | undefined,
+	opts: ClockOptionValues
+) {
+	if (record === undefined) {
+		return ok<UiSuccess>({
+			device: deviceInfo(device),
+			result: { action: "clock-reset", changed: false },
+			text: "clock was not changed",
+		});
+	}
+	return applyClock(ctx, deps, device, "clock-reset", { kind: "real" }, opts);
+}
+
+function clockStatus(
+	ctx: CommandContext,
+	device: UiDevice,
+	record: Extract<ConditionRecord, { area: "clock" }> | undefined
+) {
+	const state = recordedClock(record, ctx.now());
+	const warnings = clockWarnings(state.offsetMs);
+	return ok<UiSuccess>({
+		device: deviceInfo(device),
+		result: { action: "clock-status", ...state, setAt: record?.setAt ?? null },
+		text: describeClock(state),
+		...(warnings.length > 0 ? { warnings } : {}),
+	});
+}
+
+/**
+ * `warden ui clock set <iso> [--frozen]` · `advance <dur>` · `status` · `reset [--relaunch]`. Wall clock only
+ * (monotonic clocks never move). Recorded on the caller's lease; release / gc put the clock back.
+ */
+export function uiClock(
+	ctx: CommandContext,
+	deps: UiDeps,
+	action: string,
+	rest: readonly string[],
+	opts: ClockOptionValues
+): Promise<number> {
+	return runUi(ctx, deps, `clock ${action}`, opts, async (device) => {
+		const real = await resolveDeps(deps);
+		const record = recordOf(ctx, device.lease.id, "clock");
+		const [arg, ...extra] = rest;
+		if (extra.length > 0 || (action !== "set" && action !== "advance" && arg !== undefined)) {
+			return fail("usage", `unexpected argument "${extra[0] ?? arg}" for clock ${action}`);
+		}
+		switch (action) {
+			case "set":
+				return clockSet(ctx, real, device, arg, opts);
+			case "advance": {
+				const by = parseDuration(arg ?? "");
+				if (!by.success) return fail("usage", `clock advance needs a duration: ${by.error}`, "2d, 3h, 90m");
+				return applyClock(ctx, real, device, "clock-advance", advancedClock(ctx, record, by.data), opts);
+			}
+			case "status":
+				return clockStatus(ctx, device, record);
+			case "reset":
+				return clockReset(ctx, real, device, record, opts);
+			default:
+				return fail("usage", `unknown clock action "${action}"`, "set, advance, status or reset");
 		}
 	});
 }

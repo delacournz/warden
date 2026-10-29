@@ -10,7 +10,9 @@ import type { UiDevice } from "./device";
 import type { UiError } from "./output";
 
 /** The slice of a driver `warden ui net` / `location` use; `close` only disconnects. */
-export type ConditionsPort = Pick<Driver, "network" | "networkFaults" | "location"> & { close(): Promise<void> };
+export type ConditionsPort = Pick<Driver, "network" | "networkFaults" | "location" | "clock"> & {
+	close(): Promise<void>;
+};
 
 /** Everything impure the condition verbs reach; tests inject fakes, the real ones load on first use. */
 export type ConditionsDeps = {

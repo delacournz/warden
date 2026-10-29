@@ -51,4 +51,19 @@ export function registerConditionCommands(
 		const { uiLocation } = await import("./conditions");
 		done(await uiLocation(ctx, deps, action, args, opts));
 	});
+	withUiOptions(
+		cmd
+			.command("clock")
+			.description("mock the device wall clock: set <iso> [--frozen] | advance <dur> | status | reset")
+			.argument("<action>", "set <iso> | advance <dur> | status | reset")
+			.argument("[args...]", "the time or duration")
+			.option("--frozen", "set: hold the clock at that instant (iOS only; Android has no frozen clock)")
+			.option(
+				"--relaunch",
+				"iOS: relaunch the app with the dylib when it runs without (else it applies from the next launch)"
+			)
+	).action(async (action, args, opts) => {
+		const { uiClock } = await import("./conditions");
+		done(await uiClock(ctx, deps, action, args, opts));
+	});
 }

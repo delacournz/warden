@@ -1891,6 +1891,8 @@ Commands:
                                fault, status, reset
   location <action> [args...]  simulate the device location: set | route | gpx |
                                scenario | clear | status
+  clock <action> [args...]     mock the device wall clock: set <iso> [--frozen]
+                               | advance <dur> | status | reset
   help [command]               display help for command
 
 $ warden ui status --help
@@ -3332,6 +3334,38 @@ Options:
   --interval <s>         route: seconds between fixes (default 1)
   --loop                 route: start over at the end (Android; simctl cannot
                          loop)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui clock --help
+Usage: warden ui clock [options] <action> [args...]
+
+mock the device wall clock: set <iso> [--frozen] | advance <dur> | status |
+reset
+
+Arguments:
+  action                 set <iso> | advance <dur> | status | reset
+  args                   the time or duration
+
+Options:
+  --frozen               set: hold the clock at that instant (iOS only; Android
+                         has no frozen clock)
+  --relaunch             iOS: relaunch the app with the dylib when it runs
+                         without (else it applies from the next launch)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id

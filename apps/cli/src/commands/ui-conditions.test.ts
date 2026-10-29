@@ -47,6 +47,7 @@ function setup(platform: "ios" | "android" = "ios"): Setup {
 					},
 					networkFaults: (faults) => s.h.driver.networkFaults(faults),
 					location: (op) => s.h.driver.location(op),
+					clock: (op, opts) => s.h.driver.clock(op, opts),
 					close: () => s.h.driver.close(),
 				}),
 			spawnScheduler: (config) => {
@@ -509,5 +510,83 @@ describe("ui status", () => {
 		expect(doc(s.h.c).result.conditions.map((c: { area: string }) => c.area)).toEqual(["network", "location"]);
 		await s.h.run("status");
 		expect(s.h.c.stdout.join("\n")).toContain("conditions network 3g · location 1,2");
+	});
+});
+
+describe("clock", () => {
+	const clockOf = (s: Setup) => activeConditions(s.h.c.store(), lease(s)).find((r) => r.area === "clock");
+
+	test("set: a fixed instant, recorded on the lease", async () => {
+		const s = setup();
+		expect(await s.h.run("clock", "set", "2026-01-31T09:00:00Z", "--json")).toBe(0);
+		expect(s.h.driver.callsOf("clock")[0]?.op).toEqual({ kind: "fixed", at: "2026-01-31T09:00:00.000Z" });
+		expect(clockOf(s)?.value).toEqual({ kind: "fixed", at: "2026-01-31T09:00:00.000Z" });
+		expect(doc(s.h.c).result).toMatchObject({ action: "clock-set" });
+	});
+
+	test("set --frozen holds the instant", async () => {
+		const s = setup();
+		await s.h.run("clock", "set", "2026-01-31T09:00:00Z", "--frozen");
+		expect(clockOf(s)?.value).toEqual({ kind: "frozen", at: "2026-01-31T09:00:00.000Z" });
+	});
+
+	test("advance starts an offset, then adds to it", async () => {
+		const s = setup();
+		await s.h.run("clock", "advance", "2d");
+		expect(clockOf(s)?.value).toEqual({ kind: "offset", ms: 172_800_000 });
+		await s.h.run("clock", "advance", "1d", "--json");
+		expect(clockOf(s)?.value).toEqual({ kind: "offset", ms: 259_200_000 });
+		expect(doc(s.h.c).warnings?.[0]).toContain("HTTPS");
+	});
+
+	test("advance on a frozen clock moves the frozen instant", async () => {
+		const s = setup();
+		await s.h.run("clock", "set", "2026-01-01T00:00:00Z", "--frozen");
+		await s.h.run("clock", "advance", "1h");
+		expect(clockOf(s)?.value).toEqual({ kind: "frozen", at: "2026-01-01T01:00:00.000Z" });
+	});
+
+	test("a frozen Android clock is the driver's E_UNSUPPORTED, verbatim, and nothing is recorded", async () => {
+		const h = harness([snapshotOf(LOGIN)], {
+			platform: "android",
+			onCall: (call) => (call.method === "clock" ? failWith("E_UNSUPPORTED", "no frozen clock on Android") : undefined),
+			conditions: { open: async () => ok(h.driver), proxyStatus: async () => undefined, proxyPid: () => undefined },
+		});
+		expect(await h.run("clock", "set", "2026-01-01T00:00:00Z", "--frozen", "--json")).toBe(1);
+		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
+		expect(activeConditions(h.c.store(), h.c.store().listLeases()[0]?.id as string)).toEqual([]);
+	});
+
+	test("status reads the record without opening the device", async () => {
+		const s = setup();
+		await s.h.run("clock", "advance", "2d");
+		s.h.opens.count = 0;
+		expect(await s.h.run("clock", "status", "--json")).toBe(0);
+		expect(s.h.opens.count).toBe(0);
+		expect(doc(s.h.c).result).toMatchObject({ action: "clock-status", offsetMs: 172_800_000, frozen: false });
+	});
+
+	test("reset puts real time back and forgets the area; with nothing set it opens nothing", async () => {
+		const s = setup();
+		expect(await s.h.run("clock", "reset", "--json")).toBe(0);
+		expect(s.h.opens.count).toBe(0);
+		await s.h.run("clock", "advance", "1h");
+		expect(await s.h.run("clock", "reset")).toBe(0);
+		expect(s.h.driver.callsOf("clock").at(-1)?.op).toEqual({ kind: "real" });
+		expect(clockOf(s)).toBeUndefined();
+	});
+
+	test.each([
+		[["clock", "set", "yesterday"]],
+		[["clock", "set"]],
+		[["clock", "advance", "soon"]],
+		[["clock", "advance"]],
+		[["clock", "warp"]],
+		[["clock", "reset", "now"]],
+	])("usage: %j", async (argv) => {
+		const s = setup();
+		expect(await s.h.run(...argv, "--json")).toBe(1);
+		expect(doc(s.h.c).error.code).toBe("usage");
+		expect(s.h.driver.callsOf("clock")).toHaveLength(0);
 	});
 });

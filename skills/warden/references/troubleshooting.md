@@ -57,6 +57,8 @@
 | 51 | The app ignores `net 3g` on Android, or loss / faults do nothing | Loss and faults go through the system `http_proxy`; the app, a raw socket or `Proxy.NO_PROXY` bypasses it. Speed, delay and offline are native and reach everything | Check with `warden ui net status` (proxy connections stay 0); route the app's HTTP client through the system proxy |
 | 52 | Flapping stopped after a `net` call, or `net fault` / `net flap` is refused | A new `net` command, `reset` or `release` stops the flap; faults and a flap do not combine | `warden ui net reset`, then set one of them |
 | 53 | Location stays at the last fix after `location clear` on Android | The emulator console cannot unset a fix | Expected (warning). `location set` the point you want, or release the emulator |
+| 54 | `ui clock set --frozen` gives `E_UNSUPPORTED` on Android | The emulator clock cannot be stopped | Use `clock set <iso>` (ticks on), or freeze on iOS |
+| 55 | HTTPS fails (certificate expired / not yet valid) after `clock advance` or a far `clock set` | The device clock is outside the certificates' validity | `warden ui clock reset`, relaunch the app; keep offsets small for network specs |
 
 ## Code lookup
 
