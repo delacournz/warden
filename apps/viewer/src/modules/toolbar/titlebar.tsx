@@ -31,7 +31,7 @@ type TitlebarProps = {
 /**
  * The one bar that replaces the native title bar and toolbar. The bar and its non-interactive
  * children carry `data-tauri-drag-region` (children are `pointer-events-none` so presses fall through
- * to the bar), while buttons stay clickable. Layout: device title, connection dot and label,
+ * to the bar) and show a grab cursor, while the button groups keep the default one. Layout: device title, connection dot and label,
  * the actions (quiet until the window is hovered or focused), then the window controls. A view-scope
  * session gets no open-URL or drive controls.
  */
@@ -54,7 +54,7 @@ export function Titlebar({
 	return (
 		<header
 			data-tauri-drag-region
-			className="group/bar flex shrink-0 select-none items-center gap-1 pr-1.5 pl-3"
+			className="group/bar flex shrink-0 cursor-grab select-none items-center gap-1 pr-1.5 pl-3 active:cursor-grabbing"
 			style={{ height: TITLEBAR_HEIGHT }}
 		>
 			<h1 className="pointer-events-none min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">{title}</h1>
@@ -65,7 +65,7 @@ export function Titlebar({
 			<div
 				role="toolbar"
 				aria-label="Device actions"
-				className="flex items-center gap-0.5 opacity-60 transition-opacity duration-150 group-focus-within/bar:opacity-100 group-hover/bar:opacity-100 motion-reduce:transition-none"
+				className="flex cursor-default items-center gap-0.5 opacity-60 transition-opacity duration-150 group-focus-within/bar:opacity-100 group-hover/bar:opacity-100 motion-reduce:transition-none"
 			>
 				{scope === "drive" && <OpenUrlAction onOpenUrl={onOpenUrl} disabledReason={availability.reason} />}
 				<IconButton label="Save screenshot" onClick={onScreenshot} disabledReason={availability.reason}>
@@ -83,7 +83,7 @@ export function Titlebar({
 				)}
 			</div>
 			<span aria-hidden className="pointer-events-none mx-1 h-3.5 w-px bg-border" data-tauri-drag-region />
-			<div role="toolbar" aria-label="Window controls" className="flex items-center gap-0.5">
+			<div role="toolbar" aria-label="Window controls" className="flex cursor-default items-center gap-0.5">
 				<IconToggle label={pinned ? "Unpin from top" : "Keep on top"} pressed={pinned} onPressedChange={onPinnedChange}>
 					<PushPin />
 				</IconToggle>
