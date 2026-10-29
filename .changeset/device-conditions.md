@@ -10,3 +10,5 @@
 - iOS simulator apps get network conditions per app: launched with a small injected library that sends their traffic through the lease's shaping proxy, so presets and offline switch live without touching the Mac's network or other simulators. A running app without it fails with `E_NETWORK_RELAUNCH` unless the relaunch is opted into.
 - Spec API: `device.network.set/during/flap/fault/status/reset`, `device.location.set/route/scenario/clear`, `device.clock.set/advance/during/reset` and `device.timeline([...])`; `during` restores the previous condition even when the callback throws.
 - `warden.config.ts` takes a `conditions` key (top level or per `e2e` suite) for `network`, `location` and `clock`; each spec starts from that baseline.
+- iOS: apps using `NSURLSession.sharedSession` are shaped too, and changing a host fault cuts connections already open to that host.
+- Mock clock: shift (`offset`), set (`fixed`) or freeze (iOS) the wall clock an app sees; monotonic clocks are untouched. Android emulators set the device time; frozen time is iOS only.
