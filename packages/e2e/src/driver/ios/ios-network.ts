@@ -99,7 +99,10 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 	async function apply(opts: NetworkOptions | undefined): DriverResult<boolean> {
 		const pushed = await push();
 		if (!pushed.success) return pushed;
-		if (pushed.data.injected || !routing()) return { success: true, data: pushed.data.injected };
+		// an explicit `relaunch` is honoured for `online` too, so the next preset switches live instead of E_NETWORK_RELAUNCH
+		if (pushed.data.injected || (!routing() && opts?.relaunch !== true)) {
+			return { success: true, data: pushed.data.injected };
+		}
 		const relaunched = await ensureLaunchedInjected(opts);
 		if (!relaunched.success) return relaunched;
 		return { success: true, data: relaunched.data };

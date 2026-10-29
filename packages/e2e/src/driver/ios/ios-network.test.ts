@@ -158,6 +158,13 @@ describe("network before the app has the dylib", () => {
 		expect(result.success && result.data.appliesOnLaunch).toBeUndefined();
 	});
 
+	test("relaunch: true is honoured for online too, so later presets apply live", async () => {
+		const r = rig({ running: "com.example" });
+		const result = await r.net.network({ kind: "online" }, { bundleId: "com.example", relaunch: true });
+		expect(result.success).toBe(true);
+		expect(r.relaunches).toEqual(["com.example"]);
+	});
+
 	test("an app launched with the dylib but no proxy address needs the relaunch too", async () => {
 		const r = rig({ running: "com.example", lastBundle: "com.example" });
 		r.attach({ proxy: false });
