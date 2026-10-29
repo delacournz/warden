@@ -109,6 +109,10 @@ await device.network.fault({ match: "api.example.com", action: { kind: "status",
 await device.location.route([{ lat: 37.33, lon: -122.03 }, { lat: 37.34, lon: -122.03 }], { speedMps: 5 });
 ```
 
+- Assert timing as an ordering with a margin (`slow > online + 50`), not an absolute: an open keep-alive connection keeps its cost, so a 3g request after an online warm-up pays one round trip, not a cold handshake.
+- Only the wall clock moves. A JS timer armed while the clock was ahead waits for the shifted time after `clock.reset()`: re-read the time on demand or relaunch. A large offset breaks TLS (certificate dates).
+- Grant a permission the test needs with `device.permissions.set` before `app.open()` instead of tapping through the prompt: iOS does not always raise it.
+
 ### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (device settings)
 
 Put back when the test ends (to the suite's `conditions.permissions` / `locale` / `timezone` / `a11y`), recorded on the lease like the conditions above, and each change is a `condition` line in `results.jsonl`. Set permissions before `app.open()`: iOS terminates a running app whose permission changes.
