@@ -1825,73 +1825,93 @@ drive a leased simulator / emulator (agents): status, snapshot, find, open,
 press, fill, scroll, …
 
 Options:
-  -h, --help                   display help for command
+  -h, --help                      display help for command
 
 Commands:
-  status                       device, lease, helper and recording state
-  close                        stop this device's helper (the lease stays);
-                               --app also quits the app, --release frees the
-                               lease
-  snapshot                     the screen as @eN lines (bumps the generation)
-  find <selector...>           elements matching a selector, with @eN refs
-                               (bumps the generation)
-  open <target>                launch an app (bundle id) or open a URL; --metro
-                               starts the dev client on that Metro; --kind
-                               installs that build first
-  press <target...>            tap an element or point; an @eN older than 30 s
-                               is re-verified first
-  tap <target...>              tap an element or point; an @eN older than 30 s
-                               is re-verified first
-  fill <args...>               replace a text field's content, then read it back
-                               (use -- before text starting with -)
-  type <text>                  type into whatever has focus
-  key <name>                   press a key: Enter Backspace Tab Space Escape
-                               Delete Up Down Left Right
-  scroll <direction> [amount]  scroll content: scroll down reveals what is
-                               below; --until swipes until a selector is on
-                               screen
-  alert <action>               answer the system alert / sheet on top, or read
-                               it
-  home                         press the home button
-  back                         press back (Android only)
-  screen                       the device screen: orientation, appearance,
-                               screenshot, video
-  gesture                      touch gestures: swipe, longpress, pinch, rotate,
-                               raw paths
-  wait <args...>               poll (100 ms, --timeout) until an element is
-                               visible; also: absent <sel> | text <…> | stable
-                               [ms]
-  is <args...>                 exit 0 when the element is in that state, 1 when
-                               not
-  get <args...>                print one property of an element (count = how
-                               many match)
-  bench                        time snapshot, press, settle, tree and driver
-                               open on this device against the speed targets
-  record                       turn a warden ui session into an e2e spec: start
-                               <name> | note | use <module#fn> | undo | status |
-                               cancel | stop. The journal is kept until a
-                               successful stop or cancel
-  eval <expression>            run JavaScript in the app (Hermes) and print the
-                               value
-  tree                         the app's React components (testID, label, text,
-                               screen) with rects
-  logs [args...]               app console: logs [n] | start | stop | mark
-                               <label> | clear
-  reload                       reload the app's JavaScript
-  exceptions                   the app's uncaught exceptions
-  route                        the route key of the screen the app is on
-  devtools                     the dev session's devtools broker: status |
-                               resume
-  logpoint                     log a value whenever a source line runs, without
-                               pausing: add | list | rm | clear | hits
-  network [n]                  the app's network: log (recorded requests) | set
-                               | flap | fault | status | reset (device
-                               conditions)
-  location <action> [args...]  simulate the device location: set | route | gpx |
-                               scenario | clear | status
-  clock <action> [args...]     mock the device wall clock: set <iso> [--frozen]
-                               | advance <dur> | status | reset
-  help [command]               display help for command
+  status                          device, lease, helper and recording state
+  close                           stop this device's helper (the lease stays);
+                                  --app also quits the app, --release frees the
+                                  lease
+  snapshot                        the screen as @eN lines (bumps the generation)
+  find <selector...>              elements matching a selector, with @eN refs
+                                  (bumps the generation)
+  open <target>                   launch an app (bundle id) or open a URL;
+                                  --metro starts the dev client on that Metro;
+                                  --kind installs that build first
+  press <target...>               tap an element or point; an @eN older than 30
+                                  s is re-verified first
+  tap <target...>                 tap an element or point; an @eN older than 30
+                                  s is re-verified first
+  fill <args...>                  replace a text field's content, then read it
+                                  back (use -- before text starting with -)
+  type <text>                     type into whatever has focus
+  key <name>                      press a key: Enter Backspace Tab Space Escape
+                                  Delete Up Down Left Right
+  scroll <direction> [amount]     scroll content: scroll down reveals what is
+                                  below; --until swipes until a selector is on
+                                  screen
+  alert <action>                  answer the system alert / sheet on top, or
+                                  read it
+  home                            press the home button
+  back                            press back (Android only)
+  screen                          the device screen: orientation, appearance,
+                                  screenshot, video
+  gesture                         touch gestures: swipe, longpress, pinch,
+                                  rotate, raw paths
+  wait <args...>                  poll (100 ms, --timeout) until an element is
+                                  visible; also: absent <sel> | text <…> |
+                                  stable [ms]
+  is <args...>                    exit 0 when the element is in that state, 1
+                                  when not
+  get <args...>                   print one property of an element (count = how
+                                  many match)
+  bench                           time snapshot, press, settle, tree and driver
+                                  open on this device against the speed targets
+  record                          turn a warden ui session into an e2e spec:
+                                  start <name> | note | use <module#fn> | undo |
+                                  status | cancel | stop. The journal is kept
+                                  until a successful stop or cancel
+  eval <expression>               run JavaScript in the app (Hermes) and print
+                                  the value
+  tree                            the app's React components (testID, label,
+                                  text, screen) with rects
+  logs [args...]                  app console: logs [n] | start | stop | mark
+                                  <label> | clear
+  reload                          reload the app's JavaScript
+  exceptions                      the app's uncaught exceptions
+  route                           the route key of the screen the app is on
+  devtools                        the dev session's devtools broker: status |
+                                  resume
+  logpoint                        log a value whenever a source line runs,
+                                  without pausing: add | list | rm | clear |
+                                  hits
+  network [n]                     the app's network: log (recorded requests) |
+                                  set | flap | fault | status | reset (device
+                                  conditions)
+  location <action> [args...]     simulate the device location: set | route |
+                                  gpx | scenario | clear | status
+  clock <action> [args...]        mock the device wall clock: set <iso>
+                                  [--frozen] | advance <dur> | status | reset
+  permission <action> [pairs...]  app permissions: set
+                                  <name>=<granted|denied|unset>... | reset |
+                                  status
+  timezone <tz>                   device timezone: <IANA name> | reset | status
+                                  (iOS: applies to the app launched next)
+  locale <tag>                    the app's locale: <BCP 47 tag> | reset |
+                                  status (Android 13+; iOS: applies to the app
+                                  launched next)
+  a11y <action>                   accessibility: set [--text-size] [--bold]
+                                  [--contrast] [--reduce-motion] | reset |
+                                  status
+  battery <action>                battery: set [--level] [--charging] | reset |
+                                  status (Android emulator real; iOS status bar
+                                  only)
+  memory-warning                  send the running app a memory warning (Android
+                                  only: iOS has no mechanism that works)
+  push <payload>                  deliver a push notification to the app (iOS
+                                  only): a JSON file or inline JSON with an
+                                  \`aps\` object
+  help [command]                  display help for command
 
 $ warden ui status --help
 Usage: warden ui status [options]
@@ -3485,6 +3505,212 @@ Options:
                          has no frozen clock)
   --relaunch             iOS: relaunch the app with the dylib when it runs
                          without (else it applies from the next launch)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui permission --help
+Usage: warden ui permission [options] <action> [pairs...]
+
+app permissions: set <name>=<granted|denied|unset>... | reset | status
+
+Arguments:
+  action                 set | reset | status
+  pairs                  set: location=denied camera=granted ... (location,
+                         locationAlways, camera, photos, ...)
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui timezone --help
+Usage: warden ui timezone [options] <tz>
+
+device timezone: <IANA name> | reset | status (iOS: applies to the app launched
+next)
+
+Arguments:
+  tz                     Pacific/Auckland | reset | status
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui locale --help
+Usage: warden ui locale [options] <tag>
+
+the app's locale: <BCP 47 tag> | reset | status (Android 13+; iOS: applies to
+the app launched next)
+
+Arguments:
+  tag                    fr-FR | reset | status
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui a11y --help
+Usage: warden ui a11y [options] <action>
+
+accessibility: set [--text-size] [--bold] [--contrast] [--reduce-motion] | reset
+| status
+
+Arguments:
+  action                 set | reset | status
+
+Options:
+  --text-size <size>     a name (accessibility-large, extra-large, ...) or a
+                         font scale (1.5)
+  --bold                 bold text (Android)
+  --no-bold              bold text off
+  --contrast <mode>      increased | normal (iOS)
+  --reduce-motion        reduce motion (no mechanism on either platform:
+                         reported as skipped)
+  --no-reduce-motion     reduce motion off
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui battery --help
+Usage: warden ui battery [options] <action>
+
+battery: set [--level] [--charging] | reset | status (Android emulator real; iOS
+status bar only)
+
+Arguments:
+  action                 set | reset | status
+
+Options:
+  --level <percent>      0-100
+  --charging             plugged in and charging
+  --no-charging          on battery
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui memory-warning --help
+Usage: warden ui memory-warning [options]
+
+send the running app a memory warning (Android only: iOS has no mechanism that
+works)
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui push --help
+Usage: warden ui push [options] <payload>
+
+deliver a push notification to the app (iOS only): a JSON file or inline JSON
+with an \`aps\` object
+
+Arguments:
+  payload                payload.json | '{"aps":{"alert":"hi"}}'
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id

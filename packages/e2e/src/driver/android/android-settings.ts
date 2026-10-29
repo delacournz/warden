@@ -64,15 +64,8 @@ export const setAppLocaleArgv = (pkg: string, tag: string | null): string[] => [
 	tag ?? "",
 ];
 export const getAppLocaleArgv = (pkg: string): string[] => ["cmd", "locale", "get-app-locales", pkg];
-export const fontScaleArgv = (scale: number): string[] => ["settings", "put", "system", "font_scale", String(scale)];
+export const settingGetArgv = (table: "system" | "secure", key: string): string[] => ["settings", "get", table, key];
 export const BOLD_TEXT_ADJUSTMENT = 300;
-export const boldTextArgv = (on: boolean): string[] => [
-	"settings",
-	"put",
-	"secure",
-	"font_weight_adjustment",
-	String(on ? BOLD_TEXT_ADJUSTMENT : 0),
-];
 export const trimMemoryArgv = (pkg: string): string[] => ["am", "send-trim-memory", pkg, "RUNNING_CRITICAL"];
 export const BATTERY_RESET_ARGV: readonly string[] = ["dumpsys", "battery", "reset"];
 
@@ -89,12 +82,16 @@ export function batteryArgvs(op: { level?: number; charging?: boolean }): string
 const NOT_DECLARED = /has not requested permission|Unknown permission|not a changeable permission/i;
 
 export const APP_LOCALES_MIN_SDK = 33;
+const SETTING_ATTEMPTS = 3;
+const SETTING_SETTLE_MS = 400;
 
 export type AndroidSettingsDeps = {
 	session: AdbSession;
 	serial: string;
 	/** the session's app package, used when an op names none */
 	appPackage?: string;
+	/** wait between a settings write and its read-back (default `Bun.sleep`) */
+	sleep?: (ms: number) => Promise<void>;
 	/** the host's timezone, restored on `timezone(null)` when no previous one is given (default: `Intl`) */
 	hostTimezone?: () => string;
 };
@@ -112,6 +109,8 @@ type Ctx = {
 	serial: string;
 	shell(argv: readonly string[]): Promise<Shelled>;
 	must(argv: readonly string[]): DriverResult<string>;
+	/** `settings put`, then read back: a font change makes the system write its own value a moment later, so a put is repeated until it holds */
+	putSetting(table: "system" | "secure", key: string, value: string): DriverResult<string>;
 	packageOf(explicit: string | undefined, what: string): { bundleId: string } | ReturnType<typeof driverErr>;
 	sdk(): Promise<number>;
 };
@@ -263,12 +262,16 @@ function a11yOp(c: Ctx): Driver["a11y"] {
 			const font = fontScaleOf(op?.textSize);
 			if ("success" in font) return font;
 			notes = font.notes;
-			const done = await c.must(fontScaleArgv(font.scale));
+			const done = await c.putSetting("system", "font_scale", String(font.scale));
 			if (!done.success) return done;
 			applied.push("textSize");
 		}
 		if (op === null || op.boldText !== undefined) {
-			const done = await c.must(boldTextArgv(op?.boldText === true));
+			const done = await c.putSetting(
+				"secure",
+				"font_weight_adjustment",
+				String(op?.boldText === true ? BOLD_TEXT_ADJUSTMENT : 0)
+			);
 			if (!done.success) return done;
 			applied.push("boldText");
 		}
@@ -344,15 +347,30 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 		};
 	}
 
+	async function must(argv: readonly string[]): DriverResult<string> {
+		const done = await shell(argv);
+		return done.ok
+			? { success: true, data: done.stdout }
+			: driverErr("E_IO", done.failure ?? argv.join(" "), { detail: { serial } });
+	}
+
 	const ctx: Ctx = {
 		deps,
 		serial,
 		shell,
-		async must(argv) {
-			const done = await shell(argv);
-			return done.ok
-				? { success: true, data: done.stdout }
-				: driverErr("E_IO", done.failure ?? argv.join(" "), { detail: { serial } });
+		must,
+		async putSetting(table, key, value) {
+			const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms));
+			let last = "";
+			for (let attempt = 0; attempt < SETTING_ATTEMPTS; attempt++) {
+				const put = await must(["settings", "put", table, key, value]);
+				if (!put.success) return put;
+				await sleep(SETTING_SETTLE_MS);
+				last = (await shell(settingGetArgv(table, key))).stdout.trim();
+				// an empty read (a shell that does not answer `get`) cannot contradict the write
+				if (last === "" || Number(last) === Number(value)) return put;
+			}
+			return driverErr("E_IO", `${table} ${key} reads ${last} after setting ${value}`, { detail: { serial } });
 		},
 		packageOf(explicit, what) {
 			const bundleId = explicit ?? deps.appPackage;

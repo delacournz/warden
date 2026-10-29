@@ -61,12 +61,14 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		{ geoFixArgv, geoFixFailure },
 		{ realClock },
 		{ applyAndroidClock },
+		{ createAndroidSettings },
 	] = await Promise.all([
 		import("@delacour/warden-e2e/driver/android/adb-session"),
 		import("@delacour/warden-e2e/driver/android/android-network"),
 		import("@delacour/warden-e2e/driver/android/android-argv"),
 		import("@delacour/warden-e2e/driver/android/android-device"),
 		import("@delacour/warden-e2e/driver/android/android-clock"),
+		import("@delacour/warden-e2e/driver/android/android-settings"),
 	]);
 	const serial = device.udid;
 	const { adb } = androidTools(ctx.env);
@@ -79,7 +81,9 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		clock: realClock,
 		proxy: leaseNetworkProxy(proxyDeps(ctx), device.lease),
 	});
+	const settings = createAndroidSettings({ session, serial });
 	return ok({
+		...settings,
 		network: net.network,
 		networkFaults: net.networkFaults,
 		location: async (op) => {

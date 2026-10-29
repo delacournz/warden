@@ -56,9 +56,16 @@ export function conditionsLine(records: readonly ConditionRecord[]): string | un
 				return `location ${describeLocation(record.value)}`;
 			case "clock":
 				return `clock ${record.value.kind}`;
-			default:
-				return record.area;
+			case "permission":
+				return `permission ${record.value.grants.map((g) => `${g.permission}=${g.state}`).join(",")}`;
+			case "locale":
+				return `locale ${[record.value.timezone, record.value.locale].filter((v) => v !== undefined).join(" ")}`;
+			case "a11y":
+				return `a11y ${[record.value.textSize === undefined ? undefined : `text ${record.value.textSize}`, record.value.boldText ? "bold" : undefined].filter((v) => v !== undefined).join(" ")}`.trim();
+			case "battery":
+				return `battery ${record.value.level === undefined ? "" : `${record.value.level}%`}${record.value.cosmetic ? " (status bar)" : ""}`.trim();
 		}
+		return "";
 	});
 	return parts.length === 0 ? undefined : parts.join(" · ");
 }

@@ -8,7 +8,17 @@ import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, u
 import { DEFAULT_UI_TIMEOUT_MS } from "./ui-options";
 
 /** Subcommands that only read: a device a live warden process holds is reported on, not refused. */
-const READ_ONLY: ReadonlySet<string> = new Set(["status", "net status", "location status", "clock status"]);
+const READ_ONLY: ReadonlySet<string> = new Set([
+	"status",
+	"net status",
+	"location status",
+	"clock status",
+	"permission status",
+	"timezone status",
+	"locale status",
+	"a11y status",
+	"battery status",
+]);
 
 /** Values `withUiOptions` parses to. */
 export type UiOptionValues = UiDeviceFlags & { timeout?: string; record: boolean; json?: true };

@@ -48,3 +48,8 @@ export function resolveTextSize(size: TextSize): Result<ResolvedTextSize> {
 /** Android's `font_scale` for `scale`, clamped to what the platform takes. */
 export const androidFontScale = (scale: number): number =>
 	Math.min(ANDROID_MAX_FONT_SCALE, Math.max(ANDROID_MIN_FONT_SCALE, Math.round(scale * 100) / 100));
+
+/** The part of an a11y request the platform applied (a skipped setting is not on the device, so not recorded). */
+export function appliedA11y<T extends object>(op: T, applied: readonly string[]): Partial<T> {
+	return Object.fromEntries(Object.entries(op).filter(([key]) => applied.includes(key))) as Partial<T>;
+}

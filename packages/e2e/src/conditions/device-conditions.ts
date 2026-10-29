@@ -19,7 +19,7 @@ import type {
 	PermissionName,
 	PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
-import { resolveTextSize } from "@delacour/warden-core/conditions/text-size";
+import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { parseDuration } from "@delacour/warden-core/duration";
 import type {
 	A11yOp,
@@ -690,7 +690,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 				? {}
 				: {
 						...currentA11y,
-						...op,
+						...appliedA11y(op, state.applied),
 						...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
 					};
 		if (Object.keys(currentA11y).length === 0) recorder?.settle("a11y", currentA11y, true);

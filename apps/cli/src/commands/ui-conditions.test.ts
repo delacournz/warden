@@ -48,6 +48,13 @@ function setup(platform: "ios" | "android" = "ios"): Setup {
 					networkFaults: (faults) => s.h.driver.networkFaults(faults),
 					location: (op) => s.h.driver.location(op),
 					clock: (op, opts) => s.h.driver.clock(op, opts),
+					permissions: (grants, opts) => s.h.driver.permissions(grants, opts),
+					timezone: (tz, opts) => s.h.driver.timezone(tz, opts),
+					locale: (tag, opts) => s.h.driver.locale(tag, opts),
+					a11y: (op) => s.h.driver.a11y(op),
+					battery: (op) => s.h.driver.battery(op),
+					memoryWarning: (opts) => s.h.driver.memoryWarning(opts),
+					push: (payload, opts) => s.h.driver.push(payload, opts),
 					close: () => s.h.driver.close(),
 				}),
 			spawnScheduler: (config) => {

@@ -8,7 +8,13 @@ const PKG = "com.example.app";
 function harness(rules: ShellRule[] = [], serial = "emulator-5554") {
 	const host = fakeAndroidHost({ shell: rules });
 	const session = openAdbSession({ adb: "adb", serial, spawn: host.spawn });
-	const settings = createAndroidSettings({ session, serial, appPackage: PKG, hostTimezone: () => "Europe/London" });
+	const settings = createAndroidSettings({
+		session,
+		serial,
+		appPackage: PKG,
+		hostTimezone: () => "Europe/London",
+		sleep: async () => undefined,
+	});
 	return { settings, host };
 }
 
@@ -154,7 +160,7 @@ describe("android a11y", () => {
 	test("text size becomes font_scale (clamped), bold becomes font_weight_adjustment", async () => {
 		const h = harness();
 		const r = await h.settings.a11y({ textSize: "accessibility-extra-large", boldText: true });
-		expect(h.host.shell).toEqual([
+		expect(h.host.shell.filter((c) => c.startsWith("settings put"))).toEqual([
 			"settings put system font_scale 2",
 			"settings put secure font_weight_adjustment 300",
 		]);
@@ -170,7 +176,37 @@ describe("android a11y", () => {
 	test("null puts both back", async () => {
 		const h = harness();
 		await h.settings.a11y(null);
-		expect(h.host.shell).toEqual(["settings put system font_scale 1", "settings put secure font_weight_adjustment 0"]);
+		expect(h.host.shell.filter((c) => c.startsWith("settings put"))).toEqual([
+			"settings put system font_scale 1",
+			"settings put secure font_weight_adjustment 0",
+		]);
+	});
+});
+
+describe("android a11y write-back", () => {
+	test("a put the system overwrites is repeated until it holds", async () => {
+		let stored = "1.0";
+		let puts = 0;
+		const h = harness([
+			{
+				match: "settings put system font_scale",
+				reply: (cmd) => {
+					puts++;
+					// the first write is overwritten by the system's own persisted value
+					if (puts > 1) stored = cmd.split(" ").pop() ?? stored;
+					return "";
+				},
+			},
+			{ match: "settings get system font_scale", reply: () => `${stored}\n` },
+		]);
+		const r = await h.settings.a11y({ textSize: 1.5 });
+		expect(r.success).toBe(true);
+		expect(puts).toBe(2);
+	});
+	test("a value that never sticks is E_IO", async () => {
+		const h = harness([{ match: "settings get system font_scale", reply: "1.0\n" }]);
+		const r = await h.settings.a11y({ textSize: 1.5 });
+		expect(!r.success && r.error.code).toBe("E_IO");
 	});
 });
 

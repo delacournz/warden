@@ -109,6 +109,28 @@ await device.network.fault({ match: "api.example.com", action: { kind: "status",
 await device.location.route([{ lat: 37.33, lon: -122.03 }, { lat: 37.34, lon: -122.03 }], { speedMps: 5 });
 ```
 
+### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (device settings)
+
+Put back when the test ends (to the suite's `conditions.permissions` / `locale` / `timezone` / `a11y`), recorded on the lease like the conditions above, and each change is a `condition` line in `results.jsonl`. Set permissions before `app.open()`: iOS terminates a running app whose permission changes.
+
+| Member | Does |
+|---|---|
+| `permissions.set({ location?, camera?, photos?, contacts?, notifications?, microphone?, … }, { bundleId? })` | each `"granted" \| "denied" \| "unset"`; names: `location locationAlways camera photos photosAdd contacts contactsLimited notifications microphone calendar reminders motion mediaLibrary siri`. Returns `{ bundleId, applied, skipped }` (`skipped` = no service on this platform, or the app does not declare it); none applicable throws `E_UNSUPPORTED`. Default app: the suite's |
+| `permissions.reset({ bundleId? })` | every name this test set back to the suite's value, else `"unset"` |
+| `timezone(tz \| null)` | IANA name (`"Asia/Tokyo"`); `null` puts it back. Android emulator: live, device-wide. iOS: `{ appliesOnLaunch: true }`, the app launched next gets it |
+| `locale(tag \| null, { bundleId? })` | BCP 47 (`"fr-FR"`). Android 13+: per-app, live. iOS: applies to the app launched next |
+| `a11y({ textSize?, boldText?, contrast?, reduceMotion? } \| null)` | `textSize`: a category name (`"accessibility-large"`) or a scale (`1.5`). iOS: text size + contrast. Android: text size + bold. Returns `{ applied, skipped, notes }`; only-skipped throws `E_UNSUPPORTED`; `null` resets |
+| `battery({ level?, charging? } \| null)` | Android emulator: real. iOS: status bar only, result has `cosmetic: true`. `null` resets |
+| `memoryWarning({ bundleId? })` | Android: critical trim to the running app. iOS: throws `E_UNSUPPORTED` |
+| `push({ aps: { … } }, { bundleId? })` | iOS: delivers the payload to the app (4096 bytes max). Android: `E_UNSUPPORTED` |
+
+```ts
+await device.permissions.set({ location: "denied", notifications: "granted" });
+await app.open();
+await device.a11y({ textSize: "accessibility-large" });
+await device.locale("fr-FR");
+```
+
 ### `device.devtools` (dev client over Metro)
 
 With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.

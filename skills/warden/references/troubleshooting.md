@@ -59,6 +59,11 @@
 | 53 | Location stays at the last fix after `location clear` on Android | The emulator console cannot unset a fix | Expected (warning). `location set` the point you want, or release the emulator |
 | 54 | `ui clock set --frozen` gives `E_UNSUPPORTED` on Android | The emulator clock cannot be stopped | Use `clock set <iso>` (ticks on), or freeze on iOS |
 | 55 | HTTPS fails (certificate expired / not yet valid) after `clock advance` or a far `clock set` | The device clock is outside the certificates' validity | `warden ui clock reset`, relaunch the app; keep offsets small for network specs |
+| 56 | `permission set` skips a name, or fails `E_UNSUPPORTED` | iOS `simctl privacy` has no `camera` or `notifications` service; on Android the app's manifest must declare the permission (`pm` refuses otherwise) | Declare it in the app config, rebuild; on iOS drive the system prompt with `warden ui` instead |
+| 57 | The app still sees the old permission, locale or timezone after the verb succeeded | iOS: permissions need the app relaunched (simctl terminates it); timezone and locale are staged and only a new launch carries them (`staged: true`) | Set them before `open`, or `open --relaunch` |
+| 58 | `locale` fails `E_UNSUPPORTED` on Android, or `timezone` / `battery` does | Per-app locale needs API 33+; timezone and battery need an emulator console | Use an Android 13+ emulator image |
+| 59 | `memory-warning` is `E_UNSUPPORTED` on iOS, `E_APP_UNAVAILABLE` on Android | No mechanism reaches a UIKit app (verified: `notifyutil -p com.apple.system.lowmemory` is ignored); Android needs the app process running | iOS: Simulator > Debug > Simulate Memory Warning by hand. Android: `open` the app first |
+| 60 | `a11y set --text-size` reads back the old value on Android | The system rewrites `font_scale` a moment after a change | Warden re-applies until it holds (`E_IO` if it never does); wait for the config change, then `snapshot` |
 
 ## Code lookup
 

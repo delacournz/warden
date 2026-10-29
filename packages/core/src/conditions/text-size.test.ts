@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { androidFontScale, resolveTextSize } from "./text-size";
+import { androidFontScale, appliedA11y, resolveTextSize } from "./text-size";
 
 describe("resolveTextSize", () => {
 	test("a name carries its scale", () => {
@@ -24,5 +24,16 @@ describe("androidFontScale", () => {
 		expect(androidFontScale(3.1)).toBe(2);
 		expect(androidFontScale(0.1)).toBe(0.5);
 		expect(androidFontScale(1.3333)).toBe(1.33);
+	});
+});
+
+describe("appliedA11y", () => {
+	test("keeps only what the platform applied", () => {
+		expect(
+			appliedA11y({ textSize: 1.5, boldText: true, contrast: "increased" as const }, ["textSize", "contrast"])
+		).toEqual({
+			textSize: 1.5,
+			contrast: "increased",
+		});
 	});
 });

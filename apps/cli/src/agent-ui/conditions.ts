@@ -55,7 +55,7 @@ const STOP_POLL_MS = 100;
 const SCHEDULER_MARK = ["scheduler"] as const;
 const TICKER_MARK = ["route-ticker"] as const;
 
-const fail = (
+export const fail = (
 	code: Parameters<typeof uiError>[0],
 	message: string,
 	hint?: string
@@ -64,7 +64,7 @@ const fail = (
 	error: uiError(code, message, hint === undefined ? {} : { hint }),
 });
 
-async function resolveDeps(deps: UiDeps): Promise<Required<ConditionsDeps>> {
+export async function resolveDeps(deps: UiDeps): Promise<Required<ConditionsDeps>> {
 	const { realConditionsDeps } = await import("./conditions-real");
 	return { ...realConditionsDeps, ...deps.conditions } as Required<ConditionsDeps>;
 }
@@ -78,11 +78,11 @@ function networkOptions(ctx: CommandContext, device: UiDevice, opts: NetOptionVa
 	};
 }
 
-function deviceInfo(device: UiDevice) {
+export function deviceInfo(device: UiDevice) {
 	return { udid: device.udid, platform: device.platform, name: device.name };
 }
 
-function recordOf<A extends ConditionRecord["area"]>(
+export function recordOf<A extends ConditionRecord["area"]>(
 	ctx: CommandContext,
 	leaseId: string,
 	area: A
@@ -123,7 +123,7 @@ function ownedPids(deps: Required<ConditionsDeps>, ctx: CommandContext, lease: L
 	return [...(proxy === undefined ? [] : [{ kind: "pid" as const, pid: proxy }]), ...extra];
 }
 
-async function withPort<T>(
+export async function withPort<T>(
 	ctx: CommandContext,
 	deps: Required<ConditionsDeps>,
 	device: UiDevice,

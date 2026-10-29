@@ -102,6 +102,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets (default 20 runs; cold start, settle and open capped at 3-5); `--metro` for the tree metric; stops the device's helper: unshared device only |
 | `eval` `tree` `logs` `network log` `reload` | see Devtools | dev client only (`network log` = the request log) |
 | `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
+| `permission` `timezone` `locale` `a11y` `battery` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, memory warning, push; recorded on your lease, undone on release |
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
 
@@ -145,6 +146,27 @@ Every change prints one line (`--json`: `result.action` is `net`, `net-flap`, `n
 
 - Android: `--frozen` is `E_UNSUPPORTED` (the emulator clock cannot stop). iOS: only the app launched with warden's dylib sees the clock; without it the clock applies from the next launch, or pass `--relaunch`.
 - A large offset breaks HTTPS (certificates look expired or not yet valid): `advance` warns; `clock reset` before network work.
+
+## Device settings (`permission`, `timezone`, `locale`, `a11y`, `battery`, `memory-warning`, `push`)
+
+Each is its own verb (like `location` / `clock`) so its flags show in `--help`. They act on your lease, record what they set and **release / gc undo it** (iOS: privacy reset, text size `large`, contrast off, status bar cleared, staged launch settings removed; Android: permissions reset, `font_scale 1.0`, bold off, timezone back to what it was, app locale cleared, battery reset). A spec sets the same through `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (`specs.md`). `--app <bundle>` names the app; default is the one `open` launched.
+
+| Command | Args | Does |
+|---|---|---|
+| `permission set` | `<name>=<granted\|denied\|unset>... [--app b]` | names: `location locationAlways camera photos photosAdd contacts contactsLimited notifications microphone calendar reminders motion mediaLibrary siri`. `unset` = ask again. Names the platform has no service for come back as warnings (`skipped`); none applicable = `E_UNSUPPORTED` |
+| `permission reset` / `status` | `[--app b]` | every recorded name back to `unset` / what is recorded (reads only) |
+| `timezone` | `<IANA name\|reset\|status>` | Android: `cmd alarm set-timezone`, device-wide and live (emulator only). iOS: staged, the app launched next gets `TZ` (`staged: true` + warning; `open --relaunch`) |
+| `locale` | `<BCP 47 tag\|reset\|status> [--app b]` | Android 13+ (API 33): per-app locale, live. iOS: staged, the next launch gets `-AppleLanguages` / `-AppleLocale` |
+| `a11y set` | `[--text-size <name\|scale>] [--bold\|--no-bold] [--contrast increased\|normal] [--reduce-motion\|--no-reduce-motion]` | text size by iOS category (`extra-small` … `accessibility-extra-extra-extra-large`) or a font scale (`1.5`, Android clamps to 0.5-2). iOS: text size + contrast. Android: text size + bold. The rest are reported `skipped`; only-skipped = `E_UNSUPPORTED` |
+| `a11y reset` / `status` | | defaults back / what is recorded |
+| `battery set` | `[--level 0-100] [--charging\|--no-charging]` | Android emulator: real (`dumpsys battery`, the app sees it). iOS: status bar only (`cosmetic: true`, warning) |
+| `battery reset` / `status` | | real battery back / what is recorded |
+| `memory-warning` | `[--app b]` | Android: `am send-trim-memory RUNNING_CRITICAL` to the running app (`E_APP_UNAVAILABLE` when it is not running). iOS: `E_UNSUPPORTED` (the `lowmemory` notification never reaches a UIKit app) |
+| `push` | `<payload.json\|'{"aps":{…}}'> [--app b]` | iOS: `simctl push` (needs `aps`, 4096 bytes max). Android: `E_UNSUPPORTED` |
+
+- Permissions apply before the first launch (iOS terminates a running app whose permission changes): `permission set` then `open`. iOS `camera` and `notifications` have no `simctl privacy` service and are skipped.
+- Android permissions are the ones the app's manifest declares; a name the app does not declare is skipped with a warning.
+- `--json`: `result.action` is `permission-set`, `-reset`, `-status`, `timezone-set`, `-reset`, `-status`, `locale-*`, `a11y-*`, `battery-*`, `memory-warning`, `push`.
 
 ## Selector grammar
 
