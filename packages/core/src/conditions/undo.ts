@@ -146,6 +146,37 @@ function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[];
 	return out;
 }
 
+/** What resetting one condition record did: failure lines (empty = reset) and the owned pids stopped. */
+export type ResetOutcome = { failures: string[]; killed: number[] };
+
+/**
+ * Reset one condition record on `device` (undefined = nothing on a device to reset): the area's reset
+ * commands, the iOS inject-state / launch-settings cleanup, the lease's shaping proxy (`leaseId` keys its
+ * handle file) and the processes the record owns. Shared by a live lease's undo and an orphan's.
+ */
+export async function resetRecord(
+	deps: UndoDeps,
+	device: { platform: Platform; id: string } | undefined,
+	leaseId: string,
+	record: ConditionRecord
+): Promise<ResetOutcome> {
+	const cmds = device ? resetCommands(device.platform, device.id, record, deps) : [];
+	const resets = await runResets(deps.exec, cmds);
+	// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock
+	if (device?.platform === "ios" && (record.area === "clock" || record.area === "network")) {
+		const failed = neutralizeInjectState(injectStatePath(wardenHome(deps.env), device.id));
+		if (failed) resets.push(failed);
+	}
+	// iOS has no device-side timezone or locale: only the staged launch settings go
+	if (device?.platform === "ios" && record.area === "locale") {
+		const failed = writeLaunchSettings(launchSettingsPath(wardenHome(deps.env), device.id), {});
+		if (failed) resets.push(failed);
+	}
+	const released = await releaseProxy(deps, leaseId, record);
+	const stopped = stopOwned(deps, record);
+	return { failures: [...resets, ...released, ...stopped.failures], killed: stopped.killed };
+}
+
 /**
  * Undo every condition `lease` has set on its device: reset commands per active area, owned processes
  * killed, then the row cleared. Only the lease's own device is touched (a non-device or still-pending
@@ -158,22 +189,8 @@ export async function undoConditions(deps: UndoDeps, lease: Lease): Promise<Resu
 	const target = lease.resource;
 	const device = target.kind === "device" && !target.id.startsWith(PENDING_PREFIX) ? target : undefined;
 	for (const record of activeConditions(deps.store, lease.id)) {
-		const cmds = device ? resetCommands(device.platform, device.id, record, deps) : [];
-		const resets = await runResets(deps.exec, cmds);
-		// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock
-		if (device?.platform === "ios" && (record.area === "clock" || record.area === "network")) {
-			const failed = neutralizeInjectState(injectStatePath(wardenHome(deps.env), device.id));
-			if (failed) resets.push(failed);
-		}
-		// iOS has no device-side timezone or locale: only the staged launch settings go
-		if (device?.platform === "ios" && record.area === "locale") {
-			const failed = writeLaunchSettings(launchSettingsPath(wardenHome(deps.env), device.id), {});
-			if (failed) resets.push(failed);
-		}
-		const released = await releaseProxy(deps, lease.id, record);
-		const stopped = stopOwned(deps, record);
-		report.killed.push(...stopped.killed);
-		const failures = [...resets, ...released, ...stopped.failures];
+		const { failures, killed } = await resetRecord(deps, device, lease.id, record);
+		report.killed.push(...killed);
 		if (failures.length > 0) {
 			errors.push(...failures.map((f) => `${record.area}: ${f}`));
 			continue;

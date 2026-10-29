@@ -523,6 +523,31 @@ describe("boot queue", () => {
 		migrated.close();
 	});
 
+	test("migration adds orphan_conditions and its trigger to a database that has lease_conditions", () => {
+		const old = join(dir, "old-orphans.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
+		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
+		db.close();
+		const migrated = openStore(old);
+		const lease = migrated.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "n" },
+				owner: { kind: "user", pid: 1, cwd: "/" },
+				ttlMs: 1,
+			},
+			1
+		);
+		migrated.db
+			.query("INSERT INTO lease_conditions (lease_id, area, json, owned, set_at) VALUES (?, 'battery', '{}', '[]', 1)")
+			.run(lease.id);
+		migrated.deleteLeases([lease.id]);
+		expect(migrated.db.query("SELECT lease_id, area FROM orphan_conditions").all()).toEqual([
+			{ lease_id: lease.id, area: "battery" },
+		]);
+		migrated.close();
+	});
+
 	test("concurrent enqueues from many processes all land", async () => {
 		const dbPath = join(dir, "queue-race.db");
 		openStore(dbPath).close();

@@ -8,9 +8,9 @@ import {
 	type OwnedProcess,
 } from "./conditions.types";
 
-type ConditionRow = { area: ConditionArea; json: string; owned: string; set_at: number };
+export type ConditionRow = { area: ConditionArea; json: string; owned: string; set_at: number };
 
-function toRecord(row: ConditionRow): ConditionRecord {
+export function toConditionRecord(row: ConditionRow): ConditionRecord {
 	return {
 		area: row.area,
 		value: JSON.parse(row.json),
@@ -68,5 +68,5 @@ export function activeConditions(store: Store, leaseId: string): ConditionRecord
 		.query<ConditionRow, [string]>("SELECT area, json, owned, set_at FROM lease_conditions WHERE lease_id = ?")
 		.all(leaseId)
 		.sort((a, b) => CONDITION_AREAS.indexOf(a.area) - CONDITION_AREAS.indexOf(b.area))
-		.map(toRecord);
+		.map(toConditionRecord);
 }
