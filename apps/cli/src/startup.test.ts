@@ -228,7 +228,9 @@ describe("cold start: warden ui", () => {
 			["ui", "snapshot", "--help"],
 			["ui", "press", "--help"],
 			["ui", "record", "start", "--help"],
-			["ui", "net", "--help"],
+			["ui", "network", "--help"],
+			["ui", "network", "log", "--help"],
+			["ui", "network", "set", "--help"],
 			["ui", "location", "--help"],
 		]) {
 			const files = await loadedBy(args);
@@ -257,7 +259,7 @@ describe("cold start: warden ui", () => {
 
 	test("`ui net` / `ui location` without a lease load conditions.ts, not its real side effects or any driver", async () => {
 		for (const args of [
-			["ui", "net", "3g", "--json"],
+			["ui", "network", "set", "3g", "--json"],
 			["ui", "location", "set", "1,2", "--json"],
 		]) {
 			const files = await loadedBy(args);
@@ -300,6 +302,14 @@ describe("cold start: warden ui", () => {
 		const logs = await loadedBy(["ui", "logs", "--json"]);
 		expect(has(logs, "/agent-ui/devtools-cli.ts")).toBe(true);
 		expect(loaded(logs, [...without(OTHERS, "/agent-ui/devtools-cli.ts"), ...DRIVERS])).toEqual([]);
+		for (const args of [
+			["ui", "network", "log", "--json"],
+			["ui", "network", "--json"],
+		]) {
+			const files = await loadedBy(args);
+			expect(has(files, "/agent-ui/devtools-cli.ts")).toBe(true);
+			expect(loaded(files, [...without(OTHERS, "/agent-ui/devtools-cli.ts"), ...DRIVERS])).toEqual([]);
+		}
 	});
 });
 

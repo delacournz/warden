@@ -4,9 +4,8 @@ import type { UiDeps } from "./driver";
 import { withUiOptions } from "./ui-options";
 
 /**
- * `warden ui net` and `warden ui location`: lease-scoped device conditions. One call from `commands/ui.ts`. Only the
- * commander wiring lives here; `conditions.ts` is imported by the subcommand that runs. (`network` is already the
- * devtools request log, hence `net`.)
+ * `warden ui location` and `warden ui clock`: lease-scoped device conditions (`network` is in `network-register.ts`). One
+ * call from `commands/ui.ts`. Only the commander wiring lives here; `conditions.ts` is imported by the subcommand that runs.
  */
 export function registerConditionCommands(
 	cmd: Commander,
@@ -14,29 +13,6 @@ export function registerConditionCommands(
 	done: (code: number) => void,
 	deps: UiDeps
 ): void {
-	withUiOptions(
-		cmd
-			.command("net")
-			.description(
-				"change the device network: online | offline | edge | 3g | 4g | lte | wifi | slow | lossy, flap, fault, status, reset"
-			)
-			.argument("<action>", "a condition word, or flap | fault | status | reset")
-			.argument("[args...]", "fault: <host-glob> <status:503|reset|delay:2s|blackhole>")
-			.option("--latency <ms>", "added round-trip time (overrides the preset's)")
-			.option("--jitter <n>", "ms of jitter on a condition; percent of phase length for flap")
-			.option("--down <n>", "kbps down for a condition; how long the network is down for flap (10s)")
-			.option("--up <n>", "kbps up for a condition; how long the network stays up for flap (3s)")
-			.option("--loss <pct>", "packet loss, 0-100")
-			.option("--seed <n>", "flap: same seed, same sequence (default 1)")
-			.option(
-				"--relaunch",
-				"iOS: relaunch the app with the network dylib when it runs without (else E_NETWORK_RELAUNCH)"
-			)
-			.option("--clear", "fault: remove every fault")
-	).action(async (action, args, opts) => {
-		const { uiNet } = await import("./conditions");
-		done(await uiNet(ctx, deps, action, args, opts));
-	});
 	withUiOptions(
 		cmd
 			.command("location")

@@ -84,7 +84,7 @@ const stored = (s: Setup, area: "network" | "location") =>
 describe("net <condition>", () => {
 	test("a preset: one driver call, recorded on the lease", async () => {
 		const s = setup();
-		expect(await s.h.run("net", "3g", "--json")).toBe(0);
+		expect(await s.h.run("network", "set", "3g", "--json")).toBe(0);
 		expect(s.h.driver.callsOf("network")).toEqual([{ method: "network", op: { kind: "preset", preset: "3g" } }]);
 		expect(doc(s.h.c)).toMatchObject({
 			ok: true,
@@ -96,7 +96,7 @@ describe("net <condition>", () => {
 
 	test("flags override a preset and become a custom condition", async () => {
 		const s = setup();
-		expect(await s.h.run("net", "3g", "--latency", "800", "--loss", "5")).toBe(0);
+		expect(await s.h.run("network", "set", "3g", "--latency", "800", "--loss", "5")).toBe(0);
 		expect(s.h.driver.callsOf("network")[0]?.op).toMatchObject({
 			kind: "custom",
 			latencyMs: 800,
@@ -107,21 +107,21 @@ describe("net <condition>", () => {
 
 	test("online with nothing set records nothing", async () => {
 		const s = setup();
-		expect(await s.h.run("net", "online")).toBe(0);
+		expect(await s.h.run("network", "set", "online")).toBe(0);
 		expect(stored(s, "network")).toBeUndefined();
 	});
 
 	test("offline then online keeps a row, so release has something to undo", async () => {
 		const s = setup();
-		await s.h.run("net", "offline");
-		await s.h.run("net", "online");
+		await s.h.run("network", "set", "offline");
+		await s.h.run("network", "set", "online");
 		expect(stored(s, "network")?.value).toEqual({ kind: "online" });
 	});
 
 	test("the app warden ui opened is passed so iOS can check it for the dylib", async () => {
 		const s = setup();
 		updateState(s.h.c, UDID, (st) => ({ ...st, app: "com.example.app" }));
-		expect(await s.h.run("net", "offline", "--relaunch")).toBe(0);
+		expect(await s.h.run("network", "set", "offline", "--relaunch")).toBe(0);
 		expect(s.networkOptions).toEqual([{ bundleId: "com.example.app", relaunch: true }]);
 	});
 
@@ -135,7 +135,7 @@ describe("net <condition>", () => {
 				proxyPid: () => undefined,
 			},
 		});
-		expect(await failing.run("net", "offline", "--json")).toBe(1);
+		expect(await failing.run("network", "set", "offline", "--json")).toBe(1);
 		const out = doc(failing.c);
 		expect(out.error.message).toContain("E_NETWORK_RELAUNCH");
 		expect(out.error.details).toEqual({ driver: "E_NETWORK_RELAUNCH" });
@@ -152,15 +152,15 @@ describe("net <condition>", () => {
 				proxyPid: () => undefined,
 			},
 		});
-		expect(await failing.run("net", "3g", "--json")).toBe(1);
+		expect(await failing.run("network", "set", "3g", "--json")).toBe(1);
 		expect(doc(failing.c).error.message).toContain("E_UNSUPPORTED");
 	});
 
 	test.each([
-		[["net", "dialup"], "unknown network"],
-		[["net", "offline", "--latency", "10"], "no shaping flags"],
-		[["net", "3g", "extra"], "unexpected argument"],
-		[["net", "3g", "--loss", "400"], "--loss"],
+		[["network", "set", "dialup"], "unknown network"],
+		[["network", "set", "offline", "--latency", "10"], "no shaping flags"],
+		[["network", "set", "flap"], "not a condition"],
+		[["network", "set", "3g", "--loss", "400"], "--loss"],
 	])("usage: %j", async (argv, text) => {
 		const s = setup();
 		expect(await s.h.run(...argv, "--json")).toBe(1);
@@ -179,7 +179,7 @@ describe("net <condition>", () => {
 			stats: STATS,
 			port: 19080,
 		};
-		expect(await s.h.run("net", "4g")).toBe(0);
+		expect(await s.h.run("network", "set", "4g")).toBe(0);
 		expect(s.h.driver.calls.map((c) => c.method).filter((m) => m === "networkFaults" || m === "network")).toEqual([
 			"networkFaults",
 			"network",
@@ -192,7 +192,7 @@ describe("net <condition>", () => {
 		recordCondition(s.h.c.store(), lease(s), "network", { kind: "flap", upMs: 1000, downMs: 500 }, 1, [
 			{ kind: "pid", pid: 777 },
 		]);
-		expect(await s.h.run("net", "offline")).toBe(0);
+		expect(await s.h.run("network", "set", "offline")).toBe(0);
 		expect(s.killed).toEqual([777]);
 		expect(stored(s, "network")?.owned).toEqual([]);
 	});
@@ -200,7 +200,7 @@ describe("net <condition>", () => {
 	test("the lease's proxy pid stays owned", async () => {
 		const s = setup();
 		s.proxy.pid = 4242;
-		await s.h.run("net", "lossy");
+		await s.h.run("network", "set", "lossy");
 		expect(stored(s, "network")?.owned).toEqual([{ kind: "pid", pid: 4242 }]);
 	});
 });
@@ -208,9 +208,9 @@ describe("net <condition>", () => {
 describe("net flap", () => {
 	test("Android: starts a detached scheduler and records it as owned", async () => {
 		const s = setup("android");
-		expect(await s.h.run("net", "flap", "--up", "10s", "--down", "3s", "--jitter", "20", "--seed", "4", "--json")).toBe(
-			0
-		);
+		expect(
+			await s.h.run("network", "flap", "--up", "10s", "--down", "3s", "--jitter", "20", "--seed", "4", "--json")
+		).toBe(0);
 		expect(s.schedulers).toEqual([
 			{
 				platform: "android",
@@ -229,7 +229,7 @@ describe("net flap", () => {
 
 	test("iOS: the proxy is up first and the lease rides along", async () => {
 		const s = setup("ios");
-		expect(await s.h.run("net", "flap", "--up", "5s", "--down", "1s")).toBe(0);
+		expect(await s.h.run("network", "flap", "--up", "5s", "--down", "1s")).toBe(0);
 		expect(s.ensured).toHaveLength(1);
 		const config = s.schedulers[0];
 		expect(config?.platform).toBe("ios");
@@ -238,15 +238,15 @@ describe("net flap", () => {
 
 	test("replaces a previous flap: the old scheduler is stopped", async () => {
 		const s = setup("android");
-		await s.h.run("net", "flap", "--up", "10s", "--down", "3s");
-		await s.h.run("net", "flap", "--up", "2s", "--down", "1s");
+		await s.h.run("network", "flap", "--up", "10s", "--down", "3s");
+		await s.h.run("network", "flap", "--up", "2s", "--down", "1s");
 		expect(s.killed).toEqual([900]);
 		expect(stored(s, "network")?.owned).toEqual([{ kind: "pid", pid: 901 }]);
 	});
 
 	test("needs --up and --down", async () => {
 		const s = setup("android");
-		expect(await s.h.run("net", "flap", "--up", "10s", "--json")).toBe(1);
+		expect(await s.h.run("network", "flap", "--up", "10s", "--json")).toBe(1);
 		expect(doc(s.h.c).error.code).toBe("usage");
 		expect(s.schedulers).toHaveLength(0);
 	});
@@ -254,7 +254,7 @@ describe("net flap", () => {
 	test("refuses while faults are set", async () => {
 		const s = setup("android");
 		s.proxy.status = { params: {}, faults: [{ match: "*", action: { kind: "reset" } }], pid: 5, stats: STATS, port: 1 };
-		expect(await s.h.run("net", "flap", "--up", "1s", "--down", "1s")).toBe(1);
+		expect(await s.h.run("network", "flap", "--up", "1s", "--down", "1s")).toBe(1);
 		expect(s.schedulers).toHaveLength(0);
 	});
 });
@@ -262,7 +262,7 @@ describe("net flap", () => {
 describe("net fault", () => {
 	test("sets a rule and warns about https for a status", async () => {
 		const s = setup();
-		expect(await s.h.run("net", "fault", "api.example.com", "status:503", "--json")).toBe(0);
+		expect(await s.h.run("network", "fault", "api.example.com", "status:503", "--json")).toBe(0);
 		expect(s.h.driver.callsOf("networkFaults")[0]?.faults).toEqual([
 			{ match: "api.example.com", action: { kind: "status", code: 503 } },
 		]);
@@ -283,7 +283,7 @@ describe("net fault", () => {
 			stats: STATS,
 			port: 1,
 		};
-		await s.h.run("net", "fault", "a.*", "delay:2s");
+		await s.h.run("network", "fault", "a.*", "delay:2s");
 		expect(s.h.driver.callsOf("networkFaults")[0]?.faults).toEqual([
 			{ match: "b.*", action: { kind: "blackhole" } },
 			{ match: "a.*", action: { kind: "delay", ms: 2000 } },
@@ -292,9 +292,9 @@ describe("net fault", () => {
 
 	test("re-applies the recorded condition so the driver keeps it", async () => {
 		const s = setup();
-		await s.h.run("net", "3g");
+		await s.h.run("network", "set", "3g");
 		s.h.driver.calls.length = 0;
-		await s.h.run("net", "fault", "x", "reset");
+		await s.h.run("network", "fault", "x", "reset");
 		expect(s.h.driver.calls.map((c) => c.method).filter((m) => m === "networkFaults" || m === "network")).toEqual([
 			"network",
 			"networkFaults",
@@ -304,15 +304,15 @@ describe("net fault", () => {
 	test("--clear removes every fault", async () => {
 		const s = setup();
 		s.proxy.status = { params: {}, faults: [{ match: "a", action: { kind: "reset" } }], pid: 5, stats: STATS, port: 1 };
-		expect(await s.h.run("net", "fault", "--clear")).toBe(0);
+		expect(await s.h.run("network", "fault", "--clear")).toBe(0);
 		expect(s.h.driver.callsOf("networkFaults")[0]?.faults).toEqual([]);
 	});
 
 	test.each([
-		[["net", "fault", "only-host"]],
-		[["net", "fault", "h", "status:99"]],
-		[["net", "fault", "h", "nope"]],
-		[["net", "fault", "--clear", "h"]],
+		[["network", "fault", "only-host"]],
+		[["network", "fault", "h", "status:99"]],
+		[["network", "fault", "h", "nope"]],
+		[["network", "fault", "--clear", "h"]],
 	])("usage: %j", async (argv) => {
 		const s = setup();
 		expect(await s.h.run(...argv, "--json")).toBe(1);
@@ -323,7 +323,7 @@ describe("net fault", () => {
 	test("refuses while a flap runs", async () => {
 		const s = setup();
 		recordCondition(s.h.c.store(), lease(s), "network", { kind: "flap", upMs: 1000, downMs: 500 }, 1, []);
-		expect(await s.h.run("net", "fault", "h", "reset")).toBe(1);
+		expect(await s.h.run("network", "fault", "h", "reset")).toBe(1);
 		expect(s.h.driver.callsOf("networkFaults")).toHaveLength(0);
 	});
 });
@@ -331,7 +331,7 @@ describe("net fault", () => {
 describe("net status / reset", () => {
 	test("status reads the lease, the proxy and the flap pid without opening a driver", async () => {
 		const s = setup("android");
-		await s.h.run("net", "flap", "--up", "10s", "--down", "3s");
+		await s.h.run("network", "flap", "--up", "10s", "--down", "3s");
 		s.proxy.status = {
 			params: {},
 			faults: [{ match: "a", action: { kind: "status", code: 500 } }],
@@ -340,7 +340,7 @@ describe("net status / reset", () => {
 			port: 19081,
 		};
 		s.h.opens.count = 0;
-		expect(await s.h.run("net", "status", "--json")).toBe(0);
+		expect(await s.h.run("network", "status", "--json")).toBe(0);
 		expect(s.h.opens.count).toBe(0);
 		const out = doc(s.h.c).result;
 		expect(out).toMatchObject({
@@ -354,16 +354,16 @@ describe("net status / reset", () => {
 
 	test("status of a lease with nothing set", async () => {
 		const s = setup();
-		expect(await s.h.run("net", "status")).toBe(0);
+		expect(await s.h.run("network", "status")).toBe(0);
 		expect(s.h.c.stdout.join("\n")).toContain("not set");
 	});
 
 	test("reset stops the flap, clears faults and goes online, keeping the proxy for an injected app", async () => {
 		const s = setup("android");
-		await s.h.run("net", "flap", "--up", "10s", "--down", "3s");
+		await s.h.run("network", "flap", "--up", "10s", "--down", "3s");
 		s.proxy.status = { params: {}, faults: [{ match: "a", action: { kind: "reset" } }], pid: 5, stats: STATS, port: 1 };
 		s.h.driver.calls.length = 0;
-		expect(await s.h.run("net", "reset")).toBe(0);
+		expect(await s.h.run("network", "reset")).toBe(0);
 		expect(s.killed).toEqual([900]);
 		expect(s.h.driver.calls.map((c) => c.method).filter((m) => m === "networkFaults" || m === "network")).toEqual([
 			"networkFaults",
@@ -376,7 +376,7 @@ describe("net status / reset", () => {
 
 	test("reset with nothing set does not open the device", async () => {
 		const s = setup();
-		expect(await s.h.run("net", "reset", "--json")).toBe(0);
+		expect(await s.h.run("network", "reset", "--json")).toBe(0);
 		expect(s.h.opens.count).toBe(0);
 		expect(doc(s.h.c).result).toMatchObject({ changed: false });
 	});
@@ -504,7 +504,7 @@ describe("location", () => {
 describe("ui status", () => {
 	test("lists the conditions set on the lease", async () => {
 		const s = setup();
-		await s.h.run("net", "3g");
+		await s.h.run("network", "set", "3g");
 		await s.h.run("location", "set", "1,2");
 		expect(await s.h.run("status", "--json")).toBe(0);
 		expect(doc(s.h.c).result.conditions.map((c: { area: string }) => c.area)).toEqual(["network", "location"]);

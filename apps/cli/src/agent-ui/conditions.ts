@@ -474,6 +474,14 @@ export function uiNet(
 	});
 }
 
+/** `warden ui network set <condition>`: a condition word only (`flap` / `fault` / `status` / `reset` are their own subcommands). */
+export function uiNetSet(ctx: CommandContext, deps: UiDeps, word: string, opts: NetOptionValues): Promise<number> {
+	if (!NET_WORDS.has(word)) return uiNet(ctx, deps, word, [], opts);
+	return runUi(ctx, deps, "net", opts, async () =>
+		fail("usage", `"${word}" is not a condition: use \`warden ui network ${word}\``)
+	);
+}
+
 function locationSuccess(
 	device: UiDevice,
 	action: string,

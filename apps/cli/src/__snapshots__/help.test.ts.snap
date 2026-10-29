@@ -1877,8 +1877,6 @@ Commands:
                                screen) with rects
   logs [args...]               app console: logs [n] | start | stop | mark
                                <label> | clear
-  network [n]                  the app's fetch calls recorded by \`logs start\` or
-                               the dev session
   reload                       reload the app's JavaScript
   exceptions                   the app's uncaught exceptions
   route                        the route key of the screen the app is on
@@ -1886,9 +1884,9 @@ Commands:
                                resume
   logpoint                     log a value whenever a source line runs, without
                                pausing: add | list | rm | clear | hits
-  net <action> [args...]       change the device network: online | offline |
-                               edge | 3g | 4g | lte | wifi | slow | lossy, flap,
-                               fault, status, reset
+  network [n]                  the app's network: log (recorded requests) | set
+                               | flap | fault | status | reset (device
+                               conditions)
   location <action> [args...]  simulate the device location: set | route | gpx |
                                scenario | clear | status
   clock <action> [args...]     mock the device wall clock: set <iso> [--frozen]
@@ -3025,39 +3023,6 @@ Options:
                          this owner's leased ports)
   -h, --help             display help for command
 
-$ warden ui network --help
-Usage: warden ui network [options] [n]
-
-the app's fetch calls recorded by \`logs start\` or the dev session
-
-Arguments:
-  n                      entries to show (default 50)
-
-Options:
-  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
-                         an ISO time
-  --include <parts>      headers,body
-  --id <id>              one entry in full
-  --grep <text>          only URLs containing text (case-insensitive)
-  --status <status>      only this status: 404 | 4xx
-  --limit <n>            at most the last n entries
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
-  --force                drive the device even while a live warden process (e2e,
-                         batch, run) holds your lease on it; your own warden dev
-                         device is shared without it
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running recording
-  --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command
-
 $ warden ui reload --help
 Usage: warden ui reload [options]
 
@@ -3277,30 +3242,184 @@ Options:
   --json          print one JSON document
   -h, --help      display help for command
 
-$ warden ui net --help
-Usage: warden ui net [options] <action> [args...]
+$ warden ui network --help
+Usage: warden ui network [options] [command] [n]
 
-change the device network: online | offline | edge | 3g | 4g | lte | wifi | slow
-| lossy, flap, fault, status, reset
+the app's network: log (recorded requests) | set | flap | fault | status | reset
+(device conditions)
 
 Arguments:
-  action                 a condition word, or flap | fault | status | reset
-  args                   fault: <host-glob>
-                         <status:503|reset|delay:2s|blackhole>
+  n                deprecated: same as \`network log [n]\` (default 50)
+
+Options:
+  -h, --help       display help for command
+
+Commands:
+  log [n]          the app's fetch calls recorded by \`logs start\` or the dev
+                   session
+  set <condition>  change the device network: online | offline | edge | 3g | 4g
+                   | lte | wifi | slow | lossy
+  flap             alternate the network up and down on a schedule
+  fault [args...]  fail requests to a host: status:503 | reset | delay:2s |
+                   blackhole (--clear removes all)
+  status           the network condition recorded on the lease
+  reset            network back to normal; stops the flap scheduler and clears
+                   faults
+
+$ warden ui network log --help
+Usage: warden ui network log [options] [n]
+
+the app's fetch calls recorded by \`logs start\` or the dev session
+
+Arguments:
+  n                      entries to show (default 50)
+
+Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  --include <parts>      headers,body
+  --id <id>              one entry in full
+  --grep <text>          only URLs containing text (case-insensitive)
+  --status <status>      only this status: 404 | 4xx
+  --limit <n>            at most the last n entries
+  -h, --help             display help for command
+
+$ warden ui network set --help
+Usage: warden ui network set [options] <condition>
+
+change the device network: online | offline | edge | 3g | 4g | lte | wifi | slow
+| lossy
+
+Arguments:
+  condition              online | offline | edge | 3g | 4g | lte | wifi | slow |
+                         lossy
 
 Options:
   --latency <ms>         added round-trip time (overrides the preset's)
-  --jitter <n>           ms of jitter on a condition; percent of phase length
-                         for flap
-  --down <n>             kbps down for a condition; how long the network is down
-                         for flap (10s)
-  --up <n>               kbps up for a condition; how long the network stays up
-                         for flap (3s)
+  --jitter <ms>          ms of jitter
+  --down <kbps>          kbps down
+  --up <kbps>            kbps up
   --loss <pct>           packet loss, 0-100
-  --seed <n>             flap: same seed, same sequence (default 1)
   --relaunch             iOS: relaunch the app with the network dylib when it
                          runs without (else E_NETWORK_RELAUNCH)
-  --clear                fault: remove every fault
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network flap --help
+Usage: warden ui network flap [options]
+
+alternate the network up and down on a schedule
+
+Options:
+  --up <dur>             how long the network stays up (default 3s)
+  --down <dur>           how long the network is down (default 10s)
+  --jitter <pct>         percent of phase length
+  --seed <n>             same seed, same sequence (default 1)
+  --relaunch             iOS: relaunch the app with the network dylib when it
+                         runs without
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network fault --help
+Usage: warden ui network fault [options] [args...]
+
+fail requests to a host: status:503 | reset | delay:2s | blackhole (--clear
+removes all)
+
+Arguments:
+  args                   <host-glob> <status:503|reset|delay:2s|blackhole>
+
+Options:
+  --clear                remove every fault
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network status --help
+Usage: warden ui network status [options]
+
+the network condition recorded on the lease
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network reset --help
+Usage: warden ui network reset [options]
+
+network back to normal; stops the flap scheduler and clears faults
+
+Options:
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
