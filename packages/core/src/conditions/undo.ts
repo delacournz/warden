@@ -3,10 +3,11 @@ import { PENDING_PREFIX } from "../claim";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";
 import { androidTools } from "../providers/android";
-import type { Store } from "../store";
+import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
 import { activeConditions, clearCondition } from "./conditions";
 import type { ConditionArea, ConditionRecord } from "./conditions.types";
+import { injectStatePath, neutralizeInjectState } from "./inject-state";
 
 export type UndoDeps = {
 	store: Store;
@@ -126,6 +127,11 @@ export async function undoConditions(deps: UndoDeps, lease: Lease): Promise<Resu
 	for (const record of activeConditions(deps.store, lease.id)) {
 		const cmds = device ? resetCommands(device.platform, device.id, record, deps) : [];
 		const resets = await runResets(deps.exec, cmds);
+		// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock
+		if (device?.platform === "ios" && (record.area === "clock" || record.area === "network")) {
+			const failed = neutralizeInjectState(injectStatePath(wardenHome(deps.env), device.id));
+			if (failed) resets.push(failed);
+		}
 		const released = await releaseProxy(deps, lease.id, record);
 		const stopped = stopOwned(deps, record);
 		report.killed.push(...stopped.killed);

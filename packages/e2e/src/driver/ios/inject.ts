@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { injectStatePath as coreInjectStatePath } from "@delacour/warden-core/conditions/inject-state";
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError } from "../driver.types";
 import { driverError } from "../errors";
@@ -64,10 +65,8 @@ export function parseInjectAck(text: string): InjectAck | undefined {
 	}
 }
 
-/** One directory per device: the dylib watches its directory, so two devices never wake each other's app. */
-export function injectStatePath(wardenHome: string, udid: string): string {
-	return join(wardenHome, "inject", udid, "state.json");
-}
+/** One directory per device: the dylib watches its directory, so two devices never wake each other's app. Core owns the path (release resets the file). */
+export const injectStatePath: (wardenHome: string, udid: string) => string = coreInjectStatePath;
 
 export const injectAckPath = (statePath: string): string => `${statePath}.ack`;
 

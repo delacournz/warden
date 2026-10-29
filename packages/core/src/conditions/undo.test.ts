@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
 import type { Lease, Owner } from "../types";
 import { activeConditions, recordCondition } from "./conditions";
+import { injectStatePath } from "./inject-state";
 import { type UndoDeps, undoConditions } from "./undo";
 
 const owner: Owner = { kind: "agent", sessionId: "s1", cwd: "/tmp" };
@@ -212,6 +213,27 @@ describe("undoConditions", () => {
 		await undoConditions(deps(), port);
 		await undoConditions(deps(), pending);
 		expect(calls).toEqual([]);
+	});
+
+	test("ios clock writes a neutral state for a still-running injected app", async () => {
+		const home = join(dir, "home");
+		const path = injectStatePath(home, UDID);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ seq: 7, offline: true, clockOffsetMs: 86_400_000, clockFrozenMs: 1 }));
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "clock", { kind: "offset", ms: 86_400_000 }, 1);
+		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(res.success).toBe(true);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 8, offline: false, clockOffsetMs: 0 });
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("ios clock with no injected app writes nothing", async () => {
+		const home = join(dir, "home");
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "clock", { kind: "offset", ms: 1 }, 1);
+		expect((await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l)).success).toBe(true);
+		expect(existsSync(injectStatePath(home, UDID))).toBe(false);
 	});
 
 	test("ios permission resets all privacy grants", async () => {
