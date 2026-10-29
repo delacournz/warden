@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createDevice, type Device } from "@delacour/warden-e2e/device";
-import type { Driver, Orientation } from "@delacour/warden-e2e/driver/driver.types";
+import type { BiometricOp, Driver, Orientation } from "@delacour/warden-e2e/driver/driver.types";
 import type { E2eEnv } from "@delacour/warden-e2e/env";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -220,6 +220,42 @@ export function uiAppearance(
 			text: raw === undefined ? `appearance is ${now.data}` : `appearance ${now.data}`,
 			...(raw === undefined ? {} : { args: { mode: now.data } }),
 			extra: { appearance: now.data },
+		});
+	});
+}
+
+const BIOMETRIC_OPS: readonly BiometricOp[] = ["status", "enroll", "unenroll", "match", "fail"];
+
+/** `warden ui biometrics [status|enroll|unenroll|match|fail]`: simulated Face ID / Touch ID / fingerprint; no op reads the state. */
+export function uiBiometrics(
+	ctx: CommandContext,
+	deps: UiDeps,
+	raw: string | undefined,
+	opts: ActionOptionValues
+): Promise<number> {
+	return runUi(ctx, deps, "biometrics", opts, async (device, env) => {
+		const settle = parseSettle(opts.settle);
+		if (!settle.success) return settle;
+		const op = BIOMETRIC_OPS.find((candidate) => candidate === (raw ?? "status"));
+		if (op === undefined) {
+			return {
+				success: false,
+				error: uiError("usage", `unknown biometrics op "${raw}"`, { hint: BIOMETRIC_OPS.join(" | ") }),
+			};
+		}
+		const driver = await env.driver();
+		if (!driver.success) return driver;
+		const state = fromDriver(await driver.data.biometrics(op));
+		if (!state.success) return state;
+		const { enrolled, modality } = state.data;
+		return finishAction(ctx, deps, env, device, driver.data, settle.data, {
+			action: "biometrics",
+			text:
+				op === "status"
+					? `${modality} ${enrolled ? "enrolled" : "not enrolled"}`
+					: `${op}: ${modality} ${enrolled ? "enrolled" : "not enrolled"}`,
+			...(op === "status" ? {} : { args: { op } }),
+			extra: { biometrics: state.data },
 		});
 	});
 }

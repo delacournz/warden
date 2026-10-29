@@ -305,6 +305,24 @@ describe("warden e2e", () => {
 		expect(job?.opts.env.WARDEN_AGENT_SESSION).toBeUndefined();
 	});
 
+	test("a count-only suite with biometrics claims the +bio pool (and a plain one never does)", async () => {
+		const bioSim = { udid: "B1", name: "warden-iphone-17+bio-1", state: "Booted" as const };
+		const claimed = async (suite: Record<string, unknown>): Promise<string[]> => {
+			await resuite(suite);
+			write("src/chat/lazy.tsx", "export const x = 2;\n");
+			const sim = fakeSimctl([bioSim, wardenSim(1, "Booted")], []);
+			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? bunExec(cmd, opts) : sim(cmd, opts));
+			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
+			ctx.env = { ...ctx.env, ...OWNER_ENV };
+			ctx.cwd = dir;
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			return h.jobs().map((j) => j.opts.env.WARDEN_UDID ?? "");
+		};
+		expect(await claimed({ biometrics: true, count: 1 })).toEqual(["B1"]);
+		expect(await claimed({ count: 1 })).toEqual(["U1"]);
+	});
+
 	describe("metro", () => {
 		const projects = { projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] };
 		const suite = { project: "app", metro: { launchArgs: ["-E2E", "YES"], env: { EXPO_PUBLIC_E2E: "1" } } };

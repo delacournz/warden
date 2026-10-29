@@ -78,6 +78,8 @@ export type SpecEnvOptions = {
 	perf?: readonly string[] | undefined;
 	/** the suite's `perf.budgets` (`WARDEN_PERF_BUDGETS`) */
 	perfBudgets?: Readonly<Record<string, number>> | undefined;
+	/** the suite's devices are biometrics devices (`WARDEN_BIOMETRICS=1`) */
+	biometrics?: boolean | undefined;
 };
 
 /**
@@ -101,6 +103,7 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		...(o.perfBudgets === undefined || Object.keys(o.perfBudgets).length === 0
 			? {}
 			: { [ENV_NAMES.perfBudgets]: JSON.stringify(o.perfBudgets) }),
+		...(o.biometrics === true ? { [ENV_NAMES.biometrics]: "1" } : {}),
 		BUN_BE_BUN: "1",
 	};
 }

@@ -343,3 +343,19 @@ describe("Device Hub windows after a claim (Xcode 27)", () => {
 		expect(await claim("DeviceHub", true)).toEqual([]);
 	});
 });
+
+describe("parseClaimFlags biometrics", () => {
+	test("biometrics: true puts the +bio identity on the requested profile", () => {
+		const flags = parseClaimFlags("android", { profile: "pixel-10", biometrics: true });
+		expect(flags.success && flags.data.request.profile).toBe("pixel-10+bio");
+	});
+
+	test("unset or false leaves the profile alone, default profile included", () => {
+		const plain = parseClaimFlags("ios", {});
+		const off = parseClaimFlags("ios", { biometrics: false });
+		expect(plain.success && off.success && plain.data.request.profile).toBe(
+			off.success ? off.data.request.profile : ""
+		);
+		expect(plain.success && plain.data.request.profile.endsWith("+bio")).toBe(false);
+	});
+});

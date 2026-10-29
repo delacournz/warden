@@ -109,6 +109,7 @@ function suiteOpts(
 		passes: String(suite.passes),
 		...(suite.count !== undefined ? { count: String(suite.count) } : {}),
 		...(suite.profile !== undefined ? { profile: suite.profile } : {}),
+		...(suite.biometrics === true ? { biometrics: true as const } : {}),
 		...(suite.ports ? { port: suite.ports } : {}),
 		...(suite.serve !== undefined ? { serve: suite.serve } : {}),
 		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
@@ -539,6 +540,7 @@ async function runPlan(
 		count: String(leg.count),
 		slim: slimFlag,
 		...(suite.slim !== undefined ? { slimConfig: suite.slim } : {}),
+		...(suite.biometrics === true ? { biometrics: true } : {}),
 	});
 	const [first] = picked.data ?? [];
 	const args = parseBatchArgs(platform, first ? legOpts(first) : batchOpts, ctx.cwd, {
@@ -634,7 +636,7 @@ export async function specPlan(
 	deps: SpecPlanDeps,
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "perf"> = {}
+	opts: Pick<E2eOpts, "perf" | "biometrics"> = {}
 ): AsyncResult<SpecPlan> {
 	const bun = findBun(ctx.env, deps.execPath());
 	const version = currentBuild().version;
@@ -678,6 +680,7 @@ export async function specPlan(
 			bin: selfCommand(),
 			...(perf.data === undefined ? {} : { perf: perf.data }),
 			...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
+			...(suite.biometrics === true || opts.biometrics === true ? { biometrics: true } : {}),
 		},
 	});
 }

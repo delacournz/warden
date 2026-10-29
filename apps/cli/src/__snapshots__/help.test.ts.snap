@@ -132,6 +132,8 @@ Options:
                          android)
   --no-slim              iOS: leave the simulator daemons running (config slim /
                          WARDEN_SLIM=0 also turn slimming off)
+  --biometrics           claim devices with a fingerprint / Face ID enrolled
+                         (own pool and golden; config biometrics)
   --json                 machine-readable output
   -h, --help             display help for command"
 `;
@@ -192,6 +194,8 @@ Options:
                          android)
   --no-slim              iOS: leave the simulator daemons running (config slim /
                          WARDEN_SLIM=0 also turn slimming off)
+  --biometrics           claim devices with a fingerprint / Face ID enrolled
+                         (own pool and golden; config biometrics)
   --json                 machine-readable output
   --port <from:span>     lease a port from FROM..FROM+SPAN-1 (inclusive) for the
                          child (WARDEN_PORT_<i>); repeatable (default: [])
@@ -255,6 +259,8 @@ Options:
                               on android)
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
+  --biometrics                claim devices with a fingerprint / Face ID
+                              enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
   --udid <udid>               use this device instead of claiming one
   --lease <id>                use the device of this lease
@@ -402,6 +408,8 @@ Options:
                               on android)
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
+  --biometrics                claim devices with a fingerprint / Face ID
+                              enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
@@ -517,6 +525,8 @@ Options:
                               on android)
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
+  --biometrics                claim devices with a fingerprint / Face ID
+                              enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
@@ -1854,6 +1864,8 @@ Commands:
                                it
   home                         press the home button
   back                         press back (Android only)
+  biometrics [op]              simulated Face ID / Touch ID / fingerprint:
+                               status (default), enroll, unenroll, match, fail
   screen                       the device screen: orientation, appearance,
                                screenshot, video
   gesture                      touch gestures: swipe, longpress, pinch, rotate,
@@ -2270,6 +2282,35 @@ $ warden ui back --help
 Usage: warden ui back [options]
 
 press back (Android only)
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui biometrics --help
+Usage: warden ui biometrics [options] [op]
+
+simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll,
+match, fail
+
+Arguments:
+  op                     status | enroll | unenroll | match | fail
 
 Options:
   --settle [ms]          wait for a quiet screen afterwards (default budget 3000
@@ -3284,6 +3325,19 @@ Options:
   -h, --help  display help for command"
 `;
 
+exports[`help output warden __android-host --help (and nested subcommands) 1`] = `
+"$ warden __android-host --help
+Usage: warden __android-host [options]
+
+resident Android driver host behind \`warden ui\` (internal)
+
+Options:
+  --serial <serial>
+  --socket <path>
+  --idle-timeout <seconds>
+  -h, --help                display help for command"
+`;
+
 exports[`help output warden ui-collect --help (and nested subcommands) 1`] = `
 "$ warden ui-collect --help
 Usage: warden ui-collect [options]
@@ -3579,17 +3633,4 @@ exports[`help output unknown command suggests the closest registered one 1`] = `
 "error: unknown command 'claime'
 (Did you mean claim?)
 (add --help for usage)"
-`;
-
-exports[`help output warden __android-host --help (and nested subcommands) 1`] = `
-"$ warden __android-host --help
-Usage: warden __android-host [options]
-
-resident Android driver host behind \`warden ui\` (internal)
-
-Options:
-  --serial <serial>
-  --socket <path>
-  --idle-timeout <seconds>
-  -h, --help                display help for command"
 `;

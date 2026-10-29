@@ -123,6 +123,11 @@ describe("specEnv perf", () => {
 		expect(env.WARDEN_PERF_BUDGETS).toBe('{"jankPct":5}');
 	});
 
+	test("WARDEN_BIOMETRICS only for a biometrics suite", () => {
+		expect(specEnv({ ...base, biometrics: true }).WARDEN_BIOMETRICS).toBe("1");
+		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
+	});
+
 	test("absent unless asked for; empty budgets are not exported", () => {
 		const env = specEnv({ ...base, perfBudgets: {} });
 		expect(Object.keys(env).filter((k) => k.includes("PERF") || k === "WARDEN_BIN")).toEqual([]);

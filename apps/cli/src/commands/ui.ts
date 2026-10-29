@@ -167,6 +167,16 @@ export function createUiCommand(deps: UiDeps): Command {
 					done(await uiHardware(ctx, deps, button, opts));
 				});
 			}
+			withUiOptions(
+				cmd
+					.command("biometrics")
+					.description("simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll, match, fail")
+					.argument("[op]", "status | enroll | unenroll | match | fail")
+					.option("--settle [ms]", SETTLE)
+			).action(async (op, opts) => {
+				const { uiBiometrics } = await import("../agent-ui/controls");
+				done(await uiBiometrics(ctx, deps, op, opts));
+			});
 			const screen = cmd.command("screen").description("the device screen: orientation, appearance, screenshot, video");
 			withUiOptions(
 				screen
