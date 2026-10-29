@@ -150,6 +150,8 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 					requested: opts.inject === true,
 				})
 			) {
+				// a plain launch has no dylib: forget the ack of an earlier app so `attached()` never reports a ghost
+				channel.reset();
 				return { success: true, data: undefined };
 			}
 			const dylib = deps.dylib();

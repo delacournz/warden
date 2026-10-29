@@ -306,6 +306,36 @@ describe("offline", () => {
 	});
 });
 
+describe("going offline", () => {
+	test("cuts a tunnel that is already established, not only new connections", async () => {
+		const p = await start();
+		const socket = connect({ host: "127.0.0.1", port: p.handle.port });
+		await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+		socket.write("GET http://api.test/ HTTP/1.1\r\nHost: api.test\r\n\r\n");
+		await new Promise<void>((resolve) => socket.once("data", () => resolve()));
+		const closed = new Promise<boolean>((resolve) => {
+			socket.on("close", () => resolve(true));
+			setTimeout(() => resolve(false), 1500);
+		});
+		await setProxyConditions(p.handle, { params: { offline: "refuse" } });
+		expect(await closed).toBe(true);
+	});
+
+	test("shaping changes leave established connections alone", async () => {
+		const p = await start();
+		const socket = connect({ host: "127.0.0.1", port: p.handle.port });
+		await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+		let closed = false;
+		socket.on("close", () => {
+			closed = true;
+		});
+		await setProxyConditions(p.handle, { params: { latencyMs: 20 } });
+		await Bun.sleep(150);
+		expect(closed).toBe(false);
+		socket.destroy();
+	});
+});
+
 describe("control channel", () => {
 	test("status reports conditions, pid and counters", async () => {
 		const p = await start({ conditions: { params: { latencyMs: 5 } } });

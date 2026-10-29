@@ -211,6 +211,13 @@ describe("launchEnv", () => {
 		expect(r.proxy.calls).toEqual([]);
 	});
 
+	test("a plain launch forgets the previous app's ack, so a ghost is never attached", async () => {
+		const r = rig();
+		r.attach();
+		expect(await r.net.launchEnv({})).toEqual({ success: true, data: undefined });
+		expect(r.files.has(ACK)).toBe(false);
+	});
+
 	test("a live proxy injects with its address and stages the state", async () => {
 		const r = rig({ proxyLive: true });
 		await r.net.network({ kind: "offline" });

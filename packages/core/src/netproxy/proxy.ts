@@ -259,6 +259,10 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 		if (before === "blackhole" && conditions.params.offline !== "blackhole") {
 			for (const socket of [...held]) socket.destroy();
 		}
+		// like airplane mode: going offline cuts connections that are already up (keep-alive, open tunnels), it does not just refuse new ones
+		if (before === undefined && conditions.params.offline !== undefined) {
+			for (const socket of [...open]) socket.destroy();
+		}
 	}
 
 	const status = (): ProxyStatus => ({ ...conditions, pid: process.pid, stats: { ...stats } });
