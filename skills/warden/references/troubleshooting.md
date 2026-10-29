@@ -61,6 +61,7 @@
 | 55 | `warden ui` on an iPhone fails `ios_team_ambiguous` (or the runner build fails `no_team`) | The keychain holds several `Apple Development` identities, so no signing team can be picked | Set `WARDEN_IOS_TEAM_ID=<team>` or `ios: { teamId }` in `warden.config.ts` |
 | 56 | `E_UNSUPPORTED` from `pinch`, `rotate`, `gesture` or `press shake` / `back` on an iPhone | The on-device XCUITest runner takes single-finger taps, swipes and drags only | Use `swipe` / `drag`, or run the check on a simulator |
 | 57 | `warden e2e` / `run` / `batch` on an iPhone fails `installing an app on a physical iPhone needs a device build (WDN-PHY-8…)` before anything is leased | `--app` or the suite's `app` was given with `--udid` / `--physical` on iOS; the cached builds are simulator builds and device-target builds are not built yet | Install the app on the phone yourself and drop `--app` / `app` from the suite. Android phones install an APK as usual |
+| 58 | On an Android phone a spec stalls after sign-in under a "Save password to Google Password Manager?" sheet (nodes `autofill_save`, `autofill_save_no`, `autofill_save_yes`) | Google Password Manager autofill offers to save the typed password over the app | `test.use({ systemAlerts: "dismiss" })` (or `"accept"`, or `device.alert(...)`) closes it with the Back key. warden never presses Never (a permanent opt-out on the user's Google account) or Continue (stores the password), and `device.alert({ button })` on it fails `ACTION_FAILED`. Also mark the fields `importantForAutofill="no"` in the e2e build |
 
 ## Code lookup
 
