@@ -1,5 +1,6 @@
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
+import { splitBiometricProfile } from "../biometrics";
 import { type Exec, type ExecResult, execError } from "../exec";
 import { isGoldenName } from "../golden/golden";
 import { disabledStoreRoot } from "../sims/disabled-store";
@@ -315,6 +316,9 @@ export async function lookupCreateTarget(
 	return resolveCreateTarget(types.data, runtimes.data, profile, runtime);
 }
 
+/** BiometricKit's enrollment notification: state 1 + post enrolls, 0 + post unenrolls. */
+const ENROLLMENT_NOTIFICATION = "com.apple.BiometricKit.enrollmentChanged";
+
 /** Makes a new sim by cloning a prepared image; returns its udid + short runtime. */
 export type IosCloneStrategy = (
 	name: string,
@@ -389,7 +393,27 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		const prepared = await prepareOfflineSlim(id, slim, { root: disabledStoreRoot(deps.env) });
 		if (!prepared.success) note(`${target.name} offline slim skipped (${prepared.error})`);
 	};
+	/**
+	 * A biometrics sim (recorded profile `<profile>+bio`) enrolls on every boot: the simulator forgets its enrollment
+	 * when it shuts down, and a clone of a golden starts unenrolled, so there is nothing to bake. Runs before any
+	 * app install, so keys created with biometry-bound access control are not invalidated later.
+	 */
+	const enrollBiometrics = async (id: string): Promise<void> => {
+		const rec = deps.store.listDevices("ios").find((d) => d.id === id);
+		if (!rec || isGoldenName(rec.name) || !splitBiometricProfile(rec.profile ?? "").biometrics) return;
+		for (const args of [
+			["-s", ENROLLMENT_NOTIFICATION, "1"],
+			["-p", ENROLLMENT_NOTIFICATION],
+		]) {
+			const out = await simctl(runner, ["spawn", id, "notifyutil", ...args], IOS_TIMEOUTS.listMs);
+			if (!out.success) {
+				note(`${rec.name} biometrics enroll failed (${out.error})`);
+				return;
+			}
+		}
+	};
 	const afterReady = async (id: string): Promise<void> => {
+		await enrollBiometrics(id);
 		if (slim === false) return;
 		const target = slimTarget(id);
 		if (!target) return;
@@ -427,14 +451,16 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		},
 
 		async create(name, profile, runtime) {
+			// `<profile>+bio` is the same device type; only the pool identity (and the enrollment after boot) differs
+			const typeProfile = splitBiometricProfile(profile).profile;
 			if (options.clone) {
-				const cloned = await options.clone(name, profile, runtime);
+				const cloned = await options.clone(name, typeProfile, runtime);
 				if (cloned.success) {
 					return ok(await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime)));
 				}
 				deps.log?.(`clone failed (${cloned.error}) — creating ${name} fresh (slow first boot)`);
 			}
-			const target = await lookupCreateTarget(exec, profile, runtime, deps.timer);
+			const target = await lookupCreateTarget(exec, typeProfile, runtime, deps.timer);
 			if (!target.success) return target;
 			const created = await simctl(
 				runner,

@@ -741,4 +741,54 @@ describe("createIosProvider slim (SLIM-2)", () => {
 		expect(store.listDevices("ios")[0]?.slimmedAt).toBeUndefined();
 		expect(logs.some((l) => l.includes("live slim failed"))).toBe(true);
 	});
+
+	test("biometrics profile: the clone is made for the plain profile, recorded +bio, and enrolled after every boot", async () => {
+		const cloned: string[] = [];
+		const calls: Call[] = [];
+		const p = createIosProvider(
+			{
+				exec: fake([["xcrun simctl spawn CLONED notifyutil", {}]], calls),
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{
+				clone: async (_name, profile) => {
+					cloned.push(profile);
+					return { success: true, data: { udid: "CLONED", runtime: "iOS-26-5" } };
+				},
+				slim: false,
+				sleep: async () => {},
+			}
+		);
+		const created = await p.create("warden-iphone-17+bio-1", "iphone-17+bio");
+		expect(created.success && created.data.profile).toBe("iphone-17+bio");
+		expect(cloned).toEqual(["iphone-17"]);
+		expect(store.listDevices("ios")[0]?.profile).toBe("iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual([
+			"xcrun simctl spawn CLONED notifyutil -s com.apple.BiometricKit.enrollmentChanged 1",
+			"xcrun simctl spawn CLONED notifyutil -p com.apple.BiometricKit.enrollmentChanged",
+		]);
+	});
+
+	test("a plain profile and a device warden has no record of are never enrolled", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(fake([], calls), { slim: false });
+		await p.create("warden-iphone-17-9", "iphone-17");
+		await p.afterReady?.("CLONED");
+		await p.afterReady?.("FOREIGN");
+		expect(calls).toEqual([]);
+	});
+
+	test("a failed enrollment is logged, not fatal", async () => {
+		const p = slimProvider(fake([["xcrun simctl spawn CLONED notifyutil", { exitCode: 1, stderr: "nope" }]]), {
+			slim: false,
+		});
+		await p.create("warden-iphone-17+bio-9", "iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(logs.some((l) => l.includes("biometrics enroll failed"))).toBe(true);
+	});
 });

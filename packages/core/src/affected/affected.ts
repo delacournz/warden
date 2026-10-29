@@ -32,6 +32,8 @@ export type Suite = {
 	headless?: boolean;
 	/** the suite's `slim`, else the top-level one (undefined: neither sets it) */
 	slim?: NonNullable<E2eSuiteConfig["slim"]>;
+	/** the suite's `biometrics`, else the top-level one (undefined: neither sets it) */
+	biometrics?: boolean;
 	/** the suite's perf budgets over the top-level ones, per key (undefined: none set) */
 	perfBudgets?: NonNullable<NonNullable<E2eSuiteConfig["perf"]>["budgets"]>;
 };
@@ -176,6 +178,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 	const projectRoot = project ? resolve(rootDir, project.root) : undefined;
 	const headless = config.headless ?? top.headless;
 	const slim = config.slim ?? top.slim;
+	const biometrics = config.biometrics ?? top.biometrics;
 	const budgets = { ...top.perf?.budgets, ...config.perf?.budgets };
 	return {
 		name,
@@ -187,6 +190,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 		...(projectRoot ? { projectRoot } : {}),
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),
+		...(biometrics !== undefined ? { biometrics } : {}),
 		...(Object.keys(budgets).length > 0 ? { perfBudgets: budgets } : {}),
 	};
 }

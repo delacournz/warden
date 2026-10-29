@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok } from "@delacour/warden-types/result";
+import { STAY_AWAKE_COMMAND, SYSTEMUI_RESTART_COMMAND, unlockCommand } from "../android-keyguard";
 import { claimDevices } from "../claim";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import type { Exec, ExecOptions, ExecResult } from "../exec";
@@ -640,6 +641,87 @@ describe("waitReady", () => {
 		const provider = createAndroidProvider(deps(exec), { sleep: async () => {} });
 		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
 		expect(calls).toEqual([WAIT, settings]);
+	});
+
+	const BIO_STATE = `${ADB} -s emulator-5554 get-state`;
+	const BIO_PM = `${ADB} -s emulator-5554 shell pm path android`;
+	const BIO_DUMP = `${ADB} -s emulator-5554 shell dumpsys window`;
+	const BIO_UNLOCK = `${ADB} -s emulator-5554 shell ${unlockCommand()}`;
+	const BIO_AWAKE = `${ADB} -s emulator-5554 shell ${STAY_AWAKE_COMMAND}`;
+	const BIO_KILL = `${ADB} -s emulator-5554 emu kill`;
+
+	/** a +bio emulator created by this provider, its adb answers from `handlers` */
+	async function bioProvider(handlers: Record<string, Handler>) {
+		const settings = `${ADB} -s emulator-5554 shell ${bootSettingsCommand()}`;
+		const fake = fakeExec({
+			[`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+			[WAIT]: out(""),
+			[settings]: out(""),
+			[BIO_STATE]: out("device\n"),
+			[BIO_PM]: out("package:/system/framework/framework-res.apk\n"),
+			...handlers,
+		});
+		const spawn: SpawnDetached = async () => ok({ pid: 4242 });
+		const snapshot = async () => ok("warden-0123456789");
+		const provider = createAndroidProvider(deps(fake.exec), {
+			sleep: async () => {},
+			pidAlive: () => true,
+			spawnDetached: spawn,
+			snapshot,
+		});
+		expect((await provider.create("w", "pixel-10+bio")).success).toBe(true);
+		return { provider, ...fake };
+	}
+
+	test("a biometrics emulator waits for adb + the package manager, gets past the keyguard, then re-checks", async () => {
+		let dumps = 0;
+		const { provider, calls } = await bioProvider({
+			[BIO_DUMP]: () => out(++dumps === 1 ? "isKeyguardShowing=true" : "isKeyguardShowing=false"),
+			[BIO_UNLOCK]: out(""),
+			[BIO_AWAKE]: out(""),
+		});
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		const order = [BIO_STATE, BIO_PM, BIO_DUMP, BIO_UNLOCK, BIO_DUMP, BIO_AWAKE, BIO_STATE, BIO_PM];
+		expect(calls.filter((c) => order.includes(c))).toEqual(order);
+		expect(calls).not.toContain(BIO_KILL);
+	});
+
+	test("a plain emulator is not unlocked", async () => {
+		const wait = `${ADB} -s emulator-5560 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const plainSettings = `${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`;
+		const plain = fakeExec({ [wait]: out(""), [plainSettings]: out("") });
+		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(plain.calls).toEqual([wait, plainSettings]);
+	});
+
+	test("a biometrics emulator stuck on its keyguard fails readiness and is shut down, not left locked", async () => {
+		const { provider, calls } = await bioProvider({
+			[BIO_DUMP]: out("isKeyguardShowing=true"),
+			[BIO_UNLOCK]: out(""),
+			[`${ADB} -s emulator-5554 shell ${SYSTEMUI_RESTART_COMMAND}`]: out(""),
+			[BIO_KILL]: out(""),
+			[`${ADB} devices -l`]: out(ADB_DEVICES_EMPTY),
+		});
+		const result = await provider.waitReady("emulator-5554", 60_000);
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("keyguard");
+		expect(calls).toContain(BIO_KILL);
+		expect(store.listDevices("android")).toEqual([]);
+	});
+
+	test("a foreign emulator that fails readiness is never shut down", async () => {
+		const wait = `${ADB} -s emulator-5562 wait-for-device shell ${BOOT_WAIT_SCRIPT}`;
+		const { exec, calls } = fakeExec({
+			[wait]: fail("error: closed"),
+			[`${ADB} -s emulator-5562 wait-for-device`]: out(""),
+			[`${ADB} -s emulator-5562 shell getprop sys.boot_completed`]: out("0\n"),
+		});
+		const clock = fakeClock();
+		const provider = createAndroidProvider(deps(exec, clock.now), { sleep: clock.sleep, pollIntervalMs: 1_000 });
+		expect((await provider.waitReady("emulator-5562", 3_000)).success).toBe(false);
+		expect(calls.some((c) => c.includes("emu kill"))).toBe(false);
 	});
 
 	test("a failing settings put does not fail readiness", async () => {
