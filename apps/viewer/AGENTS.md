@@ -29,6 +29,13 @@ Rust owns the token. The webview makes no network requests (CSP has no remote `c
 - `src/modules/input/`: `input.ts` pure mapping (letterbox-aware `toDevicePoint`, tap/swipe classifier, wheel accumulator, key batcher), `use-device-input.ts` wires it to the DOM. No input at all in `view` scope or watch mode.
 - `src/modules/toolbar/`: apogee toolbar (open URL, screenshot, watch/drive toggle for `drive` scope, always-on-top, status badge).
 
+## Window chrome
+
+- Undecorated, transparent window (`decorations: false`, `transparent: true`, `shadow: true`); the rounded surface is CSS. `macOSPrivateApi` is on for transparency on macOS, which rules out the Mac App Store (the viewer never ships there).
+- The titlebar is ours: `data-tauri-drag-region` on the bar, non-interactive children `pointer-events-none`. Window controls are custom buttons plus Cmd/Ctrl+W (close) and Cmd/Ctrl+M (minimize).
+- Window capabilities are exactly `core:window:allow-start-dragging`, `allow-minimize`, `allow-close`, `allow-set-always-on-top`. Add one only with the control that needs it.
+- `TITLEBAR_HEIGHT` and `SCREEN_INSET` (`src/modules/toolbar/layout.ts`) feed `fit_window`; change them with the markup or the window no longer fits the device aspect.
+
 ## Commands
 
 ```bash
