@@ -314,4 +314,40 @@ describe("warden claim --remote", () => {
 			c.cleanup();
 		}
 	});
+
+	test("--view without --remote is a usage error and claims nothing", async () => {
+		const c = setup(["ios", "--view"]);
+		expect(await claimCommand.run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("--view needs --remote");
+		expect(c.db.listLeases()).toEqual([]);
+	});
+
+	test("--remote --view opens the viewer on the new lease and returns its exit code", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const { fakeViewer } = await import("../remote/viewer.testing");
+		const server = fakeServer();
+		const viewer = fakeViewer();
+		viewer.exit(0);
+		const c = testContext(["ios", "--remote", "--view", "--json", "--profile", "iphone-17"], {
+			fetch: server.fetch,
+			sleep: async () => {},
+			spawn: viewer.spawn,
+		});
+		try {
+			c.env = {
+				...c.env,
+				WARDEN_API_URL: "https://api.test",
+				WARDEN_TOKEN: server.token,
+				WARDEN_SESSION_ID: "s1",
+				WARDEN_VIEWER_PATH: "/dev/warden-viewer",
+			};
+			expect(await claimCommand.run(c)).toBe(0);
+			expect(viewer.spawns[0]?.cmd).toEqual(["/dev/warden-viewer"]);
+			expect(viewer.stdin[0]).toMatchObject({ deviceId: "rd1", scope: "drive", title: "iphone-17 · warden" });
+			expect(server.viewerTokens[0]?.ttlS).toBeUndefined();
+			expect(() => JSON.parse(c.stdout.join("\n"))).not.toThrow();
+		} finally {
+			c.cleanup();
+		}
+	});
 });

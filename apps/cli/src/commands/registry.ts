@@ -245,6 +245,12 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./mcp")).mcpCommand,
 	},
 	{
+		name: "view",
+		group: "Account",
+		summary: "open a hosted device in the warden viewer window",
+		load: async () => (await import("./view")).viewCommand,
+	},
+	{
 		name: "login",
 		group: "Account",
 		summary: "log in to warden cloud (remote simulators) in the browser",

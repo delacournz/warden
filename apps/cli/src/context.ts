@@ -3,6 +3,7 @@ import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/g
 import type { HostFacts } from "@delacour/warden-core/host";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import type { Fetch } from "./remote/api";
+import type { SpawnViewer } from "./remote/viewer";
 import { terminalUi, type Ui } from "./ui";
 
 /** Everything a command touches from the outside world — injectable for tests. */
@@ -32,6 +33,8 @@ export type CommandContext = {
 	fetch?: Fetch;
 	/** wall-clock wait (polling loops); unset = `Bun.sleep` */
 	sleep?: (ms: number) => Promise<void>;
+	/** starts the `warden view` window; unset = `Bun.spawn` (tests inject a fake) */
+	spawn?: SpawnViewer;
 };
 
 /** Collects the failures a command reports; `runProgram` keeps the first. */

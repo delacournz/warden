@@ -23,11 +23,15 @@ import { withSpinner } from "../spinner-context";
 /** how long `--remote` waits for the hosted device to boot when `--wait` / `--no-wait` don't say */
 const REMOTE_BOOT_WAIT_MS = 5 * 60_000;
 
-type ClaimOpts = ClaimFlagValues & { json?: true; remote?: true };
+type ClaimOpts = ClaimFlagValues & { json?: true; remote?: true; view?: true };
 
 /** Lease, then boot / create as needed; a spinner covers the (possibly minutes-long) boot. */
 async function claim(ctx: CommandContext, platformArg: string | undefined, opts: ClaimOpts): Promise<number> {
 	const { color } = ctx.ui;
+	if (opts.view && !opts.remote) {
+		reportError(ctx, "claim", "--view needs --remote (only hosted devices have a viewer)");
+		return 1;
+	}
 	const platform = await resolvePlatform(ctx, platformArg);
 	if (!platform.success) {
 		reportError(ctx, "claim", platform.error);
@@ -149,7 +153,9 @@ async function claimRemoteCommand(
 			leases.map((l) => [l.leaseId, color.bold(l.remoteId), l.name, color.dim(l.action)])
 		)
 	);
-	return 0;
+	if (!opts.view) return 0;
+	const { attachViewer } = await import("./view");
+	return attachViewer(ctx, "claim", lease, { scope: "drive", detach: false, json: opts.json === true, report: false });
 }
 
 export const claimCommand = defineCommand({
@@ -159,6 +165,7 @@ export const claimCommand = defineCommand({
 	register: (cmd, ctx, done) => {
 		withClaimOptions(cmd.argument("[platform]", "ios | android (asked for when omitted in a terminal)"))
 			.option("--remote", "lease a hosted device from warden cloud (warden login first)")
+			.option("--view", "with --remote: open the device in the warden viewer and stay until it closes")
 			.action(async (platform, opts) => done(await claim(ctx, platform, opts)));
 	},
 });

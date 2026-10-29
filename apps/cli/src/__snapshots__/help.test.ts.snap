@@ -69,6 +69,7 @@ Builds:
                                 native app builds
 
 Account:
+  view [leaseId|remoteId]       open a hosted device in the warden viewer window
   login                         log in to warden cloud (remote simulators) in
                                 the browser
   logout                        log out of warden cloud and forget the saved
@@ -145,6 +146,8 @@ Options:
   --json                 machine-readable output
   --remote               lease a hosted device from warden cloud (warden login
                          first)
+  --view                 with --remote: open the device in the warden viewer and
+                         stay until it closes
   -h, --help             display help for command"
 `;
 
@@ -3598,6 +3601,24 @@ profiles of \`warden dev\`
 
 Options:
   -h, --help  display help for command"
+`;
+
+exports[`help output warden view --help (and nested subcommands) 1`] = `
+"$ warden view --help
+Usage: warden view [options] [leaseId|remoteId]
+
+open a hosted device in the warden viewer window
+
+Arguments:
+  leaseId|remoteId  remote lease or hosted device id (default: your only remote
+                    lease)
+
+Options:
+  --watch           read-only: no taps, swipes or typing
+  --detach          leave the window open and return (one 30 min token; the
+                    lease TTL applies)
+  --json            machine-readable output
+  -h, --help        display help for command"
 `;
 
 exports[`help output warden login --help (and nested subcommands) 1`] = `
