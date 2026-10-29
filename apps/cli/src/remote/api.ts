@@ -7,6 +7,8 @@ import type {
 	Me,
 	Organization,
 	RemoteDevice,
+	ViewerScope,
+	ViewerToken,
 } from "./api.types";
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -30,6 +32,8 @@ export type WardenApi = {
 	stopDevice: (id: string) => AsyncResult<{ stopped: boolean }, ApiError>;
 	/** push the device's idle deadline out by its idle timeout (what `warden heartbeat` does for remote leases) */
 	heartbeatDevice: (id: string) => AsyncResult<RemoteDevice, ApiError>;
+	/** mint a viewer token for one device; `ttlS` is clamped server-side to 60..1800 (default 600) */
+	viewerToken: (id: string, scope: ViewerScope, ttlS?: number) => AsyncResult<ViewerToken, ApiError>;
 };
 
 export type WardenApiOptions = { baseUrl: string; token?: string; fetch?: Fetch };
@@ -92,6 +96,13 @@ function parseOrganization(value: unknown): Organization | undefined {
 	const name = str(value.name);
 	const slug = str(value.slug);
 	return id && name && slug ? { id, name, slug } : undefined;
+}
+
+function parseViewerToken(value: unknown): ViewerToken | undefined {
+	if (!isRecord(value)) return undefined;
+	const token = str(value.token);
+	const expiresAt = str(value.expiresAt);
+	return token && expiresAt ? { token, expiresAt } : undefined;
 }
 
 function parseMe(value: unknown): Me | undefined {
@@ -241,6 +252,11 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 				return devices.every((d) => d !== undefined) ? devices.filter((d) => d !== undefined) : undefined;
 			}),
 		heartbeatDevice: (id) => call("POST", `/v1/devices/${encodeURIComponent(id)}/heartbeat`, parseDevice, {}),
+		viewerToken: (id, scope, ttlS) =>
+			call("POST", `/v1/devices/${encodeURIComponent(id)}/viewer-token`, parseViewerToken, {
+				scope,
+				...(ttlS !== undefined ? { ttlS } : {}),
+			}),
 		stopDevice: (id) =>
 			call("DELETE", `/v1/devices/${encodeURIComponent(id)}`, (b) =>
 				isRecord(b) && typeof b.stopped === "boolean" ? { stopped: b.stopped } : undefined

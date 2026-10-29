@@ -27,6 +27,12 @@ export type CreateRemoteDevice = {
 	idleTimeoutS?: number;
 };
 
+/** What a viewer window may do: `view` only watches, `drive` also taps, swipes and types. */
+export type ViewerScope = "view" | "drive";
+
+/** `POST /v1/devices/:id/viewer-token`: a short-lived bearer valid only for that device's stream (and input, when `drive`). */
+export type ViewerToken = { token: string; expiresAt: string };
+
 export type RemoteConnectionState = "pending" | "connected" | "awaiting_approval" | "failed" | "disconnected";
 
 /** `GET /v1/me`. */

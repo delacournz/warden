@@ -14,6 +14,8 @@ export type FakeServer = {
 	devices: Map<string, RemoteDevice>;
 	/** `GET /v1/devices/:id` calls before a starting device reports ready */
 	readyAfterGets: number;
+	/** viewer tokens minted so far, newest last (`wvt_<n>`) */
+	viewerTokens: Array<{ deviceId: string; scope: string; ttlS?: number; token: string }>;
 };
 
 type Request = { method: string; path: string; body: Record<string, unknown> };
@@ -69,12 +71,24 @@ const AUTHED: Record<string, Handler> = {
 	},
 };
 
+/** `POST /v1/devices/:id/viewer-token`: 404 for a stopped device, ttl clamped to 60..1800 like the server. */
+function viewerToken(server: FakeServer, device: RemoteDevice, body: Record<string, unknown>): Response {
+	if (device.status === "stopped") return json({ success: false, error: "no such device", code: "NOT_FOUND" }, 404);
+	const scope = body.scope === "view" ? "view" : "drive";
+	const ttlS = typeof body.ttlS === "number" ? body.ttlS : undefined;
+	const token = `wvt_${server.viewerTokens.length + 1}`;
+	server.viewerTokens.push({ deviceId: device.id, scope, ...(ttlS !== undefined ? { ttlS } : {}), token });
+	const clamped = Math.min(1800, Math.max(60, ttlS ?? 600));
+	return json({ token, expiresAt: new Date(Date.UTC(2026, 9, 29) + clamped * 1000).toISOString() });
+}
+
 function deviceRoute(server: FakeServer, req: Request): Response | undefined {
-	const id = req.path.match(/^\/v1\/devices\/([^/]+)(?:\/heartbeat)?$/)?.[1];
+	const id = req.path.match(/^\/v1\/devices\/([^/]+)(?:\/heartbeat|\/viewer-token)?$/)?.[1];
 	if (id === undefined) return undefined;
 	const device = server.devices.get(id);
 	if (!device) return json({ success: false, error: "no such device", code: "NOT_FOUND" }, 404);
 	if (req.method === "POST" && req.path.endsWith("/heartbeat")) return json(device);
+	if (req.method === "POST" && req.path.endsWith("/viewer-token")) return viewerToken(server, device, req.body);
 	if (req.method === "DELETE") {
 		device.status = "stopped";
 		return json({ stopped: true });
@@ -104,6 +118,7 @@ export function fakeServer(
 			{ id: "o2", name: "Side", slug: "side" },
 		],
 		devices: new Map(),
+		viewerTokens: [],
 		readyAfterGets: overrides.readyAfterGets ?? 1,
 		fetch: async (input, init) => {
 			const path = new URL(input).pathname;

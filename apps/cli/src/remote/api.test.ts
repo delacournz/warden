@@ -165,4 +165,34 @@ describe("warden api client", () => {
 		expect((await api.setActiveOrganization("o1")).success).toBe(true);
 		expect(calls[1]?.body).toEqual({ organizationId: "o1" });
 	});
+
+	test("viewer token: scope and ttl in the body, 404 and bad bodies are errors", async () => {
+		const calls: Call[] = [];
+		const api = createWardenApi({
+			baseUrl: "https://api.test",
+			token: "tok",
+			fetch: fakeFetch(
+				{
+					"POST /v1/devices/d1/viewer-token": () => json({ token: "wvt_abc", expiresAt: "2026-10-29T00:10:00.000Z" }),
+					"POST /v1/devices/gone/viewer-token": () => json({ success: false, error: "no such device" }, 404),
+					"POST /v1/devices/odd/viewer-token": () => json({ token: 5 }),
+				},
+				calls
+			),
+		});
+		expect(await api.viewerToken("d1", "view")).toEqual({
+			success: true,
+			data: { token: "wvt_abc", expiresAt: "2026-10-29T00:10:00.000Z" },
+		});
+		await api.viewerToken("d1", "drive", 1800);
+		expect(calls[0]?.body).toEqual({ scope: "view" });
+		expect(calls[1]?.body).toEqual({ scope: "drive", ttlS: 1800 });
+		expect(calls[0]?.headers.authorization).toBe("Bearer tok");
+		expect(await api.viewerToken("gone", "view")).toEqual({
+			success: false,
+			error: { kind: "not_found", message: "no such device" },
+		});
+		const odd = await api.viewerToken("odd", "view");
+		expect(!odd.success && odd.error.kind).toBe("invalid_response");
+	});
 });
