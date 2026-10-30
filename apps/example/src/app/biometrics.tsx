@@ -18,7 +18,7 @@ function actionClasses(isOpen: boolean, isBusy: boolean): { button: string; labe
 }
 
 /**
- * Biometric unlock demo, styled as the vault (the app's dark theme, `styles/app.css`) for screen recordings: the
+ * Biometric unlock demo, styled as a vault in the app's docs palette (`styles/app.css`, light and dark) for screen recordings: the
  * face-frame glyph carries the state, the readout under the headline shows the raw `status` / `error` the specs
  * assert on (`bio-status`, `bio-error`), the attempt log timestamps every try and the contents drawer rises on
  * unlock. Reachable from Settings or `warden-example://biometrics` (no sign-in gate). Every view a spec reads is

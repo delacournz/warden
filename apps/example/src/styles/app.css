@@ -1,20 +1,25 @@
 /*
  * App-owned theme additions, imported by `global.css` after the registry block.
  *
- * Two app tokens the biometrics glyph reads where no semantic slot fits:
- *   --idle  "ready, waiting"
- *   --off   "unavailable"
+ * The palette itself is `theme.css`, written by `delacour theme` from the docs
+ * site's Device Hub colours (`apps/docs/DESIGN.md`): re-run the CLI to change it,
+ * never override its tokens here.
+ *
+ * Two app tokens the biometrics glyph reads where no semantic slot fits, as plain
+ * hex because SVG strokes and Reanimated cannot parse `oklch()`:
+ *   --idle  "ready, waiting"  ink
+ *   --off   "unavailable"     between ink-2 and hairline
  */
 @layer theme {
 	:root {
 		@variant light {
-			--idle: #3a4a73;
-			--off: #8a93a6;
+			--idle: #0d0d0c;
+			--off: #b3b0a6;
 		}
 
 		@variant dark {
-			--idle: #c8d3f5;
-			--off: #55607a;
+			--idle: #f3f1ea;
+			--off: #4a4842;
 		}
 	}
 }
@@ -22,4 +27,14 @@
 @theme inline {
 	--color-idle: var(--idle);
 	--color-off: var(--off);
+}
+
+/*
+ * `font-sans` and `font-mono` are Tailwind's own theme names, so the per-platform
+ * values in `theme.css` reach them. `font-heading` is not: without this the
+ * utility does not exist and headings silently draw in the sans face. Same family
+ * on both platforms, so resolving at build time is fine. `_layout.tsx` loads it.
+ */
+@theme {
+	--font-heading: "MonaSans_800ExtraBold";
 }
