@@ -43,6 +43,9 @@ export const ids = {
 		signOut: "settings-sign-out",
 		gestures: "settings-gestures",
 		biometrics: "settings-biometrics",
+		network: "settings-network",
+		location: "settings-location",
+		clock: "settings-clock",
 	},
 	biometrics: {
 		screen: "bio-screen",
@@ -50,6 +53,18 @@ export const ids = {
 		error: "bio-error",
 		unlock: "bio-unlock",
 		back: "bio-back",
+	},
+	network: {
+		screen: "net-screen",
+		back: "net-back",
+	},
+	location: {
+		screen: "loc-screen",
+		back: "loc-back",
+	},
+	clock: {
+		screen: "clk-screen",
+		back: "clk-back",
 	},
 	gestures: {
 		screen: "gestures-screen",

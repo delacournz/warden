@@ -1,19 +1,8 @@
+import type { Tone } from "@/modules/showcase/utils/tones";
 import type { BiometricStatus } from "../hooks/use-biometric-unlock";
 
-/** The vault's glyph and log tones, named for what they say. Each maps to one theme variable. */
-export type VaultTone = "idle" | "scan" | "open" | "warn" | "off";
-
-/** The theme variable behind each tone (`styles/app.css`): semantic where a slot fits, app-owned where none does. */
-export const TONE_VARIABLE = {
-	idle: "--idle",
-	scan: "--info",
-	open: "--success",
-	warn: "--warning",
-	off: "--off",
-} as const satisfies Record<VaultTone, string>;
-
 /** The glyph's tone per state. */
-export function toneOf(status: BiometricStatus): VaultTone {
+export function toneOf(status: BiometricStatus): Tone {
 	switch (status) {
 		case "Scanning":
 			return "scan";

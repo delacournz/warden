@@ -67,7 +67,18 @@ const AFFECTED = {
 		"location-route": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"location-denied": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"clock-trial": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
-		biometrics: { entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics"] },
+		biometrics: {
+			entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics", "src/modules/showcase"],
+		},
+		"network-showcase": {
+			entries: ["src/app/welcome.tsx", "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],
+		},
+		"location-showcase": {
+			entries: ["src/app/welcome.tsx", "src/app/location.tsx", "src/modules/location", "src/modules/showcase"],
+		},
+		"clock-showcase": {
+			entries: ["src/app/welcome.tsx", "src/app/clock.tsx", "src/modules/clock", "src/modules/showcase"],
+		},
 	},
 } satisfies Partial<WardenE2eSuite>;
 
