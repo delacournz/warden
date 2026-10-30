@@ -176,6 +176,26 @@
 		font-weight: 500;
 		font-size: 0.8rem;
 	}
+
+	/* A reference row's leading code links to the row itself (`src/lib/row-anchors.ts`): no underline
+	   until hovered, and a linked-to row lands clear of the header with the lamp on its edge. */
+	& a.row-anchor {
+		text-decoration: none;
+		&:hover code {
+			text-decoration: underline;
+			text-decoration-color: var(--color-ink-2);
+			text-underline-offset: 3px;
+		}
+	}
+	& tr[id] {
+		scroll-margin-top: 6rem;
+	}
+	& tr:target td {
+		background: var(--color-fill);
+	}
+	& tr:target td:first-child {
+		box-shadow: inset 2px 0 0 var(--color-lamp);
+	}
 }
 
 /* Code blocks: the surface group with a hairline, no drop shadow. */
