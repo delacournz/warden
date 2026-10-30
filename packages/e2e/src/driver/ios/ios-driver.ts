@@ -9,6 +9,7 @@ import type { Exec } from "@delacour/warden-core/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
+import type { ReadsA11y } from "../a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
@@ -32,6 +33,7 @@ import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { PastesText, SelectsAll } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
+import { createIosA11y, type IosA11y } from "./ios-a11y";
 import { createIosNetwork, type IosNetwork } from "./ios-network";
 import { type SwappableClient, swappableClient } from "./ios-session";
 import { createIosSettings, type IosSettings, type StagedSettings, withStagedSettings } from "./ios-settings";
@@ -54,7 +56,7 @@ import { typeTextBudgetMs } from "./type-budget";
 export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
 
 /** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
-export type IosDriver = Driver & SelectsAll & PastesText & ReadsAlertOn & ProbesFrontmost;
+export type IosDriver = Driver & SelectsAll & PastesText & ReadsAlertOn & ProbesFrontmost & ReadsA11y;
 
 export type OpenIosDriverOptions = {
 	udid: string;
@@ -98,6 +100,11 @@ export type OpenIosDriverOptions = {
 	stagedSettings?: StagedSettings;
 	/** state-file operations of the injected dylib's control channel, injected for tests */
 	injectFs?: InjectFs;
+	/**
+	 * Launch apps with the injected library so `readA11y` works (hint, custom actions, order). Default: `WARDEN_A11Y=1`.
+	 * Off, a launch pays nothing for it.
+	 */
+	a11y?: boolean;
 	/** CoreSimulator devices directory for the host-side `AutomationEnabled` check (default `~/Library/Developer/CoreSimulator/Devices`) */
 	devicesRoot?: string;
 };
@@ -238,11 +245,15 @@ type AppOp = "launch" | "terminate" | "openUrl";
 /** `requested` with the injected dylib's env merged in, when the lease has a network or clock condition. */
 async function launchWithInjection(
 	net: IosNetwork | undefined,
+	a11y: IosA11y | undefined,
 	requested: LaunchOptions | undefined
 ): Promise<Result<LaunchOptions | undefined, DriverError>> {
 	const injected = net ? await net.launchEnv(requested ?? {}) : undefined;
 	if (injected && !injected.success) return injected;
-	const env = injected?.data;
+	// a network/clock launch already carries the dylib (an a11y read rides on it); otherwise an a11y read may ask for it
+	const forA11y = injected?.data || !a11y ? undefined : await a11y.launchEnv(requested ?? {});
+	if (forA11y && !forA11y.success) return forA11y;
+	const env = injected?.data ?? forA11y?.data;
 	return { success: true, data: env ? { ...requested, env: { ...requested?.env, ...env } } : requested };
 }
 
@@ -258,6 +269,8 @@ export function createIosDriver(
 		clockRecorder?: ClockRecorder;
 		/** device settings (`ios-settings.ts`); absent: those ops answer `E_UNSUPPORTED` */
 		settings?: (ctx: { lastBundle: () => string | undefined }) => IosSettings;
+		/** screen-reader facts from the injected dylib (`ios-a11y.ts`); absent: `readA11y` answers `E_UNSUPPORTED` */
+		a11y?: () => IosA11y;
 		/** per-app network conditions (`ios-network.ts`); absent: `network` answers `E_UNSUPPORTED` */
 		network?: (deps: {
 			lastBundle: () => string | undefined;
@@ -282,6 +295,7 @@ export function createIosDriver(
 		relaunch: (bundleId) =>
 			driverRef ? driverRef.app.launch(bundleId, { relaunch: true, inject: true }) : noLeaseProxy(),
 	});
+	const a11y = opts.a11y?.();
 	const { client } = swap;
 	let axFailures = 0;
 	/**
@@ -699,6 +713,10 @@ export function createIosDriver(
 		alert,
 		alertOn,
 		isFrontmost,
+		readA11y: async (snapshot) =>
+			a11y
+				? a11y.read(snapshot)
+				: driverErr("E_UNSUPPORTED", "this iOS driver was opened without the injected library channel"),
 		appearance: (set) => simctl.appearance(set),
 		network: async (op, o) => (net ? net.network(op, o) : noLeaseProxy()),
 		networkFaults: async (faults) => (net ? net.networkFaults(faults) : noLeaseProxy()),
@@ -725,7 +743,7 @@ export function createIosDriver(
 		app: {
 			launch: async (bundleId, plain) => {
 				const requested = settings ? withStagedSettings(plain, settings.launchSettings()) : plain;
-				const withEnv = await launchWithInjection(net, requested);
+				const withEnv = await launchWithInjection(net, a11y, requested);
 				if (!withEnv.success) return withEnv;
 				const o = withEnv.data;
 				const viaHelper = await appOp(
@@ -744,6 +762,8 @@ export function createIosDriver(
 					if (await rebind(bundleId)) launchedBundle = undefined;
 					const loaded = await net?.confirmLoaded();
 					if (loaded && !loaded.success) return loaded;
+					const a11yLoaded = await a11y?.confirmLoaded();
+					if (a11yLoaded && !a11yLoaded.success) return a11yLoaded;
 				}
 				return launched;
 			},
@@ -857,6 +877,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			sleep,
 			log,
 			...(network ? { network } : {}),
+			a11y: () => iosA11yFor(o, now, sleep),
 			settings: (ctx) =>
 				createIosSettings({
 					udid: o.udid,
@@ -913,6 +934,33 @@ function iosNetworkFactory(
 			relaunch: ctx.relaunch,
 			...(o.debug ? { debug: true } : {}),
 		});
+}
+
+/** The injected-library accessibility reader of `o`: its own handle on the device's state file. */
+function iosA11yFor(o: OpenIosDriverOptions, now: () => number, sleep: (ms: number) => Promise<void>): IosA11y {
+	const wardenHome = o.wardenHome ?? resolveWardenHome();
+	return createIosA11y({
+		channel: createInjectChannel({
+			statePath: injectStatePath(wardenHome, o.udid),
+			now,
+			sleep,
+			...(o.bundleId ? { bundleId: () => o.bundleId } : {}),
+			...(o.injectFs ? { fs: o.injectFs } : {}),
+		}),
+		...(o.injectFs ? { fs: o.injectFs } : {}),
+		dylib: () =>
+			locateInjectDylib({
+				env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
+				execPath: o.execPath ?? process.execPath,
+				importDir: o.importDir ?? import.meta.dir,
+				wardenHome,
+				exists: o.exists ?? existsSync,
+				realpath: o.realpath ?? realpathSync,
+				...(o.version ? { version: o.version } : {}),
+			}),
+		requested: () => o.a11y ?? process.env.WARDEN_A11Y === "1",
+		...(o.debug ? { debug: true } : {}),
+	});
 }
 
 /** `[ios] exec xcrun simctl launch 270 ms (exit 0)` for every simctl call. */
