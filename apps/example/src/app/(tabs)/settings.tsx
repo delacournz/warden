@@ -8,7 +8,7 @@ import { Icon } from "@/components/ui/icon";
 import { ListGroup } from "@/components/ui/list-group";
 import { Screen } from "@/components/ui/screen";
 import { Switch } from "@/components/ui/switch";
-import { IconBell, IconHand5Finger, IconMoon } from "@/lib/icons/central";
+import { IconBell, IconHand5Finger, IconMoon, IconWifiFull } from "@/lib/icons/central";
 import { useSession } from "@/modules/session/contexts/session.context";
 
 /** Profile card, notification + dark-mode switches, and sign out (back to welcome). */
@@ -77,6 +77,15 @@ export default function Settings() {
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Gesture playground</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item onPress={() => router.push("/conditions")} testID="settings-conditions">
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconWifiFull} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Device conditions</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>

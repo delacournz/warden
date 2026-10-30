@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CLAIM_ABORTED, type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import { recordCondition } from "./conditions/conditions";
 import type { Exec, ExecResult } from "./exec";
 import type { MemoryPressure } from "./host";
 import { createIosProvider } from "./providers/ios";
@@ -1150,5 +1151,55 @@ describe("claimDevices slim hooks (SLIM-2)", () => {
 		const provider = hooked([sim("1", { state: "booted" })], { bootReady: true });
 		await claimDevices(input(provider));
 		expect(provider.calls.filter((c) => c.startsWith("prepareBoot") || c.startsWith("afterReady"))).toEqual([]);
+	});
+});
+
+describe("claimDevices: leftover conditions of a deleted lease", () => {
+	test("a stale reclaim's conditions are undone before the device is returned, and the orphan is gone", async () => {
+		const stale = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "1", name: "warden-iphone-17-1" }, owner: other, ttlMs: 1000 },
+			1
+		);
+		recordCondition(store, stale.id, "a11y", { contrast: "increased" }, 2);
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		const cmds: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			cmds.push([...cmd]);
+			return { exitCode: 0, stdout: "", stderr: "" } satisfies ExecResult;
+		};
+		const result = await claimDevices(input(provider, { orphans: { exec, env: { WARDEN_HOME: dir } } }));
+		expect(result.success && result.data.reclaimed).toEqual([stale.id]);
+		expect(cmds).toContainEqual(["xcrun", "simctl", "ui", "1", "content_size", "large"]);
+		expect(cmds).toContainEqual(["xcrun", "simctl", "ui", "1", "increase_contrast", "disabled"]);
+		expect(store.db.query("SELECT COUNT(*) AS n FROM orphan_conditions").get()).toEqual({ n: 0 });
+	});
+
+	test("a failed reset is logged and the claim still succeeds, keeping the orphan", async () => {
+		const stale = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "1", name: "warden-iphone-17-1" }, owner: other, ttlMs: 1000 },
+			1
+		);
+		recordCondition(store, stale.id, "a11y", { contrast: "increased" }, 2);
+		const logs: string[] = [];
+		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "boom" });
+		const result = await claimDevices(
+			input(fakeProvider([sim("1", { state: "booted" })]), {
+				orphans: { exec, env: { WARDEN_HOME: dir } },
+				log: (l) => logs.push(l),
+			})
+		);
+		expect(result.success).toBe(true);
+		expect(logs.some((l) => l.includes("leftover condition not undone"))).toBe(true);
+		expect(store.db.query("SELECT COUNT(*) AS n FROM orphan_conditions").get()).toEqual({ n: 1 });
+	});
+
+	test("a claim with nothing orphaned runs no condition resets", async () => {
+		const cmds: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			cmds.push([...cmd]);
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		await claimDevices(input(fakeProvider([sim("1", { state: "booted" })]), { orphans: { exec, env: {} } }));
+		expect(cmds).toEqual([]);
 	});
 });

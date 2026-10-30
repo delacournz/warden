@@ -72,6 +72,14 @@ describe("remote driver", () => {
 		]);
 	});
 
+	test("clock goes over the wire with its options and returns the state", async () => {
+		const driver = fakeDriver({ screens: [screen], platform: "android", wallNow: () => 5_000 });
+		const remote = (await connect(await serve(driver))).driver();
+		const result = await remote.clock({ kind: "offset", ms: 1_000 }, { relaunch: true });
+		expect(result).toMatchObject({ success: true, data: { offsetMs: 1_000, nowMs: 6_000 } });
+		expect(driver.callsOf("clock")).toEqual([{ method: "clock", op: { kind: "offset", ms: 1_000 } }]);
+	});
+
 	test("a snapshot comes back with flat holding the tree's own nodes in preorder", async () => {
 		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
 		const taken = await remote.snapshot({ interactiveOnly: true });

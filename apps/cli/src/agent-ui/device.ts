@@ -162,13 +162,13 @@ function pickHeld(
 }
 
 /** Prove the caller may use `candidate` (heartbeat / refuse / take over with `--claim`). */
-function leaseCandidate(
+async function leaseCandidate(
 	ctx: CommandContext,
 	owner: Owner,
 	candidate: Candidate,
 	claim: boolean,
 	check: UiLeaseCheck
-): Result<UiDevice, UiError> {
+): Promise<Result<UiDevice, UiError>> {
 	const platform = candidate.platform !== undefined ? ok(candidate.platform) : platformOf(ctx, candidate.id);
 	if (!platform.success) return fail(uiError("usage", platform.error));
 	const pid = leasePidFor(owner);
@@ -189,6 +189,15 @@ function leaseCandidate(
 		);
 	}
 	const { lease, action } = leased.data;
+	if (claim && (action === "reclaimed" || action === "leased")) {
+		const { undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
+		const report = await undoOrphansWith(
+			ctx.store(),
+			{ exec: ctx.exec, env: ctx.env, now: ctx.now },
+			{ platform: platform.data, id: candidate.id }
+		);
+		for (const e of report.errors) ctx.err(`warden: leftover condition on ${candidate.id} not undone — ${e}`);
+	}
 	return ok({
 		udid: candidate.id,
 		platform: platform.data,

@@ -156,6 +156,21 @@ describe("computeAffected", () => {
 		}
 	});
 
+	test("suite.conditions: the top-level conditions, each area replaced by the suite's own", async () => {
+		const merged = await makeSuiteRepo(
+			{ conditions: { network: "offline", timezone: "UTC" } },
+			{ conditions: { network: "3g", locale: "fr" } }
+		);
+		const none = await makeSuiteRepo();
+		try {
+			const [a, b] = await Promise.all([merged, none].map((r) => findSuite(bunExec, r.dir)));
+			expect(a?.success && a.data.conditions).toEqual({ network: "offline", timezone: "UTC", locale: "fr" });
+			expect(b?.success && b.data.conditions).toBeUndefined();
+		} finally {
+			for (const r of [merged, none]) rmSync(r.dir, { recursive: true, force: true });
+		}
+	});
+
 	test("overlay config: specs resolve in the overlay, project root and git diff stay in the checkout", async () => {
 		const home = mkdtempSync(join(tmpdir(), "warden-affected-home-"));
 		cleanup.push(home);

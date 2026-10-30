@@ -75,6 +75,10 @@ export async function runVerify(ctx: CommandContext, deps: VerifyDeps, input: Ve
 		specPaths: [input.specPath],
 		timeoutMs: plan.data.env.timeouts.timeoutMs,
 	});
+	const lease = ctx
+		.store()
+		.listLeases()
+		.find((l) => l.resource.kind === "device" && l.resource.id === input.udid);
 	const env: Record<string, string | undefined> = {
 		...ctx.env,
 		...specEnv({
@@ -83,6 +87,7 @@ export async function runVerify(ctx: CommandContext, deps: VerifyDeps, input: Ve
 			out: input.outDir,
 		}),
 		[ENV_NAMES.udid]: input.udid,
+		...(lease !== undefined ? { [ENV_NAMES.leaseId]: lease.id } : {}),
 		...(input.deviceName !== undefined ? { [ENV_NAMES.deviceName]: input.deviceName } : {}),
 		...(input.metroUrl !== undefined ? { [ENV_NAMES.metroUrl]: input.metroUrl } : {}),
 		...(input.simdSocket !== undefined ? { [ENV_NAMES.simdSocket]: input.simdSocket } : {}),

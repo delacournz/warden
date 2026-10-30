@@ -67,7 +67,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 
 | Command | Args / flags | Notes |
 |---|---|---|
-| `status` | | device, lease, helper, recording in progress (name, target, step count) |
+| `status` | | device, lease, helper, recording in progress (name, target, step count), conditions set on the lease (`conditions network 3g · location 37.3,-122`) |
 | `close` | `[--app [bundleId]] [--release]` | stops this device's helper; `--app` quits the app (default: the one `open` launched); `--release` frees the lease |
 | `snapshot` | `[-i\|--interactive] [--all] [--depth n] [--settle [ms]]` | `--settle` ends with a `-`/`+` diff and `= N unchanged` |
 | `find` | `<selector>` | matches with fresh `@eN` |
@@ -100,9 +100,73 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `record cancel` | | drop the journal; a spec already written stays |
 | `record stop` | `[--no-verify] [--suite <n>] [--overwrite]` | write spec/helper, merge ids, print lints, run the spec once on this device (helpers are not run); exit 1 keeps file and journal |
 | `bench` | `[--runs 20] [--metro url]` | times the loop against speed targets (default 20 runs; cold start, settle and open capped at 3-5); `--metro` for the tree metric; stops the device's helper: unshared device only |
-| `eval` `tree` `logs` `network` `reload` | see Devtools | dev client only |
+| `eval` `tree` `logs` `network log` `reload` | see Devtools | dev client only (`network log` = the request log) |
+| `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
+| `permission` `timezone` `locale` `a11y` `battery` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, memory warning, push; recorded on your lease, undone on release |
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
+
+## Network, location and clock (`network`, `location`, `clock`)
+
+`warden ui network set` (and `flap` / `fault` / `status` / `reset`) changes the device network, `warden ui location` its GPS. (`warden ui network log` is the devtools request log; bare `network [n] --since ...` still works as a deprecated alias of it and prints one stderr note.) Both act on your lease, record what they set, and **release / gc undo it** (network back online, location cleared on iOS, the proxy, flap scheduler and route ticker stopped), so a claim is never left shaped. A lease that expires or is deleted any other way (stale reclaim, an older `warden`) leaves its conditions parked on the device: the next `warden claim` / `e2e` / `run` / `ui --claim` of that device undoes them before handing it over, and `warden gc` does for unleased devices (a failed reset is kept and retried). A spec sets the same through `device.network` / `device.location` (`specs.md`).
+
+| Command | Args / flags | Notes |
+|---|---|---|
+| `network set <condition>` | `online\|offline\|edge\|3g\|4g\|lte\|wifi\|slow\|lossy [--latency ms] [--jitter ms] [--down kbps] [--up kbps] [--loss pct] [--relaunch]` | a flag on a preset overrides its value (a custom condition); on `online` it shapes an open network; on `offline` it is `usage`. Stops a running flap first. Prints `network <condition>`; result `{ action, condition, online, needsProxy, staged }` |
+| `network flap` | `--up 10s --down 3s [--jitter pct] [--seed n] [--relaunch]` | detached scheduler alternates online (up) and offline (down); `--jitter` = percent of each phase (0-100), same `--seed` = same sequence (default 1). A new `network set` / `network flap` / `network reset` stops it (it puts the network back first). JSON `pid` = the scheduler |
+| `network fault` | `<host-glob> <status:503\|reset\|delay:2s\|blackhole>` | per-host fault through the lease's proxy; adds to the rules already set, the same glob replaces its rule. Refused while a flap runs |
+| `network fault --clear` | | removes every fault |
+| `network status` | | recorded condition, faults, flap pid and liveness, proxy port and counts. Reads only: no device is opened, works on a device your `warden e2e` holds |
+| `network reset` | `[--relaunch]` | stops the flap, clears faults, back online; "network was not changed" when nothing was set. The proxy stays up until release (an injected iOS app keeps routing through it) |
+| `location set` | `<lat,lon> [--alt m]` | a point |
+| `location route` | `<lat,lon>... [--speed m/s] [--interval s] [--loop]` | waypoints at `--speed` (default 20), one fix per `--interval` (default 1). iOS: `simctl` plays it; Android: a detached ticker the lease owns |
+| `location gpx` | `<file> [--speed m/s]` | a GPX track (path relative to the cwd) |
+| `location scenario` | `city-run\|city-bike\|freeway` | bundled route (`freeway` plays once, the others loop on Android) |
+| `location clear` | | iOS: `simctl location clear`. Android: stops the ticker; the emulator console cannot unset a fix, so the last one stays (warning) |
+| `location status` | | recorded location and ticker pid / liveness; reads only |
+
+Every change prints one line (`--json`: `result.action` is `net`, `net-flap`, `net-fault`, `net-reset`, `net-status`, `location-set`, `-route`, `-gpx`, `-scenario`, `-clear`, `-status`). `needsProxy` non-empty = that part was not applied (loss with no proxy); `staged: true` / warning = iOS has no running app carrying the network dylib, so it applies from the app's next launch.
+
+- iOS: a simulator shares the Mac's network, so conditions reach an app only when it was launched with warden's network dylib. A running app without it: `E_NETWORK_RELAUNCH` (exit 1, `details.driver`); retry with `--relaunch` (relaunches the app `open` started with the dylib). A flap on iOS needs the same (`network flap ... --relaunch`). Only the app's own traffic is shaped (NSURLSession); raw sockets are not.
+- Android emulator: speed, delay and offline are native (`adb emu network`, airplane mode, verified against connectivity); loss and faults go through the proxy via the system `http_proxy` (apps that honour it, e.g. React Native `fetch`; raw sockets and `Proxy.NO_PROXY` apps are not covered).
+- A `status:` fault answers plain `http://` only. HTTPS is a CONNECT tunnel warden does not decrypt, so an `https://` request to that host is **reset** instead of getting the status; a warning says so. `reset`, `delay` and `blackhole` work on both.
+- Physical devices: `E_UNSUPPORTED` (network and location need an emulator console / simulator). `location route --loop` on iOS: `E_UNSUPPORTED` (simctl has no loop).
+- Faults and a flap do not combine: `network fault` while a flap runs, or `network flap` while faults are set, is `failed`; `network reset` / `network fault --clear` first.
+
+### Clock (`clock`)
+
+`warden ui clock` mocks the device wall clock; recorded on your lease, undone on release.
+
+| Command | Args | Does |
+|---|---|---|
+| `clock set` | `<iso> [--frozen] [--relaunch]` | clock reads `<iso>` (ticks on); `--frozen` holds it |
+| `clock advance` | `<dur> [--relaunch]` | move the clock forward `<dur>` (`2d`, `1h`) from where it is now |
+| `clock status` | | recorded offset / frozen instant; reads only |
+| `clock reset` | `[--relaunch]` | real time back |
+
+- Android: `--frozen` is `E_UNSUPPORTED` (the emulator clock cannot stop). iOS: only the app launched with warden's dylib sees the clock; without it the clock applies from the next launch, or pass `--relaunch`.
+- A large offset breaks HTTPS (certificates look expired or not yet valid): `advance` warns; `clock reset` before network work.
+
+## Device settings (`permission`, `timezone`, `locale`, `a11y`, `battery`, `memory-warning`, `push`)
+
+Each is its own verb (like `location` / `clock`) so its flags show in `--help`. They act on your lease, record what they set and **release / gc undo it** (iOS: privacy reset, text size `large`, contrast off, status bar cleared, staged launch settings removed; Android: permissions reset, `font_scale 1.0`, bold off, timezone back to what it was, app locale cleared, battery reset). A spec sets the same through `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (`specs.md`). `--app <bundle>` names the app; default is the one `open` launched.
+
+| Command | Args | Does |
+|---|---|---|
+| `permission set` | `<name>=<granted\|denied\|unset>... [--app b]` | names: `location locationAlways camera photos photosAdd contacts contactsLimited notifications microphone calendar reminders motion mediaLibrary siri`. `unset` = ask again. Names the platform has no service for come back as warnings (`skipped`); none applicable = `E_UNSUPPORTED` |
+| `permission reset` / `status` | `[--app b]` | every recorded name back to `unset` / what is recorded (reads only) |
+| `timezone` | `<IANA name\|reset\|status>` | Android: `cmd alarm set-timezone`, device-wide and live (emulator only). iOS: staged, the app launched next gets `TZ` (`staged: true` + warning; `open --relaunch`) |
+| `locale` | `<BCP 47 tag\|reset\|status> [--app b]` | Android 13+ (API 33): per-app locale, live. iOS: staged, the next launch gets `-AppleLanguages` / `-AppleLocale` |
+| `a11y set` | `[--text-size <name\|scale>] [--bold\|--no-bold] [--contrast increased\|normal] [--reduce-motion\|--no-reduce-motion]` | text size by iOS category (`extra-small` … `accessibility-extra-extra-extra-large`) or a font scale (`1.5`, Android clamps to 0.5-2). iOS: text size + contrast. Android: text size + bold. The rest are reported `skipped`; only-skipped = `E_UNSUPPORTED` |
+| `a11y reset` / `status` | | defaults back / what is recorded |
+| `battery set` | `[--level 0-100] [--charging\|--no-charging]` | Android emulator: real (`dumpsys battery`, the app sees it). iOS: status bar only (`cosmetic: true`, warning) |
+| `battery reset` / `status` | | real battery back / what is recorded |
+| `memory-warning` | `[--app b]` | Android: `am send-trim-memory RUNNING_CRITICAL` to the running app (`E_APP_UNAVAILABLE` when it is not running). iOS: `E_UNSUPPORTED` (the `lowmemory` notification never reaches a UIKit app) |
+| `push` | `<payload.json\|'{"aps":{…}}'> [--app b]` | iOS: `simctl push` (needs `aps`, 4096 bytes max). Android: `E_UNSUPPORTED` |
+
+- Permissions apply before the first launch (iOS terminates a running app whose permission changes): `permission set` then `open`. iOS `camera` and `notifications` have no `simctl privacy` service and are skipped.
+- Android permissions are the ones the app's manifest declares; a name the app does not declare is skipped with a warning.
+- `--json`: `result.action` is `permission-set`, `-reset`, `-status`, `timezone-set`, `-reset`, `-status`, `locale-*`, `a11y-*`, `battery-*`, `memory-warning`, `push`.
 
 ## Selector grammar
 
@@ -140,7 +204,7 @@ A session started by an older warden has no control socket: restart `warden dev`
 | `route` | route key of the screen on show (`(tabs)/todos`) |
 | `logs [n] [--since 5m] [--level warn] [--grep x] [--limit n]` | console lines, stacks symbolicated to source; default 50 |
 | `exceptions [--since] [--limit]` | uncaught errors, incl. the ones React Native reports as `console.error` |
-| `network [n] [--since] [--grep url] [--status 404\|4xx] [--limit n] [--include headers,body] [--id id]` | default 50; `--id` = one entry in full; `--include` adds headers/bodies |
+| `network log [n] [--since] [--grep url] [--status 404\|4xx] [--limit n] [--include headers,body] [--id id]` | default 50; `--id` = one entry in full; `--include` adds headers/bodies |
 | `reload` | reload the app's JS |
 | `logpoint add <file:line[:col]> '<expr>' [--id x] [--hits n]` | logs `<expr>` each time the line runs, never pauses; needs `warden dev` with devtools on, Fusebox |
 | `logpoint hits [id] [--since]` · `logpoint list` · `logpoint rm <id>` · `logpoint clear` | values logged; logpoints die with the session, re-arm across reloads |
@@ -153,7 +217,7 @@ Debug loop: `warden dev logs --kind bundle_failed,error` (does it build?) → `u
 
 `--metro <url>` on each direct call; default order: `WARDEN_METRO_URL`, URL remembered by `open --metro`, your leased ports. Caveats:
 - Chrome DevTools (`j` in Expo) on a single-debugger Metro (headless/CI Expo) takes the page: the broker yields (`devtools status` → `yielded`) and calls fail `devtools_unavailable` until `devtools resume`, which disconnects DevTools. Interactive `warden dev` allows both at once.
-- Without a broker, `logs`/`network` with no collector read the previous run's files, not the live app. `logs start` before the action. A collector ends `lost` after a 30 s reconnect budget (relaunch, crash, rebuild) and stops after 60 s idle.
+- Without a broker, `logs`/`network log` with no collector read the previous run's files, not the live app. `logs start` before the action. A collector ends `lost` after a 30 s reconnect budget (relaunch, crash, rebuild) and stops after 60 s idle.
 - `reload` falls back to Metro's broadcast `/reload`, which reloads every device on that Metro.
 - A reload drops a running `warden perf js` / profile recording (Hermes ties it to the socket).
 
