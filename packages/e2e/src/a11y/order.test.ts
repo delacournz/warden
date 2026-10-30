@@ -130,3 +130,32 @@ describe("readingOrder: iOS traversal from the injected walk", () => {
 		expect(texts(snap, "android").map((t) => t.split(",")[0])).toEqual(["Left", "Right"]);
 	});
 });
+
+describe("readingOrder: containers", () => {
+	test("a named application / window root never swallows the screen", () => {
+		const snap = snapshotOf("ios", [
+			{
+				role: "application",
+				label: "warden-example",
+				frame: { x: 0, y: 0, width: 390, height: 844 },
+				children: [
+					{ role: "text", label: "Welcome", traits: ["static-text"], frame: { x: 0, y: 100, width: 200, height: 30 } },
+					{ role: "button", label: "Next", traits: ["button"], frame: { x: 0, y: 200, width: 200, height: 44 } },
+				],
+			},
+		]);
+		expect(texts(snap, "ios")).toEqual(["Welcome", "Next, button"]);
+	});
+
+	test("a named non-actionable group with named descendants is a container, not one element", () => {
+		const snap = snapshotOf("android", [
+			{
+				role: "other",
+				label: "Card",
+				frame: { x: 0, y: 0, width: 400, height: 200 },
+				children: [{ role: "text", text: "Title", frame: { x: 0, y: 0, width: 200, height: 40 } }],
+			},
+		]);
+		expect(texts(snap, "android")).toEqual(["Card", "Title"]);
+	});
+});

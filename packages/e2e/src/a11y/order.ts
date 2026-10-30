@@ -53,17 +53,36 @@ function hasActionableDescendant(el: Element, platform: Platform): boolean {
 	return el.children.some((c) => !c.hidden && (isActionable(c, platform) || hasActionableDescendant(c, platform)));
 }
 
+function hasSpokenDescendant(el: Element, platform: Platform): boolean {
+	return el.children.some(
+		(c) =>
+			!c.hidden &&
+			(isActionable(c, platform) || accessibleName(c, platform) !== undefined || hasSpokenDescendant(c, platform))
+	);
+}
+
+/** App and window roots carry the app's name but are never a stop in the sweep. */
+const ROOTS: ReadonlySet<Element["role"]> = new Set(["application", "window"]);
+
+/**
+ * Whether `el` is read as one stop that covers its subtree. Actionable: unless a descendant is actionable too.
+ * Not actionable: when the platform says it is one element (`a11y.focusable`), or nothing under it speaks.
+ */
+function swallows(el: Element, platform: Platform, actionable: boolean): boolean {
+	if (actionable) return !hasActionableDescendant(el, platform);
+	return el.a11y?.focusable === true || !hasSpokenDescendant(el, platform);
+}
+
 type Entry = { el: Element; announcement: Announcement };
 
 function walk(el: Element, platform: Platform, screen: Screen, opts: AnnounceOptions, out: Entry[]): void {
 	if (el.hidden) return;
-	const visible = el.a11y?.important !== false && onScreen(el, screen);
+	const visible = el.a11y?.important !== false && !ROOTS.has(el.role) && onScreen(el, screen);
 	if (visible) {
 		const actionable = isActionable(el, platform);
 		const named = accessibleName(el, platform) !== undefined;
 		if (actionable || named) {
-			const swallowsChildren = !actionable || !hasActionableDescendant(el, platform);
-			if (swallowsChildren) {
+			if (swallows(el, platform, actionable)) {
 				out.push({ el, announcement: announce(el, platform, opts) });
 				return;
 			}

@@ -30,6 +30,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** One event object (either platform's wire shape is the same), or undefined when malformed. */
+/** iOS posts its own keyboard click / sound cues as announcements; no app said them. */
+const SYSTEM_ANNOUNCEMENT = /^AXAnnouncementType/;
+
 export function parseA11yEvent(value: unknown, source: A11yEventSource): A11yEvent | undefined {
 	if (!isRecord(value) || typeof value.kind !== "string" || !KINDS.has(value.kind)) return undefined;
 	if (typeof value.at !== "number" || !Number.isFinite(value.at)) return undefined;
@@ -72,7 +75,7 @@ export function parseInjectEvents(text: string, since = 0): A11yEventsRead {
 		if (line.trim() === "") continue;
 		try {
 			const event = parseA11yEvent(JSON.parse(line), "inject");
-			if (event) events.push(event);
+			if (event && !(event.text !== undefined && SYSTEM_ANNOUNCEMENT.test(event.text))) events.push(event);
 		} catch {
 			// a corrupt line is skipped; the cursor still moves past it
 		}

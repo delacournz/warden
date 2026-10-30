@@ -76,3 +76,10 @@ describe("parseInjectEvents", () => {
 		expect(parseInjectEvents(text, Buffer.byteLength(text))).toEqual({ events: [], cursor: Buffer.byteLength(text) });
 	});
 });
+
+describe("iOS system announcement noise", () => {
+	test("AXAnnouncementType* keyboard sounds are dropped", () => {
+		const text = `${JSON.stringify({ kind: "announcement", text: "AXAnnouncementTypeKeyboardClickSound", at: 1 })}\n${JSON.stringify({ kind: "announcement", text: "Saved", at: 2 })}\n`;
+		expect(parseInjectEvents(text).events.map((e) => e.text)).toEqual(["Saved"]);
+	});
+});
