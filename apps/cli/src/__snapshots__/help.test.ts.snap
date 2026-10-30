@@ -2440,6 +2440,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
