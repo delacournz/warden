@@ -49,7 +49,8 @@ export default function Todos() {
 			<Screen.ScrollArea contentContainerClassName="gap-4 px-5" keyboardAware>
 				<View className="flex-row gap-2">
 					<Input
-						className="flex-1"
+						accessibilityLabel="New todo"
+						className="min-h-12 flex-1"
 						onChangeText={setDraft}
 						onSubmitEditing={submit}
 						placeholder="What needs doing?"
@@ -61,7 +62,7 @@ export default function Todos() {
 						accessibilityLabel="Add todo"
 						isDisabled={!draft.trim()}
 						onPress={submit}
-						size="icon-md"
+						size="icon-lg"
 						testID="todo-add"
 					>
 						<Icon icon={IconPlusSmall} />
