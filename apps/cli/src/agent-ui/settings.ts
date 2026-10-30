@@ -1,3 +1,4 @@
+import { androidScreenReaderResets } from "@delacour/warden-core/conditions/a11y-keys";
 import { clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type {
 	A11yCondition,
@@ -10,6 +11,7 @@ import type {
 	PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
+import { androidTools } from "@delacour/warden-core/providers/android";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { A11yVerbOptions } from "./a11y";
@@ -401,12 +403,20 @@ async function a11ySet(
 }
 
 async function a11yReset(ctx: CommandContext, deps: Deps, device: UiDevice): Promise<Result<UiSuccess, UiError>> {
-	if (recordOf(ctx, device.lease.id, "a11y") === undefined) {
+	const recorded = recordOf(ctx, device.lease.id, "a11y")?.value;
+	if (recorded === undefined) {
 		return success(device, "a11y-reset", "a11y was not changed", { changed: false });
 	}
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
 		const done = fromDriver(await port.a11y(null));
 		if (!done.success) return done;
+		// this process never turned TalkBack on, so the port cannot undo it: put the recorded services back
+		if (device.platform === "android") {
+			const { adb } = androidTools(ctx.env);
+			for (const argv of androidScreenReaderResets(recorded)) {
+				await ctx.exec([adb, "-s", device.udid, "shell", ...argv]);
+			}
+		}
 		forget(ctx, device, "a11y");
 		return success(device, "a11y-reset", "a11y reset", { changed: true });
 	});

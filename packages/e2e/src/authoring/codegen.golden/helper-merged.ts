@@ -1,4 +1,4 @@
-import { type TestFixtures, expect } from "../../index";
+import { expect, type TestFixtures } from "../../index";
 
 const ids = {
 	signInOpen: "sign-in-open",
