@@ -36,4 +36,12 @@ describe("checkoutRunnerSources", () => {
 		const files = await checkoutRunnerSources("/nonexistent/dir/driver/ios");
 		expect(files.success).toBe(false);
 	});
+
+	test("uses the blob embedded in a bundled install when there is no checkout", async () => {
+		const files = await checkoutRunnerSources("/nonexistent/dir/driver/ios", async () => ({
+			success: true,
+			data: { "ios-runner/x": "y" },
+		}));
+		expect(files).toEqual({ success: true, data: { "ios-runner/x": "y" } });
+	});
 });
