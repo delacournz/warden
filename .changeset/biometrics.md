@@ -8,3 +8,4 @@
 - Android `+bio` devices start from a golden snapshot with a fingerprint already enrolled (screen-lock PIN `1111`); `warden golden ensure --platform android --profile <profile>+bio` builds it ahead of the first claim.
 - iOS `+bio` simulators are enrolled on every boot and again when a spec process starts, before the app is installed.
 - Android `+bio` golden snapshots are saved past the lock screen with the screen kept on; a claim returns once adb, the package manager and the unlocked screen answer, unlocking with the PIN if needed, and an emulator that never gets ready is shut down instead of left locked.
+- `warden ui reload` / `eval` / `logs` and the other devtools verbs find a dev client on a `+bio` simulator (Metro reports the `+` in its name as a space).
