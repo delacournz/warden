@@ -8,7 +8,6 @@ import { AttemptLog } from "@/modules/biometrics/components/attempt-log";
 import { FaceGlyph } from "@/modules/biometrics/components/face-glyph";
 import { VaultDrawer } from "@/modules/biometrics/components/vault-drawer";
 import { useBiometricUnlock } from "@/modules/biometrics/hooks/use-biometric-unlock";
-import { useVaultFonts } from "@/modules/biometrics/hooks/use-vault-fonts";
 import { copyOf } from "@/modules/biometrics/utils/vault-theme";
 
 /** The main button's fill and label classes: solid when it unlocks, outlined when it locks, dim while scanning. */
@@ -28,7 +27,6 @@ function actionClasses(isOpen: boolean, isBusy: boolean): { button: string; labe
  */
 export default function Biometrics() {
 	const { status, error, events, unlock, lock } = useBiometricUnlock();
-	const fonts = useVaultFonts();
 	const insets = useSafeAreaInsets();
 	const foreground = useThemeColor("foreground");
 	const background = useThemeColor("background");
@@ -59,9 +57,7 @@ export default function Biometrics() {
 					testID="bio-back"
 				>
 					<IconChevronLeft color={foreground} size={22} />
-					<Text className="text-lg text-foreground" style={fonts.display}>
-						Vault
-					</Text>
+					<Text className="font-heading text-lg text-foreground">Vault</Text>
 				</Pressable>
 				<IconLock color={isOpen ? success : faint} size={18} />
 			</View>
@@ -74,31 +70,22 @@ export default function Biometrics() {
 			>
 				<View className="items-center pt-2">
 					<FaceGlyph status={status} />
-					<Text className="mt-1 text-[34px] text-foreground tracking-tight" style={fonts.displayBold}>
-						{copy.title}
-					</Text>
-					<Text
-						className="mt-1.5 max-w-[300px] text-center text-base leading-[22px] text-muted-foreground"
-						style={fonts.body}
-					>
+					<Text className="font-heading mt-1 text-[34px] text-foreground tracking-tight">{copy.title}</Text>
+					<Text className="font-sans mt-1.5 max-w-[300px] text-center text-base leading-[22px] text-muted-foreground">
 						{copy.body}
 					</Text>
 				</View>
 
 				<View className="gap-2 border-border border-y py-3">
 					<View className="flex-row justify-between">
-						<Text className="text-[13px] text-tertiary-foreground" style={fonts.readout}>
-							status
-						</Text>
-						<Text accessible className="text-[13px] text-foreground" style={fonts.readout} testID="bio-status">
+						<Text className="font-mono text-[13px] text-tertiary-foreground">status</Text>
+						<Text accessible className="font-mono text-[13px] text-foreground" testID="bio-status">
 							{status}
 						</Text>
 					</View>
 					<View className="flex-row justify-between">
-						<Text className="text-[13px] text-tertiary-foreground" style={fonts.readout}>
-							error
-						</Text>
-						<Text accessible className="text-[13px] text-foreground" style={fonts.readout} testID="bio-error">
+						<Text className="font-mono text-[13px] text-tertiary-foreground">error</Text>
+						<Text accessible className="font-mono text-[13px] text-foreground" testID="bio-error">
 							{error}
 						</Text>
 					</View>
@@ -107,9 +94,7 @@ export default function Biometrics() {
 				{isOpen && <VaultDrawer />}
 
 				<View className="gap-3.5">
-					<Text className="text-base text-foreground" style={fonts.display}>
-						Attempts
-					</Text>
+					<Text className="font-heading text-base text-foreground">Attempts</Text>
 					<AttemptLog events={events} />
 				</View>
 			</ScrollView>
@@ -126,9 +111,7 @@ export default function Biometrics() {
 					testID="bio-unlock"
 				>
 					{!isOpen && <IconFaceId color={isBusy ? muted : background} size={20} />}
-					<Text className={`text-[17px] ${labelClass}`} style={fonts.display}>
-						{actionLabel}
-					</Text>
+					<Text className={`font-heading text-[17px] ${labelClass}`}>{actionLabel}</Text>
 				</Pressable>
 			</View>
 		</View>

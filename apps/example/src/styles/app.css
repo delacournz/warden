@@ -23,11 +23,11 @@
  *   idle    #C8D3F5  --idle  (app token: no semantic slot is "ready, waiting")
  *   off     #55607A  --off   (app token: no semantic slot is "unavailable")
  *
- * Fonts: the vault's two faces are loaded at runtime by `useVaultFonts`
- * (`expo-font`, from the JS bundle). The family names below are those
- * registered names; until a face loads, the system face draws, so text never
- * waits on it. `font-display`, `font-display-bold`, `font-body`,
- * `font-readout`.
+ * Fonts: the same three tokens `theme.css` declares per platform, pointed at
+ * the vault's faces (`font-sans` Chakra Petch, `font-heading` Chakra Petch
+ * Bold, `font-mono` JetBrains Mono). `_layout.tsx` registers them with
+ * `useFonts` and renders nothing until they are in, so no text is ever laid
+ * out in a fallback face.
  *
  * `--accent` is not `scan` itself: components paint it as a selected-row fill
  * (`Item`), where a full blue slab would bury the row's text. It is a 16% scan
@@ -97,9 +97,30 @@
 	--color-off: var(--off);
 }
 
+@layer theme {
+	:root {
+		@variant ios {
+			--font-sans: "ChakraPetch_400Regular";
+			--font-heading: "ChakraPetch_700Bold";
+			--font-mono: "JetBrainsMono_500Medium";
+		}
+
+		@variant android {
+			--font-sans: "ChakraPetch_400Regular";
+			--font-heading: "ChakraPetch_700Bold";
+			--font-mono: "JetBrainsMono_500Medium";
+		}
+	}
+}
+
+/*
+ * `font-sans` and `font-mono` are Tailwind's own theme names, so the per-platform
+ * values above reach them. `font-heading` is not: nothing declares it in
+ * `@theme`, so the utility does not exist and the Delacour headings (`Text`
+ * display / title / header) silently draw in the sans face. Declaring it here
+ * mints the class. It resolves at build time, which is fine: the family is the
+ * same on both platforms.
+ */
 @theme {
-	--font-display: ChakraPetch_600SemiBold;
-	--font-display-bold: ChakraPetch_700Bold;
-	--font-body: ChakraPetch_400Regular;
-	--font-readout: JetBrainsMono_500Medium;
+	--font-heading: "ChakraPetch_700Bold";
 }

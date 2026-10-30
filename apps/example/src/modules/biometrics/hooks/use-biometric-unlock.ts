@@ -1,5 +1,7 @@
 import { authenticateAsync, hasHardwareAsync, isEnrolledAsync } from "expo-local-authentication";
+import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 
 /** What the screen shows; the strings are the values the specs assert on. */
 export type BiometricStatus = "Checking" | "Not enrolled" | "Ready" | "Scanning" | "Unlocked" | "Failed" | "Cancelled";
@@ -16,14 +18,18 @@ export type BiometricEvent =
 /** Auth errors that mean the prompt was dismissed rather than rejected. */
 const CANCEL_ERRORS = new Set(["user_cancel", "system_cancel", "app_cancel"]);
 
+/** Statuses a fresh enrollment read may replace; never mid-scan and never over an outcome the user is looking at. */
+const REREADABLE: ReadonlySet<BiometricStatus> = new Set(["Checking", "Ready", "Not enrolled"]);
+
 /** The log keeps the latest few attempts; the screen has room for no more. */
 const MAX_EVENTS = 4;
 
 /**
- * Biometric unlock state over `expo-local-authentication`. Enrollment is read on mount and again before every
- * attempt, so an `Unlocked` / `Failed` status is never confused with the enrollment read. `Scanning` holds while the
- * system prompt is up. `disableDeviceFallback` keeps the passcode / PIN out of the prompt, so a rejected biometric
- * surfaces as `Failed`. `lock` puts an unlocked vault back to `Ready`.
+ * Biometric unlock state over `expo-local-authentication`. Enrollment is read when the screen gains focus and when the
+ * app returns to the foreground (only while `Checking` / `Ready` / `Not enrolled`, so never mid-scan or over an
+ * outcome), and again before every attempt, so an `Unlocked` / `Failed` status is never confused with the enrollment
+ * read. `Scanning` holds while the system prompt is up. `disableDeviceFallback` keeps the passcode / PIN out of the
+ * prompt, so a rejected biometric surfaces as `Failed`. `lock` puts an unlocked vault back to `Ready`.
  */
 export function useBiometricUnlock(): {
 	status: BiometricStatus;
@@ -42,17 +48,24 @@ export function useBiometricUnlock(): {
 	}, []);
 	const since = useCallback(() => Date.now() - mountedAt.current, []);
 
-	useEffect(() => {
-		let active = true;
-		const read = async () => {
-			const [hardware, enrolled] = await Promise.all([hasHardwareAsync(), isEnrolledAsync()]);
-			if (active) setStatus(hardware && enrolled ? "Ready" : "Not enrolled");
-		};
-		read();
-		return () => {
-			active = false;
-		};
+	const refresh = useCallback(async () => {
+		const [hardware, enrolled] = await Promise.all([hasHardwareAsync(), isEnrolledAsync()]);
+		const next: BiometricStatus = hardware && enrolled ? "Ready" : "Not enrolled";
+		setStatus((prev) => (REREADABLE.has(prev) ? next : prev));
 	}, []);
+
+	useFocusEffect(
+		useCallback(() => {
+			refresh();
+		}, [refresh])
+	);
+
+	useEffect(() => {
+		const sub = AppState.addEventListener("change", (state) => {
+			if (state === "active") refresh();
+		});
+		return () => sub.remove();
+	}, [refresh]);
 
 	const unlock = useCallback(async () => {
 		const enrolled = await isEnrolledAsync();

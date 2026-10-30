@@ -1,5 +1,8 @@
 import "@/styles/global.css";
+import { ChakraPetch_400Regular, ChakraPetch_700Bold, useFonts } from "@expo-google-fonts/chakra-petch";
+import { JetBrainsMono_500Medium } from "@expo-google-fonts/jetbrains-mono";
 import { Stack } from "expo-router";
+import { View } from "react-native";
 import { Uniwind } from "uniwind";
 import { DelacourProvider } from "@/components/ui/provider";
 import { NavigationTheme } from "@/lib/expo/navigation-theme";
@@ -11,6 +14,10 @@ import { TodosProvider } from "@/modules/todos/contexts/todos.context";
 Uniwind.setTheme("dark");
 
 export default function RootLayout() {
+	const [fontsLoaded, fontError] = useFonts({ ChakraPetch_400Regular, ChakraPetch_700Bold, JetBrainsMono_500Medium });
+
+	if (!(fontsLoaded || fontError)) return <View className="flex-1 bg-background" />;
+
 	return (
 		<DelacourProvider isMotionCalm={IS_E2E}>
 			<NavigationTheme>

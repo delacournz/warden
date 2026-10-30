@@ -1,7 +1,6 @@
 import { Text, View } from "react-native";
 import Animated, { FadeInDown, LinearTransition } from "react-native-reanimated";
 import type { BiometricEvent } from "../hooks/use-biometric-unlock";
-import { useVaultFonts } from "../hooks/use-vault-fonts";
 
 /** `mm:ss.cc` since the screen opened. */
 function clock(ms: number): string {
@@ -41,13 +40,8 @@ function describe(event: BiometricEvent): { text: string; tone: LineTone } {
  * measurements; each new line slides in once and the rest move down.
  */
 export function AttemptLog({ events }: { events: readonly BiometricEvent[] }) {
-	const fonts = useVaultFonts();
 	if (events.length === 0) {
-		return (
-			<Text className="text-[13px] text-tertiary-foreground" style={fonts.readout}>
-				no attempts yet
-			</Text>
-		);
+		return <Text className="font-mono text-[13px] text-tertiary-foreground">no attempts yet</Text>;
 	}
 	return (
 		<View className="gap-2.5">
@@ -60,11 +54,9 @@ export function AttemptLog({ events }: { events: readonly BiometricEvent[] }) {
 						key={`${event.kind}-${event.at}`}
 						layout={LinearTransition.duration(220)}
 					>
-						<Text className="text-[13px] text-tertiary-foreground tabular-nums" style={fonts.readout}>
-							{clock(event.at)}
-						</Text>
+						<Text className="font-mono text-[13px] text-tertiary-foreground tabular-nums">{clock(event.at)}</Text>
 						<View className={`size-1.5 rounded-full ${tone.dot}`} />
-						<Text className={`flex-1 text-[13px] ${tone.text}`} numberOfLines={1} style={fonts.readout}>
+						<Text className={`flex-1 font-mono text-[13px] ${tone.text}`} numberOfLines={1}>
 							{text}
 						</Text>
 					</Animated.View>
