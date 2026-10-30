@@ -1,46 +1,32 @@
 import type { BiometricStatus } from "../hooks/use-biometric-unlock";
 
-/**
- * The vault's own dark world: a cool graphite night, one blue for "looking", green for "open", amber for "still
- * locked". Text colours clear 4.5:1 on `bg` (muted is 6.6:1, faint 4.6:1).
- */
-export const VAULT = {
-	bg: "#07090D",
-	surface: "#0E1219",
-	line: "#1B2230",
-	text: "#E9EDF4",
-	muted: "#8C96A9",
-	faint: "#6F7A8E",
-	idle: "#C8D3F5",
-	scan: "#5B8CFF",
-	open: "#3DDC97",
-	warn: "#FFB547",
-	off: "#55607A",
-} as const;
+/** The vault's glyph and log tones, named for what they say. Each maps to one theme variable. */
+export type VaultTone = "idle" | "scan" | "open" | "warn" | "off";
 
-/** Font family names registered by `useVaultFonts`; undefined until they load, so text falls back to the system. */
-export const VAULT_FONTS = {
-	display: "ChakraPetch_600SemiBold",
-	displayBold: "ChakraPetch_700Bold",
-	body: "ChakraPetch_400Regular",
-	mono: "JetBrainsMono_500Medium",
-} as const;
+/** The theme variable behind each tone (`styles/app.css`): semantic where a slot fits, app-owned where none does. */
+export const TONE_VARIABLE = {
+	idle: "--idle",
+	scan: "--info",
+	open: "--success",
+	warn: "--warning",
+	off: "--off",
+} as const satisfies Record<VaultTone, string>;
 
-/** The glyph's tint per state. */
-export function tintOf(status: BiometricStatus): string {
+/** The glyph's tone per state. */
+export function toneOf(status: BiometricStatus): VaultTone {
 	switch (status) {
 		case "Scanning":
-			return VAULT.scan;
+			return "scan";
 		case "Unlocked":
-			return VAULT.open;
+			return "open";
 		case "Failed":
 		case "Cancelled":
-			return VAULT.warn;
+			return "warn";
 		case "Not enrolled":
 		case "Checking":
-			return VAULT.off;
+			return "off";
 		case "Ready":
-			return VAULT.idle;
+			return "idle";
 	}
 }
 

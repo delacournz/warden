@@ -1,6 +1,6 @@
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect } from "react";
-import { StyleSheet, View } from "react-native";
+import { useEffect, useRef } from "react";
+import { View } from "react-native";
 import Animated, {
 	cancelAnimation,
 	Easing,
@@ -14,8 +14,10 @@ import Animated, {
 	withTiming,
 } from "react-native-reanimated";
 import Svg, { Circle, Path } from "react-native-svg";
+import { transparentOf } from "@/lib/color";
 import type { BiometricStatus } from "../hooks/use-biometric-unlock";
-import { tintOf, VAULT } from "../utils/vault-theme";
+import { useVaultTones } from "../hooks/use-vault-tones";
+import { toneOf } from "../utils/vault-theme";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -38,6 +40,9 @@ const BRACKETS = [
 const FACE = ["M74 74 V90", "M126 74 V90", "M100 80 V114 H91", "M74 134 Q100 152 126 134"] as const;
 const CHECK = "M64 102 L90 128 L138 78";
 const CHECK_LENGTH = 110;
+const GLOW_FILL = { flex: 1 } as const;
+/** The dotted ring sits behind the frame, centred in the box. */
+const RING_STYLE = { position: "absolute" } as const;
 
 /**
  * The vault's face-frame glyph. Each state has one authored motion and then holds still, so a test runner's settle
@@ -46,8 +51,12 @@ const CHECK_LENGTH = 110;
  * `Cancelled` shake once in amber. Colour cross-fades from whatever is showing, never through another state's hue.
  */
 export function FaceGlyph({ status }: { status: BiometricStatus }) {
-	const from = useSharedValue<string>(tintOf(status));
-	const to = useSharedValue<string>(tintOf(status));
+	const tones = useVaultTones();
+	const latestTones = useRef(tones);
+	latestTones.current = tones;
+	const appliedTones = useRef(tones);
+	const from = useSharedValue<string>(tones[toneOf(status)]);
+	const to = useSharedValue<string>(tones[toneOf(status)]);
 	const tone = useSharedValue(1);
 	const close = useSharedValue(0);
 	const check = useSharedValue(0);
@@ -56,7 +65,9 @@ export function FaceGlyph({ status }: { status: BiometricStatus }) {
 	const beamOpacity = useSharedValue(0);
 
 	useEffect(() => {
-		const next = tintOf(status);
+		const current = latestTones.current;
+		appliedTones.current = current;
+		const next = current[toneOf(status)];
 		from.value = interpolateColor(tone.value, [0, 1], [from.value, to.value]);
 		to.value = next;
 		tone.value = 0;
@@ -86,6 +97,16 @@ export function FaceGlyph({ status }: { status: BiometricStatus }) {
 		}
 	}, [status, from, to, tone, close, check, shake, beam, beamOpacity]);
 
+	useEffect(() => {
+		if (appliedTones.current === tones) return;
+		appliedTones.current = tones;
+		const now = tones[toneOf(status)];
+		cancelAnimation(tone);
+		from.value = now;
+		to.value = now;
+		tone.value = 1;
+	}, [tones, status, from, to, tone]);
+
 	const stroke = useAnimatedProps(() => ({
 		stroke: interpolateColor(tone.value, [0, 1], [from.value, to.value]),
 	}));
@@ -110,10 +131,12 @@ export function FaceGlyph({ status }: { status: BiometricStatus }) {
 		transform: [{ translateY: 18 + beam.value * (SIZE - 36) }],
 	}));
 
+	const glowEdge = transparentOf(tones.scan) ?? "transparent";
+
 	return (
-		<Animated.View style={[styles.collapse, collapseStyle]}>
-			<Animated.View style={[styles.box, shrinkStyle]}>
-				<Svg height={BOX} style={styles.ring} viewBox="0 0 264 264" width={BOX}>
+		<Animated.View className="w-[264px] items-center justify-center" style={collapseStyle}>
+			<Animated.View className="size-[264px] items-center justify-center" style={shrinkStyle}>
+				<Svg height={BOX} style={RING_STYLE} viewBox="0 0 264 264" width={BOX}>
 					<AnimatedCircle
 						animatedProps={ringProps}
 						cx={132}
@@ -124,7 +147,7 @@ export function FaceGlyph({ status }: { status: BiometricStatus }) {
 						strokeWidth={1.5}
 					/>
 				</Svg>
-				<Animated.View style={[styles.frame, frameStyle]}>
+				<Animated.View className="size-[208px]" style={frameStyle}>
 					<Svg height={SIZE} viewBox="0 0 200 200" width={SIZE}>
 						{BRACKETS.map((d) => (
 							<AnimatedPath
@@ -151,32 +174,25 @@ export function FaceGlyph({ status }: { status: BiometricStatus }) {
 							animatedProps={checkProps}
 							d={CHECK}
 							fill="none"
-							stroke={VAULT.open}
+							stroke={tones.open}
 							strokeDasharray={`${CHECK_LENGTH} ${CHECK_LENGTH}`}
 							strokeLinecap="round"
 							strokeLinejoin="round"
 							strokeWidth={STROKE + 2}
 						/>
 					</Svg>
-					<Animated.View pointerEvents="none" style={[styles.beam, beamStyle]}>
-						<LinearGradient
-							colors={["rgba(91,140,255,0)", "rgba(91,140,255,0.22)", "rgba(91,140,255,0)"]}
-							style={styles.glow}
-						/>
-						<View style={styles.line} />
+					<Animated.View
+						className="absolute inset-x-3.5 -top-3.5 h-7 justify-center"
+						pointerEvents="none"
+						style={beamStyle}
+					>
+						<View className="absolute inset-0 opacity-25">
+							<LinearGradient colors={[glowEdge, tones.scan, glowEdge]} style={GLOW_FILL} />
+						</View>
+						<View className="h-0.5 rounded-[1px] bg-info" />
 					</Animated.View>
 				</Animated.View>
 			</Animated.View>
 		</Animated.View>
 	);
 }
-
-const styles = StyleSheet.create({
-	collapse: { width: BOX, alignItems: "center", justifyContent: "center" },
-	box: { width: BOX, height: BOX, alignItems: "center", justifyContent: "center" },
-	ring: { position: "absolute" },
-	frame: { width: SIZE, height: SIZE },
-	beam: { position: "absolute", left: 14, right: 14, top: -14, height: 28, justifyContent: "center" },
-	glow: { ...StyleSheet.absoluteFill },
-	line: { height: 2, borderRadius: 1, backgroundColor: VAULT.scan },
-});
