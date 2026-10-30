@@ -57,6 +57,12 @@ export const ids = {
 	network: {
 		screen: "net-screen",
 		back: "net-back",
+		state: "net-state",
+		link: "net-link",
+		last: "net-last",
+		p50: "net-p50",
+		count: "net-count",
+		toggle: "net-toggle",
 	},
 	location: {
 		screen: "loc-screen",
