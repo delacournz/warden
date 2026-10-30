@@ -61,6 +61,13 @@ export const ids = {
 	location: {
 		screen: "loc-screen",
 		back: "loc-back",
+		state: "loc-state",
+		coords: "loc-coords",
+		speed: "loc-speed",
+		distance: "loc-distance",
+		fixes: "loc-fixes",
+		geofence: "loc-geofence",
+		toggle: "loc-toggle",
 	},
 	clock: {
 		screen: "clk-screen",
