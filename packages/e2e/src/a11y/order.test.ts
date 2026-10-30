@@ -105,3 +105,28 @@ describe("readingOrder rules", () => {
 		expect(texts(snap, "android")).toEqual(["Card, button", "Inner, button"]);
 	});
 });
+
+describe("readingOrder: iOS traversal from the injected walk", () => {
+	const cell = (label: string, x: number, y: number, traversal?: number) => ({
+		role: "button" as const,
+		label,
+		traits: ["button"],
+		frame: { x, y, width: 100, height: 40 },
+		...(traversal === undefined ? {} : { a11y: { traversal } }),
+	});
+
+	test("every reachable node has a traversal index: VoiceOver's own order wins over the frame guess", () => {
+		const snap = snapshotOf("ios", [cell("Left", 0, 0, 1), cell("Right", 200, 0, 0)]);
+		expect(texts(snap, "ios")).toEqual(["Right, button", "Left, button"]);
+	});
+
+	test("some nodes without one: falls back to the row-major guess", () => {
+		const snap = snapshotOf("ios", [cell("Left", 0, 0, 1), cell("Right", 200, 0)]);
+		expect(texts(snap, "ios")).toEqual(["Left, button", "Right, button"]);
+	});
+
+	test("Android ignores traversal", () => {
+		const snap = snapshotOf("android", [cell("Left", 0, 0, 1), cell("Right", 200, 0, 0)]);
+		expect(texts(snap, "android").map((t) => t.split(",")[0])).toEqual(["Left", "Right"]);
+	});
+});

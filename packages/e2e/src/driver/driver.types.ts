@@ -151,6 +151,8 @@ export type ElementA11y = {
 	liveRegion?: "polite" | "assertive";
 	/** iOS: index in the container's `accessibilityElements` order, when the app sets one */
 	order?: number;
+	/** iOS: position in the injected walk, which follows VoiceOver's own traversal across the whole screen */
+	traversal?: number;
 };
 
 export type SnapshotBackend = "axbridge" | "ax" | "uiautomator";

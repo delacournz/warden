@@ -101,13 +101,14 @@ function overlap(a: Rect, b: Rect): number {
 	return union <= 0 ? 0 : inter / union;
 }
 
-function a11yOf(node: IosA11yNode): ElementA11y {
+function a11yOf(node: IosA11yNode, traversal: number): ElementA11y {
 	return {
 		...(node.hint ? { hint: node.hint } : {}),
 		...(node.actions.length > 0 ? { actions: node.actions } : {}),
 		focusable: node.element,
 		important: node.element,
 		...(node.order === undefined ? {} : { order: node.order }),
+		traversal,
 	};
 }
 
@@ -125,7 +126,7 @@ export type MergedA11y = { snapshot: Snapshot; matched: number; unmatched: numbe
  */
 export function mergeA11y(snapshot: Snapshot, nodes: readonly IosA11yNode[]): MergedA11y {
 	const used = new Set<number>();
-	const picked = new Map<string, IosA11yNode>();
+	const picked = new Map<string, number>();
 	for (const element of snapshot.flat) {
 		const identifier = element.identifier;
 		if (!identifier) continue;
@@ -141,8 +142,7 @@ export function mergeA11y(snapshot: Snapshot, nodes: readonly IosA11yNode[]): Me
 		});
 		if (best >= 0) {
 			used.add(best);
-			const node = nodes[best];
-			if (node) picked.set(element.id, node);
+			picked.set(element.id, best);
 		}
 	}
 	const pairs: { element: Element; index: number; score: number }[] = [];
@@ -157,17 +157,17 @@ export function mergeA11y(snapshot: Snapshot, nodes: readonly IosA11yNode[]): Me
 	}
 	pairs.sort((a, b) => b.score - a.score);
 	for (const { element, index } of pairs) {
-		const node = nodes[index];
-		if (!node || used.has(index) || picked.has(element.id)) continue;
+		if (used.has(index) || picked.has(element.id)) continue;
 		used.add(index);
-		picked.set(element.id, node);
+		picked.set(element.id, index);
 	}
 	const flat: Element[] = [];
 	const copy = (element: Element): Element => {
-		const node = picked.get(element.id);
+		const index = picked.get(element.id);
+		const node = index === undefined ? undefined : nodes[index];
 		const next: Element = {
 			...element,
-			...(node ? { a11y: { ...element.a11y, ...a11yOf(node) } } : {}),
+			...(node && index !== undefined ? { a11y: { ...element.a11y, ...a11yOf(node, index) } } : {}),
 			children: [],
 		};
 		flat.push(next);

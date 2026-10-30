@@ -80,7 +80,17 @@ describe("mergeA11y (identifier first, then frame overlap)", () => {
 			focusable: true,
 			important: true,
 			order: 1,
+			traversal: 0,
 		});
+	});
+
+	test("traversal is the node's position in the walk (VoiceOver's own order)", () => {
+		const snapshot = snap([
+			el("button", { identifier: "a", frame: { x: 0, y: 0, width: 100, height: 40 } }),
+			el("button", { identifier: "b", frame: { x: 0, y: 100, width: 100, height: 40 } }),
+		]);
+		const merged = mergeA11y(snapshot, [node({ identifier: "b" }), node({ identifier: "a" })]);
+		expect(merged.snapshot.flat.map((e) => e.a11y?.traversal)).toEqual([1, 0]);
 	});
 
 	test("falls back to frame overlap for elements without a usable identifier", () => {
@@ -109,7 +119,7 @@ describe("mergeA11y (identifier first, then frame overlap)", () => {
 
 	test("a non-accessibility container (isAccessibilityElement false) reads as not focusable and not important", () => {
 		const merged = mergeA11y(snap([el("other", { identifier: "box" })]), [node({ identifier: "box", element: false })]);
-		expect(merged.snapshot.flat[0]?.a11y).toEqual({ focusable: false, important: false });
+		expect(merged.snapshot.flat[0]?.a11y).toEqual({ focusable: false, important: false, traversal: 0 });
 	});
 
 	test("does not mutate the input snapshot and keeps tree and flat in step", () => {

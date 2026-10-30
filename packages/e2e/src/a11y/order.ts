@@ -5,8 +5,9 @@ import { type AnnounceOptions, accessibleName, announce, isActionable } from "./
 /**
  * Reading order a screen reader would walk. SIMULATED: approximates, not equals, VoiceOver / TalkBack.
  * Only reachable nodes are listed: `a11y.important !== false`, not hidden, on screen, and named or actionable.
- * Children of a focusable node are merged into it (no double entries). iOS honours `a11y.order`,
- * else sorts siblings row-major by frame (VoiceOver heuristic); Android keeps tree order.
+ * Children of a focusable node are merged into it (no double entries). iOS: when every listed node carries
+ * `a11y.traversal` (the injected walk, VoiceOver's own order) that order is used; otherwise `a11y.order`, then
+ * siblings row-major by frame (VoiceOver heuristic). Android keeps tree order.
  */
 
 type Screen = Snapshot["screen"];
@@ -52,7 +53,9 @@ function hasActionableDescendant(el: Element, platform: Platform): boolean {
 	return el.children.some((c) => !c.hidden && (isActionable(c, platform) || hasActionableDescendant(c, platform)));
 }
 
-function walk(el: Element, platform: Platform, screen: Screen, opts: AnnounceOptions, out: Announcement[]): void {
+type Entry = { el: Element; announcement: Announcement };
+
+function walk(el: Element, platform: Platform, screen: Screen, opts: AnnounceOptions, out: Entry[]): void {
 	if (el.hidden) return;
 	const visible = el.a11y?.important !== false && onScreen(el, screen);
 	if (visible) {
@@ -61,10 +64,10 @@ function walk(el: Element, platform: Platform, screen: Screen, opts: AnnounceOpt
 		if (actionable || named) {
 			const swallowsChildren = !actionable || !hasActionableDescendant(el, platform);
 			if (swallowsChildren) {
-				out.push(announce(el, platform, opts));
+				out.push({ el, announcement: announce(el, platform, opts) });
 				return;
 			}
-			if (named) out.push(announce(el, platform, opts));
+			if (named) out.push({ el, announcement: announce(el, platform, opts) });
 		}
 	}
 	for (const child of orderSiblings(el.children, platform)) walk(child, platform, screen, opts, out);
@@ -72,7 +75,9 @@ function walk(el: Element, platform: Platform, screen: Screen, opts: AnnounceOpt
 
 /** The announcements a swipe-right sweep would produce, in order. Every entry has `source: "simulated"`. */
 export function readingOrder(snapshot: Snapshot, platform: Platform, opts: AnnounceOptions = {}): Announcement[] {
-	const out: Announcement[] = [];
+	const out: Entry[] = [];
 	for (const el of orderSiblings(snapshot.elements, platform)) walk(el, platform, snapshot.screen, opts, out);
-	return out;
+	const traversed = platform === "ios" && out.length > 0 && out.every((e) => e.el.a11y?.traversal !== undefined);
+	if (traversed) out.sort((a, b) => (a.el.a11y?.traversal ?? 0) - (b.el.a11y?.traversal ?? 0));
+	return out.map((e) => e.announcement);
 }
