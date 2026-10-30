@@ -13,6 +13,7 @@ import type {
 	KeyName,
 	Snapshot,
 } from "../driver.types";
+import type { ActsOnElements } from "../element-actions";
 import { driverError } from "../errors";
 import { socketTransport, type Transport } from "../ios/simd-transport";
 import type { AuditsNatively, NativeAuditResult } from "../native-audit";
@@ -37,7 +38,7 @@ import {
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_READY_TIMEOUT_MS = 2000;
 
-type RemoteA11y = Partial<ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader>;
+type RemoteA11y = Partial<ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader & ActsOnElements>;
 
 /** A remote driver plus whichever optional capabilities the served one offers. */
 export type RemoteDriver = Driver &
@@ -51,7 +52,8 @@ export type RemoteDriver = Driver &
 			ReadsA11y &
 			ReadsA11yEvents &
 			AuditsNatively &
-			DrivesScreenReader
+			DrivesScreenReader &
+			ActsOnElements
 	>;
 
 export type RequestOptions = { timeoutMs?: number };
@@ -226,6 +228,10 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			out.screenReaderActivate = () => call("screenReaderActivate");
 			out.screenReaderFocused = () => call("screenReaderFocused");
 			out.screenReaderSpoken = (since) => call("screenReaderSpoken", since);
+		}
+		if (offered.has("pressElement")) {
+			out.pressElement = (element) => call("pressElement", element);
+			out.scrollElement = (direction, within) => call("scrollElement", direction, within);
 		}
 		return out;
 	};

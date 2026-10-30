@@ -6,6 +6,7 @@ import { canReadA11yEvents } from "../a11y-events";
 import { canReadA11y } from "../a11y-read";
 import { el, failWith, fakeDriver, snapshotOf } from "../driver.testing";
 import type { Driver, DriverCapabilities } from "../driver.types";
+import { canActOnElements } from "../element-actions";
 import { canAuditNatively } from "../native-audit";
 import { canDetectAlerts } from "../observation-cache";
 import { canDriveScreenReader } from "../screen-reader";
@@ -325,5 +326,23 @@ describe("remote driver", () => {
 			success: true,
 			data: { cursor: 3, lines: [{ text: "Go, button" }] },
 		});
+	});
+
+	test("element actions (TalkBack press / scroll) cross the wire with the element", async () => {
+		const driver = fakeDriver({ screens: [screen], platform: "android", elementActions: { handled: true } });
+		const remote = (await connect(await serve(driver))).driver();
+		if (!canActOnElements(remote)) throw new Error("element actions not offered");
+		const target = screen.flat[0];
+		if (!target) throw new Error("fixture has no element");
+		expect(await remote.pressElement(target)).toEqual({ success: true, data: true });
+		expect(await remote.scrollElement("down")).toEqual({ success: true, data: true });
+		const pressed = driver.callsOf("pressElement")[0];
+		expect(pressed).toMatchObject({ method: "pressElement", element: { identifier: target.identifier } });
+		expect(driver.callsOf("scrollElement")).toEqual([{ method: "scrollElement", direction: "down" }]);
+	});
+
+	test("a driver without element actions offers none", async () => {
+		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
+		expect(canActOnElements(remote)).toBe(false);
 	});
 });
