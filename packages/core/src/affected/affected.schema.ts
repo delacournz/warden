@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { a11yAuditConfigSchema } from "../a11y/a11y.config";
 import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
 import { conditionsConfigSchema } from "../conditions/conditions.config";
@@ -251,6 +252,8 @@ export const e2eSuiteSchema = z
 		perf: perfConfigSchema.optional(),
 		/** device conditions every spec of the suite starts from; each area replaces the top-level one */
 		conditions: conditionsConfigSchema.optional(),
+		/** accessibility audit settings for this suite; each key replaces the top-level `a11y` one */
+		a11y: a11yAuditConfigSchema.optional(),
 		/** default `required` for specs that don't set it */
 		required: z.boolean().default(true),
 		specs: z.record(z.string().min(1), e2eSpecEntrySchema).default({}),

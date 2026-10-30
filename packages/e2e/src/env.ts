@@ -1,3 +1,4 @@
+import { type A11yAuditConfig, parseA11yAuditEnv } from "@delacour/warden-core/a11y/a11y.config";
 import { type ConditionsConfig, parseConditionsEnv } from "@delacour/warden-core/conditions/conditions.config";
 import type { Result } from "@delacour/warden-types/result";
 import { z } from "zod";
@@ -54,6 +55,8 @@ export const ENV_NAMES = {
 	netproxyCommand: "WARDEN_NETPROXY_COMMAND",
 	/** `1` when the suite's devices are biometrics devices: the session enrolls an iOS sim again before the app is installed */
 	biometrics: "WARDEN_BIOMETRICS",
+	/** JSON of the suite's `a11y` (`ignore` / `minSeverity` / `rules`): the defaults `device.a11yAudit()` and `toPassA11yAudit()` use */
+	a11yAudit: "WARDEN_A11Y_AUDIT",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -82,6 +85,13 @@ const launchArgs = z.string().transform((raw, ctx): string[] => {
 
 const conditions = z.string().transform((raw, ctx): ConditionsConfig => {
 	const parsed = parseConditionsEnv(raw);
+	if (parsed.success) return parsed.data;
+	ctx.addIssue({ code: "custom", message: parsed.error });
+	return z.NEVER;
+});
+
+const a11yAudit = z.string().transform((raw, ctx): A11yAuditConfig => {
+	const parsed = parseA11yAuditEnv(raw);
 	if (parsed.success) return parsed.data;
 	ctx.addIssue({ code: "custom", message: parsed.error });
 	return z.NEVER;
@@ -118,6 +128,7 @@ const schema = z.object({
 	leaseId: z.string().min(1).optional(),
 	netproxyCommand: launchArgs.pipe(z.array(z.string()).min(1)).optional(),
 	biometrics: toggle.optional(),
+	a11yAudit: a11yAudit.optional(),
 });
 
 export type E2eEnv = {
@@ -164,6 +175,8 @@ export type E2eEnv = {
 	netproxyCommand?: string[];
 	/** `WARDEN_BIOMETRICS`: this is a biometrics device (profile `<p>+bio`); iOS enrollment does not survive a reboot or a spec's `unenroll` */
 	biometrics?: boolean;
+	/** `WARDEN_A11Y_AUDIT`: the suite's accessibility audit settings; absent = rules all, ignore none, minSeverity `error` */
+	a11yAudit?: A11yAuditConfig;
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -213,6 +226,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		...(v.leaseId === undefined ? {} : { leaseId: v.leaseId }),
 		...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
 		...(v.biometrics === true ? { biometrics: true } : {}),
+		...(v.a11yAudit === undefined ? {} : { a11yAudit: v.a11yAudit }),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
 		...(v.perf === undefined

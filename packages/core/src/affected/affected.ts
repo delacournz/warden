@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type A11yAuditConfig, mergeA11yAuditConfig } from "../a11y/a11y.config";
 import { CONFIG_FILE, type ConfigSource, type FoundConfig, findWardenConfig, loadProject } from "../builds/config";
 import { overlayDirUnlessRepoConfig } from "../builds/overlay";
 import { type ConditionsConfig, mergeConditionsConfig } from "../conditions/conditions.config";
@@ -39,6 +40,8 @@ export type Suite = {
 	perfBudgets?: NonNullable<NonNullable<E2eSuiteConfig["perf"]>["budgets"]>;
 	/** the suite's device conditions over the top-level ones, per area (undefined: none set) */
 	conditions?: ConditionsConfig;
+	/** the suite's accessibility audit settings over the top-level ones, per key (undefined: none set) */
+	a11y?: A11yAuditConfig;
 };
 
 /** Why `findSuite` found no suite: `several_suites` is the one callers act on (name one), the rest are reported as is. */
@@ -184,6 +187,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 	const biometrics = config.biometrics ?? top.biometrics;
 	const budgets = { ...top.perf?.budgets, ...config.perf?.budgets };
 	const conditions = mergeConditionsConfig(top.conditions, config.conditions);
+	const a11y = mergeA11yAuditConfig(top.a11y, config.a11y);
 	return {
 		name,
 		config,
@@ -197,6 +201,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 		...(biometrics !== undefined ? { biometrics } : {}),
 		...(Object.keys(budgets).length > 0 ? { perfBudgets: budgets } : {}),
 		...(conditions !== undefined ? { conditions } : {}),
+		...(a11y !== undefined ? { a11y } : {}),
 	};
 }
 

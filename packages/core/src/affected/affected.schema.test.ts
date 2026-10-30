@@ -98,6 +98,20 @@ describe("physical", () => {
 	});
 });
 
+describe("e2e.<suite>.a11y", () => {
+	test("ignore, minSeverity and rules; strict keys and known rules only", () => {
+		const a11y = {
+			ignore: [{ rule: "target-size", identifier: "x" }],
+			minSeverity: "warning",
+			rules: ["missing-name"],
+		};
+		expect(suite({ a11y }).a11y as unknown).toEqual(a11y);
+		expect(issues({ a11y: { ignore: [{ rule: "nope" }] } })).not.toEqual([]);
+		expect(issues({ a11y: { minSeverity: "info" } })).not.toEqual([]);
+		expect(issues({ a11y: { extra: 1 } })).not.toEqual([]);
+	});
+});
+
 describe("e2e.<suite>.conditions", () => {
 	test("network, location and clock, strict keys", () => {
 		expect(
