@@ -9,8 +9,9 @@ import { shellCommand } from "./android-argv";
 /**
  * Android device settings over the resident adb shell (each mechanism verified on an emulator): `pm grant|revoke`
  * for permissions, `cmd alarm set-timezone`, per-app `cmd locale set-app-locales` (API 33+), `settings put` for
- * font scale and bold text, `dumpsys battery`, `am send-trim-memory`. No contrast or reduce-motion switch exists in
- * the shell (the animation scales are the driver's own), so those are skipped, not faked.
+ * font scale, bold text, high-contrast text and colour inversion, `dumpsys battery`, `am send-trim-memory`. Reduce
+ * motion is the transition animation scale (what RN reads), which the driver restores to the device's value on open.
+ * No contrast switch exists in the shell, so that is skipped, not faked.
  */
 
 const ANDROID = "android.permission.";
@@ -64,7 +65,12 @@ export const setAppLocaleArgv = (pkg: string, tag: string | null): string[] => [
 	tag ?? "",
 ];
 export const getAppLocaleArgv = (pkg: string): string[] => ["cmd", "locale", "get-app-locales", pkg];
-export const settingGetArgv = (table: "system" | "secure", key: string): string[] => ["settings", "get", table, key];
+export const settingGetArgv = (table: "system" | "secure" | "global", key: string): string[] => [
+	"settings",
+	"get",
+	table,
+	key,
+];
 export const BOLD_TEXT_ADJUSTMENT = 300;
 export const trimMemoryArgv = (pkg: string): string[] => ["am", "send-trim-memory", pkg, "RUNNING_CRITICAL"];
 export const BATTERY_RESET_ARGV: readonly string[] = ["dumpsys", "battery", "reset"];
@@ -94,6 +100,8 @@ export type AndroidSettingsDeps = {
 	sleep?: (ms: number) => Promise<void>;
 	/** the host's timezone, restored on `timezone(null)` when no previous one is given (default: `Intl`) */
 	hostTimezone?: () => string;
+	/** the transition animation scale the device had before the driver zeroed it (what `reduceMotion: false` restores); `"null"` / absent = none known */
+	transitionOriginal?: () => string | undefined;
 };
 
 export type AndroidSettings = Pick<
@@ -110,7 +118,7 @@ type Ctx = {
 	shell(argv: readonly string[]): Promise<Shelled>;
 	must(argv: readonly string[]): DriverResult<string>;
 	/** `settings put`, then read back: a font change makes the system write its own value a moment later, so a put is repeated until it holds */
-	putSetting(table: "system" | "secure", key: string, value: string): DriverResult<string>;
+	putSetting(table: "system" | "secure" | "global", key: string, value: string): DriverResult<string>;
 	packageOf(explicit: string | undefined, what: string): { bundleId: string } | ReturnType<typeof driverErr>;
 	sdk(): Promise<number>;
 };
@@ -238,20 +246,35 @@ function fontScaleOf(size: TextSize | undefined): { scale: number; notes: string
 	};
 }
 
-/** Settings with no shell mechanism on Android, for the ones `op` asks for. */
+/** iOS-only settings, for the ones `op` asks for. */
+const IOS_ONLY = ["reduceTransparency", "buttonShapes", "differentiateWithoutColor", "onOffLabels"] as const;
+
+/** Settings with no Android mechanism (yet), for the ones `op` asks for. */
 function a11ySkips(op: A11yOp | null): { setting: string; reason: string }[] {
 	const skipped: { setting: string; reason: string }[] = [];
 	if (op?.contrast !== undefined) {
 		skipped.push({ setting: "contrast", reason: "Android has no shell switch for contrast that takes effect" });
 	}
-	if (op?.reduceMotion !== undefined) {
-		skipped.push({
-			setting: "reduceMotion",
-			reason: "Android's closest setting is the animation scales, which warden's driver manages itself",
-		});
+	for (const setting of IOS_ONLY) {
+		if (op?.[setting] !== undefined) skipped.push({ setting, reason: "iOS only" });
+	}
+	if (op?.screenReader !== undefined) {
+		skipped.push({ setting: "screenReader", reason: "TalkBack mode lands in A11Y-7" });
 	}
 	return skipped;
 }
+
+/** The scale `reduceMotion: false` means: the device's own transition scale, else the platform default. */
+function transitionOff(c: Ctx): string {
+	const original = c.deps.transitionOriginal?.();
+	return original !== undefined && original !== "null" && Number(original) > 0 ? original : "1.0";
+}
+
+/** Boolean settings that are one `settings put` of 1 / 0, in the order they are applied. */
+const SWITCHES = [
+	["highContrastText", "secure", "high_text_contrast_enabled"],
+	["colorInversion", "secure", "accessibility_display_inversion_enabled"],
+] as const;
 
 function a11yOp(c: Ctx): Driver["a11y"] {
 	return async (op) => {
@@ -274,6 +297,22 @@ function a11yOp(c: Ctx): Driver["a11y"] {
 			);
 			if (!done.success) return done;
 			applied.push("boldText");
+		}
+		for (const [field, table, key] of SWITCHES) {
+			if (op === null || op[field] !== undefined) {
+				const done = await c.putSetting(table, key, op?.[field] === true ? "1" : "0");
+				if (!done.success) return done;
+				if (op !== null) applied.push(field);
+			}
+		}
+		if (op === null || op.reduceMotion !== undefined) {
+			const done = await c.putSetting(
+				"global",
+				"transition_animation_scale",
+				op?.reduceMotion === true ? "0" : transitionOff(c)
+			);
+			if (!done.success) return done;
+			if (op !== null) applied.push("reduceMotion");
 		}
 		skipped.push(...a11ySkips(op));
 		if (applied.length === 0 && skipped.length > 0) {

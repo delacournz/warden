@@ -92,6 +92,13 @@ export type A11yCondition = {
 	reduceMotion?: boolean;
 	boldText?: boolean;
 	contrast?: "increased" | "normal";
+	reduceTransparency?: boolean;
+	buttonShapes?: boolean;
+	differentiateWithoutColor?: boolean;
+	onOffLabels?: boolean;
+	highContrastText?: boolean;
+	colorInversion?: boolean;
+	screenReader?: boolean;
 };
 
 /** `cosmetic`: the status bar says so, the OS and the app still see the real battery (iOS simulators) */
