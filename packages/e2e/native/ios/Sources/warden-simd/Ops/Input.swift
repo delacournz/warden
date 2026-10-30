@@ -236,6 +236,9 @@ struct InputParams {
   /// `repeatGapMs`: extra pause before a key identical to the previous one, default `KeyboardMap.defaultRepeatGapMs`.
   func repeatGapMs() throws -> Int { try wholeMs("repeatGapMs", fallback: KeyboardMap.defaultRepeatGapMs) }
 
+  /// `leadMs` for `typeText`: extra pause between the first key and the second, default `KeyboardMap.defaultLeadMs`.
+  func leadMs() throws -> Int { try wholeMs("leadMs", fallback: KeyboardMap.defaultLeadMs) }
+
   /// Milliseconds -> seconds, within 0...60 s.
   func seconds(_ key: String, default fallback: Double) throws -> Double {
     let ms = try optional(key) ?? fallback
@@ -430,7 +433,7 @@ struct InputEngine: Sendable {
     case "typeText":
       return try await typeText(
         try params.string("text"), paceMs: try params.paceMs(), holdMs: try params.holdMs(),
-        repeatGapMs: try params.repeatGapMs())
+        repeatGapMs: try params.repeatGapMs(), leadMs: try params.leadMs())
     case "paste":
       return try await send(KeyboardMap.paste)
     case "selectAll":
@@ -517,8 +520,9 @@ struct InputEngine: Sendable {
     return KeyboardMap.chordSteps(usage: usage, modifiers: modifiers, paceMs: paceMs, holdMs: holdMs)
   }
 
-  private func typeText(_ text: String, paceMs: Int, holdMs: Int, repeatGapMs: Int) async throws -> JSON {
-    let plan = KeyboardMap.plan(typing: text, paceMs: paceMs, holdMs: holdMs, repeatGapMs: repeatGapMs)
+  private func typeText(_ text: String, paceMs: Int, holdMs: Int, repeatGapMs: Int, leadMs: Int) async throws -> JSON {
+    let plan = KeyboardMap.plan(
+      typing: text, paceMs: paceMs, holdMs: holdMs, repeatGapMs: repeatGapMs, leadMs: leadMs)
     if !plan.steps.isEmpty { _ = try await send(steps: plan.steps) }
     if let rest = plan.rest {
       let first = rest.unicodeScalars.first.map { String($0) } ?? ""

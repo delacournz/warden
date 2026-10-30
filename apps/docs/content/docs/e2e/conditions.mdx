@@ -1,0 +1,197 @@
+---
+title: Device conditions
+description: Change the network, GPS location and clock of a simulator or emulator from a spec, a suite or warden ui, and have it undone on release.
+icon: Signal
+---
+
+A spec can put the device into a condition (offline, 3G, a flapping connection, one host failing, a moving GPS fix, a clock two weeks ahead) and check what the app does. Everything a test changes belongs to its lease: when the test ends, or the lease is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
+
+```ts title="e2e/network-offline.e2e.ts"
+import { expect, test } from "@delacour/warden-e2e";
+
+test("cold start offline shows the banner, going online recovers the fetch", async ({ app, device, screen }) => {
+  await device.network.set("offline"); // before the app opens: a cold start offline
+  await app.open();
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeVisible({ timeout: 15_000 });
+
+  await device.network.set("online");
+  await expect(screen.getByTestId("conditions-offline-banner")).toBeHidden({ timeout: 15_000 });
+});
+```
+
+The example app has a Conditions screen (`warden-example://conditions`) and a spec for each area in `apps/example/e2e`.
+
+## Network
+
+`device.network.set(condition)` takes `"online"`, `"offline"`, a preset or a custom shape.
+
+| Preset | Latency | Jitter | Down | Up | Loss |
+|---|---|---|---|---|---|
+| `edge` | 400 ms | 25 ms | 240 kbps | 200 kbps | 0 |
+| `3g` | 100 ms | 10 ms | 780 kbps | 330 kbps | 0 |
+| `4g` | 170 ms | 15 ms | 9 Mbps | 9 Mbps | 0 |
+| `lte` | 50 ms | 5 ms | 50 Mbps | 10 Mbps | 0 |
+| `wifi` | 2 ms | 0 | 40 Mbps | 33 Mbps | 0 |
+| `slow` | 2000 ms | 100 ms | 400 kbps | 400 kbps | 0 |
+| `lossy` | 500 ms | 50 ms | 1 Mbps | 1 Mbps | 10% |
+
+`{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }` sets your own.
+
+```ts
+await device.network.set("3g");
+await device.network.during("offline", async () => {
+  // the previous condition is back afterwards, also when this throws
+});
+await device.network.reset(); // back to the suite's conditions.network (online without one)
+```
+
+| Member | Does |
+|---|---|
+| `set(c, { relaunch? })` | change the network. A running flap stops first |
+| `during(c, fn)` | run `fn` under `c`, then restore |
+| `flap({ up, down, jitterPct?, seed?, base? })` | alternate `base` (default online) and offline until `stop()` or the end of the test; returns `{ stop(), done, status() }` |
+| `fault(rule \| rules)` | per-host faults; `[]` clears |
+| `status()` | `{ condition, faults, flapping }` |
+| `reset()` | stop the flap, clear faults, back to the baseline |
+
+### Flapping
+
+```ts
+const flap = await device.network.flap({ up: "1s", down: "1s" });
+// ... exercise the retry path ...
+await flap.stop();
+```
+
+A fixed `seed` replays the same sequence. A flap and faults do not combine: reset one before setting the other.
+
+### Faults
+
+A fault applies to every request whose host matches a glob.
+
+```ts
+await device.network.fault({ match: "api.example.com", action: { kind: "reset" } });
+```
+
+Actions: `{ kind: "status", code }`, `{ kind: "reset" }`, `{ kind: "delay", ms }`, `{ kind: "blackhole" }`.
+
+HTTPS requests are tunnelled without being opened, so a `status` fault cannot answer one: an `https://` request matching it is reset, and `fault()` returns a note saying so. Use `reset` (or `delay` / `blackhole`) for HTTPS hosts and `status` for plain HTTP.
+
+### How it reaches the app
+
+| | iOS simulator | Android emulator |
+|---|---|---|
+| Speed, delay, offline | per-app proxy (a dylib routes the app's `NSURLSession` traffic through the lease's shaping proxy) and a reachability signal | native: `adb emu network`, airplane mode |
+| Loss, faults | the proxy | the proxy, through the system `http_proxy` |
+
+A simulator shares the Mac's network, so on iOS a condition reaches only an app that was launched with warden's network dylib. A running app without it fails `E_NETWORK_RELAUNCH`. Either declare `conditions.network` for the suite (below), so every launch carries the dylib, or pass `{ relaunch: true }`.
+
+## Location
+
+```ts
+await device.location.set({ lat: 37.3349, lon: -122.009 });
+await device.location.route(
+  [{ lat: 37.3398, lon: -122.009 }, { lat: 37.3349, lon: -122.009 }, { lat: 37.33, lon: -122.009 }],
+  { speedMps: 40, intervalS: 1 },
+);
+await device.location.route({ gpx: "fixtures/commute.gpx" });
+await device.location.scenario("city-run"); // "city-run" | "city-bike" | "freeway"
+await device.location.clear();
+```
+
+| Call | Does |
+|---|---|
+| `set({ lat, lon, altM? })` | a point |
+| `route(points \| { gpx }, { speedMps?, intervalS?, loop? })` | waypoints, or a GPX file (relative to the working directory), played at a speed |
+| `scenario(name)` | one of the bundled routes |
+| `clear()` | iOS clears the simulated location. Android stops the ticker and keeps the last fix (the emulator console cannot unset one) |
+
+On iOS `simctl` plays a route once. On Android a ticker owned by the lease sends a fix every interval until the next location call.
+
+## Clock
+
+```ts
+await device.clock.advance("15d");
+await device.clock.set("2027-01-01T00:00:00Z", { frozen: true }); // iOS only
+await device.clock.during("2027-01-01T00:00:00Z", async () => { /* ... */ });
+await device.clock.reset();
+```
+
+Durations are milliseconds or `"10s"`, `"2m"`, `"2d"`. The wall clock moves; monotonic clocks do not, so timers and animations keep running.
+
+- iOS: the clock changes for an app launched with the network dylib (same rule as the network). A frozen clock holds the wall clock at one instant.
+- Android: the emulator's clock changes. It cannot be frozen (`E_UNSUPPORTED`).
+- A large offset breaks TLS: certificates look expired or not yet valid, so HTTPS fails while the clock is far from real time. Do not make requests in a spec that advances the clock by weeks.
+- A JS timer armed while the clock was ahead waits for the shifted time once the clock goes back. Re-read the time on demand (the example's clock card has a Refresh button) or relaunch the app after `reset()`.
+
+## Timeline
+
+```ts
+const run = await device.timeline([
+  { at: "0s", network: "offline" },
+  { at: "5s", network: "online", location: { lat: 37.33, lon: -122.0 } },
+]);
+```
+
+`at` is an offset from now. A step sets a condition, not a flap. The returned run has the same `stop()`, `done` and `status()` as a flap.
+
+## Suite baseline: the `conditions` key
+
+`conditions` at the top level of `warden.config.ts`, or inside a suite, is the device state every spec starts from. It is applied before the app launches and put back after each spec.
+
+```ts title="warden.config.ts"
+e2e: {
+  conditions: {
+    ...exampleSuite,
+    include: ["{network-*,location-*,clock-*}"],
+    conditions: { network: "online" },
+  },
+},
+```
+
+| Area | Value |
+|---|---|
+| `network` | `"online"`, `"offline"`, a preset or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }` |
+| `location` | `{ lat, lon, altM? }` or a scenario name |
+| `clock` | an ISO instant (it keeps running), `{ at, frozen? }` or `{ offset: "2d" }` |
+
+A suite's key replaces the top-level one for that area. On iOS, declaring `network` or `clock` launches the app with the dylib, which is why the example runs its condition specs in a separate `conditions` suite: the other specs keep a plain launch.
+
+```bash
+warden e2e conditions --specs network-offline,network-slow,location-route,clock-trial
+```
+
+## By hand: `warden ui`
+
+The same conditions are available while you drive a device, on your lease.
+
+```bash
+warden ui network set 3g
+warden ui network flap --up 10s --down 3s
+warden ui network fault api.example.com reset
+warden ui network status
+warden ui network reset
+warden ui location set 37.3349,-122.009
+warden ui location route 37.3398,-122.009 37.3349,-122.009 --speed 20
+warden ui location gpx ./commute.gpx
+warden ui location scenario city-run
+warden ui location clear
+warden ui clock advance 15d
+warden ui clock reset
+```
+
+`warden ui network log` is the request log of the dev client. See [warden ui](/docs/agents/ui) for every flag, including `--relaunch`.
+
+## What is undone on release
+
+Release, gc and the end of a spec put the device back: network online, faults cleared, the shaping proxy, the flap scheduler and the route ticker stopped, the location cleared on iOS, and the clock real again. A still-running injected iOS app is reset to online and the real clock. Android keeps the last GPS fix, because the emulator cannot unset one.
+
+## Limitations
+
+- iOS shapes the app's `NSURLSession` traffic only. Raw sockets, `NWConnection` and `CFStream` bypass the proxy.
+- Android loss and faults go through the system `http_proxy`: an app that ignores it (a raw socket, `Proxy.NO_PROXY`) is not covered. Speed, delay and offline are native and reach everything.
+- `location.route` with `loop` is unsupported on iOS (`E_UNSUPPORTED`): `simctl` has no loop.
+- A frozen clock is iOS only.
+- HTTPS fails while the clock is far from real time.
+- A `status` fault cannot answer an HTTPS request (it is reset).
+- Physical devices fail `E_UNSUPPORTED`.
+- Shaping applies to new traffic through the proxy, and an open connection keeps its cost: after warming a connection, a 3g request pays one round trip (the preset's latency), not the three or four of a cold connection. Assert an ordering with a margin, not an absolute number.

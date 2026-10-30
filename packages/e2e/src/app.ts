@@ -129,13 +129,15 @@ export type AppDeps = {
 	log?: (line: string) => void;
 	/** time for the `wait: "quiet"` content poll; default the system clock */
 	clock?: Clock;
+	/** whether an iOS launch loads the warden network dylib (the suite declares a network or clock condition, or one is active) */
+	injectWanted?: () => boolean;
 };
 
 const stderrLog = (line: string): void => {
 	process.stderr.write(`${line}\n`);
 };
 
-export function createApp({ session, driver, env, log = stderrLog, clock = systemClock }: AppDeps): App {
+export function createApp({ session, driver, env, log = stderrLog, clock = systemClock, injectWanted }: AppDeps): App {
 	const bundleId = env.bundleId;
 	let droppedLogged = false;
 	/**
@@ -194,6 +196,7 @@ export function createApp({ session, driver, env, log = stderrLog, clock = syste
 			relaunch: true,
 		};
 		if (options.env !== undefined) opts.env = options.env;
+		if (driver.platform === "ios" && injectWanted?.() === true) opts.inject = true;
 		await unwrap(() => driver.app.launch(bundleId, opts), `launch ${bundleId}`, session.signal);
 		// a dev client: attach devtools in the background, which keeps LogBox off in every JS context from now on
 		if (env.metroUrl !== undefined) void session.devtools?.();

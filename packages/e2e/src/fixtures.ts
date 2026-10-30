@@ -1,5 +1,5 @@
 import { createApp } from "./app";
-import { type AlertAction, createDevice, type Device } from "./device";
+import { type AlertAction, createDevice, createSessionConditions, type Device } from "./device";
 import { linkInFlight } from "./device-link";
 import type { DevtoolsFacet } from "./devtools/devtools.types";
 import { E2eError } from "./errors";
@@ -63,9 +63,10 @@ export function screenHostFor(ctx: FixtureContext, device?: Pick<Device, "alert"
 export async function defaultFixtureFactory(ctx: FixtureContext): Promise<BaseFixtures> {
 	const { session } = ctx;
 	const driver = await session.driver();
-	const device = traceDevice(createDevice({ session, driver, env: session.env }), session.span);
+	const conditions = createSessionConditions(session, driver, session.env);
+	const device = traceDevice(createDevice({ session, driver, env: session.env, conditions }), session.span);
 	return {
-		app: createApp({ session, driver, env: session.env }),
+		app: createApp({ session, driver, env: session.env, injectWanted: conditions.internals.wantsInject }),
 		device,
 		screen: createScreen(screenHostFor(ctx, device)),
 		platform: session.env.platform,

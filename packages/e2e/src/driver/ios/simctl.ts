@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-core/builds/install";
+import type { LatLon, LocationCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-core/exec";
+import { formatCoord } from "../../conditions/geo";
+import { loadGpxPoints } from "../../conditions/location-plan";
+import { IOS_SCENARIO_NAMES } from "../../conditions/location-scenarios.data";
 import type { BiometricOp, BiometricState, DriverError, DriverResult, LaunchOptions } from "../driver.types";
 import { driverError } from "../errors";
 
@@ -184,6 +188,55 @@ export function statusBarOverrideArgv(udid: string, o: StatusBarOverrides = {}):
 
 export const statusBarClearArgv = (udid: string): string[] => [...XCRUN, "status_bar", udid, "clear"];
 
+const latLon = (p: LatLon): string => `${formatCoord(p.lat)},${formatCoord(p.lon)}`;
+
+export const locationSetArgv = (udid: string, point: LatLon): string[] => [
+	...XCRUN,
+	"location",
+	udid,
+	"set",
+	latLon(point),
+];
+export const locationClearArgv = (udid: string): string[] => [...XCRUN, "location", udid, "clear"];
+/** `name` is Apple's scenario name (`City Run`), see {@link IOS_SCENARIO_NAMES}. */
+export const locationRunArgv = (udid: string, name: string): string[] => [...XCRUN, "location", udid, "run", name];
+
+/** A route with more waypoints than this goes through stdin (`-`) instead of the argument list. */
+export const LOCATION_ARGV_MAX_POINTS = 100;
+
+export type LocationStartOptions = { speedMps?: number; intervalS?: number };
+
+function startOptions(op: Extract<LocationCondition, { kind: "route" | "gpx" }>): LocationStartOptions {
+	const intervalS = op.kind === "route" ? op.intervalS : undefined;
+	return {
+		...(op.speedMps !== undefined ? { speedMps: op.speedMps } : {}),
+		...(intervalS !== undefined ? { intervalS } : {}),
+	};
+}
+
+/**
+ * `simctl location <udid> start [--speed=] [--interval=] <lat,lon>…`. The sim plays the path itself
+ * after the command returns. Past {@link LOCATION_ARGV_MAX_POINTS} the waypoints ride stdin of a tiny
+ * `sh -c` (one `lat,lon` per line, never interpolated into the script) with the `-` operand.
+ */
+export function locationStartArgv(udid: string, points: readonly LatLon[], o: LocationStartOptions = {}): string[] {
+	const flags = [
+		...(o.speedMps !== undefined ? [`--speed=${formatCoord(o.speedMps)}`] : []),
+		...(o.intervalS !== undefined ? [`--interval=${formatCoord(o.intervalS)}`] : []),
+	];
+	if (points.length <= LOCATION_ARGV_MAX_POINTS)
+		return [...XCRUN, "location", udid, "start", ...flags, ...points.map(latLon)];
+	return [
+		"sh",
+		"-c",
+		'printf %s "$1" | xcrun simctl location "$2" start $3 -',
+		"sh",
+		points.map(latLon).join("\n"),
+		udid,
+		flags.join(" "),
+	];
+}
+
 /**
  * `simctl pbcopy` reads stdin and `Exec` has none, so the text rides as `$1` of a tiny `sh -c`
  * (never interpolated into the script): `printf %s "$1" | xcrun simctl pbcopy "$2"`.
@@ -282,6 +335,8 @@ export type Simctl = {
 	pbpaste(): DriverResult<string>;
 	appearance(set?: "light" | "dark"): DriverResult<"light" | "dark">;
 	statusBar(overrides?: StatusBarOverrides | "clear"): DriverResult<void>;
+	/** `simctl location`: point, route (also from a GPX file), Apple scenario, or clear. Loop is not supported. */
+	location(op: LocationCondition): DriverResult<void>;
 	/**
 	 * Face ID / Touch ID through BiometricKit notifications inside the sim. Modality comes from the booted sim's
 	 * `SIMULATOR_MODEL_IDENTIFIER` (read once; unreadable = Face ID); the answer is the state after the op.
@@ -294,10 +349,13 @@ export type Simctl = {
 };
 
 const ok = <T>(data: T) => ({ success: true as const, data });
+const fail = (error: DriverError) => ({ success: false as const, error });
 
 export function createSimctl(deps: SimctlDeps): Simctl {
 	const { udid, exec } = deps;
 	const env = deps.env ?? {};
+	const readText = async (path: string): Promise<string> =>
+		new TextDecoder().decode(await (deps.readFile ?? ((p: string) => readFile(p)))(path));
 
 	async function run(argv: string[], timeoutMs: number, appCommand = false, envOverride?: Record<string, string>) {
 		const res = await exec(argv, { timeoutMs, ...(envOverride ? { env: envOverride } : {}) });
@@ -309,6 +367,18 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 	async function runVoid(argv: string[], timeoutMs = SHORT_MS, appCommand = false): ReturnType<Simctl["terminate"]> {
 		const result = await run(argv, timeoutMs, appCommand);
 		return result.ok ? ok(undefined) : { success: false, error: result.error };
+	}
+
+	async function playRoute(op: Extract<LocationCondition, { kind: "route" | "gpx" }>): DriverResult<void> {
+		if (op.kind === "route" && op.loop) {
+			return fail(driverError("E_UNSUPPORTED", "simctl location has no loop; iOS routes play once"));
+		}
+		const loaded = op.kind === "gpx" ? await loadGpxPoints(op.path, readText) : ok(op.points);
+		if (!loaded.success) return fail(driverError("E_BAD_REQUEST", loaded.error));
+		const [only, second] = loaded.data;
+		if (!only) return fail(driverError("E_BAD_REQUEST", "a route needs at least one point"));
+		if (!second) return runVoid(locationSetArgv(udid, only));
+		return runVoid(locationStartArgv(udid, loaded.data, startOptions(op)));
 	}
 
 	const probe = async (bundleId: string) => {
@@ -424,6 +494,18 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 		},
 		statusBar: (overrides) =>
 			runVoid(overrides === "clear" ? statusBarClearArgv(udid) : statusBarOverrideArgv(udid, overrides)),
+		location: (op) => {
+			switch (op.kind) {
+				case "point":
+					return runVoid(locationSetArgv(udid, op));
+				case "clear":
+					return runVoid(locationClearArgv(udid));
+				case "scenario":
+					return runVoid(locationRunArgv(udid, IOS_SCENARIO_NAMES[op.name]));
+				default:
+					return playRoute(op);
+			}
+		},
 		async screenshot(path) {
 			if (!path) return screenshotToScratch();
 			const done = await runVoid(screenshotArgv(udid, path), LAUNCH_MS);

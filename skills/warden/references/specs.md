@@ -82,6 +82,59 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 | `devtools` | `undefined` without `WARDEN_METRO_URL` (release build) |
 | `perf` | `warden perf` from a spec, see below |
 
+### `device.network` / `location` / `clock` / `timeline` (conditions)
+
+Everything a test changes is put back when it ends, to the suite's `conditions` (`suites.md`). A change that fails throws the driver's code (`E_NETWORK_RELAUNCH`, `E_UNSUPPORTED` on a physical device). `Duration` = ms or `"10s"` / `"2m"` / `"2d"`. Each change is also a `condition` line in `results.jsonl`.
+
+| Member | Does |
+|---|---|
+| `network.set(c, { relaunch? })` | `c`: `"online"`, `"offline"`, a preset (`"edge" "3g" "4g" "lte" "wifi" "slow" "lossy"`) or `{ kind: "custom", latencyMs?, jitterMs?, downKbps?, upKbps?, lossPct? }`. A running flap stops first. iOS: the app must carry the network dylib: a suite that declares `conditions.network` launches it that way, otherwise it fails `E_NETWORK_RELAUNCH` until you pass `{ relaunch: true }` |
+| `network.during(c, fn, opts?)` | run `fn` under `c`, then put the previous condition (and flap) back, also when `fn` throws |
+| `network.flap({ up, down, jitterPct?, seed?, base? })` | alternates `base` (default online) and offline until `stop()` or the end of the test; resolves once the first phase is in place; returns `{ stop(), done, status() }` |
+| `network.fault(rule \| rules)` | `{ match: "api.*", action: { kind: "status", code: 503 } \| { kind: "reset" } \| { kind: "delay", ms } \| { kind: "blackhole" } }`; replaces the faults, `[]` clears; returns `{ notes }` (an `https://` request matching a `status` fault is reset, not answered) |
+| `network.status()` | `{ condition, faults, flapping }` |
+| `network.reset()` | stop the flap, clear faults, back to the suite's `conditions.network` (online without one) |
+| `location.set({ lat, lon, altM? })` | a point |
+| `location.route(points \| { gpx }, { speedMps?, intervalS?, loop? })` | waypoints `{ lat, lon }[]` or a GPX file (relative to the cwd); iOS plays it once (`loop` is `E_UNSUPPORTED`), Android ticks it until the next location call |
+| `location.scenario("city-run" \| "city-bike" \| "freeway")` | bundled route |
+| `location.clear()` | iOS clears; Android stops the ticker and keeps the last fix |
+| `clock.set(at, { frozen? })` · `advance(by)` · `during(at, fn, opts?)` · `reset()` · `status()` | wall clock (`at`: ISO string, `Date`, epoch ms; `by`: `Duration`); `E_UNSUPPORTED` on a driver with no clock |
+| `timeline([{ at, network?, location? }])` | plays steps from now (`at` = offset, a step takes a condition, not a flap); returns the same `ConditionRun` |
+
+```ts
+await device.network.during("offline", async () => {
+	await screen.getByTestId(ids.todos.add).tap();
+	await expect(screen.getByTestId(ids.banner.offline)).toBeVisible();
+});
+await device.network.fault({ match: "api.example.com", action: { kind: "status", code: 503 } });
+await device.location.route([{ lat: 37.33, lon: -122.03 }, { lat: 37.34, lon: -122.03 }], { speedMps: 5 });
+```
+
+- Assert timing as an ordering with a margin (`slow > online + 50`), not an absolute: an open keep-alive connection keeps its cost, so a 3g request after an online warm-up pays one round trip, not a cold handshake.
+- Only the wall clock moves. A JS timer armed while the clock was ahead waits for the shifted time after `clock.reset()`: re-read the time on demand or relaunch. A large offset breaks TLS (certificate dates).
+- Grant a permission the test needs with `device.permissions.set` before `app.open()` instead of tapping through the prompt: iOS does not always raise it.
+
+### `device.permissions` / `timezone` / `locale` / `a11y` / `battery` / `memoryWarning` / `push` (device settings)
+
+Put back when the test ends (to the suite's `conditions.permissions` / `locale` / `timezone` / `a11y`), recorded on the lease like the conditions above, and each change is a `condition` line in `results.jsonl`. Set permissions before `app.open()`: iOS terminates a running app whose permission changes.
+
+| Member | Does |
+|---|---|
+| `permissions.set({ location?, camera?, photos?, contacts?, notifications?, microphone?, … }, { bundleId? })` | each `"granted" \| "denied" \| "unset"`; names: `location locationAlways camera photos photosAdd contacts contactsLimited notifications microphone calendar reminders motion mediaLibrary siri`. Returns `{ bundleId, applied, skipped }` (`skipped` = no service on this platform, or the app does not declare it); none applicable throws `E_UNSUPPORTED`. Default app: the suite's |
+| `permissions.reset({ bundleId? })` | every name this test set back to the suite's value, else `"unset"` |
+| `timezone(tz \| null)` | IANA name (`"Asia/Tokyo"`); `null` puts it back. Android emulator: live, device-wide. iOS: `{ appliesOnLaunch: true }`, the app launched next gets it |
+| `locale(tag \| null, { bundleId? })` | BCP 47 (`"fr-FR"`). Android 13+: per-app, live. iOS: applies to the app launched next |
+| `a11y({ textSize?, boldText?, contrast?, reduceMotion? } \| null)` | `textSize`: a category name (`"accessibility-large"`) or a scale (`1.5`). iOS: text size + contrast. Android: text size + bold. Returns `{ applied, skipped, notes }`; only-skipped throws `E_UNSUPPORTED`; `null` resets |
+| `battery({ level?, charging? } \| null)` | Android emulator: real. iOS: status bar only, result has `cosmetic: true`. `null` resets |
+| `memoryWarning({ bundleId? })` | Android: critical trim to the running app. iOS: throws `E_UNSUPPORTED` |
+| `push({ aps: { … } }, { bundleId? })` | iOS: delivers the payload to the app (4096 bytes max). Android: `E_UNSUPPORTED` |
+
+```ts
+await device.permissions.set({ location: "denied", notifications: "granted" });
+await app.open();
+await device.a11y({ textSize: "accessibility-large" });
+await device.locale("fr-FR");
+```
 Biometrics practice: set `biometrics: true` on the suite (suites.md) so the device is enrolled before the app is installed (a new enrollment invalidates biometry-bound keys); on iOS the first prompt per app shows "Allow X to use Face ID?", answer it with `device.alert("accept")` before `device.biometrics.match()`; Android emulators have fingerprint only; never add an app-side bypass. `fail()` leaves the prompt open (iOS "Face Not Recognized" alert, Android "Not recognized"): assert that, then cancel the prompt (the app gets `user_cancel`): `device.alert({ button: "Cancel" })` on iOS (it presses again if the press lands while the sheet animates in, and throws `ACTION_FAILED` if the alert stays up), `button_negative` on Android; a `match` / `fail` sent as the sheet appears can be dropped, so present again when nothing changed. warden enrolls an iOS biometrics sim again when a spec process starts (`WARDEN_BIOMETRICS=1`), so a spec that called `unenroll` does not leave a reused sim unenrolled.
 
 ### `device.devtools` (dev client over Metro)

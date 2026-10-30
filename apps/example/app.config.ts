@@ -13,17 +13,24 @@ const expoConfig: ExpoConfig = {
 		supportsTablet: false,
 		infoPlist: {
 			ITSAppUsesNonExemptEncryption: false,
+			NSLocationWhenInUseUsageDescription: "The Conditions screen shows your position and a geofence.",
 		},
 		bundleIdentifier: "nz.co.delacour.warden.example",
 	},
 	android: {
 		package: "nz.co.delacour.warden.example",
-		permissions: ["android.permission.USE_BIOMETRIC"],
+		permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "android.permission.USE_BIOMETRIC"],
 	},
 	plugins: [
 		"expo-router",
 		"expo-status-bar",
 		"expo-system-ui",
+		[
+			"expo-location",
+			{
+				locationWhenInUsePermission: "The Conditions screen shows your position and a geofence.",
+			},
+		],
 		[
 			"expo-local-authentication",
 			{

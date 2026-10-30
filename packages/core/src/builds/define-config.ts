@@ -437,6 +437,53 @@ export interface WardenPerfConfig {
 	budgets?: WardenPerfBudgets | undefined;
 }
 
+/** `conditions.network` as a custom shape: the fields of a `custom` network condition. */
+export interface WardenCustomNetwork {
+	/** Added round-trip time, ms. */
+	latencyMs?: number | undefined;
+	/** Plus or minus spread on the latency, ms. */
+	jitterMs?: number | undefined;
+	/** Download rate, kilobits per second (0 = unlimited). */
+	downKbps?: number | undefined;
+	/** Upload rate, kilobits per second (0 = unlimited). */
+	upKbps?: number | undefined;
+	/** Share of packets lost, 0-100. */
+	lossPct?: number | undefined;
+}
+
+/**
+ * `conditions` (top level, or `e2e.<suite>.conditions`): the device state every spec of the suite starts from.
+ * `network`, `location` and `clock` are applied before the app launches and put back after each spec;
+ * `permissions`, `locale`, `timezone` and `a11y` are accepted but not applied yet (`warden e2e` says so once).
+ */
+export interface WardenConditionsConfig {
+	/** `online`, `offline`, a preset (`edge`, `3g`, `4g`, `lte`, `wifi`, `slow`, `lossy`) or custom shaping. iOS launches the app with the network dylib so specs can change it later. */
+	network?:
+		| "online"
+		| "offline"
+		| "edge"
+		| "3g"
+		| "4g"
+		| "lte"
+		| "wifi"
+		| "slow"
+		| "lossy"
+		| WardenCustomNetwork
+		| undefined;
+	/** A point, or one of the bundled scenarios (`city-run`, `city-bike`, `freeway`). */
+	location?: "city-run" | "city-bike" | "freeway" | { lat: number; lon: number; altM?: number | undefined } | undefined;
+	/** An ISO instant the clock starts at (and keeps running from), `{ at, frozen }`, or `{ offset }` ("2d") from now. */
+	clock?: string | { at: string; frozen?: boolean | undefined } | { offset: string } | undefined;
+	/** Not applied yet. */
+	permissions?: Record<string, "granted" | "denied" | "unset"> | undefined;
+	/** Not applied yet. */
+	locale?: string | undefined;
+	/** Not applied yet. */
+	timezone?: string | undefined;
+	/** Not applied yet. */
+	a11y?: Record<string, unknown> | undefined;
+}
+
 /** `e2e.<suite>.spec`: how `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`). */
 export interface WardenE2eSpec {
 	/** The app under test. Default: the suite project's `bundleId` for the platform. */
@@ -495,6 +542,8 @@ export interface WardenE2eSuite {
 	project?: string | undefined;
 	/** Perf budgets for this suite; each key replaces the top-level `perf.budgets` one. */
 	perf?: WardenPerfConfig | undefined;
+	/** Device conditions every spec of this suite starts from; each area replaces the top-level one. */
+	conditions?: WardenConditionsConfig | undefined;
 	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
@@ -719,6 +768,8 @@ export interface WardenConfig {
 	biometrics?: boolean | undefined;
 	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
 	perf?: WardenPerfConfig | undefined;
+	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */
+	conditions?: WardenConditionsConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
 }

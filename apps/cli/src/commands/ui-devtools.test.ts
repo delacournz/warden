@@ -485,6 +485,29 @@ describe("warden ui network", () => {
 		]);
 	});
 
+	test("`network log` is the request log, with every flag, and prints no deprecation note", async () => {
+		const h = harness();
+		seed(h, [entry(1), entry(2, { status: 500 }), entry(3)]);
+		expect(await h.run("network", "log", "2")).toBe(0);
+		expect(h.c.stdout).toEqual(["#2 GET https://api.test/2 500 12ms\n#3 GET https://api.test/3 200 12ms"]);
+		expect(h.c.stderr).toEqual([]);
+		expect(await h.run("network", "log", "--status", "5xx", "--grep", "api")).toBe(0);
+		expect(h.c.stdout).toEqual(["#2 GET https://api.test/2 500 12ms"]);
+		expect(await h.run("network", "log", "--id", "3")).toBe(0);
+	});
+
+	test("bare `network [n] --flags` still works as a deprecated alias, noting it once on stderr, never with --json", async () => {
+		const h = harness();
+		seed(h, [entry(1), entry(2)]);
+		expect(await h.run("network", "1")).toBe(0);
+		expect(h.c.stdout).toEqual(["#2 GET https://api.test/2 200 12ms"]);
+		expect(h.c.stderr.join("")).toContain("warden ui network is now warden ui network log");
+		expect(await h.run("network", "--grep", "test/1")).toBe(0);
+		expect(h.c.stdout).toEqual(["#1 GET https://api.test/1 200 12ms"]);
+		expect(await h.run("network", "--json")).toBe(0);
+		expect(h.c.stderr).toEqual([]);
+	});
+
 	test("--include adds headers and bodies", async () => {
 		const h = harness();
 		seed(h, [entry(1, { requestBody: '{"a":1}', responseBody: '{"ok":true}', responseBodyTruncated: true })]);

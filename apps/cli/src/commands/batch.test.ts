@@ -90,6 +90,9 @@ describe("warden batch", () => {
 		const udid = a?.opts.env.WARDEN_UDID;
 		expect(a?.cmd).toEqual(["run", "a", `--on=${udid}`, `w${a?.opts.env.WARDEN_WORKER}s0`]);
 		expect(a?.opts.env.WARDEN_DEVICE_NAME).toBeString();
+		const leaseIds = jobs.map((j) => j.opts.env.WARDEN_LEASE_ID);
+		expect(leaseIds.every((id) => typeof id === "string" && id !== "")).toBe(true);
+		expect(a?.opts.env.WARDEN_LEASE_IDS?.split(",")).toContain(a?.opts.env.WARDEN_LEASE_ID);
 		expect(a?.opts.env.WARDEN_JOB_SEQ).toBe("0");
 		expect(a?.opts.env.WARDEN_UDIDS?.split(",").sort()).toEqual(["U1", "U2"]);
 		expect(a?.opts.env.WARDEN_SESSION_ID).toBe("me");
@@ -1087,8 +1090,8 @@ describe("warden batch", () => {
 			};
 			const h = harness();
 			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
-			// once for the run (not once per device), plus the one local build's own post-build check
-			expect(fingerprints).toHaveLength(2);
+			// once for the run (not once per device), plus the one local build's check under the checkout lock and its post-build check
+			expect(fingerprints).toHaveLength(3);
 			expect(
 				installs
 					.filter((line) => line.startsWith("xcrun simctl install"))

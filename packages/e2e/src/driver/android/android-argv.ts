@@ -1,4 +1,6 @@
+import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
+import { formatCoord } from "../../conditions/geo";
 import type { DriverError, HardwareButton, KeyName, Point } from "../driver.types";
 import { driverErr } from "../errors";
 import type { GesturePlan } from "../gesture-geometry";
@@ -334,6 +336,33 @@ export function dumpFileCommand(path: string = DUMP_FILE_PATH): string {
 /** Host argv: `adb -s <serial> install -r <apk>`. */
 export function installArgv(adb: string, serial: string, apkPath: string): string[] {
 	return [adb, "-s", serial, "install", "-r", apkPath];
+}
+
+/**
+ * Host argv: `adb -s <serial> emu geo fix <lon> <lat> [alt]`. The emulator console takes LONGITUDE first,
+ * the reverse of `simctl location set lat,lon` and of everything else here.
+ */
+export function geoFixArgv(adb: string, serial: string, point: LatLon, altM?: number): string[] {
+	return [
+		adb,
+		"-s",
+		serial,
+		"emu",
+		"geo",
+		"fix",
+		formatCoord(point.lon),
+		formatCoord(point.lat),
+		...(altM !== undefined ? [formatCoord(altM)] : []),
+	];
+}
+
+/** `adb emu` exits 0 even when the console answers `KO: …`; the reason, or undefined when it took. */
+export function geoFixFailure(res: { exitCode: number; stdout: string; stderr: string }): string | undefined {
+	const text = `${res.stdout}\n${res.stderr}`;
+	const ko = /^KO:?\s*(.*)$/m.exec(text);
+	if (ko) return `emulator console: KO ${ko[1] ?? ""}`.trim();
+	if (res.exitCode !== 0) return `adb emu geo fix exited ${res.exitCode}: ${text.trim().slice(0, 200)}`;
+	return undefined;
 }
 
 export function uninstallArgv(adb: string, serial: string, packageName: string): string[] {

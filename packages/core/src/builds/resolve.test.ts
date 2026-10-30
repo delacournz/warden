@@ -60,7 +60,7 @@ function steps(world: World) {
 		s.build = async () => {
 			calls.push(`build${locked ? "(locked)" : ""}`);
 			if (world.build === "error" || world.build === undefined) return err("xcodebuild failed");
-			return ok(world.build);
+			return ok({ kind: "built" as const, path: world.build });
 		};
 	}
 	if (world.device !== false) {

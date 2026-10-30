@@ -60,6 +60,10 @@ export type HarnessOptions = {
 	pidAlive?: PidAlive;
 	/** what `open --kind` installs with (default: the real ensure) */
 	ensureApp?: UiDeps["ensureApp"];
+	/** the condition verbs' side effects (`net` / `location`): the port, spawners, proxy reads */
+	conditions?: UiDeps["conditions"];
+	/** the leased device's platform (default ios) */
+	platform?: "ios" | "android";
 };
 
 const live: TestContext[] = [];
@@ -99,13 +103,14 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		...(options.video ? { video: options.video } : {}),
 		...(options.pidAlive ? { pidAlive: options.pidAlive } : {}),
 		...(options.ensureApp ? { ensureApp: options.ensureApp } : {}),
+		...(options.conditions ? { conditions: options.conditions } : {}),
 	};
 	const c = testContext([], { now: () => clock.t });
 	live.push(c);
 	c.env = { ...c.env, ...OWNER_ENV };
 	c.db.insertLease(
 		{
-			resource: { kind: "device", platform: "ios", id: UDID, name: "sim" },
+			resource: { kind: "device", platform: options.platform ?? "ios", id: UDID, name: "sim" },
 			owner: { kind: "agent", sessionId: "me", cwd: "/w" },
 			ttlMs: 10 * 60 * 60_000,
 			...(options.lease?.pid !== undefined ? { pid: options.lease.pid } : {}),

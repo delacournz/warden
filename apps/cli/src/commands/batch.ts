@@ -391,6 +391,8 @@ async function waitReady(
 
 type Device = BatchWorker & {
 	name: string;
+	/** the device's lease (`WARDEN_LEASE_ID` for its jobs) */
+	leaseId?: string;
 	video?: string;
 	videoStartedAt?: number;
 	leg?: string;
@@ -768,6 +770,10 @@ function watchdog(deps: BatchDeps, timeoutMs: number | undefined, proc: ProcHand
 const deviceNameEnv = (name: string | undefined): Record<string, string> =>
 	name === undefined ? {} : { [ENV_NAMES.deviceName]: name };
 
+/** `WARDEN_LEASE_ID`: the lease a job's device is held under, so a spec can record its conditions on it. */
+const leaseIdEnv = (leaseId: string | undefined): Record<string, string> =>
+	leaseId === undefined ? {} : { [ENV_NAMES.leaseId]: leaseId };
+
 /** `WARDEN_SIMD_SOCKET` for a job on a device whose helper is warm. */
 const socketEnv = (socketPath: string | undefined): Record<string, string> =>
 	socketPath === undefined ? {} : { [ENV_NAMES.simdSocket]: socketPath };
@@ -823,6 +829,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			...socketEnv(await o.socketFor(w.udid)),
 			WARDEN_UDID: w.udid,
 			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
+			...leaseIdEnv(o.live.find((d) => d.udid === w.udid)?.leaseId),
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
 			WARDEN_JOB_SEQ: String(seq),
@@ -1073,6 +1080,7 @@ function buildPools(session: LeaseSession, args: BatchArgs): Pool[] {
 				worker: worker++,
 				udid: c.device.id,
 				name: c.device.name,
+				leaseId: c.lease.id,
 				...(leg ? { leg: leg.name } : {}),
 			})),
 		};
@@ -1707,7 +1715,7 @@ async function claimLateWorker(
 		await drop();
 		return err(`${c?.device.id ?? "device"} did not come back after the headless hide`);
 	}
-	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name };
+	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name, leaseId: c.lease.id };
 	const prepared = await preparePool(
 		ctx,
 		deps,

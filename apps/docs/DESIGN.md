@@ -219,10 +219,10 @@ A recorded `warden batch` run in a 6px-rounded Sheet frame: muted loop autoplay,
 Agents are a centered row of 36px marks over mono names, +hook in accent-text under the two hooked agents (marks invert in dark); the FAQ is hairline `details` rows with a drawn plus that scales to a minus (200ms).
 
 ### Docs chrome
-Fumadocs tokens are re-pointed at these colors. Sidebar active row is Fill with wght 550; prose links are Ink with an Ink 2 underline (3px offset); tables are one 6px Sheet group with hairline rows; the toggle is `.dark` on `<html>`.
+Fumadocs tokens are re-pointed at these colors. Sidebar active row is Fill with wght 550; prose links are Ink with an Ink 2 underline (3px offset); tables are one 6px Sheet group with hairline rows, and a row led by code or a **bold term** links to itself (`#gesture-pinch`, `#deep-link-ignored`; bold is how a prose table opts in, data tables stay plain), a linked-to row on Fill with a 2px lamp edge; the toggle is `.dark` on `<html>`.
 
 ### Social cards
-1200x630, dark tokens only: one 12px-radius Sheet on Paper, the warden mark and name top-left, the landing card sets "Every agent gets its / own simulator." at 800 weight, 96px, the second line in the accent, URL in mono under a hairline. Docs cards set the page title at 600 weight.
+1200x630, dark tokens only: one 12px-radius Sheet on Paper, the warden mark and name top-left, the landing card sets "Every agent gets its / own simulator." at 800 weight, 96px, the second line in the accent, URL in mono under a hairline. Docs cards are each page's own, in two columns: on the left the sidebar section in mono accent, the page title at 600 weight and its description in Ink 2; on the right a Paper pane under a hairline tab holding the page's first code block with something to show (shell lines behind an accent `$`), or its `##` / `###` outline behind an accent `#` on a page with no code. Built by `scripts/generate-og.ts`; `bun run og:cards` renders them all onto one contact sheet.
 
 ## Do's and Don'ts
 

@@ -84,6 +84,11 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `biometrics` | off | devices have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Own pool and golden: profile `<profile>+bio`. Top-level `biometrics` and `batches.<preset>.biometrics` work the same (suite / preset wins over top level); `--biometrics` on claim/run/batch/e2e turns it on for one run |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
 
+### Conditions
+| Key | Default | Meaning |
+|---|---|---|
+| `conditions` | none | `{ network?, location?, clock?, permissions?, locale?, timezone?, a11y? }` at the top level or per suite (a suite's key replaces the top-level one per area): the device state every spec starts from, applied before the app launches and put back after each spec. `network`: `"online" \| "offline"`, a preset (`edge 3g 4g lte wifi slow lossy`) or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. `location`: `{ lat, lon, altM? }` or `"city-run" \| "city-bike" \| "freeway"`. `clock`: an ISO instant (keeps running), `{ at, frozen? }` or `{ offset: "2d" }`. On iOS a declared `network` / `clock` launches the app with the network dylib, so specs can change it later. `permissions`: `{ location: "denied", camera: "granted", … }` (names as `device.permissions.set`, applied before the app launches). `locale`: a BCP 47 tag. `timezone`: an IANA name. `a11y`: `{ textSize?, boldText?, contrast?, reduceMotion? }`. A bad value fails config load |
+
 ### App, ports, serve, setup
 | Key | Default | Meaning |
 |---|---|---|

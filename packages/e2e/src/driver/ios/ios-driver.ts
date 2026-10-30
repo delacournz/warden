@@ -1,9 +1,16 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+	launchSettingsPath,
+	readLaunchSettings,
+	writeLaunchSettings,
+} from "@delacour/warden-core/conditions/launch-settings";
 import type { Exec } from "@delacour/warden-core/exec";
+import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
+import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
 	Driver,
@@ -13,16 +20,21 @@ import type {
 	HardwareButton,
 	HealthInfo,
 	KeyName,
+	LaunchOptions,
 	Logger,
 	Orientation,
 	Snapshot,
 } from "../driver.types";
-import { driverError } from "../errors";
+import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { NetworkProxyPort } from "../network-proxy";
 import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { PastesText, SelectsAll } from "../typing";
+import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
+import { createIosNetwork, type IosNetwork } from "./ios-network";
 import { type SwappableClient, swappableClient } from "./ios-session";
+import { createIosSettings, type IosSettings, type StagedSettings, withStagedSettings } from "./ios-settings";
 import { resolveHelper } from "./locate-helper";
 import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
 import { createSimctl, type Simctl } from "./simctl";
@@ -73,6 +85,19 @@ export type OpenIosDriverOptions = {
 	defaultTimeoutMs?: number;
 	/** log each helper op and simctl call with its duration (`WARDEN_E2E_DEBUG=1`) */
 	debug?: boolean;
+	/**
+	 * The lease's shaping proxy (`leaseNetworkProxy`). Without it `network` / `networkFaults` answer `E_UNSUPPORTED`:
+	 * a driver opened by a bare caller has no lease to hang a proxy on.
+	 */
+	networkProxy?: NetworkProxyPort;
+	/** told about every successful `clock` op, so the lease records the `clock` area (`leaseClockRecorder`) */
+	clockRecorder?: ClockRecorder;
+	/** the session's app (`WARDEN_BUNDLE_ID`): the default target of permissions, push and locale */
+	bundleId?: string;
+	/** where a staged timezone / locale is kept between processes (default: `<wardenHome>/launch-settings/<udid>.json`) */
+	stagedSettings?: StagedSettings;
+	/** state-file operations of the injected dylib's control channel, injected for tests */
+	injectFs?: InjectFs;
 	/** CoreSimulator devices directory for the host-side `AutomationEnabled` check (default `~/Library/Developer/CoreSimulator/Devices`) */
 	devicesRoot?: string;
 };
@@ -210,12 +235,53 @@ function predatesOp(error: DriverError): boolean {
 
 type AppOp = "launch" | "terminate" | "openUrl";
 
+/** `requested` with the injected dylib's env merged in, when the lease has a network or clock condition. */
+async function launchWithInjection(
+	net: IosNetwork | undefined,
+	requested: LaunchOptions | undefined
+): Promise<Result<LaunchOptions | undefined, DriverError>> {
+	const injected = net ? await net.launchEnv(requested ?? {}) : undefined;
+	if (injected && !injected.success) return injected;
+	const env = injected?.data;
+	return { success: true, data: env ? { ...requested, env: { ...requested?.env, ...env } } : requested };
+}
+
 export function createIosDriver(
 	swap: SwappableClient,
 	simctl: Simctl,
-	opts: { udid: string; now: () => number; sleep: (ms: number) => Promise<void>; log?: Logger }
+	opts: {
+		udid: string;
+		now: () => number;
+		sleep: (ms: number) => Promise<void>;
+		log?: Logger;
+		/** told about every successful `clock` op */
+		clockRecorder?: ClockRecorder;
+		/** device settings (`ios-settings.ts`); absent: those ops answer `E_UNSUPPORTED` */
+		settings?: (ctx: { lastBundle: () => string | undefined }) => IosSettings;
+		/** per-app network conditions (`ios-network.ts`); absent: `network` answers `E_UNSUPPORTED` */
+		network?: (deps: {
+			lastBundle: () => string | undefined;
+			relaunch: (bundleId: string) => DriverResult<void>;
+		}) => IosNetwork;
+	}
 ): IosDriver {
 	const { udid, now, sleep } = opts;
+	let lastLaunched: string | undefined;
+	const noLeaseProxy = async () =>
+		driverErr(
+			"E_UNSUPPORTED",
+			"network and clock conditions on iOS need a device lease for the shaping proxy: run the spec with `warden e2e` (it sets WARDEN_LEASE_ID), or `warden ui`; a bare `bun test` has no lease"
+		);
+	const settings = opts.settings?.({ lastBundle: () => lastLaunched });
+	const noSettings = async () =>
+		driverErr("E_UNSUPPORTED", "this iOS driver was opened without device settings support");
+	// late-bound: the network helper relaunches through the driver's own `app.launch`
+	let driverRef: IosDriver | undefined;
+	const net = opts.network?.({
+		lastBundle: () => lastLaunched,
+		relaunch: (bundleId) =>
+			driverRef ? driverRef.app.launch(bundleId, { relaunch: true, inject: true }) : noLeaseProxy(),
+	});
 	const { client } = swap;
 	let axFailures = 0;
 	/**
@@ -634,6 +700,22 @@ export function createIosDriver(
 		alertOn,
 		isFrontmost,
 		appearance: (set) => simctl.appearance(set),
+		network: async (op, o) => (net ? net.network(op, o) : noLeaseProxy()),
+		networkFaults: async (faults) => (net ? net.networkFaults(faults) : noLeaseProxy()),
+		location: (op) => simctl.location(op),
+		permissions: (grants, o) => (settings ? settings.permissions(grants, o) : noSettings()),
+		timezone: (tz, o) => (settings ? settings.timezone(tz, o) : noSettings()),
+		locale: (tag, o) => (settings ? settings.locale(tag, o) : noSettings()),
+		a11y: (op) => (settings ? settings.a11y(op) : noSettings()),
+		battery: (op) => (settings ? settings.battery(op) : noSettings()),
+		memoryWarning: (o) => (settings ? settings.memoryWarning(o) : noSettings()),
+		push: (payload, o) => (settings ? settings.push(payload, o) : noSettings()),
+		async clock(op, o) {
+			if (!net) return noLeaseProxy();
+			const result = await net.clock(op, o);
+			if (result.success) opts.clockRecorder?.(op);
+			return result;
+		},
 		biometrics: (op) => simctl.biometrics(op),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
@@ -641,7 +723,11 @@ export function createIosDriver(
 			return copied.success ? { success: true, data: set } : copied;
 		},
 		app: {
-			launch: async (bundleId, o) => {
+			launch: async (bundleId, plain) => {
+				const requested = settings ? withStagedSettings(plain, settings.launchSettings()) : plain;
+				const withEnv = await launchWithInjection(net, requested);
+				if (!withEnv.success) return withEnv;
+				const o = withEnv.data;
 				const viaHelper = await appOp(
 					"launch",
 					params({ bundleId, args: o?.args && [...o.args], env: o?.env, terminateRunning: o?.relaunch !== false }),
@@ -653,8 +739,11 @@ export function createIosDriver(
 					(data) => noteSpanDetail("pid", data.pid)
 				);
 				if (launched.success) {
+					lastLaunched = bundleId;
 					launchedBundle = bundleId;
 					if (await rebind(bundleId)) launchedBundle = undefined;
+					const loaded = await net?.confirmLoaded();
+					if (loaded && !loaded.success) return loaded;
 				}
 				return launched;
 			},
@@ -684,6 +773,7 @@ export function createIosDriver(
 		},
 		close: () => client.close(),
 	};
+	driverRef = driver;
 	return driver;
 }
 
@@ -757,10 +847,72 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 		reopen: () => connect(o, log),
 		...(o.debug ? { debug: true } : {}),
 	});
+	const sleep = o.sleep ?? ((ms: number) => Bun.sleep(ms));
+	const network = iosNetworkFactory(o, simctl, now, sleep);
 	return {
 		success: true,
-		data: createIosDriver(swap, simctl, { udid: o.udid, now, sleep: o.sleep ?? ((ms) => Bun.sleep(ms)), log }),
+		data: createIosDriver(swap, simctl, {
+			udid: o.udid,
+			now,
+			sleep,
+			log,
+			...(network ? { network } : {}),
+			settings: (ctx) =>
+				createIosSettings({
+					udid: o.udid,
+					exec,
+					lastBundle: ctx.lastBundle,
+					...(o.bundleId ? { defaultBundle: o.bundleId } : {}),
+					staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? resolveWardenHome(), o.udid),
+				}),
+			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
+		}),
 	};
+}
+
+/** Timezone / locale staged in a file per device, so a later `warden ui open` (another process) launches with them. */
+function stagedSettingsFor(wardenHome: string, udid: string): StagedSettings {
+	const path = launchSettingsPath(wardenHome, udid);
+	return { read: () => readLaunchSettings(path), write: (next) => writeLaunchSettings(path, next) };
+}
+
+type NetworkFactory = NonNullable<Parameters<typeof createIosDriver>[2]["network"]>;
+
+/** The per-app network layer for `o`, or `undefined` when the caller gave no lease proxy. */
+function iosNetworkFactory(
+	o: OpenIosDriverOptions,
+	simctl: Simctl,
+	now: () => number,
+	sleep: (ms: number) => Promise<void>
+): NetworkFactory | undefined {
+	const proxy = o.networkProxy;
+	if (!proxy) return undefined;
+	const wardenHome = o.wardenHome ?? resolveWardenHome();
+	return (ctx) =>
+		createIosNetwork({
+			proxy,
+			channel: createInjectChannel({
+				statePath: injectStatePath(wardenHome, o.udid),
+				now,
+				sleep,
+				bundleId: ctx.lastBundle,
+				...(o.injectFs ? { fs: o.injectFs } : {}),
+			}),
+			dylib: () =>
+				locateInjectDylib({
+					env: { [INJECT_DYLIB_ENV]: process.env[INJECT_DYLIB_ENV], WARDEN_HELPER_DIR: o.env?.helperDir },
+					execPath: o.execPath ?? process.execPath,
+					importDir: o.importDir ?? import.meta.dir,
+					wardenHome,
+					exists: o.exists ?? existsSync,
+					realpath: o.realpath ?? realpathSync,
+					...(o.version ? { version: o.version } : {}),
+				}),
+			isRunning: (bundleId) => simctl.isRunning(bundleId),
+			lastBundle: ctx.lastBundle,
+			relaunch: ctx.relaunch,
+			...(o.debug ? { debug: true } : {}),
+		});
 }
 
 /** `[ios] exec xcrun simctl launch 270 ms (exit 0)` for every simctl call. */

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eventKind, readConditionEvents } from "./conditions/condition-events";
+import { conditionsOf } from "./conditions/device-conditions";
 import { createDevice } from "./device";
 import { sheetlessFor } from "./device-link";
 import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
@@ -1071,5 +1073,59 @@ describe("device misc", () => {
 		const error = await device.home().catch((e: unknown) => e);
 		expect((error as E2eError).code).toBe("TIMEOUT");
 		expect(driver.calls).toHaveLength(0);
+	});
+});
+
+describe("device conditions", () => {
+	const resultsPath = (): string => join(mkdtempSync(join(tmpdir(), "wdn-dev-cond-")), "results.jsonl");
+
+	test("string shorthand and during round-trip through the driver; during restores when fn throws", async () => {
+		const { driver, device } = setup();
+		await device.network.set("3g");
+		await expect(
+			device.network.during("offline", async () => {
+				throw new Error("boom");
+			})
+		).rejects.toThrow("boom");
+		expect(driver.callsOf("network").map((c) => c.op)).toEqual([
+			{ kind: "preset", preset: "3g" },
+			{ kind: "offline" },
+			{ kind: "preset", preset: "3g" },
+		]);
+	});
+
+	test("a flap is stopped by the device's teardown, which also restores the network", async () => {
+		const { driver, device } = setup();
+		const run = await device.network.flap({ up: "1h", down: "1h" });
+		expect(run.status().state).toBe("running");
+		await conditionsOf(device)?.teardown();
+		expect(run.status().state).toBe("stopped");
+		expect(driver.callsOf("network").at(-1)?.op).toEqual({ kind: "online" });
+	});
+
+	test("changes made through the API are appended to the session's results.jsonl", async () => {
+		const path = resultsPath();
+		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const device = createDevice({ session: { out: "/tmp/out", results: { path } }, driver, env });
+		await device.network.set("offline");
+		await device.location.set({ lat: 1, lon: 2 });
+		const events = readConditionEvents(readFileSync(path, "utf8"));
+		expect(events.map((e) => [e.area, eventKind(e)])).toEqual([
+			["network", "offline"],
+			["location", "point"],
+		]);
+	});
+
+	test("clock goes to the driver's clock op", async () => {
+		const { driver, device } = setup();
+		await device.clock.advance("2d");
+		expect(driver.callsOf("clock")).toHaveLength(1);
+	});
+
+	test("the call honours the attempt's signal", async () => {
+		const aborted = AbortSignal.abort(new Error("deadline"));
+		const { driver, device } = setup({ session: { signal: aborted } });
+		await expect(device.network.set("offline")).rejects.toMatchObject({ code: "TIMEOUT" });
+		expect(driver.callsOf("network")).toEqual([]);
 	});
 });
