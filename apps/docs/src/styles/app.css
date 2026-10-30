@@ -177,11 +177,13 @@
 		font-size: 0.8rem;
 	}
 
-	/* A reference row's leading code links to the row itself (`src/lib/row-anchors.ts`): no underline
+	/* A reference row's leading code or bold term links to the row itself (`src/lib/row-anchors.ts`): no underline
 	   until hovered, and a linked-to row lands clear of the header with the lamp on its edge. */
 	& a.row-anchor {
 		text-decoration: none;
-		&:hover code {
+		color: inherit;
+		&:hover code,
+		&:hover strong {
 			text-decoration: underline;
 			text-decoration-color: var(--color-ink-2);
 			text-underline-offset: 3px;

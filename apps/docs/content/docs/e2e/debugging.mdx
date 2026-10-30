@@ -75,25 +75,25 @@ A spec's error is an `E2eError` with a `code`: `LOCATOR_NOT_FOUND`, `LOCATOR_AMB
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| First tap after launch or navigation ignored | The view is in the accessibility tree before it takes touches | `tap({ until: <what the tap opens> })` re-sends it |
-| testIDs vanish 1-6 s after sign-in; keys go nowhere | iOS "Save Password?" sheet | In the app under the e2e flag: `autoComplete="off"` and `textContentType="oneTimeCode"`. In the spec: `test.use({ systemAlerts: "dismiss" })` or `device.alert("dismiss")`. Never `defaults write` |
-| Dropped characters | Keys sent while focus was still moving to the field | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` and spec `type` / `press` wait for the field to report `focused`, and `fill` verifies and retries |
-| App back at Welcome mid-test | Native crash | Read `~/Library/Logs/DiagnosticReports/<app>-*.ips` |
-| Deep link ignored | Opened while the app was settling | `device.openLink(url, { until })` |
+| **First tap after launch or navigation ignored** | The view is in the accessibility tree before it takes touches | `tap({ until: <what the tap opens> })` re-sends it |
+| **testIDs vanish 1-6 s after sign-in; keys go nowhere** | iOS "Save Password?" sheet | In the app under the e2e flag: `autoComplete="off"` and `textContentType="oneTimeCode"`. In the spec: `test.use({ systemAlerts: "dismiss" })` or `device.alert("dismiss")`. Never `defaults write` |
+| **Dropped characters** | Keys sent while focus was still moving to the field | Never lower `WARDEN_SIMD_PACE_MS` / `WARDEN_SIMD_HOLD_MS`. `fill` and spec `type` / `press` wait for the field to report `focused`, and `fill` verifies and retries |
+| **App back at Welcome mid-test** | Native crash | Read `~/Library/Logs/DiagnosticReports/<app>-*.ips` |
+| **Deep link ignored** | Opened while the app was settling | `device.openLink(url, { until })` |
 | `port <p> is served by <dir>, not this worktree` | Another checkout's Metro owns the port | Stop that Metro or let warden pick another port. Never start Metro by hand |
 | `device_mismatch` | Two devices on one Metro | The runner pins by `WARDEN_DEVICE_NAME`; set it by hand when running manually |
-| Tests run stale JS on a Release build | Native-only fingerprint | Use `native+js` with `jsInputs` in the project's `fingerprint` |
-| Preload exits 2 with a version message | `warden` and `@delacour/warden-e2e` are lock-step | `bun add -d @delacour/warden-e2e@<warden version>` |
+| **Tests run stale JS on a Release build** | Native-only fingerprint | Use `native+js` with `jsInputs` in the project's `fingerprint` |
+| **Preload exits 2 with a version message** | `warden` and `@delacour/warden-e2e` are lock-step | `bun add -d @delacour/warden-e2e@<warden version>` |
 | `no driver factory configured` | `bun test` run without the preload | Add `--preload @delacour/warden-e2e/preload`, or `preload` under `[test]` in `bunfig.toml` |
-| Form submitted by `hideKeyboard` | iOS presses Enter | `device.settle()` or tap elsewhere |
-| A press right after `fill` on Android is lost | The app was still taking the typed text in | `device.settle()` before the press |
+| **Form submitted by `hideKeyboard`** | iOS presses Enter | `device.settle()` or tap elsewhere |
+| **A press right after `fill` on Android is lost** | The app was still taking the typed text in | `device.settle()` before the press |
 | `E_AX_UNAVAILABLE` right after launch | Transient | Built-in 5x300 ms retry. `simctl launch` can take over 30 s under load |
 | `E_AX_UNAVAILABLE`: "another UiAutomation client holds `<serial>`" | Android allows one UiAutomation connection per device and another tool (Maestro, `am instrument`, `uiautomator`) has it | Stop the process named in the message, or release the device. warden kills only its own stale `warden-uiad` |
-| Exit 3 `engine_unavailable` | No `warden-simd` helper | `warden doctor --fetch-helper` (Intel Mac: no helper) |
+| **Exit 3 `engine_unavailable`** | No `warden-simd` helper | `warden doctor --fetch-helper` (Intel Mac: no helper) |
 | `pinch` / `rotate` / `path` fails `E_UNSUPPORTED`, `reason: helper_outdated` (iOS) | `warden-simd` predates the gesture op | `warden ui close --udid <udid>`, or rebuild: `bun run --cwd packages/e2e native:build` |
-| Android slow or unsupported | `uiautomator dump` in use (the `warden-uiad` server is off or could not start); no launch args | Deep link instead of `--metro`; ASCII text only without the server. `WARDEN_E2E_DEBUG=1` logs `uiad:` lines; `WARDEN_ANDROID_UIAD=0` forces the dump |
-| Settle takes about 2.5 s | Two helpers on one simulator | `warden ui close --udid <udid>`, or kill the stale `warden-simd --udid <udid>` |
-| Exit 124 | A job exceeded `jobTimeoutMs` per spec and was killed | Find the hang in `trace.jsonl`; raise `jobTimeoutMs` only if the spec is genuinely long |
+| **Android slow or unsupported** | `uiautomator dump` in use (the `warden-uiad` server is off or could not start); no launch args | Deep link instead of `--metro`; ASCII text only without the server. `WARDEN_E2E_DEBUG=1` logs `uiad:` lines; `WARDEN_ANDROID_UIAD=0` forces the dump |
+| **Settle takes about 2.5 s** | Two helpers on one simulator | `warden ui close --udid <udid>`, or kill the stale `warden-simd --udid <udid>` |
+| **Exit 124** | A job exceeded `jobTimeoutMs` per spec and was killed | Find the hang in `trace.jsonl`; raise `jobTimeoutMs` only if the spec is genuinely long |
 
 `WARDEN_E2E_DEBUG=1` logs every helper call with its duration. `warden doctor` shows helper health; `degraded` means the accessibility guest is present but its last read failed, and the next good read clears it.
 

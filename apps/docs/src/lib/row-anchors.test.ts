@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Element, ElementContent, Root } from "hast";
-import { rehypeRowAnchors, rowSlug } from "./row-anchors";
+import { rehypeRowAnchors, rowSlug, termSlug } from "./row-anchors";
 
 describe("rowSlug", () => {
 	test.each([
@@ -16,9 +16,24 @@ describe("rowSlug", () => {
 		["gesture path --path 'x,y x,y …' [--path …]", "gesture-path"],
 		["logs --limit <n>", "logs"],
 		["WARDEN_HOME", "warden-home"],
+		["warden-named, no warden record", "warden-named"],
+		["over --max-size", "over-max-size"],
 		["<selector>", undefined],
 	])("%s → %s", (code, slug) => {
 		expect(rowSlug(code)).toBe(slug);
+	});
+});
+
+describe("termSlug", () => {
+	test.each([
+		["Metro's output", "metros-output"],
+		["SessionEnd hook", "sessionend-hook"],
+		["First tap after launch or navigation ignored", "first-tap-after-launch-or-navigation"],
+		["testIDs vanish 1-6 s after sign-in; keys go nowhere", "testids-vanish-1-6-s-after-sign-in"],
+		["Exit 3", "exit-3"],
+		["—", undefined],
+	])("%s → %s", (term, slug) => {
+		expect(termSlug(term)).toBe(slug);
 	});
 });
 
@@ -55,6 +70,14 @@ describe("rehypeRowAnchors", () => {
 		expect(link.tagName).toBe("a");
 		expect(link.properties).toMatchObject({ href: "#gesture-pinch", className: ["row-anchor"] });
 		expect((link.children[0] as Element).tagName).toBe("code");
+	});
+
+	test("a row led by a bold term gets an id from its words", () => {
+		const [tr] = run(table([row([el("strong", [text("Deep link ignored")]), text(" on Android")])]));
+		expect(tr.properties.id).toBe("deep-link-ignored");
+		const link = (tr.children[0] as Element).children[0] as Element;
+		expect(link.properties).toMatchObject({ href: "#deep-link-ignored" });
+		expect((link.children[0] as Element).tagName).toBe("strong");
 	});
 
 	test("a row led by prose is left alone", () => {

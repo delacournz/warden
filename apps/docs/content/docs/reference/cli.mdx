@@ -271,13 +271,13 @@ iOS. The real memory cost of a booted simulator: the summed `phys_footprint` of 
 
 | Reason | Owner | When |
 |--------|-------|------|
-| runtime removed | any | the sim's runtime is no longer installed (`isAvailable: false`) |
-| warden-named, no warden record | warden | `warden-<profile>-N` that the store has no record of (`orphan`) |
-| warden sim unused N | warden | not claimed or booted (the later of the store's `lastUsedAt` and `lastBootedAt`) for `--idle` (default `7d`) |
-| over --max-size | warden | with `--max-size 40G`, the least-recently-used unblocked warden sims until all sims fit (`budget`) |
-| not booted in N | foreign | last booted more than `--stale` ago (default `30d`). Never-booted sims are left alone. |
-| older runtime | foreign | older than the newest runtime installed for the same device type and platform |
-| duplicate | foreign | same name and runtime as a more recently booted sim |
+| `runtime removed` | any | the sim's runtime is no longer installed (`isAvailable: false`) |
+| `warden-named, no warden record` | warden | `warden-<profile>-N` that the store has no record of (`orphan`) |
+| `warden sim unused N` | warden | not claimed or booted (the later of the store's `lastUsedAt` and `lastBootedAt`) for `--idle` (default `7d`) |
+| `over --max-size` | warden | with `--max-size 40G`, the least-recently-used unblocked warden sims until all sims fit (`budget`) |
+| `not booted in N` | foreign | last booted more than `--stale` ago (default `30d`). Never-booted sims are left alone. |
+| `older runtime` | foreign | older than the newest runtime installed for the same device type and platform |
+| `duplicate` | foreign | same name and runtime as a more recently booted sim |
 
 Warden sims never get `older runtime` or `duplicate`: warden manages its own pool. Goldens never get a reason; they belong to `warden golden prune`.
 

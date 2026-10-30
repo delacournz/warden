@@ -2,15 +2,17 @@ import type { Element, ElementContent, Root, RootContent } from "hast";
 
 /**
  * Deep links into reference tables. Headings already carry Fumadocs' anchors, but most of what a
- * reader wants to point at (`gesture pinch`, `--udid`, `WARDEN_HOME`) is a table row. Every body
- * row whose first cell opens with inline code gets an id from that code, and the code becomes a
- * link to its own row, so `/docs/agents/ui#gesture-pinch` lands on pinch. Wired into the MDX
- * pipeline in `source.config.ts`; `.row-anchor` and `tr:target` are styled in `app.css`.
+ * reader wants to point at (`gesture pinch`, `--udid`, `WARDEN_HOME`, a troubleshooting symptom)
+ * is a table row. Every body row whose first cell opens with inline code or a **bold term** gets
+ * an id from it, and that lead becomes a link to its own row, so `/docs/agents/ui#gesture-pinch`
+ * lands on pinch. Bold is how a table of prose terms opts in; a data table (benchmarks, timings)
+ * leads with plain text and stays unanchored. Wired into the MDX pipeline in `source.config.ts`;
+ * `.row-anchor` and `tr:target` are styled in `app.css`.
  */
 
 /** Tokens that end a command's name: an argument placeholder, an alternation, a call, a separator. */
 const STOP = /^[[<{(|·'"`]/;
-const WORD = /^-{0,2}([A-Za-z0-9_$@][\w$@.]*)/;
+const WORD = /^-{0,2}([A-Za-z0-9_$@][\w$@.-]*)/;
 /** A name past this many words is a sentence, not a command. */
 const MAX_WORDS = 4;
 
@@ -43,6 +45,25 @@ export function rowSlug(code: string): string | undefined {
 	return slug || undefined;
 }
 
+/** A prose term's id is at most this many words: enough to tell symptoms apart, short enough to share. */
+const MAX_TERM_WORDS = 6;
+
+/** A row's id from its bold term: its words up to the first `;`, `:`, `(` or dash, lowercased. */
+export function termSlug(term: string): string | undefined {
+	const words = term
+		.split(/[;:(—–]/)[0]
+		.replace(/['’]/g, "")
+		.trim()
+		.split(/\s+/)
+		.slice(0, MAX_TERM_WORDS);
+	const slug = words
+		.join("-")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return slug || undefined;
+}
+
 function isElement(node: RootContent | ElementContent | Root): node is Element {
 	return node.type === "element";
 }
@@ -60,10 +81,14 @@ function* elements(node: Root | Element): Generator<Element> {
 	}
 }
 
-/** The cell's leading `code`, skipping whitespace text; anything else first means prose. */
-function leadingCode(cell: Element): Element | undefined {
+const SLUGGERS: Record<string, (text: string) => string | undefined> = { code: rowSlug, strong: termSlug };
+
+/** The cell's leading `code` or `strong` and the id it names, skipping whitespace; anything else first means prose. */
+function leadingTerm(cell: Element): { node: Element; slug: string } | undefined {
 	const first = cell.children.find((child) => child.type !== "text" || child.value.trim() !== "");
-	return first && isElement(first) && first.tagName === "code" ? first : undefined;
+	if (!first || !isElement(first)) return undefined;
+	const slug = SLUGGERS[first.tagName]?.(textOf(first));
+	return slug ? { node: first, slug } : undefined;
 }
 
 const HEADINGS = new Set(["h2", "h3"]);
@@ -78,24 +103,23 @@ function freeId(slug: string, heading: string | undefined, taken: Set<string>): 
 	return `${slug}-${n}`;
 }
 
-/** Give one body row its id and link its leading code to it; a row not led by code is left alone. */
+/** Give one body row its id and link its leading term to it; a row led by plain text is left alone. */
 function anchorRow(row: ElementContent, heading: string | undefined, taken: Set<string>) {
 	if (!isElement(row) || row.tagName !== "tr") return;
 	const cell = row.children.find(isElement);
-	const code = cell && leadingCode(cell);
-	const slug = code && rowSlug(textOf(code));
-	if (!cell || !code || !slug) return;
+	const term = cell && leadingTerm(cell);
+	if (!cell || !term) return;
 
-	const id = freeId(slug, heading, taken);
+	const id = freeId(term.slug, heading, taken);
 	taken.add(id);
 	row.properties.id = id;
 	const link: Element = {
 		type: "element",
 		tagName: "a",
 		properties: { href: `#${id}`, className: ["row-anchor"] },
-		children: [code],
+		children: [term.node],
 	};
-	cell.children[cell.children.indexOf(code)] = link;
+	cell.children[cell.children.indexOf(term.node)] = link;
 }
 
 function idOf(node: Element): string | undefined {
