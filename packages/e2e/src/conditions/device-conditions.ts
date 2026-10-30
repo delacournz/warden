@@ -693,6 +693,13 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 						...appliedA11y(op, state.applied),
 						...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
 					};
+		if (op?.screenReader === false && currentA11y.screenReaderPrevious !== undefined) {
+			// Android TalkBack is back off and the device restored: nothing of it stays on the record
+			const { screenReader: _off, screenReaderPrevious: _prior, ...rest } = currentA11y;
+			currentA11y = rest;
+		} else if (state.screenReaderPrevious !== undefined) {
+			currentA11y = { ...currentA11y, screenReaderPrevious: state.screenReaderPrevious };
+		}
 		if (Object.keys(currentA11y).length === 0) recorder?.settle("a11y", currentA11y, true);
 		else recorder?.record("a11y", currentA11y);
 		emit({ area: "a11y", value: currentA11y });

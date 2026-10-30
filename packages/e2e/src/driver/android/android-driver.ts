@@ -28,12 +28,14 @@ import type {
 	ScreenInfo,
 	Snapshot,
 } from "../driver.types";
+import type { ActsOnElements } from "../element-actions";
 import { driverErr } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
 import type { AuditsNatively, NativeAuditOptions } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import type { DetectsAlerts } from "../observation-cache";
 import { physicalConditionOps } from "../physical-conditions";
+import type { DrivesScreenReader } from "../screen-reader";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -94,6 +96,7 @@ import {
 import { createDumper, type DumpRoute } from "./android-dump";
 import { createAndroidNetwork } from "./android-network";
 import { createSettingsGuard, preparePhone, type SettingsGuard } from "./android-phone";
+import { createScreenReaderOps } from "./android-screen-reader";
 import { createAndroidSettings } from "./android-settings";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { ensureAtfJar } from "./atf-device";
@@ -344,6 +347,8 @@ function buildDriver(
 	Partial<SelectsAll> &
 	Partial<SetsText> &
 	Partial<ReadsA11yEvents> &
+	Partial<DrivesScreenReader> &
+	Partial<ActsOnElements> &
 	Partial<AuditsNatively> {
 	const { serial, adb, exec, log } = options;
 	const { sdk } = facts;
@@ -703,12 +708,14 @@ function buildDriver(
 		});
 		return { success: true, data: { ...applied.data, condition: op } };
 	};
-	const settings = createAndroidSettings({
+	const { talkback, ...settings } = createAndroidSettings({
 		session,
 		serial,
 		...(options.appPackage ? { appPackage: options.appPackage } : {}),
 		transitionOriginal: () => facts.animations.transitionOriginal(),
+		uiadAvailable: () => uiad?.enabled() === true,
 	});
+	const screenReader = createScreenReaderOps({ uiad, talkback, session, clock, tap });
 	const clockOp: Driver["clock"] = async (op) => {
 		const applied = await applyAndroidClock({ session, exec, adb, serial }, op);
 		if (applied.success) options.clockRecorder?.(op);
@@ -839,7 +846,7 @@ function buildDriver(
 		key,
 		pressKeyRepeat,
 		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
-		...(uiad !== undefined ? { setText, a11yEvents } : {}),
+		...(uiad !== undefined ? { setText, a11yEvents, ...screenReader } : {}),
 		...(uiad !== undefined
 			? {
 					auditNatively: (opts?: NativeAuditOptions) =>
@@ -873,6 +880,8 @@ function buildDriver(
 		close: async () => {
 			await stopFlap();
 			await stopTicker();
+			// TalkBack is the one thing a closing driver must not leave on: the device outlives it
+			await talkback.disable();
 			await uiad?.stop();
 			await facts.animations.restore();
 			await facts.settings?.restore();

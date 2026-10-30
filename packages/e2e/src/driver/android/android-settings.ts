@@ -1,10 +1,12 @@
 import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-core/conditions/conditions.types";
 import { androidFontScale, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
+import type { ScreenReaderState } from "../../a11y/a11y.types";
 import { badRequest, batteryProblem, localeProblem, timezoneProblem } from "../device-settings";
 import type { A11yOp, A11yState, BatteryOp, BatteryState, Driver, DriverResult } from "../driver.types";
 import { driverErr } from "../errors";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
+import { createTalkBack, type TalkBackControl } from "./android-talkback";
 
 /**
  * Android device settings over the resident adb shell (each mechanism verified on an emulator): `pm grant|revoke`
@@ -102,6 +104,8 @@ export type AndroidSettingsDeps = {
 	hostTimezone?: () => string;
 	/** the transition animation scale the device had before the driver zeroed it (what `reduceMotion: false` restores); `"null"` / absent = none known */
 	transitionOriginal?: () => string | undefined;
+	/** is `warden-uiad` how this driver reads the screen (TalkBack mode needs it: the dump fallback unbinds TalkBack); default false */
+	uiadAvailable?: () => boolean;
 };
 
 export type AndroidSettings = Pick<
@@ -121,6 +125,7 @@ type Ctx = {
 	putSetting(table: "system" | "secure" | "global", key: string, value: string): DriverResult<string>;
 	packageOf(explicit: string | undefined, what: string): { bundleId: string } | ReturnType<typeof driverErr>;
 	sdk(): Promise<number>;
+	talkback: TalkBackControl;
 };
 
 const unsupported = (parts: readonly { name: string; reason: string }[]) =>
@@ -258,9 +263,6 @@ function a11ySkips(op: A11yOp | null): { setting: string; reason: string }[] {
 	for (const setting of IOS_ONLY) {
 		if (op?.[setting] !== undefined) skipped.push({ setting, reason: "iOS only" });
 	}
-	if (op?.screenReader !== undefined) {
-		skipped.push({ setting: "screenReader", reason: "TalkBack mode lands in A11Y-7" });
-	}
 	return skipped;
 }
 
@@ -314,11 +316,32 @@ function a11yOp(c: Ctx): Driver["a11y"] {
 			if (!done.success) return done;
 			if (op !== null) applied.push("reduceMotion");
 		}
+		let screenReader: ScreenReaderState | undefined;
+		let screenReaderPrevious: A11yState["screenReaderPrevious"];
+		// null resets everything warden set, TalkBack included (a no-op when warden never turned it on)
+		if (op === null || op.screenReader !== undefined) {
+			const done = await (op?.screenReader === true ? c.talkback.enable() : c.talkback.disable());
+			if (!done.success) return done;
+			if (op !== null) {
+				screenReader = done.data;
+				applied.push("screenReader");
+				screenReaderPrevious = c.talkback.previous();
+			}
+		}
 		skipped.push(...a11ySkips(op));
 		if (applied.length === 0 && skipped.length > 0) {
 			return unsupported(skipped.map((s) => ({ name: s.setting, reason: s.reason })));
 		}
-		return { success: true, data: { applied, skipped, notes } satisfies A11yState };
+		return {
+			success: true,
+			data: {
+				applied,
+				skipped,
+				notes,
+				...(screenReader === undefined ? {} : { screenReader }),
+				...(screenReaderPrevious === undefined ? {} : { screenReaderPrevious }),
+			} satisfies A11yState,
+		};
 	};
 }
 
@@ -372,7 +395,7 @@ function memoryWarningOp(c: Ctx): Driver["memoryWarning"] {
 	};
 }
 
-export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSettings {
+export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSettings & { talkback: TalkBackControl } {
 	const { session, serial } = deps;
 
 	async function shell(argv: readonly string[]): Promise<Shelled> {
@@ -393,8 +416,17 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 			: driverErr("E_IO", done.failure ?? argv.join(" "), { detail: { serial } });
 	}
 
+	const talkback = createTalkBack({
+		serial,
+		shell,
+		must,
+		uiadAvailable: () => deps.uiadAvailable?.() ?? false,
+		sleep: (ms) => (deps.sleep ?? ((wait: number) => Bun.sleep(wait)))(ms),
+	});
+
 	const ctx: Ctx = {
 		deps,
+		talkback,
 		serial,
 		shell,
 		must,
@@ -424,6 +456,7 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 	};
 
 	return {
+		talkback,
 		permissions: permissionsOp(ctx),
 		timezone: timezoneOp(ctx),
 		locale: localeOp(ctx),

@@ -5,7 +5,13 @@ import type { PidAlive } from "../liveness";
 import { androidTools } from "../providers/android";
 import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
-import { androidA11yResets, iosDefaultsDeleteArgvs, iosDefaultsFields, iosDefaultsMissing } from "./a11y-keys";
+import {
+	androidA11yResets,
+	androidScreenReaderResets,
+	iosDefaultsDeleteArgvs,
+	iosDefaultsFields,
+	iosDefaultsMissing,
+} from "./a11y-keys";
 import { activeConditions, clearCondition } from "./conditions";
 import type { ConditionArea, ConditionRecord } from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
@@ -79,6 +85,7 @@ function resetCommands(
 				[...base, "shell", "settings", "put", "system", "font_scale", "1.0"],
 				[...base, "shell", "settings", "put", "secure", "font_weight_adjustment", "0"],
 				...androidA11yResets(record.value).map((argv) => [...base, "shell", ...argv]),
+				...androidScreenReaderResets(record.value).map((argv) => [...base, "shell", ...argv]),
 			];
 		case "locale":
 			return androidLocaleResets(base, record, deps);

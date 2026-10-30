@@ -71,3 +71,28 @@ export function androidA11yResets(record: A11yCondition): string[][] {
 		resets.push(["settings", "put", "global", "transition_animation_scale", "1.0"]);
 	return resets;
 }
+
+/** `'…'` for a remote shell: an Android service component can hold `$` (inner classes). */
+const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
+
+/** Android setting names TalkBack mode writes. */
+export const ANDROID_SERVICES_KEY = "enabled_accessibility_services";
+export const ANDROID_A11Y_ENABLED_KEY = "accessibility_enabled";
+
+/** The `settings` argv (no `adb shell` prefix) that sets a secure key to `value`, or deletes it when it was unset. */
+export function androidSecureRestoreArgv(key: string, value: string | null): string[] {
+	return value === null ? ["settings", "delete", "secure", key] : ["settings", "put", "secure", key, shellQuote(value)];
+}
+
+/**
+ * TalkBack mode on Android: put back the accessibility services and master switch that were there before. Nothing
+ * when the record has no `screenReaderPrevious` (warden did not turn a screen reader on, so it has nothing to restore).
+ */
+export function androidScreenReaderResets(record: A11yCondition): string[][] {
+	if (record.screenReader !== true || record.screenReaderPrevious === undefined) return [];
+	const { services, enabled } = record.screenReaderPrevious;
+	return [
+		androidSecureRestoreArgv(ANDROID_SERVICES_KEY, services),
+		androidSecureRestoreArgv(ANDROID_A11Y_ENABLED_KEY, enabled),
+	];
+}
