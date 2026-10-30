@@ -22,7 +22,7 @@ const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const AnimatedLine = Animated.createAnimatedComponent(Line);
 
 const WIDTH = 264;
-const ARC_BOX = 168;
+const ARC_BOX = 140;
 const STROKE = 9;
 const EASE_OUT = Easing.out(Easing.exp);
 /** The strike-through runs corner to corner of the arcs; its length drives the draw-in. */
@@ -30,7 +30,7 @@ const SLASH = { x1: 50, y1: 40, x2: 214, y2: 150 } as const;
 const SLASH_LENGTH = Math.hypot(SLASH.x2 - SLASH.x1, SLASH.y2 - SLASH.y1);
 const PULSE_MS = 700;
 const PULSE_START = 12;
-const GLYPH_STYLE = { width: WIDTH } as const;
+const GLYPH_STYLE = { width: WIDTH, gap: 14, marginBottom: 14 } as const;
 
 type SignalGlyphProps = {
 	/** Link quality 0..3: how many arcs are lit. */
@@ -128,7 +128,7 @@ export function SignalGlyph({ quality, tone, sent, samples }: SignalGlyphProps) 
 
 	return (
 		<View style={GLYPH_STYLE}>
-			<Svg height={ARC_BOX} viewBox={`0 0 ${WIDTH} ${ARC_BOX}`} width={WIDTH}>
+			<Svg height={ARC_BOX} viewBox={`0 20 ${WIDTH} ${ARC_BOX}`} width={WIDTH}>
 				{ARC_RADII.map((radius, i) => (
 					<AnimatedPath
 						animatedProps={arcProps[i]}

@@ -21,8 +21,10 @@ export type NetState = {
 
 /** Classification looks at this many of the latest requests. */
 export const WINDOW = 6;
-/** A median above this is a slow link. */
-export const SLOW_MS = 600;
+/** The median latency is taken over this many of the latest landed requests, so a change shows within two probes. */
+export const LATENCY_WINDOW = 3;
+/** A median above this is a slow link (warden's `edge` and `slow` profiles land above it, `3g` and `wifi` below). */
+export const SLOW_MS = 300;
 /** This many link changes inside the recent window mark the link unstable. */
 export const UNSTABLE_LINK_CHANGES = 2;
 /** Failures in a row on a link that is not confirmed reachable mean no route out. */
@@ -80,7 +82,7 @@ function measure(input: ClassifyInput): NetState {
 			tone: "warn",
 		};
 	}
-	const landed = recent.flatMap((s) => (s.ok ? [s.ms] : []));
+	const landed = recent.flatMap((s) => (s.ok ? [s.ms] : [])).slice(-LATENCY_WINDOW);
 	const mid = median(landed) ?? 0;
 	if (linkChangesInWindow >= UNSTABLE_LINK_CHANGES) {
 		return {
@@ -103,7 +105,7 @@ function measure(input: ClassifyInput): NetState {
 	return {
 		kind: "online",
 		title: "Online",
-		body: `Median ${formatMs(mid)} over the last ${recent.length} requests.`,
+		body: `Median ${formatMs(mid)} over the last ${landed.length} requests.`,
 		quality: 3,
 		tone: "open",
 	};

@@ -1,3 +1,4 @@
+import { useThemeColor } from "@/hooks/use-theme-color";
 import { IconPause, IconPlay, IconSignalTower, IconWifiNoSignal } from "@/lib/icons/central";
 import { SignalGlyph } from "@/modules/network/components/signal-glyph";
 import { useNetworkProbes } from "@/modules/network/hooks/use-network-probes";
@@ -17,6 +18,8 @@ import { useTones } from "@/modules/showcase/hooks/use-tones";
 export default function NetworkShowcase() {
 	const { state, link, samples, tally, events, paused, sent, toggle } = useNetworkProbes();
 	const tones = useTones();
+	const muted = useThemeColor("muted-foreground");
+	const statusColor = state.tone === "off" ? muted : tones[state.tone];
 	const variant: ActionVariant = paused ? "solid" : "outline";
 	const StatusIcon = state.kind === "offline" ? IconWifiNoSignal : IconSignalTower;
 
@@ -25,7 +28,7 @@ export default function NetworkShowcase() {
 			backTestID="net-back"
 			testID="net-screen"
 			title="Network"
-			trailing={<StatusIcon color={tones[state.tone]} size={18} />}
+			trailing={<StatusIcon color={statusColor} size={18} />}
 		>
 			<Showcase.Body>
 				<Showcase.Hero

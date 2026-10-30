@@ -14,7 +14,7 @@ const INTERVAL_MS = 1500;
 /** A request that has not answered by now is a failure. */
 const TIMEOUT_MS = 4000;
 /** The log keeps this many lines, newest first. */
-const MAX_LOG = 6;
+const MAX_LOG = 4;
 /** Link changes older than this stop counting towards Unstable. */
 const LINK_WINDOW_MS = 10_000;
 
@@ -61,11 +61,13 @@ export function useNetworkProbes(): NetworkProbes {
 	const label = linkLabel(link);
 	const previousLabel = useRef(label);
 	useEffect(() => {
-		if (previousLabel.current === label) return;
-		const at = since();
-		log({ at, text: `link ${previousLabel.current} → ${label}`, tone: label === "none" ? "off" : "scan" });
-		setLinkChanges((prev) => [...prev, at].slice(-8));
+		const before = previousLabel.current;
+		if (before === label) return;
 		previousLabel.current = label;
+		if (before === "unknown") return;
+		const at = since();
+		log({ at, text: `link ${before} → ${label}`, tone: label === "none" ? "off" : "scan" });
+		setLinkChanges((prev) => [...prev, at].slice(-8));
 	}, [label, log, since]);
 
 	const focused = useRef(false);

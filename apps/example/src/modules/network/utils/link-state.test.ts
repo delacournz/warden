@@ -20,13 +20,13 @@ describe("classify", () => {
 		expect(state.body).toBe("Median 48 ms over the last 3 requests.");
 	});
 
-	test("the median is taken over the last 6 only", () => {
+	test("the median is taken over the last 3 landed requests only", () => {
 		const state = run([ok(1, 5000), ok(2, 40), ok(3, 40), ok(4, 40), ok(5, 40), ok(6, 40), ok(7, 40)]);
 		expect(state.kind).toBe("online");
-		expect(state.body).toBe("Median 40 ms over the last 6 requests.");
+		expect(state.body).toBe("Median 40 ms over the last 3 requests.");
 	});
 
-	test("a median above 600 ms with every request landing is a Slow link", () => {
+	test("a median above 300 ms with every request landing is a Slow link", () => {
 		const state = run([ok(1, 1800), ok(2, 1900), ok(3, 2100)]);
 		expect(state).toMatchObject({ kind: "slow", title: "Slow link", quality: 2, tone: "scan" });
 		expect(state.body).toBe("Median 1.9 s, every request still lands.");
