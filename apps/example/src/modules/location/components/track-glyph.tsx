@@ -25,7 +25,7 @@ const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const SIZE = 264;
 const HALF = SIZE / 2;
 /** Space kept clear around the plot for the scale bar and north tick. */
-const PAD = 30;
+const PAD = 36;
 const PLOT_HALF = HALF - PAD;
 const BAR_MAX_PX = 96;
 const EASE_OUT = Easing.out(Easing.exp);
@@ -184,13 +184,13 @@ export function TrackGlyph({ track, origin, ringTone }: TrackGlyphProps) {
 				<AnimatedCircle animatedProps={startProps} fill={background} r={START_R} stroke={tones.scan} strokeWidth={2} />
 				<AnimatedCircle animatedProps={pulseProps} fill="none" stroke={tones.scan} strokeWidth={2} />
 				<AnimatedCircle animatedProps={dotProps} fill={tones.scan} r={DOT_R} stroke={background} strokeWidth={2.5} />
-				<Line stroke={faint} strokeLinecap="round" strokeWidth={1.5} x1={SIZE - PAD} x2={SIZE - PAD} y1={34} y2={20} />
+				<Line stroke={faint} strokeLinecap="round" strokeWidth={1.5} x1={SIZE - 16} x2={SIZE - 16} y1={34} y2={20} />
 				<Line
 					stroke={faint}
 					strokeLinecap="round"
 					strokeWidth={1.5}
-					x1={SIZE - PAD}
-					x2={SIZE - PAD - 3}
+					x1={SIZE - 16}
+					x2={SIZE - 16 - 3}
 					y1={20}
 					y2={24}
 				/>
@@ -198,16 +198,16 @@ export function TrackGlyph({ track, origin, ringTone }: TrackGlyphProps) {
 					stroke={faint}
 					strokeLinecap="round"
 					strokeWidth={1.5}
-					x1={SIZE - PAD}
-					x2={SIZE - PAD + 3}
+					x1={SIZE - 16}
+					x2={SIZE - 16 + 3}
 					y1={20}
 					y2={24}
 				/>
 			</Svg>
-			<Text className="absolute font-mono text-tertiary-foreground text-xs" style={{ right: PAD - 4, top: 34 }}>
+			<Text className="absolute font-mono text-tertiary-foreground text-xs" style={{ right: 11, top: 36 }}>
 				N
 			</Text>
-			<View className="absolute flex-row items-center gap-2" style={{ left: PAD, bottom: 14 }}>
+			<View className="absolute flex-row items-center gap-2" style={{ left: 14, bottom: 8 }}>
 				<Animated.View className="h-1.5 border-x border-b border-tertiary-foreground" style={barStyle} />
 				<Text className="font-mono text-tertiary-foreground text-xs">{bar.label}</Text>
 			</View>
