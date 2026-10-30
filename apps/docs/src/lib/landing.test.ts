@@ -123,6 +123,7 @@ const NUMBERS: readonly { copy: string; source: string; code: RegExp }[] = [
 		source: "packages/core/src/golden/golden.ts",
 		code: /146–239 s vs clone 3\.7 s \+ boot 11\.9 s/,
 	},
+	{ copy: "set aside for 24 h", source: "packages/core/src/claim.ts", code: /QUARANTINE_TTL_MS = 24 \* 60 \* 60_000/ },
 	{ copy: "binds loopback", source: "packages/core/src/netproxy/proxy.ts", code: /const LOOPBACK = "127\.0\.0\.1"/ },
 ];
 

@@ -125,8 +125,8 @@ export const WHAT_YOU_GET = {
 		},
 		{
 			title: "Bad devices set aside",
-			command: "release --bad",
-			body: "A device that fails its health check at claim time is quarantined and the claim tries another. Mark one yourself with `warden release <id> --bad`.",
+			command: "warden release --bad",
+			body: "A device that fails its health check at claim time is quarantined, and the claim tries another. Release one as bad yourself and it is set aside for 24 h.",
 			href: "devices/leases",
 			proof: { source: "packages/core/src/claim.ts" },
 		},
