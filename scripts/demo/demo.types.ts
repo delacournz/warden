@@ -46,6 +46,12 @@ export type DemoDefinition = {
 	claim: { biometrics?: boolean; profile?: string };
 	app: DemoApp;
 	/**
+	 * `warden` argv run after the app opens and before the deep link, off camera (`--udid` appended). E.g.
+	 * `["ui", "network", "set", "online", "--relaunch"]` relaunches the iOS app with warden's network dylib, so
+	 * network and clock steps reach it live.
+	 */
+	setup?: readonly (readonly string[])[];
+	/**
 	 * `warden ui wait` selectors that must pass (after the deep link, before the video starts) so no step
 	 * presses a screen that has not mounted. E.g. `["id=bio-screen", "id=bio-unlock"]`.
 	 */

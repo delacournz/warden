@@ -25,6 +25,7 @@ Export `demo: DemoDefinition` (`scripts/demo/demo.types.ts`). Copy `apps/example
 | `phoneCaption` | line under the phone, default `real simulator · not an animation`; `""` hides it |
 | `claim` | `{ biometrics?, profile? }` -> `warden claim ios --json --label demo-<feature>-<clip> --ttl 30m [--biometrics]` |
 | `app` | `bundleId`, `kind` (`simulator` default), `project` (repo-relative cwd), `deepLink` opened with `--settle`, `appearance` (`light`/`dark`, set via `simctl ui` on the leased udid, restored after) |
+| `setup` | `warden` argv run off camera after the app opens, before the deep link; `["ui","network","set","online","--relaunch"]` gives the iOS dylib launch network / clock steps need |
 | `ready` | `warden ui wait` selectors that must pass after the deep link and before the video starts (e.g. `id=bio-screen`); a step never presses a screen that has not mounted |
 | `leadInMs` / `tailHoldMs` | idle before step 1 / last frame hold, padded by the renderer (the take tail is 1 s) |
 | `steps[]` | `argv` (after `warden`; recorder appends `--udid`), `output` (`ok` draws a vector check, `plain` is muted), `pauseAfterMs`, `shown?`, `hidden?` |
