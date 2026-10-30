@@ -615,6 +615,10 @@ Options:
                               the attempt's perf/ dir
   --dev                       run on the dev client (kind dev) against a Metro
                               warden starts, not the repacked simulator build
+  --a11y                      iOS: launch apps with the injected library so
+                              specs can read hints, actions, reading order and
+                              announcements (a suite with an \`a11y\` key does
+                              this already)
   --no-warm                   skip pre-warming the iOS socket helper per device
                               (default: on; suite warmDrivers)
   -h, --help                  display help for command
