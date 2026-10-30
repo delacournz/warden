@@ -129,7 +129,8 @@ const EXAMPLE_SUITE = {
  * build with no JS embedded, built once per native fingerprint) and repacks this worktree's JS into it in seconds
  * (`EXPO_PUBLIC_E2E=1` baked in), so a JS edit never rebuilds native. `--dev` flips the same suite to the `dev`
  * kind (Debug dev client) against a Metro warden starts for the run (`metro`), one spec process per device.
- * `warmDrivers: false` opts out of the simulator-driver pre-warm.
+ * `release` is what a physical phone installs (`--physical` / `--udid`): the same Release build with the JS embedded and
+ * the e2e flag baked in, signed for the phone (a device build, never a simulator one). `warmDrivers: false` opts out of the simulator-driver pre-warm.
  *
  * ```bash
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
@@ -150,6 +151,7 @@ export default {
 			eas: false,
 			kinds: {
 				simulator: { env: { EXPO_PUBLIC_E2E: "1" }, jsInputs: JS_INPUTS },
+				release: { env: { EXPO_PUBLIC_E2E: "1" }, jsInputs: JS_INPUTS },
 			},
 			variants: { bench },
 		},

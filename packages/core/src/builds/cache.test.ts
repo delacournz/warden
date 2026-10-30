@@ -18,6 +18,7 @@ import {
 	forgetInstall,
 	getBuild,
 	getInstall,
+	installedBundleIds,
 	kindDir,
 	kindHash,
 	listBuilds,
@@ -226,6 +227,14 @@ describe("legacy + installs + diskSize", () => {
 		expect(findLegacyArtifact(["/nope", legacy], "ios", "abc")).toBe(join(legacy, "abc", "Salient.app"));
 		expect(findLegacyArtifact([legacy], "ios", "zzz")).toBeUndefined();
 		expect(findLegacyArtifact([legacy], "android", "abc")).toBeUndefined();
+	});
+
+	test("installedBundleIds lists what warden installed on one device only", () => {
+		recordInstall(store, { platform: "android", deviceId: "R5CT", bundleId: "com.b", hash: "h", installedAt: 1 });
+		recordInstall(store, { platform: "android", deviceId: "R5CT", bundleId: "com.a", hash: "h", installedAt: 1 });
+		recordInstall(store, { platform: "android", deviceId: "OTHER", bundleId: "com.c", hash: "h", installedAt: 1 });
+		expect(installedBundleIds(store, "android", "R5CT")).toEqual(["com.a", "com.b"]);
+		expect(installedBundleIds(store, "ios", "R5CT")).toEqual([]);
 	});
 
 	test("installs upsert per device + bundle", () => {
@@ -470,5 +479,24 @@ describe("removeBuild across kinds", () => {
 		expect(existsSync(r1)).toBe(false);
 		expect(existsSync(r2)).toBe(false);
 		expect(listBuilds(store).map((b) => b.hash)).toEqual(["fp:j9"]);
+	});
+});
+
+describe("device-target kind keys", () => {
+	const device = { team: "ABCDE12345", salt: "ABCDE12345" };
+	const env = { WARDEN_HOME: "/w" } as Record<string, string>;
+
+	test("hash and dir carry the device salt; the simulator ones are unchanged", () => {
+		expect(kindHash({ kind: "dev", nativeFp: "fp" })).toBe("fp:dev");
+		expect(kindHash({ kind: "dev", nativeFp: "fp", device })).toBe("fp:device-ABCDE12345:dev");
+		expect(kindHash({ kind: "release", nativeFp: "fp", jsKey: "js", device })).toBe("fp:device-ABCDE12345:release:js");
+		const native = buildDir(env, "k", "ios", "fp");
+		expect(kindDir(env, "k", "ios", { kind: "dev", nativeFp: "fp", device })).toBe(
+			join(native, "device", "ABCDE12345", "dev")
+		);
+		expect(kindDir(env, "k", "ios", { kind: "release", nativeFp: "fp", jsKey: "js", device })).toBe(
+			join(native, "device", "ABCDE12345", "release", "js")
+		);
+		expect(kindDir(env, "k", "ios", { kind: "dev", nativeFp: "fp" })).toBe(join(native, "dev"));
 	});
 });

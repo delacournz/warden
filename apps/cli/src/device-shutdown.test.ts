@@ -18,7 +18,35 @@ function lease(c: TestContext, id: string, bootedByOwner = false): Lease {
 	);
 }
 
+function physicalLease(c: TestContext, id: string): Lease {
+	return c.db.insertLease(
+		{
+			resource: { kind: "device", platform: "android", id, name: "Pixel", physical: { transport: "usb" } },
+			owner,
+			ttlMs: 60_000,
+			bootedByOwner: true,
+		},
+		c.now()
+	);
+}
+
 describe("shutdownReleasedDevices", () => {
+	test("a physical device is never shut down, even booted by the owner and recorded; no provider call is made", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		ctx.db.recordDevice({ platform: "android", id: "P1", name: "Pixel" }, 0);
+		const guarded: string[] = [];
+		const result = await shutdownReleasedDevices(ctx, [physicalLease(ctx, "P1")], owner, async (l) => {
+			guarded.push(l.id);
+			return undefined;
+		});
+		expect(result.shutdown).toEqual([]);
+		expect(result.kept).toEqual([]);
+		expect(result.notes.join("\n")).toContain("physical device: never shut down");
+		expect(calls).toEqual([]);
+		expect(guarded).toEqual([]);
+	});
+
 	test("undoes the lease's conditions before shutting its device down", async () => {
 		const calls: string[][] = [];
 		ctx = testContext([], { exec: fakeSimctl([], calls, [["xcrun simctl location", {}]]) });

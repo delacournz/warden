@@ -58,6 +58,7 @@ describe("readEnv", () => {
 			WARDEN_HELPER_DIR: "/h",
 			WARDEN_SIMD: "/h/warden-simd",
 			WARDEN_SIMD_SOCKET: "/s.sock",
+			WARDEN_IOS_RUNNER_SOCKET: "/r.sock",
 			WARDEN_HEADLESS: "1",
 			WARDEN_LOG_TIMESTAMPS: "true",
 			WARDEN_WORKER: "w1",
@@ -78,9 +79,25 @@ describe("readEnv", () => {
 			helperDir: "/h",
 			simd: "/h/warden-simd",
 			simdSocket: "/s.sock",
+			iosRunnerSocket: "/r.sock",
 			logTimestamps: true,
 			deviceName: "warden-iphone-17-5",
 		});
+	});
+
+	test("WARDEN_DEVICE_KIND=physical and the runner restart argv are read; anything else is rejected", () => {
+		const env = readEnv({
+			...base,
+			WARDEN_DEVICE_KIND: "physical",
+			WARDEN_IOS_RUNNER_RESTART: JSON.stringify(["warden", "__ios-runner-restart", "--udid", "{udid}"]),
+		});
+		expect(env.success && env.data).toMatchObject({
+			deviceKind: "physical",
+			iosRunnerRestart: ["warden", "__ios-runner-restart", "--udid", "{udid}"],
+		});
+		expect(readEnv({ ...base, WARDEN_DEVICE_KIND: "emulator" }).success).toBe(false);
+		const plain = readEnv(base);
+		expect(plain.success && plain.data?.deviceKind).toBeUndefined();
 	});
 
 	test("WARDEN_HEADLESS and WARDEN_WORKER are for the spec's own tools: never validated, never parsed", () => {

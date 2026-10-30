@@ -99,6 +99,11 @@ describe("mapWireError", () => {
 		expect(error.detail).toEqual({ wireCode: "E_WEIRD", wireDetail: { a: 1 } });
 	});
 
+	test("a locked phone and a refused request keep their codes (the runner host's fatal events)", () => {
+		expect(mapWireError({ code: "E_DEVICE_LOCKED", message: "Unlock the phone" }).code).toBe("E_DEVICE_LOCKED");
+		expect(mapWireError({ code: "E_REFUSED", message: "not warden's" }).code).toBe("E_REFUSED");
+	});
+
 	test("detail is kept for E_UNSUPPORTED_TEXT", () => {
 		expect(mapWireError({ code: "E_UNSUPPORTED_TEXT", message: "é", detail: { rest: "é" } }).detail).toEqual({
 			rest: "é",

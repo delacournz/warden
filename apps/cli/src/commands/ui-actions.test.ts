@@ -856,6 +856,19 @@ describe("device controls", () => {
 		expect(h.driver.callsOf("biometrics").map((c) => c.op)).toEqual(["status", "enroll", "match", "fail", "unenroll"]);
 	});
 
+	for (const platform of ["ios", "android"] as const) {
+		test(`biometrics on a physical ${platform} device: E_UNSUPPORTED before the device is opened`, async () => {
+			const h = harness([snapshotOf(LOGIN)], { platform, lease: { physical: { transport: "usb" } } });
+			for (const op of ["status", "enroll", "match"]) {
+				expect(await h.run("biometrics", op, "--json")).not.toBe(0);
+				const out = JSON.stringify(doc(h.c));
+				expect(out).toContain("E_UNSUPPORTED");
+				expect(out).toContain("real Face ID / fingerprint sensor");
+			}
+			expect(h.driver.calls).toEqual([]);
+		});
+	}
+
 	test("biometrics: an unknown op is a usage error", async () => {
 		const h = harness([snapshotOf(LOGIN)]);
 		expect(await h.run("biometrics", "scan", "--json")).toBe(1);

@@ -135,6 +135,12 @@ Options:
   --biometrics           claim devices with a fingerprint / Face ID enrolled
                          (own pool and golden; config biometrics)
   --json                 machine-readable output
+  --physical             claim a connected physical phone/tablet (never booted,
+                         shut down or created by warden)
+  --serial <serial...>   android: claim these physical devices by adb serial
+                         (implies --physical)
+  --udid <udid...>       ios: claim these physical devices by CoreDevice UDID
+                         (implies --physical)
   -h, --help             display help for command"
 `;
 
@@ -197,6 +203,12 @@ Options:
   --biometrics           claim devices with a fingerprint / Face ID enrolled
                          (own pool and golden; config biometrics)
   --json                 machine-readable output
+  --physical             claim a connected physical phone/tablet (never booted,
+                         shut down or created by warden)
+  --serial <serial...>   android: claim these physical devices by adb serial
+                         (implies --physical)
+  --udid <udid...>       ios: claim these physical devices by CoreDevice UDID
+                         (implies --physical)
   --port <from:span>     lease a port from FROM..FROM+SPAN-1 (inclusive) for the
                          child (WARDEN_PORT_<i>); repeatable (default: [])
   --app                  install the project's app (fingerprint → cache → EAS →
@@ -411,6 +423,12 @@ Options:
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
+  --physical                  claim a connected physical phone/tablet (never
+                              booted, shut down or created by warden)
+  --serial <serial...>        android: claim these physical devices by adb
+                              serial (implies --physical)
+  --udid <udid...>            ios: claim these physical devices by CoreDevice
+                              UDID (implies --physical)
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
                               (default: [])
@@ -528,6 +546,12 @@ Options:
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
+  --physical                  claim a connected physical phone/tablet (never
+                              booted, shut down or created by warden)
+  --serial <serial...>        android: claim these physical devices by adb
+                              serial (implies --physical)
+  --udid <udid...>            ios: claim these physical devices by CoreDevice
+                              UDID (implies --physical)
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
                               (default: [])
@@ -597,6 +621,7 @@ Options:
 
 Examples:
   warden e2e mobile --base origin/main --count 2
+  warden e2e mobile --physical --platform android
   warden e2e mobile --dev --all
   warden e2e --dry-run --files src/modules/chat/api.ts"
 `;
@@ -672,6 +697,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -715,6 +742,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -745,6 +774,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -792,6 +823,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -824,6 +857,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -867,6 +902,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -915,6 +952,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -944,6 +983,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -972,6 +1013,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1005,6 +1048,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1036,6 +1081,8 @@ Options:
                             when none is held
   --platform <platform>     platform for --claim with no device named: ios
                             (default) | android
+  --physical                with --claim and no device named: claim a connected
+                            phone, not an emulator
   --profile <slug>          device profile for --claim with no device named
   --runtime <runtime>       runtime for --claim with no device named
   --force                   drive the device even while a live warden process
@@ -1081,6 +1128,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1125,6 +1174,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1160,6 +1211,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1189,6 +1242,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1226,6 +1281,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1258,6 +1315,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1287,6 +1346,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1327,6 +1388,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1414,6 +1477,7 @@ Arguments:
 
 Options:
   --mem       add each booted iOS sim's real memory (summed phys_footprint, MB)
+  --physical  only real phones and tablets (with why an unusable one is skipped)
   --json      machine-readable output
   -h, --help  display help for command"
 `;
@@ -1939,6 +2003,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -1966,6 +2032,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -1994,6 +2062,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2020,6 +2090,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2057,6 +2129,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2086,6 +2160,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2115,6 +2191,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2150,6 +2228,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2179,6 +2259,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2207,6 +2289,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2241,6 +2325,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2269,6 +2355,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2294,6 +2382,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2319,6 +2409,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2348,6 +2440,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2393,6 +2487,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2421,6 +2517,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2447,6 +2545,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2474,6 +2574,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2525,6 +2627,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2555,6 +2659,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2588,6 +2694,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2621,6 +2729,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2650,6 +2760,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2678,6 +2790,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2705,6 +2819,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2731,6 +2847,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2758,6 +2876,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2826,6 +2946,8 @@ Options:
                            when none is held
   --platform <platform>    platform for --claim with no device named: ios
                            (default) | android
+  --physical               with --claim and no device named: claim a connected
+                           phone, not an emulator
   --profile <slug>         device profile for --claim with no device named
   --runtime <runtime>      runtime for --claim with no device named
   --force                  drive the device even while a live warden process
@@ -2852,6 +2974,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2881,6 +3005,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2907,6 +3033,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2930,6 +3058,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2953,6 +3083,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2983,6 +3115,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3010,6 +3144,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3039,6 +3175,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3073,6 +3211,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3098,6 +3238,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3126,6 +3268,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3149,6 +3293,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3187,6 +3333,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3210,6 +3358,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3346,6 +3496,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3386,6 +3538,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3415,6 +3569,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3443,6 +3599,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3466,6 +3624,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3489,6 +3649,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3522,6 +3684,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3554,6 +3718,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3584,6 +3750,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3611,6 +3779,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3640,6 +3810,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3675,6 +3847,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3705,6 +3879,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3731,6 +3907,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3760,6 +3938,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3795,6 +3975,30 @@ Options:
   --socket <path>
   --idle-timeout <seconds>
   -h, --help                display help for command"
+`;
+
+exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
+"$ warden __ios-runner-host --help
+Usage: warden __ios-runner-host [options]
+
+resident iPhone runner host behind \`warden ui\` (internal)
+
+Options:
+  --udid <udid>
+  --socket <path>
+  --idle-timeout <seconds>
+  -h, --help                display help for command"
+`;
+
+exports[`help output warden __ios-runner-restart --help (and nested subcommands) 1`] = `
+"$ warden __ios-runner-restart --help
+Usage: warden __ios-runner-restart [options]
+
+restart an iPhone's runner host for a running e2e session (internal)
+
+Options:
+  --udid <udid>
+  -h, --help     display help for command"
 `;
 
 exports[`help output warden __netproxy --help (and nested subcommands) 1`] = `

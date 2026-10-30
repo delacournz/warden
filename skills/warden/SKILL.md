@@ -16,6 +16,7 @@ Several agents and humans share this machine's simulators and emulators; warden 
 - **Anything that must keep passing is a spec** (`*.e2e.ts`, `@delacour/warden-e2e`) run by `warden e2e <suite>`. Never start Metro or export `WARDEN_*` by hand for a suite.
 - **Xcode 27 MCP is not a device path.** `xcrun mcpbridge` / `xcrun mcp-server` are fine for build, test, previews and docs. Its `DeviceInteraction*` tools (and Apple's exported device-interaction skill) drive any booted sim and bypass leases: use them only on a udid you `warden claim`ed, end the session (`DeviceInteractionEndSession`) before `warden release`, and never run `mcp-server enable --unsafe-always-allow-all-agents`.
 - **A claim may block in the boot queue** (host RAM/CPU full; default `--wait 30m`). Don't retry, loop or raise `--max` to jump it: `--max` doesn't. See position with `warden queue`, budget with `warden capacity`. Use `--no-wait` only when you want fail-fast.
+- **`ambiguous_device` from a physical claim = ask the user.** Several usable phones and none named: warden exits 2 and lists `details.candidates` (names, models). Ask which one (list the names) unless the user already said any device is fine; then pass `--udid`/`--serial` and say which you picked. Never pick one the user said is someone else's. Detail: `references/physical.md`.
 - **Release when done.** `warden ui close --release` or `warden release <leaseId> [--shutdown]`. A bare `warden claim` by an agent lasts 5 min with no auto-refresh (every `warden ui` call heartbeats it; `warden dev`/`run`/`batch`/`e2e` hold by pid + 30 s heartbeat; else `warden heartbeat <leaseId>`). Subagents never run bare `release --mine` (frees the parent's leases): release by id, or claim `--label x` and `release --mine --label x`.
 
 ## Which path
@@ -29,6 +30,7 @@ Open the reference file for details before acting; this file only routes.
 | write or fix a `*.e2e.ts` spec, helpers, testIDs, read failure artifacts | [references/specs.md](references/specs.md) |
 | run specs (`warden e2e`, `affected`), suite config, batch dir, `run`/`batch` scripts | [references/suites.md](references/suites.md) |
 | profile an app: CPU, memory, frames, startup, JS, React, native; before/after diffs | [references/perf.md](references/perf.md) |
+| use a real phone / tablet: claim, allowlist, iPhone signing, Android quirks, privacy | [references/physical.md](references/physical.md) |
 | an error code, a dropped tap, a sheet, a stale helper, Metro refused | [references/troubleshooting.md](references/troubleshooting.md) |
 
 ## Quick reference
@@ -36,11 +38,12 @@ Open the reference file for details before acting; this file only routes.
 | Need | Command |
 |---|---|
 | one sim / emulator | `warden claim ios --json` · `warden claim android --json` (`--headless`, `--label x`, `--ttl 30m`) |
+| a physical phone / tablet | `warden claim android --physical --json` · `warden claim android --serial <adb serial…>` · `warden claim ios --udid <CoreDevice UDID…>` (naming a device implies `--physical`). Opt-in only: a plain claim never takes a phone, even with `--adopt`. Rejected with it: `--count --max --slim --headless --runtime --adopt --biometrics`. JSON leases carry `physical: { transport, hwSerial? }` |
 | set a new Expo app up for warden | `warden init --bundle-id <id>` → bundle id into `app.json`, `warden.config.ts`, `e2e/smoke.e2e.ts`; names packages to install (`expo-dev-client`, `@delacour/warden-e2e`), installs nothing |
 | run the app in this worktree (replaces `expo run:ios`) | `warden dev ios --json` (platform defaults to ios) → first stdout line `{ udid, port, metroUrl, leaseIds, source }` (everything else, Metro included, is stderr); checks bundle id + `expo-dev-client` first; installs the dev build matching the native fingerprint (installed → cache → EAS only with `eas.json`/config → local build, which regenerates a git-ignored `ios/`/`android/` prebuilt for another fingerprint; `--no-build` / `--no-eas` to skip); owns Metro on a leased port, refuses another checkout's Metro, opens the dev client; Ctrl-C releases. Agents run `--json` (plain output, no dashboard); the interactive dashboard is for people, `--no-tui` forces plain output on a TTY |
 | debug the running app | `warden dev enable devtools` first (dev starts without the CDP broker or perf HUD; `disable` / `status`) · `warden dev logs --kind bundle_failed,error` (Metro) · `warden ui exceptions` · `warden ui logs --level warn` · `warden ui logpoint add src/x.tsx:42 '<expr>'` → `logpoint hits` · `warden ui eval '<expr>'` (see ui.md Devtools) |
 | same over MCP | `warden mcp` (stdio): `dev_sessions`, `metro_logs`, `app_console`, `app_exceptions`, `app_network`, `app_eval`, `app_tree`, `app_route`, `app_reload`, `devtools_status`/`devtools_resume`, `logpoint_*`, `profile_*` |
-| a build on a device | `warden app ensure ios --udid <udid> --json [--kind dev\|simulator\|release \| --variant dev\|e2e]` · native hash: `warden app fingerprint [ios\|android]` |
+| a build on a device | `warden app ensure ios --udid <udid> --json [--kind dev\|simulator\|release \| --variant dev\|e2e]` · native hash: `warden app fingerprint [ios\|android]`. An iPhone `--udid` builds `--kind dev\|release` for the device (default `release`; `simulator` is refused) |
 | this worktree's JS in the cached sim build (seconds) | `warden repack ios\|android [--project <dir>] [--force] [--json]` → `{ result: reused\|repacked\|fallback, baseHash, jsKey, artifact, bundleMs }`; exit 1 on `fallback` (Android images changed) or an error. Never installs. `app ensure --kind simulator` / `e2e` / `ui open --kind simulator` run it for you |
 | cached builds | `warden builds ls` · `builds rm <hash…> [--platform p] [--dry-run] [--yes]` (also forgets installs; fixes a stale dev build) · `builds prune [--max-size 20G]` · `builds import <.app\|.apk>` |
 | fingerprint / Face ID | `warden ui biometrics [status\|enroll\|unenroll\|match\|fail]` · `biometrics: true` in config or `--biometrics` for an enrolled pool (ui.md, suites.md) · specs: `device.biometrics.*` |
@@ -49,6 +52,7 @@ Open the reference file for details before acting; this file only routes.
 | record a `warden ui` session into a spec | `warden ui record start <id> [--helper <module#fn>]` → drive → `record note\|use <module#fn>\|undo\|status\|cancel` → `record stop [--no-verify]` (verifies on the same device) |
 | the specs a change needs | `warden affected [suite] --base main --explain [--strict] [--json]` |
 | run them on leased devices | `warden e2e [suite] [--base main\|--all\|--specs a,b] [--count N] [--dry-run] [--devices all] [--dev \| --kind dev\|simulator\|release] [--no-shutdown] [--no-warm] [--headless] [--report f]`. Default build: the repacked `simulator` kind, no Metro. `--dev`: dev client + warden's Metro |
+| run them on a real phone | `warden e2e [suite] --physical [--platform android]` · `--serial <adb serial…>` (Android) · `--udid <CoreDevice UDID…>` (iOS) · suite/leg `physical: true\|{ ids }`; also on `run` / `batch`. No reboot, slim, arrange or shutdown; default kind `release`; an iPhone gets a build signed for it (`WARDEN_IOS_TEAM_ID`), installed with `devicectl`, never a `simulator` build; specs needing pinch: `test(t, { requires: ["pinch"] }, …)`. See suites.md |
 | N devices + ports for a script | `warden run ios --count N --port 8091:20 [--app] -- <cmd>` |
 | independent jobs over N devices | `warden batch ios\|<preset> --count N --jobs-from <file\|-> -- <cmd {job} {udid}>` |
 | a free port | `warden port claim --json` (`--from 8091 --span 20`) · `warden port ls` · `warden port release <port…>\|--lease <id…>\|--mine` |
@@ -75,6 +79,7 @@ By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preloa
 - gc shuts a stale sim down 10+ min after it went stale, and never while a non-Apple app is in the foreground. It also shuts down unleased warden devices idle 20 min (`--idle`).
 - A declined `warden.config.ts` offer from `warden dev` is kept in `~/.warden/projects/<key>/`, shared by every worktree; nothing is written to the repo.
 - warden only creates, shuts down and erases `warden-<profile>-N` sims; `--adopt` opts a foreign device in.
+- A physical device is never booted, created, shut down (`release --shutdown` and `gc` leave it and say "physical device: never shut down"), erased or slimmed, and costs no host capacity. A `--physical` claim takes only a ready device (Android adb state `device`; iPhone/iPad paired with Developer Mode on, as listed by `warden devices`) and fails with "no free ready physical <platform> device" when none is free; it never queues for capacity.
 - The SessionEnd hook releases and shuts down what the session booted; `/clear` keeps sims up.
 - Codex: set `WARDEN_SESSION_ID`, or leases count as the shell's user leases.
 - A failed `warden e2e` leaves sims booted for inspection.

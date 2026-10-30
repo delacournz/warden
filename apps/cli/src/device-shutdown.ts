@@ -22,7 +22,7 @@ type DeviceShutdown =
 	| { kind: "failed"; note: string };
 
 /**
- * Shut down the devices behind `leases` that `shouldShutdown` allows: warden-created ones and ones
+ * Shut down the devices behind `leases` that `shouldShutdown` allows (never a physical device): warden-created ones and ones
  * the lease owner booted; each shut-down iOS device's `warden-simd` is stopped with it, and its viewer window closed. A device that was already running when leased (e.g. the user's own
  * Simulator.app sim) is left running. Call while the leases are still held, so nobody is handed a
  * device mid-shutdown. Failures become notes — releasing must still go ahead. `guard` (gc's stale
@@ -45,6 +45,8 @@ export async function shutdownReleasedDevices(
 	const one = async (lease: Lease): Promise<DeviceShutdown> => {
 		const r = lease.resource;
 		if (r.kind !== "device") return { kind: "skipped" };
+		if (r.physical)
+			return { kind: "foreign", note: `left ${r.name} (${r.id}) alone: physical device: never shut down` };
 		if (!shouldShutdown(lease, wardenDevices)) {
 			return { kind: "foreign", note: `left ${r.name} (${r.id}) running: it was already running when leased` };
 		}

@@ -166,6 +166,18 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./android-host")).androidHostCommand,
 	},
 	{
+		name: "__ios-runner-host",
+		summary: "resident iPhone runner host behind `warden ui` (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-host")).iosRunnerHostCommand,
+	},
+	{
+		name: "__ios-runner-restart",
+		summary: "restart an iPhone's runner host for a running e2e session (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-restart")).iosRunnerRestartCommand,
+	},
+	{
 		name: "__netproxy",
 		summary: "a lease's network shaping proxy, started by `warden ui net` (internal)",
 		hidden: true,

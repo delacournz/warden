@@ -30,6 +30,7 @@ import { driverErr } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
 import type { NetworkProxyPort } from "../network-proxy";
 import type { DetectsAlerts } from "../observation-cache";
+import { physicalConditionOps } from "../physical-conditions";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -89,6 +90,7 @@ import {
 } from "./android-device";
 import { createDumper, type DumpRoute } from "./android-dump";
 import { createAndroidNetwork } from "./android-network";
+import { createSettingsGuard, preparePhone, type SettingsGuard } from "./android-phone";
 import { createAndroidSettings } from "./android-settings";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
@@ -143,6 +145,11 @@ export type AndroidDriverOptions = {
 	state?: AndroidStateStore;
 	/** the app under test: `app.openUrl` is addressed to it (`am start -p`), so no other app or chooser takes the link */
 	appPackage?: string;
+	/**
+	 * Packages besides `appPackage` that warden installed on this device (the `installs` table). On a physical phone
+	 * only these may be uninstalled or have their data cleared; anything else is `E_REFUSED` (`physical_protected`).
+	 */
+	ownedPackages?: readonly string[];
 	/** how long to wait for `sys.boot_completed`, default 30 s */
 	bootTimeoutMs?: number;
 	/**
@@ -229,6 +236,11 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 	});
 	if (!booted.success) return failed(booted.error);
 	const sdk = booted.data.sdk;
+	const phone = booted.data.physical;
+	if (phone) {
+		const awake = await preparePhone(session, clock, phone, log);
+		if (!awake.success) return failed(awake.error);
+	}
 	const probed = options.screen ?? booted.data.screen;
 	const screen = probed ? { success: true as const, data: probed } : await readScreen(session, serial);
 	if (!screen.success) return failed(screen.error);
@@ -241,6 +253,16 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 		...(options.state ? { state: options.state } : {}),
 		...(log ? { log } : {}),
 	});
+	const settings = phone
+		? await createSettingsGuard({
+				session,
+				serial,
+				sdk,
+				pending: { rotation: saved.rotation, uimode: saved.uimode },
+				...(options.state ? { state: options.state } : {}),
+				...(log ? { log } : {}),
+			})
+		: undefined;
 	return {
 		success: true,
 		data: buildDriver(options, session, screen.data, clock, execBinary, {
@@ -248,6 +270,8 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 			savedRoute: saved.dumpRoute,
 			savedUiadUnsupported: saved.uiadUnsupported,
 			animations,
+			settings,
+			physical: phone !== undefined,
 		}),
 	};
 }
@@ -259,6 +283,9 @@ type DeviceFacts = {
 	/** the `warden-uiad` build a past process found cannot run on this device */
 	savedUiadUnsupported: string | undefined;
 	animations: AnimationGuard;
+	/** a physical phone's rotation / night-mode guard; undefined on an emulator */
+	settings: SettingsGuard | undefined;
+	physical: boolean;
 };
 
 /**
@@ -544,6 +571,8 @@ function buildDriver(
 
 	const orientation: Driver["orientation"] = async (set?: Orientation) => {
 		if (set) {
+			const saved = await facts.settings?.beforeRotate();
+			if (saved && !saved.success) return saved;
 			for (const argv of rotationArgvs(orientationToRotation(set))) {
 				const res = await input(shellCommand(argv));
 				if (!res.success) return res;
@@ -603,6 +632,8 @@ function buildDriver(
 
 	const appearance: Driver["appearance"] = async (set) => {
 		if (set) {
+			const saved = await facts.settings?.beforeAppearance();
+			if (saved && !saved.success) return saved;
 			const res = await runChecked(session, shellCommand(uimodeSetArgv(set === "dark")), "E_UNSUPPORTED");
 			return res.success ? { success: true, data: set } : res;
 		}
@@ -801,6 +832,7 @@ function buildDriver(
 		location,
 		clock: clockOp,
 		...settings,
+		...(facts.physical ? physicalConditionOps(`physical Android device ${serial}`) : {}),
 		biometrics,
 		app: createAppCommands({
 			session,
@@ -809,12 +841,14 @@ function buildDriver(
 			serial,
 			...(log ? { log } : {}),
 			...(options.appPackage ? { appPackage: options.appPackage } : {}),
+			...(facts.physical ? { physical: true, ownedPackages: options.ownedPackages ?? [] } : {}),
 		}),
 		close: async () => {
 			await stopFlap();
 			await stopTicker();
 			await uiad?.stop();
 			await facts.animations.restore();
+			await facts.settings?.restore();
 			await Promise.all(saving.splice(0));
 			await session.close();
 		},

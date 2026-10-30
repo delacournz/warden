@@ -2,11 +2,12 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createDevice, type Device } from "@delacour/warden-e2e/device";
 import type { BiometricOp, Driver, Orientation } from "@delacour/warden-e2e/driver/driver.types";
+import { driverErr } from "@delacour/warden-e2e/driver/errors";
 import type { E2eEnv } from "@delacour/warden-e2e/env";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type ActionOptionValues, finishAction, fromE2eError, parseSettle } from "./act";
-import type { UiDevice } from "./device";
+import { physicalDevice, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { type UiError, type UiSuccess, uiError } from "./output";
 import { uiDir } from "./paths";
@@ -242,6 +243,15 @@ export function uiBiometrics(
 				success: false,
 				error: uiError("usage", `unknown biometrics op "${raw}"`, { hint: BIOMETRIC_OPS.join(" | ") }),
 			};
+		}
+		if (physicalDevice(device)) {
+			const what = device.platform === "ios" ? "a physical iPhone" : "a physical Android device";
+			return fromDriver(
+				driverErr(
+					"E_UNSUPPORTED",
+					`biometrics is not available on ${what}: a real Face ID / fingerprint sensor is never enrolled or matched; use a simulator or emulator`
+				)
+			);
 		}
 		const driver = await env.driver();
 		if (!driver.success) return driver;

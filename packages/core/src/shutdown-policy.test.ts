@@ -36,6 +36,14 @@ describe("staleShutdownBlock", () => {
 });
 
 describe("shouldShutdown", () => {
+	test("a physical device is never shut down, whatever the records or bootedByOwner say", () => {
+		const phone = lease({
+			bootedByOwner: true,
+			resource: { kind: "device", platform: "android", id: "P1", name: "n", physical: { transport: "usb" } },
+		});
+		expect(shouldShutdown(phone, new Set(["android:P1"]))).toBe(false);
+	});
+
 	test("warden-created device → yes", () => {
 		expect(shouldShutdown(lease(), new Set(["ios:U1"]))).toBe(true);
 	});

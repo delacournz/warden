@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { conditionsOf } from "../conditions/device-conditions";
-import { isHidLost } from "../driver/ios/hid-recovery";
+import { isRecoverableLoss } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
 import { perfStartFor } from "../perf/device-perf";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
@@ -338,7 +338,7 @@ async function concludeAttempt<F extends object>(
 	if (
 		outcome.failed &&
 		session.recoverHid !== undefined &&
-		isHidLost(outcome.failure) &&
+		isRecoverableLoss(outcome.failure, session.env.deviceKind) &&
 		(await session.recoverHid())
 	) {
 		return "again";

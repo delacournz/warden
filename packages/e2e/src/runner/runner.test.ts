@@ -267,6 +267,30 @@ describe("lost HID connection", () => {
 	});
 });
 
+describe("lost runner connection on a physical iPhone", () => {
+	const physical = {
+		WARDEN_DEVICE_KIND: "physical",
+		WARDEN_IOS_RUNNER_RESTART: '["warden","__ios-runner-restart","--udid","{udid}"]',
+	};
+	test("the runner host is restarted once, the phone is never rebooted, and the test runs again", async () => {
+		const run = await runSpec("runner-lost", physical);
+		const udid = "FAKE-UDID-0123456789";
+		expect(run.log).toEqual([
+			"body run 1",
+			`exec warden __ios-runner-restart --udid ${udid}`,
+			"body run 2",
+			"body run 3",
+		]);
+		expect(run.log.some((line) => line.includes("simctl"))).toBe(false);
+		expect(run.stdout).toContain("runner host restarted");
+		expect(run.stdout).toContain("lost again after a restart");
+	});
+	test("a sim-style HID loss on a phone is not rebooted", async () => {
+		const run = await runSpec("hid", physical);
+		expect(run.log.filter((line) => line.startsWith("exec"))).toEqual([]);
+	});
+});
+
 describe("windows after a HID-loss reboot", () => {
 	test("WARDEN_AFTER_REBOOT runs once after the reboot, {udid} filled in, before the test runs again", async () => {
 		const run = await runSpec("hid", { WARDEN_AFTER_REBOOT: '["rewindow","--open","{udid}"]' });
@@ -287,6 +311,15 @@ describe("skip", () => {
 		const run = await runSpec("skip");
 		expect(run.exitCode).toBe(0);
 		expect(run.log).toEqual(["skipIf false ran", "ios only ran"]);
+	});
+});
+
+describe("requires", () => {
+	test("pinch and multi-touch tests are skipped on a physical iPhone only", async () => {
+		const phone = await runSpec("requires", { WARDEN_DEVICE_KIND: "physical" });
+		expect(phone.log).toEqual(["plain ran"]);
+		const sim = await runSpec("requires");
+		expect(sim.log).toEqual(["plain ran", "needs pinch ran", "needs multi-touch ran"]);
 	});
 });
 

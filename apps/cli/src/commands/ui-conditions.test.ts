@@ -25,7 +25,7 @@ type Setup = {
 	networkOptions: unknown[];
 };
 
-function setup(platform: "ios" | "android" = "ios"): Setup {
+function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 	const killed: number[] = [];
 	const schedulers: SchedulerConfig[] = [];
 	const tickers: TickerConfig[] = [];
@@ -38,6 +38,7 @@ function setup(platform: "ios" | "android" = "ios"): Setup {
 	s.h = harness([snapshotOf(LOGIN)], {
 		platform,
 		pidAlive: (pid) => alive.has(pid),
+		...(physical ? { lease: { physical: { transport: "usb" } } } : {}),
 		conditions: {
 			open: async () =>
 				ok({
@@ -87,6 +88,28 @@ function setup(platform: "ios" | "android" = "ios"): Setup {
 const lease = (s: Setup) => s.h.c.store().listLeases()[0]?.id as string;
 const stored = (s: Setup, area: "network" | "location") =>
 	activeConditions(s.h.c.store(), lease(s)).find((r) => r.area === area);
+
+describe("conditions on a physical device", () => {
+	for (const platform of ["ios", "android"] as const) {
+		test(`${platform}: refused E_UNSUPPORTED before the device is touched, nothing recorded or spawned`, async () => {
+			const s = setup(platform, true);
+			for (const argv of [
+				["network", "set", "offline", "--json"],
+				["network", "flap", "--up", "1s", "--down", "1s", "--json"],
+				["location", "set", "1,2", "--json"],
+				["clock", "set", "2026-01-01T00:00:00Z", "--json"],
+			]) {
+				expect(await s.h.run(...argv)).not.toBe(0);
+				const out = JSON.stringify(doc(s.h.c));
+				expect(out).toContain("E_UNSUPPORTED");
+				expect(out).toContain("is not available on physical");
+			}
+			expect(s.h.driver.calls).toEqual([]);
+			expect(s.schedulers).toEqual([]);
+			expect(activeConditions(s.h.c.store(), lease(s))).toEqual([]);
+		});
+	}
+});
 
 describe("net <condition>", () => {
 	test("a preset: one driver call, recorded on the lease", async () => {

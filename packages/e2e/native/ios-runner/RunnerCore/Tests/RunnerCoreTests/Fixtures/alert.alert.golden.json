@@ -1,0 +1,105 @@
+{
+  "buttons" : [
+    {
+      "children" : [
+
+      ],
+      "depth" : 0,
+      "enabled" : true,
+      "focused" : false,
+      "frame" : {
+        "height" : 36,
+        "width" : 320,
+        "x" : 60,
+        "y" : 470
+      },
+      "hittable" : true,
+      "id" : "0",
+      "label" : "Allow Once",
+      "normFrame" : {
+        "height" : 0.03765690376569038,
+        "width" : 0.7272727272727273,
+        "x" : 0.13636363636363635,
+        "y" : 0.4916317991631799
+      },
+      "rawType" : "Button",
+      "role" : "button",
+      "selected" : false,
+      "tapPoint" : {
+        "x" : 220,
+        "y" : 488
+      },
+      "traits" : [
+        "button"
+      ]
+    },
+    {
+      "children" : [
+
+      ],
+      "depth" : 0,
+      "enabled" : true,
+      "focused" : false,
+      "frame" : {
+        "height" : 36,
+        "width" : 320,
+        "x" : 60,
+        "y" : 506
+      },
+      "hittable" : true,
+      "id" : "1",
+      "label" : "Allow While Using App",
+      "normFrame" : {
+        "height" : 0.03765690376569038,
+        "width" : 0.7272727272727273,
+        "x" : 0.13636363636363635,
+        "y" : 0.5292887029288703
+      },
+      "rawType" : "Button",
+      "role" : "button",
+      "selected" : false,
+      "tapPoint" : {
+        "x" : 220,
+        "y" : 524
+      },
+      "traits" : [
+        "button"
+      ]
+    },
+    {
+      "children" : [
+
+      ],
+      "depth" : 0,
+      "enabled" : true,
+      "focused" : false,
+      "frame" : {
+        "height" : 36,
+        "width" : 320,
+        "x" : 60,
+        "y" : 542
+      },
+      "hittable" : true,
+      "id" : "2",
+      "label" : "Don’t Allow",
+      "normFrame" : {
+        "height" : 0.03765690376569038,
+        "width" : 0.7272727272727273,
+        "x" : 0.13636363636363635,
+        "y" : 0.5669456066945606
+      },
+      "rawType" : "Button",
+      "role" : "button",
+      "selected" : false,
+      "tapPoint" : {
+        "x" : 220,
+        "y" : 560
+      },
+      "traits" : [
+        "button"
+      ]
+    }
+  ],
+  "message" : "Your location is used to show directions.",
+  "title" : "Allow “Maps” to use your location?"
+}

@@ -1,7 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_JS_INPUTS, defaultBuildCommand, simulatorBuildCommand } from "./builds.defaults";
+import {
+	DEFAULT_JS_INPUTS,
+	defaultBuildCommand,
+	iosDeviceBuildCommand,
+	simulatorBuildCommand,
+} from "./builds.defaults";
 import { testProject } from "./builds.testing";
-import { BUILD_KINDS, DEFAULT_E2E_KIND, DEFAULT_UI_KIND, kindBuildCommand, projectForKind, resolveKind } from "./kinds";
+import {
+	BUILD_KINDS,
+	DEFAULT_E2E_KIND,
+	DEFAULT_UI_KIND,
+	deviceTarget,
+	kindBuildCommand,
+	projectForKind,
+	resolveKind,
+	withDeviceBundleId,
+} from "./kinds";
 
 describe("constants", () => {
 	test("three kinds; e2e defaults to simulator, ui to dev", () => {
@@ -113,5 +127,61 @@ describe("projectForKind", () => {
 	test("clears a variant-derived jsInputs when the kind does not embed JS", () => {
 		const base = testProject({ jsInputs: ["src/**"] });
 		expect(projectForKind(base, "dev").jsInputs).toBeUndefined();
+	});
+});
+
+describe("device builds", () => {
+	test("iosDeviceBuildCommand: a signed xcodebuild for any device, products in ios/build", () => {
+		const cmd = iosDeviceBuildCommand("Release", "expo", { team: "ABCDE12345" });
+		expect(cmd).toContain(
+			'&& cd ios && ws="$(ls -d *.xcworkspace | head -n 1)" && RCT_NO_LAUNCH_PACKAGER=1 xcodebuild'
+		);
+		expect(cmd).toContain('-workspace "$ws" -scheme "${ws%.xcworkspace}" -configuration Release');
+		expect(cmd).toContain("-destination generic/platform=iOS -derivedDataPath build -allowProvisioningUpdates");
+		expect(cmd).toContain("CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=ABCDE12345 build");
+		expect(cmd).not.toContain("PRODUCT_BUNDLE_IDENTIFIER");
+		expect(cmd.startsWith("{ [ -f ios/Podfile ]")).toBe(true);
+	});
+
+	test("iosDeviceBuildCommand: the bundle id override and bare React Native pods", () => {
+		const cmd = iosDeviceBuildCommand("Release", "react-native", {
+			team: "ABCDE12345",
+			bundleIdentifier: "com.me.app",
+		});
+		expect(cmd).toContain("DEVELOPMENT_TEAM=ABCDE12345 PRODUCT_BUNDLE_IDENTIFIER=com.me.app build");
+		expect(cmd).not.toContain("expo prebuild");
+		expect(cmd).toContain("pod install --project-directory=ios");
+	});
+
+	test("deviceTarget: the salt follows the team and the bundle id override", () => {
+		const plain = testProject();
+		const overridden = testProject({ iosDeviceBundleId: "com.me.app" });
+		expect(deviceTarget(plain, "ABCDE12345")).toEqual({ team: "ABCDE12345", salt: "ABCDE12345" });
+		expect(deviceTarget(plain, "ZZZZZ99999").salt).not.toBe(deviceTarget(plain, "ABCDE12345").salt);
+		const salt = deviceTarget(overridden, "ABCDE12345").salt;
+		expect(salt).toMatch(/^ABCDE12345-[0-9a-f]{8}$/);
+		expect(deviceTarget(testProject({ iosDeviceBundleId: "com.me.other" }), "ABCDE12345").salt).not.toBe(salt);
+	});
+
+	test("projectForKind with a device target: target, device command, device bundle id", () => {
+		const project = testProject({ iosDeviceBundleId: "com.me.app" });
+		const resolved = projectForKind(project, "release", deviceTarget(project, "ABCDE12345"));
+		expect(resolved.target).toBe("device");
+		expect(resolved.bundleId.ios).toBe("com.me.app");
+		expect(resolved.bundleId.android).toBe("com.x.app");
+		expect(resolved.build.ios).toContain("DEVELOPMENT_TEAM=ABCDE12345 PRODUCT_BUNDLE_IDENTIFIER=com.me.app");
+		expect(resolved.build.android).toBe(kindBuildCommand("release", "android", "expo"));
+		expect(projectForKind(project, "release").target).toBeUndefined();
+		expect(projectForKind(project, "release").bundleId.ios).toBe("com.x.app");
+	});
+
+	test("kinds.<kind>.build.ios still replaces the device command", () => {
+		const project = testProject({ kinds: { release: { build: { ios: "my-build" } } } });
+		expect(resolveKind(project, "release", deviceTarget(project, "ABCDE12345")).build.ios).toBe("my-build");
+	});
+
+	test("withDeviceBundleId leaves a project without an override alone", () => {
+		const project = testProject();
+		expect(withDeviceBundleId(project)).toBe(project);
 	});
 });

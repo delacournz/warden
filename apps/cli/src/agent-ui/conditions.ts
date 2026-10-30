@@ -13,6 +13,7 @@ import { processAlive } from "@delacour/warden-core/liveness";
 import type { Lease } from "@delacour/warden-core/types";
 import type { SchedulerConfig } from "@delacour/warden-e2e/conditions/scheduler.config";
 import type { ClockState, NetworkState } from "@delacour/warden-e2e/driver/driver.types";
+import { physicalConditionOps } from "@delacour/warden-e2e/driver/physical-conditions";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
@@ -31,7 +32,7 @@ import {
 	type ShapingFlags,
 } from "./conditions-parse";
 import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
-import type { UiDevice } from "./device";
+import { physicalDevice, type UiDevice } from "./device";
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
 import { type UiError, type UiSuccess, uiError } from "./output";
 import { recordedIdentity } from "./process-identity";
@@ -123,12 +124,17 @@ function ownedPids(deps: Required<ConditionsDeps>, ctx: CommandContext, lease: L
 	return [...(proxy === undefined ? [] : [{ kind: "pid" as const, pid: proxy }]), ...extra];
 }
 
+/** Runs `work` on the device's condition port; a physical device gets the refusing ops and is never opened. */
 export async function withPort<T>(
 	ctx: CommandContext,
 	deps: Required<ConditionsDeps>,
 	device: UiDevice,
 	work: (port: ConditionsPort) => Promise<Result<T, UiError>>
 ): Promise<Result<T, UiError>> {
+	if (physicalDevice(device)) {
+		const what = device.platform === "ios" ? "physical iPhone" : "physical Android device";
+		return work({ ...physicalConditionOps(`${what} ${device.udid}`), close: async () => undefined });
+	}
 	const port = await deps.open(ctx, device);
 	if (!port.success) return port;
 	try {

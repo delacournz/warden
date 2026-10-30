@@ -10,6 +10,7 @@ import {
 	DISMISS_BUTTONS,
 	findButton,
 	firstOf,
+	isAutofillSaveSheet,
 	nameOf,
 } from "./alert-buttons";
 import { createAlertReader } from "./alert-reader";
@@ -115,7 +116,9 @@ export type Device = {
 	 * Answers the system alert / sheet on top. `accept` presses the first present of OK, Allow, Open,
 	 * Continue, Yes, Done, Allow While Using App, Allow Once (else the last button); `dismiss` the first
 	 * of Cancel, Don't Allow, Not Now, Dismiss, No, Close (else the first button); `{button}` the button
-	 * with that name (`ACTION_FAILED` when absent). Resolves false when no alert is showing.
+	 * with that name (`ACTION_FAILED` when absent). The Android autofill "Save password?" sheet is closed with Back for
+	 * `accept` and `dismiss` alike (never its Never / Continue buttons, which write to the user's account). Resolves false
+	 * when no alert is showing.
 	 */
 	alert(action: AlertAction): Promise<boolean>;
 	/**
@@ -370,6 +373,17 @@ export function createDevice({
 			if (info === null || info.buttons.length === 0) return false;
 			// openLink is answering this sheet itself and must see it to know the link has one
 			if (isOpenInSheet(info) && typeof action === "string" && linkInFlight(session)) return false;
+			// "Never" and "Continue" both change the user's Google account: only Back closes the sheet
+			if (driver.platform === "android" && isAutofillSaveSheet(info.buttons)) {
+				if (typeof action !== "string") {
+					throw new E2eError(
+						"ACTION_FAILED",
+						`the autofill "Save password?" sheet is closed with Back only, never "${action.button}": use accept or dismiss`
+					);
+				}
+				await unwrap(() => driver.pressButton("back"), "dismiss autofill save sheet", signal());
+				return true;
+			}
 			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
