@@ -1,4 +1,6 @@
+import { type A11yEventsRead, parseUiadA11yEvents } from "../a11y-events";
 import type { DriverError, DriverResult, Logger, Point, ScreenInfo, Snapshot } from "../driver.types";
+import { driverErr } from "../errors";
 import type { GesturePlan } from "../gesture-geometry";
 import type { SettleDetail } from "../settle";
 import { noteSpanDetail } from "../span-detail";
@@ -46,6 +48,8 @@ export type UiadOps = {
 	typeText(text: string): Maybe<void>;
 	/** replace the whole text of the focused input (`ACTION_SET_TEXT`); `undefined` = refused or no server */
 	setText(text: string): Maybe<void>;
+	/** announcements and live-region changes since a cursor (`a11yEvents` op, server 0.5.0+) */
+	a11yEvents(since?: number): Maybe<A11yEventsRead>;
 	stop(): Promise<void>;
 };
 
@@ -227,6 +231,17 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 		selectAll: () => call("selectAll", async (server) => mapVoid(await server.request("selectAll")), true),
 		typeText: (text) => edit("typeText", (server) => server.typeText(text)),
 		setText: (text) => edit("setText", (server) => server.request("setText", { text })),
+		a11yEvents: (since) =>
+			call(
+				"a11yEvents",
+				async (server) => {
+					const res = await server.request("a11yEvents", since ? { since } : {});
+					if (!res.success) return res;
+					const parsed = parseUiadA11yEvents(res.data);
+					return parsed.success ? { success: true, data: parsed.data } : driverErr("E_INTERNAL", parsed.error);
+				},
+				true
+			),
 		stop: () => backend.stop(),
 	};
 }

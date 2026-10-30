@@ -1,7 +1,15 @@
 import type { Result } from "@delacour/warden-types/result";
+import { type A11yEventsRead, parseInjectEvents } from "../a11y-events";
 import type { DriverError, DriverResult, Element, ElementA11y, LaunchOptions, Rect, Snapshot } from "../driver.types";
 import { driverErr, driverError } from "../errors";
-import { type InjectChannel, type InjectFs, injectA11yPath, injectLaunchEnv, nodeInjectFs } from "./inject";
+import {
+	type InjectChannel,
+	type InjectFs,
+	injectA11yPath,
+	injectEventsPath,
+	injectLaunchEnv,
+	nodeInjectFs,
+} from "./inject";
 import { INJECT_ACK_MS, INJECT_LOAD_MS } from "./ios-network";
 
 /**
@@ -203,6 +211,8 @@ export type IosA11y = {
 	confirmLoaded(): DriverResult<void>;
 	/** Read the app's UIKit accessibility tree now and merge it into `snapshot`. */
 	read(snapshot: Snapshot): DriverResult<Snapshot>;
+	/** Announcements and screen/layout notifications the app posted since byte offset `since` (A11Y-8). */
+	events(since?: number): DriverResult<A11yEventsRead>;
 };
 
 export function createIosA11y(deps: IosA11yDeps): IosA11y {
@@ -241,6 +251,16 @@ export function createIosA11y(deps: IosA11yDeps): IosA11y {
 					{ detail: { statePath: channel.statePath } }
 				),
 			};
+		},
+		async events(since) {
+			if (!channel.attached()) {
+				return driverErr(
+					"E_UNSUPPORTED",
+					"announcements come from the injected library, and this app was launched without it: set WARDEN_A11Y=1 (or open the driver with `a11y`) and launch the app again"
+				);
+			}
+			const text = fs.read(injectEventsPath(channel.statePath)) ?? "";
+			return { success: true, data: parseInjectEvents(text, since) };
 		},
 		async read(snapshot) {
 			const attached = channel.attached();

@@ -20,6 +20,11 @@
 // accessibilityElementsHidden) are skipped with their subtree; if the main thread does not answer in 3 s the file says
 // {"req":seq,"error":"main thread busy"}. Not iOS (the macOS test harness): {"req":seq,"nodes":[],"unsupported":true}.
 //
+// Accessibility events (A11Y-8): `UIAccessibilityPostNotification` is interposed (the original is always called) and
+// announcements (argument NSString or NSAttributedString), screen-changed and layout-changed are appended as JSON lines
+// {"kind":"announcement"|"screen-changed"|"layout-changed","text"?:s,"at":epoch ms} to `<file>.events` (append-only;
+// the host's cursor is a byte offset, and a line is only complete once it ends in a newline). Needs WARDEN_INJECT_STATE.
+//
 // Covered: NSURLSession (default/ephemeral/background configurations and sessionWithConfiguration:*), network path
 // APIs (nw_path_get_status, nw_path_uses_interface_type, NWPathMonitor update handlers re-fired on change),
 // SCNetworkReachability (flags, callbacks re-fired on change), wall clocks (clock_gettime(CLOCK_REALTIME),
@@ -384,6 +389,44 @@ static void write_a11y(long long seq) {
   NSData *data = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
   [data writeToFile:[g_state_path stringByAppendingString:@".a11y"] atomically:YES];
 }
+
+#if TARGET_OS_IOS
+#pragma mark - accessibility events
+
+static void append_a11y_event(NSString *kind, NSString *text) {
+  if (!g_state_path) return;
+  struct timespec now = real_now();
+  long long at = (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+  NSMutableDictionary *line = [NSMutableDictionary dictionaryWithObjectsAndKeys:kind, @"kind", @(at), @"at", nil];
+  if (text.length) line[@"text"] = text;
+  NSData *json = [NSJSONSerialization dataWithJSONObject:line options:0 error:nil];
+  if (!json) return;
+  NSMutableData *out = [json mutableCopy];
+  [out appendBytes:"\n" length:1];
+  int fd = open([g_state_path stringByAppendingString:@".events"].fileSystemRepresentation, O_WRONLY | O_APPEND | O_CREAT, 0644);
+  if (fd < 0) return;
+  (void)write(fd, out.bytes, out.length);  // one write on an O_APPEND fd: lines never interleave
+  close(fd);
+}
+
+static void rep_post_notification(UIAccessibilityNotifications n, id argument) {
+  @try {
+    if (n == UIAccessibilityAnnouncementNotification) {
+      NSString *text = [argument isKindOfClass:[NSAttributedString class]] ? [(NSAttributedString *)argument string]
+                     : [argument isKindOfClass:[NSString class]] ? argument : nil;
+      append_a11y_event(@"announcement", text);
+    } else if (n == UIAccessibilityScreenChangedNotification) {
+      append_a11y_event(@"screen-changed", nil);
+    } else if (n == UIAccessibilityLayoutChangedNotification) {
+      append_a11y_event(@"layout-changed", nil);
+    }
+  } @catch (NSException *e) {
+    DLOG("a11y event skipped: %s", e.reason.UTF8String);
+  }
+  UIAccessibilityPostNotification(n, argument);
+}
+INTERPOSE(rep_post_notification, UIAccessibilityPostNotification);
+#endif
 
 #pragma mark - control channel
 

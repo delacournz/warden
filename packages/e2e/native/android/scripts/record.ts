@@ -219,6 +219,8 @@ await first.request("gesture", {
 });
 await first.request("gesture", { paths: [] });
 await first.request("setText", { text: "" });
+// empty unless the screen announced something; the checked-in fixture also holds a reply from a throwaway app that does
+await first.request("a11yEvents");
 await first.request("snapshot");
 await first.request("shutdown");
 await first.close();

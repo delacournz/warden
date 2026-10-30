@@ -85,6 +85,9 @@ export const injectStatePath: (wardenHome: string, udid: string) => string = cor
 /** Where the dylib writes an accessibility read (`a11yRead`): next to the state file. */
 export const injectA11yPath = (statePath: string): string => `${statePath}.a11y`;
 
+/** Where the dylib appends accessibility events (A11Y-8): JSON lines next to the state file. */
+export const injectEventsPath = (statePath: string): string => `${statePath}.events`;
+
 export const injectAckPath = (statePath: string): string => `${statePath}.ack`;
 
 /**
@@ -278,6 +281,7 @@ export function createInjectChannel(input: {
 		reset() {
 			fs.remove(ackPath);
 			fs.remove(statePath);
+			fs.remove(injectEventsPath(statePath));
 		},
 	};
 }
