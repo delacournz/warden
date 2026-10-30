@@ -31,14 +31,29 @@ final class A11yEvents {
 		}
 	}
 
+	/** Writes one node as the snapshot's node JSON (no children); supplied by {@link Uia}. */
+	interface NodeWriter {
+		String write(AccessibilityNodeInfo node);
+	}
+
 	private final ArrayDeque<Entry> buffer = new ArrayDeque<Entry>();
 	private long cursor = 0;
+	/** accessibility-focus moves (TalkBack or a `srFocus`), a ring of their own so the announcement stream stays as it was */
+	private final ArrayDeque<Entry> focusBuffer = new ArrayDeque<Entry>();
+	private long focusCursor = 0;
+	private final NodeWriter writer;
+
+	A11yEvents(NodeWriter writer) {
+		this.writer = writer;
+	}
 
 	/** Look at one event; buffers it when it is an announcement or a live-region text change. */
 	void onEvent(AccessibilityEvent event) {
 		try {
 			int type = event.getEventType();
-			if (type == AccessibilityEvent.TYPE_ANNOUNCEMENT) {
+			if (type == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+				focus(event);
+			} else if (type == AccessibilityEvent.TYPE_ANNOUNCEMENT) {
 				String text = join(event.getText());
 				if (text.isEmpty() && event.getContentDescription() != null) text = event.getContentDescription().toString();
 				add("announcement", text);
@@ -48,6 +63,38 @@ final class A11yEvents {
 		} catch (Throwable t) {
 			Main.log("debug", "a11y event skipped: " + t);
 		}
+	}
+
+	private void focus(AccessibilityEvent event) {
+		AccessibilityNodeInfo source = event.getSource();
+		if (source == null || writer == null) return;
+		addFocus(writer.write(source));
+	}
+
+	synchronized void addFocus(String nodeJson) {
+		focusCursor++;
+		focusBuffer.addLast(new Entry(focusCursor, "focus", nodeJson, System.currentTimeMillis()));
+		while (focusBuffer.size() > CAPACITY) focusBuffer.removeFirst();
+	}
+
+	/**
+	 * `{events:[{node,at}], cursor, lost?}`: focus moves after `since`, each with the focused node as the snapshot
+	 * writes it (no children), same cursor rules as {@link #json}.
+	 */
+	synchronized String focusJson(long since) {
+		StringBuilder sb = new StringBuilder("{\"events\":[");
+		boolean firstEvent = true;
+		long oldest = focusBuffer.isEmpty() ? focusCursor + 1 : focusBuffer.peekFirst().seq;
+		for (Entry e : focusBuffer) {
+			if (e.seq <= since) continue;
+			if (!firstEvent) sb.append(',');
+			firstEvent = false;
+			sb.append("{\"node\":").append(e.text).append(",\"at\":").append(e.at).append('}');
+		}
+		sb.append("],\"cursor\":").append(focusCursor);
+		if (since + 1 < oldest && focusCursor > since) sb.append(",\"lost\":true");
+		sb.append('}');
+		return sb.toString();
 	}
 
 	private void liveRegion(AccessibilityEvent event) {

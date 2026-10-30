@@ -217,6 +217,56 @@ describe("undoConditions", () => {
 		]);
 	});
 
+	test("android TalkBack undo restores the exact previous services and never deletes what warden did not add", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{
+				screenReader: true,
+				screenReaderPrevious: { services: "com.other/com.other.Svc$Inner", enabled: "1" },
+			},
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[
+				...ADB,
+				"shell",
+				"settings",
+				"put",
+				"secure",
+				"enabled_accessibility_services",
+				"'com.other/com.other.Svc$Inner'",
+			],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_enabled", "'1'"],
+		]);
+	});
+
+	test("android TalkBack undo deletes the keys that were unset before", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{ screenReader: true, screenReaderPrevious: { services: null, enabled: null } },
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[...ADB, "shell", "settings", "delete", "secure", "enabled_accessibility_services"],
+			[...ADB, "shell", "settings", "delete", "secure", "accessibility_enabled"],
+		]);
+	});
+
+	test("a screenReader record without previous values touches no accessibility service", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "a11y", { screenReader: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([]);
+	});
+
 	test("ios locale removes the staged launch settings", async () => {
 		const home = join(dir, "home");
 		const path = launchSettingsPath(home, UDID);

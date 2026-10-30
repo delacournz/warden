@@ -51,7 +51,12 @@ final class Uia {
 	private HandlerThread thread;
 	private Display display;
 	private String displayError;
-	private final A11yEvents a11yEvents = new A11yEvents();
+	private final A11yEvents a11yEvents = new A11yEvents(new A11yEvents.NodeWriter() {
+		@Override
+		public String write(AccessibilityNodeInfo node) {
+			return nodeJson(node, STOP_SUBTREE);
+		}
+	});
 	private final Object eventLock = new Object();
 	private long lastEventMs;
 	private long eventCount;
@@ -853,5 +858,270 @@ final class Uia {
 		if (root == null) throw new OpError("E_AX_UNAVAILABLE", "null root node", true);
 		Bitmap shot = contrast ? ua.takeScreenshot() : null;
 		return Atf.run(atfPath, root, shot);
+	}
+
+	// ---------- screen reader (TalkBack) driving ----------
+
+	/** One node as JSON without its children, the shape the snapshot uses. Used for event sources and op replies. */
+	String nodeJson(AccessibilityNodeInfo node) {
+		return nodeJson(node, 1);
+	}
+
+	/** Max nodes of the subtree a focus stop carries: enough for a row's merged speech, not a whole screen. */
+	private static final int STOP_SUBTREE = 60;
+
+	/** `node` and up to `maxNodes - 1` visible descendants. */
+	String nodeJson(AccessibilityNodeInfo node, int maxNodes) {
+		int width = 0;
+		int height = 0;
+		if (display != null) {
+			DisplayMetrics m = new DisplayMetrics();
+			display.getRealMetrics(m);
+			width = m.widthPixels;
+			height = m.heightPixels;
+		}
+		StringBuilder sb = new StringBuilder(256);
+		dump(new Walk(sb, maxNodes, width, height, maxNodes == 1), node);
+		return sb.toString();
+	}
+
+	private static boolean hasSpeech(AccessibilityNodeInfo node, int depth) {
+		if (node.getText() != null && node.getText().length() > 0) return true;
+		if (node.getContentDescription() != null && node.getContentDescription().length() > 0) return true;
+		if (depth > 6) return false;
+		for (int i = 0; i < node.getChildCount(); i++) {
+			AccessibilityNodeInfo child = node.getChild(i);
+			if (child != null && child.isVisibleToUser() && hasSpeech(child, depth + 1)) return true;
+		}
+		return false;
+	}
+
+	private static boolean important(AccessibilityNodeInfo node) {
+		return Build.VERSION.SDK_INT < 24 || node.isImportantForAccessibility();
+	}
+
+	private static boolean screenReaderFocusable(AccessibilityNodeInfo node) {
+		return Build.VERSION.SDK_INT >= 28 && node.isScreenReaderFocusable();
+	}
+
+	/**
+	 * The nodes a screen reader lands on, in tree order: what TalkBack's linear navigation visits. A visible, important
+	 * node is a stop when the app marks it screen-reader focusable, or it is clickable / focusable (and not a scroll
+	 * container) and says something somewhere below it; its subtree is then spoken as one stop. Otherwise a node with
+	 * its own text or description is a stop. Invisible subtrees are skipped.
+	 */
+	private void collectStops(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> out) {
+		if (!node.isVisibleToUser()) return;
+		boolean imp = important(node);
+		if (imp) {
+			boolean group = (node.isClickable() || node.isFocusable()) && !node.isScrollable() && hasSpeech(node, 0);
+			boolean bareControl = node.isClickable() && !node.isScrollable() && node.getChildCount() == 0;
+			if (screenReaderFocusable(node) || group || bareControl) {
+				out.add(node);
+				return;
+			}
+			boolean own = (node.getText() != null && node.getText().length() > 0)
+					|| (node.getContentDescription() != null && node.getContentDescription().length() > 0);
+			if (own && node.getChildCount() == 0) {
+				out.add(node);
+				return;
+			}
+		}
+		for (int i = 0; i < node.getChildCount(); i++) {
+			AccessibilityNodeInfo child = node.getChild(i);
+			if (child != null) collectStops(child, out);
+		}
+	}
+
+	private static boolean contains(Rect outer, Rect inner) {
+		return outer.contains(inner);
+	}
+
+	/** Index of the stop that holds `focus` (the stop itself, else the smallest one around it); -1 when none does. */
+	private static int stopIndexOf(List<AccessibilityNodeInfo> stops, AccessibilityNodeInfo focus) {
+		for (int i = 0; i < stops.size(); i++) {
+			if (stops.get(i).equals(focus)) return i;
+		}
+		Rect f = new Rect();
+		focus.getBoundsInScreen(f);
+		int best = -1;
+		long bestArea = Long.MAX_VALUE;
+		for (int i = 0; i < stops.size(); i++) {
+			Rect r = new Rect();
+			stops.get(i).getBoundsInScreen(r);
+			long area = (long) r.width() * r.height();
+			if (contains(r, f) && area < bestArea) {
+				best = i;
+				bestArea = area;
+			}
+		}
+		return best;
+	}
+
+	private AccessibilityNodeInfo freshRoot() throws OpError {
+		clearCache();
+		AccessibilityNodeInfo root = activeRoot(600);
+		if (root == null) throw new OpError("E_AX_UNAVAILABLE", "no root node for the active window", true);
+		return root;
+	}
+
+	/** The node that is deepest at (x, y), later siblings (drawn on top) first. */
+	private static AccessibilityNodeInfo nodeAt(AccessibilityNodeInfo node, int x, int y) {
+		if (!node.isVisibleToUser()) return null;
+		Rect r = new Rect();
+		node.getBoundsInScreen(r);
+		if (!r.contains(x, y)) return null;
+		for (int i = node.getChildCount() - 1; i >= 0; i--) {
+			AccessibilityNodeInfo child = node.getChild(i);
+			if (child == null) continue;
+			AccessibilityNodeInfo hit = nodeAt(child, x, y);
+			if (hit != null) return hit;
+		}
+		return node;
+	}
+
+	private static AccessibilityNodeInfo clickableAncestor(AccessibilityNodeInfo node) {
+		AccessibilityNodeInfo n = node;
+		for (int depth = 0; n != null && depth < 16; depth++) {
+			if (n.isClickable() && n.isEnabled()) return n;
+			n = n.getParent();
+		}
+		return null;
+	}
+
+	private static AccessibilityNodeInfo scrollableAncestor(AccessibilityNodeInfo node) {
+		AccessibilityNodeInfo n = node;
+		for (int depth = 0; n != null && depth < 24; depth++) {
+			if (n.isScrollable()) return n;
+			n = n.getParent();
+		}
+		return null;
+	}
+
+	private static void largestScrollable(AccessibilityNodeInfo node, AccessibilityNodeInfo[] best, long[] bestArea) {
+		if (!node.isVisibleToUser()) return;
+		if (node.isScrollable()) {
+			Rect r = new Rect();
+			node.getBoundsInScreen(r);
+			long area = (long) r.width() * r.height();
+			if (area > bestArea[0]) {
+				best[0] = node;
+				bestArea[0] = area;
+			}
+		}
+		for (int i = 0; i < node.getChildCount(); i++) {
+			AccessibilityNodeInfo child = node.getChild(i);
+			if (child != null) largestScrollable(child, best, bestArea);
+		}
+	}
+
+	/** Wait until `node` reports accessibility focus (the action is asynchronous in the app), up to `ms`. */
+	private static boolean awaitFocused(AccessibilityNodeInfo node, long ms) {
+		long deadline = SystemClock.uptimeMillis() + ms;
+		for (;;) {
+			node.refresh();
+			if (node.isAccessibilityFocused()) return true;
+			if (SystemClock.uptimeMillis() >= deadline) return false;
+			SystemClock.sleep(20);
+		}
+	}
+
+	private String nodeReply(AccessibilityNodeInfo node, int index, int count) {
+		return "{\"node\":" + nodeJson(node, STOP_SUBTREE) + ",\"index\":" + index + ",\"count\":" + count + "}";
+	}
+
+	/**
+	 * Move accessibility focus one stop `dir` ("next" / "prev") from where it is, or to the stop at (x, y) when `dir`
+	 * is empty. Replies `{node, index, count}`; `{node:null, count}` past either end (focus stays where it was).
+	 */
+	String srFocus(String dir, float x, float y) throws OpError {
+		AccessibilityNodeInfo root = freshRoot();
+		List<AccessibilityNodeInfo> stops = new ArrayList<AccessibilityNodeInfo>();
+		collectStops(root, stops);
+		int target;
+		if (dir.isEmpty()) {
+			AccessibilityNodeInfo hit = nodeAt(root, (int) x, (int) y);
+			if (hit == null) throw new OpError("E_NO_ELEMENT", "no node at the point", false);
+			target = stopIndexOf(stops, hit);
+			if (target < 0) throw new OpError("E_NO_ELEMENT", "no screen reader stop at the point", false);
+		} else {
+			boolean next;
+			if ("next".equals(dir)) next = true;
+			else if ("prev".equals(dir)) next = false;
+			else throw new OpError("E_BAD_REQUEST", "dir must be next or prev", false);
+			AccessibilityNodeInfo current = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+			int at = current == null ? -1 : stopIndexOf(stops, current);
+			if (at < 0) target = next ? 0 : stops.size() - 1;
+			else target = next ? at + 1 : at - 1;
+			if (target < 0 || target >= stops.size()) return "{\"node\":null,\"count\":" + stops.size() + "}";
+		}
+		AccessibilityNodeInfo node = stops.get(target);
+		if (!node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)) {
+			throw new OpError("E_HID", "ACTION_ACCESSIBILITY_FOCUS was refused by the node", false);
+		}
+		lastInputMs = SystemClock.uptimeMillis();
+		awaitFocused(node, 500);
+		return nodeReply(node, target, stops.size());
+	}
+
+	/** The node that holds accessibility focus: `{node}` or `{node:null}`. */
+	String srFocused() throws OpError {
+		AccessibilityNodeInfo root = freshRoot();
+		AccessibilityNodeInfo focus = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+		if (focus == null) return "{\"node\":null}";
+		return "{\"node\":" + nodeJson(focus) + "}";
+	}
+
+	/** `ACTION_CLICK` on the focused node or its nearest clickable ancestor. */
+	String srActivate() throws OpError {
+		AccessibilityNodeInfo root = freshRoot();
+		AccessibilityNodeInfo focus = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+		if (focus == null) throw new OpError("E_NO_ELEMENT", "nothing holds accessibility focus", false);
+		return click(focus);
+	}
+
+	private String click(AccessibilityNodeInfo from) throws OpError {
+		AccessibilityNodeInfo target = clickableAncestor(from);
+		if (target == null) throw new OpError("E_NO_ELEMENT", "neither the node nor an ancestor is clickable", false);
+		boolean ok = target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+		lastInputMs = SystemClock.uptimeMillis();
+		if (!ok) throw new OpError("E_HID", "ACTION_CLICK was refused by the node", false);
+		return "{\"clicked\":true,\"node\":" + nodeJson(target) + "}";
+	}
+
+	/** Accessibility-focus events since `since` (see {@link A11yEvents#focusJson}). */
+	String srEvents(long since) {
+		return a11yEvents.focusJson(since);
+	}
+
+	/** `ACTION_CLICK` on the nearest clickable node at (x, y), found in the tree rather than by injecting a touch. */
+	String actionClick(float x, float y, String id) throws OpError {
+		AccessibilityNodeInfo root = freshRoot();
+		AccessibilityNodeInfo hit = nodeAt(root, (int) x, (int) y);
+		if (hit == null) throw new OpError("E_NO_ELEMENT", "no node at the point", false);
+		return click(hit);
+	}
+
+	/** `ACTION_SCROLL_FORWARD` / `BACKWARD` on the scrollable at (x, y), else the largest scrollable on screen. Replies `{scrolled}` (false at the end of the content). */
+	String actionScroll(String dir, float x, float y) throws OpError {
+		boolean forward;
+		if ("forward".equals(dir)) forward = true;
+		else if ("backward".equals(dir)) forward = false;
+		else throw new OpError("E_BAD_REQUEST", "dir must be forward or backward", false);
+		AccessibilityNodeInfo root = freshRoot();
+		AccessibilityNodeInfo target = null;
+		if (x >= 0 && y >= 0) {
+			AccessibilityNodeInfo hit = nodeAt(root, (int) x, (int) y);
+			if (hit != null) target = scrollableAncestor(hit);
+		}
+		if (target == null) {
+			AccessibilityNodeInfo[] best = new AccessibilityNodeInfo[1];
+			largestScrollable(root, best, new long[] {0});
+			target = best[0];
+		}
+		if (target == null) throw new OpError("E_NO_ELEMENT", "nothing on screen scrolls", false);
+		boolean ok = target.performAction(forward ? AccessibilityNodeInfo.ACTION_SCROLL_FORWARD : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+		lastInputMs = SystemClock.uptimeMillis();
+		return "{\"scrolled\":" + ok + "}";
 	}
 }

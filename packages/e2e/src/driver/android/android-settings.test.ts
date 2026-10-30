@@ -167,20 +167,15 @@ describe("android a11y", () => {
 		]);
 		expect(r.success && r.data.notes[0]).toContain("clamped to 2");
 	});
-	test("contrast, iOS-only settings and TalkBack are skipped with a reason; only those is E_UNSUPPORTED", async () => {
+	test("contrast and iOS-only settings are skipped with a reason; only those is E_UNSUPPORTED", async () => {
 		const h = harness();
 		const mixed = await h.settings.a11y({
 			textSize: 1.3,
 			contrast: "increased",
 			buttonShapes: true,
-			screenReader: true,
 		});
-		expect(mixed.success && mixed.data.skipped.map((s) => s.setting)).toEqual([
-			"contrast",
-			"buttonShapes",
-			"screenReader",
-		]);
-		expect(mixed.success && mixed.data.skipped.at(-1)?.reason).toBe("TalkBack mode lands in A11Y-7");
+		expect(mixed.success && mixed.data.skipped.map((s) => s.setting)).toEqual(["contrast", "buttonShapes"]);
+		expect(mixed.success && mixed.data.skipped.at(-1)?.reason).toBe("iOS only");
 		const only = await h.settings.a11y({ contrast: "increased" });
 		expect(!only.success && only.error.code).toBe("E_UNSUPPORTED");
 	});

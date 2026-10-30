@@ -433,6 +433,8 @@ export type A11yState = {
 	notes: readonly string[];
 	/** present when the op asked for `screenReader` and it was applied */
 	screenReader?: ScreenReaderState;
+	/** Android: the accessibility services / master switch the device had before TalkBack was turned on (`null` = unset), for the lease's condition record */
+	screenReaderPrevious?: { services: string | null; enabled: string | null };
 };
 
 export type BatteryOp = { level?: number; charging?: boolean };

@@ -1,4 +1,5 @@
 import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "../driver/driver.types";
+import { canActOnElements } from "../driver/element-actions";
 import { canDetectAlerts, canObserve, OBSERVATION_MAX_AGE_MS } from "../driver/observation-cache";
 import { snapshotHash } from "../driver/settle";
 import { typeText } from "../driver/typing";
@@ -569,7 +570,12 @@ export class Locator {
 			(await this.actionable(spec, options.timeout ?? this.rt.actionTimeout(), true));
 		const point =
 			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
-		this.rt.drive("tap", await found.observed.driver.tap(point));
+		const { driver } = found.observed;
+		// a screen reader changes what a touch means, so a resolved element is pressed through its accessibility action
+		if (!withPosition && "entry" in found && canActOnElements(driver)) {
+			if (this.rt.drive("tap", await driver.pressElement(found.entry.element))) return found.observed.snapshot;
+		}
+		this.rt.drive("tap", await driver.tap(point));
 		return found.observed.snapshot;
 	}
 
@@ -747,6 +753,9 @@ export class Locator {
 				{ enabled: false, tapPointOnScreen: false },
 				options.timeout ?? this.rt.actionTimeout()
 			);
+			if (canActOnElements(observed.driver)) {
+				if (this.rt.drive("swipe", await observed.driver.scrollElement(options.direction, entry.element))) return;
+			}
 			const vector = swipeVector(
 				options.direction,
 				visibleRect(entry.element.frame, observed.snapshot.screen),
@@ -1093,7 +1102,11 @@ export async function scrollUntilVisible(rt: Runtime, target: Locator, options: 
 				throw scrollGaveUp(target, entry === undefined, `${swipes} swipes ${direction}`, rt.excerpt(observed.snapshot));
 			}
 			const vector = swipeVector(direction, screenRect(observed.snapshot.screen), options.momentum);
-			rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
+			const scrolled =
+				canActOnElements(observed.driver) &&
+				rt.drive("scrollUntilVisible", await observed.driver.scrollElement(direction));
+			if (!scrolled)
+				rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
 			await observed.driver.settle(SCROLL_SETTLE);
 		}
 	});

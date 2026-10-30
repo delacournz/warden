@@ -49,6 +49,7 @@ import type {
 	TouchPath,
 	TwoFingerOptions,
 } from "./driver.types";
+import type { ActsOnElements, ScrollDirection } from "./element-actions";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
 import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
@@ -202,6 +203,8 @@ export type DriverCall =
 	| { method: "selectAll" }
 	| { method: "setText"; text: string }
 	| { method: "pasteText"; text: string }
+	| { method: "pressElement"; element: Element }
+	| { method: "scrollElement"; direction: ScrollDirection; within?: Element }
 	| { method: "pressButton"; button: HardwareButton }
 	| { method: "screenshot"; opts?: { path?: string; scale?: number } }
 	| { method: "orientation"; set?: Orientation }
@@ -261,6 +264,11 @@ export type FakeDriverOptions = {
 	setText?: boolean;
 	/** offer the optional `PastesText` capability (calls are recorded as `pasteText`); a plain driver has none */
 	pasteText?: boolean;
+	/**
+	 * Offer the optional `ActsOnElements` capability (calls are recorded as `pressElement` / `scrollElement`) and
+	 * answer whether the driver handled the action (default false: the caller sends the touch). A plain driver has none.
+	 */
+	elementActions?: { handled: boolean };
 	/** inspect every call (after it is recorded); return an override to fail it or fake its result */
 	onCall?: (call: DriverCall) => FakeOverride | undefined;
 	/**
@@ -300,6 +308,7 @@ export type FakeDriver = Driver &
 	Partial<SelectsAll> &
 	Partial<SetsText> &
 	Partial<PastesText> &
+	Partial<ActsOnElements> &
 	Partial<ReadsAlertOn & ProbesFrontmost & ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader> & {
 		/** every call so far, in order */
 		readonly calls: DriverCall[];
@@ -643,6 +652,12 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
 	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
 	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
+	const actions = options.elementActions;
+	if (actions !== undefined) {
+		driver.pressElement = async (element) => run({ method: "pressElement", element }, () => actions.handled);
+		driver.scrollElement = async (direction, within) =>
+			run({ method: "scrollElement", direction, ...(within ? { within } : {}) }, () => actions.handled);
+	}
 	const { alertBackends, frontmost } = options;
 	if (alertBackends !== undefined) {
 		driver.alertOn = async (backend) =>
