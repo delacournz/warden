@@ -1,0 +1,105 @@
+/*
+ * App-owned theme overrides, imported by `global.css` after the registry block.
+ *
+ * The example app's look is the "vault": a cool graphite night with one blue
+ * for "looking", green for "open" and amber for "still locked". It is the
+ * DARK theme only, written over the raw semantic tokens `theme.css` declares,
+ * so every Delacour component and every screen picks it up through its normal
+ * `bg-*` / `text-*` utilities. Light stays the registry palette.
+ *
+ * Nothing in the registry-copied files is edited: a later `@layer theme` rule
+ * for the same `@variant dark` variable wins over the earlier one.
+ *
+ * Vault name -> token
+ *   bg      #07090D  --background
+ *   surface #0E1219  --card, --popover
+ *   line    #1B2230  --border, --input, --secondary, --muted
+ *   text    #E9EDF4  --foreground, --primary
+ *   muted   #8C96A9  --muted-foreground
+ *   faint   #6F7A8E  --tertiary-foreground
+ *   scan    #5B8CFF  --info, --ring (and the tint behind --accent)
+ *   open    #3DDC97  --success
+ *   warn    #FFB547  --warning
+ *   idle    #C8D3F5  --idle  (app token: no semantic slot is "ready, waiting")
+ *   off     #55607A  --off   (app token: no semantic slot is "unavailable")
+ *
+ * Fonts: the vault's two faces are loaded at runtime by `useVaultFonts`
+ * (`expo-font`, from the JS bundle). The family names below are those
+ * registered names; until a face loads, the system face draws, so text never
+ * waits on it. `font-display`, `font-display-bold`, `font-body`,
+ * `font-readout`.
+ *
+ * `--accent` is not `scan` itself: components paint it as a selected-row fill
+ * (`Item`), where a full blue slab would bury the row's text. It is a 16% scan
+ * tint over the page, with the text colour on top.
+ */
+@layer theme {
+	:root {
+		@variant dark {
+			--background: #07090d;
+			--foreground: #e9edf4;
+			--card: #0e1219;
+			--card-foreground: #e9edf4;
+			--popover: #0e1219;
+			--popover-foreground: #e9edf4;
+
+			--primary: #e9edf4;
+			--primary-foreground: #07090d;
+			--secondary: #1b2230;
+			--secondary-foreground: #e9edf4;
+			--muted: #1b2230;
+			--muted-foreground: #8c96a9;
+			--accent: color-mix(in oklch, #5b8cff 16%, #07090d);
+			--accent-foreground: #e9edf4;
+
+			--destructive: #ff6b6b;
+			--destructive-foreground: #07090d;
+
+			--border: #1b2230;
+			--input: #232c3d;
+			--ring: #5b8cff;
+
+			--sidebar: #0e1219;
+			--sidebar-foreground: #e9edf4;
+			--sidebar-primary: #5b8cff;
+			--sidebar-primary-foreground: #07090d;
+			--sidebar-accent: #1b2230;
+			--sidebar-accent-foreground: #e9edf4;
+			--sidebar-border: #1b2230;
+			--sidebar-ring: #5b8cff;
+
+			--tertiary-foreground: #7f8aa0;
+
+			--success: #3ddc97;
+			--success-foreground: #07090d;
+			--warning: #ffb547;
+			--warning-foreground: #07090d;
+			--info: #5b8cff;
+			--info-foreground: #07090d;
+
+			--idle: #c8d3f5;
+			--off: #55607a;
+		}
+	}
+}
+
+@layer theme {
+	:root {
+		@variant light {
+			--idle: #3a4a73;
+			--off: #8a93a6;
+		}
+	}
+}
+
+@theme inline {
+	--color-idle: var(--idle);
+	--color-off: var(--off);
+}
+
+@theme {
+	--font-display: ChakraPetch_600SemiBold;
+	--font-display-bold: ChakraPetch_700Bold;
+	--font-body: ChakraPetch_400Regular;
+	--font-readout: JetBrainsMono_500Medium;
+}
