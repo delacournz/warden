@@ -615,6 +615,10 @@ Options:
                               the attempt's perf/ dir
   --dev                       run on the dev client (kind dev) against a Metro
                               warden starts, not the repacked simulator build
+  --a11y                      iOS: launch apps with the injected library so
+                              specs can read hints, actions, reading order and
+                              announcements (a suite with an \`a11y\` key does
+                              this already)
   --no-warm                   skip pre-warming the iOS socket helper per device
                               (default: on; suite warmDrivers)
   -h, --help                  display help for command
@@ -1977,9 +1981,10 @@ Commands:
   locale <tag>                    the app's locale: <BCP 47 tag> | reset |
                                   status (Android 13+; iOS: applies to the app
                                   launched next)
-  a11y <action>                   accessibility: set [--text-size] [--bold]
-                                  [--contrast] [--reduce-motion] | reset |
-                                  status
+  a11y <action> [args...]         accessibility: set [--text-size] [--bold]
+                                  [--screen-reader] … | reset | status | audit |
+                                  order | speak <locator> | announcements |
+                                  spoken | focus next|prev|activate|status
   battery <action>                battery: set [--level] [--charging] | reset |
                                   status (Android emulator real; iOS status bar
                                   only)
@@ -2055,6 +2060,8 @@ Options:
   --settle [ms]          wait for a quiet screen (default budget 3000 ms), then
                          print a +/-/= diff
   --depth <n>            only the first n levels of the tree
+  --a11y                 add hint, actions, a11y-focused and live-region facts
+                         (iOS: needs \`open --a11y\`)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id
@@ -2115,6 +2122,10 @@ Options:
   --relaunch             terminate a running app first
   --metro <url>          Metro URL: launch with --initialUrl and remember it
   --args <args...>       extra launch arguments
+  --a11y                 iOS: launch with the injected library so a11y
+                         audit/order/speak/announcements can read hints, actions
+                         and announcements (remembered for the device;
+                         relaunches the app the first time)
   --kind <kind>          install this build kind: dev (Debug, Metro), simulator
                          (Release + this worktree's JS repacked in seconds),
                          release (JS embedded at build) (choices: "dev",
@@ -3823,41 +3834,78 @@ Options:
   -h, --help             display help for command
 
 $ warden ui a11y --help
-Usage: warden ui a11y [options] <action>
+Usage: warden ui a11y [options] <action> [args...]
 
-accessibility: set [--text-size] [--bold] [--contrast] [--reduce-motion] | reset
-| status
+accessibility: set [--text-size] [--bold] [--screen-reader] … | reset | status |
+audit | order | speak <locator> | announcements | spoken | focus
+next|prev|activate|status
 
 Arguments:
-  action                 set | reset | status
+  action                            set | reset | status | audit | order | speak
+                                    | announcements | spoken | focus
+  args                              speak: a locator (@e3, id=…, label=…);
+                                    focus: next | prev | activate | status
 
 Options:
-  --text-size <size>     a name (accessibility-large, extra-large, ...) or a
-                         font scale (1.5)
-  --bold                 bold text (Android)
-  --no-bold              bold text off
-  --contrast <mode>      increased | normal (iOS)
-  --reduce-motion        reduce motion (no mechanism on either platform:
-                         reported as skipped)
-  --no-reduce-motion     reduce motion off
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --physical             with --claim and no device named: claim a connected
-                         phone, not an emulator
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
-  --force                drive the device even while a live warden process (e2e,
-                         batch, run) holds your lease on it; your own warden dev
-                         device is shared without it
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running recording
-  --json                 machine-readable output: one JSON document on stdout
-  -h, --help             display help for command
+  --text-size <size>                a name (accessibility-large, extra-large,
+                                    ...) or a font scale (1.5); audit: the size
+                                    the app runs at
+  --bold                            bold text
+  --no-bold                         bold text off
+  --contrast <mode>                 increased | normal (iOS)
+  --reduce-motion                   reduce motion (Android: transition
+                                    animations off; the e2e driver turns them
+                                    off anyway)
+  --no-reduce-motion                reduce motion off
+  --screen-reader                   screen reader on: iOS a simulated VoiceOver
+                                    flag, Android real TalkBack (emulator, Play
+                                    image)
+  --no-screen-reader                screen reader off (Android: the previous
+                                    accessibility services come back)
+  --reduce-transparency             reduce transparency (iOS)
+  --no-reduce-transparency          reduce transparency off
+  --button-shapes                   button shapes (iOS)
+  --no-button-shapes                button shapes off
+  --differentiate-without-color     differentiate without colour (iOS)
+  --no-differentiate-without-color  differentiate without colour off
+  --on-off-labels                   on/off labels on switches (iOS)
+  --no-on-off-labels                on/off labels off
+  --high-contrast-text              high contrast text (Android)
+  --no-high-contrast-text           high contrast text off
+  --color-inversion                 colour inversion (Android)
+  --no-color-inversion              colour inversion off
+  --rule <id>                       audit: only this rule (repeat for several)
+                                    (default: [])
+  --ignore <rule[:identifier]>      audit: drop a rule, or only on the element
+                                    with that id (repeatable) (default: [])
+  --min-severity <severity>         audit: lowest severity that fails, error
+                                    (default) | warning
+  --no-native                       audit: warden's rules only, no XCUITest /
+                                    ATF
+  --since <cursor>                  announcements, spoken: only what came after
+                                    this cursor
+  --udid <udid>                     device udid (iOS) / serial (Android)
+  --serial <serial>                 Android serial
+  --lease <id>                      use the device behind this lease id
+  --claim                           take over a stale/missing lease, or claim a
+                                    device when none is held
+  --platform <platform>             platform for --claim with no device named:
+                                    ios (default) | android
+  --physical                        with --claim and no device named: claim a
+                                    connected phone, not an emulator
+  --profile <slug>                  device profile for --claim with no device
+                                    named
+  --runtime <runtime>               runtime for --claim with no device named
+  --force                           drive the device even while a live warden
+                                    process (e2e, batch, run) holds your lease
+                                    on it; your own warden dev device is shared
+                                    without it
+  --timeout <ms>                    deadline in milliseconds (default 5000)
+  --no-record                       don't append this step to a running
+                                    recording
+  --json                            machine-readable output: one JSON document
+                                    on stdout
+  -h, --help                        display help for command
 
 $ warden ui battery --help
 Usage: warden ui battery [options] <action>

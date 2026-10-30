@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import type { A11yAuditConfig } from "@delacour/warden-core/a11y/a11y.config";
 import type { ConditionsConfig } from "@delacour/warden-core/conditions/conditions.config";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
@@ -90,6 +91,10 @@ export type SpecEnvOptions = {
 	netproxyCommand?: readonly string[] | undefined;
 	/** the suite's devices are biometrics devices (`WARDEN_BIOMETRICS=1`) */
 	biometrics?: boolean | undefined;
+	/** the suite's `a11y` (`WARDEN_A11Y_AUDIT`): the defaults `device.a11yAudit()` / `toPassA11yAudit()` judge by */
+	a11yAudit?: A11yAuditConfig | undefined;
+	/** iOS apps launch with the injected library (`WARDEN_A11Y=1`) */
+	a11y?: boolean | undefined;
 };
 
 /**
@@ -119,6 +124,8 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 			: { [ENV_NAMES.conditions]: JSON.stringify(o.conditions) }),
 		...(o.netproxyCommand === undefined ? {} : { [ENV_NAMES.netproxyCommand]: JSON.stringify(o.netproxyCommand) }),
 		...(o.biometrics === true ? { [ENV_NAMES.biometrics]: "1" } : {}),
+		...(o.a11yAudit === undefined ? {} : { [ENV_NAMES.a11yAudit]: JSON.stringify(o.a11yAudit) }),
+		...(o.a11y === true ? { [ENV_NAMES.a11y]: "1" } : {}),
 		BUN_BE_BUN: "1",
 	};
 }

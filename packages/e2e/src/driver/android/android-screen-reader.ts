@@ -42,7 +42,7 @@ export function createScreenReaderOps(deps: ScreenReaderDeps): DrivesScreenReade
 
 	/** the uiad ops when TalkBack is on, else why not */
 	async function engaged(): DriverResult<UiadOps> {
-		if (!(await talkback.detect())) {
+		if (!(await talkback.detect(true))) {
 			return driverErr("E_UNSUPPORTED", "TalkBack is off: turn it on with a11y({ screenReader: true }) first");
 		}
 		return uiad === undefined ? driverErr("E_UNSUPPORTED", NEEDS_UIAD) : ok(uiad);
@@ -58,7 +58,7 @@ export function createScreenReaderOps(deps: ScreenReaderDeps): DrivesScreenReade
 
 	return {
 		async screenReaderState() {
-			await talkback.detect();
+			await talkback.detect(true);
 			return ok(talkback.state());
 		},
 		screenReaderNext: () => focusStop("next"),

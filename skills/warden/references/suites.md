@@ -91,6 +91,11 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 |---|---|---|
 | `conditions` | none | `{ network?, location?, clock?, permissions?, locale?, timezone?, a11y? }` at the top level or per suite (a suite's key replaces the top-level one per area): the device state every spec starts from, applied before the app launches and put back after each spec. `network`: `"online" \| "offline"`, a preset (`edge 3g 4g lte wifi slow lossy`) or `{ latencyMs, jitterMs, downKbps, upKbps, lossPct }`. `location`: `{ lat, lon, altM? }` or `"city-run" \| "city-bike" \| "freeway"`. `clock`: an ISO instant (keeps running), `{ at, frozen? }` or `{ offset: "2d" }`. On iOS a declared `network` / `clock` launches the app with the network dylib, so specs can change it later. `permissions`: `{ location: "denied", camera: "granted", … }` (names as `device.permissions.set`, applied before the app launches). `locale`: a BCP 47 tag. `timezone`: an IANA name. `a11y`: `{ textSize?, boldText?, contrast?, reduceMotion? }`. A bad value fails config load |
 
+### Accessibility
+| Key | Default | Meaning |
+|---|---|---|
+| `a11y` | none | `{ rules?, ignore?: [{ rule, identifier? }], minSeverity?: "error" \| "warning" }` at the top level or per suite (a suite's key replaces the top-level one, per key). Defaults for `device.a11yAudit()` / `toPassA11yAudit()`; written to the spec process as `WARDEN_A11Y_AUDIT`. Setting it (even `{}`) also launches iOS apps with the injected library (`WARDEN_A11Y=1`); `warden e2e --a11y` does that for a suite without the key. Rules: `a11y.md` |
+
 ### App, ports, serve, setup
 | Key | Default | Meaning |
 |---|---|---|
@@ -195,6 +200,7 @@ Set by warden. Never export these for a suite run.
 | physical iPhone | `WARDEN_IOS_RUNNER_SOCKET` (the runner host's socket) `WARDEN_IOS_RUNNER_RESTART` (JSON argv the session runs once on a lost runner connection) |
 | app / log | `WARDEN_APP_PATH WARDEN_APP_HASH` (with `app`) `WARDEN_LOG_TIMESTAMPS` |
 | runner | `BUN_BE_BUN=1` (a compiled warden runs as bun; the preload drops it, so a `warden` a spec spawns stays warden) |
+| a11y | `WARDEN_A11Y_AUDIT` (JSON of the suite's `a11y`) `WARDEN_A11Y=1` (iOS: inject loaded; with an `a11y` key or `--a11y`) |
 | perf | `WARDEN_BIN` (argv `device.perf` shells out to) `WARDEN_PERF` (with `--perf`) `WARDEN_PERF_BUDGETS` (with budgets) |
 
 ## Batch dir

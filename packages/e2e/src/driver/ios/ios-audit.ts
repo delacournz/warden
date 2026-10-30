@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
-import { collectRunnerSources } from "@delacour/warden-core/ios-runner/pack";
+import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warden-core/ios-runner/pack";
 import type { RunnerSourceFiles } from "@delacour/warden-core/ios-runner/runner-build.types";
 import { ensureSimRunnerBuild } from "@delacour/warden-core/ios-runner/sim-build";
 import { wardenHome } from "@delacour/warden-core/store";
@@ -40,13 +40,20 @@ export type IosNativeAuditOptions = {
 
 const AUDIT_TIMEOUT_MS = 60_000;
 
-/** `packages/e2e/native` of the checkout this file runs from; absent in a bundled install (the CLI passes the embedded blob). */
-export function checkoutRunnerSources(importDir: string = import.meta.dir): AsyncResult<RunnerSourceFiles> {
+/**
+ * `packages/e2e/native` of the checkout this file runs from; in a bundled install (no checkout beside it) the blob
+ * embedded in the compiled `warden` binary, which a spec process (the same binary) sees too.
+ */
+export async function checkoutRunnerSources(
+	importDir: string = import.meta.dir,
+	embedded: () => AsyncResult<RunnerSourceFiles> = () => loadEmbeddedRunnerSources()
+): AsyncResult<RunnerSourceFiles> {
 	const nativeDir = join(importDir, "..", "..", "..", "native");
 	if (!existsSync(join(nativeDir, "ios-runner", "WardenRunner.xcodeproj"))) {
-		return Promise.resolve(err("the iOS runner sources are not bundled with this install"));
+		const blob = await embedded();
+		return blob.success ? blob : err("the iOS runner sources are not bundled with this install");
 	}
-	return Promise.resolve(collectRunnerSources(nativeDir));
+	return collectRunnerSources(nativeDir);
 }
 
 export function createIosNativeAudit(o: IosNativeAuditOptions): IosNativeAudit {

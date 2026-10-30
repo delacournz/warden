@@ -57,6 +57,8 @@ export const ENV_NAMES = {
 	biometrics: "WARDEN_BIOMETRICS",
 	/** JSON of the suite's `a11y` (`ignore` / `minSeverity` / `rules`): the defaults `device.a11yAudit()` and `toPassA11yAudit()` use */
 	a11yAudit: "WARDEN_A11Y_AUDIT",
+	/** `1`: iOS apps launch with the injected library, so hint, custom actions, reading order and announcements can be read */
+	a11y: "WARDEN_A11Y",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;

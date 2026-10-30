@@ -93,7 +93,7 @@ export type DeviceA11y = {
 
 export type DeviceA11yDeps = {
 	driver: Driver;
-	env: E2eEnv;
+	env: Pick<E2eEnv, "a11yAudit" | "assertionTimeoutMs"> & { bundleId?: string };
 	/** read per call: the runner swaps it for every attempt */
 	signal: () => AbortSignal | undefined;
 	step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
@@ -129,6 +129,42 @@ function ignored(issue: A11yIssue, ignore: readonly A11yIgnore[]): boolean {
 	return ignore.some((g) => g.rule === issue.rule && (g.identifier === undefined || g.identifier === issue.identifier));
 }
 
+export type AuditSnapshotOptions = DeviceA11yAuditOptions & {
+	/** the app the platform's own audit checks (iOS XCUITest) */
+	bundleId?: string;
+};
+
+/**
+ * Audits one snapshot: warden's rules, plus the platform's own audit (XCUITest / ATF) unless `native: false`, `rules`
+ * leaves out `native`, or the driver has none. `device.a11yAudit` and `warden ui a11y audit` share this.
+ */
+export async function auditSnapshot(
+	driver: Driver,
+	snapshot: Snapshot,
+	options: AuditSnapshotOptions = {}
+): Promise<A11yAuditResult> {
+	const { platform } = driver;
+	const { rules, minSeverity } = options;
+	const ignore = options.ignore ?? [];
+	const own = runAudit(snapshot, platform, {
+		...(rules === undefined ? {} : { rules }),
+		ignore,
+		...(minSeverity === undefined ? {} : { minSeverity }),
+		...(options.textSize === undefined ? {} : { textSize: options.textSize }),
+	});
+	if (options.native === false || (rules !== undefined && !rules.includes("native"))) return own;
+	const source = platform === "ios" ? "xcuitest" : "atf";
+	if (!canAuditNatively(driver)) {
+		return mergeIssues(own, [], [{ source, reason: "this driver has no native accessibility audit" }]);
+	}
+	const native = await driver.auditNatively(options.bundleId === undefined ? {} : { bundleId: options.bundleId });
+	return mergeIssues(
+		own,
+		native.issues.filter((issue) => !ignored(issue, ignore)),
+		native.skipped === undefined ? [] : [native.skipped]
+	);
+}
+
 export function createDeviceA11y(deps: DeviceA11yDeps): DeviceA11y & { target: A11yTarget } {
 	const { driver, env } = deps;
 	const signal = (): AbortSignal | undefined => deps.signal();
@@ -142,34 +178,19 @@ export function createDeviceA11y(deps: DeviceA11yDeps): DeviceA11y & { target: A
 		return merged.data;
 	};
 
-	/** `own` plus the platform's audit findings (minus the ignored), or why that engine did not run. */
-	const withNative = async (own: A11yAuditResult, ignore: readonly A11yIgnore[]): Promise<A11yAuditResult> => {
-		const source = platform === "ios" ? "xcuitest" : "atf";
-		if (!canAuditNatively(driver)) {
-			return mergeIssues(own, [], [{ source, reason: "this driver has no native accessibility audit" }]);
-		}
-		const native = await driver.auditNatively({ bundleId: env.bundleId });
-		return mergeIssues(
-			own,
-			native.issues.filter((issue) => !ignored(issue, ignore)),
-			native.skipped === undefined ? [] : [native.skipped]
-		);
-	};
-
 	const audit = async (options: DeviceA11yAuditOptions = {}): Promise<A11yAuditResult> => {
 		const config = env.a11yAudit ?? {};
 		const rules = options.rules ?? config.rules;
 		const ignore = options.ignore ?? config.ignore ?? [];
 		const minSeverity = options.minSeverity ?? config.minSeverity;
-		const snapshot = await readSnapshot();
-		const own = runAudit(snapshot, platform, {
+		return auditSnapshot(driver, await readSnapshot(), {
 			...(rules === undefined ? {} : { rules }),
 			ignore,
 			...(minSeverity === undefined ? {} : { minSeverity }),
 			...(options.textSize === undefined ? {} : { textSize: options.textSize }),
+			...(options.native === undefined ? {} : { native: options.native }),
+			...(env.bundleId === undefined ? {} : { bundleId: env.bundleId }),
 		});
-		if (options.native === false || (rules !== undefined && !rules.includes("native"))) return own;
-		return withNative(own, ignore);
 	};
 
 	const announcements = async (options: A11yAnnouncementsOptions = {}): Promise<A11yAnnouncements> => {

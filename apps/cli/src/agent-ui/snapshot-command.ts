@@ -14,6 +14,8 @@ export type SnapshotOptionValues = UiOptionValues & {
 	/** `--settle` alone = true, `--settle 5000` = "5000" */
 	settle?: true | string;
 	depth?: string;
+	/** `--a11y`: add hint / actions / focus / live-region columns (iOS: needs `open --a11y`) */
+	a11y?: true;
 };
 
 export function positiveInt(name: string, raw: string): Result<number, UiError> {
@@ -28,6 +30,7 @@ function parseRequest(opts: SnapshotOptionValues, recording: boolean): Result<Sn
 		interactiveOnly: opts.interactive === true,
 		all: opts.all === true,
 		...(recording ? { markMissingIds: true } : {}),
+		...(opts.a11y === true ? { a11y: true } : {}),
 	};
 	if (opts.depth !== undefined) {
 		const depth = positiveInt("--depth", opts.depth);
@@ -51,12 +54,27 @@ export function uiSnapshot(ctx: CommandContext, deps: UiDeps, opts: SnapshotOpti
 		if (!driver.success) return driver;
 		const taken = await takeSnapshot(ctx, deps, driver.data, device.udid, request.data);
 		if (!taken.success) return taken;
-		const { snapshot, refs: _refs, lines: _lines, header: _header, hints: _hints, ...rest } = taken.data;
+		const {
+			snapshot,
+			refs: _refs,
+			lines: _lines,
+			header: _header,
+			hints: _hints,
+			a11yMissing: _missing,
+			...rest
+		} = taken.data;
 		return ok({
 			device: { udid: device.udid, platform: device.platform, name: device.name },
 			generation: taken.data.generation,
 			text: snapshotText(taken.data),
-			warnings: taken.data.settle && !taken.data.settle.quiet ? ["screen did not settle within the budget"] : [],
+			warnings: [
+				...(taken.data.settle && !taken.data.settle.quiet ? ["screen did not settle within the budget"] : []),
+				...(taken.data.a11yMissing
+					? [
+							"--a11y: hint, actions and iOS reading order not read: the app was launched without the injected library (`warden ui open <bundle> --relaunch --a11y`)",
+						]
+					: []),
+			],
 			result: {
 				backend: snapshot.backend,
 				screen: snapshot.screen,

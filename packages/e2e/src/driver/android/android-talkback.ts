@@ -60,8 +60,8 @@ export type TalkBackControl = {
 	active(): boolean;
 	/** TalkBack is the screen reader now: warden's doing, or found already on and bound by `detect` */
 	on(): boolean;
-	/** read the device once for a TalkBack that was on before warden touched anything (a crashed run, a person) */
-	detect(): Promise<boolean>;
+	/** read the device once (`fresh`: again, for a TalkBack another process turned on since) for a TalkBack that was on before warden touched anything (a crashed run, a person) */
+	detect(fresh?: boolean): Promise<boolean>;
 	state(): ScreenReaderState;
 	previous(): Previous | undefined;
 	enable(): DriverResult<ScreenReaderState>;
@@ -105,8 +105,8 @@ export function createTalkBack(deps: TalkBackDeps): TalkBackControl {
 	return {
 		active: () => previous !== undefined,
 		on: () => previous !== undefined || external,
-		async detect() {
-			if (detected || previous !== undefined) return previous !== undefined || external;
+		async detect(fresh = false) {
+			if ((detected && !fresh) || previous !== undefined) return previous !== undefined || external;
 			detected = true;
 			const [services, enabled] = await Promise.all([
 				deps.shell(secureGetArgv(ANDROID_SERVICES_KEY)),

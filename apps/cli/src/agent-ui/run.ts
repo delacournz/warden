@@ -17,6 +17,12 @@ const READ_ONLY: ReadonlySet<string> = new Set([
 	"timezone status",
 	"locale status",
 	"a11y status",
+	"a11y audit",
+	"a11y order",
+	"a11y speak",
+	"a11y announcements",
+	"a11y spoken",
+	"a11y focus status",
 	"battery status",
 ]);
 

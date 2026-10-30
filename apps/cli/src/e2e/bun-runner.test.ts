@@ -129,6 +129,18 @@ describe("specEnv perf", () => {
 		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
 	});
 
+	test("WARDEN_A11Y_AUDIT carries the suite's a11y config; WARDEN_A11Y=1 only when asked", () => {
+		const env = specEnv({
+			...base,
+			a11yAudit: { minSeverity: "warning", ignore: [{ rule: "target-size" }] },
+			a11y: true,
+		});
+		expect(env.WARDEN_A11Y_AUDIT).toBe('{"minSeverity":"warning","ignore":[{"rule":"target-size"}]}');
+		expect(env.WARDEN_A11Y).toBe("1");
+		const quiet = specEnv({ ...base, a11y: false });
+		expect("WARDEN_A11Y" in quiet || "WARDEN_A11Y_AUDIT" in quiet).toBe(false);
+	});
+
 	test("absent unless asked for; empty budgets are not exported", () => {
 		const env = specEnv({ ...base, perfBudgets: {} });
 		expect(Object.keys(env).filter((k) => k.includes("PERF") || k === "WARDEN_BIN")).toEqual([]);
