@@ -40,33 +40,9 @@ test("sign in", async (fixtures) => {
 	await screen.gesture.pinch({ scale: 3, center: { x: 150, y: 250 }, radius: 80 });
 	await screen.getByTestId(ids.map).rotate(45);
 	await screen.gesture.rotate({ degrees: -90, durationMs: 800, radius: 120 });
-	await screen.gesture.path({
-		paths: [
-			[
-				{ x: 100, y: 400 },
-				{ x: 200, y: 300 },
-				{ x: 300, y: 400 },
-			],
-		],
-	});
-	await screen.gesture.path({
-		paths: [
-			[
-				{ x: 100, y: 400 },
-				{ x: 150, y: 400 },
-			],
-			[
-				{ x: 300, y: 400 },
-				{ x: 250, y: 400 },
-			],
-		],
-		durationMs: 450,
-	});
-	await screen.scrollUntilVisible(screen.getByRole("text", "Footer"), {
-		direction: "down",
-		maxSwipes: 5,
-		timeout: 20000,
-	});
+	await screen.gesture.path({ paths: [[{ x: 100, y: 400 }, { x: 200, y: 300 }, { x: 300, y: 400 }]] });
+	await screen.gesture.path({ paths: [[{ x: 100, y: 400 }, { x: 150, y: 400 }], [{ x: 300, y: 400 }, { x: 250, y: 400 }]], durationMs: 450 });
+	await screen.scrollUntilVisible(screen.getByRole("text", "Footer"), { direction: "down", maxSwipes: 5, timeout: 20000 });
 	await screen.swipe({ direction: "up" });
 	await expect(screen.getByTestId(ids.todosScreen)).toBeVisible({ timeout: 5000 });
 	await expect(screen.getByTestId(ids.spinner)).toBeHidden();
