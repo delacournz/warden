@@ -2,9 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canReadA11yEvents } from "../a11y-events";
+import { canReadA11y } from "../a11y-read";
 import { el, failWith, fakeDriver, snapshotOf } from "../driver.testing";
 import type { Driver, DriverCapabilities } from "../driver.types";
+import { canAuditNatively } from "../native-audit";
 import { canDetectAlerts } from "../observation-cache";
+import { canDriveScreenReader } from "../screen-reader";
 import { canSelectAll, canSetText } from "../typing";
 import { connectRemoteDriver, type RemoteClient } from "./remote-client";
 import { type RemoteServer, serveDriver } from "./remote-server";
@@ -238,5 +242,88 @@ describe("remote driver", () => {
 		const remote = (await connect(await serve(served, { alertIn: "android" }))).driver();
 		expect(canDetectAlerts(remote)).toBe(true);
 		if (canDetectAlerts(remote)) expect(remote.alertIn(screen)).toBeNull();
+	});
+
+	test("a plain driver offers none of the a11y capabilities", async () => {
+		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
+		expect(canReadA11y(remote)).toBe(false);
+		expect(canReadA11yEvents(remote)).toBe(false);
+		expect(canAuditNatively(remote)).toBe(false);
+		expect(canDriveScreenReader(remote)).toBe(false);
+	});
+
+	test("readA11y sends a snapshot over and gets the merged one back with flat rebuilt", async () => {
+		const driver = fakeDriver({
+			screens: [screen],
+			platform: "android",
+			readA11y: (shot) => {
+				const first = shot.flat[0];
+				if (first) first.a11y = { hint: "opens go" };
+				return shot;
+			},
+		});
+		const remote = (await connect(await serve(driver))).driver();
+		if (!canReadA11y(remote)) throw new Error("readA11y not offered");
+		const read = await remote.readA11y(screen);
+		if (!read.success) throw new Error(read.error.message);
+		expect(read.data.flat[0]?.a11y?.hint).toBe("opens go");
+		expect(read.data.flat[0]).toBe(read.data.elements[0]);
+	});
+
+	test("a11yEvents carries the cursor both ways", async () => {
+		const seen: (number | undefined)[] = [];
+		const driver = fakeDriver({
+			screens: [screen],
+			platform: "android",
+			a11yEvents: (since) => {
+				seen.push(since);
+				return { events: [{ kind: "announcement", text: "Saved", at: 5, source: "uiad" }], cursor: (since ?? 0) + 1 };
+			},
+		});
+		const remote = (await connect(await serve(driver))).driver();
+		if (!canReadA11yEvents(remote)) throw new Error("a11yEvents not offered");
+		const first = await remote.a11yEvents();
+		const second = await remote.a11yEvents(1);
+		expect(first).toMatchObject({ success: true, data: { cursor: 1, events: [{ text: "Saved" }] } });
+		expect(second).toMatchObject({ success: true, data: { cursor: 2 } });
+		expect(seen).toEqual([undefined, 1]);
+	});
+
+	test("auditNatively answers a plain result, not a DriverResult", async () => {
+		const driver = fakeDriver({
+			screens: [screen],
+			platform: "android",
+			auditNatively: (options) => ({
+				issues: [{ rule: "native", severity: "error", source: "atf", message: `contrast ${options?.contrast}` }],
+			}),
+		});
+		const remote = (await connect(await serve(driver))).driver();
+		if (!canAuditNatively(remote)) throw new Error("auditNatively not offered");
+		const audit = await remote.auditNatively({ contrast: false });
+		expect(audit.issues).toEqual([{ rule: "native", severity: "error", source: "atf", message: "contrast false" }]);
+		expect(driver.callsOf("auditNatively")).toEqual([{ method: "auditNatively", options: { contrast: false } }]);
+	});
+
+	test("the screen reader calls cross the wire; an absent node stays undefined", async () => {
+		const driver = fakeDriver({
+			screens: [screen],
+			platform: "android",
+			screenReader: {
+				next: () => screen.flat[0],
+				spoken: (since) => ({ lines: [{ text: "Go, button", at: 1, source: "talkback" }], cursor: (since ?? 0) + 1 }),
+			},
+		});
+		const remote = (await connect(await serve(driver))).driver();
+		if (!canDriveScreenReader(remote)) throw new Error("screen reader not offered");
+		expect(await remote.screenReaderState()).toEqual({ success: true, data: { mode: "real", engine: "talkback" } });
+		const next = await remote.screenReaderNext();
+		expect(next).toMatchObject({ success: true, data: { identifier: "go" } });
+		const prev = await remote.screenReaderPrev();
+		expect(prev).toEqual({ success: true, data: undefined });
+		expect(await remote.screenReaderActivate()).toEqual({ success: true, data: undefined });
+		expect(await remote.screenReaderSpoken(2)).toMatchObject({
+			success: true,
+			data: { cursor: 3, lines: [{ text: "Go, button" }] },
+		});
 	});
 });
