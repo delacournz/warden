@@ -54,7 +54,7 @@ A line is `@ref [role] "name" id=<testID> value="…" <states> (x,y w×h)`. Stat
 
 | Command | Use |
 |---|---|
-| `snapshot [-i\|--interactive] [--all] [--depth n]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels |
+| `snapshot [-i\|--interactive] [--all] [--depth n] [--a11y]` | the screen. `-i` filters to interactive elements and `testID`s; the default caps at 200 lines (`--all` removes the cap); `--depth n` keeps the first `n` levels; `--a11y` adds `hint`, `actions`, `a11y-focused`, `not-important` and `live` per line ([Accessibility](/docs/e2e/accessibility)) |
 | `snapshot --settle [ms]` | wait for a quiet screen (the tree hash is unchanged for 250 ms; default budget 3000 ms), then print what changed against the previous snapshot as `-` / `+` lines and a `= N unchanged` count |
 | `find <selector…>` | only the elements matching a [selector](#targets-and-selectors), each with a fresh `@eN` |
 | `screen screenshot [path]` | a PNG; default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
@@ -90,7 +90,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 
 | Command | Effect |
 |---|---|
-| `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). A bundle id that is already running is attached to, not restarted (`attached to <id>`, `--json` `attached: true`); `--relaunch` starts it fresh. `--metro` starts the dev client on that Metro and remembers it for the devtools commands |
+| `open <bundleId\|url> [--relaunch] [--metro <url>] [--args …] [--a11y]` | launch the app, or open a URL (on iOS the "Open in …?" sheet is accepted). A bundle id that is already running is attached to, not restarted (`attached to <id>`, `--json` `attached: true`); `--relaunch` starts it fresh. `--metro` starts the dev client on that Metro and remembers it for the devtools commands. `--a11y` launches an iOS app with the injected accessibility library (relaunches once; `WARDEN_A11Y=1` does the same) |
 | `press <target>` (alias `tap`) | tap. `--verify` re-checks an `@eN` first |
 | `fill <target> <text>` | focus the field, empty it, put the text in, then read it back (retried once). The text is typed key by key; `--via paste` pastes it on iOS (one Cmd+V) instead. Xcode syncs the simulator pasteboard with your Mac clipboard in both directions, so a pasted value shows up in your clipboard history and on every other booted simulator. A paste that cannot be confirmed is typed, and the retry always types. `--secure` skips the read-back and never echoes the text; `--no-verify` skips only the read-back. Use `--` before text that starts with `-` |
 | `type <text> [--submit]` | type into whatever has focus; `--submit` then presses Enter |
@@ -106,6 +106,8 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 | `screen rotate [orientation]` | `portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`; without an argument it reads the current one |
 | `screen appearance [light\|dark]` | set or read light / dark mode |
 | `biometrics [status\|enroll\|unenroll\|match\|fail]` | simulated Face ID / Touch ID / fingerprint, see [Biometrics](/docs/e2e/biometrics) |
+| `a11y set\|reset\|status` | display settings (`--text-size`, `--bold`, `--reduce-motion`, `--screen-reader`, ... each also `--no-`), recorded on your lease and undone on release, see [Accessibility](/docs/e2e/accessibility) |
+| `a11y audit\|order\|speak\|announcements\|spoken\|focus` | audit the screen, the simulated reading order and wording, announcements, real TalkBack output and focus; `audit` exits 1 when an issue is at or above `--min-severity` (default `error`), see [Accessibility](/docs/e2e/accessibility) |
 
 ### `screen` vs `gesture`
 
