@@ -28,12 +28,14 @@ import type {
 } from "../driver.types";
 import { driverErr, driverError } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { AuditsNatively } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import { type SettleDetail, settleByHash, snapshotHash } from "../settle";
 import { noteSpanDetail } from "../span-detail";
 import type { PastesText, SelectsAll } from "../typing";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
 import { createIosA11y, type IosA11y } from "./ios-a11y";
+import { createIosNativeAudit, type IosNativeAudit, type IosNativeAuditOptions } from "./ios-audit";
 import { createIosNetwork, type IosNetwork } from "./ios-network";
 import { type SwappableClient, swappableClient } from "./ios-session";
 import { createIosSettings, type IosSettings, type StagedSettings, withStagedSettings } from "./ios-settings";
@@ -56,7 +58,7 @@ import { typeTextBudgetMs } from "./type-budget";
 export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
 
 /** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
-export type IosDriver = Driver & SelectsAll & PastesText & ReadsAlertOn & ProbesFrontmost & ReadsA11y;
+export type IosDriver = Driver & SelectsAll & PastesText & ReadsAlertOn & ProbesFrontmost & ReadsA11y & AuditsNatively;
 
 export type OpenIosDriverOptions = {
 	udid: string;
@@ -107,6 +109,10 @@ export type OpenIosDriverOptions = {
 	a11y?: boolean;
 	/** CoreSimulator devices directory for the host-side `AutomationEnabled` check (default `~/Library/Developer/CoreSimulator/Devices`) */
 	devicesRoot?: string;
+	/** the runner's Xcode project as text files for the XCUITest audit (default: this checkout when run from source) */
+	runnerSources?: IosNativeAuditOptions["runnerSources"];
+	/** test seams for the XCUITest audit's runner */
+	nativeAudit?: Pick<IosNativeAuditOptions, "ensureBuild" | "spawn" | "connect">;
 };
 
 const DEFAULT_QUIET_MS = 250;
@@ -272,6 +278,8 @@ export function createIosDriver(
 		/** screen-reader facts from the injected dylib (`ios-a11y.ts`); absent: `readA11y` answers `E_UNSUPPORTED` */
 		a11y?: () => IosA11y;
 		/** per-app network conditions (`ios-network.ts`); absent: `network` answers `E_UNSUPPORTED` */
+		/** the XCUITest audit (`ios-audit.ts`); absent: `auditNatively` skips with a reason */
+		nativeAudit?: (ctx: { lastBundle: () => string | undefined }) => IosNativeAudit;
 		network?: (deps: {
 			lastBundle: () => string | undefined;
 			relaunch: (bundleId: string) => DriverResult<void>;
@@ -296,6 +304,7 @@ export function createIosDriver(
 			driverRef ? driverRef.app.launch(bundleId, { relaunch: true, inject: true }) : noLeaseProxy(),
 	});
 	const a11y = opts.a11y?.();
+	const nativeAudit = opts.nativeAudit?.({ lastBundle: () => lastLaunched });
 	const { client } = swap;
 	let axFailures = 0;
 	/**
@@ -717,6 +726,10 @@ export function createIosDriver(
 			a11y
 				? a11y.read(snapshot)
 				: driverErr("E_UNSUPPORTED", "this iOS driver was opened without the injected library channel"),
+		auditNatively: async (options) =>
+			nativeAudit
+				? nativeAudit.audit(options ?? {})
+				: { issues: [], skipped: { source: "xcuitest", reason: "this iOS driver was opened without the runner" } },
 		appearance: (set) => simctl.appearance(set),
 		network: async (op, o) => (net ? net.network(op, o) : noLeaseProxy()),
 		networkFaults: async (faults) => (net ? net.networkFaults(faults) : noLeaseProxy()),
@@ -791,7 +804,10 @@ export function createIosDriver(
 			isRunning: (bundleId) => simctl.isRunning(bundleId),
 			clearData: (bundleId, o) => simctl.clearData(bundleId, o),
 		},
-		close: () => client.close(),
+		close: async () => {
+			await nativeAudit?.close();
+			return client.close();
+		},
 	};
 	driverRef = driver;
 	return driver;
@@ -878,6 +894,17 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 			log,
 			...(network ? { network } : {}),
 			a11y: () => iosA11yFor(o, now, sleep),
+			nativeAudit: (ctx) =>
+				createIosNativeAudit({
+					udid: o.udid,
+					exec,
+					bundleId: () => o.bundleId ?? ctx.lastBundle(),
+					...(o.wardenHome ? { wardenHome: o.wardenHome } : {}),
+					...(o.version ? { version: o.version } : {}),
+					...(o.runnerSources ? { runnerSources: o.runnerSources } : {}),
+					...(o.nativeAudit ?? {}),
+					...(o.debug ? { log } : {}),
+				}),
 			settings: (ctx) =>
 				createIosSettings({
 					udid: o.udid,

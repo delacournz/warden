@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { atfAudit, atfCheckName, mapAtfReply, mapAtfResult } from "./atf";
-import settings from "./fixtures/atf-settings.reply.json";
+import { readFileSync } from "node:fs";
+import { type AtfReply, atfAudit, atfCheckName, mapAtfReply, mapAtfResult } from "./atf";
+
+const settings: AtfReply = JSON.parse(
+	readFileSync(new URL("./fixtures/atf-settings.reply.json", import.meta.url), "utf8")
+);
 
 describe("mapAtfReply (recorded from the Android Settings app on an emulator)", () => {
 	const mapped = mapAtfReply(settings);

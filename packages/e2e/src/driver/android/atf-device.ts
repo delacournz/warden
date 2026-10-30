@@ -9,7 +9,7 @@ import { bunPushDex, type PushDex, UIAD_DEVICE_DIR, uiadInstallArgv, uiadPresent
  * hash like the uiad dex, so a new build is a new file and the always-pushed uiad dex stays small.
  */
 
-export type AtfJar = Pick<typeof ATF_DEX, "bytes" | "jarSha256" | "base64">;
+export type AtfJar = { bytes: number; jarSha256: string; base64: string };
 
 export function atfDevicePath(jar: Pick<AtfJar, "jarSha256"> = ATF_DEX): string {
 	return `${UIAD_DEVICE_DIR}/warden-atf-${jar.jarSha256.slice(0, 8)}.jar`;

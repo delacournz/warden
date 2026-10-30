@@ -107,7 +107,7 @@ describe("ensureAtfJar", () => {
 	});
 
 	test("pushes the bytes on first use and reports a failed write as E_IO", async () => {
-		let bytes = new Uint8Array();
+		let bytes: Uint8Array = new Uint8Array();
 		const ok = await ensureAtfJar({
 			session: session(false) as never,
 			adb: "adb",
