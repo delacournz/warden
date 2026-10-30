@@ -65,6 +65,13 @@ export const ids = {
 	clock: {
 		screen: "clk-screen",
 		back: "clk-back",
+		state: "clk-state",
+		now: "clk-now",
+		started: "clk-started",
+		days: "clk-days",
+		trial: "clk-trial",
+		offset: "clk-offset",
+		restart: "clk-restart",
 	},
 	gestures: {
 		screen: "gestures-screen",
