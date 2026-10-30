@@ -5,6 +5,7 @@ import { CopyBlock } from "@/components/copy-block";
 import { InstallCommand } from "@/components/install-command";
 import { ClipTabs } from "@/components/landing/clip-tabs";
 import { DemoVideo } from "@/components/landing/demo-video";
+import { GlitchWord } from "@/components/landing/glitch-word";
 import { RichText } from "@/components/rich-text";
 import { WardenIcon } from "@/components/warden-icon";
 import { ANALYTICS } from "@/lib/analytics/config";
@@ -134,7 +135,10 @@ function Home(): ReactElement {
 						{HERO.pill}
 					</a>
 					<h1 className={`max-w-5xl text-balance text-[clamp(2.6rem,6.4vw,5.4rem)] text-ink leading-[0.95] ${DISPLAY}`}>
-						Every agent gets its own <span className="text-accent">simulator.</span>
+						Every <GlitchWord className="accent-voice text-accent">agent</GlitchWord> gets its own{" "}
+						<GlitchWord className="accent-voice text-accent" offset>
+							simulator.
+						</GlitchWord>
 					</h1>
 					<p className="max-w-2xl text-balance text-ink-2 text-lg leading-relaxed sm:text-xl">{HERO.lede}</p>
 					<div className="flex w-full max-w-xl flex-col items-center gap-3">
@@ -322,7 +326,7 @@ function Section({
 			<div className="mx-auto flex max-w-3xl flex-col items-center gap-4 text-center">
 				<h2 className={`text-balance text-[clamp(2.2rem,4.6vw,3.6rem)] text-ink leading-[0.98] ${DISPLAY}`}>
 					{title}
-					{accent ? <span className="text-accent"> {accent}</span> : null}
+					{accent ? <span className="accent-voice text-accent"> {accent}</span> : null}
 				</h2>
 				<p className="max-w-2xl text-balance text-ink-2 text-lg leading-relaxed">{lede}</p>
 			</div>

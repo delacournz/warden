@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "@fontsource-variable/mona-sans/wdth.css";
-@import "@fontsource-variable/martian-mono/standard.css";
+@import "@fontsource/chakra-petch/latin-500.css";
+@import "@fontsource/chakra-petch/latin-600.css";
+@import "@fontsource/chakra-petch/latin-700.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 
@@ -9,15 +12,17 @@
 
 /*
  * The familiar agent dev-tool landing order on flat paper with
- * one ink. One display voice: Mona Sans wide and heavy (wdth 125, wght 800)
- * for every heading; Martian Mono at the smallest sizes for commands,
- * readouts and ids. One accent, used for marks large enough to carry it (and
- * the lamp in the warden mark). Lease green survives only as the docs'
+ * one ink. Three voices: Mona Sans wide and heavy (wdth 125, wght 800) for
+ * every heading and for reading; Chakra Petch (700) for the accent words that
+ * close a heading; JetBrains Mono, thin and rigid, at the smallest sizes for
+ * commands, readouts and ids. One accent, used for marks large enough to carry it (and the lamp in
+ * the warden mark). Lease green survives only as the docs'
  * success state. See DESIGN.md.
  */
 @theme {
 	--font-sans: "Mona Sans Variable", ui-sans-serif, system-ui, sans-serif;
-	--font-mono: "Martian Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+	--font-accent: "Chakra Petch", "Mona Sans Variable", ui-sans-serif, system-ui, sans-serif;
+	--font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
 	--color-ground: #f5f4ef;
 	--color-surface: #fdfcf9;
@@ -115,8 +120,10 @@
 	code,
 	kbd,
 	samp,
-	pre {
+	pre,
+	.font-mono {
 		font-variant-numeric: tabular-nums;
+		font-weight: 300;
 	}
 
 	h1,
@@ -126,6 +133,19 @@
 		letter-spacing: -0.025em;
 		font-variation-settings: "wdth" 112;
 	}
+}
+
+/*
+ * The accent words in a heading: Chakra Petch 600, slim and squared off
+ * against the wide, heavy Mona Sans. It sets narrower and shorter, so it runs
+ * a step larger to sit level with the words around it.
+ */
+@utility accent-voice {
+	font-family: var(--font-accent);
+	font-weight: 600;
+	font-size: 1.08em;
+	letter-spacing: 0.005em;
+	line-height: 0;
 }
 
 /* Prose: links underline in ink, offset clear of descenders; inline code sits in a fill chip. */
@@ -368,4 +388,169 @@ figure.shiki {
 }
 .faq details[open] .faq-plus-v {
 	transform: scaleY(0);
+}
+
+/* glitch */
+/*
+ * The hero's accent words drop signal: a burst in the last ~11% of each word's period, idle in between. `.glitch-offset`
+ * runs its word on a longer period (6.8 s against 5 s, so ~750 ms bursts against ~500 ms) from a different start, so
+ * "agent" and "simulator." drift in and out of phase: sometimes apart, now and then together, never a fixed turn. Two aria-hidden copies of the word sit exactly
+ * over it. The tear copy wears the word's colour on a ground band, so the slice it shows looks displaced rather than
+ * doubled; the chroma copy is a paler channel (accent toward ink) offset the other way. Only `clip-path` and
+ * `transform` move, stepped, so the h1 never reflows. Offsets are in em so the tear scales with the clamp.
+ */
+.glitch {
+	--glitch-period: 5s;
+	--glitch-delay: 0s;
+	position: relative;
+	display: inline-block;
+	line-height: 0.84;
+	animation: glitch-base var(--glitch-period) steps(1, end) var(--glitch-delay) infinite;
+}
+
+.glitch-offset {
+	--glitch-period: 6.8s;
+	--glitch-delay: -4s;
+}
+
+.glitch-layer {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	user-select: none;
+	clip-path: inset(50% 0 50% 0);
+	animation: var(--glitch-period) steps(1, end) var(--glitch-delay) infinite;
+}
+
+.glitch-tear {
+	color: var(--color-accent);
+	background: var(--color-ground);
+	animation-name: glitch-tear;
+}
+
+.glitch-chroma {
+	color: color-mix(in oklab, var(--color-accent) 40%, var(--color-ink));
+	animation-name: glitch-chroma;
+}
+
+@keyframes glitch-base {
+	0%,
+	91%,
+	93%,
+	96%,
+	100% {
+		transform: none;
+	}
+	90% {
+		transform: translateX(0.012em);
+	}
+	92% {
+		transform: translateX(-0.018em);
+	}
+	95% {
+		transform: translateX(0.01em);
+	}
+}
+
+@keyframes glitch-tear {
+	0%,
+	99%,
+	100% {
+		clip-path: inset(50% 0 50% 0);
+		transform: none;
+	}
+	89% {
+		clip-path: inset(14% 0 60% 0);
+		transform: translateX(-0.09em);
+	}
+	91% {
+		clip-path: inset(54% 0 20% 0);
+		transform: translateX(0.11em);
+	}
+	93% {
+		clip-path: inset(30% 0 50% 0);
+		transform: translateX(-0.05em);
+	}
+	95% {
+		clip-path: inset(66% 0 6% 0);
+		transform: translateX(0.07em);
+	}
+	97% {
+		clip-path: inset(4% 0 74% 0);
+		transform: translateX(-0.1em);
+	}
+}
+
+@keyframes glitch-chroma {
+	0%,
+	98%,
+	100% {
+		clip-path: inset(50% 0 50% 0);
+		transform: none;
+	}
+	90% {
+		clip-path: inset(36% 0 48% 0);
+		transform: translateX(0.045em);
+	}
+	92% {
+		clip-path: inset(6% 0 80% 0);
+		transform: translateX(-0.05em);
+	}
+	94% {
+		clip-path: inset(60% 0 24% 0);
+		transform: translateX(0.03em);
+	}
+	96% {
+		clip-path: inset(20% 0 66% 0);
+		transform: translateX(-0.04em);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.glitch {
+		animation: none;
+	}
+
+	.glitch-layer {
+		display: none;
+		animation: none;
+	}
+}
+
+/*
+ * Top nav and the docs' mobile bars: flat Paper under a hairline, not frosted glass. Links speak in the human voice (Mona Sans a step wide and
+ * firm); the current one is Ink with the lamp from the warden mark lit beside it.
+ */
+#nd-nav nav,
+#nd-subnav,
+[data-toc-popover] > header {
+	background: var(--color-ground);
+	backdrop-filter: none;
+	border-color: var(--color-hairline);
+}
+
+#nd-nav ul a {
+	gap: 6px;
+	color: var(--color-ink-2);
+	font-size: 0.875rem;
+	letter-spacing: -0.01em;
+	font-variation-settings:
+		"wdth" 112,
+		"wght" 540;
+
+	&:hover {
+		color: var(--color-ink);
+	}
+
+	&[data-active="true"] {
+		color: var(--color-ink);
+	}
+
+	&[data-active="true"]::before {
+		content: "";
+		width: 6px;
+		height: 6px;
+		border-radius: 9999px;
+		background: var(--color-lamp);
+	}
 }
