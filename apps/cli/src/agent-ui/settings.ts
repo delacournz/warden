@@ -12,6 +12,7 @@ import type {
 import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import type { A11yVerbOptions } from "./a11y";
 import { deviceInfo, fail, recordOf, resolveDeps, withPort } from "./conditions";
 import type { ConditionsDeps } from "./conditions-types";
 import type { UiDevice } from "./device";
@@ -29,6 +30,13 @@ export type A11yOptionValues = UiOptionValues & {
 	bold?: boolean;
 	contrast?: string;
 	reduceMotion?: boolean;
+	screenReader?: boolean;
+	reduceTransparency?: boolean;
+	buttonShapes?: boolean;
+	differentiateWithoutColor?: boolean;
+	onOffLabels?: boolean;
+	highContrastText?: boolean;
+	colorInversion?: boolean;
 };
 
 export type BatteryOptionValues = UiOptionValues & { level?: string; charging?: boolean };
@@ -299,6 +307,17 @@ export function uiLocale(ctx: CommandContext, deps: UiDeps, arg: string, opts: A
 
 // ---------- a11y ----------
 
+/** The on/off display settings beyond text size, bold, contrast and reduce motion. */
+const A11Y_SWITCHES = [
+	"screenReader",
+	"reduceTransparency",
+	"buttonShapes",
+	"differentiateWithoutColor",
+	"onOffLabels",
+	"highContrastText",
+	"colorInversion",
+] as const satisfies readonly (keyof A11yOptionValues & keyof A11yCondition)[];
+
 function a11yOpOf(opts: A11yOptionValues): Result<NonNullable<A11yCondition>, UiError> {
 	const op: A11yCondition = {};
 	if (opts.textSize !== undefined) {
@@ -308,6 +327,7 @@ function a11yOpOf(opts: A11yOptionValues): Result<NonNullable<A11yCondition>, Ui
 	}
 	if (opts.bold !== undefined) op.boldText = opts.bold;
 	if (opts.reduceMotion !== undefined) op.reduceMotion = opts.reduceMotion;
+	for (const key of A11Y_SWITCHES) if (opts[key] !== undefined) op[key] = opts[key];
 	if (opts.contrast !== undefined) {
 		if (opts.contrast !== "increased" && opts.contrast !== "normal") {
 			return fail("usage", `--contrast must be increased or normal, got "${opts.contrast}"`);
@@ -315,8 +335,27 @@ function a11yOpOf(opts: A11yOptionValues): Result<NonNullable<A11yCondition>, Ui
 		op.contrast = opts.contrast;
 	}
 	return Object.keys(op).length === 0
-		? fail("usage", "a11y set needs one of --text-size, --bold, --contrast, --reduce-motion")
+		? fail(
+				"usage",
+				"a11y set needs one of --text-size, --bold, --contrast, --reduce-motion, --screen-reader, --reduce-transparency, --button-shapes, --differentiate-without-color, --on-off-labels, --high-contrast-text, --color-inversion"
+			)
 		: ok(op);
+}
+
+/**
+ * Android TalkBack: keep the services and master switch the device had before warden turned it on (undo puts back
+ * exactly those); once TalkBack is turned off again nothing of it stays on the record.
+ */
+function withScreenReaderRecord(
+	record: A11yCondition,
+	op: NonNullable<A11yCondition>,
+	previous: A11yCondition["screenReaderPrevious"]
+): A11yCondition {
+	if (op.screenReader === false && record.screenReaderPrevious !== undefined) {
+		const { screenReader: _off, screenReaderPrevious: _prior, ...rest } = record;
+		return rest;
+	}
+	return previous === undefined ? record : { ...record, screenReaderPrevious: previous };
 }
 
 async function a11ySet(
@@ -332,11 +371,15 @@ async function a11ySet(
 		if (!applied.success) return applied;
 		const resolved = op.data.textSize === undefined ? undefined : resolveTextSize(op.data.textSize);
 		const previous = recordOf(ctx, device.lease.id, "a11y")?.value ?? {};
-		const next: A11yCondition = {
-			...previous,
-			...appliedA11y(op.data, applied.data.applied),
-			...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
-		};
+		const next = withScreenReaderRecord(
+			{
+				...previous,
+				...appliedA11y(op.data, applied.data.applied),
+				...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
+			},
+			op.data,
+			applied.data.screenReaderPrevious
+		);
 		const saved = save(ctx, device, "a11y", next);
 		if (!saved.success) return saved;
 		const warnings = [
@@ -347,7 +390,11 @@ async function a11ySet(
 			device,
 			"a11y-set",
 			`a11y ${applied.data.applied.join(", ")}`,
-			{ applied: applied.data.applied, skipped: applied.data.skipped },
+			{
+				applied: applied.data.applied,
+				skipped: applied.data.skipped,
+				...(applied.data.screenReader === undefined ? {} : { screenReader: applied.data.screenReader }),
+			},
 			warnings
 		);
 	});
@@ -365,9 +412,33 @@ async function a11yReset(ctx: CommandContext, deps: Deps, device: UiDevice): Pro
 	});
 }
 
-/** `warden ui a11y set [--text-size <name|scale>] [--bold] [--contrast increased|normal] [--reduce-motion]` · `reset` · `status`. */
-export function uiA11y(ctx: CommandContext, deps: UiDeps, action: string, opts: A11yOptionValues): Promise<number> {
+/** What `a11y status` says about the screen reader a recorded condition left on. */
+function screenReaderOf(record: A11yCondition | undefined, platform: UiDevice["platform"]) {
+	if (record?.screenReader !== true) return { mode: "off" } as const;
+	return platform === "android"
+		? ({ mode: "real", engine: "talkback" } as const)
+		: ({ mode: "simulated", engine: "voiceover" } as const);
+}
+
+/**
+ * `warden ui a11y set [--text-size <name|scale>] [--bold] [--contrast increased|normal] [--reduce-motion]
+ * [--screen-reader] [--reduce-transparency] [--button-shapes] [--differentiate-without-color] [--on-off-labels]
+ * [--high-contrast-text] [--color-inversion]` (each with a `--no-…`) · `reset` · `status`; and the read-side verbs
+ * `audit` · `order` · `speak <locator>` · `announcements` · `spoken` · `focus next|prev|activate|status` (`a11y.ts`).
+ */
+export async function uiA11y(
+	ctx: CommandContext,
+	deps: UiDeps,
+	action: string,
+	rest: readonly string[],
+	opts: A11yOptionValues & A11yVerbOptions
+): Promise<number> {
+	const { A11Y_VERBS, isA11yVerb, uiA11yVerb } = await import("./a11y");
+	if (isA11yVerb(action)) return uiA11yVerb(ctx, deps, action, rest, opts);
 	return runUi(ctx, deps, `a11y ${action}`, opts, async (device) => {
+		if (rest.length > 0 && (action === "set" || action === "reset" || action === "status")) {
+			return unexpected(action, rest, "a11y");
+		}
 		switch (action) {
 			case "set":
 				return a11ySet(ctx, await resolveDeps(deps), device, opts);
@@ -375,17 +446,20 @@ export function uiA11y(ctx: CommandContext, deps: UiDeps, action: string, opts: 
 				return a11yReset(ctx, await resolveDeps(deps), device);
 			case "status": {
 				const record = recordOf(ctx, device.lease.id, "a11y")?.value;
+				const screenReader = screenReaderOf(record, device.platform);
+				const reader =
+					screenReader.mode === "off"
+						? ""
+						: `\nscreen reader  ${screenReader.mode} (${screenReader.engine}${screenReader.mode === "simulated" ? ": a flag the app reads, not VoiceOver" : ""})`;
 				return success(
 					device,
 					"a11y-status",
-					record === undefined ? "a11y  not changed" : `a11y  ${JSON.stringify(record)}`,
-					{
-						a11y: record ?? null,
-					}
+					record === undefined ? "a11y  not changed" : `a11y  ${JSON.stringify(record)}${reader}`,
+					{ a11y: record ?? null, screenReader }
 				);
 			}
 			default:
-				return fail("usage", `unknown a11y action "${action}"`, "set, reset or status");
+				return fail("usage", `unknown a11y action "${action}"`, `set, reset, status, ${A11Y_VERBS.join(", ")}`);
 		}
 	});
 }
