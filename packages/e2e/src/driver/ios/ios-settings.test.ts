@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LaunchSettings } from "@delacour/warden-core/conditions/launch-settings";
-import { type ExecCall, fakeExec, joined } from "./exec.testing";
+import { type ExecCall, type FakeExecHandler, fakeExec, joined } from "./exec.testing";
 import {
 	contentSizeArgv,
 	contrastArgv,
@@ -15,11 +15,14 @@ import {
 const UDID = "UDID-1";
 const APP = "com.example.app";
 
-function harness(opts: { last?: string; fail?: string } = {}) {
+function harness(opts: { last?: string; fail?: string; missing?: boolean } = {}) {
 	const calls: ExecCall[] = [];
 	let staged: LaunchSettings = {};
 	const exec = fakeExec(
 		[
+			...(opts.missing
+				? [["xcrun simctl spawn", { exitCode: 1, stderr: "pair of (a, b) does not exist" }] as FakeExecHandler]
+				: []),
 			["xcrun", opts.fail ? { exitCode: 1, stderr: "boom" } : {}],
 			["sh", {}],
 		],
@@ -182,27 +185,78 @@ describe("ios timezone and locale", () => {
 });
 
 describe("ios a11y", () => {
-	test("text size by name or by scale, contrast; bold and reduce motion are skipped", async () => {
+	test("text size by name or by scale and contrast go through simctl ui", async () => {
 		const h = harness();
-		const r = await h.settings.a11y({ textSize: 1.9, contrast: "increased", boldText: true, reduceMotion: true });
+		const r = await h.settings.a11y({ textSize: 1.9, contrast: "increased" });
 		expect(r.success && r.data.applied).toEqual(["textSize", "contrast"]);
-		expect(r.success && r.data.skipped.map((s) => s.setting)).toEqual(["boldText", "reduceMotion"]);
+		expect(r.success && r.data.skipped).toEqual([]);
 		expect(joined(h.calls)).toEqual([
 			"xcrun simctl ui UDID-1 content_size accessibility-large",
 			"xcrun simctl ui UDID-1 increase_contrast enabled",
 		]);
 	});
-	test("only unsupported settings is E_UNSUPPORTED", async () => {
-		const r = await harness().settings.a11y({ boldText: true });
-		expect(!r.success && r.error.code).toBe("E_UNSUPPORTED");
+	test("reduce motion, bold, transparency, shapes, colour and labels are a defaults write each, applied", async () => {
+		const h = harness();
+		const r = await h.settings.a11y({
+			reduceMotion: true,
+			boldText: true,
+			reduceTransparency: true,
+			buttonShapes: false,
+			differentiateWithoutColor: true,
+			onOffLabels: true,
+		});
+		expect(r.success && r.data.applied).toEqual([
+			"reduceMotion",
+			"boldText",
+			"reduceTransparency",
+			"buttonShapes",
+			"differentiateWithoutColor",
+			"onOffLabels",
+		]);
+		expect(r.success && r.data.skipped).toEqual([]);
+		expect(joined(h.calls)).toEqual([
+			"xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility ReduceMotionEnabled -bool YES",
+			"xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility EnhancedTextLegibilityEnabled -bool YES",
+			"xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility EnhancedBackgroundContrastEnabled -bool YES",
+			"xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility ButtonShapesEnabled -bool NO",
+			"xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility DifferentiateWithoutColor -bool YES",
+			"xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility IncreaseButtonLegibilityEnabled -bool YES",
+		]);
 	});
-	test("null puts text size and contrast back", async () => {
+	test("screenReader writes VoiceOverTouchEnabled and reports the simulated voiceover engine", async () => {
+		const h = harness();
+		const r = await h.settings.a11y({ screenReader: true });
+		expect(r.success && r.data.applied).toEqual(["screenReader"]);
+		expect(r.success && r.data.screenReader).toEqual({ mode: "simulated", engine: "voiceover" });
+		expect(joined(h.calls)).toEqual([
+			"xcrun simctl spawn UDID-1 defaults write com.apple.Accessibility VoiceOverTouchEnabled -bool YES",
+		]);
+		const off = await harness().settings.a11y({ screenReader: false });
+		expect(off.success && off.data.screenReader).toEqual({ mode: "off" });
+	});
+	test("Android-only settings are skipped with a reason; only those is E_UNSUPPORTED", async () => {
+		const mixed = await harness().settings.a11y({ boldText: true, colorInversion: true });
+		expect(mixed.success && mixed.data.skipped).toEqual([{ setting: "colorInversion", reason: "Android only" }]);
+		const only = await harness().settings.a11y({ highContrastText: true });
+		expect(!only.success && only.error.code).toBe("E_UNSUPPORTED");
+	});
+	test("a failing defaults write is E_IO", async () => {
+		const r = await harness({ fail: "x" }).settings.a11y({ boldText: true });
+		expect(!r.success && r.error.code).toBe("E_IO");
+	});
+	test("null puts text size and contrast back and deletes every key warden manages, a missing key tolerated", async () => {
 		const h = harness();
 		await h.settings.a11y(null);
-		expect(joined(h.calls)).toEqual([
+		const lines = joined(h.calls);
+		expect(lines.slice(0, 3)).toEqual([
 			"xcrun simctl ui UDID-1 content_size large",
 			"xcrun simctl ui UDID-1 increase_contrast disabled",
+			"xcrun simctl spawn UDID-1 defaults delete com.apple.Accessibility ReduceMotionEnabled",
 		]);
+		expect(lines).toHaveLength(9);
+		expect(lines.at(-1)).toContain("VoiceOverTouchEnabled");
+		const gone = await harness({ missing: true }).settings.a11y(null);
+		expect(gone.success).toBe(true);
 	});
 	test("an unknown text size is E_BAD_REQUEST", async () => {
 		const r = await harness().settings.a11y({ textSize: "huge" as never });

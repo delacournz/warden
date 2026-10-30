@@ -8,6 +8,7 @@ import type {
 	TextSize,
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
+import type { ScreenReaderState } from "../a11y/a11y.types";
 
 /**
  * The device driver contract every layer of warden-e2e builds on: the spec API (`screen`, `device`,
@@ -335,9 +336,12 @@ export interface Driver {
 	 */
 	locale(tag: string | null, opts?: SettingOptions): DriverResult<LocaleState>;
 	/**
-	 * Accessibility settings: text size, bold text, contrast, reduce motion; `null` puts them back. iOS: `simctl ui
-	 * content_size` / `increase_contrast` (no bold text or reduce motion: `skipped`). Android: `font_scale`,
-	 * `font_weight_adjustment` (no contrast or reduce motion: `skipped`).
+	 * Accessibility settings; `null` puts them back. iOS: `simctl ui content_size` / `increase_contrast`, and
+	 * `simctl spawn defaults write com.apple.Accessibility <Key>` (live) for reduce motion, bold text, reduce
+	 * transparency, button shapes, differentiate without colour, on/off labels and the fake VoiceOver flag.
+	 * Android: `font_scale`, `font_weight_adjustment`, `secure high_text_contrast_enabled` /
+	 * `accessibility_display_inversion_enabled`, and reduce motion as `transition_animation_scale` 0 (what RN reads;
+	 * off by default). No contrast switch on Android, no TalkBack until A11Y-7: `skipped` with the reason.
 	 */
 	a11y(op: A11yOp | null): DriverResult<A11yState>;
 	/**
@@ -405,6 +409,20 @@ export type A11yOp = {
 	boldText?: boolean;
 	contrast?: "increased" | "normal";
 	reduceMotion?: boolean;
+	/** iOS: Reduce Transparency */
+	reduceTransparency?: boolean;
+	/** iOS: Button Shapes */
+	buttonShapes?: boolean;
+	/** iOS: Differentiate Without Color */
+	differentiateWithoutColor?: boolean;
+	/** iOS: On/Off Labels */
+	onOffLabels?: boolean;
+	/** Android: High contrast text */
+	highContrastText?: boolean;
+	/** Android: colour inversion */
+	colorInversion?: boolean;
+	/** iOS: fake VoiceOver flag (`mode: "simulated"`); Android: real TalkBack (A11Y-7) */
+	screenReader?: boolean;
 };
 
 export type A11yState = {
@@ -413,6 +431,8 @@ export type A11yState = {
 	skipped: readonly { setting: string; reason: string }[];
 	/** the Android font scale was clamped to the platform's range */
 	notes: readonly string[];
+	/** present when the op asked for `screenReader` and it was applied */
+	screenReader?: ScreenReaderState;
 };
 
 export type BatteryOp = { level?: number; charging?: boolean };

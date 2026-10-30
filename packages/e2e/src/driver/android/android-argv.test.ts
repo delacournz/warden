@@ -41,6 +41,7 @@ import {
 	swipeArgv,
 	tapArgv,
 	textArgvs,
+	transitionRestoreArgv,
 	UNENROLLED_FINGER_ID,
 	uimodeGetArgv,
 	uimodeSetArgv,
@@ -246,6 +247,13 @@ describe("app argv", () => {
 			["settings", "put", "global", "transition_animation_scale", "0"],
 			["settings", "put", "global", "animator_duration_scale", "0"],
 		]);
+	});
+});
+
+describe("transition scale restore", () => {
+	test("puts the saved value back, or deletes a setting that was never set", () => {
+		expect(transitionRestoreArgv("1.0")).toEqual(["settings", "put", "global", "transition_animation_scale", "1.0"]);
+		expect(transitionRestoreArgv("null")).toEqual(["settings", "delete", "global", "transition_animation_scale"]);
 	});
 });
 
