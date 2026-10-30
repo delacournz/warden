@@ -2,7 +2,8 @@ import type { Element, Platform } from "../../driver/driver.types";
 import { accessibleName, isActionable } from "../speech";
 import { describe, issue, type Rule } from "./rule.context";
 
-const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, "");
+/** Case, whitespace and punctuation do not matter: a name may join parts with commas that the visible text lacks. */
+const norm = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
 function visibleText(el: Element, platform: Platform): string {
 	const own = platform === "android" ? el.text?.trim() : undefined;
