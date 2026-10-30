@@ -1,3 +1,4 @@
+import { type ConditionsConfig, parseConditionsEnv } from "@delacour/warden-core/conditions/conditions.config";
 import type { Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 
@@ -45,6 +46,12 @@ export const ENV_NAMES = {
 	perf: "WARDEN_PERF",
 	/** JSON of the suite's `perf.budgets`; a breach fails the test with `PERF_BUDGET` */
 	perfBudgets: "WARDEN_PERF_BUDGETS",
+	/** JSON of the suite's `conditions` (network / location / clock applied before each spec, the rest reported as not applied) */
+	conditions: "WARDEN_CONDITIONS",
+	/** the id of the lease holding `WARDEN_UDID`: conditions a spec sets are recorded on it and its shaping proxy hangs off it */
+	leaseId: "WARDEN_LEASE_ID",
+	/** JSON argv that runs the shaping proxy (`warden __netproxy`) when specs run from a compiled `warden`; the JSON argument is appended */
+	netproxyCommand: "WARDEN_NETPROXY_COMMAND",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -68,6 +75,13 @@ const launchArgs = z.string().transform((raw, ctx): string[] => {
 		// falls through to the issue below
 	}
 	ctx.addIssue({ code: "custom", message: "must be a JSON array of strings" });
+	return z.NEVER;
+});
+
+const conditions = z.string().transform((raw, ctx): ConditionsConfig => {
+	const parsed = parseConditionsEnv(raw);
+	if (parsed.success) return parsed.data;
+	ctx.addIssue({ code: "custom", message: parsed.error });
 	return z.NEVER;
 });
 
@@ -98,6 +112,9 @@ const schema = z.object({
 	bin: z.string().optional(),
 	perf: z.string().optional(),
 	perfBudgets: z.string().optional(),
+	conditions: conditions.optional(),
+	leaseId: z.string().min(1).optional(),
+	netproxyCommand: launchArgs.pipe(z.array(z.string()).min(1)).optional(),
 });
 
 export type E2eEnv = {
@@ -136,6 +153,12 @@ export type E2eEnv = {
 	perf?: string[];
 	/** `WARDEN_PERF_BUDGETS`: raw JSON of the suite's budgets */
 	perfBudgets?: string;
+	/** `WARDEN_CONDITIONS`: what every spec starts from (`conditions/suite-conditions.ts` applies it) */
+	conditions?: ConditionsConfig;
+	/** `WARDEN_LEASE_ID`: the device's lease; absent under a bare `bun test`, where network shaping is unsupported */
+	leaseId?: string;
+	/** `WARDEN_NETPROXY_COMMAND`: argv that starts the shaping proxy; absent from source (`bun netproxy.main.ts`) */
+	netproxyCommand?: string[];
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -181,6 +204,9 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		}),
 		...(v.deviceKind === undefined ? {} : { deviceKind: v.deviceKind }),
 		...(v.iosRunnerRestart === undefined ? {} : { iosRunnerRestart: v.iosRunnerRestart }),
+		...(v.conditions === undefined ? {} : { conditions: v.conditions }),
+		...(v.leaseId === undefined ? {} : { leaseId: v.leaseId }),
+		...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
 		...(v.perf === undefined

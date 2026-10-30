@@ -1,8 +1,21 @@
+import type {
+	ClockCondition,
+	HostFault,
+	LocationCondition,
+	NetworkCondition,
+	PermissionName,
+	PermissionState,
+} from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
+	A11yOp,
+	A11yState,
 	AlertInfo,
 	AppCommands,
+	BatteryOp,
+	BatteryState,
+	ClockState,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -13,20 +26,28 @@ import type {
 	HealthInfo,
 	KeyName,
 	LaunchOptions,
+	LocaleState,
 	Modifier,
+	NetworkState,
 	Orientation,
+	PermissionGrants,
+	PermissionsState,
 	Platform,
 	Point,
+	PushPayload,
 	Rect,
 	Role,
 	ScreenInfo,
+	SettingOptions,
 	Snapshot,
 	SnapshotBackend,
+	TimezoneState,
 	TouchPath,
 	TwoFingerOptions,
 } from "./driver.types";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
+import { faultNotes } from "./network-proxy";
 import type { PastesText, SelectsAll, SetsText } from "./typing";
 
 /**
@@ -184,6 +205,17 @@ export type DriverCall =
 	| { method: "isFrontmost"; bundleId: string }
 	| { method: "appearance"; set?: "light" | "dark" }
 	| { method: "clipboard"; set?: string }
+	| { method: "network"; op: NetworkCondition }
+	| { method: "networkFaults"; faults: readonly HostFault[] }
+	| { method: "location"; op: LocationCondition }
+	| { method: "clock"; op: ClockCondition }
+	| { method: "permissions"; grants: PermissionGrants; opts?: SettingOptions }
+	| { method: "timezone"; tz: string | null; opts?: { previous?: string } }
+	| { method: "locale"; tag: string | null; opts?: SettingOptions }
+	| { method: "a11y"; op: A11yOp | null }
+	| { method: "battery"; op: BatteryOp | null }
+	| { method: "memoryWarning"; opts?: SettingOptions }
+	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -204,6 +236,8 @@ export type FakeDriverOptions = {
 	screens: readonly Snapshot[] | (() => Snapshot);
 	platform?: Platform;
 	id?: string;
+	/** host wall time the fake `clock` op measures from (default `Date.now`) */
+	wallNow?: () => number;
 	capabilities?: Partial<DriverCapabilities>;
 	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
 	selectAll?: boolean;
@@ -292,6 +326,8 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	let current: Orientation = "portrait";
 	let theme: "light" | "dark" = "light";
 	let clip = "";
+	const wallNow = options.wallNow ?? Date.now;
+	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
 	const running = new Set<string>();
 	const installed = new Set<string>();
 
@@ -447,6 +483,93 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 				if (set !== undefined) clip = set;
 				return clip;
 			});
+		},
+		async network(op) {
+			return run({ method: "network", op }, () => {
+				net = { online: op.kind !== "offline", condition: op, needsProxy: [] };
+				return net;
+			});
+		},
+		async networkFaults(faults) {
+			return run({ method: "networkFaults", faults }, () => ({ notes: faultNotes(faults) }));
+		},
+		async location(op) {
+			return run({ method: "location", op }, () => undefined);
+		},
+		async clock(op) {
+			const at = op.kind === "fixed" || op.kind === "frozen" ? Date.parse(op.at) : 0;
+			if (Number.isNaN(at)) {
+				calls.push({ method: "clock", op });
+				return {
+					success: false,
+					error: driverError("E_BAD_REQUEST", `clock ${op.kind}: not an ISO 8601 date-time`),
+				};
+			}
+			return run({ method: "clock", op }, (): ClockState => {
+				const now = wallNow();
+				const offsetMs = op.kind === "offset" ? op.ms : op.kind === "fixed" ? at - now : 0;
+				return {
+					condition: op,
+					offsetMs,
+					frozen: op.kind === "frozen",
+					nowMs: op.kind === "frozen" ? at : now + offsetMs,
+				};
+			});
+		},
+		async permissions(grants, opts) {
+			return run(
+				{ method: "permissions", grants, ...(opts ? { opts } : {}) },
+				(): PermissionsState => ({
+					bundleId: opts?.bundleId ?? "fake.app",
+					applied: Object.entries(grants).map(([permission, state]) => ({
+						permission: permission as PermissionName,
+						state: state as PermissionState,
+					})),
+					skipped: [],
+				})
+			);
+		},
+		async timezone(tz, opts) {
+			return run(
+				{ method: "timezone", tz, ...(opts ? { opts } : {}) },
+				(): TimezoneState => ({
+					...(tz === null ? {} : { timezone: tz }),
+				})
+			);
+		},
+		async locale(tag, opts) {
+			return run(
+				{ method: "locale", tag, ...(opts ? { opts } : {}) },
+				(): LocaleState => ({
+					...(tag === null ? {} : { locale: tag }),
+				})
+			);
+		},
+		async a11y(op) {
+			return run(
+				{ method: "a11y", op },
+				(): A11yState => ({
+					applied: op === null ? ["textSize"] : Object.keys(op),
+					skipped: [],
+					notes: [],
+				})
+			);
+		},
+		async battery(op) {
+			return run(
+				{ method: "battery", op },
+				(): BatteryState => ({
+					...(op?.level === undefined ? {} : { level: op.level }),
+					...(op?.charging === undefined ? {} : { charging: op.charging }),
+					cosmetic: false,
+				})
+			);
+		},
+		async memoryWarning(opts) {
+			return run({ method: "memoryWarning", ...(opts ? { opts } : {}) }, () => undefined);
+		},
+		async push(payload, opts) {
+			return run({ method: "push", payload, ...(opts ? { opts } : {}) }, () => undefined);
 		},
 		app,
 		async close() {

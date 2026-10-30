@@ -293,8 +293,9 @@ describe("build kinds migration", () => {
 	test("a database from before kinds keeps its builds as legacy, with empty kind columns", () => {
 		const old = join(dir, "old-builds.db");
 		const db = new Database(old, { create: true });
-		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
-		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
+		const beforeKinds = MIGRATIONS.findIndex((sql) => sql.includes("ADD COLUMN kind"));
+		for (const sql of MIGRATIONS.slice(0, beforeKinds)) db.exec(sql);
+		db.exec(`PRAGMA user_version = ${beforeKinds}`);
 		db.exec("INSERT INTO builds VALUES ('k', 'ios', 'p', 'H', '/c/H/A.app', 'build', 5, 1, 2)");
 		db.close();
 		const migrated = openStore(old);
@@ -519,6 +520,31 @@ describe("boot queue", () => {
 		expect(migrated.listQueue()).toEqual([]);
 		migrated.enqueue(newEntry("q1", 1));
 		expect(migrated.listQueue()).toHaveLength(1);
+		migrated.close();
+	});
+
+	test("migration adds orphan_conditions and its trigger to a database that has lease_conditions", () => {
+		const old = join(dir, "old-orphans.db");
+		const db = new Database(old, { create: true });
+		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
+		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
+		db.close();
+		const migrated = openStore(old);
+		const lease = migrated.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U1", name: "n" },
+				owner: { kind: "user", pid: 1, cwd: "/" },
+				ttlMs: 1,
+			},
+			1
+		);
+		migrated.db
+			.query("INSERT INTO lease_conditions (lease_id, area, json, owned, set_at) VALUES (?, 'battery', '{}', '[]', 1)")
+			.run(lease.id);
+		migrated.deleteLeases([lease.id]);
+		expect(migrated.db.query("SELECT lease_id, area FROM orphan_conditions").all()).toEqual([
+			{ lease_id: lease.id, area: "battery" },
+		]);
 		migrated.close();
 	});
 

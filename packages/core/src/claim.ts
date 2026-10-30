@@ -3,6 +3,7 @@ import { availableParallelism, loadavg } from "node:os";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { allocate } from "./allocate";
 import { addCost, type Budget, type CapacityConfig, type Cost, deviceCost, explain, fits, totalCost } from "./capacity";
+import type { OrphanHost } from "./conditions/orphans";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
 import { formatDuration } from "./duration";
 import type { MemoryPressure } from "./host";
@@ -64,6 +65,8 @@ export type ClaimInput = {
 	slim?: boolean;
 	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
 	abort?: () => boolean;
+	/** conditions a deleted lease left on a claimed device are undone before the claim returns; absent = left for gc */
+	orphans?: OrphanHost;
 };
 
 /** The error of a claim ended by `ClaimInput.abort`. */
@@ -873,6 +876,23 @@ async function quarantineUnhealthy(input: ClaimInput, bad: UnhealthyDevice[]): P
 	}
 }
 
+/** Undo what a deleted lease left set on the claimed devices; only touches the conditions code when a row exists. */
+async function undoClaimedOrphans(input: ClaimInput, claimed: ClaimedDevice[]): Promise<void> {
+	const host = input.orphans;
+	if (!host) return;
+	for (const { device } of claimed) {
+		const rows = input.store.db
+			.query<{ n: number }, [string, string]>(
+				"SELECT COUNT(*) AS n FROM orphan_conditions WHERE platform = ? AND device_id = ?"
+			)
+			.get(device.platform, device.id);
+		if (!rows || rows.n === 0) continue;
+		const { undoOrphansWith } = await import("./conditions/orphans");
+		const report = await undoOrphansWith(input.store, { now: input.now, pidAlive: input.pidAlive, ...host }, device);
+		for (const e of report.errors) input.log?.(`${device.name} (${device.id}): leftover condition not undone — ${e}`);
+	}
+}
+
 /**
  * Boot / create / wait-ready / probe every reserved device; all-or-nothing. A failed probe
  * quarantines that device and asks the caller to claim again without it (`retry`).
@@ -899,6 +919,7 @@ async function complete(
 		return { retry: bad };
 	}
 	const claimed = results.flatMap((r) => (r.ok.success ? [r.ok.data] : []));
+	await undoClaimedOrphans(input, claimed);
 	const now = input.now();
 	input.store.heartbeat(
 		claimed.map((c) => c.lease.id),

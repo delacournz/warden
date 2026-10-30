@@ -1,5 +1,6 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { conditionsOf } from "../conditions/device-conditions";
 import { isRecoverableLoss } from "../driver/ios/hid-recovery";
 import { E2eError } from "../errors";
 import { perfStartFor } from "../perf/device-perf";
@@ -56,6 +57,9 @@ export function runnerTiming(): Readonly<RunnerTiming> {
 export function setRunnerTiming(next: Partial<RunnerTiming> | undefined): void {
 	timing = next === undefined ? { ...DEFAULT_TIMING } : { ...timing, ...next };
 }
+
+/** One thing to undo after the test; `when` false = nothing to undo, so no step line and no cleanup budget spent. */
+type Teardown = { name: string; run: () => Promise<void>; when?: () => boolean };
 
 type Bag = BaseFixtures & Record<string, unknown>;
 
@@ -257,7 +261,7 @@ async function runAttemptOnce<F extends object>(session: Session, spec: AttemptS
 	);
 	session.enterAttempt(ctx);
 
-	const teardowns: Array<{ name: string; run: () => Promise<void> }> = [];
+	const teardowns: Teardown[] = [];
 	const state: { bag?: Bag } = {};
 	let outcome = await raceDeadline(controller, use.timeoutMs, () =>
 		setUpAndRun(bound, spec, use, controller.signal, state, teardowns)
@@ -385,7 +389,7 @@ async function setUpAndRun<F extends object>(
 	use: ResolvedUse,
 	signal: AbortSignal,
 	state: { bag?: Bag },
-	teardowns: Array<{ name: string; run: () => Promise<void> }>
+	teardowns: Teardown[]
 ): Promise<void> {
 	const base = await buildBaseFixtures(session, signal, use);
 	const built: Bag = { ...base };
@@ -401,6 +405,12 @@ async function setUpAndRun<F extends object>(
 				if (perf.active) await perf.stop();
 			},
 		});
+	}
+	const conditions = conditionsOf(base.device);
+	if (conditions !== undefined) {
+		// registered before it is applied, so a half-applied baseline is still put back
+		teardowns.push({ name: "conditions", run: () => conditions.teardown(), when: () => conditions.dirty() });
+		if (conditions.declared) await session.step("conditions", "conditions.baseline", () => conditions.applyBaseline());
 	}
 	if (use.launch === "fresh") await session.step("app", "app.open", () => base.app.open());
 	for (const entry of spec.fixtures) {
@@ -463,7 +473,7 @@ async function runCleanup<F extends object>(
 	spec: AttemptSpec<F>,
 	ctx: AttemptContext,
 	built: Bag | undefined,
-	teardowns: ReadonlyArray<{ name: string; run: () => Promise<void> }>,
+	teardowns: readonly Teardown[],
 	budget: () => number,
 	bind: (context: AttemptContext) => void
 ): Promise<unknown[]> {
@@ -490,6 +500,7 @@ async function runCleanup<F extends object>(
 		}
 	}
 	for (const fixture of [...teardowns].reverse()) {
+		if (fixture.when?.() === false) continue;
 		await attempt(`fixture ${fixture.name} teardown`, () => step("fixture", `${fixture.name} teardown`, fixture.run));
 	}
 	cleanup.abort(new E2eError("SESSION", "attempt finished"));

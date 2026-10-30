@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { CONFIG_FILE, type ConfigSource, type FoundConfig, findWardenConfig, loadProject } from "../builds/config";
 import { overlayDirUnlessRepoConfig } from "../builds/overlay";
+import { type ConditionsConfig, mergeConditionsConfig } from "../conditions/conditions.config";
 import type { Exec } from "../exec";
 import { type GitFactsCache, readGitFacts } from "../git-facts";
 import type { Platform } from "../types";
@@ -34,6 +35,8 @@ export type Suite = {
 	slim?: NonNullable<E2eSuiteConfig["slim"]>;
 	/** the suite's perf budgets over the top-level ones, per key (undefined: none set) */
 	perfBudgets?: NonNullable<NonNullable<E2eSuiteConfig["perf"]>["budgets"]>;
+	/** the suite's device conditions over the top-level ones, per area (undefined: none set) */
+	conditions?: ConditionsConfig;
 };
 
 /** Why `findSuite` found no suite: `several_suites` is the one callers act on (name one), the rest are reported as is. */
@@ -177,6 +180,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 	const headless = config.headless ?? top.headless;
 	const slim = config.slim ?? top.slim;
 	const budgets = { ...top.perf?.budgets, ...config.perf?.budgets };
+	const conditions = mergeConditionsConfig(top.conditions, config.conditions);
 	return {
 		name,
 		config,
@@ -188,6 +192,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 		...(headless !== undefined ? { headless } : {}),
 		...(slim !== undefined ? { slim } : {}),
 		...(Object.keys(budgets).length > 0 ? { perfBudgets: budgets } : {}),
+		...(conditions !== undefined ? { conditions } : {}),
 	};
 }
 

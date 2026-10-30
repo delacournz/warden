@@ -137,14 +137,14 @@ For a dev client launched with `open --metro <url>`. A release build, or a dev c
 | `tree [--all] [--max n] [--screen <name>]` | the React components with `testID`, label, text, screen and rect. Use it for a `testID` the accessibility tree does not show; `--all` includes inactive screens |
 | `logs start [--bodies]` | start a background collector that records the app's console and `fetch` calls (`--bodies` also records bodies) |
 | `logs [n]` · `logs mark <label>` · `logs clear` · `logs stop` | read the last `n` console lines (default 50), drop a marker line, empty the log, stop the collector |
-| `network [n] [--include headers,body] [--id <id>]` | the recorded `fetch` calls; `--id` prints one in full |
+| `network log [n] [--include headers,body] [--id <id>]` | the recorded `fetch` calls; `--id` prints one in full |
 | `reload` | reload the app's JavaScript |
 
-`logs` and `network` read what `logs start` collected; run it before the action you want to observe.
+`logs` and `network log` read what `logs start` collected; run it before the action you want to observe.
 
 Two things to know:
 
-- Without a running collector, `logs` and `network` read the files of the previous run, not the live app. Run `logs start` first, then interact.
+- Without a running collector, `logs` and `network log` read the files of the previous run, not the live app. Run `logs start` first, then interact.
 - A collector started before the app was restarted (`open --relaunch`, a crash, a rebuild) gives up after a 30 s reconnect budget and ends as `lost`. Run `logs start` again after the restart.
 - The collector also stops by itself after 60 s without a console line or `fetch` call. Run `logs start` again before the next action.
 

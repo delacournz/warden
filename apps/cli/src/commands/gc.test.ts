@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
@@ -57,6 +58,27 @@ describe("warden gc", () => {
 		expect(shutdowns).toEqual(["U1"]);
 		expect(calls.some((x) => x.includes("delete") || x.includes("erase"))).toBe(false);
 		expect(c.db.listLeases().map((l) => l.resource)).toMatchObject([{ id: "U2" }]);
+	});
+
+	test("undoes the orphaned conditions of an unleased device, and leaves a leased device's alone", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.exec = fakeSimctl([{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" }], calls, [
+			["xcrun simctl status_bar", {}],
+		]);
+		const l = c.db.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "U1", name: "U1" }, owner: agent, ttlMs: 1 },
+			0
+		);
+		recordCondition(c.db, l.id, "battery", { level: 5, charging: false, cosmetic: true }, 1);
+		c.db.db.exec(`DELETE FROM leases WHERE id = '${l.id}'`);
+		c.db.db.exec(
+			"INSERT INTO orphan_conditions VALUES ('ios', 'U2', 'battery', 'old', '{\"level\":5,\"charging\":false,\"cosmetic\":true}', '[]', 1, 1)"
+		);
+		expect(await gcCommand.run(c)).toBe(0);
+		const cleared = calls.filter((x) => x[2] === "status_bar" && x[4] === "clear").map((x) => x[3]);
+		expect(cleared).toEqual(["U1"]);
+		expect(c.db.db.query("SELECT device_id FROM orphan_conditions").all()).toEqual([{ device_id: "U2" }]);
 	});
 
 	test("an idle sim it shut down loses its viewer window too (Device Hub keeps a page open)", async () => {

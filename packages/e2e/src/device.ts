@@ -14,6 +14,19 @@ import {
 	nameOf,
 } from "./alert-buttons";
 import { createAlertReader } from "./alert-reader";
+import {
+	type ConditionRun,
+	conditionSinkFor,
+	createDeviceConditions,
+	type DeviceClock,
+	type DeviceConditions,
+	type DeviceLocation,
+	type DeviceNetwork,
+	type DevicePermissions,
+	registerConditions,
+	type TimelineStepInput,
+} from "./conditions/device-conditions";
+import { type ConditionRecorder, leaseRecorderFor } from "./conditions/lease-recorder";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import {
 	isOpenInSheet,
@@ -119,6 +132,31 @@ export type Device = {
 	 * typed report. The report is copied under the attempt's `perf/`; budgets from `warden.config.ts` fail `stop`.
 	 */
 	readonly perf: DevicePerf;
+	/**
+	 * Network conditions: `set("offline" | "3g" | …)`, `during`, `flap`, `fault`, `status`, `reset`. Everything a test
+	 * changes is put back when it ends, to the suite's `conditions` (`warden.config.ts`).
+	 */
+	readonly network: DeviceNetwork;
+	/** Simulated location: `set`, `route`, `scenario`, `clear`. Put back when the test ends. */
+	readonly location: DeviceLocation;
+	/** The device's wall clock: `set`, `advance("2d")`, `during`, `reset`. Needs a driver with a clock op. */
+	readonly clock: DeviceClock;
+	/** Runtime permissions of the app: `set({ location: "denied", camera: "granted" })`, `reset`. Set before `app.open()`. */
+	readonly permissions: DevicePermissions;
+	/** Device timezone (`"Asia/Tokyo"`, `null` resets). iOS: for the app launched next. */
+	timezone: DeviceConditions["timezone"];
+	/** The app's locale (`"fr-FR"`, `null` resets). iOS: for the app launched next. Android 13+. */
+	locale: DeviceConditions["locale"];
+	/** Text size, bold text, contrast, reduce motion (`null` resets); the result names what the platform skipped. */
+	a11y: DeviceConditions["a11y"];
+	/** Battery level and charging: real on Android emulators, status bar only on iOS (`cosmetic: true`). */
+	battery: DeviceConditions["battery"];
+	/** Android: a critical trim-memory signal to the app. iOS: `E_UNSUPPORTED`. */
+	memoryWarning: DeviceConditions["memoryWarning"];
+	/** iOS: delivers an APNs payload to the app. Android: `E_UNSUPPORTED`. */
+	push: DeviceConditions["push"];
+	/** Applies network and location changes at times from now; stopped when the test ends. */
+	timeline(steps: readonly TimelineStepInput[]): Promise<ConditionRun>;
 };
 
 export type DeviceDeps = {
@@ -128,6 +166,8 @@ export type DeviceDeps = {
 	clock?: Clock;
 	/** runs `warden …` for `device.perf`; default spawns `WARDEN_BIN` */
 	perfExec?: PerfExec;
+	/** shared with `app` so a launch knows to load the network dylib; default: made here */
+	conditions?: DeviceConditions;
 };
 
 function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): number {
@@ -184,7 +224,14 @@ function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): 
 	return target;
 }
 
-export function createDevice({ session, driver, env, clock = systemClock, perfExec }: DeviceDeps): Device {
+export function createDevice({
+	session,
+	driver,
+	env,
+	clock = systemClock,
+	perfExec,
+	conditions = createSessionConditions(session, driver, env),
+}: DeviceDeps): Device {
 	const issued = new Map<string, number>();
 	// the signal is read per call: the runner swaps it for every attempt
 	const signal = (): AbortSignal | undefined => session.signal;
@@ -245,6 +292,17 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			return lazyDevtools();
 		},
 		perf,
+		network: conditions.network,
+		location: conditions.location,
+		clock: conditions.clock,
+		permissions: conditions.permissions,
+		timezone: conditions.timezone,
+		locale: conditions.locale,
+		a11y: conditions.a11y,
+		battery: conditions.battery,
+		memoryWarning: conditions.memoryWarning,
+		push: conditions.push,
+		timeline: (steps) => conditions.timeline(steps),
 
 		async alert(action) {
 			// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone
@@ -360,5 +418,23 @@ export function createDevice({ session, driver, env, clock = systemClock, perfEx
 			return { ...polled, via: "hash" };
 		},
 	};
+	registerConditions(device, conditions.internals);
 	return device;
+}
+
+/** The conditions of one attempt's device: events go to the session's `results.jsonl`, calls honour its signal. */
+export function createSessionConditions(
+	session: FixtureSession,
+	driver: Driver,
+	env: E2eEnv,
+	recorder: ConditionRecorder | undefined = leaseRecorderFor(env)
+): DeviceConditions {
+	const sink = conditionSinkFor(session);
+	return createDeviceConditions({
+		driver,
+		env,
+		signal: () => session.signal,
+		...(sink === undefined ? {} : { sink }),
+		...(recorder === undefined ? {} : { recorder }),
+	});
 }

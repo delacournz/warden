@@ -697,6 +697,21 @@ describe("warden e2e", () => {
 			});
 		});
 
+		test("the suite's conditions (over the top-level ones, per area) reach the spec process as WARDEN_CONDITIONS", async () => {
+			await resuite({ conditions: { network: "3g" } }, { conditions: { network: "offline", locale: "fr" } });
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(JSON.parse(h.jobs()[0]?.opts.env.WARDEN_CONDITIONS ?? "null")).toEqual({ network: "3g", locale: "fr" });
+		});
+
+		test("no conditions, no WARDEN_CONDITIONS", async () => {
+			const c = setup(["--files", "src/chat/lazy.tsx"]);
+			const h = harness();
+			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(h.jobs()[0]?.opts.env.WARDEN_CONDITIONS).toBeUndefined();
+		});
+
 		test("the bundle id falls back to the project's for the platform", async () => {
 			await resuite(
 				{ project: "app", spec: undefined },

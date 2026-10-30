@@ -5,6 +5,7 @@ import type { CommandContext } from "../context";
 import type { RunEnsureApp } from "../lease-session";
 import type { AuthoringDeps } from "./authoring-command";
 import type { BenchDeps } from "./bench";
+import type { ConditionsDeps } from "./conditions-types";
 import type { UiDevice } from "./device";
 import type { DevtoolsDeps } from "./devtools-cli";
 import { type UiError, uiError } from "./output";
@@ -26,6 +27,8 @@ export type UiDeps = {
 	devtools?: DevtoolsDeps;
 	/** clock and helper/driver plumbing of `bench` (default: wall clock, real helper) */
 	bench?: BenchDeps;
+	/** how the `net` / `location` verbs open the device, start their detached processes and read the lease's proxy (default: real) */
+	conditions?: ConditionsDeps;
 	/** pid liveness for the busy-device check (default: `kill(pid, 0)`) */
 	pidAlive?: PidAlive;
 	/** `open --kind`: install a build kind on the device (default: `ensureAppFor`) */

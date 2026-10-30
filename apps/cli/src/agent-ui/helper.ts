@@ -16,13 +16,16 @@ import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
+import type { ClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
+import type { NetworkProxyPort } from "@delacour/warden-e2e/driver/network-proxy";
 import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { readServedIdentity } from "../ios-runner/served-identity";
+import { selfCommand } from "../self-command";
 import { DEVICE_LOCKED_HINT, driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
@@ -451,10 +454,6 @@ export const ANDROID_HOST_KIND: HelperKind = {
 };
 
 /** argv that re-runs this warden: the compiled binary, or `bun <cli.ts>` from source (as `autogc.ts`). */
-function selfCommand(): string[] {
-	return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
-}
-
 /** `WARDEN_IOS_*` names that only steer the client (which socket to use): left out of `iosRunnerEnvKey`. */
 const IOS_RUNNER_CLIENT_ONLY_ENV = new Set(["WARDEN_IOS_RUNNER_SOCKET"]);
 
@@ -993,7 +992,8 @@ export async function ensureHelperOf<C extends HelperClient>(
 export async function connectHelper(
 	ctx: CommandContext,
 	udid: string,
-	opts: EnsureHelperOptions = {}
+	opts: EnsureHelperOptions = {},
+	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
 ): Promise<Result<Driver, UiError>> {
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
@@ -1005,6 +1005,8 @@ export async function connectHelper(
 		socketPath,
 		...(client ? { client } : {}),
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
+		...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
+		...(extras.clockRecorder ? { clockRecorder: extras.clockRecorder } : {}),
 		now: ctx.now,
 	});
 	if (driver.success) return driver;

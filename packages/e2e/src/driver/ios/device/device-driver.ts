@@ -17,6 +17,7 @@ import type {
 	Snapshot,
 } from "../../driver.types";
 import { driverError } from "../../errors";
+import { physicalConditionOps } from "../../physical-conditions";
 import { type SettleDetail, settleByHash, snapshotHash } from "../../settle";
 import { noteSpanDetail } from "../../span-detail";
 import { KEY_USAGE } from "../ios-driver";
@@ -309,6 +310,7 @@ export function createIosDeviceDriver(
 		pinch: async () => unsupported("pinch", "the XCUITest runner takes one finger"),
 		rotate: async () => unsupported("rotate", "the XCUITest runner takes one finger"),
 		gesture: async () => unsupported("gesture", "the XCUITest runner takes taps, swipes and drags only"),
+		...physicalConditionOps(`physical iPhone ${udid}`),
 		typeText: (text) => sendVoid("typeText", { text }, deviceTypeTextBudgetMs(text)),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		pressButton,

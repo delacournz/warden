@@ -1,4 +1,5 @@
 import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
+import type { Exec } from "@delacour/warden-core/exec";
 import { isLeaseAlive, type PidAlive } from "@delacour/warden-core/liveness";
 import type { Store } from "@delacour/warden-core/store";
 import {
@@ -11,6 +12,7 @@ import {
 	sameOwner,
 } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
+import { hasConditions, undoLeaseConditions } from "./lease-conditions";
 
 /**
  * Why a caller may not use a device: someone else holds it (`device_foreign`), a live warden process holds the
@@ -137,7 +139,15 @@ function insertCallerLease(store: Store, owner: Owner, probe: DeviceResource, op
 }
 
 /** What `releaseDevices` needs from a command/hook context. */
-export type ReleaseHost = { store: () => Store; now: () => number };
+export type ReleaseHost = {
+	store: () => Store;
+	now: () => number;
+	/** runs the condition resets (default: the real one) */
+	exec?: Exec;
+	env?: Record<string, string | undefined>;
+	/** where a failed condition reset is reported when `onNote` is not given */
+	err?: (line: string) => void;
+};
 
 export type ReleaseOptions = {
 	/** runs per released device lease after it is deleted (teardown hook; failures are swallowed) */
@@ -146,12 +156,15 @@ export type ReleaseOptions = {
 	touch?: boolean;
 	/** re-checked inside the transaction: leases it rejects are left alone (gc: still stale?) */
 	only?: (lease: Lease) => boolean;
+	/** a condition reset that failed (the release still goes ahead) */
+	onNote?: (note: string) => void;
 };
 
 /**
- * The single CLI choke point for deleting leases (devices, ports …). The delete happens
- * synchronously, before the first await; `after` then runs per device lease. Unknown ids are
- * skipped. Returns the leases that existed.
+ * The single CLI choke point for deleting leases (devices, ports …). A device lease with conditions set
+ * (network, location …) has them undone first, while it is still held; without any, the delete happens
+ * synchronously, before the first await. `after` then runs per device lease. Unknown ids are skipped.
+ * Returns the leases that existed.
  */
 export async function releaseDevices(
 	host: ReleaseHost,
@@ -159,6 +172,14 @@ export async function releaseDevices(
 	opts: ReleaseOptions = {}
 ): Promise<Lease[]> {
 	const store = host.store();
+	const conditioned = leaseIds
+		.flatMap((id) => store.getLease(id) ?? [])
+		.filter((l) => (opts.only?.(l) ?? true) && hasConditions(host, l));
+	if (conditioned.length > 0) {
+		const report = opts.onNote ?? ((note: string) => host.err?.(`warden: ${note}`));
+		const notes = await Promise.all(conditioned.map((l) => undoLeaseConditions(host, l)));
+		for (const note of notes.flat()) report(note);
+	}
 	const leases = store.transaction(() => {
 		const found = leaseIds.flatMap((id) => store.getLease(id) ?? []).filter((l) => opts.only?.(l) ?? true);
 		store.deleteLeases(found.map((l) => l.id));

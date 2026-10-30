@@ -1,6 +1,8 @@
+import { activeConditions } from "@delacour/warden-core/conditions/conditions";
 import { describeOwner, isPhysicalIosId } from "@delacour/warden-core/types";
 import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { conditionsLine } from "./condition-text";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
 import {
@@ -25,6 +27,8 @@ function helperKindOf(device: Pick<UiDevice, "platform" | "udid">): HelperKind {
 export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "status", opts, async (device: UiDevice) => {
 		const { lease } = device;
+		const conditions = activeConditions(ctx.store(), lease.id);
+		const conditionsText = conditionsLine(conditions);
 		const result = {
 			lease: {
 				id: lease.id,
@@ -37,6 +41,7 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 			},
 			helper: helperStatus(ctx, device.udid, defaultHelperDeps, helperKindOf(device)),
 			recording: await recordingOf(ctx, device.udid),
+			conditions: conditions.map((record) => ({ area: record.area, value: record.value, setAt: record.setAt })),
 		};
 		const { color } = ctx.ui;
 		const text = [
@@ -44,6 +49,7 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 			`lease     ${lease.id} ${color.dim(`${device.action}, ${describeOwner(lease.owner)}`)}`,
 			`helper    ${helperLine(result.helper)}`,
 			`recording ${result.recording === null ? "none" : `${result.recording.name} → ${result.recording.target} (${result.recording.steps ?? "?"} steps)`}`,
+			...(conditionsText === undefined ? [] : [`conditions ${conditionsText}`]),
 		].join("\n");
 		return ok({ device: { udid: device.udid, platform: device.platform, name: device.name }, result, text });
 	});

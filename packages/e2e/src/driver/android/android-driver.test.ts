@@ -15,6 +15,7 @@ import {
 	type ShellRule,
 } from "./android-host.testing";
 import { type AndroidStateStore, memoryAndroidState } from "./android-state";
+import { DUMPSYS_ONLINE } from "./network.fixture";
 import { parseUiautomatorXml } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
 
@@ -603,6 +604,20 @@ describe("device state", () => {
 		expect(await value(driver.appearance())).toBe("dark");
 		expect(await value(driver.appearance("light"))).toBe("light");
 		expect(host.shell).toContain("cmd uimode night no");
+	});
+
+	test("network goes through the emulator console and dumpsys", async () => {
+		const { driver, host } = await setup({
+			shell: [{ match: "dumpsys connectivity", reply: DUMPSYS_ONLINE }],
+			host: [{ match: /emu network/, reply: "OK\n" }],
+		});
+		const state = await value(driver.network({ kind: "preset", preset: "edge" }));
+		expect(state).toEqual({ online: true, condition: { kind: "preset", preset: "edge" }, needsProxy: [] });
+		expect(host.host).toEqual([
+			["adb", "-s", "emulator-5554", "emu", "network", "speed", "200:240"],
+			["adb", "-s", "emulator-5554", "emu", "network", "delay", "175:225"],
+		]);
+		expect(host.shell).toContain("cmd connectivity airplane-mode disable");
 	});
 
 	test("health", async () => {

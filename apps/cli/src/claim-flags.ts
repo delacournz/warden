@@ -456,6 +456,7 @@ export async function claimWithFlags(
 		priority: priority.data,
 		...(options.abort ? { abort: options.abort } : {}),
 		...(capacity ? { capacity } : {}),
+		orphans: { exec: ctx.exec, env: ctx.env },
 		log: (line) => ctx.err(`warden: ${line}`),
 	});
 	if (outcome.success && request.platform === "ios" && !request.physical) {

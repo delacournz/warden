@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import type { ConditionsConfig } from "@delacour/warden-core/conditions/conditions.config";
 import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { err, ok, type Result } from "@delacour/warden-types/result";
@@ -60,6 +61,9 @@ export function shardSpecs<T extends { id: string }>(specs: readonly T[], n: num
 	return shards;
 }
 
+/** The hidden `warden` subcommand that runs the lease shaping proxy; a compiled warden hands specs `<self> __netproxy` (`WARDEN_NETPROXY_COMMAND`). */
+export const NETPROXY_SUBCOMMAND = "__netproxy";
+
 export type SpecEnvOptions = {
 	platform: Platform;
 	bundleId: string;
@@ -80,6 +84,10 @@ export type SpecEnvOptions = {
 	perf?: readonly string[] | undefined;
 	/** the suite's `perf.budgets` (`WARDEN_PERF_BUDGETS`) */
 	perfBudgets?: Readonly<Record<string, number>> | undefined;
+	/** the suite's `conditions` (`WARDEN_CONDITIONS`): what every spec starts from */
+	conditions?: ConditionsConfig | undefined;
+	/** argv that runs the shaping proxy when warden is a compiled binary (`WARDEN_NETPROXY_COMMAND`); absent from source */
+	netproxyCommand?: readonly string[] | undefined;
 };
 
 /**
@@ -104,6 +112,10 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 		...(o.perfBudgets === undefined || Object.keys(o.perfBudgets).length === 0
 			? {}
 			: { [ENV_NAMES.perfBudgets]: JSON.stringify(o.perfBudgets) }),
+		...(o.conditions === undefined || Object.keys(o.conditions).length === 0
+			? {}
+			: { [ENV_NAMES.conditions]: JSON.stringify(o.conditions) }),
+		...(o.netproxyCommand === undefined ? {} : { [ENV_NAMES.netproxyCommand]: JSON.stringify(o.netproxyCommand) }),
 		BUN_BE_BUN: "1",
 	};
 }

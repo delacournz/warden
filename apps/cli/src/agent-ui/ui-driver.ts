@@ -5,7 +5,9 @@ import { openAndroidDriver } from "@delacour/warden-e2e/driver/android/android-d
 import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
 import { androidStateDir, createAndroidStateStore } from "@delacour/warden-e2e/driver/android/android-state";
 import { uiadFromEnv } from "@delacour/warden-e2e/driver/android/uiad-backend";
+import type { ClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { NetworkProxyPort } from "@delacour/warden-e2e/driver/network-proxy";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
@@ -31,7 +33,9 @@ export function androidHostFromEnv(env: Readonly<Record<string, string | undefin
  */
 export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
 	if (device.platform === "ios") {
-		return isPhysicalIosId(device.udid) ? connectIosRunner(ctx, device.udid) : connectHelper(ctx, device.udid);
+		if (isPhysicalIosId(device.udid)) return connectIosRunner(ctx, device.udid);
+		const { leaseDriverExtras } = await import("./conditions-real");
+		return connectHelper(ctx, device.udid, {}, leaseDriverExtras(ctx, device));
 	}
 	if (androidHostFromEnv(ctx.env)) {
 		const hosted = await connectAndroidHost(ctx, device.udid);
@@ -44,7 +48,8 @@ export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<R
 	// animation scales back under the host: one driver per emulator
 	const { warning } = await stopAndroidHost(ctx, device.udid);
 	if (warning !== undefined) ctx.err(`warden: ${warning}`);
-	return openAndroidInProcess(ctx, device.udid);
+	const { leaseDriverExtras } = await import("./conditions-real");
+	return openAndroidInProcess(ctx, device.udid, undefined, leaseDriverExtras(ctx, device));
 }
 
 /**
@@ -57,7 +62,8 @@ export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<R
 export async function openAndroidInProcess(
 	ctx: CommandContext,
 	serial: string,
-	log?: (line: string) => void
+	log?: (line: string) => void,
+	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
 ): Promise<Result<Driver, UiError>> {
 	const remembered = readDumpRoute(ctx, serial);
 	return fromDriver(
@@ -70,6 +76,8 @@ export async function openAndroidInProcess(
 			...(uiadFromEnv(ctx.env) ? { uiad: true } : {}),
 			...(remembered ? { dumpRoute: remembered } : {}),
 			...(log ? { log } : {}),
+			...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
+			...(extras.clockRecorder ? { clockRecorder: extras.clockRecorder } : {}),
 			onDumpRoute: (route: DumpRoute) => writeDumpRoute(ctx, serial, route),
 		})
 	);

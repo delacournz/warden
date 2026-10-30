@@ -234,6 +234,15 @@ async function leaseCandidate(
 	// the lease is kept: the user fixes the phone (accept the prompt, replug) and retries
 	const notReady = phone.kind === "phone" ? phoneStateError(candidate.id, phone.adbState) : undefined;
 	if (notReady) return fail(notReady);
+	if (claim && (action === "reclaimed" || action === "leased")) {
+		const { undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
+		const report = await undoOrphansWith(
+			ctx.store(),
+			{ exec: ctx.exec, env: ctx.env, now: ctx.now },
+			{ platform: platform.data, id: candidate.id }
+		);
+		for (const e of report.errors) ctx.err(`warden: leftover condition on ${candidate.id} not undone — ${e}`);
+	}
 	return ok({
 		udid: candidate.id,
 		platform: platform.data,

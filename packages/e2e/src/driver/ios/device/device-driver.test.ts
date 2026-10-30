@@ -184,6 +184,21 @@ describe("input", () => {
 		expect(runner.requests.map((request) => request.op)).toEqual([]);
 	});
 
+	test("network, location, clock and the device settings are E_UNSUPPORTED without asking the runner", async () => {
+		const { driver, runner } = await open(ok);
+		for (const call of [
+			driver.network({ kind: "offline" }),
+			driver.location({ kind: "point", lat: 1, lon: 2 }),
+			driver.clock({ kind: "real" }),
+			driver.battery(null),
+		]) {
+			const error = await failure(call);
+			expect(error.code).toBe("E_UNSUPPORTED");
+			expect(error.message).toContain("physical iPhone");
+		}
+		expect(runner.requests.map((request) => request.op)).toEqual([]);
+	});
+
 	test("shake and back are E_UNSUPPORTED locally; home and volume go to the runner", async () => {
 		const { driver, runner } = await open(ok);
 		expect((await failure(driver.pressButton("shake"))).code).toBe("E_UNSUPPORTED");

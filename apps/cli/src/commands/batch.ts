@@ -402,6 +402,8 @@ type Device = BatchWorker & {
 	name: string;
 	/** a real phone/tablet: never rebooted, slimmed, arranged or shut down (`WARDEN_DEVICE_KIND=physical`) */
 	physical?: true;
+	/** the device's lease (`WARDEN_LEASE_ID` for its jobs) */
+	leaseId?: string;
 	video?: string;
 	videoStartedAt?: number;
 	leg?: string;
@@ -792,6 +794,10 @@ export const socketEnv = (udid: string, socketPath: string | undefined): Record<
 const deviceKindEnv = (physical: boolean): Record<string, string> =>
 	physical ? { [ENV_NAMES.deviceKind]: "physical" } : {};
 
+/** `WARDEN_LEASE_ID`: the lease a job's device is held under, so a spec can record its conditions on it. */
+const leaseIdEnv = (leaseId: string | undefined): Record<string, string> =>
+	leaseId === undefined ? {} : { [ENV_NAMES.leaseId]: leaseId };
+
 /**
  * The per-job `run` for `runBatch`: expand the argv, spawn with the job env + log, track it for
  * SIGINT. With `passes` > 1 the job is spawned again after each green run (`WARDEN_PASS`, one log
@@ -844,6 +850,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			...deviceKindEnv(o.live.find((d) => d.udid === w.udid)?.physical === true),
 			WARDEN_UDID: w.udid,
 			...deviceNameEnv(o.live.find((d) => d.udid === w.udid)?.name),
+			...leaseIdEnv(o.live.find((d) => d.udid === w.udid)?.leaseId),
 			WARDEN_WORKER: String(w.worker),
 			WARDEN_JOB: job,
 			WARDEN_JOB_SEQ: String(seq),
@@ -1099,6 +1106,7 @@ function buildPools(session: LeaseSession, args: BatchArgs): Pool[] {
 				udid: c.device.id,
 				name: c.device.name,
 				...(isPhysicalDevice(c.device) ? { physical: true as const } : {}),
+				leaseId: c.lease.id,
 				...(leg ? { leg: leg.name } : {}),
 			})),
 		};
@@ -1733,7 +1741,7 @@ async function claimLateWorker(
 		await drop();
 		return err(`${c?.device.id ?? "device"} did not come back after the headless hide`);
 	}
-	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name };
+	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name, leaseId: c.lease.id };
 	const prepared = await preparePool(
 		ctx,
 		deps,

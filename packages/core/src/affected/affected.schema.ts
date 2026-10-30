@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
+import { conditionsConfigSchema } from "../conditions/conditions.config";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "../config.defaults";
 import { validateProfile } from "../sims/slim.profile";
 
@@ -70,6 +71,7 @@ function physicalIssues(suite: {
 	physical?: unknown;
 	slim?: unknown;
 	headless?: boolean | undefined;
+	conditions?: unknown;
 }): Array<{ message: string; path: string[] }> {
 	if (suite.physical === undefined) return [];
 	const issues: Array<{ message: string; path: string[] }> = [];
@@ -77,6 +79,11 @@ function physicalIssues(suite: {
 		issues.push({ message: "slim cannot be used with physical devices", path: ["slim"] });
 	if (suite.headless === true)
 		issues.push({ message: "headless cannot be used with physical devices", path: ["headless"] });
+	if (suite.conditions !== undefined)
+		issues.push({
+			message: "conditions cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["conditions"],
+		});
 	return issues;
 }
 
@@ -234,6 +241,8 @@ export const e2eSuiteSchema = z
 		headless: z.boolean().optional(),
 		/** perf budgets for this suite; each key replaces the top-level `perf.budgets` one */
 		perf: perfConfigSchema.optional(),
+		/** device conditions every spec of the suite starts from; each area replaces the top-level one */
+		conditions: conditionsConfigSchema.optional(),
 		/** default `required` for specs that don't set it */
 		required: z.boolean().default(true),
 		specs: z.record(z.string().min(1), e2eSpecEntrySchema).default({}),

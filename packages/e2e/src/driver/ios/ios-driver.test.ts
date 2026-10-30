@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { canProbeFrontmost, canReadAlertOn } from "../alerts";
 import { el, snapshotOf } from "../driver.testing";
 import type { Driver, Snapshot } from "../driver.types";
+import { fakeProxy } from "../network-proxy.testing";
 import { settleDetailOf } from "../settle";
 import { collectSpanDetail, type SpanDetail } from "../span-detail";
 import { canPasteText, canSelectAll } from "../typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
+import type { InjectFs } from "./inject";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
 import { spawnSimd } from "./simd-client";
@@ -1081,6 +1083,105 @@ describe("screenshot", () => {
 		const result = await driver.screenshot({ path: "/out/c.png" });
 		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
 		expect(joined(calls).some((line) => line.includes("simctl io"))).toBe(false);
+	});
+});
+
+describe("network conditions", () => {
+	/** an in-memory state dir whose app "acks" every state write */
+	function stateDir() {
+		const files = new Map<string, string>();
+		const app = { running: true };
+		const fs: InjectFs = {
+			mkdir: () => undefined,
+			writeAtomic: (path, text) => {
+				files.set(path, text);
+				if (app.running && path.endsWith("state.json")) {
+					files.set(
+						`${path}.ack`,
+						JSON.stringify({ seq: (JSON.parse(text) as { seq: number }).seq, pid: 4242, proxy: true })
+					);
+				}
+			},
+			read: (path) => files.get(path),
+			remove: (path) => void files.delete(path),
+			pidAlive: () => true,
+		};
+		return { files, fs, app };
+	}
+	const dylib = "/opt/libwarden-inject.dylib";
+	const exists = (path: string) => path === dylib;
+
+	test("without a lease proxy the op is E_UNSUPPORTED, and says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		const result = await driver.network({ kind: "offline" });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("shaping proxy");
+	});
+
+	test("a network condition set before launch makes the launch load the dylib and carry the proxy address", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const proxy = fakeProxy(19_123);
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: proxy,
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await driver.network({ kind: "preset", preset: "3g" });
+		expect(set.success && set.data.appliesOnLaunch).toBe(true);
+		dir.app.running = true;
+		await unwrapped(driver.app.launch(BUNDLE, { env: { A: "1" } }));
+		expect(helper.of("launch")[0]).toMatchObject({
+			env: {
+				A: "1",
+				DYLD_INSERT_LIBRARIES: dylib,
+				WARDEN_NET_PROXY: "127.0.0.1:19123",
+				WARDEN_INJECT_STATE: "/w/inject/UDID-1/state.json",
+			},
+		});
+	});
+
+	test("a plain run launches exactly as before: no injected env at all", async () => {
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(),
+			injectFs: stateDir().fs,
+			wardenHome: "/w",
+		});
+		await unwrapped(driver.app.launch(BUNDLE, { env: { A: "1" } }));
+		expect(helper.of("launch")[0]).toMatchObject({ env: { A: "1" } });
+		expect(helper.of("launch")[0]?.env).not.toHaveProperty("DYLD_INSERT_LIBRARIES");
+	});
+
+	test("simctl fallback gets the same env through SIMCTL_CHILD_*", async () => {
+		const dir = stateDir();
+		const { driver, calls } = await open(
+			(request) => (["launch", "terminate", "openUrl"].includes(request.op) ? unknownOp(request.op) : { data: null }),
+			{
+				networkProxy: fakeProxy(19_123, true),
+				injectFs: dir.fs,
+				exists,
+				env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+				wardenHome: "/w",
+			},
+			[["xcrun simctl launch", {}]]
+		);
+		await unwrapped(driver.app.launch(BUNDLE));
+		const launch = calls.find((call) => call.cmd.includes("launch") && call.cmd.includes("simctl"));
+		expect(launch?.opts?.env).toMatchObject({
+			SIMCTL_CHILD_DYLD_INSERT_LIBRARIES: dylib,
+			SIMCTL_CHILD_WARDEN_NET_PROXY: "127.0.0.1:19123",
+		});
+	});
+
+	test("networkFaults goes through the proxy and carries the https note", async () => {
+		const dir = stateDir();
+		const proxy = fakeProxy(19_123, true);
+		const { driver } = await open(lifecycle, { networkProxy: proxy, injectFs: dir.fs, wardenHome: "/w" });
+		const result = await driver.networkFaults([{ match: "api.example.com", action: { kind: "status", code: 503 } }]);
+		expect(result.success && result.data.notes).toHaveLength(1);
+		expect(proxy.calls[0]).toMatchObject({ op: "update", update: { faults: [{ match: "api.example.com" }] } });
 	});
 });
 
