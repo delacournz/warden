@@ -67,6 +67,7 @@ const AFFECTED = {
 		"location-route": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"location-denied": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
 		"clock-trial": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		biometrics: { entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 
@@ -124,6 +125,7 @@ const EXAMPLE_SUITE = {
  * warden e2e example --dev --all     # same specs on the dev client + warden's Metro
  * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
  * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
+ * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)
  * warden affected example            # which specs this branch needs
  * warden repack ios                  # just the repacked simulator build (cached per JS)
  * warden dev ios                     # cached Debug dev client + Metro
@@ -145,12 +147,18 @@ export default {
 	e2e: {
 		example: {
 			...EXAMPLE_SUITE,
-			exclude: [CONDITION_SPECS],
+			exclude: [CONDITION_SPECS, "biometrics"],
 		},
 		conditions: {
 			...EXAMPLE_SUITE,
 			include: [CONDITION_SPECS],
 			conditions: { network: "online" },
+		},
+		biometrics: {
+			...EXAMPLE_SUITE,
+			count: 1,
+			biometrics: true,
+			include: ["biometrics"],
 		},
 	},
 } satisfies WardenConfig;

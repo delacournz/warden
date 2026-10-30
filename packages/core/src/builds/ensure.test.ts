@@ -122,6 +122,57 @@ describe("ensureApp", () => {
 		expect(calls.some((c) => c.startsWith("xcrun simctl install"))).toBe(false);
 	});
 
+	test("Android: same key, but the emulator holds another build of the app → installed over it", async () => {
+		const apk = join(dir, "src", "app.apk");
+		mkdirSync(join(dir, "src"), { recursive: true });
+		writeFileSync(apk, "new build");
+		const stored = await storeArtifact({
+			store,
+			env,
+			projectKey: KEY,
+			platform: "android",
+			profile: "local",
+			hash: "H",
+			artifact: apk,
+			source: "import",
+			now: 1,
+		});
+		if (!stored.success) throw new Error(stored.error);
+		recordInstall(store, {
+			platform: "android",
+			deviceId: "emulator-5554",
+			bundleId: "com.x.app",
+			hash: "H",
+			installedAt: 1,
+		});
+		const run = async (deviceSha: string) => {
+			const calls: string[] = [];
+			const exec = fake(
+				[
+					["adb -s emulator-5554 shell pm path com.x.app", { stdout: "package:/data/app/x/base.apk\n" }],
+					["adb -s emulator-5554 shell sha256sum", { stdout: `${deviceSha}  /data/app/x/base.apk\n` }],
+					["adb -s emulator-5554 install -r", { stdout: "Success\n" }],
+				],
+				calls
+			);
+			const res = await ensureApp(
+				input(exec, {
+					platform: "android",
+					deviceId: "emulator-5554",
+					project: testProject({ root: join(dir, "app"), bundleId: { android: "com.x.app" } }),
+					fileDigest: async () => "new",
+				})
+			);
+			return { res, calls };
+		};
+		const stale = await run("old");
+		expect(stale.res.success && stale.res.data.source).toBe("cache");
+		expect(stale.calls.some((c) => c.includes("install -r"))).toBe(true);
+		const same = await run("new");
+		expect(same.res.success && same.res.data.source).toBe("installed");
+		expect(same.calls.some((c) => c.includes("install -r"))).toBe(false);
+	});
+
 	test("the already-installed check is three spawns: one get_app_container, two plutil, no stat", async () => {
 		await seedCache();
 		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });

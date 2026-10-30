@@ -14,9 +14,11 @@ test("settings shows the account, toggles switches and signs out", async ({ app,
 	await screen.getByTestId(ids.settings.notifications).tap();
 	await expect(screen.getByTestId(ids.settings.notifications)).toBeChecked({ checked: false });
 
-	await screen.getByTestId(ids.settings.darkMode).tap();
 	await expect(screen.getByTestId(ids.settings.darkMode)).toBeChecked();
 	await screen.getByTestId(ids.settings.darkMode).tap();
+	await expect(screen.getByTestId(ids.settings.darkMode)).toBeChecked({ checked: false });
+	await screen.getByTestId(ids.settings.darkMode).tap();
+	await expect(screen.getByTestId(ids.settings.darkMode)).toBeChecked();
 
 	await screen.getByTestId(ids.settings.signOut).tap();
 	await expect(screen.getByTestId(ids.welcome.screen)).toBeVisible();

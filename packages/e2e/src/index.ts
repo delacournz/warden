@@ -14,6 +14,7 @@ export type {
 	RouteOptions,
 	TimelineStepInput,
 } from "./conditions/device-conditions";
+export type { BiometricState, DeviceBiometrics } from "./device";
 export { E2eError } from "./errors";
 export { expect } from "./expect/expect";
 export type { PerfBreach, PerfBudgets } from "./perf/budgets";

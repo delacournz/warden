@@ -741,4 +741,102 @@ describe("createIosProvider slim (SLIM-2)", () => {
 		expect(store.listDevices("ios")[0]?.slimmedAt).toBeUndefined();
 		expect(logs.some((l) => l.includes("live slim failed"))).toBe(true);
 	});
+
+	test("biometrics profile: the clone is made for the plain profile, recorded +bio, and enrolled after every boot", async () => {
+		const cloned: string[] = [];
+		const calls: Call[] = [];
+		const p = createIosProvider(
+			{
+				exec: fake(
+					[["xcrun simctl spawn CLONED notifyutil", { stdout: "com.apple.BiometricKit.enrollmentChanged 1\n" }]],
+					calls
+				),
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{
+				clone: async (_name, profile) => {
+					cloned.push(profile);
+					return { success: true, data: { udid: "CLONED", runtime: "iOS-26-5" } };
+				},
+				slim: false,
+				sleep: async () => {},
+			}
+		);
+		const created = await p.create("warden-iphone-17+bio-1", "iphone-17+bio");
+		expect(created.success && created.data.profile).toBe("iphone-17+bio");
+		expect(cloned).toEqual(["iphone-17"]);
+		expect(store.listDevices("ios")[0]?.profile).toBe("iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual([
+			"xcrun simctl spawn CLONED notifyutil -s com.apple.BiometricKit.enrollmentChanged 1",
+			"xcrun simctl spawn CLONED notifyutil -p com.apple.BiometricKit.enrollmentChanged",
+			"xcrun simctl spawn CLONED notifyutil -g com.apple.BiometricKit.enrollmentChanged",
+		]);
+	});
+
+	test("biometrics enroll is retried until a read-back shows state 1 (a write right after boot can be dropped)", async () => {
+		const sleeps: number[] = [];
+		let reads = 0;
+		const exec: Exec = async (cmd) => {
+			if (cmd.join(" ").endsWith("notifyutil -g com.apple.BiometricKit.enrollmentChanged")) {
+				reads += 1;
+				return {
+					exitCode: 0,
+					stdout: `com.apple.BiometricKit.enrollmentChanged ${reads >= 3 ? 1 : 0}\n`,
+					stderr: "",
+				};
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const p = slimProvider(exec, {
+			slim: false,
+			sleep: async (ms) => {
+				sleeps.push(ms);
+			},
+		});
+		await p.create("warden-iphone-17+bio-1", "iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(reads).toBe(3);
+		expect(sleeps).toHaveLength(2);
+		expect(logs.some((l) => l.includes("biometrics"))).toBe(false);
+	});
+
+	test("biometrics enroll that never reads back 1 is logged after a bounded number of attempts", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(
+			fake(
+				[["xcrun simctl spawn CLONED notifyutil", { stdout: "com.apple.BiometricKit.enrollmentChanged 0\n" }]],
+				calls
+			),
+			{ slim: false }
+		);
+		await p.create("warden-iphone-17+bio-9", "iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		const reads = calls.filter((c) => c.cmd.includes("-g")).length;
+		expect(reads).toBeGreaterThan(1);
+		expect(reads).toBeLessThanOrEqual(20);
+		expect(logs.some((l) => l.includes("biometrics enroll did not take"))).toBe(true);
+	});
+
+	test("a plain profile and a device warden has no record of are never enrolled", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(fake([], calls), { slim: false });
+		await p.create("warden-iphone-17-9", "iphone-17");
+		await p.afterReady?.("CLONED");
+		await p.afterReady?.("FOREIGN");
+		expect(calls).toEqual([]);
+	});
+
+	test("a failed enrollment is logged, not fatal", async () => {
+		const p = slimProvider(fake([["xcrun simctl spawn CLONED notifyutil", { exitCode: 1, stderr: "nope" }]]), {
+			slim: false,
+		});
+		await p.create("warden-iphone-17+bio-9", "iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(logs.some((l) => l.includes("biometrics enroll failed"))).toBe(true);
+	});
 });

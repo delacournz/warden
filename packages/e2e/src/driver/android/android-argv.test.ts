@@ -7,13 +7,16 @@ import {
 	dragMotionCommand,
 	dumpFileCommand,
 	dumpStdoutArgv,
+	dumpsysFingerprintArgv,
 	dumpTtyHostArgv,
+	emuFingerTouchArgv,
 	forceStopArgv,
 	geoFixArgv,
 	geoFixFailure,
 	gestureMotionCommand,
 	getpropArgv,
 	installArgv,
+	isEmulatorSerial,
 	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
@@ -38,6 +41,7 @@ import {
 	swipeArgv,
 	tapArgv,
 	textArgvs,
+	UNENROLLED_FINGER_ID,
 	uimodeGetArgv,
 	uimodeSetArgv,
 	uninstallArgv,
@@ -390,5 +394,27 @@ describe("single-finger gesture line", () => {
 		expect(gestureMotionCommand(plan(1))).toBe(
 			"input motionevent DOWN 0 0 && sleep 0.000 && sleep 0.000 && input motionevent UP 0 0 || (input motionevent CANCEL 0 0; exit 1)"
 		);
+	});
+});
+
+describe("fingerprint", () => {
+	test("emu finger touch and dumpsys argv", () => {
+		expect(emuFingerTouchArgv("adb", "emulator-5554", 1)).toEqual([
+			"adb",
+			"-s",
+			"emulator-5554",
+			"emu",
+			"finger",
+			"touch",
+			"1",
+		]);
+		expect(UNENROLLED_FINGER_ID).toBe(99);
+		expect(dumpsysFingerprintArgv()).toEqual(["dumpsys", "fingerprint"]);
+	});
+
+	test("only emulator serials", () => {
+		expect(isEmulatorSerial("emulator-5554")).toBe(true);
+		expect(isEmulatorSerial("R58M123ABC")).toBe(false);
+		expect(isEmulatorSerial("192.168.1.5:5555")).toBe(false);
 	});
 });

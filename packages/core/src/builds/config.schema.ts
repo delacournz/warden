@@ -147,6 +147,8 @@ export const wardenConfigSchema = z
 		headless: z.boolean().optional(),
 		/** iOS simulator daemon slimming for every device warden creates; `e2e` suites and `batches` presets override it */
 		slim: topLevelSlimSchema.optional(),
+		/** devices warden creates have a fingerprint / Face ID enrolled (own golden, own pool); `e2e` suites and `batches` presets override it */
+		biometrics: z.boolean().optional(),
 		/** perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key) */
 		perf: perfConfigSchema.optional(),
 		/** device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area) */

@@ -2088,7 +2088,12 @@ async function batch(
 	});
 	const args = parseBatchArgs(
 		platform,
-		{ ...merged.opts, headless, ...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}) },
+		{
+			...merged.opts,
+			headless,
+			...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}),
+			...(preset?.biometrics === true ? { biometrics: true } : {}),
+		},
 		ctx.cwd,
 		merged.base
 	);

@@ -29,6 +29,7 @@ import { computeCacheKey } from "./fingerprint";
 import {
 	appMatchesArtifact,
 	executableStamp,
+	type FileDigest,
 	type FileSize,
 	type FileStamp,
 	installAndProbe,
@@ -147,6 +148,8 @@ export type EnsureInput = ProjectContext & {
 	fileSize?: FileSize;
 	/** `ino:mtime` of the installed executable, recorded at install to skip that check (default node:fs) */
 	fileStamp?: FileStamp;
+	/** sha256 of the cached apk for the Android installed-app identity check (default node:fs) */
+	fileDigest?: FileDigest;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
@@ -439,7 +442,12 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		const bundleId = bundleIdFor(project, platform);
 		if (!bundleId.success) return bundleId;
 		const target = { platform, deviceId };
-		const deps = { exec: input.exec, env, ...(input.fileSize ? { fileSize: input.fileSize } : {}) };
+		const deps = {
+			exec: input.exec,
+			env,
+			...(input.fileSize ? { fileSize: input.fileSize } : {}),
+			...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
+		};
 		steps.device = {
 			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
 			confirm: () => probeApp(deps, target, bundleId.data),

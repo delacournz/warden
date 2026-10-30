@@ -1,6 +1,7 @@
 import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
+import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
 import { maxConcurrent } from "@delacour/warden-core/capacity";
 import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
@@ -54,6 +55,10 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 			"--no-slim",
 			"iOS: leave the simulator daemons running (config slim / WARDEN_SLIM=0 also turn slimming off)"
 		)
+		.option(
+			"--biometrics",
+			"claim devices with a fingerprint / Face ID enrolled (own pool and golden; config biometrics)"
+		)
 		.option("--json", "machine-readable output");
 }
 
@@ -86,6 +91,8 @@ export type ClaimFlagValues = {
 	slimConfig?: SlimSetting | undefined;
 	/** top-level config `slim` */
 	slimTopLevel?: SlimSetting | undefined;
+	/** `--biometrics`, or the suite / preset / top-level config `biometrics` already picked by the caller */
+	biometrics?: boolean | undefined;
 };
 
 /** The layers `resolveSlim` merges for a claim. */
@@ -173,7 +180,8 @@ export function parseClaimFlags(
 }
 
 function deviceRequest(values: ClaimFlagValues, platform: Platform, count: number, max: number): DeviceRequest {
-	const request: DeviceRequest = { platform, profile: values.profile ?? DEFAULT_PROFILE[platform], count, max };
+	const profile = biometricProfile(values.profile ?? DEFAULT_PROFILE[platform], values.biometrics === true);
+	const request: DeviceRequest = { platform, profile, count, max };
 	if (values.runtime !== undefined) request.runtime = values.runtime;
 	if (values.adopt) request.adopt = true;
 	return request;
@@ -258,10 +266,11 @@ export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDe
 
 /** Android `auto` profile → the first AVD; every other request as is. */
 async function resolveRequest(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
-	if (request.platform !== "android" || request.profile !== "auto") return ok(request);
+	const { profile: base, biometrics } = splitBiometricProfile(request.profile);
+	if (request.platform !== "android" || base !== "auto") return ok(request);
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
-	return profile.success ? ok({ ...request, profile: profile.data }) : profile;
+	return profile.success ? ok({ ...request, profile: biometricProfile(profile.data, biometrics) }) : profile;
 }
 
 /** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */

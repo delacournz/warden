@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
@@ -16,6 +18,18 @@ export const nodeFileSize: FileSize = async (path) => {
 		return undefined;
 	}
 };
+
+/** Hex sha256 of a file; undefined when it cannot be read (or is a directory). Injected so tests need no real apk. */
+export type FileDigest = (path: string) => Promise<string | undefined>;
+
+export const nodeFileDigest: FileDigest = (path) =>
+	new Promise((resolve) => {
+		const hash = createHash("sha256");
+		const stream = createReadStream(path);
+		stream.on("data", (chunk) => hash.update(chunk));
+		stream.on("error", () => resolve(undefined));
+		stream.on("end", () => resolve(hash.digest("hex")));
+	});
 
 /** `ino:mtime` of a file; undefined when it cannot be read. Injected so tests need no real container. */
 export type FileStamp = (path: string) => Promise<string | undefined>;
@@ -42,6 +56,8 @@ export type InstallerDeps = {
 	env: Record<string, string | undefined>;
 	/** default: `node:fs` */
 	fileSize?: FileSize;
+	/** sha256 of the cached apk for the Android identity check (default: `node:fs`) */
+	fileDigest?: FileDigest;
 };
 
 /** A device to install onto: iOS simulator udid / Android emulator serial. */
@@ -123,8 +139,9 @@ export async function appIdentity(deps: InstallerDeps, appDir: string): Promise<
  * Is the app on the device the cached `artifactPath` build? iOS: compare `appIdentity` of the
  * installed container with the cached `.app`; pass `installedDir` (the container `probeApp` already
  * found) to skip a second `simctl get_app_container`. Anything unreadable counts as a mismatch
- * (reinstall is the safe side). Android: not checked (always true) — warden's install record is
- * trusted there.
+ * (reinstall is the safe side). Android: the sha256 of the installed `base.apk` (`pm path` + the device's
+ * `sha256sum`) against the cached apk's. The install record is only a hint, never the proof: an emulator
+ * restored from a snapshot, or installed onto by another tool, keeps the record while the app differs.
  */
 export async function appMatchesArtifact(
 	deps: InstallerDeps,
@@ -133,11 +150,32 @@ export async function appMatchesArtifact(
 	artifactPath: string,
 	installedDir?: string
 ): AsyncResult<boolean> {
-	if (target.platform !== "ios") return ok(true);
+	if (target.platform !== "ios") return androidMatchesArtifact(deps, target, bundleId, artifactPath);
 	const installedAt = installedDir ?? (await out(deps, probeArgv(target, bundleId, deps.env)));
 	if (!installedAt) return ok(false);
 	const [installed, cached] = await Promise.all([appIdentity(deps, installedAt), appIdentity(deps, artifactPath)]);
 	return ok(installed !== undefined && installed === cached);
+}
+
+/** The installed apk (`pm path` prints one `package:` line per split; the base is first) has the cached apk's digest. */
+async function androidMatchesArtifact(
+	deps: InstallerDeps,
+	target: InstallTarget,
+	bundleId: string,
+	artifactPath: string
+): AsyncResult<boolean> {
+	const paths = await out(deps, probeArgv(target, bundleId, deps.env));
+	const apk = paths
+		?.split("\n")
+		.map((line) => line.trim().replace(/^package:/, ""))
+		.find((line) => line.endsWith(".apk"));
+	if (!apk) return ok(false);
+	const [onDevice, cached] = await Promise.all([
+		out(deps, [androidTools(deps.env).adb, "-s", target.deviceId, "shell", "sha256sum", apk]),
+		(deps.fileDigest ?? nodeFileDigest)(artifactPath),
+	]);
+	const installed = onDevice?.split(/\s+/)[0];
+	return ok(installed !== undefined && installed !== "" && installed === cached);
 }
 
 /** `xcrun simctl uninstall <udid> <bundleId>` / `adb -s <serial> uninstall <bundleId>`. */

@@ -15,6 +15,7 @@ import type {
 	AppCommands,
 	BatteryOp,
 	BatteryState,
+	BiometricOp,
 	ClockState,
 	Driver,
 	DriverCapabilities,
@@ -216,6 +217,7 @@ export type DriverCall =
 	| { method: "battery"; op: BatteryOp | null }
 	| { method: "memoryWarning"; opts?: SettingOptions }
 	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
+	| { method: "biometrics"; op: BiometricOp }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -252,6 +254,12 @@ export type FakeDriverOptions = {
 	 * others report none. Absent = a driver with only `alert()`.
 	 */
 	alertBackends?: readonly AlertBackend[];
+	/**
+	 * A tap on an alert's button answers it (the alert reads as none until the screen changes), except the first
+	 * `swallowAlertTaps` taps, which do nothing (a sheet still animating in). Default: taps never change the screen.
+	 */
+	answerAlertOnTap?: boolean;
+	swallowAlertTaps?: number;
 	/** Offer the optional `isFrontmost` capability: the bundle id of the app in front (evaluated per call). */
 	frontmost?: () => string | undefined;
 };
@@ -319,6 +327,8 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	const platform = options.platform ?? "ios";
 	const calls: DriverCall[] = [];
 	let cursor = 0;
+	let alertAnswered = false;
+	let swallowed = options.swallowAlertTaps ?? 0;
 	const { screens } = options;
 	const provider = typeof screens === "function" ? screens : undefined;
 	const scripted: Snapshot[] | undefined = typeof screens === "function" ? undefined : [...screens];
@@ -328,8 +338,11 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	let clip = "";
 	const wallNow = options.wallNow ?? Date.now;
 	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
+	let enrolled = false;
 	const running = new Set<string>();
 	const installed = new Set<string>();
+
+	const visibleAlert = (): AlertInfo | null => (alertAnswered ? null : findAlert(currentScreen()));
 
 	const currentScreen = (): Snapshot => {
 		if (fixed) return fixed;
@@ -396,8 +409,10 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		advance() {
 			cursor += 1;
+			alertAnswered = false;
 		},
 		set(screen) {
+			alertAnswered = false;
 			if (scripted) scripted[Math.min(cursor, Math.max(scripted.length - 1, 0))] = screen;
 			else fixed = screen;
 		},
@@ -420,7 +435,16 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "elementAtPoint", point, ...(opts && { opts }) }, () => hitTest(currentScreen(), point));
 		},
 		async tap(point, opts) {
-			return run({ method: "tap", point, ...(opts && { opts }) }, () => undefined);
+			return run({ method: "tap", point, ...(opts && { opts }) }, () => {
+				if (!options.answerAlertOnTap) return undefined;
+				const screen = currentScreen();
+				const hit = hitTest(screen, point);
+				const onButton = hit !== null && (findAlert(screen)?.buttons ?? []).some((b) => b === hit);
+				if (!onButton || alertAnswered) return undefined;
+				if (swallowed > 0) swallowed -= 1;
+				else alertAnswered = true;
+				return undefined;
+			});
 		},
 		async longPress(point, opts) {
 			return run({ method: "longPress", point, ...(opts && { opts }) }, () => undefined);
@@ -470,7 +494,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "settle", ...(opts && { opts }) }, () => ({ quiet: true, waitedMs: 0 }));
 		},
 		async alert() {
-			return run({ method: "alert" }, () => findAlert(currentScreen()));
+			return run({ method: "alert" }, () => visibleAlert());
 		},
 		async appearance(set) {
 			return run({ method: "appearance", ...(set && { set }) }, () => {
@@ -571,6 +595,13 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		async push(payload, opts) {
 			return run({ method: "push", payload, ...(opts ? { opts } : {}) }, () => undefined);
 		},
+		async biometrics(op) {
+			return run({ method: "biometrics", op }, () => {
+				if (op === "enroll") enrolled = true;
+				if (op === "unenroll") enrolled = false;
+				return { enrolled, modality: "face" as const };
+			});
+		},
 		app,
 		async close() {
 			calls.push({ method: "close" });
@@ -584,7 +615,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	if (alertBackends !== undefined) {
 		driver.alertOn = async (backend) =>
 			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
-				alertBackends.includes(backend) ? findAlert(currentScreen()) : null
+				alertBackends.includes(backend) ? visibleAlert() : null
 			);
 	}
 	if (frontmost !== undefined) {

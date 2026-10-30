@@ -716,6 +716,7 @@ export function createIosDriver(
 			if (result.success) opts.clockRecorder?.(op);
 			return result;
 		},
+		biometrics: (op) => simctl.biometrics(op),
 		async clipboard(set) {
 			if (set === undefined) return simctl.pbpaste();
 			const copied = await simctl.pbcopy(set);

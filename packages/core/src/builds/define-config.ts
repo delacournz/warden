@@ -332,6 +332,12 @@ export interface WardenBatchPreset {
 	 * `--slim` / `--no-slim` override both.
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). Overrides the top-level
+	 * `biometrics`. Default false.
+	 */
+	biometrics?: boolean | undefined;
 	/** Per-job log dir. */
 	logs?: string | undefined;
 	/**
@@ -693,6 +699,12 @@ export interface WardenE2eSuite {
 	 * lists single `com.apple.*` launchd labels. `false` turns it off.
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). Overrides the top-level
+	 * `biometrics`. Default false.
+	 */
+	biometrics?: boolean | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**
@@ -748,6 +760,12 @@ export interface WardenConfig {
 	 * @default true
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). `e2e` suites and `batches` presets
+	 * override it. Default false.
+	 */
+	biometrics?: boolean | undefined;
 	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */

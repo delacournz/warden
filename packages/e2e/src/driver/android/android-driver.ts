@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
+import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
 import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
@@ -9,6 +10,7 @@ import { type Scheduler, startFlap } from "../../conditions/scheduler";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
+	BiometricState,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -45,11 +47,14 @@ import {
 	buttonKeycode,
 	DRAG_STEPS,
 	dragMotionCommand,
+	dumpsysFingerprintArgv,
+	emuFingerTouchArgv,
 	GESTURE_LINE_MAX_MOVES,
 	geoFixArgv,
 	geoFixFailure,
 	gestureMotionCommand,
 	getpropArgv,
+	isEmulatorSerial,
 	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
@@ -65,6 +70,7 @@ import {
 	swipeArgv,
 	tapArgv,
 	textArgvs,
+	UNENROLLED_FINGER_ID,
 	uimodeGetArgv,
 	uimodeSetArgv,
 	userRotationArgv,
@@ -702,6 +708,40 @@ function buildDriver(
 		return unit;
 	};
 
+	const touchSensor = async (fingerId: number): DriverResult<void> => {
+		const touched = await options.exec(emuFingerTouchArgv(adb, serial, fingerId), { timeoutMs: 10_000 });
+		// the console answers `KO: …` (and some builds still exit 0) when the sensor is missing
+		if (touched.exitCode === 0 && !/^KO\b/m.test(touched.stdout)) return { success: true, data: undefined };
+		return driverErr(
+			"E_IO",
+			`adb emu finger touch failed: ${`${touched.stdout}${touched.stderr}`.trim().slice(0, 200)}`
+		);
+	};
+
+	/**
+	 * `emu finger touch <id>` on the emulator console presents a fingerprint (id 1 is the enrolled one, 99 matches
+	 * nothing); `dumpsys fingerprint` says whether any is enrolled. Enrollment itself is baked into the golden snapshot.
+	 */
+	const biometrics: Driver["biometrics"] = async (op) => {
+		if (!isEmulatorSerial(serial)) {
+			return driverErr("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${serial}`);
+		}
+		if (op === "enroll" || op === "unenroll") {
+			return driverErr(
+				"E_UNSUPPORTED",
+				`Android fingerprint enrollment comes from the golden snapshot (profile \`biometrics: true\`); \`${op}\` is not available at run time`
+			);
+		}
+		if (op !== "status") {
+			const touched = await touchSensor(op === "match" ? 1 : UNENROLLED_FINGER_ID);
+			if (!touched.success) return touched;
+		}
+		const dump = await runChecked(session, shellCommand(dumpsysFingerprintArgv()), "E_UNSUPPORTED");
+		if (!dump.success) return dump;
+		const state: BiometricState = { enrolled: parseFingerprintEnrolled(dump.data), modality: "fingerprint" };
+		return { success: true, data: state };
+	};
+
 	const clipboard: Driver["clipboard"] = async () =>
 		driverErr("E_UNSUPPORTED", "Android has no public shell clipboard access; type ASCII with typeText");
 
@@ -761,6 +801,7 @@ function buildDriver(
 		location,
 		clock: clockOp,
 		...settings,
+		biometrics,
 		app: createAppCommands({
 			session,
 			exec,

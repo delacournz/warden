@@ -47,6 +47,21 @@ export function motionEventArgv(action: MotionAction, point: Point): string[] {
 
 /** Lowest sdk with `input motionevent` (Android 8.0). */
 export const MOTIONEVENT_MIN_SDK = 26;
+/** Host-side `adb -s <serial> emu finger touch <id>`: the emulator console presents fingerprint `id` to the sensor. */
+export function emuFingerTouchArgv(adb: string, serial: string, fingerId: number): string[] {
+	return [adb, "-s", serial, "emu", "finger", "touch", String(fingerId)];
+}
+
+/** An id no enrollment holds: the emulator reports a non-matching touch. */
+export const UNENROLLED_FINGER_ID = 99;
+
+export function dumpsysFingerprintArgv(): string[] {
+	return ["dumpsys", "fingerprint"];
+}
+
+/** Emulator serials (`emulator-5554`); the console commands exist nowhere else. */
+export const isEmulatorSerial = (serial: string): boolean => /^emulator-\d+$/.test(serial);
+
 /** `input keycombination` (and so select-all by Ctrl+A) exists from Android 13. */
 export const SELECT_ALL_MIN_SDK = 33;
 export const DRAG_STEPS = 8;

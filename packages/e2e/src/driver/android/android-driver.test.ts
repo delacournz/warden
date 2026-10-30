@@ -53,6 +53,7 @@ async function setup(
 		screen?: boolean;
 		state?: AndroidStateStore;
 		appPackage?: string;
+		serial?: string;
 		dumpRoute?: "stdout" | "tty" | "file";
 		onDumpRoute?: (route: "stdout" | "tty" | "file") => void;
 	} = {}
@@ -64,7 +65,7 @@ async function setup(
 	const lines: string[] = [];
 	const clock = fakeClock();
 	const res = await openAndroidDriver({
-		serial: "emulator-5554",
+		serial: opts.serial ?? "emulator-5554",
 		adb: "adb",
 		exec: host.exec,
 		spawn: host.spawn,
@@ -615,6 +616,44 @@ describe("device state", () => {
 			["adb", "-s", "emulator-5554", "emu", "network", "delay", "175:225"],
 		]);
 		expect(host.shell).toContain("cmd connectivity airplane-mode disable");
+	});
+
+	test("biometrics: match and fail touch the emulator sensor over the console; status parses dumpsys", async () => {
+		const { driver, host } = await setup({
+			shell: [{ match: "dumpsys fingerprint", reply: '{"prints":[{"id":0,"count":1}]}' }],
+		});
+		expect(await value(driver.biometrics("match"))).toEqual({ enrolled: true, modality: "fingerprint" });
+		expect(await value(driver.biometrics("fail"))).toEqual({ enrolled: true, modality: "fingerprint" });
+		expect(host.host).toContainEqual(["adb", "-s", "emulator-5554", "emu", "finger", "touch", "1"]);
+		expect(host.host).toContainEqual(["adb", "-s", "emulator-5554", "emu", "finger", "touch", "99"]);
+		const status = await value(driver.biometrics("status"));
+		expect(status.enrolled).toBe(true);
+	});
+
+	test("biometrics: unenrolled status; a failing console is E_IO", async () => {
+		const { driver } = await setup({
+			shell: [{ match: "dumpsys fingerprint", reply: '{"prints":[{"id":0,"count":0}]}' }],
+			host: [{ match: "adb -s emulator-5554 emu finger", reply: { exitCode: 1, stdout: "KO: no fingerprint hw" } }],
+		});
+		expect((await value(driver.biometrics("status"))).enrolled).toBe(false);
+		const res = await driver.biometrics("match");
+		expect(!res.success && res.error.code).toBe("E_IO");
+	});
+
+	test("biometrics: a physical device is E_UNSUPPORTED and nothing is sent", async () => {
+		const { driver, host } = await setup({ serial: "R58M123ABC" });
+		const res = await driver.biometrics("match");
+		expect(!res.success && res.error.code).toBe("E_UNSUPPORTED");
+		expect(host.host.some((argv) => argv.includes("emu"))).toBe(false);
+	});
+
+	test("biometrics: enroll and unenroll point at the golden snapshot", async () => {
+		const { driver } = await setup();
+		for (const op of ["enroll", "unenroll"] as const) {
+			const res = await driver.biometrics(op);
+			expect(!res.success && res.error.code).toBe("E_UNSUPPORTED");
+			expect(!res.success && res.error.message).toContain("golden");
+		}
 	});
 
 	test("health", async () => {

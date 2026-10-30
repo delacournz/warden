@@ -4,6 +4,8 @@
   "main": "index.ts",
   "dependencies": {
     "@central-icons-react-native/round-outlined-radius-1-stroke-1.5": "^1.2.1",
+    "@expo-google-fonts/chakra-petch": "^0.4.1",
+    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
     "@legendapp/list": "^3.6.0",
     "@react-native-community/netinfo": "12.0.1",
     "clsx": "^2.1.1",
@@ -13,6 +15,7 @@
     "expo-dev-client": "~57.0.19",
     "expo-linear-gradient": "~57.0.2",
     "expo-linking": "~57.0.11",
+    "expo-local-authentication": "~57.0.3",
     "expo-location": "~57.0.22",
     "expo-router": "~57.0.24",
     "expo-status-bar": "~57.0.1",

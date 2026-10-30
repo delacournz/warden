@@ -130,6 +130,14 @@ function describeDevices(targets: readonly InspectorTarget[]): string {
 	return [...seen.values()].join(", ");
 }
 
+/**
+ * The dev client sends its device name in a query string that Metro form-decodes, so a `+` in a simulator name
+ * (`warden-iphone-17+bio-1`) reaches the inspector as a space.
+ */
+function sameDeviceName(served: string, wanted: string | undefined): boolean {
+	return wanted !== undefined && served.replaceAll("+", " ") === wanted.replaceAll("+", " ");
+}
+
 function normalizeWsUrl(wsUrl: string, metroUrl: string): string {
 	const ws = new URL(wsUrl);
 	const metro = new URL(metroUrl);
@@ -157,7 +165,11 @@ export function selectTarget(
 			(t) => t.reactNative?.logicalDeviceId === query.logicalDeviceId || urlDevice(t) === query.logicalDeviceId,
 			"logicalDeviceId",
 		],
-		[query.deviceName, (t) => t.deviceName === query.deviceName, "deviceName"],
+		[
+			query.deviceName,
+			(t) => t.deviceName !== undefined && sameDeviceName(t.deviceName, query.deviceName),
+			"deviceName",
+		],
 	];
 	for (const [value, matches, label] of wanted) {
 		if (!value) continue;

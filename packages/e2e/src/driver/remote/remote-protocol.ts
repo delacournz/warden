@@ -48,6 +48,7 @@ export const DRIVER_OPS = [
 	"battery",
 	"memoryWarning",
 	"push",
+	"biometrics",
 ] as const;
 export type DriverOp = (typeof DRIVER_OPS)[number];
 

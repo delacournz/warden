@@ -43,6 +43,8 @@ export const ENV_NAMES = {
 	leaseId: "WARDEN_LEASE_ID",
 	/** JSON argv that runs the shaping proxy (`warden __netproxy`) when specs run from a compiled `warden`; the JSON argument is appended */
 	netproxyCommand: "WARDEN_NETPROXY_COMMAND",
+	/** `1` when the suite's devices are biometrics devices: the session enrolls an iOS sim again before the app is installed */
+	biometrics: "WARDEN_BIOMETRICS",
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -103,6 +105,7 @@ const schema = z.object({
 	conditions: conditions.optional(),
 	leaseId: z.string().min(1).optional(),
 	netproxyCommand: launchArgs.pipe(z.array(z.string()).min(1)).optional(),
+	biometrics: toggle.optional(),
 });
 
 export type E2eEnv = {
@@ -141,6 +144,8 @@ export type E2eEnv = {
 	leaseId?: string;
 	/** `WARDEN_NETPROXY_COMMAND`: argv that starts the shaping proxy; absent from source (`bun netproxy.main.ts`) */
 	netproxyCommand?: string[];
+	/** `WARDEN_BIOMETRICS`: this is a biometrics device (profile `<p>+bio`); iOS enrollment does not survive a reboot or a spec's `unenroll` */
+	biometrics?: boolean;
 };
 
 type Parsed = z.infer<typeof schema>;
@@ -186,6 +191,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 		...(v.conditions === undefined ? {} : { conditions: v.conditions }),
 		...(v.leaseId === undefined ? {} : { leaseId: v.leaseId }),
 		...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
+		...(v.biometrics === true ? { biometrics: true } : {}),
 		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
 		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
 		...(v.perf === undefined
