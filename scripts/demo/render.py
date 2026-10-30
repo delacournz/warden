@@ -44,6 +44,7 @@ title_font = ImageFont.truetype(DISPLAY, 70)
 sub_font = ImageFont.truetype(BODY, 30)
 mono = ImageFont.truetype(MONO, FONT_PX)
 mono_small = ImageFont.truetype(MONO, 19)
+mono_caption = ImageFont.truetype(MONO, 16)
 
 
 def fit(text: str, font: ImageFont.FreeTypeFont, width: int) -> str:
@@ -66,6 +67,9 @@ def base() -> Image.Image:
     d.text((280, 314), plan["terminalTitle"], font=mono_small, fill=FAINT)
     d.text((150, 960), plan["footer"]["left"], font=mono_small, fill=FAINT)
     d.text((1170, 960), plan["footer"]["right"], font=mono_small, fill=FAINT, anchor="ra")
+    if plan["phoneCaption"]:
+        # centred in the band between the phone ring and the bottom edge
+        d.text((x + w // 2, (y + h + 3 + H) // 2), plan["phoneCaption"], font=mono_caption, fill=FAINT, anchor="mm")
     return img
 
 

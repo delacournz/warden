@@ -22,6 +22,7 @@ Export `demo: DemoDefinition` (`scripts/demo/demo.types.ts`). Copy `apps/example
 | Field | Meaning |
 |---|---|
 | `title` / `subtitle` / `terminalTitle` / `footer` | static text; title is the claim, subtitle one line |
+| `phoneCaption` | line under the phone, default `real simulator · not an animation`; `""` hides it |
 | `claim` | `{ biometrics?, profile? }` -> `warden claim ios --json --label demo-<name> [--biometrics]` |
 | `app` | `bundleId`, `kind` (`simulator` default), `project` (repo-relative cwd), `deepLink` opened with `--settle`, `appearance` (`light`/`dark`, set via `simctl ui` on the leased udid, restored after) |
 | `ready` | `warden ui wait` selectors that must pass after the deep link and before the video starts (e.g. `id=bio-screen`); a step never presses a screen that has not mounted |

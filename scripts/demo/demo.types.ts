@@ -40,6 +40,8 @@ export type DemoDefinition = {
 	terminalTitle: string;
 	/** Bottom-left / bottom-right footer text. */
 	footer: { left: string; right: string };
+	/** Line under the phone; defaults to `DEFAULT_PHONE_CAPTION`. Every take is a real simulator (honesty rules). */
+	phoneCaption?: string;
 	platform: "ios";
 	claim: { biometrics?: boolean; profile?: string };
 	app: DemoApp;
@@ -99,6 +101,7 @@ export type RenderPlan = {
 	subtitle: string;
 	terminalTitle: string;
 	footer: { left: string; right: string };
+	phoneCaption: string;
 	steps: readonly PlanStep[];
 	outro: string;
 	outroS: number;

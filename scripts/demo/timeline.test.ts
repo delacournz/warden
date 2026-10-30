@@ -76,6 +76,12 @@ describe("buildPlan", () => {
 		expect(plan.outroS).toBeCloseTo(5.0, 5);
 		expect(plan.durationS).toBe(10);
 	});
+	test("phone caption defaults to the real-simulator note", () => {
+		expect(plan.phoneCaption).toBe("real simulator · not an animation");
+	});
+	test("phone caption follows the definition", () => {
+		expect(buildPlan({ ...def, phoneCaption: "recorded live" }, take, 8, "/f").phoneCaption).toBe("recorded live");
+	});
 	test("missing times throw", () => {
 		expect(() => buildPlan(def, { ...take, steps: [] }, 8, "/f")).toThrow();
 	});
