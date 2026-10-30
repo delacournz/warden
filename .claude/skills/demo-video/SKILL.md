@@ -78,12 +78,10 @@ ffprobe -v error -show_entries stream=codec_name,profile,width,height,r_frame_ra
 
 ## 7. Assets and docs embed
 
-Output: `apps/docs/public/demos/<feature>/<clip>.mp4` + `<clip>.jpg` (poster = last frame), served at `/demos/<feature>/<clip>.mp4` (Vite `public/`). No MDX video component exists; use plain HTML in the page:
+Output: `apps/docs/public/demos/<feature>/<clip>.mp4` + `<clip>.jpg` (poster = last frame), served at `/demos/<feature>/<clip>.mp4` (Vite `public/`). Embed with the `DemoClip` MDX component (`apps/docs/src/components/demo-clip.tsx`): autoplays muted and loops, rests on the poster under reduced motion. `src` has no extension; `label` says what the clip shows (match the caption). A raw `<video>` fails `apps/docs/src/lib/source.test.ts`.
 
 ```mdx
-<video controls muted playsInline preload="metadata" poster="/demos/<feature>/<clip>.jpg" className="w-full rounded-lg">
-  <source src="/demos/<feature>/<clip>.mp4" type="video/mp4" />
-</video>
+<DemoClip src="/demos/<feature>/<clip>" label="warden ui … doing … on a leased simulator" />
 ```
 
 Add a caption sentence naming the commands. The landing page's `apps/docs/public/demo/` is a different pipeline (`bun run demo:compose`).

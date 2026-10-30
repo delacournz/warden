@@ -23,9 +23,7 @@ The example app has a Conditions screen (`warden-example://conditions`) and a sp
 
 ## Network
 
-<video controls muted playsInline preload="metadata" poster="/demos/network/offline.jpg" className="w-full rounded-lg">
-  <source src="/demos/network/offline.mp4" type="video/mp4" />
-</video>
+<DemoClip src="/demos/network/offline" label="warden ui network set offline, edge and online against the example app's network screen" />
 
 `warden ui network set offline`, `edge` and `online` against the example app's network screen on a leased simulator: real HTTPS probes, nothing mocked in the app.
 
@@ -72,9 +70,7 @@ A fixed `seed` replays the same sequence. A flap and faults do not combine: rese
 
 ### Faults
 
-<video controls muted playsInline preload="metadata" poster="/demos/network/fault.jpg" className="w-full rounded-lg">
-  <source src="/demos/network/fault.mp4" type="video/mp4" />
-</video>
+<DemoClip src="/demos/network/fault" label="warden ui network fault resetting every request to one host while the link stays up" />
 
 `warden ui network fault speed.cloudflare.com reset`, then `--clear`: the link stays up while every request to that one host fails.
 
@@ -99,9 +95,7 @@ A simulator shares the Mac's network, so on iOS a condition reaches only an app 
 
 ## Location
 
-<video controls muted playsInline preload="metadata" poster="/demos/location/route.jpg" className="w-full rounded-lg">
-  <source src="/demos/location/route.mp4" type="video/mp4" />
-</video>
+<DemoClip src="/demos/location/route" label="warden ui location route playing a route out of a 150 m geofence" />
 
 `warden ui location route` plays a route out of a 150 m geofence; the app gets real `expo-location` fixes.
 
@@ -127,9 +121,7 @@ On iOS `simctl` plays a route once. On Android a ticker owned by the lease sends
 
 ## Clock
 
-<video controls muted playsInline preload="metadata" poster="/demos/clock/trial.jpg" className="w-full rounded-lg">
-  <source src="/demos/clock/trial.mp4" type="video/mp4" />
-</video>
+<DemoClip src="/demos/clock/trial" label="warden ui clock advance expiring a 14-day trial, then reset restoring it" />
 
 `warden ui clock advance 10d`, `5d` and `reset` expire and restore a 14-day trial; the app reads plain `Date.now()`.
 

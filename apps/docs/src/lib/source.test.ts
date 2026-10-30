@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { icons } from "lucide-react";
 
@@ -30,5 +30,26 @@ describe("docs page icons", () => {
 	test("the release notes page icon is canonical", () => {
 		const icon = readFileSync(join(import.meta.dirname, "release-notes.ts"), "utf-8").match(/"icon: (\w+)"/)?.[1];
 		expect(icon && icon in icons).toBe(true);
+	});
+});
+
+describe("docs demo clips", () => {
+	const pages = mdxUnder(CONTENT).map((file) => ({
+		file: file.slice(CONTENT.length + 1),
+		text: readFileSync(file, "utf-8"),
+	}));
+
+	test("pages embed demos with <DemoClip> (autoplay, reduced motion), never a raw <video>", () => {
+		expect(pages.filter((page) => page.text.includes("<video")).map((page) => page.file)).toEqual([]);
+	});
+
+	test("every <DemoClip> has its mp4 and poster in public/", () => {
+		const srcs = pages.flatMap((page) =>
+			[...page.text.matchAll(/<DemoClip[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1] as string)
+		);
+		expect(srcs.length).toBeGreaterThan(0);
+		const pub = join(CONTENT, "..", "..", "public");
+		const missing = srcs.flatMap((src) => [`${src}.mp4`, `${src}.jpg`]).filter((file) => !existsSync(join(pub, file)));
+		expect(missing).toEqual([]);
 	});
 });
