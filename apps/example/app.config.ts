@@ -13,7 +13,7 @@ const expoConfig: ExpoConfig = {
 		supportsTablet: false,
 		infoPlist: {
 			ITSAppUsesNonExemptEncryption: false,
-			NSLocationWhenInUseUsageDescription: "The Conditions screen shows your position and a geofence.",
+			NSLocationWhenInUseUsageDescription: "The Location and Conditions screens show your position and a geofence.",
 		},
 		bundleIdentifier: "nz.co.delacour.warden.example",
 	},
@@ -28,7 +28,7 @@ const expoConfig: ExpoConfig = {
 		[
 			"expo-location",
 			{
-				locationWhenInUsePermission: "The Conditions screen shows your position and a geofence.",
+				locationWhenInUsePermission: "The Location and Conditions screens show your position and a geofence.",
 			},
 		],
 		[

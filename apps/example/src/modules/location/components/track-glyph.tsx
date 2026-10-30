@@ -22,7 +22,7 @@ const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 /** The glyph is a square this many px on a side; geometry below is in the same units. */
-const SIZE = 264;
+const SIZE = 232;
 const HALF = SIZE / 2;
 /** Space kept clear around the plot for the scale bar and north tick. */
 const PAD = 36;
