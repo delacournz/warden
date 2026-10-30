@@ -708,6 +708,7 @@ export function createIosDriver(
 		locale: (tag, o) => (settings ? settings.locale(tag, o) : noSettings()),
 		a11y: (op) => (settings ? settings.a11y(op) : noSettings()),
 		battery: (op) => (settings ? settings.battery(op) : noSettings()),
+		camera: async () => driverErr("E_UNSUPPORTED", "the simulated camera is not wired on iOS yet"),
 		memoryWarning: (o) => (settings ? settings.memoryWarning(o) : noSettings()),
 		push: (payload, o) => (settings ? settings.push(payload, o) : noSettings()),
 		async clock(op, o) {

@@ -832,6 +832,7 @@ function buildDriver(
 		location,
 		clock: clockOp,
 		...settings,
+		camera: async () => driverErr("E_UNSUPPORTED", "the simulated camera is not wired on Android yet"),
 		...(facts.physical ? physicalConditionOps(`physical Android device ${serial}`) : {}),
 		biometrics,
 		app: createAppCommands({
