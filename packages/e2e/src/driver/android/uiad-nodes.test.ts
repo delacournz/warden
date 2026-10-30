@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Element } from "../driver.types";
 import { readSnapshotData, type UiadNode } from "./uiad-protocol";
 import { parseUiadNodes, parseUiautomatorXml } from "./uiautomator";
 
@@ -40,6 +41,7 @@ function toDumpXml(nodes: readonly UiadNode[]): string {
 			`focused="${flag(node.focused)}"`,
 			`scrollable="${flag(node.scrollable)}"`,
 			`long-clickable="${flag(node.longClickable)}"`,
+			`focusable="${flag(node.focusable)}"`,
 			`password="${flag(node.password)}"`,
 			`selected="${flag(node.selected)}"`,
 			`bounds="[${l},${t}][${r},${b}]"`,
@@ -51,6 +53,15 @@ function toDumpXml(nodes: readonly UiadNode[]): string {
 	return `<?xml version='1.0' ?><hierarchy rotation="0">${nodes.map(render).join("")}</hierarchy>`;
 }
 
+/** The elements with `a11y` cut down to `focusable`, the one fact both sources have. */
+function withoutHelperA11y(elements: readonly Element[]): Element[] {
+	return elements.map(({ a11y, children: _children, ...rest }) => ({
+		...rest,
+		children: [],
+		...(a11y?.focusable === undefined ? {} : { a11y: { focusable: a11y.focusable } }),
+	}));
+}
+
 describe("parseUiadNodes", () => {
 	test("gives the very same elements as parsing the dump of the same nodes", () => {
 		const all = snapshots();
@@ -59,8 +70,40 @@ describe("parseUiadNodes", () => {
 			const viaXml = parseUiautomatorXml(toDumpXml(nodes), SCREEN);
 			const viaNodes = parseUiadNodes(nodes, SCREEN);
 			expect(viaNodes.flat.length).toBeGreaterThan(5);
-			expect(viaNodes).toEqual(viaXml);
+			expect(withoutHelperA11y(viaNodes.flat)).toEqual(withoutHelperA11y(viaXml.flat));
 		}
+	});
+
+	test("keeps focusable on both paths and the helper-only a11y facts on the helper path alone", () => {
+		const nodes: UiadNode[] = [
+			{
+				bounds: [0, 0, 100, 100],
+				class: "android.view.ViewGroup",
+				focusable: true,
+				a11yFocused: true,
+				notImportant: true,
+				live: 2,
+				actions: ["Archive", "Delete"],
+			},
+			{ bounds: [0, 100, 100, 200], class: "android.widget.TextView", live: 1 },
+		];
+		const [group, text] = parseUiadNodes(nodes, SCREEN).flat;
+		expect(group?.a11y).toEqual({
+			focusable: true,
+			important: false,
+			a11yFocused: true,
+			liveRegion: "assertive",
+			actions: ["Archive", "Delete"],
+		});
+		expect(text?.a11y).toEqual({ focusable: false, important: true, liveRegion: "polite" });
+		const dumped = parseUiautomatorXml(toDumpXml(nodes), SCREEN).flat;
+		expect(dumped[0]?.a11y).toEqual({ focusable: true });
+		expect(dumped[1]?.a11y).toEqual({ focusable: false });
+	});
+
+	test("a dump without a focusable attribute leaves a11y undefined", () => {
+		const xml = `<hierarchy><node class="android.widget.TextView" bounds="[0,0][10,10]" /></hierarchy>`;
+		expect(parseUiautomatorXml(xml, SCREEN).flat[0]?.a11y).toBeUndefined();
 	});
 
 	test("maps testIDs and platform ids like the dump: the package prefix is dropped, a bare id stays", () => {
