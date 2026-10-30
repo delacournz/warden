@@ -1090,8 +1090,8 @@ describe("warden batch", () => {
 			};
 			const h = harness();
 			expect(await createBatchCommand(h.deps).run(c)).toBe(0);
-			// once for the run (not once per device), plus the one local build's own post-build check
-			expect(fingerprints).toHaveLength(2);
+			// once for the run (not once per device), plus the one local build's check under the checkout lock and its post-build check
+			expect(fingerprints).toHaveLength(3);
 			expect(
 				installs
 					.filter((line) => line.startsWith("xcrun simctl install"))
