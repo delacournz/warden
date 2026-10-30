@@ -28,6 +28,8 @@ export type DemoApp = {
 	project: string;
 	/** Opened with `--settle` after the app launches. */
 	deepLink?: string;
+	/** System appearance for the take (`simctl ui appearance`), restored afterwards. Match it to the frame: `render.py` draws the docs dark palette. */
+	appearance?: "light" | "dark";
 };
 
 export type DemoDefinition = {

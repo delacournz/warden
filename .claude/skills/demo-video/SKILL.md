@@ -23,7 +23,7 @@ Export `demo: DemoDefinition` (`scripts/demo/demo.types.ts`). Copy `apps/example
 |---|---|
 | `title` / `subtitle` / `terminalTitle` / `footer` | static text; title is the claim, subtitle one line |
 | `claim` | `{ biometrics?, profile? }` -> `warden claim ios --json --label demo-<name> [--biometrics]` |
-| `app` | `bundleId`, `kind` (`simulator` default), `project` (repo-relative cwd), `deepLink` opened with `--settle` |
+| `app` | `bundleId`, `kind` (`simulator` default), `project` (repo-relative cwd), `deepLink` opened with `--settle`, `appearance` (`light`/`dark`, set via `simctl ui` on the leased udid, restored after) |
 | `ready` | `warden ui wait` selectors that must pass after the deep link and before the video starts (e.g. `id=bio-screen`); a step never presses a screen that has not mounted |
 | `leadInMs` / `tailHoldMs` | idle before step 1 / last frame hold, padded by the renderer (the take tail is 1 s) |
 | `steps[]` | `argv` (after `warden`; recorder appends `--udid`), `output` (`ok` draws a vector check, `plain` is muted), `pauseAfterMs`, `shown?`, `hidden?` |
@@ -60,7 +60,8 @@ Work dir: `$TMPDIR/warden-demo/<name>` (`--out dir`): `take.mp4`, `steps.json`, 
 
 - simctl video is VFR and drops the idle tail: the renderer `fps`-normalises and pads the last frame (`tpad`) to the plan length.
 - Video time matches the command log within ~0.5 s; the recorder starts the clock right after `video start`.
-- JetBrains Mono has no check glyph: `render.py` draws it as vectors.
+- Martian Mono has no check glyph: `render.py` draws it as vectors.
+- The frame is the docs Device Hub dark palette (Mona Sans + Martian Mono); set `app.appearance: "dark"` so the phone matches. The recorder restores the sim's appearance afterwards.
 - Terminal overflow: `computeTerminalLayout` shrinks pitch and font to 17 px, then scrolls the oldest entries away.
 - Device video limit 3 min; keep takes under 40 s anyway.
 - Status bar: `xcrun simctl status_bar <udid> override` is allowed on a leased udid; the recorder clears it afterwards.

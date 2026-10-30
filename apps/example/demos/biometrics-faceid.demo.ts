@@ -18,6 +18,7 @@ export const demo: DemoDefinition = {
 		kind: "simulator",
 		project: "apps/example",
 		deepLink: "warden-example://biometrics",
+		appearance: "dark",
 	},
 	ready: ["id=bio-screen", "id=bio-unlock"],
 	leadInMs: 1500,

@@ -84,14 +84,21 @@ export async function record(
 
 	await mkdir(outDir, { recursive: true });
 	const takePath = join(outDir, "take.mp4");
-	const claimArgs = ["claim", def.platform, "--json", "--label", `demo-${def.name}`];
+	// a bare agent claim lasts 5 min unrefreshed: a first native build in `ui open --kind` outlives it
+	const claimArgs = ["claim", def.platform, "--json", "--label", `demo-${def.name}`, "--ttl", "30m"];
 	if (def.claim.biometrics) claimArgs.push("--biometrics");
 	if (def.claim.profile) claimArgs.push("--profile", def.claim.profile);
 	const lease = parseClaim((await must(claimArgs)).stdout);
 	deps.log(`claimed ${lease.udid} (lease ${lease.leaseId})`);
 	const dev = ["--udid", lease.udid];
 	let videoStarted = false;
+	let restoreAppearance: string | undefined;
 	try {
+		if (def.app.appearance) {
+			const was = await deps.exec(["xcrun", "simctl", "ui", lease.udid, "appearance"], { cwd: projectDir });
+			restoreAppearance = was.stdout.trim() || "light";
+			await deps.exec(["xcrun", "simctl", "ui", lease.udid, "appearance", def.app.appearance], { cwd: projectDir });
+		}
 		await deps.exec(
 			[
 				"xcrun",
@@ -145,6 +152,10 @@ export async function record(
 	} finally {
 		if (videoStarted) await run(["ui", "screen", "video", "stop", ...dev]).catch(() => undefined);
 		await deps.exec(["xcrun", "simctl", "status_bar", lease.udid, "clear"], { cwd: projectDir }).catch(() => undefined);
+		if (restoreAppearance)
+			await deps
+				.exec(["xcrun", "simctl", "ui", lease.udid, "appearance", restoreAppearance], { cwd: projectDir })
+				.catch(() => undefined);
 		const rel = await run(["release", lease.leaseId]);
 		deps.log(rel.code === 0 ? `released ${lease.leaseId}` : `release ${lease.leaseId} failed: ${rel.stderr.trim()}`);
 	}
