@@ -983,10 +983,24 @@ final class Uia {
 	private static AccessibilityNodeInfo clickableAncestor(AccessibilityNodeInfo node) {
 		AccessibilityNodeInfo n = node;
 		for (int depth = 0; n != null && depth < 16; depth++) {
-			if (n.isClickable() && n.isEnabled()) return n;
+			if ((n.isClickable() || advertisesClick(n)) && n.isEnabled()) return n;
 			n = n.getParent();
 		}
 		return null;
+	}
+
+	/**
+	 * Whether the node lists {@code ACTION_CLICK} though its clickable flag is off. React Native's {@code activate}
+	 * accessibility action (a switch driven by a gesture handler, for one) is exactly that: TalkBack's double tap
+	 * performs the click, so a screen-reader activation must too.
+	 */
+	private static boolean advertisesClick(AccessibilityNodeInfo node) {
+		List<AccessibilityNodeInfo.AccessibilityAction> list = node.getActionList();
+		if (list == null) return false;
+		for (AccessibilityNodeInfo.AccessibilityAction action : list) {
+			if (action.getId() == AccessibilityNodeInfo.ACTION_CLICK) return true;
+		}
+		return false;
 	}
 
 	private static AccessibilityNodeInfo scrollableAncestor(AccessibilityNodeInfo node) {

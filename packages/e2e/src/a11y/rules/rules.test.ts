@@ -43,6 +43,17 @@ describe("missing-name", () => {
 		]);
 		expect(bad).toHaveLength(1);
 	});
+	test("android scroll container is focusable but not a stop: no name needed", () => {
+		const scroller: Spec = {
+			role: "scrollview",
+			rawType: "android.widget.ScrollView",
+			traits: ["scrollable"],
+			a11y: { focusable: true },
+		};
+		expect(issuesOf("missing-name", "android", [scroller])).toEqual([]);
+		const clickable: Spec = { ...scroller, traits: ["scrollable", "clickable"] };
+		expect(issuesOf("missing-name", "android", [clickable])).toHaveLength(1);
+	});
 });
 
 describe("image-no-name", () => {
@@ -167,6 +178,15 @@ describe("label-in-name", () => {
 			traits: ["clickable"],
 			label: "Please BUY  now today",
 			text: "buy now",
+		});
+		expect(issuesOf("label-in-name", "android", [ok])).toEqual([]);
+	});
+	test('punctuation in the name is ignored ("Walk dog, Active" contains "Walk dog Active")', () => {
+		const ok = btn({
+			rawType: "android.view.View",
+			traits: ["clickable"],
+			label: "Walk dog, Active",
+			text: "Walk dog Active",
 		});
 		expect(issuesOf("label-in-name", "android", [ok])).toEqual([]);
 	});
