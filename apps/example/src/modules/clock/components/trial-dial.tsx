@@ -19,10 +19,10 @@ import { type TrialState, trialLevel } from "../utils/trial-view";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
-const BOX = 264;
+const BOX = 232;
 const CENTER = BOX / 2;
-const RADIUS = 108;
-const STROKE = 18;
+const RADIUS = 95;
+const STROKE = 16;
 const SPAN = 360 / TRIAL_DAYS;
 /** Degrees of empty ring between two day segments. */
 const GAP = 5;
@@ -126,7 +126,7 @@ export function TrialDial({ state }: { state: TrialState }) {
 	return (
 		<View
 			accessibilityElementsHidden
-			className="size-[264px] items-center justify-center"
+			className="size-[232px] items-center justify-center"
 			importantForAccessibility="no-hide-descendants"
 		>
 			<Svg height={BOX} style={RING_STYLE} viewBox={`0 0 ${BOX} ${BOX}`} width={BOX}>
@@ -134,7 +134,7 @@ export function TrialDial({ state }: { state: TrialState }) {
 					cx={CENTER}
 					cy={CENTER}
 					fill="none"
-					r={128}
+					r={CENTER - 4}
 					stroke={tones.off}
 					strokeDasharray="2 7"
 					strokeOpacity={0.5}
@@ -151,9 +151,7 @@ export function TrialDial({ state }: { state: TrialState }) {
 				))}
 			</Svg>
 			<Animated.View className="items-center" style={numeralStyle}>
-				<Text
-					className={`font-heading text-8xl leading-none tabular-nums ${expired ? "text-warning" : "text-foreground"}`}
-				>
+				<Text className={`font-heading text-7xl leading-none ${expired ? "text-warning" : "text-foreground"}`}>
 					{days}
 				</Text>
 				<Text className="font-mono mt-2 text-xs text-muted-foreground uppercase tracking-widest">

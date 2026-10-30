@@ -1,7 +1,7 @@
 import { IconClock } from "@/lib/icons/central";
 import { TrialDial } from "@/modules/clock/components/trial-dial";
 import { useTrialClock } from "@/modules/clock/hooks/use-trial-clock";
-import { formatDay, formatOffset, trialCopy } from "@/modules/clock/utils/trial-view";
+import { formatOffset, trialCopy } from "@/modules/clock/utils/trial-view";
 import { EventLog } from "@/modules/showcase/components/event-log";
 import { Showcase } from "@/modules/showcase/components/showcase";
 import { useTones } from "@/modules/showcase/hooks/use-tones";
@@ -41,7 +41,6 @@ export default function ClockShowcase() {
 				/>
 				<Showcase.Readout>
 					<Showcase.Readout.Row label="now" testID="clk-now" value={isoSeconds(now)} />
-					<Showcase.Readout.Row label="started" testID="clk-started" value={formatDay(start)} />
 					<Showcase.Readout.Row
 						label="days left"
 						testID="clk-days"

@@ -67,7 +67,6 @@ export const ids = {
 		back: "clk-back",
 		state: "clk-state",
 		now: "clk-now",
-		started: "clk-started",
 		days: "clk-days",
 		trial: "clk-trial",
 		offset: "clk-offset",
