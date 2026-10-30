@@ -1,6 +1,34 @@
 export type Platform = "ios" | "android";
 
-export type DeviceResource = { kind: "device"; platform: Platform; id: string; name: string };
+/** Facts about a real phone/tablet, from its provider. Only physical devices carry one. */
+export type PhysicalInfo =
+	| { platform: "android"; transport: "usb" | "wifi"; adbState: string; hwSerial?: string; model?: string }
+	| {
+			platform: "ios";
+			transport: "wired" | "localNetwork";
+			deviceType: string;
+			osVersion: string;
+			developerMode: boolean;
+			ddi: boolean;
+			tunnelIp?: string;
+			/** devicectl's pairing state when it is not `paired` (the reason the device is not ready) */
+			pairingState?: string;
+			/** devicectl's `tunnelState` (`connected` = reachable now); a `localNetwork` phone is often `disconnected` until something talks to it */
+			tunnelState?: string;
+			/** why a paired phone cannot be reached right now (its `lockState` probe failed); set means never auto-picked */
+			unreachable?: string;
+			/** `lockState.passcodeRequired` from the reachability probe (true = locked); only set when that probe ran and answered */
+			locked?: boolean;
+	  };
+
+export type DeviceResource = {
+	kind: "device";
+	platform: Platform;
+	id: string;
+	name: string;
+	/** set on leases of real devices; id stays the transport id (adb serial / CoreDevice UDID) */
+	physical?: { transport: string; hwSerial?: string };
+};
 export type PortResource = { kind: "port"; port: number };
 export type BuildResource = { kind: "build"; key: string };
 export type Resource = DeviceResource | PortResource | BuildResource;
@@ -51,6 +79,8 @@ export type InventoryDevice = {
 	golden?: boolean;
 	/** reported bad: never allocated until `warden sim unquarantine` */
 	quarantined?: boolean;
+	/** a real phone/tablet: never booted, shut down, created, adopted, counted in capacity or recorded as a warden device */
+	physical?: PhysicalInfo;
 };
 
 export type DeviceRequest = {
@@ -62,6 +92,12 @@ export type DeviceRequest = {
 	max: number;
 	/** allow allocating foreign (non-warden) devices that match the profile */
 	adopt?: boolean;
+	/** opt-in: only physical devices (optionally just these ids), never create or boot */
+	physical?: {
+		ids?: string[];
+		/** allowlist: with no `ids`, only these devices are picked (`physical.allow` / `WARDEN_PHYSICAL_IDS`); `ids` beat it */
+		allow?: string[];
+	};
 };
 
 export type AllocationStep =
@@ -124,3 +160,51 @@ export type QueueEntry = {
 	label?: string;
 	pid?: number;
 };
+
+/** The one constructor of a device lease resource: carries `physical` for real devices. */
+export function deviceResourceOf(d: InventoryDevice): DeviceResource {
+	const resource: DeviceResource = { kind: "device", platform: d.platform, id: d.id, name: d.name };
+	if (d.physical) {
+		resource.physical = {
+			transport: d.physical.transport,
+			...(d.physical.platform === "android" && d.physical.hwSerial !== undefined
+				? { hwSerial: d.physical.hwSerial }
+				: {}),
+		};
+	}
+	return resource;
+}
+
+const PHYSICAL_IOS_ID = /^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9a-f]{40})$/i;
+
+/** An iPhone/iPad hardware UDID: `XXXXXXXX-XXXXXXXXXXXXXXXX` or 40 hex (older devices); a simulator UUID is neither. */
+export function isPhysicalIosId(id: string): boolean {
+	return PHYSICAL_IOS_ID.test(id);
+}
+
+/** A device warden may not boot, shut down, create, erase or count in host capacity. */
+export function isPhysicalDevice(d: Pick<InventoryDevice, "physical">): boolean {
+	return d.physical !== undefined;
+}
+
+/** Is a physical device usable now: an Android phone in adb state `device`, an iOS device its provider reports `booted` (paired and available). */
+export function isPhysicalReady(d: InventoryDevice): boolean {
+	if (!d.physical) return false;
+	if (d.physical.platform === "android") return d.physical.adbState === "device";
+	return d.state === "booted" && d.physical.unreachable === undefined;
+}
+
+/** Why a physical device cannot be used now (undefined = ready, or not a phone), as `<label>: <hint>`; `devices` and a failed claim print it. */
+export function physicalNotReadyReason(d: InventoryDevice): string | undefined {
+	const p = d.physical;
+	if (!p || isPhysicalReady(d)) return undefined;
+	if (p.platform === "android") {
+		if (p.adbState === "unauthorized") return "unauthorized: accept the USB debugging prompt on the phone";
+		if (p.adbState === "offline") return "offline: reconnect the cable or re-run adb connect";
+		return `${p.adbState}: adb does not list it as ready`;
+	}
+	if (p.pairingState !== undefined) return `unpaired: ${p.pairingState}; pair and trust it in Xcode`;
+	if (!p.developerMode) return "developer mode off: enable it in Settings > Privacy & Security";
+	if (p.unreachable !== undefined) return `offline: ${p.unreachable}`;
+	return "not available";
+}

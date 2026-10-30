@@ -27,9 +27,19 @@ export type AndroidDeviceState = {
 	uiadUnsupported?: string | undefined;
 	/** the scales to put back (what they were before warden set them to 0), while warden's zeros are in place */
 	animations?: AnimationValues | undefined;
+	/** physical phones: the rotation settings to put back, while warden's pinned rotation is in place */
+	rotation?: RotationValues | undefined;
+	/** physical phones: the `cmd uimode night` mode to put back, while warden's override is in place */
+	uimode?: UimodeValue | undefined;
 };
 
+/** `settings get system` values as printed: a digit, or `null` when never set. */
+export type RotationValues = { accelerometer_rotation: string; user_rotation: string };
+export type UimodeValue = "yes" | "no" | "auto";
+
 const scaleValue = z.string().regex(/^(null|\d+(\.\d+)?)$/);
+
+const settingValue = z.string().regex(/^(null|\d)$/);
 
 const stateSchema = z.strictObject({
 	sdk: z.number().int().optional(),
@@ -45,6 +55,8 @@ const stateSchema = z.strictObject({
 			animator_duration_scale: scaleValue,
 		})
 		.optional(),
+	rotation: z.strictObject({ accelerometer_rotation: settingValue, user_rotation: settingValue }).optional(),
+	uimode: z.enum(["yes", "no", "auto"]).optional(),
 });
 
 /** The slice of `node:fs/promises` the store uses (injected in tests). */
@@ -166,6 +178,8 @@ function stripUndefined(state: AndroidDeviceState): AndroidDeviceState {
 		...(state.dumpRoute !== undefined ? { dumpRoute: state.dumpRoute } : {}),
 		...(state.uiadUnsupported !== undefined ? { uiadUnsupported: state.uiadUnsupported } : {}),
 		...(state.animations !== undefined ? { animations: state.animations } : {}),
+		...(state.rotation !== undefined ? { rotation: state.rotation } : {}),
+		...(state.uimode !== undefined ? { uimode: state.uimode } : {}),
 	};
 }
 

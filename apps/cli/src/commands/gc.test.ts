@@ -98,6 +98,25 @@ describe("warden gc", () => {
 		expect(calls.indexOf(closes[0] as string[])).toBeGreaterThan(calls.findIndex((x) => x[2] === "shutdown"));
 	});
 
+	test("a long-stale physical lease is released but its device is never shut down or probed", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], { now: () => NOW, exec: fakeSimctl([], calls) });
+		ctx.db.insertLease(
+			{
+				resource: { kind: "device", platform: "android", id: "P1", name: "Pixel", physical: { transport: "usb" } },
+				owner: agent,
+				ttlMs: 1,
+				bootedByOwner: true,
+			},
+			0
+		);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		const out = JSON.parse(ctx.stdout.join("\n"));
+		expect(out.reclaimed).toHaveLength(1);
+		expect(out.shutdown).toEqual([]);
+		expect(calls.filter((x) => x.includes("P1"))).toEqual([]);
+	});
+
 	test("--idle shortens the idle window", async () => {
 		const calls: string[][] = [];
 		const c = setup(["--idle", "30s"], calls);

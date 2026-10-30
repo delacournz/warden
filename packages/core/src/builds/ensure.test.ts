@@ -98,6 +98,94 @@ async function seedCache(hash = "H"): Promise<string> {
 	return res.data.path;
 }
 
+describe("ensureApp on a physical iPhone", () => {
+	const PHONE = "00008140-000A0B0C0D0E0F10";
+	/** a phone that gets "7" as CFBundleVersion after the install; devicectl answers through memory */
+	function phoneHost(calls: string[]) {
+		let apps: Array<Record<string, unknown>> = [];
+		const files = new Map<string, string>();
+		const deviceIo = {
+			tempDir: async () => "/tmp/dc",
+			read: async (path: string) => files.get(path) ?? "",
+			remove: async () => {},
+		};
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			if (cmd[0] === "plutil") return { exitCode: 0, stdout: "7\n", stderr: "" };
+			const out = cmd[cmd.indexOf("--json-output") + 1];
+			if (cmd[1] === "devicectl" && out !== undefined) {
+				if (cmd[3] === "uninstall") apps = [];
+				if (cmd[3] === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
+				files.set(out, JSON.stringify({ result: cmd[3] === "info" ? { apps } : {} }));
+				return { exitCode: 0, stdout: "", stderr: "" };
+			}
+			return { exitCode: 127, stdout: "", stderr: cmd.join(" ") };
+		};
+		return { exec, deviceIo };
+	}
+
+	test("installs with devicectl and records the key; the second run keeps it, with no simctl at all", async () => {
+		const path = await seedCache();
+		const calls: string[] = [];
+		const { exec, deviceIo } = phoneHost(calls);
+		const first = await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo }));
+		expect(first).toEqual({ success: true, data: { appPath: path, hash: "H", source: "cache", installed: true } });
+		expect(getInstall(store, "ios", PHONE, "com.x.app")?.hash).toBe("H");
+		expect(calls.some((c) => c.startsWith(`xcrun devicectl device install app --device ${PHONE} ${path}`))).toBe(true);
+
+		calls.length = 0;
+		const second = await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo }));
+		expect(second.success && second.data.source).toBe("installed");
+		expect(calls.some((c) => c.includes(" install app "))).toBe(false);
+		expect(calls.some((c) => c.includes("simctl"))).toBe(false);
+	});
+
+	test("a build key that differs reinstalls over the phone's old app", async () => {
+		await seedCache("NEW");
+		recordInstall(store, { platform: "ios", deviceId: PHONE, bundleId: "com.x.app", hash: "OLD", installedAt: 1 });
+		const calls: string[] = [];
+		const { exec, deviceIo } = phoneHost(calls);
+		const res = await ensureApp(input(exec, { hash: "NEW", deviceId: PHONE, physical: true, deviceIo }));
+		expect(res.success && res.data.source).toBe("cache");
+		expect(getInstall(store, "ios", PHONE, "com.x.app")?.hash).toBe("NEW");
+	});
+
+	test("--install-mode clean on a phone falls back to uninstall + install (data cannot be wiped in place)", async () => {
+		await seedCache();
+		recordInstall(store, { platform: "ios", deviceId: PHONE, bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		const calls: string[] = [];
+		const { exec, deviceIo } = phoneHost(calls);
+		await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo })); // puts the app on the phone
+		calls.length = 0;
+		const res = await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo, installMode: "clean" }));
+		expect(res.success).toBe(true);
+		expect(calls.some((c) => c.includes("uninstall app"))).toBe(true);
+		expect(calls.some((c) => c.includes(" install app "))).toBe(true);
+	});
+});
+
+describe("ensureKindBuild for a device target", () => {
+	test("the build is cached under device/<salt> with the device hash, and EAS never supplies it", async () => {
+		const device = { team: "ABCDE12345", salt: "ABCDE12345" };
+		const calls: string[] = [];
+		const app = join(dir, "app");
+		const exec: Exec = async (cmd) => {
+			calls.push(cmd.join(" "));
+			return { exitCode: 127, stdout: "", stderr: "no" };
+		};
+		const key = { kind: "release" as const, nativeFp: "fp", jsKey: "js", device };
+		const res = await ensureKindBuild({
+			...input(exec, { project: testProject({ root: app }), deviceId: undefined, eas: true, build: false }),
+			key,
+			buildKey: "bk",
+		});
+		expect(res.success).toBe(false);
+		expect(!res.success && res.error).toContain("EAS skipped");
+		expect(calls.some((c) => c.includes("eas"))).toBe(false);
+		expect(kindHash(key)).toBe("fp:device-ABCDE12345:release:js");
+	});
+});
+
 describe("ensureApp", () => {
 	test("cache → install + record; second call → installed (no reinstall)", async () => {
 		const path = await seedCache();

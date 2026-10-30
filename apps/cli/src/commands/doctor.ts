@@ -19,6 +19,7 @@ import { type InstallOrigin, installOrigin } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
 import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
+import { physicalChecks } from "./doctor-physical";
 import { xcodeChecks } from "./doctor-xcode";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -204,7 +205,7 @@ export function ccacheProject(cwd: string): Probe {
 export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
 	const { adb, emulator } = androidTools(ctx.env);
-	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode] = await Promise.all([
+	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, physical] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
 		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
@@ -215,6 +216,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		),
 		helperChecks(ctx, helper),
 		xcodeChecks(ctx.exec, ctx.env),
+		physicalChecks(ctx),
 	]);
 	return [
 		check("home", "core", homeWritable(wardenHome(ctx.env))),
@@ -237,6 +239,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		check("skill", "optional", skillProbe(home)),
 		check("rule", "optional", ruleProbe(home)),
 		check("stale-leases", "optional", staleLeases(ctx)),
+		...physical,
 	];
 }
 

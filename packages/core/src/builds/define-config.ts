@@ -222,6 +222,8 @@ export interface WardenProject {
 	 * `--kind`. Kinds sit on top of {@link WardenProject.variants}: both keep working, but a build is one or the other.
 	 */
 	kinds?: WardenKinds | undefined;
+	/** iOS-only project settings. */
+	ios?: WardenProjectIos | undefined;
 	/** Extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand. `~` expands to `$HOME`. */
 	cacheDirs?: string[] | undefined;
 }
@@ -772,6 +774,44 @@ export interface WardenConfig {
 	conditions?: WardenConditionsConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
+	/** Physical iPhone settings. */
+	ios?: WardenIosSettings | undefined;
+	/** Physical phone and tablet settings. */
+	physical?: WardenPhysicalSettings | undefined;
+}
+
+/** Physical phone and tablet settings (`physical`). */
+export interface WardenPhysicalSettings {
+	/**
+	 * Allowlist for `--physical` claims that name no device: only these adb serials / CoreDevice UDIDs are picked.
+	 * `WARDEN_PHYSICAL_IDS` (comma-separated) wins over it. Naming a device with `--serial` / `--udid` works for
+	 * any device, listed or not.
+	 *
+	 * @example ["00008140-000A0B0C0D0E0F10", "R5CT123ABC"]
+	 */
+	allow?: string[] | undefined;
+}
+
+/** iOS settings of one project (`projects[].ios`). */
+export interface WardenProjectIos {
+	/** Builds for a physical iPhone (`--physical`, `--udid <iPhone>`). */
+	device?: { bundleIdentifier?: string | undefined } | undefined;
+}
+
+/** Physical iPhone settings (`ios`). */
+export interface WardenIosSettings {
+	/**
+	 * Apple developer team id (10 characters, e.g. `LN69P7N673`) that signs warden's on-device runner. Without it
+	 * (and without `WARDEN_IOS_TEAM_ID`, which wins) warden uses the team of the one `Apple Development` identity
+	 * in your keychain and fails `ios_team_ambiguous` when there are several teams.
+	 */
+	teamId?: string | undefined;
+	/**
+	 * Bundle id of the runner app (its UI-test bundle is `<id>.uitests`).
+	 *
+	 * @default "nz.co.delacour.warden.runner.<team id, lower case>"
+	 */
+	runnerBundleId?: string | undefined;
 }
 
 /** Android emulator settings (`android`). */

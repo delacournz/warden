@@ -7,7 +7,7 @@ import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createBatchCommand, defaultBatchDeps, openOnDevices, startRecordings } from "./batch";
+import { createBatchCommand, defaultBatchDeps, openOnDevices, socketEnv, startRecordings } from "./batch";
 import { harness } from "./batch.testing";
 
 let ctx: TestContext | undefined;
@@ -1170,5 +1170,16 @@ describe("startRecordings", () => {
 		expect(out.success).toBe(true);
 		expect(h.events).toEqual(["record:U0:/rec/dev-0.mp4", "record:U2:/rec/dev-2.mp4"]);
 		expect(devices.map((d) => d.video)).toEqual(["dev-0.mp4", undefined, "dev-2.mp4"]);
+	});
+});
+
+describe("socketEnv", () => {
+	const IPHONE = "00008140-000A0B0C0D0E0F10";
+	test("a simulator's helper is WARDEN_SIMD_SOCKET; a physical iPhone's runner host is WARDEN_IOS_RUNNER_SOCKET", () => {
+		expect(socketEnv("6A1F5C2E-0000-4000-8000-000000000001", "/s/sim.sock")).toEqual({
+			WARDEN_SIMD_SOCKET: "/s/sim.sock",
+		});
+		expect(socketEnv(IPHONE, "/s/ios-runner/p.sock")).toEqual({ WARDEN_IOS_RUNNER_SOCKET: "/s/ios-runner/p.sock" });
+		expect(socketEnv(IPHONE, undefined)).toEqual({});
 	});
 });

@@ -17,3 +17,11 @@ export function typeTextBudgetMs(text: string): number {
 	}
 	return TYPE_BASE_MS + characters.length * TYPE_PER_CHAR_MS + repeats * TYPE_PER_REPEAT_MS;
 }
+
+/** The XCUITest runner on a real device types one character per `typeText` call, each waiting for the app to go idle. */
+export const DEVICE_TYPE_PER_CHAR_MS = 600;
+
+/** Base + ~600 ms per character: the runner's per-character typing on a real device. */
+export function deviceTypeTextBudgetMs(text: string): number {
+	return TYPE_BASE_MS + Array.from(text).length * DEVICE_TYPE_PER_CHAR_MS;
+}

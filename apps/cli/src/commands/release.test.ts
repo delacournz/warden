@@ -173,4 +173,25 @@ describe("warden release", () => {
 		expect(await releaseCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("nothing selected");
 	});
+
+	test("--shutdown on a physical lease sends no shutdown argv and says why", async () => {
+		const calls: string[][] = [];
+		const c = setup([], calls);
+		const phone = c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "android", id: "P1", name: "Pixel", physical: { transport: "usb" } },
+				owner: me,
+				ttlMs: 60_000,
+				bootedByOwner: true,
+			},
+			c.now()
+		);
+		c.argv = [phone.id, "--shutdown", "--json"];
+		expect(await releaseCommand.run(c)).toBe(0);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.released).toEqual([phone.id]);
+		expect(out.shutdown).toEqual([]);
+		expect(out.notes.join("\n")).toContain("never shut down");
+		expect(calls.filter((x) => x.includes("shutdown") || x.includes("emu") || x.includes("kill"))).toEqual([]);
+	});
 });

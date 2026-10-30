@@ -55,7 +55,7 @@ export type HarnessOptions = {
 	capabilities?: Partial<DriverCapabilities>;
 	video?: UiDeps["video"];
 	/** the device lease's holder pid + label (a running `warden e2e` / `batch` / `run` sets both) */
-	lease?: { pid?: number; label?: string; shared?: boolean };
+	lease?: { pid?: number; label?: string; shared?: boolean; physical?: { transport: string } };
 	/** the pid liveness probe `warden ui` uses (default: the real one) */
 	pidAlive?: PidAlive;
 	/** what `open --kind` installs with (default: the real ensure) */
@@ -110,7 +110,13 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 	c.env = { ...c.env, ...OWNER_ENV };
 	c.db.insertLease(
 		{
-			resource: { kind: "device", platform: options.platform ?? "ios", id: UDID, name: "sim" },
+			resource: {
+				kind: "device",
+				platform: options.platform ?? "ios",
+				id: UDID,
+				name: "sim",
+				...(options.lease?.physical ? { physical: options.lease.physical } : {}),
+			},
 			owner: { kind: "agent", sessionId: "me", cwd: "/w" },
 			ttlMs: 10 * 60 * 60_000,
 			...(options.lease?.pid !== undefined ? { pid: options.lease.pid } : {}),

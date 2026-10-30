@@ -1,12 +1,17 @@
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
+import { isEmulatorSerial } from "@delacour/warden-core/providers/android";
+import { DEVICE_LOCKED_HINT } from "@delacour/warden-core/providers/unlock-wait";
 import { PRIORITY } from "@delacour/warden-core/queue";
-import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
+import { isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-core/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { claimWithFlags, leasePidFor, parseClaimFlags, parsePlatform, resolveOwner } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { type CallerLease, ensureCallerLease } from "../device-lease";
 import { deviceTarget } from "../hooks/claude-pretool";
+import { awaitPhonesUnlocked, isLockedClaimError, lockedClaimMessage } from "../physical-lock";
+import { AMBIGUOUS_HINT, ambiguousMessage, pickPhysical } from "../physical-pick";
 import { type UiDeviceInfo, type UiError, uiError } from "./output";
+import { checkPhone, type PhoneCheck, phoneStateError } from "./phone";
 
 /** Label on leases `warden ui --claim` creates. */
 export const UI_LEASE_LABEL = "warden ui";
@@ -24,6 +29,8 @@ export type UiDeviceFlags = {
 	runtime?: string;
 	/** drive the device even while a live warden process holds the caller's lease on it */
 	force?: boolean;
+	/** with `--claim` and no device named: claim a connected phone (`warden claim --physical`) */
+	physical?: boolean;
 };
 
 /** How `resolveUiDevice` checks the lease: `exclusive` = refuse an own lease a live warden process holds. */
@@ -41,7 +48,7 @@ export type UiDevice = UiDeviceInfo & {
 
 type Candidate = { id: string; platform?: Platform; source: UiDeviceSource };
 
-/** Platform of an id warden knows (a lease, a device record), else its shape (UDID = ios, else adb serial). */
+/** Platform of an id warden knows (a lease, a device record), else its shape (simulator UUID or physical `XXXXXXXX-XXXXXXXXXXXXXXXX` UDID = ios, else adb serial). */
 function platformOf(ctx: CommandContext, id: string): Result<Platform> {
 	const store = ctx.store();
 	const leased = store.listLeases().find((l) => l.resource.kind === "device" && l.resource.id === id);
@@ -49,7 +56,7 @@ function platformOf(ctx: CommandContext, id: string): Result<Platform> {
 	const known = store.listDevices().find((d) => d.id === id);
 	if (known) return ok(known.platform);
 	const target = deviceTarget(id);
-	return target.kind === "device" ? ok(target.platform) : err(`${id} is not a simulator or emulator`);
+	return target.kind === "device" ? ok(target.platform) : err(`${id} is not a simulator, emulator or physical device`);
 }
 
 function fromFlags(ctx: CommandContext, flags: UiDeviceFlags): Result<Candidate | undefined, UiError> {
@@ -91,6 +98,12 @@ function callerDeviceLeases(ctx: CommandContext, owner: Owner, platform: Platfor
 }
 
 /** How `open` / `close --release` name the shared `warden dev` lease a call attached to. */
+/** A phone (its lease says so, or an iPhone UDID): condition and biometric verbs never reach it. */
+export function physicalDevice(device: UiDevice): boolean {
+	const resource = device.lease.resource;
+	return (resource.kind === "device" && resource.physical !== undefined) || isPhysicalIosId(device.udid);
+}
+
 export function sharedNote(lease: Lease): string {
 	return `sharing ${lease.id} with warden dev${lease.pid === undefined ? "" : ` (pid ${lease.pid})`}`;
 }
@@ -98,6 +111,13 @@ export function sharedNote(lease: Lease): string {
 /** A shared (`warden dev`) lease whose holding process is alive: `warden ui` attaches to it. */
 function liveShared(lease: Lease, pidAlive: PidAlive): boolean {
 	return lease.shared === true && lease.pid !== undefined && pidAlive(lease.pid);
+}
+
+/** A failed claim as a `warden ui` error: a phone that stayed locked is `device_locked` (exit 2), anything else `failed`. */
+function claimError(error: string): UiError {
+	return isLockedClaimError(error)
+		? uiError("device_locked", lockedClaimMessage(error), { hint: DEVICE_LOCKED_HINT })
+		: uiError("failed", `claim failed: ${error}`);
 }
 
 /** `--claim` with no device at all: `warden claim <platform>` (profile / runtime from the flags). */
@@ -109,6 +129,7 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 		{
 			...(flags.profile !== undefined ? { profile: flags.profile } : {}),
 			...(flags.runtime !== undefined ? { runtime: flags.runtime } : {}),
+			...(flags.physical === true ? { physical: true } : {}),
 			label: UI_LEASE_LABEL,
 		},
 		undefined,
@@ -116,8 +137,20 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 		PRIORITY.high
 	);
 	if (!parsed.success) return fail(uiError("usage", parsed.error));
-	const outcome = await claimWithFlags(ctx, owner, parsed.data, leasePidFor(owner));
-	if (!outcome.success) return fail(uiError("failed", `claim failed: ${outcome.error}`));
+	// `warden ui` is for agents: never a prompt, several usable phones are the caller's to choose between
+	const picked = await pickPhysical(ctx, owner, [parsed.data], { prompt: false });
+	if (picked.kind === "ambiguous") {
+		return fail(
+			uiError("ambiguous_device", ambiguousMessage(picked.platform, picked.candidates), {
+				hint: AMBIGUOUS_HINT,
+				details: { candidates: picked.candidates },
+			})
+		);
+	}
+	if (picked.kind !== "ok")
+		return fail(uiError("failed", `claim failed: ${picked.kind === "failed" ? picked.message : "cancelled"}`));
+	const outcome = await claimWithFlags(ctx, owner, picked.flags[0] ?? parsed.data, leasePidFor(owner));
+	if (!outcome.success) return fail(claimError(outcome.error));
 	const claimed = outcome.data.claimed[0];
 	if (!claimed) return fail(uiError("failed", "claim returned no device"));
 	return ok({
@@ -171,6 +204,20 @@ async function leaseCandidate(
 ): Promise<Result<UiDevice, UiError>> {
 	const platform = candidate.platform !== undefined ? ok(candidate.platform) : platformOf(ctx, candidate.id);
 	if (!platform.success) return fail(uiError("usage", platform.error));
+	const phone: PhoneCheck =
+		platform.data === "android" && !isEmulatorSerial(candidate.id)
+			? await checkPhone(ctx, candidate.id)
+			: { kind: "other" };
+	// `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile)
+	if (claim && platform.data === "ios" && isPhysicalIosId(candidate.id)) {
+		const unlocked = await awaitPhonesUnlocked(
+			ctx,
+			owner,
+			{ platform: "ios", profile: "iphone-17", count: 1, max: 1, physical: { ids: [candidate.id] } },
+			{ noWait: false }
+		);
+		if (!unlocked.success) return fail(claimError(unlocked.error));
+	}
 	const pid = leasePidFor(owner);
 	const leased = ensureCallerLease(ctx.store(), owner, platform.data, candidate.id, {
 		now: ctx.now(),
@@ -179,6 +226,7 @@ async function leaseCandidate(
 		label: UI_LEASE_LABEL,
 		...(pid !== undefined ? { pid } : {}),
 		exclusive: check.exclusive,
+		...(phone.kind === "phone" ? { physical: phone.physical } : {}),
 	});
 	if (!leased.success) {
 		const { code, message } = leased.error;
@@ -189,6 +237,9 @@ async function leaseCandidate(
 		);
 	}
 	const { lease, action } = leased.data;
+	// the lease is kept: the user fixes the phone (accept the prompt, replug) and retries
+	const notReady = phone.kind === "phone" ? phoneStateError(candidate.id, phone.adbState) : undefined;
+	if (notReady) return fail(notReady);
 	if (claim && (action === "reclaimed" || action === "leased")) {
 		const { undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
 		const report = await undoOrphansWith(

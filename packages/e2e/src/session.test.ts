@@ -67,10 +67,15 @@ function factory() {
 }
 
 describe("Session biometrics", () => {
-	const scripted = (platform: "ios" | "android", biometrics: boolean) => {
+	const scripted = (platform: "ios" | "android", biometrics: boolean, physical = false) => {
 		const fake = scriptedDriver({ platform, screens: [] });
 		const session = createSession({
-			env: { ...envIn(tmp()), platform, ...(biometrics ? { biometrics: true } : {}) },
+			env: {
+				...envIn(tmp()),
+				platform,
+				...(biometrics ? { biometrics: true } : {}),
+				...(physical ? { deviceKind: "physical" as const } : {}),
+			},
 			driverFactory: async () => ({ success: true, data: fake }),
 			exitHook: false,
 		});
@@ -95,6 +100,12 @@ describe("Session biometrics", () => {
 		};
 		await session.driver();
 		expect(reads).toBe(2);
+	});
+
+	test("a physical iPhone is never enrolled: its sensor is real", async () => {
+		const { fake, session } = scripted("ios", true, true);
+		await session.driver();
+		expect(fake.callsOf("biometrics")).toEqual([]);
 	});
 
 	test("plain iOS and Android sessions do not", async () => {

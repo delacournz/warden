@@ -6,6 +6,7 @@ import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { type Exec, execError } from "../exec";
 import { androidTools } from "../providers/android";
 import type { Platform } from "../types";
+import { type DeviceIo, installOnPhone, probePhone, uninstallFromPhone } from "./install-device";
 import type { InstalledApp } from "./resolve";
 
 /** Byte size of a file; undefined when it cannot be read. Injected so identity checks need no `stat` spawns. */
@@ -56,14 +57,21 @@ export type InstallerDeps = {
 	env: Record<string, string | undefined>;
 	/** default: `node:fs` */
 	fileSize?: FileSize;
+	/** the temp files of `devicectl` calls on a physical iPhone (default: node:fs) */
+	deviceIo?: DeviceIo;
 	/** sha256 of the cached apk for the Android identity check (default: `node:fs`) */
 	fileDigest?: FileDigest;
 };
 
-/** A device to install onto: iOS simulator udid / Android emulator serial. */
-export type InstallTarget = { platform: Platform; deviceId: string };
+/** A device to install onto: iOS simulator udid / Android emulator or phone serial. `physical`: a real phone (ABI check before installing). */
+export type InstallTarget = { platform: Platform; deviceId: string; physical?: boolean };
 
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
+
+/** A real iPhone / iPad: installed, probed and removed with `devicectl`, not `simctl`. */
+export const isPhoneIos = (target: InstallTarget): boolean => target.platform === "ios" && target.physical === true;
+
+const phoneDeps = (deps: InstallerDeps) => ({ exec: deps.exec, ...(deps.deviceIo ? { io: deps.deviceIo } : {}) });
 
 /** `xcrun simctl install <udid> <app>` / `adb -s <serial> install -r <apk>`. */
 export function installArgv(target: InstallTarget, appPath: string, env: InstallerDeps["env"]): string[] {
@@ -89,6 +97,7 @@ export async function probeApp(
 	target: InstallTarget,
 	bundleId: string
 ): AsyncResult<InstalledApp> {
+	if (isPhoneIos(target)) return probePhone(phoneDeps(deps), target.deviceId, bundleId);
 	const res = await deps.exec(probeArgv(target, bundleId, deps.env));
 	if (target.platform === "ios") {
 		const container = res.stdout.trim();
@@ -151,6 +160,7 @@ export async function appMatchesArtifact(
 	installedDir?: string
 ): AsyncResult<boolean> {
 	if (target.platform !== "ios") return androidMatchesArtifact(deps, target, bundleId, artifactPath);
+	if (isPhoneIos(target)) return ok(false);
 	const installedAt = installedDir ?? (await out(deps, probeArgv(target, bundleId, deps.env)));
 	if (!installedAt) return ok(false);
 	const [installed, cached] = await Promise.all([appIdentity(deps, installedAt), appIdentity(deps, artifactPath)]);
@@ -193,6 +203,13 @@ export async function uninstallApp(deps: InstallerDeps, target: InstallTarget, b
 	const present = await isAppInstalled(deps, target, bundleId);
 	if (!present.success) return present;
 	if (!present.data) return ok(undefined);
+	if (isPhoneIos(target)) {
+		const gone = await uninstallFromPhone(phoneDeps(deps), target.deviceId, bundleId);
+		if (!gone.success) return gone;
+		const left = await isAppInstalled(deps, target, bundleId);
+		if (!left.success) return left;
+		return left.data ? err(`uninstalled ${bundleId} from ${target.deviceId} but it is still there`) : ok(undefined);
+	}
 	const argv = uninstallArgv(target, bundleId, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
 	if (res.exitCode !== 0 || /Failure/.test(res.stdout)) return err(`uninstall failed: ${execError(argv, res)}`);
@@ -212,6 +229,56 @@ export async function installApp(
 	return done.success ? ok(undefined) : done;
 }
 
+/** ABI directories under `lib/` in `unzip -Z1` output; empty for a pure-Java APK. */
+export function apkAbis(entries: string): string[] {
+	const abis = new Set<string>();
+	for (const line of entries.split("\n")) {
+		const abi = /^lib\/([^/]+)\/./.exec(line.trim())?.[1];
+		if (abi) abis.add(abi);
+	}
+	return [...abis];
+}
+
+/**
+ * A phone only runs the ABIs in `ro.product.cpu.abilist`. An APK whose `lib/<abi>/` folders share none with them
+ * installs and then crashes on launch (`warden e2e` defaults to the `simulator` kind, x86_64 on an Intel host),
+ * so it is refused here with the way out. Best effort: an APK or ABI list that cannot be read lets the install go on.
+ */
+async function abiMismatch(deps: InstallerDeps, target: InstallTarget, appPath: string): Promise<string | undefined> {
+	const [listing, props] = await Promise.all([
+		deps.exec(["unzip", "-Z1", appPath]),
+		deps.exec([androidTools(deps.env).adb, "-s", target.deviceId, "shell", "getprop", "ro.product.cpu.abilist"]),
+	]);
+	if (listing.exitCode !== 0 || props.exitCode !== 0) return undefined;
+	const wanted = apkAbis(listing.stdout);
+	const supported = props.stdout
+		.trim()
+		.split(",")
+		.map((abi) => abi.trim())
+		.filter((abi) => abi !== "");
+	if (wanted.length === 0 || supported.length === 0 || wanted.some((abi) => supported.includes(abi))) return undefined;
+	return (
+		`abi_mismatch: ${appPath} has native code for ${wanted.join(", ")} but ${target.deviceId} runs ${supported.join(", ")}. ` +
+		"Install an arm64 build instead: use the `dev` or `release` build kind (the `simulator` kind targets the host CPU)"
+	);
+}
+
+/** The reason of an `adb install` failure; a signature clash gets its own message and is never fixed by uninstalling. */
+function installFailure(
+	argv: string[],
+	res: { exitCode: number; stdout: string; stderr: string },
+	target: InstallTarget,
+	bundleId: string
+): string {
+	if (target.platform === "android" && /INSTALL_FAILED_UPDATE_INCOMPATIBLE/.test(res.stdout + res.stderr)) {
+		return (
+			`install failed: a differently-signed copy of ${bundleId} is installed on ${target.deviceId}; ` +
+			"uninstall it yourself (warden never uninstalls it for you), then retry"
+		);
+	}
+	return `install failed: ${execError(argv, res)}`;
+}
+
 /** `installApp`, keeping what the confirming probe found (iOS: the new bundle container, 17-7). */
 export async function installAndProbe(
 	deps: InstallerDeps,
@@ -219,10 +286,15 @@ export async function installAndProbe(
 	appPath: string,
 	bundleId: string
 ): AsyncResult<InstalledApp> {
+	if (isPhoneIos(target)) return installOnPhone(phoneDeps(deps), target.deviceId, appPath, bundleId);
+	if (target.platform === "android" && target.physical === true) {
+		const mismatch = await abiMismatch(deps, target, appPath);
+		if (mismatch !== undefined) return err(mismatch);
+	}
 	const argv = installArgv(target, appPath, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
 	// `adb install` can exit 0 while printing `Failure [INSTALL_…]`
-	if (res.exitCode !== 0 || /Failure \[/.test(res.stdout)) return err(`install failed: ${execError(argv, res)}`);
+	if (res.exitCode !== 0 || /Failure \[/.test(res.stdout)) return err(installFailure(argv, res, target, bundleId));
 	const present = await probeApp(deps, target, bundleId);
 	if (!present.success) return present;
 	if (!present.data.present) {
@@ -321,6 +393,9 @@ async function resetIos(
 /** iOS: `simctl keychain <udid> reset` (the whole simulator's keychain; an uninstall leaves it). Android: nothing. */
 export async function resetSimKeychain(deps: InstallerDeps, target: InstallTarget): AsyncResult<void> {
 	if (target.platform !== "ios") return ok(undefined);
+	if (isPhoneIos(target)) {
+		return err("--reset-keychain is for simulators: a phone's keychain is not reset (uninstalling keeps it)");
+	}
 	const argv = ["xcrun", "simctl", "keychain", target.deviceId, "reset"];
 	const res = await deps.exec(argv);
 	return res.exitCode === 0 ? ok(undefined) : err(`keychain reset failed: ${execError(argv, res)}`);
@@ -339,6 +414,11 @@ export async function resetAppData(
 	bundleId: string,
 	opts: ResetOptions = {}
 ): AsyncResult<void> {
+	if (isPhoneIos(target)) {
+		return err(
+			`app data of ${bundleId} cannot be reset in place on a phone: warden reinstalls it (--install-mode reinstall)`
+		);
+	}
 	const present = await isAppInstalled(deps, target, bundleId);
 	if (!present.success) return present;
 	if (!present.data) return err(`${bundleId} is not installed on ${target.deviceId}`);

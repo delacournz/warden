@@ -221,3 +221,113 @@ describe("allocate quarantine + skip", () => {
 		expect(plan.kind === "assign" && plan.steps).toEqual([{ action: "boot", device: sim({ id: "2" }) }]);
 	});
 });
+
+describe("allocate physical devices", () => {
+	const phone = (id: string, overrides: Partial<InventoryDevice> = {}): InventoryDevice => ({
+		platform: "android",
+		id,
+		name: `Pixel ${id}`,
+		state: "booted",
+		wardenCreated: false,
+		profile: "pixel-8",
+		runtime: "android-35",
+		physical: { platform: "android", transport: "usb", adbState: "device" },
+		...overrides,
+	});
+	const androidReq: DeviceRequest = { platform: "android", profile: "pixel-8", count: 1, max: 4 };
+	const run = (inventory: InventoryDevice[], request: DeviceRequest, leases: Lease[] = []) =>
+		allocate({ inventory, leases, request, now: NOW, pidAlive: noPid });
+
+	test("a plain claim never takes a phone, even with --adopt", () => {
+		expect(run([phone("P1")], androidReq).kind).toBe("assign");
+		const plain = run([phone("P1")], { ...androidReq, adopt: true });
+		expect(plain.kind === "assign" && plain.steps.map((s) => s.action)).toEqual(["create"]);
+		const noRoom = run([phone("P1")], { ...androidReq, adopt: true, max: 0 });
+		expect(noRoom.kind).toBe("wait");
+	});
+
+	test("a physical claim takes a ready phone regardless of profile, never creates", () => {
+		const plan = run([phone("P1", { profile: "other" })], { ...androidReq, physical: {} });
+		expect(plan.kind === "assign" && plan.steps).toEqual([
+			{ action: "reuse", device: expect.objectContaining({ id: "P1" }) },
+		]);
+		const none = run([], { ...androidReq, physical: {} });
+		expect(none.kind).toBe("wait");
+	});
+
+	test("a physical claim skips unauthorized phones and virtual devices", () => {
+		const unauthorized = phone("P1", {
+			state: "booting",
+			physical: { platform: "android", transport: "usb", adbState: "unauthorized" },
+		});
+		const { physical: _phone, ...virtual } = phone("emulator-5554");
+		const emulator: InventoryDevice = { ...virtual, wardenCreated: true };
+		expect(run([unauthorized, emulator], { ...androidReq, physical: {} }).kind).toBe("wait");
+	});
+
+	test("ids filters; two phones with one leased gives the free one", () => {
+		const inventory = [phone("P1"), phone("P2")];
+		const both = run(inventory, { ...androidReq, physical: {} }, [
+			lease("P1", { resource: { kind: "device", platform: "android", id: "P1", name: "P1" } }),
+		]);
+		expect(both.kind === "assign" && both.steps.map((s) => (s.action === "create" ? s.name : s.device.id))).toEqual([
+			"P2",
+		]);
+		const only = run(inventory, { ...androidReq, physical: { ids: ["P2"] } });
+		expect(only.kind === "assign" && only.steps.map((s) => (s.action === "create" ? s.name : s.device.id))).toEqual([
+			"P2",
+		]);
+		expect(run(inventory, { ...androidReq, physical: { ids: ["nope"] } }).kind).toBe("wait");
+	});
+
+	test("an offline phone is never auto-picked", () => {
+		const offline = phone("P1", { physical: { platform: "android", transport: "wifi", adbState: "offline" } });
+		expect(run([offline], { ...androidReq, physical: {} }).kind).toBe("wait");
+		expect(run([offline, phone("P2")], { ...androidReq, physical: {} }).kind).toBe("assign");
+	});
+
+	test("an unreachable iPhone/iPad is never picked, named or not", () => {
+		const ipad = (id: string, unreachable?: string): InventoryDevice => ({
+			platform: "ios",
+			id,
+			name: "Test iPad",
+			state: unreachable === undefined ? "booted" : "shutdown",
+			wardenCreated: false,
+			physical: {
+				platform: "ios",
+				transport: "localNetwork",
+				deviceType: "iPad",
+				osVersion: "18.7.8",
+				developerMode: true,
+				ddi: true,
+				...(unreachable === undefined ? {} : { unreachable }),
+			},
+		});
+		const req: DeviceRequest = { platform: "ios", profile: "iphone-17", count: 1, max: 1, physical: {} };
+		expect(run([ipad("A", "not connected")], req).kind).toBe("wait");
+		expect(run([ipad("A", "not connected")], { ...req, physical: { ids: ["A"] } }).kind).toBe("wait");
+		expect(run([ipad("A", "not connected"), ipad("B")], req).kind).toBe("assign");
+	});
+
+	test("an allowlist limits an id-less physical claim to the listed devices", () => {
+		const inventory = [phone("P1"), phone("P2")];
+		const plan = run(inventory, { ...androidReq, physical: { allow: ["P2"] } });
+		expect(plan.kind === "assign" && plan.steps.map((s) => (s.action === "create" ? s.name : s.device.id))).toEqual([
+			"P2",
+		]);
+		expect(run(inventory, { ...androidReq, physical: { allow: ["other"] } }).kind).toBe("wait");
+	});
+
+	test("naming a device beats the allowlist", () => {
+		const plan = run([phone("P1"), phone("P2")], { ...androidReq, physical: { ids: ["P1"], allow: ["P2"] } });
+		expect(plan.kind === "assign" && plan.steps.map((s) => (s.action === "create" ? s.name : s.device.id))).toEqual([
+			"P1",
+		]);
+	});
+
+	test("a phone named warden-x-1 stays foreign: not in the pool", () => {
+		const named = phone("P1", { name: "warden-pixel-8-1" });
+		const plan = run([named], { ...androidReq, max: 1 });
+		expect(plan.kind === "assign" && plan.steps[0]?.action).toBe("create");
+	});
+});

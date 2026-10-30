@@ -54,6 +54,7 @@ async function setup(
 		state?: AndroidStateStore;
 		appPackage?: string;
 		serial?: string;
+		ownedPackages?: readonly string[];
 		dumpRoute?: "stdout" | "tty" | "file";
 		onDumpRoute?: (route: "stdout" | "tty" | "file") => void;
 	} = {}
@@ -71,6 +72,7 @@ async function setup(
 		spawn: host.spawn,
 		execBinary: host.execBinary,
 		log: (l) => lines.push(l),
+		...(opts.ownedPackages ? { ownedPackages: opts.ownedPackages } : {}),
 		clock,
 		...(opts.screen ? { screen: SCREEN } : {}),
 		...(opts.state ? { state: opts.state } : {}),
@@ -1025,5 +1027,109 @@ describe("animation scales", () => {
 		await driver.close();
 		await driver.close();
 		expect(host.shell.filter((c) => c.startsWith("settings put global window_animation_scale 1.0")).length).toBe(1);
+	});
+});
+
+describe("physical phone safety (PHY-2.4)", () => {
+	const PHONE = "R5CT1234ABC";
+	const phoneProbe = (tail: string): string => `${probe(34)}${tail}`;
+	const AWAKE = "wdn_qemu:\nmWakefulness=Awake\n  showing=false\n  secure=true\n";
+	const phoneRules = (tail: string = AWAKE): ShellRule[] => [
+		{ match: "getprop sys.boot_completed", reply: phoneProbe(tail) },
+	];
+	const settingsReads: ShellRule[] = [
+		{ match: "settings get system accelerometer_rotation", reply: "1\n" },
+		{ match: "settings get system user_rotation", reply: "0\n" },
+		{ match: "cmd uimode night", reply: "Night mode: no\n" },
+	];
+
+	test("an emulator serial is probed exactly as before, with no phone steps", async () => {
+		const { host } = await setup();
+		expect(host.shell[0]).toBe("getprop sys.boot_completed; getprop ro.build.version.sdk; wm size; wm density");
+		expect(host.shell.some((c) => c.includes("keyevent") || c.includes("dismiss-keyguard"))).toBe(false);
+	});
+
+	test("an awake, unlocked phone opens with the extended probe and no wake or settings writes besides animations", async () => {
+		const { host } = await setup({ serial: PHONE, shell: phoneRules() });
+		expect(host.shell[0]).toContain("ro.boot.qemu");
+		expect(host.shell.some((c) => c.includes("keyevent 224") || c.includes("settings put system"))).toBe(false);
+	});
+
+	test("a sleeping phone is woken before anything else is written", async () => {
+		const asleep = "wdn_qemu:\nmWakefulness=Asleep\n  showing=false\n  secure=true\n";
+		const { host } = await setup({
+			serial: PHONE,
+			shell: [{ match: "dumpsys window policy", reply: "  showing=false\n  secure=true\n" }, ...phoneRules(asleep)],
+		});
+		expect(host.shell[1]).toBe("input keyevent 224");
+		expect(host.shell.findIndex((c) => c.includes("settings put global"))).toBeGreaterThan(1);
+	});
+
+	test("a phone behind a secure keyguard fails the open with E_DEVICE_LOCKED and changes nothing", async () => {
+		const host = fakeAndroidHost({
+			shell: phoneRules("wdn_qemu:\nmWakefulness=Awake\n  showing=true\n  secure=true\n"),
+		});
+		const opened = await openAndroidDriver({
+			serial: PHONE,
+			adb: "adb",
+			exec: host.exec,
+			spawn: host.spawn,
+			clock: fakeClock(),
+		});
+		expect(!opened.success && opened.error.code).toBe("E_DEVICE_LOCKED");
+		expect(host.shell.some((c) => c.includes("settings put"))).toBe(false);
+	});
+
+	test("rotation and dark mode are saved before the first write and restored on close", async () => {
+		const state = memoryAndroidState();
+		const { driver, host } = await setup({ serial: PHONE, state, shell: [...settingsReads, ...phoneRules()] });
+		await value(driver.orientation("landscapeLeft"));
+		expect(await state.read(PHONE)).toMatchObject({ rotation: { accelerometer_rotation: "1", user_rotation: "0" } });
+		await value(driver.appearance("dark"));
+		const rotateAt = host.shell.indexOf("settings put system accelerometer_rotation 0");
+		expect(host.shell.indexOf("settings get system accelerometer_rotation")).toBeLessThan(rotateAt);
+		await driver.close();
+		expect(host.shell.slice(-3)).toEqual([
+			"settings put system accelerometer_rotation 1",
+			"settings put system user_rotation 0",
+			"cmd uimode night no",
+		]);
+		expect((await state.read(PHONE)).rotation).toBeUndefined();
+	});
+
+	test("an emulator rotates without saving anything", async () => {
+		const { driver, host } = await setup();
+		await value(driver.orientation("landscapeLeft"));
+		expect(host.shell.some((c) => c.startsWith("settings get system"))).toBe(false);
+	});
+
+	test("uninstall and clearData of a package warden did not install are E_REFUSED on a phone", async () => {
+		const { driver, host } = await setup({ serial: PHONE, appPackage: "com.example.app", shell: phoneRules() });
+		for (const act of [() => driver.app.uninstall("com.bank.app"), () => driver.app.clearData("com.bank.app")]) {
+			const res = await act();
+			expect(!res.success && res.error.code).toBe("E_REFUSED");
+			expect(!res.success && res.error.message).toContain("physical_protected");
+		}
+		expect(host.host.some((a) => a.includes("uninstall"))).toBe(false);
+		expect(host.shell.some((c) => c.startsWith("pm clear"))).toBe(false);
+	});
+
+	test("the app under test and installs warden recorded may be uninstalled or cleared on a phone", async () => {
+		const { driver } = await setup({
+			serial: PHONE,
+			appPackage: "com.example.app",
+			ownedPackages: ["com.example.other"],
+			shell: [{ match: "pm clear", reply: "Success\n" }, ...phoneRules()],
+		});
+		expect((await driver.app.clearData("com.example.app")).success).toBe(true);
+		expect((await driver.app.clearData("com.example.other")).success).toBe(true);
+	});
+
+	test("an emulator may uninstall anything, as before", async () => {
+		const { driver } = await setup({
+			appPackage: "com.example.app",
+			shell: [{ match: "pm clear", reply: "Success\n" }],
+		});
+		expect((await driver.app.clearData("com.other")).success).toBe(true);
 	});
 });

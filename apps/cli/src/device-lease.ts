@@ -45,6 +45,8 @@ export type EnsureLeaseOptions = {
 	 * (`warden dev`) is never busy: the caller attaches to it, exclusive or not.
 	 */
 	exclusive?: boolean;
+	/** a real phone: stamped on a lease this call creates (an existing lease keeps what it has) */
+	physical?: DeviceResource["physical"];
 };
 
 /** Message shown to the model/user when a device is held by someone else. */
@@ -121,7 +123,11 @@ function insertCallerLease(store: Store, owner: Owner, probe: DeviceResource, op
 	const known = store.listDevices(probe.platform).find((d) => d.id === probe.id);
 	return store.insertLease(
 		{
-			resource: { ...probe, name: opts.name ?? known?.name ?? probe.id },
+			resource: {
+				...probe,
+				name: opts.name ?? known?.name ?? probe.id,
+				...(opts.physical !== undefined ? { physical: opts.physical } : {}),
+			},
 			owner,
 			ttlMs: opts.ttlMs ?? DEFAULT_TTL_MS,
 			label: opts.label,

@@ -11,7 +11,13 @@ import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools
 import { openDevtoolsFacet } from "./devtools/facet";
 import type { NativeLogDeps } from "./devtools/native-log";
 import type { Driver, DriverResult } from "./driver/driver.types";
-import { type HidRecoveryDeps, rebootSim, runAfterReboot, stopResidentHelper } from "./driver/ios/hid-recovery";
+import {
+	type HidRecoveryDeps,
+	rebootSim,
+	restartRunnerHost,
+	runAfterReboot,
+	stopResidentHelper,
+} from "./driver/ios/hid-recovery";
 import { cacheObservations } from "./driver/observation-cache";
 import { traceDriver } from "./driver/traced-driver";
 import { type E2eEnv, readEnv } from "./env";
@@ -249,10 +255,28 @@ export function createSession(opts: SessionOptions = {}): Session {
 		}
 	}
 
+	/** A physical iPhone: restart its runner host once. The phone is never rebooted and `simctl` is never run. */
+	async function recoverRunner(deps: HidRecoveryDeps, name: string): Promise<boolean> {
+		if (hidRecovered) {
+			note(`iPhone ${name}: the runner connection was lost again after a restart; check the phone and retry`);
+			return false;
+		}
+		hidRecovered = true;
+		await resetDevice();
+		const restarted = await restartRunnerHost(deps, resolved.iosRunnerRestart, resolved.udid);
+		if (!restarted.success) {
+			note(`iPhone ${name}: runner connection lost, restart failed: ${restarted.error}`);
+			return false;
+		}
+		note(`iPhone ${name}: runner connection lost, runner host restarted; running the test again`);
+		return true;
+	}
+
 	/** Only the device `warden e2e` leased (this session's `WARDEN_UDID`), only once: a second loss fails as before. */
 	async function recoverHid(): Promise<boolean> {
 		if (hid === undefined || closing !== undefined) return false;
 		const name = resolved.deviceName ?? resolved.udid;
+		if (resolved.deviceKind === "physical") return recoverRunner(hid, name);
 		if (hidRecovered) {
 			note(`sim ${name}: HID connection lost again after a reboot; \`warden release <id> --shutdown\` and retry`);
 			return false;
@@ -279,10 +303,11 @@ export function createSession(opts: SessionOptions = {}): Session {
 	/**
 	 * A biometrics iOS sim is enrolled again when the session opens, before any app install: a reused booted sim
 	 * is left unenrolled by a spec that called `unenroll`. Best effort and idempotent; Android keeps its enrollment
-	 * in the golden snapshot.
+	 * in the golden snapshot. A physical iPhone is never enrolled: its Face ID / Touch ID is the real sensor.
 	 */
 	async function reenroll(driver: Driver): Promise<Driver> {
-		if (resolved.biometrics !== true || resolved.platform !== "ios") return driver;
+		if (resolved.biometrics !== true || resolved.platform !== "ios" || resolved.deviceKind === "physical")
+			return driver;
 		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 		for (let attempt = 1; attempt <= ENROLL_TRIES; attempt += 1) {
 			const state = await driver.biometrics("enroll");

@@ -88,3 +88,16 @@ export const ANDROID_ALLOW_IDS: readonly string[] = [...ANDROID_PERMISSION_ALLOW
  * `AlertDialog`'s negative `button2` (after the names).
  */
 export const ANDROID_DENY_IDS: readonly string[] = [...ANDROID_PERMISSION_DENY_IDS, ANDROID_NEGATIVE_ID];
+
+/**
+ * The ids of the Android autofill "Save password?" sheet's buttons (`autofill_save_no` "Never", `autofill_save_yes`
+ * "Continue"). Either one marks the sheet, in any locale. Its two answers write to the user's account ("Never" a
+ * permanent opt-out, "Continue" a stored password), so `device.alert` never presses them: both `accept` and `dismiss`
+ * close the sheet with the Back key.
+ */
+export const ANDROID_AUTOFILL_SAVE_IDS: readonly string[] = ["autofill_save_no", "autofill_save_yes"];
+
+/** Whether `buttons` belong to the Android autofill save sheet. */
+export function isAutofillSaveSheet(buttons: readonly Element[]): boolean {
+	return buttons.some((b) => b.identifier !== undefined && ANDROID_AUTOFILL_SAVE_IDS.includes(b.identifier));
+}

@@ -1,6 +1,7 @@
 import { bunExec, type Exec } from "@delacour/warden-core/exec";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { wardenHome } from "@delacour/warden-core/store";
+import { isPhysicalIosId } from "@delacour/warden-core/types";
 import { type StoreOpener, sharedStoreOpener } from "../conditions/lease-store";
 import type { E2eEnv } from "../env";
 import type { DriverFactory } from "../session";
@@ -9,6 +10,7 @@ import { androidStateDir, createAndroidStateStore } from "./android/android-stat
 import { uiadFromEnv } from "./android/uiad-backend";
 import { type ClockRecorder, leaseClockRecorder } from "./clock-recorder";
 import type { Driver, DriverResult } from "./driver.types";
+import { type OpenIosDeviceDriverOptions, openIosDeviceDriver } from "./ios/device/device-driver";
 import { type OpenIosDriverOptions, openIosDriver } from "./ios/ios-driver";
 import { lazyLeaseNetworkProxy, type NetworkProxyPort } from "./network-proxy";
 
@@ -18,6 +20,8 @@ import { lazyLeaseNetworkProxy, type NetworkProxyPort } from "./network-proxy";
  */
 export type OpenDriverDeps = Omit<OpenIosDriverOptions, "udid" | "env" | "exec"> & {
 	exec?: Exec;
+	/** bundle ids warden installed on a physical iPhone earlier (the `installs` table): the only others `app.uninstall` may touch */
+	ownedBundles?: readonly string[];
 	android?: Omit<AndroidDriverOptions, "serial" | "exec" | "log" | "adb"> & { adb?: string };
 	/** opens the lease store for the shaping proxy; default: the spec process's shared connection */
 	openStore?: StoreOpener;
@@ -96,11 +100,27 @@ export function androidOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean
 	};
 }
 
+/** The physical iPhone opener's options: the env's udid, runner socket, app and bundle id, and the injected seams. */
+export function deviceOptions(env: E2eEnv, deps: OpenDriverDeps, debug: boolean): OpenIosDeviceDriverOptions {
+	const log = deps.log ?? (debug ? stderrLog : undefined);
+	return {
+		udid: env.udid,
+		env,
+		exec: deps.exec ?? bunExec,
+		...(deps.defaultTimeoutMs ? { defaultTimeoutMs: deps.defaultTimeoutMs } : {}),
+		...(deps.ownedBundles ? { ownedBundles: deps.ownedBundles } : {}),
+		...(deps.now ? { now: deps.now } : {}),
+		...(deps.sleep ? { sleep: deps.sleep } : {}),
+		...(log ? { log } : {}),
+	};
+}
+
 /** Open the `Driver` for the device in `env`, by platform. Android deep links go to `env.bundleId` only. */
 export async function openDriver(env: E2eEnv, deps: OpenDriverDeps = {}): DriverResult<Driver> {
 	const debug = deps.debug ?? process.env[DEBUG_ENV] === "1";
 	switch (env.platform) {
 		case "ios": {
+			if (isPhysicalIosId(env.udid)) return openIosDeviceDriver(deviceOptions(env, deps, debug));
 			const networkProxy = deps.networkProxy ?? leaseProxyFor(env, deps);
 			const clockRecorder = deps.clockRecorder ?? leaseClockRecorderFor(env, deps);
 			return openIosDriver({

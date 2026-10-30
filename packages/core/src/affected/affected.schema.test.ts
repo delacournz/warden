@@ -60,6 +60,44 @@ describe("perf budgets", () => {
 	});
 });
 
+describe("physical", () => {
+	test("true or { ids } on a suite and on a leg; unset by default", () => {
+		expect(suite().physical).toBeUndefined();
+		expect(suite({ physical: true }).physical).toBe(true);
+		expect(suite({ physical: { ids: ["R5CT"] } }).physical).toEqual({ ids: ["R5CT"] });
+		const legs = suite({ devices: [{ profile: "pixel-8", physical: { ids: ["R5CT"] } }, { profile: "auto" }] }).devices;
+		expect(legs?.[0]?.physical).toEqual({ ids: ["R5CT"] });
+		expect(legs?.[1]?.physical).toBeUndefined();
+	});
+
+	test("false, empty ids and unknown keys are refused", () => {
+		expect(issues({ physical: false })).not.toEqual([]);
+		expect(issues({ physical: { ids: [] } })).not.toEqual([]);
+		expect(issues({ physical: { ids: ["a"], extra: 1 } })).not.toEqual([]);
+	});
+
+	test("slim and headless contradict physical", () => {
+		expect(issues({ physical: true, slim: true })).toEqual(["slim: slim cannot be used with physical devices"]);
+		expect(issues({ physical: true, headless: true })).toEqual([
+			"headless: headless cannot be used with physical devices",
+		]);
+		expect(issues({ physical: true, slim: false, headless: false })).toEqual([]);
+	});
+
+	test("biometrics contradict physical: a real sensor cannot be enrolled or matched", () => {
+		expect(issues({ physical: true, biometrics: true })).toEqual([
+			"biometrics: biometrics cannot be used with physical devices (use a simulator or emulator suite)",
+		]);
+		expect(issues({ physical: true, biometrics: false })).toEqual([]);
+	});
+
+	test("conditions contradict physical: a phone's network, clock and settings are not warden's to change", () => {
+		expect(issues({ physical: true, conditions: { network: "3g" } })).toEqual([
+			"conditions: conditions cannot be used with physical devices (use a simulator or emulator suite)",
+		]);
+	});
+});
+
 describe("e2e.<suite>.conditions", () => {
 	test("network, location and clock, strict keys", () => {
 		expect(

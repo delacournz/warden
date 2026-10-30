@@ -190,7 +190,7 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 
 ### `warden devices [platform]` (alias `list`)
 
-Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases. `--mem` adds each booted iOS sim's real memory in MB (summed `phys_footprint` of its process tree, see [`warden sim measure`](#warden-sim-measure-udid)); `--json` is machine-readable.
+Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases. `--mem` adds each booted iOS sim's real memory in MB (summed `phys_footprint` of its process tree, see [`warden sim measure`](#warden-sim-measure-udid)); `--physical` lists only real phones and tablets. Rows carry a `KIND` (`virtual` or `physical`); a physical device warden cannot use now (Android `unauthorized` / `offline`, an iPhone or iPad that is offline, unpaired or has Developer Mode off) shows that in `STATE` with a hint underneath, and `--json` adds `kind`, `transport` and `hint`. `--json` is machine-readable. See [Physical devices](/docs/devices/physical-devices).
 
 ### Device health: `release --bad`, `sim unquarantine`
 

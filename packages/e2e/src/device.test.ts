@@ -1076,6 +1076,39 @@ describe("device misc", () => {
 	});
 });
 
+describe("device.alert on the Android autofill save sheet", () => {
+	const sheet = (): Snapshot =>
+		snapshotOf(
+			[
+				el("alert", {
+					label: "Save password to Google Password Manager?",
+					children: [
+						el("button", { id: "autofill_save_no", text: "Nie" }),
+						el("button", { id: "autofill_save_yes", text: "Weiter" }),
+					],
+				}),
+			],
+			{ platform: "android" }
+		);
+
+	for (const action of ["accept", "dismiss"] as const) {
+		test(`${action} closes it with Back and taps neither Never nor Continue`, async () => {
+			const { device, driver } = setup({ platform: "android", screens: [sheet()] });
+			expect(await device.alert(action)).toBe(true);
+			expect(driver.callsOf("pressButton").map((c) => c.button)).toEqual(["back"]);
+			expect(driver.callsOf("tap")).toHaveLength(0);
+		});
+	}
+
+	test("naming a button is refused, nothing pressed", async () => {
+		const { device, driver } = setup({ platform: "android", screens: [sheet()] });
+		const error = await device.alert({ button: "Weiter" }).catch((e: unknown) => e);
+		expect((error as { code?: string }).code).toBe("ACTION_FAILED");
+		expect(driver.callsOf("pressButton")).toHaveLength(0);
+		expect(driver.callsOf("tap")).toHaveLength(0);
+	});
+});
+
 describe("device conditions", () => {
 	const resultsPath = (): string => join(mkdtempSync(join(tmpdir(), "wdn-dev-cond-")), "results.jsonl");
 

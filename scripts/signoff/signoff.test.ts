@@ -19,6 +19,7 @@ import {
 	applyFilters,
 	planChecks,
 	REQUIRED_CONTEXTS,
+	RUNNER_BUILD_ARGV,
 	SIGNOFF_CHECKS,
 	UMBRELLA_CONTEXT,
 } from "./signoff-checks";
@@ -47,6 +48,22 @@ describe("planChecks", () => {
 
 	test("a warden-simd change runs the native check", () => {
 		expect(applicable(["packages/e2e/native/ios/Sources/WardenSimd/main.swift"])).toContain("native");
+	});
+
+	test("a warden-runner change runs the native check", () => {
+		expect(applicable(["packages/e2e/native/ios-runner/RunnerTests/XCUIExecutor.swift"])).toContain("native");
+		expect(applicable(["packages/e2e/native/ios-runner/WardenRunner.xcodeproj/project.pbxproj"])).toContain("native");
+		expect(applicable(["packages/e2e/native/ios-runner/RunnerCore/Sources/RunnerCore/Command.swift"])).toContain(
+			"native"
+		);
+	});
+
+	test("the native check runs RunnerCore's tests and the unsigned runner build", () => {
+		const native = SIGNOFF_CHECKS.find((check) => check.context === "native");
+		const argvs = native?.run.map((command) => command.argv.join(" "));
+		expect(argvs).toContain("swift test --package-path packages/e2e/native/ios-runner/RunnerCore");
+		expect(argvs).toContain(RUNNER_BUILD_ARGV.join(" "));
+		expect(RUNNER_BUILD_ARGV).toContain("CODE_SIGNING_ALLOWED=NO");
 	});
 
 	test("a TypeScript change outside native/ does not run the native check", () => {
@@ -486,6 +503,14 @@ describe("drift guard", () => {
 			expect(scripts).toContain(`post ${UMBRELLA_CONTEXT}/${check.context}`);
 		}
 		expect(scripts).toMatch(new RegExp(`^post ${UMBRELLA_CONTEXT}$`, "m"));
+	});
+
+	test("the ci.yml native job runs the same warden-runner commands as the local check", async () => {
+		const steps = ((await ciWorkflow()).jobs.native?.steps ?? []).map((step) =>
+			(step.run ?? "").replace(/\s+/g, " ").trim()
+		);
+		expect(steps).toContain("swift test --package-path packages/e2e/native/ios-runner/RunnerCore");
+		expect(steps).toContain(RUNNER_BUILD_ARGV.join(" "));
 	});
 
 	test("no check declares an empty command", () => {

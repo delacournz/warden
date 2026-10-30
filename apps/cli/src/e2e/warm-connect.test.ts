@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeState } from "../agent-ui/state";
-import { residentSocket } from "./warm-connect";
+import { residentSocket, runnerWarmError } from "./warm-connect";
 
 let home: string | undefined;
 afterEach(() => {
@@ -53,5 +53,21 @@ describe("residentSocket", () => {
 			updatedAt: 1,
 		});
 		expect(await residentSocket(ctx)("U3")).toBeUndefined();
+	});
+});
+
+describe("runnerWarmError", () => {
+	test("a locked phone: the ui code first, then the message and the unlock hint", () => {
+		expect(
+			runnerWarmError({
+				code: "device_locked",
+				message: "E_DEVICE_LOCKED: Unlock the phone to Continue",
+				hint: "unlock the phone, then retry",
+			})
+		).toBe("device_locked: E_DEVICE_LOCKED: Unlock the phone to Continue (unlock the phone, then retry)");
+	});
+
+	test("no hint: no parentheses", () => {
+		expect(runnerWarmError({ code: "engine_unavailable", message: "no runner" })).toBe("engine_unavailable: no runner");
 	});
 });

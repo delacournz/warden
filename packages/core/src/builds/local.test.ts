@@ -83,6 +83,20 @@ describe("locateArtifact", () => {
 		expect(locateArtifact(root, "ios", dd, NOTHING)).toEqual({ kind: "rebuilt", path: fresh });
 	});
 
+	test("a device target looks in -iphoneos, never in -iphonesimulator", () => {
+		const root = join(dir, "app");
+		const dd = join(dir, "DerivedData");
+		const phone = fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphoneos"), "App.app");
+		fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator"), "Sim.app");
+		expect(artifactCandidates(root, "ios", dd, "Release", "device")).toEqual([phone]);
+		expect(artifactCandidates(root, "ios", dd, "Release").map((p) => p.endsWith("Sim.app"))).toEqual([true]);
+		const before = snapshotArtifacts(root, "ios", dd, "Release", "device");
+		expect(locateArtifact(root, "ios", dd, before, "Release", new Set(), "device")).toEqual({
+			kind: "up-to-date",
+			path: phone,
+		});
+	});
+
 	test("a candidate rewritten during the build beats a newer-looking unchanged one", () => {
 		const root = join(dir, "app");
 		const dd = join(dir, "DerivedData");
