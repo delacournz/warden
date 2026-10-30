@@ -64,6 +64,7 @@
 | 58 | `locale` fails `E_UNSUPPORTED` on Android, or `timezone` / `battery` does | Per-app locale needs API 33+; timezone and battery need an emulator console | Use an Android 13+ emulator image |
 | 59 | `memory-warning` is `E_UNSUPPORTED` on iOS, `E_APP_UNAVAILABLE` on Android | No mechanism reaches a UIKit app (verified: `notifyutil -p com.apple.system.lowmemory` is ignored); Android needs the app process running | iOS: Simulator > Debug > Simulate Memory Warning by hand. Android: `open` the app first |
 | 60 | `a11y set --text-size` reads back the old value on Android | The system rewrites `font_scale` a moment after a change | Warden re-applies until it holds (`E_IO` if it never does); wait for the config change, then `snapshot` |
+| 61 | A second `warden dev` / `--app` sits on `waiting for the app build…`, showing another run's build output | One local build per checkout + platform at a time: it waits for the running build, mirrors its log, then installs that build. `the <platform> checkout changed since it was fingerprinted (A → B)` = the tree moved while waiting and nothing is cached for the new key | Let it finish. On the error, run again |
 
 ## Code lookup
 
