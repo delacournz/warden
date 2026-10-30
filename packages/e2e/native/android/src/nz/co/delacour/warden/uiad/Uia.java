@@ -836,4 +836,15 @@ final class Uia {
 		sb.append(",\"png\":\"").append(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)).append("\"}");
 		return sb.toString();
 	}
+
+	// ---------- audit ----------
+
+	/** Run the Accessibility Test Framework (`warden-atf.jar` at `atfPath`) on the active window; see {@link Atf}. */
+	String audit(String atfPath, boolean contrast) throws OpError {
+		clearCache();
+		AccessibilityNodeInfo root = activeRoot(1500);
+		if (root == null) throw new OpError("E_AX_UNAVAILABLE", "null root node", true);
+		Bitmap shot = contrast ? ua.takeScreenshot() : null;
+		return Atf.run(atfPath, root, shot);
+	}
 }

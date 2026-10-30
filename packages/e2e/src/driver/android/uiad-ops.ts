@@ -46,6 +46,8 @@ export type UiadOps = {
 	typeText(text: string): Maybe<void>;
 	/** replace the whole text of the focused input (`ACTION_SET_TEXT`); `undefined` = refused or no server */
 	setText(text: string): Maybe<void>;
+	/** run the Accessibility Test Framework on the active window (`audit` op, server 0.5.0+); `undefined` = no server */
+	audit(opts: { contrast: boolean }): Maybe<unknown>;
 	stop(): Promise<void>;
 };
 
@@ -54,6 +56,8 @@ export type UiadOpsDeps = {
 	baseScreen: ScreenInfo;
 	clock: Clock;
 	log?: Logger;
+	/** puts `warden-atf.jar` on the device and names it; without it `audit` answers `undefined` */
+	atf?: () => DriverResult<string> | Promise<Res<string>>;
 };
 
 /** The wire has no `E_HID` for "nothing was injected" vs "some was": a refusal means the server could not inject at all. */
@@ -74,6 +78,7 @@ const EDIT_QUIET_TIMEOUT_MS = 1_000;
 const KEY_GAP_MS = 30;
 const KEY_BASE_TIMEOUT_MS = 10_000;
 const KEY_PRESS_BUDGET_MS = 150;
+const AUDIT_TIMEOUT_MS = 30_000;
 const ok = { success: true as const, data: undefined };
 
 /** `null root node`: the window is not there yet. (A busy slot is also `E_AX_UNAVAILABLE`, but it never comes from a request.) */
@@ -227,6 +232,17 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 		selectAll: () => call("selectAll", async (server) => mapVoid(await server.request("selectAll")), true),
 		typeText: (text) => edit("typeText", (server) => server.typeText(text)),
 		setText: (text) => edit("setText", (server) => server.request("setText", { text })),
+		audit: async (opts) => {
+			if (deps.atf === undefined) return undefined;
+			const jar = await deps.atf();
+			if (!jar.success) return jar;
+			return call(
+				"audit",
+				(server) =>
+					server.request("audit", { atf: jar.data, contrast: opts.contrast }, { timeoutMs: AUDIT_TIMEOUT_MS }),
+				true
+			);
+		},
 		stop: () => backend.stop(),
 	};
 }

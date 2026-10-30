@@ -1,0 +1,42 @@
+{
+	"version": "4.1.1",
+	"license": "Apache-2.0",
+	"artifacts": [
+		{
+			"name": "accessibility-test-framework",
+			"kind": "aar",
+			"url": "https://dl.google.com/android/maven2/com/google/android/apps/common/testing/accessibility/framework/accessibility-test-framework/4.1.1/accessibility-test-framework-4.1.1.aar",
+			"sha256": "f19c550163f277a2aebe7e002a7988c3544c693ee29dd7ac4d4747c2971e2c45"
+		},
+		{
+			"name": "guava",
+			"kind": "jar",
+			"url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/31.0.1-android/guava-31.0.1-android.jar",
+			"sha256": "9425a423a4cb9d9db0356300722d9bd8e634cf539f29d97bb84f457cccd16eb8"
+		},
+		{
+			"name": "failureaccess",
+			"kind": "jar",
+			"url": "https://repo.maven.apache.org/maven2/com/google/guava/failureaccess/1.0.1/failureaccess-1.0.1.jar",
+			"sha256": "a171ee4c734dd2da837e4b16be9df4661afab72a41adaf31eb84dfdaf936ca26"
+		},
+		{
+			"name": "protobuf-javalite",
+			"kind": "jar",
+			"url": "https://repo.maven.apache.org/maven2/com/google/protobuf/protobuf-javalite/3.19.1/protobuf-javalite-3.19.1.jar",
+			"sha256": "865210ede9acb33456ae00af4e6d02b76c09c1f7622df870a8bd2290aa5ce8d9"
+		},
+		{
+			"name": "jsoup",
+			"kind": "jar",
+			"url": "https://repo.maven.apache.org/maven2/org/jsoup/jsoup/1.15.1/jsoup-1.15.1.jar",
+			"sha256": "246947b4fa5fb5fcd446c7dae46ab1ff1779b31f6af7a33e1e0aabfbdb6d8749"
+		},
+		{
+			"name": "androidx-core",
+			"kind": "aar",
+			"url": "https://dl.google.com/android/maven2/androidx/core/core/1.8.0/core-1.8.0.aar",
+			"sha256": "48c64a15ec3eb11bfb33339e5ceb70ec7f821bd2dfa2eb8675ebd5353317e792"
+		}
+	]
+}
