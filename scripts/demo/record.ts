@@ -69,6 +69,8 @@ export async function record(
 	def: DemoDefinition,
 	repoRoot: string,
 	outDir: string,
+	/** `warden claim --label`, from `demoPaths` (no slash). */
+	label: string,
 	deps: RecordDeps = defaultDeps
 ): Promise<RecordedTake> {
 	const cli = ["bun", join(repoRoot, "apps/cli/src/cli.ts")];
@@ -85,7 +87,7 @@ export async function record(
 	await mkdir(outDir, { recursive: true });
 	const takePath = join(outDir, "take.mp4");
 	// a bare agent claim lasts 5 min unrefreshed: a first native build in `ui open --kind` outlives it
-	const claimArgs = ["claim", def.platform, "--json", "--label", `demo-${def.name}`, "--ttl", "30m"];
+	const claimArgs = ["claim", def.platform, "--json", "--label", label, "--ttl", "30m"];
 	if (def.claim.biometrics) claimArgs.push("--biometrics");
 	if (def.claim.profile) claimArgs.push("--profile", def.claim.profile);
 	const lease = parseClaim((await must(claimArgs)).stdout);

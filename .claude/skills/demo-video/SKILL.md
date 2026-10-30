@@ -5,7 +5,7 @@ description: Make a short product demo video of warden (or the example app) driv
 
 # demo-video
 
-`bun run demo <name>` records a take on a leased iOS simulator, then renders a 1920x1080 video: title left, a terminal that types each real `warden` command and prints its output when the step ends, the phone right (rounded, 3px ring). Kit: `scripts/demo/` (`demo.ts` CLI, `record.ts`, `render.py`, `timeline.ts`, `demo.types.ts`). Definitions: `apps/example/demos/<name>.demo.ts`. Internal: no changeset.
+`bun run demo <feature>/<clip>` records a take on a leased iOS simulator, then renders a 1920x1080 video: title left, a terminal that types each real `warden` command and prints its output when the step ends, the phone right (rounded, 3px ring). Kit: `scripts/demo/` (`demo.ts` CLI, `record.ts`, `render.py`, `timeline.ts`, `demo.types.ts`). Definitions: `apps/example/demos/<feature>/<clip>.demo.ts` (`name` must equal `<feature>/<clip>`); assets: `apps/docs/public/demos/<feature>/<clip>.mp4|jpg`. One folder per feature (`biometrics`, `network`, `location`, `clock`), lower-case, hyphens. Internal: no changeset.
 
 ## 1. When to make one
 
@@ -17,13 +17,13 @@ Needs `ffmpeg`, `ffprobe`, `uv` (`brew install ffmpeg uv`), Xcode, and the fonts
 
 ## 2. Write a definition
 
-Export `demo: DemoDefinition` (`scripts/demo/demo.types.ts`). Copy `apps/example/demos/biometrics-faceid.demo.ts`.
+Export `demo: DemoDefinition` (`scripts/demo/demo.types.ts`). Copy `apps/example/demos/biometrics/faceid.demo.ts`.
 
 | Field | Meaning |
 |---|---|
 | `title` / `subtitle` / `terminalTitle` / `footer` | static text; title is the claim, subtitle one line |
 | `phoneCaption` | line under the phone, default `real simulator · not an animation`; `""` hides it |
-| `claim` | `{ biometrics?, profile? }` -> `warden claim ios --json --label demo-<name> [--biometrics]` |
+| `claim` | `{ biometrics?, profile? }` -> `warden claim ios --json --label demo-<feature>-<clip> --ttl 30m [--biometrics]` |
 | `app` | `bundleId`, `kind` (`simulator` default), `project` (repo-relative cwd), `deepLink` opened with `--settle`, `appearance` (`light`/`dark`, set via `simctl ui` on the leased udid, restored after) |
 | `ready` | `warden ui wait` selectors that must pass after the deep link and before the video starts (e.g. `id=bio-screen`); a step never presses a screen that has not mounted |
 | `leadInMs` / `tailHoldMs` | idle before step 1 / last frame hold, padded by the renderer (the take tail is 1 s) |
@@ -35,18 +35,18 @@ Times are never written by hand: the recorder measures each step's start and end
 ## 3. The loop
 
 ```bash
-bun run demo <name> --record-only      # claim, 9:41 status bar, launch, record, release by id
-bun run demo <name> --render-only --sheet   # build mp4 + jpg, write <work>/sheet.jpg
-bun run demo <name>                    # both
+bun run demo <feature>/<clip> --record-only      # claim, 9:41 status bar, launch, record, release by id
+bun run demo <feature>/<clip> --render-only --sheet   # build mp4 + jpg, write <work>/sheet.jpg
+bun run demo <feature>/<clip>          # both
 ```
 
-Work dir: `$TMPDIR/warden-demo/<name>` (`--out dir`): `take.mp4`, `steps.json`, `plan.json`, `sheet.jpg`; on a failed take `failure-snapshot.txt` (error + `ui snapshot -i`). Nothing there is committed.
+Work dir: `$TMPDIR/warden-demo/<feature>/<clip>` (`--out dir`): `take.mp4`, `steps.json`, `plan.json`, `sheet.jpg`; on a failed take `failure-snapshot.txt` (error + `ui snapshot -i`). Nothing there is committed.
 
 1. Record.
 2. Read `sheet.jpg` (4x4 tiles, 1 per second, pts burned in). Check against the log: each output line lands when the phone visibly reacts; no frame shows an unrelated alert, keyboard, red box or wrong status bar; the last frame shows the end state.
 3. For a closer look: `ffmpeg -ss 7 -i take.mp4 -frames:v 1 f.png` and `Read` it.
 4. Fix in the definition (`pauseAfterMs`, drop/hide a step, `shown`) and `--render-only`; re-record only when the take itself was wrong. Batch fixes: one record per round.
-5. Commit the mp4 + jpg in `apps/docs/public/demos/`.
+5. Commit the mp4 + jpg in `apps/docs/public/demos/<feature>/`.
 
 ## 4. Honesty rules
 
@@ -72,16 +72,16 @@ Work dir: `$TMPDIR/warden-demo/<name>` (`--out dir`): `take.mp4`, `steps.json`, 
 1920x1080, H.264 High, yuv420p, 30 fps, `+faststart`, no audio, <= 2:20, small file (kit aims <= 2 MB via a CRF ladder 24..36). Check:
 
 ```bash
-ffprobe -v error -show_entries stream=codec_name,profile,width,height,r_frame_rate -show_entries format=duration,size apps/docs/public/demos/<name>.mp4
+ffprobe -v error -show_entries stream=codec_name,profile,width,height,r_frame_rate -show_entries format=duration,size apps/docs/public/demos/<feature>/<clip>.mp4
 ```
 
 ## 7. Assets and docs embed
 
-Output: `apps/docs/public/demos/<name>.mp4` + `<name>.jpg` (poster = last frame), served at `/demos/<name>.mp4` (Vite `public/`). No MDX video component exists; use plain HTML in the page:
+Output: `apps/docs/public/demos/<feature>/<clip>.mp4` + `<clip>.jpg` (poster = last frame), served at `/demos/<feature>/<clip>.mp4` (Vite `public/`). No MDX video component exists; use plain HTML in the page:
 
 ```mdx
-<video controls muted playsInline preload="metadata" poster="/demos/<name>.jpg" className="w-full rounded-lg">
-  <source src="/demos/<name>.mp4" type="video/mp4" />
+<video controls muted playsInline preload="metadata" poster="/demos/<feature>/<clip>.jpg" className="w-full rounded-lg">
+  <source src="/demos/<feature>/<clip>.mp4" type="video/mp4" />
 </video>
 ```
 

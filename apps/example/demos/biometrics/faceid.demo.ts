@@ -1,4 +1,4 @@
-import type { DemoDefinition } from "../../../scripts/demo/demo.types";
+import type { DemoDefinition } from "../../../../scripts/demo/demo.types";
 
 /**
  * Face ID on a leased simulator: status, open the real prompt, a wrong face,
@@ -6,7 +6,7 @@ import type { DemoDefinition } from "../../../scripts/demo/demo.types";
  * command that ran; every output line is what the phone visibly did.
  */
 export const demo: DemoDefinition = {
-	name: "biometrics-faceid",
+	name: "biometrics/faceid",
 	title: "Face ID, automated.",
 	subtitle: "warden drives the real iOS prompt on a leased simulator.",
 	terminalTitle: "warden-example — zsh",
