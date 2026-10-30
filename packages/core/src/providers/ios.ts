@@ -319,6 +319,10 @@ export async function lookupCreateTarget(
 /** BiometricKit's enrollment notification: state 1 + post enrolls, 0 + post unenrolls. */
 const ENROLLMENT_NOTIFICATION = "com.apple.BiometricKit.enrollmentChanged";
 
+/** Bounded retries of the biometrics enroll: a write right after `bootstatus` can be dropped. */
+const ENROLL_ATTEMPTS = 10;
+const ENROLL_RETRY_MS = 1000;
+
 /** Makes a new sim by cloning a prepared image; returns its udid + short runtime. */
 export type IosCloneStrategy = (
 	name: string,
@@ -397,20 +401,34 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 	 * A biometrics sim (recorded profile `<profile>+bio`) enrolls on every boot: the simulator forgets its enrollment
 	 * when it shuts down, and a clone of a golden starts unenrolled, so there is nothing to bake. Runs before any
 	 * app install, so keys created with biometry-bound access control are not invalidated later.
+	 *
+	 * `bootstatus -b` returns before the biometric stack is up, and a state written that early can be dropped
+	 * (`notifyutil -g` reads 0 right after the write). So every attempt reads the state back and a miss is retried,
+	 * a bounded number of times.
 	 */
 	const enrollBiometrics = async (id: string): Promise<void> => {
 		const rec = deps.store.listDevices("ios").find((d) => d.id === id);
 		if (!rec || isGoldenName(rec.name) || !splitBiometricProfile(rec.profile ?? "").biometrics) return;
-		for (const args of [
-			["-s", ENROLLMENT_NOTIFICATION, "1"],
-			["-p", ENROLLMENT_NOTIFICATION],
-		]) {
-			const out = await simctl(runner, ["spawn", id, "notifyutil", ...args], IOS_TIMEOUTS.listMs);
-			if (!out.success) {
-				note(`${rec.name} biometrics enroll failed (${out.error})`);
-				return;
+		for (let attempt = 1; attempt <= ENROLL_ATTEMPTS; attempt++) {
+			for (const args of [
+				["-s", ENROLLMENT_NOTIFICATION, "1"],
+				["-p", ENROLLMENT_NOTIFICATION],
+			]) {
+				const out = await simctl(runner, ["spawn", id, "notifyutil", ...args], IOS_TIMEOUTS.listMs);
+				if (!out.success) {
+					note(`${rec.name} biometrics enroll failed (${out.error})`);
+					return;
+				}
 			}
+			const read = await simctl(
+				runner,
+				["spawn", id, "notifyutil", "-g", ENROLLMENT_NOTIFICATION],
+				IOS_TIMEOUTS.listMs
+			);
+			if (read.success && /\s1\s*$/.test(read.data)) return;
+			if (attempt < ENROLL_ATTEMPTS) await sleep(ENROLL_RETRY_MS);
 		}
+		note(`${rec.name} biometrics enroll did not take after ${ENROLL_ATTEMPTS} attempts`);
 	};
 	const afterReady = async (id: string): Promise<void> => {
 		await enrollBiometrics(id);

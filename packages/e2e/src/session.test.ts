@@ -84,6 +84,19 @@ describe("Session biometrics", () => {
 		expect(fake.callsOf("biometrics")).toEqual([{ method: "biometrics", op: "enroll" }]);
 	});
 
+	test("an enroll whose read-back is not enrolled is applied again", async () => {
+		const { fake, session } = scripted("ios", true);
+		let reads = 0;
+		const real = fake.biometrics.bind(fake);
+		fake.biometrics = async (op) => {
+			const state = await real(op);
+			reads += 1;
+			return state.success && reads < 2 ? { success: true, data: { ...state.data, enrolled: false } } : state;
+		};
+		await session.driver();
+		expect(reads).toBe(2);
+	});
+
 	test("plain iOS and Android sessions do not", async () => {
 		for (const [platform, bio] of [
 			["ios", false],

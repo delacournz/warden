@@ -22,6 +22,10 @@ import { runSpan, type SpanRunner } from "./runner/span";
 import { runStep } from "./runner/step";
 import type { TraceWriter } from "./runner/trace";
 
+/** A biometrics enroll right after a boot can be dropped: re-apply until the read-back shows enrolled. */
+const ENROLL_TRIES = 5;
+const ENROLL_RETRY_MS = 500;
+
 export type DriverFactory = (env: E2eEnv) => DriverResult<Driver>;
 
 /** How to attach to the app's dev client; default {@link openDevtools}. Tests inject a stub. */
@@ -279,8 +283,17 @@ export function createSession(opts: SessionOptions = {}): Session {
 	 */
 	async function reenroll(driver: Driver): Promise<Driver> {
 		if (resolved.biometrics !== true || resolved.platform !== "ios") return driver;
-		const state = await driver.biometrics("enroll");
-		if (!state.success) note(`biometrics enroll failed: ${state.error.code}: ${state.error.message}`);
+		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		for (let attempt = 1; attempt <= ENROLL_TRIES; attempt += 1) {
+			const state = await driver.biometrics("enroll");
+			if (!state.success) {
+				note(`biometrics enroll failed: ${state.error.code}: ${state.error.message}`);
+				return driver;
+			}
+			if (state.data.enrolled) return driver;
+			if (attempt < ENROLL_TRIES) await sleep(ENROLL_RETRY_MS);
+		}
+		note(`biometrics enroll did not take after ${ENROLL_TRIES} attempts`);
 		return driver;
 	}
 
