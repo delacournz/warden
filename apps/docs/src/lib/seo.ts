@@ -12,9 +12,20 @@ export function canonicalLink(path: string): HeadLink {
 	return { rel: "canonical", href: `${siteUrl}${path}` };
 }
 
-/** The 1200×630 card at `path` (see `scripts/generate-og.ts`), for OpenGraph and Twitter readers. */
-export function socialImageMeta(path: string, alt: string): HeadMeta[] {
-	const url = `${siteUrl}${path}`;
+/** What the build baked from `public/og` (see `src/og/versions.ts`); empty in tests and before `seo:assets`. */
+const builtOgVersions: Record<string, string> = typeof __OG_VERSIONS__ === "undefined" ? {} : __OG_VERSIONS__;
+
+/**
+ * The 1200×630 card at `path` (see `scripts/generate-og.ts`), for OpenGraph and Twitter readers.
+ * A versioned card gets `?v=<hash>`, so a redrawn card is a new URL every unfurler fetches afresh.
+ */
+export function socialImageMeta(
+	path: string,
+	alt: string,
+	versions: Record<string, string> = builtOgVersions
+): HeadMeta[] {
+	const version = versions[path];
+	const url = version ? `${siteUrl}${path}?v=${version}` : `${siteUrl}${path}`;
 
 	return [
 		{ property: "og:image", content: url },
