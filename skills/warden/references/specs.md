@@ -137,6 +137,17 @@ await device.locale("fr-FR");
 ```
 Biometrics practice: set `biometrics: true` on the suite (suites.md) so the device is enrolled before the app is installed (a new enrollment invalidates biometry-bound keys); on iOS the first prompt per app shows "Allow X to use Face ID?", answer it with `device.alert("accept")` before `device.biometrics.match()`; Android emulators have fingerprint only; never add an app-side bypass. `fail()` leaves the prompt open (iOS "Face Not Recognized" alert, Android "Not recognized"): assert that, then cancel the prompt (the app gets `user_cancel`): `device.alert({ button: "Cancel" })` on iOS (it presses again if the press lands while the sheet animates in, and throws `ACTION_FAILED` if the alert stays up), `button_negative` on Android; a `match` / `fail` sent as the sheet appears can be dropped, so present again when nothing changed. warden enrolls an iOS biometrics sim again when a spec process starts (`WARDEN_BIOMETRICS=1`), so a spec that called `unenroll` does not leave a reused sim unenrolled.
 
+### `device.a11yAudit` / `screenReader` / `announcements` (screen readers and audits)
+
+| Member | Does |
+|---|---|
+| `a11yAudit({ rules?, ignore?, minSeverity?, textSize?, native? })` | `{ issues, checked, sources, skipped }`; the suite's `a11y` key supplies defaults, options win per key |
+| `screenReader.order()` | the simulated reading order (`Announcement[]`, `source: "simulated"`), both platforms |
+| `screenReader.state()` `next()` `prev()` `activate()` `focused()` `spoken({ since? })` | real TalkBack (Android emulator, after `device.a11y({ screenReader: true })`); elsewhere throws `ACTION_FAILED` (`E_UNSUPPORTED`). `next`/`prev` resolve the announcement now focused (`undefined` past the end); `spoken` returns `{ lines, cursor }` |
+| `announcements({ since? })` | `{ announcements, cursor, lost? }` of announcements and live-region changes; iOS needs the inject (`a11y.md`) |
+
+On Android with TalkBack on, locator `tap` / `scroll` / `swipe` use accessibility actions (a touch would only move focus); a raw coordinate tap stays a touch. The `a11y` op also takes `reduceTransparency buttonShapes differentiateWithoutColor onOffLabels highContrastText colorInversion screenReader` (table in `a11y.md`).
+
 ### `device.devtools` (dev client over Metro)
 
 With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.
@@ -210,6 +221,8 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 `expect(locator)` polls every 100 ms for the first second, then every 250 ms. Any other value goes to bun's `expect`.
 
 `toBeVisible toBeHidden toHaveText(t, { exact? }) toContainText(t, { ignoreCase? }) toHaveValue(v) toBeChecked({ checked? }) toBeEnabled toBeDisabled toHaveCount(n)`. All take `{ timeout? }`.
+
+Accessibility matchers (`a11y.md`): on a locator `toHaveAccessibleName(t)`, `toHaveRole(role)`, `toHaveHint(t)` (iOS needs the inject), `toAnnounce(t, { exact? })` (the simulated phrase, "Save, button"), `toBeA11yFocused()` (Android TalkBack). On `expect(device)`: `toPassA11yAudit({ rules?, ignore?, minSeverity?, textSize?, native? })` (runs once, settle first; fails with the issue table and the `--a11y` screen) and `toHaveAnnounced(t, { timeoutMs?, since? })` (string = contains, RegExp; `.not` waits the timeout for none).
 
 - Zero matches keep polling. Several matches fail at once (except `toHaveCount`).
 - `.not` passes only after the inverted state held for 1000 ms (sooner on iOS/Android when the driver reports a quiet screen).
