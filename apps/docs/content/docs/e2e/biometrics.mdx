@@ -4,11 +4,11 @@ description: Drive Face ID, Touch ID and Android fingerprint in specs and by han
 icon: FingerprintPattern
 ---
 
-Specs and [`warden ui`](/docs/agents/ui) control the simulator's biometric sensor, so the real `LAContext` / `BiometricPrompt` flow runs. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
-
 <DemoClip src="/demos/biometrics/faceid" label="warden ui biometrics fail and match answering the real Face ID prompt on a leased simulator" />
 
 `warden ui biometrics status`, `press`, `fail`, `match` and `wait text "Unlocked"` against the example app's vault screen on a leased simulator: the real Face ID prompt, no app-side bypass.
+
+Specs and [`warden ui`](/docs/agents/ui) control the simulator's biometric sensor, so the real `LAContext` / `BiometricPrompt` flow runs. Simulators and emulators only: a physical device fails with `E_UNSUPPORTED`.
 
 ## In a spec
 

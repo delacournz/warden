@@ -4,6 +4,8 @@ description: Change the network, GPS location and clock of a simulator or emulat
 icon: Signal
 ---
 
+<DemoTabs ids={["network", "fault", "location", "clock"]} />
+
 A spec can put the device into a condition (offline, 3G, a flapping connection, one host failing, a moving GPS fix, a clock two weeks ahead) and check what the app does. Everything a test changes belongs to its lease: when the test ends, or the lease is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
 
 ```ts title="e2e/network-offline.e2e.ts"
@@ -22,10 +24,6 @@ test("cold start offline shows the banner, going online recovers the fetch", asy
 The example app has a Conditions screen (`warden-example://conditions`) and a spec for each area in `apps/example/e2e`.
 
 ## Network
-
-<DemoClip src="/demos/network/offline" label="warden ui network set offline, edge and online against the example app's network screen" />
-
-`warden ui network set offline`, `edge` and `online` against the example app's network screen on a leased simulator: real HTTPS probes, nothing mocked in the app.
 
 `device.network.set(condition)` takes `"online"`, `"offline"`, a preset or a custom shape.
 
@@ -70,10 +68,6 @@ A fixed `seed` replays the same sequence. A flap and faults do not combine: rese
 
 ### Faults
 
-<DemoClip src="/demos/network/fault" label="warden ui network fault resetting every request to one host while the link stays up" />
-
-`warden ui network fault speed.cloudflare.com reset`, then `--clear`: the link stays up while every request to that one host fails.
-
 A fault applies to every request whose host matches a glob.
 
 ```ts
@@ -94,10 +88,6 @@ HTTPS requests are tunnelled without being opened, so a `status` fault cannot an
 A simulator shares the Mac's network, so on iOS a condition reaches only an app that was launched with warden's network dylib. A running app without it fails `E_NETWORK_RELAUNCH`. Either declare `conditions.network` for the suite (below), so every launch carries the dylib, or pass `{ relaunch: true }`.
 
 ## Location
-
-<DemoClip src="/demos/location/route" label="warden ui location route playing a route out of a 150 m geofence" />
-
-`warden ui location route` plays a route out of a 150 m geofence; the app gets real `expo-location` fixes.
 
 ```ts
 await device.location.set({ lat: 37.3349, lon: -122.009 });
@@ -120,10 +110,6 @@ await device.location.clear();
 On iOS `simctl` plays a route once. On Android a ticker owned by the lease sends a fix every interval until the next location call.
 
 ## Clock
-
-<DemoClip src="/demos/clock/trial" label="warden ui clock advance expiring a 14-day trial, then reset restoring it" />
-
-`warden ui clock advance 10d`, `5d` and `reset` expire and restore a 14-day trial; the app reads plain `Date.now()`.
 
 ```ts
 await device.clock.advance("15d");
