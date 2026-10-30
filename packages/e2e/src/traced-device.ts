@@ -1,3 +1,4 @@
+import { a11yTargetOf, registerA11yTarget } from "./a11y/a11y-target";
 import { conditionsOf, registerConditions } from "./conditions/device-conditions";
 import type { Device } from "./device";
 import type { SpanRunner } from "./runner/span";
@@ -12,7 +13,19 @@ import type { SpanRunner } from "./runner/span";
 export function traceDevice(device: Device, span: SpanRunner | undefined): Device {
 	if (span === undefined) return device;
 	const { network, location, clock, permissions } = device;
+	const { screenReader } = device;
 	const traced: Device = {
+		a11yAudit: (options) => span("device.a11yAudit", () => device.a11yAudit(options)),
+		announcements: (options) => span("device.announcements", () => device.announcements(options)),
+		screenReader: {
+			order: () => span("device.screenReader.order", () => screenReader.order()),
+			state: () => span("device.screenReader.state", () => screenReader.state()),
+			next: () => span("device.screenReader.next", () => screenReader.next()),
+			prev: () => span("device.screenReader.prev", () => screenReader.prev()),
+			activate: () => span("device.screenReader.activate", () => screenReader.activate()),
+			focused: () => span("device.screenReader.focused", () => screenReader.focused()),
+			spoken: (options) => span("device.screenReader.spoken", () => screenReader.spoken(options)),
+		},
 		get devtools() {
 			return device.devtools;
 		},
@@ -82,5 +95,7 @@ export function traceDevice(device: Device, span: SpanRunner | undefined): Devic
 	};
 	const internals = conditionsOf(device);
 	if (internals !== undefined) registerConditions(traced, internals);
+	const a11yTarget = a11yTargetOf(device);
+	if (a11yTarget !== undefined) registerA11yTarget(traced, a11yTarget);
 	return traced;
 }

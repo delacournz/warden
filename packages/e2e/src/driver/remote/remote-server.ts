@@ -17,7 +17,9 @@ import {
 	type RemoteResponse,
 	requestSchema,
 	screenshotToWire,
+	snapshotFromWire,
 	snapshotToWire,
+	type WireSnapshot,
 } from "./remote-protocol";
 
 export type ServeDriverOptions = {
@@ -89,7 +91,7 @@ function resolve(driver: Driver, op: string): Callable | undefined {
 /** What crosses the wire for `op`'s data: snapshots without `flat`, screenshots as base64. */
 function toWire(op: string, data: unknown): unknown {
 	if (data === undefined || data === null || typeof data !== "object") return data;
-	if (op === "snapshot" && "elements" in data && "flat" in data) {
+	if ((op === "snapshot" || op === "readA11y") && "elements" in data && "flat" in data) {
 		return snapshotToWire(data as Parameters<typeof snapshotToWire>[0]);
 	}
 	if (op === "screenshot") return screenshotToWire(data as Parameters<typeof screenshotToWire>[0]);
@@ -164,7 +166,12 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 		const method = resolve(driver, op);
 		if (method === undefined) return badRequest(`the served driver has no \`${op}\``);
 		try {
-			const result = await method(...argsFromWire(args));
+			const wireArgs = argsFromWire(args);
+			// readA11y takes and returns a snapshot, which crosses the wire without `flat`
+			if (op === "readA11y" && wireArgs[0] !== undefined) wireArgs[0] = snapshotFromWire(wireArgs[0] as WireSnapshot);
+			const result = await method(...wireArgs);
+			// auditNatively answers a plain NativeAuditResult (a missing engine is `skipped`, never an error)
+			if (op === "auditNatively") return { success: true, data: result };
 			return result.success ? { success: true, data: toWire(op, result.data) } : result;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

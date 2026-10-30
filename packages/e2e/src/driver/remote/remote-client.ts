@@ -1,4 +1,6 @@
 import type { Result } from "@delacour/warden-types/result";
+import type { ReadsA11yEvents } from "../a11y-events";
+import type { ReadsA11y } from "../a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
 import { detectAlert } from "../android/android-alert";
 import type {
@@ -13,7 +15,9 @@ import type {
 } from "../driver.types";
 import { driverError } from "../errors";
 import { socketTransport, type Transport } from "../ios/simd-transport";
+import type { AuditsNatively, NativeAuditResult } from "../native-audit";
 import type { DetectsAlerts } from "../observation-cache";
+import type { DrivesScreenReader } from "../screen-reader";
 import type { RepeatingKeys, SelectsAll, SetsText } from "../typing";
 import {
 	REMOTE_PROTOCOL,
@@ -23,6 +27,7 @@ import {
 	responseSchema,
 	screenshotFromWire,
 	snapshotFromWire,
+	snapshotToWire,
 	type WireScreenshot,
 	type WireSnapshot,
 	wireError,
@@ -32,9 +37,22 @@ import {
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_READY_TIMEOUT_MS = 2000;
 
+type RemoteA11y = Partial<ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader>;
+
 /** A remote driver plus whichever optional capabilities the served one offers. */
 export type RemoteDriver = Driver &
-	Partial<RepeatingKeys & SelectsAll & SetsText & DetectsAlerts & ReadsAlertOn & ProbesFrontmost>;
+	Partial<
+		RepeatingKeys &
+			SelectsAll &
+			SetsText &
+			DetectsAlerts &
+			ReadsAlertOn &
+			ProbesFrontmost &
+			ReadsA11y &
+			ReadsA11yEvents &
+			AuditsNatively &
+			DrivesScreenReader
+	>;
 
 export type RequestOptions = { timeoutMs?: number };
 
@@ -182,6 +200,36 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		return shot.success ? { success: true, data: screenshotFromWire(shot.data) } : shot;
 	};
 
+	const a11yCapabilities = (offered: ReadonlySet<string>, platform: ReadyEvent["platform"]) => {
+		const out: RemoteA11y = {};
+		if (offered.has("readA11y")) {
+			out.readA11y = async (shot) => {
+				const read = await call<WireSnapshot>("readA11y", snapshotToWire(shot));
+				return read.success ? { success: true, data: snapshotFromWire(read.data) } : read;
+			};
+		}
+		if (offered.has("a11yEvents")) out.a11yEvents = (since) => call("a11yEvents", since);
+		if (offered.has("auditNatively")) {
+			out.auditNatively = async (opts) => {
+				const audited = await call<NativeAuditResult>("auditNatively", opts);
+				if (audited.success) return audited.data;
+				return {
+					issues: [],
+					skipped: { source: platform === "ios" ? "xcuitest" : "atf", reason: audited.error.message },
+				};
+			};
+		}
+		if (offered.has("screenReaderNext")) {
+			out.screenReaderState = () => call("screenReaderState");
+			out.screenReaderNext = () => call("screenReaderNext");
+			out.screenReaderPrev = () => call("screenReaderPrev");
+			out.screenReaderActivate = () => call("screenReaderActivate");
+			out.screenReaderFocused = () => call("screenReaderFocused");
+			out.screenReaderSpoken = (since) => call("screenReaderSpoken", since);
+		}
+		return out;
+	};
+
 	const buildDriver = (): RemoteDriver => {
 		const base: Driver = {
 			platform: hello.platform,
@@ -233,6 +281,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			offered.has("setText") ? { setText: (text: string) => call<void>("setText", text) } : {},
 			offered.has("alertOn") ? { alertOn: (backend: AlertBackend) => call<AlertInfo | null>("alertOn", backend) } : {},
 			offered.has("isFrontmost") ? { isFrontmost: (bundleId: string) => call<boolean>("isFrontmost", bundleId) } : {},
+			a11yCapabilities(offered, hello.platform),
 			hello.alertIn === "android" ? { alertIn: (shot: Snapshot) => detectAlert(shot.flat) } : {}
 		);
 	};

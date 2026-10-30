@@ -1,7 +1,11 @@
 import { type Expect as BunExpect, expect as bunExpect, type Matchers } from "bun:test";
+import { a11yTargetOf } from "../a11y/a11y-target";
+import type { Device } from "../device";
 import { E2eError } from "../errors";
 import { isLocator, type Locator } from "../screen/locator";
+import type { Screen } from "../screen/screen";
 import { getSession, type Session } from "../session";
+import { DeviceAssertions } from "./a11y-matchers";
 import { LocatorAssertions } from "./matchers";
 
 /** Receives a failure `expect.soft` kept instead of throwing. */
@@ -10,14 +14,17 @@ export type SoftSink = (error: E2eError) => void;
 /** `expect.soft`: `expect` whose failures are kept on the running attempt, which fails once its body has settled. */
 export type SoftExpect = {
 	(actual: Locator): LocatorAssertions;
+	(actual: Device | Screen): DeviceAssertions;
 	<T = unknown>(actual: T, message?: string): Matchers<T>;
 };
 
 /**
- * The spec `expect`: `expect(locator)` gives the polling locator matchers, anything else is bun's own `expect`
+ * The spec `expect`: `expect(locator)` gives the polling locator matchers, `expect(device)` / `expect(screen)` the
+ * accessibility ones (`toPassA11yAudit`, `toHaveAnnounced`), anything else is bun's own `expect`
  * (all of its statics — `any`, `arrayContaining`, `extend`, `not`, … — are on it too).
  */
 export type E2eExpect = ((actual: Locator) => LocatorAssertions) &
+	((actual: Device | Screen) => DeviceAssertions) &
 	BunExpect & {
 		readonly soft: SoftExpect;
 	};
@@ -78,13 +85,21 @@ function softMatchers<T extends object>(target: T, sink: SoftSink): T {
 const NOT_STATIC = new Set<string | symbol>(["length", "name", "prototype"]);
 
 export function createExpect(deps: ExpectDeps): E2eExpect {
-	const call = (actual?: unknown, message?: string): unknown =>
-		isLocator(actual) ? new LocatorAssertions(actual, { negate: false }) : valueExpect(actual, message);
+	const call = (actual?: unknown, message?: string): unknown => {
+		if (isLocator(actual)) return new LocatorAssertions(actual, { negate: false });
+		const target = a11yTargetOf(actual);
+		if (target !== undefined) return new DeviceAssertions(target, { negate: false });
+		return valueExpect(actual, message);
+	};
 
 	const soft = (actual?: unknown, message?: string): unknown => {
 		const sink = deps.softSink();
 		if (isLocator(actual))
 			return new LocatorAssertions(actual, { negate: false, ...(sink === undefined ? {} : { soft: sink }) });
+		const target = a11yTargetOf(actual);
+		if (target !== undefined) {
+			return new DeviceAssertions(target, { negate: false, ...(sink === undefined ? {} : { soft: sink }) });
+		}
 		const matchers = valueExpect(actual, message);
 		return sink === undefined ? matchers : softMatchers(matchers, sink);
 	};
