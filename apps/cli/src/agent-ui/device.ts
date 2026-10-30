@@ -98,6 +98,12 @@ function callerDeviceLeases(ctx: CommandContext, owner: Owner, platform: Platfor
 }
 
 /** How `open` / `close --release` name the shared `warden dev` lease a call attached to. */
+/** A phone (its lease says so, or an iPhone UDID): condition and biometric verbs never reach it. */
+export function physicalDevice(device: UiDevice): boolean {
+	const resource = device.lease.resource;
+	return (resource.kind === "device" && resource.physical !== undefined) || isPhysicalIosId(device.udid);
+}
+
 export function sharedNote(lease: Lease): string {
 	return `sharing ${lease.id} with warden dev${lease.pid === undefined ? "" : ` (pid ${lease.pid})`}`;
 }

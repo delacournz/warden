@@ -303,10 +303,11 @@ export function createSession(opts: SessionOptions = {}): Session {
 	/**
 	 * A biometrics iOS sim is enrolled again when the session opens, before any app install: a reused booted sim
 	 * is left unenrolled by a spec that called `unenroll`. Best effort and idempotent; Android keeps its enrollment
-	 * in the golden snapshot.
+	 * in the golden snapshot. A physical iPhone is never enrolled: its Face ID / Touch ID is the real sensor.
 	 */
 	async function reenroll(driver: Driver): Promise<Driver> {
-		if (resolved.biometrics !== true || resolved.platform !== "ios") return driver;
+		if (resolved.biometrics !== true || resolved.platform !== "ios" || resolved.deviceKind === "physical")
+			return driver;
 		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 		for (let attempt = 1; attempt <= ENROLL_TRIES; attempt += 1) {
 			const state = await driver.biometrics("enroll");

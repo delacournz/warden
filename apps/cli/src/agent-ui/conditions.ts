@@ -10,7 +10,7 @@ import type {
 } from "@delacour/warden-core/conditions/conditions.types";
 import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
 import { processAlive } from "@delacour/warden-core/liveness";
-import { isPhysicalIosId, type Lease } from "@delacour/warden-core/types";
+import type { Lease } from "@delacour/warden-core/types";
 import type { SchedulerConfig } from "@delacour/warden-e2e/conditions/scheduler.config";
 import type { ClockState, NetworkState } from "@delacour/warden-e2e/driver/driver.types";
 import { physicalConditionOps } from "@delacour/warden-e2e/driver/physical-conditions";
@@ -32,7 +32,7 @@ import {
 	type ShapingFlags,
 } from "./conditions-parse";
 import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
-import type { UiDevice } from "./device";
+import { physicalDevice, type UiDevice } from "./device";
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
 import { type UiError, type UiSuccess, uiError } from "./output";
 import { recordedIdentity } from "./process-identity";
@@ -122,12 +122,6 @@ async function stopOwned(
 function ownedPids(deps: Required<ConditionsDeps>, ctx: CommandContext, lease: Lease, extra: readonly OwnedProcess[]) {
 	const proxy = deps.proxyPid(ctx, lease.id);
 	return [...(proxy === undefined ? [] : [{ kind: "pid" as const, pid: proxy }]), ...extra];
-}
-
-/** A phone (its lease says so, or an iPhone UDID): the condition verbs never reach it, see `physicalConditionOps`. */
-function physicalDevice(device: UiDevice): boolean {
-	const resource = device.lease.resource;
-	return (resource.kind === "device" && resource.physical !== undefined) || isPhysicalIosId(device.udid);
 }
 
 /** Runs `work` on the device's condition port; a physical device gets the refusing ops and is never opened. */

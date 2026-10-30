@@ -225,18 +225,22 @@ export function parseClaimFlags(
 
 /** Flags that make no sense on a device warden never creates, boots or arranges. */
 function physicalConflict(values: ClaimFlagValues): string | undefined {
-	const conflicts: Array<[string, boolean]> = [
-		["--count", values.count !== undefined && values.count !== "1"],
-		["--max", values.max !== undefined],
-		["--slim", values.slim === true],
-		["--headless", values.headless === true],
-		["--runtime", values.runtime !== undefined],
-		["--adopt", values.adopt === true],
+	const arranged = "a physical device is never created, booted or arranged";
+	const conflicts: Array<[string, boolean, string]> = [
+		["--count", values.count !== undefined && values.count !== "1", arranged],
+		["--max", values.max !== undefined, arranged],
+		["--slim", values.slim === true, arranged],
+		["--headless", values.headless === true, arranged],
+		["--runtime", values.runtime !== undefined, arranged],
+		["--adopt", values.adopt === true, arranged],
+		[
+			"--biometrics",
+			values.biometrics === true,
+			"a real Face ID / fingerprint sensor is never enrolled or matched; run biometric specs on a simulator or emulator",
+		],
 	];
 	const found = conflicts.find(([, given]) => given);
-	return found
-		? `${found[0]} cannot be used with --physical (a physical device is never created, booted or arranged)`
-		: undefined;
+	return found ? `${found[0]} cannot be used with --physical (${found[2]})` : undefined;
 }
 
 /** `--wait`, `--priority` and `--ttl`, validated: the part of a claim every kind shares. */

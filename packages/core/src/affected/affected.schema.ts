@@ -66,11 +66,12 @@ function runIssues(suite: RunSettings): Array<{ message: string; path: string[] 
 	return issues;
 }
 
-/** What `physical` rules out: simulator daemon slimming and closing Simulator.app windows mean nothing on a real device. */
+/** What `physical` rules out: simulator daemon slimming, closing Simulator.app windows and simulated biometrics mean nothing on a real device. */
 function physicalIssues(suite: {
 	physical?: unknown;
 	slim?: unknown;
 	headless?: boolean | undefined;
+	biometrics?: boolean | undefined;
 	conditions?: unknown;
 }): Array<{ message: string; path: string[] }> {
 	if (suite.physical === undefined) return [];
@@ -79,6 +80,11 @@ function physicalIssues(suite: {
 		issues.push({ message: "slim cannot be used with physical devices", path: ["slim"] });
 	if (suite.headless === true)
 		issues.push({ message: "headless cannot be used with physical devices", path: ["headless"] });
+	if (suite.biometrics === true)
+		issues.push({
+			message: "biometrics cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["biometrics"],
+		});
 	if (suite.conditions !== undefined)
 		issues.push({
 			message: "conditions cannot be used with physical devices (use a simulator or emulator suite)",

@@ -84,6 +84,13 @@ describe("physical", () => {
 		expect(issues({ physical: true, slim: false, headless: false })).toEqual([]);
 	});
 
+	test("biometrics contradict physical: a real sensor cannot be enrolled or matched", () => {
+		expect(issues({ physical: true, biometrics: true })).toEqual([
+			"biometrics: biometrics cannot be used with physical devices (use a simulator or emulator suite)",
+		]);
+		expect(issues({ physical: true, biometrics: false })).toEqual([]);
+	});
+
 	test("conditions contradict physical: a phone's network, clock and settings are not warden's to change", () => {
 		expect(issues({ physical: true, conditions: { network: "3g" } })).toEqual([
 			"conditions: conditions cannot be used with physical devices (use a simulator or emulator suite)",

@@ -160,12 +160,19 @@ describe("parseClaimFlags physical", () => {
 		["--headless", { headless: true }],
 		["--runtime", { runtime: "35" }],
 		["--adopt", { adopt: true }],
+		["--biometrics", { biometrics: true }],
 	] as const)("%s is rejected with --physical", (flag, extra) => {
 		expect(fail("android", { physical: true, ...extra })).toContain(`${flag} cannot be used with --physical`);
 	});
 
+	test("--biometrics says why: a real sensor is never enrolled or matched", () => {
+		expect(fail("ios", { physical: true, biometrics: true })).toContain("Face ID / fingerprint sensor");
+	});
+
 	test("--count 1, --no-slim and --no-headless are harmless with --physical", () => {
-		expect(fail("android", { physical: true, count: "1", slim: false, headless: false })).toBeUndefined();
+		expect(
+			fail("android", { physical: true, count: "1", slim: false, headless: false, biometrics: false })
+		).toBeUndefined();
 	});
 
 	test("a physical claim does not default max", () => {

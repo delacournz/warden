@@ -11,7 +11,7 @@ Real Android phones and iPhones/iPads are leased like sims, but only on request.
 | these exact devices | `--serial <adb serial…>` (Android, `ip:port` for wireless) · `--udid <CoreDevice UDID…>` (iOS); each implies `--physical` |
 | drive / test | `warden ui open --claim --physical` · `warden ui … --udid <id>` · `warden e2e <suite> --physical\|--serial\|--udid` (also `run`, `batch`) |
 
-Rejected with `--physical`: `--count --max --slim --headless --runtime --adopt`. `--serial` is Android only, `--udid` iOS only.
+Rejected with `--physical`: `--count --max --slim --headless --runtime --adopt --biometrics` (a real Face ID / fingerprint sensor is never enrolled or matched by warden; `device.biometrics` / `warden ui biometrics` fail `E_UNSUPPORTED` on a phone). `--serial` is Android only, `--udid` iOS only.
 
 ### Several usable devices
 

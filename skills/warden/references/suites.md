@@ -82,7 +82,7 @@ Paths and globs are relative to `warden.config.ts`. Unknown keys are errors.
 | `metro` | none | `{ enabled = true, port = "8081:100", launchArgs = [], open = true, env, prewarm = true, readyTimeout = "2m" }`. warden starts one Metro for the run and points the dev client at it. Applies only with `--dev` / kind `dev`, unless the suite pins `app.variant` or `app.kind: "dev"`, or installs no app. Without Metro (kind `simulator` / `release`) its `env` is still the bundle env: `EXPO_PUBLIC_*` values land in the repacked / built JS (and its cache key), over `.env*` and the shell |
 | `headless` | off | keep Simulator.app windows closed (top-level `headless` is the default; `--headless` / `--no-headless` win) |
 | `slim` | on | iOS only: simulator daemons specs never need are off from first boot. `false` leaves them running; `true` is the default profile; `{ except?: string[]; keep?: string[] }`: `except` keeps whole categories running (ids from `warden sim profiles`, e.g. `store` for push/StoreKit, `web` for universal links, `search` Spotlight, `pim` Contacts/Calendar pickers, `photos` photo picker), `keep` keeps single `com.apple.*` labels. Unknown ids fail config load. `--no-slim` / `WARDEN_SLIM=0` opt out. Skipped with a note on an Android run; refused on a suite fixed to `platform: "android"` |
-| `physical` | off | `true` = any ready physical device, `{ ids: [...] }` = exactly these (adb serials / CoreDevice UDIDs). Also per `devices` leg (a leg's wins). Not with `slim` / `headless` (config error). Command-line `--physical` / `--serial` / `--udid` win. See "Physical devices" |
+| `physical` | off | `true` = any ready physical device, `{ ids: [...] }` = exactly these (adb serials / CoreDevice UDIDs). Also per `devices` leg (a leg's wins). Not with `slim` / `headless` / `biometrics` / `conditions` (config error). Command-line `--physical` / `--serial` / `--udid` win. See "Physical devices" |
 | `biometrics` | off | devices have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Own pool and golden: profile `<profile>+bio`. Top-level `biometrics` and `batches.<preset>.biometrics` work the same (suite / preset wins over top level); `--biometrics` on claim/run/batch/e2e turns it on for one run |
 | `warmDrivers` | on | iOS: start every device's driver helper before the specs |
 
@@ -175,7 +175,7 @@ e2e: {
 
 ## Physical devices
 
-`warden e2e <suite> --physical [--platform android]`, `--serial <adb serial…>` (Android), `--udid <CoreDevice UDID…>` (iOS), or `physical` in the suite / a leg. `run` and `batch` take the same three flags. The leg runs on the named (else any one ready) phone, never creates or boots one, so `--count`, `--max`, `--slim`, `--headless`, `--runtime`, `--adopt` are refused with it (the device count is the number of ids).
+`warden e2e <suite> --physical [--platform android]`, `--serial <adb serial…>` (Android), `--udid <CoreDevice UDID…>` (iOS), or `physical` in the suite / a leg. `run` and `batch` take the same three flags. The leg runs on the named (else any one ready) phone, never creates or boots one, so `--count`, `--max`, `--slim`, `--headless`, `--runtime`, `--adopt`, `--biometrics` are refused with it (the device count is the number of ids).
 
 A physical leg does none of: reboot, headless hide, window arrange, slim, golden clone, shutdown on finish. A suite `setup` command still runs. `WARDEN_UDIDS` / `WARDEN_UDID` carry the adb serial / CoreDevice UDID, and each job gets `WARDEN_DEVICE_KIND=physical` (a mixed run: only the phone's jobs).
 
