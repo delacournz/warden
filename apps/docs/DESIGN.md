@@ -117,7 +117,7 @@ components:
 
 **Creative North Star: "One Voice, Familiar Frame"**
 
-The landing follows the familiar agent dev-tool frame: a centered hero with a pill, headline, one-sentence lede, install command and two buttons; the recorded run; a centered "Works with" row of agent marks; the lease board (five agents on one Mac and what each holds); the lease rules as cards; what an agent does on its simulator as five alternating feature blocks (run, drive, debug, keep, run the suite: copy beside a working sample); the first prompt; use-case cards; FAQ; a closing install sheet. What makes it warden's is one display voice: Mona Sans at wdth 125 / wght 800 with tight tracking on every heading, on flat paper with one ink and one orange. Martian Mono at 11-12.5px carries whatever a machine prints.
+The landing follows the familiar agent dev-tool frame: a centered hero with a pill, headline, one-sentence lede, install command and two buttons; the recorded run; a centered "Works with" row of agent marks; how it works as three numbered step cards (install, claim, drive and keep, each one command); the lease board (five agents on one Mac and what each holds); what you get as eight claim cards; what an agent does on its device as five alternating feature blocks (run, drive, debug, keep, run the suite: copy beside a working sample); device control as tabbed real-simulator clips; safe by default as four claim cards; the first prompt; use-case cards; FAQ; a closing install sheet. All copy is data in `src/lib/landing.data.ts`. What makes it warden's is one display voice: Mona Sans at wdth 125 / wght 800 with tight tracking on every heading, on flat paper with one ink and one orange. Martian Mono at 11-12.5px carries whatever a machine prints.
 
 The docs (Fumadocs) wear the same tokens so the chrome is one world. Docs pages are quiet prose on the same paper.
 
@@ -204,7 +204,16 @@ A Sheet figure with a mono 11px tab (file or tool name) divided by a hairline, t
 Mono orange-text label, Display H3, verb-first points as hairline rows, a mono underlined docs link; beside it a terminal or code sheet (three Fill dots, mono tab) or the run chart.
 
 ### Card
-A Sheet with hairline border: a mono command chip on Fill, a card-title heading, one Ink 2 sentence.
+A Sheet with hairline border: a mono command chip on Fill, a card-title heading, one or two Ink 2 sentences (inline code as Fill chips), and a mono uppercase "Read more →" to its docs page at the foot. Grids: 4 columns from `lg` for claim sets, 3 for use cases.
+
+### Step card
+A Card with a mono Orange Text number (`01`) in place of the chip and the step's command as a full-width Fill code line at the foot, prefixed `$`.
+
+### Section heading accent
+A section H2 may end in Foundry Orange: the claim's last words ("for agents that don't wait."). One per section, never mid-sentence.
+
+### Clip tabs
+Pill tabs (Fill when selected, mono 12px) over a 16:9 Sheet holding a recorded clip that autoplays muted and loops; with reduced motion it rests on the poster with controls. Below it the caption (Ink 2, inline code chips) and a mono "Read more →". Arrow keys move between tabs.
 
 ### Lease board
 A Sheet listing agents on one Mac, one hairline row each: agent (sans, wdth 112 wght 620) behind a lamp, worktree, device, Metro port and build (mono 12.5px, tabular). A leased row's lamp is a filled 8px Foundry Orange dot; a queued row is a hollow Ink 2 ring with the whole row in Ink 2. Mono column labels sit over the rows from `sm`; below it each row folds to agent and worktree over device, port and build. A mono caption says it is illustrative.
