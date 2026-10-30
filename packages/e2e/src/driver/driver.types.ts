@@ -127,8 +127,30 @@ export type Element = {
 	/** where to tap: iOS `interactable.actionable.at`, else the frame centre */
 	tapPoint?: Point;
 	pid?: number;
+	/** screen-reader facts beyond the base tree; absent when the backend can't read them */
+	a11y?: ElementA11y;
 	depth: number;
 	children: Element[];
+};
+
+/**
+ * Screen-reader facts. Android: from warden-uiad's `AccessibilityNodeInfo`. iOS: from the ios-inject UIView walk,
+ * merged by identifier / frame when an a11y read asks for it.
+ */
+export type ElementA11y = {
+	/** iOS accessibilityHint / RN accessibilityHint */
+	hint?: string;
+	/** iOS custom action names / Android node action labels (standard actions left out) */
+	actions?: readonly string[];
+	/** reachable by VoiceOver / TalkBack navigation */
+	focusable?: boolean;
+	/** iOS isAccessibilityElement / Android importantForAccessibility; `false` = skipped by screen readers */
+	important?: boolean;
+	/** Android: holds TalkBack's accessibility focus */
+	a11yFocused?: boolean;
+	liveRegion?: "polite" | "assertive";
+	/** iOS: index in the container's `accessibilityElements` order, when the app sets one */
+	order?: number;
 };
 
 export type SnapshotBackend = "axbridge" | "ax" | "uiautomator";
