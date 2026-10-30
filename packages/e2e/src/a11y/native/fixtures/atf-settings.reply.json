@@ -1,0 +1,39 @@
+{
+	"checks": 13,
+	"ignored": 513,
+	"contrast": true,
+	"hierarchyMs": 41,
+	"checksMs": 27,
+	"failedChecks": [],
+	"results": [
+		{
+			"check": "TextContrastCheck",
+			"type": "WARNING",
+			"resultId": 11,
+			"resourceName": "com.android.systemui:id/keyguard_carrier_text",
+			"className": "android.widget.TextView",
+			"text": "T-Mobile",
+			"bounds": [42, 0, 485, 142],
+			"message": "The item's text contrast ratio is 1.94. This ratio is based on an estimated foreground color of #FFFFFF and an estimated background color of #B7BAC1. Consider increasing this item's text contrast ratio to 4.50 or greater. This item may be obscured by other on-screen content. Consider manually testing this item's contrast."
+		},
+		{
+			"check": "ImageContrastCheck",
+			"type": "WARNING",
+			"resultId": 5,
+			"resourceName": "com.android.systemui:id/mobile_signal",
+			"className": "android.widget.ImageView",
+			"bounds": [797, 55, 842, 87],
+			"message": "The image's contrast ratio is 1.39. This ratio is based on an estimated foreground color of #B5B7C1 and an estimated background color of #D6D7DC. Consider increasing this ratio to 3.00 or greater. This item may be obscured by other on-screen content. Consider manually testing this item's contrast."
+		},
+		{
+			"check": "ImageContrastCheck",
+			"type": "WARNING",
+			"resultId": 5,
+			"resourceName": "com.android.systemui:id/wifi_signal",
+			"className": "android.widget.ImageView",
+			"contentDescription": "Wifi signal full.",
+			"bounds": [858, 55, 901, 87],
+			"message": "The image's contrast ratio is 2.02. This ratio is based on an estimated foreground color of #B4B6C0 and an estimated background color of #FFFFFF. Consider increasing this ratio to 3.00 or greater. This item may be obscured by other on-screen content. Consider manually testing this item's contrast."
+		}
+	]
+}

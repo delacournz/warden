@@ -166,6 +166,9 @@ public final class Main {
 				case "screenshot":
 					data = uia.screenshot();
 					break;
+				case "audit":
+					data = uia.audit(req.getString("atf"), req.optBoolean("contrast", true));
+					break;
 				case "shutdown":
 					send("{\"id\":" + quote(id) + ",\"ok\":true,\"data\":{}}");
 					return false;

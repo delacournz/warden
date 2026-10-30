@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
 import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
+import { atfAudit } from "../../a11y/native/atf";
 import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
@@ -29,6 +30,7 @@ import type {
 } from "../driver.types";
 import { driverErr } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { AuditsNatively, NativeAuditOptions } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import type { DetectsAlerts } from "../observation-cache";
 import { physicalConditionOps } from "../physical-conditions";
@@ -94,6 +96,7 @@ import { createAndroidNetwork } from "./android-network";
 import { createSettingsGuard, preparePhone, type SettingsGuard } from "./android-phone";
 import { createAndroidSettings } from "./android-settings";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
+import { ensureAtfJar } from "./atf-device";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
 import { createUiadOps, type UiadOps } from "./uiad-ops";
@@ -319,7 +322,13 @@ function openUiad(input: {
 			if (state) saving.push(state.update(serial, patchFor(sdk, { uiadUnsupported: buildId })));
 		},
 	});
-	return createUiadOps({ backend, baseScreen, clock, ...(log ? { log } : {}) });
+	return createUiadOps({
+		backend,
+		baseScreen,
+		clock,
+		...(log ? { log } : {}),
+		atf: () => ensureAtfJar({ session, adb, serial, ...(log ? { log } : {}) }),
+	});
 }
 
 function buildDriver(
@@ -329,7 +338,13 @@ function buildDriver(
 	clock: Clock,
 	execBinary: ExecBinary,
 	facts: DeviceFacts
-): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> & Partial<SetsText> & Partial<ReadsA11yEvents> {
+): Driver &
+	RepeatingKeys &
+	DetectsAlerts &
+	Partial<SelectsAll> &
+	Partial<SetsText> &
+	Partial<ReadsA11yEvents> &
+	Partial<AuditsNatively> {
 	const { serial, adb, exec, log } = options;
 	const { sdk } = facts;
 	const initialRoute = options.dumpRoute ?? facts.savedRoute;
@@ -825,6 +840,12 @@ function buildDriver(
 		pressKeyRepeat,
 		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
 		...(uiad !== undefined ? { setText, a11yEvents } : {}),
+		...(uiad !== undefined
+			? {
+					auditNatively: (opts?: NativeAuditOptions) =>
+						atfAudit({ run: (o) => uiad.audit(o) }, opts?.contrast === undefined ? {} : { contrast: opts.contrast }),
+				}
+			: {}),
 		pressButton,
 		screenshot,
 		orientation,
