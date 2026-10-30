@@ -139,3 +139,9 @@ export function linkText(link: LinkReading): string {
 export function linkLabel(link: LinkReading): string {
 	return link.isConnected === false ? "none" : link.type;
 }
+
+/** One request's tone, shared by the latency strip and the log: failed is warn, slower than `SLOW_MS` is scan. */
+export function sampleTone(sample: Sample): Tone {
+	if (!sample.ok) return "warn";
+	return sample.ms > SLOW_MS ? "scan" : "open";
+}

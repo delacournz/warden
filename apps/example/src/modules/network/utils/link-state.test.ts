@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classify, type LinkReading, linkText } from "./link-state";
+import { classify, type LinkReading, linkText, SLOW_MS, sampleTone } from "./link-state";
 import type { Sample } from "./samples";
 
 const UP: LinkReading = { isConnected: true, isInternetReachable: true, type: "wifi" };
@@ -81,5 +81,13 @@ describe("linkText", () => {
 		expect(linkText(DOWN)).toBe("none");
 		expect(linkText({ isConnected: true, isInternetReachable: false, type: "wifi" })).toBe("wifi · unreachable");
 		expect(linkText({ isConnected: null, isInternetReachable: null, type: "unknown" })).toBe("unknown");
+	});
+});
+
+describe("sampleTone", () => {
+	test("a landed request is open, a slow one scan, a failed one warn", () => {
+		expect(sampleTone(ok(1, 48))).toBe("open");
+		expect(sampleTone(ok(2, SLOW_MS + 1))).toBe("scan");
+		expect(sampleTone(bad(3))).toBe("warn");
 	});
 });

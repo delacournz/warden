@@ -2,7 +2,7 @@ import { useNetInfo } from "@react-native-community/netinfo";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LogLine } from "@/modules/showcase/components/event-log";
-import { classify, type LinkReading, linkLabel, type NetState } from "../utils/link-state";
+import { classify, type LinkReading, linkLabel, type NetState, sampleTone } from "../utils/link-state";
 import { ping } from "../utils/ping";
 import { describeFailure, formatMs, pushSample, type Sample, STRIP_SIZE } from "../utils/samples";
 
@@ -88,7 +88,7 @@ export function useNetworkProbes(): NetworkProbes {
 		log({
 			at,
 			text: sample.ok ? `GET ${sample.status} · ${formatMs(sample.ms)}` : `GET failed · ${sample.reason}`,
-			tone: sample.ok ? "open" : "warn",
+			tone: sampleTone(sample),
 		});
 	}, [log, since]);
 

@@ -5,7 +5,7 @@ import Svg, { Circle, Line, Rect } from "react-native-svg";
 import { useCalmMotion } from "@/hooks/use-calm-motion";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import type { Tones } from "@/modules/showcase/hooks/use-tones";
-import { SLOW_MS } from "../utils/link-state";
+import { sampleTone } from "../utils/link-state";
 import { barHeight, type Sample, STRIP_SIZE } from "../utils/samples";
 
 /** Width of one request's slot; the strip is `STRIP_SIZE` slots wide plus one hidden off the left edge. */
@@ -59,7 +59,7 @@ export function LatencyStrip({ samples, tones }: LatencyStripProps) {
 						const h = barHeight(sample.ms, MAX_BAR);
 						return (
 							<Rect
-								fill={sample.ms > SLOW_MS ? tones.scan : tones.open}
+								fill={tones[sampleTone(sample)]}
 								height={h}
 								key={sample.id}
 								rx={BAR / 2}
