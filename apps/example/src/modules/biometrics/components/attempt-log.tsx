@@ -41,7 +41,7 @@ function describe(event: BiometricEvent): { text: string; tone: LineTone } {
  */
 export function AttemptLog({ events }: { events: readonly BiometricEvent[] }) {
 	if (events.length === 0) {
-		return <Text className="font-mono text-[13px] text-tertiary-foreground">no attempts yet</Text>;
+		return <Text className="font-mono text-sm text-tertiary-foreground">no attempts yet</Text>;
 	}
 	return (
 		<View className="gap-2.5">
@@ -54,9 +54,9 @@ export function AttemptLog({ events }: { events: readonly BiometricEvent[] }) {
 						key={`${event.kind}-${event.at}`}
 						layout={LinearTransition.duration(220)}
 					>
-						<Text className="font-mono text-[13px] text-tertiary-foreground tabular-nums">{clock(event.at)}</Text>
+						<Text className="font-mono text-sm text-tertiary-foreground tabular-nums">{clock(event.at)}</Text>
 						<View className={`size-1.5 rounded-full ${tone.dot}`} />
-						<Text className={`flex-1 font-mono text-[13px] ${tone.text}`} numberOfLines={1}>
+						<Text className={`flex-1 font-mono text-sm ${tone.text}`} numberOfLines={1}>
 							{text}
 						</Text>
 					</Animated.View>

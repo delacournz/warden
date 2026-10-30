@@ -46,7 +46,7 @@ export default function Biometrics() {
 	return (
 		<View className="flex-1 bg-background" style={{ paddingTop: insets.top }} testID="bio-screen">
 			<StatusBar style="light" />
-			<View className="h-[52px] flex-row items-center justify-between px-5">
+			<View className="h-navbar-row flex-row items-center justify-between px-5">
 				<Pressable
 					accessibilityLabel="Back"
 					accessibilityRole="button"
@@ -64,28 +64,28 @@ export default function Biometrics() {
 
 			<ScrollView
 				bounces={false}
-				contentContainerClassName="gap-[22px] px-6 pb-6"
+				contentContainerClassName="gap-5 px-6 pb-6"
 				showsHorizontalScrollIndicator={false}
 				showsVerticalScrollIndicator={false}
 			>
 				<View className="items-center pt-2">
 					<FaceGlyph status={status} />
-					<Text className="font-heading mt-1 text-[34px] text-foreground tracking-tight">{copy.title}</Text>
-					<Text className="font-sans mt-1.5 max-w-[300px] text-center text-base leading-[22px] text-muted-foreground">
+					<Text className="font-heading mt-1 text-4xl text-foreground tracking-tight">{copy.title}</Text>
+					<Text className="font-sans mt-1.5 max-w-xs text-center text-base leading-snug text-muted-foreground">
 						{copy.body}
 					</Text>
 				</View>
 
 				<View className="gap-2 border-border border-y py-3">
 					<View className="flex-row justify-between">
-						<Text className="font-mono text-[13px] text-tertiary-foreground">status</Text>
-						<Text accessible className="font-mono text-[13px] text-foreground" testID="bio-status">
+						<Text className="font-mono text-sm text-tertiary-foreground">status</Text>
+						<Text accessible className="font-mono text-sm text-foreground" testID="bio-status">
 							{status}
 						</Text>
 					</View>
 					<View className="flex-row justify-between">
-						<Text className="font-mono text-[13px] text-tertiary-foreground">error</Text>
-						<Text accessible className="font-mono text-[13px] text-foreground" testID="bio-error">
+						<Text className="font-mono text-sm text-tertiary-foreground">error</Text>
+						<Text accessible className="font-mono text-sm text-foreground" testID="bio-error">
 							{error}
 						</Text>
 					</View>
@@ -105,13 +105,13 @@ export default function Biometrics() {
 					accessibilityRole="button"
 					accessibilityState={{ disabled: isBusy }}
 					accessible
-					className={`h-14 flex-row items-center justify-center gap-2.5 rounded-full active:scale-[0.985] active:opacity-85 ${buttonClass}`}
+					className={`h-14 flex-row items-center justify-center gap-2.5 rounded-full active:scale-98 active:opacity-85 ${buttonClass}`}
 					disabled={isBusy}
 					onPress={action}
 					testID="bio-unlock"
 				>
 					{!isOpen && <IconFaceId color={isBusy ? muted : background} size={20} />}
-					<Text className={`font-heading text-[17px] ${labelClass}`}>{actionLabel}</Text>
+					<Text className={`font-heading text-lg ${labelClass}`}>{actionLabel}</Text>
 				</Pressable>
 			</View>
 		</View>

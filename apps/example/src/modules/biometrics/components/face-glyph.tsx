@@ -189,7 +189,7 @@ export function FaceGlyph({ status }: { status: BiometricStatus }) {
 						<View className="absolute inset-0 opacity-25">
 							<LinearGradient colors={[glowEdge, tones.scan, glowEdge]} style={GLOW_FILL} />
 						</View>
-						<View className="h-0.5 rounded-[1px] bg-info" />
+						<View className="h-0.5 rounded-full bg-info" />
 					</Animated.View>
 				</Animated.View>
 			</Animated.View>
