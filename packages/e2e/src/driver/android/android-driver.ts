@@ -7,6 +7,7 @@ import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
 import { type Scheduler, startFlap } from "../../conditions/scheduler";
+import type { ReadsA11yEvents } from "../a11y-events";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
@@ -328,7 +329,7 @@ function buildDriver(
 	clock: Clock,
 	execBinary: ExecBinary,
 	facts: DeviceFacts
-): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> & Partial<SetsText> {
+): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> & Partial<SetsText> & Partial<ReadsA11yEvents> {
 	const { serial, adb, exec, log } = options;
 	const { sdk } = facts;
 	const initialRoute = options.dumpRoute ?? facts.savedRoute;
@@ -484,6 +485,10 @@ function buildDriver(
 	 */
 	const setText: SetsText["setText"] = async (text) =>
 		(await uiad?.setText(text)) ?? driverErr("E_UNSUPPORTED", "setText needs the warden-uiad server");
+
+	/** See `ReadsA11yEvents`: the server's ring of announcements and live-region changes; there is no way without it. */
+	const a11yEvents: ReadsA11yEvents["a11yEvents"] = async (since) =>
+		(await uiad?.a11yEvents(since)) ?? driverErr("E_UNSUPPORTED", "announcements need the warden-uiad server");
 
 	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
@@ -819,7 +824,7 @@ function buildDriver(
 		key,
 		pressKeyRepeat,
 		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
-		...(uiad !== undefined ? { setText } : {}),
+		...(uiad !== undefined ? { setText, a11yEvents } : {}),
 		pressButton,
 		screenshot,
 		orientation,

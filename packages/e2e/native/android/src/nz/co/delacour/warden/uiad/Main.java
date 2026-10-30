@@ -22,7 +22,7 @@ import org.json.JSONObject;
  */
 public final class Main {
 	static final int PROTOCOL = 1;
-	static final String VERSION = "0.4.0";
+	static final String VERSION = "0.5.0";
 	private static final Charset ASCII = Charset.forName("US-ASCII");
 
 	private static FileOutputStream stdout;
@@ -159,6 +159,9 @@ public final class Main {
 					break;
 				case "selectAll":
 					data = uia.selectAll();
+					break;
+				case "a11yEvents":
+					data = uia.a11yEvents(req.optLong("since", 0));
 					break;
 				case "screenshot":
 					data = uia.screenshot();

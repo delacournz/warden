@@ -211,4 +211,31 @@ describe("createIosA11y", () => {
 		files.set("/s/state.json.ack", JSON.stringify({ seq: 0, pid: 5 }));
 		expect(await reader.read(snap([]))).toMatchObject({ success: false, error: { code: "E_TIMEOUT" } });
 	});
+
+	test("events read the append-only events file by byte cursor and stop before a half-written line", async () => {
+		const files: Files = new Map();
+		const reader = harness(files);
+		await reader.launchEnv({});
+		files.set("/s/state.json.ack", JSON.stringify({ seq: 0, pid: 5 }));
+		const first = '{"kind":"announcement","text":"Saved","at":5}\n';
+		files.set("/s/state.json.events", `${first}{"kind":"screen-ch`);
+		const one = await reader.events();
+		expect(one).toEqual({
+			success: true,
+			data: { events: [{ kind: "announcement", text: "Saved", at: 5, source: "inject" }], cursor: first.length },
+		});
+		files.set("/s/state.json.events", `${first}{"kind":"screen-changed","at":9}\n`);
+		const two = await reader.events(one.success ? one.data.cursor : 0);
+		expect(two.success && two.data.events).toEqual([{ kind: "screen-changed", at: 9, source: "inject" }]);
+	});
+
+	test("events say why when the app was not launched with the dylib, and are empty before the first one", async () => {
+		const off = await harness(new Map(), { alive: false }).events();
+		expect(off).toMatchObject({ success: false, error: { code: "E_UNSUPPORTED" } });
+		const files: Files = new Map();
+		const reader = harness(files);
+		await reader.launchEnv({});
+		files.set("/s/state.json.ack", JSON.stringify({ seq: 0, pid: 5 }));
+		expect(await reader.events()).toEqual({ success: true, data: { events: [], cursor: 0 } });
+	});
 });

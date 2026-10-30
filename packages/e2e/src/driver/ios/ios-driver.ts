@@ -9,6 +9,7 @@ import type { Exec } from "@delacour/warden-core/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-core/store";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { E2eEnv } from "../../env";
+import type { ReadsA11yEvents } from "../a11y-events";
 import type { ReadsA11y } from "../a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "../alerts";
 import type { ClockRecorder } from "../clock-recorder";
@@ -56,7 +57,7 @@ import { typeTextBudgetMs } from "./type-budget";
 export type IosDriverEnv = Pick<E2eEnv, "simd" | "simdSocket" | "helperDir">;
 
 /** The iOS driver is a `Driver` plus the optional capabilities of `driver/alerts.ts`. */
-export type IosDriver = Driver & SelectsAll & PastesText & ReadsAlertOn & ProbesFrontmost & ReadsA11y;
+export type IosDriver = Driver & SelectsAll & PastesText & ReadsAlertOn & ProbesFrontmost & ReadsA11y & ReadsA11yEvents;
 
 export type OpenIosDriverOptions = {
 	udid: string;
@@ -716,6 +717,10 @@ export function createIosDriver(
 		readA11y: async (snapshot) =>
 			a11y
 				? a11y.read(snapshot)
+				: driverErr("E_UNSUPPORTED", "this iOS driver was opened without the injected library channel"),
+		a11yEvents: async (since) =>
+			a11y
+				? a11y.events(since)
 				: driverErr("E_UNSUPPORTED", "this iOS driver was opened without the injected library channel"),
 		appearance: (set) => simctl.appearance(set),
 		network: async (op, o) => (net ? net.network(op, o) : noLeaseProxy()),

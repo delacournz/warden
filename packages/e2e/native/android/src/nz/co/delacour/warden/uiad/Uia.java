@@ -51,6 +51,7 @@ final class Uia {
 	private HandlerThread thread;
 	private Display display;
 	private String displayError;
+	private final A11yEvents a11yEvents = new A11yEvents();
 	private final Object eventLock = new Object();
 	private long lastEventMs;
 	private long eventCount;
@@ -106,6 +107,7 @@ final class Uia {
 		ua.setOnAccessibilityEventListener(new UiAutomation.OnAccessibilityEventListener() {
 			@Override
 			public void onAccessibilityEvent(AccessibilityEvent event) {
+				a11yEvents.onEvent(event);
 				if (!significant(event.getEventType())) return;
 				synchronized (eventLock) {
 					lastEventMs = SystemClock.uptimeMillis();
@@ -163,6 +165,11 @@ final class Uia {
 			default:
 				return true;
 		}
+	}
+
+	/** Announcements and live-region changes since `since` (A11Y-8). */
+	String a11yEvents(long since) {
+		return a11yEvents.json(since);
 	}
 
 	private void initDisplay() {

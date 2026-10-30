@@ -71,3 +71,14 @@ export type ScreenReaderState =
 	| { mode: "off" };
 
 export type SpokenLine = { text: string; at: number; source: A11ySource };
+
+/** Where an {@link A11yEvent} was observed: the Android `warden-uiad` event stream, or the iOS injected library. */
+export type A11yEventSource = "uiad" | "inject";
+
+export type A11yEventKind = "announcement" | "live-region" | "screen-changed" | "layout-changed";
+
+/**
+ * Something the app told assistive technology, in the order it happened (WDN-A11Y, A11Y-8). `text` is the announced
+ * string (announcements and live regions); screen/layout changes carry none. `at` is epoch ms on the device.
+ */
+export type A11yEvent = { kind: A11yEventKind; text?: string; at: number; source: A11yEventSource };
