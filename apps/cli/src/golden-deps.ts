@@ -1,7 +1,9 @@
 import { profileSlug } from "@delacour/warden-core/allocate";
+import { splitBiometricProfile } from "@delacour/warden-core/biometrics";
 import {
 	type AndroidGoldenDeps,
 	buildPendingAndroidSnapshot,
+	ensureAndroidSnapshot,
 	explicitAndroidSnapshot,
 	invalidateAndroidSnapshot,
 	type SnapshotPass,
@@ -72,7 +74,8 @@ export async function androidSnapshotOn(ctx: CommandContext): Promise<boolean> {
 /**
  * The Android provider's `snapshot` hook: warden's quick-boot snapshot of the AVD when it exists (a
  * claim never builds one: missing → cold boot, logged, and `warden gc` builds it later), unless
- * `WARDEN_ANDROID_SNAPSHOT=0` or `android.snapshot: false` (looked up only when a claim creates).
+ * `WARDEN_ANDROID_SNAPSHOT=0` or `android.snapshot: false` (looked up only when a claim creates). A biometrics
+ * target (`<avd>+bio`) is built right here when missing, since an unenrolled cold boot would be wrong for it.
  */
 export function androidSnapshotHook(
 	ctx: CommandContext,
@@ -81,7 +84,11 @@ export function androidSnapshotHook(
 ): (avd: string) => AsyncResult<string | undefined> {
 	return async (avd) => {
 		if (!(await androidSnapshotOn(ctx))) return ok(undefined);
-		return snapshotForClaim(androidGoldenDeps(ctx, owner, sleep), avd);
+		const deps = androidGoldenDeps(ctx, owner, sleep);
+		if (!splitBiometricProfile(avd).biometrics) return snapshotForClaim(deps, avd);
+		// a biometrics claim must start enrolled: build the snapshot now (once, under the AVD's lock) rather than cold-boot plain
+		const ensured = await ensureAndroidSnapshot({ ...deps, prewarmHint: true }, avd);
+		return ensured.success ? ok(ensured.data?.name) : ensured;
 	};
 }
 

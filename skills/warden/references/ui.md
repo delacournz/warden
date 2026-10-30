@@ -81,6 +81,7 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `alert` | `accept\|dismiss\|get [--settle]` | `get` with none = empty list; accept/dismiss with none = `no_alert` |
 | `home` | `[--settle]` | |
 | `back` | `[--settle]` | Android only |
+| `biometrics` | `[status\|enroll\|unenroll\|match\|fail] [--settle]` | simulated Face ID / Touch ID / fingerprint; no op = `status`; answers `result.biometrics: { enrolled, modality: "face"\|"fingerprint" }`; bad op = `usage`; not recorded by `record`. See "Biometrics" below |
 | `screen rotate` | `[portrait\|portrait-upside-down\|landscape-left\|landscape-right]` | device orientation; no arg reads it |
 | `screen appearance` | `[light\|dark]` | no arg reads it |
 | `screen screenshot` | `[path]` | default `$WARDEN_HOME/ui/<udid>/shots/NNN.png` |
@@ -104,6 +105,14 @@ Line: `@eN [role] "name" id=<testID> value="..." <states> (x,y w×h)`. States: `
 | `eval` `tree` `logs` `network log` `reload` | see Devtools | dev client only (`network log` = the request log) |
 | `network set\|flap\|fault\|status\|reset` `location` `clock` | see Network and location | change the device's network / GPS; recorded on your lease, undone on release |
 | `permission` `timezone` `locale` `a11y` `battery` `memory-warning` `push` | see Device settings | permissions, timezone, locale, text size, battery, memory warning, push; recorded on your lease, undone on release |
+
+## Biometrics
+
+`warden ui biometrics enroll` → app prompts → `warden ui biometrics match` (or `fail`). Simulators and emulators only; a physical device or a non-`emulator-*` serial fails `failed`, `details.driver: E_UNSUPPORTED`.
+
+- iOS: `enroll` / `unenroll` / `match` / `fail` all work; modality is Face ID or Touch ID by device model. Enrollment is lost on reboot. Enroll before the app is installed or launched: a new enrollment invalidates keys bound to the current biometry set. The first prompt per app shows "Allow X to use Face ID?": `warden ui alert accept`.
+- Android: fingerprint only. `match` / `fail` / `status` work; `enroll` / `unenroll` fail `E_UNSUPPORTED` (enrollment is baked into the `+bio` golden snapshot: claim with `--biometrics`, see suites.md).
+- Never add an app-side bypass: drive the real `LAContext` / `BiometricPrompt` flow.
 
 `screen ...` = the device (orientation, appearance, screenshot, video); `gesture ...` = touch. `screen rotate landscape-left` turns the device, `gesture rotate @e3 45` turns two fingers. The old top-level `rotate` `appearance` `screenshot` `video` `swipe` `longpress` are removed (unknown command). Max 2 fingers. Bad scale/degrees/`--path` = `usage` (exit 1); unsupported device = `failed`, `details.driver: E_UNSUPPORTED` (exit 1).
 
@@ -246,7 +255,7 @@ Debug loop: `warden dev logs --kind bundle_failed,error` (does it build?) → `u
 - `id=` is the resource-id / testID without package prefix; `hittable` is derived.
 - Pinch, rotate and 2-finger `gesture path` need `warden-uiad` (default on API 26+); with `WARDEN_ANDROID_UIAD=0` they fail `E_UNSUPPORTED` (`details.driver`); 1-finger paths fall back to `input motionevent`. No clipboard, no `--metro`/`--args` on `open <bundleId>`; non-ASCII text needs the server (`E_UNSUPPORTED_TEXT` without it).
 - The first call starts the host; it exits after 10 idle minutes (`WARDEN_ANDROID_HOST_IDLE_TIMEOUT`), on `warden ui close`, or on release. `status` shows it as the helper. `WARDEN_ANDROID_HOST=0` drives in-process (each call reopens adb + uiad).
-- `back`, `home`, `screen rotate`, `screen appearance`, `screen video` work.
+- `back`, `home`, `screen rotate`, `screen appearance`, `screen video` work. `biometrics`: `status` / `match` / `fail` only.
 - Physical phone (`--serial <adb serial>` of a phone, `ip:port` / `adb-…` for wireless debugging, or `--claim --physical`): the lease is stamped `physical`. adb state `unauthorized` exits 2 `device_unauthorized`, any other non-`device` state exits 2 `device_offline` (the lease is kept; fix the phone and retry). A sleeping phone is woken and a keyguard with no credential is dismissed; a PIN / pattern / password keyguard fails `E_DEVICE_LOCKED` (exit 3), warden never unlocks. A device whose `ro.boot.qemu` / `ro.kernel.qemu` is 1 (`localhost:5555`, Genymotion) is a foreign emulator, not a phone. Rotation, `screen appearance` and the animation scales are saved before the first change and put back on close (a crashed run's originals are restored by the next driver). `uninstall` / `clearData` only act on `WARDEN_BUNDLE_ID` and packages warden installed there (`E_REFUSED`, `physical_protected`). Install checks the APK's ABIs first (`abi_mismatch`: use the `dev` or `release` kind) and never uninstalls a differently-signed copy.
 - A physical iPhone is driven through a resident `warden __ios-runner-host` (one per phone, log: `$WARDEN_HOME/ios-runner/<udid>.log`): it keeps the signed XCUITest runner alive on the phone and reaches it over the CoreDevice tunnel. It exits after 10 idle minutes (`WARDEN_IOS_RUNNER_IDLE_TIMEOUT`), on `warden ui close`, or on release. A runner that cannot start logs one code: `E_DEVICE_LOCKED` (unlock the phone), `E_TUNNEL_DOWN`, `E_INSTALL_FAILED`, `E_DEVELOPER_MODE_OFF`, `E_RUNNER_UNTRUSTED`, `E_DEVICE_BUSY`, `E_READY_TIMEOUT`.
 

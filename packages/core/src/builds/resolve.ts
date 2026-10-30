@@ -29,6 +29,9 @@ export type AppPhase =
 
 export type EasStepOutcome = { kind: "hit"; path: string } | { kind: "miss"; reason: string };
 
+/** What the local build step produced: its own build, or (after waiting on the checkout) another warden's, from the cache. */
+export type BuildStepOutcome = { kind: "built"; path: string } | { kind: "cached"; path: string };
+
 /** What the device probe found: is the app there, and (iOS) its container so `matches` need not ask again. */
 export type InstalledApp = {
 	present: boolean;
@@ -76,8 +79,8 @@ export type ResolveSteps = {
 	flightKey?: string;
 	/** EAS: download into the cache, or miss */
 	eas?: () => AsyncResult<EasStepOutcome>;
-	/** local build into the cache; path */
-	build?: () => AsyncResult<string>;
+	/** local build into the cache (or the build another warden just made in this checkout) */
+	build?: () => AsyncResult<BuildStepOutcome>;
 	log: (line: string) => void;
 	/** progress: where this resolve is (see `AppPhase`) */
 	onPhase?: (phase: AppPhase) => void;
@@ -101,7 +104,8 @@ async function fetchOrBuild(steps: ResolveSteps): AsyncResult<Found> {
 	}
 	if (steps.build) {
 		const built = await steps.build();
-		return built.success ? ok({ path: built.data, source: "build" }) : built;
+		if (!built.success) return built;
+		return ok({ path: built.data.path, source: built.data.kind === "built" ? "build" : "cache" });
 	}
 	misses.push("local build skipped (--no-build)");
 	return err(`no build for fingerprint ${steps.hash}: ${misses.join("; ")}`);

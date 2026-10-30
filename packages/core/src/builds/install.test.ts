@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "../exec";
 import {
 	appMatchesArtifact,
+	type FileDigest,
 	type FileSize,
 	installApp,
 	isAppInstalled,
@@ -223,6 +224,47 @@ describe("uninstallApp", () => {
 	});
 });
 
+describe("appMatchesArtifact on Android", () => {
+	const world = (deviceSha: string | undefined, cachedSha: string | null = "aaa") => {
+		const calls: string[] = [];
+		const fileDigest: FileDigest = async (path) => (path === "/cache/a.apk" ? (cachedSha ?? undefined) : undefined);
+		const e = exec(
+			{
+				"adb -s emulator-5554 shell pm path com.x": {
+					stdout: "package:/data/app/~~x==/com.x-y==/base.apk\n",
+				},
+				"adb -s emulator-5554 shell sha256sum /data/app/~~x==/com.x-y==/base.apk":
+					deviceSha === undefined ? { exitCode: 1 } : { stdout: `${deviceSha}  /data/app/~~x==/com.x-y==/base.apk\n` },
+			},
+			calls
+		);
+		return { deps: { exec: e, env, fileDigest }, calls };
+	};
+
+	test("the installed base.apk has the cached apk's sha256 → match", async () => {
+		const { deps } = world("aaa");
+		expect(await appMatchesArtifact(deps, android, "com.x", "/cache/a.apk")).toEqual({ success: true, data: true });
+	});
+
+	test("another build of the same app (different digest) → no match", async () => {
+		const { deps } = world("bbb");
+		expect(await appMatchesArtifact(deps, android, "com.x", "/cache/a.apk")).toEqual({ success: true, data: false });
+	});
+
+	test("app missing, digest unreadable on the device or locally → no match (reinstall is the safe side)", async () => {
+		expect(await appMatchesArtifact({ exec: exec({}), env }, android, "com.x", "/cache/a.apk")).toEqual({
+			success: true,
+			data: false,
+		});
+		for (const w of [world(undefined), world("aaa", null)]) {
+			expect(await appMatchesArtifact(w.deps, android, "com.x", "/cache/a.apk")).toEqual({
+				success: true,
+				data: false,
+			});
+		}
+	});
+});
+
 describe("appMatchesArtifact", () => {
 	const plist = (version: string) => JSON.stringify({ CFBundleVersion: version, CFBundleExecutable: "App" });
 	const world = (
@@ -288,14 +330,10 @@ describe("appMatchesArtifact", () => {
 		expect(calls.some((c) => c.startsWith("stat"))).toBe(false);
 	});
 
-	test("app missing or unreadable → no match; Android is not checked", async () => {
+	test("app missing or unreadable → no match", async () => {
 		expect(await appMatchesArtifact({ exec: exec({}), env }, ios, "com.x", "/cache/App.app")).toEqual({
 			success: true,
 			data: false,
-		});
-		expect(await appMatchesArtifact({ exec: exec({}), env }, android, "com.x", "/cache/a.apk")).toEqual({
-			success: true,
-			data: true,
 		});
 	});
 

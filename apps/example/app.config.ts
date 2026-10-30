@@ -19,7 +19,7 @@ const expoConfig: ExpoConfig = {
 	},
 	android: {
 		package: "nz.co.delacour.warden.example",
-		permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+		permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "android.permission.USE_BIOMETRIC"],
 	},
 	plugins: [
 		"expo-router",
@@ -29,6 +29,12 @@ const expoConfig: ExpoConfig = {
 			"expo-location",
 			{
 				locationWhenInUsePermission: "The Conditions screen shows your position and a geofence.",
+			},
+		],
+		[
+			"expo-local-authentication",
+			{
+				faceIDPermission: "Allow $(PRODUCT_NAME) to use Face ID to unlock the biometrics demo.",
 			},
 		],
 		[

@@ -310,6 +310,8 @@ export function createIosDeviceDriver(
 		pinch: async () => unsupported("pinch", "the XCUITest runner takes one finger"),
 		rotate: async () => unsupported("rotate", "the XCUITest runner takes one finger"),
 		gesture: async () => unsupported("gesture", "the XCUITest runner takes taps, swipes and drags only"),
+		biometrics: async () =>
+			unsupported("biometrics", "Face ID / Touch ID cannot be simulated on a real sensor; use a simulator"),
 		...physicalConditionOps(`physical iPhone ${udid}`),
 		typeText: (text) => sendVoid("typeText", { text }, deviceTypeTextBudgetMs(text)),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),

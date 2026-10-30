@@ -26,6 +26,7 @@ function setup(platform: "ios" | "android" = "ios") {
 	const span: SpanRunner = (op, fn, options) => runSpan(sink, op, fn, options);
 	const driver = fakeDriver({
 		platform,
+		answerAlertOnTap: true,
 		screens: [snapshotOf([el("alert", { label: "Title", children: [el("button", { label: "OK" })] })], { platform })],
 	});
 	const session: FixtureSession = { out: "/tmp/out", span };
@@ -40,6 +41,7 @@ describe("traceDevice", () => {
 		await device.home();
 		await device.orientation();
 		await device.appearance();
+		await device.biometrics.status();
 		await device.clipboard();
 		await device.setClipboard("x");
 		await device.snapshot();
@@ -49,6 +51,7 @@ describe("traceDevice", () => {
 			"device.home",
 			"device.orientation",
 			"device.appearance",
+			"device.biometrics.status",
 			"device.clipboard",
 			"device.setClipboard",
 			"device.snapshot",

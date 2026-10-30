@@ -2121,7 +2121,12 @@ async function batch(
 		: resolveHeadless({ flag: explicit, config: preset?.headless, env: ctx.env });
 	const args = parseBatchArgs(
 		platform,
-		{ ...merged.opts, headless, ...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}) },
+		{
+			...merged.opts,
+			headless,
+			...(preset?.slim !== undefined ? { slimConfig: preset.slim } : {}),
+			...(preset?.biometrics === true ? { biometrics: true } : {}),
+		},
 		ctx.cwd,
 		merged.base
 	);

@@ -88,6 +88,8 @@ export type SpecEnvOptions = {
 	conditions?: ConditionsConfig | undefined;
 	/** argv that runs the shaping proxy when warden is a compiled binary (`WARDEN_NETPROXY_COMMAND`); absent from source */
 	netproxyCommand?: readonly string[] | undefined;
+	/** the suite's devices are biometrics devices (`WARDEN_BIOMETRICS=1`) */
+	biometrics?: boolean | undefined;
 };
 
 /**
@@ -116,6 +118,7 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
 			? {}
 			: { [ENV_NAMES.conditions]: JSON.stringify(o.conditions) }),
 		...(o.netproxyCommand === undefined ? {} : { [ENV_NAMES.netproxyCommand]: JSON.stringify(o.netproxyCommand) }),
+		...(o.biometrics === true ? { [ENV_NAMES.biometrics]: "1" } : {}),
 		BUN_BE_BUN: "1",
 	};
 }

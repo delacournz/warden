@@ -8,6 +8,7 @@
 		"dev": "bun run release-notes && vite dev",
 		"build": "bun run release-notes && bun run seo:assets && vite build",
 		"seo:assets": "bun run scripts/generate-og.ts",
+		"og:cards": "bun run scripts/generate-og.ts --sheet",
 		"release-notes": "bun run scripts/generate-release-notes.ts",
 		"start": "bun --preload ./src/server/otel-preload.ts .output/server/index.mjs",
 		"fmt": "biome format --write ./src ./scripts",

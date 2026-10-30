@@ -233,6 +233,8 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons specs never need on each device, before `setup`. An object keeps categories (`except`, ids) or single labels (`keep`) on */
 		slim: slimConfigSchema.optional(),
+		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
+		biometrics: z.boolean().optional(),
 		/** removed: renamed `warmDrivers` */
 		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
 		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */

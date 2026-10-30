@@ -184,6 +184,16 @@ describe("input", () => {
 		expect(runner.requests.map((request) => request.op)).toEqual([]);
 	});
 
+	test("biometrics are E_UNSUPPORTED for every op without asking the runner", async () => {
+		const { driver, runner } = await open(ok);
+		for (const op of ["status", "enroll", "unenroll", "match", "fail"] as const) {
+			const error = await failure(driver.biometrics(op));
+			expect(error.code).toBe("E_UNSUPPORTED");
+			expect(error.message).toContain("physical iPhone");
+		}
+		expect(runner.requests.map((request) => request.op)).toEqual([]);
+	});
+
 	test("network, location, clock and the device settings are E_UNSUPPORTED without asking the runner", async () => {
 		const { driver, runner } = await open(ok);
 		for (const call of [

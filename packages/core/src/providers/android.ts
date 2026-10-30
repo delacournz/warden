@@ -3,6 +3,8 @@ import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
+import { ensureUnlocked, systemReady } from "../android-keyguard";
+import { biometricProfile, splitBiometricProfile } from "../biometrics";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import { type Exec, type ExecOptions, execError } from "../exec";
 import { type PidAlive, processAlive } from "../liveness";
@@ -438,6 +440,10 @@ export function leaseConsolePort(
 	});
 }
 
+function missingEnrolledSnapshot(profile: string): string {
+	return `profile ${profile} needs its enrolled snapshot, but none is available (android snapshots off, no SDK root, or the build failed); build it with: warden golden ensure --platform android --profile ${profile}`;
+}
+
 /** Label prefix of the console-port lease a snapshot build's writable emulator runs on. */
 export const GOLDEN_PORT_LABEL = "emulator golden ";
 
@@ -476,6 +482,10 @@ export function bootSettingsCommand(): string {
 	return BOOT_SETTINGS.map(([key, value]) => `settings put global ${key} ${value}`).join("; ");
 }
 
+/** Bound on each of the system-ready waits around the unlock of a biometrics emulator. */
+const SYSTEM_READY_MS = 60_000;
+const SETTLED_READY_MS = 15_000;
+
 /**
  * Android emulators on `adb` + `emulator`. Warden never boots an existing emulator — it launches a
  * new headless `-read-only` instance of an AVD (so one AVD backs many emulators) on a leased even
@@ -488,12 +498,27 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	const pidAlive = options.pidAlive ?? processAlive;
 	const spawnDetached = options.spawnDetached ?? createSpawnDetached(options.earlyExitMs);
 	/** emulators this provider launched: the boot wait watches their pid */
-	const launches = new Map<
-		string,
-		{ pid: number; logPath: string; logOffset: number; avd: string; snapshot?: string }
-	>();
+	type Launch = { pid: number; logPath: string; logOffset: number; avd: string; snapshot?: string };
+	const launches = new Map<string, Launch>();
 	/** the last inventory's `adb devices`, reused by a `create` right after it */
 	let lastListing: { at: number; emulators: AdbEmulator[] } | undefined;
+
+	/**
+	 * A biometrics emulator (by its launch, or by its recorded profile when warden reuses one) must be past its PIN
+	 * lock screen and have adb + the package manager answering before anything installs.
+	 */
+	async function settleBiometricsDevice(id: string, avd: string | undefined): AsyncResult<void> {
+		const recorded = deps.store.listDevices("android").find((d) => d.id === id);
+		if (recorded === undefined || !splitBiometricProfile(avd ?? recorded.profile ?? "").biometrics)
+			return ok(undefined);
+		const keyguard = { exec: deps.exec, sleep, adb: tools.adb, now: deps.now };
+		const up = await systemReady(keyguard, id, SYSTEM_READY_MS);
+		if (!up.success) return up;
+		const unlocked = await ensureUnlocked(keyguard, id);
+		if (!unlocked.success) return unlocked;
+		// the unlock and the snapshot restore can leave adb flapping offline; an install right after would fail
+		return systemReady(keyguard, id, SETTLED_READY_MS);
+	}
 
 	const adb = (serial: string, ...args: string[]): readonly string[] => [tools.adb, "-s", serial, ...args];
 
@@ -583,6 +608,59 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		return undefined;
 	}
 
+	async function shutdownDevice(id: string): AsyncResult<void> {
+		if (!isEmulatorSerial(id)) return err(`refusing to shut down ${id}: a physical device is never shut down`);
+		if (!deps.store.listDevices("android").some((d) => d.id === id)) {
+			return err(`refusing to shut down foreign emulator ${id}`);
+		}
+		const killed = await run(deps, adb(id, "emu", "kill"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
+		if (!killed.success) {
+			const emulators = await listEmulators(deps);
+			if (!emulators.success || emulators.data.some((e) => e.serial === id)) return killed;
+		}
+		const port = serialPort(id);
+		deps.store.transaction(() => {
+			if (port !== undefined) {
+				const lease = deps.store.findLeaseByResource({ kind: "port", port });
+				if (isEmulatorPortLease(lease)) deps.store.deleteLeases([lease.id]);
+			}
+			deps.store.forgetDevice("android", id);
+		});
+		return ok(undefined);
+	}
+
+	/** A device that never got ready (locked, adb offline) must not be left up for the next claim to reuse; foreign ones are left alone. */
+	async function discardUnready(id: string): Promise<void> {
+		if (deps.store.listDevices("android").some((d) => d.id === id)) await shutdownDevice(id);
+	}
+
+	/** Whether a snapshot launch loaded or fell back to a cold boot, reported to the snapshot bookkeeping. */
+	async function noteSnapshotOutcome(id: string, launched: Launch | undefined) {
+		const snapshot = launched?.snapshot;
+		if (!launched || !snapshot) return;
+		if (!snapshotLoadFailed(readLog(launched.logPath, launched.logOffset))) {
+			options.snapshotLoaded?.(launched.avd, snapshot);
+			return;
+		}
+		deps.log?.(`${id}: snapshot ${snapshot} did not load, the emulator cold-booted (log: ${launched.logPath})`);
+		const dropped = await options.snapshotFailed?.(launched.avd, snapshot);
+		if (dropped && !dropped.success) deps.log?.(`${id}: snapshot ${snapshot} kept: ${dropped.error}`);
+	}
+
+	/** The AVD, snapshot target and snapshot a `profile` launches from. */
+	async function resolveLaunchTarget(
+		profile: string
+	): AsyncResult<{ avdName: string; target: string; snapshot: string | undefined }> {
+		const split = splitBiometricProfile(profile);
+		const resolved = await resolveAvd(split.profile);
+		if (!resolved.success) return resolved;
+		// a biometrics profile is a separate golden of the AVD; its devices must start enrolled, so no cold-boot fallback
+		const target = biometricProfile(resolved.data, split.biometrics);
+		const snapshot = await snapshotFor(target);
+		if (split.biometrics && snapshot === undefined) return err(missingEnrolledSnapshot(profile));
+		return ok({ avdName: resolved.data, target, snapshot });
+	}
+
 	/** Launch a headless, read-only emulator of `avd` on `port`, logging to `$WARDEN_HOME/logs/<serial>.log`. */
 	async function launch(
 		avd: string,
@@ -665,9 +743,9 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		async create(name, profile, runtime) {
-			const avd = await resolveAvd(profile);
-			if (!avd.success) return avd;
-			const snapshot = await snapshotFor(avd.data);
+			const resolved = await resolveLaunchTarget(profile);
+			if (!resolved.success) return resolved;
+			const { avdName, target, snapshot } = resolved.data;
 			const running = await runningEmulators();
 			if (!running.success) return running;
 
@@ -675,12 +753,12 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			if (!leased.success) return leased;
 			const { lease, port } = leased.data;
 			const serial = `emulator-${port}`;
-			const launched = await launchOrColdBoot(avd.data, port, serial, snapshot);
+			const launched = await launchOrColdBoot(avdName, port, serial, snapshot);
 			if (!launched.success) {
 				deps.store.deleteLeases([lease.id]);
 				return launched;
 			}
-			launches.set(serial, { ...launched.data, avd: avd.data });
+			launches.set(serial, { ...launched.data, avd: target });
 
 			const recordedRuntime = runtime !== undefined && runtime !== "latest" ? runtime : undefined;
 			deps.store.recordDevice({ platform: "android", id: serial, name, profile, runtime: recordedRuntime }, deps.now());
@@ -725,16 +803,11 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 				return waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs);
 			}
 			const launched = launches.get(id);
-			const ready = await waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs, launched);
-			if (ready.success) await run(deps, adb(id, "shell", bootSettingsCommand()));
-			const snapshot = launched?.snapshot;
-			if (ready.success && launched && snapshot) {
-				if (snapshotLoadFailed(readLog(launched.logPath, launched.logOffset))) {
-					deps.log?.(`${id}: snapshot ${snapshot} did not load, the emulator cold-booted (log: ${launched.logPath})`);
-					const dropped = await options.snapshotFailed?.(launched.avd, snapshot);
-					if (dropped && !dropped.success) deps.log?.(`${id}: snapshot ${snapshot} kept: ${dropped.error}`);
-				} else options.snapshotLoaded?.(launched.avd, snapshot);
-			}
+			const booted = await waitBootCompleted({ ...deps, sleep, pidAlive, pollIntervalMs }, id, timeoutMs, launched);
+			if (booted.success) await run(deps, adb(id, "shell", bootSettingsCommand()));
+			const ready = booted.success ? await settleBiometricsDevice(id, launched?.avd) : booted;
+			if (!ready.success) await discardUnready(id);
+			else await noteSnapshotOutcome(id, launched);
 			return ready;
 		},
 
@@ -747,25 +820,6 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			return prop.data.trim() === "1" ? ok(undefined) : err(`${id} has not finished booting`);
 		},
 
-		async shutdown(id) {
-			if (!isEmulatorSerial(id)) return err(`refusing to shut down ${id}: a physical device is never shut down`);
-			if (!deps.store.listDevices("android").some((d) => d.id === id)) {
-				return err(`refusing to shut down foreign emulator ${id}`);
-			}
-			const killed = await run(deps, adb(id, "emu", "kill"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
-			if (!killed.success) {
-				const emulators = await listEmulators(deps);
-				if (!emulators.success || emulators.data.some((e) => e.serial === id)) return killed;
-			}
-			const port = serialPort(id);
-			deps.store.transaction(() => {
-				if (port !== undefined) {
-					const lease = deps.store.findLeaseByResource({ kind: "port", port });
-					if (isEmulatorPortLease(lease)) deps.store.deleteLeases([lease.id]);
-				}
-				deps.store.forgetDevice("android", id);
-			});
-			return ok(undefined);
-		},
+		shutdown: shutdownDevice,
 	};
 }

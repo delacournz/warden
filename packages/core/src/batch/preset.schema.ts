@@ -42,6 +42,8 @@ export const batchPresetSchema = z
 		headless: z.boolean().optional(),
 		/** iOS: slim the simulator daemons of this run's devices (default on); `--slim` / `--no-slim` win */
 		slim: slimConfigSchema.optional(),
+		/** devices of this run have a fingerprint / Face ID enrolled (own golden, own pool); `biometrics` of the top-level config is the default */
+		biometrics: z.boolean().optional(),
 		retry: z.number().int().min(0).optional(),
 		passes: z.number().int().min(1).optional(),
 		/** added to the serve + job env */

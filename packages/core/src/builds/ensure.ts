@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
@@ -24,9 +25,11 @@ import {
 } from "./cache";
 import { appStart, bundleIdFor, dynamicAppConfigDir, type EasSettings, loadProject, type Project } from "./config";
 import { type Download, resolveFromEas } from "./eas";
+import { computeCacheKey } from "./fingerprint";
 import {
 	appMatchesArtifact,
 	executableStamp,
+	type FileDigest,
 	type FileSize,
 	type FileStamp,
 	installAndProbe,
@@ -40,11 +43,12 @@ import {
 } from "./install";
 import { type DeviceIo, phoneAppMatches } from "./install-device";
 import { type DeviceTarget, projectForKind } from "./kinds";
+import { liveLogTail, openLiveLog } from "./live-log";
 import { type PrebuildStamp, runLocalBuild } from "./local";
-import { buildLockKey, withBuildLock } from "./lock";
+import { type BuildLockDeps, buildLockKey, buildTreeLockKey, withBuildLock } from "./lock";
 import { overlayDirUnlessRepoConfig } from "./overlay";
 import { readProjectKey } from "./project-key";
-import { type AppPhase, type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
+import { type AppPhase, type BuildStepOutcome, type EnsureResult, type ResolveSteps, resolveApp } from "./resolve";
 
 /** Cache `profile` for builds with no EAS profile (local / imported only). */
 export const LOCAL_PROFILE = "local";
@@ -150,6 +154,8 @@ export type EnsureInput = ProjectContext & {
 	fileSize?: FileSize;
 	/** `ino:mtime` of the installed executable, recorded at install to skip that check (default node:fs) */
 	fileStamp?: FileStamp;
+	/** sha256 of the cached apk for the Android installed-app identity check (default node:fs) */
+	fileDigest?: FileDigest;
 	download?: Download;
 	easPollMs?: number;
 	lockPollMs?: number;
@@ -245,37 +251,138 @@ function aliasPostKey(
 	onPostKey(aliasHash);
 }
 
+/** The checkout as one path, so two spellings of it (a symlinked worktree) share its tree lock. */
+function realRoot(root: string): string {
+	try {
+		return realpathSync(root);
+	} catch {
+		return root;
+	}
+}
+
+/**
+ * Hold build lock `key` for `fn`. While another warden holds it: report `waiting` once and mirror its build output
+ * (its live log) into this run's `buildOutput`, then drain the rest once the lock is ours, so a waiter shows the build
+ * as if it ran it.
+ */
+function lockFollowing<T>(
+	input: EnsureInput,
+	key: string,
+	fn: () => AsyncResult<T>,
+	waitLine?: (holder: string) => string
+): AsyncResult<T> {
+	const tail = input.buildOutput ? liveLogTail(input.store, key, input.buildOutput) : undefined;
+	let waited = false;
+	const deps: BuildLockDeps = {
+		store: input.store,
+		owner: input.owner,
+		pid: input.pid,
+		now: input.now,
+		pidAlive: input.pidAlive,
+		sleep: input.sleep,
+		log: input.log,
+		...(input.lockPollMs !== undefined ? { pollMs: input.lockPollMs } : {}),
+		...(waitLine ? { waitLine } : {}),
+		onWait: () => {
+			if (!waited) input.onPhase?.({ phase: "waiting" });
+			waited = true;
+			tail?.poll();
+		},
+	};
+	return withBuildLock(deps, key, () => {
+		if (waited) tail?.drain();
+		return fn();
+	});
+}
+
+/**
+ * Under the checkout's tree lock, before building: the build another warden made here while this one waited. Its own
+ * key may be cached by now; else the checkout is fingerprinted again (this run's key may have been read off a
+ * half-written prebuild), and a build cached under that key is used (installed under it). A checkout that moved to a
+ * key nothing is cached under is an error: building it would be verified against the wrong key.
+ */
+async function builtMeanwhile(
+	input: EnsureInput,
+	onPostKey: (postKey: string) => void
+): AsyncResult<BuildStepOutcome | undefined> {
+	const { store, projectKey, platform, hash } = input;
+	const mine = cachedBuild(store, projectKey, platform, hash, input.now());
+	if (mine) return ok({ kind: "cached", path: mine.path });
+	const verified = input.kind?.buildKey ?? hash;
+	const now = await computeCacheKey(input.exec, input.project, platform, undefined, undefined, input.env);
+	if (!now.success) return now;
+	if (now.data.key === verified) return ok(undefined);
+	const movedHash = input.kind ? postKindHash(input.kind.key, now.data.key) : now.data.key;
+	const theirs = movedHash === undefined ? undefined : cachedBuild(store, projectKey, platform, movedHash, input.now());
+	if (movedHash !== undefined && theirs) {
+		input.log(`the checkout was built meanwhile (now ${now.data.key}): using that build`);
+		onPostKey(movedHash);
+		return ok({ kind: "cached", path: theirs.path });
+	}
+	return err(
+		`the ${platform} checkout changed since it was fingerprinted (${verified} → ${now.data.key}): another build or an edit; run again`
+	);
+}
+
+/** Run the local build (under the tree lock), its output mirrored to a live log under `liveKeys`; cache it, alias a re-key. */
+async function buildHere(
+	input: EnsureInput,
+	cache: CacheFn,
+	onPostKey: (postKey: string) => void,
+	liveKeys: string[]
+): AsyncResult<BuildStepOutcome> {
+	const { project, platform } = input;
+	input.onPhase?.({ phase: "building", platform, hash: input.kind?.buildKey ?? input.hash });
+	const live = openLiveLog(input, liveKeys);
+	const output = (line: string) => {
+		live.write(line);
+		input.buildOutput?.(line);
+	};
+	let built: Awaited<ReturnType<typeof runLocalBuild>>;
+	try {
+		built = await runLocalBuild({
+			exec: input.exec,
+			project,
+			platform,
+			hash: input.kind?.buildKey ?? input.hash,
+			...(input.native !== undefined ? { native: input.native } : {}),
+			env: input.env,
+			log: input.log,
+			output,
+			...(project.compilerCache === false ? { compilerCache: false } : {}),
+			...(input.git ? { git: input.git } : {}),
+			prebuildStamp: prebuildStamp(input.store, project.root, platform),
+		});
+	} finally {
+		live.close();
+	}
+	if (!built.success) return built;
+	const stored = await cache(built.data.artifact, "build", false);
+	if (!stored.success) return stored;
+	aliasPostKey(input, stored.data, built.data.postKey, onPostKey);
+	return ok({ kind: "built", path: stored.data.path });
+}
+
 /**
  * The local build step, cached under the requested key: every fresh checkout (and this session's other
- * devices) computes it. A prebuild re-key (17-1) also aliases the post-build key and reports it.
+ * devices) computes it. A prebuild re-key (17-1) also aliases the post-build key and reports it. One build per
+ * checkout at a time (the tree lock): a second warden waits, mirroring the build's output, then takes its result.
  */
 function buildStep(
 	input: EnsureInput,
 	cache: CacheFn,
 	onPostKey: (postKey: string) => void
 ): NonNullable<ResolveSteps["build"]> {
-	const { project } = input;
-	return async () => {
-		input.onPhase?.({ phase: "building", platform: input.platform, hash: input.kind?.buildKey ?? input.hash });
-		const built = await runLocalBuild({
-			exec: input.exec,
-			project,
-			platform: input.platform,
-			hash: input.kind?.buildKey ?? input.hash,
-			...(input.native !== undefined ? { native: input.native } : {}),
-			env: input.env,
-			log: input.log,
-			...(input.buildOutput ? { output: input.buildOutput } : {}),
-			...(project.compilerCache === false ? { compilerCache: false } : {}),
-			...(input.git ? { git: input.git } : {}),
-			prebuildStamp: prebuildStamp(input.store, project.root, input.platform),
-		});
-		if (!built.success) return built;
-		const stored = await cache(built.data.artifact, "build", false);
-		if (!stored.success) return stored;
-		aliasPostKey(input, stored.data, built.data.postKey, onPostKey);
-		return ok(stored.data.path);
+	const { project, platform } = input;
+	const treeKey = buildTreeLockKey(realRoot(project.root), platform);
+	const fpKey = buildLockKey(input.projectKey, platform, input.hash);
+	const waitLine = (holder: string) => `another warden (${holder}) is building in ${project.root} — waiting`;
+	const run = async (): AsyncResult<BuildStepOutcome> => {
+		const meanwhile = await builtMeanwhile(input, onPostKey);
+		if (!meanwhile.success) return meanwhile;
+		return meanwhile.data ? ok(meanwhile.data) : buildHere(input, cache, onPostKey, [treeKey, fpKey]);
 	};
+	return () => lockFollowing(input, treeKey, run, waitLine);
 }
 
 /** Wire the real effects (sqlite cache, simctl/adb, eas-cli, local build) into `resolveApp`. */
@@ -326,21 +433,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			const stored = await cache(found, "legacy", false);
 			return stored.success ? ok(stored.data.path) : stored;
 		},
-		lock: (fn) =>
-			withBuildLock(
-				{
-					store,
-					owner: input.owner,
-					pid: input.pid,
-					now: input.now,
-					pidAlive: input.pidAlive,
-					sleep: input.sleep,
-					log: input.log,
-					...(input.lockPollMs !== undefined ? { pollMs: input.lockPollMs } : {}),
-				},
-				buildLockKey(projectKey, platform, hash),
-				fn
-			),
+		lock: (fn) => lockFollowing(input, buildLockKey(projectKey, platform, hash), fn),
 	};
 
 	const easSettings = project.eas;
@@ -364,6 +457,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			env,
 			...(input.fileSize ? { fileSize: input.fileSize } : {}),
 			...(input.deviceIo ? { deviceIo: input.deviceIo } : {}),
+			...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
 		};
 		steps.device = {
 			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),

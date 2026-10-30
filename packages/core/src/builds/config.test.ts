@@ -128,6 +128,20 @@ describe("parseWardenConfig", () => {
 		expect(withSlim({ bogus: 1 }).success).toBe(false);
 	});
 
+	test("biometrics: a boolean at the top level, on an e2e suite and on a batch preset", () => {
+		const suite = { specsDir: "specs" };
+		expect(parseWardenConfig({ biometrics: true, e2e: { s: suite } }).success).toBe(true);
+		expect(parseWardenConfig({ e2e: { s: { ...suite, biometrics: true } } }).success).toBe(true);
+		expect(
+			parseWardenConfig({ batches: { b: { platform: "android", cmd: ["true"], biometrics: false } } }).success
+		).toBe(true);
+		expect(parseWardenConfig({ biometrics: "enrolled", e2e: { s: suite } }).success).toBe(false);
+		const parsed = parseWardenConfig({ biometrics: true, e2e: { s: { ...suite, biometrics: false } } });
+		if (!parsed.success) throw new Error(parsed.error);
+		expect(parsed.data.biometrics).toBe(true);
+		expect(parsed.data.e2e?.s?.biometrics).toBe(false);
+	});
+
 	test("e2e suite run settings: metro, isolate, jobTimeoutMs and device legs, with defaults", () => {
 		const suite = { specsDir: "specs" };
 		const parse = (extra: Record<string, unknown>) => parseWardenConfig({ e2e: { s: { ...suite, ...extra } } });

@@ -28,6 +28,10 @@ import { runSpan, type SpanRunner } from "./runner/span";
 import { runStep } from "./runner/step";
 import type { TraceWriter } from "./runner/trace";
 
+/** A biometrics enroll right after a boot can be dropped: re-apply until the read-back shows enrolled. */
+const ENROLL_TRIES = 5;
+const ENROLL_RETRY_MS = 500;
+
 export type DriverFactory = (env: E2eEnv) => DriverResult<Driver>;
 
 /** How to attach to the app's dev client; default {@link openDevtools}. Tests inject a stub. */
@@ -296,6 +300,27 @@ export function createSession(opts: SessionOptions = {}): Session {
 		return true;
 	}
 
+	/**
+	 * A biometrics iOS sim is enrolled again when the session opens, before any app install: a reused booted sim
+	 * is left unenrolled by a spec that called `unenroll`. Best effort and idempotent; Android keeps its enrollment
+	 * in the golden snapshot.
+	 */
+	async function reenroll(driver: Driver): Promise<Driver> {
+		if (resolved.biometrics !== true || resolved.platform !== "ios") return driver;
+		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		for (let attempt = 1; attempt <= ENROLL_TRIES; attempt += 1) {
+			const state = await driver.biometrics("enroll");
+			if (!state.success) {
+				note(`biometrics enroll failed: ${state.error.code}: ${state.error.message}`);
+				return driver;
+			}
+			if (state.data.enrolled) return driver;
+			if (attempt < ENROLL_TRIES) await sleep(ENROLL_RETRY_MS);
+		}
+		note(`biometrics enroll did not take after ${ENROLL_TRIES} attempts`);
+		return driver;
+	}
+
 	const session: Session = {
 		env: resolved,
 		out,
@@ -329,7 +354,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 						throw new E2eError("DRIVER", `${code}: ${message}`);
 					}
 					current = cacheObservations(traceDriver(result.data, { trace: () => attempt?.trace }));
-					return current;
+					return reenroll(current);
 				},
 				(cause: unknown) => {
 					opened = undefined;

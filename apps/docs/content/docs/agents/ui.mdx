@@ -105,6 +105,7 @@ Every action accepts `--settle [ms]`: wait for a quiet screen afterwards (defaul
 | `home` · `back` | the home button; back is Android only |
 | `screen rotate [orientation]` | `portrait`, `portrait-upside-down`, `landscape-left`, `landscape-right`; without an argument it reads the current one |
 | `screen appearance [light\|dark]` | set or read light / dark mode |
+| `biometrics [status\|enroll\|unenroll\|match\|fail]` | simulated Face ID / Touch ID / fingerprint, see [Biometrics](/docs/e2e/biometrics) |
 
 ### `screen` vs `gesture`
 
@@ -193,7 +194,6 @@ What differs from iOS:
 | `--udid <udid>` · `--serial <serial>` · `--lease <id>` | the device. Otherwise `WARDEN_UDID`, a single `WARDEN_UDIDS` entry, then your only device lease |
 | `--claim` | take a device when none is leased (`--platform ios\|android`, `--profile`, `--runtime` choose it), or take over a stale lease |
 | `--timeout <ms>` | per-command deadline (default 5000) |
-
 | `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it. Without it every subcommand but `status` exits 2 (`device_busy`) naming the owner, pid and label. Not needed for your own `warden dev` device (see [Lease rules](#lease-rules)) |
 | `--no-record` | while a [recording](/docs/e2e/author-specs) is active, do not append this call to it |
 | `--json` | the envelope above |
