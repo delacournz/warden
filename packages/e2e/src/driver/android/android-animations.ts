@@ -6,6 +6,7 @@ import {
 	animationRestoreArgvs,
 	animationScaleArgvs,
 	shellCommand,
+	transitionRestoreArgv,
 } from "./android-argv";
 import { type AndroidStateStore, parseAnimationValues, patchFor, planAnimations } from "./android-state";
 
@@ -20,6 +21,8 @@ import { type AndroidStateStore, parseAnimationValues, patchFor, planAnimations 
 export type AnimationGuard = {
 	/** put the scales back (once); a restore that fails leaves the saved originals for the next driver */
 	restore(): Promise<void>;
+	/** the transition scale the device had before it was zeroed (`"null"` = never set); undefined when it was off already */
+	transitionOriginal(): string | undefined;
 };
 
 export type AnimationDeps = {
@@ -38,6 +41,11 @@ const sameValues = (a: AnimationValues | undefined, b: AnimationValues | undefin
 /**
  * One shell round trip that reads the three scales and sets them to 0, then (when something has to be put
  * back) saves the originals. Never fails the open: a device that refuses just keeps its animations.
+ *
+ * The transition scale is the exception: RN (0.86) reads it as "reduce motion", and zero would make every app
+ * under test report reduce-motion on. It goes straight back to the device's own value, so only the window and
+ * animator scales stay at 0 (those are what makes the run fast and stable); `a11y({ reduceMotion: true })` zeroes it
+ * on request.
  */
 export async function disableAnimations(deps: AnimationDeps): Promise<AnimationGuard> {
 	const { session, serial, sdk, state, log } = deps;
@@ -51,11 +59,17 @@ export async function disableAnimations(deps: AnimationDeps): Promise<AnimationG
 		if (found === undefined) log?.("could not read the animation scales, so they will not be restored");
 		else restorable = planAnimations(found, deps.pending);
 	}
+	const transition = restorable?.transition_animation_scale;
+	if (transition !== undefined && transition !== "0") {
+		const back = await session.run(shellCommand(transitionRestoreArgv(transition)));
+		if (!back.success || back.data.exitCode !== 0) log?.("could not put the transition animation scale back");
+	}
 	if (state && !sameValues(restorable, deps.pending)) {
 		await state.update(serial, patchFor(sdk, { animations: restorable }));
 	}
 
 	return {
+		transitionOriginal: () => restorable?.transition_animation_scale,
 		async restore() {
 			const originals = restorable;
 			if (originals === undefined) return;

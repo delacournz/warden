@@ -687,6 +687,7 @@ function buildDriver(
 		session,
 		serial,
 		...(options.appPackage ? { appPackage: options.appPackage } : {}),
+		transitionOriginal: () => facts.animations.transitionOriginal(),
 	});
 	const clockOp: Driver["clock"] = async (op) => {
 		const applied = await applyAndroidClock({ session, exec, adb, serial }, op);
