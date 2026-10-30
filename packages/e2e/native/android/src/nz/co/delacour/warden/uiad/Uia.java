@@ -89,7 +89,7 @@ final class Uia {
 		try {
 			Method withFlags = UiAutomation.class.getDeclaredMethod("connect", int.class);
 			withFlags.setAccessible(true);
-			invoke(withFlags, 0);
+			invoke(withFlags, UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
 			connectVia = "connect(int)";
 		} catch (NoSuchMethodException e) {
 			Method plain = UiAutomation.class.getDeclaredMethod("connect");
@@ -386,6 +386,11 @@ final class Uia {
 		first = Json.flag(sb, first, "editable", node.isEditable());
 		first = Json.flag(sb, first, "disabled", !node.isEnabled());
 		first = Json.flag(sb, first, "invisible", !node.isVisibleToUser());
+		first = Json.flag(sb, first, "a11yFocused", node.isAccessibilityFocused());
+		if (Build.VERSION.SDK_INT >= 24) first = Json.flag(sb, first, "notImportant", !node.isImportantForAccessibility());
+		int live = node.getLiveRegion();
+		if (live == 1 || live == 2) sb.append(",\"live\":").append(live);
+		appendActions(sb, node);
 		if (Build.VERSION.SDK_INT >= 24) sb.append(",\"order\":").append(node.getDrawingOrder());
 		int count = node.getChildCount();
 		boolean any = false;
@@ -402,6 +407,26 @@ final class Uia {
 		}
 		if (any) sb.append(']');
 		sb.append('}');
+	}
+
+	/**
+	 * `"actions":[label,...]`: the app-defined actions only. Framework actions are `android.R.id.*` (0x0102xxxx) or the
+	 * legacy bit flags (below 0x01000000), and say nothing a screen reader user would be offered by name.
+	 */
+	private static void appendActions(StringBuilder sb, AccessibilityNodeInfo node) {
+		List<AccessibilityNodeInfo.AccessibilityAction> list = node.getActionList();
+		if (list == null) return;
+		boolean any = false;
+		for (AccessibilityNodeInfo.AccessibilityAction action : list) {
+			int id = action.getId();
+			CharSequence label = action.getLabel();
+			if (label == null || label.length() == 0) continue;
+			if (id < 0x01000000 || (id >>> 16) == 0x0102) continue;
+			sb.append(any ? "," : ",\"actions\":[");
+			any = true;
+			Json.str(sb, label);
+		}
+		if (any) sb.append(']');
 	}
 
 	/** `AccessibilityNodeInfoHelper.getVisibleBoundsInScreen` as of API 34+: the node's screen bounds clipped to the display. */
