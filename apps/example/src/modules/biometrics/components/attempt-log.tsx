@@ -1,67 +1,25 @@
-import { Text, View } from "react-native";
-import Animated, { FadeInDown, LinearTransition } from "react-native-reanimated";
+import { EventLog, type LogLine } from "@/modules/showcase/components/event-log";
 import type { BiometricEvent } from "../hooks/use-biometric-unlock";
 
-/** `mm:ss.cc` since the screen opened. */
-function clock(ms: number): string {
-	const m = Math.floor(ms / 60_000);
-	const s = (ms % 60_000) / 1000;
-	return `${String(m).padStart(2, "0")}:${s.toFixed(2).padStart(5, "0")}`;
-}
-
-/** The theme colour classes for one log line: the dot and its text. `off` is a dot only, its text stays readable. */
-type LineTone = { dot: string; text: string };
-
-const SCAN: LineTone = { dot: "bg-info", text: "text-info" };
-const OPEN: LineTone = { dot: "bg-success", text: "text-success" };
-const WARN: LineTone = { dot: "bg-warning", text: "text-warning" };
-const OFF: LineTone = { dot: "bg-off", text: "text-muted-foreground" };
-const IDLE: LineTone = { dot: "bg-idle", text: "text-idle" };
-
-function describe(event: BiometricEvent): { text: string; tone: LineTone } {
+function lineOf(event: BiometricEvent): LogLine {
+	const { at } = event;
 	switch (event.kind) {
 		case "requested":
-			return { text: "face id requested", tone: SCAN };
+			return { at, text: "face id requested", tone: "scan" };
 		case "unlocked":
-			return { text: `matched · ${event.tookMs} ms`, tone: OPEN };
+			return { at, text: `matched · ${event.tookMs} ms`, tone: "open" };
 		case "cancelled":
-			return { text: `prompt ${event.error}`, tone: WARN };
+			return { at, text: `prompt ${event.error}`, tone: "warn" };
 		case "failed":
-			return { text: `rejected · ${event.error}`, tone: WARN };
+			return { at, text: `rejected · ${event.error}`, tone: "warn" };
 		case "not-enrolled":
-			return { text: "no face enrolled", tone: OFF };
+			return { at, text: "no face enrolled", tone: "off" };
 		case "locked":
-			return { text: "vault locked", tone: IDLE };
+			return { at, text: "vault locked", tone: "idle" };
 	}
 }
 
-/**
- * Newest-first log of unlock attempts, timestamped from when the screen opened. Monospace because these are
- * measurements; each new line slides in once and the rest move down.
- */
+/** Newest-first log of unlock attempts (`EventLog`). */
 export function AttemptLog({ events }: { events: readonly BiometricEvent[] }) {
-	if (events.length === 0) {
-		return <Text className="font-mono text-[13px] text-tertiary-foreground">no attempts yet</Text>;
-	}
-	return (
-		<View className="gap-2.5">
-			{events.map((event) => {
-				const { text, tone } = describe(event);
-				return (
-					<Animated.View
-						className="flex-row items-center gap-2.5"
-						entering={FadeInDown.duration(260)}
-						key={`${event.kind}-${event.at}`}
-						layout={LinearTransition.duration(220)}
-					>
-						<Text className="font-mono text-[13px] text-tertiary-foreground tabular-nums">{clock(event.at)}</Text>
-						<View className={`size-1.5 rounded-full ${tone.dot}`} />
-						<Text className={`flex-1 font-mono text-[13px] ${tone.text}`} numberOfLines={1}>
-							{text}
-						</Text>
-					</Animated.View>
-				);
-			})}
-		</View>
-	);
+	return <EventLog empty="no attempts yet" lines={events.map(lineOf)} />;
 }

@@ -28,6 +28,8 @@ export type DemoApp = {
 	project: string;
 	/** Opened with `--settle` after the app launches. */
 	deepLink?: string;
+	/** System appearance for the take (`simctl ui appearance`), restored afterwards. Match it to the frame: `render.py` draws the docs dark palette. */
+	appearance?: "light" | "dark";
 };
 
 export type DemoDefinition = {
@@ -38,9 +40,17 @@ export type DemoDefinition = {
 	terminalTitle: string;
 	/** Bottom-left / bottom-right footer text. */
 	footer: { left: string; right: string };
+	/** Line under the phone; defaults to `DEFAULT_PHONE_CAPTION`. Every take is a real simulator (honesty rules). */
+	phoneCaption?: string;
 	platform: "ios";
 	claim: { biometrics?: boolean; profile?: string };
 	app: DemoApp;
+	/**
+	 * `warden` argv run after the app opens and before the deep link, off camera (`--udid` appended). E.g.
+	 * `["ui", "network", "set", "online", "--relaunch"]` relaunches the iOS app with warden's network dylib, so
+	 * network and clock steps reach it live.
+	 */
+	setup?: readonly (readonly string[])[];
 	/**
 	 * `warden ui wait` selectors that must pass (after the deep link, before the video starts) so no step
 	 * presses a screen that has not mounted. E.g. `["id=bio-screen", "id=bio-unlock"]`.
@@ -97,6 +107,7 @@ export type RenderPlan = {
 	subtitle: string;
 	terminalTitle: string;
 	footer: { left: string; right: string };
+	phoneCaption: string;
 	steps: readonly PlanStep[];
 	outro: string;
 	outroS: number;

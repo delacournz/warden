@@ -65,10 +65,50 @@ async function saveFailure(
 	log(`failure snapshot: ${file}`);
 }
 
+/** The 9:41 status bar every take wears. */
+const STATUS_BAR = [
+	"--time",
+	"9:41",
+	"--batteryState",
+	"charged",
+	"--batteryLevel",
+	"100",
+	"--cellularBars",
+	"4",
+	"--wifiBars",
+	"3",
+];
+
+/** Sets the take's system appearance; returns the one to restore afterwards, or nothing when none was asked. */
+async function applyAppearance(def: DemoDefinition, udid: string, cwd: string, deps: RecordDeps) {
+	if (!def.app.appearance) return undefined;
+	const was = await deps.exec(["xcrun", "simctl", "ui", udid, "appearance"], { cwd });
+	await deps.exec(["xcrun", "simctl", "ui", udid, "appearance", def.app.appearance], { cwd });
+	return was.stdout.trim() || "light";
+}
+
+/** Everything else before the camera rolls: status bar, a fresh app launch, `setup`, the deep link, `ready`. */
+async function prepare(
+	def: DemoDefinition,
+	udid: string,
+	cwd: string,
+	deps: RecordDeps,
+	must: (args: readonly string[]) => Promise<ExecResult>
+): Promise<void> {
+	const dev = ["--udid", udid];
+	await deps.exec(["xcrun", "simctl", "status_bar", udid, "override", ...STATUS_BAR], { cwd });
+	await must(["ui", "open", def.app.bundleId, "--kind", def.app.kind, "--relaunch", ...dev]);
+	for (const argv of def.setup ?? []) await must([...argv, ...dev]);
+	if (def.app.deepLink) await must(["ui", "open", def.app.deepLink, "--settle", ...dev]);
+	for (const selector of def.ready) await must(["ui", "wait", selector, "--timeout", "30000", ...dev]);
+}
+
 export async function record(
 	def: DemoDefinition,
 	repoRoot: string,
 	outDir: string,
+	/** `warden claim --label`, from `demoPaths` (no slash). */
+	label: string,
 	deps: RecordDeps = defaultDeps
 ): Promise<RecordedTake> {
 	const cli = ["bun", join(repoRoot, "apps/cli/src/cli.ts")];
@@ -84,38 +124,18 @@ export async function record(
 
 	await mkdir(outDir, { recursive: true });
 	const takePath = join(outDir, "take.mp4");
-	const claimArgs = ["claim", def.platform, "--json", "--label", `demo-${def.name}`];
+	// a bare agent claim lasts 5 min unrefreshed: a first native build in `ui open --kind` outlives it
+	const claimArgs = ["claim", def.platform, "--json", "--label", label, "--ttl", "30m"];
 	if (def.claim.biometrics) claimArgs.push("--biometrics");
 	if (def.claim.profile) claimArgs.push("--profile", def.claim.profile);
 	const lease = parseClaim((await must(claimArgs)).stdout);
 	deps.log(`claimed ${lease.udid} (lease ${lease.leaseId})`);
 	const dev = ["--udid", lease.udid];
 	let videoStarted = false;
+	let restoreAppearance: string | undefined;
 	try {
-		await deps.exec(
-			[
-				"xcrun",
-				"simctl",
-				"status_bar",
-				lease.udid,
-				"override",
-				"--time",
-				"9:41",
-				"--batteryState",
-				"charged",
-				"--batteryLevel",
-				"100",
-				"--cellularBars",
-				"4",
-				"--wifiBars",
-				"3",
-			],
-			{ cwd: projectDir }
-		);
-		await must(["ui", "open", def.app.bundleId, "--kind", def.app.kind, "--relaunch", ...dev]);
-		if (def.app.deepLink) await must(["ui", "open", def.app.deepLink, "--settle", ...dev]);
-
-		for (const selector of def.ready) await must(["ui", "wait", selector, "--timeout", "30000", ...dev]);
+		restoreAppearance = await applyAppearance(def, lease.udid, projectDir, deps);
+		await prepare(def, lease.udid, projectDir, deps, must);
 		await must(["ui", "screen", "video", "start", takePath, ...dev]);
 		videoStarted = true;
 		const t0 = deps.now();
@@ -145,6 +165,10 @@ export async function record(
 	} finally {
 		if (videoStarted) await run(["ui", "screen", "video", "stop", ...dev]).catch(() => undefined);
 		await deps.exec(["xcrun", "simctl", "status_bar", lease.udid, "clear"], { cwd: projectDir }).catch(() => undefined);
+		if (restoreAppearance)
+			await deps
+				.exec(["xcrun", "simctl", "ui", lease.udid, "appearance", restoreAppearance], { cwd: projectDir })
+				.catch(() => undefined);
 		const rel = await run(["release", lease.leaseId]);
 		deps.log(rel.code === 0 ? `released ${lease.leaseId}` : `release ${lease.leaseId} failed: ${rel.stderr.trim()}`);
 	}

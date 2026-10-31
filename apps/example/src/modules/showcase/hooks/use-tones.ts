@@ -1,18 +1,18 @@
 import { useMemo } from "react";
 import { useCSSVariable } from "uniwind";
-import { TONE_VARIABLE, type VaultTone } from "../utils/vault-theme";
+import { TONE_VARIABLE, type Tone } from "../utils/tones";
 
 /** A tone resolved to a colour string for props that cannot take a className: SVG strokes, gradient stops, Reanimated. */
-export type VaultTones = Record<VaultTone, string>;
+export type Tones = Record<Tone, string>;
 
 /** What a tone reads as when its variable is missing: transparent, so a miss shows up on screen instead of lying. */
 const MISSING = "transparent";
 
 /**
- * The vault's tones as plain colour strings, read from the active theme (`styles/app.css`). Follows light / dark.
+ * The showcase tones as plain colour strings, read from the active theme (`styles/app.css`). Follows light / dark.
  * The result keeps its identity until a colour actually changes, so it is safe in an effect's dependencies.
  */
-export function useVaultTones(): VaultTones {
+export function useTones(): Tones {
 	const [idle, scan, open, warn, off] = useCSSVariable([
 		TONE_VARIABLE.idle,
 		TONE_VARIABLE.scan,

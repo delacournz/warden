@@ -41,12 +41,12 @@ const group = {
 	backgroundColor: SURFACE,
 };
 
-/** The warden mark (`components/warden-icon.tsx`): a device outline with its lease lamp lit. */
+/** The warden mark (`components/warden-icon.tsx`): a pair of brackets around its lease lamp. */
 function Mark({ size }: { size: number }): ReactElement {
 	return (
 		<svg aria-hidden="true" fill="none" height={size} viewBox="0 0 24 24" width={size}>
-			<rect height="20" rx="4.5" stroke={INK} strokeWidth="2" width="13" x="3" y="2" />
-			<circle cx="18" cy="6" fill={LAMP} r="4" />
+			<path d="M9 3H4V21H9M15 3H20V21H15" stroke={INK} strokeWidth="2.5" />
+			<rect fill={LAMP} height="6" width="6" x="9" y="9" />
 		</svg>
 	);
 }

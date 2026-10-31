@@ -4,6 +4,8 @@ description: Change the network, GPS location and clock of a simulator or emulat
 icon: Signal
 ---
 
+<DemoTabs ids={["network", "fault", "location", "clock"]} />
+
 A spec can put the device into a condition (offline, 3G, a flapping connection, one host failing, a moving GPS fix, a clock two weeks ahead) and check what the app does. Everything a test changes belongs to its lease: when the test ends, or the lease is released or reclaimed, warden puts it back, so the next agent never inherits a shaped device.
 
 ```ts title="e2e/network-offline.e2e.ts"

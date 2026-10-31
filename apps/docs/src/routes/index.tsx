@@ -3,10 +3,29 @@ import { HomeLayout } from "fumadocs-ui/layouts/home";
 import type { ReactElement, ReactNode } from "react";
 import { CopyBlock } from "@/components/copy-block";
 import { InstallCommand } from "@/components/install-command";
+import { ClipTabs } from "@/components/landing/clip-tabs";
 import { DemoVideo } from "@/components/landing/demo-video";
+import { GlitchWord } from "@/components/landing/glitch-word";
+import { RichText } from "@/components/rich-text";
 import { WardenIcon } from "@/components/warden-icon";
 import { ANALYTICS } from "@/lib/analytics/config";
 import { CONSENT_OPEN_EVENT } from "@/lib/analytics/consent";
+import {
+	BOARD_COPY,
+	CLOSING,
+	type Claim,
+	DEVICE_CONTROL,
+	FAQ,
+	type Feature as FeatureData,
+	FIRST_PROMPT,
+	HERO,
+	HOW_IT_WORKS,
+	ON_THE_DEVICE,
+	SAFE_BY_DEFAULT,
+	type Step as StepData,
+	USE_CASES,
+	WHAT_YOU_GET,
+} from "@/lib/landing.data";
 import { baseOptions } from "@/lib/layout.shared";
 import { canonicalLink, softwareApplicationJsonLd, tagline } from "@/lib/seo";
 import { appDescription, appName, githubUrl, privacyRoute } from "@/lib/shared";
@@ -88,45 +107,6 @@ const BOARD: readonly {
 	{ agent: "Gemini CLI", worktree: "feature/search", device: "next boot slot", port: "—", build: "—", state: "queued" },
 ];
 
-const DEV_SAMPLE = `# worktree 1: feature/checkout
-$ warden dev ios --json
-# worktree 2: fix/login-crash, at the same time
-$ warden dev ios --json
-# each gets its own simulator and Metro port,
-# and the cached build for its native fingerprint`;
-
-const DEBUG_SAMPLE = `# what broke, from the running app
-$ warden dev logs --kind bundle_failed,error
-$ warden ui exceptions
-$ warden ui network --status 4xx
-# why it is slow
-$ warden perf record --all --duration 15s --udid $UDID
-# or all of it over MCP
-$ claude mcp add warden -- warden mcp`;
-
-const DRIVE_SAMPLE = `# your agent, on its own simulator
-$ warden claim ios --json
-$ warden ui open com.example.app
-$ warden ui snapshot -i
-@e1 [textbox] "Add a todo" id=todo-input value="" enabled hittable
-@e2 [button] "Add" id=todo-add enabled hittable
-$ warden ui fill @e1 "Write e2e specs"
-$ warden ui press @e2 --settle
-$ warden ui wait text="Write e2e specs"`;
-
-const KEEP_SAMPLE = `import { expect, test } from "@delacour/warden-e2e";
-
-test("add a todo", async ({ screen }) => {
-  await screen.getByTestId("todo-input").fill("Write e2e specs");
-  await screen.getByTestId("todo-add").tap();
-  await expect(screen.getByText("Write e2e specs")).toBeVisible();
-  await expect(screen.getByTestId("remaining")).toHaveText("2 left");
-});`;
-
-const AGENT_PROMPT = `Install warden (npm i -g @delacour/warden && warden install) and set this Expo app up with warden init.
-Run the app from this worktree with warden dev, then drive it with warden ui and check the home screen renders.
-Save what you checked as an e2e spec under e2e/, run it with warden e2e, and release the simulator when you're done.`;
-
 /** Measured on Salient's 37 offline specs, iPhone 17 simulators, Oct 2026: job phase after the serve step is ready. */
 const RUNS = [
 	{ label: "1 simulator", time: "13m55s", seconds: 835 },
@@ -134,14 +114,11 @@ const RUNS = [
 ] as const;
 
 /**
- * The landing in the familiar agent dev-tool frame, told around one promise:
- * every agent gets its own simulator. A centered hero with one install command
- * and the recorded run, a "Works with" row of agent marks, the lease board
- * (five agents on one Mac and what each holds), the lease rules, then what an
- * agent does on its simulator as five alternating feature blocks (run, drive,
- * debug, keep, run the suite), the first-prompt block, use-case cards, the FAQ
- * and a closing call to action that repeats the install. Every heading uses
- * the one display voice, Mona Sans wide and heavy.
+ * The landing, told around one promise: every agent gets its own simulator. The hero with one install command and the
+ * recorded run, the agents it works with, how it works in three commands, the lease board (five agents on one Mac),
+ * what the leasing gives you, what an agent does on its device (run, drive, debug, keep, run the suite), the device
+ * conditions as recorded clips, what warden will and won't touch, the first prompt, use cases, the FAQ and a closing
+ * install. Every claim is data in `landing.data.ts`, held to the code by `landing.test.ts`.
  */
 function Home(): ReactElement {
 	return (
@@ -155,18 +132,18 @@ function Home(): ReactElement {
 						target="_blank"
 					>
 						<span className="size-1.5 rounded-full bg-accent" />
-						open source · MIT · iOS + Android
+						{HERO.pill}
 					</a>
 					<h1 className={`max-w-5xl text-balance text-[clamp(2.6rem,6.4vw,5.4rem)] text-ink leading-[0.95] ${DISPLAY}`}>
-						Every agent gets its own <span className="text-accent">simulator.</span>
+						Every <GlitchWord className="accent-voice text-accent">agent</GlitchWord> gets its own{" "}
+						<GlitchWord className="accent-voice text-accent" offset>
+							simulator.
+						</GlitchWord>
 					</h1>
-					<p className="max-w-2xl text-balance text-ink-2 text-lg leading-relaxed sm:text-xl">
-						warden leases iOS simulators, Android emulators, ports and app builds across every worktree on your Mac, so
-						parallel agents build, run and test your app without stepping on each other.
-					</p>
+					<p className="max-w-2xl text-balance text-ink-2 text-lg leading-relaxed sm:text-xl">{HERO.lede}</p>
 					<div className="flex w-full max-w-xl flex-col items-center gap-3">
 						<InstallCommand className="w-full items-center text-start" setup />
-						<p className="text-ink-2 text-sm">Installs the CLI and the skill for every agent it finds.</p>
+						<p className="text-ink-2 text-sm">{HERO.installNote}</p>
 					</div>
 					<div className="flex flex-wrap justify-center gap-2">
 						<PrimaryLink to="quickstart">Get started</PrimaryLink>
@@ -203,123 +180,48 @@ function Home(): ReactElement {
 					</p>
 				</section>
 
-				<Section
-					lede="Each agent works in its own worktree. warden hands each one a simulator, a Metro port and the build for its fingerprint, and never hands the same one to two owners."
-					title="One Mac. Every branch at once."
-				>
+				<Section id="how-it-works" lede={HOW_IT_WORKS.lede} title={HOW_IT_WORKS.title}>
+					<ol className="grid grid-cols-1 gap-4 md:grid-cols-3">
+						{HOW_IT_WORKS.steps.map((step) => (
+							<Step key={step.n} step={step} />
+						))}
+					</ol>
+				</Section>
+
+				<Section lede={BOARD_COPY.lede} title={BOARD_COPY.title}>
 					<LeaseBoard />
 				</Section>
 
-				<Section
-					lede="Every agent, worktree, CI job and shell on your Mac claims from one lease registry. Two agents asking at the same instant are served in turn, never both."
-					title="Parallel, never shared."
-				>
-					<div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-						<Card command="BEGIN IMMEDIATE" title="One registry">
-							Leases live in one sqlite db at <Code>~/.warden/warden.db</Code>. Every claim is a transaction, so there
-							are no lockfiles to go stale.
-						</Card>
-						<Card command="--adopt" title="Your simulator stays yours">
-							A device warden didn't create or lease is read-only: never handed to an agent, shut down, erased or
-							installed on.
-						</Card>
-						<Card command="SessionEnd" title="Cleans up after itself">
-							When a session ends, the hook shuts down the simulators it booted and releases its leases.
-						</Card>
-						<Card command="warden golden" title="New simulators in seconds">
-							Pool devices clone from a settled golden image: 3.7 s clone plus 11.9 s boot, instead of 146–239 s.
-						</Card>
-						<Card command="warden capacity" title="Boots wait their turn">
-							Claims queue by host RAM, CPU and priority, so ten agents don't boot ten simulators at once.
-						</Card>
-						<Card command="warden app ensure" title="One build, every worktree">
-							Builds are cached by native fingerprint and shared by every worktree of the repo. A native change builds
-							once.
-						</Card>
-					</div>
+				<Section accent={WHAT_YOU_GET.accent} lede={WHAT_YOU_GET.lede} title={WHAT_YOU_GET.title}>
+					<CardGrid cards={WHAT_YOU_GET.cards} columns="sm:grid-cols-2 lg:grid-cols-4" />
 				</Section>
 
-				<Section
-					lede="Once it holds a simulator, your agent runs the app, drives it, reads what went wrong and keeps what it checked as a test. Every step stays on its own device."
-					title="Everything it needs on that simulator."
-				>
+				<Section lede={ON_THE_DEVICE.lede} title={ON_THE_DEVICE.title}>
 					<div className="flex flex-col gap-20 sm:gap-28">
-						<Feature
-							label="Run it"
-							link={{ to: "agents/dev", text: "Dev client per worktree" }}
-							points={[
-								"Claims a device and leases a Metro port per worktree",
-								"Installs the cached build: installed, cache, EAS, then local",
-								"Never attaches to another checkout's Metro",
-								"Expo or bare React Native, with or without a config",
-							]}
-							title="warden dev in every worktree"
-						>
-							<Terminal code={DEV_SAMPLE} label="terminal" />
-						</Feature>
-						<Feature
-							flip
-							label="Drive it"
-							link={{ to: "agents/ui", text: "Drive a device" }}
-							points={[
-								"Reads the screen as @e refs: role, name, testID, state",
-								"Presses, fills, scrolls, waits and checks",
-								"Every call checks the lease and heartbeats it",
-								"Another agent's simulator is never a valid target",
-							]}
-							title="Simulator control for agents"
-						>
-							<Terminal code={DRIVE_SAMPLE} label="terminal" />
-						</Feature>
-						<Feature
-							label="Debug it"
-							link={{ to: "agents/debug", text: "Debug the running app" }}
-							points={[
-								"Metro's bundle failures, with file, line and code frame",
-								"The app's console, exceptions and network, symbolicated",
-								"CPU, memory, frames, startup and React profiles with warden perf",
-								"The same functions as MCP tools with warden mcp",
-							]}
-							title="Logs, network and profiles"
-						>
-							<Terminal code={DEBUG_SAMPLE} label="terminal" />
-						</Feature>
-						<Feature
-							flip
-							label="Keep it"
-							link={{ to: "e2e/first-test", text: "Write your first test" }}
-							points={[
-								"The testIDs warden ui found become the spec's locators",
-								"Specs are TypeScript on bun test with nine matchers",
-								"warden ui and specs share one driver, so a check that passed by hand passes in the spec",
-								"The warden skill tells the agent when a check belongs in a spec",
-							]}
-							title="What it verified becomes a test"
-						>
-							<Terminal code={KEEP_SAMPLE} label="e2e/add-todo.e2e.ts" />
-						</Feature>
-						<Feature
-							label="Run the suite"
-							link={{ to: "e2e", text: "How e2e works" }}
-							points={[
-								"warden e2e leases N simulators and installs the build",
-								"Starts Metro on its own port, one bun test per device",
-								"warden affected runs only the specs a diff reaches",
-								"Failures leave a screenshot, the screen tree and a trace",
-							]}
-							title="The suite on every simulator at once"
-						>
-							<RunChart />
-						</Feature>
+						{ON_THE_DEVICE.features.map((feature, i) => (
+							<Feature feature={feature} flip={i % 2 === 1} key={feature.label}>
+								{feature.sample ? <Terminal code={feature.sample.code} label={feature.sample.label} /> : <RunChart />}
+							</Feature>
+						))}
 					</div>
 				</Section>
 
 				<Section
-					lede="Paste this into Claude Code, Codex, Cursor or any agent in your app's directory. The warden skill tells it the rest."
-					title="Productive from the first prompt."
+					accent={DEVICE_CONTROL.accent}
+					id="device-control"
+					lede={DEVICE_CONTROL.lede}
+					title={DEVICE_CONTROL.title}
 				>
+					<ClipTabs clips={DEVICE_CONTROL.clips} />
+				</Section>
+
+				<Section accent={SAFE_BY_DEFAULT.accent} lede={SAFE_BY_DEFAULT.lede} title={SAFE_BY_DEFAULT.title}>
+					<CardGrid cards={SAFE_BY_DEFAULT.cards} columns="sm:grid-cols-2 lg:grid-cols-4" />
+				</Section>
+
+				<Section lede={FIRST_PROMPT.lede} title={FIRST_PROMPT.title}>
 					<div className="mx-auto grid w-full max-w-4xl grid-cols-1 gap-4 text-start">
-						<CopyBlock label="prompt" text={AGENT_PROMPT} />
+						<CopyBlock label="prompt" text={FIRST_PROMPT.prompt} />
 						<div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
 							<AgentLink href="/llms.txt" note="every docs page, indexed">
 								/llms.txt
@@ -334,71 +236,24 @@ function Home(): ReactElement {
 					</div>
 				</Section>
 
-				<Section
-					lede="The jobs agents get asked to do on a mobile app, and the warden command behind each."
-					title="What agents build with it."
-				>
-					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-						<Card command="warden dev" title="Parallel worktrees">
-							Five agents, five worktrees, five simulators and five Metro ports, side by side on one Mac.
-						</Card>
-						<Card command="warden ui wait" title="Verify a UI change">
-							The agent changes a screen, opens it on its own simulator and checks it before it says done.
-						</Card>
-						<Card command="warden ui snapshot" title="Reproduce a bug">
-							Walk the steps from the issue on a clean device, then keep the repro as a failing spec.
-						</Card>
-						<Card command="warden affected" title="Gate every pull request">
-							Only the specs a diff reaches run, in CI or a pre-push hook, across leased simulators.
-						</Card>
-					</div>
+				<Section lede={USE_CASES.lede} title={USE_CASES.title}>
+					<CardGrid cards={USE_CASES.cards} columns="sm:grid-cols-2 lg:grid-cols-3" />
 				</Section>
 
-				<Section lede="Short answers. The docs have the long ones." title="Questions.">
+				<Section lede={FAQ.lede} title={FAQ.title}>
 					<div className="faq mx-auto flex w-full max-w-3xl flex-col border-hairline border-t text-start">
-						<Faq q="What is warden?">
-							An open-source CLI and e2e framework that gives every coding agent its own iOS simulator or Android
-							emulator, Metro port and app build, so agents in parallel worktrees never collide. On that device the
-							agent runs, drives and debugs the app, saves what it verified as a test, and runs suites in parallel.
-						</Faq>
-						<Faq q="How do I install it?">
-							<Code>npm i -g @delacour/warden && warden install</Code>. The second command wires the skill and hooks for
-							the agents it finds, showing a diff and asking first.
-						</Faq>
-						<Faq q="Can two agents end up on the same simulator?">
-							No. Every claim is a transaction in one registry on the Mac, so a device or port has one owner at a time.
-							<Code>warden ui</Code> checks the lease on every call.
-						</Faq>
-						<Faq q="Does it work on Android?">
-							Yes. warden leases Android emulators (launched <Code>-read-only</Code>), and <Code>warden ui</Code> and
-							specs drive them. iOS needs macOS with Xcode.
-						</Faq>
-						<Faq q="Which agents does it support?">
-							Any agent the skills CLI installs into gets the warden skill: Claude Code, Codex, Cursor, GitHub Copilot,
-							Gemini CLI, OpenCode, Windsurf, Zed and more. Claude Code and Codex also get the SessionEnd cleanup hook.
-						</Faq>
-						<Faq q="Is there an MCP server?">
-							Yes. <Code>warden mcp</Code> serves a <Code>warden dev</Code> session's Metro output, console, exceptions,
-							network, eval, logpoints and profiles over stdio. Devices, specs and suites stay on the CLI.
-						</Faq>
-						<Faq q="What does my app need?">
-							Build, dev-client and Metro handling target Expo and React Native. <Code>warden ui</Code> and specs drive
-							any installed app by bundle id; elements are found by testID, label, text or role.
-						</Faq>
-						<Faq q="Will it touch my own Simulator.app?">
-							No. A booted device warden didn't create or lease is read-only. It is never handed to an agent unless you
-							pass <Code>--adopt</Code>.
-						</Faq>
-						<Faq q="How much does it cost?">
-							Nothing. warden is MIT-licensed and runs on your own Mac or CI runner. No account, no cloud.
-						</Faq>
+						{FAQ.items.map((item) => (
+							<Faq key={item.q} q={item.q}>
+								<RichText text={item.a} />
+							</Faq>
+						))}
 					</div>
 				</Section>
 
 				<section className={`${PAGE} pt-28 sm:pt-36`}>
 					<div className="flex flex-col items-center gap-8 rounded-[var(--radius-group)] border border-hairline bg-surface px-6 py-16 text-center sm:py-20">
 						<h2 className={`max-w-3xl text-balance text-[clamp(2.2rem,5vw,4rem)] text-ink leading-[0.95] ${DISPLAY}`}>
-							Give every agent a simulator of its own.
+							{CLOSING.title}
 						</h2>
 						<div className="flex w-full max-w-xl flex-col items-center gap-4">
 							<InstallCommand className="w-full items-center text-start" setup />
@@ -449,12 +304,30 @@ function Home(): ReactElement {
 	);
 }
 
-/** A centered section: display heading, one plain sentence under it, then the content. */
-function Section({ title, lede, children }: { title: string; lede: ReactNode; children: ReactNode }): ReactElement {
+/**
+ * A centered section: display heading, its last words in the accent when `accent` is given, one plain sentence under
+ * it, then the content. `id` makes it a link target.
+ */
+function Section({
+	title,
+	accent,
+	lede,
+	id,
+	children,
+}: {
+	title: string;
+	accent?: string;
+	lede: ReactNode;
+	id?: string;
+	children: ReactNode;
+}): ReactElement {
 	return (
-		<section className={`${PAGE} flex flex-col gap-12 pt-28 sm:pt-36`}>
+		<section className={`${PAGE} flex scroll-mt-20 flex-col gap-12 pt-28 sm:pt-36`} id={id}>
 			<div className="mx-auto flex max-w-3xl flex-col items-center gap-4 text-center">
-				<h2 className={`text-balance text-[clamp(2.2rem,4.6vw,3.6rem)] text-ink leading-[0.98] ${DISPLAY}`}>{title}</h2>
+				<h2 className={`text-balance text-[clamp(2.2rem,4.6vw,3.6rem)] text-ink leading-[0.98] ${DISPLAY}`}>
+					{title}
+					{accent ? <span className="accent-voice text-accent"> {accent}</span> : null}
+				</h2>
 				<p className="max-w-2xl text-balance text-ink-2 text-lg leading-relaxed">{lede}</p>
 			</div>
 			{children}
@@ -462,29 +335,43 @@ function Section({ title, lede, children }: { title: string; lede: ReactNode; ch
 	);
 }
 
+/** One numbered step of how it works: the number, a title, one sentence and the command it is. */
+function Step({ step }: { step: StepData }): ReactElement {
+	return (
+		<li className="flex flex-col gap-3 rounded-[var(--radius-group)] border border-hairline bg-surface p-6 text-start">
+			<span className="font-mono text-accent-text text-xs tabular-nums">{step.n}</span>
+			<h3 className="text-ink text-xl leading-tight tracking-[-0.02em] [font-variation-settings:'wdth'_120,'wght'_720]">
+				{step.title}
+			</h3>
+			<p className="flex-1 text-ink-2 leading-relaxed">
+				<RichText text={step.body} />
+			</p>
+			<code className="overflow-x-auto whitespace-nowrap rounded-[4px] bg-fill px-2 py-1.5 font-mono text-[12px] text-ink">
+				$ {step.command}
+			</code>
+		</li>
+	);
+}
+
 /** One step of the loop: label, heading and verb-first points beside its working sample; `flip` swaps the sides. */
 function Feature({
-	label,
-	title,
-	points,
-	link,
-	flip = false,
+	feature,
+	flip,
 	children,
 }: {
-	label: string;
-	title: string;
-	points: readonly string[];
-	link: { to: string; text: string };
-	flip?: boolean;
+	feature: FeatureData;
+	flip: boolean;
 	children: ReactNode;
 }): ReactElement {
 	return (
 		<article className="grid grid-cols-1 items-center gap-8 lg:grid-cols-2 lg:gap-16">
 			<div className={`flex flex-col gap-5 ${flip ? "lg:order-2" : ""}`}>
-				<p className="font-mono text-accent-text text-xs">{label}</p>
-				<h3 className={`text-balance text-[1.9rem] text-ink leading-[1.02] sm:text-[2.3rem] ${DISPLAY}`}>{title}</h3>
+				<p className="font-mono text-accent-text text-xs">{feature.label}</p>
+				<h3 className={`text-balance text-[1.9rem] text-ink leading-[1.02] sm:text-[2.3rem] ${DISPLAY}`}>
+					{feature.title}
+				</h3>
 				<ul className="flex flex-col border-hairline border-t">
-					{points.map((point) => (
+					{feature.points.map((point) => (
 						<li className="border-hairline border-b py-2.5 text-ink-2 leading-relaxed" key={point}>
 							{point}
 						</li>
@@ -492,10 +379,10 @@ function Feature({
 				</ul>
 				<Link
 					className="self-start font-mono text-ink text-xs underline decoration-ink-2 underline-offset-4 hover:decoration-accent"
-					params={{ _splat: link.to }}
+					params={{ _splat: feature.link.to }}
 					to="/docs/$"
 				>
-					{link.text} →
+					{feature.link.text} →
 				</Link>
 			</div>
 			<div className={`min-w-0 ${flip ? "lg:order-1" : ""}`}>{children}</div>
@@ -579,8 +466,7 @@ function LeaseBoard(): ReactElement {
 				})}
 			</ul>
 			<figcaption className="border-hairline border-t px-4 py-3 font-mono text-[11px] text-ink-2 leading-relaxed sm:px-6">
-				Illustrative. Three worktrees share a native fingerprint, so one cached build serves all three; the fifth claim
-				waits for a boot slot.
+				{BOARD_COPY.caption}
 			</figcaption>
 		</figure>
 	);
@@ -616,15 +502,41 @@ function RunChart(): ReactElement {
 	);
 }
 
-/** A flat sheet: a heading in a slightly narrower cut of the display voice, one sentence, and the command it names. */
-function Card({ title, command, children }: { title: string; command: string; children: ReactNode }): ReactElement {
+/** Claim cards in a grid; `columns` sets the breakpoints above one column. */
+function CardGrid({ cards, columns }: { cards: readonly Claim[]; columns: string }): ReactElement {
+	return (
+		<div className={`grid grid-cols-1 gap-4 ${columns}`}>
+			{cards.map((card) => (
+				<Card card={card} key={card.title} />
+			))}
+		</div>
+	);
+}
+
+/**
+ * A flat sheet: the command it names as a chip, a heading in a slightly narrower cut of the display voice, one or two
+ * sentences, and the docs page that says more.
+ */
+function Card({ card }: { card: Claim }): ReactElement {
 	return (
 		<div className="flex flex-col gap-3 rounded-[var(--radius-group)] border border-hairline bg-surface p-6 text-start">
-			<span className="self-start rounded-[4px] bg-fill px-1.5 py-0.5 font-mono text-[11px] text-ink-2">{command}</span>
+			<span className="self-start rounded-[4px] bg-fill px-1.5 py-0.5 font-mono text-[11px] text-ink-2">
+				{card.command}
+			</span>
 			<h3 className="text-ink text-xl leading-tight tracking-[-0.02em] [font-variation-settings:'wdth'_120,'wght'_720]">
-				{title}
+				{card.title}
 			</h3>
-			<p className="text-ink-2 leading-relaxed">{children}</p>
+			<p className="flex-1 text-ink-2 leading-relaxed">
+				<RichText text={card.body} />
+			</p>
+			<Link
+				aria-label={`Read more: ${card.title}`}
+				className="self-start pt-2 font-mono text-[11px] text-ink uppercase tracking-[0.12em] hover:text-accent-text"
+				params={{ _splat: card.href }}
+				to="/docs/$"
+			>
+				Read more →
+			</Link>
 		</div>
 	);
 }
@@ -654,10 +566,6 @@ function AgentLink({ href, note, children }: { href: string; note: string; child
 			<span className="text-ink-2 text-sm">{note}</span>
 		</a>
 	);
-}
-
-function Code({ children }: { children: ReactNode }): ReactElement {
-	return <code className="rounded-[4px] bg-fill px-1 py-0.5 font-mono text-[0.85em] text-ink">{children}</code>;
 }
 
 const BUTTON = "inline-flex items-center rounded-full px-5 py-2.5 text-sm transition-colors";

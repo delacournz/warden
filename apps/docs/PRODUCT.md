@@ -28,7 +28,7 @@ Success: an agent proves its own UI change on a real simulator in the same sessi
 
 Tagline: **"Every agent gets its own simulator."** Lead with isolation for parallel agents across worktrees (devices, ports, builds), then what the agent does on that device; testing is one capability, not the headline.
 
-Agent device control and an e2e test framework in one tool, on one shared driver, made parallel-safe by machine-level leasing. One sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) is shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden ui` and the spec runner use the same driver, so `warden ui record` … `export` turns an exploration into a spec. It never touches devices it didn't create or lease.
+Leasing, agent device control and an e2e test framework in one CLI, on one shared driver (no second tool for device control, no separate lease daemon), made parallel-safe by machine-level leasing. One sqlite lease registry (`~/.warden/warden.db`, `BEGIN IMMEDIATE` as the cross-process mutex) is shared by every agent session, worktree, repo, CI job and user shell on the Mac. `warden ui` and the spec runner use the same driver, so `warden ui record` … `export` turns an exploration into a spec. It never touches devices it didn't create or lease.
 
 ## Operating Context
 
@@ -43,8 +43,10 @@ Agent device control and an e2e test framework in one tool, on one shared driver
 - `warden ui`: agent CLI over the spec driver: snapshot as `@eN` refs, selectors (`id= label= text= role= value=`), press/fill/scroll/gesture, wait/is/get, devtools; checks the lease on every call.
 - `@delacour/warden-e2e`: TypeScript spec API (test/expect over `bun test`), iOS + Android driver, fixtures, devtools, failure artifacts.
 - `warden e2e` / `affected`: suites in config, affected-spec selection from the git diff via the import graph, dev-client suites with a warden-owned Metro, multiple device legs, retries/passes, report.
-- Leasing: iOS sims, Android emulators, TCP ports; capacity-aware boot queue by host RAM/CPU and priority; golden-image cloning for fast new sims; Expo-fingerprint app build reuse (installed → cache → EAS → local build); `gc`, `doctor`, self-update, tab completion.
+- Leasing: iOS sims, Android emulators, physical Android phones and iPhones (opt-in `--physical`; never booted, shut down or given device conditions; no app install on an iPhone through warden yet), TCP ports; capacity-aware boot queue by host RAM/CPU and priority; golden-image cloning for fast new sims; Expo-fingerprint app build reuse (installed → cache → EAS → local build); `gc`, `doctor`, self-update, tab completion.
 - Only shuts down devices it created or the owner booted; foreign devices are read-only unless `--adopt`.
+- Device conditions on simulators/emulators: network (`set`, `flap`, `fault`), location (`set`, `route`, `gpx`), clock, permissions, biometrics (Face ID / Touch ID on iOS sims, fingerprint on emulators); undone on release.
+- Not built (never claim): HTTP API, auth tokens/roles, published leasing client, web console, remote workers / fleet, MCP lease tools, crash reboot under the same lease, a pre-booted warm pool, auto-delete of idle sims. Tracked in `~/.claude/plans/wdn-next-landing-gaps.md`.
 - Distribution: published on npm. `npm i -g @delacour/warden && warden install` (or `bunx` / `npx @delacour/warden install`); `@delacour/warden-e2e` as a dev dependency at the same version. macOS for iOS; Linux binary exists; no Windows.
 - Repo is public: github.com/delacournz/warden. MIT.
 - Docs site: Fumadocs + TanStack Start + Tailwind v4 in `apps/docs`; content in `content/docs/**/*.mdx`; every page also served as Markdown.
@@ -53,7 +55,7 @@ Agent device control and an e2e test framework in one tool, on one shared driver
 
 - Name is lowercase `warden`, set as code/CLI.
 - Own identity, independent of the Delacour studio brand; Delacour appears at most as a credit and as the npm scope.
-- Voice: short declarative headlines with a hook, one plain explanatory sentence under each; the agent is the actor ("your agent claims a simulator…"); verb-first capability lists; mechanism first, then the claim; candid about limits and experimental features; exact nouns and numbers over adjectives; coding agents addressed as a first-class audience ("For coding agents").
+- Voice: short declarative headlines with a hook, some split so the last words carry the accent ("It only touches *what it leased.*"), one plain explanatory sentence under each; the agent is the actor ("your agent claims a simulator…"); verb-first capability lists; mechanism first, then the claim; candid about limits and experimental features; exact nouns and numbers over adjectives; coding agents addressed as a first-class audience ("For coding agents").
 - warden's own runner and driver are named freely. Competitors are named only in comparison/benchmark material, factually.
 
 ## Evidence on Hand
@@ -63,6 +65,8 @@ Agent device control and an e2e test framework in one tool, on one shared driver
 - Golden-image measurements: fresh create + first boot 146–239 s; clone of settled golden + boot 3.7 s + 11.9 s; 3 clones in parallel ~20 s; second boot of a pool device ~6.5 s.
 - Real CLI help output and command surface (`apps/cli`), the skill (`skills/warden/`).
 - Agent support is real for: any agent the `skills` CLI installs into (skill), Claude Code and Codex (skill + SessionEnd hook). Agent logos for a "Works with" strip must be the agents' own marks, not redrawn.
+- Device-condition clips (Oct 2026), real simulator takes in `public/demos/<feature>/<clip>.{mp4,jpg}`: `biometrics/faceid`, `network/offline`, `network/fault`, `location/route`, `clock/trial`. Re-recorded with `bun run demo <feature>/<clip>`, never edited.
+- Every landing claim lives in `src/lib/landing.data.ts` with its proof file; `landing.test.ts` holds commands, flags, numbers, links and clips to the code.
 - No testimonials, users, company logos, stars or blog. Do not fabricate any.
 
 ## Product Principles

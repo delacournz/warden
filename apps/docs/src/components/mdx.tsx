@@ -18,6 +18,7 @@ import {
 	BenchSteps,
 	BenchSuite,
 } from "@/components/bench/bench-comparison";
+import { DemoClip, DemoTabs } from "@/components/demo-clip";
 import { isFileHref } from "@/lib/shared";
 
 /**
@@ -45,6 +46,8 @@ export function getMDXComponents(components?: MDXComponents) {
 		BenchStartup,
 		BenchSteps,
 		BenchSuite,
+		DemoClip,
+		DemoTabs,
 		File,
 		Files,
 		Folder,

@@ -1,6 +1,6 @@
 ---
 name: warden
-description: The familiar agent dev-tool landing in one wide heavy display voice; flat paper, one ink, one orange accent.
+description: The familiar agent dev-tool landing in three voices: thick human words, squared technical accents that drop signal, thin machine mono; flat paper, one ink, one orange accent.
 colors:
   ground: "#f5f4ef"
   surface: "#fdfcf9"
@@ -29,6 +29,12 @@ typography:
     lineHeight: "0.95 to 1.02"
     letterSpacing: "-0.035em"
     fontVariation: "'wdth' 125, 'wght' 800"
+  accent:
+    fontFamily: "Chakra Petch, Mona Sans Variable, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.08em of the heading it sits in"
+    fontWeight: 600
+    lineHeight: 0
+    letterSpacing: "0.005em"
   card-title:
     fontFamily: "Mona Sans Variable, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.25rem"
@@ -49,15 +55,15 @@ typography:
     fontWeight: 400
     lineHeight: 1.625
   readout:
-    fontFamily: "Martian Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
+    fontFamily: "JetBrains Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
     fontSize: "11px"
-    fontWeight: 400
+    fontWeight: 300
     letterSpacing: "normal"
     fontFeature: "tabular-nums"
   command:
-    fontFamily: "Martian Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
+    fontFamily: "JetBrains Mono Variable, ui-monospace, SF Mono, Menlo, monospace"
     fontSize: "12.5px"
-    fontWeight: 400
+    fontWeight: 300
     lineHeight: 1.625
     fontFeature: "tabular-nums"
 rounded:
@@ -115,18 +121,21 @@ components:
 
 ## Overview
 
-**Creative North Star: "One Voice, Familiar Frame"**
+**Creative North Star: "Thick Human, Thin Machine"**
 
-The landing follows the familiar agent dev-tool frame: a centered hero with a pill, headline, one-sentence lede, install command and two buttons; the recorded run; a centered "Works with" row of agent marks; the lease board (five agents on one Mac and what each holds); the lease rules as cards; what an agent does on its simulator as five alternating feature blocks (run, drive, debug, keep, run the suite: copy beside a working sample); the first prompt; use-case cards; FAQ; a closing install sheet. What makes it warden's is one display voice: Mona Sans at wdth 125 / wght 800 with tight tracking on every heading, on flat paper with one ink and one orange. Martian Mono at 11-12.5px carries whatever a machine prints.
+The landing follows the familiar agent dev-tool frame: a centered hero with a pill, headline, one-sentence lede, install command and two buttons; the recorded run; a centered "Works with" row of agent marks; how it works as three numbered step cards (install, claim, drive and keep, each one command); the lease board (five agents on one Mac and what each holds); what you get as eight claim cards; what an agent does on its device as five alternating feature blocks (run, drive, debug, keep, run the suite: copy beside a working sample); device control as tabbed real-simulator clips; safe by default as four claim cards; the first prompt; use-case cards; FAQ; a closing install sheet. All copy is data in `src/lib/landing.data.ts`. What makes it warden's is three voices with fixed jobs, on flat paper with one ink and one orange. The human words are thick: Mona Sans at wdth 125 / wght 800 with tight tracking on every heading. The technical nouns and claim tails are squared off: Chakra Petch 600 in Foundry Orange, slimmer than the words around them, and in the hero they drop signal like a simulator screen. Whatever a machine prints is thin and rigid: JetBrains Mono 300 at 11-12.5px. The contrast between chunky human copy and thin technical type is the identity; neither voice borrows the other's weight.
 
 The docs (Fumadocs) wear the same tokens so the chrome is one world. Docs pages are quiet prose on the same paper.
 
 **Key Characteristics:**
-- One display voice (wide, heavy) for every heading; no condensed or light display cuts.
+- Thick human voice (Mona Sans wide, heavy) for every heading; no condensed or light display cuts.
+- Squared accent voice (Chakra Petch 600, orange) for the technical nouns and claim tails inside a heading.
+- Thin machine voice (JetBrains Mono 300) for commands, ids and readouts.
 - Familiar, centered section rhythm: heading + one plain sentence, then content.
 - Flat everywhere: hairlines and tonal sheets, no shadows.
 - One accent, used large (the headline's last words, the parallel bar, the lamp) and nowhere small.
 - Mono is for commands, ids and readouts only, never for sentences.
+- The hero's accent words glitch on their own clocks, drifting in and out of phase: short stepped bursts, idle in between, still under reduced motion.
 - Light and dark are the same system on warm paper / warm ink.
 
 ## Colors
@@ -134,7 +143,7 @@ The docs (Fumadocs) wear the same tokens so the chrome is one world. Docs pages 
 Warm paper and warm ink with a single saturated foundry orange. Dark mode keeps the same roles on near-black with a lifted accent. Values are the Tailwind `@theme` tokens in `src/styles/app.css`; dark values override under `.dark` (class toggle, not OS).
 
 ### Primary
-- **Foundry Orange** (accent `#ff4f1a`, dark `#ff6a3d`): the hero's "simulator.", the lamps on the lease board, the accelerated-run bar and time, the caret, text selection tint, the lamp in the warden mark, the closing period of the wordmark, and the primary button hover. About 3.2:1 on paper, so it is for large marks only.
+- **Foundry Orange** (accent `#ff4f1a`, dark `#ff6a3d`): the hero's "agent" and "simulator.", every section heading's accent tail, the lamps on the lease board, the accelerated-run bar and time, the caret, text selection tint, the lamp in the warden mark, the closing period of the wordmark, and the primary button hover. About 3.2:1 on paper, so it is for large marks only.
 - **Orange Text** (accent-text `#b8360a`, dark `#ff8a63`): the only orange allowed at small sizes (+hook tags, FAQ hover). Passes body contrast.
 
 ### Neutral
@@ -153,22 +162,25 @@ Warm paper and warm ink with a single saturated foundry orange. Dark mode keeps 
 ## Typography
 
 **Display / Body Font:** Mona Sans Variable (`@fontsource-variable/mona-sans/wdth.css`, wdth + wght axes) with ui-sans-serif, system-ui.
-**Label / Mono Font:** Martian Mono Variable with ui-monospace, SF Mono, Menlo.
+**Accent Font:** Chakra Petch (`@fontsource/chakra-petch`, static 500/600/700 latin) with Mona Sans as fallback.
+**Label / Mono Font:** JetBrains Mono Variable (`@fontsource-variable/jetbrains-mono/wght.css`) with ui-monospace, SF Mono, Menlo.
 
-**Character:** One sans face pushed through its whole width and weight range, so contrast is carried by axis settings rather than by a second family. Mono is the machine's voice: it prints what the terminal prints.
+**Character:** Three voices, each with one job. Mona Sans pushed to its full width and weight is the human: thick, wide, loud. Chakra Petch is the instrument: squared terminals and cut corners, set lighter than the words around it, so a technical noun reads as a part fitted into the sentence. JetBrains Mono at 300 is the machine: thin, rigid, fixed pitch; it prints what the terminal prints.
 
 ### Hierarchy
-- **Display** (wdth 125, wght 800, -0.035em): hero H1 `clamp(2.6rem,6.4vw,5.4rem)` at 0.95; section H2 `clamp(2.2rem,4.6vw,3.6rem)` at 0.98; feature H3 1.9rem / 2.3rem; closing H2 `clamp(2.2rem,5vw,4rem)`; run-chart times 2.1rem; the 404. Every heading on the landing uses it.
+- **Display** (Mona Sans, wdth 125, wght 800, -0.035em): hero H1 `clamp(2.6rem,6.4vw,5.4rem)` at 0.95; section H2 `clamp(2.2rem,4.6vw,3.6rem)` at 0.98; feature H3 1.9rem / 2.3rem; closing H2 `clamp(2.2rem,5vw,4rem)`; run-chart times 2.1rem; the 404. Every heading on the landing uses it.
+- **Accent** (Chakra Petch 600, 1.08em of its heading, +0.005em, line-height 0): the `accent-voice` utility. The hero's "agent" and "simulator.", each section H2's accent tail, the 404's "4". Always Foundry Orange. It runs 8% larger because it sets narrower and shorter than Mona Sans; line-height 0 keeps the larger size from opening the line.
 - **Card title** (wdth 120, wght 720, 1.25rem, -0.02em): lease and use-case card headings.
 - **Buttons / FAQ** (wdth 110-112, wght 520-600): CTA labels and FAQ questions (1.125rem).
 - **Body** (400, 1rem-1.25rem, 1.625, capped 42-68ch): ledes and feature points in Ink 2.
-- **Readout** (Martian Mono, 11px, tabular-nums): feature labels, command chips, captions, figcaption tabs, footer, "+hook" tags.
-- **Command** (Martian Mono, 12.5px, 1.625): command bars, terminal and code samples.
+- **Readout** (JetBrains Mono 300, 11px, tabular-nums): feature labels, command chips, captions, figcaption tabs, footer, "+hook" tags.
+- **Command** (JetBrains Mono 300, 12.5px, 1.625): command bars, terminal and code samples, docs code blocks and inline code.
 
-Headings in docs prose use wdth 112, -0.025em, balanced wrapping.
+Headings in docs prose use Mona Sans wdth 112, -0.025em, balanced wrapping.
 
 ### Named Rules
-**The One Voice Rule.** Headings are wide and heavy, always. Emphasis inside a heading is the accent on its last words, never a lighter or narrower cut, italic or a new family.
+**The Thick/Thin Rule.** Human copy is thick (Mona Sans 800 wide); technical type is thin (Chakra Petch 600 for accents, JetBrains Mono 300 for machine text). Never thicken the technical voices to match the headline: no faux-bold strokes, no Chakra Petch 700 in a headline, no mono above 500. The weight gap is the point.
+**The Fitted Part Rule.** Inside a heading, only the technical noun or the claim's last words change voice, and only to the accent. One accent run per heading line, never mid-word, never a third family.
 **The Machine Voice Rule.** Mono only for things a machine prints or a human types: commands, ids, readouts, file names. Sentences stay sans.
 **The Tabular Rule.** Numbers in readouts and results are tabular-nums.
 
@@ -185,7 +197,7 @@ Flat, with no shadows anywhere (code blocks set `box-shadow: none`). Depth is on
 
 ## Shapes
 
-Quiet geometry: a 6px "group" radius for every sheet (code plates, command bars, run chart, video frame, docs tables and code blocks), 4px for inline code chips and the focus ring, full pill for buttons, tabs and the copy control. Bars in the run chart are square. The warden mark is a 13x20 outlined device (4.5 radius, 2px stroke in currentColor) with a filled lamp circle at its top right corner; it is the only illustration and reads at favicon size.
+Quiet geometry: a 6px "group" radius for every sheet (code plates, command bars, run chart, video frame, docs tables and code blocks), 4px for inline code chips and the focus ring, full pill for buttons, tabs and the copy control. Bars in the run chart are square. The warden mark is a pair of square brackets (2.5px stroke in currentColor, butt caps, mitred corners, no radius) around a 6x6 square lamp in the accent, on a 24 grid: a leased scope, set like the code the name is, squared like the Chakra Petch accents. It is the only illustration and reads at favicon size; the favicon is the same two shapes, ink switching with the colour scheme.
 
 ## Components
 
@@ -204,7 +216,19 @@ A Sheet figure with a mono 11px tab (file or tool name) divided by a hairline, t
 Mono orange-text label, Display H3, verb-first points as hairline rows, a mono underlined docs link; beside it a terminal or code sheet (three Fill dots, mono tab) or the run chart.
 
 ### Card
-A Sheet with hairline border: a mono command chip on Fill, a card-title heading, one Ink 2 sentence.
+A Sheet with hairline border: a mono command chip on Fill, a card-title heading, one or two Ink 2 sentences (inline code as Fill chips), and a mono uppercase "Read more →" to its docs page at the foot. Grids: 4 columns from `lg` for claim sets, 3 for use cases.
+
+### Step card
+A Card with a mono Orange Text number (`01`) in place of the chip and the step's command as a full-width Fill code line at the foot, prefixed `$`.
+
+### Section heading accent
+A section H2 may end in its accent tail: the claim's last words ("for agents that don't wait.") in the Accent voice, Foundry Orange. One per section, never mid-sentence.
+
+### Signal glitch
+The hero's two technical nouns, "agent" and "simulator.", drop signal on their own clocks, like a simulator screen hiccuping mid-frame. `GlitchWord` keeps the real word as one selectable node and lays two `aria-hidden` copies over it: a tear copy in the word's colour on a Paper band, and a paler chroma copy (accent mixed 40% toward Ink) offset the other way. Each burst is stepped `clip-path: inset()` slices and `translateX` in em in the last ~11% of the word's period (`--glitch-period`): "agent" every 5 s (~500 ms bursts), the `offset` word "simulator." every 6.8 s (~750 ms) from a 4 s head start, so it opens the page at ~2 s and "agent" follows at ~4.5 s (`--glitch-delay`). The two periods drift, so the bursts land apart, close together or now and then at once, never as a fixed turn-taking beat. Only transform and clip-path animate, and the glitch box's line-height (0.84) matches the accent size, so the h1 never reflows. Reduced motion: no animation, no layers, the clean word. Use it on the hero only.
+
+### Clip tabs
+Pill tabs (Fill when selected, mono 12px) over a 16:9 Sheet holding a recorded clip that autoplays muted and loops; with reduced motion it rests on the poster with controls. Below it the caption (Ink 2, inline code chips) and a mono "Read more →". Arrow keys move between tabs.
 
 ### Lease board
 A Sheet listing agents on one Mac, one hairline row each: agent (sans, wdth 112 wght 620) behind a lamp, worktree, device, Metro port and build (mono 12.5px, tabular). A leased row's lamp is a filled 8px Foundry Orange dot; a queued row is a hollow Ink 2 ring with the whole row in Ink 2. Mono column labels sit over the rows from `sm`; below it each row folds to agent and worktree over device, port and build. A mono caption says it is illustrative.
@@ -227,16 +251,19 @@ Fumadocs tokens are re-pointed at these colors. Sidebar active row is Fill with 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** set every heading in the one display voice (wdth 125, wght 800) and build hierarchy by size.
+- **Do** set every heading in the thick display voice (wdth 125, wght 800) and build hierarchy by size.
+- **Do** put the technical noun or claim tail of a heading in the Accent voice (Chakra Petch 600, Foundry Orange) with `accent-voice`, never an inline font family.
 - **Do** keep orange to large marks; use accent-text `#b8360a` for any small orange.
 - **Do** separate with 1px hairlines and one tonal step; keep every sheet at 6px radius.
-- **Do** set commands, ids and readouts in mono at 11px / 12.5px with tabular-nums.
+- **Do** set commands, ids and readouts in JetBrains Mono 300 at 11px / 12.5px with tabular-nums.
 - **Do** give every motion a reduced-motion state; the page has no authored entrance motion.
 - **Do** keep claims in captions exact and dated (37 specs, 5 simulators, 3m25s vs 13m55s, Oct 2026).
 
 ### Don't:
 - **Don't** add shadows, gradients, glow or backdrop blur.
 - **Don't** add a dark terminal hero, condensed or light display cuts, giant-word beat sections, type-specimen sliders, or a second accent hue.
-- **Don't** set sentences in mono or emphasize with italics or color.
+- **Don't** set sentences in mono or emphasize with italics; color emphasis belongs only to the Accent voice.
+- **Don't** add a stroke or faux-bold to the accent words, or set them in mono; they stay slim and squared.
+- **Don't** glitch anything outside the hero's two accent words, or animate layout properties in a glitch.
 - **Don't** use Lease Green outside docs success states.
 - **Don't** let orange carry small text or meaning on its own.

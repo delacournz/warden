@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-24T16:20:09.034974Z",
+  "generatedAt": "2026-10-30T23:36:30.481962+00:00",
   "title": "Design System: warden",
   "extensions": {
     "colorMeta": {
@@ -53,11 +53,11 @@
     "typographyMeta": {
       "readout": {
         "displayName": "Readout",
-        "purpose": "Mono 11px axis readouts and captions."
+        "purpose": "JetBrains Mono 300, 11px axis readouts and captions."
       },
       "command": {
         "displayName": "Command",
-        "purpose": "Mono 12.5px commands and code."
+        "purpose": "JetBrains Mono 300, 12.5px commands and code."
       },
       "display": {
         "displayName": "Display",
@@ -66,6 +66,10 @@
       "card-title": {
         "displayName": "Card title",
         "purpose": "Lease and use-case card headings, wdth 120 / wght 720."
+      },
+      "accent": {
+        "displayName": "Accent",
+        "purpose": "Chakra Petch 600 in Foundry Orange at 1.08em: the hero's agent and simulator., section accent tails, the 404's 4."
       }
     },
     "shadows": [],
@@ -114,7 +118,7 @@
       "refersTo": "command-bar",
       "description": "Sheet with a mono install command and copy control.",
       "html": "<div class=\"ds-cmd\"><code><span class=\"ds-dollar\">$ </span>npm i -g @delacour/warden</code><button class=\"ds-copy\" aria-label=\"Copy\">⧉</button></div>",
-      "css": ".ds-cmd{display:flex;align-items:center;gap:8px;background:var(--color-surface,#fdfcf9);border:1px solid var(--color-hairline,#d8d5cb);border-radius:6px;padding:6px 6px 6px 16px}.ds-cmd code{flex:1;font-family:'Martian Mono Variable',ui-monospace,monospace;font-size:12.5px;color:var(--color-ink,#0d0d0c)}.ds-dollar{color:var(--color-ink-2,#64625b)}.ds-copy{width:32px;height:32px;border:0;border-radius:9999px;background:transparent;color:var(--color-ink-2,#64625b);cursor:pointer}.ds-copy:hover{background:var(--color-fill,#e9e7df);color:var(--color-ink,#0d0d0c)}"
+      "css": ".ds-cmd{display:flex;align-items:center;gap:8px;background:var(--color-surface,#fdfcf9);border:1px solid var(--color-hairline,#d8d5cb);border-radius:6px;padding:6px 6px 6px 16px}.ds-cmd code{flex:1;font-family:'JetBrains Mono Variable',ui-monospace,monospace;font-weight:300;font-size:12.5px;color:var(--color-ink,#0d0d0c)}.ds-dollar{color:var(--color-ink-2,#64625b)}.ds-copy{width:32px;height:32px;border:0;border-radius:9999px;background:transparent;color:var(--color-ink-2,#64625b);cursor:pointer}.ds-copy:hover{background:var(--color-fill,#e9e7df);color:var(--color-ink,#0d0d0c)}"
     },
     {
       "name": "Manager Tabs",
@@ -122,7 +126,7 @@
       "refersTo": "manager-tab",
       "description": "Package-manager pills; selected is Fill + Ink.",
       "html": "<div class=\"ds-tabs\"><button class=\"ds-tab ds-on\">npm</button><button class=\"ds-tab\">bun</button><button class=\"ds-tab\">pnpm</button></div>",
-      "css": ".ds-tabs{display:flex;gap:4px}.ds-tab{border:0;background:transparent;color:var(--color-ink-2,#64625b);border-radius:9999px;padding:4px 12px;font-family:'Martian Mono Variable',ui-monospace,monospace;font-size:12px;cursor:pointer}.ds-tab:hover{color:var(--color-ink,#0d0d0c)}.ds-on{background:var(--color-fill,#e9e7df);color:var(--color-ink,#0d0d0c)}"
+      "css": ".ds-tabs{display:flex;gap:4px}.ds-tab{border:0;background:transparent;color:var(--color-ink-2,#64625b);border-radius:9999px;padding:4px 12px;font-family:'JetBrains Mono Variable',ui-monospace,monospace;font-weight:300;font-size:12px;cursor:pointer}.ds-tab:hover{color:var(--color-ink,#0d0d0c)}.ds-on{background:var(--color-fill,#e9e7df);color:var(--color-ink,#0d0d0c)}"
     },
     {
       "name": "Code Plate",
@@ -130,7 +134,7 @@
       "refersTo": "sheet",
       "description": "Flat sheet with a mono tab naming the file.",
       "html": "<figure class=\"ds-plate\"><figcaption>e2e/add-todo.e2e.ts</figcaption><pre>await expect(screen.getByText(\"Write e2e specs\")).toBeVisible();</pre></figure>",
-      "css": ".ds-plate{margin:0;background:var(--color-surface,#fdfcf9);border:1px solid var(--color-hairline,#d8d5cb);border-radius:6px}.ds-plate figcaption{border-bottom:1px solid var(--color-hairline,#d8d5cb);padding:8px 16px;font-family:'Martian Mono Variable',ui-monospace,monospace;font-size:11px;color:var(--color-ink-2,#64625b)}.ds-plate pre{margin:0;padding:16px;font-family:'Martian Mono Variable',ui-monospace,monospace;font-size:12.5px;color:var(--color-ink,#0d0d0c);overflow-x:auto}"
+      "css": ".ds-plate{margin:0;background:var(--color-surface,#fdfcf9);border:1px solid var(--color-hairline,#d8d5cb);border-radius:6px}.ds-plate figcaption{border-bottom:1px solid var(--color-hairline,#d8d5cb);padding:8px 16px;font-family:'JetBrains Mono Variable',ui-monospace,monospace;font-weight:300;font-size:11px;color:var(--color-ink-2,#64625b)}.ds-plate pre{margin:0;padding:16px;font-family:'JetBrains Mono Variable',ui-monospace,monospace;font-weight:300;font-size:12.5px;color:var(--color-ink,#0d0d0c);overflow-x:auto}"
     },
     {
       "name": "Display heading",
@@ -138,7 +142,7 @@
       "refersTo": "typography.display",
       "description": "One hero cut over a hairline with command and axis readout.",
       "html": "<div class=\"ds-cut\"><span class=\"ds-word\">Run.</span><div class=\"ds-read\"><span class=\"ds-c\">warden e2e</span><span>wdth 125 · wght 880</span></div></div>",
-      "css": ".ds-cut{display:flex;flex-direction:column;gap:12px;width:360px}.ds-word{font-family:'Mona Sans Variable',system-ui,sans-serif;font-size:112px;line-height:.86;letter-spacing:-.035em;color:var(--color-accent,#ff4f1a);font-variation-settings:'wdth' 125,'wght' 880}.ds-read{display:flex;justify-content:space-between;border-top:1px solid var(--color-hairline,#d8d5cb);padding-top:8px;font-family:'Martian Mono Variable',ui-monospace,monospace;font-size:11px;color:var(--color-ink-2,#64625b)}.ds-c{color:var(--color-ink,#0d0d0c)}"
+      "css": ".ds-cut{display:flex;flex-direction:column;gap:12px;width:360px}.ds-word{font-family:'Mona Sans Variable',system-ui,sans-serif;font-size:112px;line-height:.86;letter-spacing:-.035em;color:var(--color-accent,#ff4f1a);font-variation-settings:'wdth' 125,'wght' 880}.ds-read{display:flex;justify-content:space-between;border-top:1px solid var(--color-hairline,#d8d5cb);padding-top:8px;font-family:'JetBrains Mono Variable',ui-monospace,monospace;font-weight:300;font-size:11px;color:var(--color-ink-2,#64625b)}.ds-c{color:var(--color-ink,#0d0d0c)}"
     },
     {
       "name": "Run Bars",
@@ -146,13 +150,25 @@
       "refersTo": "sheet",
       "description": "Serial vs parallel job time, width proportional.",
       "html": "<div class=\"ds-run\"><div class=\"ds-row\"><span>1 simulator</span><b>13m55s</b></div><div class=\"ds-track\"><i class=\"ds-bar ds-ink\"></i></div><div class=\"ds-row\"><span>5 simulators</span><b class=\"ds-or\">3m25s</b></div><div class=\"ds-track\"><i class=\"ds-bar ds-orange\"></i></div></div>",
-      "css": ".ds-run{display:flex;flex-direction:column;gap:8px;width:320px;background:var(--color-surface,#fdfcf9);border:1px solid var(--color-hairline,#d8d5cb);border-radius:6px;padding:24px}.ds-row{display:flex;justify-content:space-between;align-items:baseline;font-family:'Martian Mono Variable',ui-monospace,monospace;font-size:12px;color:var(--color-ink-2,#64625b)}.ds-row b{font-family:'Mona Sans Variable',system-ui,sans-serif;font-size:32px;font-weight:700;color:var(--color-ink,#0d0d0c)}.ds-row b.ds-or{color:var(--color-accent,#ff4f1a)}.ds-track{height:12px;background:var(--color-fill,#e9e7df)}.ds-bar{display:block;height:100%}.ds-ink{width:100%;background:var(--color-ink,#0d0d0c)}.ds-orange{width:25%;background:var(--color-accent,#ff4f1a)}"
+      "css": ".ds-run{display:flex;flex-direction:column;gap:8px;width:320px;background:var(--color-surface,#fdfcf9);border:1px solid var(--color-hairline,#d8d5cb);border-radius:6px;padding:24px}.ds-row{display:flex;justify-content:space-between;align-items:baseline;font-family:'JetBrains Mono Variable',ui-monospace,monospace;font-weight:300;font-size:12px;color:var(--color-ink-2,#64625b)}.ds-row b{font-family:'Mona Sans Variable',system-ui,sans-serif;font-size:32px;font-weight:700;color:var(--color-ink,#0d0d0c)}.ds-row b.ds-or{color:var(--color-accent,#ff4f1a)}.ds-track{height:12px;background:var(--color-fill,#e9e7df)}.ds-bar{display:block;height:100%}.ds-ink{width:100%;background:var(--color-ink,#0d0d0c)}.ds-orange{width:25%;background:var(--color-accent,#ff4f1a)}"
+    },
+    {
+      "name": "Signal Glitch",
+      "kind": "custom",
+      "refersTo": "typography.accent",
+      "description": "The hero's accent words drop signal on their own clocks: stepped clip-path slices and em offsets, every 5 s and 6.8 s so they drift; static under reduced motion.",
+      "html": "<p class=\"ds-h\">Every <span class=\"ds-g\" data-t=\"agent\">agent</span> gets its own <span class=\"ds-g ds-off\" data-t=\"simulator.\">simulator.</span></p>",
+      "css": ".ds-h{font-family:'Mona Sans Variable',system-ui,sans-serif;font-size:56px;line-height:.95;letter-spacing:-.035em;font-variation-settings:'wdth' 125,'wght' 800;color:var(--color-ink,#0d0d0c);max-width:560px}.ds-g{position:relative;display:inline-block;line-height:.84;font-family:'Chakra Petch','Mona Sans Variable',sans-serif;font-weight:600;font-size:1.08em;letter-spacing:.005em;color:var(--color-accent,#ff4f1a)}.ds-g::after{content:attr(data-t);position:absolute;inset:0;color:var(--color-accent,#ff4f1a);background:var(--color-ground,#f5f4ef);clip-path:inset(50% 0 50% 0);animation:ds-tear 5s steps(1,end) infinite}.ds-off::after{animation-duration:6.8s;animation-delay:-4s}@keyframes ds-tear{0%,99%,100%{clip-path:inset(50% 0 50% 0);transform:none}89%{clip-path:inset(14% 0 60% 0);transform:translateX(-.09em)}91%{clip-path:inset(54% 0 20% 0);transform:translateX(.11em)}93%{clip-path:inset(30% 0 50% 0);transform:translateX(-.05em)}95%{clip-path:inset(66% 0 6% 0);transform:translateX(.07em)}}@media (prefers-reduced-motion:reduce){.ds-g::after{display:none}}"
     }
   ],
   "narrative": {
-    "northStar": "One Voice, Familiar Frame",
-    "overview": "The familiar agent dev-tool landing frame: centered hero with install and demo, a Works with row, alternating feature blocks, cards, FAQ, closing install. One display voice, Mona Sans wide and heavy, on flat paper with one ink and one orange; Martian Mono for what a machine prints.",
+    "northStar": "Thick Human, Thin Machine",
+    "overview": "The familiar agent dev-tool landing frame: centered hero with install and demo, a Works with row, alternating feature blocks, cards, FAQ, closing install. Three voices on flat paper with one ink and one orange: thick human headings in Mona Sans wide and heavy; squared technical accents in Chakra Petch 600 orange, which drop signal in the hero; thin, rigid JetBrains Mono 300 for what a machine prints.",
     "keyCharacteristics": [
+      "Thick human voice (Mona Sans wide, heavy) for every heading.",
+      "Squared accent voice (Chakra Petch 600, orange) for technical nouns and claim tails.",
+      "Thin machine voice (JetBrains Mono 300) for commands, ids and readouts.",
+      "The hero's accent words glitch on their own clocks, drifting in and out of phase; static under reduced motion.",
       "Variable-axis type does the work that cards, icons and color do elsewhere.",
       "Flat everywhere: hairlines and tonal sheets, no shadows.",
       "One accent, used large and nowhere small.",
@@ -160,6 +176,16 @@
       "Light and dark are the same system on warm paper / warm ink."
     ],
     "rules": [
+      {
+        "name": "The Thick/Thin Rule",
+        "body": "Human copy is thick (Mona Sans 800 wide); technical type is thin (Chakra Petch 600 for accents, JetBrains Mono 300 for machine text). Never thicken the technical voices to match the headline.",
+        "section": "typography"
+      },
+      {
+        "name": "The Fitted Part Rule",
+        "body": "Inside a heading, only the technical noun or the claim's last words change voice, and only to the accent. One accent run per heading line, never mid-word, never a third family.",
+        "section": "typography"
+      },
       {
         "name": "The One Orange Rule",
         "body": "Orange appears on large marks or not at all; small text that needs orange uses accent-text.",
@@ -172,7 +198,7 @@
       },
       {
         "name": "The Axis Rule",
-        "body": "Emphasis is a change of wdth/wght, never a new family, italic or color.",
+        "body": "Emphasis in human copy is a change of wdth/wght; the only change of family is the Accent voice, and never italic.",
         "section": "typography"
       },
       {
@@ -192,19 +218,21 @@
       }
     ],
     "dos": [
-      "Do build hierarchy from wdth/wght and size before adding any other device.",
       "Do keep orange to large marks; use accent-text #b8360a for any small orange.",
       "Do separate with 1px hairlines and one tonal step; keep every sheet at 6px radius.",
       "Do set commands, ids and readouts in mono at 11px / 12.5px with tabular-nums.",
       "Do give every motion a reduced-motion state.",
-      "Do keep claims in captions exact and dated."
+      "Do keep claims in captions exact and dated.",
+      "Do put a heading's technical noun or claim tail in the Accent voice with accent-voice, never an inline font family."
     ],
     "donts": [
       "Don't add shadows, gradients, glow or backdrop blur.",
       "Don't add icon-card grids, a dark terminal hero, or a second accent hue.",
       "Don't set sentences in mono or emphasize with italics or color.",
       "Don't use Lease Green outside docs success states.",
-      "Don't let orange carry small text or meaning on its own."
+      "Don't let orange carry small text or meaning on its own.",
+      "Don't add a stroke or faux-bold to the accent words, or set them in mono.",
+      "Don't glitch anything outside the hero's two accent words."
     ]
   }
 }
