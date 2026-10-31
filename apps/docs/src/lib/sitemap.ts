@@ -1,11 +1,11 @@
-import { privacyRoute, siteUrl } from "./shared";
+import { pricingRoute, privacyRoute, siteUrl, termsRoute } from "./shared";
 
 /**
- * Every URL meant for search: the landing page, each docs page and the privacy
+ * Every URL meant for search: the landing page, each docs page, pricing, terms and the privacy
  * policy. Markdown twins, the llms files and raw bench artifacts stay out.
  */
 export function sitemapPaths(docsUrls: readonly string[]): string[] {
-	return [...new Set(["/", ...docsUrls, privacyRoute])];
+	return [...new Set(["/", ...docsUrls, pricingRoute, termsRoute, privacyRoute])];
 }
 
 const escapeXml = (text: string) =>

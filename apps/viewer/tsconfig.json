@@ -1,0 +1,13 @@
+{
+	"extends": "@delacour/warden-tsconfig/tsconfig.react.json",
+	"include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
+	"compilerOptions": {
+		"rootDir": ".",
+		"composite": false,
+		"noEmit": true,
+		"types": ["vite/client", "bun"],
+		"paths": { "@/*": ["./src/*"] },
+		"allowImportingTsExtensions": true,
+		"skipLibCheck": true
+	}
+}

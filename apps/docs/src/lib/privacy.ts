@@ -45,18 +45,18 @@ const MAIL = `[${CONTACT}](mailto:${CONTACT})`;
 const HISTORY = `https://github.com/${gitConfig.user}/${gitConfig.repo}/commits/${gitConfig.branch}/apps/docs/src/lib/privacy.ts`;
 
 export const PRIVACY = {
-	updated: "2026-10-25",
+	updated: "2026-10-31",
 	controller: "Delacour Limited",
 	contact: CONTACT,
 	title: "Privacy policy",
 	description:
-		"What the warden website and command-line tool send, where it goes and why. No accounts, no adverts, no tracking across other sites.",
-	lede: "warden is a command-line tool that leases simulators to coding agents, and this site documents it. Neither has accounts, adverts or tracking across other companies' sites. This page lists everything that leaves your device, where it goes and why.",
+		"What the warden website, command-line tool and warden cloud send, where it goes and why. No adverts, no tracking across other sites.",
+	lede: "warden is a command-line tool that leases simulators to coding agents, and this site documents it. warden cloud, which you opt into with `warden login`, adds hosted simulators and the account they need. None of it has adverts or tracking across other companies' sites. This page lists everything that leaves your device, where it goes and why.",
 	glance: [
-		"No accounts, sign-in or profiles. Nothing we receive has your name or email address on it.",
+		"The website and the local CLI have no accounts. Only warden cloud, if you choose to log in, knows your email address.",
 		"No adverts, no tracking across other companies' sites, and nothing is sold.",
 		"The website counts visits with PostHog without cookies. PostHog sets a cookie and records your session only if you accept.",
-		"The `warden` CLI sends nothing about you. It talks to npm and GitHub only to update itself.",
+		"The `warden` CLI sends nothing about you on its own. It talks to npm and GitHub to update itself, and to warden cloud only after you log in.",
 		"Your settings, the site's light or dark choice and your answer to the cookie banner, stay on your device.",
 	],
 } as const;
@@ -118,7 +118,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "the-cli",
 		title: "The command-line tool",
 		body: [
-			"The `warden` CLI collects no telemetry and has no account. It runs on your own Mac or CI runner, and the only requests it makes beyond your machine are the ones below.",
+			"The `warden` CLI collects no telemetry. It runs on your own Mac or CI runner, and the only requests it makes beyond your machine are the ones below, plus warden cloud's once you log in (next section).",
 		],
 		disclosures: [
 			{
@@ -127,9 +127,9 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 				why: "`warden update` asks the registry for the latest version and downloads it. The check runs only when you run the command.",
 			},
 			{
-				what: "A download of the simulator helper: your IP address and the release asset requested",
+				what: "A download of the simulator helper or the device viewer: your IP address and the release asset requested",
 				to: "GitHub, `github.com/delacournz/warden/releases`",
-				why: "`warden update` and `warden doctor --fetch-helper` fetch the native helper that drives iOS simulators, and check it against the release's published checksum.",
+				why: "`warden update` and `warden doctor --fetch-helper` fetch the native helper that drives iOS simulators, and the first `warden view` fetches the window that shows a hosted device. Each is checked against the release's published checksum.",
 			},
 			{
 				what: "Simulator, emulator and app traffic",
@@ -147,11 +147,60 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		],
 	},
 	{
+		id: "warden-cloud",
+		title: "warden cloud (hosted simulators)",
+		body: [
+			"warden cloud is optional. Nothing below happens until you run `warden login`. It runs hosted iOS simulators and Android emulators for your organization, through our own server, `api.warden.co.nz`, and a device provider, Revyl, that runs the devices for us. We create a Revyl workspace for each organization, owned by the person who created the organization, so its members can open Revyl's own dashboard from warden. Your Revyl account is governed by Revyl's terms and privacy policy.",
+		],
+		disclosures: [
+			{
+				what: "Your email address and name, the organizations you create or join, and the login sessions on your machines",
+				to: "Our own server, hosted by Railway",
+				why: "So you can log in, share devices with your team and keep a session per machine. The session token is saved on your machine in `~/.warden/auth.json`, readable by you only. `warden logout` revokes it. We keep the account until you ask us to delete it.",
+			},
+			{
+				what: "When you sign in with GitHub: your GitHub user id, username, primary verified email address and your account creation date",
+				to: "GitHub, which signs you in through OAuth, and our own server, which keeps what it returns",
+				why: "To create your account and tell whether your GitHub account is old enough (at least 30 days) for the free trial. We read nothing else from your GitHub account.",
+			},
+			{
+				what: "A one-time sign-in code sent to your email address",
+				to: "Resend, which delivers the email",
+				why: "To check that the address is yours when you log in.",
+			},
+			{
+				what: "When you top up credit: your Stripe customer id, the top-up amounts and whether each payment succeeded. Your card details go to Stripe and never to us",
+				to: "Stripe, which takes the payment through Stripe Checkout, and our own server, which keeps the customer id, amounts and status",
+				why: "To take payment, credit your balance and keep the records tax law requires. We never see or store a card number.",
+			},
+			{
+				what: "A machine identifier: an HMAC-SHA256 of your operating system's machine id, keyed with the string `warden-machine-v1`. The machine id is `IOPlatformUUID` on macOS, `MachineGuid` on Windows and `/etc/machine-id` on Linux. The raw identifier never leaves your machine",
+				to: "Our own server, which hashes it again with a secret pepper before keeping it",
+				why: "Fraud prevention: one trial per person, and no trial on a machine already used for one. Our lawful basis is legitimate interest in preventing abuse. The hash cannot be turned back into the machine id.",
+			},
+			{
+				what: "Billing emails: your email address and the message, such as a low balance warning, credits exhausted or a receipt",
+				to: "Resend, which delivers the email",
+				why: "To tell you when your credit is running low or has run out, and to send receipts.",
+			},
+			{
+				what: "The app builds you install on a hosted device, what you do on it (taps, typing, screenshots, logs, the screen itself) and how long each device runs",
+				to: "Revyl, which runs the hosted devices, through our server",
+				why: "To run the device and stream its screen to you. Each device stops when its lease ends or it sits idle. Revyl keeps session data for the period its own policy sets.",
+			},
+			{
+				what: "Your organization's name and identifier, and the email address of each person who opens Revyl's dashboard: the organization's creator when the organization is set up, and any other member the first time they open it",
+				to: "Revyl, which creates a Revyl account and workspace for your organization",
+				why: "So you can sign in to Revyl's dashboard and see your organization's devices there. Revyl emails these addresses for its own account messages, such as invitations and sign-in links. If you already have a Revyl account, you approve the connection in Revyl first. Leaving a warden organization does not remove you from its Revyl workspace: ask us and we will have Revyl remove you.",
+			},
+		],
+	},
+	{
 		id: "who-else",
 		title: "Who else handles it",
 		body: [
 			"The companies above process this information for us under their own terms. They are based in the United States, so it is processed there:",
-			"[Railway](https://railway.com/legal/privacy) for hosting the website, [PostHog](https://posthog.com/privacy) for the website's visit counts and recordings, [npm](https://docs.npmjs.com/policies/privacy) for the CLI's updates, and [GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) for the helper download.",
+			"[Railway](https://railway.com/legal/privacy) for hosting the website and warden cloud's server, [PostHog](https://posthog.com/privacy) for the website's visit counts and recordings, [npm](https://docs.npmjs.com/policies/privacy) for the CLI's updates, [GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) for the helper download and warden cloud sign-in, and, for warden cloud only, [Revyl](https://revyl.ai/privacy) for the hosted devices, [Resend](https://resend.com/legal/privacy-policy) for sign-in and billing emails and [Stripe](https://stripe.com/privacy) for payments.",
 			"We do not sell or rent anything to anyone, and we do not share it with anyone else unless the law requires us to.",
 		],
 	},
@@ -159,15 +208,15 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "why",
 		title: "Why we use it",
 		body: [
-			"Only to run the website and the CLI, to count how many people use them, to see which pages and searches get used and where readers get stuck, and to fix what breaks. We do not combine it with anything else, and we do not use it to identify, profile or advertise to anyone.",
-			"If UK or EU data protection law applies to you, our lawful basis is our legitimate interest in running and improving these services, which we have weighed against your interests given how little is collected. That covers PostHog's cookieless counting. For PostHog's cookie, local storage and session recording, it is your consent, which you can withdraw at any time from Cookie settings at the foot of the home page.",
+			"Only to run the website, the CLI and warden cloud, to count how many people use them, to see which pages and searches get used and where readers get stuck, and to fix what breaks. We do not combine it with anything else, and we do not use it to identify, profile or advertise to anyone.",
+			"If UK or EU data protection law applies to you, our lawful basis is our legitimate interest in running and improving these services, which we have weighed against your interests given how little is collected. That covers PostHog's cookieless counting. For a warden cloud account, it is the contract to provide the service you signed up for. For PostHog's cookie, local storage and session recording, it is your consent, which you can withdraw at any time from Cookie settings at the foot of the home page.",
 		],
 	},
 	{
 		id: "how-long",
 		title: "How long it is kept",
 		body: [
-			"What stays on your device is there until you clear it. Railway, PostHog, npm and GitHub keep what they receive for the periods their own policies set, linked above.",
+			"What stays on your device is there until you clear it. A warden cloud account is kept until you ask us to delete it, which also ends its hosted devices. Railway, PostHog, npm, GitHub, Stripe, Revyl and Resend keep what they receive for the periods their own policies set, linked above.",
 		],
 	},
 	{
@@ -175,7 +224,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		title: "Your rights",
 		body: [
 			`Under New Zealand's Privacy Act 2020 you can ask to see personal information we hold about you and to have it corrected. If you are in the UK or the EU you can also ask us to delete it, to restrict or object to how it is used, or to give you a copy. Write to ${MAIL}.`,
-			"Nothing we receive has your name on it, so we may not be able to find information about you in particular. Declining in the cookie banner is the surest way to stop a recording.",
+			"Apart from a warden cloud account, nothing we receive has your name on it, so we may not be able to find information about you in particular. Declining in the cookie banner is the surest way to stop a recording.",
 			"If you are unhappy with how we have handled a request, you can complain to New Zealand's [Office of the Privacy Commissioner](https://www.privacy.org.nz), the UK's [Information Commissioner's Office](https://ico.org.uk/make-a-complaint/) or the data protection authority where you live.",
 		],
 	},

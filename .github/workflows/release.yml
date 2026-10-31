@@ -108,8 +108,180 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The desktop viewer `warden view` downloads on first use (apps/viewer, Tauri). Not an npm package: three
+  # tarballs (darwin-arm64, darwin-x64, win32-x64) that publish attaches to the GitHub Release and lists in
+  # SHA256SUMS next to the warden-simd helper. Runs beside `build`; publish needs both.
+  #
+  # `environment: release` is where the signing secrets live. Everything signing-related is optional: with the
+  # secrets absent the build is unsigned and says so in a ::warning::, so a release never fails before they
+  # are set up (apps/viewer/AGENTS.md § Release lists them).
+  viewer:
+    name: viewer (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: darwin-arm64
+            triple: aarch64-apple-darwin
+            runner: namespace-profile-mac-small
+          # Cross-compiled on the arm64 runner.
+          - target: darwin-x64
+            triple: x86_64-apple-darwin
+            runner: namespace-profile-mac-small
+          - target: win32-x64
+            triple: x86_64-pc-windows-msvc
+            runner: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: namespacelabs/nscloud-checkout-action@66f2dc6f6c42a8ac6c4e53473c4840006822831e # v9.0.1
+        if: runner.os == 'macOS'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: runner.os == 'Windows'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Same guard as `build`: a tag made off a feature branch must not publish.
+      - name: Tag commit must be on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "tag $GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of origin/main: refusing to publish" >&2
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # v1 (stable toolchain)
+        with:
+          toolchain: stable
+          targets: ${{ matrix.triple }}
+
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          workspaces: apps/viewer/src-tauri -> target
+          key: ${{ matrix.triple }}
+
+      # apps/viewer depends on `@delacournz/apogee` (GitHub Packages), which needs the read:packages token.
+      # Only the viewer's dependency closure is installed.
+      - run: bun install --frozen-lockfile --filter @delacour/warden-viewer
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_READ_TOKEN }}
+
+      # Secrets cannot gate a step directly: report presence through a step output. Nothing here prints a value.
+      - name: Detect signing credentials
+        id: signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          apple=false
+          windows=false
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_CERTIFICATE_PASSWORD" ] && [ -n "$APPLE_SIGNING_IDENTITY" ] \
+              && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY_CONTENT" ]; then
+              apple=true
+            else
+              echo "::warning::APPLE_* signing secrets are not all set: the macOS viewer is built UNSIGNED and NOT notarized (Gatekeeper will quarantine-block it)"
+            fi
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            if [ -n "$WINDOWS_CERTIFICATE" ] && [ -n "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+              windows=true
+            else
+              echo "::warning::WINDOWS_CERTIFICATE secrets are not set: the Windows viewer is built without an Authenticode signature (SmartScreen will warn)"
+            fi
+          fi
+          echo "apple=$apple" >> "$GITHUB_OUTPUT"
+          echo "windows=$windows" >> "$GITHUB_OUTPUT"
+
+      # The App Store Connect API key is a .p8 file; Tauri reads its path from APPLE_API_KEY_PATH.
+      - name: Write the notarization key
+        if: steps.signing.outputs.apple == 'true'
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          umask 077
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      # Tauri imports the certificate into a temporary keychain, signs with the hardened runtime
+      # (`codesign --options runtime`), notarizes via notarytool --wait and staples the ticket.
+      # No entitlements file: WKWebView receiving WebRTC video needs no camera/microphone entitlement, the app is
+      # not sandboxed, and outbound network is open outside the sandbox. Do not add the App Sandbox.
+      - name: Build (macOS, signed and notarized)
+        if: runner.os == 'macOS' && steps.signing.outputs.apple == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bun run --cwd apps/viewer tauri:build -- --target ${{ matrix.triple }} --bundles app
+
+      - name: Build (macOS, unsigned)
+        if: runner.os == 'macOS' && steps.signing.outputs.apple != 'true'
+        run: bun run --cwd apps/viewer tauri:build -- --target ${{ matrix.triple }} --bundles app
+
+      - name: Verify signature and notarization ticket
+        if: runner.os == 'macOS' && steps.signing.outputs.apple == 'true'
+        run: |
+          app="apps/viewer/src-tauri/target/${{ matrix.triple }}/release/bundle/macos/warden viewer.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --verbose=2 "$app" 2>&1 | grep -q 'flags=.*runtime' || { echo "hardened runtime missing" >&2; exit 1; }
+          xcrun stapler validate "$app"
+
+      # A bare exe: no installer bundle.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: bun run --cwd apps/viewer tauri:build -- --target ${{ matrix.triple }} --no-bundle
+
+      - name: Sign (Windows Authenticode)
+        if: runner.os == 'Windows' && steps.signing.outputs.windows == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "viewer-cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          $exe = "apps/viewer/src-tauri/target/${{ matrix.triple }}/release/warden-viewer.exe"
+          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD $exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign failed" }
+          & $signtool.FullName verify /pa $exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool verify failed" }
+          Remove-Item $pfx
+
+      - name: Pack release asset
+        run: bun run --cwd apps/viewer pack:asset ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: viewer-${{ matrix.target }}
+          path: apps/viewer/dist-assets/warden-viewer-${{ matrix.target }}.tgz
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: build
+    needs: [build, viewer]
     runs-on: ubuntu-latest
     # No required reviewer: merging the version PR is the approval. The environment stays because
     # npm's trusted publisher is bound to this workflow file + environment name, and its deployment
@@ -125,6 +297,25 @@ jobs:
 
       - run: tar -xzf dist.tgz
 
+      # The viewer tarballs, each from its own matrix leg. Not npm packages: they only ride the GitHub Release.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: viewer-*
+          path: viewer-assets
+          merge-multiple: true
+
+      # Merge, never overwrite: dist/SHA256SUMS already lists the warden-simd helper. A rerun replaces a viewer line.
+      - name: List viewer assets in SHA256SUMS
+        run: |
+          for target in darwin-arm64 darwin-x64 win32-x64; do
+            asset="warden-viewer-$target.tgz"
+            [ -f "viewer-assets/$asset" ] || { echo "missing $asset" >&2; exit 1; }
+            grep -v "  $asset\$" dist/SHA256SUMS > dist/SHA256SUMS.tmp || true
+            (cd viewer-assets && sha256sum "$asset") >> dist/SHA256SUMS.tmp
+            mv dist/SHA256SUMS.tmp dist/SHA256SUMS
+          done
+          cat dist/SHA256SUMS
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -136,7 +327,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          assets=(dist/warden-* dist/checksums.txt dist/SHA256SUMS)
+          assets=(dist/warden-* dist/checksums.txt dist/SHA256SUMS viewer-assets/warden-viewer-*.tgz)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "release $GITHUB_REF_NAME already exists, replacing assets"
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber

@@ -106,6 +106,10 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 		opts.bad !== undefined
 			? quarantineReleased(ctx, leases, typeof opts.bad === "string" ? opts.bad : undefined)
 			: { quarantined: [], notes: [] };
+	const remote = leases.some((l) => l.resource.kind === "remote-device")
+		? await (await import("../remote/claim")).stopRemoteLeases(ctx, leases)
+		: { stopped: [], notes: [], stopReasons: {} };
+	notes.push(...remote.notes);
 	await releaseDevices(
 		ctx,
 		leases.map((l) => l.id),
@@ -119,6 +123,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			? color.yellow("nothing released")
 			: color.green(`released ${leases.map((l) => l.id).join(" ")}`),
 		...(shutdown.length > 0 ? [color.green(`shut down ${shutdown.join(" ")}`)] : []),
+		...(remote.stopped.length > 0 ? [color.green(`stopped remote ${remote.stopped.join(" ")}`)] : []),
 		...(bad.quarantined.length > 0
 			? [color.yellow(`quarantined ${bad.quarantined.join(" ")} (clear with: warden sim unquarantine <udid>)`)]
 			: []),
@@ -130,6 +135,8 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 		{
 			released: leases.map((l) => l.id),
 			shutdown,
+			remoteStopped: remote.stopped,
+			remoteStopReasons: remote.stopReasons,
 			quarantined: bad.quarantined,
 			unknown,
 			notes: [...notes, ...bad.notes],

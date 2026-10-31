@@ -81,6 +81,15 @@ describe("cold start", () => {
 	});
 });
 
+describe("cold start: the viewer is lazy", () => {
+	test("`warden view --help` loads its own command only; claim, heartbeat and release never load the viewer", async () => {
+		expect(commandModules(await loadedBy(["view", "--help"]))).toEqual(["view.ts"]);
+		for (const args of [["claim", "--help"], ["heartbeat"], ["release", "--help"], ["version"]]) {
+			expect(loaded(await loadedBy(args), ["/src/remote/viewer.ts", "/src/commands/view.ts"])).toEqual([]);
+		}
+	});
+});
+
 describe("cold start: the commands agents call most", () => {
 	const FORBID = [
 		"/node_modules/zod/",
