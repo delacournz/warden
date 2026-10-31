@@ -216,6 +216,111 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 	}, 30_000);
 });
 
+type Bgr = [number, number, number];
+type CamOpen = { event: string; device: string; running: boolean; frames: number; width: number; bgr: Bgr };
+type CamFrames = { event: string; delta: number; bgr: Bgr; width: number };
+type CamPhoto = { event: string; events: string[]; bytes: number; type: string; width: number; bgr: Bgr };
+type CamQr = { event: string; codes: { type: string; value: string }[] };
+type CamMovie = { event: string; error: string | null; duration: number; tracks: number };
+type CamPreview = { event: string; hasContents: boolean | number };
+type CamDevices = { event: string; default: string | null };
+
+const near = (got: Bgr, want: Bgr) => got.every((v, i) => Math.abs(v - (want[i] ?? 0)) <= 24);
+
+run("libwarden-inject camera (macOS build, real dyld insertion)", () => {
+	test("an image feed backs the default camera, frames, photo, preview and a live swap", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-cam-"));
+		const channel = createInjectChannel({
+			statePath: join(stateDir, "state.json"),
+			now: Date.now,
+			sleep: (ms) => Bun.sleep(ms),
+		});
+		const h = startHarness(
+			injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath, camera: true })
+		);
+		const red = join(stateDir, "red.png");
+		const blue = join(stateDir, "blue.png");
+		h.send(`cam-make-image ${red} 255 0 0`);
+		await h.next();
+		h.send(`cam-make-image ${blue} 0 0 255`);
+		await h.next();
+		const set = channel.write({ camera: { back: { kind: "image", path: red } } });
+		expect(await channel.acked(set.seq, 5_000)).toBe(true);
+		expect(channel.attached()?.camera).toBe(true);
+
+		h.send("cam-devices");
+		expect((await h.next<CamDevices>()).default).toBe("back");
+		h.send("cam-open back");
+		const opened = await h.next<CamOpen>();
+		expect(opened.running).toBe(true);
+		expect(opened.frames).toBeGreaterThan(0);
+		expect(near(opened.bgr, [0, 0, 255])).toBe(true);
+
+		h.send("cam-photo");
+		const photo = await h.next<CamPhoto>();
+		expect(photo.bytes).toBeGreaterThan(0);
+		expect(near(photo.bgr, [0, 0, 255])).toBe(true);
+
+		h.send("cam-preview");
+		expect((await h.next<CamPreview>()).hasContents).toBeTruthy();
+
+		const swap = channel.write({ camera: { back: { kind: "image", path: blue } } });
+		expect(await channel.acked(swap.seq, 5_000)).toBe(true);
+		await Bun.sleep(300);
+		h.send("cam-frames");
+		const after = await h.next<CamFrames>();
+		expect(after.delta).toBeGreaterThan(0);
+		expect(near(after.bgr, [255, 0, 0])).toBe(true);
+
+		h.send("cam-close");
+		await h.next();
+		await h.stop();
+		rmSync(stateDir, { recursive: true, force: true });
+	}, 60_000);
+
+	test("a QR image is decoded by the metadata output, and a video feed records a movie", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-cam-"));
+		const channel = createInjectChannel({
+			statePath: join(stateDir, "state.json"),
+			now: Date.now,
+			sleep: (ms) => Bun.sleep(ms),
+		});
+		const h = startHarness(
+			injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath, camera: true })
+		);
+		const qr = join(stateDir, "qr.png");
+		const clip = join(stateDir, "clip.mov");
+		const out = join(stateDir, "out.mov");
+		h.send(`cam-make-qr ${qr} hello-warden`);
+		await h.next();
+		h.send(`cam-make-video ${clip} 2`);
+		await h.next();
+
+		const set = channel.write({ camera: { back: { kind: "image", path: qr } } });
+		expect(await channel.acked(set.seq, 5_000)).toBe(true);
+		h.send("cam-open back");
+		await h.next<CamOpen>();
+		h.send("cam-qr");
+		const codes = (await h.next<CamQr>()).codes.map((c) => c.value);
+		expect(codes).toContain("hello-warden");
+		h.send("cam-close");
+		await h.next();
+
+		const video = channel.write({ camera: { back: { kind: "video", path: clip, loop: true } } });
+		expect(await channel.acked(video.seq, 5_000)).toBe(true);
+		h.send("cam-open back");
+		expect((await h.next<CamOpen>()).frames).toBeGreaterThan(0);
+		h.send(`cam-movie ${out} 1`);
+		const movie = await h.next<CamMovie>();
+		expect(movie.error).toBeNull();
+		expect(movie.duration).toBeGreaterThan(0.5);
+		h.send("cam-close");
+		await h.next();
+		await h.stop();
+		rmSync(stateDir, { recursive: true, force: true });
+	}, 60_000);
+});
+
 test("bunExec is the exec the build uses", () => {
 	expect(typeof bunExec).toBe("function");
 });
