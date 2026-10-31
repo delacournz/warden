@@ -189,3 +189,46 @@ describe("the privacy policy page", () => {
 		expect(EVERYTHING).toContain("~/.warden/auth.json");
 	});
 });
+
+describe("the privacy policy's warden cloud billing claims", () => {
+	const machine = () => readFileSync(join(REPO, "apps/cli/src/remote/machine.ts"), "utf8");
+
+	test("names the machine identifier's key and the three places it is read from", () => {
+		const source = machine();
+
+		expect(source).toContain('MACHINE_HASH_KEY = "warden-machine-v1"');
+		expect(source).toContain('["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]');
+		expect(source).toContain("IOPlatformUUID");
+		expect(source).toContain("HKLM\\\\SOFTWARE\\\\Microsoft\\\\Cryptography");
+		expect(source).toContain("MachineGuid");
+		expect(source).toContain("/etc/machine-id");
+
+		expect(EVERYTHING).toContain("HMAC-SHA256");
+		expect(EVERYTHING).toContain("warden-machine-v1");
+		expect(EVERYTHING).toContain("IOPlatformUUID");
+		expect(EVERYTHING).toContain("MachineGuid");
+		expect(EVERYTHING).toContain("/etc/machine-id");
+		expect(EVERYTHING).toContain("raw identifier never leaves");
+		expect(EVERYTHING).toContain("pepper");
+	});
+
+	test("discloses GitHub sign-in, Stripe payments and Resend billing emails", () => {
+		const rows = DISCLOSURES.map((row) => `${row.what} ${row.to}`);
+
+		expect(rows.some((row) => row.includes("GitHub user id") && row.includes("GitHub"))).toBe(true);
+		expect(EVERYTHING).toContain("account creation date");
+		expect(rows.some((row) => row.includes("Stripe customer id") && row.includes("Stripe"))).toBe(true);
+		expect(EVERYTHING).toContain("never to us");
+		expect(rows.some((row) => row.includes("low balance") && row.includes("Resend"))).toBe(true);
+	});
+
+	test("lists Stripe, GitHub and Resend among the processors, with legitimate interest as the basis for the machine hash", () => {
+		const processors = PRIVACY_SECTIONS.find((section) => section.id === "who-else")?.body.join(" ") ?? "";
+
+		expect(processors).toContain("Stripe");
+		expect(processors).toContain("GitHub");
+		expect(processors).toContain("Resend");
+		expect(EVERYTHING).toContain("legitimate interest");
+		expect(EVERYTHING).toContain("one trial per person");
+	});
+});
