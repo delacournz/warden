@@ -138,7 +138,9 @@ function exitCodeVerdicts(jobSpecs: readonly SelectedSpec[], exitCode: number): 
  * Each spec's verdict from one attempt of its job (a spec process over `jobSpecs`: one spec, or a
  * device's shard). A failed or timed-out test fails its spec. Without any usable result the exit
  * code decides every spec. After that, a non-zero exit means:
- * - a spec with no result of its own failed (the process never got to it);
+ * - a spec with no result of its own failed when the process never got to it (it sits after the last
+ *   result) or when no failed test explains the exit; a skipped spec before the last result, with a
+ *   failed test elsewhere accounting for the exit, is not blamed;
  * - if the process stopped before every spec had a result (a crash, a kill, a timeout), the spec
  *   whose result came last was running when it died, so it fails, and the specs before it passed;
  * - if every spec has a result, a failed test elsewhere is to blame and the specs whose tests passed
@@ -156,11 +158,14 @@ export function judgeJob(
 	const bySpec = resultsBySpec(all, tracked, real);
 	const lastResult = all.at(-1);
 	const lastSpec = lastResult ? specOf(lastResult, tracked, real)?.id : undefined;
+	const lastIndex = lastSpec === undefined ? -1 : jobSpecs.findIndex((f) => f.id === lastSpec);
+	const unreached = new Set(jobSpecs.filter((f, i) => i > lastIndex && !bySpec.has(f.id)).map((f) => f.id));
 	const blame: Blame = {
 		exitCode,
 		lastSpec,
 		blamed: all.some(failing),
 		stoppedEarly: jobSpecs.some((f) => !bySpec.has(f.id)),
+		unreached,
 	};
 	for (const spec of jobSpecs) {
 		const mine = bySpec.get(spec.id) ?? [];
@@ -185,6 +190,8 @@ type Blame = {
 	blamed: boolean;
 	/** some spec has no result at all */
 	stoppedEarly: boolean;
+	/** specs after the last result with no result: the process never got to them (a spec before it with none was skipped) */
+	unreached: ReadonlySet<string>;
 };
 
 /** Each result under the spec it belongs to (results of no tracked spec are dropped). */
@@ -205,8 +212,9 @@ function resultsBySpec(
 function specFailed(id: string, mine: readonly TestResult[], blame: Blame): boolean {
 	if (mine.some(failing)) return true;
 	if (blame.exitCode === 0) return false;
-	if (mine.length === 0) return true;
-	return blame.stoppedEarly ? id === blame.lastSpec : !blame.blamed;
+	if (mine.length === 0) return !blame.blamed || blame.unreached.has(id);
+	if (blame.blamed) return blame.unreached.size > 0 && id === blame.lastSpec;
+	return blame.stoppedEarly ? id === blame.lastSpec : true;
 }
 
 type Run = {
