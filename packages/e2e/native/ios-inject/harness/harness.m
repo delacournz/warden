@@ -316,6 +316,24 @@ static void cam_preview(void) {
   emit(@{ @"event": @"preview", @"sublayers": @(g_layer.sublayers.count), @"hasContents": @(sub.contents != nil), @"frame": @[ @(sub.frame.size.width), @(sub.frame.size.height) ], @"gravity": sub.contentsGravity ?: @"" });
 }
 
+/** Objects a swizzled `init…` hands back must be +1 like any init's: built in a drained pool, then used and dropped. */
+static void cam_lifetimes(void) {
+  AVCaptureDevice *dev = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+  CALayer *layer = [CALayer layer];
+  AVCaptureDeviceInput *input = nil;
+  AVCaptureDeviceRotationCoordinator *coordinator = nil;
+  @autoreleasepool {
+    input = [[AVCaptureDeviceInput alloc] initWithDevice:dev error:nil];
+    coordinator = [[AVCaptureDeviceRotationCoordinator alloc] initWithDevice:dev previewLayer:layer];
+  }
+  @autoreleasepool { spin(0.1); }
+  BOOL inputOk = input.device == dev;
+  BOOL coordOk = coordinator.device == dev && coordinator.previewLayer == layer;
+  @autoreleasepool { input = nil; coordinator = nil; }
+  @autoreleasepool { spin(0.1); }
+  emit(@{ @"event": @"lifetimes", @"input": @(inputOk), @"coordinator": @(coordOk) });
+}
+
 static void cam_rotation(void) {
   AVCaptureDevice *dev = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
   if (@available(macOS 14.0, *)) {
@@ -339,6 +357,7 @@ static BOOL handle_camera(NSArray<NSString *> *a) {
   if ([cmd isEqualToString:@"cam-movie"]) { cam_movie(a[1], a[2].doubleValue); return YES; }
   if ([cmd isEqualToString:@"cam-preview"]) { cam_preview(); return YES; }
   if ([cmd isEqualToString:@"cam-rotation"]) { cam_rotation(); return YES; }
+  if ([cmd isEqualToString:@"cam-lifetimes"]) { cam_lifetimes(); return YES; }
   if ([cmd isEqualToString:@"cam-close"]) { cam_close(); emit(@{ @"event": @"closed" }); return YES; }
   return NO;
 }

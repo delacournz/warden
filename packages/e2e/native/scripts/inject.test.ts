@@ -278,6 +278,32 @@ run("libwarden-inject camera (macOS build, real dyld insertion)", () => {
 		rmSync(stateDir, { recursive: true, force: true });
 	}, 60_000);
 
+	test("objects from the swizzled initializers are owned by the caller (no over-release under zombies)", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-cam-"));
+		const channel = createInjectChannel({
+			statePath: join(stateDir, "state.json"),
+			now: Date.now,
+			sleep: (ms) => Bun.sleep(ms),
+		});
+		const h = startHarness({
+			...injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath, camera: true }),
+			NSZombieEnabled: "YES",
+		});
+		const img = join(stateDir, "grey.png");
+		h.send(`cam-make-image ${img} 128 128 128`);
+		await h.next();
+		const set = channel.write({ camera: { back: { kind: "image", path: img } } });
+		expect(await channel.acked(set.seq, 5_000)).toBe(true);
+		h.send("cam-lifetimes");
+		const seen = await h.next<{ event: string; input: boolean | number; coordinator: boolean | number }>();
+		expect(seen.event).toBe("lifetimes");
+		expect(seen.input).toBeTruthy();
+		expect(seen.coordinator).toBeTruthy();
+		await h.stop();
+		expect(await h.proc.exited).toBe(0);
+		rmSync(stateDir, { recursive: true, force: true });
+	}, 60_000);
+
 	test("a QR image is decoded by the metadata output, and a video feed records a movie", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-cam-"));
 		const channel = createInjectChannel({

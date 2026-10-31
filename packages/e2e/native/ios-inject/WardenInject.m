@@ -1332,6 +1332,16 @@ static void wc_swz(Class cls, BOOL meta, NSString *name, id block) {
     if (class_getInstanceMethod(altTarget, sel)) wc_swz_tree(altTarget, meta, sel, imp);
   }
 }
+/**
+ * What a swizzled `init…` returns. A block IMP is not an init-family method, so ARC hands its result back +0, while the
+ * caller of an `init…` owns the result (+1) and releases it later: without this the object is released one time too
+ * many (expo-camera crashed in `objc_release` on its rotation coordinator). The receiver `self_` the caller allocated
+ * is left alone (a never-initialised AVFoundation object is not safe to release), a small leak per fake object.
+ */
+static id wc_owned(id obj) {
+  return obj ? (__bridge id)(__bridge_retained void *)obj : nil;
+}
+
 #define WC_SWZ_C(cls, selname, ...) wc_swz((cls), YES, (selname), __VA_ARGS__)
 #define WC_SWZ_I(cls, selname, ...) wc_swz((cls), NO, (selname), __VA_ARGS__)
 
@@ -1420,7 +1430,7 @@ static void wc_install_devices(void) {
     if ([d isKindOfClass:[WCDevice class]]) {
       WCInput *in = class_createInstance([WCInput class], 0);
       in->_wcDevice = d;
-      return in;
+      return wc_owned(in);
     }
     return ((id (*)(id, SEL, id, NSError **))wc_orig(self_, NSSelectorFromString(@"initWithDevice:error:")))(self_, NSSelectorFromString(@"initWithDevice:error:"), d, e);
   });
@@ -1605,9 +1615,9 @@ static void wc_install_rotation(void) {
   WC_SWZ_I(R, @"initWithDevice:previewLayer:", ^id(id self_, AVCaptureDevice *d, CALayer *layer) {
     if (![d isKindOfClass:[WCDevice class]]) return ((id (*)(id, SEL, id, id))wc_orig(self_, NSSelectorFromString(@"initWithDevice:previewLayer:")))(self_, NSSelectorFromString(@"initWithDevice:previewLayer:"), d, layer);
     id c = class_createInstance(sub, 0);
-    object_setIvar(c, devIvar, d);
-    object_setIvar(c, layerIvar, layer);
-    return c;
+    object_setIvarWithStrongDefault(c, devIvar, d);
+    object_setIvarWithStrongDefault(c, layerIvar, layer);
+    return wc_owned(c);
   });
 }
 
