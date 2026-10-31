@@ -21,14 +21,14 @@ function rig(
 			files.set(path, text);
 			if (path === STATE && app.injected) {
 				const seq = (JSON.parse(text) as { seq: number }).seq;
-				if (!app.silent) files.set(ACK, JSON.stringify({ seq, pid: 501, proxy: app.proxy }));
+				if (!app.silent) files.set(ACK, JSON.stringify({ seq, pid: 501, proxy: app.proxy, camera: app.camera }));
 			}
 		},
 		read: (path) => files.get(path),
 		remove: (path) => void files.delete(path),
 		pidAlive: (pid) => alive.has(pid),
 	};
-	const app = { injected: false, proxy: true, silent: false };
+	const app = { injected: false, proxy: true, camera: false, silent: false };
 	let t = 0;
 	const channel = createInjectChannel({
 		statePath: STATE,
@@ -67,11 +67,12 @@ function rig(
 		relaunches,
 		app,
 		/** the app is running with the dylib loaded */
-		attach: (opts: { proxy?: boolean } = {}) => {
+		attach: (opts: { proxy?: boolean; camera?: boolean } = {}) => {
 			app.injected = true;
 			app.proxy = opts.proxy ?? true;
+			app.camera = opts.camera ?? false;
 			alive.add(501);
-			files.set(ACK, JSON.stringify({ seq: 0, pid: 501, proxy: app.proxy }));
+			files.set(ACK, JSON.stringify({ seq: 0, pid: 501, proxy: app.proxy, camera: app.camera }));
 		},
 	};
 }
@@ -397,5 +398,55 @@ describe("clock (COND-12)", () => {
 		const result = await r.net.clock({ kind: "fixed", at: "not a date" });
 		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
 		expect(r.files.has(STATE)).toBe(false);
+	});
+});
+
+describe("camera", () => {
+	const back = { kind: "image" as const, path: "/w/camera/U1/back-aaa.png" };
+	const stateOf = (r: ReturnType<typeof rig>) => JSON.parse(r.files.get(STATE) ?? "{}");
+
+	test("an app launched with the camera gets a new feed live, acked", async () => {
+		const r = rig();
+		r.attach({ camera: true });
+		const done = await r.net.camera({ back });
+		expect(done).toEqual({ success: true, data: { feeds: { back } } });
+		expect(stateOf(r).camera).toEqual({ back });
+	});
+
+	test("nothing running: the feed waits for the next launch, which loads the dylib with the camera on", async () => {
+		const r = rig();
+		const done = await r.net.camera({ back });
+		expect(done).toEqual({ success: true, data: { feeds: { back }, appliesOnLaunch: true } });
+		const env = await r.net.launchEnv({});
+		expect(env.success && env.data?.WARDEN_CAMERA).toBe("1");
+		expect(env.success && env.data?.DYLD_INSERT_LIBRARIES).toBe("/d/libwarden-inject.dylib");
+		expect(stateOf(r).camera).toEqual({ back });
+		expect(r.proxy.calls.some((c) => c.op === "ensure")).toBe(false);
+	});
+
+	test("an injected app launched without the camera cannot get one live", async () => {
+		const r = rig();
+		r.attach({ camera: false });
+		const done = await r.net.camera({ back });
+		expect(done.success && done.data.appliesOnLaunch).toBe(true);
+	});
+
+	test("taking the feeds off reaches the running app as an empty camera, then launches stay plain", async () => {
+		const r = rig();
+		r.attach({ camera: true });
+		await r.net.camera({ back });
+		const off = await r.net.camera(null);
+		expect(off).toEqual({ success: true, data: { feeds: {} } });
+		expect(stateOf(r).camera).toEqual({});
+		const env = await r.net.launchEnv({});
+		expect(env).toEqual({ success: true, data: undefined });
+	});
+
+	test("the camera survives a network change", async () => {
+		const r = rig();
+		r.attach({ camera: true });
+		await r.net.camera({ back });
+		await r.net.network({ kind: "offline" });
+		expect(stateOf(r).camera).toEqual({ back });
 	});
 });

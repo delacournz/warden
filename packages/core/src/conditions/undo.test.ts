@@ -274,7 +274,28 @@ describe("undoConditions", () => {
 		recordCondition(store, l.id, "clock", { kind: "offset", ms: 86_400_000 }, 1);
 		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
 		expect(res.success).toBe(true);
-		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 8, offline: false, clockOffsetMs: 0 });
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 8, offline: false, clockOffsetMs: 0, camera: {} });
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("ios camera blanks the injected app's feeds, removes the staged files and clears the row", async () => {
+		const home = join(dir, "home");
+		const path = injectStatePath(home, UDID);
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(
+			path,
+			JSON.stringify({ seq: 3, offline: false, clockOffsetMs: 0, camera: { back: { kind: "image", path: "/x" } } })
+		);
+		const feeds = join(home, "camera", UDID);
+		mkdirSync(feeds, { recursive: true });
+		writeFileSync(join(feeds, "back-abc.png"), "x");
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "camera", { back: { kind: "image", path: join(feeds, "back-abc.png") } }, 1);
+		const res = await undoConditions({ ...deps(), env: { WARDEN_HOME: home } }, l);
+		expect(res).toEqual({ success: true, data: { reset: ["camera"], killed: [] } });
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ seq: 4, offline: false, clockOffsetMs: 0, camera: {} });
+		expect(existsSync(feeds)).toBe(false);
+		expect(calls).toEqual([]);
 		expect(activeConditions(store, l.id)).toEqual([]);
 	});
 

@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import type { CameraCondition, CameraFeed } from "@delacour/warden-core/conditions/conditions.types";
 import { injectStatePath as coreInjectStatePath } from "@delacour/warden-core/conditions/inject-state";
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError } from "../driver.types";
@@ -20,12 +21,19 @@ export const INJECT_DYLIB_ENV = "WARDEN_INJECT_DYLIB";
  * The one message of the control channel. `seq` rises with every write (the dylib ignores a state whose `seq` it
  * already applied); a field left out means "off" (`offline` false, `clockOffsetMs` 0), so a message is always the
  * whole state, never a delta. `clockFrozenMs` (ms since the epoch) holds the wall clocks at one instant and wins over
- * `clockOffsetMs`; left out, they run.
+ * `clockOffsetMs`; left out, they run. `camera`: the feeds of an app launched with `WARDEN_CAMERA=1` (a facing left out
+ * has no camera); left out, no feeds.
  */
-export type InjectState = { seq: number; offline?: boolean; clockOffsetMs?: number; clockFrozenMs?: number };
+export type InjectState = {
+	seq: number;
+	offline?: boolean;
+	clockOffsetMs?: number;
+	clockFrozenMs?: number;
+	camera?: CameraCondition;
+};
 
-/** What the dylib answers in `<state>.ack` once it applied `seq` (`bundleId`: the app it loaded into). */
-export type InjectAck = { seq: number; pid: number; proxy?: boolean; bundleId?: string };
+/** What the dylib answers in `<state>.ack` once it applied `seq` (`bundleId`: the app it loaded into; `camera`: launched with `WARDEN_CAMERA=1`). */
+export type InjectAck = { seq: number; pid: number; proxy?: boolean; camera?: boolean; bundleId?: string };
 
 export function encodeInjectState(state: InjectState): string {
 	return JSON.stringify({
@@ -33,11 +41,27 @@ export function encodeInjectState(state: InjectState): string {
 		offline: state.offline === true,
 		clockOffsetMs: Math.trunc(state.clockOffsetMs ?? 0),
 		...(state.clockFrozenMs === undefined ? {} : { clockFrozenMs: Math.trunc(state.clockFrozenMs) }),
+		...(state.camera === undefined ? {} : { camera: state.camera }),
 	});
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseFeed(value: unknown): CameraFeed | undefined {
+	if (!isRecord(value) || typeof value.path !== "string") return undefined;
+	if (value.kind === "image") return { kind: "image", path: value.path };
+	if (value.kind === "video") return { kind: "video", path: value.path, loop: value.loop !== false };
+	return undefined;
+}
+
+/** The feeds of a state file; a facing whose feed is not well formed is dropped. */
+function parseCamera(value: unknown): CameraCondition {
+	if (!isRecord(value)) return {};
+	const back = parseFeed(value.back);
+	const front = parseFeed(value.front);
+	return { ...(back ? { back } : {}), ...(front ? { front } : {}) };
 }
 
 export function parseInjectState(text: string): InjectState | undefined {
@@ -49,6 +73,7 @@ export function parseInjectState(text: string): InjectState | undefined {
 			offline: data.offline === true,
 			clockOffsetMs: typeof data.clockOffsetMs === "number" ? data.clockOffsetMs : 0,
 			...(typeof data.clockFrozenMs === "number" ? { clockFrozenMs: data.clockFrozenMs } : {}),
+			...("camera" in data ? { camera: parseCamera(data.camera) } : {}),
 		};
 	} catch {
 		return undefined;
@@ -63,6 +88,7 @@ export function parseInjectAck(text: string): InjectAck | undefined {
 			seq: data.seq,
 			pid: data.pid,
 			proxy: data.proxy === true,
+			...(data.camera === true ? { camera: true } : {}),
 			...(typeof data.bundle === "string" ? { bundleId: data.bundle } : {}),
 		};
 	} catch {
@@ -85,6 +111,8 @@ export function injectLaunchEnv(input: {
 	proxy?: ProxyAddress;
 	clockOffsetMs?: number;
 	clockFrozenMs?: number;
+	/** fake the capture stack from the state file's `camera` feeds (`WARDEN_CAMERA=1`) */
+	camera?: boolean;
 	debug?: boolean;
 }): Record<string, string> {
 	return {
@@ -93,6 +121,7 @@ export function injectLaunchEnv(input: {
 		...(input.proxy ? { WARDEN_NET_PROXY: `${input.proxy.host}:${input.proxy.port}` } : {}),
 		...(input.clockOffsetMs ? { WARDEN_CLOCK_OFFSET_MS: String(Math.trunc(input.clockOffsetMs)) } : {}),
 		...(input.clockFrozenMs === undefined ? {} : { WARDEN_CLOCK_FROZEN_MS: String(Math.trunc(input.clockFrozenMs)) }),
+		...(input.camera ? { WARDEN_CAMERA: "1" } : {}),
 		...(input.debug ? { WARDEN_INJECT_DEBUG: "1" } : {}),
 	};
 }
@@ -106,10 +135,12 @@ export function shouldInject(input: {
 	networkActive: boolean;
 	/** a clock offset is set (COND-12) */
 	clockActive: boolean;
+	/** the lease has a camera feed: the dylib must be loaded at launch to fake the capture stack */
+	cameraActive?: boolean;
 	/** the caller asked for injection (`LaunchOptions.inject`, a suite that declares `conditions.network`) */
 	requested: boolean;
 }): boolean {
-	return input.networkActive || input.clockActive || input.requested;
+	return input.networkActive || input.clockActive || input.cameraActive === true || input.requested;
 }
 
 export type LocateInjectInput = {

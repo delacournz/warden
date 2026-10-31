@@ -1143,6 +1143,32 @@ describe("network conditions", () => {
 		});
 	});
 
+	test("the camera without a lease is E_UNSUPPORTED and says what is missing", async () => {
+		const { driver } = await open(lifecycle);
+		const result = await driver.camera({ back: { kind: "image", path: "/w/camera/UDID-1/back-a.png" } });
+		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+		expect(!result.success && result.error.message).toContain("injected dylib");
+	});
+
+	test("a camera feed set before launch loads the dylib with the camera on, no proxy", async () => {
+		const dir = stateDir();
+		dir.app.running = false;
+		const { driver, helper } = await open(lifecycle, {
+			networkProxy: fakeProxy(19_124),
+			injectFs: dir.fs,
+			exists,
+			env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
+			wardenHome: "/w",
+		});
+		const set = await driver.camera({ back: { kind: "image", path: "/w/camera/UDID-1/back-a.png" } });
+		expect(set.success && set.data.appliesOnLaunch).toBe(true);
+		dir.app.running = true;
+		await unwrapped(driver.app.launch(BUNDLE));
+		const env = helper.of("launch")[0]?.env;
+		expect(env).toMatchObject({ DYLD_INSERT_LIBRARIES: dylib, WARDEN_CAMERA: "1" });
+		expect(env).not.toHaveProperty("WARDEN_NET_PROXY");
+	});
+
 	test("a plain run launches exactly as before: no injected env at all", async () => {
 		const { driver, helper } = await open(lifecycle, {
 			networkProxy: fakeProxy(),

@@ -60,7 +60,7 @@ Plan ID: **WDN-CAM**. Goal: `warden ui camera …` and `device.camera.*` in spec
 
 ### CAM-4a — ✨ feat: Android `+cam` device identity (prereq for the Android re-spike)
 - Why: the emulator's camera source is fixed at boot (`-camera-back imagefile:|videofile:`), released emulators are reused, so a camera emulator must be its own identity, like `+bio` (`packages/core/src/biometrics.ts`).
-- `packages/core/src/camera-profile.ts`: `CAMERA_PROFILE_SUFFIX = "+cam"`, `cameraProfile(profile, camera)`, `splitCameraProfile(profile)`; composes with `+bio` in canonical order `<avd>+bio+cam` (callers that split `+bio` must strip `+cam` first).
+- `packages/core/src/camera-profile.ts`: `CAMERA_PROFILE_SUFFIX = "+cam"`, `cameraProfile(profile, camera)`, `splitCameraProfile(profile)`; composes with `+bio` in canonical order `<avd>+bio+cam` (callers that split `+bio` must strip `+cam` first). **`+bio+cam` is refused by the provider for now** ("--camera cannot be combined with --biometrics yet"): the golden-baked enroll and the camera cold boot do not mix yet.
 - Android provider launch of a `+cam` profile: `-camera-back imagefile:<cameraFeedDir(home, serial)>/back.png -camera-front imagefile:<…>/front.png`, both seeded with a neutral grey placeholder PNG before launch (stable paths, so a later in-place swap or reboot reuses them). v0: `+cam` launches **cold boot** (no snapshot, never reports `snapshotFailed` against the base golden) until the re-spike proves snapshot loads.
 - CLI: `--camera` on the claim option sets (`claim`, `run`, `dev`), mapped through `cameraProfile`; iOS ignores it (identity unchanged: the dylib needs no device variant). Skill sync + help snapshots.
 - Non-goals here: swapping feeds, undo, e2e config (CAM-4/5).

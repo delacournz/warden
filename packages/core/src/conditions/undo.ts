@@ -7,7 +7,7 @@ import type { PidAlive } from "../liveness";
 import { androidTools, forgetAndroidEmulator } from "../providers/android";
 import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
-import { cameraFeedDir } from "./camera-media";
+import { cameraFeedDir, clearCameraFeeds } from "./camera-media";
 import { activeConditions, clearCondition } from "./conditions";
 import type { ConditionArea, ConditionRecord } from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
@@ -171,6 +171,24 @@ function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[];
 	return out;
 }
 
+/**
+ * iOS areas the injected dylib serves: an app that is still running keeps reading its state file, so it goes back
+ * online on the real clock with blank camera feeds; the camera's staged host files are then removed.
+ */
+function resetIosInjected(deps: UndoDeps, udid: string, area: ConditionRecord["area"]): string[] {
+	if (area !== "clock" && area !== "network" && area !== "camera") return [];
+	const home = wardenHome(deps.env);
+	const failed = neutralizeInjectState(injectStatePath(home, udid));
+	const out = failed ? [failed] : [];
+	if (area !== "camera") return out;
+	try {
+		clearCameraFeeds(home, udid);
+	} catch (error) {
+		out.push(`remove camera feeds: ${message(error)}`);
+	}
+	return out;
+}
+
 /** What resetting one condition record did: failure lines (empty = reset) and the owned pids stopped. */
 export type ResetOutcome = { failures: string[]; killed: number[] };
 
@@ -190,11 +208,7 @@ export async function resetRecord(
 	}
 	const cmds = device ? resetCommands(device.platform, device.id, record, deps) : [];
 	const resets = await runResets(deps.exec, cmds);
-	// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock
-	if (device?.platform === "ios" && (record.area === "clock" || record.area === "network")) {
-		const failed = neutralizeInjectState(injectStatePath(wardenHome(deps.env), device.id));
-		if (failed) resets.push(failed);
-	}
+	if (device?.platform === "ios") resets.push(...resetIosInjected(deps, device.id, record.area));
 	// iOS has no device-side timezone or locale: only the staged launch settings go
 	if (device?.platform === "ios" && record.area === "locale") {
 		const failed = writeLaunchSettings(launchSettingsPath(wardenHome(deps.env), device.id), {});
