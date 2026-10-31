@@ -675,6 +675,11 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		const target = biometricProfile(resolved.data, split.biometrics);
 		// a camera device cold-boots (the camera source is fixed at launch): no snapshot, and no snapshot bookkeeping
 		// against the base golden, which a camera launch must never invalidate
+		if (cam.camera && split.biometrics) {
+			return err(
+				`profile ${profile}: --camera cannot be combined with --biometrics yet (fingerprint enrollment comes from a snapshot, a camera emulator cold-boots)`
+			);
+		}
 		if (cam.camera) return ok({ avdName: resolved.data, target, snapshot: undefined, camera: true });
 		const snapshot = await snapshotFor(target);
 		if (split.biometrics && snapshot === undefined) return err(missingEnrolledSnapshot(profile));

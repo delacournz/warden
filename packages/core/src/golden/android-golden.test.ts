@@ -1055,11 +1055,12 @@ describe("biometrics snapshots", () => {
 			expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", plain.data.name))).toBe(true);
 		});
 
-		test("+bio+cam resolves the same AVD", async () => {
+		test("+bio+cam is refused, never a cold-booted unenrolled emulator", async () => {
 			const host = fakeAndroidHost();
 			const created = await provider(host).create("w", "pixel-10+bio+cam");
-			expect(created.success && created.data.profile).toBe("pixel-10+bio+cam");
-			expect(host.spawned.at(-1)).toEqual(expect.arrayContaining(["-avd", "Pixel_10", "-camera-back"]));
+			expect(created.success).toBe(false);
+			if (!created.success) expect(created.error).toContain("--camera cannot be combined with --biometrics");
+			expect(host.spawned).toHaveLength(0);
 		});
 
 		test("a plain launch has no camera args", async () => {
