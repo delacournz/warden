@@ -30,6 +30,9 @@ Plan ID: **WDN-CAM**. Goal: `warden ui camera …` and `device.camera.*` in spec
 - State: `{ back?: { path, kind: "image"|"video", loop, fps? }, front?: … }`, persisted in the lease conditions store (`packages/e2e/src/conditions/lease-store.ts`) like network/location so `ui` and specs share it; reset on lease release.
 - iOS needs dylib at launch: setting camera while app runs without the dylib → `E_CAMERA_RELAUNCH` hint (same rule as network); `app.open()` loads dylib when camera state present.
 
+## Device rules for spikes/agents
+- Devices only from `warden dev <platform> --json` (pid-held, 30 s heartbeat) and only the id it returns. Never bare `warden claim`, never pick from simctl/adb lists, never a self-made AVD or hard-coded serial/port. Stop all device commands the moment a lease ends.
+
 ## Phases
 
 ### CAM-0 — 🚧 wip: spikes (blocking CAM-4, informs CAM-2)
@@ -50,6 +53,16 @@ Plan ID: **WDN-CAM**. Goal: `warden ui camera …` and `device.camera.*` in spec
 ### CAM-3 — ✨ feat: iOS driver wiring
 - `packages/e2e/src/driver/ios/inject.ts`: add `WARDEN_CAMERA` + state; load dylib when camera state set.
 - iOS driver `camera` op writes state, waits for ack (pid/bundle match), timeout → `E_CAMERA_ACK`.
+
+### CAM-4a — ✨ feat: Android `+cam` device identity (prereq for the Android re-spike)
+- Why: the emulator's camera source is fixed at boot (`-camera-back imagefile:|videofile:`), released emulators are reused, so a camera emulator must be its own identity, like `+bio` (`packages/core/src/biometrics.ts`).
+- `packages/core/src/camera-profile.ts`: `CAMERA_PROFILE_SUFFIX = "+cam"`, `cameraProfile(profile, camera)`, `splitCameraProfile(profile)`; composes with `+bio` in canonical order `<avd>+bio+cam` (callers that split `+bio` must strip `+cam` first).
+- Android provider launch of a `+cam` profile: `-camera-back imagefile:<cameraFeedDir(home, serial)>/back.png -camera-front imagefile:<…>/front.png`, both seeded with a neutral grey placeholder PNG before launch (stable paths, so a later in-place swap or reboot reuses them). v0: `+cam` launches **cold boot** (no snapshot, never reports `snapshotFailed` against the base golden) until the re-spike proves snapshot loads.
+- CLI: `--camera` on the claim option sets (`claim`, `run`, `dev`), mapped through `cameraProfile`; iOS ignores it (identity unchanged: the dylib needs no device variant). Skill sync + help snapshots.
+- Non-goals here: swapping feeds, undo, e2e config (CAM-4/5).
+
+### CAM-0b — 🚧 wip: Android re-spike on `warden dev android --camera`
+- Only via `warden dev android --camera --json` (pid-held lease) and the serial it returns; never a self-made AVD, hard-coded serial or console port. Questions: exact frames; in-place replace / rename / symlink swap seen on camera reopen; `videofile:` loop; image↔video mode change needs reboot; does a `+cam` launch load the base golden snapshot.
 
 ### CAM-4 — ✨ feat: Android emulator camera
 - Per CAM-0 findings: `packages/core/src/providers/android.ts` boot args add `-camera-back imagefile|videofile:<lease>/camera/back.*` (+front); live-swap implementation; golden AVD camera config in `packages/core/src/golden/android-golden.ts` if needed (golden version bump).
