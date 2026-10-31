@@ -5,6 +5,7 @@ import { androidSnapshotsDue } from "@delacour/warden-core/golden/android-snapsh
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { ephemeralEnabled } from "@delacour/warden-core/shutdown-policy";
 import type { CommandContext } from "./context";
+import { goldenPruneDue } from "./golden-prune";
 
 /** Background `warden gc` is considered at most this often, machine-wide. */
 export const AUTO_GC_INTERVAL_MS = 10 * 60_000;
@@ -47,7 +48,8 @@ export function spawnDetached(cmd: string[], env: Record<string, string | undefi
  * process shares it) it looks at the store: a lease whose owner died, a warden device that went
  * idle since the last pass, a build cache over its cap (one `SUM` over the builds table), or an AVD a claim
  * cold-booted for want of a quick-boot snapshot (not under `CI`), or ephemeral sims on and never swept on this machine
- * (`EPHEMERAL_SWEPT_META_KEY`: the backlog of shut-down sims an older warden kept). Nothing there, nothing is spawned (a pass is a full warden process,
+ * (`EPHEMERAL_SWEPT_META_KEY`: the backlog of shut-down sims an older warden kept), or a day since gc last pruned stale
+ * goldens (`goldenPruneDue`). Nothing there, nothing is spawned (a pass is a full warden process,
  * ~100 MB). This is what reaps sims left behind by sessions that died without a SessionEnd: their
  * leases go stale, gc shuts them down. `WARDEN_AUTO_GC=0` disables. The child gets the context's
  * env, so it gcs the same `WARDEN_HOME`.
@@ -74,7 +76,8 @@ export function maybeAutoGc(
 		work.idleDevices === 0 &&
 		!cacheOverCap(ctx) &&
 		!androidSnapshotsDue(store, ctx.env, now) &&
-		!(ephemeralEnabled(ctx.env) && store.getMeta(EPHEMERAL_SWEPT_META_KEY) === undefined)
+		!(ephemeralEnabled(ctx.env) && store.getMeta(EPHEMERAL_SWEPT_META_KEY) === undefined) &&
+		!goldenPruneDue(store, ctx.env, now)
 	)
 		return;
 	run([...(opts.nice ?? niceCommand()), ...self, "gc", "--quiet"]);

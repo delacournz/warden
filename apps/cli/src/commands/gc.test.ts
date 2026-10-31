@@ -6,6 +6,7 @@ import { recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-core/exec";
 import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { Owner } from "@delacour/warden-core/types";
+import { GOLDEN_PRUNED_META_KEY } from "../golden-prune";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { gcCommand } from "./gc";
@@ -576,5 +577,23 @@ describe("warden gc: ephemeral sims", () => {
 		expect(await gcCommand.run(ctx)).toBe(0);
 		expect(JSON.parse(ctx.stdout.join("\n")).deleted).toEqual([]);
 		expect(calls.filter((x) => x[2] === "delete")).toEqual([]);
+	});
+});
+
+describe("warden gc: stale goldens", () => {
+	test("--json reports `goldens` and stamps the daily throttle, even when no platform can list them", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).goldens).toEqual([]);
+		expect(c.db.getMeta(GOLDEN_PRUNED_META_KEY)).toBe(String(NOW));
+	});
+
+	test("WARDEN_GOLDEN_PRUNE=0: not attempted, not stamped", async () => {
+		const calls: string[][] = [];
+		const c = setup(["--json"], calls);
+		c.env = { ...c.env, WARDEN_GOLDEN_PRUNE: "0" };
+		expect(await gcCommand.run(c)).toBe(0);
+		expect(c.db.getMeta(GOLDEN_PRUNED_META_KEY)).toBeUndefined();
 	});
 });

@@ -20,6 +20,7 @@ import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { shutdownReleasedDevices } from "../device-shutdown";
 import { androidSnapshotPass } from "../golden-deps";
+import { goldenPrunePass } from "../golden-prune";
 import { emit, heading, plural, reportError } from "../output";
 import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
@@ -223,7 +224,11 @@ function removeIfIdle(dir: string, now: number): boolean {
 type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
 
 /** Everything a pass reports. `deleted`: ephemeral sims `simctl delete`d (stale-lease shutdowns + the sweep). */
-type GcOutcome = PlatformOutcome & { reclaimed: string[]; deleted: ShutDevice[] };
+type GcOutcome = PlatformOutcome & {
+	reclaimed: string[];
+	deleted: ShutDevice[];
+	goldens: Array<{ platform: Platform; name: string }>;
+};
 
 /**
  * Ephemeral sims (`ephemeralEnabled`): every shut-down, unleased, unquarantined warden sim is deleted — including the
@@ -260,7 +265,7 @@ async function sweepEphemeral(ctx: CommandContext, owner: Owner): Promise<{ dele
  * (`sweepEphemeral`); otherwise no device is ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
  * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note. Then one
  * AVD a claim cold-booted for want of a quick-boot snapshot gets it built, if no emulator of it runs
- * (never under `CI`).
+ * (never under `CI`). Once a day, stale goldens (iOS sims, Android snapshots) are pruned (`goldenPrunePass`).
  */
 async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { color } = ctx.ui;
@@ -320,8 +325,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
 		const snapshotNotes = await androidSnapshotPass(sctx, owner);
 		const swept = await sweepEphemeral(sctx, owner);
+		// after the snapshot build, so a just-replaced snapshot is pruned this pass
+		const pruned = await goldenPrunePass(sctx, owner);
 		return {
 			reclaimed,
+			goldens: pruned.goldens,
 			shutdown: [
 				...stale.flatMap((l) =>
 					l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
@@ -351,7 +359,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	if (!opts.quiet && !opts.json)
 		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${formatDuration(idle.data)}`);
 	// `--quiet` is the detached auto-gc: no terminal, so no spinner.
-	const { reclaimed, shutdown, forgotten, deleted, notes } = opts.quiet
+	const { reclaimed, shutdown, forgotten, deleted, goldens, notes } = opts.quiet
 		? await shutDownIdle(ctx)
 		: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
 	notes.push(
@@ -377,9 +385,10 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 					),
 				]
 			: []),
+		...(goldens.length > 0 ? [color.green(`pruned stale goldens ${goldens.map((g) => g.name).join(" ")}`)] : []),
 		...notes.map((n) => color.yellow(n)),
 	].join("\n");
-	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, deleted, notes }, text);
+	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, deleted, goldens, notes }, text);
 	return 0;
 }
 
