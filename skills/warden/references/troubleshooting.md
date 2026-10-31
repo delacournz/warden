@@ -51,6 +51,9 @@
 | 45 | `warden e2e` ignores the suite's `metro` block (specs skip dev-client checks, no `WARDEN_METRO_URL`) | `metro` applies only with `--dev` / kind `dev` since the default build is the repacked simulator one | `warden e2e <suite> --dev`, or pin `app: { kind: "dev" }` in the suite |
 | 46 | stderr `warning: fingerprint.include "native+js" of project <p> is ignored by --kind …` | The project's kind-less JS-aware key does not apply to `dev` / `simulator` | Move `fingerprint.jsInputs` to `kinds.simulator.jsInputs`, or drop `fingerprint.include`; `--kind release` keys on JS anyway |
 | 47 | Android repack fails naming `zipalign`, `apksigner`, `aapt2`, `zip` or `unzip` | SDK build-tools or the system zip tools are missing | Install Android SDK build-tools (`sdkmanager "build-tools;<version>"`, found under `ANDROID_HOME`); `zip` / `unzip` ship with macOS |
+| 48 | `claim --remote` exits 1, `--json` `error.code: "credits_exhausted"`, `remote claim failed: out of credits` | The organization's prepaid balance is $0 (HTTP 402) | A person tops up: `warden billing --top-up <amount>` or the printed `billingUrl`; then claim again. Never retry in a loop |
+| 49 | `--json` `error.code: "machine_required_for_trial"` | The free trial is held until a claim from a machine you ran `warden login` on; CI and `WARDEN_TOKEN` runs send no machine id | Claim once from your own machine after `warden login`, or top up |
+| 50 | Heartbeat warns `stopped: out of credits`; `warden ls` STATE `stop_reason: credits_exhausted` | warden cloud stopped the hosted device at $0 | Top up, `warden release <leaseId>`, claim a new one |
 
 ## Code lookup
 

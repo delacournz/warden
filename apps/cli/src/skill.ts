@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import authoringMd from "../../../skills/warden/references/authoring.md" with { type: "text" };
+import cloudMd from "../../../skills/warden/references/cloud.md" with { type: "text" };
 import perfMd from "../../../skills/warden/references/perf.md" with { type: "text" };
 import specsMd from "../../../skills/warden/references/specs.md" with { type: "text" };
 import suitesMd from "../../../skills/warden/references/suites.md" with { type: "text" };
@@ -22,6 +23,7 @@ export const SKILL_PATHS = [
 	"references/specs.md",
 	"references/authoring.md",
 	"references/suites.md",
+	"references/cloud.md",
 	"references/troubleshooting.md",
 ] as const;
 export type SkillPath = (typeof SKILL_PATHS)[number];
@@ -33,6 +35,7 @@ export const SKILL_FILES: Readonly<Record<SkillPath, string>> = {
 	"references/specs.md": specsMd,
 	"references/authoring.md": authoringMd,
 	"references/suites.md": suitesMd,
+	"references/cloud.md": cloudMd,
 	"references/troubleshooting.md": troubleshootingMd,
 };
 
