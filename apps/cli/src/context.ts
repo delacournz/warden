@@ -3,6 +3,7 @@ import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/g
 import type { HostFacts } from "@delacour/warden-core/host";
 import { openStore, type Store } from "@delacour/warden-core/store";
 import type { Fetch } from "./remote/api";
+import type { CloudErrorCode } from "./remote/errors";
 import type { SpawnViewer } from "./remote/viewer";
 import { terminalUi, type Ui } from "./ui";
 
@@ -33,12 +34,17 @@ export type CommandContext = {
 	fetch?: Fetch;
 	/** wall-clock wait (polling loops); unset = `Bun.sleep` */
 	sleep?: (ms: number) => Promise<void>;
+	/** text of a file, `undefined` when missing (the machine id on Linux); unset = the disk */
+	readFile?: (path: string) => Promise<string | undefined>;
 	/** starts the `warden view` window; unset = `Bun.spawn` (tests inject a fake) */
 	spawn?: SpawnViewer;
 };
 
+/** A machine-readable code (and link) for a failure, carried into the `--json` error envelope. */
+export type FailureDetail = { code: CloudErrorCode; billingUrl?: string };
+
 /** Collects the failures a command reports; `runProgram` keeps the first. */
-export type FailureSink = { record: (message: string) => void };
+export type FailureSink = { record: (message: string, detail?: FailureDetail) => void };
 
 /** Line writes to a process stream that remember backpressure, so the process can wait for them before exiting. */
 export type LineWriter = {

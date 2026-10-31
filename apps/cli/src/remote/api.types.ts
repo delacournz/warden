@@ -17,7 +17,38 @@ export type RemoteDevice = {
 	startedAt: string;
 	readyAt?: string;
 	error?: string;
+	/** why a stopped device stopped */
+	stopReason?: StopReason;
+	/** the org's balance, on get and heartbeat */
+	billing?: DeviceBilling;
 };
+
+export type StopReason = "user" | "idle" | "credits_exhausted" | "error";
+
+export type DeviceBilling = { balanceUsd: number; lowBalance: boolean };
+
+export type TrialState = "none" | "held" | "active" | "revoked";
+
+/** `GET /v1/billing`: the active organization's prepaid balance. */
+export type Billing = {
+	balanceUsd: number;
+	ratePerMinuteUsd: number;
+	estMinutesLeft: number;
+	lowBalance: boolean;
+	trial: { state: TrialState; amountUsd: number };
+	/** the web page to top up on */
+	billingUrl: string;
+};
+
+export type LedgerKind = "grant" | "grant_revoked" | "topup" | "usage" | "refund" | "dispute" | "adjust";
+
+/** One `GET /v1/billing/ledger` entry; a kind this CLI doesn't know reads as `other`. */
+export type LedgerEntry = { id: string; kind: LedgerKind | "other"; amountUsd: number; createdAt: string };
+
+export type LedgerPage = { entries: LedgerEntry[]; nextCursor?: string };
+
+/** `POST /v1/billing/topups`: the Stripe Checkout page to pay on. */
+export type Topup = { checkoutUrl: string };
 
 export type CreateRemoteDevice = {
 	platform: RemotePlatform;
@@ -39,7 +70,7 @@ export type RemoteConnectionState = "pending" | "connected" | "awaiting_approval
 export type Me = {
 	user: { id: string; email: string; name?: string };
 	organization: { id: string; name: string; slug: string } | null;
-	remote: { state: RemoteConnectionState; concurrencyLimit?: number; active: number } | null;
+	remote: { state: RemoteConnectionState; concurrencyLimit?: number; active: number; balanceUsd?: number } | null;
 };
 
 export type Organization = { id: string; name: string; slug: string };
@@ -67,5 +98,6 @@ export type ApiError =
 	| { kind: "unauthorized"; message: string }
 	| { kind: "forbidden"; code?: string; message: string }
 	| { kind: "not_found"; message: string }
+	| { kind: "payment_required"; code?: string; message: string; billingUrl?: string }
 	| { kind: "http"; status: number; code?: string; message: string }
 	| { kind: "invalid_response"; message: string };

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createWardenApi, type Fetch, WARDEN_CLI_CLIENT_ID } from "./api";
-import type { DeviceTokenPoll, Me, RemoteDevice } from "./api.types";
+import type { Billing, DeviceTokenPoll, Me, RemoteDevice } from "./api.types";
 
 type Call = { method: string; url: string; headers: Record<string, string>; body?: unknown };
 
@@ -194,5 +194,160 @@ describe("warden api client", () => {
 		});
 		const odd = await api.viewerToken("odd", "view");
 		expect(!odd.success && odd.error.kind).toBe("invalid_response");
+	});
+});
+
+describe("warden cloud billing", () => {
+	const authed = (routes: Record<string, () => Response>, calls: Call[] = []) =>
+		createWardenApi({ baseUrl: "https://api.test", token: "tok", fetch: fakeFetch(routes, calls) });
+	const device = { id: "d1", platform: "ios", status: "ready", idleTimeoutS: 300, startedAt: "2026-10-30T00:00:00Z" };
+
+	test("registerMachine posts the hash and takes a 204", async () => {
+		const calls: Call[] = [];
+		const api = authed({ "POST /v1/machines": () => new Response(null, { status: 204 }) }, calls);
+		expect(await api.registerMachine("a".repeat(64))).toEqual({ success: true, data: undefined });
+		expect(calls[0]?.body).toEqual({ hash: "a".repeat(64) });
+	});
+
+	test("createDevice sends X-Warden-Machine only when given a hash", async () => {
+		const calls: Call[] = [];
+		const api = authed({ "POST /v1/devices": () => json(device, 202) }, calls);
+		await api.createDevice({ platform: "ios" }, { machine: "b".repeat(64) });
+		await api.createDevice({ platform: "ios" });
+		expect(calls[0]?.headers["x-warden-machine"]).toBe("b".repeat(64));
+		expect(calls[1]?.headers["x-warden-machine"]).toBeUndefined();
+	});
+
+	test("402 CREDITS_EXHAUSTED keeps the billing url", async () => {
+		const api = authed({
+			"POST /v1/devices": () =>
+				json(
+					{
+						success: false,
+						code: "CREDITS_EXHAUSTED",
+						error: "out of credits",
+						billingUrl: "https://app.warden.co.nz/billing",
+					},
+					402
+				),
+		});
+		expect(await api.createDevice({ platform: "ios" })).toEqual({
+			success: false,
+			error: {
+				kind: "payment_required",
+				code: "CREDITS_EXHAUSTED",
+				message: "out of credits",
+				billingUrl: "https://app.warden.co.nz/billing",
+			},
+		});
+	});
+
+	test("403 MACHINE_REQUIRED_FOR_TRIAL is a forbidden error with its code", async () => {
+		const api = authed({
+			"POST /v1/devices": () =>
+				json({ success: false, code: "MACHINE_REQUIRED_FOR_TRIAL", error: "trial needs a machine" }, 403),
+		});
+		const r = await api.createDevice({ platform: "ios" });
+		expect(r).toEqual({
+			success: false,
+			error: { kind: "forbidden", code: "MACHINE_REQUIRED_FOR_TRIAL", message: "trial needs a machine" },
+		});
+	});
+
+	test("devices carry stopReason and billing; unknown stop reasons are dropped", async () => {
+		const api = authed({
+			"GET /v1/devices/d1": () =>
+				json({
+					...device,
+					status: "stopped",
+					stopReason: "credits_exhausted",
+					billing: { balanceUsd: 0, lowBalance: true },
+				}),
+			"GET /v1/devices/d2": () => json({ ...device, id: "d2", stopReason: "meteor", billing: { balanceUsd: "x" } }),
+		});
+		const r = await api.getDevice("d1");
+		expect(r.success && r.data).toMatchObject({
+			stopReason: "credits_exhausted",
+			billing: { balanceUsd: 0, lowBalance: true },
+		});
+		const other = await api.getDevice("d2");
+		expect(other.success && other.data.stopReason).toBeUndefined();
+		expect(other.success && other.data.billing).toBeUndefined();
+	});
+
+	test("getBilling parses the account summary", async () => {
+		const body: Billing = {
+			balanceUsd: 1.5,
+			ratePerMinuteUsd: 0.2,
+			estMinutesLeft: 7.5,
+			lowBalance: false,
+			trial: { state: "active", amountUsd: 2 },
+			billingUrl: "https://app.warden.co.nz/billing",
+		};
+		const api = authed({ "GET /v1/billing": () => json(body) });
+		expect(await api.getBilling()).toEqual({ success: true, data: body });
+		const bad = authed({ "GET /v1/billing": () => json({ ...body, trial: { state: "maybe", amountUsd: 2 } }) });
+		expect(await bad.getBilling()).toMatchObject({ success: false, error: { kind: "invalid_response" } });
+	});
+
+	test("createTopup posts the amount and returns the checkout url; members get BILLING_ROLE", async () => {
+		const calls: Call[] = [];
+		const api = authed(
+			{ "POST /v1/billing/topups": () => json({ checkoutUrl: "https://checkout.stripe.com/c/pay/cs_1" }) },
+			calls
+		);
+		expect(await api.createTopup(20)).toEqual({
+			success: true,
+			data: { checkoutUrl: "https://checkout.stripe.com/c/pay/cs_1" },
+		});
+		expect(calls[0]?.body).toEqual({ amountUsd: 20 });
+		const member = authed({
+			"POST /v1/billing/topups": () => json({ success: false, code: "BILLING_ROLE", error: "owners only" }, 403),
+		});
+		expect(await member.createTopup(20)).toMatchObject({ success: false, error: { code: "BILLING_ROLE" } });
+	});
+
+	test("listLedger reads entries (micro-USD or USD) and asks for a limit", async () => {
+		const calls: Call[] = [];
+		const api = authed(
+			{
+				"GET /v1/billing/ledger": () =>
+					json({
+						entries: [
+							{ id: "l2", kind: "usage", amountMicrousd: -400000, createdAt: "2026-10-30T01:00:00Z" },
+							{ id: "l1", kind: "grant", amountUsd: 2, createdAt: "2026-10-30T00:00:00Z" },
+							{ id: "l0", kind: "mystery", amountUsd: 1, createdAt: "2026-10-29T00:00:00Z" },
+						],
+						nextCursor: "c2",
+					}),
+			},
+			calls
+		);
+		const r = await api.listLedger({ limit: 5 });
+		expect(r).toEqual({
+			success: true,
+			data: {
+				entries: [
+					{ id: "l2", kind: "usage", amountUsd: -0.4, createdAt: "2026-10-30T01:00:00Z" },
+					{ id: "l1", kind: "grant", amountUsd: 2, createdAt: "2026-10-30T00:00:00Z" },
+					{ id: "l0", kind: "other", amountUsd: 1, createdAt: "2026-10-29T00:00:00Z" },
+				],
+				nextCursor: "c2",
+			},
+		});
+		expect(calls[0]?.url).toBe("https://api.test/v1/billing/ledger?limit=5");
+	});
+
+	test("me.remote carries balanceUsd when the server sends it", async () => {
+		const api = authed({
+			"GET /v1/me": () =>
+				json({
+					user: { id: "u", email: "e@x.test" },
+					organization: null,
+					remote: { state: "connected", active: 0, balanceUsd: 3.25 },
+				}),
+		});
+		const r = await api.me();
+		expect(r.success && r.data.remote).toEqual({ state: "connected", active: 0, balanceUsd: 3.25 });
 	});
 });

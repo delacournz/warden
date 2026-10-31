@@ -1,11 +1,18 @@
 import type { Fetch } from "./api";
-import type { Me, Organization, RemoteDevice } from "./api.types";
+import type { Billing, LedgerEntry, Me, Organization, RemoteDevice } from "./api.types";
 
 type Poll = "pending" | "slow_down" | "denied" | "expired" | "approve";
 
 export type FakeServer = {
 	fetch: Fetch;
-	calls: Array<{ method: string; path: string; auth?: string; body?: Record<string, unknown> }>;
+	calls: Array<{
+		method: string;
+		path: string;
+		auth?: string;
+		body?: Record<string, unknown>;
+		/** the `X-Warden-Machine` header, when sent */
+		machine?: string;
+	}>;
 	/** device-token answers, in order; then `authorization_pending` */
 	polls: Poll[];
 	token: string;
@@ -16,9 +23,18 @@ export type FakeServer = {
 	readyAfterGets: number;
 	/** viewer tokens minted so far, newest last (`wvt_<n>`) */
 	viewerTokens: Array<{ deviceId: string; scope: string; ttlS?: number; token: string }>;
+	billing: Billing;
+	/** `GET /v1/billing/ledger`, newest first */
+	ledger: LedgerEntry[];
+	/** hashes `POST /v1/machines` received */
+	machines: string[];
+	/** answer the next `POST /v1/devices` with this error instead of a device (402 / 403 cases) */
+	createError?: { status: number; body: Record<string, unknown> };
+	/** answer `POST /v1/billing/topups` with this error (403 `BILLING_ROLE`) */
+	topupError?: { status: number; body: Record<string, unknown> };
 };
 
-type Request = { method: string; path: string; body: Record<string, unknown> };
+type Request = { method: string; path: string; body: Record<string, unknown>; query: URLSearchParams };
 type Handler = (server: FakeServer, req: Request) => Response;
 
 const json = (data: unknown, status = 200) =>
@@ -56,7 +72,22 @@ const AUTHED: Record<string, Handler> = {
 	"GET /api/auth/organization/list": (server) => json(server.orgs),
 	"POST /api/auth/organization/set-active": (_, req) => json({ id: req.body.organizationId }),
 	"GET /v1/devices": (server) => json([...server.devices.values()]),
+	"POST /v1/machines": (server, { body }) => {
+		if (typeof body.hash !== "string" || !/^[0-9a-f]{64}$/.test(body.hash)) {
+			return json({ success: false, error: "bad hash", code: "VALIDATION" }, 400);
+		}
+		server.machines.push(body.hash);
+		return new Response(null, { status: 204 });
+	},
+	"GET /v1/billing": (server) => json(server.billing),
+	"GET /v1/billing/ledger": (server, { query }) =>
+		json({ entries: server.ledger.slice(0, Number(query.get("limit") ?? server.ledger.length)) }),
+	"POST /v1/billing/topups": (server, { body }) =>
+		server.topupError
+			? json(server.topupError.body, server.topupError.status)
+			: json({ checkoutUrl: `https://checkout.stripe.test/pay/cs_${String(body.amountUsd)}` }),
 	"POST /v1/devices": (server, { body }) => {
+		if (server.createError) return json(server.createError.body, server.createError.status);
 		const id = `rd${server.devices.size + 1}`;
 		const device: RemoteDevice = {
 			id,
@@ -100,9 +131,31 @@ function deviceRoute(server: FakeServer, req: Request): Response | undefined {
 	return json(device);
 }
 
+/** Log one request in `server.calls`; returns its bearer and parsed JSON body. */
+function recordCall(
+	server: FakeServer,
+	method: string,
+	path: string,
+	init: RequestInit | undefined
+): { auth?: string; body: Record<string, unknown> } {
+	const headers = new Headers(init?.headers);
+	const auth = headers.get("authorization") ?? undefined;
+	const machine = headers.get("x-warden-machine") ?? undefined;
+	const raw = typeof init?.body === "string" ? init.body : undefined;
+	const body: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+	server.calls.push({
+		method,
+		path,
+		...(auth ? { auth } : {}),
+		...(raw !== undefined ? { body } : {}),
+		...(machine ? { machine } : {}),
+	});
+	return { ...(auth ? { auth } : {}), body };
+}
+
 /** An in-memory warden-api: device-flow login, `/v1/me`, organizations and `/v1/devices`. */
 export function fakeServer(
-	overrides: Partial<Pick<FakeServer, "me" | "orgs" | "polls" | "readyAfterGets">> = {}
+	overrides: Partial<Pick<FakeServer, "me" | "orgs" | "polls" | "readyAfterGets" | "billing" | "ledger">> = {}
 ): FakeServer {
 	const server: FakeServer = {
 		calls: [],
@@ -120,18 +173,25 @@ export function fakeServer(
 		devices: new Map(),
 		viewerTokens: [],
 		readyAfterGets: overrides.readyAfterGets ?? 1,
+		billing: overrides.billing ?? {
+			balanceUsd: 1.6,
+			ratePerMinuteUsd: 0.2,
+			estMinutesLeft: 8,
+			lowBalance: false,
+			trial: { state: "active", amountUsd: 2 },
+			billingUrl: "https://app.warden.test/billing",
+		},
+		ledger: overrides.ledger ?? [
+			{ id: "l2", kind: "usage", amountUsd: -0.4, createdAt: "2026-10-30T00:02:00.000Z" },
+			{ id: "l1", kind: "grant", amountUsd: 2, createdAt: "2026-10-30T00:00:00.000Z" },
+		],
+		machines: [],
 		fetch: async (input, init) => {
-			const path = new URL(input).pathname;
+			const url = new URL(input);
+			const path = url.pathname;
 			const method = init?.method ?? "GET";
-			const auth = new Headers(init?.headers).get("authorization") ?? undefined;
-			const body: Record<string, unknown> = typeof init?.body === "string" ? JSON.parse(init.body) : {};
-			server.calls.push({
-				method,
-				path,
-				...(auth ? { auth } : {}),
-				...(typeof init?.body === "string" ? { body } : {}),
-			});
-			const req = { method, path, body };
+			const { auth, body } = recordCall(server, method, path, init);
+			const req = { method, path, body, query: url.searchParams };
 			const route = `${method} ${path}`;
 			const open = PUBLIC[route];
 			if (open) return open(server, req);

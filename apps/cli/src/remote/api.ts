@@ -1,12 +1,21 @@
 import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
 import type {
 	ApiError,
+	Billing,
 	CreateRemoteDevice,
+	DeviceBilling,
 	DeviceCode,
 	DeviceTokenPoll,
+	LedgerEntry,
+	LedgerKind,
+	LedgerPage,
 	Me,
 	Organization,
+	RemoteConnectionState,
 	RemoteDevice,
+	StopReason,
+	Topup,
+	TrialState,
 	ViewerScope,
 	ViewerToken,
 } from "./api.types";
@@ -26,7 +35,8 @@ export type WardenApi = {
 	signOut: () => AsyncResult<void, ApiError>;
 	listOrganizations: () => AsyncResult<Organization[], ApiError>;
 	setActiveOrganization: (organizationId: string) => AsyncResult<void, ApiError>;
-	createDevice: (request: CreateRemoteDevice) => AsyncResult<RemoteDevice, ApiError>;
+	/** `machine` = the hashed machine id, sent as `X-Warden-Machine` (it activates the free trial) */
+	createDevice: (request: CreateRemoteDevice, opts?: { machine?: string }) => AsyncResult<RemoteDevice, ApiError>;
 	getDevice: (id: string) => AsyncResult<RemoteDevice, ApiError>;
 	listDevices: () => AsyncResult<RemoteDevice[], ApiError>;
 	stopDevice: (id: string) => AsyncResult<{ stopped: boolean }, ApiError>;
@@ -34,6 +44,13 @@ export type WardenApi = {
 	heartbeatDevice: (id: string) => AsyncResult<RemoteDevice, ApiError>;
 	/** mint a viewer token for one device; `ttlS` is clamped server-side to 60..1800 (default 600) */
 	viewerToken: (id: string, scope: ViewerScope, ttlS?: number) => AsyncResult<ViewerToken, ApiError>;
+	/** record this machine's hashed id against the user (after `warden login`) */
+	registerMachine: (hash: string) => AsyncResult<void, ApiError>;
+	getBilling: () => AsyncResult<Billing, ApiError>;
+	/** newest first */
+	listLedger: (opts?: { limit?: number; cursor?: string }) => AsyncResult<LedgerPage, ApiError>;
+	/** owner/admin only (403 `BILLING_ROLE` otherwise) */
+	createTopup: (amountUsd: number) => AsyncResult<Topup, ApiError>;
 };
 
 export type WardenApiOptions = { baseUrl: string; token?: string; fetch?: Fetch };
@@ -56,7 +73,82 @@ function httpError(status: number, body: unknown): ApiError {
 	if (status === 401) return { kind: "unauthorized", message };
 	if (status === 403) return { kind: "forbidden", ...(code ? { code } : {}), message };
 	if (status === 404) return { kind: "not_found", message };
+	if (status === 402) {
+		const billingUrl = str(record.billingUrl);
+		return { kind: "payment_required", ...(code ? { code } : {}), message, ...(billingUrl ? { billingUrl } : {}) };
+	}
 	return { kind: "http", status, ...(code ? { code } : {}), message };
+}
+
+const STOP_REASONS: readonly StopReason[] = ["user", "idle", "credits_exhausted", "error"];
+const TRIAL_STATES: readonly TrialState[] = ["none", "held", "active", "revoked"];
+const LEDGER_KINDS: readonly LedgerKind[] = ["grant", "grant_revoked", "topup", "usage", "refund", "dispute", "adjust"];
+
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+function oneOf<T extends string>(values: readonly T[], v: unknown): T | undefined {
+	return values.find((x) => x === v);
+}
+
+function parseDeviceBilling(value: unknown): DeviceBilling | undefined {
+	if (!isRecord(value)) return undefined;
+	const balanceUsd = num(value.balanceUsd);
+	return balanceUsd !== undefined && typeof value.lowBalance === "boolean"
+		? { balanceUsd, lowBalance: value.lowBalance }
+		: undefined;
+}
+
+function parseBilling(value: unknown): Billing | undefined {
+	if (!isRecord(value) || !isRecord(value.trial)) return undefined;
+	const balanceUsd = num(value.balanceUsd);
+	const ratePerMinuteUsd = num(value.ratePerMinuteUsd);
+	const estMinutesLeft = num(value.estMinutesLeft);
+	const state = oneOf(TRIAL_STATES, value.trial.state);
+	const amountUsd = num(value.trial.amountUsd);
+	const billingUrl = str(value.billingUrl);
+	if (
+		balanceUsd === undefined ||
+		ratePerMinuteUsd === undefined ||
+		estMinutesLeft === undefined ||
+		typeof value.lowBalance !== "boolean" ||
+		state === undefined ||
+		amountUsd === undefined ||
+		billingUrl === undefined
+	) {
+		return undefined;
+	}
+	return {
+		balanceUsd,
+		ratePerMinuteUsd,
+		estMinutesLeft,
+		lowBalance: value.lowBalance,
+		trial: { state, amountUsd },
+		billingUrl,
+	};
+}
+
+/** Amounts come as `amountUsd`, or as integer `amountMicrousd` (the ledger's unit). */
+function parseLedgerEntry(value: unknown): LedgerEntry | undefined {
+	if (!isRecord(value)) return undefined;
+	const id = str(value.id);
+	const createdAt = str(value.createdAt);
+	const micro = num(value.amountMicrousd);
+	const amountUsd = num(value.amountUsd) ?? (micro !== undefined ? micro / 1_000_000 : undefined);
+	if (!id || !createdAt || amountUsd === undefined) return undefined;
+	return { id, kind: oneOf(LEDGER_KINDS, value.kind) ?? "other", amountUsd, createdAt };
+}
+
+function parseLedgerPage(value: unknown): LedgerPage | undefined {
+	const rows = Array.isArray(value)
+		? value
+		: isRecord(value) && Array.isArray(value.entries)
+			? value.entries
+			: undefined;
+	if (!rows) return undefined;
+	const entries = rows.map(parseLedgerEntry);
+	if (!entries.every((e) => e !== undefined)) return undefined;
+	const nextCursor = isRecord(value) ? str(value.nextCursor) : undefined;
+	return { entries: entries.filter((e) => e !== undefined), ...(nextCursor ? { nextCursor } : {}) };
 }
 
 function parseDevice(value: unknown): RemoteDevice | undefined {
@@ -77,6 +169,8 @@ function parseDevice(value: unknown): RemoteDevice | undefined {
 		const v = str(value[key]);
 		return v !== undefined ? { [key]: v } : {};
 	};
+	const stopReason = oneOf(STOP_REASONS, value.stopReason);
+	const billing = parseDeviceBilling(value.billing);
 	return {
 		id,
 		platform,
@@ -87,6 +181,8 @@ function parseDevice(value: unknown): RemoteDevice | undefined {
 		...optional("osVersion"),
 		...optional("readyAt"),
 		...optional("error"),
+		...(stopReason ? { stopReason } : {}),
+		...(billing ? { billing } : {}),
 	};
 }
 
@@ -105,6 +201,28 @@ function parseViewerToken(value: unknown): ViewerToken | undefined {
 	return token && expiresAt ? { token, expiresAt } : undefined;
 }
 
+const REMOTE_STATES: readonly RemoteConnectionState[] = [
+	"pending",
+	"connected",
+	"awaiting_approval",
+	"failed",
+	"disconnected",
+];
+
+/** `GET /v1/me`'s `remote`: `null` when not set up, `undefined` when malformed. */
+function parseRemote(remote: unknown): Me["remote"] | undefined {
+	if (!isRecord(remote)) return null;
+	const state = oneOf(REMOTE_STATES, remote.state);
+	if (state === undefined) return undefined;
+	const balanceUsd = num(remote.balanceUsd);
+	return {
+		state,
+		active: typeof remote.active === "number" ? remote.active : 0,
+		...(typeof remote.concurrencyLimit === "number" ? { concurrencyLimit: remote.concurrencyLimit } : {}),
+		...(balanceUsd !== undefined ? { balanceUsd } : {}),
+	};
+}
+
 function parseMe(value: unknown): Me | undefined {
 	if (!isRecord(value) || !isRecord(value.user)) return undefined;
 	const id = str(value.user.id);
@@ -113,26 +231,8 @@ function parseMe(value: unknown): Me | undefined {
 	const name = str(value.user.name);
 	const organization = value.organization === null ? null : parseOrganization(value.organization);
 	if (organization === undefined) return undefined;
-	const remote = value.remote;
-	let parsedRemote: Me["remote"] = null;
-	if (isRecord(remote)) {
-		const state = remote.state;
-		if (
-			state !== "pending" &&
-			state !== "connected" &&
-			state !== "awaiting_approval" &&
-			state !== "failed" &&
-			state !== "disconnected"
-		) {
-			return undefined;
-		}
-		const active = typeof remote.active === "number" ? remote.active : 0;
-		parsedRemote = {
-			state,
-			active,
-			...(typeof remote.concurrencyLimit === "number" ? { concurrencyLimit: remote.concurrencyLimit } : {}),
-		};
-	}
+	const parsedRemote = parseRemote(value.remote);
+	if (parsedRemote === undefined) return undefined;
 	return { user: { id, email, ...(name ? { name } : {}) }, organization, remote: parsedRemote };
 }
 
@@ -161,9 +261,10 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 	async function send(
 		method: string,
 		path: string,
-		body?: unknown
+		body?: unknown,
+		extraHeaders: Record<string, string> = {}
 	): AsyncResult<{ status: number; body: unknown }, ApiError> {
-		const headers: Record<string, string> = { accept: "application/json" };
+		const headers: Record<string, string> = { accept: "application/json", ...extraHeaders };
 		if (body !== undefined) headers["content-type"] = "application/json";
 		if (options.token) headers.authorization = `Bearer ${options.token}`;
 		let response: Response;
@@ -190,9 +291,10 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 		method: string,
 		path: string,
 		parse: (body: unknown) => T | undefined,
-		body?: unknown
+		body?: unknown,
+		headers?: Record<string, string>
 	): AsyncResult<T, ApiError> {
-		const r = await send(method, path, body);
+		const r = await send(method, path, body, headers);
 		if (!r.success) return r;
 		const { status, body: data } = r.data;
 		if (status < 200 || status >= 300) return fail(httpError(status, data));
@@ -243,7 +345,8 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 			}),
 		setActiveOrganization: async (organizationId) =>
 			asVoid(await call("POST", "/api/auth/organization/set-active", done, { organizationId })),
-		createDevice: (request) => call("POST", "/v1/devices", parseDevice, request),
+		createDevice: (request, opts) =>
+			call("POST", "/v1/devices", parseDevice, request, opts?.machine ? { "x-warden-machine": opts.machine } : {}),
 		getDevice: (id) => call("GET", `/v1/devices/${encodeURIComponent(id)}`, parseDevice),
 		listDevices: () =>
 			call("GET", "/v1/devices", (b) => {
@@ -257,6 +360,22 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 				scope,
 				...(ttlS !== undefined ? { ttlS } : {}),
 			}),
+		registerMachine: async (hash) => asVoid(await call("POST", "/v1/machines", done, { hash })),
+		getBilling: () => call("GET", "/v1/billing", parseBilling),
+		listLedger: (opts = {}) => {
+			const query = new URLSearchParams();
+			if (opts.limit !== undefined) query.set("limit", String(opts.limit));
+			if (opts.cursor) query.set("cursor", opts.cursor);
+			const qs = query.toString();
+			return call("GET", `/v1/billing/ledger${qs ? `?${qs}` : ""}`, parseLedgerPage);
+		},
+		createTopup: (amountUsd) =>
+			call(
+				"POST",
+				"/v1/billing/topups",
+				(b) => (isRecord(b) && typeof b.checkoutUrl === "string" ? { checkoutUrl: b.checkoutUrl } : undefined),
+				{ amountUsd }
+			),
 		stopDevice: (id) =>
 			call("DELETE", `/v1/devices/${encodeURIComponent(id)}`, (b) =>
 				isRecord(b) && typeof b.stopped === "boolean" ? { stopped: b.stopped } : undefined
