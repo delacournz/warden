@@ -50,8 +50,12 @@ export function iosDefaultsDeleteArgvs(udid: string, fields: readonly IosDefault
 	return fields.map((field) => spawnDefaults(udid, "delete", IOS_A11Y_DOMAIN, IOS_A11Y_DEFAULTS[field]));
 }
 
-/** `defaults delete` of a key that was never written prints "does not exist", or "Domain not found" when the whole domain is empty (exit 1): already as wanted. */
-export const iosDefaultsMissing = (stderr: string): boolean => /does not exist|not found/i.test(stderr);
+/**
+ * `defaults delete` of a key that is not there exits 1: "does not exist" (older Xcode), "Could not find key" (Xcode
+ * 27), or "Domain not found" when the whole domain is empty. Already as wanted.
+ */
+export const iosDefaultsMissing = (stderr: string): boolean =>
+	/does not exist|not found|could not find key/i.test(stderr);
 
 /** The defaults-backed fields a recorded condition holds, i.e. the keys warden wrote (and may delete). */
 export function iosDefaultsFields(record: A11yCondition): IosDefaultsField[] {

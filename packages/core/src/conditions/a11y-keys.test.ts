@@ -59,6 +59,11 @@ describe("ios accessibility defaults", () => {
 		]);
 		expect(iosDefaultsMissing("The domain/default pair of (a, b) does not exist")).toBe(true);
 		expect(iosDefaultsMissing("Domain (com.apple.Accessibility) not found.")).toBe(true);
+		expect(
+			iosDefaultsMissing(
+				"Error: Could not find key 'ReduceMotionEnabled' in domain 'com.apple.Accessibility'. Defaults have not been changed."
+			)
+		).toBe(true);
 		expect(iosDefaultsMissing("Could not write domain")).toBe(false);
 	});
 	test("iosDefaultsFields picks only the defaults-backed fields present in a record", () => {
