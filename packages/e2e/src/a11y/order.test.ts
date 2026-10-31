@@ -115,9 +115,9 @@ describe("readingOrder: iOS traversal from the injected walk", () => {
 		...(traversal === undefined ? {} : { a11y: { traversal } }),
 	});
 
-	test("every reachable node has a traversal index: VoiceOver's own order wins over the frame guess", () => {
-		const snap = snapshotOf("ios", [cell("Left", 0, 0, 1), cell("Right", 200, 0, 0)]);
-		expect(texts(snap, "ios")).toEqual(["Right, button", "Left, button"]);
+	test("the walk position never overrides the frame order: a nav bar read after the content in the walk comes first", () => {
+		const snap = snapshotOf("ios", [cell("Content", 0, 300, 0), cell("Back", 0, 60, 1)]);
+		expect(texts(snap, "ios")).toEqual(["Back, button", "Content, button"]);
 	});
 
 	test("some nodes without one: falls back to the row-major guess", () => {
@@ -157,5 +157,35 @@ describe("readingOrder: containers", () => {
 			},
 		]);
 		expect(texts(snap, "android")).toEqual(["Card", "Title"]);
+	});
+
+	test("a named container role (toolbar, nav bar, tab bar, list, scroll view) is never a stop of its own", () => {
+		const container = (role: "toolbar" | "navbar" | "tabbar" | "list" | "scrollview") => ({
+			role,
+			label: "Toolbar",
+			frame: { x: 0, y: 0, width: 390, height: 844 },
+			children: [{ role: "other" as const, frame: { x: 0, y: 0, width: 390, height: 844 } }],
+		});
+		for (const role of ["toolbar", "navbar", "tabbar", "list", "scrollview"] as const) {
+			const snap = snapshotOf("ios", [
+				{ role: "button", label: "Go", traits: ["button"], frame: { x: 0, y: 100, width: 100, height: 44 } },
+				container(role),
+			]);
+			expect(texts(snap, "ios")).toEqual(["Go, button"]);
+		}
+	});
+
+	test("a container's children are still read", () => {
+		const snap = snapshotOf("ios", [
+			{
+				role: "tabbar",
+				label: "Tab Bar",
+				frame: { x: 0, y: 760, width: 390, height: 84 },
+				children: [
+					{ role: "tab", label: "Todos", traits: ["button"], frame: { x: 0, y: 760, width: 195, height: 84 } },
+				],
+			},
+		]);
+		expect(texts(snap, "ios")).toEqual(["Todos, tab"]);
 	});
 });

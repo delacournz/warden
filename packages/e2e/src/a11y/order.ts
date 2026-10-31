@@ -5,9 +5,9 @@ import { type AnnounceOptions, accessibleName, announce, isActionable } from "./
 /**
  * Reading order a screen reader would walk. SIMULATED: approximates, not equals, VoiceOver / TalkBack.
  * Only reachable nodes are listed: `a11y.important !== false`, not hidden, on screen, and named or actionable.
- * Children of a focusable node are merged into it (no double entries). iOS: when every listed node carries
- * `a11y.traversal` (the injected walk, VoiceOver's own order) that order is used; otherwise `a11y.order`, then
- * siblings row-major by frame (VoiceOver heuristic). Android keeps tree order.
+ * Children of a focusable node are merged into it (no double entries). iOS: `a11y.order`, then siblings row-major
+ * by frame (VoiceOver heuristic). `a11y.traversal` (the injected UIView walk) is subview order, not VoiceOver's: a nav
+ * bar mounted after the content is walked last but read first, so it never sorts. Android keeps tree order.
  */
 
 type Screen = Snapshot["screen"];
@@ -61,8 +61,20 @@ function hasSpokenDescendant(el: Element, platform: Platform): boolean {
 	);
 }
 
-/** App and window roots carry the app's name but are never a stop in the sweep. */
-const ROOTS: ReadonlySet<Element["role"]> = new Set(["application", "window"]);
+/**
+ * Roles screen readers walk into but never stop on: app and window roots (they carry the app's name) and containers
+ * (a UIKit accessibility container / an Android ViewGroup), whose label VoiceOver only reads on the way in. An
+ * actionable one is still a stop.
+ */
+const CONTAINERS: ReadonlySet<Element["role"]> = new Set([
+	"application",
+	"window",
+	"toolbar",
+	"navbar",
+	"tabbar",
+	"list",
+	"scrollview",
+]);
 
 /**
  * Whether `el` is read as one stop that covers its subtree. Actionable: unless a descendant is actionable too.
@@ -77,11 +89,12 @@ type Entry = { el: Element; announcement: Announcement };
 
 function walk(el: Element, platform: Platform, screen: Screen, opts: AnnounceOptions, out: Entry[]): void {
 	if (el.hidden) return;
-	const visible = el.a11y?.important !== false && !ROOTS.has(el.role) && onScreen(el, screen);
+	const visible = el.a11y?.important !== false && onScreen(el, screen);
 	if (visible) {
 		const actionable = isActionable(el, platform);
+		const container = CONTAINERS.has(el.role) && !actionable;
 		const named = accessibleName(el, platform) !== undefined;
-		if (actionable || named) {
+		if (!container && (actionable || named)) {
 			if (swallows(el, platform, actionable)) {
 				out.push({ el, announcement: announce(el, platform, opts) });
 				return;
@@ -96,7 +109,5 @@ function walk(el: Element, platform: Platform, screen: Screen, opts: AnnounceOpt
 export function readingOrder(snapshot: Snapshot, platform: Platform, opts: AnnounceOptions = {}): Announcement[] {
 	const out: Entry[] = [];
 	for (const el of orderSiblings(snapshot.elements, platform)) walk(el, platform, snapshot.screen, opts, out);
-	const traversed = platform === "ios" && out.length > 0 && out.every((e) => e.el.a11y?.traversal !== undefined);
-	if (traversed) out.sort((a, b) => (a.el.a11y?.traversal ?? 0) - (b.el.a11y?.traversal ?? 0));
 	return out.map((e) => e.announcement);
 }
