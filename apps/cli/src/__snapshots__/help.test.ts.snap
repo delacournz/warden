@@ -2004,6 +2004,9 @@ Commands:
   push <payload>                  deliver a push notification to the app (iOS
                                   only): a JSON file or inline JSON with an
                                   \`aps\` object
+  camera                          simulated camera: set <path> | status | clear
+                                  (png, jpg, heic, mp4, mov into the app's
+                                  camera)
   help [command]                  display help for command
 
 $ warden ui status --help
@@ -3947,6 +3950,108 @@ Arguments:
 Options:
   --app <bundle>         the app's bundle id / package (default: the app \`open\`
                          launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui camera --help
+Usage: warden ui camera [options] [command]
+
+simulated camera: set <path> | status | clear (png, jpg, heic, mp4, mov into the
+app's camera)
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  set <path>      feed an image or video into the camera. iOS: live in an app
+                  launched with the camera, else from its next launch. Android
+                  emulator: needs a --camera device; an image shows on the app's
+                  next camera open, a video reboots the emulator
+  status          the feeds this lease's camera has
+  clear           take the feed off one camera, or both (default)
+  help [command]  display help for command
+
+$ warden ui camera set --help
+Usage: warden ui camera set [options] <path>
+
+feed an image or video into the camera. iOS: live in an app launched with the
+camera, else from its next launch. Android emulator: needs a --camera device; an
+image shows on the app's next camera open, a video reboots the emulator
+
+Arguments:
+  path                   png | jpg | heic | mp4 | mov, relative to the working
+                         directory
+
+Options:
+  --facing <facing>      back | front | both (default back)
+  --no-loop              video: stop on the last frame instead of playing again
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui camera status --help
+Usage: warden ui camera status [options]
+
+the feeds this lease's camera has
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui camera clear --help
+Usage: warden ui camera clear [options]
+
+take the feed off one camera, or both (default)
+
+Options:
+  --facing <facing>      back | front | both (default both)
   --udid <udid>          device udid (iOS) / serial (Android)
   --serial <serial>      Android serial
   --lease <id>           use the device behind this lease id

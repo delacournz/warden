@@ -137,6 +137,26 @@ await device.locale("fr-FR");
 ```
 Biometrics practice: set `biometrics: true` on the suite (suites.md) so the device is enrolled before the app is installed (a new enrollment invalidates biometry-bound keys); on iOS the first prompt per app shows "Allow X to use Face ID?", answer it with `device.alert("accept")` before `device.biometrics.match()`; Android emulators have fingerprint only; never add an app-side bypass. `fail()` leaves the prompt open (iOS "Face Not Recognized" alert, Android "Not recognized"): assert that, then cancel the prompt (the app gets `user_cancel`): `device.alert({ button: "Cancel" })` on iOS (it presses again if the press lands while the sheet animates in, and throws `ACTION_FAILED` if the alert stays up), `button_negative` on Android; a `match` / `fail` sent as the sheet appears can be dropped, so present again when nothing changed. warden enrolls an iOS biometrics sim again when a spec process starts (`WARDEN_BIOMETRICS=1`), so a spec that called `unenroll` does not leave a reused sim unenrolled.
 
+### `device.camera` (simulated camera)
+
+Feeds a png, jpg, heic, mp4 or mov into the app's real camera. Taken off when the test ends (back to the suite's `camera`, else none), recorded on the lease, each change a `condition` line in `results.jsonl`.
+
+| Member | Does |
+|---|---|
+| `camera.set(path, { facing?, loop? })` | `path` is relative to the spec file (or absolute). `facing`: `"back"` (default) \| `"front"` \| `"both"`; the other facing keeps its feed. `loop` (video, default true). Returns `{ feeds, appliesOnLaunch?, appliesOnCameraOpen?, rebooted? }` |
+| `camera.clear(facing?)` | takes the feed off one facing, or both (default) |
+| `camera.status()` | `{ feeds }` this spec has in place |
+
+- Errors: `E_CAMERA_NOT_FOUND` (no such file), `E_CAMERA_MEDIA` (not a supported type) throw `INVALID_ARGUMENT` before the device is touched; `E_CAMERA_DEVICE` (Android emulator not claimed with `--camera`) throws `ACTION_FAILED`.
+- iOS: live in an app launched with the camera; otherwise `appliesOnLaunch: true` and the next `app.open()` picks it up. Set it before `app.open()`. QR is the only code type the iOS fake decodes.
+- Android emulator: the suite needs `camera` (or `--camera`); an image shows on the app's next camera open (`appliesOnCameraOpen: true`), a video feed reboots the emulator (`rebooted: true`).
+
+```ts
+await device.camera.set("fixtures/qr-hello.png");
+await app.open();
+await device.camera.set("fixtures/qr-bye.png"); // live on iOS
+```
+
 ### `device.devtools` (dev client over Metro)
 
 With `WARDEN_METRO_URL` set, `app.open()` attaches devtools in the background and keeps React Native's LogBox off (no warning/error toasts, no error inspector, fatals included) in every JS context, after relaunches and reloads too. Logs still land in `console.jsonl` and Metro's terminal. Assert on the app's own UI, never on a LogBox toast.

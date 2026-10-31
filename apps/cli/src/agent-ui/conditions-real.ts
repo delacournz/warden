@@ -99,6 +99,11 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 			return failure === undefined ? { success: true, data: undefined } : driverErr("E_IO", failure);
 		},
 		clock: (op) => applyAndroidClock({ session, exec: ctx.exec, adb, serial }, op),
+		camera: async () =>
+			driverErr(
+				"E_UNSUPPORTED",
+				"the simulated camera of an Android emulator is driven by the Android driver (not by this lightweight port yet)"
+			),
 		close: () => session.close(),
 	});
 }

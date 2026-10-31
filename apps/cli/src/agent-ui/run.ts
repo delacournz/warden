@@ -18,6 +18,7 @@ const READ_ONLY: ReadonlySet<string> = new Set([
 	"locale status",
 	"a11y status",
 	"battery status",
+	"camera status",
 ]);
 
 /** Values `withUiOptions` parses to. */
