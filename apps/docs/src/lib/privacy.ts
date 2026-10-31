@@ -150,7 +150,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "warden-cloud",
 		title: "warden cloud (hosted simulators)",
 		body: [
-			"warden cloud is optional. Nothing below happens until you run `warden login`. It runs hosted iOS simulators and Android emulators for your organization, through our own server, `api.warden.co.nz`, and a device provider, Revyl, that runs the devices for us. You never deal with Revyl directly: we create and control the workspace that holds your organization's devices.",
+			"warden cloud is optional. Nothing below happens until you run `warden login`. It runs hosted iOS simulators and Android emulators for your organization, through our own server, `api.warden.co.nz`, and a device provider, Revyl, that runs the devices for us. We create a Revyl workspace for each organization, owned by the person who created the organization, so its members can open Revyl's own dashboard from warden. Your Revyl account is governed by Revyl's terms and privacy policy.",
 		],
 		disclosures: [
 			{
@@ -186,7 +186,12 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 			{
 				what: "The app builds you install on a hosted device, what you do on it (taps, typing, screenshots, logs, the screen itself) and how long each device runs",
 				to: "Revyl, which runs the hosted devices, through our server",
-				why: "To run the device and stream its screen to you. Revyl sees an identifier for your organization, never your name or email address. Each device stops when its lease ends or it sits idle. Revyl keeps session data for the period its own policy sets.",
+				why: "To run the device and stream its screen to you. Each device stops when its lease ends or it sits idle. Revyl keeps session data for the period its own policy sets.",
+			},
+			{
+				what: "Your organization's name and identifier, and the email address of each person who opens Revyl's dashboard: the organization's creator when the organization is set up, and any other member the first time they open it",
+				to: "Revyl, which creates a Revyl account and workspace for your organization",
+				why: "So you can sign in to Revyl's dashboard and see your organization's devices there. Revyl emails these addresses for its own account messages, such as invitations and sign-in links. If you already have a Revyl account, you approve the connection in Revyl first. Leaving a warden organization does not remove you from its Revyl workspace: ask us and we will have Revyl remove you.",
 			},
 		],
 	},
