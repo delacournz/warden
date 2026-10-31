@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
 import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
+import { wardenHome } from "@delacour/warden-core/store";
 import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
@@ -76,6 +77,8 @@ import {
 	uimodeSetArgv,
 	userRotationArgv,
 } from "./android-argv";
+import { createAndroidCamera } from "./android-camera";
+import { type AndroidCameraHost, createAndroidCameraHost } from "./android-camera-host";
 import { applyAndroidClock } from "./android-clock";
 import {
 	type Clock,
@@ -162,6 +165,10 @@ export type AndroidDriverOptions = {
 	tickerClock?: TickerClock;
 	/** told about every network flap transition (the `condition` events of `results.jsonl`) */
 	conditionSink?: ConditionSink;
+	/** warden's home, where a camera emulator's feeds live (default `$WARDEN_HOME`, else `~/.warden`) */
+	wardenHome?: string;
+	/** the camera op's view of warden's store and provider (default: the real ones, opened on first use) */
+	cameraHost?: AndroidCameraHost;
 };
 
 /** What the dump-and-`input` driver reports; with the server on, `unicodeText` and `nativeSettle` are true. */
@@ -832,7 +839,12 @@ function buildDriver(
 		location,
 		clock: clockOp,
 		...settings,
-		camera: async () => driverErr("E_UNSUPPORTED", "the simulated camera is not wired on Android yet"),
+		camera: createAndroidCamera({
+			serial,
+			wardenHome: options.wardenHome ?? wardenHome(process.env),
+			exec,
+			...(options.cameraHost ?? createAndroidCameraHost({ serial, exec })),
+		}),
 		...(facts.physical ? physicalConditionOps(`physical Android device ${serial}`) : {}),
 		biometrics,
 		app: createAppCommands({

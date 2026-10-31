@@ -44,7 +44,9 @@ export type DriverErrorCode =
 	// the request would change something on a physical device that warden did not put there
 	| "E_REFUSED"
 	// a network / clock condition needs the app launched with the warden dylib and the app is running without it
-	| "E_NETWORK_RELAUNCH";
+	| "E_NETWORK_RELAUNCH"
+	// the camera op needs an Android emulator launched with a camera source (`--camera`) and this one was not
+	| "E_CAMERA_DEVICE";
 
 export type DriverError = { code: DriverErrorCode; message: string; retryable: boolean; detail?: unknown };
 
