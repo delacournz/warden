@@ -50,7 +50,7 @@ import {
 } from "../e2e/bun-runner";
 import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
-import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
+import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
@@ -760,6 +760,7 @@ export async function specPlan(
 	if (!bundleId.success) return bundleId;
 	const perf = parsePerfFlag(opts.perf);
 	if (!perf.success) return perf;
+	const devClientScheme = await specDevClientScheme(ctx, suite, platform);
 	const { spec } = suite.config;
 	const timeoutMs = specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
 	if (!timeoutMs.success) return timeoutMs;
@@ -777,6 +778,7 @@ export async function specPlan(
 		env: {
 			platform,
 			bundleId: bundleId.data,
+			...(devClientScheme === undefined ? {} : { devClientScheme }),
 			timeouts: {
 				timeoutMs: timeoutMs.data,
 				actionTimeoutMs: actionTimeoutMs.data,

@@ -59,7 +59,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 |---|---|
 | `open({ url?, args?, env?, wait?: "quiet" \| "none" \| { until, timeout? } })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url`; `wait: "quiet"` then polls (100 ms, 3 s max) until the screen has a visible control or testID (not the launch screen) and settles (250 ms quiet, 3 s max), never an error; `wait: { until: locator }` waits for the locator to be visible (`TIMEOUT` after `timeout`, default the assertion timeout) and settles once; default `"none"` |
 | `close()` | terminate |
-| `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` |
+| `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` (Android: no launch args; with Metro it then opens the dev-client deep link `exp+<slug>://expo-development-client/?url=<metro>` with onboarding, auto-launch menu and FAB off) |
 | `reinstall()` | uninstall + install from `WARDEN_APP_PATH` (throws without it) |
 | `clearData()` | wipe app data and keychain, keep the build |
 | `isRunning()` | boolean |

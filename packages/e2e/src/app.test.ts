@@ -385,6 +385,27 @@ describe("app.open on Android", () => {
 		expect(lines[0]).toContain("--initialUrl");
 	});
 
+	test("with a dev client scheme, --initialUrl becomes a dev-client deep link opened after the launch", async () => {
+		const driver = androidDriver();
+		const app = createApp({
+			session: { out: "/tmp/out" },
+			driver,
+			env: {
+				...baseEnv,
+				platform: "android",
+				launchArgs: ["--initialUrl", "http://127.0.0.1:8095", "--other"],
+				devClientScheme: "exp+warden",
+			},
+			log: () => {},
+		});
+		await app.open();
+		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch", "app.openUrl"]);
+		expect(driver.callsOf("app.launch")[0]?.opts).toEqual({ args: [], relaunch: true });
+		expect(driver.callsOf("app.openUrl")[0]).toMatchObject({
+			url: "exp+warden://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8095&disableOnboarding=1&disableAutoLaunch=1&disableFab=1",
+		});
+	});
+
 	test("explicit args still fail loudly", async () => {
 		const driver = androidDriver();
 		const app = createApp({

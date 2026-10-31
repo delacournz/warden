@@ -604,7 +604,7 @@ describe("warden batch", () => {
 		const install = ui.events.findIndex((e) => e.includes("installing on"));
 		expect(leased).toBeGreaterThan(-1);
 		expect(leased).toBeLessThan(install);
-		const building = ui.events.findIndex((e) => e === "spin: building the ios app (fingerprint b1fee19)…");
+		const building = ui.events.indexOf("spin: building the ios app (fingerprint b1fee19)…");
 		const installing = ui.events.findIndex((e) => e.startsWith("spin: installing the app on"));
 		expect(building).toBeGreaterThan(leased);
 		expect(installing).toBeGreaterThan(building);

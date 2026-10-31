@@ -16,6 +16,8 @@ export const ENV_NAMES = {
 	appPath: "WARDEN_APP_PATH",
 	metroUrl: "WARDEN_METRO_URL",
 	launchArgs: "WARDEN_LAUNCH_ARGS",
+	/** the dev client's url scheme (`exp+<slug>`): an Android launch has no args, so Metro's `--initialUrl` becomes a deep link on this scheme */
+	devClientScheme: "WARDEN_DEV_CLIENT_SCHEME",
 	out: "WARDEN_E2E_OUT",
 	timeout: "WARDEN_E2E_TIMEOUT",
 	actionTimeout: "WARDEN_E2E_ACTION_TIMEOUT",
@@ -108,6 +110,7 @@ const schema = z.object({
 	bundleId: z.string({ error: REQUIRED }).min(1, REQUIRED),
 	appPath: z.string().optional(),
 	metroUrl: z.string().optional(),
+	devClientScheme: z.string().min(1).optional(),
 	launchArgs: launchArgs.default([]),
 	out: z.string().optional(),
 	timeout: millis.default(DEFAULT_TIMEOUT_MS),
@@ -141,6 +144,8 @@ export type E2eEnv = {
 	bundleId: string;
 	appPath?: string;
 	metroUrl?: string;
+	/** `WARDEN_DEV_CLIENT_SCHEME` */
+	devClientScheme?: string;
 	launchArgs: string[];
 	/** where `results.jsonl` and per-attempt artifacts go (may be relative to cwd) */
 	out: string;
@@ -214,6 +219,7 @@ function toEnv(v: Parsed, now: () => Date): E2eEnv {
 			deviceName: v.deviceName,
 			appPath: v.appPath,
 			metroUrl: v.metroUrl,
+			devClientScheme: v.devClientScheme,
 			specsDir: v.specsDir,
 			helperDir: v.helperDir,
 			simd: v.simd,

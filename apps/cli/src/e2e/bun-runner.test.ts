@@ -117,6 +117,11 @@ describe("specEnv perf", () => {
 		version: "1",
 	};
 
+	test("WARDEN_DEV_CLIENT_SCHEME only when given", () => {
+		expect(specEnv(base).WARDEN_DEV_CLIENT_SCHEME).toBeUndefined();
+		expect(specEnv({ ...base, devClientScheme: "exp+warden" }).WARDEN_DEV_CLIENT_SCHEME).toBe("exp+warden");
+	});
+
 	test("WARDEN_BIN, WARDEN_PERF and the budgets", () => {
 		const env = specEnv({ ...base, bin: ["/bin/warden"], perf: ["react", "js"], perfBudgets: { jankPct: 5 } });
 		expect(env.WARDEN_BIN).toBe('["/bin/warden"]');
