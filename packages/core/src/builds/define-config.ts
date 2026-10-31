@@ -532,6 +532,12 @@ export interface WardenE2eDeviceLeg {
 	default?: boolean | undefined;
 }
 
+/** One camera asset: a path (relative to the config file), or `{ path, loop }`. */
+export type WardenCameraFeed = string | { path: string; loop?: boolean | undefined };
+
+/** `e2e.<suite>.camera`: the asset each facing plays. At least one of `back` / `front`. */
+export type WardenCameraConfig = { back?: WardenCameraFeed | undefined; front?: WardenCameraFeed | undefined };
+
 /**
  * `e2e.<suite>`: the specs `warden affected` selects and `warden e2e` runs. Every path and glob is
  * relative to the config file.
@@ -546,6 +552,12 @@ export interface WardenE2eSuite {
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every spec of this suite starts from; each area replaces the top-level one. */
 	conditions?: WardenConditionsConfig | undefined;
+	/**
+	 * The simulated camera every spec of this suite starts from, applied before the first `app.open()`: a path, or
+	 * `{ path, loop }` (video loop, default true), per facing. Paths are relative to the config file. Android devices of
+	 * the suite are claimed with `--camera` (profile `<profile>+cam`, cold boot). png, jpg, heic, mp4 and mov are accepted.
+	 */
+	camera?: WardenCameraConfig | undefined;
 	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */

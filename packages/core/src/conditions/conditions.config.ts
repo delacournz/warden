@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { parseDuration } from "../duration";
@@ -88,6 +89,63 @@ export const conditionsConfigSchema = z
 	.strict();
 
 export type ConditionsConfig = z.input<typeof conditionsConfigSchema>;
+
+const cameraFeedInput = z.union([
+	z.string().min(1),
+	z.object({ path: z.string().min(1), loop: z.boolean().optional() }).strict(),
+]);
+
+/**
+ * A suite's `camera` key: the asset each facing plays from the first `app.open()` on. A path, or `{ path, loop }`
+ * (`loop` applies to a video, default true). Paths are relative to the config file.
+ */
+export const cameraConfigSchema = z
+	.object({ back: cameraFeedInput.optional(), front: cameraFeedInput.optional() })
+	.strict()
+	.refine((v) => v.back !== undefined || v.front !== undefined, { message: "camera needs a back or a front asset" });
+
+export type CameraConfig = z.input<typeof cameraConfigSchema>;
+
+/** A suite's camera with absolute paths and a loop flag per facing: what `WARDEN_CAMERA_FEEDS` carries. */
+export type CameraSuiteFeeds = Partial<Record<"back" | "front", { path: string; loop: boolean }>>;
+
+/** `camera` as absolute paths (against `baseDir`, the config file's directory) with `loop` defaulted to true. */
+export function resolveCameraConfig(config: CameraConfig, baseDir: string): CameraSuiteFeeds {
+	const feeds: CameraSuiteFeeds = {};
+	for (const facing of ["back", "front"] as const) {
+		const input = config[facing];
+		if (input === undefined) continue;
+		const path = typeof input === "string" ? input : input.path;
+		const loop = typeof input === "string" ? true : (input.loop ?? true);
+		feeds[facing] = { path: resolve(baseDir, path), loop };
+	}
+	return feeds;
+}
+
+const cameraFeedsSchema = z
+	.object({
+		back: z
+			.object({ path: z.string().min(1), loop: z.boolean() })
+			.strict()
+			.optional(),
+		front: z
+			.object({ path: z.string().min(1), loop: z.boolean() })
+			.strict()
+			.optional(),
+	})
+	.strict();
+
+/** `WARDEN_CAMERA_FEEDS`: the JSON of a suite's resolved camera, checked again on the spec side. */
+export function parseCameraFeedsEnv(raw: string): Result<CameraSuiteFeeds> {
+	let json: unknown;
+	try {
+		json = JSON.parse(raw);
+	} catch {
+		return err("must be JSON");
+	}
+	const parsed = cameraFeedsSchema.safeParse(json);
+	return parsed.success ? ok(parsed.data) : err(parsed.error.issues.map((i) => i.message).join("; "));
+}
 
 /** What a spec's `device.network.set` takes: a condition, or its word. */
 export type NetworkInput = NetworkCondition | "online" | "offline" | NetworkPreset;
