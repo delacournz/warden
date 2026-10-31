@@ -6,10 +6,14 @@ import { maybeAutoGc } from "../autogc";
 import {
 	type ClaimFlagValues,
 	claimedJson,
+	isPhysicalClaim,
+	type PhysicalOptionValues,
 	parseClaimFlags,
 	resolveOwner,
 	resolvePlatform,
 	withClaimOptions,
+	withNamedPhysical,
+	withPhysicalOptions,
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -31,6 +35,8 @@ import {
 	withLeaseOptions,
 } from "../lease-session";
 import { heading, note, reportError } from "../output";
+import { reportClaimFailure } from "../physical-lock";
+import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
 
 /** Where the child's stdout goes: the terminal, or stderr under `--json` so stdout stays the one JSON line. */
@@ -43,7 +49,8 @@ export type RunDeps = LeaseSessionDeps & {
 
 /** Commander option values of `warden run` (claim options + `--port` / `--app` family). */
 export type RunOpts = ClaimFlagValues &
-	AppFlagValues & {
+	AppFlagValues &
+	PhysicalOptionValues & {
 		json?: true;
 		port: string[];
 	};
@@ -52,7 +59,8 @@ type RunArgs = LeaseArgs & { json: boolean };
 
 /** Validated run args from the resolved platform + option values. */
 export function parseRunArgs(platform: Platform, opts: RunOpts): Result<RunArgs> {
-	const flags = parseClaimFlags(platform, opts);
+	const named = withNamedPhysical(opts);
+	const flags = parseClaimFlags(platform, named);
 	if (!flags.success) return flags;
 	const app = parseAppFlags(opts);
 	if (!app.success) return app;
@@ -98,14 +106,22 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (!target.success) return fail(target.error);
 	const platform = await resolvePlatform(ctx, target.data.platformArg);
 	if (!platform.success) return fail(platform.error);
+	// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
+	const physical = isPhysicalClaim(withNamedPhysical(opts));
 	const args = parseRunArgs(platform.data, {
 		...opts,
-		headless: resolveHeadless({ flag: opts.headless, env: ctx.env }),
+		headless: physical ? opts.headless : resolveHeadless({ flag: opts.headless, env: ctx.env }),
 	});
 	if (!args.success) return fail(args.error);
 	const { cmd } = target.data;
 	const owner = resolveOwner(ctx);
-	const { count, profile } = args.data.flags.request;
+	// before the spinner and any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
+	const picked = await pickPhysical(ctx, owner, [args.data.flags], {
+		prompt: canPrompt(ctx, { json: args.data.json }),
+	});
+	if (picked.kind !== "ok") return reportPick(ctx, "run", picked);
+	const flags = picked.flags[0] ?? args.data.flags;
+	const { count, profile } = flags.request;
 	if (!args.data.json) heading(ctx, "run", `${platform.data} · ${profile} ×${count} · ${cmd.join(" ")}`);
 	const claimed = await withSpinner(
 		ctx,
@@ -116,6 +132,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 			const onAppPhase = appPhaseProgress(spinner, app);
 			const result = await claimAll(sctx, deps, owner, {
 				...args.data,
+				flags,
 				...(onLeased ? { onLeased } : {}),
 				...(onAppPhase ? { onAppPhase } : {}),
 			});
@@ -127,7 +144,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	);
 	// after the claim: its own leases keep the background gc off the devices it just took (16-1)
 	maybeAutoGc(ctx);
-	if (!claimed.success) return fail(claimed.error);
+	if (!claimed.success) return reportClaimFailure(ctx, "run", claimed.error);
 	const { outcome, ports, env, release, leaseIds } = claimed.data;
 	const summary = { leases: claimedJson(outcome), ports, cmd };
 	// one line: the child runs on, so a reader takes the summary from the first stdout line
@@ -144,10 +161,12 @@ export function createRunCommand(deps: RunDeps): Command {
 		summary: "claim devices, run a command with WARDEN_UDIDS set, release on exit",
 		register: (cmd, ctx, done) => {
 			withLeaseOptions(
-				withClaimOptions(
-					cmd
-						.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
-						.argument("[cmd...]", "the command to run, after --")
+				withPhysicalOptions(
+					withClaimOptions(
+						cmd
+							.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
+							.argument("[cmd...]", "the command to run, after --")
+					)
 				)
 			)
 				.addHelpText("after", "\nExample:\n  warden run ios --count 2 --port 8091:20 -- bun e2e")

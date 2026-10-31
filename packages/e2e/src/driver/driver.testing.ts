@@ -1,8 +1,22 @@
+import type {
+	ClockCondition,
+	HostFault,
+	LocationCondition,
+	NetworkCondition,
+	PermissionName,
+	PermissionState,
+} from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
+	A11yOp,
+	A11yState,
 	AlertInfo,
 	AppCommands,
+	BatteryOp,
+	BatteryState,
+	BiometricOp,
+	ClockState,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -13,20 +27,28 @@ import type {
 	HealthInfo,
 	KeyName,
 	LaunchOptions,
+	LocaleState,
 	Modifier,
+	NetworkState,
 	Orientation,
+	PermissionGrants,
+	PermissionsState,
 	Platform,
 	Point,
+	PushPayload,
 	Rect,
 	Role,
 	ScreenInfo,
+	SettingOptions,
 	Snapshot,
 	SnapshotBackend,
+	TimezoneState,
 	TouchPath,
 	TwoFingerOptions,
 } from "./driver.types";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
+import { faultNotes } from "./network-proxy";
 import type { PastesText, SelectsAll, SetsText } from "./typing";
 
 /**
@@ -184,6 +206,18 @@ export type DriverCall =
 	| { method: "isFrontmost"; bundleId: string }
 	| { method: "appearance"; set?: "light" | "dark" }
 	| { method: "clipboard"; set?: string }
+	| { method: "network"; op: NetworkCondition }
+	| { method: "networkFaults"; faults: readonly HostFault[] }
+	| { method: "location"; op: LocationCondition }
+	| { method: "clock"; op: ClockCondition }
+	| { method: "permissions"; grants: PermissionGrants; opts?: SettingOptions }
+	| { method: "timezone"; tz: string | null; opts?: { previous?: string } }
+	| { method: "locale"; tag: string | null; opts?: SettingOptions }
+	| { method: "a11y"; op: A11yOp | null }
+	| { method: "battery"; op: BatteryOp | null }
+	| { method: "memoryWarning"; opts?: SettingOptions }
+	| { method: "push"; payload: PushPayload; opts?: SettingOptions }
+	| { method: "biometrics"; op: BiometricOp }
 	| { method: "app.launch"; bundleId: string; opts?: LaunchOptions }
 	| { method: "app.terminate"; bundleId: string }
 	| { method: "app.openUrl"; url: string }
@@ -204,6 +238,8 @@ export type FakeDriverOptions = {
 	screens: readonly Snapshot[] | (() => Snapshot);
 	platform?: Platform;
 	id?: string;
+	/** host wall time the fake `clock` op measures from (default `Date.now`) */
+	wallNow?: () => number;
 	capabilities?: Partial<DriverCapabilities>;
 	/** offer the optional `SelectsAll` capability (calls are recorded as `selectAll`); a plain driver has none */
 	selectAll?: boolean;
@@ -218,6 +254,12 @@ export type FakeDriverOptions = {
 	 * others report none. Absent = a driver with only `alert()`.
 	 */
 	alertBackends?: readonly AlertBackend[];
+	/**
+	 * A tap on an alert's button answers it (the alert reads as none until the screen changes), except the first
+	 * `swallowAlertTaps` taps, which do nothing (a sheet still animating in). Default: taps never change the screen.
+	 */
+	answerAlertOnTap?: boolean;
+	swallowAlertTaps?: number;
 	/** Offer the optional `isFrontmost` capability: the bundle id of the app in front (evaluated per call). */
 	frontmost?: () => string | undefined;
 };
@@ -285,6 +327,8 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	const platform = options.platform ?? "ios";
 	const calls: DriverCall[] = [];
 	let cursor = 0;
+	let alertAnswered = false;
+	let swallowed = options.swallowAlertTaps ?? 0;
 	const { screens } = options;
 	const provider = typeof screens === "function" ? screens : undefined;
 	const scripted: Snapshot[] | undefined = typeof screens === "function" ? undefined : [...screens];
@@ -292,8 +336,13 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	let current: Orientation = "portrait";
 	let theme: "light" | "dark" = "light";
 	let clip = "";
+	const wallNow = options.wallNow ?? Date.now;
+	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
+	let enrolled = false;
 	const running = new Set<string>();
 	const installed = new Set<string>();
+
+	const visibleAlert = (): AlertInfo | null => (alertAnswered ? null : findAlert(currentScreen()));
 
 	const currentScreen = (): Snapshot => {
 		if (fixed) return fixed;
@@ -360,8 +409,10 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		},
 		advance() {
 			cursor += 1;
+			alertAnswered = false;
 		},
 		set(screen) {
+			alertAnswered = false;
 			if (scripted) scripted[Math.min(cursor, Math.max(scripted.length - 1, 0))] = screen;
 			else fixed = screen;
 		},
@@ -384,7 +435,16 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "elementAtPoint", point, ...(opts && { opts }) }, () => hitTest(currentScreen(), point));
 		},
 		async tap(point, opts) {
-			return run({ method: "tap", point, ...(opts && { opts }) }, () => undefined);
+			return run({ method: "tap", point, ...(opts && { opts }) }, () => {
+				if (!options.answerAlertOnTap) return undefined;
+				const screen = currentScreen();
+				const hit = hitTest(screen, point);
+				const onButton = hit !== null && (findAlert(screen)?.buttons ?? []).some((b) => b === hit);
+				if (!onButton || alertAnswered) return undefined;
+				if (swallowed > 0) swallowed -= 1;
+				else alertAnswered = true;
+				return undefined;
+			});
 		},
 		async longPress(point, opts) {
 			return run({ method: "longPress", point, ...(opts && { opts }) }, () => undefined);
@@ -434,7 +494,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "settle", ...(opts && { opts }) }, () => ({ quiet: true, waitedMs: 0 }));
 		},
 		async alert() {
-			return run({ method: "alert" }, () => findAlert(currentScreen()));
+			return run({ method: "alert" }, () => visibleAlert());
 		},
 		async appearance(set) {
 			return run({ method: "appearance", ...(set && { set }) }, () => {
@@ -446,6 +506,100 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 			return run({ method: "clipboard", ...(set !== undefined && { set }) }, () => {
 				if (set !== undefined) clip = set;
 				return clip;
+			});
+		},
+		async network(op) {
+			return run({ method: "network", op }, () => {
+				net = { online: op.kind !== "offline", condition: op, needsProxy: [] };
+				return net;
+			});
+		},
+		async networkFaults(faults) {
+			return run({ method: "networkFaults", faults }, () => ({ notes: faultNotes(faults) }));
+		},
+		async location(op) {
+			return run({ method: "location", op }, () => undefined);
+		},
+		async clock(op) {
+			const at = op.kind === "fixed" || op.kind === "frozen" ? Date.parse(op.at) : 0;
+			if (Number.isNaN(at)) {
+				calls.push({ method: "clock", op });
+				return {
+					success: false,
+					error: driverError("E_BAD_REQUEST", `clock ${op.kind}: not an ISO 8601 date-time`),
+				};
+			}
+			return run({ method: "clock", op }, (): ClockState => {
+				const now = wallNow();
+				const offsetMs = op.kind === "offset" ? op.ms : op.kind === "fixed" ? at - now : 0;
+				return {
+					condition: op,
+					offsetMs,
+					frozen: op.kind === "frozen",
+					nowMs: op.kind === "frozen" ? at : now + offsetMs,
+				};
+			});
+		},
+		async permissions(grants, opts) {
+			return run(
+				{ method: "permissions", grants, ...(opts ? { opts } : {}) },
+				(): PermissionsState => ({
+					bundleId: opts?.bundleId ?? "fake.app",
+					applied: Object.entries(grants).map(([permission, state]) => ({
+						permission: permission as PermissionName,
+						state: state as PermissionState,
+					})),
+					skipped: [],
+				})
+			);
+		},
+		async timezone(tz, opts) {
+			return run(
+				{ method: "timezone", tz, ...(opts ? { opts } : {}) },
+				(): TimezoneState => ({
+					...(tz === null ? {} : { timezone: tz }),
+				})
+			);
+		},
+		async locale(tag, opts) {
+			return run(
+				{ method: "locale", tag, ...(opts ? { opts } : {}) },
+				(): LocaleState => ({
+					...(tag === null ? {} : { locale: tag }),
+				})
+			);
+		},
+		async a11y(op) {
+			return run(
+				{ method: "a11y", op },
+				(): A11yState => ({
+					applied: op === null ? ["textSize"] : Object.keys(op),
+					skipped: [],
+					notes: [],
+				})
+			);
+		},
+		async battery(op) {
+			return run(
+				{ method: "battery", op },
+				(): BatteryState => ({
+					...(op?.level === undefined ? {} : { level: op.level }),
+					...(op?.charging === undefined ? {} : { charging: op.charging }),
+					cosmetic: false,
+				})
+			);
+		},
+		async memoryWarning(opts) {
+			return run({ method: "memoryWarning", ...(opts ? { opts } : {}) }, () => undefined);
+		},
+		async push(payload, opts) {
+			return run({ method: "push", payload, ...(opts ? { opts } : {}) }, () => undefined);
+		},
+		async biometrics(op) {
+			return run({ method: "biometrics", op }, () => {
+				if (op === "enroll") enrolled = true;
+				if (op === "unenroll") enrolled = false;
+				return { enrolled, modality: "face" as const };
 			});
 		},
 		app,
@@ -461,7 +615,7 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	if (alertBackends !== undefined) {
 		driver.alertOn = async (backend) =>
 			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
-				alertBackends.includes(backend) ? findAlert(currentScreen()) : null
+				alertBackends.includes(backend) ? visibleAlert() : null
 			);
 	}
 	if (frontmost !== undefined) {

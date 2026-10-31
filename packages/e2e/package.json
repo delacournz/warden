@@ -1,6 +1,6 @@
 {
 	"name": "@delacour/warden-e2e",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"description": "warden e2e: TypeScript spec API (bun test), simulator/emulator driver, RN devtools facet",
 	"type": "module",
 	"private": true,
@@ -15,7 +15,8 @@
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
 		"native:deps": "bun native/scripts/deps.ts",
-		"native:build": "bun native/scripts/build.ts",
+		"native:build": "bun native/scripts/build.ts && bun native/scripts/inject.ts",
+		"native:inject": "bun native/scripts/inject.ts",
 		"native:smoke": "bun native/scripts/smoke.ts",
 		"android:build": "bun native/android/scripts/build.ts",
 		"android:emit": "bun native/android/scripts/build.ts --emit-ts",

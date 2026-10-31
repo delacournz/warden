@@ -17,7 +17,7 @@ export function NotFound(): ReactElement {
 					aria-hidden="true"
 					className="text-[clamp(7rem,32vw,20rem)] text-ink leading-[0.85] tracking-[-0.04em] [font-variation-settings:'wdth'_125,'wght'_880]"
 				>
-					40<span className="text-accent">4</span>
+					40<span className="accent-voice text-accent">4</span>
 				</p>
 				<p className="break-all border-hairline border-t pt-3 font-mono text-[11px] text-ink-2">
 					warden: no page at <span className="text-ink">{pathname}</span>

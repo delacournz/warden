@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { TYPE_BASE_MS, TYPE_PER_CHAR_MS, TYPE_PER_REPEAT_MS, typeTextBudgetMs } from "./type-budget";
+import {
+	DEVICE_TYPE_PER_CHAR_MS,
+	deviceTypeTextBudgetMs,
+	TYPE_BASE_MS,
+	TYPE_PER_CHAR_MS,
+	TYPE_PER_REPEAT_MS,
+	typeTextBudgetMs,
+} from "./type-budget";
 
 describe("typeTextBudgetMs", () => {
 	test("empty text is the base", () => {
@@ -23,5 +30,13 @@ describe("typeTextBudgetMs", () => {
 	});
 	test("grows with a long string", () => {
 		expect(typeTextBudgetMs("x".repeat(100))).toBeGreaterThan(typeTextBudgetMs("x".repeat(10)));
+	});
+});
+
+describe("deviceTypeTextBudgetMs", () => {
+	test("allows one runner round trip per character on a real device", () => {
+		expect(deviceTypeTextBudgetMs("abc")).toBe(TYPE_BASE_MS + 3 * DEVICE_TYPE_PER_CHAR_MS);
+		expect(deviceTypeTextBudgetMs("😀")).toBe(TYPE_BASE_MS + DEVICE_TYPE_PER_CHAR_MS);
+		expect(DEVICE_TYPE_PER_CHAR_MS).toBeGreaterThan(TYPE_PER_CHAR_MS);
 	});
 });

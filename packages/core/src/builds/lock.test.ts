@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { err, ok } from "@delacour/warden-types/result";
 import { openStore, type Store } from "../store";
 import type { Owner } from "../types";
-import { type BuildLockDeps, buildLockKey, liveBuildLocks, withBuildLock } from "./lock";
+import { type BuildLockDeps, buildLockKey, buildTreeLockKey, liveBuildLocks, withBuildLock } from "./lock";
 import type { EnsureResult } from "./resolve";
 
 let dir: string;
@@ -73,6 +73,30 @@ describe("withBuildLock", () => {
 		expect(logs[0]).toContain("agent other");
 	});
 
+	test("onWait sees the holder's lease on every poll, never once it holds the lock", async () => {
+		const held = store.insertLease({ resource: { kind: "build", key: "k" }, owner: other, ttlMs: 60_000 }, 1_000);
+		const seen: string[] = [];
+		const d = deps({ onWait: (lease) => seen.push(lease.id) });
+		d.sleep = async (ms) => {
+			d.sleeps.push(ms);
+			if (d.sleeps.length === 2) store.deleteLeases([held.id]);
+		};
+		const res = await withBuildLock(d, "k", async () => ok("ran"));
+		expect(res).toEqual({ success: true, data: "ran" });
+		expect(seen).toEqual([held.id, held.id]);
+	});
+
+	test("waitLine names what the holder is doing", async () => {
+		const held = store.insertLease({ resource: { kind: "build", key: "k" }, owner: other, ttlMs: 60_000 }, 1_000);
+		const logs: string[] = [];
+		const d = deps({ log: (l) => logs.push(l), waitLine: (who) => `${who} is building in /app — waiting` });
+		d.sleep = async () => {
+			store.deleteLeases([held.id]);
+		};
+		await withBuildLock(d, "k", async () => ok(1));
+		expect(logs).toEqual(["agent other is building in /app — waiting"]);
+	});
+
 	test("stale holder (pid dead, heartbeat expired) is reclaimed", async () => {
 		store.insertLease({ resource: { kind: "build", key: "k" }, owner: other, ttlMs: 10, pid: 1 }, 0);
 		const res = await withBuildLock(deps(), "k", async () => ok("ran"));
@@ -91,6 +115,7 @@ describe("withBuildLock", () => {
 		store.insertLease({ resource: { kind: "port", port: 9 }, owner: me, ttlMs: 60_000 }, 1_000);
 		expect([...liveBuildLocks(store, 1_000, () => false)]).toEqual(["live"]);
 		expect(buildLockKey("k", "ios", "h")).toBe("k|ios|h");
+		expect(buildTreeLockKey("/w/app", "ios")).toBe("tree:/w/app|ios");
 	});
 });
 

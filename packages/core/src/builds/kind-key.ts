@@ -1,4 +1,4 @@
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Exec } from "../exec";
 import type { Platform } from "../types";
 import type { KindKey } from "./cache";
@@ -7,13 +7,19 @@ import type { KindBuildKey } from "./ensure";
 import { computeCacheKey, type FingerprintMemo } from "./fingerprint";
 import type { ReadFile } from "./js-inputs";
 import { computeJsKey } from "./js-key";
-import { type BuildKind, type KindSettings, projectForKind, resolveKind } from "./kinds";
+import { type BuildKind, type DeviceTarget, type KindSettings, projectForKind, resolveKind } from "./kinds";
+
+/** Why the `simulator` kind never runs on a physical device: its repack swaps JS into a build made for the simulator. */
+export const SIMULATOR_ON_DEVICE =
+	"the simulator kind is not supported on a physical iPhone (a repack cannot be re-signed for a device yet): use --kind release (or dev)";
 
 export type KindKeyDeps = {
 	exec: Exec;
 	project: Project;
 	platform: Platform;
 	kind: BuildKind;
+	/** build for a physical iPhone signed by this team (`dev` / `release` only): salted into every key */
+	device?: DeviceTarget;
 	/** the process env the bundle step will run in (`EXPO_PUBLIC_*`, `NODE_ENV`: part of the JS key) */
 	env: Record<string, string | undefined>;
 	readFile?: ReadFile;
@@ -42,9 +48,10 @@ export type KindKeys = {
  * content key of `kinds.<kind>.jsInputs` + bundle env + native fingerprint (`computeJsKey`).
  */
 export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
-	const { exec, platform, kind } = deps;
-	const settings = resolveKind(deps.project, kind);
-	const project = projectForKind(deps.project, kind);
+	const { exec, platform, kind, device } = deps;
+	if (device && kind === "simulator") return err(SIMULATOR_ON_DEVICE);
+	const settings = resolveKind(deps.project, kind, device);
+	const project = projectForKind(deps.project, kind, device);
 	const native = await computeCacheKey(exec, project, platform, deps.readFile, deps.memo, deps.env);
 	if (!native.success) return native;
 	const { jsInputs: _jsInputs, ...withoutJs } = project;
@@ -54,7 +61,8 @@ export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
 	if (!nativeOnly.success) return nativeOnly;
 	const nativeFp = nativeOnly.data.key;
 	const base = { buildKey: native.data.key, native: native.data.native, project, settings };
-	if (kind === "dev") return ok({ ...base, key: { kind: "dev", nativeFp } });
+	const onDevice = device ? { device } : {};
+	if (kind === "dev") return ok({ ...base, key: { kind: "dev", nativeFp, ...onDevice } });
 	const jsKey = await computeJsKey({
 		exec,
 		root: project.root,
@@ -68,7 +76,7 @@ export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
 		...(deps.bundlerFlags ? { bundlerFlags: deps.bundlerFlags } : {}),
 	});
 	if (!jsKey.success) return jsKey;
-	if (kind === "release") return ok({ ...base, key: { kind: "release", nativeFp, jsKey: jsKey.data } });
+	if (kind === "release") return ok({ ...base, key: { kind: "release", nativeFp, jsKey: jsKey.data, ...onDevice } });
 	return ok({
 		...base,
 		key: { kind: "simulator-base", nativeFp },

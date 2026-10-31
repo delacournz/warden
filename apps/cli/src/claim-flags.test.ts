@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ClaimedDevice } from "@delacour/warden-core/claim";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
 import type { Exec } from "@delacour/warden-core/exec";
+import {
+	DEVICECTL_LOCKSTATE_UNLOCKED,
+	devicectlEntry,
+	devicectlJson,
+} from "@delacour/warden-core/providers/devicectl.fixtures";
 import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { InventoryDevice, Lease } from "@delacour/warden-core/types";
 import {
 	bootedByClaim,
+	claimedJson,
 	claimWithFlags,
 	headlessDeps,
 	leasePidFor,
@@ -13,6 +21,7 @@ import {
 	resolveAutoProfile,
 	resolveOwner,
 	resolvePriority,
+	withNamedPhysical,
 } from "./claim-flags";
 import type { HideStart } from "./sim-windows";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "./simctl.testing";
@@ -108,6 +117,100 @@ describe("parseClaimFlags", () => {
 		expect(parseClaimFlags("ios", { count: "0" }).success).toBe(false);
 		expect(parseClaimFlags("ios", { count: "x" }).success).toBe(false);
 		expect(parseClaimFlags("ios", { wait: "soon" }).success).toBe(false);
+	});
+});
+
+describe("parseClaimFlags physical", () => {
+	const UDID = "00008140-001234567890001C";
+	const ok = (platform: string, values: Parameters<typeof parseClaimFlags>[1]) => {
+		const r = parseClaimFlags(platform, values, 16);
+		if (!r.success) throw new Error(r.error);
+		return r.data;
+	};
+	const fail = (platform: string, values: Parameters<typeof parseClaimFlags>[1]) => {
+		const r = parseClaimFlags(platform, values, 16);
+		return r.success ? undefined : r.error;
+	};
+
+	test("--physical asks for one physical device of the platform", () => {
+		expect(ok("android", { physical: true }).request).toMatchObject({ platform: "android", count: 1, physical: {} });
+		expect(ok("android", { physical: true }).request.adopt).toBeUndefined();
+	});
+
+	test("--serial (android) / --udid (ios) imply --physical, name the ids and set the count", () => {
+		expect(ok("android", { physicalSerial: ["A1", "B2"] }).request).toMatchObject({
+			count: 2,
+			physical: { ids: ["A1", "B2"] },
+		});
+		expect(ok("ios", { physicalUdid: [UDID] }).request).toMatchObject({ count: 1, physical: { ids: [UDID] } });
+	});
+
+	test("--serial on ios, --udid on android and a simulator UUID in --udid are rejected", () => {
+		expect(fail("ios", { physicalSerial: ["A1"] })).toContain("--serial is android-only");
+		expect(fail("android", { physicalUdid: [UDID] })).toContain("--udid is ios-only");
+		expect(fail("ios", { physicalUdid: ["5F1E9C37-2B7A-4C1D-9E0A-123456789ABC"] })).toContain(
+			"not a physical iOS device id"
+		);
+	});
+
+	test.each([
+		["--count", { count: "2" }],
+		["--max", { max: "3" }],
+		["--slim", { slim: true }],
+		["--headless", { headless: true }],
+		["--runtime", { runtime: "35" }],
+		["--adopt", { adopt: true }],
+		["--biometrics", { biometrics: true }],
+	] as const)("%s is rejected with --physical", (flag, extra) => {
+		expect(fail("android", { physical: true, ...extra })).toContain(`${flag} cannot be used with --physical`);
+	});
+
+	test("--biometrics says why: a real sensor is never enrolled or matched", () => {
+		expect(fail("ios", { physical: true, biometrics: true })).toContain("Face ID / fingerprint sensor");
+	});
+
+	test("--count 1, --no-slim and --no-headless are harmless with --physical", () => {
+		expect(
+			fail("android", { physical: true, count: "1", slim: false, headless: false, biometrics: false })
+		).toBeUndefined();
+	});
+
+	test("a physical claim does not default max", () => {
+		expect(ok("android", { physical: true }).maxDefaulted).toBeUndefined();
+	});
+
+	test("a plain claim is unchanged: no physical on the request", () => {
+		expect(ok("android", {}).request.physical).toBeUndefined();
+	});
+});
+
+describe("claimedJson", () => {
+	test("carries physical for a phone lease only", () => {
+		const device = (id: string): InventoryDevice => ({
+			platform: "android",
+			id,
+			name: id,
+			state: "booted",
+			wardenCreated: false,
+		});
+		const mk = (id: string, physical?: { transport: string; hwSerial?: string }): ClaimedDevice => ({
+			device: device(id),
+			action: "reuse",
+			lease: {
+				id: `l-${id}`,
+				resource: { kind: "device", platform: "android", id, name: id, ...(physical ? { physical } : {}) },
+				owner: { kind: "agent", sessionId: "s", cwd: "/" },
+				acquiredAt: 0,
+				heartbeatAt: 0,
+				ttlMs: 1,
+			},
+		});
+		const [phone, emu] = claimedJson({
+			claimed: [mk("P1", { transport: "usb", hwSerial: "HW" }), mk("emulator-5554")],
+			reclaimed: [],
+		});
+		expect(phone).toMatchObject({ udid: "P1", physical: { transport: "usb", hwSerial: "HW" } });
+		expect(emu && "physical" in emu).toBe(false);
 	});
 });
 
@@ -341,5 +444,122 @@ describe("Device Hub windows after a claim (Xcode 27)", () => {
 
 	test("headless, Device Hub running → no window opened, none touched", async () => {
 		expect(await claim("DeviceHub", true)).toEqual([]);
+	});
+});
+
+describe("withNamedPhysical", () => {
+	test("--serial / --udid become physicalSerial / physicalUdid; other values stay", () => {
+		type Values = { physical?: boolean; serial?: string[]; udid?: string[]; count?: string };
+		const named = (values: Values) => withNamedPhysical<Values>(values);
+		expect(named({ physical: true, serial: ["S1"], count: "1" })).toEqual({
+			physical: true,
+			count: "1",
+			physicalSerial: ["S1"],
+		});
+		expect(named({ udid: ["U1"] })).toEqual({ physicalUdid: ["U1"] });
+		expect(named({ count: "2" })).toEqual({ count: "2" });
+	});
+});
+
+describe("physical allowlist", () => {
+	const A = "00008140-000A0B0C0D0E0F10";
+	const B = "00008132-000A0B0C0D0E0F11";
+	let actx: TestContext | undefined;
+	afterEach(() => actx?.cleanup());
+
+	/** two ready, connected iPads/iPhones; every id is made up */
+	const make = (env: Record<string, string> = {}, config?: unknown): TestContext => {
+		const list = devicectlJson(
+			[A, B].map((udid, i) =>
+				devicectlEntry({
+					udid,
+					name: `Test device ${i}`,
+					deviceType: "iPhone",
+					osVersion: "27.2",
+					transportType: "wired",
+				})
+			)
+		);
+		const exec = fakeSimctl(
+			[],
+			[],
+			[
+				["xcrun devicectl list devices", { stdout: list }],
+				["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }],
+			]
+		);
+		actx = testContext([], { exec });
+		actx.env = { ...actx.env, ...OWNER_ENV, ...env };
+		if (config !== undefined) writeFileSync(join(actx.cwd, "warden.config.json"), JSON.stringify(config));
+		return actx;
+	};
+	const claimIds = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string[]> => {
+		const flags = parseClaimFlags("ios", values, 16);
+		if (!flags.success) throw new Error(flags.error);
+		const outcome = await claimWithFlags(c, resolveOwner(c), flags.data, undefined, {});
+		if (!outcome.success) throw new Error(outcome.error);
+		return outcome.data.claimed.map((d) => d.device.id);
+	};
+	const failure = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string> => {
+		const flags = parseClaimFlags("ios", values, 16);
+		if (!flags.success) throw new Error(flags.error);
+		const outcome = await claimWithFlags(c, resolveOwner(c), { ...flags.data, waitMs: 0 }, undefined, {});
+		return outcome.success ? "claimed" : outcome.error;
+	};
+
+	test("no list: any ready physical device", async () => {
+		expect((await claimIds(make(), { physical: true })).length).toBe(1);
+	});
+
+	test("WARDEN_PHYSICAL_IDS limits an id-less claim", async () => {
+		expect(await claimIds(make({ WARDEN_PHYSICAL_IDS: B }), { physical: true })).toEqual([B]);
+	});
+
+	test("config physical.allow limits it too, and the env wins over it", async () => {
+		const config = {
+			projects: [{ name: "app", root: ".", bundleId: { ios: "com.example.app" } }],
+			physical: { allow: [A] },
+		};
+		expect(await claimIds(make({}, config), { physical: true })).toEqual([A]);
+	});
+
+	test("the env list wins over the config list", async () => {
+		const config = {
+			projects: [{ name: "app", root: ".", bundleId: { ios: "com.example.app" } }],
+			physical: { allow: [A] },
+		};
+		expect(await claimIds(make({ WARDEN_PHYSICAL_IDS: B }, config), { physical: true })).toEqual([B]);
+	});
+
+	test("naming a device beats the list", async () => {
+		expect(await claimIds(make({ WARDEN_PHYSICAL_IDS: A }), { physicalUdid: [B] })).toEqual([B]);
+	});
+
+	test("an allowlist with nothing connected on it waits and says why", async () => {
+		expect(await failure(make({ WARDEN_PHYSICAL_IDS: "00008140-000A0B0C0D0E0FFF" }), { physical: true })).toContain(
+			"allowlist"
+		);
+	});
+
+	test("an unreadable config fails the claim instead of ignoring the list", async () => {
+		const c = make();
+		writeFileSync(join(c.cwd, "warden.config.json"), "{ not json");
+		expect(await failure(c, { physical: true })).toContain("allowlist");
+	});
+});
+
+describe("parseClaimFlags biometrics", () => {
+	test("biometrics: true puts the +bio identity on the requested profile", () => {
+		const flags = parseClaimFlags("android", { profile: "pixel-10", biometrics: true });
+		expect(flags.success && flags.data.request.profile).toBe("pixel-10+bio");
+	});
+
+	test("unset or false leaves the profile alone, default profile included", () => {
+		const plain = parseClaimFlags("ios", {});
+		const off = parseClaimFlags("ios", { biometrics: false });
+		expect(plain.success && off.success && plain.data.request.profile).toBe(
+			off.success ? off.data.request.profile : ""
+		);
+		expect(plain.success && plain.data.request.profile.endsWith("+bio")).toBe(false);
 	});
 });

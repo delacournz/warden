@@ -11,20 +11,25 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { installedBundleIds } from "@delacour/warden-core/builds/cache";
 import { parseDuration } from "@delacour/warden-core/duration";
 import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
 import { type Store, wardenHome } from "@delacour/warden-core/store";
 import type { Owner } from "@delacour/warden-core/types";
+import type { ClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
 import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
+import type { NetworkProxyPort } from "@delacour/warden-e2e/driver/network-proxy";
 import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { driverUiError } from "./driver";
+import { readServedIdentity } from "../ios-runner/served-identity";
+import { selfCommand } from "../self-command";
+import { DEVICE_LOCKED_HINT, driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
-import { androidHostDir, simdDir } from "./paths";
+import { androidHostDir, fsSafeId, iosRunnerDir, simdDir } from "./paths";
 import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 import { type HelperRecord, readState, type UiState, updateState } from "./state";
 
@@ -110,7 +115,27 @@ export type HelperDeps<C extends HelperClient = SimdClient> = {
 	command?: ProcessCommand;
 	/** argv that re-runs this warden (the Android host is warden itself). Absent: `selfCommand()` */
 	self?: () => string[];
+	/** the iPhone runner host's build identity (`IosRunnerIdentityDeps`). Absent: a resident host is never replaced for it */
+	runner?: IosRunnerIdentityDeps;
 };
+
+/**
+ * What `ensureIosRunner` needs to tell whether the resident `__ios-runner-host` serves the runner the current sources
+ * would build. Injected so tests never touch xcodebuild or the keychain.
+ */
+export type IosRunnerIdentityDeps = {
+	/** the build identity the current sources, team and Xcode would give; undefined: cannot be told, leave the host */
+	expected: () => Promise<string | undefined>;
+	/** the identity the host on `socketPath` serves; undefined: none recorded (a host that predates identities) */
+	served: (socketPath: string) => string | undefined;
+	/** `ownerKey` of the calling session, to tell a lease of its own from someone else's */
+	caller: () => Promise<string | undefined>;
+	/** the one stderr line when a host is replaced */
+	note: (line: string) => void;
+};
+
+/** The stderr note when a changed runner makes `ensureIosRunner` replace the host. */
+export const RUNNER_CHANGED_NOTE = "runner changed; restarting the iPhone runner host";
 
 /**
  * Watch a spawned helper's stdout for the line that says its socket is accepting: the helper's own `ready` event
@@ -249,10 +274,12 @@ export function socketPathFor(host: Pick<CommandContext, "env">, udid: string): 
 
 /** `socketPathFor` for any helper kind: `<kind dir>/<id>.sock`, or a short `/tmp` path when that is too long. */
 export function socketPathOf(kind: HelperKind, host: Pick<CommandContext, "env">, id: string): string {
-	const preferred = join(kind.dir(host), `${id}.sock`);
+	const preferred = join(kind.dir(host), `${fsSafeId(id)}.sock`);
 	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
 	const tag = Bun.hash(wardenHome(host.env)).toString(36).slice(0, 8);
-	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `${kind.socketTag}-${tag}-${id.slice(0, 8)}.sock`);
+	// the id's own hash, not just its first 8 characters: `192.168.*` / `adb-*` serials share those
+	const idTag = `${id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8)}${id.length > 8 ? `-${Bun.hash(id).toString(36).slice(0, 8)}` : ""}`;
+	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `${kind.socketTag}-${tag}-${idTag}.sock`);
 }
 
 export type HelperInfo<C extends HelperClient = SimdClient> = {
@@ -316,7 +343,7 @@ export function androidHostEnvKey(env: Readonly<Record<string, string | undefine
 }
 
 /** The `state.json` field a kind's record lives in. */
-type RecordField = "helper" | "androidHost";
+type RecordField = "helper" | "androidHost" | "iosRunner";
 
 /**
  * One kind of resident per-device helper process: everything that differs between iOS's `warden-simd` and Android's
@@ -351,6 +378,12 @@ export type HelperKind = {
 	command: (input: { binary: string; id: string; socket: string; idleSeconds: number; self: string[] }) => string[];
 	/** what to suggest when it dies before it is ready */
 	hint: string;
+	/**
+	 * how long a start may take (ms): the wait for its ready line, how long its spawn row stays live, and the most
+	 * an `ensureHelper` call waits in all. Default `SPAWN_LIVE_WAIT_MS`; the iPhone runner builds, installs and
+	 * launches on a phone first
+	 */
+	startupMs?: number;
 };
 
 export const SIMD_KIND: HelperKind = {
@@ -421,9 +454,60 @@ export const ANDROID_HOST_KIND: HelperKind = {
 };
 
 /** argv that re-runs this warden: the compiled binary, or `bun <cli.ts>` from source (as `autogc.ts`). */
-function selfCommand(): string[] {
-	return Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main];
+/** `WARDEN_IOS_*` names that only steer the client (which socket to use): left out of `iosRunnerEnvKey`. */
+const IOS_RUNNER_CLIENT_ONLY_ENV = new Set(["WARDEN_IOS_RUNNER_SOCKET"]);
+
+/** `simdEnvKey` for the iPhone runner host: the `WARDEN_IOS_*` knobs it and its builder read (idle timeout, signing team…). */
+export function iosRunnerEnvKey(env: Readonly<Record<string, string | undefined>>): string {
+	const entries = Object.entries(env)
+		.filter((entry): entry is [string, string] => entry[0].startsWith("WARDEN_IOS_") && entry[1] !== undefined)
+		.filter(([name]) => !IOS_RUNNER_CLIENT_ONLY_ENV.has(name))
+		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	return Bun.hash(JSON.stringify(entries)).toString(36);
 }
+
+/** `$WARDEN_IOS_RUNNER_IDLE_TIMEOUT` overrides the iPhone runner host's idle timeout (default 10 min). */
+export const IOS_RUNNER_IDLE_TIMEOUT_ENV = "WARDEN_IOS_RUNNER_IDLE_TIMEOUT";
+
+/** The hidden subcommand that serves a physical iPhone's runner (`commands/ios-runner-host.ts`). */
+export const IOS_RUNNER_SUBCOMMAND = "__ios-runner-host";
+
+/** build + install + launch of the runner on a phone: 15-30 s warm, much longer on a first install */
+export const IOS_RUNNER_STARTUP_MS = 150_000;
+
+export const IOS_RUNNER_KIND: HelperKind = {
+	label: "warden iOS runner host",
+	platform: "ios",
+	rowPrefix: "ios_runner_spawn",
+	dir: iosRunnerDir,
+	socketTag: "wirun",
+	field: "iosRunner",
+	envKey: iosRunnerEnvKey,
+	idleEnv: IOS_RUNNER_IDLE_TIMEOUT_ENV,
+	marks: (udid, socket) => [`--udid ${udid}`, `--socket ${socket}`],
+	locate: (_host, _udid, _opts, deps) => {
+		const self = (deps.self ?? selfCommand)();
+		const binary = self[self.length - 1];
+		return binary === undefined
+			? {
+					success: false,
+					error: { code: "E_HELPER_MISSING", message: "cannot tell how to re-run warden", retryable: false },
+				}
+			: ok(binary);
+	},
+	command: ({ id, socket, idleSeconds, self }) => [
+		...self,
+		IOS_RUNNER_SUBCOMMAND,
+		"--udid",
+		id,
+		"--socket",
+		socket,
+		"--idle-timeout",
+		String(idleSeconds),
+	],
+	hint: "unlock the phone and run `warden doctor`; the last lines of the log say why the runner did not start",
+	startupMs: IOS_RUNNER_STARTUP_MS,
+};
 
 const rowKey = (kind: HelperKind, id: string) => `${kind.rowPrefix}:${id}`;
 
@@ -454,7 +538,8 @@ function claimSpawnRow(
 	return store.transaction(() => {
 		const current = parseRow(store.getMeta(rowKey(kind, udid)));
 		const now = deps.now();
-		const live = current !== undefined && now - current.at < ROW_STALE_MS && deps.pidAlive(current.pid);
+		const live =
+			current !== undefined && now - current.at < (kind.startupMs ?? ROW_STALE_MS) && deps.pidAlive(current.pid);
 		if (live) return false;
 		store.setMeta(rowKey(kind, udid), JSON.stringify({ pid: deps.pid, at: now } satisfies SpawnRow));
 		return true;
@@ -504,7 +589,11 @@ function unlinkQuietly(path: string): void {
 	}
 }
 
+/** A host that could not start; one that died on a locked phone is `device_locked`, which no retry can fix. */
 function unavailable(message: string, hint?: string): { success: false; error: UiError } {
+	if (message.includes("E_DEVICE_LOCKED")) {
+		return { success: false, error: uiError("device_locked", message, { hint: DEVICE_LOCKED_HINT }) };
+	}
 	return { success: false, error: uiError("engine_unavailable", message, hint === undefined ? {} : { hint }) };
 }
 
@@ -600,7 +689,7 @@ function spawnHelper(
 	const self = (deps.self ?? selfCommand)();
 	const cmd = kind.command({ binary: located.data, id: udid, socket: socketPath, idleSeconds: idle.data, self });
 	unlinkQuietly(socketPath);
-	const spawned = deps.spawnDetached({ cmd, logPath, signalMs: SIGNAL_WAIT_MS });
+	const spawned = deps.spawnDetached({ cmd, logPath, signalMs: kind.startupMs ?? SIGNAL_WAIT_MS });
 	const binary = realPath(deps, located.data);
 	const mtimeMs = deps.mtime?.(binary);
 	const lease = currentLease(host.store(), kind, udid);
@@ -668,18 +757,53 @@ async function answered<C extends HelperClient>(a: Attempt<C>, client: C): Promi
 
 /** Something answers on the socket: use it, unless it is stale and this caller may replace it. */
 async function onAnswer<C extends HelperClient>(a: Attempt<C>, client: C): Promise<Step<C>> {
-	const stale =
-		a.spawned === undefined && !a.replaced ? staleReason(a.host, a.kind, a.udid, a.opts, a.deps) : undefined;
-	if (stale === undefined) return answered(a, client);
+	const checkable = a.spawned === undefined && !a.replaced;
+	const runner = checkable ? await runnerChange(a) : "same";
+	if (runner === "blocked") {
+		await client.close();
+		return { kind: "done", result: { success: false, error: runnerBusy(a) } };
+	}
+	const stale = checkable && runner === "changed" ? "the runner changed" : undefined;
+	const other = checkable && stale === undefined ? staleReason(a.host, a.kind, a.udid, a.opts, a.deps) : undefined;
+	if (stale === undefined && other === undefined) return answered(a, client);
 	await client.close();
 	if (!a.held && !claimSpawnRow(a.host, a.kind, a.udid, a.deps)) return WAIT;
 	a.held = true;
 	a.replaced = true;
+	if (stale !== undefined) a.deps.runner?.note(RUNNER_CHANGED_NOTE);
 	const pid = readState(a.host, a.udid)[a.kind.field]?.pid;
 	const stop = await stopRecorded(a.host, a.kind, a.udid, { socketPath: a.socketPath, deps: a.deps });
 	// a helper that could not be stopped is still the recorded one: `spawnHelper` refuses to start beside it
 	if (stop.warning === undefined) a.stopped = pid;
 	return RETRY;
+}
+
+/**
+ * Whether the iPhone runner host answering on the socket serves another runner build than the current sources would
+ * give. `same`: it does not (or this kind has no identity, or it cannot be told). `changed`: replace it. `blocked`:
+ * it changed, but the phone is leased to a different session, whose run must not be killed under it. A host with no
+ * recorded identity (older warden) counts as changed. The check comes before the lease exemption of `staleReason`:
+ * a run that holds the lease is exactly the one that started the old runner.
+ */
+async function runnerChange<C extends HelperClient>(a: Attempt<C>): Promise<"same" | "changed" | "blocked"> {
+	const runner = a.deps.runner;
+	if (runner === undefined || a.kind.field !== "iosRunner") return "same";
+	const expected = await runner.expected();
+	if (expected === undefined || runner.served(a.socketPath) === expected) return "same";
+	const lease = currentLease(a.host.store(), a.kind, a.udid);
+	if (lease === undefined) return "changed";
+	const caller = await runner.caller();
+	return caller !== undefined && caller === lease.owner ? "changed" : "blocked";
+}
+
+function runnerBusy<C extends HelperClient>(a: Attempt<C>): UiError {
+	return uiError(
+		"device_busy",
+		`the iPhone runner changed (new warden or edited runner sources), but ${a.udid} is leased to another session whose run uses the old runner host`,
+		{
+			hint: "wait for that session to finish or release the phone, then run again: the host is restarted on the next call",
+		}
+	);
 }
 
 /** The recorded helper's pid when it is alive (and not reused by another program), else undefined. */
@@ -844,17 +968,15 @@ export async function ensureHelperOf<C extends HelperClient>(
 	if (!made.success) return made;
 	const a = made.data;
 	const { socketPath, logPath, started } = a;
+	const liveWaitMs = kind.startupMs ?? SPAWN_LIVE_WAIT_MS;
 	try {
 		for (;;) {
 			const step = await attempt(a);
 			if (step.kind === "done") return step.result;
 			if (step.kind === "retry") continue;
-			if (deps.now() - started >= SPAWN_LIVE_WAIT_MS) {
+			if (deps.now() - started >= liveWaitMs) {
 				if (a.spawned !== undefined) abandonSpawn(a, a.spawned);
-				return unavailable(
-					`${kind.label} did not answer on ${socketPath} within ${SPAWN_LIVE_WAIT_MS} ms`,
-					`see ${logPath}`
-				);
+				return unavailable(`${kind.label} did not answer on ${socketPath} within ${liveWaitMs} ms`, `see ${logPath}`);
 			}
 			await deps.sleep(POLL_MS);
 		}
@@ -870,7 +992,8 @@ export async function ensureHelperOf<C extends HelperClient>(
 export async function connectHelper(
 	ctx: CommandContext,
 	udid: string,
-	opts: EnsureHelperOptions = {}
+	opts: EnsureHelperOptions = {},
+	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
 ): Promise<Result<Driver, UiError>> {
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
@@ -882,6 +1005,8 @@ export async function connectHelper(
 		socketPath,
 		...(client ? { client } : {}),
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
+		...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
+		...(extras.clockRecorder ? { clockRecorder: extras.clockRecorder } : {}),
 		now: ctx.now,
 	});
 	if (driver.success) return driver;
@@ -1076,7 +1201,7 @@ export function sweepDeadHelpers(
 	return removed;
 }
 
-const HELPER_KINDS: readonly HelperKind[] = [SIMD_KIND, ANDROID_HOST_KIND];
+const HELPER_KINDS: readonly HelperKind[] = [SIMD_KIND, ANDROID_HOST_KIND, IOS_RUNNER_KIND];
 
 export const defaultAndroidHostDeps: HelperDeps<RemoteClient> = {
 	...defaultHelperDeps,
@@ -1120,4 +1245,76 @@ export function stopAndroidHost(
 	opts: { socketPath?: string; deps?: HelperDeps<RemoteClient> } = {}
 ): Promise<StopOutcome> {
 	return stopHelperOf(ANDROID_HOST_KIND, host, serial, opts.deps ?? defaultAndroidHostDeps, opts);
+}
+
+/**
+ * `ensureHelper` for a physical iPhone: its resident `warden __ios-runner-host`, which keeps `xcodebuild` running the
+ * XCUITest runner on the phone and proxies its wire to `$WARDEN_HOME/ios-runner/<udid>.sock`. The socket speaks the
+ * `warden-simd` protocol, so the client is the same `SimdClient`.
+ */
+export function ensureIosRunner(
+	host: CommandContext,
+	udid: string,
+	opts: EnsureHelperOptions = {}
+): Promise<Result<HelperInfo, UiError>> {
+	return ensureHelperOf(IOS_RUNNER_KIND, host, udid, opts.deps ?? iosRunnerDeps(host), opts);
+}
+
+/**
+ * `defaultHelperDeps` plus the runner identity: a resident host that serves an older runner build (new warden, edited
+ * runner sources) is replaced by the next client, unless the phone is leased to another session (`device_busy`).
+ */
+function iosRunnerDeps(host: CommandContext): HelperDeps {
+	return {
+		...defaultHelperDeps,
+		runner: {
+			expected: async () => (await import("../ios-runner/identity")).expectedRunnerIdentity(host),
+			served: (socketPath) => readServedIdentity(socketPath),
+			caller: async () => {
+				const { resolveOwner } = await import("../claim-flags");
+				return ownerKey(resolveOwner(host));
+			},
+			note: (line) => host.err(line),
+		},
+	};
+}
+
+/**
+ * The physical-iPhone `Driver` for a leased phone, over its (possibly just-spawned) runner host. The app under test is
+ * `WARDEN_BUNDLE_ID`, `WARDEN_APP_PATH` is what `clearData` reinstalls, and only bundles warden installed on this phone
+ * (`installs` table) may be uninstalled. Closing it only disconnects; the host stays resident until its idle timeout.
+ */
+export async function connectIosRunner(
+	ctx: CommandContext,
+	udid: string,
+	opts: EnsureHelperOptions = {}
+): Promise<Result<Driver, UiError>> {
+	const host = await ensureIosRunner(ctx, udid, { ...opts, keepClient: true });
+	if (!host.success) return host;
+	const { client, socketPath } = host.data;
+	const { openIosDeviceDriver } = await import("@delacour/warden-e2e/driver/ios/device/device-driver");
+	const bundleId = ctx.env.WARDEN_BUNDLE_ID?.trim();
+	const appPath = ctx.env.WARDEN_APP_PATH?.trim();
+	const driver = await openIosDeviceDriver({
+		udid,
+		exec: ctx.exec,
+		socketPath,
+		...(client ? { client } : {}),
+		...(bundleId ? { bundleId } : {}),
+		...(appPath ? { appPath } : {}),
+		ownedBundles: installedBundleIds(ctx.store(), "ios", udid),
+		now: ctx.now,
+	});
+	if (driver.success) return driver;
+	await client?.close();
+	return { success: false, error: driverUiError(driver.error) };
+}
+
+/** `stopHelper` for a physical iPhone's runner host. */
+export function stopIosRunner(
+	host: StopHost,
+	udid: string,
+	opts: { socketPath?: string; deps?: HelperDeps } = {}
+): Promise<StopOutcome> {
+	return stopHelperOf(IOS_RUNNER_KIND, host, udid, opts.deps ?? defaultHelperDeps, opts);
 }

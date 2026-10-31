@@ -108,14 +108,25 @@ enum KeyboardMap {
   /// same loss showed at 5 and 10 ms of hold. It was 300 ms.
   static let defaultRepeatGapMs = envMs("WARDEN_SIMD_REPEAT_GAP_MS", fallback: 50)
 
+  /// Extra pause between the first key of a `typeText` request and the second (`WARDEN_SIMD_LEAD_MS`). A controlled
+  /// React Native input re-renders on its first change (placeholder gone, focus state), and the second key landing in
+  /// that render is lost or moved to the end ("Hllo", "Hllo, World 123!e", "lol, World 123!H"). Measured with
+  /// `native/scripts/smoke.ts --focus-types 80 --via type` on a host busy with other simulators: no lead-in lost 8 of
+  /// 80 strings (2-4 of 40 on other runs), always in the first two characters; 60 ms lost none in 80 (~41 ms/char).
+  /// Pace 20 also lost none but costs ~54 ms on every character; pace 10 still lost 1.
+  static let defaultLeadMs = envMs("WARDEN_SIMD_LEAD_MS", fallback: 60)
+
   // History: pace 30 / hold 40 / repeat gap 300 cost ~99 ms per character on the same simulator (and ~260 ms on the
   // EAS VirtualMac, where idb's `.delay` timer sleeps were stretched); 5 / 20 / 50 costs ~38 ms. The delays are
   // slept by this helper with zero timer tolerance (`InputEnvironment.pause`), not by idb's `.delay`.
 
 
   /// `paceMs` is the pause after every key press, `holdMs` the pause between a key's down and up, `repeatGapMs` an
-  /// extra pause before a key identical to the previous one (all 0 = back to back).
-  static func plan(typing text: String, paceMs: Int = 0, holdMs: Int = 0, repeatGapMs: Int = 0) -> TypingPlan {
+  /// extra pause before a key identical to the previous one, `leadMs` an extra pause between the first key and the
+  /// second (all 0 = back to back).
+  static func plan(
+    typing text: String, paceMs: Int = 0, holdMs: Int = 0, repeatGapMs: Int = 0, leadMs: Int = 0
+  ) -> TypingPlan {
     var steps: [KeyStep] = []
     var shiftDown = false
     var previous: Stroke?
@@ -129,6 +140,7 @@ enum KeyboardMap {
         rest = String(remainder)
         break
       }
+      if typed == 1, leadMs > 0 { steps.append(.pause(leadMs)) }
       if stroke.shift != shiftDown {
         steps.append(.event(.keyboard(direction: stroke.shift ? .down : .up, keyCode: leftShift)))
         shiftDown = stroke.shift

@@ -26,6 +26,7 @@ describe("stageHelper", () => {
 				idb: "1.1.8",
 				xcode: "26.6 (17F113)",
 				frameworks: ["AccessibilityPlatformTranslationStub.framework", "CoreSimulatorStub.framework"],
+				inject: false,
 			},
 		});
 		for (const path of [
@@ -38,6 +39,20 @@ describe("stageHelper", () => {
 			expect(existsSync(join(bin, path))).toBe(true);
 		}
 		expect(statSync(join(bin, "warden-simd")).mode & 0o111).toBe(0o111);
+	});
+
+	test("the injected dylib is staged when built, and a release build requires it", () => {
+		fakeHelperDist(dist, { inject: true });
+		const staged = stageHelper({ distDir: dist, binDir: bin, required: true });
+		expect(staged.success && staged.data?.inject).toBe(true);
+		expect(existsSync(join(bin, "libwarden-inject.dylib"))).toBe(true);
+
+		const bare = join(root, "bare");
+		fakeHelperDist(bare);
+		const missing = stageHelper({ distDir: bare, binDir: join(root, "pkg2", "bin"), required: true });
+		expect(missing.success).toBe(false);
+		if (!missing.success) expect(missing.error).toContain("libwarden-inject.dylib");
+		expect(stageHelper({ distDir: bare, binDir: join(root, "pkg3", "bin"), required: false }).success).toBe(true);
 	});
 
 	test("no helper built: skipped, unless required", () => {

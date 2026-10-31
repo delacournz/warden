@@ -174,6 +174,15 @@ describe("selectTarget", () => {
 		expect(result.success && result.data.id).toBe("d2-1");
 	});
 
+	test("deviceName with a '+' matches Metro's form-decoded name (a space)", () => {
+		const targets = [
+			fusebox("d1-1", "L1", { deviceName: "warden-iphone-17 bio-1" }),
+			fusebox("d2-1", "L2", { deviceName: "warden-iphone-17 bio-2" }),
+		];
+		const result = pick(targets, { deviceName: "warden-iphone-17+bio-2" });
+		expect(result.success && result.data.id).toBe("d2-1");
+	});
+
 	test("unknown deviceName with several devices is device_mismatch", () => {
 		const targets = [fusebox("d1-1", "L1"), fusebox("d2-1", "L2", { deviceName: "iPhone B" })];
 		const result = pick(targets, { deviceName: "Pixel" });

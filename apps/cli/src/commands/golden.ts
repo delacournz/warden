@@ -1,4 +1,5 @@
 import { profileSlug } from "@delacour/warden-core/allocate";
+import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
 import { DEFAULT_PROFILE } from "@delacour/warden-core/config.defaults";
 import {
 	ensureAndroidSnapshot,
@@ -27,14 +28,15 @@ function platformOf(ctx: CommandContext, opts: PlatformOpt): "ios" | "android" |
 	return undefined;
 }
 
-/** The AVD a profile names (`auto` = the first AVD). */
+/** The snapshot target a profile names: its AVD (`auto` = the first AVD), plus `+bio` for a biometrics profile. */
 async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string> {
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 	if (!avds.success) return avds;
-	const slug = profile === "auto" ? resolveAutoProfile(avds.data) : ok(profile);
+	const { profile: base, biometrics } = splitBiometricProfile(profile);
+	const slug = base === "auto" ? resolveAutoProfile(avds.data) : ok(base);
 	if (!slug.success) return slug;
 	const avd = avds.data.find((a) => profileSlug(a) === slug.data);
-	return avd !== undefined ? ok(avd) : err(`no AVD matches profile "${slug.data}"`);
+	return avd !== undefined ? ok(biometricProfile(avd, biometrics)) : err(`no AVD matches profile "${slug.data}"`);
 }
 
 async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts: EnsureOpts): Promise<number> {

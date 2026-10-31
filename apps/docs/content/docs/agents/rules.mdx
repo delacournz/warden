@@ -33,19 +33,19 @@ Xcode 27 ships an MCP server (`xcrun mcpbridge`, headless via `xcrun mcp-server`
 `warden install --claude` adds the hook, skill and rule below. The hook edit to `~/.claude/settings.json` shows a diff first and applies only after you confirm or pass `--yes` (non-interactive without `--yes` skips it); `--dry-run` writes nothing. It also removes the `PreToolUse` hook (`warden hook pretool`, a device-lease hook for MCP device tools) that older versions installed; `warden hook pretool` stays a no-op so an old config keeps working.
 
 <Accordions>
-<Accordion title="SessionEnd hook">
+<Accordion id="session-end-hook" title="SessionEnd hook">
 
 **Shuts down the session's sims** and releases its leases, so nothing is left running. Only sims warden created, or that the session booted itself, are shut down; one that was already running (your own Simulator.app) is released but left on.
 
 On `/clear` (reason `clear`) sims keep running: the conversation restarts, the work usually continues, and the new session re-claims the sim with its next `warden claim`. Leases a still-running `warden e2e` / `batch` / `run` / `dev` holds (live pid, fresh heartbeat) are kept too; that run releases them when it ends. A run whose leases are released under it (`warden release`, a SessionEnd) stops with "leases were released by another process".
 
 </Accordion>
-<Accordion title="Sessions that die without SessionEnd">
+<Accordion id="sessions-without-session-end" title="Sessions that die without SessionEnd">
 
 Killed or terminal closed: their leases go stale after their TTL (30 min; 5 min for a bare agent claim), and `warden gc` then shuts those sims down under the same rule, but only 10+ min after the lease went stale and never while a non-Apple app is running on the sim. gc runs automatically in the background at most every 10 min, triggered by `claim` / `run` / `batch` / `dev` (`WARDEN_AUTO_GC=0` turns this off).
 
 </Accordion>
-<Accordion title="Skill and rule">
+<Accordion id="skill-and-rule" title="Skill and rule">
 
 Stages the embedded skill folder in `$WARDEN_HOME/skill/warden/` and installs it with the vercel skills CLI (`bunx skills add <dir> --skill warden -g -a claude-code -y`, `npx` fallback; `--dry-run` prints the command). The CLI places it at `~/.agents/skills/warden` and symlinks `~/.claude/skills/warden`. Without bun or node the step is skipped; use `warden skill show`. The rule `~/.claude/rules/warden.md` is written directly. A leftover `~/.claude/rules/agent-device.md` or `argent.md` from the retired setup is reported by `warden install` but never deleted.
 

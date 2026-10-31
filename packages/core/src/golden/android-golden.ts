@@ -11,12 +11,19 @@
  * fingerprint, the emulator version, the AVD's `hw.*` and guest-shaping config, the launch flags and the
  * recipe. A key change leaves the old snapshot stale; the next build of that AVD (or `warden golden prune
  * --platform android`) deletes it. A snapshot a claim saw fail to load is deleted so the next build replaces it.
+ *
+ * A biometrics target (`<avd>+bio`, see `biometrics.ts`) is its own snapshot of the same AVD: its key covers
+ * `hw.fingerprint=yes` plus a biometrics marker, its build enrolls a fingerprint before saving (so claims start
+ * enrolled), and a plain build never deletes it (nor the reverse). Bookkeeping (pending, load failures) is
+ * keyed by the target; the build lock, the AVD dir and the emulator are the real AVD's.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
+import { ensureUnlocked } from "../android-keyguard";
+import { biometricProfile, splitBiometricProfile } from "../biometrics";
 import { withBuildLock } from "../builds/lock";
 import type { Exec } from "../exec";
 import type { PidAlive } from "../liveness";
@@ -37,6 +44,7 @@ import {
 } from "../providers/android";
 import { type Store, wardenHome } from "../store";
 import type { Owner } from "../types";
+import { enrollFingerprint } from "./android-biometrics";
 import {
 	ANDROID_SNAPSHOT_MAX_LOAD_FAILURES,
 	ANDROID_SNAPSHOT_RETRY_MS,
@@ -51,6 +59,8 @@ import {
 
 /** Bump when what building a snapshot does to the device changes, so existing snapshots go stale. */
 export const ANDROID_SNAPSHOT_RECIPE = 1;
+/** Bumped when what a biometrics snapshot is saved in changes. 2: saved past the lock screen, screen kept awake. */
+export const ANDROID_BIOMETRICS_RECIPE = 2;
 export const ANDROID_SNAPSHOT_PREFIX = "warden-";
 const SNAPSHOT_PATTERN = /^warden-[0-9a-f]{10}$/;
 
@@ -69,6 +79,8 @@ export type AndroidSnapshotInputs = {
 	hardware: string[];
 	/** `headlessEmulatorFlags` the snapshot is built and launched with */
 	flags?: string[];
+	/** a biometrics snapshot: the build enrolls a fingerprint (absent = plain) */
+	biometrics?: boolean;
 };
 
 /** Non-`hw.*` `config.ini` keys that change the guest a snapshot captures (`fastboot.*`, display names do not). */
@@ -83,6 +95,7 @@ export function androidSnapshotKey(inputs: AndroidSnapshotInputs, recipe: number
 		inputs.emulatorVersion,
 		...[...inputs.hardware].sort(),
 		...(inputs.flags !== undefined ? [`flags:${inputs.flags.join(" ")}`] : []),
+		...(inputs.biometrics ? [`biometrics:${ANDROID_BIOMETRICS_RECIPE}`] : []),
 		`r${recipe}`,
 	].join("|");
 	return new Bun.CryptoHasher("sha256").update(material).digest("hex").slice(0, 10);
@@ -238,8 +251,10 @@ const toldNoSdk = new WeakSet<Exec>();
  */
 export async function readSnapshotInputs(
 	deps: AndroidGoldenDeps,
-	avd: string
+	target: string,
+	opts: { writeConfig?: boolean } = {}
 ): AsyncResult<{ inputs: AndroidSnapshotInputs; dir: string } | undefined> {
+	const { profile: avd, biometrics } = splitBiometricProfile(target);
 	const sdk = deps.env.ANDROID_HOME || deps.env.ANDROID_SDK_ROOT;
 	if (!sdk) {
 		if (!toldNoSdk.has(deps.exec)) {
@@ -251,7 +266,9 @@ export async function readSnapshotInputs(
 	const dir = avdDir(deps.env, avd);
 	const configText = readText(join(dir, "config.ini"));
 	if (configText === undefined) return err(`no config.ini in ${dir}`);
-	const config = parseProperties(configText);
+	const patched = biometrics ? biometricConfig(deps, dir, configText, opts.writeConfig === true) : ok(configText);
+	if (!patched.success) return patched;
+	const config = parseProperties(patched.data);
 	const sysdir = config.get("image.sysdir.1");
 	if (!sysdir) return err(`${join(dir, "config.ini")} names no image.sysdir.1`);
 	const imageDir = isAbsolute(sysdir) ? sysdir : join(sdk, sysdir);
@@ -264,8 +281,56 @@ export async function readSnapshotInputs(
 	if (!version.success) return version;
 	const hardware = [...config].filter(([k]) => KEYED_CONFIG.test(k)).map(([k, v]) => `${k}=${v}`);
 	const flags = headlessEmulatorFlags(deps.env);
-	return ok({ inputs: { imageRevision, fingerprint, emulatorVersion: version.data, hardware, flags }, dir });
+	return ok({
+		inputs: {
+			imageRevision,
+			fingerprint,
+			emulatorVersion: version.data,
+			hardware,
+			flags,
+			...(biometrics ? { biometrics } : {}),
+		},
+		dir,
+	});
 }
+
+/** A biometrics target's `config.ini` text: `hw.fingerprint=yes` set, and written back when `write`. */
+function biometricConfig(deps: AndroidGoldenDeps, dir: string, configText: string, write: boolean): Result<string> {
+	if (parseProperties(configText).get("hw.fingerprint") === "yes") return ok(configText);
+	const patched = withFingerprintHardware(configText);
+	if (!write) return ok(patched);
+	const configPath = join(dir, "config.ini");
+	try {
+		writeFileSync(configPath, patched);
+	} catch (error) {
+		return err(
+			`cannot set hw.fingerprint=yes in ${configPath}: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+	log(deps, `set hw.fingerprint=yes in ${configPath} (biometrics)`);
+	return ok(patched);
+}
+
+/** `config.ini` text with `hw.fingerprint=yes` (the emulator has no fingerprint sensor without it). */
+export function withFingerprintHardware(configText: string): string {
+	const lines = configText.split("\n");
+	const at = lines.findIndex((l) => /^hw\.fingerprint\s*=/.test(l.trim()));
+	if (at >= 0) lines[at] = "hw.fingerprint=yes";
+	else {
+		if (lines.at(-1) === "") lines.pop();
+		lines.push("hw.fingerprint=yes", "");
+	}
+	return lines.join("\n");
+}
+
+/** The `--profile` slug naming `target` (`pixel-10`, or `pixel-10+bio`). */
+const targetProfile = (target: string): string => {
+	const { profile, biometrics } = splitBiometricProfile(target);
+	return biometricProfile(profileSlug(profile), biometrics);
+};
+
+/** Both snapshot targets of one AVD: its plain snapshot and its biometrics one. */
+const targetsOf = (avd: string): string[] => [avd, biometricProfile(avd, true)];
 
 /** Warden snapshots in an AVD dir (`snapshots/warden-<10 hex>`). */
 function wardenSnapshots(dir: string): string[] {
@@ -372,12 +437,22 @@ async function saveFromInstance(
 	deps: AndroidGoldenDeps,
 	target: { avd: string; dir: string; name: string },
 	serial: string,
-	launched: { pid: number; logPath: string }
+	launched: { pid: number; logPath: string },
+	biometrics = false
 ): AsyncResult<void> {
 	const t = timing(deps);
 	const booted = await waitBootCompleted({ ...deps, pollIntervalMs: 250 }, serial, t.bootTimeoutMs, launched);
 	let saved: Result<unknown> = booted;
-	if (booted.success) {
+	if (booted.success && biometrics) {
+		log(deps, `enrolling a fingerprint on ${serial} (PIN set for the lock screen)`);
+		saved = await enrollFingerprint({ exec: deps.exec, sleep: deps.sleep, adb: androidTools(deps.env).adb }, serial);
+	}
+	if (saved.success && booted.success && biometrics) {
+		// the snapshot is RAM + disk: saved past the PIN lock screen and awake, it restores unlocked
+		const keyguard = { exec: deps.exec, sleep: deps.sleep, adb: androidTools(deps.env).adb, now: deps.now };
+		saved = await ensureUnlocked(keyguard, serial);
+	}
+	if (saved.success && booted.success) {
 		await deps.sleep(t.settleMs);
 		saved = await emuConsole(deps, serial, ["avd", "snapshot", "save", target.name], t.saveTimeoutMs);
 	}
@@ -404,13 +479,14 @@ async function launchBuild(
 }
 
 /** Caller holds the AVD's golden lock and has checked it is not running. */
-async function buildSnapshot(deps: AndroidGoldenDeps, avd: string, dir: string, key: string): AsyncResult<void> {
+async function buildSnapshot(deps: AndroidGoldenDeps, target: string, dir: string, key: string): AsyncResult<void> {
+	const { profile: avd, biometrics } = splitBiometricProfile(target);
 	const name = snapshotName(key);
 	const started = deps.now();
 	if (deps.prewarmHint) {
 		log(
 			deps,
-			`building quick-boot snapshot for ${avd} (first claim, a cold boot plus ~${Math.round(timing(deps).settleMs / 1000)}s); prewarm with: warden golden ensure --platform android --profile ${profileSlug(avd)}`
+			`building quick-boot snapshot for ${avd} (first claim, a cold boot plus ~${Math.round(timing(deps).settleMs / 1000)}s); prewarm with: warden golden ensure --platform android --profile ${targetProfile(target)}`
 		);
 	}
 	log(deps, `building ${name} of ${avd} — one-time cold boot`);
@@ -422,13 +498,13 @@ async function buildSnapshot(deps: AndroidGoldenDeps, avd: string, dir: string, 
 		const serial = `emulator-${leased.data.port}`;
 		const logDir = join(wardenHome(deps.env), "logs");
 		mkdirSync(logDir, { recursive: true });
-		const logPath = join(logDir, `golden-${profileSlug(avd)}.log`);
+		const logPath = join(logDir, `golden-${targetProfile(target)}.log`);
 		const launched = await launchBuild(deps, avd, leased.data.port, logPath);
 		if (!launched.success) return launched;
 		pid = launched.data.pid;
 		// the port lease now lives as long as the build emulator does, so a leftover one keeps its port
 		deps.store.setLeasePid(leased.data.lease.id, pid);
-		const saved = await saveFromInstance(deps, { avd, dir, name }, serial, { pid, logPath });
+		const saved = await saveFromInstance(deps, { avd, dir, name }, serial, { pid, logPath }, biometrics);
 		if (saved.success) log(deps, `${name} of ${avd} ready in ${Math.round((deps.now() - started) / 1000)}s`);
 		return saved;
 	} catch (error) {
@@ -487,14 +563,23 @@ async function reapLeftoverBuilds(
 	return ok({ stopped, held });
 }
 
+/** Snapshot names the AVD's other target (plain ↔ biometrics) is current at: a build of one never deletes them. */
+async function siblingNames(deps: AndroidGoldenDeps, target: string): Promise<Set<string>> {
+	const { profile: avd, biometrics } = splitBiometricProfile(target);
+	const other = biometrics ? avd : biometricProfile(avd, true);
+	const read = await readSnapshotInputs(deps, other);
+	return new Set(read.success && read.data !== undefined ? [snapshotName(androidSnapshotKey(read.data.inputs))] : []);
+}
+
 async function ensureLocked(
 	deps: AndroidGoldenDeps,
-	avd: string,
+	target: string,
 	dir: string,
 	key: string
 ): AsyncResult<EnsuredSnapshot | undefined> {
+	const { profile: avd } = splitBiometricProfile(target);
 	const name = snapshotName(key);
-	if (snapshotComplete(dir, name)) return ok({ avd, name, key, built: false });
+	if (snapshotComplete(dir, name)) return ok({ avd: target, name, key, built: false });
 	const instances = await instancesOf(deps, avd);
 	if (!instances.success) return instances;
 	const reaped = await reapLeftoverBuilds(deps, avd, instances.data);
@@ -508,24 +593,28 @@ async function ensureLocked(
 		log(deps, `${avd} is running (${busy.join(", ")}): no snapshot built now`);
 		return ok(undefined);
 	}
-	for (const stale of wardenSnapshots(dir).filter((s) => s !== name)) {
+	const keep = await siblingNames(deps, target);
+	for (const stale of wardenSnapshots(dir).filter((s) => s !== name && !keep.has(s))) {
 		const deleted = deleteSnapshot(deps, avd, dir, stale);
 		if (!deleted.success) return deleted;
 	}
-	const built = await buildSnapshot(deps, avd, dir, key);
-	return built.success ? ok({ avd, name, key, built: true }) : built;
+	const built = await buildSnapshot(deps, target, dir, key);
+	return built.success ? ok({ avd: target, name, key, built: true }) : built;
 }
 
 function lockDeps(deps: AndroidGoldenDeps) {
 	return { ...deps, waitMs: timing(deps).lockWaitMs, log: (line: string) => log(deps, line) };
 }
 
-/** Warden's current snapshot of `avd` and whether it exists; files only, no lock. `undefined` = no SDK root. */
+/**
+ * Warden's current snapshot of `target` (an AVD, or `<avd>+bio`) and whether it exists; files only, no lock.
+ * `undefined` = no SDK root. A biometrics target writes `hw.fingerprint=yes` into the AVD's `config.ini` when it lacks it.
+ */
 export async function currentAndroidSnapshot(
 	deps: AndroidGoldenDeps,
 	avd: string
 ): AsyncResult<{ avd: string; name: string; key: string; dir: string; present: boolean } | undefined> {
-	const read = await readSnapshotInputs(deps, avd);
+	const read = await readSnapshotInputs(deps, avd, { writeConfig: true });
 	if (!read.success || read.data === undefined) return read.success ? ok(undefined) : read;
 	const { dir, inputs } = read.data;
 	const key = androidSnapshotKey(inputs);
@@ -544,7 +633,7 @@ export async function snapshotForClaim(deps: AndroidGoldenDeps, avd: string): As
 	markAndroidSnapshotPending(deps.store, avd);
 	log(
 		deps,
-		`no quick-boot snapshot of ${avd} yet: cold boot (warden gc builds it while ${avd} is idle; now: warden golden ensure --platform android --profile ${profileSlug(avd)})`
+		`no quick-boot snapshot of ${avd} yet: cold boot (warden gc builds it while ${avd} is idle; now: warden golden ensure --platform android --profile ${targetProfile(avd)})`
 	);
 	return ok(undefined);
 }
@@ -566,7 +655,9 @@ export async function ensureAndroidSnapshot(
 	const { dir, key, name, present } = current.data;
 	const ensured: Result<EnsuredSnapshot | undefined> = present
 		? ok({ avd, name, key, built: false })
-		: await withBuildLock(lockDeps(deps), androidGoldenLockKey(avd), () => ensureLocked(deps, avd, dir, key));
+		: await withBuildLock(lockDeps(deps), androidGoldenLockKey(splitBiometricProfile(avd).profile), () =>
+				ensureLocked(deps, avd, dir, key)
+			);
 	if (!ensured.success) markAndroidSnapshotFailed(deps.store, avd, deps.now());
 	else if (ensured.data !== undefined) clearAndroidSnapshotPending(deps.store, avd);
 	return ensured;
@@ -601,11 +692,12 @@ export async function buildPendingAndroidSnapshot(deps: AndroidGoldenDeps): Asyn
  */
 export async function invalidateAndroidSnapshot(deps: AndroidGoldenDeps, avd: string, name: string): AsyncResult<void> {
 	if (!isWardenSnapshot(name)) return err(`${name} is not a warden snapshot`);
-	return withBuildLock({ ...lockDeps(deps), waitMs: 0 }, androidGoldenLockKey(avd), async () => {
-		const deleted = deleteSnapshot(deps, avd, avdDir(deps.env, avd), name);
+	const real = splitBiometricProfile(avd).profile;
+	return withBuildLock({ ...lockDeps(deps), waitMs: 0 }, androidGoldenLockKey(real), async () => {
+		const deleted = deleteSnapshot(deps, real, avdDir(deps.env, real), name);
 		if (deleted.success) {
 			const { loadFailures, deferred } = recordAndroidSnapshotLoadFailure(deps.store, avd, deps.now());
-			const ensure = `warden golden ensure --platform android --profile ${profileSlug(avd)}`;
+			const ensure = `warden golden ensure --platform android --profile ${targetProfile(avd)}`;
 			if (loadFailures >= ANDROID_SNAPSHOT_MAX_LOAD_FAILURES) {
 				log(deps, `${name} of ${avd} failed to load ${loadFailures} times: gc no longer rebuilds it (${ensure} does)`);
 			} else if (deferred) {
@@ -628,9 +720,12 @@ export async function listAndroidSnapshots(deps: AndroidGoldenDeps): AsyncResult
 		const dir = avdDir(deps.env, avd);
 		const names = wardenSnapshots(dir);
 		if (names.length === 0) continue;
-		const read = await readSnapshotInputs(deps, avd);
-		const current = read.success && read.data !== undefined ? snapshotName(androidSnapshotKey(read.data.inputs)) : "";
-		for (const name of names) entries.push({ avd, name, path: snapshotDir(dir, name), current: name === current });
+		const current = new Set<string>();
+		for (const target of targetsOf(avd)) {
+			const read = await readSnapshotInputs(deps, target);
+			if (read.success && read.data !== undefined) current.add(snapshotName(androidSnapshotKey(read.data.inputs)));
+		}
+		for (const name of names) entries.push({ avd, name, path: snapshotDir(dir, name), current: current.has(name) });
 	}
 	return ok(entries);
 }

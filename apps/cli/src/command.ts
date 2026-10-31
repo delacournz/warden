@@ -4,8 +4,7 @@ import {
 	type CommandUnknownOpts,
 	type HelpConfiguration,
 } from "@commander-js/extra-typings";
-import type { CommandContext } from "./context";
-import type { CloudErrorCode } from "./remote/errors";
+import type { CommandContext, FailureExtra } from "./context";
 import { SYMBOLS, type Ui } from "./ui";
 
 /**
@@ -89,7 +88,7 @@ function usageError(ui: Ui, argv: readonly string[], names: ReadonlySet<string>,
 export type JsonFailure = {
 	ok: false;
 	command: string;
-	error: { code: "usage" | "failed" | CloudErrorCode; message: string; billingUrl?: string };
+	error: { code: "usage" | "failed"; message: string } | ({ message: string } & FailureExtra);
 };
 
 /** `ui snapshot` from `["ui", "snapshot", "--json"]`: the command words of `argv`, as registered. */
@@ -131,13 +130,9 @@ export async function runProgram(
 			ctx.out(line);
 		},
 		failure: {
-			record: (message, detail) => {
-				failure ??= {
-					code: detail?.code ?? "failed",
-					message,
-					...(detail?.billingUrl ? { billingUrl: detail.billingUrl } : {}),
-				};
-				ctx.failure?.record(message, detail);
+			record: (message, extra) => {
+				failure ??= extra ? { message, ...extra } : { code: "failed", message };
+				ctx.failure?.record(message, extra);
 			},
 		},
 	};

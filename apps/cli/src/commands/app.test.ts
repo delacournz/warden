@@ -351,6 +351,47 @@ describe("warden app ensure", () => {
 	});
 });
 
+describe("warden app ensure on a physical iPhone", () => {
+	const IPHONE = "00008140-000A0B0C0D0E0F10";
+
+	test("--kind simulator is refused with the way out; nothing is built or installed", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--udid", IPHONE, "--kind", "simulator"], [], calls);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("simulator kind is not supported on a physical iPhone");
+		expect(calls.some((cmd) => cmd.includes("devicectl") || cmd.includes("xcodebuild") || cmd.includes("simctl"))).toBe(
+			false
+		);
+	});
+
+	test("--variant builds are simulator builds: refused on a phone", async () => {
+		const c = setup(["ensure", "ios", "--udid", IPHONE, "--variant", "dev"]);
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain("use --kind release");
+	});
+
+	test("an iPhone build is keyed on the env team: the dev kind misses at <fp>:device-<team>:dev", async () => {
+		const calls: string[][] = [];
+		const c = setup(["ensure", "ios", "--udid", IPHONE, "--kind", "dev", "--no-build", "--no-eas"], [], calls);
+		c.env = { ...c.env, WARDEN_IOS_TEAM_ID: "ABCDE12345" };
+		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(c.stderr.join("\n")).toContain(`${HASH}:device-ABCDE12345:dev`);
+	});
+
+	test("kindAppInput carries the team from warden.config.ts only for an iPhone", () => {
+		const base = { project: testProject(), projectKey: "k" };
+		const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
+		const c = testContext([], { env: { HOME: "/h" } });
+		writeFileSync(join(c.cwd, "warden.config.json"), JSON.stringify({ ios: { teamId: "ABCDE12345" }, e2e: {} }));
+		const phone = kindAppInput(c, deps, owner, "ios", base, "release", { eas: false, build: true, physical: true });
+		const sim = kindAppInput(c, deps, owner, "ios", base, "release", { eas: false, build: true });
+		expect(phone.configTeamId).toBe("ABCDE12345");
+		expect(phone.physical).toBe(true);
+		expect(sim.configTeamId).toBeUndefined();
+		c.cleanup();
+	});
+});
+
 describe("kindAppInput bundle env", () => {
 	const project = { project: testProject(), projectKey: "k" };
 	const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;

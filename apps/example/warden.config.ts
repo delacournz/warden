@@ -60,6 +60,25 @@ const AFFECTED = {
 		devtools: { entries: ["src/app/welcome.tsx"] },
 		perf: { entries: [...SIGNED_IN, "src/app/(tabs)/todos.tsx"] },
 		gestures: { entries: ["src/app/welcome.tsx", "src/app/gestures.tsx", "src/modules/gestures"] },
+		"network-offline": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"network-slow": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"network-flaky": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"network-fault": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"location-route": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"location-denied": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		"clock-trial": { entries: ["src/app/welcome.tsx", "src/app/conditions.tsx", "src/modules/conditions"] },
+		biometrics: {
+			entries: ["src/app/welcome.tsx", "src/app/biometrics.tsx", "src/modules/biometrics", "src/modules/showcase"],
+		},
+		"network-showcase": {
+			entries: ["src/app/welcome.tsx", "src/app/network.tsx", "src/modules/network", "src/modules/showcase"],
+		},
+		"location-showcase": {
+			entries: ["src/app/welcome.tsx", "src/app/location.tsx", "src/modules/location", "src/modules/showcase"],
+		},
+		"clock-showcase": {
+			entries: ["src/app/welcome.tsx", "src/app/clock.tsx", "src/modules/clock", "src/modules/showcase"],
+		},
 	},
 } satisfies Partial<WardenE2eSuite>;
 
@@ -87,17 +106,38 @@ const bench = {
 	fingerprint: { include: "native+js", jsInputs: JS_INPUTS },
 } satisfies WardenVariant;
 
+/** Spec ids of the device-conditions specs: they run in the `conditions` suite, not in `example`. */
+const CONDITION_SPECS = "{network-*,location-*,clock-*}";
+
+/**
+ * What the `example` and `conditions` suites share. The `conditions` suite declares `conditions.network: "online"`,
+ * which launches the app on iOS with the warden network dylib (a plain launch cannot be steered later), so its specs
+ * can change network and clock mid-test without `relaunch`; every other spec keeps the plain launch.
+ */
+const EXAMPLE_SUITE = {
+	count: 2,
+	app: true,
+	slim: true,
+	spec: SPEC,
+	metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
+	jobTimeoutMs: 15 * 60_000,
+	...AFFECTED,
+} satisfies WardenE2eSuite;
+
 /**
  * warden config for the example app, on build kinds: `warden e2e example` installs the `simulator` kind (a Release
  * build with no JS embedded, built once per native fingerprint) and repacks this worktree's JS into it in seconds
  * (`EXPO_PUBLIC_E2E=1` baked in), so a JS edit never rebuilds native. `--dev` flips the same suite to the `dev`
  * kind (Debug dev client) against a Metro warden starts for the run (`metro`), one spec process per device.
- * `warmDrivers: false` opts out of the simulator-driver pre-warm.
+ * `release` is what a physical phone installs (`--physical` / `--udid`): the same Release build with the JS embedded and
+ * the e2e flag baked in, signed for the phone (a device build, never a simulator one). `warmDrivers: false` opts out of the simulator-driver pre-warm.
  *
  * ```bash
  * warden e2e example                 # specs this branch needs, 2 sims (--all: every spec)
  * warden e2e example --dev --all     # same specs on the dev client + warden's Metro
  * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
+ * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
+ * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)
  * warden affected example            # which specs this branch needs
  * warden repack ios                  # just the repacked simulator build (cached per JS)
  * warden dev ios                     # cached Debug dev client + Metro
@@ -111,6 +151,7 @@ export default {
 			eas: false,
 			kinds: {
 				simulator: { env: { EXPO_PUBLIC_E2E: "1" }, jsInputs: JS_INPUTS },
+				release: { env: { EXPO_PUBLIC_E2E: "1" }, jsInputs: JS_INPUTS },
 			},
 			variants: { bench },
 		},
@@ -118,13 +159,19 @@ export default {
 	perf: { budgets: { jankPct: 5, maxCommitMs: 100, p95CpuPct: 90, peakMemoryMb: 600 } },
 	e2e: {
 		example: {
-			count: 2,
-			app: true,
-			slim: true,
-			spec: SPEC,
-			metro: { env: { EXPO_PUBLIC_E2E: "1" }, launchArgs: DEV_MENU_OFF },
-			jobTimeoutMs: 15 * 60_000,
-			...AFFECTED,
+			...EXAMPLE_SUITE,
+			exclude: [CONDITION_SPECS, "biometrics"],
+		},
+		conditions: {
+			...EXAMPLE_SUITE,
+			include: [CONDITION_SPECS],
+			conditions: { network: "online" },
+		},
+		biometrics: {
+			...EXAMPLE_SUITE,
+			count: 1,
+			biometrics: true,
+			include: ["biometrics"],
 		},
 	},
 } satisfies WardenConfig;

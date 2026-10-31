@@ -166,6 +166,36 @@ export const COMMANDS: readonly CommandEntry[] = [
 		load: async () => (await import("./android-host")).androidHostCommand,
 	},
 	{
+		name: "__ios-runner-host",
+		summary: "resident iPhone runner host behind `warden ui` (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-host")).iosRunnerHostCommand,
+	},
+	{
+		name: "__ios-runner-restart",
+		summary: "restart an iPhone's runner host for a running e2e session (internal)",
+		hidden: true,
+		load: async () => (await import("./ios-runner-restart")).iosRunnerRestartCommand,
+	},
+	{
+		name: "__netproxy",
+		summary: "a lease's network shaping proxy, started by `warden ui net` (internal)",
+		hidden: true,
+		load: async () => (await import("./condition-processes")).netproxyCommand,
+	},
+	{
+		name: "__route-ticker",
+		summary: "the detached Android location route ticker (internal)",
+		hidden: true,
+		load: async () => (await import("./condition-processes")).routeTickerCommand,
+	},
+	{
+		name: "__scheduler",
+		summary: "the detached network flap / timeline scheduler (internal)",
+		hidden: true,
+		load: async () => (await import("./condition-processes")).schedulerCommand,
+	},
+	{
 		name: "ui-collect",
 		summary: "background console + network collector for `warden ui logs start` (internal)",
 		hidden: true,

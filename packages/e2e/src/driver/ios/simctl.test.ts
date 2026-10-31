@@ -4,10 +4,15 @@ import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import {
 	appearanceArgv,
 	automationArgv,
+	biometricEnrollArgvs,
+	biometricEventArgv,
+	biometricModalityOf,
+	biometricStateArgv,
 	createSimctl,
 	devicectlPbcopyArgv,
 	launchArgv,
 	launchEnv,
+	modelIdentifierArgv,
 	parseRunning,
 	pbcopyArgv,
 	screenshotArgv,
@@ -78,6 +83,66 @@ describe("argv builders", () => {
 		);
 		expect(statusBarOverrideArgv(UDID).join(" ")).toContain("--time 9:41");
 		expect(statusBarOverrideArgv(UDID, { time: "10:00", wifiBars: 1 }).join(" ")).toContain("--time 10:00");
+	});
+});
+
+describe("biometric argv and modality", () => {
+	test("enrollment is set then posted; state is read with -g", () => {
+		expect(biometricEnrollArgvs(UDID, true).map((argv) => argv.join(" "))).toEqual([
+			`xcrun simctl spawn ${UDID} notifyutil -s com.apple.BiometricKit.enrollmentChanged 1`,
+			`xcrun simctl spawn ${UDID} notifyutil -p com.apple.BiometricKit.enrollmentChanged`,
+		]);
+		expect(biometricEnrollArgvs(UDID, false)[0]?.at(-1)).toBe("0");
+		expect(biometricStateArgv(UDID).join(" ")).toBe(
+			`xcrun simctl spawn ${UDID} notifyutil -g com.apple.BiometricKit.enrollmentChanged`
+		);
+	});
+
+	test("match and nomatch name the modality's notification", () => {
+		expect(biometricEventArgv(UDID, "face", "match").at(-1)).toBe("com.apple.BiometricKit_Sim.pearl.match");
+		expect(biometricEventArgv(UDID, "face", "nomatch").at(-1)).toBe("com.apple.BiometricKit_Sim.pearl.nomatch");
+		expect(biometricEventArgv(UDID, "fingerprint", "match").at(-1)).toBe(
+			"com.apple.BiometricKit_Sim.fingerTouch.match"
+		);
+		expect(biometricEventArgv(UDID, "fingerprint", "nomatch").slice(0, 5)).toEqual([
+			"xcrun",
+			"simctl",
+			"spawn",
+			UDID,
+			"notifyutil",
+		]);
+	});
+
+	test("model identifier is read from the booted sim", () => {
+		expect(modelIdentifierArgv(UDID)).toEqual(["xcrun", "simctl", "getenv", UDID, "SIMULATOR_MODEL_IDENTIFIER"]);
+	});
+
+	test("Touch ID models are fingerprint, the rest face", () => {
+		for (const id of [
+			"iPhone8,4",
+			"iPhone9,1",
+			"iPhone10,1",
+			"iPhone10,5",
+			"iPhone12,8",
+			"iPhone14,6",
+			"iPad13,18",
+			"iPad14,8",
+		]) {
+			expect([id, biometricModalityOf(id)]).toEqual([id, "fingerprint"]);
+		}
+		for (const id of [
+			"iPhone10,3",
+			"iPhone10,6",
+			"iPhone11,2",
+			"iPhone14,7",
+			"iPhone17,1",
+			"iPad8,1",
+			"iPad13,4",
+			"iPad16,3",
+		]) {
+			expect([id, biometricModalityOf(id)]).toEqual([id, "face"]);
+		}
+		expect(biometricModalityOf("")).toBe("face");
 	});
 });
 
@@ -235,6 +300,56 @@ describe("createSimctl", () => {
 		const weird = harness([["xcrun simctl ui", { stdout: "unsupported\n" }]]);
 		const result = await weird.simctl.appearance();
 		expect(!result.success && result.error.code).toBe("E_UNSUPPORTED");
+	});
+
+	test("biometrics: enroll sets then posts, state follows notifyutil -g, modality from the model", async () => {
+		const h = harness([
+			["xcrun simctl getenv", { stdout: "iPhone14,7\n" }],
+			["xcrun simctl spawn UDID-1 notifyutil -g", { stdout: "com.apple.BiometricKit.enrollmentChanged 1\n" }],
+			["xcrun simctl spawn", {}],
+		]);
+		expect(await h.simctl.biometrics("enroll")).toEqual({ success: true, data: { enrolled: true, modality: "face" } });
+		const cmds = joined(h.calls).filter((c) => c.includes("notifyutil"));
+		expect(cmds.slice(0, 2)).toEqual([
+			`xcrun simctl spawn ${UDID} notifyutil -s com.apple.BiometricKit.enrollmentChanged 1`,
+			`xcrun simctl spawn ${UDID} notifyutil -p com.apple.BiometricKit.enrollmentChanged`,
+		]);
+	});
+
+	test("biometrics: unenroll writes 0; status reads 0 as not enrolled; Touch ID model posts fingerTouch", async () => {
+		const h = harness([
+			["xcrun simctl getenv", { stdout: "iPhone14,6\n" }],
+			["xcrun simctl spawn UDID-1 notifyutil -g", { stdout: "com.apple.BiometricKit.enrollmentChanged 0\n" }],
+			["xcrun simctl spawn", {}],
+		]);
+		expect(await h.simctl.biometrics("unenroll")).toEqual({
+			success: true,
+			data: { enrolled: false, modality: "fingerprint" },
+		});
+		expect(joined(h.calls)).toContain(
+			`xcrun simctl spawn ${UDID} notifyutil -s com.apple.BiometricKit.enrollmentChanged 0`
+		);
+		await h.simctl.biometrics("match");
+		await h.simctl.biometrics("fail");
+		const posts = joined(h.calls).filter((c) => c.includes("fingerTouch"));
+		expect(posts.map((c) => c.split(" ").at(-1))).toEqual([
+			"com.apple.BiometricKit_Sim.fingerTouch.match",
+			"com.apple.BiometricKit_Sim.fingerTouch.nomatch",
+		]);
+	});
+
+	test("biometrics: an unreadable state or model is a typed error, an unknown model defaults to face", async () => {
+		const bad = harness([["xcrun simctl", { exitCode: 1, stderr: "boom" }]]);
+		const failed = await bad.simctl.biometrics("status");
+		expect(!failed.success && failed.error.code).toBe("E_IO");
+		const odd = harness([
+			["xcrun simctl getenv", { exitCode: 1 }],
+			["xcrun simctl spawn UDID-1 notifyutil -g", { stdout: "garbage\n" }],
+		]);
+		expect(await odd.simctl.biometrics("status")).toEqual({
+			success: true,
+			data: { enrolled: false, modality: "face" },
+		});
 	});
 
 	test("status bar override and clear", async () => {

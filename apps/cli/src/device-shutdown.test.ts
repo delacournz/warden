@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-core/exec";
 import type { Lease, Owner } from "@delacour/warden-core/types";
 import { shutdownReleasedDevices } from "./device-shutdown";
@@ -17,7 +18,58 @@ function lease(c: TestContext, id: string, bootedByOwner = false): Lease {
 	);
 }
 
+function physicalLease(c: TestContext, id: string): Lease {
+	return c.db.insertLease(
+		{
+			resource: { kind: "device", platform: "android", id, name: "Pixel", physical: { transport: "usb" } },
+			owner,
+			ttlMs: 60_000,
+			bootedByOwner: true,
+		},
+		c.now()
+	);
+}
+
 describe("shutdownReleasedDevices", () => {
+	test("a physical device is never shut down, even booted by the owner and recorded; no provider call is made", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		ctx.db.recordDevice({ platform: "android", id: "P1", name: "Pixel" }, 0);
+		const guarded: string[] = [];
+		const result = await shutdownReleasedDevices(ctx, [physicalLease(ctx, "P1")], owner, async (l) => {
+			guarded.push(l.id);
+			return undefined;
+		});
+		expect(result.shutdown).toEqual([]);
+		expect(result.kept).toEqual([]);
+		expect(result.notes.join("\n")).toContain("physical device: never shut down");
+		expect(calls).toEqual([]);
+		expect(guarded).toEqual([]);
+	});
+
+	test("undoes the lease's conditions before shutting its device down", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls, [["xcrun simctl location", {}]]) });
+		ctx.db.recordDevice({ platform: "ios", id: "W", name: "warden-iphone-17-1" }, 0);
+		const w = lease(ctx, "W");
+		recordCondition(ctx.db, w.id, "location", { kind: "point", lat: 1, lon: 2 }, 1);
+		const result = await shutdownReleasedDevices(ctx, [w], owner);
+		const verbs = calls.map((c) => c[2]);
+		expect(verbs.indexOf("location")).toBeGreaterThanOrEqual(0);
+		expect(verbs.indexOf("location")).toBeLessThan(verbs.indexOf("shutdown"));
+		expect(result.shutdown).toEqual(["W"]);
+		expect(activeConditions(ctx.db, w.id)).toEqual([]);
+	});
+
+	test("a foreign device keeps its conditions untouched (never reset what warden doesn't shut down)", async () => {
+		const calls: string[][] = [];
+		ctx = testContext([], { exec: fakeSimctl([], calls) });
+		const f = lease(ctx, "USERS");
+		recordCondition(ctx.db, f.id, "location", { kind: "clear" }, 1);
+		await shutdownReleasedDevices(ctx, [f], owner);
+		expect(calls.filter((c) => c[2] === "location")).toEqual([]);
+	});
+
 	test("shuts down warden-created + owner-booted devices; leaves already-running foreign ones", async () => {
 		const calls: string[][] = [];
 		ctx = testContext([], { exec: fakeSimctl([], calls) });

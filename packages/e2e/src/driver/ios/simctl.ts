@@ -2,8 +2,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-core/builds/install";
+import type { LatLon, LocationCondition } from "@delacour/warden-core/conditions/conditions.types";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-core/exec";
-import type { DriverError, DriverResult, LaunchOptions } from "../driver.types";
+import { formatCoord } from "../../conditions/geo";
+import { loadGpxPoints } from "../../conditions/location-plan";
+import { IOS_SCENARIO_NAMES } from "../../conditions/location-scenarios.data";
+import type { BiometricOp, BiometricState, DriverError, DriverResult, LaunchOptions } from "../driver.types";
 import { driverError } from "../errors";
 
 /**
@@ -61,6 +65,64 @@ export const appearanceArgv = (udid: string, set?: "light" | "dark"): string[] =
 	"appearance",
 	...(set ? [set] : []),
 ];
+const notifyutilArgv = (udid: string, args: readonly string[]): string[] => [
+	...XCRUN,
+	"spawn",
+	udid,
+	"notifyutil",
+	...args,
+];
+const ENROLLMENT_NOTIFICATION = "com.apple.BiometricKit.enrollmentChanged";
+/** Sets the enrollment state, then posts the change (`notifyutil -s <name> <state>` before `-p <name>`). */
+export const biometricEnrollArgvs = (udid: string, enrolled: boolean): string[][] => [
+	notifyutilArgv(udid, ["-s", ENROLLMENT_NOTIFICATION, enrolled ? "1" : "0"]),
+	notifyutilArgv(udid, ["-p", ENROLLMENT_NOTIFICATION]),
+];
+/** Prints `com.apple.BiometricKit.enrollmentChanged <0|1>`. */
+export const biometricStateArgv = (udid: string): string[] => notifyutilArgv(udid, ["-g", ENROLLMENT_NOTIFICATION]);
+/** The Face ID (`pearl`) or Touch ID (`fingerTouch`) match / nomatch notification the simulator's BiometricKit listens for. */
+export const biometricEventArgv = (
+	udid: string,
+	modality: BiometricState["modality"],
+	event: "match" | "nomatch"
+): string[] =>
+	notifyutilArgv(udid, ["-p", `com.apple.BiometricKit_Sim.${modality === "face" ? "pearl" : "fingerTouch"}.${event}`]);
+/** The notifications one op posts, in order; `status` posts nothing. */
+export function biometricArgvs(udid: string, modality: BiometricState["modality"], op: BiometricOp): string[][] {
+	if (op === "enroll" || op === "unenroll") return biometricEnrollArgvs(udid, op === "enroll");
+	if (op === "match" || op === "fail")
+		return [biometricEventArgv(udid, modality, op === "match" ? "match" : "nomatch")];
+	return [];
+}
+/** Model identifier (`iPhone14,7`) of a booted sim. */
+export const modelIdentifierArgv = (udid: string): string[] => [...XCRUN, "getenv", udid, "SIMULATOR_MODEL_IDENTIFIER"];
+
+/**
+ * Touch ID models by identifier: iPhone SE and everything up to the 8 (`iPhone10,1|2|4|5`; the X, `10,3|6`, has Face ID),
+ * and the iPads with a home or power-button sensor. Face ID iPads are the Pros from 2018 (`iPad8,*`, `iPad13,4-11`,
+ * `iPad14,3-6`, `iPad16,3-6`, `iPad17,*`). Unknown or empty falls back to Face ID.
+ */
+export function biometricModalityOf(model: string): BiometricState["modality"] {
+	const id = model.trim();
+	const match = /^(iPhone|iPad)(\d+),(\d+)$/.exec(id);
+	if (!match) return "face";
+	const major = Number(match[2]);
+	const minor = Number(match[3]);
+	if (match[1] === "iPhone") {
+		if (major <= 9) return "fingerprint";
+		if (major === 10) return minor === 3 || minor === 6 ? "face" : "fingerprint";
+		return id === "iPhone12,8" || id === "iPhone14,6" ? "fingerprint" : "face";
+	}
+	const faceMinors: Record<number, readonly [number, number]> = {
+		8: [1, 12],
+		13: [4, 11],
+		14: [3, 6],
+		16: [3, 6],
+		17: [1, 99],
+	};
+	const range = faceMinors[major];
+	return range && minor >= range[0] && minor <= range[1] ? "face" : "fingerprint";
+}
 export const screenshotArgv = (udid: string, path: string): string[] => [
 	...XCRUN,
 	"io",
@@ -125,6 +187,55 @@ export function statusBarOverrideArgv(udid: string, o: StatusBarOverrides = {}):
 }
 
 export const statusBarClearArgv = (udid: string): string[] => [...XCRUN, "status_bar", udid, "clear"];
+
+const latLon = (p: LatLon): string => `${formatCoord(p.lat)},${formatCoord(p.lon)}`;
+
+export const locationSetArgv = (udid: string, point: LatLon): string[] => [
+	...XCRUN,
+	"location",
+	udid,
+	"set",
+	latLon(point),
+];
+export const locationClearArgv = (udid: string): string[] => [...XCRUN, "location", udid, "clear"];
+/** `name` is Apple's scenario name (`City Run`), see {@link IOS_SCENARIO_NAMES}. */
+export const locationRunArgv = (udid: string, name: string): string[] => [...XCRUN, "location", udid, "run", name];
+
+/** A route with more waypoints than this goes through stdin (`-`) instead of the argument list. */
+export const LOCATION_ARGV_MAX_POINTS = 100;
+
+export type LocationStartOptions = { speedMps?: number; intervalS?: number };
+
+function startOptions(op: Extract<LocationCondition, { kind: "route" | "gpx" }>): LocationStartOptions {
+	const intervalS = op.kind === "route" ? op.intervalS : undefined;
+	return {
+		...(op.speedMps !== undefined ? { speedMps: op.speedMps } : {}),
+		...(intervalS !== undefined ? { intervalS } : {}),
+	};
+}
+
+/**
+ * `simctl location <udid> start [--speed=] [--interval=] <lat,lon>…`. The sim plays the path itself
+ * after the command returns. Past {@link LOCATION_ARGV_MAX_POINTS} the waypoints ride stdin of a tiny
+ * `sh -c` (one `lat,lon` per line, never interpolated into the script) with the `-` operand.
+ */
+export function locationStartArgv(udid: string, points: readonly LatLon[], o: LocationStartOptions = {}): string[] {
+	const flags = [
+		...(o.speedMps !== undefined ? [`--speed=${formatCoord(o.speedMps)}`] : []),
+		...(o.intervalS !== undefined ? [`--interval=${formatCoord(o.intervalS)}`] : []),
+	];
+	if (points.length <= LOCATION_ARGV_MAX_POINTS)
+		return [...XCRUN, "location", udid, "start", ...flags, ...points.map(latLon)];
+	return [
+		"sh",
+		"-c",
+		'printf %s "$1" | xcrun simctl location "$2" start $3 -',
+		"sh",
+		points.map(latLon).join("\n"),
+		udid,
+		flags.join(" "),
+	];
+}
 
 /**
  * `simctl pbcopy` reads stdin and `Exec` has none, so the text rides as `$1` of a tiny `sh -c`
@@ -224,6 +335,13 @@ export type Simctl = {
 	pbpaste(): DriverResult<string>;
 	appearance(set?: "light" | "dark"): DriverResult<"light" | "dark">;
 	statusBar(overrides?: StatusBarOverrides | "clear"): DriverResult<void>;
+	/** `simctl location`: point, route (also from a GPX file), Apple scenario, or clear. Loop is not supported. */
+	location(op: LocationCondition): DriverResult<void>;
+	/**
+	 * Face ID / Touch ID through BiometricKit notifications inside the sim. Modality comes from the booted sim's
+	 * `SIMULATOR_MODEL_IDENTIFIER` (read once; unreadable = Face ID); the answer is the state after the op.
+	 */
+	biometrics(op: BiometricOp): DriverResult<BiometricState>;
 	/** `simctl io screenshot` to `path`, or (no path) to a scratch file read back as PNG bytes */
 	screenshot(path?: string): DriverResult<{ path?: string; png?: Uint8Array }>;
 	/** `defaults write com.apple.Accessibility AutomationEnabled -bool true` inside the sim */
@@ -231,10 +349,13 @@ export type Simctl = {
 };
 
 const ok = <T>(data: T) => ({ success: true as const, data });
+const fail = (error: DriverError) => ({ success: false as const, error });
 
 export function createSimctl(deps: SimctlDeps): Simctl {
 	const { udid, exec } = deps;
 	const env = deps.env ?? {};
+	const readText = async (path: string): Promise<string> =>
+		new TextDecoder().decode(await (deps.readFile ?? ((p: string) => readFile(p)))(path));
 
 	async function run(argv: string[], timeoutMs: number, appCommand = false, envOverride?: Record<string, string>) {
 		const res = await exec(argv, { timeoutMs, ...(envOverride ? { env: envOverride } : {}) });
@@ -246,6 +367,18 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 	async function runVoid(argv: string[], timeoutMs = SHORT_MS, appCommand = false): ReturnType<Simctl["terminate"]> {
 		const result = await run(argv, timeoutMs, appCommand);
 		return result.ok ? ok(undefined) : { success: false, error: result.error };
+	}
+
+	async function playRoute(op: Extract<LocationCondition, { kind: "route" | "gpx" }>): DriverResult<void> {
+		if (op.kind === "route" && op.loop) {
+			return fail(driverError("E_UNSUPPORTED", "simctl location has no loop; iOS routes play once"));
+		}
+		const loaded = op.kind === "gpx" ? await loadGpxPoints(op.path, readText) : ok(op.points);
+		if (!loaded.success) return fail(driverError("E_BAD_REQUEST", loaded.error));
+		const [only, second] = loaded.data;
+		if (!only) return fail(driverError("E_BAD_REQUEST", "a route needs at least one point"));
+		if (!second) return runVoid(locationSetArgv(udid, only));
+		return runVoid(locationStartArgv(udid, loaded.data, startOptions(op)));
 	}
 
 	const probe = async (bundleId: string) => {
@@ -269,6 +402,14 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			await (deps.rmDir ?? ((p: string) => rm(p, { recursive: true, force: true })))(dir).catch(() => undefined);
 		}
 	}
+
+	let modality: BiometricState["modality"] | undefined;
+	const modalityOf = async (): Promise<BiometricState["modality"]> => {
+		if (modality) return modality;
+		const result = await run(modelIdentifierArgv(udid), SHORT_MS);
+		modality = result.ok ? biometricModalityOf(result.res.stdout) : "face";
+		return modality;
+	};
 
 	return {
 		async launch(bundleId, opts = {}) {
@@ -341,8 +482,30 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			if (value === "light" || value === "dark") return ok(value);
 			return { success: false, error: driverError("E_UNSUPPORTED", `simctl ui appearance reported \`${value}\``) };
 		},
+		async biometrics(op) {
+			const kind = await modalityOf();
+			for (const argv of biometricArgvs(udid, kind, op)) {
+				const done = await runVoid(argv);
+				if (!done.success) return done;
+			}
+			const read = await run(biometricStateArgv(udid), SHORT_MS);
+			if (!read.ok) return { success: false, error: read.error };
+			return ok({ enrolled: /\s1\s*$/.test(read.res.stdout), modality: kind });
+		},
 		statusBar: (overrides) =>
 			runVoid(overrides === "clear" ? statusBarClearArgv(udid) : statusBarOverrideArgv(udid, overrides)),
+		location: (op) => {
+			switch (op.kind) {
+				case "point":
+					return runVoid(locationSetArgv(udid, op));
+				case "clear":
+					return runVoid(locationClearArgv(udid));
+				case "scenario":
+					return runVoid(locationRunArgv(udid, IOS_SCENARIO_NAMES[op.name]));
+				default:
+					return playRoute(op);
+			}
+		},
 		async screenshot(path) {
 			if (!path) return screenshotToScratch();
 			const done = await runVoid(screenshotArgv(udid, path), LAUNCH_MS);

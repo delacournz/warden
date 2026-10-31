@@ -3,7 +3,7 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
 const SRC = "/demo";
 
 /** Tracks `prefers-reduced-motion`; `true` on the server so nothing autoplays before hydration decides. */
-function useReducedMotion(): boolean {
+export function useReducedMotion(): boolean {
 	const [reduced, setReduced] = useState(true);
 	useEffect(() => {
 		const query = window.matchMedia("(prefers-reduced-motion: reduce)");

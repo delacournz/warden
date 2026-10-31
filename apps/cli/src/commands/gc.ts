@@ -38,6 +38,18 @@ type ShutDevice = { platform: Platform; id: string; name: string };
 /** What a pass reads: when it is, how idle is idle, and which devices someone holds. */
 type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
 
+/** Conditions a deleted lease left on devices nobody holds now are undone; a failed reset stays for the next pass. */
+async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<string>): Promise<string[]> {
+	const { orphanedDevices, undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
+	const notes: string[] = [];
+	for (const device of orphanedDevices(ctx.store())) {
+		if (leased.has(`${device.platform}:${device.id}`)) continue;
+		const report = await undoOrphansWith(ctx.store(), { exec: ctx.exec, env: ctx.env, now: ctx.now }, device);
+		notes.push(...report.errors.map((e) => `leftover conditions on ${device.id}: ${e}`));
+	}
+	return notes;
+}
+
 /** What one platform's pass did. */
 type PlatformOutcome = { shutdown: ShutDevice[]; forgotten: ShutDevice[]; notes: string[] };
 
@@ -90,7 +102,9 @@ async function gcPlatform(
 		outcome.notes.push(`${platform}: skipped (${inventory.error})`);
 		return outcome;
 	}
-	const booted = new Set(inventory.data.filter((d) => d.state !== "shutdown").map((d) => d.id));
+	const booted = new Set(
+		inventory.data.filter((d) => d.state !== "shutdown" && d.physical === undefined).map((d) => d.id)
+	);
 	if (platform === "android") {
 		const listed = new Set(inventory.data.map((d) => d.id));
 		for (const r of records) {
@@ -267,6 +281,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 				.listLeases()
 				.flatMap((l) => (l.resource.kind === "device" ? [`${l.resource.platform}:${l.resource.id}`] : []))
 		);
+		const orphanNotes = await undoUnleasedOrphans(sctx, leased);
 		for (const l of stale) {
 			if (l.resource.kind !== "device" || !orphaned.kept.includes(l.resource.id)) continue;
 			// Spared on purpose: restart its idle clock and keep the idle pass off it this run.
@@ -288,7 +303,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 				...platforms.flatMap((p) => p.shutdown),
 			],
 			forgotten: platforms.flatMap((p) => p.forgotten),
-			notes: [...orphaned.notes, ...platforms.flatMap((p) => p.notes), ...snapshotNotes],
+			notes: [...orphaned.notes, ...orphanNotes, ...platforms.flatMap((p) => p.notes), ...snapshotNotes],
 		};
 	};
 	if (!opts.quiet && !opts.json)

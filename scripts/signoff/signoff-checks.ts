@@ -73,6 +73,24 @@ const CPU_GUARD_SCRIPT = [
 /** The bare context branch protection requires. Emitted last, and only when everything passed. */
 export const UMBRELLA_CONTEXT = "signoff";
 
+/**
+ * `warden-runner` compiled for iOS without signing (`generic/platform=iOS`, `CODE_SIGNING_ALLOWED=NO`): proves the
+ * checked-in `WardenRunner.xcodeproj` and the sources it lists still build. `WARDEN_RUNNER_BUNDLE_ID` stands in for the
+ * team-derived default, which needs `DEVELOPMENT_TEAM`.
+ */
+export const RUNNER_BUILD_ARGV = [
+	"xcodebuild",
+	"build-for-testing",
+	"-project",
+	"packages/e2e/native/ios-runner/WardenRunner.xcodeproj",
+	"-scheme",
+	"WardenRunner",
+	"-destination",
+	"generic/platform=iOS",
+	"CODE_SIGNING_ALLOWED=NO",
+	"WARDEN_RUNNER_BUNDLE_ID=nz.co.delacour.warden.runner.ci",
+] as const;
+
 export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 	{
 		context: "typecheck",
@@ -100,7 +118,7 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 	},
 	{
 		context: "native",
-		label: "native (warden-simd)",
+		label: "native (warden-simd, warden-runner)",
 		always: false,
 		paths: ["packages/e2e/native/**"],
 		workflow: "ci.yml",
@@ -110,6 +128,10 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 			{ argv: ["bun", "run", "--cwd", "packages/e2e", "native:deps"] },
 			{ argv: ["bun", "run", "--cwd", "packages/e2e", "native:build"] },
 			{ argv: ["swift", "test", "--package-path", "packages/e2e/native/ios"] },
+			// warden-runner (real devices, XCUITest): RunnerCore's `swift test` runs on macOS, and the Xcode project
+			// must still compile for iOS. Unsigned: no team, no device, no profile.
+			{ argv: ["swift", "test", "--package-path", "packages/e2e/native/ios-runner/RunnerCore"] },
+			{ argv: [...RUNNER_BUILD_ARGV] },
 		],
 		// SwiftPM holds an exclusive lock on its build dir; never two Swift builds at once.
 		locks: ["swiftpm"],

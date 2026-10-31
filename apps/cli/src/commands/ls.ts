@@ -9,7 +9,7 @@ import type { StopReason } from "../remote/api.types";
 export function describeResource(resource: Resource): string {
 	switch (resource.kind) {
 		case "device":
-			return `${resource.platform} ${resource.name} (${resource.id})`;
+			return `${resource.platform} ${resource.name} (${resource.id})${resource.physical ? " [physical]" : ""}`;
 		case "port":
 			return `port ${resource.port}`;
 		case "build":

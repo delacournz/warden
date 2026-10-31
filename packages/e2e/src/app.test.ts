@@ -97,6 +97,25 @@ describe("app.open", () => {
 		expect(driver.callsOf("app.openUrl")).toHaveLength(0);
 	});
 
+	test("iOS launches with the network dylib when conditions want it; Android and a plain run do not", async () => {
+		const wanted = fakeDriver({ screens: [CONTENT] });
+		await createApp({ session: { out: "/tmp/out" }, driver: wanted, env: baseEnv, injectWanted: () => true }).open();
+		expect(wanted.callsOf("app.launch")[0]?.opts?.inject).toBe(true);
+
+		const plain = fakeDriver({ screens: [CONTENT] });
+		await createApp({ session: { out: "/tmp/out" }, driver: plain, env: baseEnv, injectWanted: () => false }).open();
+		expect(plain.callsOf("app.launch")[0]?.opts).not.toHaveProperty("inject");
+
+		const android = fakeDriver({ screens: [CONTENT], platform: "android" });
+		await createApp({
+			session: { out: "/tmp/out" },
+			driver: android,
+			env: { ...baseEnv, platform: "android", launchArgs: [] },
+			injectWanted: () => true,
+		}).open();
+		expect(android.callsOf("app.launch")[0]?.opts).not.toHaveProperty("inject");
+	});
+
 	test("with no options launches with only the env launch args", async () => {
 		const { driver, app } = setup({ launchArgs: [] });
 		await app.open();

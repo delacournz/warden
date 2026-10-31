@@ -604,13 +604,12 @@ const ALERT = snapshotOf([
 
 describe("alert", () => {
 	test("accept presses Allow, dismiss presses Don't Allow", async () => {
-		const h = harness([ALERT]);
-		expect(await h.run("alert", "accept")).toBe(0);
-		expect(await h.run("alert", "dismiss")).toBe(0);
-		expect(h.driver.callsOf("tap").map((call) => call.point)).toEqual([
-			{ x: 250, y: 520 },
-			{ x: 100, y: 520 },
-		]);
+		const accept = harness([ALERT], { answerAlertOnTap: true });
+		expect(await accept.run("alert", "accept")).toBe(0);
+		expect(accept.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 250, y: 520 }]);
+		const dismiss = harness([ALERT], { answerAlertOnTap: true });
+		expect(await dismiss.run("alert", "dismiss")).toBe(0);
+		expect(dismiss.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 100, y: 520 }]);
 	});
 
 	test("get reads the alert", async () => {
@@ -842,6 +841,39 @@ describe("device controls", () => {
 		expect(await h.run("screen", "appearance", "--json")).toBe(0);
 		expect(doc(h.c).result.appearance).toBe("dark");
 		expect(await h.run("screen", "appearance", "blue", "--json")).toBe(1);
+	});
+
+	test("biometrics reads (default) and runs enroll / match / fail / unenroll", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		expect(await h.run("biometrics", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics).toEqual({ enrolled: false, modality: "face" });
+		expect(await h.run("biometrics", "enroll", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics).toEqual({ enrolled: true, modality: "face" });
+		expect(await h.run("biometrics", "match", "--json")).toBe(0);
+		expect(await h.run("biometrics", "fail", "--json")).toBe(0);
+		expect(await h.run("biometrics", "unenroll", "--json")).toBe(0);
+		expect(doc(h.c).result.biometrics.enrolled).toBe(false);
+		expect(h.driver.callsOf("biometrics").map((c) => c.op)).toEqual(["status", "enroll", "match", "fail", "unenroll"]);
+	});
+
+	for (const platform of ["ios", "android"] as const) {
+		test(`biometrics on a physical ${platform} device: E_UNSUPPORTED before the device is opened`, async () => {
+			const h = harness([snapshotOf(LOGIN)], { platform, lease: { physical: { transport: "usb" } } });
+			for (const op of ["status", "enroll", "match"]) {
+				expect(await h.run("biometrics", op, "--json")).not.toBe(0);
+				const out = JSON.stringify(doc(h.c));
+				expect(out).toContain("E_UNSUPPORTED");
+				expect(out).toContain("real Face ID / fingerprint sensor");
+			}
+			expect(h.driver.calls).toEqual([]);
+		});
+	}
+
+	test("biometrics: an unknown op is a usage error", async () => {
+		const h = harness([snapshotOf(LOGIN)]);
+		expect(await h.run("biometrics", "scan", "--json")).toBe(1);
+		expect(doc(h.c).error.code).toBe("usage");
+		expect(h.driver.callsOf("biometrics")).toHaveLength(0);
 	});
 
 	test("screenshot numbers its files under $WARDEN_HOME/ui/<udid>/shots, or goes where told", async () => {
