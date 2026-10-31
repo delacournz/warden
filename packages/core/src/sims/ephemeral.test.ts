@@ -122,6 +122,14 @@ describe("sweepEphemeralSims", () => {
 		expect(deleted(host)).toEqual([]);
 	});
 
+	test("a persistent sim (`warden dev`'s) is kept", async () => {
+		const host: Host = { sims: [sim("D", "warden-iphone-17-D")], calls: [] };
+		record("D");
+		store.markPersistent("ios", "D", NOW);
+		await sweepEphemeralSims(deps(host));
+		expect(deleted(host)).toEqual([]);
+	});
+
 	test("a failed delete is reported; the others still go", async () => {
 		const host: Host = {
 			sims: [sim("A", "warden-iphone-17-A"), sim("B", "warden-iphone-17-B")],

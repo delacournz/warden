@@ -49,7 +49,8 @@ export function ephemeralEnabled(env: Record<string, string | undefined>): boole
 
 /**
  * Delete this device once it is shut down (with `ephemeralEnabled`)? Only a warden-created iOS sim (it has a
- * store `record`) that is not quarantined (kept for `warden sim unquarantine`) and not a golden. A sim warden
+ * store `record`) that is not quarantined (kept for `warden sim unquarantine`), not persistent (`warden dev`'s,
+ * `devKeepsSim`) and not a golden. A sim warden
  * didn't create — even one the lease owner booted — is never deleted.
  */
 export function deleteAfterShutdown(record: DeviceRecord | undefined): boolean {
@@ -57,6 +58,14 @@ export function deleteAfterShutdown(record: DeviceRecord | undefined): boolean {
 		record !== undefined &&
 		record.platform === "ios" &&
 		record.quarantinedAt === undefined &&
+		record.persistentAt === undefined &&
 		!isGoldenName(record.name)
 	);
+}
+
+const ON = new Set(["1", "true", "on", "yes"]);
+
+/** Does `warden dev` keep its sim (mark it persistent) so installs and logins survive? Yes unless `WARDEN_EPHEMERAL_DEV` is on. */
+export function devKeepsSim(env: Record<string, string | undefined>): boolean {
+	return !ON.has(env.WARDEN_EPHEMERAL_DEV?.trim().toLowerCase() ?? "");
 }

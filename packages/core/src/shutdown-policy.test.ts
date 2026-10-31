@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	deleteAfterShutdown,
+	devKeepsSim,
 	ephemeralEnabled,
 	shouldShutdown,
 	staleForMs,
@@ -83,6 +84,16 @@ describe("ephemeralEnabled", () => {
 	});
 });
 
+describe("devKeepsSim", () => {
+	test("on by default: `warden dev` keeps its sim", () => {
+		expect(devKeepsSim({})).toBe(true);
+	});
+
+	test("WARDEN_EPHEMERAL_DEV=1/true/on/yes makes dev sims ephemeral too", () => {
+		for (const v of ["1", "true", "ON", " yes "]) expect(devKeepsSim({ WARDEN_EPHEMERAL_DEV: v })).toBe(false);
+	});
+});
+
 describe("deleteAfterShutdown", () => {
 	const record = (o: Partial<DeviceRecord> = {}): DeviceRecord => ({
 		platform: "ios",
@@ -103,6 +114,10 @@ describe("deleteAfterShutdown", () => {
 
 	test("a quarantined sim is kept for `warden sim unquarantine`", () => {
 		expect(deleteAfterShutdown(record({ quarantinedAt: 5 }))).toBe(false);
+	});
+
+	test("a persistent sim (`warden dev`'s) is kept so its installs and logins survive", () => {
+		expect(deleteAfterShutdown(record({ persistentAt: 5 }))).toBe(false);
 	});
 
 	test("Android emulators are not ephemeral", () => {
