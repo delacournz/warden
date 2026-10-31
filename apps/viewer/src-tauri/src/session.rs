@@ -87,13 +87,21 @@ impl std::fmt::Display for StartError {
     }
 }
 
-/// Keep a billing URL only when it is an absolute `https://` URL with a host.
+/// Keep a billing URL only when it is an absolute `https://` URL with a host, or plain `http://` on a
+/// loopback host (`localhost`, `127.0.0.1`, `::1`) so a local dev web app works.
 pub fn sanitize_billing_url(raw: &str) -> Option<String> {
     let url = reqwest::Url::parse(raw.trim()).ok()?;
-    if url.scheme() == "https" && url.host_str().is_some() {
-        Some(url.to_string())
-    } else {
-        None
+    let host = url.host_str()?;
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    match url.scheme() {
+        "https" => Some(url.to_string()),
+        "http" if loopback => Some(url.to_string()),
+        _ => None,
     }
 }
 
@@ -108,7 +116,7 @@ pub fn parse_session(line: &str) -> Result<Session, StartError> {
     if let Some(raw) = session.billing_url.take() {
         session.billing_url = sanitize_billing_url(&raw);
         if session.billing_url.is_none() {
-            log::warn!("ignoring billingUrl: not an https:// URL");
+            log::warn!("ignoring billingUrl: not an https:// (or loopback http://) URL");
         }
     }
     Ok(session)
@@ -390,6 +398,29 @@ mod tests {
             let s = parse_session(&line).unwrap();
             assert_eq!(s.billing_url, None, "{bad}");
             assert!(!SessionState::new(s).info().has_billing_url);
+        }
+    }
+
+    #[test]
+    fn billing_url_allows_plain_http_only_on_loopback() {
+        for local in [
+            "http://localhost:3012/billing",
+            "http://127.0.0.1:3012/billing",
+            "http://[::1]:3012/billing",
+        ] {
+            assert_eq!(
+                sanitize_billing_url(local).as_deref(),
+                Some(local),
+                "{local}"
+            );
+        }
+        for remote in [
+            "http://localhost.evil.example/billing",
+            "http://10.0.0.1/billing",
+            "http://0.0.0.0:3012/billing",
+            "ftp://localhost/billing",
+        ] {
+            assert_eq!(sanitize_billing_url(remote), None, "{remote}");
         }
     }
 
