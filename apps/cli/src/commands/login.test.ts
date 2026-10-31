@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { statSync } from "node:fs";
 import { fakeServer } from "../remote/api.testing";
+import type { Me } from "../remote/api.types";
 import { credentialsPath, readCredentials } from "../remote/credentials";
 import { hashMachineId } from "../remote/machine";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
@@ -136,6 +137,31 @@ describe("warden whoami / org / logout", () => {
 		c.argv = ["--json"];
 		expect(await whoamiCommand.run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).billing).toBeNull();
+	});
+
+	test("whoami shows the Revyl approval code while the workspace awaits approval", async () => {
+		const server = fakeServer();
+		const c = await loggedIn(server);
+		const approval = {
+			userCode: "WDN-4821",
+			uri: "https://app.revyl.ai/connect?code=WDN-4821",
+			expiresAt: "2026-11-07T00:00:00.000Z",
+		};
+		server.fetch = ((inner) => async (input: string, init?: RequestInit) => {
+			if (new URL(input).pathname !== "/v1/me") return inner(input, init);
+			const me = (await (await inner(input, init)).json()) as Me;
+			return Response.json({ ...me, remote: { active: 0, ...me.remote, state: "awaiting_approval", approval } });
+		})(server.fetch);
+		c.fetch = server.fetch;
+		c.argv = ["--json"];
+		expect(await whoamiCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).remote).toMatchObject({ state: "awaiting_approval", approval });
+		c.stdout.length = 0;
+		c.argv = [];
+		expect(await whoamiCommand.run(c)).toBe(0);
+		const text = c.stdout.join("\n");
+		expect(text).toContain("approve in Revyl with code WDN-4821");
+		expect(text).toContain(approval.uri);
 	});
 
 	test("WARDEN_TOKEN authenticates without a saved login", async () => {

@@ -1,7 +1,7 @@
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, reportError } from "../output";
-import type { Billing } from "../remote/api.types";
+import type { Billing, RevylApproval } from "../remote/api.types";
 import { minutesLeft, trialLine, usd } from "../remote/format";
 import { authedApi } from "../remote/session";
 
@@ -14,6 +14,13 @@ function billingLines(ctx: CommandContext, account: Billing | null): string[] {
 		`balance       ${balance}${color.dim(`  ${minutesLeft(account)}`)}`,
 		`trial         ${trialLine(account.trial)}`,
 	];
+}
+
+/** The owner's Revyl connect code while the workspace awaits approval; none otherwise. */
+function approvalLines(ctx: CommandContext, approval: RevylApproval | null): string[] {
+	if (!approval) return [];
+	const { color } = ctx.ui;
+	return [`              ${color.yellow(`approve in Revyl with code ${approval.userCode}`)}  ${approval.uri}`];
 }
 
 /**
@@ -47,6 +54,7 @@ async function whoami(ctx: CommandContext, opts: { json?: true }): Promise<numbe
 					}`
 				: color.dim("not set up")
 		}`,
+		...approvalLines(ctx, remote?.approval ?? null),
 		...billingLines(ctx, account),
 		color.dim(`api           ${authed.data.apiUrl}${authed.data.source === "env" ? " (WARDEN_TOKEN)" : ""}`),
 	];

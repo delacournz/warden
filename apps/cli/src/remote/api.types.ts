@@ -70,8 +70,20 @@ export type RemoteConnectionState = "pending" | "connected" | "awaiting_approval
 export type Me = {
 	user: { id: string; email: string; name?: string };
 	organization: { id: string; name: string; slug: string } | null;
-	remote: { state: RemoteConnectionState; concurrencyLimit?: number; active: number; balanceUsd?: number } | null;
+	remote: {
+		state: RemoteConnectionState;
+		concurrencyLimit?: number;
+		active: number;
+		balanceUsd?: number;
+		/** Only while `awaiting_approval`, and only for the org owner: the Revyl connect code. */
+		approval?: RevylApproval | null;
+		/** Whether this member can open the org's Revyl dashboard from warden-web. */
+		dashboard?: boolean;
+	} | null;
 };
+
+/** The owner already has a Revyl account: they approve warden at `uri` with `userCode` before devices start. */
+export type RevylApproval = { userCode: string; uri: string; expiresAt: string };
 
 export type Organization = { id: string; name: string; slug: string };
 

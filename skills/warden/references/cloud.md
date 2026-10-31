@@ -8,6 +8,8 @@ Hosted iOS / Android devices you lease like a local sim. Local sims and emulator
 |---|---|
 | log in (a person, once per machine) | `warden login` (`--no-browser` prints the code; `--api-url <url>` for staging; `--json` → `{ apiUrl, user, organization, machine }`) |
 | who am I, balance | `warden whoami [--json]` → account, org, remote status, `billing: { balanceUsd, ratePerMinuteUsd, estMinutesLeft, lowBalance, trial: { state, amountUsd }, billingUrl }` (`null` when billing can't be read) |
+| Revyl approval | `remote.state: awaiting_approval` = the org owner already has a Revyl account; `warden whoami` prints `approve in Revyl with code <code>  <uri>` (`--json`: `remote.approval: { userCode, uri, expiresAt }`, owner only). Devices can't start until a person approves it in Revyl |
+| Revyl dashboard | warden-web's **Open in Revyl** (`remote.dashboard: true`). A person signs in to Revyl themselves; agents never need it |
 | organizations | `warden org list` · `warden org use <org>` |
 | log out | `warden logout` |
 | CI | `WARDEN_TOKEN` (+ `WARDEN_API_URL`); no login, no machine id |
@@ -17,6 +19,7 @@ Hosted iOS / Android devices you lease like a local sim. Local sims and emulator
 ## Credits
 
 - $0.20 per device-minute, billed per second from start to stop (boot counts). Prepaid only; credits never expire.
+- Devices started directly in Revyl's dashboard are billed too: a nightly job debits that usage at the same rate.
 - Free trial: $2 per person, held until the first `claim --remote` from a machine you ran `warden login` on. A machine that already had a trial gets none (paid credit still works).
 - At ~2 min left: heartbeats warn, the viewer shows a low-balance banner. At $0 warden cloud stops the device; the viewer shows "You've run out of credits" with **Top up**.
 

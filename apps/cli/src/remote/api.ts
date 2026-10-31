@@ -13,6 +13,7 @@ import type {
 	Organization,
 	RemoteConnectionState,
 	RemoteDevice,
+	RevylApproval,
 	StopReason,
 	Topup,
 	TrialState,
@@ -215,12 +216,24 @@ function parseRemote(remote: unknown): Me["remote"] | undefined {
 	const state = oneOf(REMOTE_STATES, remote.state);
 	if (state === undefined) return undefined;
 	const balanceUsd = num(remote.balanceUsd);
+	const approval = parseApproval(remote.approval);
 	return {
 		state,
 		active: typeof remote.active === "number" ? remote.active : 0,
 		...(typeof remote.concurrencyLimit === "number" ? { concurrencyLimit: remote.concurrencyLimit } : {}),
 		...(balanceUsd !== undefined ? { balanceUsd } : {}),
+		...(approval ? { approval } : {}),
+		...(typeof remote.dashboard === "boolean" ? { dashboard: remote.dashboard } : {}),
 	};
+}
+
+/** `remote.approval`: the Revyl connect code, or `undefined` when absent or malformed. */
+function parseApproval(value: unknown): RevylApproval | undefined {
+	if (!isRecord(value)) return undefined;
+	const userCode = str(value.userCode);
+	const uri = str(value.uri);
+	const expiresAt = str(value.expiresAt);
+	return userCode && uri && expiresAt ? { userCode, uri, expiresAt } : undefined;
 }
 
 function parseMe(value: unknown): Me | undefined {
