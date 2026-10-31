@@ -1,3 +1,4 @@
+mod billing;
 mod device;
 mod session;
 
@@ -26,6 +27,48 @@ fn watch_expiry(handle: tauri::AppHandle) {
     });
 }
 
+/// Poll the device every 15 s for `stopReason` and `billing.lowBalance`, and tell the window when
+/// either changes. The token stays in Rust. 401 and 404 end polling quietly, other failures are
+/// logged and retried, and a stopped device ends it after one `viewer-stopped`.
+fn watch_billing(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut last_low = false;
+        loop {
+            let creds = handle.state::<SessionState>().credentials();
+            let result =
+                tauri::async_runtime::block_on(device::fetch_device(&handle.state(), &creds));
+            match result {
+                Err(e) => log::warn!("billing poll failed: {}", e.without_url()),
+                Ok((status, body)) => match billing::classify_status(status) {
+                    billing::HttpAction::StopQuietly => return,
+                    billing::HttpAction::Retry => log::warn!("billing poll got HTTP {status}"),
+                    billing::HttpAction::Parse => match billing::parse_device(&body) {
+                        Err(e) => log::warn!("billing poll: bad body: {e}"),
+                        Ok(snap) => {
+                            let decision = billing::decide(last_low, &snap);
+                            for emission in decision.emit {
+                                match emission {
+                                    billing::Emission::Billing(p) => {
+                                        last_low = p.low_balance;
+                                        let _ = handle.emit("viewer-billing", p);
+                                    }
+                                    billing::Emission::Stopped(p) => {
+                                        let _ = handle.emit("viewer-stopped", p);
+                                    }
+                                }
+                            }
+                            if decision.done {
+                                return;
+                            }
+                        }
+                    },
+                },
+            }
+            std::thread::sleep(std::time::Duration::from_secs(billing::POLL_INTERVAL_SECS));
+        }
+    });
+}
+
 pub fn run() {
     if cfg!(target_os = "linux") {
         fail("the warden viewer does not support Linux yet");
@@ -49,6 +92,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(SessionState::new(start))
         .manage(device::DeviceState::new())
         .setup(move |app| {
@@ -58,6 +102,7 @@ pub fn run() {
             if app.state::<SessionState>().detached() {
                 watch_expiry(app.handle().clone());
             }
+            watch_billing(app.handle().clone());
             // The parent holds stdin open for the session; EOF means it died.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -82,6 +127,7 @@ pub fn run() {
             device::swipe,
             device::input,
             device::open_url,
+            device::open_billing,
             device::screenshot,
         ])
         .build(tauri::generate_context!())

@@ -4,16 +4,18 @@
 
 ## Stack
 
-Tauri v2, Vite, React 19, TanStack Router (file routes, `__root` + `index`), Tailwind v4, `@delacournz/apogee` (optionalDependency, needs `NPM_TOKEN`; without it typecheck and build fail here only), Phosphor icons, Rust (`reqwest` with rustls). Tests: `bun test` (TS), `cargo test` (Rust).
+Tauri v2, Vite, React 19, TanStack Router (file routes, `__root` + `index`), Tailwind v4, `@delacournz/apogee` (optionalDependency, needs `NPM_TOKEN`; without it typecheck and build fail here only), Phosphor icons, Rust (`reqwest` with rustls, `tauri-plugin-opener`). Tests: `bun test` (TS), `cargo test` (Rust).
 
 ## Process contract (the CLI implements the other side; keep it exact)
 
 - Launch: the binary with no args. Nothing secret on argv or env.
 - stdin, JSON lines:
-  - First: `{"apiUrl","deviceId","token":"wvt_…","expiresAt","scope":"view"|"drive","title","platform":"ios"|"android","detached":boolean}`
+  - First: `{"apiUrl","deviceId","token":"wvt_…","expiresAt","scope":"view"|"drive","title","platform":"ios"|"android","detached":boolean,"billingUrl"?}`. `billingUrl` is optional, `https://` only (anything else is dropped with a stderr warning, not fatal) and is opened only by `open_billing`
   - Later: `{"token","expiresAt"}` replaces the token in memory.
   - EOF with `detached:false`: the parent died; close the window, exit 0.
   - EOF with `detached:true`: keep the held token and the window. When `expiresAt` passes, Rust emits `viewer-expired`; the window drops the stream and shows "Access expired, run warden view again". Exit 0 when the user closes the window.
+- Polling: Rust calls `GET {apiUrl}/v1/devices/:deviceId` every 15 s with the viewer token. 401 and 404 end polling quietly, other failures are logged and retried.
+- Webview events (not on stdout): `viewer-expired` (no payload), `viewer-billing` `{"lowBalance":boolean}` (when `billing.lowBalance` changes), `viewer-stopped` `{"reason":"user"|"idle"|"credits_exhausted"|"error"|"unknown"}` (once, when `status` is `stopped` or `failed`; polling then ends). `credits_exhausted` shows "You've run out of credits" with **Top up**; other reasons show "Device stopped".
 - stdout, JSON lines only: `{"event":"ready"}` (window up), `{"event":"streaming"}` (first frame, once), `{"event":"error","message"}` (fatal). Logs go to stderr.
 - Exit: 0 on window close or stdin EOF, 1 on a fatal startup error (bad first line, unsupported OS).
 
@@ -22,10 +24,12 @@ Tauri v2, Vite, React 19, TanStack Router (file routes, `__root` + `index`), Tai
 Rust owns the token. The webview makes no network requests (CSP has no remote `connect-src`) and never sees the token.
 
 - `src-tauri/src/session.rs`: stdin parsing, `SessionState` (RwLock), refresh pump, stdout events.
-- `src-tauri/src/device.rs`: `#[tauri::command]`s. `viewer_info` (no token), `whep_offer`/`whep_candidate`/`whep_close` (Location kept in Rust; refused if on another origin), `tap`/`swipe`/`input`/`open_url` (refused locally for `view` scope), `screenshot` (save panel, PNG written in Rust), `viewer_streaming`, `fit_window`. Errors serialise as `{code, message}`.
-- Capabilities: `core:default`, `dialog:default`, `log:default`, `core:window:allow-set-always-on-top`.
+- `src-tauri/src/billing.rs`: pure parse of the polled `RemoteDevice` (`status`, `stopReason`, `billing.lowBalance`) and the emit/stop decision; the poll thread is `watch_billing` in `lib.rs`.
+- `src-tauri/src/device.rs`: `#[tauri::command]`s. `viewer_info` (no token), `whep_offer`/`whep_candidate`/`whep_close` (Location kept in Rust; refused if on another origin), `tap`/`swipe`/`input`/`open_url` (refused locally for `view` scope), `open_billing` (no argument: opens the launch-time `billingUrl` through the opener plugin from Rust; `NO_BILLING_URL` when absent), `screenshot` (save panel, PNG written in Rust), `viewer_streaming`, `fit_window`. `viewer_info` carries `hasBillingUrl`, never the URL. Errors serialise as `{code, message}`.
+- Capabilities: `core:default`, `dialog:default`, `log:default`, `core:window:allow-set-always-on-top`. The opener plugin is registered in Rust only and grants JS no permission.
 - `src/core/api/device.api.ts`: `invoke` wrappers (`DeviceError` carries `code`).
 - `src/modules/stream/`: `whep.ts` (pure: backoff, trickle-ICE fragment), `whep-session.ts` (RTCPeerConnection recvonly, reconnect on failed/disconnected), `use-whep.ts`, `viewer.tsx` (window layout).
+- `src/modules/stream/billing-state.ts` (pure reducer and `overlayFor` precedence: expired, then out-of-credits, then stopped), `use-billing.ts` (event listeners), `stopped-state.tsx` (the overlays). A stop drops the stream like expiry. The titlebar shows a quiet "Low balance · top up" badge only when `hasBillingUrl`.
 - `src/modules/input/`: `input.ts` pure mapping (letterbox-aware `toDevicePoint`, tap/swipe classifier, wheel accumulator, key batcher), `use-device-input.ts` wires it to the DOM. No input at all in `view` scope or watch mode.
 - `src/modules/toolbar/`: apogee toolbar (open URL, screenshot, watch/drive toggle for `drive` scope, always-on-top, status badge).
 

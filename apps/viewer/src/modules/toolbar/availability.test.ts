@@ -18,6 +18,11 @@ describe("actionAvailability", () => {
 		});
 	});
 
+	test("a stopped device disables them", () => {
+		expect(actionAvailability("stopped", false)).toEqual({ enabled: false, reason: "The device has stopped." });
+		expect(actionAvailability("stopped", true).reason).toBe("The device has stopped.");
+	});
+
 	test("unreachable outranks reconnecting", () => {
 		expect(actionAvailability("reconnecting", true).reason).toBe("Can't reach warden cloud.");
 		expect(actionAvailability("connecting", true).reason).toBe("Can't reach warden cloud.");
