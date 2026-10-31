@@ -75,6 +75,7 @@ describe("warden release", () => {
 	test("--shutdown only shuts down warden-created devices", async () => {
 		const calls: string[][] = [];
 		const c = setup([], calls);
+		c.env = { ...c.env, WARDEN_EPHEMERAL: "0" };
 		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
 		lease(c, "U1");
 		lease(c, "FOREIGN");
@@ -89,6 +90,32 @@ describe("warden release", () => {
 		expect(out.shutdown).toEqual(["U1"]);
 		expect(out.notes.join(" ")).toContain("FOREIGN");
 		expect(c.db.listDevices("ios")[0]?.lastUsedAt).toBe(c.now());
+	});
+
+	test("--shutdown deletes an ephemeral warden sim and reports it", async () => {
+		const calls: string[][] = [];
+		const c = setup([], calls);
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
+		lease(c, "U1");
+		c.argv = ["--mine", "--shutdown", "--json"];
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(calls.filter((x) => x[2] === "delete").map((x) => x[3])).toEqual(["U1"]);
+		expect(JSON.parse(c.stdout.join("\n")).deleted).toEqual(["U1"]);
+		expect(c.db.listDevices("ios")).toEqual([]);
+	});
+
+	test("--bad --shutdown quarantines first, so the bad sim is kept, not deleted", async () => {
+		const calls: string[][] = [];
+		const c = setup([], calls);
+		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
+		lease(c, "U1");
+		c.argv = ["--mine", "--shutdown", "--bad", "frozen", "--json"];
+		expect(await releaseCommand.run(c)).toBe(0);
+		expect(calls.filter((x) => x[2] === "delete")).toEqual([]);
+		const out = JSON.parse(c.stdout.join("\n"));
+		expect(out.quarantined).toEqual(["U1"]);
+		expect(out.deleted).toEqual([]);
+		expect(c.db.listDevices("ios")[0]).toMatchObject({ id: "U1", quarantineReason: "frozen" });
 	});
 
 	test("--udid is repeatable; no spinner without --shutdown", async () => {

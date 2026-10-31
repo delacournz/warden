@@ -170,6 +170,28 @@ describe("pruneGoldens", () => {
 		expect(pruned.success && pruned.data.map((s) => s.udid)).toEqual(["OLD"]);
 		expect(host.sims.map((s) => s.udid)).toEqual(["NEW", "NEWWIP"]);
 	});
+
+	test("cautious (gc's auto prune): a profile whose target cannot be read keeps every golden", async () => {
+		const host = fakeHost({
+			sims: [{ udid: "OLD", name: goldenName("no-such-device", "0000000000"), state: "Shutdown" }],
+			migrationPolls: 0,
+		});
+		const pruned = await pruneGoldens(deps(host), { all: false, cautious: true });
+		expect(pruned.success && pruned.data).toEqual([]);
+		expect(host.sims.map((s) => s.udid)).toEqual(["OLD"]);
+	});
+
+	test("cautious still prunes a readable profile's stale golden", async () => {
+		const host = fakeHost({
+			sims: [
+				{ udid: "G", name: GOLDEN, state: "Shutdown" },
+				{ udid: "OLD", name: goldenName("iphone-17", "0000000000"), state: "Shutdown" },
+			],
+			migrationPolls: 0,
+		});
+		const pruned = await pruneGoldens(deps(host), { all: false, cautious: true });
+		expect(pruned.success && pruned.data.map((s) => s.udid)).toEqual(["OLD"]);
+	});
 });
 
 const AUTOMATION = ["defaults", "write", "com.apple.Accessibility", "AutomationEnabled", "-bool", "true"];
