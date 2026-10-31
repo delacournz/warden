@@ -18,20 +18,21 @@ PHONE = (1289, 50, 451, 980)  # x, y, w, h (matches timeline.ts)
 PHONE_RADIUS = 62
 BODY_TOP = 380
 
-BG = (6, 8, 11)
-SURFACE = (14, 18, 25)
-LINE = (27, 34, 48)
-TEXT = (233, 237, 244)
-MUTED = (140, 150, 169)
-FAINT = (111, 122, 142)
-SCAN = (91, 140, 255)
-OPEN = (61, 220, 151)
+# the docs site's Device Hub dark tokens (apps/docs/DESIGN.md), same as the example app's theme.css
+BG = (15, 15, 14)  # ground
+SURFACE = (23, 23, 21)  # surface
+LINE = (48, 47, 42)  # hairline
+TEXT = (243, 241, 234)  # ink
+MUTED = (156, 153, 143)  # ink-2
+FAINT = (111, 108, 100)  # ink-2 toward ground
+SCAN = (255, 106, 61)  # accent
+OPEN = (48, 209, 88)  # lease
 
 plan = json.load(open(sys.argv[1]))
 fonts = plan["fontsDir"]
-MONO = f"{fonts}/jetbrains-mono/500Medium/JetBrainsMono_500Medium.ttf"
-DISPLAY = f"{fonts}/chakra-petch/700Bold/ChakraPetch_700Bold.ttf"
-BODY = f"{fonts}/chakra-petch/400Regular/ChakraPetch_400Regular.ttf"
+MONO = f"{fonts}/martian-mono/400Regular/MartianMono_400Regular.ttf"
+DISPLAY = f"{fonts}/mona-sans/800ExtraBold/MonaSans_800ExtraBold.ttf"
+BODY = f"{fonts}/mona-sans/400Regular/MonaSans_400Regular.ttf"
 
 layout = plan["layout"]
 FPS = plan["fps"]
@@ -43,6 +44,7 @@ title_font = ImageFont.truetype(DISPLAY, 70)
 sub_font = ImageFont.truetype(BODY, 30)
 mono = ImageFont.truetype(MONO, FONT_PX)
 mono_small = ImageFont.truetype(MONO, 19)
+mono_caption = ImageFont.truetype(MONO, 16)
 
 
 def fit(text: str, font: ImageFont.FreeTypeFont, width: int) -> str:
@@ -65,11 +67,14 @@ def base() -> Image.Image:
     d.text((280, 314), plan["terminalTitle"], font=mono_small, fill=FAINT)
     d.text((150, 960), plan["footer"]["left"], font=mono_small, fill=FAINT)
     d.text((1170, 960), plan["footer"]["right"], font=mono_small, fill=FAINT, anchor="ra")
+    if plan["phoneCaption"]:
+        # centred in the band between the phone ring and the bottom edge
+        d.text((x + w // 2, (y + h + 3 + H) // 2), plan["phoneCaption"], font=mono_caption, fill=FAINT, anchor="mm")
     return img
 
 
 def check(d: ImageDraw.ImageDraw, cx: int, cy: int) -> None:
-    # JetBrains Mono has no check glyph: draw it as a vector, scaled to the font
+    # the mono face has no check glyph: draw it as a vector, scaled to the font
     s = FONT_PX / 25
     pts = [(1, 16), (7, 22), (17, 9)]
     d.line([(cx + px * s, cy + py * s) for px, py in pts], fill=OPEN, width=max(2, round(3 * s)), joint="curve")

@@ -15,8 +15,8 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Circle, Path } from "react-native-svg";
 import { transparentOf } from "@/lib/color";
+import { useTones } from "@/modules/showcase/hooks/use-tones";
 import type { BiometricStatus } from "../hooks/use-biometric-unlock";
-import { useVaultTones } from "../hooks/use-vault-tones";
 import { toneOf } from "../utils/vault-theme";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -51,7 +51,7 @@ const RING_STYLE = { position: "absolute" } as const;
  * `Cancelled` shake once in amber. Colour cross-fades from whatever is showing, never through another state's hue.
  */
 export function FaceGlyph({ status }: { status: BiometricStatus }) {
-	const tones = useVaultTones();
+	const tones = useTones();
 	const latestTones = useRef(tones);
 	latestTones.current = tones;
 	const appliedTones = useRef(tones);
@@ -189,7 +189,7 @@ export function FaceGlyph({ status }: { status: BiometricStatus }) {
 						<View className="absolute inset-0 opacity-25">
 							<LinearGradient colors={[glowEdge, tones.scan, glowEdge]} style={GLOW_FILL} />
 						</View>
-						<View className="h-0.5 rounded-[1px] bg-info" />
+						<View className="h-0.5 rounded-full bg-info" />
 					</Animated.View>
 				</Animated.View>
 			</Animated.View>

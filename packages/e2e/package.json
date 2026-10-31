@@ -1,6 +1,6 @@
 {
 	"name": "@delacour/warden-e2e",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"description": "warden e2e: TypeScript spec API (bun test), simulator/emulator driver, RN devtools facet",
 	"type": "module",
 	"private": true,

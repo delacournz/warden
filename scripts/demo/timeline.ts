@@ -73,6 +73,9 @@ export function typeDuration(shown: string): number {
  * Joins a definition with the recorder's measured times. Output appears at the
  * step's END; typing ends at its start and never overlaps the previous output.
  */
+/** Drawn under the phone unless a definition says otherwise. */
+export const DEFAULT_PHONE_CAPTION = "real simulator · not an animation";
+
 export function buildPlan(def: DemoDefinition, take: RecordedTake, videoS: number, fontsDir: string): RenderPlan {
 	const byIndex = new Map(take.steps.map((s) => [s.index, s]));
 	const steps: PlanStep[] = [];
@@ -101,6 +104,7 @@ export function buildPlan(def: DemoDefinition, take: RecordedTake, videoS: numbe
 		subtitle: def.subtitle,
 		terminalTitle: def.terminalTitle,
 		footer: def.footer,
+		phoneCaption: maskSecrets(def.phoneCaption ?? DEFAULT_PHONE_CAPTION),
 		steps,
 		outro: maskSecrets(def.outro),
 		outroS,

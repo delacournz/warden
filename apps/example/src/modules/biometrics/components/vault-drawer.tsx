@@ -17,19 +17,19 @@ const SECRETS = [
 export function VaultDrawer() {
 	return (
 		<Animated.View
-			className="rounded-2xl border border-success/35 bg-card px-[18px] py-3.5"
+			className="rounded-2xl border border-success/35 bg-card px-4 py-3.5"
 			entering={FadeInUp.duration(520).easing(Easing.out(Easing.exp))}
 			exiting={FadeOutDown.duration(200)}
 		>
 			<View className="flex-row items-baseline justify-between pb-1.5">
 				<Text className="font-heading text-base text-foreground">Contents</Text>
-				<Text className="font-mono text-[11px] text-tertiary-foreground">demo values</Text>
+				<Text className="font-mono text-xs text-tertiary-foreground">demo values</Text>
 			</View>
 			{SECRETS.map((secret, i) => (
 				<View className={i > 0 ? "gap-1 border-t border-border py-2.5" : "gap-1 py-2.5"} key={secret.label}>
-					<Text className="font-heading text-[13px] text-muted-foreground">{secret.label}</Text>
+					<Text className="font-heading text-sm text-muted-foreground">{secret.label}</Text>
 					<Animated.Text
-						className="font-mono text-[15px] text-success"
+						className="font-mono text-base text-success"
 						entering={FadeIn.delay(260 + i * 140).duration(360)}
 						numberOfLines={1}
 					>

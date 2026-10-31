@@ -8,7 +8,16 @@ import { Icon } from "@/components/ui/icon";
 import { ListGroup } from "@/components/ui/list-group";
 import { Screen } from "@/components/ui/screen";
 import { Switch } from "@/components/ui/switch";
-import { IconBell, IconFingerPrint1, IconHand5Finger, IconMoon, IconWifiFull } from "@/lib/icons/central";
+import {
+	IconBell,
+	IconClock,
+	IconFingerPrint1,
+	IconHand5Finger,
+	IconLocation,
+	IconMoon,
+	IconSignalTower,
+	IconWifiFull,
+} from "@/lib/icons/central";
 import { useSession } from "@/modules/session/contexts/session.context";
 
 /** Profile card, notification + dark-mode switches, and sign out (back to welcome). */
@@ -124,6 +133,48 @@ export default function Settings() {
 						</ListGroup.ItemPrefix>
 						<ListGroup.ItemContent>
 							<ListGroup.ItemTitle>Biometrics</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Network"
+						accessible
+						onPress={() => router.push("/network")}
+						testID="settings-network"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconSignalTower} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Network</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Location"
+						accessible
+						onPress={() => router.push("/location")}
+						testID="settings-location"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconLocation} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Location</ListGroup.ItemTitle>
+						</ListGroup.ItemContent>
+						<ListGroup.ItemSuffix />
+					</ListGroup.Item>
+					<ListGroup.Item
+						accessibilityLabel="Clock"
+						accessible
+						onPress={() => router.push("/clock")}
+						testID="settings-clock"
+					>
+						<ListGroup.ItemPrefix>
+							<Icon icon={IconClock} />
+						</ListGroup.ItemPrefix>
+						<ListGroup.ItemContent>
+							<ListGroup.ItemTitle>Clock</ListGroup.ItemTitle>
 						</ListGroup.ItemContent>
 						<ListGroup.ItemSuffix />
 					</ListGroup.Item>

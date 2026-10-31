@@ -19,8 +19,9 @@
 	},
 	"dependencies": {
 		"@delacour/warden-e2e-bench": "workspace:*",
-		"@fontsource-variable/martian-mono": "5.3.0",
+		"@fontsource-variable/jetbrains-mono": "5.3.0",
 		"@fontsource-variable/mona-sans": "5.3.0",
+		"@fontsource/chakra-petch": "5.3.0",
 		"@tanstack/react-router": "1.170.27",
 		"@tanstack/react-start": "1.168.44",
 		"fumadocs-core": "16.15.1",

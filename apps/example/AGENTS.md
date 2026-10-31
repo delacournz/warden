@@ -60,6 +60,10 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 | `/(tabs)/settings` | `Avatar`, `Switch`es (dark mode via `Uniwind.setTheme`), gesture playground row, sign out | `settings-*` |
 | `/gestures` | pinch / two-finger rotate + pan canvas, one-finger trace pad, readouts committed on gesture end, Reset. Deep link `warden-example://gestures`. Rotation is degrees, clockwise positive | `gestures-*` |
 | `/conditions` | NetInfo state + offline banner, `Fetch` (HTTPS GET, 8 s timeout, one retry after 3 s with the same `Idempotency-Key`), live `expo-location` coordinates with a 150 m geofence (`Inside` / `Outside`, last `Entered` / `Exited`) and permission state, wall clock + 14-day trial (`Active` / `Expired`) with a Refresh button. Deep link `warden-example://conditions`. No sign-in gate | `conditions-*` |
+| `/biometrics` | vault on the `Showcase` shell: face glyph, `status` / `error` readout, attempt log, Face ID unlock. Deep link `warden-example://biometrics` | `bio-*` |
+| `/network` | probes a 1 KB HTTPS download every ~1.5 s: signal glyph, latency strip (24 requests), `Online` / `Slow link` (median > 300 ms) / `Requests failing` / `Offline`, Pause probes. Deep link `warden-example://network` | `net-*` |
+| `/location` | live `expo-location` track, 150 m geofence around the first fix, speed / distance / fixes readout, fix log. Deep link `warden-example://location` | `loc-*` |
+| `/clock` | 14-day trial dial driven by `Date.now()`, clock-jump log. Deep link `warden-example://clock` | `clk-*` |
 | `/a11y` | accessibility showcase: heading, labelled switch, adjustable slider, labelled + decorative image, polite live-region counter, `Announce` ("Saved"), row with custom actions (Archive / Delete), hinted button, live screen reader / reduce motion / bold text readouts. `?bad=1` (deep link `warden-example://a11y?bad=1`) adds known failures: unnamed icon button, 20x20 target, "Submit button" (role in name), visible text not in the name. No sign-in gate | `a11y-*` |
 
 ### e2e

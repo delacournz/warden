@@ -1,93 +1,25 @@
 /*
- * App-owned theme overrides, imported by `global.css` after the registry block.
+ * App-owned theme additions, imported by `global.css` after the registry block.
  *
- * The example app's look is the "vault": a cool graphite night with one blue
- * for "looking", green for "open" and amber for "still locked". It is the
- * DARK theme only, written over the raw semantic tokens `theme.css` declares,
- * so every Delacour component and every screen picks it up through its normal
- * `bg-*` / `text-*` utilities. Light stays the registry palette.
+ * The palette itself is `theme.css`, written by `delacour theme` from the docs
+ * site's Device Hub colours (`apps/docs/DESIGN.md`): re-run the CLI to change it,
+ * never override its tokens here.
  *
- * Nothing in the registry-copied files is edited: a later `@layer theme` rule
- * for the same `@variant dark` variable wins over the earlier one.
- *
- * Vault name -> token
- *   bg      #07090D  --background
- *   surface #0E1219  --card, --popover
- *   line    #1B2230  --border, --input, --secondary, --muted
- *   text    #E9EDF4  --foreground, --primary
- *   muted   #8C96A9  --muted-foreground
- *   faint   #6F7A8E  --tertiary-foreground
- *   scan    #5B8CFF  --info, --ring (and the tint behind --accent)
- *   open    #3DDC97  --success
- *   warn    #FFB547  --warning
- *   idle    #C8D3F5  --idle  (app token: no semantic slot is "ready, waiting")
- *   off     #55607A  --off   (app token: no semantic slot is "unavailable")
- *
- * Fonts: the same three tokens `theme.css` declares per platform, pointed at
- * the vault's faces (`font-sans` Chakra Petch, `font-heading` Chakra Petch
- * Bold, `font-mono` JetBrains Mono). `_layout.tsx` registers them with
- * `useFonts` and renders nothing until they are in, so no text is ever laid
- * out in a fallback face.
- *
- * `--accent` is not `scan` itself: components paint it as a selected-row fill
- * (`Item`), where a full blue slab would bury the row's text. It is a 16% scan
- * tint over the page, with the text colour on top.
+ * Two app tokens the biometrics glyph reads where no semantic slot fits, as plain
+ * hex because SVG strokes and Reanimated cannot parse `oklch()`:
+ *   --idle  "ready, waiting"  ink
+ *   --off   "unavailable"     between ink-2 and hairline
  */
 @layer theme {
 	:root {
-		@variant dark {
-			--background: #07090d;
-			--foreground: #e9edf4;
-			--card: #0e1219;
-			--card-foreground: #e9edf4;
-			--popover: #0e1219;
-			--popover-foreground: #e9edf4;
-
-			--primary: #e9edf4;
-			--primary-foreground: #07090d;
-			--secondary: #1b2230;
-			--secondary-foreground: #e9edf4;
-			--muted: #1b2230;
-			--muted-foreground: #8c96a9;
-			--accent: color-mix(in oklch, #5b8cff 16%, #07090d);
-			--accent-foreground: #e9edf4;
-
-			--destructive: #ff6b6b;
-			--destructive-foreground: #07090d;
-
-			--border: #1b2230;
-			--input: #232c3d;
-			--ring: #5b8cff;
-
-			--sidebar: #0e1219;
-			--sidebar-foreground: #e9edf4;
-			--sidebar-primary: #5b8cff;
-			--sidebar-primary-foreground: #07090d;
-			--sidebar-accent: #1b2230;
-			--sidebar-accent-foreground: #e9edf4;
-			--sidebar-border: #1b2230;
-			--sidebar-ring: #5b8cff;
-
-			--tertiary-foreground: #7f8aa0;
-
-			--success: #3ddc97;
-			--success-foreground: #07090d;
-			--warning: #ffb547;
-			--warning-foreground: #07090d;
-			--info: #5b8cff;
-			--info-foreground: #07090d;
-
-			--idle: #c8d3f5;
-			--off: #55607a;
-		}
-	}
-}
-
-@layer theme {
-	:root {
 		@variant light {
-			--idle: #3a4a73;
-			--off: #8a93a6;
+			--idle: #0d0d0c;
+			--off: #b3b0a6;
+		}
+
+		@variant dark {
+			--idle: #f3f1ea;
+			--off: #4a4842;
 		}
 	}
 }
@@ -97,30 +29,12 @@
 	--color-off: var(--off);
 }
 
-@layer theme {
-	:root {
-		@variant ios {
-			--font-sans: "ChakraPetch_400Regular";
-			--font-heading: "ChakraPetch_700Bold";
-			--font-mono: "JetBrainsMono_500Medium";
-		}
-
-		@variant android {
-			--font-sans: "ChakraPetch_400Regular";
-			--font-heading: "ChakraPetch_700Bold";
-			--font-mono: "JetBrainsMono_500Medium";
-		}
-	}
-}
-
 /*
  * `font-sans` and `font-mono` are Tailwind's own theme names, so the per-platform
- * values above reach them. `font-heading` is not: nothing declares it in
- * `@theme`, so the utility does not exist and the Delacour headings (`Text`
- * display / title / header) silently draw in the sans face. Declaring it here
- * mints the class. It resolves at build time, which is fine: the family is the
- * same on both platforms.
+ * values in `theme.css` reach them. `font-heading` is not: without this the
+ * utility does not exist and headings silently draw in the sans face. Same family
+ * on both platforms, so resolving at build time is fine. `_layout.tsx` loads it.
  */
 @theme {
-	--font-heading: "ChakraPetch_700Bold";
+	--font-heading: "MonaSans_800ExtraBold";
 }

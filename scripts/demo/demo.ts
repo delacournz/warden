@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Demo-video kit: `bun run demo <name> [--record-only|--render-only] [--out dir] [--sheet]`.
+ * Demo-video kit: `bun run demo <feature>/<clip> [--record-only|--render-only] [--out dir] [--sheet]`.
  *
- * Definition: apps/example/demos/<name>.demo.ts. Record writes take.mp4 + steps.json
- * into the work dir (default $TMPDIR/warden-demo/<name>); render builds the 1920x1080
- * mp4 + jpg poster into apps/docs/public/demos/. Needs ffmpeg, ffprobe and uv.
+ * Definition: apps/example/demos/<feature>/<clip>.demo.ts. Record writes take.mp4 + steps.json
+ * into the work dir (default $TMPDIR/warden-demo/<feature>/<clip>); render builds the 1920x1080
+ * mp4 + jpg poster into apps/docs/public/demos/<feature>/. Needs ffmpeg, ffprobe and uv.
  */
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -12,11 +12,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { DemoDefinition, RecordedTake } from "./demo.types";
+import { type DemoPaths, demoPaths } from "./paths";
 import { record } from "./record";
 import { buildPlan, PHONE } from "./timeline";
 
 const REPO = resolve(import.meta.dir, "../..");
-const PUBLIC_DIR = join(REPO, "apps/docs/public/demos");
 const MAX_BYTES = 2_000_000;
 const CRF_LADDER = [24, 27, 30, 33, 36] as const;
 const DEFAULT_SIMD = "/Users/chris/.warden/simd/0.6.0/warden-simd";
@@ -32,15 +32,20 @@ async function sh(cmd: string, env: Record<string, string> = {}): Promise<string
 	return out;
 }
 
-async function loadDefinition(name: string): Promise<DemoDefinition> {
-	const file = join(REPO, "apps/example/demos", `${name}.demo.ts`);
+async function loadDefinition(paths: DemoPaths, name: string): Promise<DemoDefinition> {
+	const file = paths.definition;
 	if (!existsSync(file)) throw new Error(`no definition at ${file}`);
 	const mod = (await import(file)) as { demo?: DemoDefinition };
 	if (!mod.demo) throw new Error(`${file} must export \`demo\``);
+	if (mod.demo.name !== name) throw new Error(`${file} names itself "${mod.demo.name}", expected "${name}"`);
 	return mod.demo;
 }
 
-async function render(def: DemoDefinition, work: string): Promise<{ mp4: string; jpg: string; durationS: number }> {
+async function render(
+	def: DemoDefinition,
+	paths: DemoPaths,
+	work: string
+): Promise<{ mp4: string; jpg: string; durationS: number }> {
 	const takePath = join(work, "take.mp4");
 	const take = JSON.parse(await readFile(join(work, "steps.json"), "utf8")) as RecordedTake;
 	const videoS = Number.parseFloat(
@@ -63,9 +68,8 @@ async function render(def: DemoDefinition, work: string): Promise<{ mp4: string;
 		`[0:v][pm]overlay=${PHONE.x}:${PHONE.y}:eof_action=pass,format=yuv420p[v]`,
 	].join(";");
 
-	await mkdir(PUBLIC_DIR, { recursive: true });
-	const mp4 = join(PUBLIC_DIR, `${def.name}.mp4`);
-	const jpg = join(PUBLIC_DIR, `${def.name}.jpg`);
+	await mkdir(paths.publicDir, { recursive: true });
+	const { mp4, jpg } = paths;
 	for (const crf of CRF_LADDER) {
 		await sh(
 			`uv run --script "${py}" "${plate}" "${mask}" | ffmpeg -y -v error -f rawvideo -pix_fmt rgb24 -s 1920x1080 -framerate ${plan.fps} -i - -i "${takePath}" -t ${dur} -loop 1 -framerate ${plan.fps} -i "${mask}" -filter_complex "${filter}" -map "[v]" -t ${dur} -r ${plan.fps} -c:v libx264 -profile:v high -preset slow -crf ${crf} -an -movflags +faststart "${mp4}"`
@@ -100,19 +104,20 @@ async function main(): Promise<number> {
 	});
 	const name = positionals[0];
 	if (!name || (values["record-only"] && values["render-only"])) {
-		console.error("usage: bun run demo <name> [--record-only|--render-only] [--sheet] [--out dir]");
+		console.error("usage: bun run demo <feature>/<clip> [--record-only|--render-only] [--sheet] [--out dir]");
 		return 1;
 	}
-	const def = await loadDefinition(name);
-	const work = resolve(values.out ?? join(tmpdir(), "warden-demo", name));
+	const paths = demoPaths(REPO, name, tmpdir());
+	const def = await loadDefinition(paths, name);
+	const work = resolve(values.out ?? paths.work);
 	await mkdir(work, { recursive: true });
 	process.env.WARDEN_SIMD ??= DEFAULT_SIMD;
-	if (!values["render-only"]) await record(def, REPO, work);
+	if (!values["render-only"]) await record(def, REPO, work, paths.label);
 	if (values["record-only"]) {
 		console.error(`recorded ${work}/take.mp4`);
 		return 0;
 	}
-	const res = await render(def, work);
+	const res = await render(def, paths, work);
 	const size = (await stat(res.mp4)).size;
 	console.error(`${res.mp4} ${(size / 1e6).toFixed(2)} MB, ${res.durationS.toFixed(1)} s\n${res.jpg}`);
 	if (values.sheet) {
