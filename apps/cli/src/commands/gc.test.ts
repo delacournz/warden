@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
 import { recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-core/exec";
+import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { Owner } from "@delacour/warden-core/types";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
@@ -29,6 +30,8 @@ function setup(argv: string[], calls: string[][]): TestContext {
 			calls
 		),
 	});
+	// the persistent-pool behaviour these tests pin; the ephemeral sweep has its own describe
+	ctx.env = { ...ctx.env, WARDEN_EPHEMERAL: "0" };
 	const db = ctx.db;
 	db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
 	db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2" }, 0);
@@ -346,6 +349,7 @@ describe("warden gc: parallel shutdown", () => {
 		];
 		const c = testContext(["--json"], { now: () => NOW, exec: fakeSimctl(sims, calls, extra) });
 		ctx = c;
+		c.env = { ...c.env, WARDEN_EPHEMERAL: "0" };
 		for (const sim of idle) c.db.recordDevice({ platform: "ios", id: sim.udid, name: sim.name }, 0);
 		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
 		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2" }, NOW - 60_000);
@@ -519,5 +523,58 @@ describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
 			expect(await gcCommand.run(c)).toBe(0);
 			expect(JSON.parse(c.stdout.join("\n")).notes).toEqual([]);
 		});
+	});
+});
+
+describe("warden gc: ephemeral sims", () => {
+	/** `fakeSimctl` + the unfiltered `simctl list devices -j` the sweep reads (sims whose runtime is gone included). */
+	const sweepSimctl = (sims: FixtureSim[], calls: string[][]) =>
+		fakeSimctl(sims, calls, [["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": sims }) }]]);
+
+	test("deletes shut-down unleased warden sims (incl. ones it just shut down for idling); keeps leased, foreign, quarantined", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: sweepSimctl(
+				[
+					{ udid: "U4", name: "warden-iphone-17-4", state: "Shutdown" },
+					{ udid: "U5", name: "warden-iphone-17-5", state: "Shutdown" },
+					{ udid: "Q", name: "warden-iphone-17-6", state: "Shutdown" },
+					{ udid: "F", name: "iPhone 17", state: "Shutdown" },
+				],
+				calls
+			),
+		});
+		const db = ctx.db;
+		db.recordDevice({ platform: "ios", id: "U4", name: "warden-iphone-17-4" }, NOW);
+		db.recordDevice({ platform: "ios", id: "U5", name: "warden-iphone-17-5" }, NOW);
+		db.recordDevice({ platform: "ios", id: "Q", name: "warden-iphone-17-6" }, NOW);
+		db.quarantineDevice({ platform: "ios", id: "Q", name: "warden-iphone-17-6" }, "bad", NOW);
+		db.insertLease(
+			{
+				resource: { kind: "device", platform: "ios", id: "U5", name: "warden-iphone-17-5" },
+				owner: agent,
+				ttlMs: 60_000,
+			},
+			NOW
+		);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		const out = JSON.parse(ctx.stdout.join("\n"));
+		expect(out.deleted).toEqual([{ platform: "ios", id: "U4", name: "warden-iphone-17-4" }]);
+		expect(calls.filter((x) => x[2] === "delete").map((x) => x[3])).toEqual(["U4"]);
+		expect(db.listDevices("ios").map((d) => d.id)).toEqual(["U5", "Q"]);
+	});
+
+	test("WARDEN_EPHEMERAL=0: nothing is deleted", async () => {
+		const calls: string[][] = [];
+		ctx = testContext(["--json"], {
+			now: () => NOW,
+			exec: sweepSimctl([{ udid: "U4", name: "warden-iphone-17-4", state: "Shutdown" }], calls),
+		});
+		ctx.env = { ...ctx.env, WARDEN_EPHEMERAL: "0" };
+		ctx.db.recordDevice({ platform: "ios", id: "U4", name: "warden-iphone-17-4" }, NOW);
+		expect(await gcCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).deleted).toEqual([]);
+		expect(calls.filter((x) => x[2] === "delete")).toEqual([]);
 	});
 });

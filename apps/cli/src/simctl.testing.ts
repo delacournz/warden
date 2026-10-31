@@ -4,7 +4,7 @@ import { fakeExec } from "./testing";
 
 export const OWNER_ENV = { WARDEN_SESSION_ID: "me" };
 
-/** Fake `xcrun simctl` for command tests: inventory from `sims`, boot/bootstatus/shutdown succeed. */
+/** Fake `xcrun simctl` for command tests: inventory from `sims`, boot/bootstatus/shutdown/delete succeed. */
 export function fakeSimctl(
 	sims: FixtureSim[],
 	calls: string[][] = [],
@@ -17,6 +17,7 @@ export function fakeSimctl(
 			["xcrun simctl boot", {}],
 			["xcrun simctl bootstatus", {}],
 			["xcrun simctl shutdown", {}],
+			["xcrun simctl delete", {}],
 			["xcrun simctl spawn", { stdout: "PID\tStatus\tLabel\n412\t0\tUIKitApplication:com.apple.springboard[x]\n" }],
 		],
 		calls

@@ -92,7 +92,12 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 	if (picked.kind === "exit") return picked.code;
 	const { leases, unknown } = selectLeases(ctx, { ...selector, ids: picked.ids });
 	const devices = leases.filter((l) => l.resource.kind === "device");
-	const { shutdown, notes }: ShutdownOutcome =
+	// quarantine before the shutdown: an ephemeral sim is deleted once shut down, a bad one must be kept
+	const bad =
+		opts.bad !== undefined
+			? quarantineReleased(ctx, leases, typeof opts.bad === "string" ? opts.bad : undefined)
+			: { quarantined: [], notes: [] };
+	const { shutdown, notes, deleted }: ShutdownOutcome =
 		opts.shutdown && devices.length > 0
 			? await withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {
 					const outcome = await shutdownReleasedDevices(sctx, leases, resolveOwner(ctx));
@@ -101,11 +106,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 					);
 					return outcome;
 				})
-			: { shutdown: [], notes: [], kept: [] };
-	const bad =
-		opts.bad !== undefined
-			? quarantineReleased(ctx, leases, typeof opts.bad === "string" ? opts.bad : undefined)
-			: { quarantined: [], notes: [] };
+			: { shutdown: [], notes: [], kept: [], deleted: [] };
 	await releaseDevices(
 		ctx,
 		leases.map((l) => l.id),
@@ -119,6 +120,9 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			? color.yellow("nothing released")
 			: color.green(`released ${leases.map((l) => l.id).join(" ")}`),
 		...(shutdown.length > 0 ? [color.green(`shut down ${shutdown.join(" ")}`)] : []),
+		...(deleted.length > 0
+			? [color.green(`deleted ${deleted.join(" ")} (ephemeral; the next claim clones fresh)`)]
+			: []),
 		...(bad.quarantined.length > 0
 			? [color.yellow(`quarantined ${bad.quarantined.join(" ")} (clear with: warden sim unquarantine <udid>)`)]
 			: []),
@@ -130,6 +134,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 		{
 			released: leases.map((l) => l.id),
 			shutdown,
+			deleted,
 			quarantined: bad.quarantined,
 			unknown,
 			notes: [...notes, ...bad.notes],
