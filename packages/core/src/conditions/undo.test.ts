@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { PLACEHOLDER_PNG } from "../camera-placeholder";
 import type { Exec, ExecResult } from "../exec";
 import { openStore, type Store } from "../store";
 import type { Lease, Owner } from "../types";
@@ -296,5 +297,60 @@ describe("undoConditions", () => {
 		);
 		await undoConditions(deps(), l);
 		expect(calls).toEqual([["xcrun", "simctl", "privacy", UDID, "reset", "all"]]);
+	});
+});
+
+describe("android camera", () => {
+	const SERIAL = "emulator-5554";
+	const feedDir = () => join(dir, "camera", SERIAL);
+	const camDeps = (): UndoDeps => ({ ...deps(), env: { WARDEN_HOME: dir } });
+
+	function stageFeeds(mode: { back?: string; front?: string }): void {
+		mkdirSync(feedDir(), { recursive: true });
+		writeFileSync(join(feedDir(), "back.png"), "scene");
+		writeFileSync(join(feedDir(), "front.png"), "scene");
+		for (const name of Object.values(mode)) writeFileSync(join(feedDir(), name), "video");
+		if (Object.keys(mode).length > 0) writeFileSync(join(feedDir(), "mode.json"), JSON.stringify(mode));
+	}
+
+	test("image mode: both feeds go back to the grey placeholder, no device command, row cleared", async () => {
+		stageFeeds({});
+		const l = lease("android", SERIAL);
+		recordCondition(store, l.id, "camera", { back: { kind: "image", path: "/x/back-1.png" } }, 1);
+		const r = await undoConditions(camDeps(), l);
+		expect(r).toEqual({ success: true, data: { reset: ["camera"], killed: [] } });
+		expect(calls).toEqual([]);
+		expect(readFileSync(join(feedDir(), "back.png")).equals(PLACEHOLDER_PNG)).toBe(true);
+		expect(readFileSync(join(feedDir(), "front.png")).equals(PLACEHOLDER_PNG)).toBe(true);
+		expect(activeConditions(store, l.id)).toEqual([]);
+	});
+
+	test("video mode: videos and mode.json removed and the emulator stopped and forgotten, so the next claim boots in image mode", async () => {
+		stageFeeds({ back: "back.mp4" });
+		store.recordDevice({ platform: "android", id: SERIAL, name: "w", profile: "pixel-10+cam" }, 1);
+		store.insertLease({ resource: { kind: "port", port: 5554 }, owner, ttlMs: 1, label: "emulator w" }, 1);
+		const l = lease("android", SERIAL);
+		recordCondition(store, l.id, "camera", { back: { kind: "video", path: "/x/back.mp4", loop: true } }, 1);
+		const r = await undoConditions(camDeps(), l);
+		expect(r.success).toBe(true);
+		expect(calls).toEqual([[...ADB, "emu", "kill"]]);
+		expect(existsSync(join(feedDir(), "mode.json"))).toBe(false);
+		expect(existsSync(join(feedDir(), "back.mp4"))).toBe(false);
+		expect(readFileSync(join(feedDir(), "back.png")).equals(PLACEHOLDER_PNG)).toBe(true);
+		expect(store.listDevices("android")).toEqual([]);
+		expect(store.findLeaseByResource({ kind: "port", port: 5554 })).toBeUndefined();
+	});
+
+	test("a failed emulator stop keeps the row and the video mode for the retry", async () => {
+		stageFeeds({ front: "front.mov" });
+		store.recordDevice({ platform: "android", id: SERIAL, name: "w", profile: "pixel-10+cam" }, 1);
+		fail = (cmd) => cmd.includes("kill");
+		const l = lease("android", SERIAL);
+		recordCondition(store, l.id, "camera", { front: { kind: "video", path: "/x/front.mov", loop: true } }, 1);
+		const r = await undoConditions(camDeps(), l);
+		expect(r.success).toBe(false);
+		expect(existsSync(join(feedDir(), "mode.json"))).toBe(true);
+		expect(store.listDevices("android")).toHaveLength(1);
+		expect(activeConditions(store, l.id)).toHaveLength(1);
 	});
 });

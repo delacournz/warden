@@ -5,13 +5,14 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { profileSlug } from "../allocate";
 import { ensureUnlocked, systemReady } from "../android-keyguard";
 import { biometricProfile, splitBiometricProfile } from "../biometrics";
+import { type CameraMode, cameraSources, readCameraMode, usesVideo } from "../camera-mode";
 import { seedCameraPlaceholders } from "../camera-placeholder";
 import { splitCameraProfile } from "../camera-profile";
-import { cameraFeedDir } from "../conditions/camera-media";
+import { cameraFeedDir, clearCameraFeeds } from "../conditions/camera-media";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import { type Exec, type ExecOptions, execError } from "../exec";
 import { type PidAlive, processAlive } from "../liveness";
-import { wardenHome } from "../store";
+import { type Store, wardenHome } from "../store";
 import type { InventoryDevice, Lease } from "../types";
 import type { DeviceProvider, ProviderDeps } from "./provider.types";
 
@@ -214,6 +215,9 @@ export type AndroidProviderOptions = {
 
 /** How often, and how long, `boot` looks for a just-launched warden emulator in `adb devices`. */
 const REGISTER_POLL_MS = 250;
+/** a relaunch waits this long for the killed emulator to leave `adb devices`, then this long for its console port */
+const RELAUNCH_GONE_TIMEOUT_MS = 30_000;
+const RELAUNCH_PORT_SETTLE_MS = 2_000;
 const REGISTER_TIMEOUT_MS = 15_000;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -303,8 +307,8 @@ export function claimEmulatorArgv(
 	snapshot?: string,
 	/** `false` leaves out `headlessEmulatorFlags` (an emulator that rejected them) */
 	headless = true,
-	/** a `+cam` device's feed dir: both cameras read `back.png` / `front.png` from it */
-	cameraDir?: string
+	/** a `+cam` device's feeds: each camera plays `mode`'s video, else reads `<facing>.png` from `dir` */
+	camera?: { dir: string; mode: CameraMode }
 ): string[] {
 	return [
 		tools.emulator,
@@ -318,16 +322,21 @@ export function claimEmulatorArgv(
 		"-no-snapshot-save",
 		"-no-boot-anim",
 		...(headless ? headlessEmulatorFlags(env) : []),
-		...(cameraDir !== undefined
-			? [
-					// cold on purpose: without it the emulator tries `default_boot`, which another renderer config may have saved
-					"-no-snapshot-load",
-					"-camera-back",
-					`imagefile:${join(cameraDir, "back.png")}`,
-					"-camera-front",
-					`imagefile:${join(cameraDir, "front.png")}`,
-				]
-			: []),
+		...(camera !== undefined ? cameraArgv(camera.dir, camera.mode) : []),
+	];
+}
+
+/** A `+cam` launch: cold on purpose, the cameras' sources, and `VideoPlayback` when one of them plays a video. */
+function cameraArgv(dir: string, mode: CameraMode): string[] {
+	const sources = cameraSources(dir, mode);
+	return [
+		// without it the emulator tries `default_boot`, which another renderer config may have saved
+		"-no-snapshot-load",
+		...(usesVideo(mode) ? ["-feature", "VideoPlayback"] : []),
+		"-camera-back",
+		sources.back,
+		"-camera-front",
+		sources.front,
 	];
 }
 
@@ -481,6 +490,18 @@ function isEmulatorPortLease(lease: Lease | undefined): lease is Lease {
 	return lease?.resource.kind === "port" && (lease.label?.startsWith("emulator ") ?? false);
 }
 
+/** The bookkeeping of an emulator that is gone: its console-port lease and its `devices` record. */
+export function forgetAndroidEmulator(store: Store, serial: string): void {
+	const port = serialPort(serial);
+	store.transaction(() => {
+		if (port !== undefined) {
+			const lease = store.findLeaseByResource({ kind: "port", port });
+			if (isEmulatorPortLease(lease)) store.deleteLeases([lease.id]);
+		}
+		store.forgetDevice("android", serial);
+	});
+}
+
 /**
  * Global settings applied after every boot. On a fresh playstore image the first `adb install` can pop a Play
  * Protect consent dialog (a GMS activity the e2e alert detector cannot classify), and every adb install otherwise
@@ -629,6 +650,9 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	async function shutdownDevice(id: string): AsyncResult<void> {
 		if (!isEmulatorSerial(id)) return err(`refusing to shut down ${id}: a physical device is never shut down`);
 		if (!deps.store.listDevices("android").some((d) => d.id === id)) {
+			// nothing recorded and nothing running: already shut down (a camera reset stops its emulator itself)
+			const listed = await listEmulators(deps);
+			if (listed.success && !listed.data.some((e) => e.serial === id)) return ok(undefined);
 			return err(`refusing to shut down foreign emulator ${id}`);
 		}
 		const killed = await run(deps, adb(id, "emu", "kill"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
@@ -636,14 +660,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			const emulators = await listEmulators(deps);
 			if (!emulators.success || emulators.data.some((e) => e.serial === id)) return killed;
 		}
-		const port = serialPort(id);
-		deps.store.transaction(() => {
-			if (port !== undefined) {
-				const lease = deps.store.findLeaseByResource({ kind: "port", port });
-				if (isEmulatorPortLease(lease)) deps.store.deleteLeases([lease.id]);
-			}
-			deps.store.forgetDevice("android", id);
-		});
+		forgetAndroidEmulator(deps.store, id);
 		return ok(undefined);
 	}
 
@@ -705,16 +722,17 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		}
 		const logPath = join(logDir, `${serial}.log`);
 		const logOffset = logSize(logPath);
-		let cameraDir: string | undefined;
+		let cameraLaunch: { dir: string; mode: CameraMode } | undefined;
 		if (camera) {
-			cameraDir = cameraFeedDir(wardenHome(deps.env), serial);
+			const cameraDir = cameraFeedDir(wardenHome(deps.env), serial);
 			try {
 				seedCameraPlaceholders(cameraDir);
 			} catch (error) {
 				return err(error);
 			}
+			cameraLaunch = { dir: cameraDir, mode: readCameraMode(cameraDir) };
 		}
-		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless, cameraDir);
+		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless, cameraLaunch);
 		const spawned = await spawnDetached(argv, logPath);
 		return spawned.success ? ok({ pid: spawned.data.pid, logPath, logOffset }) : spawned;
 	}
@@ -791,6 +809,8 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			if (!leased.success) return leased;
 			const { lease, port } = leased.data;
 			const serial = `emulator-${port}`;
+			// a new device starts on placeholders: feeds a previous emulator on this port left behind are not its
+			if (camera) clearCameraFeeds(wardenHome(deps.env), serial);
 			const launched = await launchOrColdBoot(avdName, port, serial, snapshot, camera);
 			if (!launched.success) {
 				deps.store.deleteLeases([lease.id]);
@@ -859,5 +879,37 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		shutdown: shutdownDevice,
+
+		/**
+		 * Restart a camera emulator on its own serial and console port, keeping the device record and the port lease
+		 * (the claim's lease names the serial): kill it, wait until adb stops listing it, launch it again with the
+		 * argv a fresh launch would build, so it picks up the recorded camera mode. The caller waits for `waitReady`.
+		 */
+		async relaunch(id) {
+			const port = serialPort(id);
+			const recorded = deps.store.listDevices("android").find((d) => d.id === id);
+			if (port === undefined || recorded === undefined) return err(`refusing to relaunch foreign emulator ${id}`);
+			if (!splitCameraProfile(recorded.profile ?? "").camera) return err(`${id} is not a camera emulator`);
+			const resolved = await resolveLaunchTarget(recorded.profile ?? "");
+			if (!resolved.success) return resolved;
+			const killed = await run(deps, adb(id, "emu", "kill"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
+			const deadline = deps.now() + RELAUNCH_GONE_TIMEOUT_MS;
+			for (;;) {
+				const listed = await listEmulators(deps);
+				if (listed.success && !listed.data.some((e) => e.serial === id)) break;
+				if (deps.now() >= deadline) {
+					return err(
+						`${id} did not shut down within ${RELAUNCH_GONE_TIMEOUT_MS / 1000}s${killed.success ? "" : `: ${killed.error}`}`
+					);
+				}
+				await sleep(REGISTER_POLL_MS);
+			}
+			// the old qemu process outlives its adb entry for a moment and still holds the console port
+			await sleep(RELAUNCH_PORT_SETTLE_MS);
+			const launched = await launchOrColdBoot(resolved.data.avdName, port, id, undefined, true);
+			if (!launched.success) return launched;
+			launches.set(id, { ...launched.data, avd: resolved.data.target });
+			return ok(undefined);
+		},
 	};
 }

@@ -1,10 +1,13 @@
 import { ok, type Result } from "@delacour/warden-types/result";
+import { readCameraMode, usesVideo } from "../camera-mode";
+import { resetCameraFeeds } from "../camera-placeholder";
 import { PENDING_PREFIX } from "../claim";
 import { type Exec, execError } from "../exec";
 import type { PidAlive } from "../liveness";
-import { androidTools } from "../providers/android";
+import { androidTools, forgetAndroidEmulator } from "../providers/android";
 import { type Store, wardenHome } from "../store";
 import type { Lease, Platform } from "../types";
+import { cameraFeedDir } from "./camera-media";
 import { activeConditions, clearCondition } from "./conditions";
 import type { ConditionArea, ConditionRecord } from "./conditions.types";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
@@ -131,6 +134,28 @@ async function releaseProxy(deps: UndoDeps, leaseId: string, record: ConditionRe
 	}
 }
 
+/**
+ * Android camera: both feeds back to the grey placeholder. An emulator launched on a video source cannot go back to
+ * images without a restart, so it is stopped and forgotten here: the next claim boots a fresh one in image mode (the
+ * emulator is warden's own; only a `+cam` device ever has a mode file). A stop that fails leaves everything for the retry.
+ */
+async function resetAndroidCamera(deps: UndoDeps, serial: string): Promise<string[]> {
+	const dir = cameraFeedDir(wardenHome(deps.env), serial);
+	const failures: string[] = [];
+	if (usesVideo(readCameraMode(dir))) {
+		const { adb } = androidTools(deps.env);
+		const stopped = await runResets(deps.exec, [[adb, "-s", serial, "emu", "kill"]]);
+		if (stopped.length > 0) return stopped;
+		forgetAndroidEmulator(deps.store, serial);
+	}
+	try {
+		resetCameraFeeds(dir);
+	} catch (error) {
+		failures.push(`reset camera feeds: ${message(error)}`);
+	}
+	return failures;
+}
+
 /** SIGTERM the live processes `record` owns; a dead pid is skipped (already gone). */
 function stopOwned(deps: UndoDeps, record: ConditionRecord): { killed: number[]; failures: string[] } {
 	const out = { killed: [] as number[], failures: [] as string[] };
@@ -160,6 +185,9 @@ export async function resetRecord(
 	leaseId: string,
 	record: ConditionRecord
 ): Promise<ResetOutcome> {
+	if (device?.platform === "android" && record.area === "camera") {
+		return { failures: await resetAndroidCamera(deps, device.id), killed: [] };
+	}
 	const cmds = device ? resetCommands(device.platform, device.id, record, deps) : [];
 	const resets = await runResets(deps.exec, cmds);
 	// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock

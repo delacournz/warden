@@ -37,6 +37,12 @@ export interface DeviceProvider {
 	 * shutdown reuse), never for an already-booted one. A failure is logged by the provider, never fatal.
 	 */
 	prepareBoot?(id: string): Promise<void>;
+	/**
+	 * Restart a running warden device in place (same id, same console port, device record and port lease kept) so
+	 * launch-time settings apply again; the caller then waits with `waitReady`. Android camera emulators only
+	 * (the camera source is fixed at launch). Absent = the platform cannot.
+	 */
+	relaunch?(id: string): AsyncResult<void>;
 	/** Called once the device is ready, before the health probe. Best effort. */
 	afterReady?(id: string): Promise<void>;
 }
