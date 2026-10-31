@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { statSync } from "node:fs";
 import { fakeServer } from "../remote/api.testing";
+import type { Me } from "../remote/api.types";
 import { credentialsPath, readCredentials } from "../remote/credentials";
+import { hashMachineId } from "../remote/machine";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { loginCommand } from "./login";
 import { logoutCommand } from "./logout";
@@ -43,12 +45,33 @@ describe("warden login", () => {
 		c.ui = scriptedUi({ interactive: true });
 		c.os = "darwin";
 		expect(await loginCommand.run(c)).toBe(0);
-		expect(calls).toEqual([["open", "https://app.test/device?user_code=WXYZ-1234"]]);
+		expect(calls.filter((c) => c[0] === "open")).toEqual([["open", "https://app.test/device?user_code=WXYZ-1234"]]);
 
 		const quiet: string[][] = [];
 		const d = setup(fakeServer(), quiet);
 		expect(await loginCommand.run(d)).toBe(0);
-		expect(quiet).toEqual([]);
+		expect(quiet.filter((c) => c[0] === "open")).toEqual([]);
+	});
+
+	test("registers this machine's hashed id after logging in", async () => {
+		const server = fakeServer();
+		const c = setup(server);
+		c.os = "darwin";
+		c.exec = fakeExec([["ioreg", { stdout: '"IOPlatformUUID" = "8F1C2D3E-4A5B-6C7D-8E9F-0A1B2C3D4E5F"' }]]);
+		c.argv = ["--json"];
+		expect(await loginCommand.run(c)).toBe(0);
+		expect(server.machines).toEqual([hashMachineId("8f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f")]);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ machine: "registered" });
+	});
+
+	test("no machine id (CI): logs in without registering one", async () => {
+		const server = fakeServer();
+		const c = setup(server);
+		c.env = { ...c.env, CI: "true" };
+		c.argv = ["--json"];
+		expect(await loginCommand.run(c)).toBe(0);
+		expect(server.machines).toEqual([]);
+		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ machine: "none" });
 	});
 
 	test("denied in the browser: exit 1, nothing saved", async () => {
@@ -83,6 +106,62 @@ describe("warden whoami / org / logout", () => {
 			user: { email: "dev@acme.test" },
 			remote: { state: "connected", concurrencyLimit: 2 },
 		});
+	});
+
+	test("whoami shows balance, minutes left and trial state", async () => {
+		const c = await loggedIn();
+		c.argv = ["--json"];
+		expect(await whoamiCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).billing).toMatchObject({
+			balanceUsd: 1.6,
+			estMinutesLeft: 8,
+			trial: { state: "active", amountUsd: 2 },
+		});
+		c.stdout.length = 0;
+		c.argv = [];
+		expect(await whoamiCommand.run(c)).toBe(0);
+		const text = c.stdout.join("\n");
+		expect(text).toContain("$1.60");
+		expect(text).toContain("~8 min left at $0.20/min");
+		expect(text).toContain("trial         active ($2.00)");
+	});
+
+	test("whoami still works when billing is unavailable", async () => {
+		const server = fakeServer();
+		const c = await loggedIn(server);
+		server.fetch = (
+			(inner) => async (input: string, init?: RequestInit) =>
+				new URL(input).pathname === "/v1/billing" ? new Response("nope", { status: 404 }) : inner(input, init)
+		)(server.fetch);
+		c.fetch = server.fetch;
+		c.argv = ["--json"];
+		expect(await whoamiCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).billing).toBeNull();
+	});
+
+	test("whoami shows the Revyl approval code while the workspace awaits approval", async () => {
+		const server = fakeServer();
+		const c = await loggedIn(server);
+		const approval = {
+			userCode: "WDN-4821",
+			uri: "https://app.revyl.ai/connect?code=WDN-4821",
+			expiresAt: "2026-11-07T00:00:00.000Z",
+		};
+		server.fetch = ((inner) => async (input: string, init?: RequestInit) => {
+			if (new URL(input).pathname !== "/v1/me") return inner(input, init);
+			const me = (await (await inner(input, init)).json()) as Me;
+			return Response.json({ ...me, remote: { active: 0, ...me.remote, state: "awaiting_approval", approval } });
+		})(server.fetch);
+		c.fetch = server.fetch;
+		c.argv = ["--json"];
+		expect(await whoamiCommand.run(c)).toBe(0);
+		expect(JSON.parse(c.stdout.join("\n")).remote).toMatchObject({ state: "awaiting_approval", approval });
+		c.stdout.length = 0;
+		c.argv = [];
+		expect(await whoamiCommand.run(c)).toBe(0);
+		const text = c.stdout.join("\n");
+		expect(text).toContain("approve in Revyl with code WDN-4821");
+		expect(text).toContain(approval.uri);
 	});
 
 	test("WARDEN_TOKEN authenticates without a saved login", async () => {

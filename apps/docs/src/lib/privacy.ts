@@ -45,7 +45,7 @@ const MAIL = `[${CONTACT}](mailto:${CONTACT})`;
 const HISTORY = `https://github.com/${gitConfig.user}/${gitConfig.repo}/commits/${gitConfig.branch}/apps/docs/src/lib/privacy.ts`;
 
 export const PRIVACY = {
-	updated: "2026-10-28",
+	updated: "2026-10-31",
 	controller: "Delacour Limited",
 	contact: CONTACT,
 	title: "Privacy policy",
@@ -150,7 +150,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "warden-cloud",
 		title: "warden cloud (hosted simulators)",
 		body: [
-			"warden cloud is optional. Nothing below happens until you run `warden login`. It runs hosted iOS simulators and Android emulators for your organization, through our own server, `api.warden.co.nz`, and a device provider, Revyl, that runs the devices for us. You never deal with Revyl directly: we create and control the workspace that holds your organization's devices.",
+			"warden cloud is optional. Nothing below happens until you run `warden login`. It runs hosted iOS simulators and Android emulators for your organization, through our own server, `api.warden.co.nz`, and a device provider, Revyl, that runs the devices for us. We create a Revyl workspace for each organization, owned by the person who created the organization, so its members can open Revyl's own dashboard from warden. Your Revyl account is governed by Revyl's terms and privacy policy.",
 		],
 		disclosures: [
 			{
@@ -159,14 +159,39 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 				why: "So you can log in, share devices with your team and keep a session per machine. The session token is saved on your machine in `~/.warden/auth.json`, readable by you only. `warden logout` revokes it. We keep the account until you ask us to delete it.",
 			},
 			{
+				what: "When you sign in with GitHub: your GitHub user id, username, primary verified email address and your account creation date",
+				to: "GitHub, which signs you in through OAuth, and our own server, which keeps what it returns",
+				why: "To create your account and tell whether your GitHub account is old enough (at least 30 days) for the free trial. We read nothing else from your GitHub account.",
+			},
+			{
 				what: "A one-time sign-in code sent to your email address",
 				to: "Resend, which delivers the email",
 				why: "To check that the address is yours when you log in.",
 			},
 			{
+				what: "When you top up credit: your Stripe customer id, the top-up amounts and whether each payment succeeded. Your card details go to Stripe and never to us",
+				to: "Stripe, which takes the payment through Stripe Checkout, and our own server, which keeps the customer id, amounts and status",
+				why: "To take payment, credit your balance and keep the records tax law requires. We never see or store a card number.",
+			},
+			{
+				what: "A machine identifier: an HMAC-SHA256 of your operating system's machine id, keyed with the string `warden-machine-v1`. The machine id is `IOPlatformUUID` on macOS, `MachineGuid` on Windows and `/etc/machine-id` on Linux. The raw identifier never leaves your machine",
+				to: "Our own server, which hashes it again with a secret pepper before keeping it",
+				why: "Fraud prevention: one trial per person, and no trial on a machine already used for one. Our lawful basis is legitimate interest in preventing abuse. The hash cannot be turned back into the machine id.",
+			},
+			{
+				what: "Billing emails: your email address and the message, such as a low balance warning, credits exhausted or a receipt",
+				to: "Resend, which delivers the email",
+				why: "To tell you when your credit is running low or has run out, and to send receipts.",
+			},
+			{
 				what: "The app builds you install on a hosted device, what you do on it (taps, typing, screenshots, logs, the screen itself) and how long each device runs",
 				to: "Revyl, which runs the hosted devices, through our server",
-				why: "To run the device and stream its screen to you. Revyl sees an identifier for your organization, never your name or email address. Each device stops when its lease ends or it sits idle. Revyl keeps session data for the period its own policy sets.",
+				why: "To run the device and stream its screen to you. Each device stops when its lease ends or it sits idle. Revyl keeps session data for the period its own policy sets.",
+			},
+			{
+				what: "Your organization's name and identifier, and the email address of each person who opens Revyl's dashboard: the organization's creator when the organization is set up, and any other member the first time they open it",
+				to: "Revyl, which creates a Revyl account and workspace for your organization",
+				why: "So you can sign in to Revyl's dashboard and see your organization's devices there. Revyl emails these addresses for its own account messages, such as invitations and sign-in links. If you already have a Revyl account, you approve the connection in Revyl first. Leaving a warden organization does not remove you from its Revyl workspace: ask us and we will have Revyl remove you.",
 			},
 		],
 	},
@@ -175,7 +200,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		title: "Who else handles it",
 		body: [
 			"The companies above process this information for us under their own terms. They are based in the United States, so it is processed there:",
-			"[Railway](https://railway.com/legal/privacy) for hosting the website and warden cloud's server, [PostHog](https://posthog.com/privacy) for the website's visit counts and recordings, [npm](https://docs.npmjs.com/policies/privacy) for the CLI's updates, [GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) for the helper download, and, for warden cloud only, [Revyl](https://revyl.ai/privacy) for the hosted devices and [Resend](https://resend.com/legal/privacy-policy) for sign-in emails.",
+			"[Railway](https://railway.com/legal/privacy) for hosting the website and warden cloud's server, [PostHog](https://posthog.com/privacy) for the website's visit counts and recordings, [npm](https://docs.npmjs.com/policies/privacy) for the CLI's updates, [GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) for the helper download and warden cloud sign-in, and, for warden cloud only, [Revyl](https://revyl.ai/privacy) for the hosted devices, [Resend](https://resend.com/legal/privacy-policy) for sign-in and billing emails and [Stripe](https://stripe.com/privacy) for payments.",
 			"We do not sell or rent anything to anyone, and we do not share it with anyone else unless the law requires us to.",
 		],
 	},
@@ -191,7 +216,7 @@ export const PRIVACY_SECTIONS: readonly PrivacySection[] = [
 		id: "how-long",
 		title: "How long it is kept",
 		body: [
-			"What stays on your device is there until you clear it. A warden cloud account is kept until you ask us to delete it, which also ends its hosted devices. Railway, PostHog, npm, GitHub, Revyl and Resend keep what they receive for the periods their own policies set, linked above.",
+			"What stays on your device is there until you clear it. A warden cloud account is kept until you ask us to delete it, which also ends its hosted devices. Railway, PostHog, npm, GitHub, Stripe, Revyl and Resend keep what they receive for the periods their own policies set, linked above.",
 		],
 	},
 	{

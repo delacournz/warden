@@ -1,7 +1,7 @@
 import { DeviceError, whepCandidate, whepClose, whepOffer } from "../../core/api/device.api.ts";
 import { backoffDelay, candidateFragment } from "./whep.ts";
 
-export type StreamStatus = "connecting" | "streaming" | "reconnecting" | "expired";
+export type StreamStatus = "connecting" | "streaming" | "reconnecting" | "expired" | "stopped";
 export type StreamError = { code: string; message: string };
 
 const DISCONNECT_GRACE_MS = 2000;

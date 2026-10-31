@@ -1,4 +1,4 @@
-import { Camera, Eye, HandPointing, Minus, PushPin, X } from "@phosphor-icons/react";
+import { Camera, Coins, Eye, HandPointing, Minus, PushPin, X } from "@phosphor-icons/react";
 import type { Scope } from "../../core/api/device.api.ts";
 import type { StreamStatus } from "../stream/whep-session.ts";
 import type { Availability } from "./availability.ts";
@@ -11,6 +11,7 @@ const STATUS = {
 	reconnecting: { dot: "bg-warning animate-pulse motion-reduce:animate-none", label: "Retrying" },
 	streaming: { dot: "bg-success", label: "Live" },
 	expired: { dot: "bg-muted-foreground", label: "Expired" },
+	stopped: { dot: "bg-muted-foreground", label: "Stopped" },
 } as const satisfies Record<StreamStatus, { dot: string; label: string }>;
 
 type TitlebarProps = {
@@ -22,6 +23,8 @@ type TitlebarProps = {
 	availability: Availability;
 	pinned: boolean;
 	onPinnedChange: (pinned: boolean) => void;
+	lowBalance: boolean;
+	onTopUp: () => void;
 	onOpenUrl: (url: string) => void;
 	onScreenshot: () => void;
 	onMinimize: () => void;
@@ -32,7 +35,7 @@ type TitlebarProps = {
  * The one bar that replaces the native title bar and toolbar. The bar and its non-interactive
  * children carry `data-tauri-drag-region` (children are `pointer-events-none` so presses fall through
  * to the bar) and show a grab cursor, while the button groups keep the default one. Layout: device title, connection dot and label,
- * the actions (quiet until the window is hovered or focused), then the window controls. A view-scope
+ * a quiet low-balance badge (click to top up) when the viewer has a billing URL, the actions (quiet until the window is hovered or focused), then the window controls. A view-scope
  * session gets no open-URL or drive controls.
  */
 export function Titlebar({
@@ -44,6 +47,8 @@ export function Titlebar({
 	availability,
 	pinned,
 	onPinnedChange,
+	lowBalance,
+	onTopUp,
 	onOpenUrl,
 	onScreenshot,
 	onMinimize,
@@ -62,6 +67,16 @@ export function Titlebar({
 				<span className={`size-1.5 rounded-full ${state.dot}`} />
 				<span>{state.label}</span>
 			</div>
+			{lowBalance && (
+				<button
+					type="button"
+					onClick={onTopUp}
+					className="flex shrink-0 cursor-default items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] text-warning-foreground hover:bg-warning/25"
+				>
+					<Coins size={12} />
+					Low balance · top up
+				</button>
+			)}
 			<div
 				role="toolbar"
 				aria-label="Device actions"

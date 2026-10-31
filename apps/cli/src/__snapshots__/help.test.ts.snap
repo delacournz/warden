@@ -74,8 +74,10 @@ Account:
                                 the browser
   logout                        log out of warden cloud and forget the saved
                                 token
-  whoami                        show the warden cloud account, organization and
-                                remote-device status
+  whoami                        show the warden cloud account, organization,
+                                balance and remote-device status
+  billing                       show the warden cloud balance and ledger, or top
+                                up credit
   org                           list warden cloud organizations or switch the
                                 active one
 
@@ -4393,11 +4395,26 @@ exports[`help output warden whoami --help (and nested subcommands) 1`] = `
 "$ warden whoami --help
 Usage: warden whoami [options]
 
-show the warden cloud account, organization and remote-device status
+show the warden cloud account, organization, balance and remote-device status
 
 Options:
   --json      machine-readable output
   -h, --help  display help for command"
+`;
+
+exports[`help output warden billing --help (and nested subcommands) 1`] = `
+"$ warden billing --help
+Usage: warden billing [options]
+
+show the warden cloud balance and ledger, or top up credit
+
+Options:
+  --top-up [amount]  buy credit in USD ($10–$500) through Stripe Checkout; no
+                     amount = pick one
+  --limit <n>        ledger entries to show (default 10)
+  --no-browser       print the checkout link instead of opening it
+  --json             machine-readable output
+  -h, --help         display help for command"
 `;
 
 exports[`help output warden org --help (and nested subcommands) 1`] = `

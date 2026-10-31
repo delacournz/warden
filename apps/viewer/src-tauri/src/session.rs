@@ -35,6 +35,9 @@ pub struct Session {
     /// The parent will not keep stdin open: EOF no longer ends the session, expiry does.
     #[serde(default)]
     pub detached: bool,
+    /// Where `open_billing` sends the user. https only; anything else is dropped at parse time.
+    #[serde(default)]
+    pub billing_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -55,6 +58,7 @@ pub struct ViewerInfo {
     pub expires_at: String,
     pub detached: bool,
     pub expired: bool,
+    pub has_billing_url: bool,
 }
 
 /// Credentials for one outgoing request.
@@ -83,13 +87,37 @@ impl std::fmt::Display for StartError {
     }
 }
 
+/// Keep a billing URL only when it is an absolute `https://` URL with a host, or plain `http://` on a
+/// loopback host (`localhost`, `127.0.0.1`, `::1`) so a local dev web app works.
+pub fn sanitize_billing_url(raw: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw.trim()).ok()?;
+    let host = url.host_str()?;
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    match url.scheme() {
+        "https" => Some(url.to_string()),
+        "http" if loopback => Some(url.to_string()),
+        _ => None,
+    }
+}
+
 pub fn parse_session(line: &str) -> Result<Session, StartError> {
-    let session: Session =
+    let mut session: Session =
         serde_json::from_str(line.trim()).map_err(|e| StartError::Invalid(e.to_string()))?;
     if session.api_url.is_empty() || session.device_id.is_empty() || session.token.is_empty() {
         return Err(StartError::Invalid(
             "apiUrl, deviceId and token must be non-empty".into(),
         ));
+    }
+    if let Some(raw) = session.billing_url.take() {
+        session.billing_url = sanitize_billing_url(&raw);
+        if session.billing_url.is_none() {
+            log::warn!("ignoring billingUrl: not an https:// (or loopback http://) URL");
+        }
     }
     Ok(session)
 }
@@ -137,7 +165,16 @@ impl SessionState {
             expires_at: s.expires_at.clone(),
             detached: s.detached,
             expired: is_expired(&s.expires_at, OffsetDateTime::now_utc()),
+            has_billing_url: s.billing_url.is_some(),
         }
+    }
+
+    pub fn billing_url(&self) -> Option<String> {
+        self.0
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .billing_url
+            .clone()
     }
 
     pub fn detached(&self) -> bool {
@@ -331,6 +368,72 @@ mod tests {
                 .info()
                 .expired
         );
+    }
+
+    #[test]
+    fn billing_url_is_optional_and_https_only() {
+        assert_eq!(parse_session(START).unwrap().billing_url, None);
+        let ok = START.replace(
+            "\"detached\":false",
+            "\"detached\":false,\"billingUrl\":\"https://app.warden.co.nz/billing\"",
+        );
+        let s = parse_session(&ok).unwrap();
+        assert_eq!(
+            s.billing_url.as_deref(),
+            Some("https://app.warden.co.nz/billing")
+        );
+        assert!(SessionState::new(s).info().has_billing_url);
+        for bad in [
+            "http://app.warden.co.nz/billing",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "not a url",
+            "https://",
+            "",
+        ] {
+            let line = START.replace(
+                "\"detached\":false",
+                &format!("\"detached\":false,\"billingUrl\":\"{bad}\""),
+            );
+            let s = parse_session(&line).unwrap();
+            assert_eq!(s.billing_url, None, "{bad}");
+            assert!(!SessionState::new(s).info().has_billing_url);
+        }
+    }
+
+    #[test]
+    fn billing_url_allows_plain_http_only_on_loopback() {
+        for local in [
+            "http://localhost:3012/billing",
+            "http://127.0.0.1:3012/billing",
+            "http://[::1]:3012/billing",
+        ] {
+            assert_eq!(
+                sanitize_billing_url(local).as_deref(),
+                Some(local),
+                "{local}"
+            );
+        }
+        for remote in [
+            "http://localhost.evil.example/billing",
+            "http://10.0.0.1/billing",
+            "http://0.0.0.0:3012/billing",
+            "ftp://localhost/billing",
+        ] {
+            assert_eq!(sanitize_billing_url(remote), None, "{remote}");
+        }
+    }
+
+    #[test]
+    fn info_exposes_only_whether_a_billing_url_exists() {
+        let line = START.replace(
+            "\"detached\":false",
+            "\"detached\":false,\"billingUrl\":\"https://app.warden.co.nz/billing\"",
+        );
+        let json = serde_json::to_string(&SessionState::new(parse_session(&line).unwrap()).info())
+            .unwrap();
+        assert!(json.contains("\"hasBillingUrl\":true"));
+        assert!(!json.contains("app.warden.co.nz"));
     }
 
     #[test]

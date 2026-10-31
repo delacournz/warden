@@ -60,3 +60,40 @@ describe("warden ls", () => {
 		expect(ctx.stdout.join("\n")).toContain("no leases");
 	});
 });
+
+describe("warden ls with remote leases", () => {
+	test("shows stop_reason for a hosted device warden cloud stopped", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const server = fakeServer();
+		ctx = testContext(["--json"], { fetch: server.fetch });
+		ctx.env = { ...ctx.env, WARDEN_API_URL: "https://api.test", WARDEN_TOKEN: server.token };
+		server.devices.set("rd1", {
+			id: "rd1",
+			platform: "ios",
+			status: "stopped",
+			stopReason: "credits_exhausted",
+			idleTimeoutS: 300,
+			startedAt: "2026-10-30T00:00:00.000Z",
+		});
+		ctx.db.insertLease(
+			{ resource: { kind: "remote-device", platform: "ios", id: "rd1", name: "iphone" }, owner: agent, ttlMs: 60_000 },
+			ctx.now()
+		);
+		expect(await lsCommand.run(ctx)).toBe(0);
+		expect(JSON.parse(ctx.stdout.join("\n")).leases[0]).toMatchObject({ stopReason: "credits_exhausted" });
+
+		ctx.stdout.length = 0;
+		ctx.argv = [];
+		expect(await lsCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("stop_reason: credits_exhausted");
+	});
+
+	test("local-only leases never call warden cloud", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const server = fakeServer();
+		ctx = testContext([], { fetch: server.fetch });
+		ctx.db.insertLease({ resource: { kind: "port", port: 1 }, owner: agent, ttlMs: 60_000 }, ctx.now());
+		expect(await lsCommand.run(ctx)).toBe(0);
+		expect(server.calls).toEqual([]);
+	});
+});

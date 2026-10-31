@@ -323,6 +323,55 @@ describe("warden claim --remote", () => {
 		}
 	});
 
+	test("--remote --json out of credits: a JSON failure with code credits_exhausted and the link", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const server = fakeServer();
+		server.createError = {
+			status: 402,
+			body: { success: false, code: "CREDITS_EXHAUSTED", error: "no credit", billingUrl: "https://app.test/billing" },
+		};
+		const c = testContext(["ios", "--remote", "--json"], { fetch: server.fetch, sleep: async () => {} });
+		try {
+			c.env = { ...c.env, WARDEN_API_URL: "https://api.test", WARDEN_TOKEN: server.token };
+			expect(await claimCommand.run(c)).toBe(1);
+			expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+				ok: false,
+				command: "claim",
+				error: {
+					code: "credits_exhausted",
+					message: "remote claim failed: out of credits; top up at https://app.test/billing",
+					billingUrl: "https://app.test/billing",
+				},
+			});
+			expect(c.stderr.join("\n")).toContain("out of credits; top up at https://app.test/billing");
+		} finally {
+			c.cleanup();
+		}
+	});
+
+	test("release of a device stopped for credits reports stop_reason credits_exhausted", async () => {
+		const { fakeServer } = await import("../remote/api.testing");
+		const { releaseCommand } = await import("./release");
+		const server = fakeServer();
+		const c = testContext(["ios", "--remote", "--json"], { fetch: server.fetch, sleep: async () => {} });
+		try {
+			c.env = { ...c.env, WARDEN_API_URL: "https://api.test", WARDEN_TOKEN: server.token, WARDEN_SESSION_ID: "s1" };
+			expect(await claimCommand.run(c)).toBe(0);
+			const leaseId = JSON.parse(c.stdout.join("\n")).leases[0].leaseId;
+			const device = server.devices.get("rd1");
+			if (device) Object.assign(device, { status: "stopped", stopReason: "credits_exhausted" });
+			c.stdout.length = 0;
+			c.argv = [leaseId, "--json"];
+			expect(await releaseCommand.run(c)).toBe(0);
+			expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
+				released: [leaseId],
+				remoteStopReasons: { rd1: "credits_exhausted" },
+			});
+		} finally {
+			c.cleanup();
+		}
+	});
+
 	test("--remote without a login fails with the hint", async () => {
 		const c = testContext(["android", "--remote"]);
 		try {

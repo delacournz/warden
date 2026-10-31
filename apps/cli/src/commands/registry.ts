@@ -295,8 +295,14 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "whoami",
 		group: "Account",
-		summary: "show the warden cloud account, organization and remote-device status",
+		summary: "show the warden cloud account, organization, balance and remote-device status",
 		load: async () => (await import("./whoami")).whoamiCommand,
+	},
+	{
+		name: "billing",
+		group: "Account",
+		summary: "show the warden cloud balance and ledger, or top up credit",
+		load: async () => (await import("./billing")).billingCommand,
 	},
 	{
 		name: "org",

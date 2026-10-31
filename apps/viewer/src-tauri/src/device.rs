@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 
 const SDP: &str = "application/sdp";
 const TRICKLE: &str = "application/trickle-ice-sdpfrag";
@@ -181,6 +182,37 @@ async fn post_json(
 #[tauri::command]
 pub fn viewer_info(session: State<'_, SessionState>) -> ViewerInfo {
     session.info()
+}
+
+/// One `GET /v1/devices/:id` with the viewer token: the status code and body, for `billing`.
+pub async fn fetch_device(
+    state: &DeviceState,
+    c: &Credentials,
+) -> Result<(u16, String), reqwest::Error> {
+    let response = state
+        .client
+        .get(device_url(c, ""))
+        .bearer_auth(&c.token)
+        .send()
+        .await?;
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+    Ok((status, body))
+}
+
+/// Open the launch-time billing URL in the system browser. Takes no argument: JS cannot choose
+/// where this goes.
+#[tauri::command]
+pub fn open_billing(app: tauri::AppHandle, session: State<'_, SessionState>) -> CmdResult<()> {
+    let Some(url) = session.billing_url() else {
+        return Err(ApiError::new(
+            "NO_BILLING_URL",
+            "no billing URL was provided",
+        ));
+    };
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| ApiError::new("OPEN", e.to_string()))
 }
 
 #[derive(Serialize)]

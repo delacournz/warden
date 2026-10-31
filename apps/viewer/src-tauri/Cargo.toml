@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["macos-private-api"] }
 # Save panel for screenshots. The plugin returns a path only; the PNG is written in session-free Rust.
 tauri-plugin-dialog = "2"
+# Opens the launch-time billing URL from Rust only; no JS permission is granted.
+tauri-plugin-opener = "2"
 # Rust-side logging to stderr: stdout carries the process contract and nothing else.
 tauri-plugin-log = "2"
 log = "0.4"

@@ -6,7 +6,7 @@ import type { StreamStatus } from "./whep-session.ts";
 type Copy = { icon: ReactNode; title: string; hint: string };
 
 function copyFor(status: StreamStatus, unreachable: boolean): Copy | null {
-	if (status === "streaming") return null;
+	if (status === "streaming" || status === "stopped") return null;
 	if (status === "expired") {
 		return {
 			icon: <ClockCountdown size={22} />,

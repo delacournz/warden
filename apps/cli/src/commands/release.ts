@@ -108,7 +108,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			: { quarantined: [], notes: [] };
 	const remote = leases.some((l) => l.resource.kind === "remote-device")
 		? await (await import("../remote/claim")).stopRemoteLeases(ctx, leases)
-		: { stopped: [], notes: [] };
+		: { stopped: [], notes: [], stopReasons: {} };
 	notes.push(...remote.notes);
 	await releaseDevices(
 		ctx,
@@ -136,6 +136,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			released: leases.map((l) => l.id),
 			shutdown,
 			remoteStopped: remote.stopped,
+			remoteStopReasons: remote.stopReasons,
 			quarantined: bad.quarantined,
 			unknown,
 			notes: [...notes, ...bad.notes],

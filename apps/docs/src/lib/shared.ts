@@ -6,6 +6,12 @@ export const appDescription =
 
 export const docsRoute = "/docs";
 
+/** What warden cloud costs. */
+export const pricingRoute = "/pricing";
+
+/** warden cloud's terms of service. */
+export const termsRoute = "/terms";
+
 /** The privacy policy; the cookie banner and the footer link to it. */
 export const privacyRoute = "/privacy";
 

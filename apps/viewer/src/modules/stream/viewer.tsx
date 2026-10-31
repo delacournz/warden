@@ -5,8 +5,11 @@ import { useDeviceInput } from "../input/use-device-input.ts";
 import { actionAvailability } from "../toolbar/availability.ts";
 import { CHROME_HEIGHT, CHROME_WIDTH, SCREEN_INSET } from "../toolbar/layout.ts";
 import { Titlebar } from "../toolbar/titlebar.tsx";
+import { overlayFor } from "./billing-state.ts";
+import { StoppedState } from "./stopped-state.tsx";
 import { StreamState } from "./stream-state.tsx";
 import { type Ripple, TapRipples } from "./tap-ripples.tsx";
+import { useBilling } from "./use-billing.ts";
 import { useWhep } from "./use-whep.ts";
 import type { StreamStatus } from "./whep-session.ts";
 
@@ -58,8 +61,10 @@ function message(e: unknown): string {
  */
 export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: boolean }) {
 	const videoRef = useRef<HTMLVideoElement>(null);
-	const { status: streamStatus, size, error } = useWhep(videoRef, !expired);
-	const status: StreamStatus = expired ? "expired" : streamStatus;
+	const billing = useBilling();
+	const overlay = overlayFor(expired, billing);
+	const { status: streamStatus, size, error } = useWhep(videoRef, overlay === null);
+	const status: StreamStatus = overlay === "expired" ? "expired" : overlay ? "stopped" : streamStatus;
 	const [driving, setDriving] = useState(info.scope === "drive");
 	const [pinned, setPinned] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -100,6 +105,8 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 		if (canDrive) addRipple(event);
 	};
 
+	const topUp = () => void run(device.openBilling());
+
 	const unreachable = error?.code === "UNREACHABLE";
 	const availability = actionAvailability(status, unreachable);
 	const ring = canDrive ? "ring-1 ring-primary/50" : "ring-1 ring-border";
@@ -115,6 +122,8 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 				availability={availability}
 				pinned={pinned}
 				onPinnedChange={onPinnedChange}
+				lowBalance={billing.lowBalance && info.hasBillingUrl}
+				onTopUp={topUp}
 				onOpenUrl={(url) => void run(device.openUrl(url))}
 				onScreenshot={() => void run(device.screenshot())}
 				onMinimize={minimize}
@@ -137,6 +146,9 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 					/>
 					<TapRipples ripples={ripples} onDone={removeRipple} />
 					<StreamState status={status} unreachable={unreachable} />
+					{(overlay === "out-of-credits" || overlay === "stopped") && (
+						<StoppedState overlay={overlay} hasBillingUrl={info.hasBillingUrl} onTopUp={topUp} />
+					)}
 					{notice && (
 						<p
 							role="alert"

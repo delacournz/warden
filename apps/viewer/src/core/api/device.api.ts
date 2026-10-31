@@ -12,6 +12,7 @@ export type ViewerInfo = {
 	expiresAt: string;
 	detached: boolean;
 	expired: boolean;
+	hasBillingUrl: boolean;
 };
 
 export class DeviceError extends Error {
@@ -53,4 +54,5 @@ export const swipe = (fromX: number, fromY: number, toX: number, toY: number, du
 	call<void>("swipe", { fromX, fromY, toX, toY, durationMs });
 export const input = (text: string, clearFirst?: boolean) => call<void>("input", { text, clearFirst });
 export const openUrl = (url: string) => call<void>("open_url", { url });
+export const openBilling = () => call<void>("open_billing");
 export const screenshot = () => call<string | null>("screenshot");
