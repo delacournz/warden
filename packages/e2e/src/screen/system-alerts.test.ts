@@ -5,6 +5,7 @@ import { el, type FakeDriver, fakeDriver, snapshotOf } from "../driver/driver.te
 import type { AlertInfo, Snapshot } from "../driver/driver.types";
 import type { E2eEnv } from "../env";
 import { LocatorAssertions } from "../expect/matchers";
+import { answerAlertQuietly } from "../fixtures";
 import { createScreen } from "./screen";
 import { testHost } from "./screen.testing";
 
@@ -52,7 +53,7 @@ function wire(driver: FakeDriver, action: "accept" | "dismiss" | "off") {
 				env: { ...env, platform: driver.platform },
 				clock: host.clock,
 			});
-			return holder.device.alert(action);
+			return answerAlertQuietly(holder.device, action);
 		};
 	}
 	return { host, screen: createScreen(host) };
@@ -114,14 +115,14 @@ describe("systemAlerts on an iOS-style screen (snapshot.modal)", () => {
 		expect(driver.calls.map((call) => call.method)).toEqual(["snapshot"]);
 	});
 
-	test("a sheet that stays up is answered at most three times per look, then the look is returned as it is", async () => {
+	test("a sheet that stays up is pressed three times in one answer, then the look is returned as it is", async () => {
 		const driver = fakeDriver({
 			screens: [snapshotOf([...app, sheet("Save Password", "Not Now")], { modal: { pid: 7 } })],
 		});
 		const { screen } = wire(driver, "dismiss");
 		expect(await screen.getByTestId("title").isVisible()).toBe(true);
 		expect(driver.callsOf("tap")).toHaveLength(3);
-		expect(driver.callsOf("snapshot")).toHaveLength(4);
+		expect(driver.callsOf("snapshot")).toHaveLength(1);
 	});
 
 	test("a modal with no buttons to press leaves the read as it is", async () => {

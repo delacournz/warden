@@ -6,7 +6,7 @@ import { bunExec } from "@delacour/warden-core/exec";
 import { UIAD_DEX } from "@delacour/warden-e2e/driver/android/uiad-dex.generated";
 
 /** Bun writes node built-ins without the `node:` prefix. */
-const BUILTINS = new Set(["fs", "fs/promises", "path", "os", "crypto", "async_hooks"]);
+const BUILTINS = new Set(["fs", "fs/promises", "path", "os", "crypto", "async_hooks", "child_process", "net"]);
 /** Top-level `import … from "x"` / `} from "x"` / `import "x"` statements (not strings that merely contain the words). */
 const BARE_IMPORT = /^(?:import\s.*?\sfrom|\}\s*from|import)\s*"([^."/][^"]*)";$/gm;
 const MAIN = resolve(import.meta.dir, "e2e-bundle-main.ts");

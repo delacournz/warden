@@ -30,7 +30,13 @@ describe("platformManifest", () => {
 });
 
 describe("platformManifest with the simulator helper", () => {
-	const helper = { version: "0.1.0", idb: "1.1.8", xcode: "26.6 (17F113)", frameworks: ["A.framework", "B.framework"] };
+	const helper = {
+		version: "0.1.0",
+		idb: "1.1.8",
+		xcode: "26.6 (17F113)",
+		frameworks: ["A.framework", "B.framework"],
+		inject: false,
+	};
 
 	test("darwin-arm64 ships warden-simd, resources, frameworks and records the build for doctor", () => {
 		const manifest = platformManifest("darwin-arm64", meta, helper);

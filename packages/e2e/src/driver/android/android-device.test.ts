@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openAdbSession } from "./adb-session";
 import {
+	bootProbeFor,
 	hierarchyRotation,
 	orientationToRotation,
 	parseWmDensity,
@@ -90,6 +91,35 @@ describe("device reads", () => {
 		expect(polls).toBe(3);
 		expect(clock.elapsed()).toBe(1000);
 		await session.close();
+	});
+
+	test("a console emulator gets the plain probe; any other serial also reads qemu props, wakefulness and keyguard", () => {
+		expect(bootProbeFor("emulator-5554")).toBe(
+			"getprop sys.boot_completed; getprop ro.build.version.sdk; wm size; wm density"
+		);
+		const phone = bootProbeFor("R5CT1234ABC");
+		expect(phone.startsWith(bootProbeFor("emulator-5554"))).toBe(true);
+		expect(phone).toContain("ro.boot.qemu");
+		expect(phone).toContain("ro.kernel.qemu");
+		expect(phone).toContain("mWakefulness");
+	});
+
+	test("waitForBoot reports a phone's facts, and none for a qemu device or a console emulator", async () => {
+		const reply = (tail: string) => `1\n34\nPhysical size: 1080x2400\nPhysical density: 420\n${tail}`;
+		const probe = async (serial: string, tail: string) => {
+			const host = fakeAndroidHost({ shell: [{ match: "getprop sys.boot_completed", reply: reply(tail) }] });
+			const session = openAdbSession({ adb: "adb", serial, spawn: host.spawn });
+			const res = await waitForBoot(session, serial, fakeClock());
+			await session.close();
+			return res.success ? res.data.physical : "failed";
+		};
+		expect(await probe("R5CT", "wdn_qemu:\nmWakefulness=Asleep\n  showing=true\n  secure=true\n")).toEqual({
+			awake: false,
+			keyguardShowing: true,
+			keyguardSecure: true,
+		});
+		expect(await probe("localhost:5555", "wdn_qemu:11\n")).toBeUndefined();
+		expect(await probe("emulator-5554", "")).toBeUndefined();
 	});
 
 	test("waitForBoot gives E_NOT_BOOTED at the timeout", async () => {

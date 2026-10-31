@@ -102,6 +102,35 @@ export const MIGRATIONS: readonly string[] = [
 	ALTER TABLE builds ADD COLUMN js_key TEXT;
 	ALTER TABLE builds ADD COLUMN worktree TEXT;
 	ALTER TABLE builds ADD COLUMN branch TEXT;`,
+	`CREATE TABLE lease_conditions (
+		lease_id TEXT NOT NULL REFERENCES leases(id) ON DELETE CASCADE,
+		area TEXT NOT NULL,
+		json TEXT NOT NULL,
+		owned TEXT NOT NULL DEFAULT '[]',
+		set_at INTEGER NOT NULL,
+		PRIMARY KEY (lease_id, area)
+	);`,
+	// a device lease deleted by any path (stale reclaim, eviction, rollback, an older binary) takes its
+	// conditions with it by cascade; the trigger parks them here first so the next claim can undo them
+	`CREATE TABLE orphan_conditions (
+		platform TEXT NOT NULL,
+		device_id TEXT NOT NULL,
+		area TEXT NOT NULL,
+		lease_id TEXT NOT NULL,
+		json TEXT NOT NULL,
+		owned TEXT NOT NULL DEFAULT '[]',
+		set_at INTEGER NOT NULL,
+		orphaned_at INTEGER NOT NULL,
+		PRIMARY KEY (platform, device_id, area)
+	);
+	CREATE TRIGGER leases_orphan_conditions BEFORE DELETE ON leases
+	WHEN json_extract(OLD.resource, '$.kind') = 'device' AND json_extract(OLD.resource, '$.id') NOT LIKE 'pending:%'
+	BEGIN
+		INSERT OR REPLACE INTO orphan_conditions (platform, device_id, area, lease_id, json, owned, set_at, orphaned_at)
+		SELECT json_extract(OLD.resource, '$.platform'), json_extract(OLD.resource, '$.id'), c.area, OLD.id, c.json, c.owned, c.set_at,
+			CAST(strftime('%s', 'now') AS INTEGER) * 1000
+		FROM lease_conditions c WHERE c.lease_id = OLD.id;
+	END;`,
 ];
 
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */

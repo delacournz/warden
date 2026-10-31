@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { duration, portSpec, slimConfigSchema } from "../batch/preset.schema";
 import { appOptionSchema } from "../builds/app-option.schema";
+import { conditionsConfigSchema } from "../conditions/conditions.config";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "../config.defaults";
 import { validateProfile } from "../sims/slim.profile";
 
@@ -65,6 +66,33 @@ function runIssues(suite: RunSettings): Array<{ message: string; path: string[] 
 	return issues;
 }
 
+/** What `physical` rules out: simulator daemon slimming, closing Simulator.app windows and simulated biometrics mean nothing on a real device. */
+function physicalIssues(suite: {
+	physical?: unknown;
+	slim?: unknown;
+	headless?: boolean | undefined;
+	biometrics?: boolean | undefined;
+	conditions?: unknown;
+}): Array<{ message: string; path: string[] }> {
+	if (suite.physical === undefined) return [];
+	const issues: Array<{ message: string; path: string[] }> = [];
+	if (suite.slim !== undefined && suite.slim !== false)
+		issues.push({ message: "slim cannot be used with physical devices", path: ["slim"] });
+	if (suite.headless === true)
+		issues.push({ message: "headless cannot be used with physical devices", path: ["headless"] });
+	if (suite.biometrics === true)
+		issues.push({
+			message: "biometrics cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["biometrics"],
+		});
+	if (suite.conditions !== undefined)
+		issues.push({
+			message: "conditions cannot be used with physical devices (use a simulator or emulator suite)",
+			path: ["conditions"],
+		});
+	return issues;
+}
+
 /** `e2e.<suite>.metro`: warden starts one Metro for the run and points the dev client at it. */
 export const e2eMetroSchema = z
 	.object({
@@ -83,6 +111,9 @@ export const e2eMetroSchema = z
 	})
 	.strict();
 
+/** `physical` on a suite or leg: `true` = any ready physical device, `{ ids }` = exactly these (adb serials / CoreDevice UDIDs). Never booted, created or arranged. */
+export const physicalSchema = z.union([z.literal(true), z.object({ ids: z.array(z.string().min(1)).min(1) }).strict()]);
+
 /** `e2e.<suite>.devices[]`: one leg of the run, with its own device pool. */
 export const e2eDeviceLegSchema = z
 	.object({
@@ -92,6 +123,8 @@ export const e2eDeviceLegSchema = z
 		env: z.record(z.string(), z.string()).optional(),
 		/** false = only with `--devices all` (or naming the profile) */
 		default: z.boolean().default(true),
+		/** run this leg on physical devices instead of simulators / emulators */
+		physical: physicalSchema.optional(),
 	})
 	.strict();
 
@@ -164,6 +197,8 @@ export const e2eSuiteSchema = z
 		/** file-based router dir (e.g. `apps/mobile/src/app`): `_layout` files above an entry are entries too */
 		routerRoot: path.optional(),
 		platform: platform.optional(),
+		/** run the suite on physical devices (every leg without its own `physical`); needs no slim or headless */
+		physical: physicalSchema.optional(),
 		/** git ref changes are measured against (merge-base with HEAD) */
 		base: z.string().min(1).default("main"),
 		/** only import chains of at most this many hops from an entry select a spec (default: any length) */
@@ -204,6 +239,8 @@ export const e2eSuiteSchema = z
 		setup: z.string().min(1).optional(),
 		/** iOS: switch off the simulator daemons specs never need on each device, before `setup`. An object keeps categories (`except`, ids) or single labels (`keep`) on */
 		slim: slimConfigSchema.optional(),
+		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
+		biometrics: z.boolean().optional(),
 		/** removed: renamed `warmDrivers` */
 		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
 		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */
@@ -212,6 +249,8 @@ export const e2eSuiteSchema = z
 		headless: z.boolean().optional(),
 		/** perf budgets for this suite; each key replaces the top-level `perf.budgets` one */
 		perf: perfConfigSchema.optional(),
+		/** device conditions every spec of the suite starts from; each area replaces the top-level one */
+		conditions: conditionsConfigSchema.optional(),
 		/** default `required` for specs that don't set it */
 		required: z.boolean().default(true),
 		specs: z.record(z.string().min(1), e2eSpecEntrySchema).default({}),
@@ -228,11 +267,13 @@ export const e2eSuiteSchema = z
 			const checked = validateProfile({ except: suite.slim.except ?? [], keep: suite.slim.keep ?? [] });
 			if (!checked.success) issue.addIssue({ code: "custom", message: checked.error, path: ["slim"] });
 		}
-		for (const message of runIssues(suite)) issue.addIssue({ code: "custom", ...message });
+		for (const message of [...runIssues(suite), ...physicalIssues(suite)])
+			issue.addIssue({ code: "custom", ...message });
 	});
 
 export type E2eSpecConfig = z.infer<typeof e2eSpecSchema>;
 export type E2eMetroConfig = z.infer<typeof e2eMetroSchema>;
+export type E2ePhysical = z.infer<typeof physicalSchema>;
 export type E2eDeviceLeg = z.infer<typeof e2eDeviceLegSchema>;
 export type E2eSpecEntryConfig = z.infer<typeof e2eSpecEntrySchema>;
 export type E2eSlimConfig = z.infer<typeof slimConfigSchema>;

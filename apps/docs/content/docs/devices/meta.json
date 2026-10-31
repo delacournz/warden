@@ -2,6 +2,7 @@
 	"title": "Devices & parallel",
 	"pages": [
 		"leases",
+		"physical-devices",
 		"remote",
 		"scripts",
 		"ports",

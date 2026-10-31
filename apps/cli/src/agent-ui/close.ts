@@ -1,11 +1,11 @@
-import type { Lease } from "@delacour/warden-core/types";
+import { isPhysicalIosId, type Lease } from "@delacour/warden-core/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseDevices } from "../device-lease";
 import { releaseAfter } from "../perf/release-after";
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
-import { stopAndroidHost, stopHelper } from "./helper";
+import { stopAndroidHost, stopHelper, stopIosRunner } from "./helper";
 import { type UiError, uiError } from "./output";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { readState } from "./state";
@@ -22,13 +22,21 @@ function keptWarning(lease: Lease): string {
 	return `not released: ${lease.id} belongs to ${holder}; stop warden dev (Ctrl-C) to release it`;
 }
 
+/** The resident helper a device's session runs on: the Android host, a physical iPhone's runner host, or `warden-simd`. */
+export function stopperFor(
+	device: UiDevice
+): (host: Parameters<typeof stopHelper>[0], id: string) => ReturnType<typeof stopHelper> {
+	if (device.platform === "android") return stopAndroidHost;
+	return isPhysicalIosId(device.udid) ? stopIosRunner : stopHelper;
+}
+
 /** Release the lease (its `after` stops the helper) or just stop the helper. */
 async function endHelper(
 	ctx: CommandContext,
 	device: UiDevice,
 	release: boolean
 ): Promise<{ stopped: boolean; how: string; warning?: string }> {
-	if (!release) return (device.platform === "android" ? stopAndroidHost : stopHelper)(ctx, device.udid);
+	if (!release) return stopperFor(device)(ctx, device.udid);
 	await releaseDevices(ctx, [device.lease.id], { after: releaseAfter(ctx, { helper: true }) });
 	return { stopped: true, how: "release" };
 }

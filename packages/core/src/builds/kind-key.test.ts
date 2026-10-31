@@ -130,3 +130,34 @@ describe("computeKindKey", () => {
 		expect(res.success).toBe(false);
 	});
 });
+
+describe("computeKindKey for a physical iPhone", () => {
+	const device = { team: "ABCDE12345", salt: "ABCDE12345" };
+
+	test("the device key differs from the simulator key and carries the team", async () => {
+		const sim = await keys({ kind: "release" });
+		const phone = await keys({ kind: "release", device });
+		expect(phone.key).toEqual({
+			kind: "release",
+			nativeFp: sim.key.nativeFp,
+			jsKey: (sim.key as { jsKey: string }).jsKey,
+			device,
+		});
+		expect(kindHash(phone.key)).not.toBe(kindHash(sim.key));
+		expect(kindHash(phone.key)).toContain(":device-ABCDE12345:release:");
+		expect(phone.project.target).toBe("device");
+		expect(phone.settings.build.ios).toContain("DEVELOPMENT_TEAM=ABCDE12345");
+	});
+
+	test("another team is another key", async () => {
+		const a = await keys({ kind: "dev", device });
+		const b = await keys({ kind: "dev", device: { team: "ZZZZZ99999", salt: "ZZZZZ99999" } });
+		expect(kindHash(a.key)).not.toBe(kindHash(b.key));
+	});
+
+	test("the simulator kind is refused on a device", async () => {
+		const res = await computeKindKey(deps({ kind: "simulator", device }));
+		expect(res.success).toBe(false);
+		expect(!res.success && res.error).toContain("simulator kind is not supported on a physical iPhone");
+	});
+});

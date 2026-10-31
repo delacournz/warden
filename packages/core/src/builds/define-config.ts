@@ -222,6 +222,8 @@ export interface WardenProject {
 	 * `--kind`. Kinds sit on top of {@link WardenProject.variants}: both keep working, but a build is one or the other.
 	 */
 	kinds?: WardenKinds | undefined;
+	/** iOS-only project settings. */
+	ios?: WardenProjectIos | undefined;
 	/** Extra (legacy) cache roots laid out as `<dir>/<hash>/*.app|*.apk`, imported on demand. `~` expands to `$HOME`. */
 	cacheDirs?: string[] | undefined;
 }
@@ -332,6 +334,12 @@ export interface WardenBatchPreset {
 	 * `--slim` / `--no-slim` override both.
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). Overrides the top-level
+	 * `biometrics`. Default false.
+	 */
+	biometrics?: boolean | undefined;
 	/** Per-job log dir. */
 	logs?: string | undefined;
 	/**
@@ -431,6 +439,53 @@ export interface WardenPerfConfig {
 	budgets?: WardenPerfBudgets | undefined;
 }
 
+/** `conditions.network` as a custom shape: the fields of a `custom` network condition. */
+export interface WardenCustomNetwork {
+	/** Added round-trip time, ms. */
+	latencyMs?: number | undefined;
+	/** Plus or minus spread on the latency, ms. */
+	jitterMs?: number | undefined;
+	/** Download rate, kilobits per second (0 = unlimited). */
+	downKbps?: number | undefined;
+	/** Upload rate, kilobits per second (0 = unlimited). */
+	upKbps?: number | undefined;
+	/** Share of packets lost, 0-100. */
+	lossPct?: number | undefined;
+}
+
+/**
+ * `conditions` (top level, or `e2e.<suite>.conditions`): the device state every spec of the suite starts from.
+ * `network`, `location` and `clock` are applied before the app launches and put back after each spec;
+ * `permissions`, `locale`, `timezone` and `a11y` are accepted but not applied yet (`warden e2e` says so once).
+ */
+export interface WardenConditionsConfig {
+	/** `online`, `offline`, a preset (`edge`, `3g`, `4g`, `lte`, `wifi`, `slow`, `lossy`) or custom shaping. iOS launches the app with the network dylib so specs can change it later. */
+	network?:
+		| "online"
+		| "offline"
+		| "edge"
+		| "3g"
+		| "4g"
+		| "lte"
+		| "wifi"
+		| "slow"
+		| "lossy"
+		| WardenCustomNetwork
+		| undefined;
+	/** A point, or one of the bundled scenarios (`city-run`, `city-bike`, `freeway`). */
+	location?: "city-run" | "city-bike" | "freeway" | { lat: number; lon: number; altM?: number | undefined } | undefined;
+	/** An ISO instant the clock starts at (and keeps running from), `{ at, frozen }`, or `{ offset }` ("2d") from now. */
+	clock?: string | { at: string; frozen?: boolean | undefined } | { offset: string } | undefined;
+	/** Not applied yet. */
+	permissions?: Record<string, "granted" | "denied" | "unset"> | undefined;
+	/** Not applied yet. */
+	locale?: string | undefined;
+	/** Not applied yet. */
+	timezone?: string | undefined;
+	/** Not applied yet. */
+	a11y?: Record<string, unknown> | undefined;
+}
+
 /** `e2e.<suite>.spec`: how `warden e2e` runs the `*.e2e.ts` specs (`bun test` with `@delacour/warden-e2e`). */
 export interface WardenE2eSpec {
 	/** The app under test. Default: the suite project's `bundleId` for the platform. */
@@ -489,6 +544,8 @@ export interface WardenE2eSuite {
 	project?: string | undefined;
 	/** Perf budgets for this suite; each key replaces the top-level `perf.budgets` one. */
 	perf?: WardenPerfConfig | undefined;
+	/** Device conditions every spec of this suite starts from; each area replaces the top-level one. */
+	conditions?: WardenConditionsConfig | undefined;
 	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
@@ -644,6 +701,12 @@ export interface WardenE2eSuite {
 	 * lists single `com.apple.*` launchd labels. `false` turns it off.
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). Overrides the top-level
+	 * `biometrics`. Default false.
+	 */
+	biometrics?: boolean | undefined;
 	/** Removed: renamed `warmDrivers`. */
 	warmRunners?: undefined;
 	/**
@@ -699,10 +762,56 @@ export interface WardenConfig {
 	 * @default true
 	 */
 	slim?: boolean | { except?: string[] | undefined; keep?: string[] | undefined } | undefined;
+	/**
+	 * Devices of this run have a fingerprint (Android) / Face ID (iOS) enrolled before any app install. Enrolled
+	 * devices are a separate pool and golden from plain ones (profile `<profile>+bio`). `e2e` suites and `batches` presets
+	 * override it. Default false.
+	 */
+	biometrics?: boolean | undefined;
 	/** Perf budgets every `e2e` suite starts from (a suite's own `perf.budgets` replace them per key). */
 	perf?: WardenPerfConfig | undefined;
+	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */
+	conditions?: WardenConditionsConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
+	/** Physical iPhone settings. */
+	ios?: WardenIosSettings | undefined;
+	/** Physical phone and tablet settings. */
+	physical?: WardenPhysicalSettings | undefined;
+}
+
+/** Physical phone and tablet settings (`physical`). */
+export interface WardenPhysicalSettings {
+	/**
+	 * Allowlist for `--physical` claims that name no device: only these adb serials / CoreDevice UDIDs are picked.
+	 * `WARDEN_PHYSICAL_IDS` (comma-separated) wins over it. Naming a device with `--serial` / `--udid` works for
+	 * any device, listed or not.
+	 *
+	 * @example ["00008140-000A0B0C0D0E0F10", "R5CT123ABC"]
+	 */
+	allow?: string[] | undefined;
+}
+
+/** iOS settings of one project (`projects[].ios`). */
+export interface WardenProjectIos {
+	/** Builds for a physical iPhone (`--physical`, `--udid <iPhone>`). */
+	device?: { bundleIdentifier?: string | undefined } | undefined;
+}
+
+/** Physical iPhone settings (`ios`). */
+export interface WardenIosSettings {
+	/**
+	 * Apple developer team id (10 characters, e.g. `LN69P7N673`) that signs warden's on-device runner. Without it
+	 * (and without `WARDEN_IOS_TEAM_ID`, which wins) warden uses the team of the one `Apple Development` identity
+	 * in your keychain and fails `ios_team_ambiguous` when there are several teams.
+	 */
+	teamId?: string | undefined;
+	/**
+	 * Bundle id of the runner app (its UI-test bundle is `<id>.uitests`).
+	 *
+	 * @default "nz.co.delacour.warden.runner.<team id, lower case>"
+	 */
+	runnerBundleId?: string | undefined;
 }
 
 /** Android emulator settings (`android`). */

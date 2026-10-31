@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ANDROID_ALLOW_IDS, ANDROID_DENY_IDS, detectAlert } from "./android-alert";
 import { REAL_ANR_DUMP, REAL_ANR_SCREEN } from "./anr.fixture";
+import { AUTOFILL_SAVE_DUMP, AUTOFILL_SAVE_SCREEN } from "./autofill-save.fixture";
 import { parseUiautomatorXml } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
 
@@ -62,6 +63,12 @@ describe("detectAlert", () => {
 			["aerr_close", "Close app", true],
 			["aerr_wait", "Wait", true],
 		]);
+	});
+
+	test("the autofill save sheet: found by its ids, titled, both buttons listed", () => {
+		const alert = detectAlert(parseUiautomatorXml(AUTOFILL_SAVE_DUMP, AUTOFILL_SAVE_SCREEN).flat);
+		expect(alert?.title).toBe("Save password to Google Password Manager?");
+		expect(alert?.buttons.map((b) => b.identifier)).toEqual(["autofill_save_no", "autofill_save_yes"]);
 	});
 
 	test("the three-button location dialog (API 30+): every button, deny last", () => {

@@ -152,6 +152,7 @@ jobs:
           path: |
             ~/Library/Caches/warden-idb
             packages/e2e/native/ios/.build
+            packages/e2e/native/ios-runner/RunnerCore/.build
 
       # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
       # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
@@ -159,6 +160,12 @@ jobs:
       - run: bun run --cwd packages/e2e native:deps
       - run: bun run --cwd packages/e2e native:build
       - run: swift test --package-path packages/e2e/native/ios
+      # warden-runner (XCUITest, real devices): RunnerCore's tests, then the unsigned iOS build of the checked-in project.
+      - run: swift test --package-path packages/e2e/native/ios-runner/RunnerCore
+      - run: >-
+          xcodebuild build-for-testing -project packages/e2e/native/ios-runner/WardenRunner.xcodeproj
+          -scheme WardenRunner -destination generic/platform=iOS CODE_SIGNING_ALLOWED=NO
+          WARDEN_RUNNER_BUNDLE_ID=nz.co.delacour.warden.runner.ci
 
   # The viewer's Rust tests (apps/viewer, Tauri). Its TypeScript is covered by the `checks` job. Path-gated,
   # never a required context: the umbrella still waits on it through the `signoff` job below.

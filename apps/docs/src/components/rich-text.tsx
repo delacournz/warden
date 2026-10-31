@@ -13,7 +13,10 @@ export function RichText({ text }: { text: string }): ReactElement {
 	const nodes: ReactNode[] = text.split(MARK).map((part, index) => {
 		if (part.startsWith("`") && part.endsWith("`")) {
 			return (
-				<code className="rounded-[4px] bg-fill px-1 py-0.5 font-mono text-[0.85em] text-ink" key={`${index}-${part}`}>
+				<code
+					className="whitespace-nowrap rounded-[4px] bg-fill px-1 py-0.5 font-mono text-[0.85em] text-ink"
+					key={`${index}-${part}`}
+				>
 					{part.slice(1, -1)}
 				</code>
 			);

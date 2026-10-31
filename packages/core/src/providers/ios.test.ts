@@ -5,6 +5,13 @@ import { join } from "node:path";
 import type { Exec, ExecResult } from "../exec";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "../sims/slim.profile";
 import { openStore, type Store } from "../store";
+import {
+	DEVICECTL_LIST_MIXED,
+	DEVICECTL_LOCKSTATE_LOCKED,
+	FAKE_IPAD_UDID,
+	FAKE_IPHONE_UDID,
+	FAKE_UNPAIRED_UDID,
+} from "./devicectl.fixtures";
 import { createIosProvider, deleteSim, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
 import { SIMCTL_DEVICES_JSON, SIMCTL_DEVICETYPES_JSON, SIMCTL_RUNTIMES_JSON, simctlDevicesJson } from "./ios.fixture";
 import type { DeviceProvider } from "./provider.types";
@@ -413,7 +420,7 @@ describe("createIosProvider timeouts (16-11)", () => {
 	test("every simctl call carries a default timeout: list 30 s, create/boot 120 s, shutdown 60 s", async () => {
 		const timeouts = new Map<string, number | undefined>();
 		const exec: Exec = (cmd, opts) => {
-			timeouts.set(cmd.slice(2, 4).join(" "), opts?.timeoutMs);
+			timeouts.set(cmd.slice(cmd[1] === "devicectl" ? 1 : 2, 4).join(" "), opts?.timeoutMs);
 			return okAll(cmd, opts);
 		};
 		const p = provider(exec);
@@ -740,5 +747,204 @@ describe("createIosProvider slim (SLIM-2)", () => {
 		await p.afterReady?.("CLONED");
 		expect(store.listDevices("ios")[0]?.slimmedAt).toBeUndefined();
 		expect(logs.some((l) => l.includes("live slim failed"))).toBe(true);
+	});
+
+	test("biometrics profile: the clone is made for the plain profile, recorded +bio, and enrolled after every boot", async () => {
+		const cloned: string[] = [];
+		const calls: Call[] = [];
+		const p = createIosProvider(
+			{
+				exec: fake(
+					[["xcrun simctl spawn CLONED notifyutil", { stdout: "com.apple.BiometricKit.enrollmentChanged 1\n" }]],
+					calls
+				),
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner,
+				log: (line) => logs.push(line),
+			},
+			{
+				clone: async (_name, profile) => {
+					cloned.push(profile);
+					return { success: true, data: { udid: "CLONED", runtime: "iOS-26-5" } };
+				},
+				slim: false,
+				sleep: async () => {},
+			}
+		);
+		const created = await p.create("warden-iphone-17+bio-1", "iphone-17+bio");
+		expect(created.success && created.data.profile).toBe("iphone-17+bio");
+		expect(cloned).toEqual(["iphone-17"]);
+		expect(store.listDevices("ios")[0]?.profile).toBe("iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(calls.map((c) => c.cmd.join(" "))).toEqual([
+			"xcrun simctl spawn CLONED notifyutil -s com.apple.BiometricKit.enrollmentChanged 1",
+			"xcrun simctl spawn CLONED notifyutil -p com.apple.BiometricKit.enrollmentChanged",
+			"xcrun simctl spawn CLONED notifyutil -g com.apple.BiometricKit.enrollmentChanged",
+		]);
+	});
+
+	test("biometrics enroll is retried until a read-back shows state 1 (a write right after boot can be dropped)", async () => {
+		const sleeps: number[] = [];
+		let reads = 0;
+		const exec: Exec = async (cmd) => {
+			if (cmd.join(" ").endsWith("notifyutil -g com.apple.BiometricKit.enrollmentChanged")) {
+				reads += 1;
+				return {
+					exitCode: 0,
+					stdout: `com.apple.BiometricKit.enrollmentChanged ${reads >= 3 ? 1 : 0}\n`,
+					stderr: "",
+				};
+			}
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		const p = slimProvider(exec, {
+			slim: false,
+			sleep: async (ms) => {
+				sleeps.push(ms);
+			},
+		});
+		await p.create("warden-iphone-17+bio-1", "iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(reads).toBe(3);
+		expect(sleeps).toHaveLength(2);
+		expect(logs.some((l) => l.includes("biometrics"))).toBe(false);
+	});
+
+	test("biometrics enroll that never reads back 1 is logged after a bounded number of attempts", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(
+			fake(
+				[["xcrun simctl spawn CLONED notifyutil", { stdout: "com.apple.BiometricKit.enrollmentChanged 0\n" }]],
+				calls
+			),
+			{ slim: false }
+		);
+		await p.create("warden-iphone-17+bio-9", "iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		const reads = calls.filter((c) => c.cmd.includes("-g")).length;
+		expect(reads).toBeGreaterThan(1);
+		expect(reads).toBeLessThanOrEqual(20);
+		expect(logs.some((l) => l.includes("biometrics enroll did not take"))).toBe(true);
+	});
+
+	test("a plain profile and a device warden has no record of are never enrolled", async () => {
+		const calls: Call[] = [];
+		const p = slimProvider(fake([], calls), { slim: false });
+		await p.create("warden-iphone-17-9", "iphone-17");
+		await p.afterReady?.("CLONED");
+		await p.afterReady?.("FOREIGN");
+		expect(calls).toEqual([]);
+	});
+
+	test("a failed enrollment is logged, not fatal", async () => {
+		const p = slimProvider(fake([["xcrun simctl spawn CLONED notifyutil", { exitCode: 1, stderr: "nope" }]]), {
+			slim: false,
+		});
+		await p.create("warden-iphone-17+bio-9", "iphone-17+bio");
+		await p.afterReady?.("CLONED");
+		expect(logs.some((l) => l.includes("biometrics enroll failed"))).toBe(true);
+	});
+});
+
+describe("createIosProvider physical iPhones (PHY-6.5)", () => {
+	const physicalProvider = (exec: Exec): DeviceProvider =>
+		createIosProvider(
+			{
+				exec,
+				store,
+				env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
+				now: () => 42,
+				owner: { kind: "agent", sessionId: "s1", cwd: "/" },
+			},
+			{ physical: true }
+		);
+	const SIMS: [string, Partial<ExecResult>] = [
+		"xcrun simctl list devices available -j",
+		{ stdout: SIMCTL_DEVICES_JSON },
+	];
+	const LIST: [string, Partial<ExecResult>] = ["xcrun devicectl list devices", { stdout: DEVICECTL_LIST_MIXED }];
+
+	test("inventory runs no devicectl unless physical is on", async () => {
+		const calls: Call[] = [];
+		const result = await provider(fake([SIMS, LIST], calls)).inventory();
+		expect(result.success && result.data.some((d) => d.physical)).toBe(false);
+		expect(calls.map((c) => c.cmd[1])).toEqual(["simctl"]);
+	});
+
+	test("inventory lists simulators and physical phones together", async () => {
+		const result = await physicalProvider(fake([SIMS, LIST])).inventory();
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		const phones = result.data.filter((d) => d.physical);
+		expect(phones.map((d) => d.id)).toEqual([FAKE_IPHONE_UDID, FAKE_IPAD_UDID, FAKE_UNPAIRED_UDID]);
+		expect(result.data.filter((d) => !d.physical).length).toBeGreaterThan(0);
+	});
+
+	test.each([
+		["devicectl fails", { exitCode: 1, stderr: "boom" }],
+		["devicectl prints garbage", { stdout: "not json" }],
+		["xcrun cannot find devicectl", { exitCode: 127, stderr: "xcrun: error" }],
+	] as Array<[string, Partial<ExecResult>]>)("sim inventory is unaffected when %s", async (_name, failure) => {
+		const result = await physicalProvider(fake([SIMS, ["xcrun devicectl list devices", failure]])).inventory();
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data.some((d) => d.physical)).toBe(false);
+		expect(result.data.map((d) => d.name)).toContain("iPhone 17");
+	});
+
+	test("a failing simctl still fails the inventory", async () => {
+		const result = await physicalProvider(
+			fake([["xcrun simctl list", { exitCode: 1, stderr: "x" }], LIST])
+		).inventory();
+		expect(result.success).toBe(false);
+	});
+
+	test("a phone never reaches the store devices table", async () => {
+		await physicalProvider(fake([SIMS, LIST])).inventory();
+		expect(store.listDevices("ios")).toEqual([]);
+	});
+
+	test("boot, bootReady and shutdown refuse a phone and run nothing", async () => {
+		const calls: Call[] = [];
+		const p = physicalProvider(fake([SIMS, LIST], calls));
+		const boot = await p.boot(FAKE_IPHONE_UDID);
+		const shutdown = await p.shutdown(FAKE_IPHONE_UDID);
+		const ready = await p.bootReady?.(FAKE_IPHONE_UDID, 1000);
+		expect(boot.success).toBe(false);
+		expect(!boot.success && boot.error).toContain("physical");
+		expect(shutdown.success).toBe(false);
+		expect(!shutdown.success && shutdown.error).toContain("physical");
+		expect(ready?.kind).toBe("boot-failed");
+		expect(calls).toEqual([]);
+	});
+
+	test("probe, probeBooted, verifyWarm and waitReady on a phone use devicectl lockState, never simctl", async () => {
+		const calls: Call[] = [];
+		const p = provider(
+			fake([["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_LOCKED }]], calls)
+		);
+		expect((await p.probe?.(FAKE_IPHONE_UDID))?.success).toBe(true);
+		expect((await p.probeBooted?.(FAKE_IPHONE_UDID))?.success).toBe(true);
+		expect((await p.verifyWarm?.(FAKE_IPHONE_UDID))?.success).toBe(true);
+		expect((await p.waitReady(FAKE_IPHONE_UDID, 1000)).success).toBe(true);
+		expect(calls.length).toBe(4);
+		expect(calls.every((c) => c.cmd.slice(0, 5).join(" ") === "xcrun devicectl device info lockState")).toBe(true);
+	});
+
+	test("a phone devicectl cannot reach fails its probe", async () => {
+		const p = physicalProvider(
+			fake([["xcrun devicectl device info lockState", { exitCode: 1, stderr: "not connected" }]])
+		);
+		expect((await p.probe?.(FAKE_IPHONE_UDID))?.success).toBe(false);
+	});
+
+	test("prepareBoot and afterReady leave a phone alone", async () => {
+		const calls: Call[] = [];
+		const p = physicalProvider(fake([], calls));
+		await p.prepareBoot?.(FAKE_IPHONE_UDID);
+		await p.afterReady?.(FAKE_IPHONE_UDID);
+		expect(calls).toEqual([]);
 	});
 });

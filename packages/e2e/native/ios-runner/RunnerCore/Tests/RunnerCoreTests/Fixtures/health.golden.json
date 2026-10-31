@@ -1,0 +1,22 @@
+{
+  "ax" : {
+    "bridge" : "missing",
+    "default" : "ax"
+  },
+  "backend" : "ax",
+  "engine" : "xcuitest",
+  "hid" : {
+    "transport" : "xcuitest"
+  },
+  "port" : 8765,
+  "protocol" : 1,
+  "screen" : {
+    "height" : 956,
+    "scale" : 3,
+    "width" : 440
+  },
+  "state" : "serving",
+  "udid" : "00008140-000A0B0C0D0E0F10",
+  "uptimeMs" : 0,
+  "version" : "0.1.0"
+}

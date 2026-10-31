@@ -27,9 +27,9 @@ Set up warden for mobile device work in this repo.
 
 | Piece | Where | Agents |
 |---|---|---|
-| Skill | `skills/warden/`: `SKILL.md` + `references/{ui,specs,suites,troubleshooting}.md`, embedded in the binary | anything the [`skills`](https://github.com/vercel-labs/skills) CLI installs into |
-| Rule | `~/.claude/rules/warden.md`, written directly | Claude Code |
-| SessionEnd hook | `warden hook session-end` | Claude Code, Codex |
+| **Skill** | `skills/warden/`: `SKILL.md` + `references/{ui,specs,suites,troubleshooting}.md`, embedded in the binary | anything the [`skills`](https://github.com/vercel-labs/skills) CLI installs into |
+| **Rule** | `~/.claude/rules/warden.md`, written directly | Claude Code |
+| **SessionEnd hook** | `warden hook session-end` | Claude Code, Codex |
 
 The skill loads into Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Windsurf, Zed and the other agents the `skills` CLI supports. Hooks exist only for Claude Code and Codex.
 

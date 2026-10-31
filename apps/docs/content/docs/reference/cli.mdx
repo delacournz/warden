@@ -190,7 +190,7 @@ List leases: resource, state, owner, repo/worktree, age, heartbeat.
 
 ### `warden devices [platform]` (alias `list`)
 
-Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases. `--mem` adds each booted iOS sim's real memory in MB (summed `phys_footprint` of its process tree, see [`warden sim measure`](#warden-sim-measure-udid)); `--json` is machine-readable.
+Every simulator / emulator, booted or not, plus Android AVDs — with warden ownership and leases. `--mem` adds each booted iOS sim's real memory in MB (summed `phys_footprint` of its process tree, see [`warden sim measure`](#warden-sim-measure-udid)); `--physical` lists only real phones and tablets. Rows carry a `KIND` (`virtual` or `physical`); a physical device warden cannot use now (Android `unauthorized` / `offline`, an iPhone or iPad that is offline, unpaired or has Developer Mode off) shows that in `STATE` with a hint underneath, and `--json` adds `kind`, `transport` and `hint`. `--json` is machine-readable. See [Physical devices](/docs/devices/physical-devices).
 
 ### Device health: `release --bad`, `sim unquarantine`
 
@@ -271,13 +271,13 @@ iOS. The real memory cost of a booted simulator: the summed `phys_footprint` of 
 
 | Reason | Owner | When |
 |--------|-------|------|
-| runtime removed | any | the sim's runtime is no longer installed (`isAvailable: false`) |
-| warden-named, no warden record | warden | `warden-<profile>-N` that the store has no record of (`orphan`) |
-| warden sim unused N | warden | not claimed or booted (the later of the store's `lastUsedAt` and `lastBootedAt`) for `--idle` (default `7d`) |
-| over --max-size | warden | with `--max-size 40G`, the least-recently-used unblocked warden sims until all sims fit (`budget`) |
-| not booted in N | foreign | last booted more than `--stale` ago (default `30d`). Never-booted sims are left alone. |
-| older runtime | foreign | older than the newest runtime installed for the same device type and platform |
-| duplicate | foreign | same name and runtime as a more recently booted sim |
+| `runtime removed` | any | the sim's runtime is no longer installed (`isAvailable: false`) |
+| `warden-named, no warden record` | warden | `warden-<profile>-N` that the store has no record of (`orphan`) |
+| `warden sim unused N` | warden | not claimed or booted (the later of the store's `lastUsedAt` and `lastBootedAt`) for `--idle` (default `7d`) |
+| `over --max-size` | warden | with `--max-size 40G`, the least-recently-used unblocked warden sims until all sims fit (`budget`) |
+| `not booted in N` | foreign | last booted more than `--stale` ago (default `30d`). Never-booted sims are left alone. |
+| `older runtime` | foreign | older than the newest runtime installed for the same device type and platform |
+| `duplicate` | foreign | same name and runtime as a more recently booted sim |
 
 Warden sims never get `older runtime` or `duplicate`: warden manages its own pool. Goldens never get a reason; they belong to `warden golden prune`.
 
@@ -398,7 +398,6 @@ The agent CLI over the e2e driver: read the screen, act on it, wait. Full guide:
 | `--udid <udid>` · `--serial <serial>` · `--lease <id>` | the device (else `WARDEN_UDID`, a single `WARDEN_UDIDS`, your only device lease) |
 | `--claim` | take a device when none is leased, or take over a stale lease; `--platform ios\|android`, `--profile <slug>`, `--runtime <runtime>` pick it |
 | `--timeout <ms>` | per-command deadline (default 5000) |
-
 | `--force` | drive the device even while a live warden process (`warden e2e`, `batch`, `run`) holds your lease on it; without it the call exits 2 (`device_busy`) naming the owner, pid and label. Your own `warden dev` device needs no `--force`: the call shares it (`"attachedTo": "<leaseId>"` in `--json`; `close --release` keeps that lease). Another owner's live lease still refuses |
 | `--no-record` | while a `record` is active, do not append this call to it |
 | `--json` | one JSON document on stdout: `{ok, command, device, generation?, durationMs, result, warnings?}` or `{ok:false, command, error:{code, message, hint?}}` |
@@ -426,7 +425,7 @@ Exit codes: 0 ok · 1 failed or usage (also the `record` errors `no_recording`, 
 | `record use <module#fn>` | `--suite <name>`. Runs the exported helper once on this device (a generated one-test spec through the spec process `stop` verifies with); on a pass appends a `use` step, which the spec calls as `await fn(fixtures)` imported relative to its path. Exit 1 `helper_missing` (module or export not found), `use_failed` (helper failed; `details.evidence`), `verify_unavailable` (no suite), `no_recording`; nothing is recorded on failure |
 | `record note <text>` · `record undo [n]` · `record status` · `record cancel` | `note`: a comment above the next action; `undo`: drop the last n steps (notes count); `status`: target, step count, last 5 steps, lints; `cancel`: drop the journal (a written spec stays) |
 | `record stop` | `--no-verify`, `--suite <name>`, `--overwrite`. Writes the spec or helper, merges ids, prints lints and the `specs.<id>` entry for `warden.config.ts` (`--json`: `result.config` `{ id, suite?, snippet, entries, routes, unresolved, captured, hints }`, `null` for a helper; routes are read on dev clients only, need the suite's `routerRoot`, and capture stops after 3 failed reads), then runs the spec once on this device (helpers are not run). Exit 1 (`verify_failed`, `verify_unavailable`, `target_exists`) keeps the journal; `--force` is the busy-device option, not this one |
-| `eval <expr>` · `tree` · `logs` · `network` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network [n]` (default 50) `--include headers,body --id <id>`; `eval`, `tree`, `logs` and `reload` take `--metro <url>` (default: `WARDEN_METRO_URL`, `state.json`, then this owner's leased ports) |
+| `eval <expr>` · `tree` · `logs` · `network log` · `reload` | dev client only (`--metro <url>`): `eval --await`; `tree --all --max <n> --screen <name>`; `logs [n]\|start [--bodies]\|stop\|mark <label>\|clear`; `network log [n]` (default 50; bare `network [n]` is a deprecated alias) `--include headers,body --id <id>`; `eval`, `tree`, `logs` and `reload` take `--metro <url>` (default: `WARDEN_METRO_URL`, `state.json`, then this owner's leased ports) |
 
 
 The old top-level `rotate`, `appearance`, `screenshot`, `video`, `swipe` and `longpress` are removed (unknown command, no aliases).

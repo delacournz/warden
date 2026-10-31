@@ -151,6 +151,7 @@ describe("registrationDefaults", () => {
 			actionTimeoutMs: 30_000,
 			assertionTimeoutMs: 5_000,
 			platform: undefined,
+			deviceKind: undefined,
 		});
 		const env = { WARDEN_UDID: "U", WARDEN_BUNDLE_ID: "b", WARDEN_PLATFORM: "android", WARDEN_E2E_TIMEOUT: "777" };
 		expect(registrationDefaults(env)).toMatchObject({ timeoutMs: 777, platform: "android" });

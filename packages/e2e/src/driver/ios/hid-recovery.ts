@@ -66,6 +66,40 @@ export function isHidLost(error: unknown): boolean {
 }
 
 /**
+ * The error of a call on a physical iPhone whose runner host is gone (the host or the runner exited, or the socket
+ * closed): the driver's `E_HELPER_CRASHED`, however the error was wrapped.
+ */
+export function isRunnerLost(error: unknown): boolean {
+	if (!(error instanceof E2eError) || (error.code !== "ACTION_FAILED" && error.code !== "DRIVER")) return false;
+	return /\bE_HELPER_CRASHED\b/.test(error.message);
+}
+
+/**
+ * Whether a failed attempt is worth one recovery and the test running again: a simulator that lost its HID connection
+ * (reboot), or a physical iPhone that lost its runner host (restart the host; the phone is never rebooted).
+ */
+export function isRecoverableLoss(error: unknown, deviceKind: "physical" | undefined): boolean {
+	return deviceKind === "physical" ? isRunnerLost(error) : isHidLost(error);
+}
+
+const RUNNER_RESTART_MS = 180_000;
+
+/**
+ * Restarts a physical iPhone's runner host (`WARDEN_IOS_RUNNER_RESTART`, `{udid}` replaced): stop the host, start a
+ * new one on the same socket and wait until it answers. Never touches the phone itself (no reboot, no `simctl`).
+ */
+export async function restartRunnerHost(
+	deps: HidRecoveryDeps,
+	argv: readonly string[] | undefined,
+	udid: string
+): AsyncResult<void> {
+	if (argv === undefined || argv.length === 0) return err("WARDEN_IOS_RUNNER_RESTART is not set");
+	const cmd = argv.map((arg) => arg.replaceAll("{udid}", udid));
+	const res = await deps.exec(cmd, { timeoutMs: RUNNER_RESTART_MS });
+	return res.exitCode === 0 ? ok(undefined) : err(execError(cmd, res));
+}
+
+/**
  * Shuts the sim down and boots it again: `bootstatus -b` boots a shut-down sim itself and waits for it, and opens
  * no Simulator.app window (the same windowless path warden claims use). The caller reconnects the helper and
  * relaunches the app.

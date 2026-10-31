@@ -1,4 +1,20 @@
 export type { OpenOptions, OpenWaitUntil } from "./app";
+export type {
+	ClockInput,
+	ConditionRun,
+	DeviceClock,
+	DeviceLocation,
+	DeviceNetwork,
+	DevicePermissions,
+	Duration,
+	FlapOptions,
+	LocationPoint,
+	NetworkSetOptions,
+	NetworkStatus,
+	RouteOptions,
+	TimelineStepInput,
+} from "./conditions/device-conditions";
+export type { BiometricState, DeviceBiometrics } from "./device";
 export { E2eError } from "./errors";
 export { expect } from "./expect/expect";
 export type { PerfBreach, PerfBudgets } from "./perf/budgets";

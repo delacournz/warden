@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { CLAIM_ABORTED, type ClaimInput, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import { recordCondition } from "./conditions/conditions";
 import type { Exec, ExecResult } from "./exec";
 import type { MemoryPressure } from "./host";
 import { createIosProvider } from "./providers/ios";
@@ -1089,6 +1090,24 @@ describe("claim capacity queue", () => {
 		expect(store.listQueue()).toEqual([]);
 	});
 
+	test("phones cost nothing: three booted phones do not queue a sim claim", async () => {
+		const phone = (id: string): InventoryDevice => ({
+			...sim(id, { name: `iPhone ${id}`, state: "booted" }),
+			physical: {
+				platform: "ios",
+				transport: "wired",
+				deviceType: "iPhone",
+				osVersion: "27.2",
+				developerMode: true,
+				ddi: true,
+			},
+		});
+		const provider = fakeProvider([phone("P1"), phone("P2"), phone("P3"), sim("1")]);
+		const result = await claimDevices(capInput(provider, { cpu: 1, request: request({ adopt: true }) }));
+		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
+		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
+	});
+
 	test("without capacity a full host never queues", async () => {
 		const provider = fakeProvider([]);
 		const result = await claimDevices(input(provider));
@@ -1150,5 +1169,174 @@ describe("claimDevices slim hooks (SLIM-2)", () => {
 		const provider = hooked([sim("1", { state: "booted" })], { bootReady: true });
 		await claimDevices(input(provider));
 		expect(provider.calls.filter((c) => c.startsWith("prepareBoot") || c.startsWith("afterReady"))).toEqual([]);
+	});
+});
+
+describe("claimDevices physical", () => {
+	const phone = (id: string, overrides: Partial<InventoryDevice> = {}): InventoryDevice => ({
+		platform: "android",
+		id,
+		name: `Pixel ${id}`,
+		state: "booted",
+		wardenCreated: false,
+		physical: { platform: "android", transport: "usb", adbState: "device", hwSerial: `HW-${id}` },
+		...overrides,
+	});
+
+	test("leases a ready phone with a physical resource, never boots or creates it and records no device", async () => {
+		const provider = fakeProvider([phone("P1")]);
+		const result = await claimDevices(input(provider, { request: request({ platform: "android", physical: {} }) }));
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data.claimed[0]?.lease.resource).toEqual({
+			kind: "device",
+			platform: "android",
+			id: "P1",
+			name: "Pixel P1",
+			physical: { transport: "usb", hwSerial: "HW-P1" },
+		});
+		expect(result.data.claimed[0]?.action).toBe("reuse");
+		expect(provider.calls.filter((c) => /^(boot|create|shutdown)/.test(c))).toEqual([]);
+		expect(store.listDevices()).toEqual([]);
+	});
+
+	test("with no ready phone it waits instead of creating", async () => {
+		const provider = fakeProvider([]);
+		const result = await claimDevices(input(provider, { request: request({ platform: "android", physical: {} }) }));
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error).toContain("physical");
+		expect(provider.calls).toEqual([]);
+	});
+
+	test("naming an offline phone fails device_offline with the reason", async () => {
+		const offline = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "offline" } });
+		const result = await claimDevices(
+			input(fakeProvider([offline]), { request: request({ platform: "android", physical: { ids: ["P1"] } }) })
+		);
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error).toContain("device_offline");
+			expect(result.error).toContain("P1");
+			expect(result.error).toContain("offline");
+		}
+	});
+
+	test("waiting on a named phone that is not ready says what it waits for, once, then every 30 s", async () => {
+		const offline = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "offline" } });
+		let at = NOW;
+		const lines: string[] = [];
+		const result = await claimDevices(
+			input(fakeProvider([offline]), {
+				request: request({ platform: "android", physical: { ids: ["P1"] } }),
+				waitMs: 70_000,
+				pollMs: 10_000,
+				now: () => at,
+				sleep: async (ms) => {
+					at += ms;
+				},
+				log: (line) => lines.push(line),
+			})
+		);
+		expect(result.success).toBe(false);
+		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("waiting");
+		expect(lines[0]).toContain("P1");
+		expect(lines[0]).toContain("offline");
+		expect(lines[0]).toContain("1m10s");
+		expect(lines[1]).toContain("still waiting");
+	});
+
+	test("waiting for any free device says so, never silently", async () => {
+		let at = NOW;
+		const lines: string[] = [];
+		await claimDevices(
+			input(fakeProvider([]), {
+				request: request({ platform: "android", physical: {} }),
+				waitMs: 10_000,
+				pollMs: 10_000,
+				now: () => at,
+				sleep: async (ms) => {
+					at += ms;
+				},
+				log: (line) => lines.push(line),
+			})
+		);
+		expect(lines[0]).toContain("waiting");
+	});
+
+	test("an unauthorized phone is listed as skipped when nothing else is ready", async () => {
+		const unauthorized = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "unauthorized" } });
+		const result = await claimDevices(
+			input(fakeProvider([unauthorized]), { request: request({ platform: "android", physical: {} }) })
+		);
+		expect(!result.success && result.error).toContain("USB debugging");
+	});
+
+	test("an allowlist that matches nothing says so", async () => {
+		const result = await claimDevices(
+			input(fakeProvider([phone("P1")]), { request: request({ platform: "android", physical: { allow: ["P9"] } }) })
+		);
+		expect(!result.success && result.error).toContain("allowlist");
+	});
+
+	test("two claims get two different phones", async () => {
+		const provider = fakeProvider([phone("P1"), phone("P2")]);
+		const req = request({ platform: "android", physical: {} });
+		const a = await claimDevices(input(provider, { request: req }));
+		const b = await claimDevices(input(provider, { request: req, owner: other }));
+		expect(a.success && b.success && [a.data.claimed[0]?.device.id, b.data.claimed[0]?.device.id].sort()).toEqual([
+			"P1",
+			"P2",
+		]);
+	});
+});
+
+describe("claimDevices: leftover conditions of a deleted lease", () => {
+	test("a stale reclaim's conditions are undone before the device is returned, and the orphan is gone", async () => {
+		const stale = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "1", name: "warden-iphone-17-1" }, owner: other, ttlMs: 1000 },
+			1
+		);
+		recordCondition(store, stale.id, "a11y", { contrast: "increased" }, 2);
+		const provider = fakeProvider([sim("1", { state: "booted" })]);
+		const cmds: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			cmds.push([...cmd]);
+			return { exitCode: 0, stdout: "", stderr: "" } satisfies ExecResult;
+		};
+		const result = await claimDevices(input(provider, { orphans: { exec, env: { WARDEN_HOME: dir } } }));
+		expect(result.success && result.data.reclaimed).toEqual([stale.id]);
+		expect(cmds).toContainEqual(["xcrun", "simctl", "ui", "1", "content_size", "large"]);
+		expect(cmds).toContainEqual(["xcrun", "simctl", "ui", "1", "increase_contrast", "disabled"]);
+		expect(store.db.query("SELECT COUNT(*) AS n FROM orphan_conditions").get()).toEqual({ n: 0 });
+	});
+
+	test("a failed reset is logged and the claim still succeeds, keeping the orphan", async () => {
+		const stale = store.insertLease(
+			{ resource: { kind: "device", platform: "ios", id: "1", name: "warden-iphone-17-1" }, owner: other, ttlMs: 1000 },
+			1
+		);
+		recordCondition(store, stale.id, "a11y", { contrast: "increased" }, 2);
+		const logs: string[] = [];
+		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "boom" });
+		const result = await claimDevices(
+			input(fakeProvider([sim("1", { state: "booted" })]), {
+				orphans: { exec, env: { WARDEN_HOME: dir } },
+				log: (l) => logs.push(l),
+			})
+		);
+		expect(result.success).toBe(true);
+		expect(logs.some((l) => l.includes("leftover condition not undone"))).toBe(true);
+		expect(store.db.query("SELECT COUNT(*) AS n FROM orphan_conditions").get()).toEqual({ n: 1 });
+	});
+
+	test("a claim with nothing orphaned runs no condition resets", async () => {
+		const cmds: string[][] = [];
+		const exec: Exec = async (cmd) => {
+			cmds.push([...cmd]);
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
+		await claimDevices(input(fakeProvider([sim("1", { state: "booted" })]), { orphans: { exec, env: {} } }));
+		expect(cmds).toEqual([]);
 	});
 });

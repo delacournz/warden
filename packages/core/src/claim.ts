@@ -3,7 +3,9 @@ import { availableParallelism, loadavg } from "node:os";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { allocate } from "./allocate";
 import { addCost, type Budget, type CapacityConfig, type Cost, deviceCost, explain, fits, totalCost } from "./capacity";
+import type { OrphanHost } from "./conditions/orphans";
 import { DEFAULT_READY_TIMEOUT_MS } from "./config.defaults";
+import { formatDuration } from "./duration";
 import type { MemoryPressure } from "./host";
 import { markWardenDevices } from "./inventory";
 import { isLeaseAlive, type PidAlive } from "./liveness";
@@ -15,10 +17,12 @@ import {
 	type AllocationStep,
 	type DeviceRequest,
 	type DeviceResource,
+	deviceResourceOf,
 	type InventoryDevice,
 	type Lease,
 	type Owner,
 	type Platform,
+	physicalNotReadyReason,
 	resourceKey,
 } from "./types";
 
@@ -61,6 +65,8 @@ export type ClaimInput = {
 	slim?: boolean;
 	/** polled once per round: true ends the claim with `CLAIM_ABORTED` (nothing stays leased or queued) */
 	abort?: () => boolean;
+	/** conditions a deleted lease left on a claimed device are undone before the claim returns; absent = left for gc */
+	orphans?: OrphanHost;
 };
 
 /** The error of a claim ended by `ClaimInput.abort`. */
@@ -115,7 +121,7 @@ type Reserved =
 
 type Reservation =
 	| { kind: "assign"; items: Reserved[] }
-	| { kind: "wait"; poolSize: number }
+	| { kind: "wait"; poolSize: number; notReady: string[] }
 	| { kind: "queued"; position: number; total: number; reason: string; evict: Eviction[] };
 
 const DEFAULT_POLL_MS = 2_000;
@@ -123,7 +129,8 @@ const MAX_CONFLICT_RETRIES = 5;
 /** Re-claims after a device fails its health probe (so up to 3 attempts in all). */
 const MAX_HEALTH_RETRIES = 2;
 
-function deviceResource(device: { platform: Platform; id: string; name: string }): DeviceResource {
+/** Resource of a pending (being created) device: a placeholder, never physical. */
+function placeholderResource(device: { platform: Platform; id: string; name: string }): DeviceResource {
 	return { kind: "device", platform: device.platform, id: device.id, name: device.name };
 }
 
@@ -186,7 +193,7 @@ function reserve(
 		const poolSize = inventory.filter(
 			(d) => d.platform === request.platform && d.wardenCreated && d.profile === request.profile
 		).length;
-		return { kind: "wait", poolSize };
+		return { kind: "wait", poolSize, notReady: notReadyPhysical(inventory, request) };
 	}
 	if (cap) store.dequeue(cap.queueId);
 	const common = { owner, ...(input.label !== undefined ? { label: input.label } : {}) };
@@ -195,7 +202,7 @@ function reserve(
 			const placeholder = { platform: request.platform, id: `${PENDING_PREFIX}${step.name}`, name: step.name };
 			const lease = store.insertLease(
 				{
-					resource: deviceResource(placeholder),
+					resource: placeholderResource(placeholder),
 					...common,
 					ttlMs: Math.min(input.ttlMs, input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS),
 					pid: input.selfPid ?? process.pid,
@@ -206,7 +213,7 @@ function reserve(
 		}
 		const lease = store.insertLease(
 			{
-				resource: deviceResource(step.device),
+				resource: deviceResourceOf(step.device),
 				...common,
 				ttlMs: input.ttlMs,
 				...(input.pid !== undefined ? { pid: input.pid } : {}),
@@ -222,7 +229,7 @@ const bootedState = (d: InventoryDevice): boolean => d.state === "booted" || d.s
 
 /** Cost of everything booted or booting on the host (foreign included) plus creates not yet visible in it. */
 function hostUsage(cap: CapacityRound, leases: Lease[], slimmed: ReadonlySet<string>, slimCreates: boolean): Cost {
-	const live = cap.hostInventory.filter(bootedState);
+	const live = cap.hostInventory.filter((d) => bootedState(d) && d.physical === undefined);
 	const names = new Set(live.map((d) => d.name));
 	const pending = leases.flatMap((l) =>
 		l.resource.kind === "device" && l.resource.id.startsWith(PENDING_PREFIX) && !names.has(l.resource.name)
@@ -331,12 +338,13 @@ function pickEvictions(
 		.filter(
 			(d) =>
 				d.state === "booted" &&
+				d.physical === undefined &&
 				d.wardenCreated &&
 				d.golden !== true &&
 				d.quarantined !== true &&
 				!planned.has(d.id) &&
 				!cap.noEvict.has(d.id) &&
-				!held.has(resourceKey({ kind: "device", platform: d.platform, id: d.id, name: d.name }))
+				!held.has(resourceKey(deviceResourceOf(d)))
 		)
 		.sort((a, b) => used(a) - used(b));
 	const picked: InventoryDevice[] = [];
@@ -350,7 +358,7 @@ function pickEvictions(
 				device,
 				leaseId: store.insertLease(
 					{
-						resource: deviceResource(device),
+						resource: deviceResourceOf(device),
 						owner: input.owner,
 						label: "capacity-evict",
 						ttlMs: input.ttlMs,
@@ -496,7 +504,7 @@ async function realise(input: ClaimInput, item: Reserved): Promise<Realised> {
 				store.deleteLeases([item.lease.id]);
 				return store.insertLease(
 					{
-						resource: deviceResource(device),
+						resource: deviceResourceOf(device),
 						owner: input.owner,
 						ttlMs: input.ttlMs,
 						...(input.label !== undefined ? { label: input.label } : {}),
@@ -569,7 +577,31 @@ async function checkReady(
 	return { ok: ok({ lease, device: { ...device, state: "booted" }, action: item.action }), leaseId: lease.id };
 }
 
-function waitMessage(request: DeviceRequest, poolSize: number): string {
+/** `id (name): reason` for each physical device the request would consider that is not usable now. */
+function notReadyPhysical(inventory: InventoryDevice[], request: DeviceRequest): string[] {
+	if (!request.physical) return [];
+	const scope = request.physical.ids ?? request.physical.allow;
+	return inventory.flatMap((d) => {
+		if (d.platform !== request.platform || (scope !== undefined && !scope.includes(d.id))) return [];
+		const reason = physicalNotReadyReason(d);
+		return reason === undefined ? [] : [`${d.id} (${d.name}): ${reason}`];
+	});
+}
+
+function waitMessage(request: DeviceRequest, poolSize: number, notReady: string[] = []): string {
+	if (request.physical) {
+		const { ids, allow } = request.physical;
+		const named = ids?.length ? ` (${ids.join(", ")})` : "";
+		const skipped = notReady.length > 0 ? `; not usable: ${notReady.join("; ")}` : "";
+		if (ids?.length && notReady.length > 0) {
+			return `device_offline: ${notReady.join("; ")}. Connect or unlock it and retry (see warden devices)`;
+		}
+		const list =
+			allow !== undefined
+				? ` in the allowlist (${allow.join(", ") || "empty"}; WARDEN_PHYSICAL_IDS / physical.allow)`
+				: "";
+		return `no free ready physical ${request.platform} device${named}${list}: connect and authorize it, or release the lease holding it (see warden devices / warden ls)${skipped}`;
+	}
 	return `all ${poolSize} warden-${request.profile} devices leased; max ${request.max} — use --wait or --max`;
 }
 
@@ -702,7 +734,39 @@ type Round = {
 	/** last queued line logged / reservation seen, so progress prints only on change */
 	queuedKey?: string;
 	queued?: Extract<Reservation, { kind: "queued" }>;
+	/** when the last "waiting for …" line was logged (undefined: none yet) */
+	waitLoggedAt?: number;
 };
+
+/** Gap between two "still waiting" lines of a claim that polls for a device. */
+export const WAIT_PROGRESS_MS = 30_000;
+
+/** What a polling claim waits for, in one line: a device that is not ready, or one that is leased. */
+function waitingFor(request: DeviceRequest, reservation: Extract<Reservation, { kind: "wait" }>): string {
+	if (!request.physical) return `all ${reservation.poolSize} warden-${request.profile} devices are leased`;
+	if (reservation.notReady.length > 0) return `${reservation.notReady.join("; ")}`;
+	const named = request.physical.ids?.length ? ` (${request.physical.ids.join(", ")})` : "";
+	return `a free ready physical ${request.platform} device${named}`;
+}
+
+/** Log that the claim is polling: right away, then about every `WAIT_PROGRESS_MS`, so a wait is never silent. */
+function logWaiting(
+	input: ClaimInput,
+	round: Round,
+	reservation: Extract<Reservation, { kind: "wait" }>,
+	remainingMs: number
+): void {
+	const now = input.now();
+	if (round.waitLoggedAt !== undefined && now - round.waitLoggedAt < WAIT_PROGRESS_MS) return;
+	const first = round.waitLoggedAt === undefined;
+	round.waitLoggedAt = now;
+	const left = formatDuration(remainingMs);
+	input.log?.(
+		first
+			? `waiting for ${waitingFor(input.request, reservation)} (up to ${left}; --no-wait fails at once)`
+			: `still waiting for ${waitingFor(input.request, reservation)} (${left} left)`
+	);
+}
 
 /** After a reservation: the final result, or undefined to go round again (after waiting, or without unhealthy devices). */
 async function settle(
@@ -736,8 +800,9 @@ async function settle(
 				`timed out in the boot queue at #${reservation.position} of ${reservation.total}: ${reservation.reason}`
 			);
 		}
-		return err(waitMessage(input.request, reservation.poolSize));
+		return err(waitMessage(input.request, reservation.poolSize, reservation.notReady));
 	}
+	if (reservation.kind === "wait") logWaiting(input, round, reservation, remaining);
 	await pause(input, remaining);
 	return undefined;
 }
@@ -811,6 +876,23 @@ async function quarantineUnhealthy(input: ClaimInput, bad: UnhealthyDevice[]): P
 	}
 }
 
+/** Undo what a deleted lease left set on the claimed devices; only touches the conditions code when a row exists. */
+async function undoClaimedOrphans(input: ClaimInput, claimed: ClaimedDevice[]): Promise<void> {
+	const host = input.orphans;
+	if (!host) return;
+	for (const { device } of claimed) {
+		const rows = input.store.db
+			.query<{ n: number }, [string, string]>(
+				"SELECT COUNT(*) AS n FROM orphan_conditions WHERE platform = ? AND device_id = ?"
+			)
+			.get(device.platform, device.id);
+		if (!rows || rows.n === 0) continue;
+		const { undoOrphansWith } = await import("./conditions/orphans");
+		const report = await undoOrphansWith(input.store, { now: input.now, pidAlive: input.pidAlive, ...host }, device);
+		for (const e of report.errors) input.log?.(`${device.name} (${device.id}): leftover condition not undone — ${e}`);
+	}
+}
+
 /**
  * Boot / create / wait-ready / probe every reserved device; all-or-nothing. A failed probe
  * quarantines that device and asks the caller to claim again without it (`retry`).
@@ -837,6 +919,7 @@ async function complete(
 		return { retry: bad };
 	}
 	const claimed = results.flatMap((r) => (r.ok.success ? [r.ok.data] : []));
+	await undoClaimedOrphans(input, claimed);
 	const now = input.now();
 	input.store.heartbeat(
 		claimed.map((c) => c.lease.id),

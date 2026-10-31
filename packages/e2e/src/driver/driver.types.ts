@@ -1,3 +1,12 @@
+import type {
+	ClockCondition,
+	HostFault,
+	LocationCondition,
+	NetworkCondition,
+	PermissionName,
+	PermissionState,
+	TextSize,
+} from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 
 /**
@@ -28,7 +37,13 @@ export type DriverErrorCode =
 	| "E_HID"
 	| "E_IO"
 	| "E_BAD_REQUEST"
-	| "E_INTERNAL";
+	| "E_INTERNAL"
+	// a physical phone is locked behind a secure keyguard: warden cannot (and must not) unlock it
+	| "E_DEVICE_LOCKED"
+	// the request would change something on a physical device that warden did not put there
+	| "E_REFUSED"
+	// a network / clock condition needs the app launched with the warden dylib and the app is running without it
+	| "E_NETWORK_RELAUNCH";
 
 export type DriverError = { code: DriverErrorCode; message: string; retryable: boolean; detail?: unknown };
 
@@ -143,6 +158,12 @@ export type KeyName = "Enter" | "Backspace" | "Tab" | "Space" | "Escape" | "Dele
 
 export type Modifier = "shift" | "cmd" | "alt" | "ctrl";
 
+/** What `Driver.biometrics` does: read the enrollment, (un)enroll, or present a matching / non-matching biometric. */
+export type BiometricOp = "status" | "enroll" | "unenroll" | "match" | "fail";
+
+/** `modality`: what the device scans, iOS Face ID (`face`) or Touch ID and Android (`fingerprint`). */
+export type BiometricState = { enrolled: boolean; modality: "face" | "fingerprint" };
+
 export type AlertInfo = { title?: string; message?: string; buttons: Element[] };
 
 export type HealthInfo = {
@@ -162,6 +183,20 @@ export type LaunchOptions = {
 	args?: readonly string[];
 	env?: Record<string, string>;
 	/** iOS: `--terminate-running-process`; Android: `am force-stop` first. Default true. */
+	relaunch?: boolean;
+	/**
+	 * iOS: load the warden network dylib even though no condition is set yet, so `network()` can take effect later
+	 * without a relaunch (a suite that declares `conditions.network` launches this way). Conditions set before the
+	 * launch inject on their own, a plain launch pays nothing. Ignored on Android.
+	 */
+	inject?: boolean;
+};
+
+/** Options of `Driver.network`. */
+export type NetworkOptions = {
+	/** iOS: the app to check for the dylib (default: the last app this driver launched) */
+	bundleId?: string;
+	/** iOS: relaunch a running app that lacks the dylib instead of failing with `E_NETWORK_RELAUNCH` */
 	relaunch?: boolean;
 };
 
@@ -228,8 +263,151 @@ export interface Driver {
 	alert(): DriverResult<AlertInfo | null>;
 	appearance(set?: "light" | "dark"): DriverResult<"light" | "dark">;
 	clipboard(set?: string): DriverResult<string>;
+	/**
+	 * Put the device's network into `op` (offline / online / a preset / custom speed and latency) and return what
+	 * is now in effect. Android emulator: native, verified through `dumpsys connectivity`. iOS: per app, the app
+	 * is launched with a dylib that routes it through the lease proxy (`E_NETWORK_RELAUNCH` when it runs without).
+	 * `flap` alternates the base with offline in this process (`conditions/scheduler.ts`) until the next network op
+	 * or `close()` (Android; iOS goes through the scheduler directly).
+	 */
+	network(op: NetworkCondition, opts?: NetworkOptions): DriverResult<NetworkState>;
+	/**
+	 * Replace the per-host faults (status / reset / delay / blackhole by host glob). Both platforms route the app
+	 * through the lease's shaping proxy for this. `notes` carries what the proxy cannot do as written (an https://
+	 * request matching a `status` fault is reset, the proxy does not decrypt TLS). `[]` clears them.
+	 */
+	networkFaults(faults: readonly HostFault[]): DriverResult<{ notes: readonly string[] }>;
+	/**
+	 * Simulated location: a point, a route (waypoints or GPX, played at `speedMps`), a bundled scenario, or clear.
+	 * iOS: `simctl location` (the sim plays routes itself, no loop). Android: emulator `geo fix`, routes ticked by
+	 * warden until the next op or `close()`; `clear` keeps the last fix. Physical devices: `E_UNSUPPORTED`.
+	 */
+	location(op: LocationCondition): DriverResult<void>;
+	/**
+	 * Mock the device's wall clock (monotonic clocks are never touched). `offset` shifts it from the real time,
+	 * `fixed` sets it to an instant and lets it run, `frozen` holds it there, `real` puts it back. Android emulator:
+	 * system time (`settings put global auto_time 0` + `cmd alarm set-time`), device-wide; no `frozen`
+	 * (`E_UNSUPPORTED`). iOS: the injected dylib shifts or holds the clocks of the injected app only (live, no
+	 * relaunch); an app without the dylib gets it from the next launch (`appliesOnLaunch`), or from a relaunch with
+	 * `relaunch: true`. Large offsets break TLS validity (HTTPS fails once the clock passes a certificate's dates).
+	 */
+	clock(op: ClockCondition, opts?: NetworkOptions): DriverResult<ClockState>;
+	/**
+	 * Set runtime permissions of an app, per name (`location`, `camera`, `photos`, `notifications`, ...): `granted`,
+	 * `denied` (revoked) or `unset` (back to asking). Names a platform has no service for are listed in `skipped`;
+	 * when none applies it is `E_UNSUPPORTED`. iOS: `simctl privacy` (terminates a running app). Android: `pm
+	 * grant|revoke` of the permissions the app declares. Apply before the first launch.
+	 */
+	permissions(grants: PermissionGrants, opts?: SettingOptions): DriverResult<PermissionsState>;
+	/**
+	 * Device timezone (IANA name); `null` puts it back. Android: `cmd alarm set-timezone`, device-wide, live. iOS: a
+	 * simulator has none per device, so it is staged and the app launched next gets it as `TZ` (`appliesOnLaunch`).
+	 * `previous` is the Android timezone to restore on `null` (default: the host's).
+	 */
+	timezone(tz: string | null, opts?: { previous?: string }): DriverResult<TimezoneState>;
+	/**
+	 * Locale of an app (BCP 47, `fr-FR`); `null` puts it back. Android 13+: per-app locale (`cmd locale
+	 * set-app-locales`), live. iOS: staged for the next launch as `-AppleLanguages` / `-AppleLocale`.
+	 */
+	locale(tag: string | null, opts?: SettingOptions): DriverResult<LocaleState>;
+	/**
+	 * Accessibility settings: text size, bold text, contrast, reduce motion; `null` puts them back. iOS: `simctl ui
+	 * content_size` / `increase_contrast` (no bold text or reduce motion: `skipped`). Android: `font_scale`,
+	 * `font_weight_adjustment` (no contrast or reduce motion: `skipped`).
+	 */
+	a11y(op: A11yOp | null): DriverResult<A11yState>;
+	/**
+	 * Battery level and charging; `null` puts the real battery back. Android emulator: `dumpsys battery`, seen by the
+	 * OS and the app. iOS: status bar override only (`cosmetic: true`): the app still reads the real battery.
+	 */
+	battery(op: BatteryOp | null): DriverResult<BatteryState>;
+	/** Android: `am send-trim-memory RUNNING_CRITICAL` to the running app. iOS: `E_UNSUPPORTED` (no way verified to reach an app). */
+	memoryWarning(opts?: SettingOptions): DriverResult<void>;
+	/** iOS: `simctl push` of an APNs payload (needs `aps`) to the app. Android: `E_UNSUPPORTED`. */
+	push(payload: PushPayload, opts?: SettingOptions): DriverResult<void>;
+	/** Simulated biometrics (simulators / emulators only, else `E_UNSUPPORTED`); answers the state after the op. */
+	biometrics(op: BiometricOp): DriverResult<BiometricState>;
 	readonly app: AppCommands;
 	close(): Promise<void>;
 }
+
+/** Parts of a network condition no native mechanism does; the per-lease shaping proxy (COND-4) carries them. */
+export type NetworkProxyFeature = "loss";
+
+/**
+ * What `Driver.network` left on the device. `online` is what the OS reports (verified, not assumed);
+ * `needsProxy` lists the asked-for parts that were NOT applied because they need the shaping proxy.
+ */
+export type NetworkState = {
+	online: boolean;
+	condition: NetworkCondition;
+	needsProxy: readonly NetworkProxyFeature[];
+	/**
+	 * iOS: the condition is staged (proxy configured, state written) but no running app carries the dylib yet; it
+	 * reaches the app launched next. Absent = in effect now.
+	 */
+	appliesOnLaunch?: true;
+};
+
+/** The app a setting is for (default: the last app this driver launched, else the one the session names). */
+export type SettingOptions = { bundleId?: string };
+
+export type PermissionGrants = Partial<Record<PermissionName, PermissionState>>;
+
+export type PermissionsState = {
+	bundleId: string;
+	applied: readonly { permission: PermissionName; state: PermissionState }[];
+	/** names this platform has no service for, with why */
+	skipped: readonly { permission: PermissionName; reason: string }[];
+};
+
+export type TimezoneState = {
+	/** the timezone in effect (or staged), absent after a reset on iOS */
+	timezone?: string;
+	/** Android: the timezone before this change */
+	previous?: string;
+	/** iOS: staged for the next launch */
+	appliesOnLaunch?: true;
+};
+
+export type LocaleState = {
+	locale?: string;
+	bundleId?: string;
+	appliesOnLaunch?: true;
+};
+
+export type A11yOp = {
+	textSize?: TextSize;
+	boldText?: boolean;
+	contrast?: "increased" | "normal";
+	reduceMotion?: boolean;
+};
+
+export type A11yState = {
+	applied: readonly string[];
+	/** asked for but this platform has no mechanism that works, with why */
+	skipped: readonly { setting: string; reason: string }[];
+	/** the Android font scale was clamped to the platform's range */
+	notes: readonly string[];
+};
+
+export type BatteryOp = { level?: number; charging?: boolean };
+
+export type BatteryState = { level?: number; charging?: boolean; cosmetic: boolean };
+
+/** An APNs payload: an object with an `aps` key (4096 bytes at most). */
+export type PushPayload = { aps: Record<string, unknown> } & Record<string, unknown>;
+
+/** What `Driver.clock` left on the device. */
+export type ClockState = {
+	condition: ClockCondition;
+	/** wall clock minus the host's, ms (0 for `real` and `frozen`) */
+	offsetMs: number;
+	frozen: boolean;
+	/** what the device's wall clock read when the op returned, ms since the epoch */
+	nowMs: number;
+	/** iOS: staged for the next launch of the app; absent = in effect now */
+	appliesOnLaunch?: true;
+};
 
 export type Logger = (line: string) => void;

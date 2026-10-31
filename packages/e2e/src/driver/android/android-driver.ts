@@ -1,8 +1,16 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
+import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
+import type { ConditionSink } from "../../conditions/condition-events";
+import { planRoute } from "../../conditions/location-plan";
+import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
+import { type Scheduler, startFlap } from "../../conditions/scheduler";
+import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
+	BiometricState,
 	Driver,
 	DriverCapabilities,
 	DriverError,
@@ -20,7 +28,9 @@ import type {
 } from "../driver.types";
 import { driverErr } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { NetworkProxyPort } from "../network-proxy";
 import type { DetectsAlerts } from "../observation-cache";
+import { physicalConditionOps } from "../physical-conditions";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -38,9 +48,14 @@ import {
 	buttonKeycode,
 	DRAG_STEPS,
 	dragMotionCommand,
+	dumpsysFingerprintArgv,
+	emuFingerTouchArgv,
 	GESTURE_LINE_MAX_MOVES,
+	geoFixArgv,
+	geoFixFailure,
 	gestureMotionCommand,
 	getpropArgv,
+	isEmulatorSerial,
 	keycombinationArgv,
 	keyeventArgv,
 	keyNameKeycode,
@@ -56,10 +71,12 @@ import {
 	swipeArgv,
 	tapArgv,
 	textArgvs,
+	UNENROLLED_FINGER_ID,
 	uimodeGetArgv,
 	uimodeSetArgv,
 	userRotationArgv,
 } from "./android-argv";
+import { applyAndroidClock } from "./android-clock";
 import {
 	type Clock,
 	hierarchyRotation,
@@ -72,6 +89,9 @@ import {
 	waitForBoot,
 } from "./android-device";
 import { createDumper, type DumpRoute } from "./android-dump";
+import { createAndroidNetwork } from "./android-network";
+import { createSettingsGuard, preparePhone, type SettingsGuard } from "./android-phone";
+import { createAndroidSettings } from "./android-settings";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
@@ -104,6 +124,10 @@ export type AndroidDriverOptions = {
 	/** override how the resident shell is spawned (tests) */
 	spawn?: SpawnAdb;
 	log?: Logger;
+	/** the lease's shaping proxy: loss and per-host faults route through it (`createAndroidNetwork`); without it loss stays in `needsProxy` */
+	networkProxy?: NetworkProxyPort;
+	/** told about every successful `clock` op, so the lease records the `clock` area (`leaseClockRecorder`) */
+	clockRecorder?: ClockRecorder;
 	/** skip `wm size`/`wm density` */
 	screen?: ScreenInfo;
 	/** binary runner for screenshots, default {@link bunExecBinary} */
@@ -121,6 +145,11 @@ export type AndroidDriverOptions = {
 	state?: AndroidStateStore;
 	/** the app under test: `app.openUrl` is addressed to it (`am start -p`), so no other app or chooser takes the link */
 	appPackage?: string;
+	/**
+	 * Packages besides `appPackage` that warden installed on this device (the `installs` table). On a physical phone
+	 * only these may be uninstalled or have their data cleared; anything else is `E_REFUSED` (`physical_protected`).
+	 */
+	ownedPackages?: readonly string[];
 	/** how long to wait for `sys.boot_completed`, default 30 s */
 	bootTimeoutMs?: number;
 	/**
@@ -129,6 +158,10 @@ export type AndroidDriverOptions = {
 	 * (a fake spawn, a fake dex push) a test replaces. API 26 and up only.
 	 */
 	uiad?: boolean | UiadOptions;
+	/** pacing of in-process location routes (default real time); tests pass a fake */
+	tickerClock?: TickerClock;
+	/** told about every network flap transition (the `condition` events of `results.jsonl`) */
+	conditionSink?: ConditionSink;
 };
 
 /** What the dump-and-`input` driver reports; with the server on, `unicodeText` and `nativeSettle` are true. */
@@ -155,6 +188,7 @@ const DRAG_PRESS_MS = 500;
 const DRAG_MOVE_MS = 600;
 /** worst case for one `input motionevent` process start under load */
 const DRAG_PROCESS_BUDGET_MS = 3_000;
+const GEO_FIX_MS = 10_000;
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 
 const unit = { success: true as const, data: undefined };
@@ -202,6 +236,11 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 	});
 	if (!booted.success) return failed(booted.error);
 	const sdk = booted.data.sdk;
+	const phone = booted.data.physical;
+	if (phone) {
+		const awake = await preparePhone(session, clock, phone, log);
+		if (!awake.success) return failed(awake.error);
+	}
 	const probed = options.screen ?? booted.data.screen;
 	const screen = probed ? { success: true as const, data: probed } : await readScreen(session, serial);
 	if (!screen.success) return failed(screen.error);
@@ -214,6 +253,16 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 		...(options.state ? { state: options.state } : {}),
 		...(log ? { log } : {}),
 	});
+	const settings = phone
+		? await createSettingsGuard({
+				session,
+				serial,
+				sdk,
+				pending: { rotation: saved.rotation, uimode: saved.uimode },
+				...(options.state ? { state: options.state } : {}),
+				...(log ? { log } : {}),
+			})
+		: undefined;
 	return {
 		success: true,
 		data: buildDriver(options, session, screen.data, clock, execBinary, {
@@ -221,6 +270,8 @@ export async function openAndroidDriver(options: AndroidDriverOptions): DriverRe
 			savedRoute: saved.dumpRoute,
 			savedUiadUnsupported: saved.uiadUnsupported,
 			animations,
+			settings,
+			physical: phone !== undefined,
 		}),
 	};
 }
@@ -232,6 +283,9 @@ type DeviceFacts = {
 	/** the `warden-uiad` build a past process found cannot run on this device */
 	savedUiadUnsupported: string | undefined;
 	animations: AnimationGuard;
+	/** a physical phone's rotation / night-mode guard; undefined on an emulator */
+	settings: SettingsGuard | undefined;
+	physical: boolean;
 };
 
 /**
@@ -517,6 +571,8 @@ function buildDriver(
 
 	const orientation: Driver["orientation"] = async (set?: Orientation) => {
 		if (set) {
+			const saved = await facts.settings?.beforeRotate();
+			if (saved && !saved.success) return saved;
 			for (const argv of rotationArgvs(orientationToRotation(set))) {
 				const res = await input(shellCommand(argv));
 				if (!res.success) return res;
@@ -576,12 +632,145 @@ function buildDriver(
 
 	const appearance: Driver["appearance"] = async (set) => {
 		if (set) {
+			const saved = await facts.settings?.beforeAppearance();
+			if (saved && !saved.success) return saved;
 			const res = await runChecked(session, shellCommand(uimodeSetArgv(set === "dark")), "E_UNSUPPORTED");
 			return res.success ? { success: true, data: set } : res;
 		}
 		const res = await runChecked(session, shellCommand(uimodeGetArgv()), "E_UNSUPPORTED");
 		if (!res.success) return res;
 		return { success: true, data: /Night mode:\s*yes/i.test(res.data) ? "dark" : "light" };
+	};
+
+	const { network: applyNetwork, networkFaults } = createAndroidNetwork({
+		session,
+		exec,
+		adb,
+		serial,
+		clock,
+		...(options.networkProxy ? { proxy: options.networkProxy } : {}),
+	});
+	let flapper: Scheduler | undefined;
+	const stopFlap = async (): Promise<void> => {
+		const running = flapper;
+		flapper = undefined;
+		running?.stop();
+		await running?.done;
+	};
+	/**
+	 * Any network op ends a running flap first (which puts its base back). `flap` itself applies the base, then
+	 * the scheduler alternates it with offline in this process until the next network op or `close()`.
+	 */
+	const network: Driver["network"] = async (op, opts) => {
+		await stopFlap();
+		if (op.kind !== "flap") return applyNetwork(op, opts);
+		const base = op.base ?? { kind: "online" };
+		if (base.kind === "flap") return driverErr("E_BAD_REQUEST", "flap base cannot itself be a flap");
+		if (!(op.upMs > 0 && op.downMs > 0)) return driverErr("E_BAD_REQUEST", "flap needs upMs and downMs above 0");
+		const applied = await applyNetwork(base, opts);
+		if (!applied.success) return applied;
+		const running = startFlap(
+			{ network: (condition) => applyNetwork(condition, opts) },
+			{ ...op, base, applyInitial: false },
+			{
+				...(options.tickerClock ?? realTickerClock),
+				...(options.conditionSink ? { sink: options.conditionSink } : {}),
+			}
+		);
+		flapper = running;
+		void running.done.then((outcome) => {
+			if (outcome.stopped === "failed") log?.(`network flap stopped: ${outcome.error}`);
+		});
+		return { success: true, data: { ...applied.data, condition: op } };
+	};
+	const settings = createAndroidSettings({
+		session,
+		serial,
+		...(options.appPackage ? { appPackage: options.appPackage } : {}),
+	});
+	const clockOp: Driver["clock"] = async (op) => {
+		const applied = await applyAndroidClock({ session, exec, adb, serial }, op);
+		if (applied.success) options.clockRecorder?.(op);
+		return applied;
+	};
+	let ticker: RouteTicker | undefined;
+	const stopTicker = async (): Promise<void> => {
+		const running = ticker;
+		ticker = undefined;
+		running?.stop();
+		await running?.done;
+	};
+	const geoFix = async (point: LatLon, altM?: number): DriverResult<void> => {
+		const res = await exec(geoFixArgv(adb, serial, point, altM), { timeoutMs: GEO_FIX_MS });
+		const failure = geoFixFailure(res);
+		return failure === undefined ? unit : driverErr("E_IO", failure);
+	};
+
+	/**
+	 * `adb emu geo fix` (emulators only; the console takes longitude first). A route is played by a ticker in
+	 * this process until the next location op or `close()`; a detached ticker for `warden ui` is
+	 * `conditions/route-ticker.main.ts`. The emulator has no way to un-set a fix, so `clear` stops the ticker and
+	 * the last fix stays.
+	 */
+	const location: Driver["location"] = async (op) => {
+		if (!serial.startsWith("emulator-")) {
+			return driverErr("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
+		}
+		await stopTicker();
+		if (op.kind === "clear") return unit;
+		if (op.kind === "point") return geoFix(op, op.altM);
+		const planned = await planRoute(op, (path) => readFile(path, "utf8"));
+		if (!planned.success) return driverErr("E_BAD_REQUEST", planned.error);
+		const plan = planned.data;
+		const first = plan.points[0] as LatLon;
+		const placed = await geoFix(first);
+		if (!placed.success || plan.points.length < 2) return placed;
+		ticker = startRouteTicker(plan, {
+			...(options.tickerClock ?? realTickerClock),
+			fix: async (point) => {
+				const res = await geoFix(point);
+				return res.success ? undefined : res.error.message;
+			},
+		});
+		const running = ticker;
+		void running.done.then((outcome) => {
+			if (outcome.stopped === "failed") log?.(`location route stopped: ${outcome.error}`);
+		});
+		return unit;
+	};
+
+	const touchSensor = async (fingerId: number): DriverResult<void> => {
+		const touched = await options.exec(emuFingerTouchArgv(adb, serial, fingerId), { timeoutMs: 10_000 });
+		// the console answers `KO: …` (and some builds still exit 0) when the sensor is missing
+		if (touched.exitCode === 0 && !/^KO\b/m.test(touched.stdout)) return { success: true, data: undefined };
+		return driverErr(
+			"E_IO",
+			`adb emu finger touch failed: ${`${touched.stdout}${touched.stderr}`.trim().slice(0, 200)}`
+		);
+	};
+
+	/**
+	 * `emu finger touch <id>` on the emulator console presents a fingerprint (id 1 is the enrolled one, 99 matches
+	 * nothing); `dumpsys fingerprint` says whether any is enrolled. Enrollment itself is baked into the golden snapshot.
+	 */
+	const biometrics: Driver["biometrics"] = async (op) => {
+		if (!isEmulatorSerial(serial)) {
+			return driverErr("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${serial}`);
+		}
+		if (op === "enroll" || op === "unenroll") {
+			return driverErr(
+				"E_UNSUPPORTED",
+				`Android fingerprint enrollment comes from the golden snapshot (profile \`biometrics: true\`); \`${op}\` is not available at run time`
+			);
+		}
+		if (op !== "status") {
+			const touched = await touchSensor(op === "match" ? 1 : UNENROLLED_FINGER_ID);
+			if (!touched.success) return touched;
+		}
+		const dump = await runChecked(session, shellCommand(dumpsysFingerprintArgv()), "E_UNSUPPORTED");
+		if (!dump.success) return dump;
+		const state: BiometricState = { enrolled: parseFingerprintEnrolled(dump.data), modality: "fingerprint" };
+		return { success: true, data: state };
 	};
 
 	const clipboard: Driver["clipboard"] = async () =>
@@ -638,6 +827,13 @@ function buildDriver(
 		alertIn: (snapshot) => detectAlert(snapshot.flat),
 		appearance,
 		clipboard,
+		network,
+		networkFaults,
+		location,
+		clock: clockOp,
+		...settings,
+		...(facts.physical ? physicalConditionOps(`physical Android device ${serial}`) : {}),
+		biometrics,
 		app: createAppCommands({
 			session,
 			exec,
@@ -645,10 +841,14 @@ function buildDriver(
 			serial,
 			...(log ? { log } : {}),
 			...(options.appPackage ? { appPackage: options.appPackage } : {}),
+			...(facts.physical ? { physical: true, ownedPackages: options.ownedPackages ?? [] } : {}),
 		}),
 		close: async () => {
+			await stopFlap();
+			await stopTicker();
 			await uiad?.stop();
 			await facts.animations.restore();
+			await facts.settings?.restore();
 			await Promise.all(saving.splice(0));
 			await session.close();
 		},

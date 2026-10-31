@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eventKind, readConditionEvents } from "./conditions/condition-events";
+import { conditionsOf } from "./conditions/device-conditions";
 import { createDevice } from "./device";
 import { sheetlessFor } from "./device-link";
 import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
@@ -42,7 +44,11 @@ function setup(
 	opts: { screens?: Snapshot[] | (() => Snapshot); platform?: Platform; session?: Partial<FixtureSession> } = {}
 ) {
 	const platform = opts.platform ?? "ios";
-	const driver = fakeDriver({ screens: opts.screens ?? [snapshotOf([], { platform })], platform });
+	const driver = fakeDriver({
+		screens: opts.screens ?? [snapshotOf([], { platform })],
+		platform,
+		answerAlertOnTap: true,
+	});
 	const clock = fakeClock();
 	const session: FixtureSession = { out: "/tmp/out", ...opts.session };
 	const device = createDevice({ session, driver, env: { ...env, platform }, clock });
@@ -108,11 +114,12 @@ describe("device.alert", () => {
 		let failures = 2;
 		const driver = fakeDriver({
 			screens: [withAlert("Cancel", "OK")],
+			answerAlertOnTap: true,
 			onCall: (c) => (c.method === "alert" && failures-- > 0 ? failWith("E_AX_UNAVAILABLE") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock: fakeClock() });
 		expect(await device.alert("accept")).toBe(true);
-		expect(driver.callsOf("alert")).toHaveLength(3);
+		expect(driver.callsOf("alert")).toHaveLength(4);
 	});
 
 	test("driver failures become E2eError", async () => {
@@ -130,6 +137,49 @@ describe("device.alert", () => {
 		expect(await device.alert("dismiss")).toBe(false);
 		expect(driver.calls.map((c) => c.method)).toEqual(["alert"]);
 		expect(clock.time()).toBe(0);
+	});
+});
+
+describe("device.alert on iOS: a press that does not land", () => {
+	function sheet(swallowAlertTaps: number, extra: Partial<Parameters<typeof fakeDriver>[0]> = {}) {
+		const clock = fakeClock();
+		const driver = fakeDriver({
+			screens: [withAlert("Try Face ID Again", "Cancel")],
+			alertBackends: ["ax", "axbridge"],
+			answerAlertOnTap: true,
+			swallowAlertTaps,
+			...extra,
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
+		return { driver, device, clock };
+	}
+
+	test("a press swallowed while the sheet animates in is pressed again, and answers once the alert is gone", async () => {
+		const { device, driver, clock } = sheet(1);
+		expect(await device.alert({ button: "Cancel" })).toBe(true);
+		expect(driver.callsOf("tap")).toHaveLength(2);
+		expect(clock.time()).toBeGreaterThan(0);
+	});
+
+	test("an alert that survives every press throws ACTION_FAILED instead of answering", async () => {
+		const { device, driver } = sheet(99);
+		const error = (await device.alert({ button: "Cancel" }).catch((e: unknown) => e)) as E2eError;
+		expect(error.code).toBe("ACTION_FAILED");
+		expect(error.message).toContain("Cancel");
+		expect(driver.callsOf("tap")).toHaveLength(3);
+	});
+
+	test("a different alert after the press counts as answered", async () => {
+		let taps = 0;
+		const { device, driver } = sheet(0, {
+			screens: () => (taps > 0 ? withAlert("Allow", "Don't Allow") : withAlert("Try Face ID Again", "Cancel")),
+			onCall: (c) => {
+				if (c.method === "tap") taps += 1;
+				return undefined;
+			},
+		});
+		expect(await device.alert({ button: "Cancel" })).toBe(true);
+		expect(driver.callsOf("tap")).toHaveLength(1);
 	});
 });
 
@@ -280,7 +330,7 @@ describe("device.alert on Android permission prompts", () => {
 describe("device.alert on a driver that reads one backend", () => {
 	function backends(screens: Snapshot[] | (() => Snapshot), extra: Partial<Parameters<typeof fakeDriver>[0]> = {}) {
 		const clock = fakeClock();
-		const driver = fakeDriver({ screens, alertBackends: ["ax", "axbridge"], ...extra });
+		const driver = fakeDriver({ screens, alertBackends: ["ax", "axbridge"], answerAlertOnTap: true, ...extra });
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		return { driver, device, clock };
 	}
@@ -295,10 +345,10 @@ describe("device.alert on a driver that reads one backend", () => {
 	test("an alert is answered from the same single read", async () => {
 		const { device, driver, clock } = backends([withAlert("Not Now", "Save")]);
 		expect(await device.alert("dismiss")).toBe(true);
-		expect(driver.callsOf("alertOn")).toHaveLength(1);
+		expect(driver.callsOf("alertOn")).toHaveLength(2);
 		expect(driver.callsOf("alert")).toHaveLength(0);
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
-		expect(clock.time()).toBe(0);
+		expect(clock.time()).toBe(250);
 	});
 
 	test("a modal whose buttons are not readable yet is looked at again, with sleeps", async () => {
@@ -307,7 +357,7 @@ describe("device.alert on a driver that reads one backend", () => {
 			onCall: (c) => (c.method === "alertOn" && reads++ < 2 ? { data: { buttons: [] } } : undefined),
 		});
 		expect(await device.alert("dismiss")).toBe(true);
-		expect(driver.callsOf("alertOn")).toHaveLength(3);
+		expect(driver.callsOf("alertOn")).toHaveLength(4);
 		expect(clock.time()).toBeGreaterThan(0);
 		expect(clock.time()).toBeLessThan(1000);
 	});
@@ -343,7 +393,7 @@ describe("device.alert on a driver that reads one backend", () => {
 		expect(await device.alert("accept")).toBe(true);
 		expect(driver.callsOf("alert")).toHaveLength(0);
 		expect(driver.callsOf("tap")).toHaveLength(1);
-		expect(clock.time()).toBe(0);
+		expect(clock.time()).toBe(250);
 	});
 
 	test("when both single reads fail the two-reader read answers", async () => {
@@ -352,7 +402,7 @@ describe("device.alert on a driver that reads one backend", () => {
 		});
 		expect(await device.alert("accept")).toBe(true);
 		expect(driver.calls.map((c) => c.method).slice(0, 3)).toEqual(["alertOn", "alertOn", "alert"]);
-		expect(clock.time()).toBe(0);
+		expect(clock.time()).toBe(250);
 	});
 });
 
@@ -816,6 +866,36 @@ describe("hardware and system", () => {
 	});
 });
 
+describe("device.biometrics", () => {
+	test("enroll, status, match, fail and unenroll round-trip", async () => {
+		const { device, driver } = setup();
+		expect((await device.biometrics.status()).enrolled).toBe(false);
+		expect(await device.biometrics.enroll()).toEqual({ enrolled: true, modality: "face" });
+		expect((await device.biometrics.status()).enrolled).toBe(true);
+		expect((await device.biometrics.match()).enrolled).toBe(true);
+		expect((await device.biometrics.fail()).enrolled).toBe(true);
+		expect((await device.biometrics.unenroll()).enrolled).toBe(false);
+		expect(driver.callsOf("biometrics").map((c) => c.op)).toEqual([
+			"status",
+			"enroll",
+			"status",
+			"match",
+			"fail",
+			"unenroll",
+		]);
+	});
+
+	test("E_UNSUPPORTED surfaces as an E2eError", async () => {
+		const driver = fakeDriver({
+			screens: [snapshotOf([])],
+			onCall: (c) => (c.method === "biometrics" ? failWith("E_UNSUPPORTED") : undefined),
+		});
+		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock: fakeClock() });
+		const error = await device.biometrics.enroll().catch((e: unknown) => e);
+		expect((error as E2eError).code).toBe("ACTION_FAILED");
+	});
+});
+
 describe("device.hideKeyboard", () => {
 	const withKeyboard = snapshotOf([el("textfield", { id: "email" }), el("keyboard")]);
 
@@ -993,5 +1073,92 @@ describe("device misc", () => {
 		const error = await device.home().catch((e: unknown) => e);
 		expect((error as E2eError).code).toBe("TIMEOUT");
 		expect(driver.calls).toHaveLength(0);
+	});
+});
+
+describe("device.alert on the Android autofill save sheet", () => {
+	const sheet = (): Snapshot =>
+		snapshotOf(
+			[
+				el("alert", {
+					label: "Save password to Google Password Manager?",
+					children: [
+						el("button", { id: "autofill_save_no", text: "Nie" }),
+						el("button", { id: "autofill_save_yes", text: "Weiter" }),
+					],
+				}),
+			],
+			{ platform: "android" }
+		);
+
+	for (const action of ["accept", "dismiss"] as const) {
+		test(`${action} closes it with Back and taps neither Never nor Continue`, async () => {
+			const { device, driver } = setup({ platform: "android", screens: [sheet()] });
+			expect(await device.alert(action)).toBe(true);
+			expect(driver.callsOf("pressButton").map((c) => c.button)).toEqual(["back"]);
+			expect(driver.callsOf("tap")).toHaveLength(0);
+		});
+	}
+
+	test("naming a button is refused, nothing pressed", async () => {
+		const { device, driver } = setup({ platform: "android", screens: [sheet()] });
+		const error = await device.alert({ button: "Weiter" }).catch((e: unknown) => e);
+		expect((error as { code?: string }).code).toBe("ACTION_FAILED");
+		expect(driver.callsOf("pressButton")).toHaveLength(0);
+		expect(driver.callsOf("tap")).toHaveLength(0);
+	});
+});
+
+describe("device conditions", () => {
+	const resultsPath = (): string => join(mkdtempSync(join(tmpdir(), "wdn-dev-cond-")), "results.jsonl");
+
+	test("string shorthand and during round-trip through the driver; during restores when fn throws", async () => {
+		const { driver, device } = setup();
+		await device.network.set("3g");
+		await expect(
+			device.network.during("offline", async () => {
+				throw new Error("boom");
+			})
+		).rejects.toThrow("boom");
+		expect(driver.callsOf("network").map((c) => c.op)).toEqual([
+			{ kind: "preset", preset: "3g" },
+			{ kind: "offline" },
+			{ kind: "preset", preset: "3g" },
+		]);
+	});
+
+	test("a flap is stopped by the device's teardown, which also restores the network", async () => {
+		const { driver, device } = setup();
+		const run = await device.network.flap({ up: "1h", down: "1h" });
+		expect(run.status().state).toBe("running");
+		await conditionsOf(device)?.teardown();
+		expect(run.status().state).toBe("stopped");
+		expect(driver.callsOf("network").at(-1)?.op).toEqual({ kind: "online" });
+	});
+
+	test("changes made through the API are appended to the session's results.jsonl", async () => {
+		const path = resultsPath();
+		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const device = createDevice({ session: { out: "/tmp/out", results: { path } }, driver, env });
+		await device.network.set("offline");
+		await device.location.set({ lat: 1, lon: 2 });
+		const events = readConditionEvents(readFileSync(path, "utf8"));
+		expect(events.map((e) => [e.area, eventKind(e)])).toEqual([
+			["network", "offline"],
+			["location", "point"],
+		]);
+	});
+
+	test("clock goes to the driver's clock op", async () => {
+		const { driver, device } = setup();
+		await device.clock.advance("2d");
+		expect(driver.callsOf("clock")).toHaveLength(1);
+	});
+
+	test("the call honours the attempt's signal", async () => {
+		const aborted = AbortSignal.abort(new Error("deadline"));
+		const { driver, device } = setup({ session: { signal: aborted } });
+		await expect(device.network.set("offline")).rejects.toMatchObject({ code: "TIMEOUT" });
+		expect(driver.callsOf("network")).toEqual([]);
 	});
 });

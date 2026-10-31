@@ -148,6 +148,21 @@ describe("findBatchPreset", () => {
 		expect(none.success && none.data.preset?.slim).toBeUndefined();
 	});
 
+	test("biometrics: the preset's own wins over the top-level default", () => {
+		write(JSON_CONFIG_FILE, {
+			biometrics: true,
+			batches: {
+				a: { platform: "ios", cmd: ["x"] },
+				b: { platform: "ios", biometrics: false, cmd: ["x"] },
+			},
+		});
+		const a = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const b = findBatchPreset({ start: dir, stopAt: dir, name: "b" });
+		if (!a.success || !b.success) throw new Error("config");
+		expect(a.data.preset?.biometrics).toBe(true);
+		expect(b.data.preset?.biometrics).toBe(false);
+	});
+
 	test("headless unset everywhere → undefined", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
 		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });

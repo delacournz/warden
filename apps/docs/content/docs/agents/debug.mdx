@@ -34,7 +34,7 @@ warden dev logs --kind bundle_failed,error     # does it build? (Metro's output,
 warden dev logs --since 5m --follow            # stream it
 warden ui exceptions                           # uncaught errors, symbolicated
 warden ui logs --level warn --since 2m         # console, warnings and up
-warden ui network --status 4xx                 # failed requests
+warden ui network log --status 4xx              # failed requests
 warden ui eval 'useStore.getState().todos.length'
 warden ui tree --max 40                        # components on screen, with testIDs
 warden ui route                                # (tabs)/todos

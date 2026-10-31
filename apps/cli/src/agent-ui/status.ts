@@ -1,17 +1,34 @@
-import { describeOwner } from "@delacour/warden-core/types";
+import { activeConditions } from "@delacour/warden-core/conditions/conditions";
+import { describeOwner, isPhysicalIosId } from "@delacour/warden-core/types";
 import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { conditionsLine } from "./condition-text";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
-import { ANDROID_HOST_KIND, defaultHelperDeps, helperStatus, SIMD_KIND } from "./helper";
+import {
+	ANDROID_HOST_KIND,
+	defaultHelperDeps,
+	type HelperKind,
+	helperStatus,
+	IOS_RUNNER_KIND,
+	SIMD_KIND,
+} from "./helper";
 import { recordingFile } from "./paths";
 import { runUi, type UiOptionValues } from "./run";
 import { readState } from "./state";
+
+/** The resident helper a device has: the Android host, a physical iPhone's runner host, or `warden-simd`. */
+function helperKindOf(device: Pick<UiDevice, "platform" | "udid">): HelperKind {
+	if (device.platform === "android") return ANDROID_HOST_KIND;
+	return isPhysicalIosId(device.udid) ? IOS_RUNNER_KIND : SIMD_KIND;
+}
 
 /** `warden ui status`: the device, the caller's lease on it, the helper and the recording in progress. */
 export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "status", opts, async (device: UiDevice) => {
 		const { lease } = device;
+		const conditions = activeConditions(ctx.store(), lease.id);
+		const conditionsText = conditionsLine(conditions);
 		const result = {
 			lease: {
 				id: lease.id,
@@ -22,13 +39,9 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 				ttlMs: lease.ttlMs,
 				heartbeatAt: lease.heartbeatAt,
 			},
-			helper: helperStatus(
-				ctx,
-				device.udid,
-				defaultHelperDeps,
-				device.platform === "android" ? ANDROID_HOST_KIND : SIMD_KIND
-			),
+			helper: helperStatus(ctx, device.udid, defaultHelperDeps, helperKindOf(device)),
 			recording: await recordingOf(ctx, device.udid),
+			conditions: conditions.map((record) => ({ area: record.area, value: record.value, setAt: record.setAt })),
 		};
 		const { color } = ctx.ui;
 		const text = [
@@ -36,6 +49,7 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 			`lease     ${lease.id} ${color.dim(`${device.action}, ${describeOwner(lease.owner)}`)}`,
 			`helper    ${helperLine(result.helper)}`,
 			`recording ${result.recording === null ? "none" : `${result.recording.name} → ${result.recording.target} (${result.recording.steps ?? "?"} steps)`}`,
+			...(conditionsText === undefined ? [] : [`conditions ${conditionsText}`]),
 		].join("\n");
 		return ok({ device: { udid: device.udid, platform: device.platform, name: device.name }, result, text });
 	});

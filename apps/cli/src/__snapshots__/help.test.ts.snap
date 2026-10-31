@@ -143,7 +143,15 @@ Options:
                          android)
   --no-slim              iOS: leave the simulator daemons running (config slim /
                          WARDEN_SLIM=0 also turn slimming off)
+  --biometrics           claim devices with a fingerprint / Face ID enrolled
+                         (own pool and golden; config biometrics)
   --json                 machine-readable output
+  --physical             claim a connected physical phone/tablet (never booted,
+                         shut down or created by warden)
+  --serial <serial...>   android: claim these physical devices by adb serial
+                         (implies --physical)
+  --udid <udid...>       ios: claim these physical devices by CoreDevice UDID
+                         (implies --physical)
   --remote               lease a hosted device from warden cloud (warden login
                          first)
   --view                 with --remote: open the device in the warden viewer and
@@ -207,7 +215,15 @@ Options:
                          android)
   --no-slim              iOS: leave the simulator daemons running (config slim /
                          WARDEN_SLIM=0 also turn slimming off)
+  --biometrics           claim devices with a fingerprint / Face ID enrolled
+                         (own pool and golden; config biometrics)
   --json                 machine-readable output
+  --physical             claim a connected physical phone/tablet (never booted,
+                         shut down or created by warden)
+  --serial <serial...>   android: claim these physical devices by adb serial
+                         (implies --physical)
+  --udid <udid...>       ios: claim these physical devices by CoreDevice UDID
+                         (implies --physical)
   --port <from:span>     lease a port from FROM..FROM+SPAN-1 (inclusive) for the
                          child (WARDEN_PORT_<i>); repeatable (default: [])
   --app                  install the project's app (fingerprint → cache → EAS →
@@ -270,6 +286,8 @@ Options:
                               on android)
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
+  --biometrics                claim devices with a fingerprint / Face ID
+                              enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
   --udid <udid>               use this device instead of claiming one
   --lease <id>                use the device of this lease
@@ -417,7 +435,15 @@ Options:
                               on android)
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
+  --biometrics                claim devices with a fingerprint / Face ID
+                              enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
+  --physical                  claim a connected physical phone/tablet (never
+                              booted, shut down or created by warden)
+  --serial <serial...>        android: claim these physical devices by adb
+                              serial (implies --physical)
+  --udid <udid...>            ios: claim these physical devices by CoreDevice
+                              UDID (implies --physical)
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
                               (default: [])
@@ -532,7 +558,15 @@ Options:
                               on android)
   --no-slim                   iOS: leave the simulator daemons running (config
                               slim / WARDEN_SLIM=0 also turn slimming off)
+  --biometrics                claim devices with a fingerprint / Face ID
+                              enrolled (own pool and golden; config biometrics)
   --json                      machine-readable output
+  --physical                  claim a connected physical phone/tablet (never
+                              booted, shut down or created by warden)
+  --serial <serial...>        android: claim these physical devices by adb
+                              serial (implies --physical)
+  --udid <udid...>            ios: claim these physical devices by CoreDevice
+                              UDID (implies --physical)
   --port <from:span>          lease a port from FROM..FROM+SPAN-1 (inclusive)
                               for the child (WARDEN_PORT_<i>); repeatable
                               (default: [])
@@ -602,6 +636,7 @@ Options:
 
 Examples:
   warden e2e mobile --base origin/main --count 2
+  warden e2e mobile --physical --platform android
   warden e2e mobile --dev --all
   warden e2e --dry-run --files src/modules/chat/api.ts"
 `;
@@ -677,6 +712,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -720,6 +757,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -750,6 +789,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -797,6 +838,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -829,6 +872,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -872,6 +917,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -920,6 +967,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -949,6 +998,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -977,6 +1028,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1010,6 +1063,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1041,6 +1096,8 @@ Options:
                             when none is held
   --platform <platform>     platform for --claim with no device named: ios
                             (default) | android
+  --physical                with --claim and no device named: claim a connected
+                            phone, not an emulator
   --profile <slug>          device profile for --claim with no device named
   --runtime <runtime>       runtime for --claim with no device named
   --force                   drive the device even while a live warden process
@@ -1086,6 +1143,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1130,6 +1189,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1165,6 +1226,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1194,6 +1257,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1231,6 +1296,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1263,6 +1330,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1292,6 +1361,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1332,6 +1403,8 @@ Options:
                           when none is held
   --platform <platform>   platform for --claim with no device named: ios
                           (default) | android
+  --physical              with --claim and no device named: claim a connected
+                          phone, not an emulator
   --profile <slug>        device profile for --claim with no device named
   --runtime <runtime>     runtime for --claim with no device named
   --force                 drive the device even while a live warden process
@@ -1419,6 +1492,7 @@ Arguments:
 
 Options:
   --mem       add each booted iOS sim's real memory (summed phys_footprint, MB)
+  --physical  only real phones and tablets (with why an unusable one is skipped)
   --json      machine-readable output
   -h, --help  display help for command"
 `;
@@ -1840,68 +1914,96 @@ drive a leased simulator / emulator (agents): status, snapshot, find, open,
 press, fill, scroll, …
 
 Options:
-  -h, --help                   display help for command
+  -h, --help                      display help for command
 
 Commands:
-  status                       device, lease, helper and recording state
-  close                        stop this device's helper (the lease stays);
-                               --app also quits the app, --release frees the
-                               lease
-  snapshot                     the screen as @eN lines (bumps the generation)
-  find <selector...>           elements matching a selector, with @eN refs
-                               (bumps the generation)
-  open <target>                launch an app (bundle id) or open a URL; --metro
-                               starts the dev client on that Metro; --kind
-                               installs that build first
-  press <target...>            tap an element or point; an @eN older than 30 s
-                               is re-verified first
-  tap <target...>              tap an element or point; an @eN older than 30 s
-                               is re-verified first
-  fill <args...>               replace a text field's content, then read it back
-                               (use -- before text starting with -)
-  type <text>                  type into whatever has focus
-  key <name>                   press a key: Enter Backspace Tab Space Escape
-                               Delete Up Down Left Right
-  scroll <direction> [amount]  scroll content: scroll down reveals what is
-                               below; --until swipes until a selector is on
-                               screen
-  alert <action>               answer the system alert / sheet on top, or read
-                               it
-  home                         press the home button
-  back                         press back (Android only)
-  screen                       the device screen: orientation, appearance,
-                               screenshot, video
-  gesture                      touch gestures: swipe, longpress, pinch, rotate,
-                               raw paths
-  wait <args...>               poll (100 ms, --timeout) until an element is
-                               visible; also: absent <sel> | text <…> | stable
-                               [ms]
-  is <args...>                 exit 0 when the element is in that state, 1 when
-                               not
-  get <args...>                print one property of an element (count = how
-                               many match)
-  bench                        time snapshot, press, settle, tree and driver
-                               open on this device against the speed targets
-  record                       turn a warden ui session into an e2e spec: start
-                               <name> | note | use <module#fn> | undo | status |
-                               cancel | stop. The journal is kept until a
-                               successful stop or cancel
-  eval <expression>            run JavaScript in the app (Hermes) and print the
-                               value
-  tree                         the app's React components (testID, label, text,
-                               screen) with rects
-  logs [args...]               app console: logs [n] | start | stop | mark
-                               <label> | clear
-  network [n]                  the app's fetch calls recorded by \`logs start\` or
-                               the dev session
-  reload                       reload the app's JavaScript
-  exceptions                   the app's uncaught exceptions
-  route                        the route key of the screen the app is on
-  devtools                     the dev session's devtools broker: status |
-                               resume
-  logpoint                     log a value whenever a source line runs, without
-                               pausing: add | list | rm | clear | hits
-  help [command]               display help for command
+  status                          device, lease, helper and recording state
+  close                           stop this device's helper (the lease stays);
+                                  --app also quits the app, --release frees the
+                                  lease
+  snapshot                        the screen as @eN lines (bumps the generation)
+  find <selector...>              elements matching a selector, with @eN refs
+                                  (bumps the generation)
+  open <target>                   launch an app (bundle id) or open a URL;
+                                  --metro starts the dev client on that Metro;
+                                  --kind installs that build first
+  press <target...>               tap an element or point; an @eN older than 30
+                                  s is re-verified first
+  tap <target...>                 tap an element or point; an @eN older than 30
+                                  s is re-verified first
+  fill <args...>                  replace a text field's content, then read it
+                                  back (use -- before text starting with -)
+  type <text>                     type into whatever has focus
+  key <name>                      press a key: Enter Backspace Tab Space Escape
+                                  Delete Up Down Left Right
+  scroll <direction> [amount]     scroll content: scroll down reveals what is
+                                  below; --until swipes until a selector is on
+                                  screen
+  alert <action>                  answer the system alert / sheet on top, or
+                                  read it
+  home                            press the home button
+  back                            press back (Android only)
+  biometrics [op]                 simulated Face ID / Touch ID / fingerprint:
+                                  status (default), enroll, unenroll, match,
+                                  fail
+  screen                          the device screen: orientation, appearance,
+                                  screenshot, video
+  gesture                         touch gestures: swipe, longpress, pinch,
+                                  rotate, raw paths
+  wait <args...>                  poll (100 ms, --timeout) until an element is
+                                  visible; also: absent <sel> | text <…> |
+                                  stable [ms]
+  is <args...>                    exit 0 when the element is in that state, 1
+                                  when not
+  get <args...>                   print one property of an element (count = how
+                                  many match)
+  bench                           time snapshot, press, settle, tree and driver
+                                  open on this device against the speed targets
+  record                          turn a warden ui session into an e2e spec:
+                                  start <name> | note | use <module#fn> | undo |
+                                  status | cancel | stop. The journal is kept
+                                  until a successful stop or cancel
+  eval <expression>               run JavaScript in the app (Hermes) and print
+                                  the value
+  tree                            the app's React components (testID, label,
+                                  text, screen) with rects
+  logs [args...]                  app console: logs [n] | start | stop | mark
+                                  <label> | clear
+  reload                          reload the app's JavaScript
+  exceptions                      the app's uncaught exceptions
+  route                           the route key of the screen the app is on
+  devtools                        the dev session's devtools broker: status |
+                                  resume
+  logpoint                        log a value whenever a source line runs,
+                                  without pausing: add | list | rm | clear |
+                                  hits
+  network [n]                     the app's network: log (recorded requests) |
+                                  set | flap | fault | status | reset (device
+                                  conditions)
+  location <action> [args...]     simulate the device location: set | route |
+                                  gpx | scenario | clear | status
+  clock <action> [args...]        mock the device wall clock: set <iso>
+                                  [--frozen] | advance <dur> | status | reset
+  permission <action> [pairs...]  app permissions: set
+                                  <name>=<granted|denied|unset>... | reset |
+                                  status
+  timezone <tz>                   device timezone: <IANA name> | reset | status
+                                  (iOS: applies to the app launched next)
+  locale <tag>                    the app's locale: <BCP 47 tag> | reset |
+                                  status (Android 13+; iOS: applies to the app
+                                  launched next)
+  a11y <action>                   accessibility: set [--text-size] [--bold]
+                                  [--contrast] [--reduce-motion] | reset |
+                                  status
+  battery <action>                battery: set [--level] [--charging] | reset |
+                                  status (Android emulator real; iOS status bar
+                                  only)
+  memory-warning                  send the running app a memory warning (Android
+                                  only: iOS has no mechanism that works)
+  push <payload>                  deliver a push notification to the app (iOS
+                                  only): a JSON file or inline JSON with an
+                                  \`aps\` object
+  help [command]                  display help for command
 
 $ warden ui status --help
 Usage: warden ui status [options]
@@ -1916,6 +2018,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -1943,6 +2047,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -1971,6 +2077,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -1997,6 +2105,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2034,6 +2144,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2063,6 +2175,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2092,6 +2206,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2127,6 +2243,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2156,6 +2274,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2184,6 +2304,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2218,6 +2340,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2246,6 +2370,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2271,6 +2397,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2296,6 +2424,39 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui biometrics --help
+Usage: warden ui biometrics [options] [op]
+
+simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll,
+match, fail
+
+Arguments:
+  op                     status | enroll | unenroll | match | fail
+
+Options:
+  --settle [ms]          wait for a quiet screen afterwards (default budget 3000
+                         ms) and print what changed
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2341,6 +2502,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2369,6 +2532,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2395,6 +2560,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2422,6 +2589,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2473,6 +2642,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2503,6 +2674,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2536,6 +2709,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2569,6 +2744,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2598,6 +2775,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2626,6 +2805,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2653,6 +2834,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2679,6 +2862,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2706,6 +2891,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2774,6 +2961,8 @@ Options:
                            when none is held
   --platform <platform>    platform for --claim with no device named: ios
                            (default) | android
+  --physical               with --claim and no device named: claim a connected
+                           phone, not an emulator
   --profile <slug>         device profile for --claim with no device named
   --runtime <runtime>      runtime for --claim with no device named
   --force                  drive the device even while a live warden process
@@ -2800,6 +2989,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2829,6 +3020,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2855,6 +3048,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2878,6 +3073,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2901,6 +3098,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2931,6 +3130,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2958,6 +3159,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -2987,6 +3190,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3021,6 +3226,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3031,39 +3238,6 @@ Options:
   --json                 machine-readable output: one JSON document on stdout
   --metro <url>          Metro URL (default: WARDEN_METRO_URL, state.json, then
                          this owner's leased ports)
-  -h, --help             display help for command
-
-$ warden ui network --help
-Usage: warden ui network [options] [n]
-
-the app's fetch calls recorded by \`logs start\` or the dev session
-
-Arguments:
-  n                      entries to show (default 50)
-
-Options:
-  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
-                         an ISO time
-  --include <parts>      headers,body
-  --id <id>              one entry in full
-  --grep <text>          only URLs containing text (case-insensitive)
-  --status <status>      only this status: 404 | 4xx
-  --limit <n>            at most the last n entries
-  --udid <udid>          device udid (iOS) / serial (Android)
-  --serial <serial>      Android serial
-  --lease <id>           use the device behind this lease id
-  --claim                take over a stale/missing lease, or claim a device when
-                         none is held
-  --platform <platform>  platform for --claim with no device named: ios
-                         (default) | android
-  --profile <slug>       device profile for --claim with no device named
-  --runtime <runtime>    runtime for --claim with no device named
-  --force                drive the device even while a live warden process (e2e,
-                         batch, run) holds your lease on it; your own warden dev
-                         device is shared without it
-  --timeout <ms>         deadline in milliseconds (default 5000)
-  --no-record            don't append this step to a running recording
-  --json                 machine-readable output: one JSON document on stdout
   -h, --help             display help for command
 
 $ warden ui reload --help
@@ -3079,6 +3253,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3107,6 +3283,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3130,6 +3308,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3168,6 +3348,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3191,6 +3373,8 @@ Options:
                          none is held
   --platform <platform>  platform for --claim with no device named: ios
                          (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
   --profile <slug>       device profile for --claim with no device named
   --runtime <runtime>    runtime for --claim with no device named
   --force                drive the device even while a live warden process (e2e,
@@ -3283,7 +3467,503 @@ Options:
   --limit <n>     at most the last n hits (default 50)
   --udid <id>     which dev session (default: the only one)
   --json          print one JSON document
-  -h, --help      display help for command"
+  -h, --help      display help for command
+
+$ warden ui network --help
+Usage: warden ui network [options] [command] [n]
+
+the app's network: log (recorded requests) | set | flap | fault | status | reset
+(device conditions)
+
+Arguments:
+  n                deprecated: same as \`network log [n]\` (default 50)
+
+Options:
+  -h, --help       display help for command
+
+Commands:
+  log [n]          the app's fetch calls recorded by \`logs start\` or the dev
+                   session
+  set <condition>  change the device network: online | offline | edge | 3g | 4g
+                   | lte | wifi | slow | lossy
+  flap             alternate the network up and down on a schedule
+  fault [args...]  fail requests to a host: status:503 | reset | delay:2s |
+                   blackhole (--clear removes all)
+  status           the network condition recorded on the lease
+  reset            network back to normal; stops the flap scheduler and clears
+                   faults
+
+$ warden ui network log --help
+Usage: warden ui network log [options] [n]
+
+the app's fetch calls recorded by \`logs start\` or the dev session
+
+Arguments:
+  n                      entries to show (default 50)
+
+Options:
+  --since <when>         only entries from the last <dur> (30s, 5m, 2h) or after
+                         an ISO time
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  --include <parts>      headers,body
+  --id <id>              one entry in full
+  --grep <text>          only URLs containing text (case-insensitive)
+  --status <status>      only this status: 404 | 4xx
+  --limit <n>            at most the last n entries
+  -h, --help             display help for command
+
+$ warden ui network set --help
+Usage: warden ui network set [options] <condition>
+
+change the device network: online | offline | edge | 3g | 4g | lte | wifi | slow
+| lossy
+
+Arguments:
+  condition              online | offline | edge | 3g | 4g | lte | wifi | slow |
+                         lossy
+
+Options:
+  --latency <ms>         added round-trip time (overrides the preset's)
+  --jitter <ms>          ms of jitter
+  --down <kbps>          kbps down
+  --up <kbps>            kbps up
+  --loss <pct>           packet loss, 0-100
+  --relaunch             iOS: relaunch the app with the network dylib when it
+                         runs without (else E_NETWORK_RELAUNCH)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network flap --help
+Usage: warden ui network flap [options]
+
+alternate the network up and down on a schedule
+
+Options:
+  --up <dur>             how long the network stays up (default 3s)
+  --down <dur>           how long the network is down (default 10s)
+  --jitter <pct>         percent of phase length
+  --seed <n>             same seed, same sequence (default 1)
+  --relaunch             iOS: relaunch the app with the network dylib when it
+                         runs without
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network fault --help
+Usage: warden ui network fault [options] [args...]
+
+fail requests to a host: status:503 | reset | delay:2s | blackhole (--clear
+removes all)
+
+Arguments:
+  args                   <host-glob> <status:503|reset|delay:2s|blackhole>
+
+Options:
+  --clear                remove every fault
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network status --help
+Usage: warden ui network status [options]
+
+the network condition recorded on the lease
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui network reset --help
+Usage: warden ui network reset [options]
+
+network back to normal; stops the flap scheduler and clears faults
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui location --help
+Usage: warden ui location [options] <action> [args...]
+
+simulate the device location: set | route | gpx | scenario | clear | status
+
+Arguments:
+  action                 set <lat,lon> | route <lat,lon>... | gpx <file> |
+                         scenario <name> | clear | status
+  args                   the points, file or scenario name
+
+Options:
+  --alt <m>              set: altitude in metres
+  --speed <m/s>          route / gpx: speed (default 20)
+  --interval <s>         route: seconds between fixes (default 1)
+  --loop                 route: start over at the end (Android; simctl cannot
+                         loop)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui clock --help
+Usage: warden ui clock [options] <action> [args...]
+
+mock the device wall clock: set <iso> [--frozen] | advance <dur> | status |
+reset
+
+Arguments:
+  action                 set <iso> | advance <dur> | status | reset
+  args                   the time or duration
+
+Options:
+  --frozen               set: hold the clock at that instant (iOS only; Android
+                         has no frozen clock)
+  --relaunch             iOS: relaunch the app with the dylib when it runs
+                         without (else it applies from the next launch)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui permission --help
+Usage: warden ui permission [options] <action> [pairs...]
+
+app permissions: set <name>=<granted|denied|unset>... | reset | status
+
+Arguments:
+  action                 set | reset | status
+  pairs                  set: location=denied camera=granted ... (location,
+                         locationAlways, camera, photos, ...)
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui timezone --help
+Usage: warden ui timezone [options] <tz>
+
+device timezone: <IANA name> | reset | status (iOS: applies to the app launched
+next)
+
+Arguments:
+  tz                     Pacific/Auckland | reset | status
+
+Options:
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui locale --help
+Usage: warden ui locale [options] <tag>
+
+the app's locale: <BCP 47 tag> | reset | status (Android 13+; iOS: applies to
+the app launched next)
+
+Arguments:
+  tag                    fr-FR | reset | status
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui a11y --help
+Usage: warden ui a11y [options] <action>
+
+accessibility: set [--text-size] [--bold] [--contrast] [--reduce-motion] | reset
+| status
+
+Arguments:
+  action                 set | reset | status
+
+Options:
+  --text-size <size>     a name (accessibility-large, extra-large, ...) or a
+                         font scale (1.5)
+  --bold                 bold text (Android)
+  --no-bold              bold text off
+  --contrast <mode>      increased | normal (iOS)
+  --reduce-motion        reduce motion (no mechanism on either platform:
+                         reported as skipped)
+  --no-reduce-motion     reduce motion off
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui battery --help
+Usage: warden ui battery [options] <action>
+
+battery: set [--level] [--charging] | reset | status (Android emulator real; iOS
+status bar only)
+
+Arguments:
+  action                 set | reset | status
+
+Options:
+  --level <percent>      0-100
+  --charging             plugged in and charging
+  --no-charging          on battery
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui memory-warning --help
+Usage: warden ui memory-warning [options]
+
+send the running app a memory warning (Android only: iOS has no mechanism that
+works)
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command
+
+$ warden ui push --help
+Usage: warden ui push [options] <payload>
+
+deliver a push notification to the app (iOS only): a JSON file or inline JSON
+with an \`aps\` object
+
+Arguments:
+  payload                payload.json | '{"aps":{"alert":"hi"}}'
+
+Options:
+  --app <bundle>         the app's bundle id / package (default: the app \`open\`
+                         launched)
+  --udid <udid>          device udid (iOS) / serial (Android)
+  --serial <serial>      Android serial
+  --lease <id>           use the device behind this lease id
+  --claim                take over a stale/missing lease, or claim a device when
+                         none is held
+  --platform <platform>  platform for --claim with no device named: ios
+                         (default) | android
+  --physical             with --claim and no device named: claim a connected
+                         phone, not an emulator
+  --profile <slug>       device profile for --claim with no device named
+  --runtime <runtime>    runtime for --claim with no device named
+  --force                drive the device even while a live warden process (e2e,
+                         batch, run) holds your lease on it; your own warden dev
+                         device is shared without it
+  --timeout <ms>         deadline in milliseconds (default 5000)
+  --no-record            don't append this step to a running recording
+  --json                 machine-readable output: one JSON document on stdout
+  -h, --help             display help for command"
 `;
 
 exports[`help output warden __affected-graph --help (and nested subcommands) 1`] = `
@@ -3310,6 +3990,69 @@ Options:
   --socket <path>
   --idle-timeout <seconds>
   -h, --help                display help for command"
+`;
+
+exports[`help output warden __ios-runner-host --help (and nested subcommands) 1`] = `
+"$ warden __ios-runner-host --help
+Usage: warden __ios-runner-host [options]
+
+resident iPhone runner host behind \`warden ui\` (internal)
+
+Options:
+  --udid <udid>
+  --socket <path>
+  --idle-timeout <seconds>
+  -h, --help                display help for command"
+`;
+
+exports[`help output warden __ios-runner-restart --help (and nested subcommands) 1`] = `
+"$ warden __ios-runner-restart --help
+Usage: warden __ios-runner-restart [options]
+
+restart an iPhone's runner host for a running e2e session (internal)
+
+Options:
+  --udid <udid>
+  -h, --help     display help for command"
+`;
+
+exports[`help output warden __netproxy --help (and nested subcommands) 1`] = `
+"$ warden __netproxy --help
+Usage: warden __netproxy [options] <args>
+
+a lease's network shaping proxy, started by \`warden ui net\` (internal)
+
+Arguments:
+  args        the proxy arguments, as JSON
+
+Options:
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden __route-ticker --help (and nested subcommands) 1`] = `
+"$ warden __route-ticker --help
+Usage: warden __route-ticker [options] <config>
+
+the detached Android location route ticker (internal)
+
+Arguments:
+  config      the ticker config, as JSON
+
+Options:
+  -h, --help  display help for command"
+`;
+
+exports[`help output warden __scheduler --help (and nested subcommands) 1`] = `
+"$ warden __scheduler --help
+Usage: warden __scheduler [options] <config>
+
+the detached network flap / timeline scheduler (internal)
+
+Arguments:
+  config      the scheduler config, as JSON
+
+Options:
+  -h, --help  display help for command"
 `;
 
 exports[`help output warden ui-collect --help (and nested subcommands) 1`] = `

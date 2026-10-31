@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Exec } from "@delacour/warden-core/exec";
 import { execError } from "@delacour/warden-core/exec";
+import { RUNNER_BLOB } from "@delacour/warden-core/ios-runner/pack";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { RUNTIME_BLOB } from "../e2e/e2e-runtime";
 import { type BuildInfo, DEFINE_KEY } from "./build-info";
@@ -53,6 +54,11 @@ export function runtimeBlobArgs(sourceDir: string, blob: string, version: string
 	return ["bun", join(cliDir(sourceDir), "scripts", "e2e-runtime.ts"), sourceDir, blob, version];
 }
 
+/** `bun <apps/cli/scripts/ios-runner-blob.ts> <repoRoot> <blob>`: writes the iPhone runner sources the binary embeds. */
+export function runnerBlobArgs(sourceDir: string, blob: string): string[] {
+	return ["bun", join(cliDir(sourceDir), "scripts", "ios-runner-blob.ts"), sourceDir, blob];
+}
+
 export function cliDir(sourceDir: string): string {
 	return join(sourceDir, "apps", "cli");
 }
@@ -83,14 +89,18 @@ export async function buildFromSource(
 	};
 	// the blob's name is what `Bun.embeddedFiles` reports (plus a hash), so it must be called RUNTIME_BLOB
 	const blob = join(dirname(outfile), RUNTIME_BLOB);
-	const pack = runtimeBlobArgs(sourceDir, blob, version);
-	const packed = await exec(pack, { cwd: cliDir(sourceDir) });
-	if (packed.exitCode !== 0) return err(execError(pack, packed));
+	const runnerBlob = join(dirname(outfile), RUNNER_BLOB);
 	try {
-		const cmd = compileArgs({ entry: join(cliDir(sourceDir), "src", "cli.ts"), outfile, info, embed: [blob] });
+		for (const pack of [runtimeBlobArgs(sourceDir, blob, version), runnerBlobArgs(sourceDir, runnerBlob)]) {
+			const packed = await exec(pack, { cwd: cliDir(sourceDir) });
+			if (packed.exitCode !== 0) return err(execError(pack, packed));
+		}
+		const embed = [blob, runnerBlob];
+		const cmd = compileArgs({ entry: join(cliDir(sourceDir), "src", "cli.ts"), outfile, info, embed });
 		const result = await exec(cmd, { cwd: cliDir(sourceDir) });
 		return result.exitCode === 0 ? ok(info) : err(execError(cmd, result));
 	} finally {
 		rmSync(blob, { force: true });
+		rmSync(runnerBlob, { force: true });
 	}
 }

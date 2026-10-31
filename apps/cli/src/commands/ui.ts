@@ -1,7 +1,10 @@
 import { registerAuthoringCommands } from "../agent-ui/authoring-register";
 import type { CloseOptionValues } from "../agent-ui/close";
+import { registerConditionCommands } from "../agent-ui/conditions-register";
 import { registerDevtoolsCommands } from "../agent-ui/devtools-register";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
+import { registerNetworkGroup } from "../agent-ui/network-register";
+import { registerSettingsCommands } from "../agent-ui/settings-register";
 import { withUiOptions } from "../agent-ui/ui-options";
 import { type Command, defineCommand } from "../command";
 import { kindOption } from "../install-flags";
@@ -167,6 +170,16 @@ export function createUiCommand(deps: UiDeps): Command {
 					done(await uiHardware(ctx, deps, button, opts));
 				});
 			}
+			withUiOptions(
+				cmd
+					.command("biometrics")
+					.description("simulated Face ID / Touch ID / fingerprint: status (default), enroll, unenroll, match, fail")
+					.argument("[op]", "status | enroll | unenroll | match | fail")
+					.option("--settle [ms]", SETTLE)
+			).action(async (op, opts) => {
+				const { uiBiometrics } = await import("../agent-ui/controls");
+				done(await uiBiometrics(ctx, deps, op, opts));
+			});
 			const screen = cmd.command("screen").description("the device screen: orientation, appearance, screenshot, video");
 			withUiOptions(
 				screen
@@ -315,6 +328,9 @@ export function createUiCommand(deps: UiDeps): Command {
 			});
 			registerAuthoringCommands(cmd, ctx, done, deps);
 			registerDevtoolsCommands(cmd, ctx, done, deps);
+			registerNetworkGroup(cmd, ctx, done, deps);
+			registerConditionCommands(cmd, ctx, done, deps);
+			registerSettingsCommands(cmd, ctx, done, deps);
 		},
 	});
 }

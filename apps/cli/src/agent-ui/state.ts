@@ -60,6 +60,8 @@ export type UiState = {
 	helper?: HelperRecord;
 	/** the device's resident `warden __android-host` (Android): same record as `helper`, the binary being warden itself */
 	androidHost?: HelperRecord;
+	/** the physical iPhone's resident `warden __ios-runner-host`: same record as `helper`, the binary being warden itself */
+	iosRunner?: HelperRecord;
 	/** the running `logs start` collector (`warden ui-collect`): host pid, start time and (newer warden) its `--out` dir */
 	collector?: { pid: number; startedAt: number; out?: string };
 	/** the running `video start` recorder: host pid, output file, and (Android) the file on the device */
@@ -168,6 +170,7 @@ const stateSchema = z.object({
 		.optional(),
 	helper: helperRecordSchema.optional(),
 	androidHost: helperRecordSchema.optional(),
+	iosRunner: helperRecordSchema.optional(),
 	collector: z.object({ pid: z.number(), startedAt: z.number(), out: z.string().optional() }).optional(),
 	video: z
 		.object({ pid: z.number(), path: z.string(), remote: z.string().optional(), startedAt: z.number() })
