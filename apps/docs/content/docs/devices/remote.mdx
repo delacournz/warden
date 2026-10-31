@@ -18,6 +18,26 @@ warden logout
 
 The session token is saved to `~/.warden/auth.json`, and only you can read it. In CI, set `WARDEN_TOKEN` instead. `WARDEN_API_URL` points the CLI at another warden cloud, such as staging. A saved token is only ever sent to the server that issued it.
 
+## Several accounts and linked directories
+
+Work for more than one organization, or with more than one account? Link a directory once instead of running `warden org use` every time you switch.
+
+```bash
+warden login                           # your default account
+warden login --account client          # a second account, e.g. a client's
+warden account                         # * marks the default, > the one this directory uses
+
+warden org link acme --path ~/orca/workspaces/acme              # every worktree under it bills acme
+warden org link client-co --account client --path ~/code/client # this tree uses the client account
+warden org link side --remote          # any checkout of this repo's origin, wherever it lives
+warden org links                       # every link; * marks the one for this directory
+warden org unlink --path ~/code/client
+```
+
+`warden org link` with no `--path` links the repository you are in (its git top-level). The longest matching path wins, and a path link wins over a remote link. Each request names its organization, so two terminals in two linked directories can claim at the same time without stepping on each other. A hosted device remembers the account and organization it was claimed under, so `warden release` and `warden view` reach it from any directory.
+
+`WARDEN_ACCOUNT=<name>` and `WARDEN_ORG=<slug>` override the link for one command. `warden whoami` shows which account and organization a directory uses, and why.
+
 ## Claim and release
 
 ```bash

@@ -12,6 +12,8 @@ export type FakeServer = {
 		body?: Record<string, unknown>;
 		/** the `X-Warden-Machine` header, when sent */
 		machine?: string;
+		/** the `X-Warden-Organization` header, when sent */
+		organization?: string;
 	}>;
 	/** device-token answers, in order; then `authorization_pending` */
 	polls: Poll[];
@@ -141,6 +143,7 @@ function recordCall(
 	const headers = new Headers(init?.headers);
 	const auth = headers.get("authorization") ?? undefined;
 	const machine = headers.get("x-warden-machine") ?? undefined;
+	const organization = headers.get("x-warden-organization") ?? undefined;
 	const raw = typeof init?.body === "string" ? init.body : undefined;
 	const body: Record<string, unknown> = raw ? JSON.parse(raw) : {};
 	server.calls.push({
@@ -149,6 +152,7 @@ function recordCall(
 		...(auth ? { auth } : {}),
 		...(raw !== undefined ? { body } : {}),
 		...(machine ? { machine } : {}),
+		...(organization ? { organization } : {}),
 	});
 	return { ...(auth ? { auth } : {}), body };
 }

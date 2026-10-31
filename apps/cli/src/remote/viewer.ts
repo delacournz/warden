@@ -9,7 +9,7 @@ import { warn } from "../output";
 import { type ExtractAsset, type FetchedAsset, fetchReleaseAsset, releaseBaseUrl } from "../update/fetch-asset";
 import type { Fetch } from "../update/npm-registry";
 import type { ViewerScope } from "./api.types";
-import { heartbeatRemoteLeases } from "./claim";
+import { heartbeatRemoteLeases, leasePin } from "./claim";
 import { authedApi } from "./session";
 
 /** How often an attached viewer gets a fresh token, the hosted device a heartbeat and the local lease a renewal. */
@@ -195,7 +195,7 @@ export async function openViewer(ctx: CommandContext, input: OpenViewerInput): A
 	const { lease, scope, detach } = input;
 	if (!isRemote(lease)) return err(`lease ${lease.id} is not a remote device`);
 	const { id: deviceId, name, platform } = lease.resource;
-	const authed = authedApi(ctx);
+	const authed = authedApi(ctx, leasePin(lease));
 	if (!authed.success) return authed;
 	const { api, apiUrl } = authed.data;
 	const [minted, billing] = await Promise.all([

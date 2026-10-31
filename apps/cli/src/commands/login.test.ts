@@ -197,7 +197,7 @@ describe("warden whoami / org / logout", () => {
 		const c = await loggedIn(server);
 		c.argv = ["--json"];
 		expect(await logoutCommand.run(c)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ loggedOut: true, revoked: true });
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ loggedOut: true, revoked: true, accounts: ["default"] });
 		expect(server.calls.at(-1)?.path).toBe("/api/auth/sign-out");
 		expect(readCredentials(c.env)).toEqual({ success: true, data: undefined });
 	});

@@ -3,12 +3,12 @@ import type { CommandContext } from "../context";
 import { emit, note, reportError, success, warn } from "../output";
 import { createWardenApi, type WardenApi } from "../remote/api";
 import { openBrowser } from "../remote/browser";
-import { DEFAULT_API_URL, writeCredentials } from "../remote/credentials";
+import { DEFAULT_ACCOUNT, DEFAULT_API_URL, isAccountName, readAccounts, writeAccount } from "../remote/credentials";
 import { pollDeviceToken } from "../remote/device-login";
 import { machineDepsFor, machineHash } from "../remote/machine";
 import { anonApi } from "../remote/session";
 
-type LoginOpts = { apiUrl?: string; browser?: boolean; json?: true };
+type LoginOpts = { account?: string; apiUrl?: string; browser?: boolean; json?: true };
 
 /** `registered`, `none` (no machine id here, e.g. CI) or `failed` (the server refused or was unreachable). */
 type MachineRegistration = "registered" | "none" | "failed";
@@ -25,9 +25,20 @@ async function registerMachine(ctx: CommandContext, api: WardenApi): Promise<Mac
 
 /**
  * Device-flow login: warden-api hands out a code, the user approves it in the browser, the CLI polls for the
- * session token and saves it to `$WARDEN_HOME/auth.json`. The code and link go to stderr so `--json` stays data.
+ * session token and saves it as account `--account` (default `default`) in `$WARDEN_HOME/auth.json`; the first
+ * account saved becomes the default. The code and link go to stderr so `--json` stays data.
  */
 async function login(ctx: CommandContext, opts: LoginOpts): Promise<number> {
+	const account = opts.account ?? DEFAULT_ACCOUNT;
+	if (!isAccountName(account)) {
+		reportError(ctx, "login", `invalid account name ${account}: lowercase letters, digits and -, up to 32`);
+		return 1;
+	}
+	const existing = readAccounts(ctx.env);
+	if (!existing.success) {
+		reportError(ctx, "login", existing.error);
+		return 1;
+	}
 	const apiUrl = (opts.apiUrl ?? ctx.env.WARDEN_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
 	const api = anonApi(ctx, apiUrl);
 	const code = await api.deviceCode();
@@ -55,7 +66,7 @@ async function login(ctx: CommandContext, opts: LoginOpts): Promise<number> {
 		return 1;
 	}
 	const { user, organization } = me.data;
-	const saved = writeCredentials(ctx.env, {
+	const saved = writeAccount(ctx.env, account, {
 		apiUrl,
 		token: token.data,
 		user: { id: user.id, email: user.email },
@@ -68,10 +79,10 @@ async function login(ctx: CommandContext, opts: LoginOpts): Promise<number> {
 	}
 	const machine = await registerMachine(ctx, authed);
 	if (opts.json) {
-		emit(ctx, true, { apiUrl, user, organization, machine }, "");
+		emit(ctx, true, { account, apiUrl, user, organization, machine }, "");
 		return 0;
 	}
-	success(ctx, `logged in as ${user.email}`);
+	success(ctx, `logged in as ${user.email}${account === DEFAULT_ACCOUNT ? "" : ` (account ${account})`}`);
 	if (machine === "failed")
 		warn(ctx, "could not register this machine; the free trial unlocks once it is (run warden login again)");
 	if (organization) note(ctx, `organization: ${organization.name} (${organization.slug})`);
@@ -85,6 +96,7 @@ export const loginCommand = defineCommand({
 	summary: "log in to warden cloud (remote simulators) in the browser",
 	register: (cmd, ctx, done) => {
 		cmd
+			.option("--account <name>", `save this login as a named account (default: ${DEFAULT_ACCOUNT})`)
 			.option("--api-url <url>", `warden-api to log in to (default: $WARDEN_API_URL or ${DEFAULT_API_URL})`)
 			.option("--no-browser", "print the approval link instead of opening it")
 			.option("--json", "machine-readable output")

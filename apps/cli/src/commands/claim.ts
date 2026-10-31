@@ -19,7 +19,7 @@ import {
 } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, heading, reportError, table, warn } from "../output";
+import { emit, heading, note, reportError, table, warn } from "../output";
 import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
@@ -106,6 +106,39 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	return 0;
 }
 
+/** Why a remote claim bills the org it does, for the note: the link's path / remote, `WARDEN_ORG`, or the default. */
+function billingVia(billedTo: { orgVia: string; link?: string }): string {
+	switch (billedTo.orgVia) {
+		case "link":
+			return billedTo.link ?? "link";
+		case "env":
+			return "WARDEN_ORG";
+		case "account":
+			return "default";
+		default:
+			return billedTo.orgVia;
+	}
+}
+
+function noteBilling(
+	ctx: CommandContext,
+	billedTo: { organization?: string; account?: string; orgVia: string; link?: string }
+): void {
+	if (!billedTo.organization) return;
+	note(
+		ctx,
+		`billing ${billedTo.organization} (${billedTo.account ? `${billedTo.account}, ` : ""}via ${billingVia(billedTo)})`
+	);
+}
+
+function billingJson(billedTo: { organization?: string; account?: string; orgVia: string }): Record<string, string> {
+	return {
+		...(billedTo.account ? { account: billedTo.account } : {}),
+		...(billedTo.organization ? { organization: billedTo.organization } : {}),
+		via: billedTo.orgVia,
+	};
+}
+
 /**
  * `claim --remote`: one hosted device through warden cloud instead of a local sim/emulator. Local capacity,
  * allocation and windows don't apply; `--profile` / `--runtime` pick the device model / OS version.
@@ -156,7 +189,8 @@ async function claimRemoteCommand(
 	if (shortLived) {
 		warn(ctx, `lease expires in ${formatDuration(flags.ttlMs)}; hold it with: warden heartbeat`);
 	}
-	const { lease, device } = outcome.data;
+	const { lease, device, billedTo } = outcome.data;
+	if (!opts.json) noteBilling(ctx, billedTo);
 	const leases = [
 		{
 			leaseId: lease.id,
@@ -171,7 +205,7 @@ async function claimRemoteCommand(
 	emit(
 		ctx,
 		opts.json === true,
-		{ leases, remoteIds: [device.id] },
+		{ leases, remoteIds: [device.id], ...billingJson(billedTo) },
 		table(
 			ctx,
 			["LEASE", "REMOTE", "NAME", "ACTION"],

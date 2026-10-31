@@ -3,7 +3,7 @@ import type { CommandContext } from "../context";
 import { emit, reportError } from "../output";
 import type { Billing, RevylApproval } from "../remote/api.types";
 import { minutesLeft, trialLine, usd } from "../remote/format";
-import { authedApi } from "../remote/session";
+import { type Authed, authedApi } from "../remote/session";
 
 /** The balance and trial lines; none when billing can't be read. */
 function billingLines(ctx: CommandContext, account: Billing | null): string[] {
@@ -21,6 +21,19 @@ function approvalLines(ctx: CommandContext, approval: RevylApproval | null): str
 	if (!approval) return [];
 	const { color } = ctx.ui;
 	return [`              ${color.yellow(`approve in Revyl with code ${approval.userCode}`)}  ${approval.uri}`];
+}
+
+/** Why this directory uses this account: the linked path / remote, `WARDEN_ACCOUNT`, a lease, or the default. */
+function viaLabel(a: Extract<Authed, { source: "saved" }>): string {
+	if (a.link) return a.link.kind === "path" ? a.link.path : a.link.remote;
+	switch (a.accountVia) {
+		case "env":
+			return "WARDEN_ACCOUNT";
+		case "lease":
+			return "lease";
+		default:
+			return "default";
+	}
 }
 
 /**
@@ -42,8 +55,10 @@ async function whoami(ctx: CommandContext, opts: { json?: true }): Promise<numbe
 	const { user, organization, remote } = me.data;
 	const { color } = ctx.ui;
 	const account = billing.success ? billing.data : null;
+	const a = authed.data;
 	const lines = [
 		`${user.email}${user.name ? color.dim(` (${user.name})`) : ""}`,
+		...(a.source === "saved" ? [`account       ${a.account}${color.dim(`  via ${viaLabel(a)}`)}`] : []),
 		`organization  ${organization ? `${organization.name} ${color.dim(organization.slug)}` : color.yellow("none")}`,
 		`remote        ${
 			remote
@@ -61,7 +76,16 @@ async function whoami(ctx: CommandContext, opts: { json?: true }): Promise<numbe
 	emit(
 		ctx,
 		opts.json === true,
-		{ apiUrl: authed.data.apiUrl, source: authed.data.source, ...me.data, billing: account },
+		{
+			apiUrl: a.apiUrl,
+			source: a.source,
+			...(a.source === "saved"
+				? { account: a.account, accountVia: a.accountVia, ...(a.link ? { link: a.link } : {}) }
+				: {}),
+			orgVia: a.orgVia,
+			...me.data,
+			billing: account,
+		},
 		lines.join("\n"),
 		{
 			scope: "whoami",

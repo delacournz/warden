@@ -54,7 +54,8 @@ export type WardenApi = {
 	createTopup: (amountUsd: number) => AsyncResult<Topup, ApiError>;
 };
 
-export type WardenApiOptions = { baseUrl: string; token?: string; fetch?: Fetch };
+/** `organization` (id or slug) is sent as `X-Warden-Organization` with a token: the org this call acts for. */
+export type WardenApiOptions = { baseUrl: string; token?: string; organization?: string; fetch?: Fetch };
 
 function fail<E>(error: E): { success: false; error: E } {
 	return { success: false, error };
@@ -280,6 +281,7 @@ export function createWardenApi(options: WardenApiOptions): WardenApi {
 		const headers: Record<string, string> = { accept: "application/json", ...extraHeaders };
 		if (body !== undefined) headers["content-type"] = "application/json";
 		if (options.token) headers.authorization = `Bearer ${options.token}`;
+		if (options.token && options.organization) headers["x-warden-organization"] = options.organization;
 		let response: Response;
 		try {
 			response = await doFetch(`${baseUrl}${path}`, {

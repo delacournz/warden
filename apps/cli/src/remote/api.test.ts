@@ -218,6 +218,32 @@ describe("warden cloud billing", () => {
 		expect(calls[1]?.headers["x-warden-machine"]).toBeUndefined();
 	});
 
+	test("X-Warden-Organization rides on every authed call when an organization is set", async () => {
+		const calls: Call[] = [];
+		const routes = { "GET /v1/billing": () => json({}), "POST /v1/devices": () => json(device, 202) };
+		const withOrg = createWardenApi({
+			baseUrl: "https://api.test",
+			token: "tok",
+			organization: "org-1",
+			fetch: fakeFetch(routes, calls),
+		});
+		await withOrg.getBilling();
+		await withOrg.createDevice({ platform: "ios" });
+		await authed(routes, calls).getBilling();
+		expect(calls.map((c) => c.headers["x-warden-organization"] ?? "none")).toEqual(["org-1", "org-1", "none"]);
+	});
+
+	test("no X-Warden-Organization without a token (login endpoints)", async () => {
+		const calls: Call[] = [];
+		const anon = createWardenApi({
+			baseUrl: "https://api.test",
+			organization: "org-1",
+			fetch: fakeFetch({ "POST /api/auth/device/code": () => json({}) }, calls),
+		});
+		await anon.deviceCode();
+		expect(calls[0]?.headers["x-warden-organization"]).toBeUndefined();
+	});
+
 	test("402 CREDITS_EXHAUSTED keeps the billing url", async () => {
 		const api = authed({
 			"POST /v1/devices": () =>
