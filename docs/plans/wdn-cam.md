@@ -33,6 +33,10 @@ Plan ID: **WDN-CAM**. Goal: `warden ui camera …` and `device.camera.*` in spec
 ## Device rules for spikes/agents
 - Devices only from `warden dev <platform> --json` (pid-held, 30 s heartbeat) and only the id it returns. Never bare `warden claim`, never pick from simctl/adb lists, never a self-made AVD or hard-coded serial/port. Stop all device commands the moment a lease ends.
 
+## Spike findings (CAM-0 iOS, CAM-0b Android) — binding for implementation
+- iOS (`docs/plans/wdn-cam-0-ios-findings.md`): **shadow session**. Never let the real `AVCaptureSession` connect to the fake device (real `addInput:` hits private Fig/KVO selectors, OS-fragile). Swizzle `AVCaptureDeviceInput deviceInputWithDevice:error:` / `initWithDevice:error:` → `WCInput`, and `AVCaptureSession canAddInput:/addInput:/removeInput:/inputs/startRunning/stopRunning/isRunning`; real `addOutput:` works for all outputs. Swizzle `AVCapturePhotoOutput capturePhotoWithSettings:delegate:` (subclass `AVCapturePhoto` + `AVCaptureResolvedPhotoSettings`), `AVCaptureMetadataOutput setMetadataObjectTypes:/availableMetadataObjectTypes`, `AVCaptureMovieFileOutput start/stop/isRecording` (AVAssetWriter), `connectionWithMediaType:` (fake `AVCaptureConnection initWithInputPorts:@[] output:`), `AVCaptureDevice.RotationCoordinator`. **QR via CIDetector only** (Vision barcode fails on the sim); other symbologies out of scope v1. Preview: set `AVCaptureVideoPreviewLayer.contents` per frame. Picker: own overlay, not Apple's camera UI. expo-camera: two DiscoverySessions (KVO `.devices`), `systemPreferredCamera`, `userPreferredCamera`. Risk: `AVCaptureDeviceFormat`/`activeFormat` (vision-camera).
+- Android (`docs/plans/wdn-cam-0-android-findings.md`): file **re-read per camera open** (not per frame); overwrite / tmp+rename / symlink identical; HOME or force-stop + reopen shows the new image. **PNG only** (JPEG at the path renders magenta): re-encode every image to PNG (`sips -s format png` on the macOS host, via injected `Exec`). Any resolution, centre-cropped. No runtime source switch (`emu virtualscene-image` is virtualscene-only). `videofile:` likely needs `-feature VideoPlayback` at boot (untested). `+cam` cold boot ≈ 16 s; argv now has `-no-snapshot-load`.
+
 ## Phases
 
 ### CAM-0 — 🚧 wip: spikes (blocking CAM-4, informs CAM-2)
@@ -64,9 +68,11 @@ Plan ID: **WDN-CAM**. Goal: `warden ui camera …` and `device.camera.*` in spec
 ### CAM-0b — 🚧 wip: Android re-spike on `warden dev android --camera`
 - Only via `warden dev android --camera --json` (pid-held lease) and the serial it returns; never a self-made AVD, hard-coded serial or console port. Questions: exact frames; in-place replace / rename / symlink swap seen on camera reopen; `videofile:` loop; image↔video mode change needs reboot; does a `+cam` launch load the base golden snapshot.
 
-### CAM-4 — ✨ feat: Android emulator camera
-- Per CAM-0 findings: `packages/core/src/providers/android.ts` boot args add `-camera-back imagefile|videofile:<lease>/camera/back.*` (+front); live-swap implementation; golden AVD camera config in `packages/core/src/golden/android-golden.ts` if needed (golden version bump).
-- Android driver `camera` op; reboot fallback reports `rebooted: true` in status.
+### CAM-4 — ✨ feat: Android emulator camera op
+- Only `+cam` emulators (CAM-4a): `camera` op on a plain emulator → `E_CAMERA_DEVICE` "claim with --camera" (error code added to `DriverErrorCode`).
+- Image feed: re-encode to PNG into a temp file in `cameraFeedDir`, rename over `<facing>.png`; result `appliesOnCameraOpen: true`, `rebooted: false`. `null` / a facing left out → grey placeholder.
+- Video feed (or image→video / video→image): per-device camera mode recorded in `<cameraFeedDir>/mode.json`; the provider's `+cam` launch reads it (`-feature VideoPlayback -camera-back videofile:<dir>/back.<ext>` vs `imagefile:`); the driver restarts the leased emulator through the provider (same serial, lease kept), waits ready, returns `rebooted: true`. Verify on a `warden dev android --camera` lease (device rules) that `videofile:` plays and loops.
+- Release / undo (`packages/core/src/conditions/undo.ts` camera case): feeds back to placeholder; a device in video mode is shut down on release (it is warden-created) so the next claim boots in image mode.
 
 ### CAM-5 — ✨ feat: spec API
 - `packages/e2e/src/device.ts`: `device.camera: DeviceCamera` = `set(path, { facing?: "back"|"front"|"both", loop?, fps? })`, `clear(facing?)`, `status()`; auto-clear at test end (like `location`). Path resolved relative to spec file.

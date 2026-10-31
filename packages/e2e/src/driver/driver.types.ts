@@ -403,8 +403,17 @@ export type BatteryOp = { level?: number; charging?: boolean };
 
 export type BatteryState = { level?: number; charging?: boolean; cosmetic: boolean };
 
-/** The feeds now playing; `appliesOnLaunch`: no running app has the camera yet, the next launch picks it up; `rebooted`: the emulator restarted to switch its camera source. */
-export type CameraState = { feeds: CameraCondition; appliesOnLaunch?: boolean; rebooted?: boolean };
+/**
+ * The feeds now playing. `appliesOnLaunch`: no running app has the camera yet, the next launch picks it up (iOS);
+ * `appliesOnCameraOpen`: an open camera keeps the old frames until the app opens the camera again (Android emulator,
+ * which reads the file per camera open); `rebooted`: the emulator restarted to switch its camera source (image ↔ video).
+ */
+export type CameraState = {
+	feeds: CameraCondition;
+	appliesOnLaunch?: boolean;
+	appliesOnCameraOpen?: boolean;
+	rebooted?: boolean;
+};
 
 /** An APNs payload: an object with an `aps` key (4096 bytes at most). */
 export type PushPayload = { aps: Record<string, unknown> } & Record<string, unknown>;
