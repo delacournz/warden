@@ -73,6 +73,7 @@ describe("openViewer", () => {
 			title: "iphone-17 · warden",
 			platform: "ios",
 			detached: false,
+			billingUrl: "https://app.warden.test/billing",
 		});
 		const [spawned] = viewer.spawns;
 		expect(spawned?.cmd).toEqual(["/bin/viewer"]);
@@ -80,6 +81,18 @@ describe("openViewer", () => {
 		const surface = JSON.stringify([spawned?.cmd, spawned?.env]);
 		for (const secret of secrets) expect(surface).not.toContain(secret);
 		expect(server.viewerTokens).toEqual([{ deviceId: "rd1", scope: "drive", token: "wvt_1" }]);
+	});
+
+	test("billingUrl is left out when billing can't be read or isn't https", async () => {
+		for (const billingUrl of ["http://app.warden.test/billing", "javascript:alert(1)"]) {
+			const { ctx: c, server, viewer, lease } = setup(() => new Promise(() => undefined));
+			server.billing = { ...server.billing, billingUrl };
+			const opened = openViewer(c, { binary: "v", lease, scope: "view", detach: true });
+			await opened;
+			expect(viewer.stdin[0]).not.toHaveProperty("billingUrl");
+			c.cleanup();
+		}
+		ctx = undefined;
 	});
 
 	test("each tick writes a refresh line, heartbeats the device and renews the local lease", async () => {

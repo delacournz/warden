@@ -1,18 +1,26 @@
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, note, reportError, success } from "../output";
-import { createWardenApi } from "../remote/api";
+import { emit, note, reportError, success, warn } from "../output";
+import { createWardenApi, type WardenApi } from "../remote/api";
+import { openBrowser } from "../remote/browser";
 import { DEFAULT_API_URL, writeCredentials } from "../remote/credentials";
 import { pollDeviceToken } from "../remote/device-login";
+import { machineDepsFor, machineHash } from "../remote/machine";
 import { anonApi } from "../remote/session";
 
 type LoginOpts = { apiUrl?: string; browser?: boolean; json?: true };
 
-/** `open` on macOS, `xdg-open` elsewhere; a failure only means the user opens the link themselves. */
-async function openBrowser(ctx: CommandContext, url: string): Promise<boolean> {
-	const opener = (ctx.os ?? process.platform) === "darwin" ? "open" : "xdg-open";
-	const r = await ctx.exec([opener, url], { timeoutMs: 10_000 }).catch(() => undefined);
-	return r?.exitCode === 0;
+/** `registered`, `none` (no machine id here, e.g. CI) or `failed` (the server refused or was unreachable). */
+type MachineRegistration = "registered" | "none" | "failed";
+
+/**
+ * Record this machine's hashed id against the account, which is what unlocks the one-per-person free trial.
+ * Never fatal: paid usage works without it.
+ */
+async function registerMachine(ctx: CommandContext, api: WardenApi): Promise<MachineRegistration> {
+	const machine = await machineHash(machineDepsFor(ctx));
+	if (machine.kind === "none") return "none";
+	return (await api.registerMachine(machine.hash)).success ? "registered" : "failed";
 }
 
 /**
@@ -40,11 +48,8 @@ async function login(ctx: CommandContext, opts: LoginOpts): Promise<number> {
 		reportError(ctx, "login", token.error);
 		return 1;
 	}
-	const me = await createWardenApi({
-		baseUrl: apiUrl,
-		token: token.data,
-		...(ctx.fetch ? { fetch: ctx.fetch } : {}),
-	}).me();
+	const authed = createWardenApi({ baseUrl: apiUrl, token: token.data, ...(ctx.fetch ? { fetch: ctx.fetch } : {}) });
+	const me = await authed.me();
 	if (!me.success) {
 		reportError(ctx, "login", `logged in, but ${apiUrl}/v1/me failed: ${me.error.message}`);
 		return 1;
@@ -61,11 +66,14 @@ async function login(ctx: CommandContext, opts: LoginOpts): Promise<number> {
 		reportError(ctx, "login", saved.error);
 		return 1;
 	}
+	const machine = await registerMachine(ctx, authed);
 	if (opts.json) {
-		emit(ctx, true, { apiUrl, user, organization }, "");
+		emit(ctx, true, { apiUrl, user, organization, machine }, "");
 		return 0;
 	}
 	success(ctx, `logged in as ${user.email}`);
+	if (machine === "failed")
+		warn(ctx, "could not register this machine; the free trial unlocks once it is (run warden login again)");
 	if (organization) note(ctx, `organization: ${organization.name} (${organization.slug})`);
 	else note(ctx, "no organization yet: create one in the browser, then warden org use <slug>");
 	return 0;

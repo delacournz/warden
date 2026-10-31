@@ -125,7 +125,8 @@ async function claimRemoteCommand(
 		return result;
 	});
 	if (!outcome.success) {
-		reportError(ctx, "claim", outcome.error);
+		const { message, code, billingUrl } = outcome.error;
+		reportError(ctx, "claim", message, code ? { code, ...(billingUrl ? { billingUrl } : {}) } : undefined);
 		return 1;
 	}
 	if (shortLived) {

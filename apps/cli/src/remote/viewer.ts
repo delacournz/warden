@@ -177,6 +177,15 @@ function viewerEnv(env: Readonly<Record<string, string | undefined>>): Record<st
 	return rest;
 }
 
+/** `url` when it is an https URL: the only kind the viewer's Top up button may open. */
+function httpsUrl(url: string): string | undefined {
+	try {
+		return new URL(url).protocol === "https:" ? url : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Open the viewer window on a hosted device. The device-scoped token goes in over stdin (never argv or env), and
  * while the window is open a fresh one is written every minute along with a heartbeat for the hosted device and
@@ -189,7 +198,11 @@ export async function openViewer(ctx: CommandContext, input: OpenViewerInput): A
 	const authed = authedApi(ctx);
 	if (!authed.success) return authed;
 	const { api, apiUrl } = authed.data;
-	const minted = await api.viewerToken(deviceId, scope, detach ? DETACHED_TTL_S : undefined);
+	const [minted, billing] = await Promise.all([
+		api.viewerToken(deviceId, scope, detach ? DETACHED_TTL_S : undefined),
+		api.getBilling(),
+	]);
+	const billingUrl = billing.success ? httpsUrl(billing.data.billingUrl) : undefined;
 	if (!minted.success) return err(`viewer token for ${deviceId}: ${minted.error.message}`);
 
 	const spawn = ctx.spawn ?? bunSpawnViewer;
@@ -209,6 +222,7 @@ export async function openViewer(ctx: CommandContext, input: OpenViewerInput): A
 			title: `${name} · warden`,
 			platform,
 			detached: detach,
+			...(billingUrl ? { billingUrl } : {}),
 		})
 	);
 
