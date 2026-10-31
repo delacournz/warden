@@ -19,7 +19,7 @@
     },
     "apps/cli": {
       "name": "@delacour/warden",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "bin": {
         "warden": "./src/cli.ts",
       },
@@ -146,7 +146,7 @@
     },
     "packages/e2e": {
       "name": "@delacour/warden-e2e",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@delacour/warden-core": "workspace:*",
         "@delacour/warden-types": "workspace:*",

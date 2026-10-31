@@ -1,5 +1,101 @@
 # @delacour/warden
 
+## 0.7.0
+
+### Minor Changes
+
+- [#114](https://github.com/delacournz/warden/pull/114) [`776daf0`](https://github.com/delacournz/warden/commit/776daf07a1dfe8587e24abecd5acf1d07ddf6326) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Add `warden ui biometrics [status|enroll|unenroll|match|fail]`: simulated Face ID, Touch ID and Android fingerprint on warden-claimed simulators and emulators. Answers `{ enrolled, modality }`; a physical device or an Android `enroll` / `unenroll` fails with `E_UNSUPPORTED`.
+  - Add `device.biometrics.status()`, `enroll()`, `unenroll()`, `match()` and `fail()` to `@delacour/warden-e2e` specs (`BiometricState`, `DeviceBiometrics` types). Android `enroll` / `unenroll` throw `ACTION_FAILED`.
+  - Add the `biometrics` config key (top level, `e2e.<suite>`, `batches.<preset>`; default `false`) and the `--biometrics` flag on `claim`, `run`, `batch` and `e2e`. Devices get the profile `<profile>+bio`, with their own pool and golden snapshot.
+  - Android `+bio` devices start from a golden snapshot with a fingerprint already enrolled (screen-lock PIN `1111`); `warden golden ensure --platform android --profile <profile>+bio` builds it ahead of the first claim.
+  - iOS `+bio` simulators are enrolled on every boot and again when a spec process starts, before the app is installed.
+  - Android `+bio` golden snapshots are saved past the lock screen with the screen kept on; a claim returns once adb, the package manager and the unlocked screen answer, unlocking with the PIN if needed, and an emulator that never gets ready is shut down instead of left locked.
+  - `warden ui reload` / `eval` / `logs` and the other devtools verbs find a dev client on a `+bio` simulator (Metro reports the `+` in its name as a space).
+
+- [#117](https://github.com/delacournz/warden/pull/117) [`a0ba85c`](https://github.com/delacournz/warden/commit/a0ba85c8a0bbb21b6cd06e92ee2b8806f2d06fef) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Device conditions set on a lease (network, location, clock, …) are always undone when the lease is released or garbage-collected.
+  - Android emulators can be set offline (airplane mode, checked against the device's connectivity state) or shaped to the `edge`, `3g`, `4g`, `lte`, `wifi`, `slow` and `lossy` network presets.
+  - A per-lease network shaping proxy throttles bandwidth, adds latency, jitter and packet loss, and injects per-host faults (HTTP status, reset, delay, blackhole); it is stopped and its port freed when the lease is released.
+  - Simulated location: set a point, follow a route of waypoints (speed, interval), replay a GPX file, or run a built-in scenario (`city-run`, `city-bike`, `freeway`) on iOS simulators and Android emulators.
+  - Flaky networks: flap between online and offline on a schedule (with seeded jitter), or run a timeline of network and location changes; every change is recorded next to the test results.
+  - iOS simulator apps get network conditions per app: launched with a small injected library that sends their traffic through the lease's shaping proxy, so presets and offline switch live without touching the Mac's network or other simulators. A running app without it fails with `E_NETWORK_RELAUNCH` unless the relaunch is opted into.
+  - Spec API: `device.network.set/during/flap/fault/status/reset`, `device.location.set/route/scenario/clear`, `device.clock.set/advance/during/reset` and `device.timeline([...])`; `during` restores the previous condition even when the callback throws.
+  - `warden.config.ts` takes a `conditions` key (top level or per `e2e` suite) for `network`, `location` and `clock`; each spec starts from that baseline.
+  - iOS: apps using `NSURLSession.sharedSession` are shaped too, and changing a host fault cuts connections already open to that host.
+  - Mock clock: shift (`offset`), set (`fixed`) or freeze (iOS) the wall clock an app sees; monotonic clocks are untouched. Android emulators set the device time; frozen time is iOS only.
+  - Specs know their lease (`WARDEN_LEASE_ID`): network and clock conditions work under `warden e2e` on iOS, and every condition a spec sets is recorded, so a crashed spec process is still undone when the lease is released.
+  - `warden ui network` is now a group: `network log` shows the request log (the old `warden ui network [n]` still works and points to it), and `network set <preset>`, `network flap`, `network fault`, `network status`, `network reset` set conditions on the device.
+  - New `warden ui location set|route|gpx|scenario|clear|status` and `warden ui clock set|advance|status|reset`; `warden ui status` lists the conditions active on the lease.
+  - Releasing a lease also puts a still-running iOS app launched with network or clock conditions back online and on the real clock.
+  - More conditions: app permissions (`device.permissions.set`, `warden ui permission`), timezone and locale, text size and contrast (`device.a11y`), battery level and charging (Android real, iOS status bar only), Android memory warnings and iOS push notifications. Each is undone when the lease is released.
+  - Conditions left behind by a lease that expired or was deleted any other way (including by an older `warden`) are undone before the device is claimed again, and by `warden gc` for unleased devices.
+  - On iOS, a network or clock change that cannot tell whether the app is running now fails instead of being staged silently, and another injected app still running on the simulator no longer stands in for the app under test.
+  - `device.permissions.set` / `warden ui permission` on iOS retry a `simctl privacy` call that hangs on a simulator that just booted.
+
+- [#118](https://github.com/delacournz/warden/pull/118) [`26c8ce5`](https://github.com/delacournz/warden/commit/26c8ce5e0e28490ea0d2d37400891b0e25863843) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - Physical devices: lease, drive and test real Android phones and iPhones/iPads.
+
+  **Claiming**
+  - `warden claim --physical` leases a connected phone or tablet; `--serial <serial...>` (Android) and `--udid <udid...>` (iOS) name the devices and imply `--physical`. A plain `warden claim` never takes a physical device, even with `--adopt`.
+  - `--physical` is rejected together with `--count`, `--max`, `--slim`, `--headless`, `--runtime` and `--adopt`; `--serial` / `--udid` are rejected on the wrong platform. Leases and `warden claim --json` carry a `physical` field.
+  - A physical device is never booted, created, shut down, erased or slimmed: `warden release --shutdown` and `warden gc` leave it running, and it costs nothing in host capacity.
+  - An iPhone or iPad is picked only when it is reachable: its tunnel is connected, it is wired, or `devicectl device info lockState` answers within 5 s (20 s for a phone named with `--udid` or `physical.ids`; probes run in parallel). An answer means reachable even when the phone is locked: `warden devices` and `warden doctor` show it as locked. Devices that are listed as available but are offline (an iPad in a drawer) are shown with a reason and never auto-picked. An Android phone that is `unauthorized` or `offline` is never auto-picked either.
+  - Naming an unusable device with `--udid` / `--serial` fails `device_offline` with the reason and what to do.
+  - `physical: { allow: [...] }` in `warden.config.ts` and `WARDEN_PHYSICAL_IDS` (comma-separated, wins over the config) limit what an id-less `--physical` claim may pick. Naming a device with `--udid` / `--serial` still works for any device. A `warden.config` that cannot be read fails the claim instead of ignoring the list.
+  - An id-less `--physical` claim with more than one usable phone (ready, reachable, unleased, on the allowlist) no longer picks silently, in `warden claim`, `warden ui --claim`, `warden e2e`, `warden run` and `warden batch`. In a terminal a picker lists name, model, OS version and transport (cancel = `Aborted.`, exit 1); otherwise, or with `--json`, it fails `ambiguous_device` (exit 2) with `error.details.candidates` and the hint to pass `--udid` / `--serial` or set `WARDEN_PHYSICAL_IDS`. The choice is made once before any lease, build or job; one candidate is still picked without asking.
+  - A claim of a locked iPhone (`warden claim`, `run`, `batch`, `e2e`, `ui --claim`) no longer stalls: before any lease warden prints `<name> is locked: unlock it to continue (waiting up to 2m)`, polls `lockState` every 10 s with a progress line about every 30 s, and continues once the phone is unlocked. Still locked after 2 minutes, or with `--no-wait`, it fails `device_locked` (exit 2, hint `unlock the phone, then retry`; `--json` error code `device_locked`). No lease is held while waiting.
+  - A claim that polls for a device (a named phone that is offline, a pool that is fully leased) now prints `waiting for …` and `still waiting …` lines about every 30 s instead of staying silent until `--wait` runs out.
+
+  **Android phones**
+  - `warden ui` drives Android phones: `--serial <adb serial>` (USB, `ip:port` or wireless-debugging serials) or `--claim --physical`. It exits 2 with `device_unauthorized` (accept the USB debugging prompt) or `device_offline`; the lease is kept.
+  - A device with qemu properties set (`localhost:5555`, Genymotion) is a foreign emulator, never a phone.
+  - warden wakes the screen and dismisses a keyguard with no credential; a PIN, pattern or password lock fails `E_DEVICE_LOCKED` and warden never unlocks it. Rotation, dark mode and animation scales are saved before the first change and restored on close.
+  - `uninstall` and `clear data` refuse any package warden did not install (`E_REFUSED`, `physical_protected`). Installing an APK checks its ABIs first and fails `abi_mismatch` with a hint to use the `dev` or `release` kind; `INSTALL_FAILED_UPDATE_INCOMPATIBLE` says to uninstall the differently-signed copy yourself.
+  - `test.use({ systemAlerts })` and `device.alert` close the "Save password to Google Password Manager?" sheet with Back for both `accept` and `dismiss`; warden never presses Never or Continue.
+
+  **iPhones and iPads**
+  - `warden claim ios --physical` and `--udid <udid>` lease paired devices listed by `devicectl`; a paired device with Developer Mode on and reachable is ready. `warden ui --udid <iPhone udid>` (or `--claim --physical`) starts an on-device XCUITest runner once, then `snapshot`, `press`, `fill`, `type`, `swipe`, `screenshot`, `open` and the rest talk to the phone through it.
+  - Single-finger input only: `pinch`, `rotate`, `gesture`, `press shake` and `press back` fail `E_UNSUPPORTED`. On an iPhone `screen appearance` is read-only, `screen rotate` goes through `devicectl`, and a locked phone exits 2 with `device_locked`.
+  - `ios: { teamId, runnerBundleId }` in `warden.config.ts` and `WARDEN_IOS_TEAM_ID` choose the Apple team that signs the runner; without them warden uses the keychain's `Apple Development` team when there is exactly one and fails `ios_team_ambiguous` listing the teams otherwise.
+  - The runner is built with `xcodebuild build-for-testing -allowProvisioningUpdates`, cached per team and Xcode build, and rebuilt for a new phone or when its provisioning profile ends within 24 hours. Failures carry a code and a hint (`no_account`, `no_team`, `bundle_id_taken`, `device_locked`, `developer_mode_off`, `runner_untrusted`, `ui_automation_disabled`, `device_busy`, `ddi_unavailable`, `unsupported_os`).
+  - `fill` and `press` on an iPhone type one character at a time so a React Native field keeps every key, and Backspace, Enter, Tab and Space are typed on the software keyboard (a retry now clears the field).
+  - The resident iPhone runner host records which runner build it serves; when the runner changes (a new warden, an edited runner source) the next `warden ui` / `warden e2e` replaces the host and prints `runner changed; restarting the iPhone runner host`, so no manual restart is needed. A phone leased to another session keeps its host and fails `device_busy` (exit 2) instead.
+
+  **Tests**
+  - `warden e2e`, `warden run` and `warden batch` take `--physical`, `--serial` and `--udid`; `physical: true | { ids }` on an e2e suite or device leg does the same, and the flags win. A physical run never reboots, hides, arranges, slims, golden-clones or shuts down a device, and a suite `setup` command still runs. `WARDEN_UDIDS` carries the adb serial / CoreDevice UDID and each job of a phone gets `WARDEN_DEVICE_KIND=physical`.
+  - A physical e2e run installs the `release` build kind by default (an explicit `--kind` or the suite's `app.kind` wins). On an iPhone, `--app` (or a suite `app`) builds the app for the device and installs it with `devicectl` (see Device builds).
+  - On an iPhone, `warden e2e` starts the runner host before the specs and stops when it cannot (a locked phone exits 2 with `device_locked` and an unlock hint, no spec runs, `e2e-report.json` carries `error`); a lost runner connection restarts it once and reruns the test, and the phone is never rebooted.
+  - `test(title, { requires: ["pinch" | "multiTouch"] }, body)` skips a spec on a device whose driver lacks the capability (a physical iPhone has neither).
+
+  **Device builds**
+  - `warden app ensure ios --udid <iPhone> --kind release|dev`, `warden e2e --udid <iPhone>` and `--app` on `run` / `batch` build the app signed for the phone (`xcodebuild -destination generic/platform=iOS -allowProvisioningUpdates`, team from `WARDEN_IOS_TEAM_ID`, `ios.teamId` or the keychain) and install it with `devicectl device install app`. The build is cached apart from simulator builds, keyed on the team; with no `--kind` an iPhone gets `release`. `--kind simulator` and `--variant` are refused on an iPhone.
+  - `projects[].ios.device.bundleIdentifier` in `warden.config.ts` replaces the bundle id on a phone (and is the specs' `WARDEN_BUNDLE_ID` there) when your app's id belongs to another Apple team.
+  - `--install-mode reinstall|clean` on an iPhone uninstalls and reinstalls (app data cannot be wiped in place); `--reset-keychain` is refused. A phone that the app's provisioning profile does not list is registered automatically: warden builds once with `-destination id=<udid>`, rebuilds the cached device build and installs again (once per phone); `device_not_in_profile` is reported only if that does not help.
+
+  **Output and diagnosis**
+  - `warden devices` has a `KIND` column (`virtual` or `physical`), shows why a physical device is unusable (`unauthorized`, `offline`, `unpaired`, `developer mode off`) with a hint, and takes `--physical` to list only phones and tablets; `--json` rows carry `kind`, `transport` and `hint`. `warden ls` tags physical leases.
+  - `warden doctor` adds `ios-team`, `ios-devices`, `ios-runner` and `android-devices` rows, only when a phone or a signing team exists.
+  - The warden skill gains a physical-devices reference.
+
+### Patch Changes
+
+- [#114](https://github.com/delacournz/warden/pull/114) [`776daf0`](https://github.com/delacournz/warden/commit/776daf07a1dfe8587e24abecd5acf1d07ddf6326) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - An Android app install is no longer skipped on a matching key alone: the emulator's installed `base.apk` must have the cached apk's sha256, so an emulator holding an older build of the same native build (an older `warden repack`, a restored snapshot) gets the current one without `--install-mode reinstall`. A truly identical build is still kept.
+
+- [#114](https://github.com/delacournz/warden/pull/114) [`776daf0`](https://github.com/delacournz/warden/commit/776daf07a1dfe8587e24abecd5acf1d07ddf6326) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - `device.alert` on iOS answers `true` only once the alert is gone: a press that lands while the sheet is still animating in (LocalAuthentication's "Face Not Recognized") is pressed again, and an alert that survives three presses throws `ACTION_FAILED` instead of reporting it answered.
+
+- [#115](https://github.com/delacournz/warden/pull/115) [`cc761a1`](https://github.com/delacournz/warden/commit/cc761a192ca0e85bf793a09739e6dd295cdd09ac) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - iOS `fill`, `type` and `warden ui fill` / `warden ui type` no longer drop or reorder the first letters of the text in a controlled React Native input (`"Hllo"`, `"Hllo, World 123!e"`): the helper now waits 60 ms between the first key and the second, while the field re-renders on its first change
+  - `WARDEN_SIMD_LEAD_MS` sets that pause (0 turns it off)
+
+- [#119](https://github.com/delacournz/warden/pull/119) [`d2d728f`](https://github.com/delacournz/warden/commit/d2d728fd14c4ea22ceada794eb31668ba583fd5c) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Two `warden dev` (or `--app`) runs on one checkout no longer both build the app: one local build runs per checkout and platform, the other waits (`waiting for the app build…`), then installs that build. A run that read its fingerprint while the other build was prebuilding now waits too, instead of building in the same tree and removing its `ios/` mid-build.
+  - A waiting run shows the running build's output live in its own log, from the first line.
+  - A checkout that changed while waiting, with nothing cached for the new fingerprint, fails with `the <platform> checkout changed since it was fingerprinted (A → B)`; run again.
+
+- [#118](https://github.com/delacournz/warden/pull/118) [`26c8ce5`](https://github.com/delacournz/warden/commit/26c8ce5e0e28490ea0d2d37400891b0e25863843) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Biometrics on a physical device are refused up front instead of being silently ignored: `--biometrics` with `--physical` / `--serial` / `--udid` fails the claim (`claim`, `run`, `batch`, `e2e`, `ui --claim`), and an `e2e` suite that sets both `physical` and `biometrics` is refused when `warden.config.ts` loads.
+  - `device.biometrics` and `warden ui biometrics` fail with `E_UNSUPPORTED` on a physical iPhone, as they already did on an Android phone: a real Face ID / Touch ID sensor cannot be enrolled or matched. A session on a phone never tries to enroll.
+
+- [#118](https://github.com/delacournz/warden/pull/118) [`26c8ce5`](https://github.com/delacournz/warden/commit/26c8ce5e0e28490ea0d2d37400891b0e25863843) Thanks [@UrbanChrisy](https://github.com/UrbanChrisy)! - - Device conditions and settings (`warden ui network|location|clock|permission|timezone|locale|a11y|battery|memory-warning|push`, `device.network`, `device.location`, `device.clock` and the other spec condition APIs) fail with `E_UNSUPPORTED` on a physical iPhone or Android phone, before anything reaches the phone: warden never flips a phone's airplane mode, clock, timezone or font scale.
+  - An `e2e` suite that sets both `physical` and `conditions` is refused when `warden.config.ts` loads.
+- Updated dependencies []:
+  - @delacour/warden-e2e@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes
