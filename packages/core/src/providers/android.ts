@@ -320,6 +320,8 @@ export function claimEmulatorArgv(
 		...(headless ? headlessEmulatorFlags(env) : []),
 		...(cameraDir !== undefined
 			? [
+					// cold on purpose: without it the emulator tries `default_boot`, which another renderer config may have saved
+					"-no-snapshot-load",
 					"-camera-back",
 					`imagefile:${join(cameraDir, "back.png")}`,
 					"-camera-front",

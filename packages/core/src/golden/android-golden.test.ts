@@ -1010,6 +1010,7 @@ describe("biometrics snapshots", () => {
 			const argv = host.spawned.at(-1) ?? [];
 			const feeds = join(dir, "camera", `emulator-${portOf(argv)}`);
 			expect(argv).not.toContain("-snapshot");
+			expect(argv).toContain("-no-snapshot-load");
 			expect(hooked).toEqual([]);
 			expect(argv).toEqual(
 				expect.arrayContaining([
