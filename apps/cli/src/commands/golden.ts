@@ -1,5 +1,6 @@
 import { profileSlug } from "@delacour/warden-core/allocate";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
+import { splitCameraProfile } from "@delacour/warden-core/camera-profile";
 import { DEFAULT_PROFILE } from "@delacour/warden-core/config.defaults";
 import {
 	ensureAndroidSnapshot,
@@ -28,11 +29,11 @@ function platformOf(ctx: CommandContext, opts: PlatformOpt): "ios" | "android" |
 	return undefined;
 }
 
-/** The snapshot target a profile names: its AVD (`auto` = the first AVD), plus `+bio` for a biometrics profile. */
+/** The snapshot target a profile names: its AVD (`auto` = the first AVD), plus `+bio` for a biometrics profile. `+cam` is ignored: camera devices cold-boot, there is no camera golden. */
 async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string> {
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 	if (!avds.success) return avds;
-	const { profile: base, biometrics } = splitBiometricProfile(profile);
+	const { profile: base, biometrics } = splitBiometricProfile(splitCameraProfile(profile).profile);
 	const slug = base === "auto" ? resolveAutoProfile(avds.data) : ok(base);
 	if (!slug.success) return slug;
 	const avd = avds.data.find((a) => profileSlug(a) === slug.data);

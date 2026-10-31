@@ -2,6 +2,7 @@ import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
+import { cameraProfile, splitCameraProfile } from "@delacour/warden-core/camera-profile";
 import { maxConcurrent } from "@delacour/warden-core/capacity";
 import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
@@ -61,6 +62,10 @@ export function withClaimOptions<Args extends unknown[], Opts extends OptionValu
 			"--biometrics",
 			"claim devices with a fingerprint / Face ID enrolled (own pool and golden; config biometrics)"
 		)
+		.option(
+			"--camera",
+			"Android: launch the emulator with a file-fed camera (`+cam` device); iOS: no effect, the simulated camera needs no special device"
+		)
 		.option("--json", "machine-readable output");
 }
 
@@ -114,6 +119,8 @@ export type ClaimFlagValues = {
 	slimTopLevel?: SlimSetting | undefined;
 	/** `--biometrics`, or the suite / preset / top-level config `biometrics` already picked by the caller */
 	biometrics?: boolean | undefined;
+	/** `--camera`: Android only (the `+cam` identity); iOS leaves the profile unchanged */
+	camera?: boolean | undefined;
 };
 
 /** Does the claim ask for physical devices (`--physical`, or naming one with `--serial` / `--udid`)? */
@@ -238,6 +245,7 @@ function physicalConflict(values: ClaimFlagValues): string | undefined {
 			values.biometrics === true,
 			"a real Face ID / fingerprint sensor is never enrolled or matched; run biometric specs on a simulator or emulator",
 		],
+		["--camera", values.camera === true, "a physical device's camera is never fed from a file"],
 	];
 	const found = conflicts.find(([, given]) => given);
 	return found ? `${found[0]} cannot be used with --physical (${found[2]})` : undefined;
@@ -300,7 +308,8 @@ function parsePhysicalClaim(
 }
 
 function deviceRequest(values: ClaimFlagValues, platform: Platform, count: number, max: number): DeviceRequest {
-	const profile = biometricProfile(values.profile ?? DEFAULT_PROFILE[platform], values.biometrics === true);
+	const withBio = biometricProfile(values.profile ?? DEFAULT_PROFILE[platform], values.biometrics === true);
+	const profile = cameraProfile(withBio, platform === "android" && values.camera === true);
 	const request: DeviceRequest = { platform, profile, count, max };
 	if (values.runtime !== undefined) request.runtime = values.runtime;
 	if (values.adopt) request.adopt = true;
@@ -388,11 +397,14 @@ export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDe
 
 /** Android `auto` profile → the first AVD; every other request as is. */
 async function resolveRequest(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
-	const { profile: base, biometrics } = splitBiometricProfile(request.profile);
+	const { profile: noCam, camera } = splitCameraProfile(request.profile);
+	const { profile: base, biometrics } = splitBiometricProfile(noCam);
 	if (request.physical || request.platform !== "android" || base !== "auto") return ok(request);
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
 	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
-	return profile.success ? ok({ ...request, profile: biometricProfile(profile.data, biometrics) }) : profile;
+	return profile.success
+		? ok({ ...request, profile: cameraProfile(biometricProfile(profile.data, biometrics), camera) })
+		: profile;
 }
 
 /**

@@ -29,7 +29,7 @@ warden e2e example --specs todos,settings  # exactly these ids / globs
 | `--no-warm` | skip the iOS driver warm-up (never skipped for an iPhone: its jobs reach the runner host through it) |
 | `--physical` / `--serial <serial...>` / `--udid <udid...>` | run on physical phones/tablets, see "Physical devices". `--serial` is Android, `--udid` is iOS (CoreDevice UDID); naming devices implies `--physical`. Win over the suite's `physical` |
 | `--perf [captures]` | profile every attempt: bare = metrics, frames, logs; or `--perf=react,js`, `all` (names: `all js react native metrics frames logs`). Reports land in the attempt's `perf/` dir; suite/top-level `perf.budgets` make a breach fail the test (`PERF_BUDGET`) |
-| claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --biometrics --json` (`--json` prints the e2e report) |
+| claim flags | `--profile --runtime --count --max --wait --no-wait --priority --ttl --label --adopt --headless --no-headless --slim --no-slim --biometrics --camera --json` (`--json` prints the e2e report) |
 | lease flags | `--port <from:span>` (repeatable), `--app --install-mode clean\|reinstall --reset-keychain --project --bundle-id --variant --kind --no-eas --no-build` |
 | batch flags | `--retry --passes --serve --serve-ready --serve-timeout --job-timeout --record <dir> --logs <dir> --no-tui` |
 

@@ -5,6 +5,9 @@ import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/r
 import { profileSlug } from "../allocate";
 import { ensureUnlocked, systemReady } from "../android-keyguard";
 import { biometricProfile, splitBiometricProfile } from "../biometrics";
+import { seedCameraPlaceholders } from "../camera-placeholder";
+import { splitCameraProfile } from "../camera-profile";
+import { cameraFeedDir } from "../conditions/camera-media";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import { type Exec, type ExecOptions, execError } from "../exec";
 import { type PidAlive, processAlive } from "../liveness";
@@ -299,7 +302,9 @@ export function claimEmulatorArgv(
 	port: number,
 	snapshot?: string,
 	/** `false` leaves out `headlessEmulatorFlags` (an emulator that rejected them) */
-	headless = true
+	headless = true,
+	/** a `+cam` device's feed dir: both cameras read `back.png` / `front.png` from it */
+	cameraDir?: string
 ): string[] {
 	return [
 		tools.emulator,
@@ -313,6 +318,14 @@ export function claimEmulatorArgv(
 		"-no-snapshot-save",
 		"-no-boot-anim",
 		...(headless ? headlessEmulatorFlags(env) : []),
+		...(cameraDir !== undefined
+			? [
+					"-camera-back",
+					`imagefile:${join(cameraDir, "back.png")}`,
+					"-camera-front",
+					`imagefile:${join(cameraDir, "front.png")}`,
+				]
+			: []),
 	];
 }
 
@@ -509,7 +522,10 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	 */
 	async function settleBiometricsDevice(id: string, avd: string | undefined): AsyncResult<void> {
 		const recorded = deps.store.listDevices("android").find((d) => d.id === id);
-		if (recorded === undefined || !splitBiometricProfile(avd ?? recorded.profile ?? "").biometrics)
+		if (
+			recorded === undefined ||
+			!splitBiometricProfile(splitCameraProfile(avd ?? recorded.profile ?? "").profile).biometrics
+		)
 			return ok(undefined);
 		const keyguard = { exec: deps.exec, sleep, adb: tools.adb, now: deps.now };
 		const up = await systemReady(keyguard, id, SYSTEM_READY_MS);
@@ -650,15 +666,19 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	/** The AVD, snapshot target and snapshot a `profile` launches from. */
 	async function resolveLaunchTarget(
 		profile: string
-	): AsyncResult<{ avdName: string; target: string; snapshot: string | undefined }> {
-		const split = splitBiometricProfile(profile);
+	): AsyncResult<{ avdName: string; target: string; snapshot: string | undefined; camera: boolean }> {
+		const cam = splitCameraProfile(profile);
+		const split = splitBiometricProfile(cam.profile);
 		const resolved = await resolveAvd(split.profile);
 		if (!resolved.success) return resolved;
 		// a biometrics profile is a separate golden of the AVD; its devices must start enrolled, so no cold-boot fallback
 		const target = biometricProfile(resolved.data, split.biometrics);
+		// a camera device cold-boots (the camera source is fixed at launch): no snapshot, and no snapshot bookkeeping
+		// against the base golden, which a camera launch must never invalidate
+		if (cam.camera) return ok({ avdName: resolved.data, target, snapshot: undefined, camera: true });
 		const snapshot = await snapshotFor(target);
 		if (split.biometrics && snapshot === undefined) return err(missingEnrolledSnapshot(profile));
-		return ok({ avdName: resolved.data, target, snapshot });
+		return ok({ avdName: resolved.data, target, snapshot, camera: false });
 	}
 
 	/** Launch a headless, read-only emulator of `avd` on `port`, logging to `$WARDEN_HOME/logs/<serial>.log`. */
@@ -667,7 +687,8 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		port: number,
 		serial: string,
 		snapshot: string | undefined,
-		headless: boolean
+		headless: boolean,
+		camera: boolean
 	): AsyncResult<{ pid: number; logPath: string; logOffset: number }> {
 		const logDir = join(wardenHome(deps.env), "logs");
 		try {
@@ -677,7 +698,16 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		}
 		const logPath = join(logDir, `${serial}.log`);
 		const logOffset = logSize(logPath);
-		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless);
+		let cameraDir: string | undefined;
+		if (camera) {
+			cameraDir = cameraFeedDir(wardenHome(deps.env), serial);
+			try {
+				seedCameraPlaceholders(cameraDir);
+			} catch (error) {
+				return err(error);
+			}
+		}
+		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless, cameraDir);
 		const spawned = await spawnDetached(argv, logPath);
 		return spawned.success ? ok({ pid: spawned.data.pid, logPath, logOffset }) : spawned;
 	}
@@ -696,17 +726,18 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		avd: string,
 		port: number,
 		serial: string,
-		snapshot: string | undefined
+		snapshot: string | undefined,
+		camera: boolean
 	): AsyncResult<{ pid: number; logPath: string; logOffset: number; snapshot?: string }> {
 		let headless = true;
 		const attempt = async (from: string | undefined) => {
-			const first = await launch(avd, port, serial, from, headless);
+			const first = await launch(avd, port, serial, from, headless, camera);
 			if (first.success || !headless || !rejectedOption(first.error)) return first;
 			headless = false;
 			deps.log?.(
 				`${serial}: the emulator rejected ${headlessEmulatorFlags(deps.env).join(" ")} — relaunching without them`
 			);
-			return launch(avd, port, serial, from, false);
+			return launch(avd, port, serial, from, false, camera);
 		};
 		const launched = await attempt(snapshot);
 		if (launched.success) return snapshot !== undefined ? ok({ ...launched.data, snapshot }) : launched;
@@ -745,7 +776,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		async create(name, profile, runtime) {
 			const resolved = await resolveLaunchTarget(profile);
 			if (!resolved.success) return resolved;
-			const { avdName, target, snapshot } = resolved.data;
+			const { avdName, target, snapshot, camera } = resolved.data;
 			const running = await runningEmulators();
 			if (!running.success) return running;
 
@@ -753,7 +784,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			if (!leased.success) return leased;
 			const { lease, port } = leased.data;
 			const serial = `emulator-${port}`;
-			const launched = await launchOrColdBoot(avdName, port, serial, snapshot);
+			const launched = await launchOrColdBoot(avdName, port, serial, snapshot, camera);
 			if (!launched.success) {
 				deps.store.deleteLeases([lease.id]);
 				return launched;

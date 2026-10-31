@@ -134,6 +134,9 @@ Options:
                          WARDEN_SLIM=0 also turn slimming off)
   --biometrics           claim devices with a fingerprint / Face ID enrolled
                          (own pool and golden; config biometrics)
+  --camera               Android: launch the emulator with a file-fed camera
+                         (\`+cam\` device); iOS: no effect, the simulated camera
+                         needs no special device
   --json                 machine-readable output
   --physical             claim a connected physical phone/tablet (never booted,
                          shut down or created by warden)
@@ -202,6 +205,9 @@ Options:
                          WARDEN_SLIM=0 also turn slimming off)
   --biometrics           claim devices with a fingerprint / Face ID enrolled
                          (own pool and golden; config biometrics)
+  --camera               Android: launch the emulator with a file-fed camera
+                         (\`+cam\` device); iOS: no effect, the simulated camera
+                         needs no special device
   --json                 machine-readable output
   --physical             claim a connected physical phone/tablet (never booted,
                          shut down or created by warden)
@@ -273,6 +279,9 @@ Options:
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
+  --camera                    Android: launch the emulator with a file-fed
+                              camera (\`+cam\` device); iOS: no effect, the
+                              simulated camera needs no special device
   --json                      machine-readable output
   --udid <udid>               use this device instead of claiming one
   --lease <id>                use the device of this lease
@@ -422,6 +431,9 @@ Options:
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
+  --camera                    Android: launch the emulator with a file-fed
+                              camera (\`+cam\` device); iOS: no effect, the
+                              simulated camera needs no special device
   --json                      machine-readable output
   --physical                  claim a connected physical phone/tablet (never
                               booted, shut down or created by warden)
@@ -545,6 +557,9 @@ Options:
                               slim / WARDEN_SLIM=0 also turn slimming off)
   --biometrics                claim devices with a fingerprint / Face ID
                               enrolled (own pool and golden; config biometrics)
+  --camera                    Android: launch the emulator with a file-fed
+                              camera (\`+cam\` device); iOS: no effect, the
+                              simulated camera needs no special device
   --json                      machine-readable output
   --physical                  claim a connected physical phone/tablet (never
                               booted, shut down or created by warden)
