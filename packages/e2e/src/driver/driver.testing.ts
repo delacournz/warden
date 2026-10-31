@@ -7,6 +7,9 @@ import type {
 	PermissionState,
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { Result } from "@delacour/warden-types/result";
+import type { ScreenReaderState } from "../a11y/a11y.types";
+import type { A11yEventsRead, ReadsA11yEvents } from "./a11y-events";
+import type { ReadsA11y } from "./a11y-read";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "./alerts";
 import type {
 	A11yOp,
@@ -46,9 +49,12 @@ import type {
 	TouchPath,
 	TwoFingerOptions,
 } from "./driver.types";
+import type { ActsOnElements, ScrollDirection } from "./element-actions";
 import { driverError } from "./errors";
 import { planGesture } from "./gesture-geometry";
+import type { AuditsNatively, NativeAuditOptions, NativeAuditResult } from "./native-audit";
 import { faultNotes } from "./network-proxy";
+import type { DrivesScreenReader, SpokenRead } from "./screen-reader";
 import type { PastesText, SelectsAll, SetsText } from "./typing";
 
 /**
@@ -197,6 +203,8 @@ export type DriverCall =
 	| { method: "selectAll" }
 	| { method: "setText"; text: string }
 	| { method: "pasteText"; text: string }
+	| { method: "pressElement"; element: Element }
+	| { method: "scrollElement"; direction: ScrollDirection; within?: Element }
 	| { method: "pressButton"; button: HardwareButton }
 	| { method: "screenshot"; opts?: { path?: string; scale?: number } }
 	| { method: "orientation"; set?: Orientation }
@@ -204,6 +212,15 @@ export type DriverCall =
 	| { method: "alert" }
 	| { method: "alertOn"; backend: AlertBackend }
 	| { method: "isFrontmost"; bundleId: string }
+	| { method: "readA11y" }
+	| { method: "a11yEvents"; since?: number }
+	| { method: "auditNatively"; options?: NativeAuditOptions }
+	| { method: "screenReaderState" }
+	| { method: "screenReaderNext" }
+	| { method: "screenReaderPrev" }
+	| { method: "screenReaderActivate" }
+	| { method: "screenReaderFocused" }
+	| { method: "screenReaderSpoken"; since?: number }
 	| { method: "appearance"; set?: "light" | "dark" }
 	| { method: "clipboard"; set?: string }
 	| { method: "network"; op: NetworkCondition }
@@ -247,6 +264,11 @@ export type FakeDriverOptions = {
 	setText?: boolean;
 	/** offer the optional `PastesText` capability (calls are recorded as `pasteText`); a plain driver has none */
 	pasteText?: boolean;
+	/**
+	 * Offer the optional `ActsOnElements` capability (calls are recorded as `pressElement` / `scrollElement`) and
+	 * answer whether the driver handled the action (default false: the caller sends the touch). A plain driver has none.
+	 */
+	elementActions?: { handled: boolean };
 	/** inspect every call (after it is recorded); return an override to fail it or fake its result */
 	onCall?: (call: DriverCall) => FakeOverride | undefined;
 	/**
@@ -262,13 +284,32 @@ export type FakeDriverOptions = {
 	swallowAlertTaps?: number;
 	/** Offer the optional `isFrontmost` capability: the bundle id of the app in front (evaluated per call). */
 	frontmost?: () => string | undefined;
+	/** Offer the optional `ReadsA11y` capability: the snapshot the driver would hand back with `Element.a11y` filled in. */
+	readA11y?: (snapshot: Snapshot) => Snapshot;
+	/** Offer the optional `ReadsA11yEvents` capability (cursor semantics are the function's own). */
+	a11yEvents?: (since?: number) => A11yEventsRead;
+	/** Offer the optional `AuditsNatively` capability. */
+	auditNatively?: (options?: NativeAuditOptions) => NativeAuditResult;
+	/**
+	 * Offer the optional `DrivesScreenReader` capability (all six calls, recorded as `screenReader*`). Unset members
+	 * answer a quiet default: state `real`/`talkback`, no focus, nothing spoken.
+	 */
+	screenReader?: Partial<{
+		state: () => ScreenReaderState;
+		next: () => Element | undefined;
+		prev: () => Element | undefined;
+		activate: () => void;
+		focused: () => Element | undefined;
+		spoken: (since?: number) => SpokenRead;
+	}>;
 };
 
 export type FakeDriver = Driver &
 	Partial<SelectsAll> &
 	Partial<SetsText> &
 	Partial<PastesText> &
-	Partial<ReadsAlertOn & ProbesFrontmost> & {
+	Partial<ActsOnElements> &
+	Partial<ReadsAlertOn & ProbesFrontmost & ReadsA11y & ReadsA11yEvents & AuditsNatively & DrivesScreenReader> & {
 		/** every call so far, in order */
 		readonly calls: DriverCall[];
 		/** the screen `snapshot()` currently returns */
@@ -611,6 +652,12 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
 	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
 	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
+	const actions = options.elementActions;
+	if (actions !== undefined) {
+		driver.pressElement = async (element) => run({ method: "pressElement", element }, () => actions.handled);
+		driver.scrollElement = async (direction, within) =>
+			run({ method: "scrollElement", direction, ...(within ? { within } : {}) }, () => actions.handled);
+	}
 	const { alertBackends, frontmost } = options;
 	if (alertBackends !== undefined) {
 		driver.alertOn = async (backend) =>
@@ -620,6 +667,36 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 	}
 	if (frontmost !== undefined) {
 		driver.isFrontmost = async (bundleId) => run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
+	}
+	if (options.readA11y !== undefined) {
+		const read = options.readA11y;
+		driver.readA11y = async (snapshot) => run({ method: "readA11y" }, () => read(snapshot));
+	}
+	if (options.a11yEvents !== undefined) {
+		const events = options.a11yEvents;
+		driver.a11yEvents = async (since) =>
+			run({ method: "a11yEvents", ...(since === undefined ? {} : { since }) }, () => events(since));
+	}
+	if (options.auditNatively !== undefined) {
+		const audit = options.auditNatively;
+		driver.auditNatively = async (opts) => {
+			calls.push({ method: "auditNatively", ...(opts === undefined ? {} : { options: opts }) });
+			return audit(opts);
+		};
+	}
+	if (options.screenReader !== undefined) {
+		const reader = options.screenReader;
+		driver.screenReaderState = async () =>
+			run({ method: "screenReaderState" }, () => reader.state?.() ?? { mode: "real", engine: "talkback" });
+		driver.screenReaderNext = async () => run({ method: "screenReaderNext" }, () => reader.next?.());
+		driver.screenReaderPrev = async () => run({ method: "screenReaderPrev" }, () => reader.prev?.());
+		driver.screenReaderActivate = async () => run({ method: "screenReaderActivate" }, () => reader.activate?.());
+		driver.screenReaderFocused = async () => run({ method: "screenReaderFocused" }, () => reader.focused?.());
+		driver.screenReaderSpoken = async (since) =>
+			run(
+				{ method: "screenReaderSpoken", ...(since === undefined ? {} : { since }) },
+				() => reader.spoken?.(since) ?? { lines: [], cursor: since ?? 0 }
+			);
 	}
 	return driver;
 }

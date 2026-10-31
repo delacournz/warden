@@ -20,6 +20,8 @@
 		"native:smoke": "bun native/scripts/smoke.ts",
 		"android:build": "bun native/android/scripts/build.ts",
 		"android:emit": "bun native/android/scripts/build.ts --emit-ts",
+		"android:atf": "bun native/android/scripts/build-atf.ts",
+		"android:emit-atf": "bun native/android/scripts/build-atf.ts --emit-ts",
 		"android:smoke": "bun native/android/scripts/smoke.ts"
 	},
 	"dependencies": {

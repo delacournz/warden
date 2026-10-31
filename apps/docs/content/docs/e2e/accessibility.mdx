@@ -1,0 +1,181 @@
+---
+title: Accessibility
+description: Audit screens, check what a screen reader would say, read announcements and set display settings from a spec, a suite or warden ui - with a real TalkBack on Android and a simulated reader on iOS.
+icon: Accessibility
+---
+
+Specs and [`warden ui`](/docs/agents/ui) can audit a screen, show the order and wording a screen reader would use, read announcements and live-region changes, and set the OS accessibility settings an app reads (bold text, reduce motion, screen reader on). Everything is scoped to the lease and undone on release.
+
+## What works where
+
+| | iOS simulator | Android emulator | Physical device |
+|---|---|---|---|
+| Real screen reader | no: VoiceOver does not run in the simulator | yes: TalkBack, on a Google Play system image | not supported |
+| App believes a screen reader is on | yes, a simulated flag (`mode: "simulated"`, `engine: "voiceover"`) | yes, real TalkBack (`mode: "real"`, `engine: "talkback"`) | no |
+| Reading order and wording | simulated | simulated | simulated |
+| What TalkBack said (`spoken`, `focus`) | `E_UNSUPPORTED` | yes | no |
+| Audit | warden rules + XCUITest | warden rules + Android Accessibility Test Framework (ATF) | warden rules |
+| Announcements and live regions | yes, needs the injected library | yes | no |
+| Display settings | yes | yes | refused (`E_UNSUPPORTED`) |
+
+Wording and order from warden are a model of VoiceOver and TalkBack (`source: "simulated"`), an approximation and never what they say. Keep a manual on-device pass with VoiceOver and TalkBack in your release checklist.
+
+## Display settings
+
+```ts
+await device.a11y({ textSize: "accessibility-large", boldText: true, reduceMotion: true });
+await app.open();
+```
+
+```bash
+warden ui a11y set --text-size accessibility-large --bold --reduce-motion
+warden ui a11y set --no-bold --no-reduce-motion   # each flag has a --no- form
+warden ui a11y status                             # what is recorded, plus the screen-reader state
+warden ui a11y reset
+```
+
+| Flag / key | iOS | Android |
+|---|---|---|
+| `--text-size` / `textSize` | category (`extra-small` ... `accessibility-extra-extra-extra-large`) or scale, live | scale, clamped to 0.5-2 |
+| `--bold` / `boldText` | live | `font_weight_adjustment` |
+| `--contrast increased\|normal` | live | skipped |
+| `--reduce-motion` / `reduceMotion` | live | `transition_animation_scale`; off by default, `true` zeroes it (React Native reads it) |
+| `--reduce-transparency`, `--button-shapes`, `--differentiate-without-color`, `--on-off-labels` | live, no relaunch | skipped |
+| `--high-contrast-text`, `--color-inversion` | skipped | live |
+| `--screen-reader` / `screenReader` | simulated flag | real TalkBack |
+
+A setting a platform has no mechanism for is `skipped` with a reason; a call where everything is skipped fails with `E_UNSUPPORTED`. Release puts every setting back (including TalkBack's accessibility services and master switch, exactly as the device had them).
+
+On Android apps see reduce motion off by default under warden. Warden zeroes window and animator scales while it drives, and restores the device's `transition_animation_scale` afterwards, so an app reading reduce motion no longer sees it on in every spec. Set `reduceMotion: true` for the reduced path.
+
+## Screen readers
+
+**iOS** has no VoiceOver in the simulator. `screenReader: true` flips the flag the app reads (React Native `AccessibilityInfo.isScreenReaderEnabled()` becomes true), so the app takes its screen-reader code paths. Taps and snapshots are unchanged. Use `order` and `speak` for wording.
+
+**Android** runs real TalkBack. It needs:
+
+- an emulator with a Google Play system image (TalkBack preinstalled; otherwise `E_UNSUPPORTED ... not installed`)
+- the `warden-uiad` server on (not `WARDEN_ANDROID_UIAD=0`: the `uiautomator dump` fallback unbinds TalkBack)
+- an unlocked screen. Warden emulators are unlocked at boot.
+
+With TalkBack on, a touch only moves focus, so locator `tap`, `scroll` and `swipe` (and `warden ui press` / `scroll`) use accessibility actions instead. A raw coordinate tap stays a touch.
+
+```ts
+await device.a11y({ screenReader: true });
+await app.open();
+const first = await device.screenReader.next();   // moves TalkBack focus
+await device.screenReader.activate();
+const { lines } = await device.screenReader.spoken();
+```
+
+```bash
+warden ui a11y set --screen-reader
+warden ui a11y focus next          # next | prev | activate | status
+warden ui a11y spoken              # then: cursor N, pass it as --since N
+```
+
+`spoken` has `source: "talkback"` only when TalkBack's verbose log is on; otherwise it is composed from focus events (`simulated`).
+
+## Reading order and speech (simulated)
+
+```bash
+warden ui a11y order               # the reading order, labelled simulated
+warden ui a11y speak "@e3"         # what a reader would say for one element
+```
+
+```ts
+const order = await device.screenReader.order();   // Announcement[], both platforms
+await expect(screen.getByTestId("save")).toAnnounce("Save, button");
+```
+
+Only nodes a screen reader can reach are listed. Child text inside a focusable parent is merged into the parent, as both readers do.
+
+## Audit
+
+```bash
+warden ui a11y audit
+warden ui a11y audit --min-severity warning --ignore target-size-platform:close-btn
+```
+
+```ts
+const result = await device.a11yAudit({ minSeverity: "warning" });
+await expect(device).toPassA11yAudit();
+```
+
+An audit runs warden's rules on the snapshot, plus the platform's own audit unless `--no-native` / `native: false`.
+
+| Rule | Severity | WCAG | Finds |
+|---|---|---|---|
+| `missing-name` | error | 4.1.2 | a control a reader stops on with no accessible name |
+| `image-no-name` | error | 1.1.1 | an image with no name (label it or mark it decorative) |
+| `label-in-name` | error | 2.5.3 | visible text not contained in the accessible name |
+| `target-size` | error | 2.5.8 | target under 24x24 with another target within 24 |
+| `target-size-platform` | warning | | under 44pt (iOS) / 48dp (Android) |
+| `duplicate-name` | warning | 2.4.6 | two controls announced the same |
+| `role-in-name` | warning | | name repeats its role word ("Save button") |
+| `hidden-focusable` | warning | | focusable but hidden, zero-size or off screen |
+| `text-clipped` | warning | 1.4.4 | truncated or overflowing text; runs from `accessibility-medium` up |
+| `native` | per engine | per engine | iOS: XCUITest `performAccessibilityAudit`; Android: ATF (contrast, touch target, labels) |
+
+- The audit fails at `--min-severity` (default `error`); `warning` also counts warnings. The CLI exits 1 on a failure and still prints the issues.
+- `--ignore <rule[:identifier]>` suppresses a finding, `--rule <id>` limits the run, `--text-size` audits at that size.
+- A native engine that cannot run is `skipped` (a warning), never a failure. On iOS it needs the app running and the runner sources (a checkout, or the binary's embedded copy); the simulator build is unsigned and cached.
+
+Set suite defaults with the `a11y` key; a suite's key replaces the top-level one per key:
+
+```ts title="warden.config.ts"
+export default defineConfig({
+  e2e: {
+    mobile: {
+      specsDir: "e2e",
+      a11y: { minSeverity: "warning", ignore: [{ rule: "target-size-platform", identifier: "close-btn" }] },
+    },
+  },
+});
+```
+
+## Announcements and live regions
+
+```ts
+await screen.getByTestId("save").tap();
+await expect(device).toHaveAnnounced("Saved");
+const { announcements, cursor } = await device.announcements();
+```
+
+```bash
+warden ui a11y announcements [--since <cursor>]
+```
+
+Announcements and live-region changes come back oldest first with a cursor. `toHaveAnnounced(text, { timeoutMs?, since? })` takes a string (contains) or a RegExp; `.not` waits the timeout for none.
+
+## The injected library on iOS
+
+iOS hints, custom actions, reading order and announcements come from a library injected when the app launches. Without it `snapshot --a11y`, `audit`, `order` and `speak` still work on the plain tree and warn; `announcements` and `toHaveHint` fail `E_UNSUPPORTED`.
+
+- By hand: `warden ui open <bundle> --a11y` (relaunches once, remembered per device), or `WARDEN_A11Y=1`.
+- Suites: `warden e2e --a11y`, or any suite with an `a11y` key (even `a11y: {}`). Other suites pay nothing. Android needs nothing.
+
+## Matchers
+
+| Matcher | |
+|---|---|
+| `toHaveAccessibleName(t)` | the accessible name |
+| `toHaveRole(role)` | the role |
+| `toHaveHint(t)` | the hint (iOS needs the injected library) |
+| `toAnnounce(t, { exact? })` | the simulated phrase, e.g. "Save, button" |
+| `toBeA11yFocused()` | TalkBack's focus is on the element (Android) |
+| `expect(device).toPassA11yAudit(opts?)` | the audit finds nothing at or above `minSeverity` |
+| `expect(device).toHaveAnnounced(t, opts?)` | an announcement matching `t` arrived |
+
+## Snapshots
+
+`warden ui snapshot -i --a11y` adds `hint="..."`, `actions=[...]`, `a11y-focused`, `not-important` and `live=...` per line (`--json`: an `a11y` object per element). iOS needs the injected library or it warns.
+
+## Limits
+
+- No VoiceOver in the simulator and no physical-device VoiceOver control; the iOS reader is a flag plus a model.
+- Speech and order are an approximation. Keep a manual pass with the real readers before release.
+- Physical devices refuse settings (`E_UNSUPPORTED`); warden never changes a phone's settings.
+- TalkBack mode needs a Play image, `warden-uiad` and an unlocked screen. Without one, `a11y set --screen-reader` fails with `E_UNSUPPORTED` and a hint naming the fix.
+
+See also [Write e2e specs](/docs/e2e/specs), [Suites](/docs/e2e/suites) and [Debugging](/docs/e2e/debugging).

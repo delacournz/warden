@@ -24,6 +24,7 @@
 		64720501B24F9A67404E007B /* ErrorClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 717FA5448817FE529FDA2D2C /* ErrorClassifier.swift */; };
 		7A82EC50F2227358F03E3E6D /* SnapshotEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A84543646B80056F960FB3A /* SnapshotEncoder.swift */; };
 		8E1DE6981AE2D99A0072F741 /* WardenRunnerHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4017EFC9F0C97FB7939C4FCA /* WardenRunnerHostApp.swift */; };
+		9AAF3046E099887B0F7BAA11 /* AuditEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D941088ABFF5D29ADA82313 /* AuditEncoder.swift */; };
 		A8262510F7621141027AC18C /* Router.swift in Sources */ = {isa = PBXBuildFile; fileRef = E14513AE2E91BDD4D8F26B75 /* Router.swift */; };
 		B75938364C659993552EBDC9 /* RunnerInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C41C51660BB41B58E3A63A2 /* RunnerInfo.swift */; };
 /* End PBXBuildFile section */
@@ -47,6 +48,7 @@
 		3F02DA8BB97F8A93B60ADC53 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		4017EFC9F0C97FB7939C4FCA /* WardenRunnerHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WardenRunnerHostApp.swift; sourceTree = "<group>"; };
 		46BE301BBC2621AB147273CF /* KeyMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyMap.swift; sourceTree = "<group>"; };
+		4D941088ABFF5D29ADA82313 /* AuditEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditEncoder.swift; sourceTree = "<group>"; };
 		56EF9DF632A4AFEEB136E0AA /* RunnerServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerServer.swift; sourceTree = "<group>"; };
 		5A47AFFB799860127B5E6541 /* RunnerTests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "RunnerTests-Bridging-Header.h"; sourceTree = "<group>"; };
 		717FA5448817FE529FDA2D2C /* ErrorClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorClassifier.swift; sourceTree = "<group>"; };
@@ -68,6 +70,7 @@
 		177297C667976C795BF25BEB /* RunnerCore */ = {
 			isa = PBXGroup;
 			children = (
+				4D941088ABFF5D29ADA82313 /* AuditEncoder.swift */,
 				248A848492ABFBC89BEEB136 /* Command.swift */,
 				717FA5448817FE529FDA2D2C /* ErrorClassifier.swift */,
 				E9FFBE672778F95E38826E9B /* FrameSpace.swift */,
@@ -272,6 +275,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9AAF3046E099887B0F7BAA11 /* AuditEncoder.swift in Sources */,
 				40188687F38C80F68DC9BA32 /* Command.swift in Sources */,
 				62F1B5E89B976DEC982A22FC /* Element.swift in Sources */,
 				158B636DA326632B2EB60033 /* ElementTypeName.swift in Sources */,

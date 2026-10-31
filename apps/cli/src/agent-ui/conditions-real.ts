@@ -5,6 +5,7 @@ import { ensureLeaseProxy } from "@delacour/warden-core/netproxy/lease-proxy";
 import { androidTools } from "@delacour/warden-core/providers/android";
 import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-e2e/conditions/route-ticker.spawn";
 import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-e2e/conditions/scheduler.spawn";
+import { uiadFromEnv } from "@delacour/warden-e2e/driver/android/uiad-backend";
 import { leaseClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
 import { driverErr } from "@delacour/warden-e2e/driver/errors";
 import {
@@ -81,7 +82,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		clock: realClock,
 		proxy: leaseNetworkProxy(proxyDeps(ctx), device.lease),
 	});
-	const settings = createAndroidSettings({ session, serial });
+	const settings = createAndroidSettings({ session, serial, uiadAvailable: () => uiadFromEnv(ctx.env) === true });
 	return ok({
 		...settings,
 		network: net.network,

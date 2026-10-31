@@ -1,7 +1,15 @@
+import {
+	IOS_DEFAULTS_FIELDS,
+	type IosDefaultsField,
+	iosDefaultsDeleteArgvs,
+	iosDefaultsMissing,
+	iosDefaultsWriteArgvs,
+} from "@delacour/warden-core/conditions/a11y-keys";
 import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-core/conditions/conditions.types";
 import type { LaunchSettings } from "@delacour/warden-core/conditions/launch-settings";
 import { resolveTextSize } from "@delacour/warden-core/conditions/text-size";
 import { type Exec, execError } from "@delacour/warden-core/exec";
+import type { ScreenReaderState } from "../../a11y/a11y.types";
 import { badRequest, batteryProblem, localeProblem, pushProblem, timezoneProblem } from "../device-settings";
 import type { A11yState, BatteryState, Driver, DriverResult, LaunchOptions } from "../driver.types";
 import { driverErr } from "../errors";
@@ -150,10 +158,10 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 	};
 
 	/** `retryHung`: a call killed at the timeout runs once more (seen: `simctl privacy` hanging on a sim that just booted) */
-	async function simctl(argv: string[], retryHung = false): DriverResult<void> {
+	async function simctl(argv: string[], retryHung = false, tolerate?: (stderr: string) => boolean): DriverResult<void> {
 		let res = await exec(argv, { timeoutMs: SIMCTL_MS });
 		if (retryHung && res.exitCode === KILLED_BY_TIMEOUT) res = await exec(argv, { timeoutMs: SIMCTL_MS });
-		return res.exitCode === 0
+		return res.exitCode === 0 || tolerate?.(`${res.stderr}${res.stdout}`)
 			? { success: true, data: undefined }
 			: driverErr("E_IO", execError(argv, res), { detail: { udid } });
 	}
@@ -224,16 +232,38 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 				if (!done.success) return done;
 				applied.push("contrast");
 			}
-			if (op?.boldText !== undefined) {
-				skipped.push({ setting: "boldText", reason: "iOS has no simctl switch for bold text" });
+			if (op === null) {
+				for (const argv of iosDefaultsDeleteArgvs(udid, IOS_DEFAULTS_FIELDS)) {
+					const done = await simctl(argv, false, iosDefaultsMissing);
+					if (!done.success) return done;
+				}
+			} else {
+				const entries = IOS_DEFAULTS_FIELDS.flatMap((field): [IosDefaultsField, boolean][] => {
+					const on = op[field];
+					return on === undefined ? [] : [[field, on]];
+				});
+				for (const argv of iosDefaultsWriteArgvs(udid, entries)) {
+					const done = await simctl(argv);
+					if (!done.success) return done;
+				}
+				applied.push(...entries.map(([field]) => field));
 			}
-			if (op?.reduceMotion !== undefined) {
-				skipped.push({ setting: "reduceMotion", reason: "iOS has no simctl switch for reduce motion" });
+			for (const setting of ["highContrastText", "colorInversion"] as const) {
+				if (op?.[setting] !== undefined) skipped.push({ setting, reason: "Android only" });
 			}
 			if (applied.length === 0 && skipped.length > 0) {
 				return driverErr("E_UNSUPPORTED", skipped.map((s) => `${s.setting}: ${s.reason}`).join("; "));
 			}
-			return { success: true, data: { applied, skipped, notes: [] } satisfies A11yState };
+			const screenReader: ScreenReaderState | undefined =
+				op?.screenReader === undefined
+					? undefined
+					: op.screenReader
+						? { mode: "simulated", engine: "voiceover" }
+						: { mode: "off" };
+			return {
+				success: true,
+				data: { applied, skipped, notes: [], ...(screenReader ? { screenReader } : {}) } satisfies A11yState,
+			};
 		},
 		async battery(op) {
 			if (op === null) {

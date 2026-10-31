@@ -200,6 +200,20 @@ describe("perf env", () => {
 	});
 });
 
+describe("a11y audit env", () => {
+	test("WARDEN_A11Y_AUDIT is the suite's a11y settings as JSON; a bad value is reported by name", () => {
+		const config = { ignore: [{ rule: "target-size", identifier: "close" }], minSeverity: "warning" } as const;
+		expect(read({ ...base, WARDEN_A11Y_AUDIT: JSON.stringify(config) })?.a11yAudit as unknown).toEqual(config);
+		const plain = readEnv(base);
+		expect(plain.success && plain.data && "a11yAudit" in plain.data).toBe(false);
+		for (const bad of ["{", '{"minSeverity":"info"}']) {
+			const res = readEnv({ ...base, WARDEN_A11Y_AUDIT: bad });
+			expect(res.success).toBe(false);
+			expect(res.success ? "" : res.error).toContain("WARDEN_A11Y_AUDIT");
+		}
+	});
+});
+
 describe("lease env", () => {
 	test("WARDEN_LEASE_ID is read as leaseId, absent otherwise", () => {
 		expect(read({ ...base, WARDEN_LEASE_ID: "lease-9" })?.leaseId).toBe("lease-9");

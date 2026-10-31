@@ -11,7 +11,7 @@ import { sharedNote, type UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";
 import { type UiError, type UiSuccess, uiError } from "./output";
 import { runUi, type UiRunEnv } from "./run";
-import { updateState } from "./state";
+import { readState, updateState } from "./state";
 
 export type OpenOptionValues = ActionOptionValues & {
 	relaunch?: true;
@@ -23,6 +23,8 @@ export type OpenOptionValues = ActionOptionValues & {
 	kind?: BuildKind;
 	/** `--project`: the app's project dir for `--kind` (default: cwd) */
 	project?: string;
+	/** `--a11y`: iOS launches carry the injected library from now on (remembered in `state.json`) */
+	a11y?: true;
 };
 
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -92,11 +94,24 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 				}),
 			};
 		}
+		const launch = isUrl ? opts : withA11yLaunch(ctx, device, opts);
+		// remembered before the driver opens: it reads the flag to decide whether launches carry the injected library
 		const driver = await env.driver();
 		if (!driver.success) return driver;
 		const open = isUrl ? openUrl : openBundle;
-		return open({ ctx, deps, env, device, driver: driver.data, settle: settle.data, what, opts });
+		return open({ ctx, deps, env, device, driver: driver.data, settle: settle.data, what, opts: launch });
 	});
+}
+
+/**
+ * `--a11y` on iOS: remember that launches carry the injected library. An app already running without it must start
+ * again to load it, so the first `--a11y` implies `--relaunch`. Android reads accessibility facts natively: no-op.
+ */
+function withA11yLaunch(ctx: CommandContext, device: UiDevice, opts: OpenOptionValues): OpenOptionValues {
+	if (opts.a11y !== true || device.platform !== "ios") return opts;
+	const already = readState(ctx, device.udid).a11y === true;
+	updateState(ctx, device.udid, (state) => ({ ...state, a11y: true }));
+	return already ? opts : { ...opts, relaunch: true };
 }
 
 /** Whether any flag that only a bundle-id launch understands is set. */

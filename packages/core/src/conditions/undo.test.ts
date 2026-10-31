@@ -181,6 +181,92 @@ describe("undoConditions", () => {
 		]);
 	});
 
+	test("ios a11y deletes only the defaults keys the record holds", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "a11y", { reduceMotion: true, screenReader: true, contrast: "increased" }, 1);
+		await undoConditions(deps(), l);
+		expect(calls).toEqual([
+			["xcrun", "simctl", "ui", UDID, "content_size", "large"],
+			["xcrun", "simctl", "ui", UDID, "increase_contrast", "disabled"],
+			["xcrun", "simctl", "spawn", UDID, "defaults", "delete", "com.apple.Accessibility", "ReduceMotionEnabled"],
+			["xcrun", "simctl", "spawn", UDID, "defaults", "delete", "com.apple.Accessibility", "VoiceOverTouchEnabled"],
+		]);
+	});
+
+	test("ios a11y undo tolerates a defaults key that was never written", async () => {
+		const l = lease("ios", UDID);
+		recordCondition(store, l.id, "a11y", { boldText: true }, 1);
+		fail = () => false;
+		const base = deps();
+		const exec: Exec = async (cmd) =>
+			cmd[4] === "defaults"
+				? { exitCode: 1, stdout: "", stderr: "The domain/default pair of (x, y) does not exist" }
+				: base.exec(cmd);
+		const r = await undoConditions({ ...base, exec }, l);
+		expect(r.success).toBe(true);
+	});
+
+	test("android a11y resets high contrast text, inversion and the transition scale it set", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "a11y", { highContrastText: true, colorInversion: true, reduceMotion: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[...ADB, "shell", "settings", "put", "secure", "high_text_contrast_enabled", "0"],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_display_inversion_enabled", "0"],
+			[...ADB, "shell", "settings", "put", "global", "transition_animation_scale", "1.0"],
+		]);
+	});
+
+	test("android TalkBack undo restores the exact previous services and never deletes what warden did not add", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{
+				screenReader: true,
+				screenReaderPrevious: { services: "com.other/com.other.Svc$Inner", enabled: "1" },
+			},
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[
+				...ADB,
+				"shell",
+				"settings",
+				"put",
+				"secure",
+				"enabled_accessibility_services",
+				"'com.other/com.other.Svc$Inner'",
+			],
+			[...ADB, "shell", "settings", "put", "secure", "accessibility_enabled", "'1'"],
+		]);
+	});
+
+	test("android TalkBack undo deletes the keys that were unset before", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(
+			store,
+			l.id,
+			"a11y",
+			{ screenReader: true, screenReaderPrevious: { services: null, enabled: null } },
+			1
+		);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([
+			[...ADB, "shell", "settings", "delete", "secure", "enabled_accessibility_services"],
+			[...ADB, "shell", "settings", "delete", "secure", "accessibility_enabled"],
+		]);
+	});
+
+	test("a screenReader record without previous values touches no accessibility service", async () => {
+		const l = lease("android", "emulator-5554");
+		recordCondition(store, l.id, "a11y", { screenReader: true }, 1);
+		await undoConditions(deps(), l);
+		expect(calls.slice(2)).toEqual([]);
+	});
+
 	test("ios locale removes the staged launch settings", async () => {
 		const home = join(dir, "home");
 		const path = launchSettingsPath(home, UDID);

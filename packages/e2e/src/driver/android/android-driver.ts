@@ -3,10 +3,12 @@ import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-core/conditions/conditions.types";
 import type { Exec } from "@delacour/warden-core/exec";
 import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
+import { atfAudit } from "../../a11y/native/atf";
 import type { ConditionSink } from "../../conditions/condition-events";
 import { planRoute } from "../../conditions/location-plan";
 import { type RouteTicker, realTickerClock, startRouteTicker, type TickerClock } from "../../conditions/route-ticker";
 import { type Scheduler, startFlap } from "../../conditions/scheduler";
+import type { ReadsA11yEvents } from "../a11y-events";
 import type { ClockRecorder } from "../clock-recorder";
 import type {
 	AlertInfo,
@@ -26,11 +28,14 @@ import type {
 	ScreenInfo,
 	Snapshot,
 } from "../driver.types";
+import type { ActsOnElements } from "../element-actions";
 import { driverErr } from "../errors";
 import { DEFAULT_RADIUS, type GesturePlan, pinchPlan, planGesture, rotatePlan } from "../gesture-geometry";
+import type { AuditsNatively, NativeAuditOptions } from "../native-audit";
 import type { NetworkProxyPort } from "../network-proxy";
 import type { DetectsAlerts } from "../observation-cache";
 import { physicalConditionOps } from "../physical-conditions";
+import type { DrivesScreenReader } from "../screen-reader";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
@@ -91,8 +96,10 @@ import {
 import { createDumper, type DumpRoute } from "./android-dump";
 import { createAndroidNetwork } from "./android-network";
 import { createSettingsGuard, preparePhone, type SettingsGuard } from "./android-phone";
+import { createScreenReaderOps } from "./android-screen-reader";
 import { createAndroidSettings } from "./android-settings";
 import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
+import { ensureAtfJar } from "./atf-device";
 import { createUiadBackend, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
 import { createUiadOps, type UiadOps } from "./uiad-ops";
@@ -318,7 +325,13 @@ function openUiad(input: {
 			if (state) saving.push(state.update(serial, patchFor(sdk, { uiadUnsupported: buildId })));
 		},
 	});
-	return createUiadOps({ backend, baseScreen, clock, ...(log ? { log } : {}) });
+	return createUiadOps({
+		backend,
+		baseScreen,
+		clock,
+		...(log ? { log } : {}),
+		atf: () => ensureAtfJar({ session, adb, serial, ...(log ? { log } : {}) }),
+	});
 }
 
 function buildDriver(
@@ -328,7 +341,15 @@ function buildDriver(
 	clock: Clock,
 	execBinary: ExecBinary,
 	facts: DeviceFacts
-): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> & Partial<SetsText> {
+): Driver &
+	RepeatingKeys &
+	DetectsAlerts &
+	Partial<SelectsAll> &
+	Partial<SetsText> &
+	Partial<ReadsA11yEvents> &
+	Partial<DrivesScreenReader> &
+	Partial<ActsOnElements> &
+	Partial<AuditsNatively> {
 	const { serial, adb, exec, log } = options;
 	const { sdk } = facts;
 	const initialRoute = options.dumpRoute ?? facts.savedRoute;
@@ -484,6 +505,10 @@ function buildDriver(
 	 */
 	const setText: SetsText["setText"] = async (text) =>
 		(await uiad?.setText(text)) ?? driverErr("E_UNSUPPORTED", "setText needs the warden-uiad server");
+
+	/** See `ReadsA11yEvents`: the server's ring of announcements and live-region changes; there is no way without it. */
+	const a11yEvents: ReadsA11yEvents["a11yEvents"] = async (since) =>
+		(await uiad?.a11yEvents(since)) ?? driverErr("E_UNSUPPORTED", "announcements need the warden-uiad server");
 
 	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
@@ -683,11 +708,14 @@ function buildDriver(
 		});
 		return { success: true, data: { ...applied.data, condition: op } };
 	};
-	const settings = createAndroidSettings({
+	const { talkback, ...settings } = createAndroidSettings({
 		session,
 		serial,
 		...(options.appPackage ? { appPackage: options.appPackage } : {}),
+		transitionOriginal: () => facts.animations.transitionOriginal(),
+		uiadAvailable: () => uiad?.enabled() === true,
 	});
+	const screenReader = createScreenReaderOps({ uiad, talkback, session, clock, tap });
 	const clockOp: Driver["clock"] = async (op) => {
 		const applied = await applyAndroidClock({ session, exec, adb, serial }, op);
 		if (applied.success) options.clockRecorder?.(op);
@@ -818,7 +846,13 @@ function buildDriver(
 		key,
 		pressKeyRepeat,
 		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
-		...(uiad !== undefined ? { setText } : {}),
+		...(uiad !== undefined ? { setText, a11yEvents, ...screenReader } : {}),
+		...(uiad !== undefined
+			? {
+					auditNatively: (opts?: NativeAuditOptions) =>
+						atfAudit({ run: (o) => uiad.audit(o) }, opts?.contrast === undefined ? {} : { contrast: opts.contrast }),
+				}
+			: {}),
 		pressButton,
 		screenshot,
 		orientation,
@@ -846,6 +880,8 @@ function buildDriver(
 		close: async () => {
 			await stopFlap();
 			await stopTicker();
+			// TalkBack is the one thing a closing driver must not leave on: the device outlives it
+			await talkback.disable();
 			await uiad?.stop();
 			await facts.animations.restore();
 			await facts.settings?.restore();

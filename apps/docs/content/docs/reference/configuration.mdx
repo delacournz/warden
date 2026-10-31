@@ -194,6 +194,7 @@ export default defineConfig({
     runAll: { type: "string[]", description: "Globs: a matching change selects every spec." },
     ignore: { type: "string[]", description: "Globs: matching changes are ignored." },
     always: { type: "string[]", description: "Spec ids / globs that always run." },
+    a11y: { type: '{ rules?; ignore?: { rule; identifier? }[]; minSeverity?: "error" | "warning" }', description: "Defaults for `device.a11yAudit()` and `toPassA11yAudit()`; also at the top level, where a suite's key replaces it per key. Setting it, even `{}`, launches iOS apps with the injected accessibility library. See [Accessibility](/docs/e2e/accessibility)." },
     unmapped: { type: '"run" | "skip"', description: "Specs with no `entries` / `paths`: run every time, or only via `runAll` / `always`.", default: '"run"' },
     required: { type: "boolean", description: "Default `required` for specs.", default: "true" },
     passes: { type: "number", description: "Consecutive green runs a spec needs.", default: "1" },

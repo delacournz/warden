@@ -64,6 +64,7 @@ A demo app for dogfooding warden end to end: Expo SDK 57 + Expo Router + Uniwind
 | `/network` | probes a 1 KB HTTPS download every ~1.5 s: signal glyph, latency strip (24 requests), `Online` / `Slow link` (median > 300 ms) / `Requests failing` / `Offline`, Pause probes. Deep link `warden-example://network` | `net-*` |
 | `/location` | live `expo-location` track, 150 m geofence around the first fix, speed / distance / fixes readout, fix log. Deep link `warden-example://location` | `loc-*` |
 | `/clock` | 14-day trial dial driven by `Date.now()`, clock-jump log. Deep link `warden-example://clock` | `clk-*` |
+| `/a11y` | accessibility showcase: heading, labelled switch, adjustable slider, labelled + decorative image, polite live-region counter, `Announce` ("Saved"), row with custom actions (Archive / Delete), hinted button, live screen reader / reduce motion / bold text readouts. `?bad=1` (deep link `warden-example://a11y?bad=1`) adds known failures: unnamed icon button, 20x20 target, "Submit button" (role in name), visible text not in the name. No sign-in gate | `a11y-*` |
 
 ### e2e
 
@@ -79,6 +80,8 @@ Specs are `bun test` specs driven by `@delacour/warden-e2e`; `warden e2e` leases
   - project `example`: build kinds. `simulator` (the default of `warden e2e`) is a Release build with no JS embedded, built once per native fingerprint, and this worktree's JS (`EXPO_PUBLIC_E2E=1` baked in) is repacked into it in seconds (`warden repack ios`); `dev` is the Debug dev client; variant `bench` is the benchmark's Release build with the JS embedded;
   - suite `example`: 2 sims, install (skipped when the sim already has this build; no uninstall, state is in-memory), slim, and the spec → screen `entries` that `warden affected` uses. `--dev` runs the same suite on the dev client: warden starts and verifies its own Metro (the suite's `metro`, which also sets `--initialUrl` and turns the Expo dev menu off), and one spec process per device runs its share of the specs (the default `isolate: "device"`). `metro` applies only with `--dev`;
   - `spec.bundleId` is the app the specs drive (`app.open()` launches it with `WARDEN_LAUNCH_ARGS`).
+
+The accessibility spec (`a11y.e2e.ts`) runs in the `a11y` suite (`warden e2e a11y`), not `example`: its `a11y` key launches iOS with the injected library. Android drives real TalkBack for the `next` / `activate` test.
 
 The network / location / clock specs (`network-*`, `location-*`, `clock-*`) run in the `conditions` suite (`warden e2e conditions`), not `example`: it declares `conditions.network: "online"`, so on iOS every launch carries the network dylib and a spec can change network or clock mid-test. `warden e2e conditions` needs the dylib built (`packages/e2e/native/dist/libwarden-inject.dylib`).
 

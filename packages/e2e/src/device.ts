@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { registerA11yTarget } from "./a11y/a11y-target";
 import {
 	ACCEPT_BUTTONS,
 	ANDROID_NEGATIVE_ID,
@@ -27,6 +28,7 @@ import {
 	type TimelineStepInput,
 } from "./conditions/device-conditions";
 import { type ConditionRecorder, leaseRecorderFor } from "./conditions/lease-recorder";
+import { createDeviceA11y, type DeviceA11y, withA11yRead } from "./device-a11y";
 import { createDeviceDevtools, type DeviceDevtools } from "./device-devtools";
 import {
 	isOpenInSheet,
@@ -81,7 +83,11 @@ export type OpenLinkOptions = {
 	waitMs?: number;
 };
 
-export type SnapshotTextOptions = { interactiveOnly?: boolean };
+export type SnapshotTextOptions = {
+	interactiveOnly?: boolean;
+	/** append hint, actions, focus and live-region facts to each line (the iOS injected read is merged in when available) */
+	a11y?: boolean;
+};
 
 export type SettleOptions = {
 	/** how long the UI must stay unchanged. Default 250 ms. */
@@ -111,7 +117,7 @@ export type DeviceBiometrics = {
 	fail(): Promise<BiometricState>;
 };
 
-export type Device = {
+export type Device = DeviceA11y & {
 	/**
 	 * Answers the system alert / sheet on top. `accept` presses the first present of OK, Allow, Open,
 	 * Continue, Yes, Done, Allow While Using App, Allow Once (else the last button); `dismiss` the first
@@ -350,7 +356,17 @@ export function createDevice({
 			: {}),
 	});
 
+	const a11y = createDeviceA11y({
+		driver,
+		env,
+		signal,
+		step: (label, fn) => (session.step === undefined ? fn() : session.step("locator", label, fn)),
+	});
+
 	const device: Device = {
+		a11yAudit: a11y.a11yAudit,
+		screenReader: a11y.screenReader,
+		announcements: a11y.announcements,
 		get devtools() {
 			return lazyDevtools();
 		},
@@ -470,8 +486,18 @@ export function createDevice({
 
 		async snapshot(options = {}) {
 			const interactiveOnly = options.interactiveOnly ?? false;
-			const snapshot = await readSnapshot({ interactiveOnly });
-			const rendered = renderSnapshot(snapshot, { interactiveOnly, refs: new Map() });
+			const taken = await readSnapshot({ interactiveOnly });
+			let snapshot = taken;
+			if (options.a11y === true) {
+				const merged = await withA11yRead(driver, taken);
+				if (!merged.success) throw toE2eError(merged.error, "read accessibility facts");
+				snapshot = merged.data;
+			}
+			const rendered = renderSnapshot(snapshot, {
+				interactiveOnly,
+				refs: new Map(),
+				...(options.a11y === true ? { a11y: true } : {}),
+			});
 			return [renderHeader({ snapshot, rendered, interactiveOnly }), ...rendered.lines].join("\n");
 		},
 
@@ -491,6 +517,7 @@ export function createDevice({
 		},
 	};
 	registerConditions(device, conditions.internals);
+	registerA11yTarget(device, a11y.target);
 	return device;
 }
 

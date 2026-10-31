@@ -79,6 +79,7 @@ const AFFECTED = {
 		"clock-showcase": {
 			entries: ["src/app/welcome.tsx", "src/app/clock.tsx", "src/modules/clock", "src/modules/showcase"],
 		},
+		a11y: { entries: ["src/app/welcome.tsx", "src/app/a11y.tsx", "src/modules/a11y"] },
 	},
 } satisfies Partial<WardenE2eSuite>;
 
@@ -137,6 +138,7 @@ const EXAMPLE_SUITE = {
  * warden e2e example --dev --all     # same specs on the dev client + warden's Metro
  * warden e2e example --specs perf --perf  # profile every attempt too (reports under each attempt's perf/)
  * warden e2e conditions              # network / location / clock specs (iOS app launched with the network dylib)
+ * warden e2e a11y                  # the accessibility spec (iOS launched with the a11y library)
  * warden e2e biometrics --all        # the biometrics spec alone, on +bio devices (the example suite excludes it)
  * warden affected example            # which specs this branch needs
  * warden repack ios                  # just the repacked simulator build (cached per JS)
@@ -160,12 +162,18 @@ export default {
 	e2e: {
 		example: {
 			...EXAMPLE_SUITE,
-			exclude: [CONDITION_SPECS, "biometrics"],
+			exclude: [CONDITION_SPECS, "biometrics", "a11y"],
 		},
 		conditions: {
 			...EXAMPLE_SUITE,
 			include: [CONDITION_SPECS],
 			conditions: { network: "online" },
+		},
+		a11y: {
+			...EXAMPLE_SUITE,
+			count: 1,
+			a11y: { minSeverity: "error" },
+			include: ["a11y"],
 		},
 		biometrics: {
 			...EXAMPLE_SUITE,

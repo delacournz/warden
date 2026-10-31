@@ -3,7 +3,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { profileSlug } from "../allocate";
-import { ensureUnlocked, systemReady } from "../android-keyguard";
+import { ensureUnlocked, keyguardIsShowing, systemReady } from "../android-keyguard";
 import { biometricProfile, splitBiometricProfile } from "../biometrics";
 import { DEFAULT_TTL_MS } from "../config.defaults";
 import { type Exec, type ExecOptions, execError } from "../exec";
@@ -505,13 +505,19 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 
 	/**
 	 * A biometrics emulator (by its launch, or by its recorded profile when warden reuses one) must be past its PIN
-	 * lock screen and have adb + the package manager answering before anything installs.
+	 * lock screen and have adb + the package manager answering before anything installs. Any other warden emulator
+	 * is unlocked only when it comes up behind a lock screen.
 	 */
 	async function settleBiometricsDevice(id: string, avd: string | undefined): AsyncResult<void> {
 		const recorded = deps.store.listDevices("android").find((d) => d.id === id);
-		if (recorded === undefined || !splitBiometricProfile(avd ?? recorded.profile ?? "").biometrics)
-			return ok(undefined);
 		const keyguard = { exec: deps.exec, sleep, adb: tools.adb, now: deps.now };
+		if (recorded === undefined || !splitBiometricProfile(avd ?? recorded.profile ?? "").biometrics) {
+			// A plain emulator can still restore behind the PIN lock (a shared AVD that once enrolled a fingerprint):
+			// the user is then RUNNING_LOCKED, no app resolves its launcher (`am start` → START_CLASS_NOT_FOUND,
+			// `resolve-activity` → "No activity found"). Best effort: a failed unlock never discards the device.
+			if (await keyguardIsShowing(keyguard, id)) await ensureUnlocked(keyguard, id);
+			return ok(undefined);
+		}
 		const up = await systemReady(keyguard, id, SYSTEM_READY_MS);
 		if (!up.success) return up;
 		const unlocked = await ensureUnlocked(keyguard, id);

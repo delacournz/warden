@@ -21,6 +21,8 @@ export type Target = "ios-simulator" | "macos";
 /** SCNetworkReachability is deprecated but is what older NetInfo builds call: interposing it is the point. */
 const FLAGS = ["-Wall", "-Werror", "-Wno-deprecated-declarations"];
 const FRAMEWORKS = ["-framework", "Foundation", "-framework", "Network", "-framework", "SystemConfiguration"];
+/** The accessibility read (A11Y-1) walks UIKit, which only the simulator build has. */
+const UIKIT = ["-framework", "UIKit"];
 
 /** `xcrun clang` argv for the injected dylib on `target`. */
 export function dylibArgv(target: Target, out: string): string[] {
@@ -41,6 +43,7 @@ export function dylibArgv(target: Target, out: string): string[] {
 		"-install_name",
 		`@rpath/${INJECT_DYLIB}`,
 		...FRAMEWORKS,
+		...(target === "ios-simulator" ? UIKIT : []),
 		INJECT_SOURCE,
 		"-o",
 		out,

@@ -4,6 +4,7 @@
  */
 
 import { z } from "zod";
+import { a11yAuditConfigSchema } from "../a11y/a11y.config";
 import { e2eSuiteSchema, perfConfigSchema } from "../affected/affected.schema";
 import { batchPresetSchema, RESERVED_PRESET_NAMES, slimConfigSchema } from "../batch/preset.schema";
 import { conditionsConfigSchema } from "../conditions/conditions.config";
@@ -170,6 +171,8 @@ export const wardenConfigSchema = z
 		perf: perfConfigSchema.optional(),
 		/** device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area) */
 		conditions: conditionsConfigSchema.optional(),
+		/** accessibility audit settings every `e2e` suite starts from (a suite's own `a11y` keys replace them) */
+		a11y: a11yAuditConfigSchema.optional(),
 		/** Android emulator settings */
 		android: z
 			.object({

@@ -439,6 +439,29 @@ export interface WardenPerfConfig {
 	budgets?: WardenPerfBudgets | undefined;
 }
 
+/** `a11y` (top level, or `e2e.<suite>.a11y`): how accessibility audits judge a screen. */
+export interface WardenA11yConfig {
+	/** Findings to drop: a rule everywhere, or only on the element with that `identifier` (testID). */
+	ignore?: Array<{ rule: WardenA11yRule; identifier?: string | undefined }> | undefined;
+	/** Lowest severity that fails an audit. @default "error" */
+	minSeverity?: "error" | "warning" | undefined;
+	/** Run only these rules (default: all). */
+	rules?: WardenA11yRule[] | undefined;
+}
+
+/** A rule id an audit reports; `native` = XCUITest / ATF findings. */
+export type WardenA11yRule =
+	| "missing-name"
+	| "image-no-name"
+	| "target-size"
+	| "target-size-platform"
+	| "duplicate-name"
+	| "role-in-name"
+	| "label-in-name"
+	| "hidden-focusable"
+	| "text-clipped"
+	| "native";
+
 /** `conditions.network` as a custom shape: the fields of a `custom` network condition. */
 export interface WardenCustomNetwork {
 	/** Added round-trip time, ms. */
@@ -546,6 +569,8 @@ export interface WardenE2eSuite {
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every spec of this suite starts from; each area replaces the top-level one. */
 	conditions?: WardenConditionsConfig | undefined;
+	/** Accessibility audit settings for this suite; each key replaces the top-level `a11y` one. */
+	a11y?: WardenA11yConfig | undefined;
 	/** Directory of specs: `*.e2e.ts(x)` specs whose other `.ts` files are helpers (searched recursively; dot dirs, `node_modules` and `__baselines__` skipped). */
 	specsDir: string;
 	/** How the specs run: the app under test, its launch arguments and the timeouts. */
@@ -772,6 +797,8 @@ export interface WardenConfig {
 	perf?: WardenPerfConfig | undefined;
 	/** Device conditions every `e2e` suite starts from (a suite's own `conditions` replace them per area). */
 	conditions?: WardenConditionsConfig | undefined;
+	/** Accessibility audit settings every `e2e` suite starts from (a suite's own `a11y` keys replace them). */
+	a11y?: WardenA11yConfig | undefined;
 	/** Android emulator settings. */
 	android?: WardenAndroidSettings | undefined;
 	/** Physical iPhone settings. */

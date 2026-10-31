@@ -117,6 +117,11 @@ describe("specEnv perf", () => {
 		version: "1",
 	};
 
+	test("WARDEN_DEV_CLIENT_SCHEME only when given", () => {
+		expect(specEnv(base).WARDEN_DEV_CLIENT_SCHEME).toBeUndefined();
+		expect(specEnv({ ...base, devClientScheme: "exp+warden" }).WARDEN_DEV_CLIENT_SCHEME).toBe("exp+warden");
+	});
+
 	test("WARDEN_BIN, WARDEN_PERF and the budgets", () => {
 		const env = specEnv({ ...base, bin: ["/bin/warden"], perf: ["react", "js"], perfBudgets: { jankPct: 5 } });
 		expect(env.WARDEN_BIN).toBe('["/bin/warden"]');
@@ -127,6 +132,18 @@ describe("specEnv perf", () => {
 	test("WARDEN_BIOMETRICS only for a biometrics suite", () => {
 		expect(specEnv({ ...base, biometrics: true }).WARDEN_BIOMETRICS).toBe("1");
 		expect("WARDEN_BIOMETRICS" in specEnv({ ...base, biometrics: false })).toBe(false);
+	});
+
+	test("WARDEN_A11Y_AUDIT carries the suite's a11y config; WARDEN_A11Y=1 only when asked", () => {
+		const env = specEnv({
+			...base,
+			a11yAudit: { minSeverity: "warning", ignore: [{ rule: "target-size" }] },
+			a11y: true,
+		});
+		expect(env.WARDEN_A11Y_AUDIT).toBe('{"minSeverity":"warning","ignore":[{"rule":"target-size"}]}');
+		expect(env.WARDEN_A11Y).toBe("1");
+		const quiet = specEnv({ ...base, a11y: false });
+		expect("WARDEN_A11Y" in quiet || "WARDEN_A11Y_AUDIT" in quiet).toBe(false);
 	});
 
 	test("absent unless asked for; empty budgets are not exported", () => {

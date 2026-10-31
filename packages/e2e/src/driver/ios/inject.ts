@@ -22,7 +22,14 @@ export const INJECT_DYLIB_ENV = "WARDEN_INJECT_DYLIB";
  * whole state, never a delta. `clockFrozenMs` (ms since the epoch) holds the wall clocks at one instant and wins over
  * `clockOffsetMs`; left out, they run.
  */
-export type InjectState = { seq: number; offline?: boolean; clockOffsetMs?: number; clockFrozenMs?: number };
+export type InjectState = {
+	seq: number;
+	offline?: boolean;
+	clockOffsetMs?: number;
+	clockFrozenMs?: number;
+	/** one-shot request (A11Y-1): walk the accessibility tree and write `<state>.a11y` before acknowledging this `seq` */
+	a11yRead?: boolean;
+};
 
 /** What the dylib answers in `<state>.ack` once it applied `seq` (`bundleId`: the app it loaded into). */
 export type InjectAck = { seq: number; pid: number; proxy?: boolean; bundleId?: string };
@@ -33,6 +40,7 @@ export function encodeInjectState(state: InjectState): string {
 		offline: state.offline === true,
 		clockOffsetMs: Math.trunc(state.clockOffsetMs ?? 0),
 		...(state.clockFrozenMs === undefined ? {} : { clockFrozenMs: Math.trunc(state.clockFrozenMs) }),
+		...(state.a11yRead ? { a11yRead: true } : {}),
 	});
 }
 
@@ -49,6 +57,7 @@ export function parseInjectState(text: string): InjectState | undefined {
 			offline: data.offline === true,
 			clockOffsetMs: typeof data.clockOffsetMs === "number" ? data.clockOffsetMs : 0,
 			...(typeof data.clockFrozenMs === "number" ? { clockFrozenMs: data.clockFrozenMs } : {}),
+			...(data.a11yRead === true ? { a11yRead: true } : {}),
 		};
 	} catch {
 		return undefined;
@@ -72,6 +81,12 @@ export function parseInjectAck(text: string): InjectAck | undefined {
 
 /** One directory per device: the dylib watches its directory, so two devices never wake each other's app. Core owns the path (release resets the file). */
 export const injectStatePath: (wardenHome: string, udid: string) => string = coreInjectStatePath;
+
+/** Where the dylib writes an accessibility read (`a11yRead`): next to the state file. */
+export const injectA11yPath = (statePath: string): string => `${statePath}.a11y`;
+
+/** Where the dylib appends accessibility events (A11Y-8): JSON lines next to the state file. */
+export const injectEventsPath = (statePath: string): string => `${statePath}.events`;
 
 export const injectAckPath = (statePath: string): string => `${statePath}.ack`;
 
@@ -266,6 +281,7 @@ export function createInjectChannel(input: {
 		reset() {
 			fs.remove(ackPath);
 			fs.remove(statePath);
+			fs.remove(injectEventsPath(statePath));
 		},
 	};
 }

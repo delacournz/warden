@@ -50,7 +50,7 @@ import {
 } from "../e2e/bun-runner";
 import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
-import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
+import { type LaunchPlan, specBundleId, specDevClientScheme, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-session";
 import { emit, note, reportError, success, warn } from "../output";
@@ -98,6 +98,8 @@ export type E2eOpts = ClaimFlagValues &
 		perf?: string | true;
 		/** `--dev`: the dev client (kind `dev`) on warden's Metro */
 		dev?: true;
+		/** `--a11y`: iOS apps launch with the injected library even when the suite sets no `a11y` */
+		a11y?: true;
 	};
 
 export type E2eReport = {
@@ -740,7 +742,7 @@ export async function specPlan(
 	deps: SpecPlanDeps,
 	suite: Suite,
 	platform: Platform,
-	opts: Pick<E2eOpts, "perf" | "biometrics"> = {},
+	opts: Pick<E2eOpts, "perf" | "biometrics" | "a11y"> = {},
 	/** the run is on phones: an iPhone's app has the device bundle id (`projects[].ios.device.bundleIdentifier`) */
 	physical = false
 ): AsyncResult<SpecPlan> {
@@ -758,6 +760,7 @@ export async function specPlan(
 	if (!bundleId.success) return bundleId;
 	const perf = parsePerfFlag(opts.perf);
 	if (!perf.success) return perf;
+	const devClientScheme = await specDevClientScheme(ctx, suite, platform);
 	const { spec } = suite.config;
 	const timeoutMs = specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
 	if (!timeoutMs.success) return timeoutMs;
@@ -775,6 +778,7 @@ export async function specPlan(
 		env: {
 			platform,
 			bundleId: bundleId.data,
+			...(devClientScheme === undefined ? {} : { devClientScheme }),
 			timeouts: {
 				timeoutMs: timeoutMs.data,
 				actionTimeoutMs: actionTimeoutMs.data,
@@ -792,6 +796,9 @@ export async function specPlan(
 			...(suite.perfBudgets === undefined ? {} : { perfBudgets: suite.perfBudgets }),
 			...(suite.conditions === undefined ? {} : { conditions: suite.conditions }),
 			...(suite.biometrics === true || opts.biometrics === true ? { biometrics: true } : {}),
+			...(suite.a11y === undefined ? {} : { a11yAudit: suite.a11y }),
+			// the injected library reads hint / actions / order / announcements on iOS: loaded only for a suite that asks (`a11y` key or `--a11y`)
+			...(platform === "ios" && (suite.a11y !== undefined || opts.a11y === true) ? { a11y: true } : {}),
 		},
 	});
 }
@@ -867,6 +874,10 @@ export function createE2eCommand(deps: BatchDeps): Command {
 				.option(
 					"--dev",
 					"run on the dev client (kind dev) against a Metro warden starts, not the repacked simulator build"
+				)
+				.option(
+					"--a11y",
+					"iOS: launch apps with the injected library so specs can read hints, actions, reading order and announcements (a suite with an `a11y` key does this already)"
 				)
 				.option("--no-warm", "skip pre-warming the iOS socket helper per device (default: on; suite warmDrivers)")
 				.addHelpText(

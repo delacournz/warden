@@ -181,7 +181,7 @@ function parseJson(text: string): unknown {
 }
 
 /** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json, the resolved app config, or `expo config`. */
-async function devScheme(
+export async function devScheme(
 	ctx: CommandContext,
 	context: ProjectContext,
 	override: string | undefined

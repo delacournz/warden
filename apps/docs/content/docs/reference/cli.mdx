@@ -169,6 +169,7 @@ With no `e2e` suite configured (and none named), the Expo app around the cwd get
 | `--devices <legs>` | which `devices` legs run: `default` (the default), `all`, or profile names (comma-separated) |
 | `--job-timeout <duration>` | overrides the suite's `jobTimeoutMs` (default 10 min) |
 | `--no-shutdown` | keep the devices running after the gate passes (the default locally; under CI they are shut down. Suite `shutdown` sets it, the flag wins) |
+| `--a11y` | launch iOS apps with the injected accessibility library even when the suite has no `a11y` key ([Accessibility](/docs/e2e/accessibility)) |
 | `--perf[=captures]` | profile every attempt: a [perf session](/docs/devices/perf) wraps each test and its report is copied to the attempt's `perf/` dir (`report.json`, `report.md`, `session.json`). Bare `--perf` records metrics, frames and logs; `--perf=react,js` picks captures (`js`, `react`, `native`, `metrics`, `frames`, `logs`, or `all`). `perf.budgets` apply, and a breach fails the test with a `PERF_BUDGET` error (kind `perf_budget` in `e2e-report.json`); `e2e-report.json` links each test's `perf` dir |
 | `--dev` | run on the dev client (kind `dev`) against a Metro warden starts: the suite's `metro` block, else the defaults. Not with `--kind` / `--variant` |
 | `--kind <kind>` | `dev`, `simulator` (default: the suite's `app.kind`, else the repacked simulator build) or `release` |

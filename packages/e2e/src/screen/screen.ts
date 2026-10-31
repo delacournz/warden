@@ -1,4 +1,5 @@
 import type { Point } from "../driver/driver.types";
+import { canActOnElements } from "../driver/element-actions";
 import { E2eError } from "../errors";
 import {
 	assertDegrees,
@@ -90,6 +91,9 @@ export function createScreen(host: ScreenHost): Screen {
 		return rt.step("swipe", async () => {
 			if ("direction" in options) {
 				const observed = await rt.observe();
+				if (canActOnElements(observed.driver)) {
+					if (rt.drive("swipe", await observed.driver.scrollElement(options.direction))) return;
+				}
 				const vector = swipeVector(options.direction, screenRect(observed.snapshot.screen), options.momentum);
 				rt.drive("swipe", await observed.driver.swipe(vector.from, vector.to, vector.options));
 				return;

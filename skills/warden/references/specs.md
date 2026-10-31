@@ -59,7 +59,7 @@ Never import subpaths (`/device`, `/screen/*`, `/env`). Only `.` and `./preload`
 |---|---|
 | `open({ url?, args?, env?, wait?: "quiet" \| "none" \| { until, timeout? } })` | terminate, relaunch with `WARDEN_LAUNCH_ARGS` + `args`, then open `url`; `wait: "quiet"` then polls (100 ms, 3 s max) until the screen has a visible control or testID (not the launch screen) and settles (250 ms quiet, 3 s max), never an error; `wait: { until: locator }` waits for the locator to be visible (`TIMEOUT` after `timeout`, default the assertion timeout) and settles once; default `"none"` |
 | `close()` | terminate |
-| `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` |
+| `restart()` | relaunch with `WARDEN_LAUNCH_ARGS` (Android: no launch args; with Metro it then opens the dev-client deep link `exp+<slug>://expo-development-client/?url=<metro>` with onboarding, auto-launch menu and FAB off) |
 | `reinstall()` | uninstall + install from `WARDEN_APP_PATH` (throws without it) |
 | `clearData()` | wipe app data and keychain, keep the build |
 | `isRunning()` | boolean |
@@ -124,7 +124,7 @@ Put back when the test ends (to the suite's `conditions.permissions` / `locale` 
 | `permissions.reset({ bundleId? })` | every name this test set back to the suite's value, else `"unset"` |
 | `timezone(tz \| null)` | IANA name (`"Asia/Tokyo"`); `null` puts it back. Android emulator: live, device-wide. iOS: `{ appliesOnLaunch: true }`, the app launched next gets it |
 | `locale(tag \| null, { bundleId? })` | BCP 47 (`"fr-FR"`). Android 13+: per-app, live. iOS: applies to the app launched next |
-| `a11y({ textSize?, boldText?, contrast?, reduceMotion? } \| null)` | `textSize`: a category name (`"accessibility-large"`) or a scale (`1.5`). iOS: text size + contrast. Android: text size + bold. Returns `{ applied, skipped, notes }`; only-skipped throws `E_UNSUPPORTED`; `null` resets |
+| `a11y({ textSize?, boldText?, contrast?, reduceMotion? } \| null)` | `textSize`: a category name (`"accessibility-large"`) or a scale (`1.5`). iOS: text size, contrast, `boldText`, `reduceMotion`, `reduceTransparency`, `buttonShapes`, `differentiateWithoutColor`, `onOffLabels`, `screenReader` (fake VoiceOver flag, `screenReader: { mode: "simulated", engine: "voiceover" }` in the result), applied live. Android: text size, `boldText`, `highContrastText`, `colorInversion`, `reduceMotion` (off by default; `true` zeroes `transition_animation_scale`, which RN reads). Other-platform settings and Android `screenReader` are `skipped` with a reason. Returns `{ applied, skipped, notes }`; only-skipped throws `E_UNSUPPORTED`; `null` resets |
 | `battery({ level?, charging? } \| null)` | Android emulator: real. iOS: status bar only, result has `cosmetic: true`. `null` resets |
 | `memoryWarning({ bundleId? })` | Android: critical trim to the running app. iOS: throws `E_UNSUPPORTED` |
 | `push({ aps: { … } }, { bundleId? })` | iOS: delivers the payload to the app (4096 bytes max). Android: `E_UNSUPPORTED` |
@@ -136,6 +136,17 @@ await device.a11y({ textSize: "accessibility-large" });
 await device.locale("fr-FR");
 ```
 Biometrics practice: set `biometrics: true` on the suite (suites.md) so the device is enrolled before the app is installed (a new enrollment invalidates biometry-bound keys); on iOS the first prompt per app shows "Allow X to use Face ID?", answer it with `device.alert("accept")` before `device.biometrics.match()`; Android emulators have fingerprint only; never add an app-side bypass. `fail()` leaves the prompt open (iOS "Face Not Recognized" alert, Android "Not recognized"): assert that, then cancel the prompt (the app gets `user_cancel`): `device.alert({ button: "Cancel" })` on iOS (it presses again if the press lands while the sheet animates in, and throws `ACTION_FAILED` if the alert stays up), `button_negative` on Android; a `match` / `fail` sent as the sheet appears can be dropped, so present again when nothing changed. warden enrolls an iOS biometrics sim again when a spec process starts (`WARDEN_BIOMETRICS=1`), so a spec that called `unenroll` does not leave a reused sim unenrolled.
+
+### `device.a11yAudit` / `screenReader` / `announcements` (screen readers and audits)
+
+| Member | Does |
+|---|---|
+| `a11yAudit({ rules?, ignore?, minSeverity?, textSize?, native? })` | `{ issues, checked, sources, skipped }`; the suite's `a11y` key supplies defaults, options win per key |
+| `screenReader.order()` | the simulated reading order (`Announcement[]`, `source: "simulated"`), both platforms |
+| `screenReader.state()` `next()` `prev()` `activate()` `focused()` `spoken({ since? })` | real TalkBack (Android emulator, after `device.a11y({ screenReader: true })`); elsewhere throws `ACTION_FAILED` (`E_UNSUPPORTED`). `next`/`prev` resolve the announcement now focused (`undefined` past the end); `spoken` returns `{ lines, cursor }` |
+| `announcements({ since? })` | `{ announcements, cursor, lost? }` of announcements and live-region changes; iOS needs the inject (`a11y.md`) |
+
+On Android with TalkBack on, locator `tap` / `scroll` / `swipe` use accessibility actions (a touch would only move focus); a raw coordinate tap stays a touch. The `a11y` op also takes `reduceTransparency buttonShapes differentiateWithoutColor onOffLabels highContrastText colorInversion screenReader` (table in `a11y.md`).
 
 ### `device.devtools` (dev client over Metro)
 
@@ -210,6 +221,8 @@ Roles: button link textbox searchbox checkbox radio switch slider image heading 
 `expect(locator)` polls every 100 ms for the first second, then every 250 ms. Any other value goes to bun's `expect`.
 
 `toBeVisible toBeHidden toHaveText(t, { exact? }) toContainText(t, { ignoreCase? }) toHaveValue(v) toBeChecked({ checked? }) toBeEnabled toBeDisabled toHaveCount(n)`. All take `{ timeout? }`.
+
+Accessibility matchers (`a11y.md`): on a locator `toHaveAccessibleName(t)`, `toHaveRole(role)`, `toHaveHint(t)` (iOS needs the inject), `toAnnounce(t, { exact? })` (the simulated phrase, "Save, button"), `toBeA11yFocused()` (Android TalkBack). On `expect(device)`: `toPassA11yAudit({ rules?, ignore?, minSeverity?, textSize?, native? })` (runs once, settle first; fails with the issue table and the `--a11y` screen) and `toHaveAnnounced(t, { timeoutMs?, since? })` (string = contains, RegExp; `.not` waits the timeout for none).
 
 - Zero matches keep polling. Several matches fail at once (except `toHaveCount`).
 - `.not` passes only after the inverted state held for 1000 ms (sooner on iOS/Android when the driver reports a quiet screen).

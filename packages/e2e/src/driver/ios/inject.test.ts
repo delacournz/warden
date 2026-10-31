@@ -8,6 +8,7 @@ import {
 	encodeInjectState,
 	INJECT_DYLIB,
 	type InjectFs,
+	injectA11yPath,
 	injectAckPath,
 	injectLaunchEnv,
 	injectStatePath,
@@ -98,6 +99,20 @@ describe("frozen clock", () => {
 		expect(
 			injectLaunchEnv({ dylib: "/d", statePath: "/s", clockFrozenMs: 1_700_000_000_000 }).WARDEN_CLOCK_FROZEN_MS
 		).toBe("1700000000000");
+	});
+});
+
+describe("a11y read request", () => {
+	test("is one-shot: only present when asked, and survives the round trip", () => {
+		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("a11yRead");
+		const text = encodeInjectState({ seq: 6, a11yRead: true });
+		expect(JSON.parse(text)).toMatchObject({ seq: 6, a11yRead: true });
+		expect(parseInjectState(text)).toMatchObject({ seq: 6, a11yRead: true });
+		expect(parseInjectState(encodeInjectState({ seq: 7 }))).not.toHaveProperty("a11yRead");
+	});
+
+	test("the dump sits next to the state file", () => {
+		expect(injectA11yPath("/h/inject/u/state.json")).toBe("/h/inject/u/state.json.a11y");
 	});
 });
 

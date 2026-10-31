@@ -13,12 +13,28 @@
 // `WARDEN_INJECT_STATE` atomically (write + rename); a vnode watch on its directory fires, the new state is applied
 // and `<file>.ack` is written with `{"seq":n,"pid":p,"proxy":bool,"bundle":id}` (`proxy`: launched with WARDEN_NET_PROXY; `bundle`: so the host ignores another injected app). No sockets, no polling, nothing running while idle.
 //
+// Accessibility read (A11Y-1): a state with `"a11yRead":true` makes the app walk its UIKit accessibility tree on the main
+// thread and write `<file>.a11y` = {"req":seq,"nodes":[{cls,ae,label,hint,value,id,traits:"0x..",frame:[x,y,w,h] (screen
+// points),actions:[names],order?:n}]} (traversal order; `order` = index in the container's accessibilityElements, only
+// when the app set that array) BEFORE the ack for that seq is written. Hidden views (hidden, alpha 0,
+// accessibilityElementsHidden) are skipped with their subtree; if the main thread does not answer in 3 s the file says
+// {"req":seq,"error":"main thread busy"}. Not iOS (the macOS test harness): {"req":seq,"nodes":[],"unsupported":true}.
+//
+// Accessibility events (A11Y-8): `UIAccessibilityPostNotification` is interposed (the original is always called) and
+// announcements (argument NSString or NSAttributedString), screen-changed and layout-changed are appended as JSON lines
+// {"kind":"announcement"|"screen-changed"|"layout-changed","text"?:s,"at":epoch ms} to `<file>.events` (append-only;
+// the host's cursor is a byte offset, and a line is only complete once it ends in a newline). Needs WARDEN_INJECT_STATE.
+//
 // Covered: NSURLSession (default/ephemeral/background configurations and sessionWithConfiguration:*), network path
 // APIs (nw_path_get_status, nw_path_uses_interface_type, NWPathMonitor update handlers re-fired on change),
 // SCNetworkReachability (flags, callbacks re-fired on change), wall clocks (clock_gettime(CLOCK_REALTIME),
 // gettimeofday, time, CFAbsoluteTimeGetCurrent), shifted by an offset or held at a fixed instant (`clockFrozenMs`). NSURLSession.sharedSession is replaced by a session on the routed
 // default configuration (sharing the shared session's cache, cookie and credential stores). Not covered: raw sockets / NWConnection / CFStream (they bypass the proxy), monotonic clocks (left real on purpose).
+#import <TargetConditionals.h>
 #import <Foundation/Foundation.h>
+#if TARGET_OS_IOS
+#import <UIKit/UIKit.h>
+#endif
 #import <Network/Network.h>
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <objc/runtime.h>
@@ -299,6 +315,119 @@ static CFAbsoluteTime rep_cf_abs(void) {
 }
 INTERPOSE(rep_cf_abs, CFAbsoluteTimeGetCurrent);
 
+#pragma mark - accessibility read
+
+#if TARGET_OS_IOS
+#define A11Y_MAX_NODES 5000
+#define A11Y_MAX_DEPTH 80
+
+static NSString *nz(NSString *s) { return s.length ? s : nil; }
+
+static void a11y_visit(id node, NSInteger order, int depth, NSMutableArray *out) {
+  if (!node || depth > A11Y_MAX_DEPTH || out.count >= A11Y_MAX_NODES) return;
+  if ([node isKindOfClass:[UIView class]]) {
+    UIView *v = node;
+    if (v.hidden || v.alpha < 0.01 || v.accessibilityElementsHidden) return;
+  }
+  BOOL ae = [node isAccessibilityElement];
+  NSString *label = nz([node accessibilityLabel]);
+  NSString *hint = nz([node accessibilityHint]);
+  NSString *value = nz([node accessibilityValue]);
+  NSString *ident = nil;
+  if ([node conformsToProtocol:@protocol(UIAccessibilityIdentification)]) ident = nz([(id<UIAccessibilityIdentification>)node accessibilityIdentifier]);
+  NSMutableArray *actions = [NSMutableArray array];
+  for (UIAccessibilityCustomAction *a in [node accessibilityCustomActions] ?: @[]) if (a.name.length) [actions addObject:a.name];
+  if (ae || label || hint || ident || actions.count) {
+    CGRect f = [node accessibilityFrame];
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    d[@"cls"] = NSStringFromClass([node class]);
+    d[@"ae"] = @(ae);
+    if (label) d[@"label"] = label;
+    if (hint) d[@"hint"] = hint;
+    if (value) d[@"value"] = value;
+    if (ident) d[@"id"] = ident;
+    d[@"traits"] = [NSString stringWithFormat:@"0x%llx", (unsigned long long)[node accessibilityTraits]];
+    d[@"frame"] = @[ @(f.origin.x), @(f.origin.y), @(f.size.width), @(f.size.height) ];
+    if (actions.count) d[@"actions"] = actions;
+    if (order >= 0) d[@"order"] = @(order);
+    [out addObject:d];
+  }
+  // what VoiceOver walks: the explicit order, else the container protocol, else the subviews
+  NSArray *explicitOrder = [node respondsToSelector:@selector(accessibilityElements)] ? [node accessibilityElements] : nil;
+  if (explicitOrder.count) {
+    NSInteger i = 0;
+    for (id child in explicitOrder) a11y_visit(child, i++, depth + 1, out);
+    return;
+  }
+  NSInteger count = [node accessibilityElementCount];
+  if (count != NSNotFound && count > 0) {
+    for (NSInteger i = 0; i < count; i++) a11y_visit([node accessibilityElementAtIndex:i], -1, depth + 1, out);
+    return;
+  }
+  if ([node isKindOfClass:[UIView class]]) for (UIView *sub in ((UIView *)node).subviews) a11y_visit(sub, -1, depth + 1, out);
+}
+
+static NSArray *a11y_collect(void) {
+  NSMutableArray *out = [NSMutableArray array];
+  for (UIWindow *w in UIApplication.sharedApplication.windows) a11y_visit(w, -1, 0, out);
+  return out;
+}
+#endif
+
+static void write_a11y(long long seq) {
+  NSMutableDictionary *body = [NSMutableDictionary dictionaryWithObject:@(seq) forKey:@"req"];
+#if TARGET_OS_IOS
+  __block NSArray *nodes = nil;
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  dispatch_async(dispatch_get_main_queue(), ^{ nodes = a11y_collect(); dispatch_semaphore_signal(done); });
+  if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)) == 0) body[@"nodes"] = nodes;
+  else body[@"error"] = @"main thread busy";
+#else
+  body[@"nodes"] = @[];
+  body[@"unsupported"] = @YES;
+#endif
+  NSData *data = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+  [data writeToFile:[g_state_path stringByAppendingString:@".a11y"] atomically:YES];
+}
+
+#if TARGET_OS_IOS
+#pragma mark - accessibility events
+
+static void append_a11y_event(NSString *kind, NSString *text) {
+  if (!g_state_path) return;
+  struct timespec now = real_now();
+  long long at = (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+  NSMutableDictionary *line = [NSMutableDictionary dictionaryWithObjectsAndKeys:kind, @"kind", @(at), @"at", nil];
+  if (text.length) line[@"text"] = text;
+  NSData *json = [NSJSONSerialization dataWithJSONObject:line options:0 error:nil];
+  if (!json) return;
+  NSMutableData *out = [json mutableCopy];
+  [out appendBytes:"\n" length:1];
+  int fd = open([g_state_path stringByAppendingString:@".events"].fileSystemRepresentation, O_WRONLY | O_APPEND | O_CREAT, 0644);
+  if (fd < 0) return;
+  (void)write(fd, out.bytes, out.length);  // one write on an O_APPEND fd: lines never interleave
+  close(fd);
+}
+
+static void rep_post_notification(UIAccessibilityNotifications n, id argument) {
+  @try {
+    if (n == UIAccessibilityAnnouncementNotification) {
+      NSString *text = [argument isKindOfClass:[NSAttributedString class]] ? [(NSAttributedString *)argument string]
+                     : [argument isKindOfClass:[NSString class]] ? argument : nil;
+      append_a11y_event(@"announcement", text);
+    } else if (n == UIAccessibilityScreenChangedNotification) {
+      append_a11y_event(@"screen-changed", nil);
+    } else if (n == UIAccessibilityLayoutChangedNotification) {
+      append_a11y_event(@"layout-changed", nil);
+    }
+  } @catch (NSException *e) {
+    DLOG("a11y event skipped: %s", e.reason.UTF8String);
+  }
+  UIAccessibilityPostNotification(n, argument);
+}
+INTERPOSE(rep_post_notification, UIAccessibilityPostNotification);
+#endif
+
 #pragma mark - control channel
 
 static void write_ack(long long seq) {
@@ -325,6 +454,7 @@ static void apply_state_file(void) {
   if (frozen) atomic_store(&g_clock_frozen_ms, [state[@"clockFrozenMs"] longLongValue]);
   atomic_store(&g_clock_frozen, frozen ? 1 : 0);
   atomic_store(&g_applied_seq, seq);
+  if ([state[@"a11yRead"] respondsToSelector:@selector(boolValue)] && [state[@"a11yRead"] boolValue]) write_a11y(seq);
   DLOG("state seq=%lld offline=%d clockOffsetMs=%lld frozen=%d", seq, offline, off, frozen);
   if (wasOffline != offline) notify_connectivity_changed();
   write_ack(seq);

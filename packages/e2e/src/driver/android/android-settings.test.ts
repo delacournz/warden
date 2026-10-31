@@ -5,7 +5,7 @@ import { batteryArgvs, createAndroidSettings, permissionArgv, setAppLocaleArgv }
 
 const PKG = "com.example.app";
 
-function harness(rules: ShellRule[] = [], serial = "emulator-5554") {
+function harness(rules: ShellRule[] = [], serial = "emulator-5554", transitionOriginal?: string) {
 	const host = fakeAndroidHost({ shell: rules });
 	const session = openAdbSession({ adb: "adb", serial, spawn: host.spawn });
 	const settings = createAndroidSettings({
@@ -14,6 +14,7 @@ function harness(rules: ShellRule[] = [], serial = "emulator-5554") {
 		appPackage: PKG,
 		hostTimezone: () => "Europe/London",
 		sleep: async () => undefined,
+		...(transitionOriginal === undefined ? {} : { transitionOriginal: () => transitionOriginal }),
 	});
 	return { settings, host };
 }
@@ -166,19 +167,51 @@ describe("android a11y", () => {
 		]);
 		expect(r.success && r.data.notes[0]).toContain("clamped to 2");
 	});
-	test("contrast and reduce motion are skipped; only those is E_UNSUPPORTED", async () => {
+	test("contrast and iOS-only settings are skipped with a reason; only those is E_UNSUPPORTED", async () => {
 		const h = harness();
-		const mixed = await h.settings.a11y({ textSize: 1.3, contrast: "increased", reduceMotion: true });
-		expect(mixed.success && mixed.data.skipped.map((s) => s.setting)).toEqual(["contrast", "reduceMotion"]);
+		const mixed = await h.settings.a11y({
+			textSize: 1.3,
+			contrast: "increased",
+			buttonShapes: true,
+		});
+		expect(mixed.success && mixed.data.skipped.map((s) => s.setting)).toEqual(["contrast", "buttonShapes"]);
+		expect(mixed.success && mixed.data.skipped.at(-1)?.reason).toBe("iOS only");
 		const only = await h.settings.a11y({ contrast: "increased" });
 		expect(!only.success && only.error.code).toBe("E_UNSUPPORTED");
 	});
-	test("null puts both back", async () => {
+	test("high contrast text and colour inversion are secure settings, applied live", async () => {
+		const h = harness();
+		const r = await h.settings.a11y({ highContrastText: true, colorInversion: false });
+		expect(r.success && r.data.applied).toEqual(["highContrastText", "colorInversion"]);
+		expect(h.host.shell.filter((c) => c.startsWith("settings put"))).toEqual([
+			"settings put secure high_text_contrast_enabled 1",
+			"settings put secure accessibility_display_inversion_enabled 0",
+		]);
+	});
+	test("reduce motion zeroes transition_animation_scale; false puts the device's original back (1.0 without one)", async () => {
+		const h = harness();
+		const on = await h.settings.a11y({ reduceMotion: true });
+		expect(on.success && on.data.applied).toEqual(["reduceMotion"]);
+		await h.settings.a11y({ reduceMotion: false });
+		expect(h.host.shell.filter((c) => c.startsWith("settings put"))).toEqual([
+			"settings put global transition_animation_scale 0",
+			"settings put global transition_animation_scale 1.0",
+		]);
+		const kept = harness([], "emulator-5554", "0.5");
+		await kept.settings.a11y({ reduceMotion: false });
+		expect(kept.host.shell.filter((c) => c.startsWith("settings put"))).toEqual([
+			"settings put global transition_animation_scale 0.5",
+		]);
+	});
+	test("null puts every a11y setting back", async () => {
 		const h = harness();
 		await h.settings.a11y(null);
 		expect(h.host.shell.filter((c) => c.startsWith("settings put"))).toEqual([
 			"settings put system font_scale 1",
 			"settings put secure font_weight_adjustment 0",
+			"settings put secure high_text_contrast_enabled 0",
+			"settings put secure accessibility_display_inversion_enabled 0",
+			"settings put global transition_animation_scale 1.0",
 		]);
 	});
 });

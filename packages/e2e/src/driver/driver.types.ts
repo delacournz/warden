@@ -8,6 +8,7 @@ import type {
 	TextSize,
 } from "@delacour/warden-core/conditions/conditions.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
+import type { ScreenReaderState } from "../a11y/a11y.types";
 
 /**
  * The device driver contract every layer of warden-e2e builds on: the spec API (`screen`, `device`,
@@ -127,8 +128,32 @@ export type Element = {
 	/** where to tap: iOS `interactable.actionable.at`, else the frame centre */
 	tapPoint?: Point;
 	pid?: number;
+	/** screen-reader facts beyond the base tree; absent when the backend can't read them */
+	a11y?: ElementA11y;
 	depth: number;
 	children: Element[];
+};
+
+/**
+ * Screen-reader facts. Android: from warden-uiad's `AccessibilityNodeInfo`. iOS: from the ios-inject UIView walk,
+ * merged by identifier / frame when an a11y read asks for it.
+ */
+export type ElementA11y = {
+	/** iOS accessibilityHint / RN accessibilityHint */
+	hint?: string;
+	/** iOS custom action names / Android node action labels (standard actions left out) */
+	actions?: readonly string[];
+	/** reachable by VoiceOver / TalkBack navigation */
+	focusable?: boolean;
+	/** iOS isAccessibilityElement / Android importantForAccessibility; `false` = skipped by screen readers */
+	important?: boolean;
+	/** Android: holds TalkBack's accessibility focus */
+	a11yFocused?: boolean;
+	liveRegion?: "polite" | "assertive";
+	/** iOS: index in the container's `accessibilityElements` order, when the app sets one */
+	order?: number;
+	/** iOS: position in the injected walk, which follows VoiceOver's own traversal across the whole screen */
+	traversal?: number;
 };
 
 export type SnapshotBackend = "axbridge" | "ax" | "uiautomator";
@@ -311,9 +336,12 @@ export interface Driver {
 	 */
 	locale(tag: string | null, opts?: SettingOptions): DriverResult<LocaleState>;
 	/**
-	 * Accessibility settings: text size, bold text, contrast, reduce motion; `null` puts them back. iOS: `simctl ui
-	 * content_size` / `increase_contrast` (no bold text or reduce motion: `skipped`). Android: `font_scale`,
-	 * `font_weight_adjustment` (no contrast or reduce motion: `skipped`).
+	 * Accessibility settings; `null` puts them back. iOS: `simctl ui content_size` / `increase_contrast`, and
+	 * `simctl spawn defaults write com.apple.Accessibility <Key>` (live) for reduce motion, bold text, reduce
+	 * transparency, button shapes, differentiate without colour, on/off labels and the fake VoiceOver flag.
+	 * Android: `font_scale`, `font_weight_adjustment`, `secure high_text_contrast_enabled` /
+	 * `accessibility_display_inversion_enabled`, and reduce motion as `transition_animation_scale` 0 (what RN reads;
+	 * off by default). No contrast switch on Android, no TalkBack until A11Y-7: `skipped` with the reason.
 	 */
 	a11y(op: A11yOp | null): DriverResult<A11yState>;
 	/**
@@ -381,6 +409,20 @@ export type A11yOp = {
 	boldText?: boolean;
 	contrast?: "increased" | "normal";
 	reduceMotion?: boolean;
+	/** iOS: Reduce Transparency */
+	reduceTransparency?: boolean;
+	/** iOS: Button Shapes */
+	buttonShapes?: boolean;
+	/** iOS: Differentiate Without Color */
+	differentiateWithoutColor?: boolean;
+	/** iOS: On/Off Labels */
+	onOffLabels?: boolean;
+	/** Android: High contrast text */
+	highContrastText?: boolean;
+	/** Android: colour inversion */
+	colorInversion?: boolean;
+	/** iOS: fake VoiceOver flag (`mode: "simulated"`); Android: real TalkBack (A11Y-7) */
+	screenReader?: boolean;
 };
 
 export type A11yState = {
@@ -389,6 +431,10 @@ export type A11yState = {
 	skipped: readonly { setting: string; reason: string }[];
 	/** the Android font scale was clamped to the platform's range */
 	notes: readonly string[];
+	/** present when the op asked for `screenReader` and it was applied */
+	screenReader?: ScreenReaderState;
+	/** Android: the accessibility services / master switch the device had before TalkBack was turned on (`null` = unset), for the lease's condition record */
+	screenReaderPrevious?: { services: string | null; enabled: string | null };
 };
 
 export type BatteryOp = { level?: number; charging?: boolean };

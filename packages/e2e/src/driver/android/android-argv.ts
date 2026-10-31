@@ -298,6 +298,13 @@ export function animationRestoreArgvs(values: AnimationValues): string[][] {
 	);
 }
 
+/** Put just the transition scale back (a setting that was never set, `null`, is deleted). */
+export function transitionRestoreArgv(value: string): string[] {
+	return value === "null"
+		? ["settings", "delete", "global", "transition_animation_scale"]
+		: ["settings", "put", "global", "transition_animation_scale", value];
+}
+
 /** Host argv: `adb -s <serial> exec-out screencap -p` (binary PNG on stdout). */
 export function screencapArgv(adb: string, serial: string): string[] {
 	return [adb, "-s", serial, "exec-out", "screencap", "-p"];
