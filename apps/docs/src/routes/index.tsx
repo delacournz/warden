@@ -135,7 +135,9 @@ function Home(): ReactElement {
 						{HERO.pill}
 					</a>
 					<h1 className={`max-w-5xl text-balance text-[clamp(2.6rem,6.4vw,5.4rem)] text-ink leading-[0.95] ${DISPLAY}`}>
-						Every <GlitchWord className="accent-voice text-accent">agent</GlitchWord> gets its own{" "}
+						Every <GlitchWord className="accent-voice text-accent">agent</GlitchWord> gets
+						<br />
+						its own{" "}
 						<GlitchWord className="accent-voice text-accent" offset>
 							simulator.
 						</GlitchWord>
