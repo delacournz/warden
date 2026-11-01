@@ -1,10 +1,10 @@
 import { Keyboard } from "@phosphor-icons/react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
-import { createTextBatcher } from "../input/input.ts";
 import { type DeviceActions, logActions } from "./device-actions.ts";
 import { DeviceMenu, type MenuAnchor, type MenuChoice } from "./device-menu.tsx";
 import { TextDialog } from "./dialogs.tsx";
 import { mirrorThroughCentre, type Point, pictureFit, type Size, toInteractionPoint } from "./geometry.ts";
+import { createTextBatcher } from "./text-batcher.ts";
 import { type Fingers, MultiTouchFeedback, TouchFeedback } from "./touch-overlay.tsx";
 import { createMultiTouchSession, createTouchSession } from "./touch-session.ts";
 import {
@@ -22,7 +22,7 @@ type ScreenElement = HTMLVideoElement | HTMLCanvasElement;
 
 type InteractionLayerProps = {
 	enabled: boolean;
-	/** TODO(wiring agent): the real device size in points (iOS e.g. 440x956); this default is an iPhone 16 Pro Max. */
+	/** The device size in points; until known, an iPhone 16 Pro Max (440x956). */
 	deviceSize?: Size;
 	actions?: DeviceActions;
 	className?: string;
@@ -51,9 +51,8 @@ function isTextField(target: EventTarget | null): boolean {
 /**
  * Wraps the device picture (a `<video>` or `<canvas>` child) with the interaction layer: touch
  * feedback visuals, Alt two-finger mode, the right-click menu, and typing mode. It listens on the
- * wrapper with native listeners, so pointer events that the picture's own handlers already consume
- * still bubble here; both see every press, and this layer only logs through `actions`. Visuals and
- * handlers are off when `enabled` is false. The overlays are siblings of the picture, in container
+ * wrapper with native listeners and sends the result through `actions` (device points, mapped
+ * with `deviceSize`). Visuals and handlers are off when `enabled` is false. The overlays are siblings of the picture, in container
  * CSS px, and ignore pointer events. Typing mode starts after a tap and ends on Escape, and shows a
  * small "Typing" badge while it is on.
  */
@@ -128,28 +127,19 @@ export function InteractionLayer({
 			setFingers({ first: rel(pair.first), second: rel(pair.second), pressed: isPressed });
 		};
 
-		const onPointerDown = (event: PointerEvent) => {
-			if (event.button !== 0 || !event.isPrimary) return;
-			const screen = screenIn(container);
-			if (!screen || event.target !== screen) return;
-			const g = geometry();
-			if (!g) return;
-			const client = { x: event.clientX, y: event.clientY };
-			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current);
-			if (!device) return;
-			if (removeTimer) clearTimeout(removeTimer);
-			if (altDown || event.altKey) {
-				altDown = true;
-				const pair = fingerPair(client, g.fit);
-				const touches = toTouches(pair, g);
-				if (!touches) return;
-				pressed = "multi";
-				multi.down(touches, centreDistance(pair, g.fit), event.timeStamp);
-				showFingers(client, true);
-				return;
-			}
+		type Geometry = NonNullable<ReturnType<typeof geometry>>;
+
+		const pressMulti = (client: Point, g: Geometry, t: number) => {
+			const pair = fingerPair(client, g.fit);
+			const touches = toTouches(pair, g);
+			if (!touches) return;
+			pressed = "multi";
+			multi.down(touches, centreDistance(pair, g.fit), t);
+			showFingers(client, true);
+		};
+		const pressSingle = (client: Point, device: Point, t: number) => {
 			pressed = "single";
-			single.down(device, client, event.timeStamp);
+			single.down(device, client, t);
 			const local = rel(client);
 			setTouch((current) => {
 				const next = pressTouch(current, local.x, local.y, lastId);
@@ -157,48 +147,75 @@ export function InteractionLayer({
 				return next;
 			});
 		};
+		const moveMulti = (client: Point, g: Geometry, t: number) => {
+			const pair = fingerPair(client, g.fit);
+			const touches = toTouches(pair, g);
+			if (touches) multi.move(touches, centreDistance(pair, g.fit), t);
+			showFingers(client, true);
+		};
+		const moveSingle = (client: Point, g: Geometry, t: number) => {
+			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, { clamp: true });
+			if (device) single.move(device, client, t);
+			const local = rel(client);
+			setTouch((current) => moveTouch(current, local.x, local.y));
+		};
+		const endMulti = (client: Point, g: Geometry) => {
+			const pair = fingerPair(client, g.fit);
+			const touches = toTouches(pair, g);
+			if (touches) multi.up(touches, centreDistance(pair, g.fit));
+			if (altDown) showFingers(client, false);
+		};
+		const endSingle = (client: Point, g: Geometry, t: number) => {
+			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, { clamp: true });
+			const gesture = device ? single.up(device, client, t) : null;
+			setTouch((current) => releaseTouch(current));
+			removeTimer = setTimeout(() => {
+				setTouch((current) => (current ? removeTouch(current, current.id) : current));
+			}, RELEASE_REMOVE_MS);
+			if (gesture === "tap") setTyping(true);
+		};
+
+		const pressTarget = (event: PointerEvent) => {
+			const screen = screenIn(container);
+			const primary = event.button === 0 && event.isPrimary;
+			const g = primary && screen && event.target === screen ? geometry() : null;
+			if (!g) return null;
+			const client = { x: event.clientX, y: event.clientY };
+			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current);
+			return device ? { g, client, device } : null;
+		};
+
+		const onPointerDown = (event: PointerEvent) => {
+			const target = pressTarget(event);
+			if (!target) return;
+			if (removeTimer) clearTimeout(removeTimer);
+			if (altDown || event.altKey) {
+				altDown = true;
+				pressMulti(target.client, target.g, event.timeStamp);
+			} else {
+				pressSingle(target.client, target.device, event.timeStamp);
+			}
+		};
 
 		const onPointerMove = (event: PointerEvent) => {
 			const client = { x: event.clientX, y: event.clientY };
 			pointer = client;
 			const g = geometry();
 			if (!g) return;
-			if (pressed === "multi") {
-				const pair = fingerPair(client, g.fit);
-				const touches = toTouches(pair, g);
-				if (touches) multi.move(touches, centreDistance(pair, g.fit), event.timeStamp);
-				showFingers(client, true);
-			} else if (pressed === "single") {
-				const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, { clamp: true });
-				if (device) single.move(device, client, event.timeStamp);
-				const local = rel(client);
-				setTouch((current) => moveTouch(current, local.x, local.y));
-			} else if (altDown) {
-				showFingers(client, false);
-			}
+			if (pressed === "multi") moveMulti(client, g, event.timeStamp);
+			else if (pressed === "single") moveSingle(client, g, event.timeStamp);
+			else if (altDown) showFingers(client, false);
 		};
 
 		const onPointerEnd = (event: PointerEvent) => {
 			if (!pressed || !event.isPrimary) return;
 			const g = geometry();
-			const client = { x: event.clientX, y: event.clientY };
 			const mode = pressed;
 			pressed = null;
 			if (!g) return;
-			if (mode === "multi") {
-				const pair = fingerPair(client, g.fit);
-				const touches = toTouches(pair, g);
-				if (touches) multi.up(touches, centreDistance(pair, g.fit));
-				if (altDown) showFingers(client, false);
-				return;
-			}
-			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, { clamp: true });
-			const gesture = device ? single.up(device, client, event.timeStamp) : null;
-			setTouch((current) => releaseTouch(current));
-			removeTimer = setTimeout(() => {
-				setTouch((current) => (current ? removeTouch(current, current.id) : current));
-			}, RELEASE_REMOVE_MS);
-			if (gesture === "tap") setTyping(true);
+			const client = { x: event.clientX, y: event.clientY };
+			if (mode === "multi") endMulti(client, g);
+			else endSingle(client, g, event.timeStamp);
 		};
 
 		const onContextMenu = (event: MouseEvent) => {

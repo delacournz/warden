@@ -7,14 +7,19 @@ import { IconButton } from "./icon-button.tsx";
 type DeviceControlsProps = {
 	actions: DeviceActions;
 	disabledReason: string | null;
+	/** Whether a live input path can rotate the device; false keeps the button visible but disabled. */
+	canRotate?: boolean;
 };
+
+export const ROTATE_UNAVAILABLE_REASON = "Needs live input (coming soon)";
 
 /**
  * Home, shake, rotate and set-location buttons for the toolbar. Rotate toggles between portrait
- * and landscape and sends the new orientation; Set location opens a dialog. Each is disabled with a
- * reason while the stream is not live, like the other device actions.
+ * and landscape and sends the new orientation, but stays disabled unless `canRotate`; Set location
+ * opens a dialog. Each is disabled with a reason while the stream is not live, like the other
+ * device actions.
  */
-export function DeviceControls({ actions, disabledReason }: DeviceControlsProps) {
+export function DeviceControls({ actions, disabledReason, canRotate = false }: DeviceControlsProps) {
 	const [orientation, setOrientation] = useState<Orientation>("portrait");
 	const [locationOpen, setLocationOpen] = useState(false);
 	const next: Orientation = orientation === "portrait" ? "landscape" : "portrait";
@@ -33,7 +38,7 @@ export function DeviceControls({ actions, disabledReason }: DeviceControlsProps)
 					setOrientation(next);
 					actions.setOrientation({ orientation: next });
 				}}
-				disabledReason={disabledReason}
+				disabledReason={disabledReason ?? (canRotate ? null : ROTATE_UNAVAILABLE_REASON)}
 			>
 				{orientation === "portrait" ? <DeviceMobile /> : <DeviceMobileSpeaker className="rotate-90" />}
 			</IconButton>

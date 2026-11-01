@@ -1,8 +1,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as device from "../../core/api/device.api.ts";
-import { type Screen, useDeviceInput } from "../input/use-device-input.ts";
-import { logActions } from "../interaction/device-actions.ts";
+import { createDeviceActions } from "../interaction/device-actions.ts";
+import type { Size } from "../interaction/geometry.ts";
 import { InteractionLayer } from "../interaction/interaction-layer.tsx";
 import { actionAvailability } from "../toolbar/availability.ts";
 import { DeviceControls } from "../toolbar/device-controls.tsx";
@@ -14,19 +14,12 @@ import { ClosePrompt } from "./close-prompt.tsx";
 import { DemoOrbHint } from "./demo-orb-hint.tsx";
 import { StoppedState } from "./stopped-state.tsx";
 import { StreamState } from "./stream-state.tsx";
-import { type Ripple, TapRipples } from "./tap-ripples.tsx";
 import { useBilling } from "./use-billing.ts";
 import { useDeviceStream } from "./use-device-stream.ts";
 import type { StreamStatus } from "./whep-session.ts";
 import { needsRefit } from "./window-fit.ts";
 
 const NOTICE_VISIBLE_MS = 4000;
-
-/**
- * Switch for the stub interaction layer (touch visuals, right-click menu, typing mode). It runs
- * beside the real tap path in `useDeviceInput`: both see every press, the layer only logs.
- */
-const INTERACTION_LAYER = true;
 
 /** Screen corner radius that echoes the platform's hardware. */
 const SCREEN_RADIUS = { ios: "rounded-[26px]", android: "rounded-[16px]" } as const;
@@ -47,20 +40,6 @@ function useWindowShortcuts(close: () => void, minimize: () => void) {
 	}, [close, minimize]);
 }
 
-/** Ripples at the pointer, relative to the element pressed; at most five live at once. */
-function useRipples() {
-	const [ripples, setRipples] = useState<Ripple[]>([]);
-	const counter = useRef(0);
-	const addRipple = (event: PointerEvent<HTMLElement>) => {
-		const box = event.currentTarget.getBoundingClientRect();
-		counter.current += 1;
-		const next = { id: counter.current, x: event.clientX - box.left, y: event.clientY - box.top };
-		setRipples((current) => [...current.slice(-4), next]);
-	};
-	const removeRipple = (id: number) => setRipples((current) => current.filter((r) => r.id !== id));
-	return { ripples, addRipple, removeRipple };
-}
-
 function message(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
@@ -70,7 +49,7 @@ function message(e: unknown): string {
  * resizes the window to the device aspect (again on rotation; Rust then holds that ratio through
  * user resizes) and tells the CLI the stream is up. With a view-scope
  * session, or the toggle on watch, the screen is inert; in drive mode it gets a ring, a pointer
- * cursor and a ripple where you press. Non-streaming states are a calm overlay on the screen, and
+ * cursor and the interaction layer, whose device actions call the device API. Non-streaming states are a calm overlay on the screen, and
  * Cmd/Ctrl+W closes while Cmd/Ctrl+M minimizes, since there is no native menu. Closing an attached
  * viewer on a live device asks first: keep the device running, or shut it down and release the lease.
  */
@@ -84,11 +63,23 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 	const [notice, setNotice] = useState<string | null>(null);
 	const announced = useRef(false);
 	const fitted = useRef<number | null>(null);
-	const { ripples, addRipple, removeRipple } = useRipples();
+	const [deviceSize, setDeviceSize] = useState<Size | undefined>(undefined);
 	const canDrive = info.scope === "drive" && driving && status === "streaming";
 
 	const showNotice = useCallback((text: string) => setNotice(text), []);
-	const handlers = useDeviceInput(info.scope === "drive" && driving, showNotice);
+	const actions = useMemo(() => createDeviceActions({ device, onError: showNotice }), [showNotice]);
+
+	useEffect(() => {
+		if (status !== "streaming") return;
+		let cancelled = false;
+		device
+			.deviceScreen()
+			.then((screen) => !cancelled && setDeviceSize({ width: screen.width, height: screen.height }))
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [status]);
 
 	useEffect(() => {
 		if (!notice) return;
@@ -133,11 +124,6 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 		void run(getCurrentWindow().setAlwaysOnTop(next));
 	};
 
-	const onPointerDown = (event: PointerEvent<Screen>) => {
-		handlers.onPointerDown(event);
-		if (canDrive) addRipple(event);
-	};
-
 	const topUp = () => void run(device.openBilling());
 
 	const unreachable = error?.code === "UNREACHABLE";
@@ -161,22 +147,18 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 				onScreenshot={() => void run(device.screenshot())}
 				onMinimize={minimize}
 				onClose={close}
-				deviceControls={<DeviceControls actions={logActions} disabledReason={availability.reason} />}
+				deviceControls={<DeviceControls actions={actions} disabledReason={availability.reason} />}
 			/>
 			<div className="min-h-0 flex-1" style={{ padding: `0 ${SCREEN_INSET}px ${SCREEN_INSET}px` }}>
 				<InteractionLayer
-					enabled={INTERACTION_LAYER && canDrive}
+					enabled={canDrive}
+					deviceSize={deviceSize}
+					actions={actions}
 					className={`relative h-full overflow-hidden bg-black ${SCREEN_RADIUS[info.platform]} ${ring}`}
 					style={{ cursor: canDrive ? "pointer" : "default" }}
 				>
 					{native ? (
-						<canvas
-							ref={canvasRef}
-							className="h-full w-full touch-none select-none object-contain"
-							onPointerDown={onPointerDown}
-							onPointerUp={handlers.onPointerUp}
-							onWheel={handlers.onWheel}
-						/>
+						<canvas ref={canvasRef} className="h-full w-full touch-none select-none object-contain" />
 					) : (
 						<video
 							ref={videoRef}
@@ -184,12 +166,8 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 							autoPlay
 							muted
 							playsInline
-							onPointerDown={onPointerDown}
-							onPointerUp={handlers.onPointerUp}
-							onWheel={handlers.onWheel}
 						/>
 					)}
-					<TapRipples ripples={ripples} onDone={removeRipple} />
 					{demo && size && <DemoOrbHint size={size} />}
 					<StreamState status={status} unreachable={unreachable} />
 					{(overlay === "out-of-credits" || overlay === "stopped") && (
