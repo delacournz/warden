@@ -26,54 +26,59 @@ const TARGET: SelectedTarget = {
 	title: undefined,
 };
 
-/** A `DevtoolsFacet` that talks to nothing: calls are recorded, answers are the fields of the returned object. */
-export function stubFacet(): StubFacet {
-	let closes = 0;
-	const stub: StubFacet = {
-		evaluated: [],
-		treeCalls: [],
-		closes: () => closes,
-		artifactDirs: [],
-		consoleLines: [],
-		networkEntries: [],
-		tree: { components: [], truncated: false },
-		facet: {
-			async evaluate(expression) {
-				stub.evaluated.push(expression);
-				return resultFactory.ok(undefined);
-			},
-			async reloadJs() {
-				return resultFactory.ok({ method: "expo" as const });
-			},
-			console: {
-				lines: () => stub.consoleLines,
-				clear: () => {
-					stub.consoleLines = [];
+/** Builds {@link StubFacet}s. Use the shared {@link facetStubs} singleton. */
+export class FacetStubs {
+	/** A `DevtoolsFacet` that talks to nothing: calls are recorded, answers are the fields of the returned object. */
+	create(): StubFacet {
+		let closes = 0;
+		const stub: StubFacet = {
+			evaluated: [],
+			treeCalls: [],
+			closes: () => closes,
+			artifactDirs: [],
+			consoleLines: [],
+			networkEntries: [],
+			tree: { components: [], truncated: false },
+			facet: {
+				async evaluate(expression) {
+					stub.evaluated.push(expression);
+					return resultFactory.ok(undefined);
 				},
-				mark: (label) => {
-					stub.consoleLines.push({ ts: 0, level: "info", kind: "note", text: label });
+				async reloadJs() {
+					return resultFactory.ok({ method: "expo" as const });
+				},
+				console: {
+					lines: () => stub.consoleLines,
+					clear: () => {
+						stub.consoleLines = [];
+					},
+					mark: (label) => {
+						stub.consoleLines.push({ ts: 0, level: "info", kind: "note", text: label });
+					},
+				},
+				network: {
+					entries: async () => stub.networkEntries,
+					clear: async () => {
+						stub.networkEntries = [];
+					},
+				},
+				async tree(options) {
+					stub.treeCalls.push(options);
+					return resultFactory.ok(stub.tree);
+				},
+				target: TARGET,
+				on: () => () => undefined,
+				async attachArtifacts(dir) {
+					stub.artifactDirs.push(dir);
+					return resultFactory.ok({ console: `${dir}/console.jsonl`, network: `${dir}/network.jsonl` });
+				},
+				close() {
+					closes += 1;
 				},
 			},
-			network: {
-				entries: async () => stub.networkEntries,
-				clear: async () => {
-					stub.networkEntries = [];
-				},
-			},
-			async tree(options) {
-				stub.treeCalls.push(options);
-				return resultFactory.ok(stub.tree);
-			},
-			target: TARGET,
-			on: () => () => undefined,
-			async attachArtifacts(dir) {
-				stub.artifactDirs.push(dir);
-				return resultFactory.ok({ console: `${dir}/console.jsonl`, network: `${dir}/network.jsonl` });
-			},
-			close() {
-				closes += 1;
-			},
-		},
-	};
-	return stub;
+		};
+		return stub;
+	}
 }
+
+export const facetStubs = new FacetStubs();

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { wardenErrors } from "@delacour/warden-types/error";
@@ -32,7 +32,7 @@ const provider: DeviceProvider = {
 };
 
 function rig(extraEnv: Record<string, string> = {}): { seams: ClientSeams; options: WardenClientOptions } {
-	const stub = stubFacet();
+	const stub = facetStubs.create();
 	return {
 		seams: {
 			providerFor: () => provider,

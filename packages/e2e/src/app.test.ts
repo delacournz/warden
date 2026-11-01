@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { devtoolsErr } from "@delacour/warden-devtools/devtools.types";
+import { devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
 import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { cacheObservations } from "@delacour/warden-driver/observation-cache";
@@ -69,7 +69,7 @@ describe("app.open", () => {
 			devtools: () => {
 				attaches++;
 				expect(driver.callsOf("app.launch")).toHaveLength(1);
-				return Promise.resolve(devtoolsErr("devtools_unavailable", "not under test"));
+				return Promise.resolve(devtoolsErrors.err("devtools_unavailable", "not under test"));
 			},
 		};
 		const app = createApp({ session, driver, env: { ...baseEnv, metroUrl: "http://localhost:8081" } });
@@ -84,7 +84,7 @@ describe("app.open", () => {
 			out: "/tmp/out",
 			devtools: () => {
 				attaches++;
-				return Promise.resolve(devtoolsErr("devtools_unavailable", "not under test"));
+				return Promise.resolve(devtoolsErrors.err("devtools_unavailable", "not under test"));
 			},
 		};
 		await createApp({ session, driver, env: baseEnv }).open();

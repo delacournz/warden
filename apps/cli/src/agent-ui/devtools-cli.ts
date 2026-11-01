@@ -2,8 +2,8 @@ import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { metroOwner } from "@delacour/warden-builds/metro";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
-import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
-import { readRoute } from "@delacour/warden-devtools/route";
+import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
+import { routeReader } from "@delacour/warden-devtools/route";
 import {
 	CONSOLE_FILE,
 	DEFAULT_TAIL,
@@ -61,7 +61,7 @@ const COLLECT_HINT = "run `warden ui logs start` first";
 export type CliDevtoolsDeps = DevtoolsDeps & { brokerClient?: BrokerClientDeps };
 
 export const defaultDevtoolsDeps: CliDevtoolsDeps = {
-	open: (options) => openDevtoolsFacet(options),
+	open: (options) => devtoolsFacetOpener.open(options),
 	probe: async (host, port) => {
 		const owner = await metroOwner(host.exec, port, host.cwd);
 		if (owner.kind === "ours") return "ours";
@@ -458,7 +458,7 @@ export function uiRoute(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOptionV
 		if (via !== undefined) return via.success ? routePayload(via.data.route) : via;
 		const session = opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device));
 		const read = await withFacet(session, opts, async (facet) => {
-			const found = await readRoute(facet);
+			const found = await routeReader.read(facet);
 			return found.success
 				? resultFactory.ok(found.data ?? null)
 				: { success: false, error: devtoolsError(found.error) };

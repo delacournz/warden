@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
-import { captureNativeLog, type NativeLogDeps, type NativeTarget } from "@delacour/warden-devtools/native-log";
+import { NativeLogCapture, type NativeLogDeps, type NativeTarget } from "@delacour/warden-devtools/native-log";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { renderHeader, renderSnapshot } from "@delacour/warden-screen/render";
 import type { E2eEnv } from "../env";
@@ -151,7 +151,7 @@ export function nativeTarget(env: Pick<E2eEnv, "platform" | "udid" | "bundleId">
 }
 
 /**
- * `native.log` (+ iOS `.ips` crash reports) of the failed attempt, see {@link captureNativeLog}. Best effort
+ * `native.log` (+ iOS `.ips` crash reports) of the failed attempt, see {@link NativeLogCapture}. Best effort
  * like {@link captureFailure}: never throws, limited by `timeoutMs` and what `budget` has left.
  */
 export async function captureNativeArtifacts(
@@ -164,7 +164,7 @@ export async function captureNativeArtifacts(
 	const ms = Math.min(timeoutMs, budget());
 	if (ms <= 0) return { files: [], problems: [`native log: ${SPENT}`] };
 	try {
-		return await limited(captureNativeLog(target, deps, { ...win, nowMs: Date.now(), timeoutMs: ms }), ms);
+		return await limited(new NativeLogCapture(deps).capture(target, { ...win, nowMs: Date.now(), timeoutMs: ms }), ms);
 	} catch (cause) {
 		return { files: [], problems: [`native log: ${message(cause)}`] };
 	}

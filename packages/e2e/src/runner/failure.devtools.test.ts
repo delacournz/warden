@@ -3,9 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
-import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
-import { fakePage, page, startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
-import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
+import { fakeMetros, fakePages } from "@delacour/warden-devtools/testing/devtools";
+import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { captureDevtoolsArtifacts } from "./failure";
 
 const cleanup: (() => void)[] = [];
@@ -24,12 +24,12 @@ const tmp = (): string => {
 async function openFake(): Promise<{
 	facet: DevtoolsFacet;
 	emit: (method: string, params: unknown) => void;
-	queue: ReturnType<typeof fakePage>["state"];
+	queue: ReturnType<typeof fakePages.create>["state"];
 }> {
-	const p = fakePage();
-	const fake = startFakeMetro({ respond: (request, connection) => p.respond(request, connection) });
+	const p = fakePages.create();
+	const fake = fakeMetros.start({ respond: (request, connection) => p.respond(request, connection) });
 	cleanup.push(() => void fake.stop());
-	const opened = await openDevtoolsFacet({
+	const opened = await devtoolsFacetOpener.open({
 		env: { metroUrl: fake.url },
 		device: {},
 		fetch,
@@ -50,7 +50,7 @@ describe("captureDevtoolsArtifacts", () => {
 			timestamp: 20,
 		});
 		await Bun.sleep(30);
-		queue.queue.push(page("https://api.test/me", { status: 500 }));
+		queue.queue.push(fakePages.entry("https://api.test/me", { status: 500 }));
 		const dir = tmp();
 		const capture = await captureDevtoolsArtifacts(facet, dir);
 		expect(capture).toEqual({ files: ["console.jsonl", "network.jsonl"], problems: [] });
@@ -59,7 +59,7 @@ describe("captureDevtoolsArtifacts", () => {
 	});
 
 	test("an unwritable directory is a problem, not a throw", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		stub.facet.attachArtifacts = async () => ({
 			success: false,
 			error: { code: "io_failed", message: "no space" },
@@ -70,7 +70,7 @@ describe("captureDevtoolsArtifacts", () => {
 	});
 
 	test("a wedged facet is given up on after the timeout", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		stub.facet.attachArtifacts = () => new Promise(() => undefined);
 		const capture = await captureDevtoolsArtifacts(stub.facet, tmp(), 30);
 		expect(capture.files).toEqual([]);
@@ -78,7 +78,7 @@ describe("captureDevtoolsArtifacts", () => {
 	});
 
 	test("a throwing facet is a problem too", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		stub.facet.attachArtifacts = async () => {
 			throw new Error("socket gone");
 		};

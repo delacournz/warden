@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { captureNativeLog, type NativeFs, type NativeTarget, realNativeFs } from "./native-log";
+import { type NativeFs, NativeLogCapture, type NativeTarget, nativeLogDepsFactory } from "./native-log";
 
 const ok = (stdout: string): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
 const fail = (stderr: string): ExecResult => ({ exitCode: 1, stdout: "", stderr });
@@ -45,11 +45,11 @@ describe("captureNativeLog ios", () => {
 	test("writes native.log from log show scoped to the app process and the attempt window", async () => {
 		const { exec, calls } = script(replies);
 		const { fs, written } = memoryFs();
-		const capture = await captureNativeLog(
-			ios,
-			{ exec, adb: "adb", fs, reportsDir: "/r" },
-			{ dir: "/out", sinceMs: SINCE, nowMs: NOW }
-		);
+		const capture = await new NativeLogCapture({ exec, adb: "adb", fs, reportsDir: "/r" }).capture(ios, {
+			dir: "/out",
+			sinceMs: SINCE,
+			nowMs: NOW,
+		});
 		expect(capture).toEqual({ files: ["native.log"], problems: [] });
 		expect(written.get("/out/native.log")).toBe('{"eventMessage":"boom"}\n');
 		const show = calls.find((c) => c.includes("log show")) ?? "";
@@ -66,11 +66,11 @@ describe("captureNativeLog ios", () => {
 			{ name: "Other-2026-10-24-101011.ips", mtimeMs: NOW - 1000 },
 			{ name: "Example-notes.txt", mtimeMs: NOW },
 		]);
-		const capture = await captureNativeLog(
-			ios,
-			{ exec, adb: "adb", fs, reportsDir: "/r" },
-			{ dir: "/out", sinceMs: SINCE, nowMs: NOW }
-		);
+		const capture = await new NativeLogCapture({ exec, adb: "adb", fs, reportsDir: "/r" }).capture(ios, {
+			dir: "/out",
+			sinceMs: SINCE,
+			nowMs: NOW,
+		});
 		expect(copied).toEqual([["/r/Example-2026-10-24-101010.ips", "/out/Example-2026-10-24-101010.ips"]]);
 		expect(capture.files).toEqual(["native.log", "Example-2026-10-24-101010.ips"]);
 	});
@@ -78,11 +78,11 @@ describe("captureNativeLog ios", () => {
 	test("unknown app container is a problem, not an exception", async () => {
 		const { exec } = script([]);
 		const { fs, written } = memoryFs();
-		const capture = await captureNativeLog(
-			ios,
-			{ exec, adb: "adb", fs, reportsDir: "/r" },
-			{ dir: "/out", sinceMs: SINCE, nowMs: NOW }
-		);
+		const capture = await new NativeLogCapture({ exec, adb: "adb", fs, reportsDir: "/r" }).capture(ios, {
+			dir: "/out",
+			sinceMs: SINCE,
+			nowMs: NOW,
+		});
 		expect(capture.files).toEqual([]);
 		expect(capture.problems[0]).toContain("native log");
 		expect(written.size).toBe(0);
@@ -93,11 +93,11 @@ describe("captureNativeLog ios", () => {
 			throw new Error("spawn failed");
 		};
 		const { fs } = memoryFs();
-		const capture = await captureNativeLog(
-			ios,
-			{ exec, adb: "adb", fs, reportsDir: "/r" },
-			{ dir: "/out", sinceMs: SINCE, nowMs: NOW }
-		);
+		const capture = await new NativeLogCapture({ exec, adb: "adb", fs, reportsDir: "/r" }).capture(ios, {
+			dir: "/out",
+			sinceMs: SINCE,
+			nowMs: NOW,
+		});
 		expect(capture.problems.join()).toContain("spawn failed");
 	});
 });
@@ -110,11 +110,11 @@ describe("captureNativeLog android", () => {
 			["adb -s emulator-5554 logcat -d -b crash", ok("FATAL EXCEPTION\n")],
 		]);
 		const { fs, written } = memoryFs();
-		const capture = await captureNativeLog(
-			android,
-			{ exec, adb: "adb", fs, reportsDir: "/r" },
-			{ dir: "/out", sinceMs: SINCE, nowMs: NOW }
-		);
+		const capture = await new NativeLogCapture({ exec, adb: "adb", fs, reportsDir: "/r" }).capture(android, {
+			dir: "/out",
+			sinceMs: SINCE,
+			nowMs: NOW,
+		});
 		expect(capture).toEqual({ files: ["native.log"], problems: [] });
 		const text = written.get("/out/native.log") ?? "";
 		expect(text).toContain("main line");
@@ -130,11 +130,11 @@ describe("captureNativeLog android", () => {
 			["adb -s emulator-5554 logcat -d -b crash", ok("FATAL EXCEPTION\n")],
 		]);
 		const { fs, written } = memoryFs();
-		await captureNativeLog(
-			android,
-			{ exec, adb: "adb", fs, reportsDir: "/r" },
-			{ dir: "/out", sinceMs: SINCE, nowMs: NOW }
-		);
+		await new NativeLogCapture({ exec, adb: "adb", fs, reportsDir: "/r" }).capture(android, {
+			dir: "/out",
+			sinceMs: SINCE,
+			nowMs: NOW,
+		});
 		expect(calls.some((c) => c.includes("--pid"))).toBe(false);
 		expect(written.get("/out/native.log")).toContain("FATAL EXCEPTION");
 	});
@@ -142,11 +142,11 @@ describe("captureNativeLog android", () => {
 	test("adb failing is a problem", async () => {
 		const { exec } = script([]);
 		const { fs } = memoryFs();
-		const capture = await captureNativeLog(
-			android,
-			{ exec, adb: "adb", fs, reportsDir: "/r" },
-			{ dir: "/out", sinceMs: SINCE, nowMs: NOW }
-		);
+		const capture = await new NativeLogCapture({ exec, adb: "adb", fs, reportsDir: "/r" }).capture(android, {
+			dir: "/out",
+			sinceMs: SINCE,
+			nowMs: NOW,
+		});
 		expect(capture.files).toEqual([]);
 		expect(capture.problems[0]).toContain("native log");
 	});
@@ -156,7 +156,7 @@ describe("realNativeFs", () => {
 	test("write creates the attempt dir when nothing else did", () => {
 		const root = mkdtempSync(join(tmpdir(), "wdn-native-"));
 		try {
-			realNativeFs().write(join(root, "a", "b", "native.log"), "x");
+			nativeLogDepsFactory.fs().write(join(root, "a", "b", "native.log"), "x");
 			expect(readFileSync(join(root, "a", "b", "native.log"), "utf8")).toBe("x");
 		} finally {
 			rmSync(root, { recursive: true, force: true });

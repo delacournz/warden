@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Collector, parseCollectorArgv, runCollector, startCollector } from "./collector";
-import { fakePage, fakeTarget, page, startFakeMetro } from "./devtools.testing";
+import { type Collector, collectorArgv, collectorRunner } from "./collector";
+import { fakeMetros, fakePages } from "./devtools.testing";
 
 const cleanup: (() => void)[] = [];
 const dirs: string[] = [];
@@ -70,12 +70,12 @@ async function runClock(clock: ReturnType<typeof fakeClock>, until: Promise<unkn
 }
 
 async function start(extra: { idleMs?: number; signal?: AbortSignal } = {}) {
-	const p = fakePage();
-	const fake = startFakeMetro({ respond: p.respond });
+	const p = fakePages.create();
+	const fake = fakeMetros.start({ respond: p.respond });
 	cleanup.push(() => void fake.stop());
 	const out = await outDir();
 	const clock = fakeClock();
-	const started = await startCollector({
+	const started = await collectorRunner.start({
 		metroUrl: fake.url,
 		device: {},
 		out,
@@ -95,7 +95,7 @@ describe("startCollector", () => {
 	test("appends console lines and network entries to the two files as they arrive", async () => {
 		const { fake, out, state, clock } = await start();
 		fake.emit("Runtime.consoleAPICalled", { type: "warning", args: [str("careful")], timestamp: 5 });
-		state.queue.push(page("https://api.test/a"));
+		state.queue.push(fakePages.entry("https://api.test/a"));
 		await clock.advance(500);
 		const networkPath = join(out, "network.jsonl");
 		for (let i = 0; i < 100 && (await rows(networkPath)).length === 0; i++) await Bun.sleep(20);
@@ -158,10 +158,10 @@ describe("startCollector", () => {
 	});
 
 	test("a release build (no Metro) is devtools_unavailable", async () => {
-		const down = startFakeMetro({ targets: [fakeTarget(1, 1)] });
+		const down = fakeMetros.start({ targets: [fakeMetros.target(1, 1)] });
 		const url = down.url;
 		await down.stop();
-		const started = await startCollector({
+		const started = await collectorRunner.start({
 			metroUrl: url,
 			device: {},
 			out: await outDir(),
@@ -176,7 +176,7 @@ describe("startCollector", () => {
 describe("parseCollectorArgv", () => {
 	test("reads the flags the CLI passes", () => {
 		expect(
-			parseCollectorArgv([
+			collectorArgv.parse([
 				"--metro",
 				"http://127.0.0.1:8081",
 				"--out",
@@ -204,39 +204,39 @@ describe("parseCollectorArgv", () => {
 	});
 
 	test("idle defaults to 60 s; --metro and --out are required; junk is rejected", () => {
-		const minimal = parseCollectorArgv(["--metro", "http://m:1", "--out", "o"]);
+		const minimal = collectorArgv.parse(["--metro", "http://m:1", "--out", "o"]);
 		expect(minimal.success && minimal.data.idleMs).toBe(60_000);
-		expect(parseCollectorArgv(["--out", "o"]).success).toBe(false);
-		expect(parseCollectorArgv(["--metro", "http://m:1"]).success).toBe(false);
-		expect(parseCollectorArgv(["--metro", "http://m:1", "--out", "o", "--idle-ms", "soon"]).success).toBe(false);
-		expect(parseCollectorArgv(["--metro", "http://m:1", "--out", "o", "--nope"]).success).toBe(false);
-		expect(parseCollectorArgv(["--metro"]).success).toBe(false);
+		expect(collectorArgv.parse(["--out", "o"]).success).toBe(false);
+		expect(collectorArgv.parse(["--metro", "http://m:1"]).success).toBe(false);
+		expect(collectorArgv.parse(["--metro", "http://m:1", "--out", "o", "--idle-ms", "soon"]).success).toBe(false);
+		expect(collectorArgv.parse(["--metro", "http://m:1", "--out", "o", "--nope"]).success).toBe(false);
+		expect(collectorArgv.parse(["--metro"]).success).toBe(false);
 	});
 });
 
 describe("runCollector", () => {
 	test("exit 1 on bad usage, with the reason logged", async () => {
 		const lines: string[] = [];
-		const code = await runCollector(["--out", "o"], { fetch, log: (l) => lines.push(l) });
+		const code = await collectorRunner.run(["--out", "o"], { fetch, log: (l) => lines.push(l) });
 		expect(code).toBe(1);
 		expect(lines.join("\n")).toContain("--metro");
 	});
 
 	test("exit 3 when there is no dev client to talk to", async () => {
-		const down = startFakeMetro();
+		const down = fakeMetros.start();
 		const url = down.url;
 		await down.stop();
-		const code = await runCollector(["--metro", url, "--out", await outDir()], { fetch, WebSocket });
+		const code = await collectorRunner.run(["--metro", url, "--out", await outDir()], { fetch, WebSocket });
 		expect(code).toBe(3);
 	});
 
 	test("exit 0 after idle, files written", async () => {
-		const p = fakePage();
-		const fake = startFakeMetro({ respond: p.respond });
+		const p = fakePages.create();
+		const fake = fakeMetros.start({ respond: p.respond });
 		cleanup.push(() => void fake.stop());
 		const out = await outDir();
 		const clock = fakeClock();
-		const running = runCollector(["--metro", fake.url, "--out", out, "--idle-ms", "1000"], {
+		const running = collectorRunner.run(["--metro", fake.url, "--out", out, "--idle-ms", "1000"], {
 			fetch,
 			WebSocket,
 			sleep: clock.sleep,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { EvaluateError } from "./devtools.types";
-import { type LogBoxSession, muteLogBox } from "./logbox";
+import { LogBoxMuter, type LogBoxSession } from "./logbox";
 import { LOGBOX_EXPRESSION } from "./logbox.script";
 
 type Reply = Result<unknown, EvaluateError>;
@@ -39,7 +39,7 @@ const fast = { sleep: () => Promise.resolve(), intervalMs: 1 };
 describe("muteLogBox", () => {
 	test("evaluates the LogBox script once when the app answers off", async () => {
 		const { session, expressions } = fakeSession([resultFactory.ok("off")]);
-		const muted = muteLogBox(session, fast);
+		const muted = new LogBoxMuter(session, fast);
 		await muted.settled;
 		expect(expressions).toEqual([LOGBOX_EXPRESSION]);
 		muted.stop();
@@ -52,7 +52,7 @@ describe("muteLogBox", () => {
 			resultFactory.ok("not-ready"),
 			resultFactory.ok("off"),
 		]);
-		const muted = muteLogBox(session, fast);
+		const muted = new LogBoxMuter(session, fast);
 		await muted.settled;
 		expect(expressions).toHaveLength(4);
 		muted.stop();
@@ -61,7 +61,7 @@ describe("muteLogBox", () => {
 	test("gives up after its attempts and logs once", async () => {
 		const { session, expressions } = fakeSession([resultFactory.ok("no-require")]);
 		const lines: string[] = [];
-		const muted = muteLogBox(session, { ...fast, attempts: 3, log: (line) => lines.push(line) });
+		const muted = new LogBoxMuter(session, { ...fast, attempts: 3, log: (line) => lines.push(line) });
 		await muted.settled;
 		expect(expressions).toHaveLength(3);
 		expect(lines).toEqual(["devtools: LogBox left on (no-require after 3 attempts)"]);
@@ -70,7 +70,7 @@ describe("muteLogBox", () => {
 
 	test("applies again after every reconnect (relaunch, JS reload)", async () => {
 		const { session, expressions, reconnect } = fakeSession([resultFactory.ok("off")]);
-		const muted = muteLogBox(session, fast);
+		const muted = new LogBoxMuter(session, fast);
 		await muted.settled;
 		reconnect();
 		await tick();
@@ -85,7 +85,7 @@ describe("muteLogBox", () => {
 
 	test("stop ends a retry loop", async () => {
 		const { session, expressions } = fakeSession([resultFactory.ok("no-require")]);
-		const muted = muteLogBox(session, { sleep: () => Bun.sleep(2), intervalMs: 2 });
+		const muted = new LogBoxMuter(session, { sleep: () => Bun.sleep(2), intervalMs: 2 });
 		await tick();
 		muted.stop();
 		const seen = expressions.length;

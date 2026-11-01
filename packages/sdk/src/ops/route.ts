@@ -1,4 +1,4 @@
-import { readRoute } from "@delacour/warden-devtools/route";
+import { routeReader } from "@delacour/warden-devtools/route";
 import { resultFactory } from "@delacour/warden-types/result";
 import { devtoolsError, type MetroParams, withFacet } from "./devtools";
 import { fail } from "./errors";
@@ -20,7 +20,7 @@ export async function route(session: OpSession, params: MetroParams = {}): OpOut
 		return resultFactory.ok({ result: { route: found }, text: found ?? "unknown" });
 	}
 	return withFacet(session, params, async (facet) => {
-		const found = await readRoute(facet, { timeoutMs: session.timeoutMs });
+		const found = await routeReader.read(facet, { timeoutMs: session.timeoutMs });
 		if (!found.success) return fail(devtoolsError(found.error));
 		return resultFactory.ok({ result: { route: found.data }, text: found.data ?? "unknown" });
 	});

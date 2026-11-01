@@ -1,18 +1,18 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { CloseInfo } from "@delacour/warden-devtools/cdp";
-import { type ConsoleCapture, createConsoleCapture } from "@delacour/warden-devtools/console";
+import { type ConsoleCapture, ConsoleRecorder } from "@delacour/warden-devtools/console";
 import type { ConsoleLevel, ConsoleLine, Fetch, NetworkEntry, Sleep } from "@delacour/warden-devtools/devtools.types";
-import { appendJsonl, writeJsonl } from "@delacour/warden-devtools/jsonl";
-import { attachNetwork, type NetworkCapture } from "@delacour/warden-devtools/network";
-import { readRoute } from "@delacour/warden-devtools/route";
+import { jsonl } from "@delacour/warden-devtools/jsonl";
+import { type NetworkCapture, networkAttacher } from "@delacour/warden-devtools/network";
+import { routeReader } from "@delacour/warden-devtools/route";
 import {
 	type ConnectDevtoolsOptions,
-	connectDevtools,
 	type DevtoolsDevice,
 	type DevtoolsSession,
+	devtoolsConnector,
 } from "@delacour/warden-devtools/session";
-import { fetchTree, formatTree } from "@delacour/warden-devtools/tree";
+import { treeFetcher, treeFormatter } from "@delacour/warden-devtools/tree";
 import { resultFactory } from "@delacour/warden-types/result";
 import {
 	consoleQuerySchema,
@@ -97,7 +97,7 @@ export type BrokerOptions = {
 	networkPollMs?: number;
 	/** overrides `<logDir>/broker.sock` (and the short fallback) */
 	socketPath?: string;
-	connect?: typeof connectDevtools;
+	connect?: typeof devtoolsConnector.connect;
 	fetch?: Fetch;
 	WebSocket?: typeof WebSocket;
 	sleep?: Sleep;
@@ -199,7 +199,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 	const log = o.log ?? (() => undefined);
 	const sleep = o.sleep ?? timerSleep;
 	const now = o.now ?? Date.now;
-	const connect = o.connect ?? connectDevtools;
+	const connect = o.connect ?? devtoolsConnector.connect;
 	const retry = o.retry ?? DEFAULT_RETRY;
 	const startedAt = now();
 	const consolePath = join(o.logDir, CONSOLE_FILE);
@@ -207,8 +207,8 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 
 	try {
 		await mkdir(o.logDir, { recursive: true });
-		await writeJsonl(consolePath, []);
-		await writeJsonl(networkPath, []);
+		await jsonl.write(consolePath, []);
+		await jsonl.write(networkPath, []);
 	} catch (error) {
 		return brokerErr("io_failed", `cannot write to ${o.logDir}: ${String(error)}`);
 	}
@@ -229,11 +229,11 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 
 	const append = (path: string, row: unknown) => {
 		writes = writes
-			.then(() => appendJsonl(path, [row]))
+			.then(() => jsonl.append(path, [row]))
 			.catch((error) => log(`broker: write failed: ${String(error)}`));
 	};
 
-	const consoleCapture: ConsoleCapture = createConsoleCapture({
+	const consoleCapture: ConsoleCapture = new ConsoleRecorder({
 		ring: o.consoleRing ?? DEFAULT_CONSOLE_RING,
 		now,
 		sink: (line) => {
@@ -290,7 +290,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 		const connected = await connect(options);
 		if (!connected.success) return brokerErr(connected.error.code, connected.error.message);
 		const session = connected.data;
-		const network = await attachNetwork(session, {
+		const network = await networkAttacher.attach(session, {
 			ring: networkRingSize,
 			metroUrl: o.metroUrl,
 			includeBodies: o.includeBodies,
@@ -475,12 +475,12 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 			if (!parsed.success) return badParams("tree", parsed.error.message);
 			const session = context.requireSession();
 			if (!session.success) return session;
-			const fetched = await fetchTree(session.data, {}, { sleep });
+			const fetched = await treeFetcher.fetch(session.data, {}, { sleep });
 			if (!fetched.success) return brokerErr(fetched.error.code, fetched.error.message);
 			const tree = filterTree(fetched.data, parsed.data);
 			return resultFactory.ok({
 				...(tree.screen === undefined ? {} : { screen: tree.screen }),
-				lines: formatTree(tree),
+				lines: treeFormatter.format(tree),
 				components: tree.components,
 				truncated: tree.truncated,
 			});
@@ -490,7 +490,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 			if (!parsed.success) return badParams("route", parsed.error.message);
 			const session = context.requireSession();
 			if (!session.success) return session;
-			const route = await readRoute(session.data);
+			const route = await routeReader.read(session.data);
 			if (!route.success) return brokerErr(route.error.code, route.error.message);
 			return resultFactory.ok({ route: route.data ?? null });
 		},

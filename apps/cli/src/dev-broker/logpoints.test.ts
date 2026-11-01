@@ -6,9 +6,8 @@ import {
 	type FakeCdpRequest,
 	type FakeConnection,
 	type FakeMetro,
-	fakePage,
-	fakeTarget,
-	startFakeMetro,
+	fakeMetros,
+	fakePages,
 } from "@delacour/warden-devtools/testing/devtools";
 import { type Broker, callBroker, startBroker } from "./broker";
 import {
@@ -42,7 +41,7 @@ type Rig = { broker: Broker; metro: FakeMetro; fetched: string[]; teardown: () =
 
 /** A broker on a fake Metro whose Hermes replays one bundle script on every `Debugger.enable`. */
 async function rig(options: { legacy?: boolean } = {}): Promise<Rig> {
-	const net = fakePage();
+	const net = fakePages.create();
 	let scripts = 0;
 	let breakpoints = 0;
 	const respond = (request: FakeCdpRequest, connection: FakeConnection) => {
@@ -56,9 +55,10 @@ async function rig(options: { legacy?: boolean } = {}): Promise<Rig> {
 		}
 		return net.respond(request, connection);
 	};
-	const metro = startFakeMetro({ respond });
+	const metro = fakeMetros.start({ respond });
 	metros.push(metro);
-	if (options.legacy) metro.setTargets([fakeTarget(metro.port - 1, 1, { reactNative: { logicalDeviceId: "dev1" } })]);
+	if (options.legacy)
+		metro.setTargets([fakeMetros.target(metro.port - 1, 1, { reactNative: { logicalDeviceId: "dev1" } })]);
 	const logDir = mkdtempSync(join(tmpdir(), "wlp-"));
 	dirs.push(logDir);
 	const started = await startBroker({

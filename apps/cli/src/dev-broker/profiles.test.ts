@@ -6,7 +6,7 @@ import {
 	type FakeCdpRequest,
 	type FakeMetro,
 	type FakeReply,
-	startFakeMetro,
+	fakeMetros,
 } from "@delacour/warden-devtools/testing/devtools";
 import { buildProfile } from "@delacour/warden-perf/js/js.testing";
 import { jsErr } from "@delacour/warden-perf/js/js.types";
@@ -87,7 +87,7 @@ function app(options: { heapFails?: boolean }) {
 }
 
 async function setup(options: { heapFails?: boolean } = {}) {
-	const metro = startFakeMetro({ respond: app(options) });
+	const metro = fakeMetros.start({ respond: app(options) });
 	metros.push(metro);
 	const logDir = mkdtempSync(join(tmpdir(), "wbp-"));
 	dirs.push(logDir);

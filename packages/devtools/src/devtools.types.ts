@@ -38,9 +38,14 @@ export type Fetch = (input: string, init?: { method?: string; signal?: AbortSign
 
 export type Sleep = (ms: number) => Promise<void>;
 
-export function devtoolsErr(code: DevtoolsErrorCode, message: string): { success: false; error: DevtoolsError } {
-	return { success: false, error: { code, message } };
+/** Builds failed {@link DevtoolsResult}s. Use the shared {@link devtoolsErrors} singleton. */
+export class DevtoolsErrors {
+	err(code: DevtoolsErrorCode, message: string): { success: false; error: DevtoolsError } {
+		return { success: false, error: { code, message } };
+	}
 }
+
+export const devtoolsErrors = new DevtoolsErrors();
 
 /** One CDP event as the session saw it. `replay` = it arrived while the connect handshake was still running. */
 export type CdpTapEvent = {

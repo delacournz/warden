@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
-import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import type { Platform } from "@delacour/warden-store/types";
@@ -127,7 +127,7 @@ function harness(options: { platform?: Platform; withMetro?: boolean } = {}): Ha
 			return undefined;
 		},
 	});
-	const stub = stubFacet();
+	const stub = facetStubs.create();
 	const facet: DevtoolsFacet = {
 		...stub.facet,
 		tree: async (treeOptions) => {

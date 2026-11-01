@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attachConsole, createConsoleCapture, formatConsoleArgs } from "./console";
-import { startFakeMetro } from "./devtools.testing";
+import { type ConsoleCapture, ConsoleRecorder, consoleAttacher, consoleFormatter } from "./console";
+import { fakeMetros } from "./devtools.testing";
 import type { CdpTapEvent, ConsoleLine } from "./devtools.types";
-import { connectDevtools } from "./session";
+import { devtoolsConnector } from "./session";
 
 const dirs: string[] = [];
 const cleanup: (() => void)[] = [];
@@ -32,12 +32,16 @@ function consoleEvent(
 
 describe("formatConsoleArgs", () => {
 	test("primitives: top-level strings raw, others by value", () => {
-		expect(formatConsoleArgs([str("hello"), num(3), { type: "boolean", value: true }]).text).toBe("hello 3 true");
-		expect(formatConsoleArgs([{ type: "undefined" }, { type: "object", subtype: "null", value: null }]).text).toBe(
-			"undefined null"
+		expect(consoleFormatter.format([str("hello"), num(3), { type: "boolean", value: true }]).text).toBe("hello 3 true");
+		expect(
+			consoleFormatter.format([{ type: "undefined" }, { type: "object", subtype: "null", value: null }]).text
+		).toBe("undefined null");
+		expect(consoleFormatter.format([{ type: "number", unserializableValue: "NaN", description: "NaN" }]).text).toBe(
+			"NaN"
 		);
-		expect(formatConsoleArgs([{ type: "number", unserializableValue: "NaN", description: "NaN" }]).text).toBe("NaN");
-		expect(formatConsoleArgs([{ type: "bigint", unserializableValue: "10n", description: "10n" }]).text).toBe("10n");
+		expect(consoleFormatter.format([{ type: "bigint", unserializableValue: "10n", description: "10n" }]).text).toBe(
+			"10n"
+		);
 	});
 
 	test("objects use the shallow preview, nested strings are quoted", () => {
@@ -55,7 +59,7 @@ describe("formatConsoleArgs", () => {
 				],
 			},
 		};
-		expect(formatConsoleArgs([object]).text).toBe('{id: 7, name: "ann", tags: Array(2)}');
+		expect(consoleFormatter.format([object]).text).toBe('{id: 7, name: "ann", tags: Array(2)}');
 	});
 
 	test("arrays, overflow, class instances", () => {
@@ -73,38 +77,40 @@ describe("formatConsoleArgs", () => {
 				],
 			},
 		};
-		expect(formatConsoleArgs([array]).text).toBe('[1, "b", …]');
+		expect(consoleFormatter.format([array]).text).toBe('[1, "b", …]');
 		const instance = {
 			type: "object",
 			className: "Point",
 			description: "Point",
 			preview: { type: "object", overflow: false, properties: [{ name: "x", type: "number", value: "1" }] },
 		};
-		expect(formatConsoleArgs([instance]).text).toBe("Point {x: 1}");
+		expect(consoleFormatter.format([instance]).text).toBe("Point {x: 1}");
 	});
 
 	test("objects without a preview fall back to description; errors keep their stack text", () => {
-		expect(formatConsoleArgs([{ type: "object", className: "Object", description: "Object" }]).text).toBe("Object");
+		expect(consoleFormatter.format([{ type: "object", className: "Object", description: "Object" }]).text).toBe(
+			"Object"
+		);
 		const error = { type: "object", subtype: "error", description: "Error: boom\n    at f (app.js:1:1)" };
-		expect(formatConsoleArgs([error]).text).toBe("Error: boom\n    at f (app.js:1:1)");
+		expect(consoleFormatter.format([error]).text).toBe("Error: boom\n    at f (app.js:1:1)");
 	});
 
 	test("printf specifiers consume arguments; leftovers are appended", () => {
-		expect(formatConsoleArgs([str("user %s has %d items (%%)"), str("ann"), num(3), str("extra")]).text).toBe(
+		expect(consoleFormatter.format([str("user %s has %d items (%%)"), str("ann"), num(3), str("extra")]).text).toBe(
 			"user ann has 3 items (%) extra"
 		);
-		expect(formatConsoleArgs([str("%cstyled"), str("color: red")]).text).toBe("styled");
-		expect(formatConsoleArgs([str("100%"), num(1)]).text).toBe("100% 1");
+		expect(consoleFormatter.format([str("%cstyled"), str("color: red")]).text).toBe("styled");
+		expect(consoleFormatter.format([str("100%"), num(1)]).text).toBe("100% 1");
 	});
 
 	test("args are each rendered on their own", () => {
-		expect(formatConsoleArgs([str("a %s"), str("b")]).args).toEqual(["a %s", "b"]);
+		expect(consoleFormatter.format([str("a %s"), str("b")]).args).toEqual(["a %s", "b"]);
 	});
 });
 
 describe("console capture lines", () => {
 	test("level, text, source (1-based) and args", () => {
-		const capture = createConsoleCapture({ now: () => 5 });
+		const capture = new ConsoleRecorder({ now: () => 5 });
 		capture.handle(
 			consoleEvent("log", [str("hi"), num(2)], {
 				timestamp: 1234,
@@ -127,7 +133,7 @@ describe("console capture lines", () => {
 	});
 
 	test("CDP types map onto the five levels", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		for (const type of ["log", "info", "debug", "warning", "error", "assert", "dir", "table", "trace"]) {
 			capture.handle(consoleEvent(type, [str(type)], { timestamp: Math.random() }));
 		}
@@ -145,7 +151,7 @@ describe("console capture lines", () => {
 	});
 
 	test("Runtime.exceptionThrown becomes an error line with the exception text and position", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		capture.handle({
 			method: "Runtime.exceptionThrown",
 			params: {
@@ -173,7 +179,7 @@ describe("console capture lines", () => {
 	});
 
 	test("exception stackTrace call frames become 1-based stack frames", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		capture.handle({
 			method: "Runtime.exceptionThrown",
 			params: {
@@ -195,21 +201,21 @@ describe("console capture lines", () => {
 	});
 
 	test("other events and malformed params are ignored", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		capture.handle({ method: "Runtime.executionContextCreated", params: {}, connection: 1, replay: false });
 		capture.handle({ method: "Runtime.consoleAPICalled", params: "nope", connection: 1, replay: false });
 		expect(capture.lines()).toEqual([]);
 	});
 
 	test("ring keeps the newest lines", () => {
-		const capture = createConsoleCapture({ ring: 3 });
+		const capture = new ConsoleRecorder({ ring: 3 });
 		for (let i = 0; i < 5; i++) capture.handle(consoleEvent("log", [str(`m${i}`)], { timestamp: i }));
 		expect(capture.lines().map((l) => l.text)).toEqual(["m2", "m3", "m4"]);
 	});
 
 	test("sink gets every new line, including marks", () => {
 		const seen: ConsoleLine[] = [];
-		const capture = createConsoleCapture({ sink: (line) => seen.push(line), now: () => 9 });
+		const capture = new ConsoleRecorder({ sink: (line) => seen.push(line), now: () => 9 });
 		capture.handle(consoleEvent("warning", [str("w")]));
 		capture.mark("step 2");
 		expect(seen.map((l) => [l.kind, l.text])).toEqual([
@@ -219,7 +225,7 @@ describe("console capture lines", () => {
 	});
 
 	test("mark inserts a note line stamped with the clock; clear empties the buffer", () => {
-		const capture = createConsoleCapture({ now: () => 4242 });
+		const capture = new ConsoleRecorder({ now: () => 4242 });
 		capture.mark("before tap");
 		expect(capture.lines()).toEqual([{ ts: 4242, level: "info", kind: "note", text: "before tap" }]);
 		capture.clear();
@@ -229,7 +235,7 @@ describe("console capture lines", () => {
 	test("writeJsonl writes one JSON object per line, creating directories", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "warden-console-"));
 		dirs.push(dir);
-		const capture = createConsoleCapture({ now: () => 1 });
+		const capture = new ConsoleRecorder({ now: () => 1 });
 		capture.handle(consoleEvent("error", [str("bad")], { timestamp: 2 }));
 		capture.mark("m");
 		const path = join(dir, "nested", "console.jsonl");
@@ -243,10 +249,10 @@ describe("console capture lines", () => {
 });
 
 describe("replay de-duplication", () => {
-	const text = (capture: ReturnType<typeof createConsoleCapture>) => capture.lines().map((l) => l.text);
+	const text = (capture: ConsoleCapture) => capture.lines().map((l) => l.text);
 
 	test("a reconnect replays the buffer: seen (timestamp, text) pairs are dropped, new ones kept", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		capture.handle(consoleEvent("log", [str("a")], { timestamp: 1, replay: true, connection: 1 }));
 		capture.handle(consoleEvent("log", [str("b")], { timestamp: 2, replay: true, connection: 1 }));
 		capture.handle(consoleEvent("log", [str("live")], { timestamp: 3, connection: 1 }));
@@ -258,7 +264,7 @@ describe("replay de-duplication", () => {
 	});
 
 	test("two genuinely identical lines in one burst are both kept, and both dropped on the next replay", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		for (let i = 0; i < 2; i++) {
 			capture.handle(consoleEvent("log", [str("same")], { timestamp: 5, replay: true, connection: 1 }));
 		}
@@ -270,13 +276,13 @@ describe("replay de-duplication", () => {
 	});
 
 	test("live lines are never de-duplicated (a loop logging within one millisecond)", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		for (let i = 0; i < 3; i++) capture.handle(consoleEvent("log", [str("tick")], { timestamp: 9 }));
 		expect(text(capture)).toEqual(["tick", "tick", "tick"]);
 	});
 
 	test("a second reconnect replays against the same history", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		for (const connection of [1, 2, 3]) {
 			capture.handle(consoleEvent("log", [str("a")], { timestamp: 1, replay: true, connection }));
 		}
@@ -284,7 +290,7 @@ describe("replay de-duplication", () => {
 	});
 
 	test("clear() keeps the de-dupe history, so replayed old lines do not come back after it", () => {
-		const capture = createConsoleCapture({});
+		const capture = new ConsoleRecorder({});
 		capture.handle(consoleEvent("log", [str("a")], { timestamp: 1, replay: true, connection: 1 }));
 		capture.clear();
 		capture.handle(consoleEvent("log", [str("a")], { timestamp: 1, replay: true, connection: 2 }));
@@ -300,7 +306,7 @@ describe("attachConsole against a session", () => {
 			{ type: "log", args: [str("early 1")], timestamp: 100 },
 			{ type: "warning", args: [str("early 2")], timestamp: 101 },
 		];
-		return startFakeMetro({
+		return fakeMetros.start({
 			respond: (request, connection) => {
 				if (request.method !== "Runtime.enable") return undefined;
 				for (const message of buffered) connection.emit("Runtime.consoleAPICalled", message);
@@ -312,8 +318,8 @@ describe("attachConsole against a session", () => {
 	test("live messages and exceptions arrive; a reconnect replay adds nothing twice", async () => {
 		const fake = replayingMetro();
 		cleanup.push(() => void fake.stop());
-		const capture = createConsoleCapture({});
-		const connected = await connectDevtools({
+		const capture = new ConsoleRecorder({});
+		const connected = await devtoolsConnector.connect({
 			metroUrl: fake.url,
 			device: {},
 			fetch,
@@ -338,7 +344,7 @@ describe("attachConsole against a session", () => {
 	test("attachConsole after connect only sees what comes after it", async () => {
 		const fake = replayingMetro();
 		cleanup.push(() => void fake.stop());
-		const connected = await connectDevtools({
+		const connected = await devtoolsConnector.connect({
 			metroUrl: fake.url,
 			device: {},
 			fetch,
@@ -348,7 +354,7 @@ describe("attachConsole against a session", () => {
 		if (!connected.success) throw new Error(connected.error.message);
 		const session = connected.data;
 		cleanup.push(() => session.close());
-		const capture = attachConsole(session, {});
+		const capture = consoleAttacher.attach(session, {});
 		expect(capture.lines()).toEqual([]);
 		fake.emit("Runtime.consoleAPICalled", { type: "info", args: [str("later")], timestamp: 300 });
 		await Bun.sleep(30);

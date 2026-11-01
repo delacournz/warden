@@ -1,4 +1,4 @@
-import { iosProcessName } from "@delacour/warden-devtools/native-log";
+import { IosProcessName } from "@delacour/warden-devtools/native-log";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { fail, opError } from "./errors";
@@ -109,7 +109,10 @@ async function readIos(
 	sinceMs: number
 ): Promise<Result<NativeLogLine[], WardenError>> {
 	const { host, device } = session;
-	const proc = await iosProcessName({ platform: "ios", udid: device.id, bundleId: app }, host.exec, READ_TIMEOUT_MS);
+	const proc = await new IosProcessName(host.exec).of(
+		{ platform: "ios", udid: device.id, bundleId: app },
+		READ_TIMEOUT_MS
+	);
 	if (proc.exe === undefined) return fail(opError("failed", proc.error ?? "unknown process"));
 	const seconds = Math.max(1, Math.ceil((host.now() - sinceMs) / 1000));
 	const shown = await host.exec(

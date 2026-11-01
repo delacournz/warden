@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DevtoolsFacet, DevtoolsResult } from "@delacour/warden-devtools/devtools.types";
-import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { DevtoolsDeps } from "./devtools";
 import { createMemoryRefStore } from "./ref-store";
@@ -39,7 +39,7 @@ function session(open: DevtoolsDeps["open"]): OpSession {
 }
 
 function facetReplying(reply: unknown): { open: DevtoolsDeps["open"]; closes: () => number } {
-	const stub = stubFacet();
+	const stub = facetStubs.create();
 	const facet: DevtoolsFacet = {
 		...stub.facet,
 		evaluate: async () => resultFactory.ok(reply),

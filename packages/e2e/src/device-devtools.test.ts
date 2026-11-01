@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createDeviceDevtools, type DevtoolsSource } from "@delacour/warden-device/device-devtools";
 import type { FixtureSession } from "@delacour/warden-device/fixture-session";
-import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "@delacour/warden-devtools/devtools.types";
-import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { type DevtoolsFacet, type DevtoolsResult, devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
+import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import type { E2eError } from "@delacour/warden-driver/e2e-error";
 import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -26,7 +26,7 @@ function source(result: () => DevtoolsResult<DevtoolsFacet>) {
 
 describe("createDeviceDevtools", () => {
 	test("nothing is opened until a call needs the app", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		const { src, opens } = source(() => resultFactory.ok(stub.facet));
 		const devtools = createDeviceDevtools(src);
 		expect(opens()).toBe(0);
@@ -36,7 +36,7 @@ describe("createDeviceDevtools", () => {
 	});
 
 	test("evaluate, reloadJs and tree pass the facet's answer through", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		stub.tree = { components: [{ id: 0, name: "View", parent: null }], truncated: false };
 		const devtools = createDeviceDevtools(source(() => resultFactory.ok(stub.facet)).src);
 		expect(await devtools.reloadJs()).toEqual(resultFactory.ok({ method: "expo" }));
@@ -46,7 +46,7 @@ describe("createDeviceDevtools", () => {
 	});
 
 	test("console and network are async: they wait for the attach", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		stub.consoleLines = [{ ts: 1, level: "log", kind: "console", text: "hi" }];
 		const devtools = createDeviceDevtools(source(() => resultFactory.ok(stub.facet)).src);
 		expect((await devtools.console.lines()).map((l) => l.text)).toEqual(["hi"]);
@@ -58,7 +58,9 @@ describe("createDeviceDevtools", () => {
 	});
 
 	test("an attach that fails fails the call with the reason, not a throw", async () => {
-		const devtools = createDeviceDevtools(source(() => devtoolsErr("devtools_unavailable", "Metro is down")).src);
+		const devtools = createDeviceDevtools(
+			source(() => devtoolsErrors.err("devtools_unavailable", "Metro is down")).src
+		);
 		const evaluated = await devtools.evaluate("1");
 		expect(!evaluated.success && evaluated.error).toMatchObject({
 			code: "devtools_unavailable",
@@ -69,14 +71,16 @@ describe("createDeviceDevtools", () => {
 	});
 
 	test("reads of console/network throw SESSION when the app cannot be reached", async () => {
-		const devtools = createDeviceDevtools(source(() => devtoolsErr("devtools_unavailable", "Metro is down")).src);
+		const devtools = createDeviceDevtools(
+			source(() => devtoolsErrors.err("devtools_unavailable", "Metro is down")).src
+		);
 		const error = await devtools.console.lines().catch((e: unknown) => e);
 		expect((error as E2eError).code).toBe("SESSION");
 		expect((error as E2eError).message).toContain("Metro is down");
 	});
 
 	test("connect() hands out the whole facet", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		const devtools = createDeviceDevtools(source(() => resultFactory.ok(stub.facet)).src);
 		expect(await devtools.connect()).toBe(stub.facet);
 	});
@@ -98,7 +102,7 @@ describe("device.devtools", () => {
 	const driver = () => fakeDriver({ screens: [snapshotOf([])] });
 
 	test("undefined without a Metro URL (a release build)", () => {
-		const { src } = source(() => resultFactory.ok(stubFacet().facet));
+		const { src } = source(() => resultFactory.ok(facetStubs.create().facet));
 		const session: FixtureSession = { out: "/tmp/out", ...src };
 		expect(createDevice({ session, driver: driver(), env: env() }).devtools).toBeUndefined();
 	});
@@ -109,7 +113,7 @@ describe("device.devtools", () => {
 	});
 
 	test("first access starts the attach (so console capture begins) and the object is stable", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		const { src, opens } = source(() => resultFactory.ok(stub.facet));
 		const session: FixtureSession = { out: "/tmp/out", ...src };
 		const device = createDevice({ session, driver: driver(), env: env("http://127.0.0.1:8081") });

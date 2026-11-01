@@ -1,6 +1,6 @@
 import { closeSync, openSync } from "node:fs";
 import { metroOwner } from "@delacour/warden-builds/metro";
-import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
+import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
 import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
 import type { DevtoolsDeps } from "./ops/devtools";
@@ -12,7 +12,7 @@ import type { DevtoolsDeps } from "./ops/devtools";
  */
 export function defaultDevtoolsDeps(env: Record<string, string | undefined>): DevtoolsDeps {
 	return {
-		open: (options) => openDevtoolsFacet(options),
+		open: (options) => devtoolsFacetOpener.open(options),
 		probe: async (host, port) => {
 			const owner = await metroOwner(host.exec, port, host.cwd);
 			if (owner.kind === "ours") return "ours";

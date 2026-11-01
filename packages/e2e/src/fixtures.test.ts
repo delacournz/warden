@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { whileLinkInFlight } from "@delacour/warden-device/device-link";
-import { devtoolsErr } from "@delacour/warden-devtools/devtools.types";
-import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
+import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
 import { screenHostFor } from "./fixtures";
@@ -44,12 +44,12 @@ function hostFor(metroUrl: string | undefined, devtools: DevtoolsOpener) {
 
 describe("screenHostFor devtools", () => {
 	test("none without a Metro URL, so getByTestId never looks in React", () => {
-		const host = hostFor(undefined, async () => resultFactory.ok(stubFacet().facet));
+		const host = hostFor(undefined, async () => resultFactory.ok(facetStubs.create().facet));
 		expect(host.devtools?.()).toBeUndefined();
 	});
 
 	test("with a Metro URL the React tree is read through the session's facet, attached on first use", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		let opens = 0;
 		const host = hostFor("http://127.0.0.1:8081", async () => {
 			opens += 1;
@@ -66,7 +66,9 @@ describe("screenHostFor devtools", () => {
 	});
 
 	test("an app that cannot be reached answers with the failure", async () => {
-		const host = hostFor("http://127.0.0.1:8081", async () => devtoolsErr("devtools_unavailable", "Metro is down"));
+		const host = hostFor("http://127.0.0.1:8081", async () =>
+			devtoolsErrors.err("devtools_unavailable", "Metro is down")
+		);
 		const tree = await host.devtools?.()?.tree();
 		expect(tree && !tree.success && tree.error.message).toBe("Metro is down");
 	});

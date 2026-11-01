@@ -7,11 +7,10 @@ import {
 	type FakeCdpRequest,
 	type FakeConnection,
 	type FakeMetro,
+	type FakeMetroOptions,
 	type FakeReply,
-	fakePage,
-	fakeTarget,
-	page,
-	startFakeMetro,
+	fakeMetros,
+	fakePages,
 } from "@delacour/warden-devtools/testing/devtools";
 import { type Broker, type BrokerOptions, callBroker, NEW_DEBUGGER_TAG, startBroker } from "./broker";
 import { brokerErr } from "./broker.types";
@@ -62,7 +61,7 @@ const evalValue = (value: unknown): FakeReply => ({
 
 /** An app behind the fake Metro: network page, route, tree (polled), eval, and a reload that clears the JS context. */
 function fakeApp() {
-	const net = fakePage();
+	const net = fakePages.create();
 	const respond = (request: FakeCdpRequest, connection: FakeConnection): FakeReply | undefined => {
 		if (request.method !== "Runtime.evaluate") return undefined;
 		const expression = String(request.params.expression);
@@ -101,12 +100,9 @@ type Started = {
 	logs: string[];
 };
 
-async function start(
-	overrides: Partial<BrokerOptions> = {},
-	metroOptions: Parameters<typeof startFakeMetro>[0] = {}
-): Promise<Started> {
+async function start(overrides: Partial<BrokerOptions> = {}, metroOptions: FakeMetroOptions = {}): Promise<Started> {
 	const app = fakeApp();
-	const metro = startFakeMetro({ respond: app.respond, ...metroOptions });
+	const metro = fakeMetros.start({ respond: app.respond, ...metroOptions });
 	metros.push(metro);
 	const logDir = mkdtempSync(join(tmpdir(), "wbk-"));
 	dirs.push(logDir);
@@ -201,7 +197,7 @@ describe("capture and queries", () => {
 		const s = await start();
 		await attached(s);
 		s.metro.emit("Runtime.consoleAPICalled", consoleEvent("to disk", 1000));
-		s.app.net.state.queue.push(page("https://api.test/todos", { ts: 5 }));
+		s.app.net.state.queue.push(fakePages.entry("https://api.test/todos", { ts: 5 }));
 		await until(async () => (await status(s)).network.total === 1, "1 request");
 		await until(() => readFileSync(join(s.logDir, "console.jsonl"), "utf8").includes("to disk"), "console.jsonl");
 		const consoleRow = JSON.parse(readFileSync(join(s.logDir, "console.jsonl"), "utf8").trim());
@@ -215,9 +211,9 @@ describe("capture and queries", () => {
 		const s = await start();
 		await attached(s);
 		s.app.net.state.queue.push(
-			page("https://api.test/todos", { ts: 10 }),
-			page("https://api.test/login", { ts: 20, status: 401 }),
-			page("https://cdn.test/img.png", { ts: 30, status: 503 })
+			fakePages.entry("https://api.test/todos", { ts: 10 }),
+			fakePages.entry("https://api.test/login", { ts: 20, status: 401 }),
+			fakePages.entry("https://cdn.test/img.png", { ts: 30, status: 503 })
 		);
 		const query = async (params: object) => {
 			const result = await callBroker(s.broker.socketPath, { method: "network.query", params });
@@ -317,7 +313,7 @@ describe("attach lifecycle", () => {
 		const early = await callBroker(s.broker.socketPath, { method: "eval", params: { expression: "1 + 1" } });
 		expect(early.success).toBe(false);
 		if (!early.success) expect(early.error.code).toBe("devtools_unavailable");
-		s.metro.setTargets([fakeTarget(s.metro.port - 1, 1)]);
+		s.metro.setTargets([fakeMetros.target(s.metro.port - 1, 1)]);
 		await attached(s);
 		const late = await callBroker(s.broker.socketPath, { method: "eval", params: { expression: "1 + 1" } });
 		expect(late.success).toBe(true);

@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { type DevtoolsResult, devtoolsErr, type EvaluateError, type ReactTree } from "./devtools.types";
+import {
+	type DevtoolsResult,
+	devtoolsErrors,
+	type EvaluateError,
+	type ReactTree,
+	type TreeOptions,
+} from "./devtools.types";
 import type { DevtoolsSession } from "./session";
-import { fetchTree, formatTree } from "./tree";
+import { treeFetcher, treeFormatter } from "./tree";
 
 type TreeSession = Pick<DevtoolsSession, "evaluate" | "evaluateWithBinding" | "bindingAvailable">;
 
@@ -102,8 +108,8 @@ function stubSession(
 
 const noWait = async () => undefined;
 
-async function treeOf(stub: Stub, options: Parameters<typeof fetchTree>[1] = {}): Promise<ReactTree> {
-	const result = await fetchTree(stub.session, options, { sleep: noWait });
+async function treeOf(stub: Stub, options: TreeOptions = {}): Promise<ReactTree> {
+	const result = await treeFetcher.fetch(stub.session, options, { sleep: noWait });
 	if (!result.success) throw new Error(`fetchTree failed: ${result.error.code} ${result.error.message}`);
 	return result.data;
 }
@@ -144,7 +150,10 @@ describe("fetchTree", () => {
 	});
 
 	test("a missing binding falls back to polling", async () => {
-		const stub = stubSession({ binding: true, bindingError: devtoolsErr("binding_unavailable", "legacy Hermes") });
+		const stub = stubSession({
+			binding: true,
+			bindingError: devtoolsErrors.err("binding_unavailable", "legacy Hermes"),
+		});
 		const tree = await treeOf(stub);
 		expect(tree.components).toHaveLength(3);
 	});
@@ -170,8 +179,14 @@ describe("fetchTree", () => {
 	});
 
 	test("no DevTools hook is devtools_unavailable", async () => {
-		const result = await fetchTree(stubSession({ binding: true, page: { setTimeout } }).session, {}, { sleep: noWait });
-		expect(result).toEqual(devtoolsErr("devtools_unavailable", "React DevTools hook not present (release build?)"));
+		const result = await treeFetcher.fetch(
+			stubSession({ binding: true, page: { setTimeout } }).session,
+			{},
+			{ sleep: noWait }
+		);
+		expect(result).toEqual(
+			devtoolsErrors.err("devtools_unavailable", "React DevTools hook not present (release build?)")
+		);
 	});
 
 	test("a hook with no mounted root is devtools_unavailable", async () => {
@@ -179,7 +194,7 @@ describe("fetchTree", () => {
 			__REACT_DEVTOOLS_GLOBAL_HOOK__: { renderers: new Map(), getFiberRoots: () => new Set() },
 			setTimeout,
 		};
-		const result = await fetchTree(stubSession({ binding: false, page }).session, {}, { sleep: noWait });
+		const result = await treeFetcher.fetch(stubSession({ binding: false, page }).session, {}, { sleep: noWait });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.code).toBe("devtools_unavailable");
 	});
@@ -193,7 +208,7 @@ describe("fetchTree", () => {
 			},
 			setTimeout,
 		};
-		const result = await fetchTree(stubSession({ binding: true, page }).session, {}, { sleep: noWait });
+		const result = await treeFetcher.fetch(stubSession({ binding: true, page }).session, {}, { sleep: noWait });
 		expect(result.success).toBe(false);
 		if (!result.success) {
 			expect(result.error.code).toBe("eval_failed");
@@ -208,7 +223,7 @@ describe("fetchTree", () => {
 			evaluateWithBinding: async (_script, requestId) =>
 				resultFactory.ok({ requestId, result: { components: "nope" } }),
 		};
-		const result = await fetchTree(session, {}, { sleep: noWait });
+		const result = await treeFetcher.fetch(session, {}, { sleep: noWait });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.code).toBe("cdp_protocol");
 	});
@@ -217,15 +232,17 @@ describe("fetchTree", () => {
 		const session: TreeSession = {
 			bindingAvailable: false,
 			evaluate: async () => ({ success: false, error: { message: "socket closed", code: "cdp_closed" } }),
-			evaluateWithBinding: async () => devtoolsErr("cdp_closed", "unused"),
+			evaluateWithBinding: async () => devtoolsErrors.err("cdp_closed", "unused"),
 		};
-		const result = await fetchTree(session, {}, { sleep: noWait });
-		expect(result).toEqual(devtoolsErr("cdp_closed", "socket closed"));
+		const result = await treeFetcher.fetch(session, {}, { sleep: noWait });
+		expect(result).toEqual(devtoolsErrors.err("cdp_closed", "socket closed"));
 	});
 
 	test("a binding failure other than unavailable is passed on", async () => {
-		const stub = stubSession({ binding: true, bindingError: devtoolsErr("cdp_timeout", "no callback") });
-		expect(await fetchTree(stub.session, {}, { sleep: noWait })).toEqual(devtoolsErr("cdp_timeout", "no callback"));
+		const stub = stubSession({ binding: true, bindingError: devtoolsErrors.err("cdp_timeout", "no callback") });
+		expect(await treeFetcher.fetch(stub.session, {}, { sleep: noWait })).toEqual(
+			devtoolsErrors.err("cdp_timeout", "no callback")
+		);
 	});
 
 	test("polling gives up at the timeout", async () => {
@@ -233,9 +250,9 @@ describe("fetchTree", () => {
 		const session: TreeSession = {
 			bindingAvailable: false,
 			evaluate: async () => resultFactory.ok(null),
-			evaluateWithBinding: async () => devtoolsErr("cdp_closed", "unused"),
+			evaluateWithBinding: async () => devtoolsErrors.err("cdp_closed", "unused"),
 		};
-		const result = await fetchTree(
+		const result = await treeFetcher.fetch(
 			session,
 			{ timeoutMs: 1000 },
 			{
@@ -272,7 +289,7 @@ describe("formatTree", () => {
 	};
 
 	test("indents by depth and shows testID, label or text, and rect", () => {
-		expect(formatTree(tree)).toEqual([
+		expect(treeFormatter.format(tree)).toEqual([
 			"SettingsScreen (0,0 390×844)",
 			'  View testID=save "Save changes" (20,700.5 350×48)',
 			'    Text "Save" (150,712 90×24)',
@@ -280,7 +297,7 @@ describe("formatTree", () => {
 	});
 
 	test("all adds unmeasured and inactive components, marked", () => {
-		expect(formatTree(tree, { all: true })).toEqual([
+		expect(treeFormatter.format(tree, { all: true })).toEqual([
 			"SettingsScreen (0,0 390×844)",
 			'  View testID=save "Save changes" (20,700.5 350×48)',
 			'    Text "Save" (150,712 90×24)',
@@ -290,7 +307,7 @@ describe("formatTree", () => {
 	});
 
 	test("max cuts the list and says how many were left out", () => {
-		expect(formatTree(tree, { max: 2 })).toEqual([
+		expect(treeFormatter.format(tree, { max: 2 })).toEqual([
 			"SettingsScreen (0,0 390×844)",
 			'  View testID=save "Save changes" (20,700.5 350×48)',
 			"... 1 more",
@@ -304,7 +321,7 @@ describe("formatTree", () => {
 				{ id: 0, name: "Text", text: "x".repeat(100), parent: null, rect: { x: 0, y: 0, width: 1, height: 1 } },
 			],
 		};
-		const line = formatTree(long)[0] ?? "";
+		const line = treeFormatter.format(long)[0] ?? "";
 		expect(line.length).toBeLessThan(100);
 		expect(line).toContain("...");
 	});

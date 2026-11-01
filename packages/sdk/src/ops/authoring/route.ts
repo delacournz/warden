@@ -1,4 +1,4 @@
-import { readRoute } from "@delacour/warden-devtools/route";
+import { routeReader } from "@delacour/warden-devtools/route";
 import { resultFactory } from "@delacour/warden-types/result";
 import { devtoolsError, withFacet } from "../devtools";
 import type { OpSession } from "../session";
@@ -35,7 +35,7 @@ export async function readCurrentRoute(session: OpSession): Promise<string | und
 	try {
 		const quick = { ...session, timeoutMs: ROUTE_TIMEOUT_MS };
 		const read = await withFacet(quick, {}, async (facet) => {
-			const found = await readRoute(facet, { timeoutMs: ROUTE_TIMEOUT_MS });
+			const found = await routeReader.read(facet, { timeoutMs: ROUTE_TIMEOUT_MS });
 			return found.success ? resultFactory.ok(found.data) : { success: false, error: devtoolsError(found.error) };
 		});
 		if (!read.success) return miss();

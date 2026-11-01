@@ -17,24 +17,29 @@ export type FindMetroInput = {
 
 export type FoundMetro = { url: string; source: MetroSource };
 
-function clean(value: string | undefined): string | undefined {
-	const trimmed = value?.trim().replace(/\/+$/, "");
-	return trimmed ? trimmed : undefined;
+/** Picks the Metro to inspect. Use the shared {@link metroFinder} singleton. */
+export class MetroFinder {
+	/**
+	 * Which Metro to inspect: `--metro`, then `WARDEN_METRO_URL`, then the device state's URL, then the first
+	 * leased port the probe says is ours. A `foreign` Metro (another checkout) is never picked.
+	 */
+	async find(input: FindMetroInput): Promise<FoundMetro | undefined> {
+		const explicit: [MetroSource, string | undefined][] = [
+			["flag", this.clean(input.flag)],
+			["env", this.clean(input.env)],
+			["state", this.clean(input.stateMetroUrl)],
+		];
+		for (const [source, url] of explicit) if (url) return { url, source };
+		for (const port of input.portLeases) {
+			if ((await input.probe(port)) === "ours") return { url: `http://127.0.0.1:${port}`, source: "lease" };
+		}
+		return undefined;
+	}
+
+	private clean(value: string | undefined): string | undefined {
+		const trimmed = value?.trim().replace(/\/+$/, "");
+		return trimmed ? trimmed : undefined;
+	}
 }
 
-/**
- * Which Metro to inspect: `--metro`, then `WARDEN_METRO_URL`, then the device state's URL, then the first
- * leased port the probe says is ours. A `foreign` Metro (another checkout) is never picked.
- */
-export async function findMetro(input: FindMetroInput): Promise<FoundMetro | undefined> {
-	const explicit: [MetroSource, string | undefined][] = [
-		["flag", clean(input.flag)],
-		["env", clean(input.env)],
-		["state", clean(input.stateMetroUrl)],
-	];
-	for (const [source, url] of explicit) if (url) return { url, source };
-	for (const port of input.portLeases) {
-		if ((await input.probe(port)) === "ours") return { url: `http://127.0.0.1:${port}`, source: "lease" };
-	}
-	return undefined;
-}
+export const metroFinder = new MetroFinder();

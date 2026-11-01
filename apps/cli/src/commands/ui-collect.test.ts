@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakePage, startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
+import { fakeMetros, fakePages } from "@delacour/warden-devtools/testing/devtools";
 import { runLazyProgram } from "../command";
 import { type TestContext, testContext } from "../testing";
 import { COMMANDS } from "./registry";
@@ -23,8 +23,8 @@ const out = (): string => {
 
 describe("warden ui-collect", () => {
 	test("collects until the app is quiet, then exits 0 leaving both files", async () => {
-		const page = fakePage();
-		const fake = startFakeMetro({ respond: (request, connection) => page.respond(request, connection) });
+		const page = fakePages.create();
+		const fake = fakeMetros.start({ respond: (request, connection) => page.respond(request, connection) });
 		cleanup.push(() => fake.stop());
 		const dir = out();
 		ctx = testContext(["--metro", fake.url, "--out", dir, "--idle-ms", "60"]);
@@ -36,7 +36,7 @@ describe("warden ui-collect", () => {
 	});
 
 	test("an abort ends it with 0", async () => {
-		const fake = startFakeMetro();
+		const fake = fakeMetros.start();
 		cleanup.push(() => fake.stop());
 		const controller = new AbortController();
 		ctx = testContext(["--metro", fake.url, "--out", out(), "--idle-ms", "60000"]);

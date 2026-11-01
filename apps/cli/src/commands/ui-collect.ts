@@ -1,4 +1,4 @@
-import { runCollector } from "@delacour/warden-devtools/collector";
+import { collectorRunner } from "@delacour/warden-devtools/collector";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 
@@ -39,15 +39,17 @@ function collect(ctx: CommandContext, deps: UiCollectDeps, opts: CollectOptionVa
 	process.once("SIGTERM", stop);
 	process.once("SIGINT", stop);
 	deps.signal?.addEventListener("abort", stop, { once: true });
-	return runCollector(collectorArgv(opts), {
-		fetch,
-		WebSocket,
-		signal: controller.signal,
-		log: (line) => ctx.err(line),
-	}).finally(() => {
-		process.off("SIGTERM", stop);
-		process.off("SIGINT", stop);
-	});
+	return collectorRunner
+		.run(collectorArgv(opts), {
+			fetch,
+			WebSocket,
+			signal: controller.signal,
+			log: (line) => ctx.err(line),
+		})
+		.finally(() => {
+			process.off("SIGTERM", stop);
+			process.off("SIGINT", stop);
+		});
 }
 
 /**

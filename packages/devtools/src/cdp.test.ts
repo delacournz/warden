@@ -1,20 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type CdpClient, inspectorOrigin, openCdp } from "./cdp";
-import { type FakeMetro, startFakeMetro } from "./devtools.testing";
+import { type CdpClient, cdpConnector, cdpProtocol } from "./cdp";
+import { type FakeMetro, type FakeMetroOptions, fakeMetros } from "./devtools.testing";
 
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
 	for (const fn of cleanup.splice(0)) await fn();
 });
 
-function metro(options?: Parameters<typeof startFakeMetro>[0]): FakeMetro {
-	const fake = startFakeMetro(options);
+function metro(options?: FakeMetroOptions): FakeMetro {
+	const fake = fakeMetros.start(options);
 	cleanup.push(() => fake.stop());
 	return fake;
 }
 
 async function connect(fake: FakeMetro, timeoutMs = 2_000): Promise<CdpClient> {
-	const opened = await openCdp(fake.wsUrl(), { timeoutMs });
+	const opened = await cdpConnector.open(fake.wsUrl(), { timeoutMs });
 	if (!opened.success) throw new Error(opened.error.message);
 	cleanup.push(() => opened.data.close());
 	return opened.data;
@@ -22,9 +22,11 @@ async function connect(fake: FakeMetro, timeoutMs = 2_000): Promise<CdpClient> {
 
 describe("inspectorOrigin", () => {
 	test("is the 127.0.0.1 origin of the socket's port, whatever host it dials", () => {
-		expect(inspectorOrigin("ws://localhost:8081/inspector/debug?device=a&page=1")).toBe("http://127.0.0.1:8081");
-		expect(inspectorOrigin("ws://192.168.1.5:19000/inspector/debug")).toBe("http://127.0.0.1:19000");
-		expect(inspectorOrigin("not a url")).toBeUndefined();
+		expect(cdpProtocol.inspectorOrigin("ws://localhost:8081/inspector/debug?device=a&page=1")).toBe(
+			"http://127.0.0.1:8081"
+		);
+		expect(cdpProtocol.inspectorOrigin("ws://192.168.1.5:19000/inspector/debug")).toBe("http://127.0.0.1:19000");
+		expect(cdpProtocol.inspectorOrigin("not a url")).toBeUndefined();
 	});
 });
 
@@ -49,7 +51,7 @@ describe("openCdp", () => {
 		const fake = metro();
 		const url = fake.wsUrl();
 		await fake.stop();
-		const opened = await openCdp(url, { timeoutMs: 1_000 });
+		const opened = await cdpConnector.open(url, { timeoutMs: 1_000 });
 		expect(!opened.success && opened.error.code).toBe("devtools_unavailable");
 	});
 

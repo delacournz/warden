@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakePage, page, startFakeMetro } from "./devtools.testing";
+import { type FakeMetroOptions, fakeMetros, fakePages } from "./devtools.testing";
 import type { DevtoolsFacet } from "./devtools.types";
-import { type OpenDevtoolsFacetOptions, openDevtoolsFacet } from "./facet";
+import { devtoolsFacetOpener, type OpenDevtoolsFacetOptions } from "./facet";
 import { LOGBOX_EXPRESSION } from "./logbox.script";
 
 const cleanup: (() => void)[] = [];
@@ -19,10 +19,10 @@ const str = (value: string) => ({ type: "string", value });
 async function open(
 	extra: Partial<OpenDevtoolsFacetOptions> = {},
 	replay = true,
-	onRequest?: NonNullable<Parameters<typeof startFakeMetro>[0]>["respond"]
+	onRequest?: NonNullable<FakeMetroOptions>["respond"]
 ) {
-	const p = fakePage();
-	const fake = startFakeMetro({
+	const p = fakePages.create();
+	const fake = fakeMetros.start({
 		respond: (request, connection) => {
 			if (request.method === "Runtime.enable" && replay) {
 				connection.emit("Runtime.consoleAPICalled", { type: "log", args: [str("boot")], timestamp: 10 });
@@ -33,7 +33,7 @@ async function open(
 		},
 	});
 	cleanup.push(() => void fake.stop());
-	const opened = await openDevtoolsFacet({
+	const opened = await devtoolsFacetOpener.open({
 		env: { metroUrl: fake.url },
 		device: { deviceName: "iPhone A" },
 		fetch,
@@ -49,15 +49,15 @@ async function open(
 
 describe("openDevtoolsFacet", () => {
 	test("no Metro URL (release build) is devtools_unavailable", async () => {
-		const opened = await openDevtoolsFacet({ env: {}, device: {}, fetch, WebSocket });
+		const opened = await devtoolsFacetOpener.open({ env: {}, device: {}, fetch, WebSocket });
 		expect(!opened.success && opened.error.code).toBe("devtools_unavailable");
 	});
 
 	test("a Metro that is down is devtools_unavailable", async () => {
-		const down = startFakeMetro();
+		const down = fakeMetros.start();
 		const url = down.url;
 		await down.stop();
-		const opened = await openDevtoolsFacet({ env: { metroUrl: url }, device: {}, fetch, WebSocket });
+		const opened = await devtoolsFacetOpener.open({ env: { metroUrl: url }, device: {}, fetch, WebSocket });
 		expect(!opened.success && opened.error.code).toBe("devtools_unavailable");
 	});
 
@@ -78,7 +78,7 @@ describe("openDevtoolsFacet", () => {
 
 	test("network entries come from the page, evaluate and reloadJs pass through", async () => {
 		const { facet, state } = await open();
-		state.queue.push(page("https://api.test/me", { status: 401 }));
+		state.queue.push(fakePages.entry("https://api.test/me", { status: 401 }));
 		const entries = await facet.network.entries();
 		expect(entries).toMatchObject([{ id: 1, url: "https://api.test/me", status: 401 }]);
 		expect((await facet.evaluate("1 + 1")).success).toBe(true);
@@ -87,7 +87,7 @@ describe("openDevtoolsFacet", () => {
 
 	test("attachArtifacts writes console.jsonl and network.jsonl", async () => {
 		const { facet, state } = await open();
-		state.queue.push(page("https://api.test/x"));
+		state.queue.push(fakePages.entry("https://api.test/x"));
 		facet.console.mark("m");
 		const dir = await mkdtemp(join(tmpdir(), "warden-facet-"));
 		dirs.push(dir);

@@ -7,8 +7,8 @@
  */
 import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
-import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "@delacour/warden-devtools/devtools.types";
-import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
+import { type DevtoolsFacet, type DevtoolsResult, devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
+import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
 import type { NativeLogDeps } from "@delacour/warden-devtools/native-log";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
@@ -50,7 +50,7 @@ export function devtoolsTarget(env: E2eEnv): { appId: string; deviceName?: strin
  * its toasts and inspector cover the app and take taps, while the logs still reach the console capture.
  */
 export const openDevtools: DevtoolsOpener = (env) =>
-	openDevtoolsFacet({
+	devtoolsFacetOpener.open({
 		env: { metroUrl: env.metroUrl },
 		device: devtoolsTarget(env),
 		fetch,
@@ -368,10 +368,11 @@ export function createSession(opts: SessionOptions = {}): Session {
 			return current;
 		},
 		devtools() {
-			if (closing !== undefined) return Promise.resolve(devtoolsErr("devtools_unavailable", "session is closed"));
+			if (closing !== undefined)
+				return Promise.resolve(devtoolsErrors.err("devtools_unavailable", "session is closed"));
 			if (resolved.metroUrl === undefined) {
 				return Promise.resolve(
-					devtoolsErr("devtools_unavailable", "no Metro URL (WARDEN_METRO_URL): release builds have no devtools")
+					devtoolsErrors.err("devtools_unavailable", "no Metro URL (WARDEN_METRO_URL): release builds have no devtools")
 				);
 			}
 			if (devtoolsOpening !== undefined) return devtoolsOpening;
@@ -395,7 +396,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 				},
 				(cause: unknown) => {
 					if (devtoolsOpening === opening) devtoolsOpening = undefined;
-					return devtoolsErr("devtools_unavailable", cause instanceof Error ? cause.message : String(cause));
+					return devtoolsErrors.err("devtools_unavailable", cause instanceof Error ? cause.message : String(cause));
 				}
 			);
 			devtoolsOpening = opening;

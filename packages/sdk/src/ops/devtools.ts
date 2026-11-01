@@ -9,8 +9,8 @@ import type {
 	ReactTree,
 } from "@delacour/warden-devtools/devtools.types";
 import type { OpenDevtoolsFacetOptions } from "@delacour/warden-devtools/facet";
-import { findMetro, type MetroProbe } from "@delacour/warden-devtools/metro";
-import { formatTree } from "@delacour/warden-devtools/tree";
+import { type MetroProbe, metroFinder } from "@delacour/warden-devtools/metro";
+import { treeFormatter } from "@delacour/warden-devtools/tree";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import { type ProcessCommand, processIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -174,7 +174,7 @@ async function metroFor(
 	flag: string | undefined
 ): Promise<Result<string, WardenError>> {
 	const stateMetroUrl = session.state.read().metroUrl;
-	const found = await findMetro({
+	const found = await metroFinder.find({
 		...(flag === undefined ? {} : { flag }),
 		...(session.host.env.WARDEN_METRO_URL === undefined ? {} : { env: session.host.env.WARDEN_METRO_URL }),
 		...(stateMetroUrl === undefined ? {} : { stateMetroUrl }),
@@ -271,7 +271,7 @@ function treeOutcome(result: ReactTree, all: boolean): Result<OpDone<ReactTree>,
 	const header = `# ${result.screen === undefined ? "screen unknown" : `screen ${result.screen}`} · ${result.components.length} components${result.truncated ? " (truncated)" : ""}`;
 	return resultFactory.ok({
 		result,
-		text: [header, ...formatTree(result, { all })].join("\n"),
+		text: [header, ...treeFormatter.format(result, { all })].join("\n"),
 		warnings: result.truncated ? ["more components exist; raise --max"] : [],
 	});
 }

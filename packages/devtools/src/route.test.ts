@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resultFactory } from "@delacour/warden-types/result";
-import { readRoute, routeKey } from "./route";
+import { routeReader } from "./route";
 import { ROUTE_SCRIPT } from "./route.script";
 
 type Fiber = {
@@ -69,8 +69,8 @@ describe("route script", () => {
 
 describe("routeKey", () => {
 	test("joins names and drops the expo-router wrapper", () => {
-		expect(routeKey(["__root", "(tabs)", "settings"])).toBe("(tabs)/settings");
-		expect(routeKey([])).toBeUndefined();
+		expect(routeReader.key(["__root", "(tabs)", "settings"])).toBe("(tabs)/settings");
+		expect(routeReader.key([])).toBeUndefined();
 	});
 });
 
@@ -78,22 +78,22 @@ describe("readRoute", () => {
 	const facet = (data: unknown) => ({ evaluate: async () => resultFactory.ok(data) });
 
 	test("the route key from the script's reply", async () => {
-		const read = await readRoute(facet(JSON.stringify({ route: ["(tabs)", "todos"] })));
+		const read = await routeReader.read(facet(JSON.stringify({ route: ["(tabs)", "todos"] })));
 		expect(read).toEqual({ success: true, data: "(tabs)/todos" });
 	});
 
 	test("a release build is devtools_unavailable", async () => {
-		const read = await readRoute(facet(JSON.stringify({ error: "no-hook" })));
+		const read = await routeReader.read(facet(JSON.stringify({ error: "no-hook" })));
 		expect(!read.success && read.error.code).toBe("devtools_unavailable");
 	});
 
 	test("a reply that is not the script's is a protocol error", async () => {
-		const read = await readRoute(facet("nope"));
+		const read = await routeReader.read(facet("nope"));
 		expect(!read.success && read.error.code).toBe("cdp_protocol");
 	});
 
 	test("an evaluate failure keeps its code", async () => {
-		const read = await readRoute({
+		const read = await routeReader.read({
 			evaluate: async () => ({ success: false, error: { message: "slow", code: "cdp_timeout" } }),
 		});
 		expect(!read.success && read.error.code).toBe("cdp_timeout");

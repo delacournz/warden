@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findMetro, type MetroProbe } from "./metro";
+import { type MetroProbe, metroFinder } from "./metro";
 
 const probeOf =
 	(answers: Record<number, MetroProbe>, seen: number[] = []) =>
@@ -18,28 +18,31 @@ describe("findMetro precedence", () => {
 	};
 
 	test("flag wins", async () => {
-		expect(await findMetro(all)).toEqual({ url: "http://flag:1", source: "flag" });
+		expect(await metroFinder.find(all)).toEqual({ url: "http://flag:1", source: "flag" });
 	});
 
 	test("env next", async () => {
-		expect(await findMetro({ ...all, flag: undefined })).toEqual({ url: "http://env:2", source: "env" });
+		expect(await metroFinder.find({ ...all, flag: undefined })).toEqual({ url: "http://env:2", source: "env" });
 	});
 
 	test("state next", async () => {
-		expect(await findMetro({ ...all, flag: undefined, env: "" })).toEqual({ url: "http://state:3", source: "state" });
+		expect(await metroFinder.find({ ...all, flag: undefined, env: "" })).toEqual({
+			url: "http://state:3",
+			source: "state",
+		});
 	});
 
 	test("leases last, trailing slash trimmed on explicit urls", async () => {
-		expect(await findMetro({ ...all, flag: undefined, env: undefined, stateMetroUrl: undefined })).toEqual({
+		expect(await metroFinder.find({ ...all, flag: undefined, env: undefined, stateMetroUrl: undefined })).toEqual({
 			url: "http://127.0.0.1:8081",
 			source: "lease",
 		});
-		expect((await findMetro({ ...all, flag: "http://x:1//" }))?.url).toBe("http://x:1");
+		expect((await metroFinder.find({ ...all, flag: "http://x:1//" }))?.url).toBe("http://x:1");
 	});
 
 	test("explicit sources skip probing", async () => {
 		const seen: number[] = [];
-		await findMetro({ ...all, probe: probeOf({}, seen) });
+		await metroFinder.find({ ...all, probe: probeOf({}, seen) });
 		expect(seen).toEqual([]);
 	});
 });
@@ -47,7 +50,7 @@ describe("findMetro precedence", () => {
 describe("findMetro lease probing", () => {
 	test("never picks foreign, takes the first ours", async () => {
 		const seen: number[] = [];
-		const found = await findMetro({
+		const found = await metroFinder.find({
 			portLeases: [8081, 8082, 8083],
 			probe: probeOf({ 8081: "foreign", 8082: "none", 8083: "ours" }, seen),
 		});
@@ -56,7 +59,7 @@ describe("findMetro lease probing", () => {
 	});
 
 	test("only foreign or none gives undefined", async () => {
-		expect(await findMetro({ portLeases: [8081, 8082], probe: probeOf({ 8081: "foreign" }) })).toBeUndefined();
-		expect(await findMetro({ portLeases: [], probe: probeOf({}) })).toBeUndefined();
+		expect(await metroFinder.find({ portLeases: [8081, 8082], probe: probeOf({ 8081: "foreign" }) })).toBeUndefined();
+		expect(await metroFinder.find({ portLeases: [], probe: probeOf({}) })).toBeUndefined();
 	});
 });

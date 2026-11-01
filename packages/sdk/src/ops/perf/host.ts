@@ -1,5 +1,5 @@
 import { metroOwner } from "@delacour/warden-builds/metro";
-import { findMetro } from "@delacour/warden-devtools/metro";
+import { metroFinder } from "@delacour/warden-devtools/metro";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { leaseModel } from "@delacour/warden-store/types";
 import { readMetroUrl } from "./device-state";
@@ -15,7 +15,7 @@ export const defaultPerfHostDeps: PerfHostDeps = {
 			.store()
 			.listLeases()
 			.flatMap((l) => (l.resource.kind === "port" && leaseModel.sameOwner(l.owner, owner) ? [l.resource.port] : []));
-		const found = await findMetro({
+		const found = await metroFinder.find({
 			...(env.env.WARDEN_METRO_URL === undefined ? {} : { env: env.env.WARDEN_METRO_URL }),
 			...(stateUrl === undefined ? {} : { stateMetroUrl: stateUrl }),
 			portLeases,

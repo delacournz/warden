@@ -1,9 +1,10 @@
 import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { DevtoolsResult, NetworkEntry, NetworkQuery, Sleep } from "./devtools.types";
-import { writeJsonl } from "./jsonl";
+import { jsonl } from "./jsonl";
 import { NETWORK_DRAIN_EXPRESSION, networkInstallExpression } from "./network.script";
 import type { DevtoolsSession } from "./session";
+import { timer } from "./timer";
 
 const DEFAULT_RING = 2_000;
 const DEFAULT_POLL_MS = 500;
@@ -34,19 +35,6 @@ export type NetworkCapture = {
 	stop: () => void;
 };
 
-/** Every URL prefix that is the same Metro: its origin plus the loopback aliases of a simulator and an emulator. */
-export function metroSkipPrefixes(metroUrl: string): string[] {
-	let url: URL;
-	try {
-		url = new URL(metroUrl);
-	} catch {
-		return [];
-	}
-	const port = url.port ? `:${url.port}` : "";
-	const prefixes = [url.origin, ...LOOPBACK_HOSTS.map((host) => `${url.protocol}//${host}${port}`)];
-	return [...new Set(prefixes)];
-}
-
 const pageEntrySchema = z.looseObject({
 	ts: z.number(),
 	method: z.string(),
@@ -61,45 +49,93 @@ const pageEntrySchema = z.looseObject({
 	error: z.string().optional(),
 });
 
-const timerSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Every URL prefix that is the same Metro: its origin plus the loopback aliases of a simulator and an emulator. */
+class MetroPrefixes {
+	of(metroUrl: string): string[] {
+		let url: URL;
+		try {
+			url = new URL(metroUrl);
+		} catch {
+			return [];
+		}
+		const port = url.port ? `:${url.port}` : "";
+		const prefixes = [url.origin, ...LOOPBACK_HOSTS.map((host) => `${url.protocol}//${host}${port}`)];
+		return [...new Set(prefixes)];
+	}
+}
 
-/**
- * Record the app's `fetch` calls: patch `fetch` inside the page once, then drain its ring on a timer and
- * whenever a caller asks. A new JS context (reload) loses the wrapper, so it is re-installed on reconnect and
- * whenever a drain finds it missing; requests made before that are lost.
- */
-export async function attachNetwork(
-	session: DevtoolsSession,
-	options: NetworkOptions = {}
-): Promise<DevtoolsResult<NetworkCapture>> {
-	const ring = options.ring ?? DEFAULT_RING;
-	const sleep = options.sleep ?? timerSleep;
-	const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
-	const installExpression = networkInstallExpression({
-		ring,
-		includeBodies: options.includeBodies ?? false,
-		skipPrefixes: options.metroUrl ? metroSkipPrefixes(options.metroUrl) : [],
-	});
+const metroPrefixes = new MetroPrefixes();
 
-	let buffer: NetworkEntry[] = [];
-	let nextId = 1;
-	let stopped = false;
-	let queue: Promise<unknown> = Promise.resolve();
+/** Records one session's `fetch` calls into a ring; built by {@link NetworkAttacher}. */
+class NetworkRecorder implements NetworkCapture {
+	private readonly ring: number;
+	private readonly sleep: Sleep;
+	private readonly pollMs: number;
+	private readonly installExpression: string;
+	private buffer: NetworkEntry[] = [];
+	private nextId = 1;
+	private stopped = false;
+	private queue: Promise<unknown> = Promise.resolve();
 
-	/** one at a time, so a poll and an `entries()` never interleave */
-	const serial = <T>(task: () => Promise<T>): Promise<T> => {
-		const run = queue.then(task, task);
-		queue = run.catch(() => undefined);
-		return run;
+	constructor(
+		private readonly session: DevtoolsSession,
+		private readonly options: NetworkOptions
+	) {
+		this.ring = options.ring ?? DEFAULT_RING;
+		this.sleep = options.sleep ?? timer.sleep;
+		this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
+		this.installExpression = networkInstallExpression({
+			ring: this.ring,
+			includeBodies: options.includeBodies ?? false,
+			skipPrefixes: options.metroUrl ? metroPrefixes.of(options.metroUrl) : [],
+		});
+	}
+
+	/** Installs the page wrapper and starts polling; fails when the first install does. */
+	async start(): Promise<DevtoolsResult<NetworkCapture>> {
+		const first = await this.install();
+		if (!first.success) return first;
+		this.session.on("reconnected", () => {
+			void this.serial(this.install);
+		});
+		void this.poll();
+		return resultFactory.ok(this);
+	}
+
+	readonly entries = async (query: NetworkQuery = {}): Promise<NetworkEntry[]> => {
+		await this.serial(this.drain);
+		if (query.id !== undefined) return this.buffer.filter((entry) => entry.id === query.id);
+		return query.last === undefined ? [...this.buffer] : this.buffer.slice(-query.last);
 	};
 
-	const install = async (): Promise<DevtoolsResult<true>> => {
-		const installed = await session.evaluate(installExpression);
+	readonly clear = async (): Promise<void> => {
+		await this.serial(this.drain);
+		this.buffer = [];
+	};
+
+	readonly writeJsonl = async (path: string): Promise<void> => {
+		await this.serial(this.drain);
+		await jsonl.write(path, this.buffer);
+	};
+
+	readonly stop = (): void => {
+		this.stopped = true;
+	};
+
+	/** one at a time, so a poll and an `entries()` never interleave */
+	private serial<T>(task: () => Promise<T>): Promise<T> {
+		const run = this.queue.then(task, task);
+		this.queue = run.catch(() => undefined);
+		return run;
+	}
+
+	private readonly install = async (): Promise<DevtoolsResult<true>> => {
+		const installed = await this.session.evaluate(this.installExpression);
 		if (installed.success) return resultFactory.ok(true);
 		return { success: false, error: { code: installed.error.code ?? "eval_failed", message: installed.error.message } };
 	};
 
-	const take = (text: string): void => {
+	private take(text: string): void {
 		let rows: unknown;
 		try {
 			rows = JSON.parse(text);
@@ -110,51 +146,44 @@ export async function attachNetwork(
 		for (const row of rows) {
 			const parsed = pageEntrySchema.safeParse(row);
 			if (!parsed.success) continue;
-			const entry: NetworkEntry = { ...parsed.data, id: nextId++ };
-			buffer.push(entry);
-			options.sink?.(entry);
+			const entry: NetworkEntry = { ...parsed.data, id: this.nextId++ };
+			this.buffer.push(entry);
+			this.options.sink?.(entry);
 		}
-		if (buffer.length > ring) buffer = buffer.slice(buffer.length - ring);
-	};
+		if (this.buffer.length > this.ring) this.buffer = this.buffer.slice(this.buffer.length - this.ring);
+	}
 
-	const drain = async (): Promise<void> => {
-		const drained = await session.evaluate(NETWORK_DRAIN_EXPRESSION);
+	private readonly drain = async (): Promise<void> => {
+		const drained = await this.session.evaluate(NETWORK_DRAIN_EXPRESSION);
 		if (!drained.success) return;
-		if (typeof drained.data === "string") take(drained.data);
-		else if (drained.data === null) await install();
+		if (typeof drained.data === "string") this.take(drained.data);
+		else if (drained.data === null) await this.install();
 	};
 
-	const first = await install();
-	if (!first.success) return first;
-	session.on("reconnected", () => {
-		void serial(install);
-	});
-
-	const poll = async (): Promise<void> => {
+	private async poll(): Promise<void> {
 		for (;;) {
-			await sleep(pollMs);
-			if (stopped) return;
-			await serial(drain);
+			await this.sleep(this.pollMs);
+			if (this.stopped) return;
+			await this.serial(this.drain);
 		}
-	};
-	void poll();
-
-	return resultFactory.ok({
-		async entries(query = {}) {
-			await serial(drain);
-			if (query.id !== undefined) return buffer.filter((entry) => entry.id === query.id);
-			return query.last === undefined ? [...buffer] : buffer.slice(-query.last);
-		},
-		async clear() {
-			await serial(drain);
-			buffer = [];
-		},
-		async writeJsonl(path) {
-			await serial(drain);
-			await writeJsonl(path, buffer);
-		},
-		stop() {
-			stopped = true;
-		},
-	});
+	}
 }
+
+/** Starts network capture on a session. Use the shared {@link networkAttacher} singleton. */
+export class NetworkAttacher {
+	/** Every URL prefix that is the same Metro: its origin plus the loopback aliases of a simulator and an emulator. */
+	skipPrefixes(metroUrl: string): string[] {
+		return metroPrefixes.of(metroUrl);
+	}
+
+	/**
+	 * Record the app's `fetch` calls: patch `fetch` inside the page once, then drain its ring on a timer and
+	 * whenever a caller asks. A new JS context (reload) loses the wrapper, so it is re-installed on reconnect and
+	 * whenever a drain finds it missing; requests made before that are lost.
+	 */
+	attach(session: DevtoolsSession, options: NetworkOptions = {}): Promise<DevtoolsResult<NetworkCapture>> {
+		return new NetworkRecorder(session, options).start();
+	}
+}
+
+export const networkAttacher = new NetworkAttacher();

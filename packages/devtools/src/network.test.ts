@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type FakeMetro, fakePage, type PageEntry, page, startFakeMetro } from "./devtools.testing";
-import { attachNetwork, metroSkipPrefixes, type NetworkCapture, type NetworkOptions } from "./network";
-import { connectDevtools, type DevtoolsSession } from "./session";
+import { type FakeMetro, fakeMetros, fakePages, type PageEntry } from "./devtools.testing";
+import { type NetworkCapture, type NetworkOptions, networkAttacher } from "./network";
+import { type DevtoolsSession, devtoolsConnector } from "./session";
 
 const cleanup: (() => void)[] = [];
 const dirs: string[] = [];
@@ -14,10 +14,10 @@ afterEach(async () => {
 });
 
 async function setup(options: Partial<NetworkOptions> = {}, session?: { fake?: FakeMetro }) {
-	const p = fakePage();
-	const fake = session?.fake ?? startFakeMetro({ respond: p.respond });
+	const p = fakePages.create();
+	const fake = session?.fake ?? fakeMetros.start({ respond: p.respond });
 	cleanup.push(() => void fake.stop());
-	const connected = await connectDevtools({
+	const connected = await devtoolsConnector.connect({
 		metroUrl: fake.url,
 		device: {},
 		fetch,
@@ -27,7 +27,7 @@ async function setup(options: Partial<NetworkOptions> = {}, session?: { fake?: F
 	if (!connected.success) throw new Error(connected.error.message);
 	const live: DevtoolsSession = connected.data;
 	cleanup.push(() => live.close());
-	const attached = await attachNetwork(live, {
+	const attached = await networkAttacher.attach(live, {
 		metroUrl: fake.url,
 		sleep: () => new Promise<void>(() => undefined),
 		...options,
@@ -40,12 +40,12 @@ async function setup(options: Partial<NetworkOptions> = {}, session?: { fake?: F
 
 describe("metroSkipPrefixes", () => {
 	test("covers the loopback aliases a simulator and an emulator use for the same Metro port", () => {
-		expect(metroSkipPrefixes("http://127.0.0.1:8081")).toEqual([
+		expect(networkAttacher.skipPrefixes("http://127.0.0.1:8081")).toEqual([
 			"http://127.0.0.1:8081",
 			"http://localhost:8081",
 			"http://10.0.2.2:8081",
 		]);
-		expect(metroSkipPrefixes("http://metro.lan:9000/")).toEqual([
+		expect(networkAttacher.skipPrefixes("http://metro.lan:9000/")).toEqual([
 			"http://metro.lan:9000",
 			"http://127.0.0.1:9000",
 			"http://localhost:9000",
@@ -66,19 +66,23 @@ describe("attachNetwork", () => {
 
 	test("entries() drains the page first and numbers entries in arrival order", async () => {
 		const { state, capture } = await setup();
-		state.queue.push(page("https://a.test/1"), page("https://a.test/2"));
+		state.queue.push(fakePages.entry("https://a.test/1"), fakePages.entry("https://a.test/2"));
 		const first = await capture.entries();
 		expect(first.map((e) => [e.id, e.url])).toEqual([
 			[1, "https://a.test/1"],
 			[2, "https://a.test/2"],
 		]);
-		state.queue.push(page("https://a.test/3"));
+		state.queue.push(fakePages.entry("https://a.test/3"));
 		expect((await capture.entries()).map((e) => e.id)).toEqual([1, 2, 3]);
 	});
 
 	test("last and id narrow the answer", async () => {
 		const { state, capture } = await setup();
-		state.queue.push(page("https://a.test/1"), page("https://a.test/2"), page("https://a.test/3"));
+		state.queue.push(
+			fakePages.entry("https://a.test/1"),
+			fakePages.entry("https://a.test/2"),
+			fakePages.entry("https://a.test/3")
+		);
 		expect((await capture.entries({ last: 2 })).map((e) => e.url)).toEqual(["https://a.test/2", "https://a.test/3"]);
 		expect((await capture.entries({ id: 1 })).map((e) => e.url)).toEqual(["https://a.test/1"]);
 		expect(await capture.entries({ id: 99 })).toEqual([]);
@@ -86,31 +90,35 @@ describe("attachNetwork", () => {
 
 	test("the host ring keeps the newest entries", async () => {
 		const { state, capture } = await setup({ ring: 2 });
-		state.queue.push(page("https://a.test/1"), page("https://a.test/2"), page("https://a.test/3"));
+		state.queue.push(
+			fakePages.entry("https://a.test/1"),
+			fakePages.entry("https://a.test/2"),
+			fakePages.entry("https://a.test/3")
+		);
 		expect((await capture.entries()).map((e) => e.id)).toEqual([2, 3]);
 	});
 
 	test("clear() drops buffered entries and what the page still holds; ids keep counting", async () => {
 		const { state, capture } = await setup();
-		state.queue.push(page("https://a.test/1"));
+		state.queue.push(fakePages.entry("https://a.test/1"));
 		await capture.entries();
-		state.queue.push(page("https://a.test/stale"));
+		state.queue.push(fakePages.entry("https://a.test/stale"));
 		await capture.clear();
 		expect(await capture.entries()).toEqual([]);
-		state.queue.push(page("https://a.test/2"));
+		state.queue.push(fakePages.entry("https://a.test/2"));
 		expect((await capture.entries()).map((e) => e.id)).toEqual([3]);
 	});
 
 	test("malformed page entries are dropped, the rest survive", async () => {
 		const { state, capture } = await setup();
-		state.queue.push(page("https://a.test/ok"), { url: 7 } as unknown as PageEntry);
+		state.queue.push(fakePages.entry("https://a.test/ok"), { url: 7 } as unknown as PageEntry);
 		expect((await capture.entries()).map((e) => e.url)).toEqual(["https://a.test/ok"]);
 	});
 
 	test("the sink sees each new entry once", async () => {
 		const seen: number[] = [];
 		const { state, capture } = await setup({ sink: (entry) => seen.push(entry.id) });
-		state.queue.push(page("https://a.test/1"), page("https://a.test/2"));
+		state.queue.push(fakePages.entry("https://a.test/1"), fakePages.entry("https://a.test/2"));
 		await capture.entries();
 		await capture.entries();
 		expect(seen).toEqual([1, 2]);
@@ -130,7 +138,7 @@ describe("attachNetwork", () => {
 			await Bun.sleep(20);
 		};
 		await Bun.sleep(5);
-		state.queue.push(page("https://a.test/polled"));
+		state.queue.push(fakePages.entry("https://a.test/polled"));
 		await tick();
 		expect(state.drains).toBeGreaterThanOrEqual(1);
 		capture.stop();
@@ -144,7 +152,7 @@ describe("attachNetwork", () => {
 	test("a fresh JS context (wrapper gone) is re-installed on the next drain", async () => {
 		const { state, capture } = await setup();
 		state.installed = false;
-		state.queue.push(page("https://a.test/before-reload"));
+		state.queue.push(fakePages.entry("https://a.test/before-reload"));
 		await capture.entries();
 		expect(state.installs).toHaveLength(2);
 		expect(state.installed).toBe(true);
@@ -164,7 +172,7 @@ describe("attachNetwork", () => {
 		const { state, capture } = await setup();
 		const dir = await mkdtemp(join(tmpdir(), "warden-network-"));
 		dirs.push(dir);
-		state.queue.push(page("https://a.test/1", { status: 500 }));
+		state.queue.push(fakePages.entry("https://a.test/1", { status: 500 }));
 		const path = join(dir, "out", "network.jsonl");
 		await capture.writeJsonl(path);
 		const rows = (await readFile(path, "utf8"))

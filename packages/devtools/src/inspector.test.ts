@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Fetch } from "./devtools.types";
-import { type InspectorTarget, listTargets, selectTarget } from "./inspector";
+import { type InspectorTarget, inspectorTargets } from "./inspector";
 
 const METRO = "http://127.0.0.1:8081";
 
@@ -44,7 +44,7 @@ describe("listTargets", () => {
 			"/status": { body: "packager-status:running" },
 			"/json/list": { body: JSON.stringify([target("d1-1"), target("d1-2", { vm: "don't use" })]) },
 		});
-		const result = await listTargets(METRO, fetch);
+		const result = await inspectorTargets.list(METRO, fetch);
 		expect(result.success && result.data.map((t) => t.id)).toEqual(["d1-1"]);
 	});
 
@@ -54,15 +54,15 @@ describe("listTargets", () => {
 			"/json/list": { status: 404, body: "" },
 			"/json": { body: JSON.stringify([target("d1-1")]) },
 		});
-		const result = await listTargets(METRO, fetch);
+		const result = await inspectorTargets.list(METRO, fetch);
 		expect(result.success && result.data).toHaveLength(1);
 		expect(fetch.calls).toContain(`${METRO}/json`);
 	});
 
 	test("unreachable Metro and non-Metro servers are devtools_unavailable", async () => {
-		const down = await listTargets(METRO, route({}));
+		const down = await inspectorTargets.list(METRO, route({}));
 		expect(!down.success && down.error.code).toBe("devtools_unavailable");
-		const other = await listTargets(METRO, route({ "/status": { body: "<html>nginx</html>" } }));
+		const other = await inspectorTargets.list(METRO, route({ "/status": { body: "<html>nginx</html>" } }));
 		expect(!other.success && other.error.code).toBe("devtools_unavailable");
 	});
 
@@ -71,24 +71,24 @@ describe("listTargets", () => {
 			"/status": { body: "packager-status:running" },
 			"/json/list": { body: JSON.stringify([{ id: "x" }, 7, target("d1-1")]) },
 		});
-		const result = await listTargets(METRO, fetch);
+		const result = await inspectorTargets.list(METRO, fetch);
 		expect(result.success && result.data.map((t) => t.id)).toEqual(["d1-1"]);
 	});
 
 	test("a body that is not a list is a protocol error", async () => {
 		const fetch = route({ "/status": { body: "packager-status:running" }, "/json/list": { body: "{}" } });
-		const result = await listTargets(METRO, fetch);
+		const result = await inspectorTargets.list(METRO, fetch);
 		expect(!result.success && result.error.code).toBe("devtools_unavailable");
 	});
 });
 
 describe("selectTarget", () => {
-	const pick = (targets: InspectorTarget[], query = {}) => selectTarget(targets, query, METRO);
+	const pick = (targets: InspectorTarget[], query = {}) => inspectorTargets.select(targets, query, METRO);
 
 	test("normalises the ws url to the Metro host and port", () => {
 		const result = pick([fusebox("d1-1", "L1")]);
 		expect(result.success && result.data.wsUrl).toBe("ws://127.0.0.1:8081/inspector/debug?device=d1&page=1");
-		const secure = selectTarget([fusebox("d1-1", "L1")], {}, "https://metro.test:9000");
+		const secure = inspectorTargets.select([fusebox("d1-1", "L1")], {}, "https://metro.test:9000");
 		expect(secure.success && secure.data.wsUrl.startsWith("wss://metro.test:9000/")).toBe(true);
 	});
 
@@ -209,7 +209,7 @@ describe("selectTarget", () => {
 			"/status": { body: "packager-status:running" },
 			"/json/list": { body: JSON.stringify([fusebox("d1-9", "L1", { vm: "don't use" }), fusebox("d1-1", "L1")]) },
 		});
-		const listed = await listTargets(METRO, fetch);
+		const listed = await inspectorTargets.list(METRO, fetch);
 		const result = listed.success ? pick(listed.data) : listed;
 		expect(result.success && result.data.id).toBe("d1-1");
 	});

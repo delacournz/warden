@@ -61,10 +61,10 @@ export const defaultStartupIo: StartupIo = {
 	...defaultRelaunchIo,
 	sleep,
 	readMarks: async (metroUrl, appId, deviceName) => {
-		const { connectDevtools } = await import("@delacour/warden-devtools/session");
+		const { devtoolsConnector } = await import("@delacour/warden-devtools/session");
 		let lastError = "no devtools target";
 		for (let i = 0; i < MARK_POLLS; i++) {
-			const session = await connectDevtools({
+			const session = await devtoolsConnector.connect({
 				metroUrl,
 				device: { appId, ...(deviceName !== undefined ? { deviceName } : {}) },
 				fetch: (url, init) => fetch(url, init),

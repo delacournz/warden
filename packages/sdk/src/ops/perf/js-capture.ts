@@ -93,8 +93,8 @@ const abortableSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
 
 export const defaultJsDeps: JsDeps = {
 	open: async (o) => {
-		const { connectDevtools } = await import("@delacour/warden-devtools/session");
-		return connectDevtools({
+		const { devtoolsConnector } = await import("@delacour/warden-devtools/session");
+		return devtoolsConnector.connect({
 			metroUrl: o.metroUrl,
 			device: {
 				...(o.appId === undefined ? {} : { appId: o.appId }),

@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { devtoolsErr } from "@delacour/warden-devtools/devtools.types";
-import { startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
-import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
+import { fakeMetros } from "@delacour/warden-devtools/testing/devtools";
+import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
 import { createSession } from "./session";
@@ -40,7 +40,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async () => {
 				opens += 1;
-				return resultFactory.ok(stubFacet().facet);
+				return resultFactory.ok(facetStubs.create().facet);
 			},
 		});
 		const result = await session.devtools();
@@ -50,7 +50,7 @@ describe("Session devtools", () => {
 	});
 
 	test("opens on the first call, once and shared, even concurrently", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		const seen: E2eEnv[] = [];
 		const session = createSession({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
@@ -69,14 +69,16 @@ describe("Session devtools", () => {
 	});
 
 	test("a failed open is returned and retried on the next call", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		let attempts = 0;
 		const session = createSession({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
 			devtools: async () => {
 				attempts += 1;
-				return attempts === 1 ? devtoolsErr("devtools_unavailable", "Metro is down") : resultFactory.ok(stub.facet);
+				return attempts === 1
+					? devtoolsErrors.err("devtools_unavailable", "Metro is down")
+					: resultFactory.ok(stub.facet);
 			},
 		});
 		const first = await session.devtools();
@@ -87,8 +89,8 @@ describe("Session devtools", () => {
 	});
 
 	test("a facet that emitted lost is dropped: peek forgets it and the next call opens a fresh one", async () => {
-		const first = stubFacet();
-		const second = stubFacet();
+		const first = facetStubs.create();
+		const second = facetStubs.create();
 		const lostHandlers: ((error: { code: "devtools_unavailable"; message: string }) => void)[] = [];
 		const lostable = {
 			...first.facet,
@@ -103,7 +105,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async () => {
 				const next = opened.shift();
-				return next === undefined ? devtoolsErr("devtools_unavailable", "no more") : resultFactory.ok(next);
+				return next === undefined ? devtoolsErrors.err("devtools_unavailable", "no more") : resultFactory.ok(next);
 			},
 		});
 		const a = await session.devtools();
@@ -121,7 +123,7 @@ describe("Session devtools", () => {
 	});
 
 	test("close() closes an opened facet once", async () => {
-		const stub = stubFacet();
+		const stub = facetStubs.create();
 		const session = createSession({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
@@ -139,7 +141,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async () => {
 				opens += 1;
-				return resultFactory.ok(stubFacet().facet);
+				return resultFactory.ok(facetStubs.create().facet);
 			},
 		});
 		await session.close();
@@ -147,7 +149,7 @@ describe("Session devtools", () => {
 	});
 
 	test("the default opener connects to a real (fake) Metro", async () => {
-		const fake = startFakeMetro();
+		const fake = fakeMetros.start();
 		try {
 			const session = createSession({ env: envIn({ metroUrl: fake.url }), exitHook: false });
 			const result = await session.devtools();

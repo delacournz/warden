@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type FakeMetro, fakeTarget, startFakeMetro } from "./devtools.testing";
-import { type ConnectDevtoolsOptions, connectDevtools, type DevtoolsSession } from "./session";
+import { type FakeMetro, type FakeMetroOptions, fakeMetros } from "./devtools.testing";
+import { type ConnectDevtoolsOptions, type DevtoolsSession, devtoolsConnector } from "./session";
 
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
 	for (const fn of cleanup.splice(0)) await fn();
 });
 
-function metro(options?: Parameters<typeof startFakeMetro>[0]): FakeMetro {
-	const fake = startFakeMetro(options);
+function metro(options?: FakeMetroOptions): FakeMetro {
+	const fake = fakeMetros.start(options);
 	cleanup.push(() => fake.stop());
 	return fake;
 }
@@ -27,7 +27,7 @@ function options(fake: FakeMetro, extra: Partial<ConnectDevtoolsOptions> = {}): 
 }
 
 async function connect(fake: FakeMetro, extra?: Partial<ConnectDevtoolsOptions>): Promise<DevtoolsSession> {
-	const connected = await connectDevtools(options(fake, extra));
+	const connected = await devtoolsConnector.connect(options(fake, extra));
 	if (!connected.success) throw new Error(connected.error.message);
 	cleanup.push(() => connected.data.close());
 	return connected.data;
@@ -42,7 +42,7 @@ async function until(condition: () => boolean, timeoutMs = 2_000): Promise<void>
 }
 
 /** `1+1` and `2+2` answered by value, like a live Hermes page. */
-const arithmetic: NonNullable<Parameters<typeof startFakeMetro>[0]>["respond"] = (r) => {
+const arithmetic: NonNullable<FakeMetroOptions>["respond"] = (r) => {
 	if (r.method !== "Runtime.evaluate") return undefined;
 	const value = { "1+1": 2, "2+2": 4 }[String(r.params.expression)];
 	return value === undefined ? undefined : { result: { result: { type: "number", value } } };
@@ -80,36 +80,36 @@ describe("connectDevtools", () => {
 		const fake = metro({
 			respond: (r) => (r.method === "Runtime.enable" ? { error: { message: "nope" } } : undefined),
 		});
-		const connected = await connectDevtools(options(fake));
+		const connected = await devtoolsConnector.connect(options(fake));
 		expect(!connected.success && connected.error.code).toBe("cdp_protocol");
 		await until(() => fake.connections.length === 0);
 	});
 
 	test("no Metro URL (release build) is devtools_unavailable", async () => {
 		const fake = metro();
-		const connected = await connectDevtools(options(fake, { metroUrl: undefined }));
+		const connected = await devtoolsConnector.connect(options(fake, { metroUrl: undefined }));
 		expect(!connected.success && connected.error.code).toBe("devtools_unavailable");
 	});
 
 	test("Metro down, not Metro, or no targets is devtools_unavailable", async () => {
 		const down = metro();
 		await down.stop();
-		const a = await connectDevtools(options(down));
+		const a = await devtoolsConnector.connect(options(down));
 		expect(!a.success && a.error.code).toBe("devtools_unavailable");
-		const b = await connectDevtools(options(metro({ notMetro: true })));
+		const b = await devtoolsConnector.connect(options(metro({ notMetro: true })));
 		expect(!b.success && b.error.code).toBe("devtools_unavailable");
-		const c = await connectDevtools(options(metro({ targets: [] })));
+		const c = await devtoolsConnector.connect(options(metro({ targets: [] })));
 		expect(!c.success && c.error.code).toBe("devtools_unavailable");
 	});
 
 	test("a different device name than anything on a multi-device Metro is device_mismatch", async () => {
 		const fake = metro({
 			targets: [
-				fakeTarget(0, 1),
-				fakeTarget(0, 1, { id: "dev2-1", deviceName: "iPhone B", reactNative: { logicalDeviceId: "dev2" } }),
+				fakeMetros.target(0, 1),
+				fakeMetros.target(0, 1, { id: "dev2-1", deviceName: "iPhone B", reactNative: { logicalDeviceId: "dev2" } }),
 			],
 		});
-		const connected = await connectDevtools(options(fake, { device: { deviceName: "Pixel" } }));
+		const connected = await devtoolsConnector.connect(options(fake, { device: { deviceName: "Pixel" } }));
 		expect(!connected.success && connected.error.code).toBe("device_mismatch");
 	});
 });
@@ -222,7 +222,7 @@ describe("reconnect", () => {
 		let sleeps = 0;
 		const session = await connect(fake, {
 			sleep: async () => {
-				if (++sleeps === 3) fake.setTargets([fakeTarget(fake.port, 2)]);
+				if (++sleeps === 3) fake.setTargets([fakeMetros.target(fake.port, 2)]);
 				await Bun.sleep(5);
 			},
 		});
@@ -250,7 +250,7 @@ describe("reconnect", () => {
 		const fake = metro();
 		const session = await connect(fake);
 		expect(session.target.id).toBe("dev1-1");
-		fake.setTargets([fakeTarget(fake.port, 2)]);
+		fake.setTargets([fakeMetros.target(fake.port, 2)]);
 		const reconnected: string[] = [];
 		session.on("reconnected", (target) => reconnected.push(target.id));
 		fake.dropAll();
@@ -262,13 +262,13 @@ describe("reconnect", () => {
 	test("keeps the same device once it has connected, even when another device appears", async () => {
 		const fake = metro();
 		const session = await connect(fake, { device: {} });
-		const other = fakeTarget(fake.port, 9, {
+		const other = fakeMetros.target(fake.port, 9, {
 			id: "dev2-9",
 			deviceName: "iPhone B",
 			webSocketDebuggerUrl: `ws://localhost:1/inspector/debug?device=dev2&page=9`,
 			reactNative: { logicalDeviceId: "dev2", capabilities: { prefersFuseboxFrontend: true } },
 		});
-		fake.setTargets([fakeTarget(fake.port, 2), other]);
+		fake.setTargets([fakeMetros.target(fake.port, 2), other]);
 		const reconnected: string[] = [];
 		session.on("reconnected", (target) => reconnected.push(target.id));
 		fake.dropAll();
@@ -282,7 +282,7 @@ describe("reconnect", () => {
 		const session = await connect(fake, {
 			sleep: async (ms) => {
 				sleeps.push(ms);
-				if (sleeps.length === 3) fake.setTargets([fakeTarget(fake.port, 2)]);
+				if (sleeps.length === 3) fake.setTargets([fakeMetros.target(fake.port, 2)]);
 				await Bun.sleep(2);
 			},
 		});
@@ -321,7 +321,7 @@ describe("reconnect", () => {
 		fake.setTargets([]);
 		fake.dropAll();
 		await until(() => sleeps > 15);
-		fake.setTargets([fakeTarget(fake.port, 2)]);
+		fake.setTargets([fakeMetros.target(fake.port, 2)]);
 		const result = await session.evaluate("1+1");
 		expect(result).toEqual({ success: true, data: 2 });
 		expect(lost).toEqual([]);
@@ -363,7 +363,7 @@ describe("reconnect", () => {
 		await until(() => lost.length === 1);
 		const still = await session.evaluate("1");
 		expect(!still.success && still.error.code).toBe("devtools_unavailable");
-		fake.setTargets([fakeTarget(fake.port, 2)]);
+		fake.setTargets([fakeMetros.target(fake.port, 2)]);
 		const [a, b] = await Promise.all([session.evaluate("1+1"), session.evaluate("2+2")]);
 		expect(a).toEqual({ success: true, data: 2 });
 		expect(b).toEqual({ success: true, data: 4 });
@@ -483,7 +483,7 @@ describe("reloadJs", () => {
 	test("POST /reload answering non-200 stays devtools_unavailable", async () => {
 		const fake = reloadMetro(false, false);
 		const real = globalThis.fetch;
-		const broken = await connectDevtools({
+		const broken = await devtoolsConnector.connect({
 			...options(fake, { reloadWaitMs: 20 }),
 			fetch: (input, init) =>
 				String(input).endsWith("/reload") ? Promise.resolve(new Response("nope", { status: 500 })) : real(input, init),

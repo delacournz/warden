@@ -281,13 +281,13 @@ export function readTree(
 						},
 					}
 		);
-		const { formatTree } = await import("@delacour/warden-devtools/tree");
+		const { treeFormatter } = await import("@delacour/warden-devtools/tree");
 		const tree = {
 			...(reply.data.screen === undefined ? {} : { screen: reply.data.screen }),
 			components,
 			truncated: reply.data.truncated || cut,
 		};
-		return resultFactory.ok({ ...tree, lines: formatTree(tree) });
+		return resultFactory.ok({ ...tree, lines: treeFormatter.format(tree) });
 	});
 }
 

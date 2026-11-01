@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
-import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
-import { type FakeReply, fakePage, startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
+import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
+import { type FakeReply, fakeMetros, fakePages } from "@delacour/warden-devtools/testing/devtools";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -75,9 +75,9 @@ const SCRIPTED_VALUES: Record<string, FakeReply> = {
 
 /** A leased device, a fake Metro with scripted evaluate answers (the reload probe answers `expo` and clears the JS context like a real reload), and a fake collector spawner. */
 function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}) {
-	const page = fakePage();
+	const page = fakePages.create();
 	const evaluated: string[] = [];
-	const fake = startFakeMetro({
+	const fake = fakeMetros.start({
 		respond: (request, connection) => {
 			if (request.method === "Runtime.evaluate") {
 				const expression = String(request.params.expression);
@@ -99,7 +99,10 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 	let nextPid = 5000;
 	const devtools: DevtoolsDeps = {
 		open: (o) =>
-			openDevtoolsFacet({ ...o, sleep: (ms) => (ms === 500 ? new Promise<void>(() => undefined) : Bun.sleep(2)) }),
+			devtoolsFacetOpener.open({
+				...o,
+				sleep: (ms) => (ms === 500 ? new Promise<void>(() => undefined) : Bun.sleep(2)),
+			}),
 		probe: async (_ctx, port) => {
 			probes.push(port);
 			return port === fake.port ? "ours" : "none";

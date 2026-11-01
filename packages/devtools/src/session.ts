@@ -1,15 +1,16 @@
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { type CdpClient, type CloseInfo, describeException, openCdp, readEvaluateReply } from "./cdp";
+import { type CdpClient, type CloseInfo, cdpConnector, cdpProtocol } from "./cdp";
 import {
 	type CdpTap,
 	type DevtoolsError,
 	type DevtoolsResult,
-	devtoolsErr,
+	devtoolsErrors,
 	type EvaluateError,
 	type Fetch,
 	type Sleep,
 } from "./devtools.types";
-import { listTargets, type SelectedTarget, selectTarget } from "./inspector";
+import { inspectorTargets, type SelectedTarget } from "./inspector";
+import { timer } from "./timer";
 
 /** The one binding warden installs; scripts call `__warden_cb(JSON.stringify({ requestId, … }))`. */
 export const WARDEN_BINDING = "__warden_cb";
@@ -115,48 +116,181 @@ type State =
 	| { kind: "lost"; error: DevtoolsError }
 	| { kind: "closed" };
 
-const timerSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+type ConnectionOptions = Omit<ConnectDevtoolsOptions, "metroUrl"> & { metroUrl: string };
+
+/** Pause schedule and budget of one reconnect, from {@link ConnectDevtoolsOptions}. */
+class ReconnectPolicy {
+	readonly maxAttempts: number;
+	readonly budgetMs: number;
+	private readonly backoffMs: number;
+	private readonly maxBackoffMs: number;
+
+	constructor(o: ConnectDevtoolsOptions) {
+		this.backoffMs = o.reconnectBackoffMs ?? RECONNECT_BACKOFF_MS;
+		this.maxBackoffMs = Math.max(this.backoffMs, o.maxReconnectBackoffMs ?? MAX_RECONNECT_BACKOFF_MS);
+		this.maxAttempts = o.maxReconnectAttempts ?? Number.POSITIVE_INFINITY;
+		this.budgetMs = o.reconnectBudgetMs ?? RECONNECT_BUDGET_MS;
+	}
+
+	/** pause after failed attempt `n` (1-based): the base for the first 10, then doubling up to the cap */
+	backoffAfter(attempt: number): number {
+		return attempt <= FAST_RECONNECT_ATTEMPTS
+			? this.backoffMs
+			: Math.min(this.maxBackoffMs, this.backoffMs * 2 ** (attempt - FAST_RECONNECT_ATTEMPTS));
+	}
+}
 
 /**
- * Attach to the app's Hermes runtime through Metro's inspector proxy. Connect sequence (same as Chrome's Fusebox
- * frontend): `FuseboxClient.setClientMetadata`, `ReactNativeApplication.enable`, `Runtime.enable`,
+ * One attached devtools session. Connect sequence (same as Chrome's Fusebox frontend):
+ * `FuseboxClient.setClientMetadata`, `ReactNativeApplication.enable`, `Runtime.enable`,
  * `Runtime.runIfWaitingForDebugger`, `Runtime.addBinding`. The session re-attaches on socket close and on
  * `Runtime.executionContextsCleared` (JS reload), re-selecting the target because a reload gets a new page id.
+ * Build one with {@link DevtoolsConnector}.
  */
-export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<DevtoolsResult<DevtoolsSession>> {
-	const { metroUrl } = o;
-	if (!metroUrl) {
-		return devtoolsErr("devtools_unavailable", "no Metro URL: release builds have no devtools (start a dev client)");
-	}
-	const sleep = o.sleep ?? timerSleep;
-	const log = o.log ?? (() => undefined);
-	const now = o.now ?? Date.now;
-	const backoffMs = o.reconnectBackoffMs ?? RECONNECT_BACKOFF_MS;
-	const maxBackoffMs = Math.max(backoffMs, o.maxReconnectBackoffMs ?? MAX_RECONNECT_BACKOFF_MS);
-	const maxAttempts = o.maxReconnectAttempts ?? Number.POSITIVE_INFINITY;
-	const budgetMs = o.reconnectBudgetMs ?? RECONNECT_BUDGET_MS;
-	/** pause after failed attempt `n` (1-based): the base for the first 10, then doubling up to the cap */
-	const backoffAfter = (attempt: number): number =>
-		attempt <= FAST_RECONNECT_ATTEMPTS
-			? backoffMs
-			: Math.min(maxBackoffMs, backoffMs * 2 ** (attempt - FAST_RECONNECT_ATTEMPTS));
-
-	let pinnedLogicalId = o.device.logicalDeviceId;
-	let state: State = { kind: "closed" };
-	const phase = (): State["kind"] => state.kind;
-	let epoch = 0;
-	const epochWaiters = new Set<() => void>();
-	const cdpHandlers = new Map<string, Set<(params: unknown) => void>>();
-	const eventHandlers: { [E in keyof SessionEvents]: Set<(arg: SessionEvents[E]) => void> } = {
+export class DevtoolsSessionConnection implements DevtoolsSession {
+	private readonly sleep: Sleep;
+	private readonly log: (line: string) => void;
+	private readonly now: () => number;
+	private readonly policy: ReconnectPolicy;
+	private pinnedLogicalId: string | undefined;
+	private state: State = { kind: "closed" };
+	private epoch = 0;
+	private readonly epochWaiters = new Set<() => void>();
+	private readonly cdpHandlers = new Map<string, Set<(params: unknown) => void>>();
+	private readonly eventHandlers: { [E in keyof SessionEvents]: Set<(arg: SessionEvents[E]) => void> } = {
 		reconnected: new Set(),
 		lost: new Set(),
 		yielded: new Set(),
 	};
-	let unsubscribeCdp: (() => void)[] = [];
-	let connection = 0;
-	const taps = new Set<CdpTap>(o.taps ?? []);
+	private unsubscribeCdp: (() => void)[] = [];
+	private connection = 0;
+	private readonly taps: Set<CdpTap>;
+	private firstTarget: SelectedTarget | undefined;
 
-	async function handshake(cdp: CdpClient, target: SelectedTarget): Promise<DevtoolsResult<Attached>> {
+	constructor(private readonly o: ConnectionOptions) {
+		this.sleep = o.sleep ?? timer.sleep;
+		this.log = o.log ?? (() => undefined);
+		this.now = o.now ?? Date.now;
+		this.policy = new ReconnectPolicy(o);
+		this.pinnedLogicalId = o.device.logicalDeviceId;
+		this.taps = new Set<CdpTap>(o.taps ?? []);
+	}
+
+	/** The first attach; fails when Metro, the target or the handshake does. */
+	async start(): Promise<DevtoolsResult<DevtoolsSession>> {
+		const first = await this.establish();
+		if (!first.success) return first;
+		this.firstTarget = first.data.target;
+		this.attach(first.data);
+		this.log(`devtools: attached to ${first.data.target.id} (${first.data.target.fusebox ? "Fusebox" : "legacy"})`);
+		return resultFactory.ok(this);
+	}
+
+	get target(): SelectedTarget {
+		if (this.state.kind === "up") return this.state.attached.target;
+		return this.firstTarget as SelectedTarget;
+	}
+
+	get bindingAvailable(): boolean {
+		return this.state.kind === "up" && this.state.attached.cdp.bindingAvailable === true;
+	}
+
+	async evaluate(
+		expression: string,
+		options: { await?: boolean; timeoutMs?: number } = {}
+	): Promise<Result<unknown, EvaluateError>> {
+		const live = await this.current();
+		if (!live.success) return { success: false, error: { message: live.error.message, code: live.error.code } };
+		const reply = await live.data.cdp.send(
+			"Runtime.evaluate",
+			{ expression, returnByValue: true, awaitPromise: options.await ?? false },
+			{ timeoutMs: options.timeoutMs }
+		);
+		if (!reply.success) return { success: false, error: { message: reply.error.message, code: reply.error.code } };
+		const { value, exceptionDetails } = cdpProtocol.readEvaluateReply(reply.data);
+		if (exceptionDetails) {
+			return {
+				success: false,
+				error: { message: cdpProtocol.describeException(exceptionDetails), code: "eval_failed", exceptionDetails },
+			};
+		}
+		return resultFactory.ok(value);
+	}
+
+	async reloadJs(): Promise<DevtoolsResult<{ method: ReloadMethod }>> {
+		const live = await this.current();
+		if (!live.success) return live;
+		const startedAt = this.epoch;
+		const waitMs = this.o.reloadWaitMs ?? RELOAD_WAIT_MS;
+		const probe = await live.data.cdp.send("Runtime.evaluate", {
+			expression: RELOAD_EXPRESSION,
+			returnByValue: true,
+		});
+		if (!probe.success) {
+			this.log(`devtools: reload probe failed: ${probe.error.message}`);
+			return devtoolsErrors.err(probe.error.code, `reload probe failed: ${probe.error.message}`);
+		}
+		const method: ReloadMethod = this.readReloadMethod(probe.data) ?? "http";
+		const failure =
+			(await this.requestReload(method, this.o.metroUrl)) ?? (await this.awaitReload(method, startedAt, waitMs));
+		return failure ?? resultFactory.ok({ method });
+	}
+
+	async send(
+		method: string,
+		params?: Record<string, unknown>,
+		options?: { timeoutMs?: number }
+	): Promise<DevtoolsResult<unknown>> {
+		const live = await this.current();
+		if (!live.success) return live;
+		return live.data.cdp.send(method, params, options);
+	}
+
+	onEvent(tap: CdpTap): () => void {
+		this.taps.add(tap);
+		return () => {
+			this.taps.delete(tap);
+		};
+	}
+
+	onCdp(method: string, handler: (params: unknown) => void): () => void {
+		let set = this.cdpHandlers.get(method);
+		if (!set) {
+			set = new Set();
+			this.cdpHandlers.set(method, set);
+		}
+		const handlers = set;
+		handlers.add(handler);
+		const off = this.state.kind === "up" ? this.state.attached.cdp.on(method, handler) : undefined;
+		if (off) this.unsubscribeCdp.push(off);
+		return () => {
+			handlers.delete(handler);
+			off?.();
+		};
+	}
+
+	async evaluateWithBinding(script: string, requestId: string, timeoutMs?: number): Promise<DevtoolsResult<unknown>> {
+		const live = await this.current();
+		if (!live.success) return live;
+		return live.data.cdp.evaluateWithBinding(script, requestId, timeoutMs);
+	}
+
+	readonly on = <E extends keyof SessionEvents>(event: E, handler: (arg: SessionEvents[E]) => void): (() => void) => {
+		const handlers = this.eventHandlers[event] as Set<typeof handler>;
+		handlers.add(handler);
+		return () => {
+			handlers.delete(handler);
+		};
+	};
+
+	close(): void {
+		const previous = this.state;
+		this.state = { kind: "closed" };
+		if (previous.kind === "up") previous.attached.cdp.close();
+		for (const wake of [...this.epochWaiters]) wake();
+	}
+
+	private async handshake(cdp: CdpClient, target: SelectedTarget): Promise<DevtoolsResult<Attached>> {
 		const optional = { timeoutMs: HANDSHAKE_OPTIONAL_TIMEOUT_MS };
 		await cdp.send("FuseboxClient.setClientMetadata", {}, optional);
 		await cdp.send("ReactNativeApplication.enable", {}, optional);
@@ -169,112 +303,126 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 	}
 
 	/** list -> select -> socket -> handshake; the socket is closed again if any step fails */
-	async function establish(): Promise<DevtoolsResult<Attached>> {
-		const listed = await listTargets(metroUrl as string, o.fetch);
+	private async establish(): Promise<DevtoolsResult<Attached>> {
+		const { metroUrl } = this.o;
+		const listed = await inspectorTargets.list(metroUrl, this.o.fetch);
 		if (!listed.success) return listed;
-		const selected = selectTarget(
+		const selected = inspectorTargets.select(
 			listed.data,
-			{ deviceName: o.device.deviceName, logicalDeviceId: pinnedLogicalId, appId: o.device.appId },
-			metroUrl as string
+			{ deviceName: this.o.device.deviceName, logicalDeviceId: this.pinnedLogicalId, appId: this.o.device.appId },
+			metroUrl
 		);
 		if (!selected.success) return selected;
-		const opened = await openCdp(selected.data.wsUrl, { WebSocket: o.WebSocket, timeoutMs: o.timeoutMs });
+		const opened = await cdpConnector.open(selected.data.wsUrl, {
+			WebSocket: this.o.WebSocket,
+			timeoutMs: this.o.timeoutMs,
+		});
 		if (!opened.success) return opened;
-		const connectionNumber = ++connection;
+		this.connection += 1;
+		const connectionNumber = this.connection;
 		let replay = true;
 		opened.data.onAny((method, params) => {
-			for (const tap of [...taps]) tap({ method, params, connection: connectionNumber, replay });
+			for (const tap of [...this.taps]) tap({ method, params, connection: connectionNumber, replay });
 		});
-		const attached = await handshake(opened.data, selected.data);
+		const attached = await this.handshake(opened.data, selected.data);
 		replay = false;
 		if (!attached.success) opened.data.close();
 		return attached;
 	}
 
-	function attach(attached: Attached): void {
-		state = { kind: "up", attached };
-		pinnedLogicalId = attached.target.logicalDeviceId ?? pinnedLogicalId;
-		for (const off of unsubscribeCdp) off();
-		unsubscribeCdp = [];
-		for (const [method, handlers] of cdpHandlers) {
-			for (const handler of handlers) unsubscribeCdp.push(attached.cdp.on(method, handler));
+	private attach(attached: Attached): void {
+		this.state = { kind: "up", attached };
+		this.pinnedLogicalId = attached.target.logicalDeviceId ?? this.pinnedLogicalId;
+		for (const off of this.unsubscribeCdp) off();
+		this.unsubscribeCdp = [];
+		for (const [method, handlers] of this.cdpHandlers) {
+			for (const handler of handlers) this.unsubscribeCdp.push(attached.cdp.on(method, handler));
 		}
-		attached.cdp.onClose((info) => {
-			if (state.kind !== "up" || state.attached.cdp !== attached.cdp) return;
-			if (o.yieldOnClose?.(info)) {
-				state = { kind: "closed" };
-				log(`devtools: yielded (${info.code} ${info.reason})`);
-				for (const handler of [...eventHandlers.yielded]) handler(info);
-				return;
-			}
-			void reconnect("socket closed");
-		});
+		attached.cdp.onClose((info) => this.onSocketClosed(attached, info));
 		attached.cdp.on("Runtime.executionContextsCleared", () => {
-			if (state.kind === "up" && state.attached.cdp === attached.cdp) void reconnect("JS context cleared");
+			if (this.isLive(attached)) void this.reconnect("JS context cleared");
 		});
 	}
 
-	const closedError = (): DevtoolsResult<Attached> => devtoolsErr("cdp_closed", "devtools session is closed");
+	private isLive(attached: Attached): boolean {
+		return this.state.kind === "up" && this.state.attached.cdp === attached.cdp;
+	}
+
+	private onSocketClosed(attached: Attached, info: CloseInfo): void {
+		if (!this.isLive(attached)) return;
+		if (this.o.yieldOnClose?.(info)) {
+			this.state = { kind: "closed" };
+			this.log(`devtools: yielded (${info.code} ${info.reason})`);
+			for (const handler of [...this.eventHandlers.yielded]) handler(info);
+			return;
+		}
+		void this.reconnect("socket closed");
+	}
+
+	private closedError(): DevtoolsResult<Attached> {
+		return devtoolsErrors.err("cdp_closed", "devtools session is closed");
+	}
 
 	/** Makes `attached` the live socket and tells the `reconnected` listeners. */
-	function adopt(attached: Attached): void {
-		attach(attached);
-		log(`devtools: reconnected to ${attached.target.id}`);
-		for (const handler of [...eventHandlers.reconnected]) handler(attached.target);
+	private adopt(attached: Attached): void {
+		this.attach(attached);
+		this.log(`devtools: reconnected to ${attached.target.id}`);
+		for (const handler of [...this.eventHandlers.reconnected]) handler(attached.target);
 	}
 
 	/** Adopts a fresh socket, unless the session was closed while it was being established (then it is closed again). */
-	function adoptIfOpen(attached: Attached): DevtoolsResult<Attached> {
-		if (phase() === "closed") {
+	private adoptIfOpen(attached: Attached): DevtoolsResult<Attached> {
+		if (this.state.kind === "closed") {
 			attached.cdp.close();
-			return closedError();
+			return this.closedError();
 		}
-		adopt(attached);
+		this.adopt(attached);
 		return resultFactory.ok(attached);
 	}
 
 	/** Moves to `lost` with `error` and tells the `lost` listeners, unless the session is closed. */
-	function markLost(error: DevtoolsError): void {
-		if (phase() === "closed") return;
-		state = { kind: "lost", error };
-		for (const handler of [...eventHandlers.lost]) handler(error);
+	private markLost(error: DevtoolsError): void {
+		if (this.state.kind === "closed") return;
+		this.state = { kind: "lost", error };
+		for (const handler of [...this.eventHandlers.lost]) handler(error);
 	}
 
 	/** Closes the dead socket, then re-establishes with backoff until the attempt count or time budget runs out. */
-	async function reconnectLoop(previous: Attached): Promise<DevtoolsResult<Attached>> {
+	private async reconnectLoop(previous: Attached): Promise<DevtoolsResult<Attached>> {
 		previous.cdp.close();
 		let last: DevtoolsError = { code: "devtools_unavailable", message: "reconnect failed" };
+		const { maxAttempts, budgetMs } = this.policy;
 		// the budget runs out on the clock or on the time slept, whichever is first (an injected sleep may not
 		// move the clock)
-		const startedAt = now();
+		const startedAt = this.now();
 		let slept = 0;
-		const leftMs = (): number => budgetMs - Math.max(now() - startedAt, slept);
+		const leftMs = (): number => budgetMs - Math.max(this.now() - startedAt, slept);
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-			if (phase() === "closed") return closedError();
-			const result = await establish();
-			if (result.success) return adoptIfOpen(result.data);
+			if (this.state.kind === "closed") return this.closedError();
+			const result = await this.establish();
+			if (result.success) return this.adoptIfOpen(result.data);
 			last = result.error;
 			const left = leftMs();
 			const cap = Number.isFinite(maxAttempts) ? `/${maxAttempts}` : "";
-			log(`devtools: reconnect attempt ${attempt}${cap} failed: ${last.message}`);
+			this.log(`devtools: reconnect attempt ${attempt}${cap} failed: ${last.message}`);
 			if (attempt >= maxAttempts || left <= 0) break;
-			const pause = Math.min(backoffAfter(attempt), left);
+			const pause = Math.min(this.policy.backoffAfter(attempt), left);
 			slept += pause;
-			await sleep(pause);
+			await this.sleep(pause);
 		}
-		markLost(last);
+		this.markLost(last);
 		return { success: false, error: last };
 	}
 
-	function reconnect(reason: string): Promise<DevtoolsResult<Attached>> {
-		if (state.kind === "reconnecting") return state.done;
-		if (state.kind !== "up") return Promise.resolve(closedError());
-		const previous = state.attached;
-		log(`devtools: ${reason}, reconnecting`);
-		const done = reconnectLoop(previous);
-		state = { kind: "reconnecting", done };
-		epoch++;
-		for (const wake of [...epochWaiters]) wake();
+	private reconnect(reason: string): Promise<DevtoolsResult<Attached>> {
+		if (this.state.kind === "reconnecting") return this.state.done;
+		if (this.state.kind !== "up") return Promise.resolve(this.closedError());
+		const previous = this.state.attached;
+		this.log(`devtools: ${reason}, reconnecting`);
+		const done = this.reconnectLoop(previous);
+		this.state = { kind: "reconnecting", done };
+		this.epoch++;
+		for (const wake of [...this.epochWaiters]) wake();
 		return done;
 	}
 
@@ -282,181 +430,105 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 	 * Leaves `lost`: one fresh attach attempt, shared by every caller that arrives while it runs. A failure stays
 	 * `lost` (with the new error) without emitting `lost` again; a success emits `reconnected`.
 	 */
-	function revive(): Promise<DevtoolsResult<Attached>> {
-		log("devtools: lost, trying to attach again");
-		const done = (async (): Promise<DevtoolsResult<Attached>> => {
-			const result = await establish();
-			if (phase() === "closed") {
-				if (result.success) result.data.cdp.close();
-				return closedError();
-			}
-			if (!result.success) {
-				state = { kind: "lost", error: result.error };
-				return result;
-			}
-			adopt(result.data);
-			return result;
-		})();
-		state = { kind: "reconnecting", done };
+	private revive(): Promise<DevtoolsResult<Attached>> {
+		this.log("devtools: lost, trying to attach again");
+		const done = this.reviveOnce();
+		this.state = { kind: "reconnecting", done };
 		return done;
 	}
 
+	private async reviveOnce(): Promise<DevtoolsResult<Attached>> {
+		const result = await this.establish();
+		if (this.state.kind === "closed") {
+			if (result.success) result.data.cdp.close();
+			return this.closedError();
+		}
+		if (!result.success) {
+			this.state = { kind: "lost", error: result.error };
+			return result;
+		}
+		this.adopt(result.data);
+		return result;
+	}
+
 	/** the live socket, waiting out a reconnect; a `lost` session tries to attach again */
-	async function current(): Promise<DevtoolsResult<Attached>> {
-		if (state.kind === "up") return resultFactory.ok(state.attached);
-		if (state.kind === "reconnecting") return state.done;
-		if (state.kind === "lost") return revive();
-		return devtoolsErr("cdp_closed", "devtools session is closed");
+	private async current(): Promise<DevtoolsResult<Attached>> {
+		if (this.state.kind === "up") return resultFactory.ok(this.state.attached);
+		if (this.state.kind === "reconnecting") return this.state.done;
+		if (this.state.kind === "lost") return this.revive();
+		return devtoolsErrors.err("cdp_closed", "devtools session is closed");
 	}
 
 	/** Triggers the reload: nothing to do for `expo` / `devsettings` (the probe scheduled it), a POST for `http`. */
-	async function requestReload(method: ReloadMethod, baseUrl: string): Promise<DevtoolsResult<never> | undefined> {
+	private async requestReload(method: ReloadMethod, baseUrl: string): Promise<DevtoolsResult<never> | undefined> {
 		if (method !== "http") {
-			log(`devtools: reload via ${method}`);
+			this.log(`devtools: reload via ${method}`);
 			return undefined;
 		}
-		log("devtools: reload via http");
+		this.log("devtools: reload via http");
 		try {
-			const res = await o.fetch(`${baseUrl.replace(/\/+$/, "")}/reload`, { method: "POST" });
+			const res = await this.o.fetch(`${baseUrl.replace(/\/+$/, "")}/reload`, { method: "POST" });
 			if (!res.ok) {
-				return devtoolsErr("devtools_unavailable", `reload failed: POST /reload answered ${res.status}`);
+				return devtoolsErrors.err("devtools_unavailable", `reload failed: POST /reload answered ${res.status}`);
 			}
 		} catch (error) {
-			return devtoolsErr("devtools_unavailable", `reload failed: POST /reload threw ${String(error)}`);
+			return devtoolsErrors.err("devtools_unavailable", `reload failed: POST /reload threw ${String(error)}`);
 		}
 		return undefined;
 	}
 
 	/** After a reload request: an error when the JS context never restarted or the reconnect it caused failed. */
-	async function awaitReload(
+	private async awaitReload(
 		method: ReloadMethod,
 		startedAt: number,
 		waitMs: number
 	): Promise<DevtoolsResult<never> | undefined> {
-		if (epoch === startedAt) await waitForEpochChange(waitMs);
-		if (epoch === startedAt && state.kind === "up") {
-			log(`devtools: reload via ${method} not observed after ${waitMs} ms`);
-			return devtoolsErr(
+		if (this.epoch === startedAt) await this.waitForEpochChange(waitMs);
+		if (this.epoch === startedAt && this.state.kind === "up") {
+			this.log(`devtools: reload via ${method} not observed after ${waitMs} ms`);
+			return devtoolsErrors.err(
 				"reload_failed",
 				`reload via ${method} acknowledged but the JS context did not restart within ${waitMs} ms`
 			);
 		}
-		if (state.kind !== "reconnecting") return undefined;
-		const back = await state.done;
+		if (this.state.kind !== "reconnecting") return undefined;
+		const back = await this.state.done;
 		return back.success ? undefined : back;
 	}
 
 	/** Resolves when the session next reconnects or closes, or after `waitMs`, whichever is first. */
-	function waitForEpochChange(waitMs: number): Promise<void> {
+	private waitForEpochChange(waitMs: number): Promise<void> {
 		return new Promise<void>((resolve) => {
 			const wake = () => {
-				epochWaiters.delete(wake);
+				this.epochWaiters.delete(wake);
 				resolve();
 			};
-			epochWaiters.add(wake);
-			void sleep(waitMs).then(wake);
+			this.epochWaiters.add(wake);
+			void this.sleep(waitMs).then(wake);
 		});
 	}
 
-	const first = await establish();
-	if (!first.success) return first;
-	attach(first.data);
-	log(`devtools: attached to ${first.data.target.id} (${first.data.target.fusebox ? "Fusebox" : "legacy"})`);
+	/** The method the reload expression scheduled, or `undefined` when the app has neither JS reload API. */
+	private readReloadMethod(data: unknown): "expo" | "devsettings" | undefined {
+		if (typeof data !== "object" || data === null || !("result" in data)) return undefined;
+		const { result } = data;
+		if (typeof result !== "object" || result === null || !("value" in result)) return undefined;
+		return result.value === "expo" || result.value === "devsettings" ? result.value : undefined;
+	}
+}
 
-	const session: DevtoolsSession = {
-		async evaluate(expression, options = {}) {
-			const live = await current();
-			if (!live.success) return { success: false, error: { message: live.error.message, code: live.error.code } };
-			const reply = await live.data.cdp.send(
-				"Runtime.evaluate",
-				{ expression, returnByValue: true, awaitPromise: options.await ?? false },
-				{ timeoutMs: options.timeoutMs }
+/** Attaches to the app's Hermes runtime through Metro's inspector proxy. Use the shared {@link devtoolsConnector}. */
+export class DevtoolsConnector {
+	async connect(o: ConnectDevtoolsOptions): Promise<DevtoolsResult<DevtoolsSession>> {
+		const { metroUrl } = o;
+		if (!metroUrl) {
+			return devtoolsErrors.err(
+				"devtools_unavailable",
+				"no Metro URL: release builds have no devtools (start a dev client)"
 			);
-			if (!reply.success) return { success: false, error: { message: reply.error.message, code: reply.error.code } };
-			const { value, exceptionDetails } = readEvaluateReply(reply.data);
-			if (exceptionDetails) {
-				return {
-					success: false,
-					error: { message: describeException(exceptionDetails), code: "eval_failed", exceptionDetails },
-				};
-			}
-			return resultFactory.ok(value);
-		},
-		async reloadJs() {
-			const live = await current();
-			if (!live.success) return live;
-			const startedAt = epoch;
-			const waitMs = o.reloadWaitMs ?? RELOAD_WAIT_MS;
-			const probe = await live.data.cdp.send("Runtime.evaluate", {
-				expression: RELOAD_EXPRESSION,
-				returnByValue: true,
-			});
-			if (!probe.success) {
-				log(`devtools: reload probe failed: ${probe.error.message}`);
-				return devtoolsErr(probe.error.code, `reload probe failed: ${probe.error.message}`);
-			}
-			const method: ReloadMethod = readReloadMethod(probe.data) ?? "http";
-			const failure = (await requestReload(method, metroUrl)) ?? (await awaitReload(method, startedAt, waitMs));
-			return failure ?? resultFactory.ok({ method });
-		},
-		get target() {
-			if (state.kind === "up") return state.attached.target;
-			return first.data.target;
-		},
-		get bindingAvailable() {
-			return state.kind === "up" && state.attached.cdp.bindingAvailable === true;
-		},
-		async send(method, params, options) {
-			const live = await current();
-			if (!live.success) return live;
-			return live.data.cdp.send(method, params, options);
-		},
-		onEvent(tap) {
-			taps.add(tap);
-			return () => {
-				taps.delete(tap);
-			};
-		},
-		onCdp(method, handler) {
-			let set = cdpHandlers.get(method);
-			if (!set) {
-				set = new Set();
-				cdpHandlers.set(method, set);
-			}
-			set.add(handler);
-			const off = state.kind === "up" ? state.attached.cdp.on(method, handler) : undefined;
-			if (off) unsubscribeCdp.push(off);
-			return () => {
-				set.delete(handler);
-				off?.();
-			};
-		},
-		async evaluateWithBinding(script, requestId, timeoutMs) {
-			const live = await current();
-			if (!live.success) return live;
-			return live.data.cdp.evaluateWithBinding(script, requestId, timeoutMs);
-		},
-		on(event, handler) {
-			const handlers = eventHandlers[event] as Set<typeof handler>;
-			handlers.add(handler);
-			return () => {
-				handlers.delete(handler);
-			};
-		},
-		close() {
-			const previous = state;
-			state = { kind: "closed" };
-			if (previous.kind === "up") previous.attached.cdp.close();
-			for (const wake of [...epochWaiters]) wake();
-		},
-	};
-	return resultFactory.ok(session);
+		}
+		return new DevtoolsSessionConnection({ ...o, metroUrl }).start();
+	}
 }
 
-/** The method the reload expression scheduled, or `undefined` when the app has neither JS reload API. */
-function readReloadMethod(data: unknown): "expo" | "devsettings" | undefined {
-	if (typeof data !== "object" || data === null || !("result" in data)) return undefined;
-	const { result } = data;
-	if (typeof result !== "object" || result === null || !("value" in result)) return undefined;
-	return result.value === "expo" || result.value === "devsettings" ? result.value : undefined;
-}
+export const devtoolsConnector = new DevtoolsConnector();

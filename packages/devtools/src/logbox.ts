@@ -1,8 +1,9 @@
 import type { Sleep } from "./devtools.types";
 import { LOGBOX_EXPRESSION } from "./logbox.script";
 import type { DevtoolsSession } from "./session";
+import { timer } from "./timer";
 
-/** What {@link muteLogBox} needs of a devtools session (or facet). */
+/** What {@link LogBoxMuter} needs of a devtools session (or facet). */
 export type LogBoxSession = {
 	evaluate: DevtoolsSession["evaluate"];
 	on: (event: "reconnected", handler: () => void) => () => void;
@@ -27,48 +28,58 @@ export type LogBoxMute = {
 const INTERVAL_MS = 250;
 const ATTEMPTS = 80;
 
-const timerSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * Keeps React Native's LogBox off in the attached app (see `logbox.script.ts`): now, and again in every new JS context
  * (`reconnected` after a relaunch or JS reload). A context whose bundle has not run yet is tried again every
  * `intervalMs`; a newer context or `stop()` ends the older context's tries.
  */
-export function muteLogBox(session: LogBoxSession, options: MuteLogBoxOptions = {}): LogBoxMute {
-	const sleep = options.sleep ?? timerSleep;
-	const intervalMs = options.intervalMs ?? INTERVAL_MS;
-	const attempts = options.attempts ?? ATTEMPTS;
-	let generation = 0;
-	let stopped = false;
+export class LogBoxMuter implements LogBoxMute {
+	readonly settled: Promise<void>;
+	private readonly sleep: Sleep;
+	private readonly intervalMs: number;
+	private readonly attempts: number;
+	private readonly off: () => void;
+	private generation = 0;
+	private stopped = false;
+
+	constructor(
+		private readonly session: LogBoxSession,
+		private readonly options: MuteLogBoxOptions = {}
+	) {
+		this.sleep = options.sleep ?? timer.sleep;
+		this.intervalMs = options.intervalMs ?? INTERVAL_MS;
+		this.attempts = options.attempts ?? ATTEMPTS;
+		this.off = session.on("reconnected", () => {
+			void this.start();
+		});
+		this.settled = this.start();
+	}
+
+	stop(): void {
+		this.stopped = true;
+		this.off();
+	}
+
+	private start(): Promise<void> {
+		this.generation += 1;
+		return this.apply(this.generation);
+	}
 
 	/** `undefined` once LogBox is off, else why it is not (yet) */
-	async function tryOnce(): Promise<string | undefined> {
-		const reply = await session.evaluate(LOGBOX_EXPRESSION);
+	private async tryOnce(): Promise<string | undefined> {
+		const reply = await this.session.evaluate(LOGBOX_EXPRESSION);
 		if (!reply.success) return reply.error.message;
 		return reply.data === "off" ? undefined : String(reply.data);
 	}
 
-	async function apply(mine: number): Promise<void> {
-		const current = (): boolean => !stopped && mine === generation;
+	private async apply(mine: number): Promise<void> {
+		const current = (): boolean => !this.stopped && mine === this.generation;
 		let last: string | undefined = "no reply";
-		for (let attempt = 1; attempt <= attempts && current(); attempt++) {
-			last = await tryOnce();
+		for (let attempt = 1; attempt <= this.attempts && current(); attempt++) {
+			last = await this.tryOnce();
 			if (last === undefined) return;
-			if (attempt < attempts) await sleep(intervalMs);
+			if (attempt < this.attempts) await this.sleep(this.intervalMs);
 		}
-		if (current()) options.log?.(`devtools: LogBox left on (${last} after ${attempts} attempts)`);
+		if (current()) this.options.log?.(`devtools: LogBox left on (${last} after ${this.attempts} attempts)`);
 	}
-
-	const start = (): Promise<void> => apply(++generation);
-	const off = session.on("reconnected", () => {
-		void start();
-	});
-	const settled = start();
-	return {
-		settled,
-		stop() {
-			stopped = true;
-			off();
-		},
-	};
 }
