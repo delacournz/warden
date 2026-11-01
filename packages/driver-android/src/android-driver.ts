@@ -1,17 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-config/conditions.types";
 import { androidBiometrics } from "@delacour/warden-core/golden/android-biometrics";
+import { BaseDriver, type BaseDriverOptions } from "@delacour/warden-driver/base-driver";
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { ConditionSink } from "@delacour/warden-driver/conditions/condition-events";
-import { locationPlanner } from "@delacour/warden-driver/conditions/location-plan";
-import {
-	type RouteTicker,
-	realTickerClock,
-	routeTickers,
-	type TickerClock,
-} from "@delacour/warden-driver/conditions/route-ticker";
-import { type Scheduler, schedulers } from "@delacour/warden-driver/conditions/scheduler";
+import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type {
 	AlertInfo,
 	BiometricState,
@@ -35,7 +29,7 @@ import { DEFAULT_RADIUS, type GesturePlan, gestureGeometry } from "@delacour/war
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import type { DetectsAlerts } from "@delacour/warden-driver/observation-cache";
 import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
-import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS, settler } from "@delacour/warden-driver/settle";
+import { settler } from "@delacour/warden-driver/settle";
 import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { RepeatingKeys, SelectsAll, SetsText } from "@delacour/warden-driver/typing";
 import type { Exec } from "@delacour/warden-runtime/exec";
@@ -232,6 +226,23 @@ class UiadOpener {
 	}
 }
 
+/** The slice of the driver options the shared {@link BaseDriver} takes. */
+class BaseDriverOptionsFactory {
+	of(options: AndroidDriverOptions, time: Clock): BaseDriverOptions {
+		const { log, tickerClock, conditionSink, clockRecorder } = options;
+		return {
+			now: time.now,
+			sleep: time.sleep,
+			...(log ? { log } : {}),
+			...(tickerClock ? { tickerClock } : {}),
+			...(conditionSink ? { conditionSink } : {}),
+			...(clockRecorder ? { clockRecorder } : {}),
+		};
+	}
+}
+
+const baseDriverOptions = new BaseDriverOptionsFactory();
+
 /**
  * Android `Driver`: one resident `adb shell` (inputs, `am`, `pm`, dumps), host `adb` for install and
  * `exec-out` (binary screenshots never touch the session). `settle` is implemented here over snapshots (one dump,
@@ -240,7 +251,10 @@ class UiadOpener {
  *
  * The driver ops are arrow-function properties (own, enumerable, detachable) so a wrapper may spread or proxy them.
  */
-export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Partial<SelectsAll>, Partial<SetsText> {
+export class AndroidDriver
+	extends BaseDriver
+	implements Driver, RepeatingKeys, DetectsAlerts, Partial<SelectsAll>, Partial<SetsText>
+{
 	readonly platform = "android" as const;
 	readonly id: string;
 	declare readonly networkFaults: Driver["networkFaults"];
@@ -258,13 +272,10 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 	private readonly serial: string;
 	private readonly adb: string;
 	private readonly sdk: number | undefined;
-	private readonly saving: Promise<void>[] = [];
 	private readonly dumper: Dumper;
 	private readonly uiad: UiadOps | undefined;
-	private readonly applyNetwork: Driver["network"];
+	private readonly net: AndroidNetwork;
 	private readonly radius: number;
-	private flapper: Scheduler | undefined;
-	private ticker: RouteTicker | undefined;
 
 	constructor(
 		private readonly options: AndroidDriverOptions,
@@ -274,6 +285,7 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 		private readonly execBinary: ExecBinary,
 		private readonly facts: DeviceFacts
 	) {
+		super(baseDriverOptions.of(options, time));
 		const { serial, adb, exec, log } = options;
 		const sdk = facts.sdk;
 		this.id = serial;
@@ -297,7 +309,7 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 			},
 		});
 		this.uiad = new UiadOpener().open({ options, session, baseScreen, clock: time, facts, saving: this.saving });
-		const net = new AndroidNetwork({
+		this.net = new AndroidNetwork({
 			session,
 			exec,
 			adb,
@@ -305,7 +317,6 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 			clock: time,
 			...(options.networkProxy ? { proxy: options.networkProxy } : {}),
 		});
-		this.applyNetwork = net.network;
 		if (this.uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK)) this.selectAll = this.runSelectAll;
 		if (this.uiad !== undefined) this.setText = this.runSetText;
 		this.app = new AndroidApp({
@@ -319,7 +330,7 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 		});
 		Object.assign(
 			this,
-			{ networkFaults: net.networkFaults },
+			{ networkFaults: this.net.networkFaults },
 			new AndroidSettings({
 				session,
 				serial,
@@ -517,36 +528,25 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 	/**
 	 * `uiautomator dump` waits for a second without accessibility events before it reads, so one dump is already
 	 * "quiet for 1 s": that is the whole settle for any `quietMs` it covers (the default 250 ms among them), instead of
-	 * two or more dumps compared by hash (3.8 s). A longer `quietMs` still compares successive snapshots. A failed dump,
-	 * or one that took so long it gave up waiting for idle, is not quiet. `timeoutMs` bounds only that comparison.
-	 * With the server on, none of this runs unless the server could not do the settle: it waits for the accessibility
-	 * events to stop by itself, for any `quietMs`. (The single dump is the dump's idle wait, which a server snapshot
-	 * does not have, so it is always a real dump here.)
+	 * two or more dumps compared by hash (3.8 s). A longer `quietMs` still compares successive snapshots (the base's
+	 * hash settle; `timeoutMs` bounds only that comparison). A failed dump, or one that took so long it gave up
+	 * waiting for idle, is not quiet. With the server on, none of this runs unless the server could not do the
+	 * settle: it waits for the accessibility events to stop by itself, for any `quietMs`. (The single dump is the
+	 * dump's idle wait, which a server snapshot does not have, so it is always a real dump here.)
 	 */
-	readonly settle: Driver["settle"] = async (opts) => {
-		const quietMs = opts?.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
-		const timeoutMs = opts?.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
-		const fast = await this.uiad?.settle({ quietMs, timeoutMs });
+	protected override async nativeSettle(o: { quietMs: number; timeoutMs: number }) {
+		const fast = await this.uiad?.settle(o);
 		if (fast !== undefined) return fast;
-		if (quietMs <= DUMP_IDLE_MS) {
-			const start = this.time.now();
-			const taken = await this.dumpSnapshot();
-			const waitedMs = this.time.now() - start;
-			spanDetails.note("via", "snapshot");
-			return {
-				success: true,
-				data: { quiet: taken.success && waitedMs < DUMP_IDLE_TIMEOUT_MS, waitedMs, via: "snapshot" },
-			};
-		}
-		const outcome = await settler.byHash(() => this.pollHash(), {
-			quietMs,
-			timeoutMs,
-			now: this.time.now,
-			sleep: this.time.sleep,
-		});
-		spanDetails.note("via", "hash");
-		return { success: true, data: { ...outcome, via: "hash" } };
-	};
+		if (o.quietMs > DUMP_IDLE_MS) return undefined;
+		const start = this.time.now();
+		const taken = await this.dumpSnapshot();
+		const waitedMs = this.time.now() - start;
+		spanDetails.note("via", "snapshot");
+		return {
+			success: true as const,
+			data: { quiet: taken.success && waitedMs < DUMP_IDLE_TIMEOUT_MS, waitedMs, via: "snapshot" as const },
+		};
+	}
 
 	readonly alert: Driver["alert"] = async (): DriverResult<AlertInfo | null> => {
 		const taken = await this.takeSnapshot();
@@ -578,72 +578,24 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 	readonly clipboard: Driver["clipboard"] = async () =>
 		driverErrors.err("E_UNSUPPORTED", "Android has no public shell clipboard access; type ASCII with typeText");
 
-	/**
-	 * Any network op ends a running flap first (which puts its base back). `flap` itself applies the base, then
-	 * the scheduler alternates it with offline in this process until the next network op or `close()`.
-	 */
-	readonly network: Driver["network"] = async (op, opts) => {
-		await this.stopFlap();
-		if (op.kind !== "flap") return this.applyNetwork(op, opts);
-		const base = op.base ?? { kind: "online" };
-		if (base.kind === "flap") return driverErrors.err("E_BAD_REQUEST", "flap base cannot itself be a flap");
-		if (!(op.upMs > 0 && op.downMs > 0)) return driverErrors.err("E_BAD_REQUEST", "flap needs upMs and downMs above 0");
-		const applied = await this.applyNetwork(base, opts);
-		if (!applied.success) return applied;
-		const running = schedulers.startFlap(
-			{ network: (condition) => this.applyNetwork(condition, opts) },
-			{ ...op, base, applyInitial: false },
-			{
-				...(this.options.tickerClock ?? realTickerClock),
-				...(this.options.conditionSink ? { sink: this.options.conditionSink } : {}),
-			}
-		);
-		this.flapper = running;
-		void running.done.then((outcome) => {
-			if (outcome.stopped === "failed") this.options.log?.(`network flap stopped: ${outcome.error}`);
-		});
-		return { success: true, data: { ...applied.data, condition: op } };
-	};
+	protected override applyNetwork(op: Parameters<Driver["network"]>[0], opts?: Parameters<Driver["network"]>[1]) {
+		return this.net.network(op, opts);
+	}
 
-	readonly clock: Driver["clock"] = async (op) => {
+	protected override async applyClock(op: Parameters<Driver["clock"]>[0]) {
 		const { session, options, adb, serial } = this;
-		const applied = await new AndroidClock({ session, exec: options.exec, adb, serial }).apply(op);
-		if (applied.success) options.clockRecorder?.(op);
-		return applied;
-	};
+		return new AndroidClock({ session, exec: options.exec, adb, serial }).apply(op);
+	}
 
-	/**
-	 * `adb emu geo fix` (emulators only; the console takes longitude first). A route is played by a ticker in
-	 * this process until the next location op or `close()`; a detached ticker for `warden ui` is
-	 * `conditions/route-ticker.main.ts`. The emulator has no way to un-set a fix, so `clear` stops the ticker and
-	 * the last fix stays.
-	 */
-	readonly location: Driver["location"] = async (op) => {
-		if (!this.serial.startsWith("emulator-")) {
-			return driverErrors.err("E_UNSUPPORTED", `location needs an emulator; ${this.serial} has no emulator console`);
-		}
-		await this.stopTicker();
-		if (op.kind === "clear") return unit;
-		if (op.kind === "point") return this.geoFix(op, op.altM);
-		const planned = await locationPlanner.planRoute(op, (path) => readFile(path, "utf8"));
-		if (!planned.success) return driverErrors.err("E_BAD_REQUEST", planned.error);
-		const plan = planned.data;
-		const first = plan.points[0] as LatLon;
-		const placed = await this.geoFix(first);
-		if (!placed.success || plan.points.length < 2) return placed;
-		const running = routeTickers.start(plan, {
-			...(this.options.tickerClock ?? realTickerClock),
-			fix: async (point) => {
-				const res = await this.geoFix(point);
-				return res.success ? undefined : res.error.message;
-			},
-		});
-		this.ticker = running;
-		void running.done.then((outcome) => {
-			if (outcome.stopped === "failed") this.options.log?.(`location route stopped: ${outcome.error}`);
-		});
-		return unit;
-	};
+	/** `adb emu geo fix` works on emulators only; the console takes longitude first. The last fix stays after `clear`. */
+	protected override locationGuard(): DriverError | undefined {
+		if (this.serial.startsWith("emulator-")) return undefined;
+		return driverErrors.make("E_UNSUPPORTED", `location needs an emulator; ${this.serial} has no emulator console`);
+	}
+
+	protected override setLocationFix(point: LatLon, altM?: number): DriverResult<void> {
+		return this.geoFix(point, altM);
+	}
 
 	/**
 	 * `emu finger touch <id>` on the emulator console presents a fingerprint (id 1 is the enrolled one, 99 matches
@@ -673,15 +625,18 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 		return { success: true, data: state };
 	};
 
-	readonly close = async (): Promise<void> => {
-		await this.stopFlap();
-		await this.stopTicker();
+	protected override async stopHelper(): Promise<void> {
 		await this.uiad?.stop();
+	}
+
+	protected override async restoreSettings(): Promise<void> {
 		await this.facts.animations.restore();
 		await this.facts.settings?.restore();
-		await Promise.all(this.saving.splice(0));
+	}
+
+	protected override async teardown(): Promise<void> {
 		await this.session.close();
-	};
+	}
 
 	/**
 	 * See `SelectsAll`: the server selects the focused field's text whole; without it, Ctrl+A on the Androids that
@@ -745,11 +700,11 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 	}
 
 	/** The server's snapshot when it is running (tens of ms); else, or when it cannot be used, `uiautomator dump` (about 2 s). */
-	private async takeSnapshot(): DriverResult<Snapshot> {
+	protected async takeSnapshot(): DriverResult<Snapshot> {
 		return (await this.uiad?.snapshot()) ?? this.dumpSnapshot();
 	}
 
-	private async pollHash(): Promise<string> {
+	protected override async pollHash(): Promise<string> {
 		const taken = await this.takeSnapshot();
 		if (!taken.success) return "unavailable";
 		// snapshotHash ignores `text`; on Android static text lives there, so fold it into `value`
@@ -790,20 +745,6 @@ export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Part
 	private maxPointers(): 0 | 1 | 2 {
 		if (this.uiad?.enabled()) return 2;
 		return this.sdk !== undefined && this.sdk >= MOTIONEVENT_MIN_SDK ? 1 : 0;
-	}
-
-	private async stopFlap(): Promise<void> {
-		const running = this.flapper;
-		this.flapper = undefined;
-		running?.stop();
-		await running?.done;
-	}
-
-	private async stopTicker(): Promise<void> {
-		const running = this.ticker;
-		this.ticker = undefined;
-		running?.stop();
-		await running?.done;
 	}
 
 	private async geoFix(point: LatLon, altM?: number): DriverResult<void> {

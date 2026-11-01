@@ -12,7 +12,8 @@ import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span
 import { deviceTyping } from "@delacour/warden-driver/typing";
 import { type ExecCall, fakeExec } from "./exec.testing";
 import type { InjectFs } from "./inject";
-import { iosDriverOpener, KEY_USAGE, type OpenIosDriverOptions } from "./ios-driver";
+import { iosDriverOpener, type OpenIosDriverOptions } from "./ios-driver";
+import { KEY_USAGE } from "./ios-engine-base";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
 import { simdClients } from "./simd-client";
 

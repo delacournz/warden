@@ -7,6 +7,7 @@
 	"exports": {
 		"./alert-buttons": "./src/alert-buttons.ts",
 		"./alerts": "./src/alerts.ts",
+		"./base-driver": "./src/base-driver.ts",
 		"./clock-recorder": "./src/clock-recorder.ts",
 		"./conditions/condition-events": "./src/conditions/condition-events.ts",
 		"./conditions/geo": "./src/conditions/geo.ts",

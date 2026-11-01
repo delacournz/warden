@@ -10,29 +10,22 @@ import type {
 	DriverError,
 	DriverResult,
 	HardwareButton,
-	KeyName,
 	LaunchOptions,
 	Logger,
-	Snapshot,
 } from "@delacour/warden-driver/driver.types";
 import { driverErrors } from "@delacour/warden-driver/errors";
 import { DEFAULT_RADIUS, type GesturePlan, gestureGeometry } from "@delacour/warden-driver/gesture-geometry";
-import type {
-	AlertButtonsData,
-	HealthData,
-	OpData,
-	RebindData,
-	SettleData,
-} from "@delacour/warden-driver/helper/simd-protocol";
+import type { HealthData, OpData, RebindData, SettleData } from "@delacour/warden-driver/helper/simd-protocol";
 import type { SimdSpawn } from "@delacour/warden-driver/helper/simd-transport";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
-import { type SettleDetail, settler } from "@delacour/warden-driver/settle";
+import type { SettleDetail } from "@delacour/warden-driver/settle";
 import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { PastesText, SelectsAll } from "@delacour/warden-driver/typing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { storeLocator } from "@delacour/warden-store/store";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { FileInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectProtocol } from "./inject";
+import { IosEngineBase, okVoid, type Params } from "./ios-engine-base";
 import { type IosNetwork, IosNetworkController } from "./ios-network";
 import { type SwapPort, SwappableClient } from "./ios-session";
 import { type IosSettings, IosSettingsController, iosLaunchSettings, type StagedSettings } from "./ios-settings";
@@ -110,27 +103,10 @@ const DEFAULT_SETTLE_TIMEOUT_MS = 5_000;
 const SETTLE_MARGIN_MS = 2_000;
 /** How long `app.launch` lets the helper wait for its stream to follow the new process; the helper answers earlier. */
 const REBIND_TIMEOUT_MS = 3_000;
-const GESTURE_MARGIN_MS = 5_000;
-/** `frontmost` is one launchd lookup; a helper that has not answered in this long is busy, and the caller carries on without. */
-const FRONTMOST_TIMEOUT_MS = 3_000;
 /** The helper's `launch` waits for the app to start, bounded like `simctl launch` was. */
 const LAUNCH_TIMEOUT_MS = 30_000;
 /** `terminate` / `openUrl` through the helper. */
 const APP_OP_TIMEOUT_MS = 15_000;
-
-/** USB HID keyboard-page usage ids for the keys `Driver.key` offers. */
-export const KEY_USAGE: Readonly<Record<KeyName, number>> = {
-	Enter: 0x28,
-	Escape: 0x29,
-	Backspace: 0x2a,
-	Tab: 0x2b,
-	Space: 0x2c,
-	Delete: 0x4c,
-	Right: 0x4f,
-	Left: 0x50,
-	Down: 0x51,
-	Up: 0x52,
-};
 
 const BUTTONS: Readonly<Record<Exclude<HardwareButton, "back">, string>> = {
 	home: "home",
@@ -160,18 +136,7 @@ const RETRIED_AFTER_CRASH: ReadonlySet<string> = new Set([
 /** How long `connect` waits before asking a configured socket a second time (20-1). */
 const SOCKET_RETRY_MS = 500;
 
-type Params = Record<string, unknown>;
-
-const okVoid = { success: true as const, data: undefined };
-
 type AppOp = "launch" | "terminate" | "openUrl";
-
-/** Carries a `DriverError` out of a `settleByHash` poll callback. */
-class DriverFailure extends Error {
-	constructor(readonly error: DriverError) {
-		super(error.message);
-	}
-}
 
 /** Wire-level helpers of the iOS driver: request params, reply details, spans. Use the shared `iosWire` singleton. */
 class IosWire {
@@ -258,20 +223,18 @@ export type IosNetworkFactory = (deps: {
 }) => IosNetwork;
 
 /** The iOS `Driver` over one helper client (`SwapPort`) and `simctl`. Built by {@link IosDriverOpener}. */
-export class IosDriverEngine implements IosDriver {
-	readonly platform = "ios" as const;
+export class IosDriverEngine extends IosEngineBase implements IosDriver {
 	readonly id: string;
 	readonly capabilities: DriverCapabilities;
 
 	private readonly swap: SwapPort;
 	private readonly simctl: Simctl;
 	private readonly opts: IosDriverEngineOptions;
-	private readonly now: () => number;
-	private readonly sleep: (ms: number) => Promise<void>;
-	private readonly client: SwapPort["client"];
+	protected readonly client: SwapPort["client"];
+	protected readonly logTag = "[ios]";
 	private readonly settings: IosSettings | undefined;
 	private readonly net: IosNetwork | undefined;
-	private readonly nativeSettle: boolean;
+	private readonly axSettle: boolean;
 	private readonly bridgeUp: boolean;
 
 	private lastLaunched: string | undefined;
@@ -296,12 +259,17 @@ export class IosDriverEngine implements IosDriver {
 	private answeredGeneration: number;
 
 	constructor(swap: SwapPort, simctl: Simctl, opts: IosDriverEngineOptions) {
+		super({
+			now: opts.now,
+			sleep: opts.sleep,
+			settleDefaults: { quietMs: DEFAULT_QUIET_MS, timeoutMs: DEFAULT_SETTLE_TIMEOUT_MS },
+			...(opts.log ? { log: opts.log } : {}),
+			...(opts.clockRecorder ? { clockRecorder: opts.clockRecorder } : {}),
+		});
 		this.swap = swap;
 		this.simctl = simctl;
 		this.opts = opts;
 		this.id = opts.udid;
-		this.now = opts.now;
-		this.sleep = opts.sleep;
 		this.client = swap.client;
 		this.settings = opts.settings?.({ lastBundle: () => this.lastLaunched });
 		// late-bound: the network helper relaunches through the driver's own `app.launch`
@@ -310,44 +278,30 @@ export class IosDriverEngine implements IosDriver {
 			relaunch: (bundleId) => this.app.launch(bundleId, { relaunch: true, inject: true }),
 		});
 		const { ready } = this.client;
-		this.nativeSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
+		this.axSettle = ready.ax.default === "axbridge" && ready.ax.bridge === "available";
 		this.bridgeUp = ready.ax.bridge === "available";
-		this.settleUnsupported = !this.nativeSettle;
+		this.settleUnsupported = !this.axSettle;
 		this.answeredGeneration = swap.generation();
 		this.capabilities = {
 			pinch: true,
 			maxPointers: 2,
 			unicodeText: true,
-			nativeSettle: this.nativeSettle,
+			nativeSettle: this.axSettle,
 			alerts: true,
 			reachability: true,
 			cheapHitTest: true,
 		};
 	}
 
-	health: IosDriver["health"] = async () => {
-		const result = await this.request("health");
-		if (!result.success) return result;
-		const d = result.data;
-		return {
-			success: true,
-			data: {
-				platform: "ios",
-				id: this.id,
-				version: d.version,
-				transport: d.hid.transport,
-				bridge: d.ax.bridge === "degraded" ? "available" : d.ax.bridge,
-				screen: d.screen,
-				detail: iosWire.healthDetail(d),
-			},
-		};
-	};
+	protected healthDetail(d: HealthData): Record<string, unknown> {
+		return iosWire.healthDetail(d);
+	}
 
 	/**
 	 * The first `E_AX_UNAVAILABLE` goes to the caller (it is retryable); a second one in a row means the
 	 * in-sim AX bridge went stale, so restart the helper once and retry the snapshot.
 	 */
-	snapshot: IosDriver["snapshot"] = async (o) => {
+	override readonly snapshot: IosDriver["snapshot"] = async (o) => {
 		const generation = this.swap.generation();
 		const first = await this.fetchSnapshot(o);
 		if (first.success) {
@@ -379,28 +333,11 @@ export class IosDriverEngine implements IosDriver {
 		};
 	};
 
-	tap: IosDriver["tap"] = (point, o) =>
-		this.sendVoid("tap", iosWire.params({ x: point.x, y: point.y, count: o?.count, durationMs: o?.durationMs }));
-
-	longPress: IosDriver["longPress"] = (point, o) =>
-		this.sendVoid(
-			"longPress",
-			iosWire.params({ x: point.x, y: point.y, durationMs: o?.durationMs }),
-			this.gestureTimeout(o?.durationMs, 1_000)
-		);
-
 	swipe: IosDriver["swipe"] = (from, to, o) =>
 		this.sendVoid(
 			"swipe",
 			iosWire.params({ from, to, durationMs: o?.durationMs, momentum: o?.momentum }),
 			this.gestureTimeout(o?.durationMs, 300)
-		);
-
-	drag: IosDriver["drag"] = (from, to, o) =>
-		this.sendVoid(
-			"drag",
-			iosWire.params({ from, to, pressMs: o?.pressMs, durationMs: o?.durationMs, releaseMs: o?.releaseMs }),
-			this.gestureTimeout((o?.pressMs ?? 0) + (o?.durationMs ?? 0) + (o?.releaseMs ?? 0), 300)
 		);
 
 	pinch: IosDriver["pinch"] = (center, scale, o) =>
@@ -423,9 +360,6 @@ export class IosDriverEngine implements IosDriver {
 		this.opts.log?.(`[ios] typeText: pasting ${rest.length} unmappable character(s)`);
 		return this.pasteText(rest);
 	};
-
-	key: IosDriver["key"] = (key, modifiers) =>
-		this.sendVoid("key", iosWire.params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] }));
 
 	selectAll: IosDriver["selectAll"] = () => this.sendVoid("selectAll");
 
@@ -467,22 +401,9 @@ export class IosDriverEngine implements IosDriver {
 		const { orientation: read, source } = result.data;
 		if (source !== undefined && source !== "device")
 			this.opts.log?.(`[ios] orientation ${read} is ${source}, not read from the device`);
-		if (read === "faceUp" || read === "faceDown" || read === "unknown") {
-			// Orientation is frozen at the four interface orientations; a flat device has no better answer than upright.
-			this.opts.log?.(`[ios] device reports ${read}; exposing it as portrait`);
-			return { success: true, data: "portrait" };
-		}
-		return { success: true, data: read };
-	};
-
-	settle: IosDriver["settle"] = async (o = {}) => {
-		const quietMs = o.quietMs ?? DEFAULT_QUIET_MS;
-		const timeoutMs = o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
-		if (!this.settleUnsupported) {
-			const native = await this.settleViaHelper(quietMs, timeoutMs);
-			if (native) return native;
-		}
-		return this.hashSettle({ quietMs, timeoutMs });
+		const upright = this.interfaceOrientation(read);
+		if (upright !== read) this.opts.log?.(`[ios] device reports ${read}; exposing it as portrait`);
+		return { success: true, data: upright };
 	};
 
 	alert: IosDriver["alert"] = () => this.readAlert();
@@ -491,17 +412,16 @@ export class IosDriverEngine implements IosDriver {
 	alertOn: IosDriver["alertOn"] = (backend) =>
 		this.readAlert(backend === "axbridge" && !this.bridgeUp ? "ax" : backend);
 
-	isFrontmost: IosDriver["isFrontmost"] = async (bundleId) => {
-		if (!this.bridgeUp) return this.fail(driverErrors.make("E_UNSUPPORTED", "frontmost needs the axbridge backend"));
-		const result = await this.request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
-		return result.success ? { success: true, data: result.data.frontmost } : result;
-	};
+	protected override frontmostGuard(): DriverError | undefined {
+		return this.bridgeUp ? undefined : driverErrors.make("E_UNSUPPORTED", "frontmost needs the axbridge backend");
+	}
 
 	appearance: IosDriver["appearance"] = (set) => this.simctl.appearance(set);
-	network: IosDriver["network"] = async (op, o) => (this.net ? this.net.network(op, o) : this.noLeaseProxy());
+	override readonly network: IosDriver["network"] = async (op, o) =>
+		this.net ? this.net.network(op, o) : this.noLeaseProxy();
 	networkFaults: IosDriver["networkFaults"] = async (faults) =>
 		this.net ? this.net.networkFaults(faults) : this.noLeaseProxy();
-	location: IosDriver["location"] = (op) => this.simctl.location(op);
+	override readonly location: IosDriver["location"] = (op) => this.simctl.location(op);
 	permissions: IosDriver["permissions"] = (grants, o) =>
 		this.settings ? this.settings.permissions(grants, o) : this.noSettings();
 	timezone: IosDriver["timezone"] = (tz, o) => (this.settings ? this.settings.timezone(tz, o) : this.noSettings());
@@ -512,12 +432,9 @@ export class IosDriverEngine implements IosDriver {
 		this.settings ? this.settings.memoryWarning(o) : this.noSettings();
 	push: IosDriver["push"] = (payload, o) => (this.settings ? this.settings.push(payload, o) : this.noSettings());
 
-	clock: IosDriver["clock"] = async (op, o) => {
-		if (!this.net) return this.noLeaseProxy();
-		const result = await this.net.clock(op, o);
-		if (result.success) this.opts.clockRecorder?.(op);
-		return result;
-	};
+	protected override async applyClock(op: Parameters<IosDriver["clock"]>[0], o?: Parameters<IosDriver["clock"]>[1]) {
+		return this.net ? this.net.clock(op, o) : this.noLeaseProxy();
+	}
 
 	biometrics: IosDriver["biometrics"] = (op) => this.simctl.biometrics(op);
 
@@ -582,12 +499,6 @@ export class IosDriverEngine implements IosDriver {
 		clearData: (bundleId, o) => this.simctl.clearData(bundleId, o),
 	};
 
-	close: IosDriver["close"] = () => this.client.close();
-
-	private fail(error: DriverError) {
-		return { success: false as const, error };
-	}
-
 	private async noLeaseProxy() {
 		return driverErrors.err(
 			"E_UNSUPPORTED",
@@ -633,7 +544,7 @@ export class IosDriverEngine implements IosDriver {
 	 * answered like a stale bridge: the helper is replaced once (`swap.restart`, socket first, else a stdio
 	 * spawn) and a read is asked again; an input op's error is returned unchanged, the next call uses the new helper.
 	 */
-	private async request<Op extends string>(op: Op, p: Params = {}, o: RequestOptions = {}): DriverResult<OpData<Op>> {
+	protected async request<Op extends string>(op: Op, p: Params = {}, o: RequestOptions = {}): DriverResult<OpData<Op>> {
 		if (this.lost) return this.fail(this.lost);
 		const seen = this.swap.generation();
 		const first = await this.client.request(op, p, o);
@@ -649,19 +560,6 @@ export class IosDriverEngine implements IosDriver {
 		const again = await this.client.request(op, p, o);
 		if (again.success) this.answeredGeneration = generation;
 		return again;
-	}
-
-	private send(op: string, p: Params = {}, timeoutMs?: number) {
-		return this.request(op, p, timeoutMs === undefined ? {} : { timeoutMs });
-	}
-
-	private async sendVoid(op: string, p: Params = {}, timeoutMs?: number): DriverResult<void> {
-		const result = await this.send(op, p, timeoutMs);
-		return result.success ? okVoid : result;
-	}
-
-	private gestureTimeout(durationMs: number | undefined, base = 0): number {
-		return (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
 	}
 
 	private helperOutdated() {
@@ -732,35 +630,6 @@ export class IosDriverEngine implements IosDriver {
 		return okVoid;
 	}
 
-	private async fetchSnapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }) {
-		const result = await this.request(
-			"snapshot",
-			iosWire.params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend })
-		);
-		if (!result.success) return result;
-		const { fallback } = result.data;
-		if (fallback) this.opts.log?.(`[ios] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
-		return { success: true, data: elementNormalizer.snapshot(result.data, this.now()) } as const;
-	}
-
-	private async hashSettle(o: { quietMs: number; timeoutMs: number }): DriverResult<SettleDetail> {
-		try {
-			const outcome = await settler.byHash(
-				async () => {
-					const snap = await this.snapshot();
-					if (!snap.success) throw new DriverFailure(snap.error);
-					return settler.snapshotHash(snap.data);
-				},
-				{ quietMs: o.quietMs, timeoutMs: o.timeoutMs, now: this.now, sleep: this.sleep }
-			);
-			spanDetails.note("via", "hash");
-			return { success: true, data: { ...outcome, via: "hash" } };
-		} catch (error) {
-			if (error instanceof DriverFailure) return this.fail(error.error);
-			throw error;
-		}
-	}
-
 	/**
 	 * Right after `simctl launch` the helper's quiescence stream still reports on the previous frontmost app; the first
 	 * AX read then fails with `did not respond` and the repair costs seconds. `rebind` makes the helper wait (briefly,
@@ -814,12 +683,8 @@ export class IosDriverEngine implements IosDriver {
 		return undefined;
 	}
 
-	private toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
-		const { title, message, buttons } = data;
-		const info: AlertInfo = { buttons: elementNormalizer.elements(buttons, this.client.ready.screen).elements };
-		if (title !== undefined) info.title = title;
-		if (message !== undefined) info.message = message;
-		return info;
+	protected override async nativeSettle(o: { quietMs: number; timeoutMs: number }) {
+		return this.settleUnsupported ? undefined : this.settleViaHelper(o.quietMs, o.timeoutMs);
 	}
 
 	/** The helper's `alertButtons`: both readers without a `backend`, only that one with it. */

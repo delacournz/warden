@@ -1,7 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "@delacour/warden-driver/alerts";
 import type {
-	AlertInfo,
 	Driver,
 	DriverError,
 	DriverResult,
@@ -12,14 +11,12 @@ import type {
 	Snapshot,
 } from "@delacour/warden-driver/driver.types";
 import { driverErrors } from "@delacour/warden-driver/errors";
-import type { AlertButtonsData, OpData } from "@delacour/warden-driver/helper/simd-protocol";
+import type { HealthData, OpData } from "@delacour/warden-driver/helper/simd-protocol";
 import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
-import { settler } from "@delacour/warden-driver/settle";
 import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Result } from "@delacour/warden-types/result";
-import { KEY_USAGE } from "../ios-driver";
-import { elementNormalizer } from "../normalize";
+import { IosEngineBase, okVoid, type Params } from "../ios-engine-base";
 import { type RequestOptions, type SimdClient, simdClients } from "../simd-client";
 import { typeBudget } from "../type-budget";
 import { IOS_DEVICE_CAPABILITIES } from "./capabilities";
@@ -65,23 +62,11 @@ export type IosDeviceDriver = Driver & ReadsAlertOn & ProbesFrontmost;
 
 const DEFAULT_QUIET_MS = 250;
 const DEFAULT_SETTLE_TIMEOUT_MS = 5_000;
-const GESTURE_MARGIN_MS = 5_000;
 const LAUNCH_TIMEOUT_MS = 30_000;
 const APP_OP_TIMEOUT_MS = 15_000;
-const FRONTMOST_TIMEOUT_MS = 3_000;
 
 /** Runner screenshot failures after which devicectl is worth a try (the op missing or failing, not a dead runner). */
 const SCREENSHOT_FALLBACK: ReadonlySet<string> = new Set(["E_UNSUPPORTED", "E_IO", "E_INTERNAL"]);
-
-type Params = Record<string, unknown>;
-
-const okVoid = { success: true as const, data: undefined };
-
-class DriverFailure extends Error {
-	constructor(readonly error: DriverError) {
-		super(error.message);
-	}
-}
 
 export type IosDeviceEngineOptions = Omit<
 	OpenIosDeviceDriverOptions,
@@ -93,15 +78,14 @@ export type IosDeviceEngineOptions = Omit<
 };
 
 /** The `Driver` of one physical iPhone over its runner client and `devicectl`. Built by {@link IosDeviceDriverOpener}. */
-export class IosDeviceEngine implements IosDeviceDriver {
-	readonly platform = "ios" as const;
+export class IosDeviceEngine extends IosEngineBase implements IosDeviceDriver {
 	readonly id: string;
 	readonly capabilities = IOS_DEVICE_CAPABILITIES;
 
-	readonly network: IosDeviceDriver["network"];
+	override readonly network: IosDeviceDriver["network"];
 	readonly networkFaults: IosDeviceDriver["networkFaults"];
-	readonly location: IosDeviceDriver["location"];
-	readonly clock: IosDeviceDriver["clock"];
+	override readonly location: IosDeviceDriver["location"];
+	override readonly clock: IosDeviceDriver["clock"];
 	readonly permissions: IosDeviceDriver["permissions"];
 	readonly timezone: IosDeviceDriver["timezone"];
 	readonly locale: IosDeviceDriver["locale"];
@@ -110,13 +94,20 @@ export class IosDeviceEngine implements IosDeviceDriver {
 	readonly memoryWarning: IosDeviceDriver["memoryWarning"];
 	readonly push: IosDeviceDriver["push"];
 
-	private readonly client: SimdClient;
+	protected readonly client: SimdClient;
+	protected readonly logTag = "[ios-device]";
 	private readonly devicectl: Devicectl;
 	private readonly opts: IosDeviceEngineOptions;
 	/** bundles this session may uninstall: the app under test, earlier installs, and what this driver installed */
 	private readonly owned: Set<string>;
 
 	constructor(client: SimdClient, devicectl: Devicectl, opts: IosDeviceEngineOptions) {
+		super({
+			now: opts.now,
+			sleep: opts.sleep,
+			settleDefaults: { quietMs: DEFAULT_QUIET_MS, timeoutMs: DEFAULT_SETTLE_TIMEOUT_MS },
+			...(opts.log ? { log: opts.log } : {}),
+		});
 		this.client = client;
 		this.devicectl = devicectl;
 		this.opts = opts;
@@ -136,64 +127,20 @@ export class IosDeviceEngine implements IosDeviceDriver {
 		this.push = ops.push;
 	}
 
-	health: IosDeviceDriver["health"] = async () => {
-		const result = await this.request("health");
-		if (!result.success) return result;
-		const d = result.data;
-		return {
-			success: true,
-			data: {
-				platform: "ios",
-				id: this.id,
-				version: d.version,
-				transport: d.hid.transport,
-				bridge: d.ax.bridge === "degraded" ? "available" : d.ax.bridge,
-				screen: d.screen,
-				detail: { axDefault: d.ax.default, ...(d.state ? { state: d.state } : {}) },
-			},
-		};
-	};
-
-	snapshot: IosDeviceDriver["snapshot"] = async (o) => {
-		const result = await this.request(
-			"snapshot",
-			this.params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend })
-		);
-		if (!result.success) return result;
-		const { fallback } = result.data;
-		if (fallback) {
-			this.opts.log?.(`[ios-device] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
-		}
-		return { success: true, data: elementNormalizer.snapshot(result.data, this.opts.now()) };
-	};
+	protected healthDetail(d: HealthData): Record<string, unknown> {
+		return { axDefault: d.ax.default, ...(d.state ? { state: d.state } : {}) };
+	}
 
 	elementAtPoint: IosDeviceDriver["elementAtPoint"] = async (point) => {
 		const snap = await this.snapshot();
 		return snap.success ? { success: true, data: this.hitTest(snap.data, point) } : snap;
 	};
 
-	tap: IosDeviceDriver["tap"] = (point, o) =>
-		this.sendVoid("tap", this.params({ x: point.x, y: point.y, count: o?.count, durationMs: o?.durationMs }));
-
-	longPress: IosDeviceDriver["longPress"] = (point, o) =>
-		this.sendVoid(
-			"longPress",
-			this.params({ x: point.x, y: point.y, durationMs: o?.durationMs }),
-			this.gestureTimeout(o?.durationMs, 1_000)
-		);
-
 	swipe: IosDeviceDriver["swipe"] = (from, to, o) =>
 		this.sendVoid(
 			"swipe",
 			this.params({ from, to, durationMs: o?.durationMs }),
 			this.gestureTimeout(o?.durationMs, 300)
-		);
-
-	drag: IosDeviceDriver["drag"] = (from, to, o) =>
-		this.sendVoid(
-			"drag",
-			this.params({ from, to, pressMs: o?.pressMs, durationMs: o?.durationMs, releaseMs: o?.releaseMs }),
-			this.gestureTimeout((o?.pressMs ?? 0) + (o?.durationMs ?? 0) + (o?.releaseMs ?? 0), 300)
 		);
 
 	pinch: IosDeviceDriver["pinch"] = async () => this.unsupported("pinch", "the XCUITest runner takes one finger");
@@ -205,9 +152,6 @@ export class IosDeviceEngine implements IosDeviceDriver {
 
 	typeText: IosDeviceDriver["typeText"] = (text) =>
 		this.sendVoid("typeText", { text }, typeBudget.deviceTypeText(text));
-
-	key: IosDeviceDriver["key"] = (key, modifiers) =>
-		this.sendVoid("key", this.params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] }));
 
 	pressButton: IosDeviceDriver["pressButton"] = async (button) => {
 		if (button === "back") return this.fail(driverErrors.make("E_UNSUPPORTED", "iOS has no hardware back button"));
@@ -240,29 +184,6 @@ export class IosDeviceEngine implements IosDeviceDriver {
 		return this.readOrientation();
 	};
 
-	settle: IosDeviceDriver["settle"] = async (o = {}) => {
-		try {
-			const outcome = await settler.byHash(
-				async () => {
-					const snap = await this.snapshot();
-					if (!snap.success) throw new DriverFailure(snap.error);
-					return settler.snapshotHash(snap.data);
-				},
-				{
-					quietMs: o.quietMs ?? DEFAULT_QUIET_MS,
-					timeoutMs: o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS,
-					now: this.opts.now,
-					sleep: this.opts.sleep,
-				}
-			);
-			spanDetails.note("via", "hash");
-			return { success: true, data: { ...outcome, via: "hash" } };
-		} catch (error) {
-			if (error instanceof DriverFailure) return this.fail(error.error);
-			throw error;
-		}
-	};
-
 	alert: IosDeviceDriver["alert"] = async () => {
 		const result = await this.request("alertButtons");
 		if (!result.success) return result;
@@ -270,11 +191,6 @@ export class IosDeviceEngine implements IosDeviceDriver {
 	};
 
 	alertOn: IosDeviceDriver["alertOn"] = (_backend: AlertBackend) => this.alert();
-
-	isFrontmost: IosDeviceDriver["isFrontmost"] = async (bundleId) => {
-		const result = await this.request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
-		return result.success ? { success: true, data: result.data.frontmost } : result;
-	};
 
 	appearance: IosDeviceDriver["appearance"] = async (set) => {
 		if (set !== undefined) {
@@ -331,22 +247,8 @@ export class IosDeviceEngine implements IosDeviceDriver {
 		clearData: (bundleId) => this.clearData(bundleId),
 	};
 
-	close: IosDeviceDriver["close"] = () => this.client.close();
-
-	private params(values: Record<string, unknown>): Params {
-		return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
-	}
-
-	private fail(error: DriverError) {
-		return { success: false as const, error };
-	}
-
 	private unsupported(what: string, why: string) {
 		return this.fail(driverErrors.make("E_UNSUPPORTED", `${what} is not available on a physical iPhone: ${why}`));
-	}
-
-	private gestureTimeout(durationMs: number | undefined, base = 0): number {
-		return (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
 	}
 
 	/** The last element (deepest, topmost in preorder) whose frame holds `point`, ignoring hidden ones. */
@@ -360,29 +262,14 @@ export class IosDeviceEngine implements IosDeviceDriver {
 		return hit;
 	}
 
-	private async request<Op extends string>(op: Op, p: Params = {}, o: RequestOptions = {}): DriverResult<OpData<Op>> {
+	protected async request<Op extends string>(op: Op, p: Params = {}, o: RequestOptions = {}): DriverResult<OpData<Op>> {
 		return this.client.request(op, p, o);
-	}
-
-	private async sendVoid(op: string, p: Params = {}, timeoutMs?: number): DriverResult<void> {
-		const result = await this.request(op, p, timeoutMs === undefined ? {} : { timeoutMs });
-		return result.success ? okVoid : result;
 	}
 
 	private async readOrientation(): DriverResult<Orientation> {
 		const result = await this.request("orientation");
 		if (!result.success) return result;
-		const read = result.data.orientation;
-		if (read === "faceUp" || read === "faceDown" || read === "unknown") return { success: true, data: "portrait" };
-		return { success: true, data: read };
-	}
-
-	private toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
-		const { title, message, buttons } = data;
-		const info: AlertInfo = { buttons: elementNormalizer.elements(buttons, this.client.ready.screen).elements };
-		if (title !== undefined) info.title = title;
-		if (message !== undefined) info.message = message;
-		return info;
+		return { success: true, data: this.interfaceOrientation(result.data.orientation) };
 	}
 
 	/** The refusal for a bundle warden did not install; a phone is somebody's, only warden's own installs are touched. */
