@@ -5285,6 +5285,8 @@ dependencies = [
  "bytes",
  "libc",
  "log",
+ "objc2",
+ "objc2-foundation",
  "reqwest 0.12.28",
  "rtc",
  "serde",
@@ -5297,6 +5299,7 @@ dependencies = [
  "time",
  "tokio",
  "webrtc",
+ "windows",
 ]
 
 [[package]]

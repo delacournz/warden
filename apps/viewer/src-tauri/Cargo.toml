@@ -37,6 +37,14 @@ async-trait = "0.1.92"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Native resize hooks that keep the window at the device aspect (src/aspect_*.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 [profile.release]
 opt-level = "s"
 lto = true

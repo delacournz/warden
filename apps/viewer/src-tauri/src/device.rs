@@ -453,10 +453,46 @@ pub fn fit_window(
             (width, height) = fit_size(aspect, chrome_height, pad_x, height * shrink);
         }
     }
+    lock_aspect(
+        &window,
+        crate::aspect::Lock {
+            aspect,
+            chrome_height,
+            pad_x,
+        },
+    );
     window
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| ApiError::new("WINDOW", e.to_string()))?;
     Ok(())
+}
+
+/// Keep later user resizes at this ratio (see `aspect.rs`). Best effort: a failure only means
+/// the window resizes freely, so it is logged, never returned.
+fn lock_aspect(window: &tauri::WebviewWindow, lock: crate::aspect::Lock) {
+    #[cfg(target_os = "macos")]
+    let native = window.ns_window().map(|p| p as usize);
+    #[cfg(windows)]
+    let native = window.hwnd().map(|h| h.0 as usize);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let native: Result<usize, tauri::Error> = Err(tauri::Error::WindowNotFound);
+    let native = match native {
+        Ok(native) => native,
+        Err(e) => {
+            log::warn!("aspect: no native window handle: {e}");
+            return;
+        }
+    };
+    crate::aspect::set(native, window.label(), lock);
+    let install = move || {
+        #[cfg(target_os = "macos")]
+        crate::aspect_macos::install(native);
+        #[cfg(windows)]
+        crate::aspect_windows::install(native);
+    };
+    if let Err(e) = window.run_on_main_thread(install) {
+        log::warn!("aspect: could not install the resize hook: {e}");
+    }
 }
 
 /// Window size (logical) that keeps `height` and gives the video area, inside `chrome_height` of

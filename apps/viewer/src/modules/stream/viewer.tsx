@@ -17,6 +17,7 @@ import { type Ripple, TapRipples } from "./tap-ripples.tsx";
 import { useBilling } from "./use-billing.ts";
 import { useDeviceStream } from "./use-device-stream.ts";
 import type { StreamStatus } from "./whep-session.ts";
+import { needsRefit } from "./window-fit.ts";
 
 const NOTICE_VISIBLE_MS = 4000;
 
@@ -65,7 +66,8 @@ function message(e: unknown): string {
 
 /**
  * The whole window: a rounded surface holding one slim bar and the device screen. The first frame
- * resizes the window to the device aspect and tells the CLI the stream is up. With a view-scope
+ * resizes the window to the device aspect (again on rotation; Rust then holds that ratio through
+ * user resizes) and tells the CLI the stream is up. With a view-scope
  * session, or the toggle on watch, the screen is inert; in drive mode it gets a ring, a pointer
  * cursor and a ripple where you press. Non-streaming states are a calm overlay on the screen, and
  * Cmd/Ctrl+W closes while Cmd/Ctrl+M minimizes, since there is no native menu. Closing an attached
@@ -80,6 +82,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 	const [pinned, setPinned] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
 	const announced = useRef(false);
+	const fitted = useRef<number | null>(null);
 	const { ripples, addRipple, removeRipple } = useRipples();
 	const canDrive = info.scope === "drive" && driving && status === "streaming";
 
@@ -93,9 +96,14 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 	}, [notice]);
 
 	useEffect(() => {
-		if (!size || announced.current) return;
+		if (!size) return;
+		const aspect = size.width / size.height;
+		if (needsRefit(fitted.current, aspect)) {
+			fitted.current = aspect;
+			device.fitWindow(aspect, CHROME_HEIGHT, CHROME_WIDTH).catch(() => undefined);
+		}
+		if (announced.current) return;
 		announced.current = true;
-		device.fitWindow(size.width / size.height, CHROME_HEIGHT, CHROME_WIDTH).catch(() => undefined);
 		device.viewerStreaming().catch(() => undefined);
 	}, [size]);
 

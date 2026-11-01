@@ -1,3 +1,8 @@
+mod aspect;
+#[cfg(target_os = "macos")]
+mod aspect_macos;
+#[cfg(windows)]
+mod aspect_windows;
 mod billing;
 mod device;
 mod h264;
@@ -261,6 +266,7 @@ fn run_host() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
+                aspect::forget(window.label());
                 if let Some(host) = window.app_handle().try_state::<TauriHost>() {
                     let host = host.inner().clone();
                     let label = window.label().to_string();
