@@ -1,5 +1,6 @@
 import { DeviceError, whepClose, whepOffer } from "../../core/api/device.api.ts";
 import { backoffDelay, iceGatheringComplete } from "./whep.ts";
+import { offerCandidateCount, watchDiagnostics } from "./whep-diagnostics.ts";
 
 export type StreamStatus = "connecting" | "streaming" | "reconnecting" | "expired" | "stopped";
 export type StreamError = { code: string; message: string };
@@ -21,7 +22,9 @@ async function negotiate(conn: RTCPeerConnection, stale: () => boolean): Promise
 	await conn.setLocalDescription(offer);
 	await iceGatheringComplete(conn, ICE_GATHER_TIMEOUT_MS);
 	if (stale()) return;
-	const answer = await whepOffer(conn.localDescription?.sdp ?? offer.sdp ?? "");
+	const sdp = conn.localDescription?.sdp ?? offer.sdp ?? "";
+	console.info("[whep] offer", { candidates: offerCandidateCount(sdp) });
+	const answer = await whepOffer(sdp);
 	if (stale()) return;
 	await conn.setRemoteDescription({ type: "answer", sdp: answer.sdp });
 }
@@ -42,9 +45,11 @@ export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): 
 	let pc: RTCPeerConnection | null = null;
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
 	let graceTimer: ReturnType<typeof setTimeout> | undefined;
+	let stopDiagnostics = () => {};
 
 	const teardown = async () => {
 		clearTimeout(graceTimer);
+		stopDiagnostics();
 		if (pc) {
 			pc.onconnectionstatechange = null;
 			pc.ontrack = null;
@@ -93,6 +98,7 @@ export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): 
 			if (video.srcObject !== stream) video.srcObject = stream;
 		};
 		watchConnection(conn);
+		stopDiagnostics = watchDiagnostics(conn);
 
 		try {
 			await negotiate(conn, () => stopped || pc !== conn);
