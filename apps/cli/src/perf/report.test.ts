@@ -3,9 +3,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { type TestContext, testContext } from "../testing";
-import { type PerfReportOptions, perfReport as report } from "./report";
-import { SEED_T0, samplesJsonl, seedSession } from "./session-fixture.testing";
-import { asMe, fakePerfDeps } from "./testing";
+import { type PerfReportOptions, perfReportCli } from "./report";
+import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -18,22 +18,39 @@ const dev = (n: number) => ({ platform: "android", id: `emulator-${n}`, name: `p
 function setup(booted: Array<ReturnType<typeof dev>> = [dev(5554)]) {
 	const c = testContext([], { now: () => SEED_T0 + 60_000 });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	for (const d of [dev(5554), dev(5556)]) c.db.recordDevice(d, SEED_T0);
-	const deps = fakePerfDeps(booted);
-	const withCpu = (cpu: number[]) => ({ "metrics/samples.jsonl": samplesJsonl(SEED_T0, cpu) });
-	seedSession(c, { id: OLD, udid: "emulator-5554", startMs: SEED_T0, files: withCpu([10, 20]) });
-	seedSession(c, { id: MID, udid: "emulator-5556", startMs: SEED_T0 + 60_000, files: withCpu([40, 50]) });
-	seedSession(c, { id: NEW, udid: "emulator-5554", startMs: SEED_T0 + 120_000, files: withCpu([70, 80]) });
+	const deps = perfTestingCli.fakePerfDeps(booted);
+	const withCpu = (cpu: number[]) => ({
+		"metrics/samples.jsonl": perfSessionFixtureTestingCli.samplesJsonl(SEED_T0, cpu),
+	});
+	perfSessionFixtureTestingCli.seedSession(c, {
+		id: OLD,
+		udid: "emulator-5554",
+		startMs: SEED_T0,
+		files: withCpu([10, 20]),
+	});
+	perfSessionFixtureTestingCli.seedSession(c, {
+		id: MID,
+		udid: "emulator-5556",
+		startMs: SEED_T0 + 60_000,
+		files: withCpu([40, 50]),
+	});
+	perfSessionFixtureTestingCli.seedSession(c, {
+		id: NEW,
+		udid: "emulator-5554",
+		startMs: SEED_T0 + 120_000,
+		files: withCpu([70, 80]),
+	});
 	return { c, deps };
 }
 
 const perfReport = (
 	c: TestContext,
-	deps: ReturnType<typeof fakePerfDeps>,
+	deps: ReturnType<typeof perfTestingCli.fakePerfDeps>,
 	id: string | undefined,
 	opts: Partial<PerfReportOptions>
-) => report(c, deps, id, { ...opts });
+) => perfReportCli.perfReport(c, deps, id, { ...opts });
 
 const lastJson = (c: TestContext) => JSON.parse(c.stdout.at(-1) ?? "null");
 
@@ -90,14 +107,14 @@ describe("warden perf report", () => {
 	test("no sessions at all is session_not_found", async () => {
 		const c = testContext([], {});
 		ctx = c;
-		asMe(c);
-		expect(await perfReport(c, fakePerfDeps([]), undefined, { json: true })).toBe(1);
+		perfTestingCli.asMe(c);
+		expect(await perfReport(c, perfTestingCli.fakePerfDeps([]), undefined, { json: true })).toBe(1);
 		expect(lastJson(c)).toMatchObject({ error: { code: "session_not_found", message: "no perf sessions yet" } });
 	});
 
 	test("a still-running session is session_active with a stop hint", async () => {
 		const { c, deps } = setup();
-		seedSession(c, {
+		perfSessionFixtureTestingCli.seedSession(c, {
 			id: "20261024-100300-dddddd",
 			udid: "emulator-5554",
 			startMs: SEED_T0 + 180_000,

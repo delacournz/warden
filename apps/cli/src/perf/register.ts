@@ -1,26 +1,26 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import type { CommandContext } from "../context";
-import { registerCrashes } from "./crashes";
-import { registerDiff } from "./diff";
-import { registerDoctor } from "./doctor";
-import { registerFrames } from "./frames";
-import { registerHeap } from "./heap";
-import { registerJs } from "./js";
-import { registerLogs } from "./logs";
-import { registerLs } from "./ls";
-import { registerMark } from "./mark";
-import { registerMemory } from "./memory";
-import { registerMetrics } from "./metrics";
-import { registerNative } from "./native";
-import { registerQuery } from "./query";
-import { registerReact } from "./react";
-import { registerRecord } from "./record";
-import { registerReport } from "./report";
+import { perfCrashesCli } from "./crashes";
+import { perfDiffCli } from "./diff";
+import { perfDoctorCli } from "./doctor";
+import { perfFramesCli } from "./frames";
+import { perfHeapCli } from "./heap";
+import { perfJsCli } from "./js";
+import { perfLogsCli } from "./logs";
+import { perfLsCli } from "./ls";
+import { perfMarkCli } from "./mark";
+import { perfMemoryCli } from "./memory";
+import { perfMetricsCli } from "./metrics";
+import { perfNativeCli } from "./native";
+import { perfQueryCli } from "./query";
+import { perfReactCli } from "./react";
+import { perfRecordCli } from "./record";
+import { perfReportCli } from "./report";
 import type { PerfDeps } from "./run";
-import { registerStart } from "./start";
-import { registerStartup } from "./startup";
-import { registerStop } from "./stop";
-import { registerTools } from "./tools";
+import { perfStartCli } from "./start";
+import { perfStartupCli } from "./startup";
+import { perfStopCli } from "./stop";
+import { perfToolsCli } from "./tools";
 
 /**
  * Wire one `warden perf` subcommand onto its commander node. The extension point: a phase adds a subcommand by
@@ -31,24 +31,24 @@ export type PerfRegister = (cmd: Commander, ctx: CommandContext, done: (code: nu
 
 /** Every `warden perf` subcommand, in `--help` order. One line per subcommand. */
 export const PERF_SUBCOMMANDS: readonly PerfRegister[] = [
-	registerStart,
-	registerStop,
-	registerRecord,
-	registerMark,
-	registerReport,
-	registerQuery,
-	registerDiff,
-	registerMetrics,
-	registerMemory,
-	registerFrames,
-	registerStartup,
-	registerJs,
-	registerHeap,
-	registerReact,
-	registerNative,
-	registerLogs,
-	registerCrashes,
-	registerLs,
-	registerDoctor,
-	registerTools,
+	perfStartCli.registerStart,
+	perfStopCli.registerStop,
+	perfRecordCli.registerRecord,
+	perfMarkCli.registerMark,
+	perfReportCli.registerReport,
+	perfQueryCli.registerQuery,
+	perfDiffCli.registerDiff,
+	perfMetricsCli.registerMetrics,
+	perfMemoryCli.registerMemory,
+	perfFramesCli.registerFrames,
+	perfStartupCli.registerStartup,
+	perfJsCli.registerJs,
+	perfHeapCli.registerHeap,
+	perfReactCli.registerReact,
+	perfNativeCli.registerNative,
+	perfLogsCli.registerLogs,
+	perfCrashesCli.registerCrashes,
+	perfLsCli.registerLs,
+	perfDoctorCli.registerDoctor,
+	perfToolsCli.registerTools,
 ];

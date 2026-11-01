@@ -7,7 +7,7 @@ import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { type IosNativeFs, iosNativeCapture } from "@delacour/warden-sdk/ops/perf/native-ios";
 import type { NativeIo, NativeStartInput } from "@delacour/warden-sdk/ops/perf/native-types";
 import { type TestContext, testContext } from "../testing";
-import { fakePerfDeps } from "./testing";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 const dirs: string[] = [];
@@ -96,7 +96,7 @@ function setup(rs: Rule[], opts: { traceExists?: boolean; recorderDies?: boolean
 		fs,
 		dir,
 		written,
-		deps: fakePerfDeps([sim]),
+		deps: perfTestingCli.fakePerfDeps([sim]),
 	};
 }
 

@@ -11,22 +11,22 @@ import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import type { PerfTarget } from "./device";
-import { perfRecord } from "./record";
-import { startHooks } from "./session-kit";
-import { perfStart } from "./start";
-import { perfStop } from "./stop";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfRecordCli } from "./record";
+import { perfSessionKitCli } from "./session-kit";
+import { perfStartCli } from "./start";
+import { perfStopCli } from "./stop";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 const startCli = (
 	c: TestContext,
-	deps: ReturnType<typeof fakePerfDeps>,
+	deps: ReturnType<typeof perfTestingCli.fakePerfDeps>,
 	kit: SessionKit,
 	t: PerfTarget,
 	o: StartOptions
-) => perfOrchestrator.startPerf(c, deps, kit, t, o, startHooks(c, deps, o));
+) => perfOrchestrator.startPerf(c, deps, kit, t, o, perfSessionKitCli.startHooks(c, deps, o));
 const fx = (name: string) =>
 	readFileSync(new URL(`../../../../packages/perf/fixtures/${name}`, import.meta.url), "utf8");
 
@@ -63,9 +63,9 @@ function setup(rules: Rule[] = []) {
 		},
 	});
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: "android", id: EMU, name: "pixel" }, T0);
-	const deps = fakePerfDeps(
+	const deps = perfTestingCli.fakePerfDeps(
 		[{ platform: "android", id: EMU, name: "pixel" }],
 		{},
 		{ metro: async () => "http://localhost:8081" }
@@ -351,11 +351,11 @@ describe("finalizeSession", () => {
 describe("start / stop / record commands", () => {
 	test("start --json then stop --json: the report is the result", async () => {
 		const { c, deps, kit } = setup();
-		expect(await perfStart(c, deps, { json: true, app: APP, metrics: true }, kit)).toBe(0);
+		expect(await perfStartCli.perfStart(c, deps, { json: true, app: APP, metrics: true }, kit)).toBe(0);
 		const started = JSON.parse(c.stdout.join("\n"));
 		expect(started).toMatchObject({ ok: true, command: "perf start", result: { app: APP } });
 		c.stdout.length = 0;
-		expect(await perfStop(c, deps, { json: true }, kit)).toBe(0);
+		expect(await perfStopCli.perfStop(c, deps, { json: true }, kit)).toBe(0);
 		const stopped = JSON.parse(c.stdout.join("\n"));
 		expect(stopped.result.sessionId).toBe(started.result.sessionId);
 		expect(stopped.result.report.version).toBe(1);
@@ -363,23 +363,23 @@ describe("start / stop / record commands", () => {
 
 	test("start --join attaches read-only to the running session", async () => {
 		const { c, deps, kit } = setup();
-		await perfStart(c, deps, { json: true, app: APP, metrics: true }, kit);
+		await perfStartCli.perfStart(c, deps, { json: true, app: APP, metrics: true }, kit);
 		const id = JSON.parse(c.stdout.join("\n")).result.sessionId;
 		c.stdout.length = 0;
-		expect(await perfStart(c, deps, { json: true, join: true }, kit)).toBe(0);
+		expect(await perfStartCli.perfStart(c, deps, { json: true, join: true }, kit)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).result).toMatchObject({ sessionId: id, joined: true });
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
 	test("stop with no session is session_not_found", async () => {
 		const { c, deps, kit } = setup();
-		expect(await perfStop(c, deps, { json: true }, kit)).toBe(1);
+		expect(await perfStopCli.perfStop(c, deps, { json: true }, kit)).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ error: { code: "session_not_found" } });
 	});
 
 	test("record waits the duration, then reports; the cap defaults to duration + 10s", async () => {
 		const { c, clock, deps, kit } = setup();
-		const code = await perfRecord(c, deps, { json: true, app: APP, metrics: true, duration: "5s" }, kit, {
+		const code = await perfRecordCli.perfRecord(c, deps, { json: true, app: APP, metrics: true, duration: "5s" }, kit, {
 			interrupt: () => ({ signal: new AbortController().signal, dispose: () => {} }),
 		});
 		expect(code).toBe(0);
@@ -393,7 +393,7 @@ describe("start / stop / record commands", () => {
 		const { c, deps, kit } = setup();
 		const controller = new AbortController();
 		controller.abort();
-		const code = await perfRecord(c, deps, { json: true, app: APP, metrics: true, duration: "5m" }, kit, {
+		const code = await perfRecordCli.perfRecord(c, deps, { json: true, app: APP, metrics: true, duration: "5m" }, kit, {
 			interrupt: () => ({ signal: controller.signal, dispose: () => {} }),
 		});
 		expect(code).toBe(130);
@@ -402,7 +402,7 @@ describe("start / stop / record commands", () => {
 
 	test("record rejects a duration over 5m", async () => {
 		const { c, deps, kit } = setup();
-		expect(await perfRecord(c, deps, { json: true, app: APP, duration: "6m" }, kit)).toBe(1);
+		expect(await perfRecordCli.perfRecord(c, deps, { json: true, app: APP, duration: "6m" }, kit)).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ error: { code: "usage" } });
 	});
 });

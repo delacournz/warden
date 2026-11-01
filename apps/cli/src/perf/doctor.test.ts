@@ -3,8 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { instrumentChecker } from "@delacour/warden-perf/ios/instruments";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { type DoctorCheck, perfDoctor } from "./doctor";
-import { asMe, fakePerfDeps } from "./testing";
+import { type DoctorCheck, perfDoctorCli } from "./doctor";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => {
@@ -30,17 +30,21 @@ const HOST_OK: Handler = [
 function setup(
 	device: typeof sim | typeof emu | undefined,
 	handlers: Handler,
-	host: Parameters<typeof fakePerfDeps>[2] = {}
+	host: Parameters<typeof perfTestingCli.fakePerfDeps>[2] = {}
 ) {
 	const c = testContext([], { exec: fakeExec(handlers) });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	if (device) c.db.recordDevice({ platform: device.platform, id: device.id, name: device.name }, c.now());
-	return { c, deps: fakePerfDeps(device ? [device] : [], {}, host) };
+	return { c, deps: perfTestingCli.fakePerfDeps(device ? [device] : [], {}, host) };
 }
 
-async function run(c: TestContext, deps: ReturnType<typeof fakePerfDeps>, opts: Record<string, unknown> = {}) {
-	const code = await perfDoctor(c, deps, { json: true, ...opts });
+async function run(
+	c: TestContext,
+	deps: ReturnType<typeof perfTestingCli.fakePerfDeps>,
+	opts: Record<string, unknown> = {}
+) {
+	const code = await perfDoctorCli.perfDoctor(c, deps, { json: true, ...opts });
 	const doc = JSON.parse(c.stdout.join("\n"));
 	const byId: Record<string, DoctorCheck> = Object.fromEntries((doc.checks as DoctorCheck[]).map((k) => [k.id, k]));
 	return { code, doc, byId };
@@ -169,7 +173,7 @@ describe("warden perf doctor: device checks", () => {
 describe("warden perf doctor: text mode", () => {
 	test("prints one line per check with a status glyph word", async () => {
 		const { c, deps } = setup(sim, HOST_OK);
-		const code = await perfDoctor(c, deps, { app: "a.b" });
+		const code = await perfDoctorCli.perfDoctor(c, deps, { app: "a.b" });
 		expect(code).toBe(0);
 		const text = c.stdout.join("\n");
 		expect(text).toContain("xctrace");

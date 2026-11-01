@@ -6,11 +6,11 @@ import { resultFactory } from "@delacour/warden-types/result";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
-import { brokerErr } from "../dev-broker/broker.types";
-import { serveBroker } from "../dev-broker/ipc";
+import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
+import { devBrokerIpc } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
-import { createWardenMcp, toResponse } from "./server";
-import { type ToolDef, wardenTools } from "./tools";
+import { wardenMcpServer } from "./server";
+import { mcpTools, type ToolDef } from "./tools";
 
 const homes: string[] = [];
 const closers: (() => unknown)[] = [];
@@ -26,7 +26,7 @@ function home(): Record<string, string> {
 }
 
 async function connect(env: Record<string, string | undefined>, tools: readonly ToolDef[]): Promise<Client> {
-	const server = createWardenMcp(env, tools, "0.0.0-test");
+	const server = wardenMcpServer.createWardenMcp(env, tools, "0.0.0-test");
 	const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
 	await server.connect(serverSide);
 	const client = new Client({ name: "test", version: "1" });
@@ -41,8 +41,10 @@ const text = (result: Awaited<ReturnType<Client["callTool"]>>): unknown => {
 
 describe("toResponse", () => {
 	test("data is one JSON text block; an error is `{ error }` with isError", () => {
-		expect(toResponse(resultFactory.ok({ a: 1 }))).toEqual({ content: [{ type: "text", text: '{"a":1}' }] });
-		expect(toResponse({ success: false, error: { code: "x", message: "m" } })).toEqual({
+		expect(wardenMcpServer.toResponse(resultFactory.ok({ a: 1 }))).toEqual({
+			content: [{ type: "text", text: '{"a":1}' }],
+		});
+		expect(wardenMcpServer.toResponse({ success: false, error: { code: "x", message: "m" } })).toEqual({
 			content: [{ type: "text", text: '{"error":{"code":"x","message":"m"}}' }],
 			isError: true,
 		});
@@ -51,7 +53,7 @@ describe("toResponse", () => {
 
 describe("warden mcp", () => {
 	test("lists every warden tool with its input schema", async () => {
-		const client = await connect(home(), wardenTools());
+		const client = await connect(home(), mcpTools.wardenTools());
 		const { tools } = await client.listTools();
 		const names = tools.map((t) => t.name);
 		expect(names).toContain("dev_sessions");
@@ -95,7 +97,7 @@ describe("warden mcp", () => {
 			projectRoot: "/app",
 			startedAt: new Date(0).toISOString(),
 		});
-		const client = await connect(env, wardenTools());
+		const client = await connect(env, mcpTools.wardenTools());
 		const sessions = text(await client.callTool({ name: "dev_sessions", arguments: {} }));
 		expect(sessions).toMatchObject([{ leaseId: "lease-1", deviceId: "UDID-1" }]);
 		const errors = await client.callTool({ name: "metro_logs", arguments: { kinds: ["error", "bundle_failed"] } });
@@ -106,7 +108,7 @@ describe("warden mcp", () => {
 	});
 
 	test("metro_logs with no dev session and a bad since are tool errors", async () => {
-		const client = await connect(home(), wardenTools());
+		const client = await connect(home(), mcpTools.wardenTools());
 		const none = await client.callTool({ name: "metro_logs", arguments: {} });
 		expect(none.isError).toBe(true);
 		expect(text(none)).toMatchObject({ error: { code: "no_dev_session" } });
@@ -124,7 +126,7 @@ describe("warden mcp over the dev session's broker", () => {
 		const calls: { method: string; params: unknown }[] = [];
 		const dir = mkdtempSync(join(tmpdir(), "wmb-"));
 		homes.push(dir);
-		const served = await serveBroker(join(dir, "b.sock"), async (method, params) => {
+		const served = await devBrokerIpc.serveBroker(join(dir, "b.sock"), async (method, params) => {
 			calls.push({ method, params });
 			if (method === "status")
 				return resultFactory.ok({ state: { phase: "attached", targetId: "t", deviceName: "sim" } });
@@ -132,7 +134,7 @@ describe("warden mcp over the dev session's broker", () => {
 				return resultFactory.ok({ lines: [{ ts: NOW, level: "error", kind: "console", text: "boom" }], total: 1 });
 			if (method === "eval") return resultFactory.ok({ value: 42 });
 			if (method === "route") return resultFactory.ok({ route: "(tabs)/home" });
-			return brokerErr("unknown_method", method);
+			return devBrokerBrokerTypes.brokerErr("unknown_method", method);
 		});
 		if (!served.success) throw new Error(served.error.message);
 		const server = served.data;
@@ -155,7 +157,7 @@ describe("warden mcp over the dev session's broker", () => {
 
 	test("app_console passes filters through with since as epoch ms", async () => {
 		const { env, calls } = await brokered();
-		const client = await connect(env, wardenTools({ now: () => NOW }));
+		const client = await connect(env, mcpTools.wardenTools({ now: () => NOW }));
 		const result = await client.callTool({ name: "app_console", arguments: { since: "30s", level: "error" } });
 		expect(result.isError).toBeUndefined();
 		expect(text(result)).toMatchObject({ total: 1, lines: [{ text: "boom" }] });
@@ -164,7 +166,7 @@ describe("warden mcp over the dev session's broker", () => {
 
 	test("app_eval and app_route answer from the broker", async () => {
 		const { env } = await brokered();
-		const client = await connect(env, wardenTools({ now: () => NOW }));
+		const client = await connect(env, mcpTools.wardenTools({ now: () => NOW }));
 		expect(text(await client.callTool({ name: "app_eval", arguments: { expression: "6 * 7" } }))).toEqual({
 			value: 42,
 		});

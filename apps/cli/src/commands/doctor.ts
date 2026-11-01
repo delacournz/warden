@@ -5,10 +5,10 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { MIGRATIONS, storeLocator } from "@delacour/warden-store/store";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import { codexDetected } from "../hooks/agents";
-import { hasWardenHook } from "../hooks/claude-settings";
-import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hooks/codex-hooks";
-import { errorMessage } from "../hooks/json";
+import { hookAgents } from "../hooks/agents";
+import { hookClaudeSettings } from "../hooks/claude-settings";
+import { hookCodexHooks } from "../hooks/codex-hooks";
+import { hookJson } from "../hooks/json";
 import { NPM_PACKAGE } from "../npm/platforms";
 import { output } from "../output";
 import { RULE_MD, staleSkillFiles } from "../skill";
@@ -70,7 +70,7 @@ export class DoctorCommand extends CliCommand {
 		try {
 			return fn();
 		} catch (error) {
-			return { ok: false, detail: errorMessage(error) };
+			return { ok: false, detail: hookJson.errorMessage(error) };
 		}
 	}
 
@@ -155,7 +155,7 @@ export class DoctorCommand extends CliCommand {
 		const path = join(home, ".claude", "settings.json");
 		return this.attempt(() => {
 			const settings: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-			const missing = (["session-end"] as const).filter((name) => !hasWardenHook(settings, name));
+			const missing = (["session-end"] as const).filter((name) => !hookClaudeSettings.hasWardenHook(settings, name));
 			return missing.length === 0
 				? { ok: true, detail: path }
 				: { ok: false, detail: `missing warden hook ${missing.join(", ")} — run \`warden install --claude\`` };
@@ -164,15 +164,15 @@ export class DoctorCommand extends CliCommand {
 
 	/** Codex: optional — only checked when Codex is detected; hooks may live in hooks.json or config.toml. */
 	private codexHook(ctx: CommandContext): Probe {
-		if (!codexDetected(ctx.env)) return { ok: true, detail: "codex not detected" };
-		const path = codexHooksPath(ctx.env);
-		const configPath = codexConfigPath(ctx.env);
+		if (!hookAgents.codexDetected(ctx.env)) return { ok: true, detail: "codex not detected" };
+		const path = hookCodexHooks.codexHooksPath(ctx.env);
+		const configPath = hookCodexHooks.codexConfigPath(ctx.env);
 		if (!path || !configPath) return { ok: false, detail: "$HOME / $CODEX_HOME not set" };
 		return this.attempt(() => {
 			const hooks: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
 			const toml = existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
 			const missing = (["session-end"] as const).filter(
-				(name) => !hasWardenHook(hooks, name) && !codexTomlHasWardenHook(toml, name)
+				(name) => !hookClaudeSettings.hasWardenHook(hooks, name) && !hookCodexHooks.codexTomlHasWardenHook(toml, name)
 			);
 			return missing.length === 0
 				? { ok: true, detail: path }

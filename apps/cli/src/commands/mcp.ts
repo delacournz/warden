@@ -17,15 +17,18 @@ export class McpCommand extends CliCommand {
 	 * protocol: nothing else may print there.
 	 */
 	async runMcp(ctx: CommandContext): Promise<number> {
-		const [{ StdioServerTransport }, { createWardenMcp, serveWardenMcp }, { wardenTools }, { currentBuild }] =
-			await Promise.all([
-				import("@modelcontextprotocol/sdk/server/stdio.js"),
-				import("../mcp/server"),
-				import("../mcp/tools"),
-				import("../update/build-info"),
-			]);
-		const server = createWardenMcp(ctx.env, wardenTools({ now: ctx.now }), currentBuild().version);
-		await serveWardenMcp(server, new StdioServerTransport());
+		const [{ StdioServerTransport }, { wardenMcpServer }, { mcpTools }, { currentBuild }] = await Promise.all([
+			import("@modelcontextprotocol/sdk/server/stdio.js"),
+			import("../mcp/server"),
+			import("../mcp/tools"),
+			import("../update/build-info"),
+		]);
+		const server = wardenMcpServer.createWardenMcp(
+			ctx.env,
+			mcpTools.wardenTools({ now: ctx.now }),
+			currentBuild().version
+		);
+		await wardenMcpServer.serveWardenMcp(server, new StdioServerTransport());
 		return 0;
 	}
 }

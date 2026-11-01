@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { leaseModel } from "@delacour/warden-store/types";
 import type { CommandContext } from "../context";
-import { deviceTarget } from "../hooks/claude-pretool";
+import { hookClaudePretool } from "../hooks/claude-pretool";
 import type { uiHelper } from "./helper";
 import { cliUiPaths } from "./paths";
 
@@ -57,7 +57,7 @@ export class UiStopHelperAfter {
 		recorded: AndroidHostRecorded = this.recordedAndroidHost
 	): (udid: string) => Promise<void> {
 		return async (udid) => {
-			const target = deviceTarget(udid);
+			const target = hookClaudePretool.deviceTarget(udid);
 			if (target.kind !== "device") return;
 			const kind = this.helperOf(target.platform, udid);
 			if (kind !== "simd" && !recorded(ctx, udid)) return;

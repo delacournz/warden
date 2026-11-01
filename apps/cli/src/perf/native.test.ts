@@ -8,8 +8,8 @@ import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
-import { perfNative } from "./native";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfNativeCli } from "./native";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -61,7 +61,7 @@ function fakeProfiler(log: string[]): NativeProfiler {
 function setup(device: typeof sim | typeof droid = sim) {
 	const c = testContext([], { now: () => T0 });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: device.platform, id: device.id, name: device.name }, T0);
 	const log: string[] = [];
 	const profiler = fakeProfiler(log);
@@ -73,11 +73,18 @@ function setup(device: typeof sim | typeof droid = sim) {
 		pidAlive: () => false,
 		sleep: async (ms) => void sleeps.push(ms),
 	};
-	return { c, log, profilers, io, sleeps, deps: fakePerfDeps([device], { [device.id]: "com.acme.shop" }) };
+	return {
+		c,
+		log,
+		profilers,
+		io,
+		sleeps,
+		deps: perfTestingCli.fakePerfDeps([device], { [device.id]: "com.acme.shop" }),
+	};
 }
 
 const run = (s: ReturnType<typeof setup>, action: string | undefined, opts: Record<string, unknown> = {}) =>
-	perfNative(s.c, s.deps, action, { json: true, app: "com.acme.shop", ...opts }, s.io, s.profilers);
+	perfNativeCli.perfNative(s.c, s.deps, action, { json: true, app: "com.acme.shop", ...opts }, s.io, s.profilers);
 
 describe("warden perf native", () => {
 	test("one-shot: start, wait --duration, stop + analyze, report.md written", async () => {

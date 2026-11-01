@@ -5,7 +5,7 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { type TestContext, testContext } from "../testing";
-import { fixtureText, SEED_T0, samplesJsonl, seedSession, startupJson } from "./session-fixture.testing";
+import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -27,7 +27,7 @@ function load(c: TestContext, id = ID) {
 describe("loadReportInput", () => {
 	test("a session with no artifact files yields only the session: every optional part is absent", () => {
 		const c = setup();
-		seedSession(c, { id: ID });
+		perfSessionFixtureTestingCli.seedSession(c, { id: ID });
 		const { session, input } = load(c);
 		expect(input.session).toEqual(session);
 		expect(input.now).toBe(SEED_T0 + 20_000);
@@ -38,11 +38,11 @@ describe("loadReportInput", () => {
 
 	test("reads metrics, startup, logs, frames, hotspots, crashes and react from their files", () => {
 		const c = setup();
-		seedSession(c, {
+		perfSessionFixtureTestingCli.seedSession(c, {
 			id: ID,
 			files: {
-				"metrics/samples.jsonl": samplesJsonl(SEED_T0, [10, 20, 30]),
-				"metrics/startup.json": startupJson(1500),
+				"metrics/samples.jsonl": perfSessionFixtureTestingCli.samplesJsonl(SEED_T0, [10, 20, 30]),
+				"metrics/startup.json": perfSessionFixtureTestingCli.startupJson(1500),
 				"logs/device.log": "04-01 10:00:00.000  1  1 E App: boom\n04-01 10:00:01.000  1  1 I App: fine\n",
 				"frames.json": {
 					status: "ok",
@@ -68,7 +68,7 @@ describe("loadReportInput", () => {
 					findings: [],
 					warnings: [],
 				},
-				"react/commits.json": fixtureText("react-commits.json"),
+				"react/commits.json": perfSessionFixtureTestingCli.fixtureText("react-commits.json"),
 			},
 		});
 		const { input } = load(c);
@@ -85,16 +85,19 @@ describe("loadReportInput", () => {
 
 	test("frames.json that is not status ok is ignored", () => {
 		const c = setup();
-		seedSession(c, { id: ID, files: { "frames.json": { status: "unsupported", platform: "ios" } } });
+		perfSessionFixtureTestingCli.seedSession(c, {
+			id: ID,
+			files: { "frames.json": { status: "unsupported", platform: "ios" } },
+		});
 		expect("frames" in load(c).input).toBe(false);
 	});
 
 	test("corrupt optional files are skipped, never thrown on", () => {
 		const c = setup();
-		seedSession(c, {
+		perfSessionFixtureTestingCli.seedSession(c, {
 			id: ID,
 			files: {
-				"metrics/samples.jsonl": `${samplesJsonl(SEED_T0, [10, 20])}\n{not json\n`,
+				"metrics/samples.jsonl": `${perfSessionFixtureTestingCli.samplesJsonl(SEED_T0, [10, 20])}\n{not json\n`,
 				"metrics/startup.json": "{broken",
 				"frames.json": "",
 				"js/hotspots.json": "[1,",
@@ -113,7 +116,7 @@ describe("loadReportInput", () => {
 
 	test("native/summary.json of an unknown version or missing section is ignored", () => {
 		const c = setup();
-		seedSession(c, {
+		perfSessionFixtureTestingCli.seedSession(c, {
 			id: ID,
 			files: { "native/summary.json": { version: 2, platform: "ios", section: { title: "x", lines: [] } } },
 		});
@@ -122,7 +125,7 @@ describe("loadReportInput", () => {
 
 	test("a valid native summary keeps hangs and drops malformed rows", () => {
 		const c = setup();
-		seedSession(c, {
+		perfSessionFixtureTestingCli.seedSession(c, {
 			id: ID,
 			files: {
 				"native/summary.json": {
@@ -152,7 +155,10 @@ describe("loadReportInput", () => {
 describe("readCommitsFile", () => {
 	test("parses the React fixture; schema-invalid or corrupt JSON is undefined", () => {
 		const c = setup();
-		seedSession(c, { id: ID, files: { "react/commits.json": fixtureText("react-commits.json") } });
+		perfSessionFixtureTestingCli.seedSession(c, {
+			id: ID,
+			files: { "react/commits.json": perfSessionFixtureTestingCli.fixtureText("react-commits.json") },
+		});
 		expect(reportReader.readCommitsFile(perfPaths.sessionDir(c, ID))?.commits).toHaveLength(39);
 		writeFileSync(join(perfPaths.sessionDir(c, ID), "react", "commits.json"), JSON.stringify({ version: 2 }));
 		expect(reportReader.readCommitsFile(perfPaths.sessionDir(c, ID))).toBeUndefined();
@@ -164,7 +170,10 @@ describe("readCommitsFile", () => {
 describe("report files", () => {
 	test("writeSessionReport writes report.json and report.md that readSessionReport round-trips", () => {
 		const c = setup();
-		seedSession(c, { id: ID, files: { "metrics/samples.jsonl": samplesJsonl(SEED_T0, [10, 20, 30]) } });
+		perfSessionFixtureTestingCli.seedSession(c, {
+			id: ID,
+			files: { "metrics/samples.jsonl": perfSessionFixtureTestingCli.samplesJsonl(SEED_T0, [10, 20, 30]) },
+		});
 		const { session } = load(c);
 		const report = reportReader.writeSessionReport(c, session);
 		expect(existsSync(join(perfPaths.sessionDir(c, ID), "report.md"))).toBe(true);
@@ -175,7 +184,7 @@ describe("report files", () => {
 
 	test("readSessionReport is undefined for a missing, corrupt or wrong-version report", () => {
 		const c = setup();
-		seedSession(c, { id: ID });
+		perfSessionFixtureTestingCli.seedSession(c, { id: ID });
 		expect(reportReader.readSessionReport(c, ID)).toBeUndefined();
 		writeFileSync(join(perfPaths.sessionDir(c, ID), "report.json"), "{oops");
 		expect(reportReader.readSessionReport(c, ID)).toBeUndefined();
@@ -188,7 +197,10 @@ describe("report files", () => {
 
 	test("reportFor prefers the written report, rebuilds over a corrupt one, and is undefined for no session", () => {
 		const c = setup();
-		seedSession(c, { id: ID, files: { "metrics/samples.jsonl": samplesJsonl(SEED_T0, [10, 20, 30]) } });
+		perfSessionFixtureTestingCli.seedSession(c, {
+			id: ID,
+			files: { "metrics/samples.jsonl": perfSessionFixtureTestingCli.samplesJsonl(SEED_T0, [10, 20, 30]) },
+		});
 		const built = reportReader.reportFor(c, ID);
 		expect(built?.metrics.cpuP95Pct).toBe(30);
 		const path = join(perfPaths.sessionDir(c, ID), "report.json");

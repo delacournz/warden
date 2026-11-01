@@ -5,11 +5,11 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { CliCommand, type CommandNode } from "../command";
 import { type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";
 import type { CommandContext } from "../context";
-import { type Agent, detectAgents } from "../hooks/agents";
-import { mergeClaudeSettings } from "../hooks/claude-settings";
-import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHooks } from "../hooks/codex-hooks";
-import { errorMessage } from "../hooks/json";
-import { lineDiff } from "../hooks/text-diff";
+import { type Agent, hookAgents } from "../hooks/agents";
+import { hookClaudeSettings } from "../hooks/claude-settings";
+import { hookCodexHooks } from "../hooks/codex-hooks";
+import { hookJson } from "../hooks/json";
+import { hookTextDiff } from "../hooks/text-diff";
 import { output } from "../output";
 import { RULE_MD, SKILL_NAME, staleSkillFiles } from "../skill";
 import {
@@ -205,7 +205,7 @@ export class InstallCommand extends CliCommand {
 		const current = this.readIfExists(path);
 		if (current === RULE_MD) return this.report("rule", "unchanged", path);
 		if (flags.dryRun) {
-			this.showDiff(ctx, flags, lineDiff(current ?? "", RULE_MD, path));
+			this.showDiff(ctx, flags, hookTextDiff.lineDiff(current ?? "", RULE_MD, path));
 			return this.report("rule", "dry-run", path);
 		}
 		this.atomicWrite(path, RULE_MD);
@@ -251,7 +251,7 @@ export class InstallCommand extends CliCommand {
 		before: string,
 		after: string
 	): Promise<StepReport> {
-		this.showDiff(ctx, flags, lineDiff(before, after, path));
+		this.showDiff(ctx, flags, hookTextDiff.lineDiff(before, after, path));
 		if (flags.dryRun) return this.report(step, "dry-run", path);
 		if (!flags.yes) {
 			if (!ctx.ui.interactive) return this.report(step, "skipped", path, "needs confirmation — re-run with --yes");
@@ -269,7 +269,7 @@ export class InstallCommand extends CliCommand {
 		try {
 			return resultFactory.ok(JSON.parse(text));
 		} catch (error) {
-			return resultFactory.err(`invalid JSON: ${errorMessage(error)}`);
+			return resultFactory.err(`invalid JSON: ${hookJson.errorMessage(error)}`);
 		}
 	}
 
@@ -277,7 +277,7 @@ export class InstallCommand extends CliCommand {
 		const before = this.readIfExists(path);
 		const parsed = this.parseJson(before);
 		if (!parsed.success) return this.report("settings", "error", path, parsed.error);
-		const merged = mergeClaudeSettings(parsed.data, HOOK_BINARY);
+		const merged = hookClaudeSettings.mergeClaudeSettings(parsed.data, HOOK_BINARY);
 		if (!merged.success) return this.report("settings", "error", path, merged.error);
 		if (!merged.data.changed) return this.report("settings", "unchanged", path);
 		return this.guardedWrite(ctx, flags, "settings", path, before ?? "", this.formatJson(merged.data.settings, before));
@@ -300,13 +300,13 @@ export class InstallCommand extends CliCommand {
 		configPath: string
 	): Promise<StepReport> {
 		const toml = this.readIfExists(configPath);
-		if (codexTomlHasWardenHook(toml, "session-end")) {
+		if (hookCodexHooks.codexTomlHasWardenHook(toml, "session-end")) {
 			return this.report("codex-hooks", "unchanged", configPath);
 		}
 		const before = this.readIfExists(path);
 		const parsed = this.parseJson(before);
 		if (!parsed.success) return this.report("codex-hooks", "error", path, parsed.error);
-		const merged = mergeCodexHooks(parsed.data, HOOK_BINARY);
+		const merged = hookCodexHooks.mergeCodexHooks(parsed.data, HOOK_BINARY);
 		if (!merged.success) return this.report("codex-hooks", "error", path, merged.error);
 		if (!merged.data.changed) return this.report("codex-hooks", "unchanged", path);
 		return this.guardedWrite(
@@ -365,13 +365,13 @@ export class InstallCommand extends CliCommand {
 		try {
 			return await fn();
 		} catch (error) {
-			return this.report(name, "error", path, errorMessage(error));
+			return this.report(name, "error", path, hookJson.errorMessage(error));
 		}
 	}
 
 	/** `--claude` / `--codex` force those agents; with neither, every detected agent. */
 	private targetAgents(ctx: CommandContext, flags: Flags): Agent[] {
-		if (!flags.claude && !flags.codex) return detectAgents(ctx.env);
+		if (!flags.claude && !flags.codex) return hookAgents.detectAgents(ctx.env);
 		const agents: Agent[] = [];
 		if (flags.claude) agents.push("claude");
 		if (flags.codex) agents.push("codex");
@@ -398,8 +398,8 @@ export class InstallCommand extends CliCommand {
 			steps.push(await this.step("rule", rulePath, () => this.installRule(ctx, rulePath, flags)));
 			steps.push(await this.step("settings", settingsPath, () => this.installSettings(ctx, flags, settingsPath)));
 		}
-		const hooksPath = codexHooksPath({ ...ctx.env, HOME: home });
-		const configPath = codexConfigPath({ ...ctx.env, HOME: home });
+		const hooksPath = hookCodexHooks.codexHooksPath({ ...ctx.env, HOME: home });
+		const configPath = hookCodexHooks.codexConfigPath({ ...ctx.env, HOME: home });
 		if (agents.includes("codex") && hooksPath && configPath) {
 			steps.push(
 				await this.step("codex-hooks", hooksPath, () => this.installCodexHooks(ctx, flags, hooksPath, configPath))

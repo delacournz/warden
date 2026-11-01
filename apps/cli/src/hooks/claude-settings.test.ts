@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { hasWardenHook, mergeClaudeSettings, WARDEN_HOOKS } from "./claude-settings";
+import { hookClaudeSettings, WARDEN_HOOKS } from "./claude-settings";
 
 const BIN = "$HOME/.local/bin/warden";
 
 function ok(existing: unknown) {
-	const result = mergeClaudeSettings(existing, BIN);
+	const result = hookClaudeSettings.mergeClaudeSettings(existing, BIN);
 	if (!result.success) throw new Error(result.error);
 	return result.data;
 }
@@ -92,17 +92,19 @@ describe("mergeClaudeSettings", () => {
 	});
 
 	test("rejects non-object settings / hooks", () => {
-		expect(mergeClaudeSettings([], BIN).success).toBe(false);
-		expect(mergeClaudeSettings("x", BIN).success).toBe(false);
-		expect(mergeClaudeSettings({ hooks: [] }, BIN).success).toBe(false);
-		expect(mergeClaudeSettings({ hooks: { SessionEnd: {} } }, BIN).success).toBe(false);
+		expect(hookClaudeSettings.mergeClaudeSettings([], BIN).success).toBe(false);
+		expect(hookClaudeSettings.mergeClaudeSettings("x", BIN).success).toBe(false);
+		expect(hookClaudeSettings.mergeClaudeSettings({ hooks: [] }, BIN).success).toBe(false);
+		expect(hookClaudeSettings.mergeClaudeSettings({ hooks: { SessionEnd: {} } }, BIN).success).toBe(false);
 	});
 });
 
 describe("hasWardenHook", () => {
 	test("detects the session-end hook", () => {
-		expect(hasWardenHook(ok({}).settings, "session-end")).toBe(true);
-		expect(hasWardenHook({}, "session-end")).toBe(false);
-		expect(hasWardenHook({ hooks: { SessionEnd: [{ hooks: [{ command: "other" }] }] } }, "session-end")).toBe(false);
+		expect(hookClaudeSettings.hasWardenHook(ok({}).settings, "session-end")).toBe(true);
+		expect(hookClaudeSettings.hasWardenHook({}, "session-end")).toBe(false);
+		expect(
+			hookClaudeSettings.hasWardenHook({ hooks: { SessionEnd: [{ hooks: [{ command: "other" }] }] } }, "session-end")
+		).toBe(false);
 	});
 });

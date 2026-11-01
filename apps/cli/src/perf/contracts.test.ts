@@ -5,10 +5,10 @@ import { perfFramesResultSchema, perfLsResultSchema, perfMarkResultSchema } from
 import { uiJsonSchema } from "@delacour/warden-sdk/contracts/ui";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { perfFrames } from "./frames";
-import { perfLs } from "./ls";
-import { perfMark } from "./mark";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfFramesCli } from "./frames";
+import { perfLsCli } from "./ls";
+import { perfMarkCli } from "./mark";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -27,16 +27,16 @@ function setup() {
 		now: () => T0,
 	});
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: emu.platform, id: emu.id, name: emu.name }, T0);
-	return { c, deps: fakePerfDeps([emu]) };
+	return { c, deps: perfTestingCli.fakePerfDeps([emu]) };
 }
 
 const doc = (c: TestContext): unknown => JSON.parse(c.stdout.join("\n"));
 
 test("perf frames --json is a ui envelope whose result parses as the frames contract", async () => {
 	const { c, deps } = setup();
-	expect(await perfFrames(c, deps, { json: true, app: "com.example.app" })).toBe(0);
+	expect(await perfFramesCli.perfFrames(c, deps, { json: true, app: "com.example.app" })).toBe(0);
 	const parsed = uiJsonSchema.parse(doc(c));
 	if (!parsed.ok) throw new Error("expected ok");
 	expect(perfFramesResultSchema.parse(parsed.result)).toMatchObject({ status: "ok", refreshHz: 90 });
@@ -50,13 +50,13 @@ test("perf mark and perf ls --json results parse as their contracts", async () =
 		maxDurationMs: 60_000,
 	});
 	if (!made.success) throw new Error("create");
-	expect(await perfMark(c, deps, ["checkout"], { json: true })).toBe(0);
+	expect(await perfMarkCli.perfMark(c, deps, ["checkout"], { json: true })).toBe(0);
 	const marked = uiJsonSchema.parse(doc(c));
 	if (!marked.ok) throw new Error("expected ok");
 	expect(perfMarkResultSchema.parse(marked.result)).toMatchObject({ label: "checkout", sessionId: made.data.id });
 
 	c.stdout.length = 0;
-	expect(await perfLs(c, deps, { json: true })).toBe(0);
+	expect(await perfLsCli.perfLs(c, deps, { json: true })).toBe(0);
 	const listed = perfLsResultSchema.parse(doc(c));
 	expect(listed.sessions.map((s) => s.id)).toEqual([made.data.id]);
 });

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { perfSessionRefs } from "@delacour/warden-sdk/ops/perf/session-ref";
 import { type TestContext, testContext } from "../testing";
-import { pickSession } from "./session-pick";
-import { fakePerfDeps } from "./testing";
+import { perfSessionPickCli } from "./session-pick";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -14,7 +14,7 @@ function setup() {
 	const clock = { now: Date.UTC(2026, 9, 24, 10, 0, 0) };
 	const c = testContext([], { now: () => clock.now });
 	ctx = c;
-	const deps = fakePerfDeps([sim]);
+	const deps = perfTestingCli.fakePerfDeps([sim]);
 	const ids: string[] = [];
 	for (const udid of ["U1", "U2"]) {
 		const made = perfSessionStore.createSession(c, deps.session, {
@@ -62,7 +62,7 @@ describe("sessionByRef", () => {
 describe("pickSession", () => {
 	test("without a ref, the newest session overall when no device resolves", async () => {
 		const { c, deps } = setup();
-		const r = await pickSession(c, deps, {}, undefined);
+		const r = await perfSessionPickCli.pickSession(c, deps, {}, undefined);
 		expect(r).toMatchObject({ success: true });
 	});
 });

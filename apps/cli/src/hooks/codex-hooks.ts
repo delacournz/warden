@@ -1,12 +1,6 @@
 import { join } from "node:path";
 import type { Result } from "@delacour/warden-types/result";
-import {
-	type HookName,
-	hasWardenHook,
-	type MergedSettings,
-	mergeWardenHooks,
-	type WardenHookSpec,
-} from "./claude-settings";
+import { type HookName, hookClaudeSettings, type MergedSettings, type WardenHookSpec } from "./claude-settings";
 
 type Env = Record<string, string | undefined>;
 
@@ -17,33 +11,37 @@ type Env = Record<string, string | undefined>;
  */
 export const CODEX_HOOKS: readonly WardenHookSpec[] = [{ event: "SessionEnd", name: "session-end", timeout: 3 }];
 
-/** Codex's config dir: `$CODEX_HOME`, else `~/.codex`. */
-export function codexHome(env: Env): string | undefined {
-	if (env.CODEX_HOME) return env.CODEX_HOME;
-	return env.HOME ? join(env.HOME, ".codex") : undefined;
-}
+export class HookCodexHooks {
+	/** Codex's config dir: `$CODEX_HOME`, else `~/.codex`. */
+	codexHome(env: Env): string | undefined {
+		if (env.CODEX_HOME) return env.CODEX_HOME;
+		return env.HOME ? join(env.HOME, ".codex") : undefined;
+	}
 
-export function codexHooksPath(env: Env): string | undefined {
-	const home = codexHome(env);
-	return home ? join(home, "hooks.json") : undefined;
-}
+	codexHooksPath(env: Env): string | undefined {
+		const home = this.codexHome(env);
+		return home ? join(home, "hooks.json") : undefined;
+	}
 
-export function codexConfigPath(env: Env): string | undefined {
-	const home = codexHome(env);
-	return home ? join(home, "config.toml") : undefined;
-}
+	codexConfigPath(env: Env): string | undefined {
+		const home = this.codexHome(env);
+		return home ? join(home, "config.toml") : undefined;
+	}
 
-/** Add warden's hooks to a Codex `hooks.json` document. Pure + idempotent. */
-export function mergeCodexHooks(existing: unknown, binary: string): Result<MergedSettings> {
-	return mergeWardenHooks(existing, binary, CODEX_HOOKS, "hooks.json");
-}
+	/** Add warden's hooks to a Codex `hooks.json` document. Pure + idempotent. */
+	mergeCodexHooks(existing: unknown, binary: string): Result<MergedSettings> {
+		return hookClaudeSettings.mergeWardenHooks(existing, binary, CODEX_HOOKS, "hooks.json");
+	}
 
-/** True when `config.toml` declares the warden hook `name` in its `[[hooks.<Event>]]` tables. */
-export function codexTomlHasWardenHook(toml: string | undefined, name: HookName): boolean {
-	if (toml === undefined) return false;
-	try {
-		return hasWardenHook(Bun.TOML.parse(toml), name);
-	} catch {
-		return false;
+	/** True when `config.toml` declares the warden hook `name` in its `[[hooks.<Event>]]` tables. */
+	codexTomlHasWardenHook(toml: string | undefined, name: HookName): boolean {
+		if (toml === undefined) return false;
+		try {
+			return hookClaudeSettings.hasWardenHook(Bun.TOML.parse(toml), name);
+		} catch {
+			return false;
+		}
 	}
 }
+
+export const hookCodexHooks = new HookCodexHooks();

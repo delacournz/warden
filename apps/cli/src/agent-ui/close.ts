@@ -2,7 +2,7 @@ import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
 import { type Lease, leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { releaseAfter } from "../perf/release-after";
+import { perfReleaseAfterCli } from "../perf/release-after";
 import type { UiDevice } from "./device";
 import { opErrors, type UiDeps } from "./driver";
 import { uiHelper } from "./helper";
@@ -38,7 +38,9 @@ export class UiClose {
 		release: boolean
 	): Promise<{ stopped: boolean; how: string; warning?: string }> {
 		if (!release) return this.stopperFor(device)(ctx, device.udid);
-		await new DeviceReleaser(ctx).release([device.lease.id], { after: releaseAfter(ctx, { helper: true }) });
+		await new DeviceReleaser(ctx).release([device.lease.id], {
+			after: perfReleaseAfterCli.releaseAfter(ctx, { helper: true }),
+		});
 		return { stopped: true, how: "release" };
 	}
 

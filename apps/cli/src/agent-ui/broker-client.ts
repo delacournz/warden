@@ -95,8 +95,8 @@ const SINCE_UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_60
 
 export class UiBrokerClient {
 	private readonly lazyCall: BrokerCall = async (socketPath, request, options) => {
-		const { callBroker } = await import("../dev-broker/ipc");
-		return callBroker(socketPath, request, options);
+		const { devBrokerIpc } = await import("../dev-broker/ipc");
+		return devBrokerIpc.callBroker(socketPath, request, options);
 	};
 
 	private handleOf(session: DevSessionRecord, socketPath: string, call: BrokerCall): BrokerHandle {

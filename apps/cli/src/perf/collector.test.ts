@@ -11,8 +11,8 @@ import { type PerfPlan, perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
-import { type CollectorDeps, runSessionCollector } from "./collector";
-import { asMe, fakePerfDeps } from "./testing";
+import { type CollectorDeps, perfCollectorCli } from "./collector";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -77,8 +77,12 @@ function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpaw
 		},
 	});
 	ctx = c;
-	asMe(c);
-	const perfDeps = fakePerfDeps([{ platform: "android", id: EMU, name: "pixel" }], {}, { metro: async () => METRO });
+	perfTestingCli.asMe(c);
+	const perfDeps = perfTestingCli.fakePerfDeps(
+		[{ platform: "android", id: EMU, name: "pixel" }],
+		{},
+		{ metro: async () => METRO }
+	);
 	const made = perfSessionStore.createSession(c, perfDeps.session, {
 		device: { udid: EMU, platform: "android", name: "pixel" },
 		target: { udid: EMU, ownedByCaller: false },
@@ -171,7 +175,7 @@ const states = (h: Harness) =>
 describe("runSessionCollector", () => {
 	test("an unknown session or one with no plan is missing and starts nothing", async () => {
 		const h = setup();
-		const none = await runSessionCollector(
+		const none = await perfCollectorCli.runSessionCollector(
 			h.c,
 			h.perfDeps,
 			h.deps,
@@ -185,7 +189,7 @@ describe("runSessionCollector", () => {
 
 	test("starts exactly the requested capturers", async () => {
 		const h = setup({ plan: { metrics: true, logs: true } });
-		await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
+		await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		expect(Object.keys(states(h)).sort()).toEqual(["logs", "metrics"]);
 		expect(h.opens()).toBe(0);
 		expect(h.logArgv).toHaveLength(1);
@@ -193,7 +197,7 @@ describe("runSessionCollector", () => {
 
 	test("metrics: one sample per tick, timed from the session start on the injected clock", async () => {
 		const h = setup({ plan: { metrics: true }, maxDurationMs: 4_000 });
-		await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
+		await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		const rows = sampleSeries.decodeSamples(
 			readFileSync(join(perfPaths.sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8")
 		);
@@ -212,7 +216,7 @@ describe("runSessionCollector", () => {
 
 	test("logs: redacted lines land in logs/device.log and the stream is killed on stop", async () => {
 		const h = setup({ plan: { logs: true } });
-		await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
+		await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		const text = readFileSync(join(perfPaths.sessionDir(h.c, h.id), "logs", "device.log"), "utf8");
 		expect(text).toContain("I/App: second");
 		expect(text).not.toContain("hunter2");
@@ -223,7 +227,7 @@ describe("runSessionCollector", () => {
 
 	test("the cap ends the run: captures flush, then finalize runs exactly once", async () => {
 		const h = setup({ plan: { metrics: true, logs: true }, maxDurationMs: 3_000 });
-		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
+		const r = await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		expect(r).toEqual({ success: true, data: "capped" });
 		expect(h.finalized).toEqual([h.id]);
 		expect(h.snapshots[0]).toEqual({ metrics: "stopped", logs: "stopped" });
@@ -237,7 +241,7 @@ describe("runSessionCollector", () => {
 		h.hooks.onSleep = (n) => {
 			if (n === 6) stop.abort();
 		};
-		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, stop.signal);
+		const r = await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, stop.signal);
 		expect(r).toEqual({ success: true, data: "aborted" });
 		expect(h.finalized).toEqual([]);
 		expect(h.clock.now).toBeLessThan(T0 + 120_000);
@@ -254,7 +258,7 @@ describe("runSessionCollector", () => {
 		const h = setup({ plan: { metrics: true }, maxDurationMs: 120_000 });
 		const stop = new AbortController();
 		stop.abort();
-		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, stop.signal);
+		const r = await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, stop.signal);
 		expect(r).toEqual({ success: true, data: "aborted" });
 		expect(h.finalized).toEqual([]);
 	});
@@ -264,14 +268,14 @@ describe("runSessionCollector", () => {
 		h.hooks.onSleep = (n) => {
 			if (n === 2) perfSessionStore.stopSession(h.c, h.perfDeps.session, h.id, "user", { signalCollector: false });
 		};
-		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
+		const r = await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		expect(r).toEqual({ success: true, data: "ended" });
 		expect(h.finalized).toEqual([]);
 	});
 
 	test("a failing capturer is recorded as failed and the others keep running", async () => {
 		const h = setup({ plan: { metrics: true, logs: true }, maxDurationMs: 4_000, logSpawnThrows: true });
-		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
+		const r = await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		expect(r).toEqual({ success: true, data: "capped" });
 		expect(states(h)).toEqual({ logs: "failed", metrics: "stopped" });
 		expect(h.log.join("\n")).toContain("logs: logcat exploded");
@@ -290,7 +294,7 @@ describe("runSessionCollector", () => {
 			if (n === 3) midRun = { stopSent: h.cdp.sent.some((s) => s.method === "Profiler.stop"), closed: h.closes() };
 			if (n === 4) stop.abort();
 		};
-		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, stop.signal);
+		const r = await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, stop.signal);
 		expect(r).toEqual({ success: true, data: "aborted" });
 		expect(midRun).toEqual({ stopSent: false, closed: 0 });
 		expect(h.cdp.sent.some((s) => s.method === "Profiler.stop")).toBe(true);
@@ -307,7 +311,7 @@ describe("runSessionCollector", () => {
 	test("no Metro target: js and react are failed, metrics still run, the socket is never opened", async () => {
 		const h = setup({ plan: { js: true, react: true, metrics: true }, maxDurationMs: 4_000 });
 		h.deps.js.open = async () => ({ success: false, error: { code: "devtools_unavailable", message: "no target" } });
-		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
+		const r = await perfCollectorCli.runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		expect(r).toEqual({ success: true, data: "capped" });
 		expect(states(h)).toEqual({ js: "failed", react: "failed", metrics: "stopped" });
 		expect(h.log.join("\n")).toContain("devtools:");

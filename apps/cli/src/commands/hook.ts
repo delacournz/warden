@@ -3,8 +3,8 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { backgroundAllowed, selfCommand, spawnDetached } from "../autogc";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import { type HookDeps, type HookResult, handleSessionEnd } from "../hooks/claude-pretool";
-import { errorMessage } from "../hooks/json";
+import { type HookDeps, type HookResult, hookClaudePretool } from "../hooks/claude-pretool";
+import { hookJson } from "../hooks/json";
 import { leaseHostBuilder } from "../lease-host";
 
 export class HookCommand extends CliCommand {
@@ -43,7 +43,7 @@ export class HookCommand extends CliCommand {
 	}
 
 	private dispatch(ctx: CommandContext, input: unknown): Promise<HookResult> {
-		return handleSessionEnd(input, this.hookDeps(ctx));
+		return hookClaudePretool.handleSessionEnd(input, this.hookDeps(ctx));
 	}
 
 	/**
@@ -55,7 +55,7 @@ export class HookCommand extends CliCommand {
 		try {
 			input = JSON.parse(await ctx.readStdin());
 		} catch (error) {
-			ctx.err(`warden hook session-end: bad stdin JSON (${errorMessage(error)}) — allowing`);
+			ctx.err(`warden hook session-end: bad stdin JSON (${hookJson.errorMessage(error)}) — allowing`);
 			return 0;
 		}
 		const result = await this.dispatch(ctx, input);

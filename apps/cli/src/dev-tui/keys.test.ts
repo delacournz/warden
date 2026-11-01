@@ -1,14 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	actionFor,
-	createKeyParser,
-	ESC_TIMEOUT_MS,
-	EXPO_KEYS,
-	type Key,
-	type KeyTimers,
-	LIST_BINDINGS,
-	promptEdit,
-} from "./keys";
+import { devTuiKeys, ESC_TIMEOUT_MS, EXPO_KEYS, type Key, type KeyTimers, LIST_BINDINGS } from "./keys";
 import type { ActionId } from "./model";
 
 function fakeTimers() {
@@ -35,7 +26,7 @@ function fakeTimers() {
 function parse(...chunks: Array<string | Uint8Array>) {
 	const keys: Key[] = [];
 	const clock = fakeTimers();
-	const parser = createKeyParser((k) => keys.push(k), clock.timers);
+	const parser = devTuiKeys.createKeyParser((k) => keys.push(k), clock.timers);
 	for (const chunk of chunks) parser.feed(chunk);
 	return { keys, clock };
 }
@@ -122,17 +113,17 @@ const press = (name: string, flags: Partial<Key> = {}): Key => ({
 
 describe("actionFor", () => {
 	test("list mode moves the selection with arrows and j/k", () => {
-		expect(actionFor("list", press("down"))).toEqual({ type: "select", delta: 1 });
-		expect(actionFor("list", press("j"))).toEqual({ type: "select", delta: 1 });
-		expect(actionFor("list", press("up"))).toEqual({ type: "select", delta: -1 });
-		expect(actionFor("list", press("k"))).toEqual({ type: "select", delta: -1 });
+		expect(devTuiKeys.actionFor("list", press("down"))).toEqual({ type: "select", delta: 1 });
+		expect(devTuiKeys.actionFor("list", press("j"))).toEqual({ type: "select", delta: 1 });
+		expect(devTuiKeys.actionFor("list", press("up"))).toEqual({ type: "select", delta: -1 });
+		expect(devTuiKeys.actionFor("list", press("k"))).toEqual({ type: "select", delta: -1 });
 	});
 
 	test("q and Ctrl-C quit; ? opens help; tab focuses the log", () => {
-		expect(actionFor("list", press("q"))).toEqual({ type: "quit" });
-		expect(actionFor("list", press("c", { ctrl: true }))).toEqual({ type: "quit" });
-		expect(actionFor("list", press("?"))).toEqual({ type: "mode", mode: "help" });
-		expect(actionFor("list", press("tab"))).toEqual({ type: "mode", mode: "log" });
+		expect(devTuiKeys.actionFor("list", press("q"))).toEqual({ type: "quit" });
+		expect(devTuiKeys.actionFor("list", press("c", { ctrl: true }))).toEqual({ type: "quit" });
+		expect(devTuiKeys.actionFor("list", press("?"))).toEqual({ type: "mode", mode: "help" });
+		expect(devTuiKeys.actionFor("list", press("tab"))).toEqual({ type: "mode", mode: "log" });
 	});
 
 	test("every action key in the plan's map runs its action", () => {
@@ -152,20 +143,23 @@ describe("actionFor", () => {
 			g: "report",
 		};
 		for (const [name, action] of Object.entries(map)) {
-			expect(actionFor("list", press(name, { shift: name === name.toUpperCase() }))).toEqual({ type: "run", action });
+			expect(devTuiKeys.actionFor("list", press(name, { shift: name === name.toUpperCase() }))).toEqual({
+				type: "run",
+				action,
+			});
 		}
-		expect(actionFor("list", press("h"))).toEqual({ type: "hud" });
-		expect(actionFor("list", press("l", { ctrl: true }))).toEqual({ type: "redraw" });
+		expect(devTuiKeys.actionFor("list", press("h"))).toEqual({ type: "hud" });
+		expect(devTuiKeys.actionFor("list", press("l", { ctrl: true }))).toEqual({ type: "redraw" });
 	});
 
 	test("enter and i interact with Metro", () => {
-		for (const name of ["enter", "i"]) expect(actionFor("list", press(name))).toEqual({ type: "interact" });
+		for (const name of ["enter", "i"]) expect(devTuiKeys.actionFor("list", press(name))).toEqual({ type: "interact" });
 	});
 
 	test("interact mode: Esc leaves, Shift+PgUp/PgDn scroll the pane, everything else goes to Expo", () => {
-		expect(actionFor("interact", press("escape"))).toEqual({ type: "mode", mode: "list" });
-		expect(actionFor("interact", press("pgup", { shift: true }))).toEqual({ type: "pane-scroll", dir: 1 });
-		expect(actionFor("interact", press("pgdn", { shift: true }))).toEqual({ type: "pane-scroll", dir: -1 });
+		expect(devTuiKeys.actionFor("interact", press("escape"))).toEqual({ type: "mode", mode: "list" });
+		expect(devTuiKeys.actionFor("interact", press("pgup", { shift: true }))).toEqual({ type: "pane-scroll", dir: 1 });
+		expect(devTuiKeys.actionFor("interact", press("pgdn", { shift: true }))).toEqual({ type: "pane-scroll", dir: -1 });
 		for (const k of [
 			press("r"),
 			press("?"),
@@ -175,26 +169,30 @@ describe("actionFor", () => {
 			press("pgup"),
 			press("l", { ctrl: true }),
 		])
-			expect(actionFor("interact", k)).toEqual({ type: "forward" });
+			expect(devTuiKeys.actionFor("interact", k)).toEqual({ type: "forward" });
 	});
 
 	test("plain letters do not fire on Ctrl", () => {
-		expect(actionFor("list", press("r", { ctrl: true }))).toBeUndefined();
+		expect(devTuiKeys.actionFor("list", press("r", { ctrl: true }))).toBeUndefined();
 	});
 
 	test("log mode scrolls; g and G jump", () => {
-		expect(actionFor("log", press("up"))).toEqual({ type: "scroll", kind: "line", dir: 1 });
-		expect(actionFor("log", press("pgdn"))).toEqual({ type: "scroll", kind: "page", dir: -1 });
-		expect(actionFor("log", press("g"))).toEqual({ type: "scroll", kind: "top", dir: 1 });
-		expect(actionFor("log", press("G", { shift: true }))).toEqual({ type: "scroll", kind: "bottom", dir: -1 });
-		expect(actionFor("log", press("escape"))).toEqual({ type: "mode", mode: "list" });
+		expect(devTuiKeys.actionFor("log", press("up"))).toEqual({ type: "scroll", kind: "line", dir: 1 });
+		expect(devTuiKeys.actionFor("log", press("pgdn"))).toEqual({ type: "scroll", kind: "page", dir: -1 });
+		expect(devTuiKeys.actionFor("log", press("g"))).toEqual({ type: "scroll", kind: "top", dir: 1 });
+		expect(devTuiKeys.actionFor("log", press("G", { shift: true }))).toEqual({
+			type: "scroll",
+			kind: "bottom",
+			dir: -1,
+		});
+		expect(devTuiKeys.actionFor("log", press("escape"))).toEqual({ type: "mode", mode: "list" });
 	});
 
 	test("help closes on Esc, ?, q; Ctrl-C still quits", () => {
 		for (const name of ["escape", "?", "q"])
-			expect(actionFor("help", press(name))).toEqual({ type: "mode", mode: "list" });
-		expect(actionFor("help", press("c", { ctrl: true }))).toEqual({ type: "quit" });
-		expect(actionFor("help", press("j"))).toBeUndefined();
+			expect(devTuiKeys.actionFor("help", press(name))).toEqual({ type: "mode", mode: "list" });
+		expect(devTuiKeys.actionFor("help", press("c", { ctrl: true }))).toEqual({ type: "quit" });
+		expect(devTuiKeys.actionFor("help", press("j"))).toBeUndefined();
 	});
 });
 
@@ -220,24 +218,24 @@ describe("help text sources", () => {
 
 describe("promptEdit", () => {
 	test("printable keys type, space is a space, backspace deletes", () => {
-		expect(promptEdit(press("a"))).toEqual({ op: "char", char: "a" });
-		expect(promptEdit(press("A", { shift: true }))).toEqual({ op: "char", char: "A" });
-		expect(promptEdit(press("space"))).toEqual({ op: "char", char: " " });
-		expect(promptEdit(press("backspace"))).toEqual({ op: "backspace" });
+		expect(devTuiKeys.promptEdit(press("a"))).toEqual({ op: "char", char: "a" });
+		expect(devTuiKeys.promptEdit(press("A", { shift: true }))).toEqual({ op: "char", char: "A" });
+		expect(devTuiKeys.promptEdit(press("space"))).toEqual({ op: "char", char: " " });
+		expect(devTuiKeys.promptEdit(press("backspace"))).toEqual({ op: "backspace" });
 	});
 
 	test("Enter submits; Esc and Ctrl-C cancel", () => {
-		expect(promptEdit(press("enter"))).toEqual({ op: "submit" });
-		expect(promptEdit(press("escape"))).toEqual({ op: "cancel" });
-		expect(promptEdit(press("c", { ctrl: true }))).toEqual({ op: "cancel" });
+		expect(devTuiKeys.promptEdit(press("enter"))).toEqual({ op: "submit" });
+		expect(devTuiKeys.promptEdit(press("escape"))).toEqual({ op: "cancel" });
+		expect(devTuiKeys.promptEdit(press("c", { ctrl: true }))).toEqual({ op: "cancel" });
 	});
 
 	test("arrows, other Ctrl keys and named keys are ignored", () => {
 		for (const k of [press("up"), press("tab"), press("pgup"), press("l", { ctrl: true })])
-			expect(promptEdit(k)).toBeUndefined();
+			expect(devTuiKeys.promptEdit(k)).toBeUndefined();
 	});
 
 	test("list mode has no binding while the prompt is open", () => {
-		expect(actionFor("prompt", press("q"))).toBeUndefined();
+		expect(devTuiKeys.actionFor("prompt", press("q"))).toBeUndefined();
 	});
 });

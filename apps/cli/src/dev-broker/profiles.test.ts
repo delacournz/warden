@@ -11,10 +11,11 @@ import {
 import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
 import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import { reactFixtures } from "@delacour/warden-perf/react/react.testing";
-import { type Broker, callBroker, startBroker } from "./broker";
-import { withExtensions } from "./extensions";
-import { profileStatus, startProfile, stopProfile } from "./profile-client";
-import { createProfilesExtension, summarizeHeapSampling } from "./profiles";
+import { type Broker, devBroker } from "./broker";
+import { devBrokerExtensions } from "./extensions";
+import { devBrokerIpc } from "./ipc";
+import { devBrokerProfileClient } from "./profile-client";
+import { devBrokerProfiles } from "./profiles";
 
 const dirs: string[] = [];
 const brokers: Broker[] = [];
@@ -91,7 +92,7 @@ async function setup(options: { heapFails?: boolean } = {}) {
 	metros.push(metro);
 	const logDir = mkdtempSync(join(tmpdir(), "wbp-"));
 	dirs.push(logDir);
-	const started = await startBroker({
+	const started = await devBroker.startBroker({
 		metroUrl: metro.url,
 		device: { deviceName: "iPhone A" },
 		logDir,
@@ -99,8 +100,8 @@ async function setup(options: { heapFails?: boolean } = {}) {
 		networkPollMs: 10,
 	});
 	if (!started.success) throw new Error(started.error.message);
-	const broker = withExtensions(started.data, { metroUrl: metro.url, logDir }, [
-		createProfilesExtension({
+	const broker = devBrokerExtensions.withExtensions(started.data, { metroUrl: metro.url, logDir }, [
+		devBrokerProfiles.createProfilesExtension({
 			now: () => T0,
 			cwd: logDir,
 			fetchMap: async () => jsResultFactory.err("cdp_failed", "no source maps in this test"),
@@ -111,7 +112,8 @@ async function setup(options: { heapFails?: boolean } = {}) {
 	return { broker, metro, logDir };
 }
 
-const call = (broker: Broker, method: string, params: unknown) => callBroker(broker.socketPath, { method, params });
+const call = (broker: Broker, method: string, params: unknown) =>
+	devBrokerIpc.callBroker(broker.socketPath, { method, params });
 
 describe("profile.* methods", () => {
 	test("cpu: start, stop writes the cpuprofile and hotspots and returns top self-time functions", async () => {
@@ -227,23 +229,27 @@ describe("profile client", () => {
 				return { success: true as const, data: { kind: "cpu", startedAt: 1 } };
 			},
 		};
-		const started = await startProfile(env, { udid: "U1", kind: "cpu", samplingIntervalUs: 200 }, deps);
+		const started = await devBrokerProfileClient.startProfile(
+			env,
+			{ udid: "U1", kind: "cpu", samplingIntervalUs: 200 },
+			deps
+		);
 		expect(started.success).toBe(true);
-		await stopProfile(env, { kind: "cpu" }, deps);
-		await profileStatus(env, {}, deps);
+		await devBrokerProfileClient.stopProfile(env, { kind: "cpu" }, deps);
+		await devBrokerProfileClient.profileStatus(env, {}, deps);
 		expect(calls).toEqual([
 			{ socket: "/tmp/b.sock", method: "profile.start", params: { kind: "cpu", samplingIntervalUs: 200 } },
 			{ socket: "/tmp/b.sock", method: "profile.stop", params: { kind: "cpu" } },
 			{ socket: "/tmp/b.sock", method: "profile.status", params: {} },
 		]);
-		const none = await startProfile({ WARDEN_HOME: join(home, "empty") }, { kind: "cpu" }, deps);
+		const none = await devBrokerProfileClient.startProfile({ WARDEN_HOME: join(home, "empty") }, { kind: "cpu" }, deps);
 		expect(!none.success && none.error.code).toBe("broker_unreachable");
 	});
 });
 
 describe("summarizeHeapSampling", () => {
 	test("merges sites and ranks by bytes", () => {
-		const summary = summarizeHeapSampling(HEAP.head, 1);
+		const summary = devBrokerProfiles.summarizeHeapSampling(HEAP.head, 1);
 		expect(summary.topAllocators).toHaveLength(1);
 		expect(summary.topAllocators[0]?.selfBytes).toBe(800);
 	});

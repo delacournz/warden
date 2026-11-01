@@ -4,74 +4,81 @@ import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
 import { perfSessionRefs } from "@delacour/warden-sdk/ops/perf/session-ref";
 import { UI_EXIT, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
-import { errorMessage } from "../hooks/json";
+import { hookJson } from "../hooks/json";
 
 export type PerfDiffOptions = { json?: true; failOn?: string; threshold?: string };
 
-/** `10%` / `10` to 10. */
-function parseThreshold(raw: string | undefined): number | undefined {
-	if (raw === undefined) return DEFAULT_THRESHOLD_PCT;
-	const m = /^(\d+(?:\.\d+)?)%?$/.exec(raw.trim());
-	return m?.[1] === undefined ? undefined : Number(m[1]);
-}
-
-/**
- * `warden perf diff <a> <b> [--fail-on regress] [--threshold 10%]`: per-metric deltas between two sessions' reports
- * (startup p50, jank %, p95 CPU, peak PSS/RSS, slowest commit, hangs, top functions' self share). Exit 1 when
- * `--fail-on regress` and something regressed past the threshold. Reads files only: no device.
- */
-export async function perfDiff(ctx: CommandContext, a: string, b: string, opts: PerfDiffOptions): Promise<number> {
-	const meta = { command: "perf diff", label: "perf diff", json: opts.json === true, startedAt: ctx.now() };
-	try {
-		if (opts.failOn !== undefined && opts.failOn !== "regress")
-			return uiOutput.reportError(
-				ctx,
-				meta,
-				uiOutput.uiError("usage", `--fail-on must be "regress", got "${opts.failOn}"`)
-			);
-		const threshold = parseThreshold(opts.threshold);
-		if (threshold === undefined)
-			return uiOutput.reportError(
-				ctx,
-				meta,
-				uiOutput.uiError("usage", `--threshold must be a percentage like 10%, got "${opts.threshold}"`)
-			);
-		const sessions = [perfSessionRefs.sessionByRef(ctx, a), perfSessionRefs.sessionByRef(ctx, b)] as const;
-		for (const s of sessions) if (!s.success) return uiOutput.reportError(ctx, meta, s.error);
-		const [first, second] = sessions;
-		if (!first.success || !second.success) return UI_EXIT.failed;
-		const reports = [reportReader.reportFor(ctx, first.data.id), reportReader.reportFor(ctx, second.data.id)] as const;
-		const [ra, rb] = reports;
-		if (ra === undefined || rb === undefined)
-			return uiOutput.reportError(
-				ctx,
-				meta,
-				uiOutput.uiError("session_not_found", "could not build a report for one of the sessions")
-			);
-		const diff = reportDiffer.diffReports(ra, rb, threshold);
-		const failed = opts.failOn === "regress" && diff.regressions > 0;
-		return uiOutput.reportOk(ctx, meta, {
-			device: { udid: rb.device.udid, platform: rb.device.platform, name: rb.device.name },
-			result: { ...diff, failed },
-			text: reportDiffer.diffLines(diff).join("\n"),
-			exit: failed ? UI_EXIT.failed : UI_EXIT.ok,
-		});
-	} catch (error) {
-		return uiOutput.reportError(ctx, meta, uiOutput.uiError("failed", errorMessage(error)));
+export class PerfDiffCli {
+	/** `10%` / `10` to 10. */
+	private parseThreshold(raw: string | undefined): number | undefined {
+		if (raw === undefined) return DEFAULT_THRESHOLD_PCT;
+		const m = /^(\d+(?:\.\d+)?)%?$/.exec(raw.trim());
+		return m?.[1] === undefined ? undefined : Number(m[1]);
 	}
+
+	/**
+	 * `warden perf diff <a> <b> [--fail-on regress] [--threshold 10%]`: per-metric deltas between two sessions' reports
+	 * (startup p50, jank %, p95 CPU, peak PSS/RSS, slowest commit, hangs, top functions' self share). Exit 1 when
+	 * `--fail-on regress` and something regressed past the threshold. Reads files only: no device.
+	 */
+	readonly perfDiff = async (ctx: CommandContext, a: string, b: string, opts: PerfDiffOptions): Promise<number> => {
+		const meta = { command: "perf diff", label: "perf diff", json: opts.json === true, startedAt: ctx.now() };
+		try {
+			if (opts.failOn !== undefined && opts.failOn !== "regress")
+				return uiOutput.reportError(
+					ctx,
+					meta,
+					uiOutput.uiError("usage", `--fail-on must be "regress", got "${opts.failOn}"`)
+				);
+			const threshold = this.parseThreshold(opts.threshold);
+			if (threshold === undefined)
+				return uiOutput.reportError(
+					ctx,
+					meta,
+					uiOutput.uiError("usage", `--threshold must be a percentage like 10%, got "${opts.threshold}"`)
+				);
+			const sessions = [perfSessionRefs.sessionByRef(ctx, a), perfSessionRefs.sessionByRef(ctx, b)] as const;
+			for (const s of sessions) if (!s.success) return uiOutput.reportError(ctx, meta, s.error);
+			const [first, second] = sessions;
+			if (!first.success || !second.success) return UI_EXIT.failed;
+			const reports = [
+				reportReader.reportFor(ctx, first.data.id),
+				reportReader.reportFor(ctx, second.data.id),
+			] as const;
+			const [ra, rb] = reports;
+			if (ra === undefined || rb === undefined)
+				return uiOutput.reportError(
+					ctx,
+					meta,
+					uiOutput.uiError("session_not_found", "could not build a report for one of the sessions")
+				);
+			const diff = reportDiffer.diffReports(ra, rb, threshold);
+			const failed = opts.failOn === "regress" && diff.regressions > 0;
+			return uiOutput.reportOk(ctx, meta, {
+				device: { udid: rb.device.udid, platform: rb.device.platform, name: rb.device.name },
+				result: { ...diff, failed },
+				text: reportDiffer.diffLines(diff).join("\n"),
+				exit: failed ? UI_EXIT.failed : UI_EXIT.ok,
+			});
+		} catch (error) {
+			return uiOutput.reportError(ctx, meta, uiOutput.uiError("failed", hookJson.errorMessage(error)));
+		}
+	};
+
+	/** Wire `diff` onto `warden perf`. */
+	readonly registerDiff = (cmd: Commander, ctx: CommandContext, done: (code: number) => void): void => {
+		cmd
+			.command("diff")
+			.description("compare two sessions' reports (before/after a fix); --fail-on regress exits 1 on a regression")
+			.argument("<a>", "the baseline session id (or prefix, or latest)")
+			.argument("<b>", "the session to judge")
+			.option("--fail-on <what>", "regress: exit 1 when a metric got worse past the threshold")
+			.option("--threshold <pct>", "relative change that counts as a regression (default 10%)")
+			.option("--json", "machine-readable output")
+			.action(async (a, b, opts) => {
+				done(await this.perfDiff(ctx, a, b, opts));
+			});
+	};
 }
 
-/** Wire `diff` onto `warden perf`. */
-export function registerDiff(cmd: Commander, ctx: CommandContext, done: (code: number) => void): void {
-	cmd
-		.command("diff")
-		.description("compare two sessions' reports (before/after a fix); --fail-on regress exits 1 on a regression")
-		.argument("<a>", "the baseline session id (or prefix, or latest)")
-		.argument("<b>", "the session to judge")
-		.option("--fail-on <what>", "regress: exit 1 when a metric got worse past the threshold")
-		.option("--threshold <pct>", "relative change that counts as a regression (default 10%)")
-		.option("--json", "machine-readable output")
-		.action(async (a, b, opts) => {
-			done(await perfDiff(ctx, a, b, opts));
-		});
-}
+export const perfDiffCli = new PerfDiffCli();

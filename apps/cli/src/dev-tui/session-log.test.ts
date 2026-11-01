@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_PENDING_BYTES, openSessionLog, SESSION_LOG_FLUSH_MS } from "./session-log";
+import { devTuiSessionLog, MAX_PENDING_BYTES, SESSION_LOG_FLUSH_MS } from "./session-log";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -20,7 +20,7 @@ const FIXED = Date.UTC(2026, 9, 26, 1, 2, 3, 456);
 describe("openSessionLog", () => {
 	test("lines and Metro bytes land on close", () => {
 		const dir = join(tmp(), "dev", "lease-1");
-		const log = openSessionLog(dir, { now: () => FIXED });
+		const log = devTuiSessionLog.openSessionLog(dir, { now: () => FIXED });
 		log.line("claim", "ios · warden-iphone-17-5");
 		log.line("metro", "two\nlines");
 		log.metro(new TextEncoder().encode("\x1b[1mBundled\x1b[0m"));
@@ -37,7 +37,7 @@ describe("openSessionLog", () => {
 
 	test("writes are buffered and flushed within the flush interval", async () => {
 		const dir = join(tmp(), "d");
-		const log = openSessionLog(dir, { now: () => FIXED });
+		const log = devTuiSessionLog.openSessionLog(dir, { now: () => FIXED });
 		log.line("a", "one");
 		expect(existsSync(join(dir, "warden.log"))).toBe(false);
 		await Bun.sleep(SESSION_LOG_FLUSH_MS + 100);
@@ -49,7 +49,7 @@ describe("openSessionLog", () => {
 
 	test("before the directory is known everything is held, then written once it is", () => {
 		const dir = join(tmp(), "dev", "lease-2");
-		const log = openSessionLog(undefined, { now: () => FIXED });
+		const log = devTuiSessionLog.openSessionLog(undefined, { now: () => FIXED });
 		log.line("claim", "early");
 		log.metro(new TextEncoder().encode("early bytes"));
 		expect(log.shotsDir()).toBeUndefined();
@@ -64,7 +64,7 @@ describe("openSessionLog", () => {
 
 	test("pending output beyond 1 MB is dropped and said so", () => {
 		const dir = join(tmp(), "dev", "lease-3");
-		const log = openSessionLog(undefined, { now: () => FIXED });
+		const log = devTuiSessionLog.openSessionLog(undefined, { now: () => FIXED });
 		log.metro(new Uint8Array(MAX_PENDING_BYTES));
 		log.metro(new TextEncoder().encode("dropped"));
 		log.attach(dir);
@@ -75,24 +75,24 @@ describe("openSessionLog", () => {
 
 	test("shots/ is created only when asked", () => {
 		const dir = join(tmp(), "d");
-		const log = openSessionLog(dir);
+		const log = devTuiSessionLog.openSessionLog(dir);
 		log.close();
 		expect(existsSync(join(dir, "shots"))).toBe(false);
-		const again = openSessionLog(dir);
+		const again = devTuiSessionLog.openSessionLog(dir);
 		expect(again.shotsDir()).toBe(join(dir, "shots"));
 		expect(existsSync(join(dir, "shots"))).toBe(true);
 		again.close();
 	});
 
 	test("an unwritable directory never throws", () => {
-		const log = openSessionLog("/dev/null/nope", { now: () => FIXED });
+		const log = devTuiSessionLog.openSessionLog("/dev/null/nope", { now: () => FIXED });
 		log.line("a", "x");
 		expect(() => log.close()).not.toThrow();
 	});
 
 	test("lines after close are ignored", () => {
 		const dir = join(tmp(), "d");
-		const log = openSessionLog(dir, { now: () => FIXED });
+		const log = devTuiSessionLog.openSessionLog(dir, { now: () => FIXED });
 		log.close();
 		log.line("a", "late");
 		expect(existsSync(join(dir, "warden.log"))).toBe(false);

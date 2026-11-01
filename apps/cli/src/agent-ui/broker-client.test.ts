@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brokerErr } from "../dev-broker/broker.types";
-import { type BrokerServer, serveBroker } from "../dev-broker/ipc";
+import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
+import { type BrokerServer, devBrokerIpc } from "../dev-broker/ipc";
 import { type DevSessionRecord, writeDevSession } from "../dev-session";
 import { uiBrokerClient } from "./broker-client";
 
@@ -16,13 +16,13 @@ afterEach(async () => {
 
 const alive = { isAlive: () => true };
 
-type Stub = (method: string, params: unknown) => ReturnType<Parameters<typeof serveBroker>[1]>;
+type Stub = (method: string, params: unknown) => ReturnType<Parameters<typeof devBrokerIpc.serveBroker>[1]>;
 
 /** A temp WARDEN_HOME with one dev session per `udid` whose broker is `stub`. */
 async function session(udid: string, stub: Stub, env?: Record<string, string>) {
 	const home = env?.WARDEN_HOME ?? mkdtempSync(join(tmpdir(), "wbc-"));
 	if (env === undefined) dirs.push(home);
-	const served = await serveBroker(join(mkdtempSync(join(tmpdir(), "wbs-")), "b.sock"), stub);
+	const served = await devBrokerIpc.serveBroker(join(mkdtempSync(join(tmpdir(), "wbs-")), "b.sock"), stub);
 	if (!served.success) throw new Error(served.error.message);
 	servers.push(served.data);
 	dirs.push(join(served.data.socketPath, ".."));
@@ -101,8 +101,9 @@ describe("work functions", () => {
 	test("broker errors map: unavailable keeps its hint, eval_failed is the plain message", async () => {
 		const { env } = await session("U1", async (method) => {
 			if (method === "status") return { success: true, data: statusData };
-			if (method === "resume") return brokerErr("devtools_unavailable", "yielded", "close DevTools");
-			return brokerErr("eval_failed", "ReferenceError: boom");
+			if (method === "resume")
+				return devBrokerBrokerTypes.brokerErr("devtools_unavailable", "yielded", "close DevTools");
+			return devBrokerBrokerTypes.brokerErr("eval_failed", "ReferenceError: boom");
 		});
 		const resumed = await uiBrokerClient.devtoolsResume({ env, udid: "U1" }, alive);
 		expect(!resumed.success && resumed.error).toMatchObject({ code: "devtools_unavailable", hint: "close DevTools" });

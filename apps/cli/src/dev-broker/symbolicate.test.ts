@@ -4,7 +4,7 @@ import { resultFactory } from "@delacour/warden-types/result";
 import type { Broker } from "./broker";
 import type { LineProcessor } from "./broker.types";
 import { BROKER_EXTENSIONS } from "./extensions";
-import { createSymbolicator, isBundleFrame, symbolicateExtension, symbolicateFrames } from "./symbolicate";
+import { devBrokerSymbolicate } from "./symbolicate";
 
 const BUNDLE = "http://localhost:8081/index.bundle?platform=ios&dev=true";
 
@@ -50,18 +50,22 @@ const exception = (line = 5): ConsoleLine => ({
 describe("isBundleFrame", () => {
 	test("accepts the JSC-safe `//&` bundle URL React Native reports", () => {
 		const file = "http://127.0.0.1:8082/apps/example/index.ts.bundle//&platform=ios&dev=true";
-		expect(isBundleFrame({ file, line: 1, col: 1 })).toBe(true);
-		expect(isBundleFrame({ file: "InternalBytecode.js", line: 1, col: 1 })).toBe(false);
+		expect(devBrokerSymbolicate.isBundleFrame({ file, line: 1, col: 1 })).toBe(true);
+		expect(devBrokerSymbolicate.isBundleFrame({ file: "InternalBytecode.js", line: 1, col: 1 })).toBe(false);
 	});
 });
 
 describe("symbolicateFrames", () => {
 	test("sends 1-based line / 0-based column and maps the reply", async () => {
 		const metro = fakeMetro();
-		const result = await symbolicateFrames("http://localhost:8081", [{ file: BUNDLE, line: 5, col: 3, fn: "boom" }], {
-			fetch: metro.fetch,
-			timeoutMs: 500,
-		});
+		const result = await devBrokerSymbolicate.symbolicateFrames(
+			"http://localhost:8081",
+			[{ file: BUNDLE, line: 5, col: 3, fn: "boom" }],
+			{
+				fetch: metro.fetch,
+				timeoutMs: 500,
+			}
+		);
 		expect(metro.posts[0]?.stack).toEqual([{ file: BUNDLE, lineNumber: 5, column: 2, methodName: "boom" }]);
 		expect(result).toEqual({
 			success: true,
@@ -73,15 +77,23 @@ describe("symbolicateFrames", () => {
 	});
 
 	test("errors on a non-200 reply or a timeout", async () => {
-		const failed = await symbolicateFrames("http://localhost:8081", [{ file: BUNDLE, line: 1, col: 1 }], {
-			fetch: fakeMetro({ fail: true }).fetch,
-			timeoutMs: 500,
-		});
+		const failed = await devBrokerSymbolicate.symbolicateFrames(
+			"http://localhost:8081",
+			[{ file: BUNDLE, line: 1, col: 1 }],
+			{
+				fetch: fakeMetro({ fail: true }).fetch,
+				timeoutMs: 500,
+			}
+		);
 		expect(failed.success).toBe(false);
-		const hung = await symbolicateFrames("http://localhost:8081", [{ file: BUNDLE, line: 1, col: 1 }], {
-			fetch: fakeMetro({ hang: true }).fetch,
-			timeoutMs: 20,
-		});
+		const hung = await devBrokerSymbolicate.symbolicateFrames(
+			"http://localhost:8081",
+			[{ file: BUNDLE, line: 1, col: 1 }],
+			{
+				fetch: fakeMetro({ hang: true }).fetch,
+				timeoutMs: 20,
+			}
+		);
 		expect(hung.success).toBe(false);
 	});
 });
@@ -89,7 +101,10 @@ describe("symbolicateFrames", () => {
 describe("symbolicator line processor", () => {
 	test("rewrites exceptions: only bundle frames sent, collapsed kept flagged, source and codeFrame set", async () => {
 		const metro = fakeMetro();
-		const process = createSymbolicator("http://localhost:8081", { fetch: metro.fetch, timeoutMs: 500 }).process;
+		const process = devBrokerSymbolicate.createSymbolicator("http://localhost:8081", {
+			fetch: metro.fetch,
+			timeoutMs: 500,
+		}).process;
 		const out = await process(exception());
 		expect(metro.posts[0]?.stack.map((f) => f.lineNumber)).toEqual([5, 99]);
 		expect(out.stack).toEqual([
@@ -104,7 +119,10 @@ describe("symbolicator line processor", () => {
 
 	test("lines without bundle frames pass untouched and cost no request", async () => {
 		const metro = fakeMetro();
-		const process = createSymbolicator("http://localhost:8081", { fetch: metro.fetch, timeoutMs: 500 }).process;
+		const process = devBrokerSymbolicate.createSymbolicator("http://localhost:8081", {
+			fetch: metro.fetch,
+			timeoutMs: 500,
+		}).process;
 		const note: ConsoleLine = { ts: 1, level: "info", kind: "note", text: "mark" };
 		const plain: ConsoleLine = {
 			ts: 1,
@@ -120,7 +138,10 @@ describe("symbolicator line processor", () => {
 
 	test("console line with only a bundle source is symbolicated through it", async () => {
 		const metro = fakeMetro();
-		const process = createSymbolicator("http://localhost:8081", { fetch: metro.fetch, timeoutMs: 500 }).process;
+		const process = devBrokerSymbolicate.createSymbolicator("http://localhost:8081", {
+			fetch: metro.fetch,
+			timeoutMs: 500,
+		}).process;
 		const out = await process({
 			ts: 1,
 			level: "log",
@@ -133,7 +154,10 @@ describe("symbolicator line processor", () => {
 
 	test("caches per bundle + frame; invalidate() and a changed bundle URL refetch", async () => {
 		const metro = fakeMetro();
-		const sym = createSymbolicator("http://localhost:8081", { fetch: metro.fetch, timeoutMs: 500 });
+		const sym = devBrokerSymbolicate.createSymbolicator("http://localhost:8081", {
+			fetch: metro.fetch,
+			timeoutMs: 500,
+		});
 		await sym.process(exception());
 		await sym.process(exception());
 		expect(metro.posts).toHaveLength(1);
@@ -152,7 +176,10 @@ describe("symbolicator line processor", () => {
 
 	test("a new bundle URL drops cached frames of the old one", async () => {
 		const metro = fakeMetro();
-		const sym = createSymbolicator("http://localhost:8081", { fetch: metro.fetch, timeoutMs: 500 });
+		const sym = devBrokerSymbolicate.createSymbolicator("http://localhost:8081", {
+			fetch: metro.fetch,
+			timeoutMs: 500,
+		});
 		await sym.process(exception());
 		const next = {
 			...exception(),
@@ -167,7 +194,10 @@ describe("symbolicator line processor", () => {
 	test("failure or timeout returns the line unchanged", async () => {
 		const line = exception();
 		for (const options of [{ fail: true }, { hang: true }]) {
-			const sym = createSymbolicator("http://localhost:8081", { fetch: fakeMetro(options).fetch, timeoutMs: 20 });
+			const sym = devBrokerSymbolicate.createSymbolicator("http://localhost:8081", {
+				fetch: fakeMetro(options).fetch,
+				timeoutMs: 20,
+			});
 			expect(await sym.process(line)).toBe(line);
 		}
 	});
@@ -175,7 +205,7 @@ describe("symbolicator line processor", () => {
 
 describe("symbolicateExtension", () => {
 	test("is installed by default", () => {
-		expect(BROKER_EXTENSIONS).toContain(symbolicateExtension);
+		expect(BROKER_EXTENSIONS).toContain(devBrokerSymbolicate.symbolicateExtension);
 	});
 
 	test("registers a processor and an attach hook, and removes both on teardown", async () => {
@@ -194,7 +224,7 @@ describe("symbolicateExtension", () => {
 			},
 			registerMethod: () => resultFactory.ok(() => undefined),
 		} as unknown as Broker;
-		const teardown = symbolicateExtension(broker, {
+		const teardown = devBrokerSymbolicate.symbolicateExtension(broker, {
 			metroUrl: "http://localhost:8081",
 			logDir: "/d",
 			log: () => undefined,

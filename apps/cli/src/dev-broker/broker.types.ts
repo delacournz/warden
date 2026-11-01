@@ -120,10 +120,10 @@ export type MethodHandler = (params: unknown, context: BrokerContext) => Promise
  */
 export type LineProcessor = (line: ConsoleLine) => ConsoleLine | Promise<ConsoleLine>;
 
-export function brokerErr(
-	code: BrokerErrorCode,
-	message: string,
-	hint?: string
-): { success: false; error: BrokerError } {
-	return { success: false, error: hint === undefined ? { code, message } : { code, message, hint } };
+export class DevBrokerBrokerTypes {
+	brokerErr(code: BrokerErrorCode, message: string, hint?: string): { success: false; error: BrokerError } {
+		return { success: false, error: hint === undefined ? { code, message } : { code, message, hint } };
+	}
 }
+
+export const devBrokerBrokerTypes = new DevBrokerBrokerTypes();

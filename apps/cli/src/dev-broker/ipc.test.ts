@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { brokerErr } from "./broker.types";
-import { type BrokerServer, callBroker, chooseSocketPath, serveBroker } from "./ipc";
+import { devBrokerBrokerTypes } from "./broker.types";
+import { type BrokerServer, devBrokerIpc } from "./ipc";
 
 const dirs: string[] = [];
 const servers: BrokerServer[] = [];
@@ -19,8 +19,8 @@ afterEach(async () => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function serve(path: string, handle: Parameters<typeof serveBroker>[1]): Promise<BrokerServer> {
-	const served = await serveBroker(path, handle);
+async function serve(path: string, handle: Parameters<typeof devBrokerIpc.serveBroker>[1]): Promise<BrokerServer> {
+	const served = await devBrokerIpc.serveBroker(path, handle);
 	if (!served.success) throw new Error(served.error.message);
 	servers.push(served.data);
 	return served.data;
@@ -28,15 +28,15 @@ async function serve(path: string, handle: Parameters<typeof serveBroker>[1]): P
 
 describe("chooseSocketPath", () => {
 	test("uses <logDir>/broker.sock when it fits", () => {
-		expect(chooseSocketPath("/tmp/a")).toBe("/tmp/a/broker.sock");
+		expect(devBrokerIpc.chooseSocketPath("/tmp/a")).toBe("/tmp/a/broker.sock");
 	});
 
 	test("falls back to a short temp path for a long log dir, stable per dir", () => {
 		const long = `/${"x".repeat(120)}`;
-		const path = chooseSocketPath(long, () => "/tmp");
+		const path = devBrokerIpc.chooseSocketPath(long, () => "/tmp");
 		expect(path).toMatch(/^\/tmp\/warden-[0-9a-f]{12}\.sock$/);
-		expect(chooseSocketPath(long, () => "/tmp")).toBe(path);
-		expect(chooseSocketPath(`${long}2`, () => "/tmp")).not.toBe(path);
+		expect(devBrokerIpc.chooseSocketPath(long, () => "/tmp")).toBe(path);
+		expect(devBrokerIpc.chooseSocketPath(`${long}2`, () => "/tmp")).not.toBe(path);
 	});
 });
 
@@ -48,15 +48,15 @@ describe("serveBroker / callBroker", () => {
 			seen.push({ method, params });
 			return { success: true, data: { echoed: params } };
 		});
-		const result = await callBroker(path, { method: "echo", params: { grep: "x" } });
+		const result = await devBrokerIpc.callBroker(path, { method: "echo", params: { grep: "x" } });
 		expect(result).toEqual({ success: true, data: { echoed: { grep: "x" } } });
 		expect(seen).toEqual([{ method: "echo", params: { grep: "x" } }]);
 	});
 
 	test("hands a handler error to the caller with its hint", async () => {
 		const path = join(tempDir(), "b.sock");
-		await serve(path, async () => brokerErr("devtools_unavailable", "yielded", "close DevTools"));
-		const result = await callBroker(path, { method: "route", params: {} });
+		await serve(path, async () => devBrokerBrokerTypes.brokerErr("devtools_unavailable", "yielded", "close DevTools"));
+		const result = await devBrokerIpc.callBroker(path, { method: "route", params: {} });
 		expect(result).toEqual({
 			success: false,
 			error: { code: "devtools_unavailable", message: "yielded", hint: "close DevTools" },
@@ -71,8 +71,8 @@ describe("serveBroker / callBroker", () => {
 			return { success: true, data: tag };
 		});
 		const [slow, fast] = await Promise.all([
-			callBroker(path, { method: "x", params: { delay: 60, tag: "slow" } }),
-			callBroker(path, { method: "x", params: { delay: 1, tag: "fast" } }),
+			devBrokerIpc.callBroker(path, { method: "x", params: { delay: 60, tag: "slow" } }),
+			devBrokerIpc.callBroker(path, { method: "x", params: { delay: 1, tag: "fast" } }),
 		]);
 		expect(slow).toEqual({ success: true, data: "slow" });
 		expect(fast).toEqual({ success: true, data: "fast" });
@@ -82,7 +82,7 @@ describe("serveBroker / callBroker", () => {
 		const path = join(tempDir(), "b.sock");
 		const big = "é".repeat(3_000_000);
 		await serve(path, async () => ({ success: true, data: big }));
-		const result = await callBroker(path, { method: "x", params: {} });
+		const result = await devBrokerIpc.callBroker(path, { method: "x", params: {} });
 		expect(result).toEqual({ success: true, data: big });
 	});
 
@@ -90,15 +90,15 @@ describe("serveBroker / callBroker", () => {
 		const path = join(tempDir(), "b.sock");
 		writeFileSync(path, "");
 		await serve(path, async () => ({ success: true, data: "up" }));
-		expect(await callBroker(path, { method: "x", params: {} })).toEqual({ success: true, data: "up" });
+		expect(await devBrokerIpc.callBroker(path, { method: "x", params: {} })).toEqual({ success: true, data: "up" });
 	});
 
 	test("refuses to serve over a live broker", async () => {
 		const path = join(tempDir(), "b.sock");
 		await serve(path, async () => ({ success: true, data: 1 }));
-		const second = await serveBroker(path, async () => ({ success: true, data: 2 }));
+		const second = await devBrokerIpc.serveBroker(path, async () => ({ success: true, data: 2 }));
 		expect(second.success).toBe(false);
-		expect(await callBroker(path, { method: "x", params: {} })).toEqual({ success: true, data: 1 });
+		expect(await devBrokerIpc.callBroker(path, { method: "x", params: {} })).toEqual({ success: true, data: 1 });
 	});
 
 	test("close removes the socket file and later calls are broker_unreachable", async () => {
@@ -106,7 +106,7 @@ describe("serveBroker / callBroker", () => {
 		const server = await serve(path, async () => ({ success: true, data: 1 }));
 		await server.close();
 		expect(existsSync(path)).toBe(false);
-		const result = await callBroker(path, { method: "x", params: {} });
+		const result = await devBrokerIpc.callBroker(path, { method: "x", params: {} });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.code).toBe("broker_unreachable");
 	});
@@ -114,7 +114,7 @@ describe("serveBroker / callBroker", () => {
 	test("times out when the handler never answers", async () => {
 		const path = join(tempDir(), "b.sock");
 		await serve(path, () => new Promise(() => undefined));
-		const result = await callBroker(path, { method: "x", params: {} }, { timeoutMs: 50 });
+		const result = await devBrokerIpc.callBroker(path, { method: "x", params: {} }, { timeoutMs: 50 });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.code).toBe("timeout");
 	});
@@ -124,7 +124,7 @@ describe("serveBroker / callBroker", () => {
 		await serve(path, async () => {
 			throw new Error("boom");
 		});
-		const result = await callBroker(path, { method: "x", params: {} });
+		const result = await devBrokerIpc.callBroker(path, { method: "x", params: {} });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("boom");
 	});

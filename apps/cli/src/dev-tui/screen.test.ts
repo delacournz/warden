@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { fakeProcess, fakeStdin, fakeStdout } from "./fakes.testing";
-import { createScreen, ENTER, RESTORE } from "./screen";
+import { devTuiFakesTesting } from "./fakes.testing";
+import { devTuiScreen, ENTER, RESTORE } from "./screen";
 
 function setup(cols = 20, rows = 4) {
-	const stdin = fakeStdin();
-	const stdout = fakeStdout(cols, rows);
-	const process = fakeProcess();
+	const stdin = devTuiFakesTesting.fakeStdin();
+	const stdout = devTuiFakesTesting.fakeStdout(cols, rows);
+	const process = devTuiFakesTesting.fakeProcess();
 	const stderr: string[] = [];
-	const screen = createScreen({
+	const screen = devTuiScreen.createScreen({
 		stdin: stdin.input,
 		stdout: stdout.output,
 		proc: process.proc,
@@ -29,9 +29,9 @@ describe("createScreen", () => {
 	});
 
 	test("registers its restore handlers before it writes anything", () => {
-		const stdin = fakeStdin();
-		const stdout = fakeStdout();
-		const process = fakeProcess();
+		const stdin = devTuiFakesTesting.fakeStdin();
+		const stdout = devTuiFakesTesting.fakeStdout();
+		const process = devTuiFakesTesting.fakeProcess();
 		const seen: Record<string, number> = {};
 		const original = stdout.output.write;
 		stdout.output.write = (data) => {
@@ -39,7 +39,7 @@ describe("createScreen", () => {
 				seen[event] = process.count(event);
 			return original(data);
 		};
-		createScreen({ stdin: stdin.input, stdout: stdout.output, proc: process.proc });
+		devTuiScreen.createScreen({ stdin: stdin.input, stdout: stdout.output, proc: process.proc });
 		expect(seen).toEqual({ exit: 1, uncaughtException: 1, SIGINT: 1, SIGTERM: 1, SIGHUP: 1 });
 	});
 

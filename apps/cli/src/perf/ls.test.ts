@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { Owner } from "@delacour/warden-store/types";
 import { type TestContext, testContext } from "../testing";
-import { perfLs } from "./ls";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfLsCli } from "./ls";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -16,12 +16,12 @@ function setup() {
 	const clock = { now: T0 };
 	const c = testContext([], { now: () => clock.now });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	for (const n of [1, 2]) c.db.recordDevice({ platform: "ios", id: `U${n}`, name: sim(n).name }, T0);
-	return { c, clock, deps: fakePerfDeps([sim(1), sim(2)], { U1: "com.acme.shop" }) };
+	return { c, clock, deps: perfTestingCli.fakePerfDeps([sim(1), sim(2)], { U1: "com.acme.shop" }) };
 }
 
-const open = (c: TestContext, deps: ReturnType<typeof fakePerfDeps>, n: number, app?: string) =>
+const open = (c: TestContext, deps: ReturnType<typeof perfTestingCli.fakePerfDeps>, n: number, app?: string) =>
 	perfSessionStore.createSession(c, deps.session, {
 		device: { udid: `U${n}`, platform: "ios", name: sim(n).name },
 		target: { udid: `U${n}`, ownedByCaller: false },
@@ -33,7 +33,7 @@ describe("warden perf ls", () => {
 	test("no sessions", async () => {
 		const { c, deps } = setup();
 		c.argv = [];
-		expect(await perfLs(c, deps, {})).toBe(0);
+		expect(await perfLsCli.perfLs(c, deps, {})).toBe(0);
 		expect(c.stdout.join("\n")).toContain("no perf sessions");
 	});
 
@@ -45,7 +45,7 @@ describe("warden perf ls", () => {
 		if (!a.success || !b.success) throw new Error("create");
 		perfSessionStore.updateSession(c, a.data.id, (s) => ({ ...s, marks: [{ label: "x", wallMs: T0, atMs: 0 }] }));
 		perfSessionStore.stopSession(c, deps.session, a.data.id, "user");
-		expect(await perfLs(c, deps, { json: true })).toBe(0);
+		expect(await perfLsCli.perfLs(c, deps, { json: true })).toBe(0);
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc.sessions.map((s: { id: string }) => s.id)).toEqual([b.data.id, a.data.id]);
 		expect(doc.sessions[1]).toMatchObject({ device: "U1", app: "com.acme.shop", status: "stopped", marks: 1 });
@@ -56,7 +56,7 @@ describe("warden perf ls", () => {
 		const { c, clock, deps } = setup();
 		open(c, deps, 1);
 		clock.now += 45_000;
-		await perfLs(c, deps, { json: true });
+		await perfLsCli.perfLs(c, deps, { json: true });
 		expect(JSON.parse(c.stdout.join("\n")).sessions[0].status).toBe("overdue");
 	});
 
@@ -64,7 +64,7 @@ describe("warden perf ls", () => {
 		const { c, deps } = setup();
 		open(c, deps, 1);
 		open(c, deps, 2);
-		await perfLs(c, deps, { json: true, device: "U2" });
+		await perfLsCli.perfLs(c, deps, { json: true, device: "U2" });
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc.sessions).toHaveLength(1);
 		expect(doc.sessions[0].device).toBe("U2");
@@ -81,7 +81,7 @@ describe("warden perf ls", () => {
 			},
 			c.now()
 		);
-		expect(await perfLs(c, deps, { json: true, devices: true })).toBe(0);
+		expect(await perfLsCli.perfLs(c, deps, { json: true, devices: true })).toBe(0);
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc.devices).toEqual([
 			{ udid: "U1", platform: "ios", name: "warden-iphone-17-1", app: "com.acme.shop" },

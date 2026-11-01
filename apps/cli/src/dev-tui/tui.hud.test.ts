@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
 import { type TestContext, testContext } from "../testing";
-import { fakeProcess, fakeStdin, fakeStdout, replay } from "./fakes.testing";
-import { createDevTui, FRAME_MS } from "./tui";
+import { devTuiFakesTesting } from "./fakes.testing";
+import { devTuiTui, FRAME_MS } from "./tui";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -26,12 +26,12 @@ const settle = () => Bun.sleep(FRAME_MS * 4);
 
 function setup(hud: { enabled: boolean; intervalMs: number } | undefined) {
 	ctx = testContext([]);
-	const stdout = fakeStdout(120, 40);
-	const process = fakeProcess();
-	const stdin = fakeStdin();
+	const stdout = devTuiFakesTesting.fakeStdout(120, 40);
+	const process = devTuiFakesTesting.fakeProcess();
+	const stdin = devTuiFakesTesting.fakeStdin();
 	const targets: string[] = [];
 	let pending: (() => Promise<void>) | undefined;
-	const ui = createDevTui({
+	const ui = devTuiTui.createDevTui({
 		ctx,
 		stdin: stdin.input,
 		stdout: stdout.output,
@@ -64,7 +64,7 @@ function setup(hud: { enabled: boolean; intervalMs: number } | undefined) {
 			await fn?.();
 			await settle();
 		},
-		screen: () => replay(stdout.all(), 120, 40),
+		screen: () => devTuiFakesTesting.replay(stdout.all(), 120, 40),
 	};
 }
 

@@ -7,8 +7,8 @@ import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
-import { perfReact, perfReactStart, perfReactStop } from "./react";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfReactCli } from "./react";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -20,9 +20,9 @@ const METRO = "http://127.0.0.1:8081";
 function setup(globalOver: Record<string, unknown> = {}) {
 	const c = testContext([], { now: () => T0 });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
-	const deps = fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => METRO });
+	const deps = perfTestingCli.fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => METRO });
 	const renderer = reactFixtures.fakeRenderer();
 	const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([renderer]), globalOver);
 	const opened: Array<Parameters<JsDeps["open"]>[0]> = [];
@@ -46,7 +46,7 @@ const doc = (s: ReturnType<typeof setup>) => JSON.parse(s.c.stdout.join("\n"));
 describe("warden perf react", () => {
 	test("records for --duration, writes commits and findings, reports the totals", async () => {
 		const s = setup();
-		expect(await perfReact(s.c, s.deps, opts({ duration: "5s" }), s.js)).toBe(0);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts({ duration: "5s" }), s.js)).toBe(0);
 		const out = doc(s);
 		expect(out).toMatchObject({
 			ok: true,
@@ -63,16 +63,16 @@ describe("warden perf react", () => {
 
 	test("default duration 10s, capped at 5m; bad duration is a usage error", async () => {
 		const s = setup();
-		await perfReact(s.c, s.deps, opts(), s.js);
-		await perfReact(s.c, s.deps, opts({ duration: "20m" }), s.js);
+		await perfReactCli.perfReact(s.c, s.deps, opts(), s.js);
+		await perfReactCli.perfReact(s.c, s.deps, opts({ duration: "20m" }), s.js);
 		expect(s.slept).toEqual([10_000, 300_000]);
 		s.c.stdout.length = 0;
-		expect(await perfReact(s.c, s.deps, opts({ duration: "soon" }), s.js)).toBe(1);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts({ duration: "soon" }), s.js)).toBe(1);
 	});
 
 	test("text mode: dev banner, the hot commit, next hints", async () => {
 		const s = setup();
-		expect(await perfReact(s.c, s.deps, { app: "com.acme.shop" }, s.js)).toBe(0);
+		expect(await perfReactCli.perfReact(s.c, s.deps, { app: "com.acme.shop" }, s.js)).toBe(0);
 		const text = s.c.stdout.join("\n");
 		expect(text).toContain("dev build (__DEV__)");
 		expect(text).toContain("#0");
@@ -81,7 +81,7 @@ describe("warden perf react", () => {
 
 	test("release build: not_profileable naming the cause", async () => {
 		const s = setup({ __DEV__: false });
-		expect(await perfReact(s.c, s.deps, opts(), s.js)).toBe(1);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts(), s.js)).toBe(1);
 		const out = doc(s);
 		expect(out.error).toMatchObject({ code: "not_profileable", details: { react: "release_build" } });
 		expect(out.error.message).toContain("release_build");
@@ -91,7 +91,7 @@ describe("warden perf react", () => {
 		const s = setup();
 		s.g.__REACT_DEVTOOLS_GLOBAL_HOOK__?.rendererInterfaces.clear();
 		s.g.__r = Object.assign(() => undefined, { getModules: () => new Map() });
-		expect(await perfReact(s.c, s.deps, opts(), s.js)).toBe(3);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts(), s.js)).toBe(3);
 		expect(doc(s).error).toMatchObject({ code: "engine_unavailable", details: { react: "devtools_backend_missing" } });
 	});
 
@@ -104,24 +104,24 @@ describe("warden perf react", () => {
 					new Map([[1, { verboseName: "node_modules/react-native/Libraries/Utilities/Platform.ios.js" }]]),
 			}
 		);
-		expect(await perfReact(s.c, s.deps, opts(), s.js)).toBe(3);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts(), s.js)).toBe(3);
 		expect(doc(s).error).toMatchObject({ details: { react: "rn_too_old" } });
 	});
 
 	test("no Metro: devtools_unavailable, exit 3", async () => {
 		const s = setup();
 		s.deps.host.metro = async () => undefined;
-		expect(await perfReact(s.c, s.deps, opts(), s.js)).toBe(3);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts(), s.js)).toBe(3);
 		expect(doc(s).error.code).toBe("devtools_unavailable");
 	});
 
 	test("another agent's live profile: session_active naming the owner; --take-over takes over", async () => {
 		const s = setup();
 		await reactProfiler.startReactProfile(reactFixtures.runtimeCdp(s.g), { owner: "agent:other" });
-		expect(await perfReact(s.c, s.deps, opts(), s.js)).toBe(1);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts(), s.js)).toBe(1);
 		expect(doc(s).error).toMatchObject({ code: "session_active", details: { owner: "agent:other" } });
 		s.c.stdout.length = 0;
-		expect(await perfReact(s.c, s.deps, opts({ takeOver: true }), s.js)).toBe(0);
+		expect(await perfReactCli.perfReact(s.c, s.deps, opts({ takeOver: true }), s.js)).toBe(0);
 	});
 
 	test("into a running session: that session's react dir", async () => {
@@ -132,7 +132,7 @@ describe("warden perf react", () => {
 			maxDurationMs: 30_000,
 		});
 		if (!made.success) throw new Error("create");
-		await perfReact(s.c, s.deps, opts(), s.js);
+		await perfReactCli.perfReact(s.c, s.deps, opts(), s.js);
 		const out = doc(s);
 		expect(out.result.sessionId).toBe(made.data.id);
 		expect(out.result.dir).toContain(`/perf/${made.data.id}/react`);
@@ -141,7 +141,7 @@ describe("warden perf react", () => {
 
 	test("observing never takes a lease", async () => {
 		const s = setup();
-		await perfReact(s.c, s.deps, opts(), s.js);
+		await perfReactCli.perfReact(s.c, s.deps, opts(), s.js);
 		expect(s.c.db.listLeases()).toEqual([]);
 	});
 });
@@ -149,21 +149,21 @@ describe("warden perf react", () => {
 describe("warden perf react start / stop", () => {
 	test("start returns at once; stop, a later invocation, analyses what the runtime recorded", async () => {
 		const s = setup();
-		expect(await perfReactStart(s.c, s.deps, opts(), s.js)).toBe(0);
+		expect(await perfReactCli.perfReactStart(s.c, s.deps, opts(), s.js)).toBe(0);
 		expect(doc(s)).toMatchObject({ ok: true, command: "perf react start", result: { dev: true, bootstrapped: false } });
 		expect(s.slept).toEqual([]);
 		s.c.stdout.length = 0;
-		expect(await perfReactStop(s.c, s.deps, opts(), s.js)).toBe(0);
+		expect(await perfReactCli.perfReactStop(s.c, s.deps, opts(), s.js)).toBe(0);
 		expect(doc(s)).toMatchObject({ ok: true, command: "perf react stop", result: { totals: { commits: 2 } } });
 	});
 
 	test("stop with nothing running fails; a second agent's start is refused", async () => {
 		const s = setup();
-		expect(await perfReactStop(s.c, s.deps, opts(), s.js)).toBe(1);
+		expect(await perfReactCli.perfReactStop(s.c, s.deps, opts(), s.js)).toBe(1);
 		expect(doc(s).error.message).toContain("no React profile is running");
 		s.c.stdout.length = 0;
 		await reactProfiler.startReactProfile(reactFixtures.runtimeCdp(s.g), { owner: "agent:other" });
-		expect(await perfReactStart(s.c, s.deps, opts(), s.js)).toBe(1);
+		expect(await perfReactCli.perfReactStart(s.c, s.deps, opts(), s.js)).toBe(1);
 		expect(doc(s).error.code).toBe("session_active");
 	});
 });

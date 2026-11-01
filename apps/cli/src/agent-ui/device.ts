@@ -8,7 +8,7 @@ import { type Lease, leaseModel, type Owner, type Platform } from "@delacour/war
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { claimWithFlags, parseClaimFlags, parsePlatform } from "../claim-flags";
 import type { CommandContext } from "../context";
-import { deviceTarget } from "../hooks/claude-pretool";
+import { hookClaudePretool } from "../hooks/claude-pretool";
 import { awaitPhonesUnlocked, isLockedClaimError, lockedClaimMessage } from "../physical-lock";
 import { AMBIGUOUS_HINT, ambiguousMessage, pickPhysical } from "../physical-pick";
 import { type UiDeviceInfo, type UiError, uiOutput } from "./output";
@@ -57,7 +57,7 @@ export class UiDeviceResolver {
 		if (leased?.resource.kind === "device") return resultFactory.ok(leased.resource.platform);
 		const known = store.listDevices().find((d) => d.id === id);
 		if (known) return resultFactory.ok(known.platform);
-		const target = deviceTarget(id);
+		const target = hookClaudePretool.deviceTarget(id);
 		return target.kind === "device"
 			? resultFactory.ok(target.platform)
 			: resultFactory.err(`${id} is not a simulator, emulator or physical device`);

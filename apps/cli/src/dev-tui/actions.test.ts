@@ -5,7 +5,7 @@ import {
 	type ActionEffects,
 	type ActionFailure,
 	type ActionSink,
-	createActions,
+	devTuiActions,
 	type FxResult,
 	type PerfStarted,
 	type PerfStopped,
@@ -109,7 +109,7 @@ function setup(info: DevReady | null = IOS, overrides: Partial<ActionEffects> = 
 		report: () => done("report", undefined),
 		...overrides,
 	};
-	const actions = createActions({
+	const actions = devTuiActions.createActions({
 		now: () => clock,
 		ready: () => info ?? undefined,
 		sink,

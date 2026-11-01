@@ -1,3 +1,213 @@
+export class DevTuiMetroLog {
+	/** Applies the CSI sequence at `input[start]` (`ESC [`) to `screen`; returns the index after it. */
+	private applyCsi(input: string, start: number, screen: Screen): number {
+		let end = start + 2;
+		while (end < input.length && /[0-?]/.test(input[end] ?? "")) end++;
+		while (end < input.length && /[ -/]/.test(input[end] ?? "")) end++;
+		const params = input.slice(start + 2, end);
+		switch (input[end]) {
+			case "K":
+				screen.eraseLine(params === "" ? 0 : Number(params));
+				break;
+			case "A":
+				screen.cursorUp(Math.max(1, Number(params) || 1));
+				break;
+			case "G":
+				screen.cursorColumn((Number(params) || 1) - 1);
+				break;
+		}
+		return end + 1;
+	}
+
+	/** The index after the escape sequence starting at `input[start]`, applying the ones that move the cursor. */
+	private skipEscape(input: string, start: number, screen: Screen): number {
+		const next = input[start + 1];
+		if (next === "[") return this.applyCsi(input, start, screen);
+		if (next !== "]") return start + 2;
+		let end = start + 2;
+		while (end < input.length && input[end] !== BEL && !(input[end] === ESC && input[end + 1] === "\\")) end++;
+		return input[end] === BEL ? end + 1 : end + 2;
+	}
+
+	/**
+	 * The lines a terminal would show for `input`: `\r` rewinds to column 0 and later text overwrites, `ESC[K` / `ESC[2K`
+	 * erase, `ESC[nA` moves back up into a line already written (Expo's spinner erases itself that way), every other
+	 * escape sequence is dropped. Trailing spaces are trimmed.
+	 */
+	renderTerminalLines(input: string): string[] {
+		const screen = new Screen();
+		let i = 0;
+		while (i < input.length) {
+			const ch = input[i] ?? "";
+			if (ch === ESC) {
+				i = this.skipEscape(input, i, screen);
+				continue;
+			}
+			if (ch === "\n") screen.newline();
+			else if (ch === "\r") screen.carriageReturn();
+			else if (ch >= " ") screen.write(ch);
+			i++;
+		}
+		return screen.finish();
+	}
+
+	isBlock(entry: MetroLogEntry | undefined): entry is Block {
+		return entry !== undefined && (entry.kind === "bundle_failed" || entry.kind === "error");
+	}
+
+	private platformTag(tag: string | undefined): string | undefined {
+		return tag === undefined ? undefined : tag.toLowerCase();
+	}
+
+	/** `file`, `line`, `col` out of the first message line (`SyntaxError: /a/b.tsx: msg (12:20)`, `Unable to resolve "x" from "y"`). */
+	private locate(message: string): { file?: string; line?: number; col?: number; message: string } {
+		const unresolved = /^Unable to resolve "[^"]*" from "([^"]+)"/.exec(message);
+		if (unresolved) return { file: unresolved[1] ?? "", message };
+		const metroUnresolved = /^(?:\w*Error: )?Unable to resolve module .+? from (\S+?):/.exec(message);
+		if (metroUnresolved) return { file: metroUnresolved[1] ?? "", message };
+		const withFile = /^(?:[A-Za-z]*Error:\s*)?((?:\/|[A-Za-z]:\\)[^:]*?):\s+(.*)$/.exec(message);
+		const file = withFile?.[1];
+		const rest = withFile?.[2] ?? message;
+		const position = POSITION.exec(rest);
+		if (position) {
+			return {
+				...(file === undefined ? {} : { file }),
+				line: Number(position[1]),
+				col: Number(position[2]),
+				message: rest.replace(POSITION, "").trimEnd(),
+			};
+		}
+		return { ...(file === undefined ? {} : { file }), message: rest };
+	}
+
+	/** Line (and column, from the caret row) of a code frame, when the message itself gave none. */
+	private framePosition(codeFrame: readonly string[]): { line?: number; col?: number } {
+		const marked = codeFrame.find((l) => /^\s*>\s*\d+\s*\|/.test(l));
+		const line = marked === undefined ? undefined : Number(/(\d+)\s*\|/.exec(marked)?.[1]);
+		const caret = codeFrame.find((l) => CODE_CARET.test(l));
+		let col: number | undefined;
+		if (caret !== undefined) {
+			const pipe = caret.indexOf("|");
+			col = caret.indexOf("^") - (pipe + 2) + 1;
+		}
+		return {
+			...(line === undefined || Number.isNaN(line) ? {} : { line }),
+			...(col === undefined || col < 1 ? {} : { col }),
+		};
+	}
+
+	private openBlock(kind: Block["kind"], text: string, message: string, extra: { platform?: string } = {}): Block {
+		return { kind, text, message, codeFrame: [], ...extra };
+	}
+
+	/** Fill `message`/`file`/`line`/`col` on an entry from the first error line that follows it. */
+	private adopt(block: Block, text: string): void {
+		const located = this.locate(text);
+		block.message = located.message;
+		if (located.file !== undefined) block.file = located.file;
+		if (located.line !== undefined) block.line = located.line;
+		if (located.col !== undefined) block.col = located.col;
+	}
+
+	/** Fill `line`/`col` from the code frame once the block is complete. */
+	finish(block: Block): void {
+		if (block.line !== undefined && block.col !== undefined) return;
+		const position = this.framePosition(block.codeFrame);
+		if (block.line === undefined && position.line !== undefined) block.line = position.line;
+		if (block.col === undefined && position.col !== undefined) block.col = position.col;
+	}
+
+	/** A `Bundled` / `Bundling failed` / progress line (Expo's, then plain Metro's), or undefined. */
+	matchBundle(line: string, stamp: Stamp): MetroLogEntry | undefined {
+		const done = BUNDLED.exec(line);
+		if (done) {
+			const platform = this.platformTag(done[1]);
+			return {
+				kind: "bundle_done",
+				text: line,
+				...stamp,
+				...(platform === undefined ? {} : { platform }),
+				ms: Number(done[2]),
+				entry: done[3] ?? "",
+				modules: Number(done[4]),
+			};
+		}
+		const failed = BUNDLING_FAILED.exec(line);
+		if (failed) {
+			const platform = this.platformTag(failed[1]);
+			return { ...this.openBlock("bundle_failed", line, "", platform === undefined ? {} : { platform }), ...stamp };
+		}
+		const progress = PROGRESS.exec(line);
+		if (progress) {
+			const platform = this.platformTag(progress[1]);
+			return {
+				kind: "bundle_start",
+				text: line,
+				...stamp,
+				...(platform === undefined ? {} : { platform }),
+				entry: progress[2] ?? "",
+				progress: Number(progress[3]) / 100,
+			};
+		}
+		const metro = METRO_BUNDLE.exec(line.trim());
+		if (!metro) return undefined;
+		const entry = metro[1] ?? "";
+		if (metro[2] === undefined) return { kind: "bundle_done", text: line, ...stamp, entry };
+		return { kind: "bundle_start", text: line, ...stamp, entry, progress: Number(metro[2]) / 100 };
+	}
+
+	/** An `ERROR` / `WARN` / `INFO` / `LOG` line (bundler badge or forwarded app console), or undefined. */
+	matchLevel(line: string, stamp: Stamp): MetroLogEntry | undefined {
+		const level = LEVEL.exec(line.trim());
+		if (!level) return undefined;
+		const [, tag, name, body = ""] = level;
+		if (name !== "ERROR") return { kind: name === "WARN" ? "warn" : "info", text: line, ...stamp };
+		const platform = this.platformTag(tag);
+		const block = this.openBlock("error", line, "", platform === undefined ? {} : { platform });
+		this.adopt(block, body.trim());
+		return { ...block, ...stamp };
+	}
+
+	/** Does `line` belong to the error block `open` (code frame, stack, import stack, indented detail)? */
+	continuesBlock(open: Block, line: string): boolean {
+		return (
+			CODE_FRAME.test(line) ||
+			CODE_CARET.test(line) ||
+			STACK_FRAME.test(line) ||
+			/^\s/.test(line) ||
+			UNRESOLVED.test(line) ||
+			/^(?:Import stack:|Learn more)/i.test(line) ||
+			(open.kind === "bundle_failed" && open.message === "")
+		);
+	}
+
+	/** Add `line` to `open`: the first text of a `bundle_failed` is its message, code frame rows go to `codeFrame`. */
+	foldIntoBlock(open: Block, line: string): void {
+		const frame = CODE_FRAME.test(line) || CODE_CARET.test(line);
+		if (frame) open.codeFrame.push(line);
+		else if (open.message === "") this.adopt(open, line.trim());
+		open.text = `${open.text}\n${line}`;
+	}
+
+	/**
+	 * Classify rendered terminal lines. An error's code frame (`  10 | …`, `> 12 | …`, caret rows), `at …` frames,
+	 * import stacks and indented detail fold into the open `bundle_failed` / `error` entry; a `Bundling failed` line
+	 * adopts the error line Expo prints right after it. Consecutive progress rows for one entry collapse to the last.
+	 */
+	classifyMetroLines(lines: readonly string[], options: ParseOptions = {}): MetroLogEntry[] {
+		const classifier = new Classifier(options.ts === undefined ? {} : { ts: options.ts });
+		for (const line of lines) classifier.line(line);
+		return classifier.done();
+	}
+
+	/** Raw `metro.log` bytes (or already-decoded text) → entries, oldest first. */
+	parseMetroLog(input: string | Uint8Array, options: ParseOptions = {}): MetroLogEntry[] {
+		const text = typeof input === "string" ? input : new TextDecoder().decode(input);
+		return this.classifyMetroLines(this.renderTerminalLines(text), options);
+	}
+}
+
+export const devTuiMetroLog = new DevTuiMetroLog();
 /**
  * Metro / Expo CLI terminal output → structured entries. Pure: `metro.log` holds the raw PTY bytes the bundler wrote
  * (colours, `\r` spinner overwrites, cursor movement), so this first renders them to the lines a terminal would end
@@ -98,58 +308,6 @@ class Screen {
 	}
 }
 
-/** Applies the CSI sequence at `input[start]` (`ESC [`) to `screen`; returns the index after it. */
-function applyCsi(input: string, start: number, screen: Screen): number {
-	let end = start + 2;
-	while (end < input.length && /[0-?]/.test(input[end] ?? "")) end++;
-	while (end < input.length && /[ -/]/.test(input[end] ?? "")) end++;
-	const params = input.slice(start + 2, end);
-	switch (input[end]) {
-		case "K":
-			screen.eraseLine(params === "" ? 0 : Number(params));
-			break;
-		case "A":
-			screen.cursorUp(Math.max(1, Number(params) || 1));
-			break;
-		case "G":
-			screen.cursorColumn((Number(params) || 1) - 1);
-			break;
-	}
-	return end + 1;
-}
-
-/** The index after the escape sequence starting at `input[start]`, applying the ones that move the cursor. */
-function skipEscape(input: string, start: number, screen: Screen): number {
-	const next = input[start + 1];
-	if (next === "[") return applyCsi(input, start, screen);
-	if (next !== "]") return start + 2;
-	let end = start + 2;
-	while (end < input.length && input[end] !== BEL && !(input[end] === ESC && input[end + 1] === "\\")) end++;
-	return input[end] === BEL ? end + 1 : end + 2;
-}
-
-/**
- * The lines a terminal would show for `input`: `\r` rewinds to column 0 and later text overwrites, `ESC[K` / `ESC[2K`
- * erase, `ESC[nA` moves back up into a line already written (Expo's spinner erases itself that way), every other
- * escape sequence is dropped. Trailing spaces are trimmed.
- */
-export function renderTerminalLines(input: string): string[] {
-	const screen = new Screen();
-	let i = 0;
-	while (i < input.length) {
-		const ch = input[i] ?? "";
-		if (ch === ESC) {
-			i = skipEscape(input, i, screen);
-			continue;
-		}
-		if (ch === "\n") screen.newline();
-		else if (ch === "\r") screen.carriageReturn();
-		else if (ch >= " ") screen.write(ch);
-		i++;
-	}
-	return screen.finish();
-}
-
 const PLATFORM = "(iOS|Android|Web|DOM|λ|RSC\\([^)]*\\))";
 const BUNDLED = new RegExp(`^(?:${PLATFORM}\\s+)?Bundled\\s+([\\d.]+)ms\\s+(\\S.*?)\\s+\\((\\d+) modules?\\)$`);
 const BUNDLING_FAILED = new RegExp(
@@ -168,143 +326,7 @@ const POSITION = /\((\d+):(\d+)\)\s*$/;
 
 type Block = Extract<MetroLogEntry, { kind: "bundle_failed" | "error" }>;
 
-const isBlock = (entry: MetroLogEntry | undefined): entry is Block =>
-	entry !== undefined && (entry.kind === "bundle_failed" || entry.kind === "error");
-
-const platformTag = (tag: string | undefined): string | undefined =>
-	tag === undefined ? undefined : tag.toLowerCase();
-
-/** `file`, `line`, `col` out of the first message line (`SyntaxError: /a/b.tsx: msg (12:20)`, `Unable to resolve "x" from "y"`). */
-function locate(message: string): { file?: string; line?: number; col?: number; message: string } {
-	const unresolved = /^Unable to resolve "[^"]*" from "([^"]+)"/.exec(message);
-	if (unresolved) return { file: unresolved[1] ?? "", message };
-	const metroUnresolved = /^(?:\w*Error: )?Unable to resolve module .+? from (\S+?):/.exec(message);
-	if (metroUnresolved) return { file: metroUnresolved[1] ?? "", message };
-	const withFile = /^(?:[A-Za-z]*Error:\s*)?((?:\/|[A-Za-z]:\\)[^:]*?):\s+(.*)$/.exec(message);
-	const file = withFile?.[1];
-	const rest = withFile?.[2] ?? message;
-	const position = POSITION.exec(rest);
-	if (position) {
-		return {
-			...(file === undefined ? {} : { file }),
-			line: Number(position[1]),
-			col: Number(position[2]),
-			message: rest.replace(POSITION, "").trimEnd(),
-		};
-	}
-	return { ...(file === undefined ? {} : { file }), message: rest };
-}
-
-/** Line (and column, from the caret row) of a code frame, when the message itself gave none. */
-function framePosition(codeFrame: readonly string[]): { line?: number; col?: number } {
-	const marked = codeFrame.find((l) => /^\s*>\s*\d+\s*\|/.test(l));
-	const line = marked === undefined ? undefined : Number(/(\d+)\s*\|/.exec(marked)?.[1]);
-	const caret = codeFrame.find((l) => CODE_CARET.test(l));
-	let col: number | undefined;
-	if (caret !== undefined) {
-		const pipe = caret.indexOf("|");
-		col = caret.indexOf("^") - (pipe + 2) + 1;
-	}
-	return {
-		...(line === undefined || Number.isNaN(line) ? {} : { line }),
-		...(col === undefined || col < 1 ? {} : { col }),
-	};
-}
-
-function openBlock(kind: Block["kind"], text: string, message: string, extra: { platform?: string } = {}): Block {
-	return { kind, text, message, codeFrame: [], ...extra };
-}
-
-/** Fill `message`/`file`/`line`/`col` on an entry from the first error line that follows it. */
-function adopt(block: Block, text: string): void {
-	const located = locate(text);
-	block.message = located.message;
-	if (located.file !== undefined) block.file = located.file;
-	if (located.line !== undefined) block.line = located.line;
-	if (located.col !== undefined) block.col = located.col;
-}
-
-/** Fill `line`/`col` from the code frame once the block is complete. */
-function finish(block: Block): void {
-	if (block.line !== undefined && block.col !== undefined) return;
-	const position = framePosition(block.codeFrame);
-	if (block.line === undefined && position.line !== undefined) block.line = position.line;
-	if (block.col === undefined && position.col !== undefined) block.col = position.col;
-}
-
 type Stamp = { ts?: number };
-
-/** A `Bundled` / `Bundling failed` / progress line (Expo's, then plain Metro's), or undefined. */
-function matchBundle(line: string, stamp: Stamp): MetroLogEntry | undefined {
-	const done = BUNDLED.exec(line);
-	if (done) {
-		const platform = platformTag(done[1]);
-		return {
-			kind: "bundle_done",
-			text: line,
-			...stamp,
-			...(platform === undefined ? {} : { platform }),
-			ms: Number(done[2]),
-			entry: done[3] ?? "",
-			modules: Number(done[4]),
-		};
-	}
-	const failed = BUNDLING_FAILED.exec(line);
-	if (failed) {
-		const platform = platformTag(failed[1]);
-		return { ...openBlock("bundle_failed", line, "", platform === undefined ? {} : { platform }), ...stamp };
-	}
-	const progress = PROGRESS.exec(line);
-	if (progress) {
-		const platform = platformTag(progress[1]);
-		return {
-			kind: "bundle_start",
-			text: line,
-			...stamp,
-			...(platform === undefined ? {} : { platform }),
-			entry: progress[2] ?? "",
-			progress: Number(progress[3]) / 100,
-		};
-	}
-	const metro = METRO_BUNDLE.exec(line.trim());
-	if (!metro) return undefined;
-	const entry = metro[1] ?? "";
-	if (metro[2] === undefined) return { kind: "bundle_done", text: line, ...stamp, entry };
-	return { kind: "bundle_start", text: line, ...stamp, entry, progress: Number(metro[2]) / 100 };
-}
-
-/** An `ERROR` / `WARN` / `INFO` / `LOG` line (bundler badge or forwarded app console), or undefined. */
-function matchLevel(line: string, stamp: Stamp): MetroLogEntry | undefined {
-	const level = LEVEL.exec(line.trim());
-	if (!level) return undefined;
-	const [, tag, name, body = ""] = level;
-	if (name !== "ERROR") return { kind: name === "WARN" ? "warn" : "info", text: line, ...stamp };
-	const platform = platformTag(tag);
-	const block = openBlock("error", line, "", platform === undefined ? {} : { platform });
-	adopt(block, body.trim());
-	return { ...block, ...stamp };
-}
-
-/** Does `line` belong to the error block `open` (code frame, stack, import stack, indented detail)? */
-function continuesBlock(open: Block, line: string): boolean {
-	return (
-		CODE_FRAME.test(line) ||
-		CODE_CARET.test(line) ||
-		STACK_FRAME.test(line) ||
-		/^\s/.test(line) ||
-		UNRESOLVED.test(line) ||
-		/^(?:Import stack:|Learn more)/i.test(line) ||
-		(open.kind === "bundle_failed" && open.message === "")
-	);
-}
-
-/** Add `line` to `open`: the first text of a `bundle_failed` is its message, code frame rows go to `codeFrame`. */
-function foldIntoBlock(open: Block, line: string): void {
-	const frame = CODE_FRAME.test(line) || CODE_CARET.test(line);
-	if (frame) open.codeFrame.push(line);
-	else if (open.message === "") adopt(open, line.trim());
-	open.text = `${open.text}\n${line}`;
-}
 
 /** Entries so far plus the error block still open to absorb detail lines. */
 class Classifier {
@@ -316,13 +338,13 @@ class Classifier {
 	line(raw: string): void {
 		const line = raw.trimEnd();
 		if (line.trim() === "" || QR_BLOCK.test(line)) return;
-		const entry = matchBundle(line, this.stamp) ?? matchLevel(line, this.stamp);
+		const entry = devTuiMetroLog.matchBundle(line, this.stamp) ?? devTuiMetroLog.matchLevel(line, this.stamp);
 		if (entry) {
 			this.accept(entry, line);
 			return;
 		}
-		if (this.open && continuesBlock(this.open, line)) {
-			foldIntoBlock(this.open, line);
+		if (this.open && devTuiMetroLog.continuesBlock(this.open, line)) {
+			devTuiMetroLog.foldIntoBlock(this.open, line);
 			return;
 		}
 		this.push({ kind: HMR.test(line) ? "hmr" : "info", text: line, ...this.stamp });
@@ -343,8 +365,8 @@ class Classifier {
 	}
 
 	private push(entry: MetroLogEntry): void {
-		if (this.open) finish(this.open);
-		this.open = isBlock(entry) ? entry : undefined;
+		if (this.open) devTuiMetroLog.finish(this.open);
+		this.open = devTuiMetroLog.isBlock(entry) ? entry : undefined;
 		const previous = this.entries[this.entries.length - 1];
 		if (entry.kind === "bundle_start" && previous?.kind === "bundle_start" && previous.entry === entry.entry) {
 			this.entries[this.entries.length - 1] = entry;
@@ -354,24 +376,7 @@ class Classifier {
 	}
 
 	done(): MetroLogEntry[] {
-		if (this.open) finish(this.open);
+		if (this.open) devTuiMetroLog.finish(this.open);
 		return this.entries;
 	}
-}
-
-/**
- * Classify rendered terminal lines. An error's code frame (`  10 | …`, `> 12 | …`, caret rows), `at …` frames,
- * import stacks and indented detail fold into the open `bundle_failed` / `error` entry; a `Bundling failed` line
- * adopts the error line Expo prints right after it. Consecutive progress rows for one entry collapse to the last.
- */
-export function classifyMetroLines(lines: readonly string[], options: ParseOptions = {}): MetroLogEntry[] {
-	const classifier = new Classifier(options.ts === undefined ? {} : { ts: options.ts });
-	for (const line of lines) classifier.line(line);
-	return classifier.done();
-}
-
-/** Raw `metro.log` bytes (or already-decoded text) → entries, oldest first. */
-export function parseMetroLog(input: string | Uint8Array, options: ParseOptions = {}): MetroLogEntry[] {
-	const text = typeof input === "string" ? input : new TextDecoder().decode(input);
-	return classifyMetroLines(renderTerminalLines(text), options);
 }

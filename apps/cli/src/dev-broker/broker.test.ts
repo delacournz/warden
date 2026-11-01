@@ -12,8 +12,9 @@ import {
 	fakeMetros,
 	fakePages,
 } from "@delacour/warden-devtools/testing/devtools";
-import { type Broker, type BrokerOptions, callBroker, NEW_DEBUGGER_TAG, startBroker } from "./broker";
-import { brokerErr } from "./broker.types";
+import { type Broker, type BrokerOptions, devBroker, NEW_DEBUGGER_TAG } from "./broker";
+import { devBrokerBrokerTypes } from "./broker.types";
+import { devBrokerIpc } from "./ipc";
 
 const dirs: string[] = [];
 const brokers: Broker[] = [];
@@ -108,7 +109,7 @@ async function start(overrides: Partial<BrokerOptions> = {}, metroOptions: FakeM
 	dirs.push(logDir);
 	const phases: string[] = [];
 	const logs: string[] = [];
-	const started = await startBroker({
+	const started = await devBroker.startBroker({
 		metroUrl: metro.url,
 		device: { deviceName: "iPhone A" },
 		logDir,
@@ -128,13 +129,13 @@ const attached = (s: Started) =>
 	until(() => s.broker.state().phase === "attached" && s.metro.connections.length === 1, "attached");
 
 const status = async (s: Started) => {
-	const result = await callBroker(s.broker.socketPath, { method: "status", params: {} });
+	const result = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "status", params: {} });
 	if (!result.success) throw new Error(result.error.message);
 	return result.data;
 };
 
 const consoleTexts = async (s: Started, params: object = {}) => {
-	const result = await callBroker(s.broker.socketPath, { method: "console.query", params });
+	const result = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "console.query", params });
 	if (!result.success) throw new Error(result.error.message);
 	return result.data.lines.map((line) => line.text);
 };
@@ -156,7 +157,7 @@ describe("capture and queries", () => {
 		expect(await consoleTexts(s, { grep: "BETA" })).toEqual(["Beta warn"]);
 		expect(await consoleTexts(s, { since: 2000, limit: 1 })).toEqual(["gamma"]);
 		expect(await consoleTexts(s, { kind: "exception" })).toEqual([]);
-		const limited = await callBroker(s.broker.socketPath, {
+		const limited = await devBrokerIpc.callBroker(s.broker.socketPath, {
 			method: "console.query",
 			params: { since: 2000, limit: 1 },
 		});
@@ -170,7 +171,7 @@ describe("capture and queries", () => {
 		s.metro.emit("Runtime.consoleAPICalled", consoleEvent("noise", 1000));
 		s.metro.emit("Runtime.exceptionThrown", exceptionEvent("Error: kaboom", 2000));
 		await until(async () => (await status(s)).console.total === 2, "2 lines");
-		const result = await callBroker(s.broker.socketPath, { method: "exceptions.query", params: {} });
+		const result = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "exceptions.query", params: {} });
 		expect(result.success && result.data.lines.map((l) => [l.kind, l.text])).toEqual([["exception", "Error: kaboom"]]);
 	});
 
@@ -189,7 +190,7 @@ describe("capture and queries", () => {
 			stackTrace: { callFrames: [frame("methodName"), frame("reactConsoleErrorHandler"), frame("reportException")] },
 		});
 		await until(async () => (await status(s)).console.total === 2, "2 lines");
-		const result = await callBroker(s.broker.socketPath, { method: "exceptions.query", params: {} });
+		const result = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "exceptions.query", params: {} });
 		expect(result.success && result.data.lines.map((l) => l.text)).toEqual(["Error: boom\n    at thrower (:1:58)"]);
 	});
 
@@ -216,7 +217,7 @@ describe("capture and queries", () => {
 			fakePages.entry("https://cdn.test/img.png", { ts: 30, status: 503 })
 		);
 		const query = async (params: object) => {
-			const result = await callBroker(s.broker.socketPath, { method: "network.query", params });
+			const result = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "network.query", params });
 			if (!result.success) throw new Error(result.error.message);
 			return result.data.entries.map((e) => e.url);
 		};
@@ -225,16 +226,22 @@ describe("capture and queries", () => {
 		expect(await query({ status: 401 })).toEqual(["https://api.test/login"]);
 		expect(await query({ status: "5xx" })).toEqual(["https://cdn.test/img.png"]);
 		expect(await query({ since: 20, limit: 1 })).toEqual(["https://cdn.test/img.png"]);
-		const ids = await callBroker(s.broker.socketPath, { method: "network.query", params: {} });
+		const ids = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "network.query", params: {} });
 		expect(ids.success && ids.data.entries.map((e) => e.id)).toEqual([1, 2, 3]);
 	});
 
 	test("eval returns the value, or the page's error", async () => {
 		const s = await start();
 		await attached(s);
-		const good = await callBroker(s.broker.socketPath, { method: "eval", params: { expression: "1 + 1" } });
+		const good = await devBrokerIpc.callBroker(s.broker.socketPath, {
+			method: "eval",
+			params: { expression: "1 + 1" },
+		});
 		expect(good).toEqual({ success: true, data: { value: 2 } });
-		const bad = await callBroker(s.broker.socketPath, { method: "eval", params: { expression: "boom()" } });
+		const bad = await devBrokerIpc.callBroker(s.broker.socketPath, {
+			method: "eval",
+			params: { expression: "boom()" },
+		});
 		expect(bad.success).toBe(false);
 		if (!bad.success) {
 			expect(bad.error.code).toBe("eval_failed");
@@ -245,7 +252,7 @@ describe("capture and queries", () => {
 	test("route answers the focused route key", async () => {
 		const s = await start();
 		await attached(s);
-		expect(await callBroker(s.broker.socketPath, { method: "route", params: {} })).toEqual({
+		expect(await devBrokerIpc.callBroker(s.broker.socketPath, { method: "route", params: {} })).toEqual({
 			success: true,
 			data: { route: "(tabs)/todos" },
 		});
@@ -254,20 +261,23 @@ describe("capture and queries", () => {
 	test("tree answers lines, and depth / testID cut it", async () => {
 		const s = await start();
 		await attached(s);
-		const full = await callBroker(s.broker.socketPath, { method: "tree", params: {} });
+		const full = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "tree", params: {} });
 		expect(full.success && full.data.lines).toEqual([
 			"App (0,0 390×800)",
 			"  View testID=list (0,0 390×400)",
 			"    Row (0,0 390×40)",
 		]);
-		const cut = await callBroker(s.broker.socketPath, { method: "tree", params: { testID: "list", depth: 0 } });
+		const cut = await devBrokerIpc.callBroker(s.broker.socketPath, {
+			method: "tree",
+			params: { testID: "list", depth: 0 },
+		});
 		expect(cut.success && cut.data.lines).toEqual(["View testID=list (0,0 390×400)"]);
 	});
 
 	test("reload runs through the session and resolves once the app is back", async () => {
 		const s = await start();
 		await attached(s);
-		const result = await callBroker(s.broker.socketPath, { method: "reload", params: {} });
+		const result = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "reload", params: {} });
 		expect(result).toEqual({ success: true, data: { method: "expo" } });
 		await attached(s);
 	});
@@ -297,10 +307,10 @@ describe("capture and queries", () => {
 	test("rejects unknown methods and bad params", async () => {
 		const s = await start();
 		await attached(s);
-		const unknown = await callBroker(s.broker.socketPath, { method: "nope", params: {} });
+		const unknown = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "nope", params: {} });
 		expect(unknown.success).toBe(false);
 		if (!unknown.success) expect(unknown.error.code).toBe("unknown_method");
-		const bad = await callBroker(s.broker.socketPath, { method: "console.query", params: { limit: -1 } });
+		const bad = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "console.query", params: { limit: -1 } });
 		expect(bad.success).toBe(false);
 		if (!bad.success) expect(bad.error.code).toBe("bad_request");
 	});
@@ -310,12 +320,18 @@ describe("attach lifecycle", () => {
 	test("does not fail when Metro has no page yet, and attaches when one appears", async () => {
 		const s = await start({}, { targets: [] });
 		await until(() => s.broker.state().phase === "connecting" && s.logs.length > 0, "retrying");
-		const early = await callBroker(s.broker.socketPath, { method: "eval", params: { expression: "1 + 1" } });
+		const early = await devBrokerIpc.callBroker(s.broker.socketPath, {
+			method: "eval",
+			params: { expression: "1 + 1" },
+		});
 		expect(early.success).toBe(false);
 		if (!early.success) expect(early.error.code).toBe("devtools_unavailable");
 		s.metro.setTargets([fakeMetros.target(s.metro.port - 1, 1)]);
 		await attached(s);
-		const late = await callBroker(s.broker.socketPath, { method: "eval", params: { expression: "1 + 1" } });
+		const late = await devBrokerIpc.callBroker(s.broker.socketPath, {
+			method: "eval",
+			params: { expression: "1 + 1" },
+		});
 		expect(late.success).toBe(true);
 	});
 
@@ -335,7 +351,7 @@ describe("attach lifecycle", () => {
 		expect(s.broker.state()).toEqual({ phase: "closed" });
 		expect(existsSync(socketPath)).toBe(false);
 		await until(() => s.metro.connections.length === 0, "socket closed");
-		const after = await callBroker(socketPath, { method: "status", params: {} });
+		const after = await devBrokerIpc.callBroker(socketPath, { method: "status", params: {} });
 		expect(after.success).toBe(false);
 	});
 
@@ -361,7 +377,10 @@ describe("takeover", () => {
 
 		await pause(150);
 		expect(s.metro.connections).toHaveLength(0);
-		const evaluated = await callBroker(s.broker.socketPath, { method: "eval", params: { expression: "1 + 1" } });
+		const evaluated = await devBrokerIpc.callBroker(s.broker.socketPath, {
+			method: "eval",
+			params: { expression: "1 + 1" },
+		});
 		expect(evaluated.success).toBe(false);
 		if (!evaluated.success) {
 			expect(evaluated.error.code).toBe("devtools_unavailable");
@@ -378,7 +397,7 @@ describe("takeover", () => {
 		kick(s.metro);
 		await until(() => s.broker.state().phase === "yielded", "yielded");
 
-		const resumed = await callBroker(s.broker.socketPath, { method: "resume", params: {} });
+		const resumed = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "resume", params: {} });
 		expect(resumed.success).toBe(true);
 		await attached(s);
 		s.metro.emit("Runtime.consoleAPICalled", consoleEvent("after", 2000));
@@ -415,13 +434,17 @@ describe("extension points", () => {
 			return { success: true, data: { params, phase: context.state().phase } };
 		});
 		expect(registered.success).toBe(true);
-		const called = await callBroker(s.broker.socketPath, { method: "logpoint.list", params: { a: 1 } });
+		const called = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "logpoint.list", params: { a: 1 } });
 		expect(called).toEqual({ success: true, data: { params: { a: 1 }, phase: "attached" } });
-		expect(s.broker.registerMethod("logpoint.list", async () => brokerErr("bad_request", "x")).success).toBe(false);
-		expect(s.broker.registerMethod("eval", async () => brokerErr("bad_request", "x")).success).toBe(false);
+		expect(
+			s.broker.registerMethod("logpoint.list", async () => devBrokerBrokerTypes.brokerErr("bad_request", "x")).success
+		).toBe(false);
+		expect(
+			s.broker.registerMethod("eval", async () => devBrokerBrokerTypes.brokerErr("bad_request", "x")).success
+		).toBe(false);
 		expect((await status(s)).methods).toContain("logpoint.list");
 		if (registered.success) registered.data();
-		const gone = await callBroker(s.broker.socketPath, { method: "logpoint.list", params: {} });
+		const gone = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "logpoint.list", params: {} });
 		expect(gone.success).toBe(false);
 	});
 
@@ -433,7 +456,7 @@ describe("extension points", () => {
 		);
 		s.metro.emit("Runtime.exceptionThrown", exceptionEvent("Error: kaboom", 1000));
 		await until(async () => (await status(s)).console.total === 1, "line");
-		const result = await callBroker(s.broker.socketPath, { method: "exceptions.query", params: {} });
+		const result = await devBrokerIpc.callBroker(s.broker.socketPath, { method: "exceptions.query", params: {} });
 		expect(result.success && result.data.lines.map((l) => l.text)).toEqual(["Error: kaboom [mapped]"]);
 		await until(() => readFileSync(join(s.logDir, "console.jsonl"), "utf8").includes("kaboom"), "jsonl");
 		expect(readFileSync(join(s.logDir, "console.jsonl"), "utf8")).not.toContain("[mapped]");

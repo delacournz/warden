@@ -9,14 +9,9 @@ import {
 	fakeMetros,
 	fakePages,
 } from "@delacour/warden-devtools/testing/devtools";
-import { type Broker, callBroker, startBroker } from "./broker";
-import {
-	createLogpointsExtension,
-	type LogpointInfo,
-	logpointCondition,
-	logpointIdOf,
-	parseLocation,
-} from "./logpoints";
+import { type Broker, devBroker } from "./broker";
+import { devBrokerIpc } from "./ipc";
+import { devBrokerLogpoints, type LogpointInfo } from "./logpoints";
 import { METRO_BUNDLE_URL, METRO_MAP } from "./source-map.testing";
 
 const dirs: string[] = [];
@@ -61,7 +56,7 @@ async function rig(options: { legacy?: boolean } = {}): Promise<Rig> {
 		metro.setTargets([fakeMetros.target(metro.port - 1, 1, { reactNative: { logicalDeviceId: "dev1" } })]);
 	const logDir = mkdtempSync(join(tmpdir(), "wlp-"));
 	dirs.push(logDir);
-	const started = await startBroker({
+	const started = await devBroker.startBroker({
 		metroUrl: metro.url,
 		device: { deviceName: "iPhone A" },
 		logDir,
@@ -72,7 +67,7 @@ async function rig(options: { legacy?: boolean } = {}): Promise<Rig> {
 	const broker = started.data;
 	brokers.push(broker);
 	const fetched: string[] = [];
-	const teardown = createLogpointsExtension({
+	const teardown = devBrokerLogpoints.createLogpointsExtension({
 		fetch: async (url) => {
 			fetched.push(url);
 			return { ok: true, status: 200, text: async () => JSON.stringify(METRO_MAP) };
@@ -82,7 +77,8 @@ async function rig(options: { legacy?: boolean } = {}): Promise<Rig> {
 	return { broker, metro, fetched, teardown };
 }
 
-const call = (r: Rig, method: string, params: unknown = {}) => callBroker(r.broker.socketPath, { method, params });
+const call = (r: Rig, method: string, params: unknown = {}) =>
+	devBrokerIpc.callBroker(r.broker.socketPath, { method, params });
 
 /** `logpoint.list`, typed. */
 const logpointsOf = async (r: Rig): Promise<LogpointInfo[]> => {
@@ -125,7 +121,7 @@ describe("logpoint.add", () => {
 		const [set, ...rest] = sent(r, "Debugger.setBreakpointByUrl");
 		expect(rest).toHaveLength(0);
 		expect(set?.params).toMatchObject({ url: METRO_BUNDLE_URL, lineNumber: 1, columnNumber: 2 });
-		expect(String(set?.params.condition)).toBe(logpointCondition("t1", "n + 1"));
+		expect(String(set?.params.condition)).toBe(devBrokerLogpoints.logpointCondition("t1", "n + 1"));
 		expect(String(set?.params.condition)).toContain("return false");
 	});
 
@@ -230,7 +226,9 @@ describe("hits", () => {
 		await new Promise((resolve) => setTimeout(resolve, 30));
 		r.metro.dropAll();
 		await until(() => sent(r, "Debugger.setBreakpointByUrl").length === 2, "re-armed");
-		expect(String(sent(r, "Debugger.setBreakpointByUrl")[1]?.params.condition)).toBe(logpointCondition("h", "n", 2));
+		expect(String(sent(r, "Debugger.setBreakpointByUrl")[1]?.params.condition)).toBe(
+			devBrokerLogpoints.logpointCondition("h", "n", 2)
+		);
 	});
 });
 
@@ -275,21 +273,24 @@ describe("logpointCondition", () => {
 	}
 
 	test("logs the tagged value and returns false", () => {
-		expect(run(logpointCondition("a", "n * 2"), { n: 21 })).toEqual({ value: false, logged: [["[logpoint:a]", 42]] });
+		expect(run(devBrokerLogpoints.logpointCondition("a", "n * 2"), { n: 21 })).toEqual({
+			value: false,
+			logged: [["[logpoint:a]", 42]],
+		});
 	});
 
 	test("an exception is logged, not thrown", () => {
-		const { value, logged } = run(logpointCondition("a", "missing.x"));
+		const { value, logged } = run(devBrokerLogpoints.logpointCondition("a", "missing.x"));
 		expect(value).toBe(false);
 		expect(logged[0]?.[0]).toBe("[logpoint:a] error");
 	});
 
 	test("a trailing line comment in the expression cannot swallow the closing", () => {
-		expect(run(logpointCondition("a", "1 // why")).logged).toEqual([["[logpoint:a]", 1]]);
+		expect(run(devBrokerLogpoints.logpointCondition("a", "1 // why")).logged).toEqual([["[logpoint:a]", 1]]);
 	});
 
 	test("with hits the page stops logging after that many", () => {
-		const condition = logpointCondition("a", "1", 2);
+		const condition = devBrokerLogpoints.logpointCondition("a", "1", 2);
 		const g = globalThis as unknown as { __wardenLogpoints?: unknown };
 		const logged: unknown[][] = [];
 		const original = console.log;
@@ -306,15 +307,15 @@ describe("logpointCondition", () => {
 
 describe("helpers", () => {
 	test("parseLocation", () => {
-		expect(parseLocation("src/a.tsx:42")).toEqual({ file: "src/a.tsx", line: 42 });
-		expect(parseLocation("src/a.tsx:42:7")).toEqual({ file: "src/a.tsx", line: 42, col: 7 });
-		expect(parseLocation("src/a.tsx")).toBeUndefined();
-		expect(parseLocation("src/a.tsx:0")).toBeUndefined();
+		expect(devBrokerLogpoints.parseLocation("src/a.tsx:42")).toEqual({ file: "src/a.tsx", line: 42 });
+		expect(devBrokerLogpoints.parseLocation("src/a.tsx:42:7")).toEqual({ file: "src/a.tsx", line: 42, col: 7 });
+		expect(devBrokerLogpoints.parseLocation("src/a.tsx")).toBeUndefined();
+		expect(devBrokerLogpoints.parseLocation("src/a.tsx:0")).toBeUndefined();
 	});
 
 	test("logpointIdOf", () => {
-		expect(logpointIdOf("[logpoint:ab-1] 3 4")).toBe("ab-1");
-		expect(logpointIdOf("[logpoint:ab-1] error ReferenceError")).toBe("ab-1");
-		expect(logpointIdOf("hello [logpoint:x]")).toBeUndefined();
+		expect(devBrokerLogpoints.logpointIdOf("[logpoint:ab-1] 3 4")).toBe("ab-1");
+		expect(devBrokerLogpoints.logpointIdOf("[logpoint:ab-1] error ReferenceError")).toBe("ab-1");
+		expect(devBrokerLogpoints.logpointIdOf("hello [logpoint:x]")).toBeUndefined();
 	});
 });

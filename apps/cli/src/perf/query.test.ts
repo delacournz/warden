@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
 import { type TestContext, testContext } from "../testing";
-import { hangLines, type PerfQueryOptions, parseWindow, perfQuery } from "./query";
-import { fixtureText, SEED_T0, seedSession } from "./session-fixture.testing";
-import { asMe, fakePerfDeps } from "./testing";
+import { type PerfQueryOptions, perfQueryCli } from "./query";
+import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -93,25 +93,25 @@ const frames = {
 function setup() {
 	const c = testContext([], { now: () => SEED_T0 + 60_000 });
 	ctx = c;
-	asMe(c);
-	const deps = fakePerfDeps([]);
-	seedSession(c, {
+	perfTestingCli.asMe(c);
+	const deps = perfTestingCli.fakePerfDeps([]);
+	perfSessionFixtureTestingCli.seedSession(c, {
 		id: FULL,
 		files: {
-			"react/commits.json": fixtureText("react-commits.json"),
+			"react/commits.json": perfSessionFixtureTestingCli.fixtureText("react-commits.json"),
 			"js/hotspots.json": hotspots,
 			"js/cpu.cpuprofile": profile,
 			"native/ios-native.json": iosNative,
 			"frames.json": frames,
 		},
 	});
-	seedSession(c, { id: BARE, startMs: SEED_T0 + 60_000 });
+	perfSessionFixtureTestingCli.seedSession(c, { id: BARE, startMs: SEED_T0 + 60_000 });
 	return { c, deps };
 }
 
 const run = async (
 	c: TestContext,
-	deps: ReturnType<typeof fakePerfDeps>,
+	deps: ReturnType<typeof perfTestingCli.fakePerfDeps>,
 	id: string,
 	topic: string,
 	rest: string[] = [],
@@ -119,7 +119,7 @@ const run = async (
 ) => {
 	c.stdout.length = 0;
 	c.stderr.length = 0;
-	const code = await perfQuery(c, deps, id, topic, rest, { json: true, ...opts });
+	const code = await perfQueryCli.perfQuery(c, deps, id, topic, rest, { json: true, ...opts });
 	return { code, doc: JSON.parse(c.stdout.at(-1) ?? "null") };
 };
 
@@ -235,7 +235,7 @@ describe("perf query stacks", () => {
 		expect(doc.result).toMatchObject({ sub: "hang", platform: "ios" });
 		const text = await (async () => {
 			c.stdout.length = 0;
-			await perfQuery(c, deps, FULL, "stacks", ["hang"], {});
+			await perfQueryCli.perfQuery(c, deps, FULL, "stacks", ["hang"], {});
 			return c.stdout.join("\n");
 		})();
 		expect(text).toContain("412ms @ 3.2s (trace time) Hang");
@@ -244,7 +244,7 @@ describe("perf query stacks", () => {
 	});
 
 	test("hang on Android prints the main-thread state split", () => {
-		const lines = hangLines("android", {
+		const lines = perfQueryCli.hangLines("android", {
 			hangs: { hangs: [{ atMs: 2000, durMs: 300, jankType: "Late", main: { running: 120, io: 80, sleeping: 0 } }] },
 		});
 		expect(lines).toEqual(["300ms @ 2.0s Late  main: running 120ms, io 80ms"]);
@@ -288,7 +288,7 @@ describe("perf query frames", () => {
 		expect(doc.result.windows).toHaveLength(1);
 		expect(doc.result.hangs).toEqual(["412ms @ 3.2s (trace time) Hang"]);
 		c.stdout.length = 0;
-		await perfQuery(c, deps, FULL, "frames", [], { worst: true });
+		await perfQueryCli.perfQuery(c, deps, FULL, "frames", [], { worst: true });
 		const text = c.stdout.join("\n");
 		expect(text).toContain("55 fps, 6.5% janky, 1 frozen");
 		expect(text).toContain('3.0s..3.5s  9 frames over budget, worst 88ms  after "scroll feed"');
@@ -323,14 +323,14 @@ describe("perf query session and topic handling", () => {
 
 	test("text mode prints the lines, not JSON", async () => {
 		const { c, deps } = setup();
-		const code = await perfQuery(c, deps, FULL, "commits", [], {});
+		const code = await perfQueryCli.perfQuery(c, deps, FULL, "commits", [], {});
 		expect(code).toBe(0);
 		expect(c.stdout[0]).toMatch(/^ExpensiveSort {2}renders \d+/);
 	});
 
 	test("a corrupt cpuprofile or commits file reads as missing, never a crash", async () => {
 		const { c, deps } = setup();
-		seedSession(c, {
+		perfSessionFixtureTestingCli.seedSession(c, {
 			id: "20261024-100200-cccccc",
 			startMs: SEED_T0 + 120_000,
 			files: { "react/commits.json": "{", "js/cpu.cpuprofile": "{" },
@@ -344,14 +344,14 @@ describe("perf query session and topic handling", () => {
 
 describe("parseWindow", () => {
 	test("accepts durations and bare numbers; rejects reversed, malformed and extra parts", () => {
-		expect(parseWindow("2s-5s")).toEqual({ fromMs: 2000, toMs: 5000 });
-		expect(parseWindow("500ms-1.5s")).toEqual({ fromMs: 500, toMs: 1500 });
-		expect(parseWindow("0s-5s")).toEqual({ fromMs: 0, toMs: 5000 });
-		expect(parseWindow("0-2")).toEqual({ fromMs: 0, toMs: 2000 });
-		expect(parseWindow("0s-0s")).toBeUndefined();
-		expect(parseWindow("5s-2s")).toBeUndefined();
-		expect(parseWindow("5s")).toBeUndefined();
-		expect(parseWindow("1s-2s-3s")).toBeUndefined();
-		expect(parseWindow("a-b")).toBeUndefined();
+		expect(perfQueryCli.parseWindow("2s-5s")).toEqual({ fromMs: 2000, toMs: 5000 });
+		expect(perfQueryCli.parseWindow("500ms-1.5s")).toEqual({ fromMs: 500, toMs: 1500 });
+		expect(perfQueryCli.parseWindow("0s-5s")).toEqual({ fromMs: 0, toMs: 5000 });
+		expect(perfQueryCli.parseWindow("0-2")).toEqual({ fromMs: 0, toMs: 2000 });
+		expect(perfQueryCli.parseWindow("0s-0s")).toBeUndefined();
+		expect(perfQueryCli.parseWindow("5s-2s")).toBeUndefined();
+		expect(perfQueryCli.parseWindow("5s")).toBeUndefined();
+		expect(perfQueryCli.parseWindow("1s-2s-3s")).toBeUndefined();
+		expect(perfQueryCli.parseWindow("a-b")).toBeUndefined();
 	});
 });

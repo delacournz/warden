@@ -2,7 +2,7 @@ import type { MetricSample } from "@delacour/warden-perf/metrics/series";
 import type { FrameRateSource } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import type { Platform } from "@delacour/warden-store/types";
 import type { CommandContext } from "../context";
-import { eraseLines, renderWatch, type WatchFrame } from "./render-spark";
+import { perfRenderSparkCli, type WatchFrame } from "./render-spark";
 
 /** What a `perf metrics` run reaches the terminal and the clock through; tests inject fakes. */
 export type MetricsIo = {
@@ -23,76 +23,87 @@ export type MetricsIo = {
 	dispose?: () => void;
 };
 
-/** Android: fps from `dumpsys gfxinfo framestats` (frames.ts, loaded on first read); the iOS simulator has none. */
-function gfxinfoFps(
-	ctx: CommandContext,
-	target: { udid: string; platform: Platform },
-	app: string
-): FrameRateSource | undefined {
-	if (target.platform !== "android") return undefined;
-	return async () => {
-		const { perfFramesOps } = await import("@delacour/warden-sdk/ops/perf/frames");
-		return (await perfFramesOps.androidFrameRate(ctx, target.udid, app))?.fps;
-	};
-}
-
-/** Real timers, stderr, and a SIGINT handler that ends the run cleanly (so the summary still prints, exit 130). */
-export function defaultMetricsIo(): MetricsIo {
-	const abort = new AbortController();
-	const onSigint = () => abort.abort();
-	process.once("SIGINT", onSigint);
-	return {
-		fpsFor: gfxinfoFps,
-		signal: abort.signal,
-		write: (chunk) => {
-			process.stderr.write(chunk);
-		},
-		sleep: (ms, signal) =>
-			new Promise<void>((resolve) => {
-				const finish = () => {
-					clearTimeout(timer);
-					signal.removeEventListener("abort", finish);
-					resolve();
-				};
-				const timer = setTimeout(finish, ms);
-				signal.addEventListener("abort", finish, { once: true });
-			}),
-		dispose: () => {
-			process.off("SIGINT", onSigint);
-		},
-	};
-}
-
 const KB_PER_MB = 1024;
 
-/** The sparkline rows for the samples so far: cpu, memory (PSS when the platform has it, else RSS), and fps when a source feeds it. */
-export function buildFrame(title: string, samples: readonly MetricSample[], withFps: boolean): WatchFrame {
-	const last = samples[samples.length - 1];
-	const usePss = samples.length > 0 && samples.every((s) => s.pssKb !== undefined);
-	return {
-		title,
-		elapsedMs: last?.atMs ?? 0,
-		rows: [
-			{ label: "cpu", unit: "%", floor: "zero", values: samples.flatMap((s) => s.cpuPct ?? []) },
-			{
-				label: usePss ? "pss" : "rss",
-				unit: "MB",
-				floor: "min",
-				values: samples.map((s) => (usePss ? (s.pssKb ?? 0) : s.rssKb) / KB_PER_MB),
-			},
-			...(withFps
-				? [{ label: "fps", unit: "fps" as const, floor: "zero" as const, values: samples.flatMap((s) => s.fps ?? []) }]
-				: []),
-		],
+export class PerfMetricsWatchCli {
+	/** Android: fps from `dumpsys gfxinfo framestats` (frames.ts, loaded on first read); the iOS simulator has none. */
+	private readonly gfxinfoFps = (
+		ctx: CommandContext,
+		target: { udid: string; platform: Platform },
+		app: string
+	): FrameRateSource | undefined => {
+		if (target.platform !== "android") return undefined;
+		return async () => {
+			const { perfFramesOps } = await import("@delacour/warden-sdk/ops/perf/frames");
+			return (await perfFramesOps.androidFrameRate(ctx, target.udid, app))?.fps;
+		};
 	};
+
+	/** Real timers, stderr, and a SIGINT handler that ends the run cleanly (so the summary still prints, exit 130). */
+	defaultMetricsIo(): MetricsIo {
+		const abort = new AbortController();
+		const onSigint = () => abort.abort();
+		process.once("SIGINT", onSigint);
+		return {
+			fpsFor: this.gfxinfoFps,
+			signal: abort.signal,
+			write: (chunk) => {
+				process.stderr.write(chunk);
+			},
+			sleep: (ms, signal) =>
+				new Promise<void>((resolve) => {
+					const finish = () => {
+						clearTimeout(timer);
+						signal.removeEventListener("abort", finish);
+						resolve();
+					};
+					const timer = setTimeout(finish, ms);
+					signal.addEventListener("abort", finish, { once: true });
+				}),
+			dispose: () => {
+				process.off("SIGINT", onSigint);
+			},
+		};
+	}
+
+	/** The sparkline rows for the samples so far: cpu, memory (PSS when the platform has it, else RSS), and fps when a source feeds it. */
+	buildFrame(title: string, samples: readonly MetricSample[], withFps: boolean): WatchFrame {
+		const last = samples[samples.length - 1];
+		const usePss = samples.length > 0 && samples.every((s) => s.pssKb !== undefined);
+		return {
+			title,
+			elapsedMs: last?.atMs ?? 0,
+			rows: [
+				{ label: "cpu", unit: "%", floor: "zero", values: samples.flatMap((s) => s.cpuPct ?? []) },
+				{
+					label: usePss ? "pss" : "rss",
+					unit: "MB",
+					floor: "min",
+					values: samples.map((s) => (usePss ? (s.pssKb ?? 0) : s.rssKb) / KB_PER_MB),
+				},
+				...(withFps
+					? [
+							{
+								label: "fps",
+								unit: "fps" as const,
+								floor: "zero" as const,
+								values: samples.flatMap((s) => s.fps ?? []),
+							},
+						]
+					: []),
+			],
+		};
+	}
+
+	/** Redraws the frame in place on stderr: erase the previous one, write the new. */
+	createRedraw(io: Pick<MetricsIo, "write">, columns: number, dim: (text: string) => string) {
+		let drawn = 0;
+		return (frame: WatchFrame): void => {
+			const lines = perfRenderSparkCli.renderWatch(frame, columns, dim);
+			io.write(`${perfRenderSparkCli.eraseLines(drawn)}${lines.join("\n")}\n`);
+			drawn = lines.length;
+		};
+	}
 }
 
-/** Redraws the frame in place on stderr: erase the previous one, write the new. */
-export function createRedraw(io: Pick<MetricsIo, "write">, columns: number, dim: (text: string) => string) {
-	let drawn = 0;
-	return (frame: WatchFrame): void => {
-		const lines = renderWatch(frame, columns, dim);
-		io.write(`${eraseLines(drawn)}${lines.join("\n")}\n`);
-		drawn = lines.length;
-	};
-}
+export const perfMetricsWatchCli = new PerfMetricsWatchCli();

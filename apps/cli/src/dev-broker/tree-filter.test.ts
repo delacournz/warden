@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ReactTree } from "@delacour/warden-devtools/devtools.types";
-import { filterTree } from "./tree-filter";
+import { devBrokerTreeFilter } from "./tree-filter";
 
 const tree: ReactTree = {
 	screen: "home",
@@ -18,24 +18,24 @@ const ids = (t: ReactTree) => t.components.map((c) => c.id);
 
 describe("filterTree", () => {
 	test("no filter keeps the tree", () => {
-		expect(filterTree(tree, {})).toBe(tree);
+		expect(devBrokerTreeFilter.filterTree(tree, {})).toBe(tree);
 	});
 
 	test("depth cuts below the top-level roots", () => {
-		expect(ids(filterTree(tree, { depth: 1 }))).toEqual([0, 1, 4]);
-		expect(ids(filterTree(tree, { depth: 0 }))).toEqual([0]);
+		expect(ids(devBrokerTreeFilter.filterTree(tree, { depth: 1 }))).toEqual([0, 1, 4]);
+		expect(ids(devBrokerTreeFilter.filterTree(tree, { depth: 0 }))).toEqual([0]);
 	});
 
 	test("testID keeps that subtree only", () => {
-		expect(ids(filterTree(tree, { testID: "list" }))).toEqual([1, 2, 3]);
+		expect(ids(devBrokerTreeFilter.filterTree(tree, { testID: "list" }))).toEqual([1, 2, 3]);
 	});
 
 	test("testID and depth count from the matched component", () => {
-		expect(ids(filterTree(tree, { testID: "list", depth: 1 }))).toEqual([1, 2]);
+		expect(ids(devBrokerTreeFilter.filterTree(tree, { testID: "list", depth: 1 }))).toEqual([1, 2]);
 	});
 
 	test("an unknown testID leaves nothing and keeps the screen", () => {
-		const out = filterTree(tree, { testID: "nope" });
+		const out = devBrokerTreeFilter.filterTree(tree, { testID: "nope" });
 		expect(out.components).toEqual([]);
 		expect(out.screen).toBe("home");
 	});

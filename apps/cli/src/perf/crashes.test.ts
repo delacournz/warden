@@ -6,8 +6,8 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { PerfCommand } from "../commands/perf";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { perfCrashes, registerCrashes } from "./crashes";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfCrashesCli } from "./crashes";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -26,7 +26,7 @@ function setup(platform: "ios" | "android", handlers: Handlers) {
 	const id = platform === "ios" ? SIM1 : EMU;
 	const c = testContext([], { exec: fakeExec(handlers, calls), now: () => NOW });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform, id, name: "dev" }, 1);
 	const reports = join(c.cwd, "DiagnosticReports");
 	mkdirSync(reports, { recursive: true });
@@ -34,7 +34,7 @@ function setup(platform: "ios" | "android", handlers: Handlers) {
 		copyFileSync(fixtureUrl(name), join(reports, name.replace("ips-", "").replace(".ips", "-2026-10-24-100211.ips")));
 	}
 	const crashDeps: CrashDeps = { reportsDir: () => reports };
-	return { c, calls, crashDeps, deps: fakePerfDeps([{ platform, id, name: "dev" }]) };
+	return { c, calls, crashDeps, deps: perfTestingCli.fakePerfDeps([{ platform, id, name: "dev" }]) };
 }
 
 const iosHandlers = (): Handlers => [
@@ -47,7 +47,7 @@ const json = (c: TestContext) => JSON.parse(c.stdout.join("\n"));
 describe("perf crashes ios", () => {
 	test("only this app on this simulator, summarised", async () => {
 		const { c, deps, crashDeps } = setup("ios", iosHandlers());
-		expect(await perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps)).toBe(0);
+		expect(await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps)).toBe(0);
 		const doc = json(c);
 		expect(doc.result.count).toBe(1);
 		const crash = doc.result.crashes[0];
@@ -65,16 +65,16 @@ describe("perf crashes ios", () => {
 
 	test("--since", async () => {
 		const { c, deps, crashDeps } = setup("ios", iosHandlers());
-		await perfCrashes(c, deps, { json: true, app: "com.acme.shop", since: "1m" }, crashDeps);
+		await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop", since: "1m" }, crashDeps);
 		expect(json(c).result.count).toBe(0);
 		c.stdout.length = 0;
-		await perfCrashes(c, deps, { json: true, app: "com.acme.shop", since: "1h" }, crashDeps);
+		await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop", since: "1h" }, crashDeps);
 		expect(json(c).result.count).toBe(1);
 	});
 
 	test("text output names the first app frame", async () => {
 		const { c, deps, crashDeps } = setup("ios", iosHandlers());
-		await perfCrashes(c, deps, { app: "com.acme.shop" }, crashDeps);
+		await perfCrashesCli.perfCrashes(c, deps, { app: "com.acme.shop" }, crashDeps);
 		const text = c.stdout.join("\n");
 		expect(text).toContain("CRASH ShopApp");
 		expect(text).toContain("first app frame: ShopApp +4521772");
@@ -82,7 +82,7 @@ describe("perf crashes ios", () => {
 
 	test("a missing reports dir is a note, not a failure", async () => {
 		const { c, deps } = setup("ios", iosHandlers());
-		const code = await perfCrashes(
+		const code = await perfCrashesCli.perfCrashes(
 			c,
 			deps,
 			{ json: true, app: "com.acme.shop" },
@@ -100,7 +100,7 @@ describe("perf crashes ios", () => {
 			maxDurationMs: 30_000,
 		});
 		if (!made.success) throw new Error("session");
-		await perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps);
+		await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps);
 		const copied = join(perfPaths.sessionDir(c, made.data.id), "crashes", "shopapp-sim1-2026-10-24-100211.ips");
 		expect(existsSync(copied)).toBe(true);
 		expect(json(c).result.crashes[0].file).toBe(copied);
@@ -114,7 +114,7 @@ describe("perf crashes ios", () => {
 				["atos -arch arm64", { stdout: read("atos-out.txt") }],
 			]);
 			expect(
-				await perfCrashes(
+				await perfCrashesCli.perfCrashes(
 					c,
 					deps,
 					{ json: true, app: "com.acme.shop", symbolicate: true, dsym: "/d/ShopApp.app.dSYM" },
@@ -141,7 +141,12 @@ describe("perf crashes ios", () => {
 		test("a dSYM from another build is reported, crash still listed", async () => {
 			const other = "UUID: 00000000-0000-0000-0000-000000000000 (arm64) /d/DWARF/ShopApp\n";
 			const { c, deps, crashDeps } = setup("ios", [...iosHandlers(), ["dwarfdump --uuid", { stdout: other }]]);
-			await perfCrashes(c, deps, { json: true, app: "com.acme.shop", symbolicate: true, dsym: "/d/x.dSYM" }, crashDeps);
+			await perfCrashesCli.perfCrashes(
+				c,
+				deps,
+				{ json: true, app: "com.acme.shop", symbolicate: true, dsym: "/d/x.dSYM" },
+				crashDeps
+			);
 			const doc = json(c);
 			expect(doc.result.count).toBe(1);
 			expect(doc.result.crashes[0].symbolicated).toBeUndefined();
@@ -150,7 +155,9 @@ describe("perf crashes ios", () => {
 
 		test("needs --dsym", async () => {
 			const { c, deps, crashDeps } = setup("ios", iosHandlers());
-			expect(await perfCrashes(c, deps, { json: true, app: "com.acme.shop", symbolicate: true }, crashDeps)).toBe(1);
+			expect(
+				await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop", symbolicate: true }, crashDeps)
+			).toBe(1);
 			expect(json(c).error.message).toContain("--dsym");
 		});
 	});
@@ -166,7 +173,7 @@ const androidHandlers = (): Handlers => [
 describe("perf crashes android", () => {
 	test("logcat crash buffer + dropbox, deduped, app only, with an ANR finding", async () => {
 		const { c, deps, crashDeps } = setup("android", androidHandlers());
-		expect(await perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps)).toBe(0);
+		expect(await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps)).toBe(0);
 		const doc = json(c);
 		const kinds = doc.result.crashes.map((x: { kind: string; source: string }) => `${x.kind}:${x.source}`);
 		expect(kinds).toEqual(["anr:dropbox:data_app_anr", "crash:logcat", "crash:dropbox:data_app_crash"]);
@@ -177,7 +184,7 @@ describe("perf crashes android", () => {
 
 	test("--since uses the device clock", async () => {
 		const { c, deps, crashDeps } = setup("android", androidHandlers());
-		await perfCrashes(c, deps, { json: true, app: "com.acme.shop", since: "6m" }, crashDeps);
+		await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop", since: "6m" }, crashDeps);
 		const got = json(c).result.crashes.map((x: { at: string }) => x.at);
 		expect(got).toEqual(["2026-10-24 10:05:00", "10-24 10:04:10.100"]);
 	});
@@ -190,7 +197,7 @@ describe("perf crashes android", () => {
 			maxDurationMs: 30_000,
 		});
 		if (!made.success) throw new Error("session");
-		await perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps);
+		await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps);
 		const dir = join(perfPaths.sessionDir(c, made.data.id), "crashes");
 		for (const f of ["logcat-crash.txt", "dropbox-data_app_crash.txt", "dropbox-data_app_anr.txt"])
 			expect(existsSync(join(dir, f))).toBe(true);
@@ -202,14 +209,19 @@ describe("perf crashes android", () => {
 			[`adb -s ${EMU} logcat -b crash`, { stdout: read("logcat-crash-buffer.txt") }],
 			[`adb -s ${EMU} shell dumpsys`, { exitCode: 1 }],
 		]);
-		expect(await perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps)).toBe(0);
+		expect(await perfCrashesCli.perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps)).toBe(0);
 		expect(json(c).warnings?.length).toBe(2);
 	});
 
 	test("--symbolicate is iOS only", async () => {
 		const { c, deps, crashDeps } = setup("android", androidHandlers());
 		expect(
-			await perfCrashes(c, deps, { json: true, app: "com.acme.shop", symbolicate: true, dsym: "/d" }, crashDeps)
+			await perfCrashesCli.perfCrashes(
+				c,
+				deps,
+				{ json: true, app: "com.acme.shop", symbolicate: true, dsym: "/d" },
+				crashDeps
+			)
 		).toBe(1);
 	});
 });
@@ -220,6 +232,6 @@ test("crashes is wired onto warden perf with its flags", async () => {
 	ctx?.cleanup();
 	ctx = c;
 	c.db.recordDevice({ platform: "ios", id: SIM1, name: "dev" }, 1);
-	expect(await new PerfCommand(deps, [registerCrashes]).definition().run(c)).toBe(1);
+	expect(await new PerfCommand(deps, [perfCrashesCli.registerCrashes]).definition().run(c)).toBe(1);
 	expect(JSON.parse(c.stdout.join("\n")).error.code).toBe("usage");
 });

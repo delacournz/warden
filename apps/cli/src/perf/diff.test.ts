@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { type TestContext, testContext } from "../testing";
-import { perfDiff } from "./diff";
-import { SEED_T0, samplesJsonl, seedSession, startupJson } from "./session-fixture.testing";
+import { perfDiffCli } from "./diff";
+import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -16,18 +16,18 @@ function setup(a: { cold: number; cpu: number[] }, b: { cold: number; cpu: numbe
 	const c = testContext([], { now: () => SEED_T0 + 60_000 });
 	ctx = c;
 	const files = (s: { cold: number; cpu: number[] }) => ({
-		"metrics/startup.json": startupJson(s.cold),
-		"metrics/samples.jsonl": samplesJsonl(SEED_T0, s.cpu),
+		"metrics/startup.json": perfSessionFixtureTestingCli.startupJson(s.cold),
+		"metrics/samples.jsonl": perfSessionFixtureTestingCli.samplesJsonl(SEED_T0, s.cpu),
 	});
-	seedSession(c, { id: A, files: files(a) });
-	seedSession(c, { id: B, startMs: SEED_T0 + 60_000, files: files(b) });
+	perfSessionFixtureTestingCli.seedSession(c, { id: A, files: files(a) });
+	perfSessionFixtureTestingCli.seedSession(c, { id: B, startMs: SEED_T0 + 60_000, files: files(b) });
 	return c;
 }
 
-async function run(c: TestContext, a: string, b: string, opts: Parameters<typeof perfDiff>[3] = {}) {
+async function run(c: TestContext, a: string, b: string, opts: Parameters<typeof perfDiffCli.perfDiff>[3] = {}) {
 	c.stdout.length = 0;
 	c.stderr.length = 0;
-	const code = await perfDiff(c, a, b, { json: true, ...opts });
+	const code = await perfDiffCli.perfDiff(c, a, b, { json: true, ...opts });
 	return { code, doc: JSON.parse(c.stdout.at(-1) ?? "null") };
 }
 
@@ -126,7 +126,7 @@ describe("warden perf diff", () => {
 
 	test("text mode prints the diff lines ending in the regression count", async () => {
 		const c = setup({ cold: 1000, cpu: [10, 20] }, { cold: 1300, cpu: [10, 20] });
-		const code = await perfDiff(c, A, B, { failOn: "regress" });
+		const code = await perfDiffCli.perfDiff(c, A, B, { failOn: "regress" });
 		expect(code).toBe(1);
 		const text = c.stdout.join("\n");
 		expect(text).toContain("REGRESS");

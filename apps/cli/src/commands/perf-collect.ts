@@ -62,19 +62,19 @@ export class PerfCollectCommand extends CliCommand {
 				});
 				return 0;
 			}
-			const { runSessionCollector, defaultCollectorDeps } = await import("../perf/collector");
+			const { perfCollectorCli } = await import("../perf/collector");
 			const { perfOrchestrator } = await import("@delacour/warden-sdk/ops/perf/orchestrate");
 			const { defaultSessionKit } = await import("../perf/session-kit");
 			const { defaultPerfDeps } = await import("../perf/run");
 			const perf = deps.perf ?? defaultPerfDeps;
 			const kit = deps.kit ?? defaultSessionKit;
 			const collectorDeps: CollectorDeps = {
-				...defaultCollectorDeps((line) => ctx.err(line)),
+				...perfCollectorCli.defaultCollectorDeps((line) => ctx.err(line)),
 				...deps.collector,
 				finalize: (sessionId) =>
 					perfOrchestrator.finalizeSession(ctx, perf, kit, sessionId, { reason: "max-duration", fromCollector: true }),
 			};
-			const outcome = await runSessionCollector(ctx, perf, collectorDeps, id, controller.signal);
+			const outcome = await perfCollectorCli.runSessionCollector(ctx, perf, collectorDeps, id, controller.signal);
 			return outcome.success ? 0 : 1;
 		} finally {
 			process.off("SIGTERM", stop);

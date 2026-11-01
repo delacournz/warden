@@ -5,12 +5,12 @@ import { join } from "node:path";
 import type { Hotspots } from "@delacour/warden-perf/js/hotspots";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { resultFactory } from "@delacour/warden-types/result";
-import { brokerErr } from "../dev-broker/broker.types";
-import { type BrokerServer, serveBroker } from "../dev-broker/ipc";
+import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
+import { type BrokerServer, devBrokerIpc } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
 import { type TestContext, testContext } from "../testing";
-import { perfJs } from "./js";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfJsCli } from "./js";
+import { perfTestingCli } from "./testing";
 
 const cleanup: Array<() => unknown> = [];
 let ctx: TestContext | undefined;
@@ -54,7 +54,7 @@ describe("warden perf js with a dev-session broker", () => {
 	test("profiles through profile.start/stop and reports from hotspots.json; opens no Hermes socket", async () => {
 		const c = testContext([], { now: () => T0 });
 		ctx = c;
-		asMe(c);
+		perfTestingCli.asMe(c);
 		c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
 		const dir = mkdtempSync(join(tmpdir(), "wpj-"));
 		cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -66,7 +66,7 @@ describe("warden perf js with a dev-session broker", () => {
 		writeFileSync(hotspotsPath, JSON.stringify(hotspots));
 
 		const calls: Array<{ method: string; params: unknown }> = [];
-		const served = await serveBroker(join(dir, "b.sock"), async (method, params) => {
+		const served = await devBrokerIpc.serveBroker(join(dir, "b.sock"), async (method, params) => {
 			calls.push({ method, params });
 			if (method === "status") return resultFactory.ok({});
 			if (method === "profile.start") return resultFactory.ok({ kind: "cpu", startedAt: T0 });
@@ -77,7 +77,7 @@ describe("warden perf js with a dev-session broker", () => {
 					summary: { kind: "cpu", sampleCount: 3, durationMs: 600, idlePct: 50, hotspotsPath, topSelf: [] },
 				});
 			}
-			return brokerErr("unknown_method", method);
+			return devBrokerBrokerTypes.brokerErr("unknown_method", method);
 		});
 		if (!served.success) throw new Error(served.error.message);
 		const server: BrokerServer = served.data;
@@ -96,7 +96,11 @@ describe("warden perf js with a dev-session broker", () => {
 			brokerSocket: server.socketPath,
 		});
 
-		const deps = fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => "http://127.0.0.1:8081" });
+		const deps = perfTestingCli.fakePerfDeps(
+			[sim],
+			{ U1: "com.acme.shop" },
+			{ metro: async () => "http://127.0.0.1:8081" }
+		);
 		const slept: number[] = [];
 		let opened = 0;
 		const js: JsDeps = {
@@ -111,7 +115,7 @@ describe("warden perf js with a dev-session broker", () => {
 		};
 
 		expect(
-			await perfJs(c, deps, { json: true, app: "com.acme.shop", duration: "5s", samplingInterval: "200" }, js)
+			await perfJsCli.perfJs(c, deps, { json: true, app: "com.acme.shop", duration: "5s", samplingInterval: "200" }, js)
 		).toBe(0);
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc).toMatchObject({ ok: true, command: "perf js", result: { app: "com.acme.shop" } });

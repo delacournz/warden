@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectAgents, onPath } from "./agents";
+import { hookAgents } from "./agents";
 
 let dir: string | undefined;
 afterEach(() => {
@@ -29,47 +29,47 @@ describe("onPath", () => {
 		const { bin } = sandbox();
 		exe(bin, "codex");
 		exe(bin, "claude", 0o644);
-		expect(onPath({ PATH: `/nonexistent:${bin}` }, "codex")).toBe(true);
-		expect(onPath({ PATH: bin }, "claude")).toBe(false);
-		expect(onPath({}, "codex")).toBe(false);
+		expect(hookAgents.onPath({ PATH: `/nonexistent:${bin}` }, "codex")).toBe(true);
+		expect(hookAgents.onPath({ PATH: bin }, "claude")).toBe(false);
+		expect(hookAgents.onPath({}, "codex")).toBe(false);
 	});
 });
 
 describe("detectAgents", () => {
 	test("nothing present → none", () => {
 		const { home, bin } = sandbox();
-		expect(detectAgents({ HOME: home, PATH: bin })).toEqual([]);
+		expect(hookAgents.detectAgents({ HOME: home, PATH: bin })).toEqual([]);
 	});
 
 	test("~/.claude dir → claude", () => {
 		const { home, bin } = sandbox();
 		mkdirSync(join(home, ".claude"));
-		expect(detectAgents({ HOME: home, PATH: bin })).toEqual(["claude"]);
+		expect(hookAgents.detectAgents({ HOME: home, PATH: bin })).toEqual(["claude"]);
 	});
 
 	test("~/.codex dir → codex", () => {
 		const { home, bin } = sandbox();
 		mkdirSync(join(home, ".codex"));
-		expect(detectAgents({ HOME: home, PATH: bin })).toEqual(["codex"]);
+		expect(hookAgents.detectAgents({ HOME: home, PATH: bin })).toEqual(["codex"]);
 	});
 
 	test("$CODEX_HOME dir → codex (even without ~/.codex)", () => {
 		const { home, bin } = sandbox();
 		const codexHome = join(home, "custom-codex");
 		mkdirSync(codexHome);
-		expect(detectAgents({ HOME: home, PATH: bin, CODEX_HOME: codexHome })).toEqual(["codex"]);
+		expect(hookAgents.detectAgents({ HOME: home, PATH: bin, CODEX_HOME: codexHome })).toEqual(["codex"]);
 	});
 
 	test("binaries on PATH → both", () => {
 		const { home, bin } = sandbox();
 		exe(bin, "claude");
 		exe(bin, "codex");
-		expect(detectAgents({ HOME: home, PATH: bin })).toEqual(["claude", "codex"]);
+		expect(hookAgents.detectAgents({ HOME: home, PATH: bin })).toEqual(["claude", "codex"]);
 	});
 
 	test("no HOME still detects via PATH", () => {
 		const { bin } = sandbox();
 		exe(bin, "codex");
-		expect(detectAgents({ PATH: bin })).toEqual(["codex"]);
+		expect(hookAgents.detectAgents({ PATH: bin })).toEqual(["codex"]);
 	});
 });

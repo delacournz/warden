@@ -6,8 +6,8 @@ import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtoo
 import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { cliUiPaths } from "../agent-ui/paths";
-import { brokerErr } from "../dev-broker/broker.types";
-import { type BrokerServer, serveBroker } from "../dev-broker/ipc";
+import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
+import { type BrokerServer, devBrokerIpc } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
@@ -106,10 +106,10 @@ async function harness(options: { broker: boolean }): Promise<Harness> {
 	if (options.broker) {
 		const dir = mkdtempSync(join(tmpdir(), "wbh-"));
 		cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
-		const served = await serveBroker(join(dir, "b.sock"), async (method, params) => {
+		const served = await devBrokerIpc.serveBroker(join(dir, "b.sock"), async (method, params) => {
 			if (method !== "status") calls.push({ method, params });
 			const answer = ANSWERS[method];
-			return answer === undefined ? brokerErr("unknown_method", method) : answer(params);
+			return answer === undefined ? devBrokerBrokerTypes.brokerErr("unknown_method", method) : answer(params);
 		});
 		if (!served.success) throw new Error(served.error.message);
 		const server: BrokerServer = served.data;

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PERF_SUBCOMMANDS, type PerfRegister } from "../perf/register";
-import { fakePerfDeps } from "../perf/testing";
+import { perfTestingCli } from "../perf/testing";
 import { type TestContext, testContext } from "../testing";
 import { PerfCommand } from "./perf";
 
@@ -13,7 +13,7 @@ function setup(argv: string[]) {
 	const c = testContext(argv);
 	ctx = c;
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, c.now());
-	return { c, deps: fakePerfDeps([sim]) };
+	return { c, deps: perfTestingCli.fakePerfDeps([sim]) };
 }
 
 describe("warden perf", () => {

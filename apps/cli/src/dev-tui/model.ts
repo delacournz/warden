@@ -104,34 +104,38 @@ const INITIAL_TASKS: ReadonlyArray<{ id: string; title: string }> = [
 	{ id: "session", title: "session" },
 ];
 
-export function newTask(id: string, title: string): Task {
-	return { id, title, status: "pending", startedAt: undefined, endedAt: undefined, log: [], scroll: 0 };
-}
-
-export function initialState(size: Size, now: number): TuiState {
-	return {
-		tasks: INITIAL_TASKS.map((t) => newTask(t.id, t.title)),
-		selected: 0,
-		autoFollow: true,
-		mode: "list",
-		prompt: undefined,
-		size,
-		ready: undefined,
-		hud: {
-			visible: false,
-			sample: undefined,
-			fps: undefined,
-			bundle: undefined,
-			sessionStartedAt: undefined,
-			perf: undefined,
-		},
-		quitting: false,
-		metroExit: undefined,
-		redraw: 0,
-		now,
-	};
-}
-
 /** Below this the dashboard cannot lay out and shows one line. */
 export const MIN_COLS = 60;
 export const MIN_ROWS = 16;
+
+export class DevTuiModel {
+	newTask(id: string, title: string): Task {
+		return { id, title, status: "pending", startedAt: undefined, endedAt: undefined, log: [], scroll: 0 };
+	}
+
+	initialState(size: Size, now: number): TuiState {
+		return {
+			tasks: INITIAL_TASKS.map((t) => this.newTask(t.id, t.title)),
+			selected: 0,
+			autoFollow: true,
+			mode: "list",
+			prompt: undefined,
+			size,
+			ready: undefined,
+			hud: {
+				visible: false,
+				sample: undefined,
+				fps: undefined,
+				bundle: undefined,
+				sessionStartedAt: undefined,
+				perf: undefined,
+			},
+			quitting: false,
+			metroExit: undefined,
+			redraw: 0,
+			now,
+		};
+	}
+}
+
+export const devTuiModel = new DevTuiModel();

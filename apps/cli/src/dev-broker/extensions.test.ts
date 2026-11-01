@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { Broker } from "./broker";
-import { type BrokerExtension, withExtensions } from "./extensions";
+import { type BrokerExtension, devBrokerExtensions } from "./extensions";
 
 function fakeBroker(events: string[]): Broker {
 	return {
@@ -26,7 +26,10 @@ describe("withExtensions", () => {
 				events.push(`${name} installed ${context.metroUrl} ${context.logDir}`);
 				return () => events.push(`${name} removed`);
 			};
-		const broker = withExtensions(fakeBroker(events), { metroUrl: "http://m", logDir: "/d" }, [ext("a"), ext("b")]);
+		const broker = devBrokerExtensions.withExtensions(fakeBroker(events), { metroUrl: "http://m", logDir: "/d" }, [
+			ext("a"),
+			ext("b"),
+		]);
 		expect(broker.socketPath).toBe("/tmp/b.sock");
 		await broker.close();
 		expect(events).toEqual([

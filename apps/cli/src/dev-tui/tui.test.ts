@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { DevReady } from "../commands/dev-ui";
 import { testContext } from "../testing";
-import { fakeProcess, fakeStdin, fakeStdout, replay } from "./fakes.testing";
-import { listWidth } from "./render";
-import { createDevTui, FRAME_MS } from "./tui";
+import { devTuiFakesTesting } from "./fakes.testing";
+import { devTuiRender } from "./render";
+import { devTuiTui, FRAME_MS } from "./tui";
 
 const READY: DevReady = {
 	platform: "ios",
@@ -19,11 +19,11 @@ const READY: DevReady = {
 const settle = () => Bun.sleep(FRAME_MS * 3);
 
 function setup(cols = 80, rows = 24) {
-	const stdin = fakeStdin();
-	const stdout = fakeStdout(cols, rows);
-	const process = fakeProcess();
+	const stdin = devTuiFakesTesting.fakeStdin();
+	const stdout = devTuiFakesTesting.fakeStdout(cols, rows);
+	const process = devTuiFakesTesting.fakeProcess();
 	let clock = 1000;
-	const ui = createDevTui({
+	const ui = devTuiTui.createDevTui({
 		ctx: testContext([]),
 		stdin: stdin.input,
 		stdout: stdout.output,
@@ -38,7 +38,7 @@ function setup(cols = 80, rows = 24) {
 		advance: (ms: number) => {
 			clock += ms;
 		},
-		screen: () => replay(stdout.all(), stdout.output.columns, stdout.output.rows),
+		screen: () => devTuiFakesTesting.replay(stdout.all(), stdout.output.columns, stdout.output.rows),
 	};
 }
 
@@ -239,7 +239,7 @@ describe("createDevTui", () => {
 		stdout.resize(120, 40);
 		process.emit("SIGWINCH");
 		await settle();
-		const rows = await replay(stdout.all(), 120, 40);
+		const rows = await devTuiFakesTesting.replay(stdout.all(), 120, 40);
 		expect(rows[0]).toContain("hud off");
 		await ui.close();
 	});
@@ -251,7 +251,7 @@ describe("createDevTui", () => {
 		stdout.resize(40, 10);
 		process.emit("SIGWINCH");
 		await settle();
-		const rows = await replay(stdout.all(), 40, 10);
+		const rows = await devTuiFakesTesting.replay(stdout.all(), 40, 10);
 		expect(rows[0]).toContain("terminal too small");
 		expect(rows.slice(1).map((r) => r.trim())).toEqual(Array(9).fill(""));
 		await ui.close();
@@ -391,7 +391,7 @@ describe("Metro pane and key passthrough", () => {
 		m.metro.onData(new TextEncoder().encode("ab\r\ncd"));
 		m.stdin.press("i");
 		await Bun.sleep(80);
-		const col = listWidth(80) + 2 + 2 + 1;
+		const col = devTuiRender.listWidth(80) + 2 + 2 + 1;
 		expect(m.stdout.all()).toContain(`\x1b[${1 + 1 + 1};${col}H\x1b[?25h`);
 		m.stdout.clear();
 		m.stdin.press("\x1b");
@@ -502,10 +502,16 @@ describe("Metro pane and key passthrough", () => {
 describe("createDevTui: failures reach the terminal after the dashboard closes", () => {
 	function setupWithCtx(cols = 80, rows = 24) {
 		const ctx = testContext([]);
-		const stdin = fakeStdin();
-		const stdout = fakeStdout(cols, rows);
-		const process = fakeProcess();
-		const ui = createDevTui({ ctx, stdin: stdin.input, stdout: stdout.output, proc: process.proc, now: () => 1000 });
+		const stdin = devTuiFakesTesting.fakeStdin();
+		const stdout = devTuiFakesTesting.fakeStdout(cols, rows);
+		const process = devTuiFakesTesting.fakeProcess();
+		const ui = devTuiTui.createDevTui({
+			ctx,
+			stdin: stdin.input,
+			stdout: stdout.output,
+			proc: process.proc,
+			now: () => 1000,
+		});
 		return { ui, ctx, stdin };
 	}
 

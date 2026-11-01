@@ -2,7 +2,7 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { type DevSessionDeps, type DevSessionError, findDevSession } from "./dev-session";
-import { METRO_LOG_KINDS, type MetroLogEntry, type MetroLogKind, parseMetroLog } from "./dev-tui/metro-log";
+import { devTuiMetroLog, METRO_LOG_KINDS, type MetroLogEntry, type MetroLogKind } from "./dev-tui/metro-log";
 
 /** Only the end of `metro.log` is read: a long session writes megabytes of progress redraws. */
 export const MAX_METRO_LOG_BYTES = 8 * 1024 * 1024;
@@ -124,7 +124,7 @@ export function readMetroLogs(
 	const log = readMetroLogText(join(session.data.logDir, "metro.log"));
 	if (log === undefined) return { success: false, error: metroLogUnavailable(session.data.logDir) };
 	if (query.sinceMs !== undefined && log.mtimeMs < query.sinceMs) return resultFactory.ok([]);
-	return filterMetroLogs(parseMetroLog(log.text), query);
+	return filterMetroLogs(devTuiMetroLog.parseMetroLog(log.text), query);
 }
 
 /** Entries with a trailing error block still being written are held back until the log stops growing. */
@@ -151,7 +151,7 @@ export async function followMetroLog(
 	const path = join(logDir, "metro.log");
 	const first = readMetroLogText(path);
 	if (first === undefined) return { success: false, error: metroLogUnavailable(logDir) };
-	const cursor = { seen: parseMetroLog(first.text).length, size: first.size };
+	const cursor = { seen: devTuiMetroLog.parseMetroLog(first.text).length, size: first.size };
 	while (!deps.signal.aborted) {
 		await deps.sleep(deps.pollMs ?? 500);
 		if (deps.signal.aborted) break;
@@ -171,7 +171,7 @@ function pollFresh(path: string, cursor: { seen: number; size: number }, now: nu
 	const grew = next.size !== cursor.size;
 	if (next.size < cursor.size) cursor.seen = 0;
 	cursor.size = next.size;
-	const all = parseMetroLog(next.text);
+	const all = devTuiMetroLog.parseMetroLog(next.text);
 	const upTo = grew && holdsOpenBlock(all[all.length - 1]) ? all.length - 1 : all.length;
 	if (upTo <= cursor.seen) return [];
 	const fresh = all.slice(cursor.seen, upTo).map((e) => ({ ...e, ts: e.ts ?? now }));

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PerfCommand } from "../commands/perf";
 import { type TestContext, testContext } from "../testing";
-import { registerMemory } from "./memory";
-import { registerMetrics } from "./metrics";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfMemoryCli } from "./memory";
+import { perfMetricsCli } from "./metrics";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -13,9 +13,15 @@ const droid = { platform: "android", id: "emulator-5554", name: "warden-pixel-1"
 function setup(argv: string[]) {
 	const c = testContext(argv, { exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }) });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice(droid, c.now());
-	return { c, command: new PerfCommand(fakePerfDeps([droid]), [registerMetrics, registerMemory]).definition() };
+	return {
+		c,
+		command: new PerfCommand(perfTestingCli.fakePerfDeps([droid]), [
+			perfMetricsCli.registerMetrics,
+			perfMemoryCli.registerMemory,
+		]).definition(),
+	};
 }
 
 describe("registerMetrics / registerMemory", () => {

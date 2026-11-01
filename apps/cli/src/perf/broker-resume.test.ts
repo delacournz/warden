@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeDevSession } from "../dev-session";
 import { testContext } from "../testing";
-import { resumeBrokerOnClose, settleBrokerResumes } from "./broker-resume";
+import { perfBrokerResumeCli } from "./broker-resume";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -17,9 +17,9 @@ describe("resumeBrokerOnClose", () => {
 		dirs.push(home);
 		const ctx = testContext([], { env: { WARDEN_HOME: home } });
 		let closed = 0;
-		const session = resumeBrokerOnClose(ctx, "U1", { close: () => closed++ });
+		const session = perfBrokerResumeCli.resumeBrokerOnClose(ctx, "U1", { close: () => closed++ });
 		session.close();
-		await settleBrokerResumes();
+		await perfBrokerResumeCli.settleBrokerResumes();
 		expect(closed).toBe(1);
 		ctx.cleanup();
 	});
@@ -43,8 +43,8 @@ describe("resumeBrokerOnClose", () => {
 		});
 		const ctx = testContext([], { env });
 		let closed = 0;
-		resumeBrokerOnClose(ctx, "U1", { close: () => closed++ }).close();
-		await settleBrokerResumes();
+		perfBrokerResumeCli.resumeBrokerOnClose(ctx, "U1", { close: () => closed++ }).close();
+		await perfBrokerResumeCli.settleBrokerResumes();
 		expect(closed).toBe(1);
 		ctx.cleanup();
 	});

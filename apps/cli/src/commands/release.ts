@@ -11,7 +11,7 @@ import type { CommandContext } from "../context";
 import { leaseHostBuilder } from "../lease-host";
 import { type SelectOptionValues, selectorFrom, withSelectOptions } from "../lease-select";
 import { output } from "../output";
-import { releaseAfter } from "../perf/release-after";
+import { perfReleaseAfterCli } from "../perf/release-after";
 import { withSpinner } from "../spinner-context";
 import { lsCli } from "./ls";
 
@@ -124,7 +124,7 @@ export class ReleaseCommand extends CliCommand {
 				: { quarantined: [], notes: [] };
 		await new DeviceReleaser(ctx).release(
 			leases.map((l) => l.id),
-			{ after: releaseAfter(ctx, { helper: opts.shutdown === true }) }
+			{ after: perfReleaseAfterCli.releaseAfter(ctx, { helper: opts.shutdown === true }) }
 		);
 
 		for (const u of unknown) output.reportError(ctx, "release", `no lease for ${u}`);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { deviceTarget, type HookDeps, handleSessionEnd } from "./claude-pretool";
+import { type HookDeps, hookClaudePretool } from "./claude-pretool";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
@@ -58,13 +58,17 @@ const other: Owner = { kind: "agent", sessionId: "s2", cwd: "/work/other", repo:
 
 describe("deviceTarget", () => {
 	test("classifies ids", async () => {
-		expect(deviceTarget(UDID)).toEqual({ kind: "device", platform: "ios", id: UDID });
-		expect(deviceTarget(UDID.toLowerCase())).toMatchObject({ platform: "ios" });
-		expect(deviceTarget("00008030-001A2B3C4D5E6F70")).toMatchObject({ platform: "ios" });
-		expect(deviceTarget("emulator-5554")).toEqual({ kind: "device", platform: "android", id: "emulator-5554" });
-		expect(deviceTarget("R58M12345AB")).toMatchObject({ platform: "android" });
-		expect(deviceTarget("chromium-cdp-9222")).toEqual({ kind: "skip" });
-		expect(deviceTarget("")).toEqual({ kind: "skip" });
+		expect(hookClaudePretool.deviceTarget(UDID)).toEqual({ kind: "device", platform: "ios", id: UDID });
+		expect(hookClaudePretool.deviceTarget(UDID.toLowerCase())).toMatchObject({ platform: "ios" });
+		expect(hookClaudePretool.deviceTarget("00008030-001A2B3C4D5E6F70")).toMatchObject({ platform: "ios" });
+		expect(hookClaudePretool.deviceTarget("emulator-5554")).toEqual({
+			kind: "device",
+			platform: "android",
+			id: "emulator-5554",
+		});
+		expect(hookClaudePretool.deviceTarget("R58M12345AB")).toMatchObject({ platform: "android" });
+		expect(hookClaudePretool.deviceTarget("chromium-cdp-9222")).toEqual({ kind: "skip" });
+		expect(hookClaudePretool.deviceTarget("")).toEqual({ kind: "skip" });
 	});
 });
 
@@ -80,20 +84,23 @@ describe("handleSessionEnd", () => {
 			{ resource: { kind: "device", platform: "ios", id: "OTHER", name: "o" }, owner: other, ttlMs: 60_000 },
 			now
 		);
-		const result = await handleSessionEnd({ session_id: "s1", hook_event_name: "SessionEnd", reason: "exit" }, deps());
+		const result = await hookClaudePretool.handleSessionEnd(
+			{ session_id: "s1", hook_event_name: "SessionEnd", reason: "exit" },
+			deps()
+		);
 		expect(result.exitCode).toBe(0);
 		expect(store.listLeases().map((l) => l.owner)).toEqual([other]);
 	});
 
 	test("malformed input → exit 0, nothing released", async () => {
 		store.insertLease({ resource: { kind: "port", port: 1 }, owner: other, ttlMs: 1 }, now);
-		expect((await handleSessionEnd("nope", deps())).exitCode).toBe(0);
+		expect((await hookClaudePretool.handleSessionEnd("nope", deps())).exitCode).toBe(0);
 		expect(store.listLeases()).toHaveLength(1);
 	});
 
 	test("shuts down the session's devices it booted (policy decides), then releases", async () => {
 		lease(UDID, "s1", true);
-		const result = await handleSessionEnd(
+		const result = await hookClaudePretool.handleSessionEnd(
 			{ session_id: "s1", hook_event_name: "SessionEnd", reason: "prompt_input_exit" },
 			deps()
 		);
@@ -104,7 +111,10 @@ describe("handleSessionEnd", () => {
 
 	test("/clear releases but leaves devices running (the work usually continues)", async () => {
 		lease(UDID, "s1", true);
-		await handleSessionEnd({ session_id: "s1", hook_event_name: "SessionEnd", reason: "clear" }, deps());
+		await hookClaudePretool.handleSessionEnd(
+			{ session_id: "s1", hook_event_name: "SessionEnd", reason: "clear" },
+			deps()
+		);
 		expect(shutdowns).toEqual([]);
 		expect(store.listLeases()).toEqual([]);
 	});
@@ -134,7 +144,10 @@ describe("handleSessionEnd", () => {
 		run("CRASHED", 999);
 		lease("BARE");
 		pidAlive = (pid) => pid === 4242;
-		const result = await handleSessionEnd({ session_id: "s1", hook_event_name: "SessionEnd", reason: "clear" }, deps());
+		const result = await hookClaudePretool.handleSessionEnd(
+			{ session_id: "s1", hook_event_name: "SessionEnd", reason: "clear" },
+			deps()
+		);
 		expect(
 			store
 				.listLeases()
@@ -157,7 +170,7 @@ describe("handleSessionEnd", () => {
 		);
 		now += 60_001;
 		pidAlive = () => true;
-		await handleSessionEnd({ session_id: "s1", reason: "clear" }, deps());
+		await hookClaudePretool.handleSessionEnd({ session_id: "s1", reason: "clear" }, deps());
 		expect(store.listLeases()).toEqual([]);
 	});
 
@@ -172,7 +185,7 @@ describe("handleSessionEnd", () => {
 			now
 		);
 		pidAlive = () => true;
-		await handleSessionEnd({ session_id: "s1", reason: "exit" }, deps());
+		await hookClaudePretool.handleSessionEnd({ session_id: "s1", reason: "exit" }, deps());
 		expect(store.listLeases()).toEqual([]);
 	});
 
@@ -182,7 +195,7 @@ describe("handleSessionEnd", () => {
 		d.shutdown = async () => {
 			throw new Error("simctl gone");
 		};
-		expect((await handleSessionEnd({ session_id: "s1", reason: "exit" }, d)).exitCode).toBe(0);
+		expect((await hookClaudePretool.handleSessionEnd({ session_id: "s1", reason: "exit" }, d)).exitCode).toBe(0);
 		expect(store.listLeases()).toEqual([]);
 	});
 
@@ -194,7 +207,7 @@ describe("handleSessionEnd", () => {
 			handedOff.push(sessionId);
 			return true;
 		};
-		const result = await handleSessionEnd({ session_id: "s1", reason: "other" }, d);
+		const result = await hookClaudePretool.handleSessionEnd({ session_id: "s1", reason: "other" }, d);
 		expect(handedOff).toEqual(["s1"]);
 		expect(shutdowns).toEqual([]);
 		expect(store.listLeases()).toHaveLength(1);
@@ -212,7 +225,7 @@ describe("handleSessionEnd", () => {
 			spawned = true;
 			return true;
 		};
-		await handleSessionEnd({ session_id: "s1", reason: "other" }, d);
+		await hookClaudePretool.handleSessionEnd({ session_id: "s1", reason: "other" }, d);
 		expect(spawned).toBe(false);
 		expect(store.listLeases()).toEqual([]);
 	});

@@ -7,8 +7,8 @@ import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { StartupMark } from "@delacour/warden-sdk/ops/perf/startup";
 import { storeLocator } from "@delacour/warden-store/store";
 import { type TestContext, testContext } from "../testing";
-import { perfStartup, type StartupIo, type StartupOptions } from "./startup";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfStartupCli, type StartupIo, type StartupOptions } from "./startup";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -23,7 +23,11 @@ const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 type Reply = Partial<ExecResult> | (() => Partial<ExecResult>);
 type Rule = [needle: string, reply: Reply];
 
-function setup(device: typeof droid | typeof sim, rules: Rule[], host: Parameters<typeof fakePerfDeps>[2] = {}) {
+function setup(
+	device: typeof droid | typeof sim,
+	rules: Rule[],
+	host: Parameters<typeof perfTestingCli.fakePerfDeps>[2] = {}
+) {
 	const calls: string[] = [];
 	const c = testContext([], {
 		now: () => T0,
@@ -37,7 +41,7 @@ function setup(device: typeof droid | typeof sim, rules: Rule[], host: Parameter
 		},
 	});
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: device.platform, id: device.id, name: device.name }, T0);
 	const sleeps: number[] = [];
 	let t = 0;
@@ -50,7 +54,7 @@ function setup(device: typeof droid | typeof sim, rules: Rule[], host: Parameter
 		},
 		readMarks: async () => ({ success: false, error: "no devtools target" }),
 	};
-	return { c, calls, io, sleeps, deps: fakePerfDeps([device], {}, host) };
+	return { c, calls, io, sleeps, deps: perfTestingCli.fakePerfDeps([device], {}, host) };
 }
 
 type RunOpts = Partial<Omit<StartupOptions, "record">>;
@@ -58,12 +62,12 @@ type RunOpts = Partial<Omit<StartupOptions, "record">>;
 /** `perf startup` as `agent me`: `--json --claim --app com.acme.shop` unless the call opts out. */
 const run = (
 	c: TestContext,
-	deps: ReturnType<typeof fakePerfDeps>,
+	deps: ReturnType<typeof perfTestingCli.fakePerfDeps>,
 	io: StartupIo,
 	opts: RunOpts = {},
 	out: { text?: true; noClaim?: true } = {}
 ) =>
-	perfStartup(
+	perfStartupCli.perfStartup(
 		c,
 		deps,
 		{

@@ -7,7 +7,7 @@ import type { UiDeviceFlags, UiDeviceSource } from "../agent-ui/device";
 import { type UiDeviceInfo, type UiError, uiOutput } from "../agent-ui/output";
 import { parsePlatform } from "../claim-flags";
 import type { CommandContext } from "../context";
-import { deviceTarget } from "../hooks/claude-pretool";
+import { hookClaudePretool } from "../hooks/claude-pretool";
 
 /** Label on the leases `warden perf --claim` creates. */
 export const PERF_LEASE_LABEL = "warden perf";
@@ -68,259 +68,262 @@ export const defaultPerfDeviceDeps: PerfDeviceDeps = {
 		);
 	},
 	foregroundApp: async (ctx, device) => {
-		const { foregroundApp } = await import("./app");
-		return foregroundApp(ctx, device);
+		const { perfAppCli } = await import("./app");
+		return perfAppCli.foregroundApp(ctx, device);
 	},
 };
 
 type Named = { id: string; platform?: Platform; source: UiDeviceSource | "booted" };
 
-function fail(error: UiError): { success: false; error: UiError } {
-	return { success: false, error };
-}
-
-function named(ctx: CommandContext, flags: PerfDeviceFlags): Result<Named | undefined, UiError> {
-	if (flags.lease !== undefined) {
-		const lease = ctx.store().getLease(flags.lease);
-		if (!lease) return fail(uiOutput.uiError("lease_not_found", `no lease ${flags.lease}`, { hint: "see warden ls" }));
-		if (lease.resource.kind !== "device")
-			return fail(uiOutput.uiError("usage", `lease ${flags.lease} is not a device lease`));
-		return resultFactory.ok({ id: lease.resource.id, platform: lease.resource.platform, source: "flag" });
-	}
-	if (flags.serial !== undefined) return resultFactory.ok({ id: flags.serial, platform: "android", source: "flag" });
-	if (flags.udid !== undefined) return resultFactory.ok({ id: flags.udid, source: "flag" });
-	const single = ctx.env.WARDEN_UDID?.trim();
-	if (single) return resultFactory.ok({ id: single, source: "WARDEN_UDID" });
-	const many = (ctx.env.WARDEN_UDIDS ?? "").split(/[\s,]+/).filter((s) => s.length > 0);
-	const only = many.length === 1 ? many[0] : undefined;
-	return resultFactory.ok(only === undefined ? undefined : { id: only, source: "WARDEN_UDIDS" });
-}
-
 type Known = { platform: Platform; id: string; name: string };
 
-/** Devices warden knows: created or adopted (`devices` table) plus anything leased. */
-function knownDevices(ctx: CommandContext): Known[] {
-	const store = ctx.store();
-	const byKey = new Map<string, Known>();
-	for (const d of store.listDevices())
-		byKey.set(`${d.platform}:${d.id}`, { platform: d.platform, id: d.id, name: d.name });
-	for (const l of store.listLeases()) {
-		if (l.resource.kind === "device") {
-			const { platform, id, name } = l.resource;
-			byKey.set(`${platform}:${id}`, { platform, id, name });
-		}
+export class PerfDeviceCli {
+	private fail(error: UiError): { success: false; error: UiError } {
+		return { success: false, error };
 	}
-	return [...byKey.values()];
-}
 
-function liveLease(ctx: CommandContext, deps: PerfDeviceDeps, platform: Platform, id: string): Lease | undefined {
-	const lease = ctx.store().findLeaseByResource({ kind: "device", platform, id, name: id });
-	return lease && liveness.isLeaseAlive(lease, ctx.now(), deps.pidAlive) ? lease : undefined;
-}
+	private named(ctx: CommandContext, flags: PerfDeviceFlags): Result<Named | undefined, UiError> {
+		if (flags.lease !== undefined) {
+			const lease = ctx.store().getLease(flags.lease);
+			if (!lease)
+				return this.fail(uiOutput.uiError("lease_not_found", `no lease ${flags.lease}`, { hint: "see warden ls" }));
+			if (lease.resource.kind !== "device")
+				return this.fail(uiOutput.uiError("usage", `lease ${flags.lease} is not a device lease`));
+			return resultFactory.ok({ id: lease.resource.id, platform: lease.resource.platform, source: "flag" });
+		}
+		if (flags.serial !== undefined) return resultFactory.ok({ id: flags.serial, platform: "android", source: "flag" });
+		if (flags.udid !== undefined) return resultFactory.ok({ id: flags.udid, source: "flag" });
+		const single = ctx.env.WARDEN_UDID?.trim();
+		if (single) return resultFactory.ok({ id: single, source: "WARDEN_UDID" });
+		const many = (ctx.env.WARDEN_UDIDS ?? "").split(/[\s,]+/).filter((s) => s.length > 0);
+		const only = many.length === 1 ? many[0] : undefined;
+		return resultFactory.ok(only === undefined ? undefined : { id: only, source: "WARDEN_UDIDS" });
+	}
 
-function holderOf(lease: Lease | undefined, owner: Owner): string | undefined {
-	if (lease === undefined || leaseModel.sameOwner(lease.owner, owner)) return undefined;
-	return `${leaseModel.describeOwner(lease.owner)}${lease.label ? ` (${lease.label})` : ""}`;
-}
+	/** Devices warden knows: created or adopted (`devices` table) plus anything leased. */
+	private knownDevices(ctx: CommandContext): Known[] {
+		const store = ctx.store();
+		const byKey = new Map<string, Known>();
+		for (const d of store.listDevices())
+			byKey.set(`${d.platform}:${d.id}`, { platform: d.platform, id: d.id, name: d.name });
+		for (const l of store.listLeases()) {
+			if (l.resource.kind === "device") {
+				const { platform, id, name } = l.resource;
+				byKey.set(`${platform}:${id}`, { platform, id, name });
+			}
+		}
+		return [...byKey.values()];
+	}
 
-/** Booted devices that are warden's (known to the store), optionally of one platform. */
-async function bootedKnown(
-	ctx: CommandContext,
-	deps: PerfDeviceDeps,
-	platform: Platform | undefined
-): Promise<Known[]> {
-	const known = new Set(knownDevices(ctx).map((d) => `${d.platform}:${d.id}`));
-	const booted = await deps.booted(ctx);
-	return booted.filter(
-		(d) => known.has(`${d.platform}:${d.id}`) && (platform === undefined || d.platform === platform)
-	);
-}
+	private liveLease(ctx: CommandContext, deps: PerfDeviceDeps, platform: Platform, id: string): Lease | undefined {
+		const lease = ctx.store().findLeaseByResource({ kind: "device", platform, id, name: id });
+		return lease && liveness.isLeaseAlive(lease, ctx.now(), deps.pidAlive) ? lease : undefined;
+	}
 
-async function candidatesOf(
-	ctx: CommandContext,
-	deps: PerfDeviceDeps,
-	owner: Owner,
-	devices: readonly Known[]
-): Promise<PerfCandidate[]> {
-	return Promise.all(
-		devices.map(async (d) => {
-			const holder = holderOf(liveLease(ctx, deps, d.platform, d.id), owner);
-			const app = await deps.foregroundApp(ctx, d).catch(() => undefined);
-			return {
-				udid: d.id,
-				platform: d.platform,
-				name: d.name,
-				...(holder !== undefined ? { holder } : {}),
-				...(app !== undefined ? { app } : {}),
-			};
-		})
-	);
-}
+	private holderOf(lease: Lease | undefined, owner: Owner): string | undefined {
+		if (lease === undefined || leaseModel.sameOwner(lease.owner, owner)) return undefined;
+		return `${leaseModel.describeOwner(lease.owner)}${lease.label ? ` (${lease.label})` : ""}`;
+	}
 
-/** Warden's booted devices with who holds each and its foreground app (`perf ls --devices`). */
-export async function listPerfCandidates(
-	ctx: CommandContext,
-	deps: PerfDeviceDeps,
-	platform?: Platform
-): Promise<PerfCandidate[]> {
-	return candidatesOf(ctx, deps, ownerResolver.resolve(ctx), await bootedKnown(ctx, deps, platform));
-}
-
-function ambiguous(what: string, candidates: readonly PerfCandidate[]): UiError {
-	const listing = candidates.map((c) => `${c.udid} (${c.name})`).join(", ");
-	return uiOutput.uiError("ambiguous_device", `${what}: ${listing}`, {
-		hint: "pick one with --udid <id> (or --serial / --lease); warden perf ls --devices lists them",
-		details: { candidates },
-	});
-}
-
-/** Which device, when no flag or env names one: the caller's single lease, else the only booted warden device. */
-async function pick(
-	ctx: CommandContext,
-	deps: PerfDeviceDeps,
-	owner: Owner,
-	flags: PerfDeviceFlags,
-	platform: Platform | undefined
-): Promise<Result<Named, UiError>> {
-	const mine = ctx
-		.store()
-		.listLeasesByOwner(owner)
-		.flatMap((l) =>
-			l.resource.kind === "device" && (platform === undefined || l.resource.platform === platform) ? [l.resource] : []
+	/** Booted devices that are warden's (known to the store), optionally of one platform. */
+	private async bootedKnown(
+		ctx: CommandContext,
+		deps: PerfDeviceDeps,
+		platform: Platform | undefined
+	): Promise<Known[]> {
+		const known = new Set(this.knownDevices(ctx).map((d) => `${d.platform}:${d.id}`));
+		const booted = await deps.booted(ctx);
+		return booted.filter(
+			(d) => known.has(`${d.platform}:${d.id}`) && (platform === undefined || d.platform === platform)
 		);
-	if (mine.length > 1) {
-		return fail(ambiguous("several devices leased", await candidatesOf(ctx, deps, owner, mine)));
 	}
-	const first = mine[0];
-	if (first) return resultFactory.ok({ id: first.id, platform: first.platform, source: "lease" });
-	const booted = await bootedKnown(ctx, deps, platform);
-	if (booted.length > 1)
-		return fail(ambiguous("several booted warden devices", await candidatesOf(ctx, deps, owner, booted)));
-	const only = booted[0];
-	if (only) return resultFactory.ok({ id: only.id, platform: only.platform, source: "booted" });
-	return fail(
-		uiOutput.uiError("no_device_leased", "no booted warden device", {
-			hint: `run warden claim ${flags.platform ?? "ios"} --json, or add --claim to a mutating command`,
-		})
-	);
-}
 
-function platformOf(ctx: CommandContext, id: string): Platform | undefined {
-	const known = knownDevices(ctx).find((d) => d.id === id);
-	if (known) return known.platform;
-	return undefined;
-}
-
-/** `mutate`: the caller's own lease (heartbeat or `--claim`), or `--allow-mutate-foreign` onto a device no live warden process holds. */
-function leaseForMutation(
-	ctx: CommandContext,
-	deps: PerfDeviceDeps,
-	owner: Owner,
-	flags: PerfDeviceFlags,
-	device: Known
-): Result<{ lease?: Lease; ownedByCaller: boolean }, UiError> {
-	const pid = ownerResolver.leasePidFor(owner);
-	const leased = new CallerLeaseGate(ctx.store()).ensure(owner, device.platform, device.id, {
-		now: ctx.now(),
-		pidAlive: deps.pidAlive,
-		claim: flags.claim === true,
-		label: PERF_LEASE_LABEL,
-		name: device.name,
-		...(pid !== undefined ? { pid } : {}),
-		exclusive: flags.force !== true,
-	});
-	if (leased.success) return resultFactory.ok({ lease: leased.data.lease, ownedByCaller: true });
-	const { code, message } = leased.error;
-	if (code === "device_busy") return fail(uiOutput.uiError("device_busy", message));
-	if (flags.allowMutateForeign === true) {
-		const held = liveLease(ctx, deps, device.platform, device.id);
-		if (held?.pid !== undefined && deps.pidAlive(held.pid)) {
-			return fail(
-				uiOutput.uiError(
-					"device_busy",
-					`${message} — a live warden process (pid ${held.pid}) holds it; not mutating it`
-				)
-			);
-		}
-		return resultFactory.ok({ ownedByCaller: false });
+	private async candidatesOf(
+		ctx: CommandContext,
+		deps: PerfDeviceDeps,
+		owner: Owner,
+		devices: readonly Known[]
+	): Promise<PerfCandidate[]> {
+		return Promise.all(
+			devices.map(async (d) => {
+				const holder = this.holderOf(this.liveLease(ctx, deps, d.platform, d.id), owner);
+				const app = await deps.foregroundApp(ctx, d).catch(() => undefined);
+				return {
+					udid: d.id,
+					platform: d.platform,
+					name: d.name,
+					...(holder !== undefined ? { holder } : {}),
+					...(app !== undefined ? { app } : {}),
+				};
+			})
+		);
 	}
-	return fail(
-		uiOutput.uiError(code, message, {
-			hint: "add --claim to lease a free device, or --allow-mutate-foreign to act on one someone else holds",
-		})
-	);
-}
 
-/** The device named by flags / env, or else picked by the fallback chain (`pick`). */
-async function pickNamed(
-	ctx: CommandContext,
-	flags: PerfDeviceFlags,
-	owner: ReturnType<typeof ownerResolver.resolve>,
-	deps: PerfDeviceDeps
-): Promise<Result<Named, UiError>> {
-	const explicit = named(ctx, flags);
-	if (!explicit.success) return explicit;
-	const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);
-	if (platformFlag && !platformFlag.success) return fail(uiOutput.uiError("usage", platformFlag.error));
-	if (explicit.data !== undefined) return resultFactory.ok(explicit.data);
-	return pick(ctx, deps, owner, flags, platformFlag?.data);
-}
+	/** Warden's booted devices with who holds each and its foreground app (`perf ls --devices`). */
+	async listPerfCandidates(ctx: CommandContext, deps: PerfDeviceDeps, platform?: Platform): Promise<PerfCandidate[]> {
+		return this.candidatesOf(ctx, deps, ownerResolver.resolve(ctx), await this.bootedKnown(ctx, deps, platform));
+	}
 
-/** The warden-known device matching a picked id, if any. */
-function findKnownDevice(ctx: CommandContext, picked: Named) {
-	const platform = picked.platform ?? platformOf(ctx, picked.id);
-	return platform === undefined
-		? undefined
-		: knownDevices(ctx).find((d) => d.platform === platform && d.id === picked.id);
-}
-
-/** The `device_unknown` error for an id warden does not know, with a hint for raw device ids. */
-function deviceUnknownError(id: string): UiError {
-	const hint =
-		deviceTarget(id).kind === "device"
-			? "warden perf only attaches to devices warden created or leased; see warden devices"
-			: undefined;
-	return uiOutput.uiError("device_unknown", `${id} is not a device warden knows`, hint === undefined ? {} : { hint });
-}
-
-/**
- * The device a `warden perf` call acts on. Order: `--udid|--serial|--lease` → `WARDEN_UDID` → `WARDEN_UDIDS` (if one)
- * → the caller's own single device lease → the only booted device warden knows (several: `ambiguous_device`, listed).
- * A device warden does not know is `device_unknown` (foreign = read-only: perf attaches only to warden's own).
- * `observe` never takes or heartbeats a lease and reports who holds the device; `mutate` needs the caller's lease.
- */
-export async function resolvePerfDevice(
-	ctx: CommandContext,
-	flags: PerfDeviceFlags,
-	mode: PerfMode,
-	deps: PerfDeviceDeps = defaultPerfDeviceDeps
-): Promise<Result<PerfTarget, UiError>> {
-	const owner = ownerResolver.resolve(ctx);
-	const picked = await pickNamed(ctx, flags, owner, deps);
-	if (!picked.success) return picked;
-	const device = findKnownDevice(ctx, picked.data);
-	if (device === undefined) return fail(deviceUnknownError(picked.data.id));
-	const lease = liveLease(ctx, deps, device.platform, device.id);
-	const holder = holderOf(lease, owner);
-	const base = {
-		udid: device.id,
-		platform: device.platform,
-		name: device.name,
-		...(holder !== undefined ? { holder } : {}),
-		source: picked.data.source,
-		mode,
-	} as const;
-	if (mode === "observe") {
-		return resultFactory.ok({
-			...base,
-			ownedByCaller: lease !== undefined && leaseModel.sameOwner(lease.owner, owner),
+	private ambiguous(what: string, candidates: readonly PerfCandidate[]): UiError {
+		const listing = candidates.map((c) => `${c.udid} (${c.name})`).join(", ");
+		return uiOutput.uiError("ambiguous_device", `${what}: ${listing}`, {
+			hint: "pick one with --udid <id> (or --serial / --lease); warden perf ls --devices lists them",
+			details: { candidates },
 		});
 	}
-	const mutable = leaseForMutation(ctx, deps, owner, flags, device);
-	if (!mutable.success) return mutable;
-	return resultFactory.ok({
-		...base,
-		ownedByCaller: mutable.data.ownedByCaller,
-		...(mutable.data.lease ? { lease: mutable.data.lease } : {}),
-	});
+
+	/** Which device, when no flag or env names one: the caller's single lease, else the only booted warden device. */
+	private async pick(
+		ctx: CommandContext,
+		deps: PerfDeviceDeps,
+		owner: Owner,
+		flags: PerfDeviceFlags,
+		platform: Platform | undefined
+	): Promise<Result<Named, UiError>> {
+		const mine = ctx
+			.store()
+			.listLeasesByOwner(owner)
+			.flatMap((l) =>
+				l.resource.kind === "device" && (platform === undefined || l.resource.platform === platform) ? [l.resource] : []
+			);
+		if (mine.length > 1) {
+			return this.fail(this.ambiguous("several devices leased", await this.candidatesOf(ctx, deps, owner, mine)));
+		}
+		const first = mine[0];
+		if (first) return resultFactory.ok({ id: first.id, platform: first.platform, source: "lease" });
+		const booted = await this.bootedKnown(ctx, deps, platform);
+		if (booted.length > 1)
+			return this.fail(
+				this.ambiguous("several booted warden devices", await this.candidatesOf(ctx, deps, owner, booted))
+			);
+		const only = booted[0];
+		if (only) return resultFactory.ok({ id: only.id, platform: only.platform, source: "booted" });
+		return this.fail(
+			uiOutput.uiError("no_device_leased", "no booted warden device", {
+				hint: `run warden claim ${flags.platform ?? "ios"} --json, or add --claim to a mutating command`,
+			})
+		);
+	}
+
+	private platformOf(ctx: CommandContext, id: string): Platform | undefined {
+		const known = this.knownDevices(ctx).find((d) => d.id === id);
+		if (known) return known.platform;
+		return undefined;
+	}
+
+	/** `mutate`: the caller's own lease (heartbeat or `--claim`), or `--allow-mutate-foreign` onto a device no live warden process holds. */
+	private leaseForMutation(
+		ctx: CommandContext,
+		deps: PerfDeviceDeps,
+		owner: Owner,
+		flags: PerfDeviceFlags,
+		device: Known
+	): Result<{ lease?: Lease; ownedByCaller: boolean }, UiError> {
+		const pid = ownerResolver.leasePidFor(owner);
+		const leased = new CallerLeaseGate(ctx.store()).ensure(owner, device.platform, device.id, {
+			now: ctx.now(),
+			pidAlive: deps.pidAlive,
+			claim: flags.claim === true,
+			label: PERF_LEASE_LABEL,
+			name: device.name,
+			...(pid !== undefined ? { pid } : {}),
+			exclusive: flags.force !== true,
+		});
+		if (leased.success) return resultFactory.ok({ lease: leased.data.lease, ownedByCaller: true });
+		const { code, message } = leased.error;
+		if (code === "device_busy") return this.fail(uiOutput.uiError("device_busy", message));
+		if (flags.allowMutateForeign === true) {
+			const held = this.liveLease(ctx, deps, device.platform, device.id);
+			if (held?.pid !== undefined && deps.pidAlive(held.pid)) {
+				return this.fail(
+					uiOutput.uiError(
+						"device_busy",
+						`${message} — a live warden process (pid ${held.pid}) holds it; not mutating it`
+					)
+				);
+			}
+			return resultFactory.ok({ ownedByCaller: false });
+		}
+		return this.fail(
+			uiOutput.uiError(code, message, {
+				hint: "add --claim to lease a free device, or --allow-mutate-foreign to act on one someone else holds",
+			})
+		);
+	}
+
+	/** The device named by flags / env, or else picked by the fallback chain (`pick`). */
+	private async pickNamed(
+		ctx: CommandContext,
+		flags: PerfDeviceFlags,
+		owner: ReturnType<typeof ownerResolver.resolve>,
+		deps: PerfDeviceDeps
+	): Promise<Result<Named, UiError>> {
+		const explicit = this.named(ctx, flags);
+		if (!explicit.success) return explicit;
+		const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);
+		if (platformFlag && !platformFlag.success) return this.fail(uiOutput.uiError("usage", platformFlag.error));
+		if (explicit.data !== undefined) return resultFactory.ok(explicit.data);
+		return this.pick(ctx, deps, owner, flags, platformFlag?.data);
+	}
+
+	/** The warden-known device matching a picked id, if any. */
+	private findKnownDevice(ctx: CommandContext, picked: Named) {
+		const platform = picked.platform ?? this.platformOf(ctx, picked.id);
+		return platform === undefined
+			? undefined
+			: this.knownDevices(ctx).find((d) => d.platform === platform && d.id === picked.id);
+	}
+
+	/** The `device_unknown` error for an id warden does not know, with a hint for raw device ids. */
+	private deviceUnknownError(id: string): UiError {
+		const hint =
+			hookClaudePretool.deviceTarget(id).kind === "device"
+				? "warden perf only attaches to devices warden created or leased; see warden devices"
+				: undefined;
+		return uiOutput.uiError("device_unknown", `${id} is not a device warden knows`, hint === undefined ? {} : { hint });
+	}
+
+	/**
+	 * The device a `warden perf` call acts on. Order: `--udid|--serial|--lease` → `WARDEN_UDID` → `WARDEN_UDIDS` (if one)
+	 * → the caller's own single device lease → the only booted device warden knows (several: `ambiguous_device`, listed).
+	 * A device warden does not know is `device_unknown` (foreign = read-only: perf attaches only to warden's own).
+	 * `observe` never takes or heartbeats a lease and reports who holds the device; `mutate` needs the caller's lease.
+	 */
+	async resolvePerfDevice(
+		ctx: CommandContext,
+		flags: PerfDeviceFlags,
+		mode: PerfMode,
+		deps: PerfDeviceDeps = defaultPerfDeviceDeps
+	): Promise<Result<PerfTarget, UiError>> {
+		const owner = ownerResolver.resolve(ctx);
+		const picked = await this.pickNamed(ctx, flags, owner, deps);
+		if (!picked.success) return picked;
+		const device = this.findKnownDevice(ctx, picked.data);
+		if (device === undefined) return this.fail(this.deviceUnknownError(picked.data.id));
+		const lease = this.liveLease(ctx, deps, device.platform, device.id);
+		const holder = this.holderOf(lease, owner);
+		const base = {
+			udid: device.id,
+			platform: device.platform,
+			name: device.name,
+			...(holder !== undefined ? { holder } : {}),
+			source: picked.data.source,
+			mode,
+		} as const;
+		if (mode === "observe") {
+			return resultFactory.ok({
+				...base,
+				ownedByCaller: lease !== undefined && leaseModel.sameOwner(lease.owner, owner),
+			});
+		}
+		const mutable = this.leaseForMutation(ctx, deps, owner, flags, device);
+		if (!mutable.success) return mutable;
+		return resultFactory.ok({
+			...base,
+			ownedByCaller: mutable.data.ownedByCaller,
+			...(mutable.data.lease ? { lease: mutable.data.lease } : {}),
+		});
+	}
 }
+
+export const perfDeviceCli = new PerfDeviceCli();

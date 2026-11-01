@@ -33,16 +33,6 @@ export type MetroPane = {
 const CM_P16 = 16777216;
 const ESC = String.fromCharCode(27);
 
-/** SGR parameters for one cell's colour, 16-colour palette as 30-37/90-97 (and 40-47/100-107). */
-function paletteSgr(mode: number, color: number, base: number, bright: number, extended: string): string {
-	if (mode === CM_P16) return String(color < 8 ? base + color : bright + color - 8);
-	return `${extended};5;${color}`;
-}
-
-function rgbSgr(color: number, extended: string): string {
-	return `${extended};2;${(color >> 16) & 255};${(color >> 8) & 255};${color & 255}`;
-}
-
 type Cell = NonNullable<ReturnType<BufferLine["getCell"]>>;
 
 const FLAGS: ReadonlyArray<readonly [(c: Cell) => number, string]> = [
@@ -57,119 +47,133 @@ const FLAGS: ReadonlyArray<readonly [(c: Cell) => number, string]> = [
 	[(c) => c.isOverline(), "53"],
 ];
 
-function colourSgr(c: Cell): string[] {
-	const out: string[] = [];
-	if (c.isFgRGB()) out.push(rgbSgr(c.getFgColor(), "38"));
-	else if (c.isFgPalette()) out.push(paletteSgr(c.getFgColorMode(), c.getFgColor(), 30, 90, "38"));
-	if (c.isBgRGB()) out.push(rgbSgr(c.getBgColor(), "48"));
-	else if (c.isBgPalette()) out.push(paletteSgr(c.getBgColorMode(), c.getBgColor(), 40, 100, "48"));
-	return out;
-}
-
-function cellStyle(c: Cell): string {
-	const sgr = [...FLAGS.flatMap(([has, code]) => (has(c) ? [code] : [])), ...colourSgr(c)];
-	return sgr.length > 0 ? `${ESC}[0;${sgr.join(";")}m` : `${ESC}[0m`;
-}
-
-/** A blank cell is only worth keeping when it paints something. */
-function paintsBlank(c: Cell): boolean {
-	return Boolean(c.isBgRGB() || c.isBgPalette() || c.isInverse() || c.isUnderline() || c.isStrikethrough());
-}
-
-/**
- * One buffer row as an ANSI string straight from the cell attributes, so DIM survives BOLD joining it (the
- * serialize addon emits SGR 22 for both). Every style change restates the full state after a reset.
- */
-export function serializeRow(line: BufferLine, cols: number): string {
-	const scratch = line.getCell(0);
-	if (!scratch) return "";
-	let out = "";
-	let current = `${ESC}[0m`;
-	let keep = 0;
-	for (let x = 0; x < cols; x++) {
-		const c = line.getCell(x, scratch);
-		if (!c || c.getWidth() === 0) continue;
-		const style = cellStyle(c);
-		const chars = c.getChars() || " ";
-		if (style !== current) {
-			out += style;
-			current = style;
-		}
-		out += chars;
-		if (chars !== " " || paintsBlank(c)) keep = out.length;
-	}
-	const trimmed = out.slice(0, keep);
-	return trimmed.includes(`${ESC}[0;`) ? `${trimmed}${ESC}[0m` : trimmed;
-}
-
 const PLATFORMS: Record<string, BundleInfo["platform"]> = { ios: "ios", android: "android", web: "web" };
 const BUNDLED = /\b(iOS|Android|Web)\s+Bundled\s+(\d+)ms\b.*?\((\d+)\s+modules?\)/;
 const BUNDLING = /\b(iOS|Android|Web)\s+Bundling\b.*?(\d+(?:\.\d+)?)%/;
 
-function platformOf(name: string | undefined): BundleInfo["platform"] | undefined {
-	return PLATFORMS[(name ?? "").toLowerCase()];
-}
+export class DevTuiMetroPane {
+	/** SGR parameters for one cell's colour, 16-colour palette as 30-37/90-97 (and 40-47/100-107). */
+	private paletteSgr(mode: number, color: number, base: number, bright: number, extended: string): string {
+		if (mode === CM_P16) return String(color < 8 ? base + color : bright + color - 8);
+		return `${extended};5;${color}`;
+	}
 
-/**
- * Metro's terminal as a model: PTY bytes go in, styled rows and a cursor come out. Full VT emulation by
- * `@xterm/headless`; 5000 lines of scrollback. Expo does not repaint on resize, so the pane is a log, not a screen.
- */
-export function createMetroPane(size: MetroPaneSize): MetroPane {
-	const term = new Terminal({ cols: size.cols, rows: size.rows, allowProposedApi: true, scrollback: 5000 });
-	let pending: Promise<void> = Promise.resolve();
-	let cursorHidden = false;
-	const showHide = (hidden: boolean) => (params: ReadonlyArray<number | number[]>) => {
-		if (params.includes(25)) cursorHidden = hidden;
-		return false;
-	};
-	term.parser.registerCsiHandler({ prefix: "?", final: "l" }, showHide(true));
-	term.parser.registerCsiHandler({ prefix: "?", final: "h" }, showHide(false));
+	private rgbSgr(color: number, extended: string): string {
+		return `${extended};2;${(color >> 16) & 255};${(color >> 8) & 255};${color & 255}`;
+	}
 
-	const lineText = (y: number): string => term.buffer.active.getLine(y)?.translateToString(true) ?? "";
-	const lastMatch = (pattern: RegExp): { index: number; match: RegExpExecArray } | undefined => {
-		for (let y = term.buffer.active.length - 1; y >= 0; y--) {
-			const match = pattern.exec(lineText(y));
-			if (match) return { index: y, match };
+	private colourSgr(c: Cell): string[] {
+		const out: string[] = [];
+		if (c.isFgRGB()) out.push(this.rgbSgr(c.getFgColor(), "38"));
+		else if (c.isFgPalette()) out.push(this.paletteSgr(c.getFgColorMode(), c.getFgColor(), 30, 90, "38"));
+		if (c.isBgRGB()) out.push(this.rgbSgr(c.getBgColor(), "48"));
+		else if (c.isBgPalette()) out.push(this.paletteSgr(c.getBgColorMode(), c.getBgColor(), 40, 100, "48"));
+		return out;
+	}
+
+	private cellStyle(c: Cell): string {
+		const sgr = [...FLAGS.flatMap(([has, code]) => (has(c) ? [code] : [])), ...this.colourSgr(c)];
+		return sgr.length > 0 ? `${ESC}[0;${sgr.join(";")}m` : `${ESC}[0m`;
+	}
+
+	/** A blank cell is only worth keeping when it paints something. */
+	private paintsBlank(c: Cell): boolean {
+		return Boolean(c.isBgRGB() || c.isBgPalette() || c.isInverse() || c.isUnderline() || c.isStrikethrough());
+	}
+
+	/**
+	 * One buffer row as an ANSI string straight from the cell attributes, so DIM survives BOLD joining it (the
+	 * serialize addon emits SGR 22 for both). Every style change restates the full state after a reset.
+	 */
+	serializeRow(line: BufferLine, cols: number): string {
+		const scratch = line.getCell(0);
+		if (!scratch) return "";
+		let out = "";
+		let current = `${ESC}[0m`;
+		let keep = 0;
+		for (let x = 0; x < cols; x++) {
+			const c = line.getCell(x, scratch);
+			if (!c || c.getWidth() === 0) continue;
+			const style = this.cellStyle(c);
+			const chars = c.getChars() || " ";
+			if (style !== current) {
+				out += style;
+				current = style;
+			}
+			out += chars;
+			if (chars !== " " || this.paintsBlank(c)) keep = out.length;
 		}
-		return undefined;
-	};
+		const trimmed = out.slice(0, keep);
+		return trimmed.includes(`${ESC}[0;`) ? `${trimmed}${ESC}[0m` : trimmed;
+	}
 
-	return {
-		write(chunk) {
-			const applied = new Promise<void>((resolve) => term.write(chunk, resolve));
-			pending = pending.then(() => applied);
-			return applied;
-		},
-		flush: () => pending,
-		resize: (cols, rows) => term.resize(Math.max(1, cols), Math.max(1, rows)),
-		rows() {
-			const buffer = term.buffer.active;
-			return Array.from({ length: term.rows }, (_, y) => {
-				const line = buffer.getLine(buffer.viewportY + y);
-				return line ? serializeRow(line, term.cols) : "";
-			});
-		},
-		cursor() {
-			const buffer = term.buffer.active;
-			const atBottom = buffer.viewportY === buffer.baseY;
-			return { x: buffer.cursorX, y: buffer.cursorY, visible: atBottom && !cursorHidden };
-		},
-		scroll: (deltaLines) => term.scrollLines(deltaLines),
-		scrollToBottom: () => term.scrollToBottom(),
-		bundleInfo() {
-			const found = lastMatch(BUNDLED);
-			const platform = platformOf(found?.match[1]);
-			if (!found || !platform) return undefined;
-			return { platform, ms: Number(found.match[2]), modules: Number(found.match[3]) };
-		},
-		bundling() {
-			const progress = lastMatch(BUNDLING);
-			const platform = platformOf(progress?.match[1]);
-			if (!progress || !platform) return undefined;
-			const finished = lastMatch(BUNDLED);
-			if (finished && finished.index >= progress.index) return undefined;
-			return { platform, percent: Number(progress.match[2]) };
-		},
-		dispose: () => term.dispose(),
+	platformOf(name: string | undefined): BundleInfo["platform"] | undefined {
+		return PLATFORMS[(name ?? "").toLowerCase()];
+	}
+
+	/**
+	 * Metro's terminal as a model: PTY bytes go in, styled rows and a cursor come out. Full VT emulation by
+	 * `@xterm/headless`; 5000 lines of scrollback. Expo does not repaint on resize, so the pane is a log, not a screen.
+	 */
+	readonly createMetroPane = (size: MetroPaneSize): MetroPane => {
+		const term = new Terminal({ cols: size.cols, rows: size.rows, allowProposedApi: true, scrollback: 5000 });
+		let pending: Promise<void> = Promise.resolve();
+		let cursorHidden = false;
+		const showHide = (hidden: boolean) => (params: ReadonlyArray<number | number[]>) => {
+			if (params.includes(25)) cursorHidden = hidden;
+			return false;
+		};
+		term.parser.registerCsiHandler({ prefix: "?", final: "l" }, showHide(true));
+		term.parser.registerCsiHandler({ prefix: "?", final: "h" }, showHide(false));
+
+		const lineText = (y: number): string => term.buffer.active.getLine(y)?.translateToString(true) ?? "";
+		const lastMatch = (pattern: RegExp): { index: number; match: RegExpExecArray } | undefined => {
+			for (let y = term.buffer.active.length - 1; y >= 0; y--) {
+				const match = pattern.exec(lineText(y));
+				if (match) return { index: y, match };
+			}
+			return undefined;
+		};
+
+		return {
+			write(chunk) {
+				const applied = new Promise<void>((resolve) => term.write(chunk, resolve));
+				pending = pending.then(() => applied);
+				return applied;
+			},
+			flush: () => pending,
+			resize: (cols, rows) => term.resize(Math.max(1, cols), Math.max(1, rows)),
+			rows() {
+				const buffer = term.buffer.active;
+				return Array.from({ length: term.rows }, (_, y) => {
+					const line = buffer.getLine(buffer.viewportY + y);
+					return line ? devTuiMetroPane.serializeRow(line, term.cols) : "";
+				});
+			},
+			cursor() {
+				const buffer = term.buffer.active;
+				const atBottom = buffer.viewportY === buffer.baseY;
+				return { x: buffer.cursorX, y: buffer.cursorY, visible: atBottom && !cursorHidden };
+			},
+			scroll: (deltaLines) => term.scrollLines(deltaLines),
+			scrollToBottom: () => term.scrollToBottom(),
+			bundleInfo() {
+				const found = lastMatch(BUNDLED);
+				const platform = devTuiMetroPane.platformOf(found?.match[1]);
+				if (!found || !platform) return undefined;
+				return { platform, ms: Number(found.match[2]), modules: Number(found.match[3]) };
+			},
+			bundling() {
+				const progress = lastMatch(BUNDLING);
+				const platform = devTuiMetroPane.platformOf(progress?.match[1]);
+				if (!progress || !platform) return undefined;
+				const finished = lastMatch(BUNDLED);
+				if (finished && finished.index >= progress.index) return undefined;
+				return { platform, percent: Number(progress.match[2]) };
+			},
+			dispose: () => term.dispose(),
+		};
 	};
 }
+
+export const devTuiMetroPane = new DevTuiMetroPane();

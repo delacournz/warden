@@ -1,7 +1,7 @@
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { errorMessage } from "../hooks/json";
+import { hookJson } from "../hooks/json";
 import { type UiDevice, type UiDeviceFlags, uiDeviceResolver } from "./device";
 import type { UiDeps } from "./driver";
 import { type UiError, type UiExitCode, type UiSuccess, uiOutput } from "./output";
@@ -83,7 +83,7 @@ export class UiRun {
 				if (used?.success) await used.data.close().catch(() => undefined);
 			}
 		} catch (error) {
-			return uiOutput.reportError(ctx, report, uiOutput.uiError("failed", errorMessage(error)));
+			return uiOutput.reportError(ctx, report, uiOutput.uiError("failed", hookJson.errorMessage(error)));
 		}
 	}
 }

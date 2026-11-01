@@ -61,7 +61,7 @@ import {
 	serveDevControl,
 } from "../dev-control";
 import { removeDevSession, updateDevSession, writeDevSession } from "../dev-session";
-import { parseHudInterval } from "../dev-tui/hud";
+import { devTuiHud } from "../dev-tui/hud";
 import { missingPackages } from "../expo-app";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
 import { leaseHostBuilder } from "../lease-host";
@@ -211,12 +211,12 @@ type Prepared = {
 export const defaultDevDeps: DevDeps = {
 	pid: process.pid,
 	startBroker: async (options) => {
-		const [{ startBroker }, { withExtensions }] = await Promise.all([
+		const [{ devBroker }, { devBrokerExtensions }] = await Promise.all([
 			import("../dev-broker/broker"),
 			import("../dev-broker/extensions"),
 		]);
-		const started = await startBroker(options);
-		return started.success ? resultFactory.ok(withExtensions(started.data, options)) : started;
+		const started = await devBroker.startBroker(options);
+		return started.success ? resultFactory.ok(devBrokerExtensions.withExtensions(started.data, options)) : started;
 	},
 	isPortFree: (port) => portProbe.isFree(port),
 	spawn(cmd, env, cwd, stdout) {
@@ -1169,7 +1169,7 @@ export class DevCommand extends CliCommand {
 		platformArg: string | undefined,
 		opts: DevOpts
 	): Promise<number> {
-		const hudInterval = parseHudInterval(opts.hudInterval);
+		const hudInterval = devTuiHud.parseHudInterval(opts.hudInterval);
 		if (!hudInterval.success) {
 			output.reportError(rawCtx, "dev", `--hud-interval: ${hudInterval.error}`);
 			return 1;
@@ -1257,7 +1257,10 @@ export class DevCommand extends CliCommand {
 	async selectDevUi(
 		ctx: CommandContext,
 		opts: DevUiOpts,
-		load: LoadTui = () => import("../dev-tui/tui")
+		load: LoadTui = async () => {
+			const { devTuiTui } = await import("../dev-tui/tui");
+			return { createDevTui: (deps) => devTuiTui.createDevTui(deps) };
+		}
 	): Promise<DevUi> {
 		const tui =
 			ctx.ui.interactive && ctx.ui.rich && opts.json !== true && opts.tui !== false && ctx.env.WARDEN_TUI !== "0";

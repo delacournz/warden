@@ -27,8 +27,8 @@ type Rendered = { result: unknown; text: string; warnings?: string[] };
 
 export class UiLogpointCli {
 	private readonly lazyCall: BrokerCall = async (socketPath, request, options) => {
-		const { callBroker } = await import("../dev-broker/ipc");
-		return callBroker(socketPath, request, options);
+		const { devBrokerIpc } = await import("../dev-broker/ipc");
+		return devBrokerIpc.callBroker(socketPath, request, options);
 	};
 
 	/** Call a `logpoint.*` method on the broker `target` resolves to. */

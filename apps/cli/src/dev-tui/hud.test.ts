@@ -3,7 +3,7 @@ import type { MetricsSampler, MetricsTarget } from "@delacour/warden-sdk/ops/per
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiOutput } from "../agent-ui/output";
 import { testContext } from "../testing";
-import { HUD_MIN_INTERVAL_MS, startHud } from "./hud";
+import { devTuiHud, HUD_MIN_INTERVAL_MS } from "./hud";
 import { HUD_HISTORY, type HudFps, type HudSample } from "./model";
 
 const IOS: MetricsTarget = { udid: "U1", platform: "ios", app: "nz.example" };
@@ -26,7 +26,7 @@ function rig(opts: {
 	let pending: (() => Promise<void>) | undefined;
 	let cancelled = 0;
 	let reads = 0;
-	const hud = startHud({
+	const hud = devTuiHud.startHud({
 		ctx: testContext([]),
 		target: opts.target,
 		intervalMs: opts.intervalMs ?? 1000,
@@ -217,7 +217,7 @@ describe("startHud", () => {
 	test("a sampler that cannot be built reports why", async () => {
 		const samples: HudSample[] = [];
 		let first = true;
-		const hud = startHud({
+		const hud = devTuiHud.startHud({
 			ctx: testContext([]),
 			target: () => IOS,
 			intervalMs: 1000,

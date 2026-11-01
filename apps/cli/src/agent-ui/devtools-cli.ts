@@ -452,8 +452,8 @@ export class UiDevtoolsCli {
 				)
 			);
 			if (via !== undefined) return via.success ? this.linesPayload(device, via.data) : via;
-			const { isAppException } = await import("../dev-broker/exceptions");
-			return this.linesFromFile(ctx, device, filter.data, isAppException);
+			const { devBrokerExceptions } = await import("../dev-broker/exceptions");
+			return this.linesFromFile(ctx, device, filter.data, (line) => devBrokerExceptions.isAppException(line));
 		});
 	}
 

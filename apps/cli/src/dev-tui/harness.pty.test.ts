@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { startHarness } from "./harness.testing";
+import { devTuiHarnessTesting } from "./harness.testing";
 
 const SCRIPT = join(import.meta.dir, "fixtures", "tui-script.ts");
 
 describe("createDevTui under a real PTY", () => {
 	test("draws the dashboard at 80x24, follows a resize, and restores the terminal on q", async () => {
-		const harness = startHarness([process.execPath, SCRIPT], { cols: 80, rows: 24 });
+		const harness = devTuiHarnessTesting.startHarness([process.execPath, SCRIPT], { cols: 80, rows: 24 });
 		try {
 			const frame = await harness.waitFor((rows) => rows.some((row) => row.includes("holding the device")));
 			expect(frame[0]).toContain("warden dev · ios · example");
@@ -35,7 +35,7 @@ describe("createDevTui under a real PTY", () => {
 	}, 20_000);
 
 	test("a SIGTERM restores the terminal too", async () => {
-		const harness = startHarness([process.execPath, SCRIPT], { cols: 80, rows: 24 });
+		const harness = devTuiHarnessTesting.startHarness([process.execPath, SCRIPT], { cols: 80, rows: 24 });
 		try {
 			await harness.waitFor((rows) => rows.some((row) => row.includes("holding the device")));
 			harness.kill();

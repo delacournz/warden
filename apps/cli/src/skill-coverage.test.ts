@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import type { CommandUnknownOpts } from "@commander-js/extra-typings";
 import { programRunner } from "./command";
 import { COMMANDS } from "./commands/registry";
-import { wardenTools } from "./mcp/tools";
+import { mcpTools } from "./mcp/tools";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "./skill";
 import { SKILL_OMITTED_COMMANDS, SKILL_OMITTED_OPTIONS } from "./skill-coverage.data";
 import { testContext } from "./testing";
@@ -92,7 +92,8 @@ describe("the warden skill covers the CLI", () => {
 	});
 
 	test("every `warden mcp` tool is named in the skill", () => {
-		const missing = wardenTools()
+		const missing = mcpTools
+			.wardenTools()
 			.map((t) => t.name)
 			.filter((name) => {
 				const family = name.replace(/_[a-z]+$/, "_*");

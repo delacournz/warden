@@ -6,8 +6,8 @@ import { dirname, join } from "node:path";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { MIGRATIONS } from "@delacour/warden-store/store";
 import { Chalk } from "chalk";
-import { mergeClaudeSettings } from "../hooks/claude-settings";
-import { mergeCodexHooks } from "../hooks/codex-hooks";
+import { hookClaudeSettings } from "../hooks/claude-settings";
+import { hookCodexHooks } from "../hooks/codex-hooks";
 import { fakeHelperDist } from "../npm/helper.testing";
 import { packHelper } from "../npm/helper-asset";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
@@ -51,7 +51,7 @@ function installEverything(home: string, env: TestContext["env"]): TestContext["
 	}
 	mkdirSync(join(home, ".claude", "rules"), { recursive: true });
 	writeFileSync(join(home, ".claude", "rules", "warden.md"), RULE_MD);
-	const merged = mergeClaudeSettings({}, "$HOME/.local/bin/warden");
+	const merged = hookClaudeSettings.mergeClaudeSettings({}, "$HOME/.local/bin/warden");
 	if (!merged.success) throw new Error(merged.error);
 	writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify(merged.data.settings));
 	return { ...env, PATH: `/usr/bin:${bin}` };
@@ -147,7 +147,7 @@ describe("warden doctor", () => {
 		await doctorCommand.run(c);
 		expect(byName(c)["codex-hook"]?.status).toBe("warn");
 		expect(byName(c)["codex-hook"]?.detail).toContain("warden install --codex");
-		const merged = mergeCodexHooks(undefined, "$HOME/.local/bin/warden");
+		const merged = hookCodexHooks.mergeCodexHooks(undefined, "$HOME/.local/bin/warden");
 		if (!merged.success) throw new Error(merged.error);
 		writeFileSync(join(codexDir, "hooks.json"), JSON.stringify(merged.data.settings));
 		c.stdout.length = 0;

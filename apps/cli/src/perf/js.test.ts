@@ -6,8 +6,8 @@ import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
-import { perfJs } from "./js";
-import { asMe, fakePerfDeps } from "./testing";
+import { perfJsCli } from "./js";
+import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -34,9 +34,9 @@ const profile = jsFixtures.buildProfile(
 function setup(metro: string | null = METRO) {
 	const c = testContext([], { now: () => T0 });
 	ctx = c;
-	asMe(c);
+	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
-	const deps = fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => metro ?? undefined });
+	const deps = perfTestingCli.fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => metro ?? undefined });
 	const cdp = jsFixtures.fakeCdp(
 		{
 			"Profiler.stop": { profile },
@@ -61,7 +61,7 @@ function setup(metro: string | null = METRO) {
 }
 
 const run = (s: ReturnType<typeof setup>, opts: Record<string, unknown> = {}) =>
-	perfJs(s.c, s.deps, { json: true, app: "com.acme.shop", ...opts }, s.js);
+	perfJsCli.perfJs(s.c, s.deps, { json: true, app: "com.acme.shop", ...opts }, s.js);
 
 describe("warden perf js", () => {
 	test("profiles for --duration, writes the profile and hotspots, reports file:line", async () => {
@@ -92,7 +92,7 @@ describe("warden perf js", () => {
 
 	test("text mode shows the dev-build banner, the hotspot and next hints", async () => {
 		const s = setup();
-		expect(await perfJs(s.c, s.deps, { app: "com.acme.shop" }, s.js)).toBe(0);
+		expect(await perfJsCli.perfJs(s.c, s.deps, { app: "com.acme.shop" }, s.js)).toBe(0);
 		const text = s.c.stdout.join("\n");
 		expect(text).toContain("dev build (__DEV__)");
 		expect(text).toContain("renderFeed");

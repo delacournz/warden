@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Command } from "@commander-js/extra-typings";
 import type { ConsoleLine } from "@delacour/warden-devtools/devtools.types";
-import { type BrokerResult, brokerErr } from "../dev-broker/broker.types";
+import { type BrokerResult, devBrokerBrokerTypes } from "../dev-broker/broker.types";
 import { type DevSessionRecord, writeDevSession } from "../dev-session";
 import { type TestContext, testContext } from "../testing";
 import type { BrokerCall, BrokerClientDeps } from "./broker-client";
@@ -84,7 +84,7 @@ describe("work functions", () => {
 	});
 
 	test("a broker error becomes a ui error", async () => {
-		const r = rig(async () => brokerErr("logpoints_unsupported", "legacy", "use eval"));
+		const r = rig(async () => devBrokerBrokerTypes.brokerErr("logpoints_unsupported", "legacy", "use eval"));
 		const added = await uiLogpointCli.addLogpoint(r.target, { location: "a.ts:1", expression: "1" }, r.deps);
 		expect(added.success).toBe(false);
 		if (added.success) return;
@@ -189,7 +189,7 @@ describe("registerLogpoint", () => {
 	});
 
 	test("a failing broker exits non-zero with its hint", async () => {
-		const r = rig(async () => brokerErr("logpoints_unsupported", "legacy", "use eval"));
+		const r = rig(async () => devBrokerBrokerTypes.brokerErr("logpoints_unsupported", "legacy", "use eval"));
 		expect(await run(r, ["rm", "lp1"])).toBe(1);
 		expect(r.ctx.stderr.join("\n")).toContain("use eval");
 	});

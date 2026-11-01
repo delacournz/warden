@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { type BootedDevice, PERF_LEASE_LABEL, type PerfDeviceDeps, resolvePerfDevice } from "./device";
+import { type BootedDevice, PERF_LEASE_LABEL, type PerfDeviceDeps, perfDeviceCli } from "./device";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -43,7 +43,7 @@ describe("resolvePerfDevice: observe", () => {
 	test("an unleased warden device is usable and no lease is taken", async () => {
 		const { c, deps } = setup([sim(1)]);
 		record(c, sim(1));
-		const r = await resolvePerfDevice(c, {}, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, {}, "observe", deps);
 		expect(r).toMatchObject({ success: true, data: { udid: "U1", platform: "ios", ownedByCaller: false } });
 		expect(c.db.listLeases()).toEqual([]);
 	});
@@ -53,7 +53,7 @@ describe("resolvePerfDevice: observe", () => {
 		record(c, sim(1));
 		const held = lease(c, sim(1), other);
 		c.now = () => 1_030_000;
-		const r = await resolvePerfDevice(c, { udid: "U1" }, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, { udid: "U1" }, "observe", deps);
 		expect(r.success).toBe(true);
 		if (!r.success) return;
 		expect(r.data.ownedByCaller).toBe(false);
@@ -65,16 +65,21 @@ describe("resolvePerfDevice: observe", () => {
 		const { c, deps } = setup([sim(1)]);
 		const own = lease(c, sim(1), { kind: "agent", sessionId: "me", cwd: "/" });
 		c.now = () => 1_030_000;
-		const r = await resolvePerfDevice(c, {}, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, {}, "observe", deps);
 		expect(r).toMatchObject({ success: true, data: { udid: "U1", ownedByCaller: true, source: "lease" } });
 		expect(c.db.getLease(own.id)?.heartbeatAt).toBe(own.heartbeatAt);
 	});
 
 	test("a device warden does not know is refused as device_unknown", async () => {
 		const { c, deps } = setup([sim(1)]);
-		const r = await resolvePerfDevice(c, { udid: "FOREIGN-UDID" }, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, { udid: "FOREIGN-UDID" }, "observe", deps);
 		expect(r).toMatchObject({ success: false, error: { code: "device_unknown" } });
-		const env = await resolvePerfDevice({ ...c, env: { ...c.env, WARDEN_UDID: "NOPE" } }, {}, "observe", deps);
+		const env = await perfDeviceCli.resolvePerfDevice(
+			{ ...c, env: { ...c.env, WARDEN_UDID: "NOPE" } },
+			{},
+			"observe",
+			deps
+		);
 		expect(env).toMatchObject({ success: false, error: { code: "device_unknown" } });
 	});
 
@@ -83,7 +88,7 @@ describe("resolvePerfDevice: observe", () => {
 		record(c, sim(1));
 		record(c, sim(2));
 		lease(c, sim(2), other, { label: "e2e" });
-		const r = await resolvePerfDevice(c, {}, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, {}, "observe", deps);
 		expect(r.success).toBe(false);
 		if (r.success) return;
 		expect(r.error.code).toBe("ambiguous_device");
@@ -99,14 +104,14 @@ describe("resolvePerfDevice: observe", () => {
 		record(c, sim(1));
 		record(c, sim(2));
 		lease(c, sim(2), { kind: "agent", sessionId: "me", cwd: "/" });
-		const r = await resolvePerfDevice(c, {}, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, {}, "observe", deps);
 		expect(r).toMatchObject({ success: true, data: { udid: "U2" } });
 	});
 
 	test("shut-down devices are not candidates; none booted is no_device_leased", async () => {
 		const { c, deps } = setup([]);
 		record(c, sim(1));
-		const r = await resolvePerfDevice(c, {}, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, {}, "observe", deps);
 		expect(r).toMatchObject({ success: false, error: { code: "no_device_leased" } });
 	});
 
@@ -115,7 +120,7 @@ describe("resolvePerfDevice: observe", () => {
 		const { c, deps } = setup([sim(1), android]);
 		record(c, sim(1));
 		record(c, android);
-		const r = await resolvePerfDevice(c, { platform: "android" }, "observe", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, { platform: "android" }, "observe", deps);
 		expect(r).toMatchObject({ success: true, data: { udid: "emulator-5554", platform: "android" } });
 	});
 });
@@ -125,7 +130,7 @@ describe("resolvePerfDevice: mutate", () => {
 		const { c, deps } = setup([sim(1)]);
 		record(c, sim(1));
 		lease(c, sim(1), other);
-		const r = await resolvePerfDevice(c, { udid: "U1" }, "mutate", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, { udid: "U1" }, "mutate", deps);
 		expect(r.success).toBe(false);
 		if (r.success) return;
 		expect(r.error.code).toBe("device_foreign");
@@ -137,7 +142,7 @@ describe("resolvePerfDevice: mutate", () => {
 		const { c, deps } = setup([sim(1)]);
 		record(c, sim(1));
 		lease(c, sim(1), other);
-		const r = await resolvePerfDevice(c, { udid: "U1", allowMutateForeign: true }, "mutate", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, { udid: "U1", allowMutateForeign: true }, "mutate", deps);
 		expect(r).toMatchObject({ success: true, data: { udid: "U1", ownedByCaller: false } });
 	});
 
@@ -146,16 +151,16 @@ describe("resolvePerfDevice: mutate", () => {
 		record(c, sim(1));
 		lease(c, sim(1), other, { pid: 4321 });
 		const live: PerfDeviceDeps = { ...deps, pidAlive: (pid) => pid === 4321 };
-		const r = await resolvePerfDevice(c, { udid: "U1", allowMutateForeign: true }, "mutate", live);
+		const r = await perfDeviceCli.resolvePerfDevice(c, { udid: "U1", allowMutateForeign: true }, "mutate", live);
 		expect(r).toMatchObject({ success: false, error: { code: "device_busy" } });
 	});
 
 	test("an unleased device needs --claim; the claim leases it as warden perf", async () => {
 		const { c, deps } = setup([sim(1)]);
 		record(c, sim(1));
-		const refused = await resolvePerfDevice(c, { udid: "U1" }, "mutate", deps);
+		const refused = await perfDeviceCli.resolvePerfDevice(c, { udid: "U1" }, "mutate", deps);
 		expect(refused).toMatchObject({ success: false, error: { code: "device_not_leased" } });
-		const claimed = await resolvePerfDevice(c, { udid: "U1", claim: true }, "mutate", deps);
+		const claimed = await perfDeviceCli.resolvePerfDevice(c, { udid: "U1", claim: true }, "mutate", deps);
 		expect(claimed).toMatchObject({ success: true, data: { udid: "U1", ownedByCaller: true } });
 		expect(c.db.listLeases()).toHaveLength(1);
 		expect(c.db.listLeases()[0]?.label).toBe(PERF_LEASE_LABEL);
@@ -165,7 +170,7 @@ describe("resolvePerfDevice: mutate", () => {
 		const { c, deps } = setup([sim(1)]);
 		const own = lease(c, sim(1), { kind: "agent", sessionId: "me", cwd: "/" });
 		c.now = () => 1_020_000;
-		const r = await resolvePerfDevice(c, {}, "mutate", deps);
+		const r = await perfDeviceCli.resolvePerfDevice(c, {}, "mutate", deps);
 		expect(r).toMatchObject({ success: true, data: { ownedByCaller: true } });
 		expect(c.db.getLease(own.id)?.heartbeatAt).toBe(1_020_000);
 	});

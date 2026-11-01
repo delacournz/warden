@@ -7,7 +7,7 @@ import { type AndroidNativeDeps, androidNativeCapture } from "@delacour/warden-s
 import type { NativeHandle, NativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
 import { type TestContext, testContext } from "../testing";
 import type { PerfTarget } from "./device";
-import { fakePerfDeps } from "./testing";
+import { perfTestingCli } from "./testing";
 
 const fixture = (n: string) => readFileSync(join(import.meta.dir, "../../../../packages/perf/fixtures", n), "utf8");
 const TARGET: PerfTarget = {
@@ -110,7 +110,7 @@ function setup(
 }
 
 const profiler = () => androidNativeCapture.createAndroidNativeProfiler(env.deps);
-const perfDeps = () => fakePerfDeps([]);
+const perfDeps = () => perfTestingCli.fakePerfDeps([]);
 
 async function started(flavor?: string): Promise<NativeHandle> {
 	const res = await profiler().start(env.c, perfDeps(), io, {

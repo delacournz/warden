@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { DevReady } from "../commands/dev-ui";
 import type { Key } from "./keys";
-import { initialState, type TuiState } from "./model";
-import { MAX_LOG_LINES, reduce, type TuiEvent } from "./reducer";
+import { devTuiModel, type TuiState } from "./model";
+import { devTuiReducer, MAX_LOG_LINES, type TuiEvent } from "./reducer";
 
 const press = (name: string, flags: Partial<Key> = {}): TuiEvent => ({
 	type: "key",
@@ -21,8 +21,8 @@ const READY: DevReady = {
 	projectName: "example",
 };
 
-const fresh = (): TuiState => initialState({ cols: 80, rows: 24 }, 0);
-const run = (events: TuiEvent[], from = fresh()): TuiState => events.reduce(reduce, from);
+const fresh = (): TuiState => devTuiModel.initialState({ cols: 80, rows: 24 }, 0);
+const run = (events: TuiEvent[], from = fresh()): TuiState => events.reduce(devTuiReducer.reduce, from);
 const task = (state: TuiState, id: string) => state.tasks.find((t) => t.id === id);
 
 describe("tasks", () => {

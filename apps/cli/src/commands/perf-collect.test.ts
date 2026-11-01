@@ -7,7 +7,7 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
-import { fakePerfDeps } from "../perf/testing";
+import { perfTestingCli } from "../perf/testing";
 import { type TestContext, testContext } from "../testing";
 import { PerfCollectCommand } from "./perf-collect";
 
@@ -21,7 +21,7 @@ function setup(maxDurationMs: number) {
 	const clock = { now: T0 };
 	const c = testContext([], { now: () => clock.now });
 	ctx = c;
-	const deps = fakePerfDeps([sim]);
+	const deps = perfTestingCli.fakePerfDeps([sim]);
 	const made = perfSessionStore.createSession(c, deps.session, {
 		device: { udid: "U1", platform: "ios", name: sim.name },
 		target: { udid: "U1", ownedByCaller: true },
@@ -90,7 +90,7 @@ describe("warden perf-collect with a plan", () => {
 			},
 		});
 		ctx = c;
-		const deps = fakePerfDeps([{ platform: "android", id: EMU, name: "pixel" }]);
+		const deps = perfTestingCli.fakePerfDeps([{ platform: "android", id: EMU, name: "pixel" }]);
 		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: EMU, platform: "android", name: "pixel" },
 			target: { udid: EMU, ownedByCaller: false },

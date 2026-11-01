@@ -5,7 +5,7 @@ import { sessionSignals } from "@delacour/warden-leasing/session";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type DevSessionDeps, findDevSession } from "../dev-session";
-import { type MetroLogEntry, type MetroLogKind, parseMetroLog } from "../dev-tui/metro-log";
+import { devTuiMetroLog, type MetroLogEntry, type MetroLogKind } from "../dev-tui/metro-log";
 import {
 	filterMetroLogs,
 	followMetroLog,
@@ -136,7 +136,10 @@ export class DevLogs {
 	): Result<MetroLogEntry[], MetroLogsError> {
 		const { filters, tail } = parsed;
 		if (filters.sinceMs !== undefined && log.mtimeMs < filters.sinceMs) return resultFactory.ok([]);
-		return filterMetroLogs(parseMetroLog(log.text), { ...filters, ...(tail === undefined ? {} : { tail }) });
+		return filterMetroLogs(devTuiMetroLog.parseMetroLog(log.text), {
+			...filters,
+			...(tail === undefined ? {} : { tail }),
+		});
 	}
 
 	/** `--follow`: new entries until `deps.interrupt` fires. */

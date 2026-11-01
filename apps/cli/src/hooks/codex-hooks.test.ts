@@ -1,24 +1,24 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { hookCommand } from "../commands/hook";
 import { type TestContext, testContext } from "../testing";
-import { hasWardenHook } from "./claude-settings";
-import { CODEX_HOOKS, codexHome, codexHooksPath, codexTomlHasWardenHook, mergeCodexHooks } from "./codex-hooks";
+import { hookClaudeSettings } from "./claude-settings";
+import { CODEX_HOOKS, hookCodexHooks } from "./codex-hooks";
 
 const BIN = "$HOME/.local/bin/warden";
 
 function merged(existing: unknown) {
-	const result = mergeCodexHooks(existing, BIN);
+	const result = hookCodexHooks.mergeCodexHooks(existing, BIN);
 	if (!result.success) throw new Error(result.error);
 	return result.data;
 }
 
 describe("codexHome / codexHooksPath", () => {
 	test("$CODEX_HOME wins, else ~/.codex", () => {
-		expect(codexHome({ HOME: "/h", CODEX_HOME: "/c" })).toBe("/c");
-		expect(codexHome({ HOME: "/h" })).toBe("/h/.codex");
-		expect(codexHome({ HOME: "/h", CODEX_HOME: "" })).toBe("/h/.codex");
-		expect(codexHome({})).toBeUndefined();
-		expect(codexHooksPath({ HOME: "/h" })).toBe("/h/.codex/hooks.json");
+		expect(hookCodexHooks.codexHome({ HOME: "/h", CODEX_HOME: "/c" })).toBe("/c");
+		expect(hookCodexHooks.codexHome({ HOME: "/h" })).toBe("/h/.codex");
+		expect(hookCodexHooks.codexHome({ HOME: "/h", CODEX_HOME: "" })).toBe("/h/.codex");
+		expect(hookCodexHooks.codexHome({})).toBeUndefined();
+		expect(hookCodexHooks.codexHooksPath({ HOME: "/h" })).toBe("/h/.codex/hooks.json");
 	});
 });
 
@@ -54,7 +54,7 @@ describe("mergeCodexHooks", () => {
 	});
 
 	test("errors mention hooks.json", () => {
-		const bad = mergeCodexHooks({ hooks: [] }, BIN);
+		const bad = hookCodexHooks.mergeCodexHooks({ hooks: [] }, BIN);
 		expect(bad.success).toBe(false);
 		if (!bad.success) expect(bad.error).toContain("hooks.json");
 	});
@@ -70,17 +70,17 @@ type = "command"
 command = "$HOME/.local/bin/warden hook session-end"
 `;
 	test("finds warden hooks declared in config.toml", () => {
-		expect(codexTomlHasWardenHook(toml, "session-end")).toBe(true);
-		expect(codexTomlHasWardenHook(toml, "pretool")).toBe(false);
+		expect(hookCodexHooks.codexTomlHasWardenHook(toml, "session-end")).toBe(true);
+		expect(hookCodexHooks.codexTomlHasWardenHook(toml, "pretool")).toBe(false);
 	});
 
 	test("missing / invalid TOML → false", () => {
-		expect(codexTomlHasWardenHook(undefined, "session-end")).toBe(false);
-		expect(codexTomlHasWardenHook("[[[ nope", "session-end")).toBe(false);
+		expect(hookCodexHooks.codexTomlHasWardenHook(undefined, "session-end")).toBe(false);
+		expect(hookCodexHooks.codexTomlHasWardenHook("[[[ nope", "session-end")).toBe(false);
 	});
 
 	test("hooks.json shape is understood by hasWardenHook", () => {
-		expect(hasWardenHook(merged({}).settings, "session-end")).toBe(true);
+		expect(hookClaudeSettings.hasWardenHook(merged({}).settings, "session-end")).toBe(true);
 	});
 });
 
