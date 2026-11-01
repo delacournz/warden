@@ -6,7 +6,7 @@ import ts from "typescript";
 import { CONFIG_ENTRY_DTS, CONFIG_ENTRY_JS } from "./manifests";
 
 /** `defineConfig` + the documented config types; self-contained, so it compiles to one `.d.ts` + one `.mjs`. */
-const SOURCE = fileURLToPath(import.meta.resolve("@delacour/warden-core/builds/define-config"));
+const SOURCE = fileURLToPath(import.meta.resolve("@delacour/warden-config/define-config"));
 
 /** The declarations of `SOURCE`, TSDoc kept. */
 function emitDeclarations(): AsyncResult<string> {

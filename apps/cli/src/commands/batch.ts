@@ -1,6 +1,19 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
+import {
+	devClientLaunchArgv,
+	type Metro,
+	type MetroOwner,
+	metroOwner,
+	prewarmMetro,
+	resolveExpoBin,
+	reverseMetroPort,
+	startMetro,
+} from "@delacour/warden-builds/metro";
+import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import type { SlimProfile } from "@delacour/warden-config/slim.profile";
+import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "@delacour/warden-core/batch/elastic";
 import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
 import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
 import {
@@ -10,23 +23,40 @@ import {
 	type BatchWorker,
 	runBatch,
 } from "@delacour/warden-core/batch/schedule";
-import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-core/claim";
-import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
-import { bunExec, execError } from "@delacour/warden-core/exec";
-import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
-import { resolveHeadless } from "@delacour/warden-core/headless";
-import { isPortFree } from "@delacour/warden-core/ports";
-import { PRIORITY } from "@delacour/warden-core/queue";
-import { slimSimulator } from "@delacour/warden-core/sims/slim";
-import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
-import { wardenHome } from "@delacour/warden-core/store";
-import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
+import { buildCapacityDeps } from "@delacour/warden-leasing/capacity-deps";
+import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-leasing/claim";
+import { bootedByClaim, detachLockFor } from "@delacour/warden-leasing/claim-request";
+import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
+import { resolveHeadless } from "@delacour/warden-leasing/headless";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { isPortFree } from "@delacour/warden-leasing/ports";
+import { PRIORITY } from "@delacour/warden-leasing/queue";
+import {
+	claimAll,
+	exitCodeOf,
+	type ForwardedSignal,
+	holdLeases,
+	INTERRUPTED,
+	intervalEvery,
+	type LeaseArgs,
+	type LeaseSession,
+	type LeaseSessionDeps,
+	leasedText,
+	processOnSignal,
+	type RunPort,
+} from "@delacour/warden-leasing/session";
+import { hideSimWindows } from "@delacour/warden-leasing/sim-windows";
+import { slimSimulator } from "@delacour/warden-providers/slim";
+import { bunExec, execError } from "@delacour/warden-runtime/exec";
+import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
+import { wardenHome } from "@delacour/warden-store/store";
+import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
 import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
-import { maybeAutoGc } from "../autogc";
+import { maybeAutoGc, selfCommand } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
 import { type EarlyWarm, startEarlyWarm } from "../batch/early-warm";
 import { type Recording, startSimRecording, videoName } from "../batch/record";
@@ -53,62 +83,34 @@ import {
 } from "../batch/tui";
 import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
 import { warmGate } from "../batch/warm-gate";
-import { buildCapacityDeps } from "../capacity-deps";
 import {
-	bootedByClaim,
 	type ClaimFlags,
 	type ClaimFlagValues,
-	detachLockFor,
 	isPhysicalClaim,
 	type PhysicalOptionValues,
 	parseClaimFlags,
-	resolveOwner,
 	resolvePlatform,
 	withClaimOptions,
 	withNamedPhysical,
 	withPhysicalOptions,
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import type { CommandContext } from "../context";
-import { shutdownReleasedDevices } from "../device-shutdown";
+import { appHostFromContext, type CommandContext } from "../context";
 import { helperDir } from "../e2e/bun-runner";
 import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
 import { residentSocket, warmConnect } from "../e2e/warm-connect";
-import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "../elastic";
+import { leaseHostFromContext } from "../lease-host";
 import {
 	type AppFlagValues,
 	appPhaseProgress,
-	claimAll,
-	exitCodeOf,
-	type ForwardedSignal,
-	holdLeases,
-	INTERRUPTED,
-	intervalEvery,
-	type LeaseArgs,
-	type LeaseSession,
-	type LeaseSessionDeps,
 	leasedProgress,
-	leasedText,
 	parseAppFlags,
-	processOnSignal,
-	type RunPort,
 	splitCommand,
 	withLeaseOptions,
-} from "../lease-session";
-import {
-	devClientLaunchArgv,
-	type Metro,
-	type MetroOwner,
-	metroOwner,
-	prewarmMetro,
-	resolveExpoBin,
-	reverseMetroPort,
-	startMetro,
-} from "../metro";
+} from "../lease-options";
 import { emit, note, reportError, warn } from "../output";
 import { isLockedClaimError, reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
-import { hideSimWindows } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { currentBuild } from "../update/build-info";
@@ -1022,7 +1024,7 @@ async function shutdownDevices(
 	const leases = session.leaseIds.flatMap((id) => store.getLease(id) ?? []);
 	const owner = resolveOwner(ctx);
 	const { notes } = await withSpinner(ctx, "shutting down devices…", async (sctx, spinner) => {
-		const outcome = await shutdownReleasedDevices(sctx, leases, owner);
+		const outcome = await shutdownReleasedDevices(leaseHostFromContext(sctx), leases, owner);
 		spinner.succeed(outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down");
 		return outcome;
 	});
@@ -1684,7 +1686,13 @@ async function hideLateWindows(
 	const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
 	// arbitrated with every other warden hide (16-8); a device the close shut down loses its resident helper
 	await hideSimWindows(
-		{ exec: ctx.exec, sleep: deps.sleep, warn, detachLock: detachLockFor(ctx), onShutDown: stopHelperAfter(ctx) },
+		{
+			exec: ctx.exec,
+			sleep: deps.sleep,
+			warn,
+			detachLock: detachLockFor(appHostFromContext(ctx)),
+			onShutDown: stopHelperAfter(ctx),
+		},
 		live
 	);
 }
@@ -1733,7 +1741,7 @@ async function claimLateWorker(
 			run.slim?.leased(outcome);
 		},
 	});
-	if (!more.success) return more;
+	if (!more.success) return err(more.error.message);
 	const { drop, lost, outcome } = more.data;
 	const c = outcome.claimed[0];
 	const pool = r.pools[0];
@@ -1864,7 +1872,7 @@ async function supervise(
 	const logs = new Map<string, string>();
 	const resultFiles = new Map<string, string>();
 	const drains = new Map<string, number>();
-	const stopHold = holdLeases(ctx, deps, session.leaseIds, (signal) => {
+	const stopHold = holdLeases(appHostFromContext(ctx), deps, session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
 	});
@@ -2022,7 +2030,7 @@ async function resolveTarget(
 		return platform.success ? ok({ platform: platform.data }) : platform;
 	}
 	const stopAt = (await readGitFacts(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
-	const found = findBatchPreset({ start: ctx.cwd, name: target, ...(stopAt ? { stopAt } : {}) });
+	const found = findBatchPreset({ start: ctx.cwd, env: ctx.env, name: target, ...(stopAt ? { stopAt } : {}) });
 	if (!found.success) return found;
 	const { preset, names } = found.data;
 	if (!preset) {
@@ -2249,7 +2257,7 @@ async function abortClaim(
 	const { launch } = run;
 	await launch?.stop();
 	const metro = launch ? await launch.pending : undefined;
-	const claimError = claimed.success || claimed.error === INTERRUPTED ? undefined : claimed.error;
+	const claimError = claimed.success || claimed.error.code === "interrupted" ? undefined : claimed.error.message;
 	const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
 	const reason = claimError ?? (interrupted ? INTERRUPTED : (metroError ?? INTERRUPTED));
 	if (!interrupted && claimError !== undefined && isLockedClaimError(claimError)) {
@@ -2319,6 +2327,7 @@ export async function runSession(
 		const onPorts = sessionOnPorts(ctx, sctx, deps, lease, run, batchDir, controller);
 		const claimArgs = {
 			...lease,
+			self: selfCommand(),
 			...(legFlags ? { legFlags } : {}),
 			...(onLeased ? { onLeased } : {}),
 			...(onAppPhase ? { onAppPhase } : {}),
@@ -2329,7 +2338,7 @@ export async function runSession(
 			// a failed leg releases the others at once: their early slim and warm-up end first (R3)
 			...(warm || slim ? { beforeRelease: quiesce } : {}),
 		};
-		const result = await claimAll(sctx, deps, owner, claimArgs, name);
+		const result = await claimAll(leaseHostFromContext(sctx), deps, owner, claimArgs, name);
 		run.claimDone = true;
 		// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
 		maybeAutoGc(ctx);
@@ -2376,7 +2385,11 @@ async function elasticSplit(
 	const whole = { lease: args, extra: 0, setup: undefined };
 	// phones are not created: a physical request claims exactly the devices it names
 	if (args.legs || request.count < 2 || request.physical !== undefined) return whole;
-	const plan = await planElastic(await buildCapacityDeps(ctx, owner), request.platform, request.count);
+	const plan = await planElastic(
+		await buildCapacityDeps(leaseHostFromContext(ctx), owner),
+		request.platform,
+		request.count
+	);
 	if (!plan) return whole;
 	note(
 		ctx,

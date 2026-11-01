@@ -5,10 +5,10 @@
  * holds it), shut down if its runtime is still there, `simctl delete`d, forgotten, and released.
  */
 
-import type { Exec } from "../exec";
-import { deleteSim } from "../providers/ios";
-import type { Store } from "../store";
-import type { DeviceResource, Lease, Owner } from "../types";
+import { deleteSim } from "@delacour/warden-providers/ios";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import type { Store } from "@delacour/warden-store/store";
+import type { DeviceResource, Lease, Owner } from "@delacour/warden-store/types";
 
 export type DeleteDeps = {
 	exec: Exec;
@@ -62,7 +62,7 @@ export async function deleteSims<T extends DeleteTarget>(
 		try {
 			const deleted = await deleteSim(deps.exec, entry.udid, { shutdown: entry.isAvailable });
 			if (!deleted.success) {
-				result.failed.push({ entry, error: deleted.error });
+				result.failed.push({ entry, error: deleted.error.message });
 				continue;
 			}
 			deps.store.forgetDevice("ios", entry.udid);

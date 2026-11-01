@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { DeviceRecord } from "../store";
-import type { Lease } from "../types";
+import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
+import type { DeviceRecord } from "@delacour/warden-store/store";
+import type { Lease } from "@delacour/warden-store/types";
 import { auditSims } from "./audit";
-import type { SimctlSim } from "./list";
 import type { RulesInput } from "./rules";
 
 const DAY = 86_400_000;

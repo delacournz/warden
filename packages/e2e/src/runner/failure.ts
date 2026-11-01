@@ -1,10 +1,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DevtoolsFacet } from "../devtools/devtools.types";
-import { captureNativeLog, type NativeLogDeps, type NativeTarget } from "../devtools/native-log";
-import type { Driver } from "../driver/driver.types";
+import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
+import { captureNativeLog, type NativeLogDeps, type NativeTarget } from "@delacour/warden-devtools/native-log";
+import type { Driver } from "@delacour/warden-driver/driver.types";
+import { renderHeader, renderSnapshot } from "@delacour/warden-screen/render";
 import type { E2eEnv } from "../env";
-import { renderHeader, renderSnapshot } from "../screen/render";
 
 export const FAILURE_PNG = "failure.png";
 export const SCREEN_AT_FAILURE = "screen-at-failure.txt";

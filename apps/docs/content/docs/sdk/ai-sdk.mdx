@@ -1,0 +1,85 @@
+---
+title: AI SDK tools
+description: createWardenTools - let a Vercel AI SDK agent drive an app on a warden-leased simulator or emulator, with tool errors the model can recover from.
+icon: Bot
+---
+
+`@delacour/warden-sdk/ai-sdk` turns a [session](/docs/sdk/client-api#session) into a set of [Vercel AI SDK](https://ai-sdk.dev) tools. `ai` is an **optional peer** (`>=7 <8`): install it yourself.
+
+```bash
+bun add @delacour/warden-sdk ai
+```
+
+## Use
+
+This is `packages/sdk/examples/agent.ts` (a model key is needed to run it).
+
+```ts
+import { isStepCount, ToolLoopAgent } from "ai";
+import { createWardenTools } from "@delacour/warden-sdk/ai-sdk";
+
+const warden = await createWardenTools({
+  platform: "ios",
+  app: "com.apple.Preferences",
+  set: "core",
+  approval: { alert: "user-approval" },
+  clientOptions: { lockPolicy: "wait" },
+});
+try {
+  const agent = new ToolLoopAgent({
+    model: "anthropic/claude-sonnet-4.5",
+    instructions:
+      "You drive a mobile app through tools. Call snapshot to see the screen, act with the @eN refs it returns, " +
+      "and snapshot again after every action. If a tool returns ok:false, follow its hint.",
+    tools: warden.tools,
+    toolApproval: warden.toolApproval,
+    stopWhen: isStepCount(20),
+  });
+  const result = await agent.generate({ prompt: "open Wi-Fi settings and tell me which network is joined" });
+  console.log(result.text);
+} finally {
+  await warden.close();
+}
+```
+
+`createWardenTools` returns `{ tools, toolApproval, client, session, getSession(), close() }`.
+
+- With no `session` or `client` given it creates a client (label `ai-sdk`), then **claims a device and opens the session on the first tool call**. `close()` closes the session and the client, which releases the lease.
+- Pass `client` and/or `session` to drive one you manage; `close()` then leaves them alone.
+- `platform` and `app` choose the device and the app the session drives. `clientOptions` are the [client options](/docs/sdk/client-api#client-options).
+
+## Tool sets
+
+`set: "core"` has 17 tools; `set: "all"` adds 16.
+
+| Set | Tools |
+|---|---|
+| `core` | `open`, `close`, `snapshot`, `press`, `fill`, `type`, `get`, `is`, `find`, `wait`, `back`, `scroll`, `swipe`, `alert`, `screenshot`, `logs`, `route` |
+| `all` adds | `claim`, `release`, `devices`, `install`, `metro`, `eval`, `network`, `record_start`, `record_note`, `record_stop`, `record_status` ([spec authoring](/docs/sdk/authoring)), `perf_startup`, `perf_metrics`, `perf_memory`, `perf_logs`, `perf_crashes` ([perf](/docs/sdk/perf), read-only results) |
+
+The model sees the screen as compact text (`snapshot` returns `screen`, `generation`, `truncated`) with `@eN` refs, to keep tokens down. `screenshot` writes a PNG and returns its path, width and height, and the model also receives the PNG as an image content part (`toModelOutput`). A PNG larger than `screenshotImageMaxBytes` (default 1 MB) is not sent: the result carries `imageOmitted` with the reason and the model can retry with a smaller `scale`.
+
+## Errors the model can act on
+
+No tool throws. A result is `{ ok: true, ... }` or
+
+```ts
+{ ok: false, error: { code: string, message: string, hint?: string } }
+```
+
+so the model reads the failure and recovers. A `stale_ref` always carries the hint "refs expire on every snapshot: run snapshot again and use the new @eN refs". An aborted run (`abortSignal`) fails with `interrupted`.
+
+## Approval
+
+`approval` maps tool names to `"user-approval"`. The returned `toolApproval` holds the entries for tools in the chosen set; pass it to the agent or `generateText`, and the AI SDK asks a human before running whichever tools you list (here `alert`).
+
+## Schemas without `ai`
+
+`@delacour/warden-sdk/ai-sdk/tools.schema` exports `toolInputSchemas` (zod, one per tool), `toolDescriptions`, `CORE_TOOL_NAMES` and `EXTRA_TOOL_NAMES` and imports neither `ai` nor the client. Use it to expose the same tools through an MCP server or another agent framework.
+
+```ts
+import { toolDescriptions, toolInputSchemas } from "@delacour/warden-sdk/ai-sdk/tools.schema";
+
+const pressSchema = toolInputSchemas.press; // z.object({ ref?, selector?, point?, count? })
+console.log(toolDescriptions.press);
+```

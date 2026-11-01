@@ -3,8 +3,8 @@ import type {
 	DevtoolsErrorCode,
 	NetworkEntry,
 	TreeComponent,
-} from "@delacour/warden-e2e/devtools/devtools.types";
-import type { DevtoolsSession } from "@delacour/warden-e2e/devtools/session";
+} from "@delacour/warden-devtools/devtools.types";
+import type { DevtoolsSession } from "@delacour/warden-devtools/session";
 import type { Result } from "@delacour/warden-types/result";
 import type { z } from "zod";
 import type {

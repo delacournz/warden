@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { certificatesFromPem, sha1Hex } from "@delacour/warden-core/ios-runner/signing";
-import { CERT_TEAM_A, CERT_TEAM_B } from "@delacour/warden-core/ios-runner/signing.testing";
+import { certificatesFromPem, sha1Hex } from "@delacour/warden-builds/ios-runner/signing";
+import { CERT_TEAM_A, CERT_TEAM_B } from "@delacour/warden-builds/ios-runner/signing.testing";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
 	devicectlEntry,
 	devicectlJson,
 	FAKE_IPAD_UDID,
 	FAKE_IPHONE_UDID,
-} from "@delacour/warden-core/providers/devicectl.fixtures";
+} from "@delacour/warden-providers/devicectl.fixtures";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { physicalChecks } from "./doctor-physical";
 

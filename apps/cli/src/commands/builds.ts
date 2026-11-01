@@ -1,14 +1,16 @@
 import { basename, resolve } from "node:path";
-import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
-import { type BuildRecord, listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
-import { ccacheCleanup } from "@delacour/warden-core/builds/compiler-cache";
-import { LOCAL_PROFILE } from "@delacour/warden-core/builds/ensure";
-import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-core/builds/prune";
-import { removeBuilds } from "@delacour/warden-core/builds/remove";
-import { formatDuration } from "@delacour/warden-core/duration";
-import { processAlive } from "@delacour/warden-core/liveness";
-import { wardenHome } from "@delacour/warden-core/store";
-import type { Platform } from "@delacour/warden-core/types";
+import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-builds/builds.defaults";
+import { storeArtifact } from "@delacour/warden-builds/cache";
+import { ccacheCleanup } from "@delacour/warden-builds/compiler-cache";
+import { LOCAL_PROFILE } from "@delacour/warden-builds/ensure";
+import { projectStart } from "@delacour/warden-builds/prepare";
+import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-builds/prune";
+import { removeBuilds } from "@delacour/warden-builds/remove";
+import { formatDuration } from "@delacour/warden-config/duration";
+import { type BuildRecord, listBuilds } from "@delacour/warden-store/builds-table";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { wardenHome } from "@delacour/warden-store/store";
+import type { Platform } from "@delacour/warden-store/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
@@ -16,7 +18,6 @@ import type { CommandContext } from "../context";
 import { emit, heading, plural, reportError, table, warn } from "../output";
 import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
-import { projectStart } from "./app";
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
 	reportError(ctx, `builds ${sub}`, message);

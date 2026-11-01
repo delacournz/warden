@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { DeviceRecord } from "../store";
-import type { Lease, Owner } from "../types";
-import type { SimctlSim } from "./list";
+import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
+import type { DeviceRecord } from "@delacour/warden-store/store";
+import type { Lease, Owner } from "@delacour/warden-store/types";
 import {
 	canDelete,
 	canPrune,

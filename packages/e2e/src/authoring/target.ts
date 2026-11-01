@@ -1,6 +1,6 @@
-import type { Element, Point, Snapshot } from "../driver/driver.types";
-import { indexSnapshot, type NodeEntry, type NodeIndex } from "../screen/nodes";
-import { formatSelector, matchesSelector, type ParsedSelector } from "../screen/selector";
+import type { Element, Point, Snapshot } from "@delacour/warden-driver/driver.types";
+import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-screen/nodes";
+import { formatSelector, matchesSelector, type ParsedSelector } from "@delacour/warden-screen/selector";
 import type { ChainEntry, CoordsTarget, Target } from "./recording.schema";
 
 /** Turn an element the user pointed at into a durable target (never an `@ref`), degrading to coordinates. */

@@ -1,75 +1,24 @@
 import { readFileSync } from "node:fs";
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { formatDuration } from "@delacour/warden-core/duration";
-import { DEFAULT_SAMPLING_INTERVAL_US } from "@delacour/warden-perf/js/cpu-profile";
 import { type Hotspots, hotspotFindings, hotspotsSection } from "@delacour/warden-perf/js/hotspots";
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
-import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
-import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
+import { connectJsApp, type JsParams, type JsPlan, jsSuccess, jsWork, planJs } from "@delacour/warden-sdk/ops/perf/js";
+import {
+	defaultJsDeps,
+	type JsDeps,
+	type JsProfileResult,
+	type JsSession,
+} from "@delacour/warden-sdk/ops/perf/js-capture";
+import { type JsOut, jsOutFor } from "@delacour/warden-sdk/ops/perf/js-out";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
 import { resumeBrokerOnClose } from "./broker-resume";
 import type { PerfTarget } from "./device";
-import {
-	defaultJsDeps,
-	devtoolsPerfError,
-	type JsDeps,
-	type JsProfileResult,
-	type JsSession,
-	jsUiError,
-	runJsCapture,
-} from "./js-capture";
-import { type JsOut, jsOutFor } from "./js-out";
 import { withPerfOptions } from "./options";
-import { displayPath } from "./paths";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
 
-export type PerfJsOptions = PerfOptionValues & { duration?: string; samplingInterval?: string; metro?: string };
-
-const DEFAULT_DURATION_MS = 10_000;
-
-type Plan = { durationMs: number; samplingIntervalUs: number };
-
-function plan(opts: PerfJsOptions): Result<Plan, UiError> {
-	const duration = opts.duration === undefined ? DEFAULT_DURATION_MS : parseDuration(opts.duration);
-	if (duration === undefined || duration < 1) {
-		return {
-			success: false,
-			error: uiError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
-		};
-	}
-	const interval = opts.samplingInterval === undefined ? DEFAULT_SAMPLING_INTERVAL_US : Number(opts.samplingInterval);
-	if (!Number.isInteger(interval) || interval < 10) {
-		return {
-			success: false,
-			error: uiError("usage", `--sampling-interval is microseconds, at least 10, got "${opts.samplingInterval}"`),
-		};
-	}
-	return ok({ durationMs: Math.min(duration, HARD_MAX_DURATION_MS), samplingIntervalUs: interval });
-}
-
-/** `--metro`, else the Metro serving this device. */
-export async function metroFor(
-	ctx: CommandContext,
-	deps: PerfDeps,
-	target: PerfTarget,
-	flag: string | undefined
-): Promise<Result<string, UiError>> {
-	const url = flag !== undefined && flag !== "" ? flag.replace(/\/+$/, "") : await deps.host.metro(ctx, target.udid);
-	if (url !== undefined) return ok(url);
-	return {
-		success: false,
-		error: uiError(
-			"devtools_unavailable",
-			"no Metro found for this device: a release build, or no dev client running",
-			{
-				hint: "start the dev client with `warden dev <platform>`, or pass --metro <url>",
-			}
-		),
-	};
-}
+export type PerfJsOptions = PerfOptionValues & JsParams & { metro?: string };
 
 type Connected = { session: JsSession; metro: string; app: string };
 
@@ -84,59 +33,9 @@ export async function connectJs(
 ): Promise<Result<Connected, UiError>> {
 	const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 	if (!app.success) return app;
-	const metro = await metroFor(ctx, deps, target, opts.metro);
-	if (!metro.success) return metro;
-	const session = await js.open({
-		metroUrl: metro.data,
-		appId: app.data.id,
-		deviceName: target.platform === "ios" ? target.name : undefined,
-		timeoutMs,
-	});
-	if (!session.success) return { success: false, error: devtoolsPerfError(session.error) };
-	return ok({ session: resumeBrokerOnClose(ctx, target.udid, session.data), metro: metro.data, app: app.data.id });
-}
-
-function successOf(
-	ctx: CommandContext,
-	target: PerfTarget,
-	app: string,
-	out: JsOut,
-	result: JsProfileResult,
-	durationMs: number
-): UiSuccess {
-	const h = result.hotspots;
-	const next = [
-		`warden perf js --duration ${formatDuration(durationMs * 3)}`,
-		"warden perf mark <label>   (then compare hotspots across runs)",
-	];
-	const text = renderMarkdown(
-		{
-			title: "JS CPU profile",
-			banners: [SIMULATOR_BANNER, ...(h.dev === true ? [DEV_BUILD_BANNER] : [])],
-			summary: [
-				`${app} on ${target.name ?? target.udid} (${target.platform}): ${h.sampleCount} samples over ${(h.durationMs / 1000).toFixed(1)}s, ${h.idlePct}% idle`,
-				`profile: ${displayPath(ctx, result.cpuPath)} (open in Chrome DevTools or speedscope)`,
-			],
-			findings: result.findings,
-			sections: [result.section],
-			next,
-		},
-		{ maxLines: MAX_TEXT_LINES }
-	);
-	return {
-		device: { udid: target.udid, platform: target.platform, name: target.name },
-		result: {
-			...(out.sessionId === undefined ? {} : { sessionId: out.sessionId }),
-			app,
-			dir: out.dir,
-			files: { cpuprofile: result.cpuPath, hotspots: result.hotspotsPath },
-			hotspots: h,
-			findings: result.findings,
-			next,
-		},
-		text,
-		warnings: h.warnings,
-	};
+	const connected = await connectJsApp(ctx, deps, js, target, app.data.id, opts.metro, timeoutMs);
+	if (!connected.success) return connected;
+	return ok({ ...connected.data, session: resumeBrokerOnClose(ctx, target.udid, connected.data.session) });
 }
 
 /**
@@ -148,7 +47,7 @@ async function brokeredProfile(
 	ctx: CommandContext,
 	target: PerfTarget,
 	opts: PerfJsOptions,
-	plan: Plan,
+	plan: JsPlan,
 	out: JsOut,
 	sleep: JsDeps["sleep"]
 ): Promise<Result<UiSuccess, UiError> | undefined> {
@@ -186,7 +85,7 @@ async function brokeredProfile(
 			section: hotspotsSection(hotspots),
 		};
 		const app = await resolveApp(ctx, { platform: target.platform, id: udid }, opts.app);
-		return ok(successOf(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs));
+		return ok(jsSuccess(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs));
 	} catch (error) {
 		return { success: false, error: uiError("failed", `cannot read ${summary.hotspotsPath}: ${String(error)}`) };
 	}
@@ -196,40 +95,6 @@ function capturingError(out: JsOut, udid: string): UiError {
 	return uiError("session_active", `session ${out.sessionId} already holds the JS profiler on ${udid}`, {
 		hint: "its profile lands in js/cpu.cpuprofile when it stops (warden perf stop)",
 	});
-}
-
-type DirectProfile = {
-	ctx: CommandContext;
-	deps: PerfDeps;
-	js: JsDeps;
-	target: PerfTarget;
-	opts: PerfJsOptions;
-	plan: Plan;
-	out: JsOut;
-	timeoutMs: number;
-};
-
-/** The profile over this process's own Hermes socket (no dev-session broker for the device). */
-async function directProfile(d: DirectProfile): Promise<Result<UiSuccess, UiError>> {
-	const connected = await connectJs(d.ctx, d.deps, d.js, d.target, d.opts, d.timeoutMs);
-	if (!connected.success) return connected;
-	const { session, metro, app } = connected.data;
-	try {
-		const captured = await runJsCapture(session, {
-			dir: d.out.dir,
-			metroUrl: metro,
-			fetchMap: d.js.fetchMap,
-			projectRoot: d.ctx.cwd,
-			durationMs: d.plan.durationMs,
-			samplingIntervalUs: d.plan.samplingIntervalUs,
-			sleep: d.js.sleep,
-			now: d.ctx.now,
-		});
-		if (!captured.success) return { success: false, error: jsUiError(captured.error) };
-		return ok(successOf(d.ctx, d.target, app, d.out, captured.data, d.plan.durationMs));
-	} finally {
-		session.close();
-	}
 }
 
 /**
@@ -245,13 +110,22 @@ export function perfJs(
 	js: JsDeps = defaultJsDeps
 ): Promise<number> {
 	return runPerf(ctx, deps, "js", "observe", opts, async (target, env) => {
-		const planned = plan(opts);
+		const planned = planJs(opts);
 		if (!planned.success) return planned;
 		const out = jsOutFor(ctx, deps.session, target.udid, "js");
 		if (out.jsCapturing) return { success: false, error: capturingError(out, target.udid) };
 		const brokered = await brokeredProfile(ctx, target, opts, planned.data, out, js.sleep);
 		if (brokered !== undefined) return brokered;
-		return directProfile({ ctx, deps, js, target, opts, plan: planned.data, out, timeoutMs: env.timeoutMs });
+		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
+		if (!app.success) return app;
+		const resuming: JsDeps = {
+			...js,
+			open: async (options) => {
+				const opened = await js.open(options);
+				return opened.success ? ok(resumeBrokerOnClose(ctx, target.udid, opened.data)) : opened;
+			},
+		};
+		return jsWork(ctx, deps, resuming, target, app.data.id, planned.data, opts.metro, env.timeoutMs);
 	});
 }
 

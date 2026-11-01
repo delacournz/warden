@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { bunExec, type Exec, type ExecResult } from "../exec";
+import { bunExec, type Exec, type ExecResult } from "@delacour/warden-runtime/exec";
+import { graphOf, makeSuiteRepo } from "../testing/fixture.testing";
 import { findSuite } from "./affected";
-import { graphOf, makeSuiteRepo } from "./fixture.testing";
 import { reachable, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
 import {
 	compiledBinary,
@@ -312,7 +312,7 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 
 describe("graphEntries", () => {
 	test("every spec's entries that exist, then the router layouts above them", async () => {
-		const suite = await findSuite(bunExec, dir);
+		const suite = await findSuite(bunExec, dir, undefined, undefined, {});
 		if (!suite.success) throw new Error(suite.error.message);
 		const config = { ...suite.data.config, routerRoot: "src/app" };
 		expect(rel(graphEntries(config, dir, "ios"))).toEqual([
@@ -328,7 +328,7 @@ describe("graphEntries", () => {
 	});
 
 	test("an entry that does not exist is left out", async () => {
-		const suite = await findSuite(bunExec, dir);
+		const suite = await findSuite(bunExec, dir, undefined, undefined, {});
 		if (!suite.success) throw new Error(suite.error.message);
 		const specs = {
 			...suite.data.config.specs,

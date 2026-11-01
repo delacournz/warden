@@ -3,9 +3,11 @@
  * sims use each one, and which are unused. Runtimes are machine-wide and not warden's, so this is
  * report-only — the user deletes one with `xcrun simctl runtime delete <identifier>`.
  */
+
+import { shortRuntime } from "@delacour/warden-providers/ios";
+import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { type WardenError, wardenErr } from "@delacour/warden-types/error";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { type Exec, execError } from "../exec";
-import { shortRuntime } from "../providers/ios";
 import type { SimEntry } from "./rules";
 
 export type DiskRuntime = {
@@ -69,21 +71,23 @@ function toRuntime(entry: unknown): DiskRuntime | undefined {
 }
 
 /** `simctl runtime list -j`: an object keyed by disk image UUID. */
-export function parseRuntimeList(stdout: string): Result<DiskRuntime[]> {
+export function parseRuntimeList(stdout: string): Result<DiskRuntime[], WardenError> {
 	let data: unknown;
 	try {
 		data = JSON.parse(stdout);
 	} catch {
-		return err("simctl runtime list: invalid JSON");
+		return wardenErr("failed", "simctl runtime list: invalid JSON");
 	}
-	if (!isRecord(data)) return err("simctl runtime list: expected an object");
+	if (!isRecord(data)) return wardenErr("failed", "simctl runtime list: expected an object");
 	return ok(Object.values(data).flatMap((entry) => toRuntime(entry) ?? []));
 }
 
 export async function listDiskRuntimes(exec: Exec): AsyncResult<DiskRuntime[]> {
 	const cmd = ["xcrun", "simctl", "runtime", "list", "-j"];
 	const result = await exec(cmd);
-	return result.exitCode === 0 ? parseRuntimeList(result.stdout) : err(execError(cmd, result));
+	if (result.exitCode !== 0) return err(execError(cmd, result));
+	const runtimes = parseRuntimeList(result.stdout);
+	return runtimes.success ? runtimes : err(runtimes.error.message);
 }
 
 function verdictFor(runtime: DiskRuntime, users: readonly SimEntry[]): RuntimeVerdict {

@@ -90,7 +90,7 @@ jobs:
       - run: bun run check
       - run: bun run test
 
-  # Paths filter for the native job: does this commit touch packages/e2e/native/** against develop?
+  # Paths filter for the native job: does this commit touch packages/driver-ios/native/** against develop?
   native-changes:
     needs: validate
     runs-on: namespace-profile-linux-small
@@ -103,8 +103,8 @@ jobs:
           SHA: ${{ inputs.signoff-sha }}
         run: |
           # An unreadable compare runs native rather than skipping it.
-          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || echo "packages/e2e/native/")
-          if echo "$files" | grep -q '^packages/e2e/native/'; then
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/develop...$SHA" --jq '.files[].filename' 2>/dev/null || echo "packages/driver-ios/native/")
+          if echo "$files" | grep -q '^packages/driver-ios/native/'; then
             echo "native=true" >> "$GITHUB_OUTPUT"
           else
             echo "native=false" >> "$GITHUB_OUTPUT"
@@ -140,19 +140,19 @@ jobs:
         with:
           path: |
             ~/Library/Caches/warden-idb
-            packages/e2e/native/ios/.build
-            packages/e2e/native/ios-runner/RunnerCore/.build
+            packages/driver-ios/native/ios/.build
+            packages/driver-ios/native/ios-runner/RunnerCore/.build
 
       # No NPM_TOKEN: `@delacournz/*` (GitHub Packages) is only apps/docs' optional OpenTelemetry, which
       # nothing here uses. The 401 is a warning, and this proves a tokenless clone installs.
       - run: bun install --frozen-lockfile
-      - run: bun run --cwd packages/e2e native:deps
-      - run: bun run --cwd packages/e2e native:build
-      - run: swift test --package-path packages/e2e/native/ios
+      - run: bun run --cwd packages/driver-ios native:deps
+      - run: bun run --cwd packages/driver-ios native:build
+      - run: swift test --package-path packages/driver-ios/native/ios
       # warden-runner (XCUITest, real devices): RunnerCore's tests, then the unsigned iOS build of the checked-in project.
-      - run: swift test --package-path packages/e2e/native/ios-runner/RunnerCore
+      - run: swift test --package-path packages/driver-ios/native/ios-runner/RunnerCore
       - run: >-
-          xcodebuild build-for-testing -project packages/e2e/native/ios-runner/WardenRunner.xcodeproj
+          xcodebuild build-for-testing -project packages/driver-ios/native/ios-runner/WardenRunner.xcodeproj
           -scheme WardenRunner -destination generic/platform=iOS CODE_SIGNING_ALLOWED=NO
           WARDEN_RUNNER_BUNDLE_ID=nz.co.delacour.warden.runner.ci
 
@@ -183,7 +183,7 @@ jobs:
           }
           if [ "$CHECKS" != "success" ]; then fail "checks $CHECKS"; fi
           if [ "$NATIVE_CHANGES" != "success" ]; then fail "native-changes $NATIVE_CHANGES"; fi
-          # native is skipped when the commit does not touch packages/e2e/native/**.
+          # native is skipped when the commit does not touch packages/driver-ios/native/**.
           if [ "$NATIVE" != "success" ] && [ "$NATIVE" != "skipped" ]; then fail "native $NATIVE"; fi
 
           post() {

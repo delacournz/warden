@@ -1,4 +1,4 @@
-import type { ReactTree, TreeComponent } from "@delacour/warden-e2e/devtools/devtools.types";
+import type { ReactTree, TreeComponent } from "@delacour/warden-devtools/devtools.types";
 
 export type TreeFilter = { depth?: number; testID?: string };
 

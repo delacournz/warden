@@ -30,6 +30,7 @@
 	"workspaces": [
 		"apps/*",
 		"packages/*",
+		"scripts/cycles",
 		"scripts/demo",
 		"scripts/release",
 		"scripts/signoff",

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
-import { storeArtifact } from "@delacour/warden-core/builds/cache";
-import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
+import { storeArtifact } from "@delacour/warden-builds/cache";
+import { fakeApp } from "@delacour/warden-builds/testing/builds.testing";
+import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { markAndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
-import type { Owner } from "@delacour/warden-core/types";
+import type { Owner } from "@delacour/warden-store/types";
 import { AUTO_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
 import { type TestContext, testContext } from "./testing";
 

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readTrace, type TraceEvent } from "@delacour/warden-e2e/runner/trace";
+import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
+import { readTrace } from "@delacour/warden-e2e/runner/trace";
 import { nativeNameOf, parseWardenResults, stepsFromTrace, untracedMsOf } from "./warden-results";
 
 const fixture = (name: string) => readFileSync(join(import.meta.dir, "../fixtures/warden", name), "utf8");

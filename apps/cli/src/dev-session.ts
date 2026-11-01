@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { processAlive } from "@delacour/warden-core/liveness";
-import { wardenHome } from "@delacour/warden-core/store";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { wardenHome } from "@delacour/warden-store/store";
 import { ok, type Result } from "@delacour/warden-types/result";
 
 /**

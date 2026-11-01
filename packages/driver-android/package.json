@@ -1,0 +1,47 @@
+{
+	"name": "@delacour/warden-driver-android",
+	"version": "0.1.0",
+	"description": "warden Android driver: persistent adb shell, the resident warden-uiad server (native/), uiautomator dump fallback",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./adb-session": "./src/adb-session.ts",
+		"./android-alert": "./src/android-alert.ts",
+		"./android-argv": "./src/android-argv.ts",
+		"./android-clock": "./src/android-clock.ts",
+		"./android-device": "./src/android-device.ts",
+		"./android-driver": "./src/android-driver.ts",
+		"./android-dump": "./src/android-dump.ts",
+		"./android-network": "./src/android-network.ts",
+		"./android-phone": "./src/android-phone.ts",
+		"./android-settings": "./src/android-settings.ts",
+		"./android-state": "./src/android-state.ts",
+		"./testing/android-host": "./src/android-host.testing.ts",
+		"./testing/uiautomator.fixture": "./src/uiautomator.fixture.ts",
+		"./uiad-backend": "./src/uiad-backend.ts",
+		"./uiad-dex.generated": "./src/uiad-dex.generated.ts",
+		"./uiautomator": "./src/uiautomator.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src ./native/scripts",
+		"lint": "biome lint --write ./src ./native/scripts",
+		"check": "biome check ./src ./native/scripts",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"android:build": "bun native/scripts/build.ts",
+		"android:emit": "bun native/scripts/build.ts --emit-ts",
+		"android:smoke": "bun native/scripts/smoke.ts"
+	},
+	"dependencies": {
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-core": "workspace:*",
+		"@delacour/warden-driver": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-types": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@delacour/warden-providers": "workspace:*",
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

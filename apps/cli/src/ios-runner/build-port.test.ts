@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { RunnerBuild, RunnerBuildError } from "@delacour/warden-core/ios-runner/runner-build.types";
+import type { RunnerBuild, RunnerBuildError } from "@delacour/warden-builds/ios-runner/runner-build.types";
 import { type TestContext, testContext } from "../testing";
 import type { BuildInfo } from "../update/build-info";
 import { createRunnerBuild, describeBuildError, type EnsureRunnerBuild } from "./build-port";

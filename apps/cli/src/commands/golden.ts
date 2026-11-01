@@ -1,18 +1,20 @@
-import { profileSlug } from "@delacour/warden-core/allocate";
-import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
-import { DEFAULT_PROFILE } from "@delacour/warden-core/config.defaults";
+import { DEFAULT_PROFILE } from "@delacour/warden-config/config.defaults";
 import {
 	ensureAndroidSnapshot,
 	listAndroidSnapshots,
 	pruneAndroidSnapshots,
 } from "@delacour/warden-core/golden/android-golden";
 import { ensureGolden, listGoldens, pruneGoldens } from "@delacour/warden-core/golden/ios-golden";
-import { listAvds } from "@delacour/warden-core/providers/android";
+import { androidGoldenDeps, goldenDeps, type Sleep } from "@delacour/warden-core/host-deps";
+import { resolveAutoProfile } from "@delacour/warden-leasing/claim-request";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { listAvds } from "@delacour/warden-providers/android";
+import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
+import { profileSlug } from "@delacour/warden-store/types";
+import { textError } from "@delacour/warden-types/error";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { resolveAutoProfile, resolveOwner } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import type { CommandContext } from "../context";
-import { androidGoldenDeps, goldenDeps, type Sleep } from "../golden-deps";
+import { appHostFromContext, type CommandContext } from "../context";
 import { emit, heading, plural, reportError, table } from "../output";
 import { withSpinner } from "../spinner-context";
 
@@ -31,9 +33,9 @@ function platformOf(ctx: CommandContext, opts: PlatformOpt): "ios" | "android" |
 /** The snapshot target a profile names: its AVD (`auto` = the first AVD), plus `+bio` for a biometrics profile. */
 async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string> {
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
-	if (!avds.success) return avds;
+	if (!avds.success) return textError(avds);
 	const { profile: base, biometrics } = splitBiometricProfile(profile);
-	const slug = base === "auto" ? resolveAutoProfile(avds.data) : ok(base);
+	const slug = base === "auto" ? textError(resolveAutoProfile(avds.data)) : ok(base);
 	if (!slug.success) return slug;
 	const avd = avds.data.find((a) => profileSlug(a) === slug.data);
 	return avd !== undefined ? ok(biometricProfile(avd, biometrics)) : err(`no AVD matches profile "${slug.data}"`);
@@ -46,9 +48,13 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 	const avd = await avdFor(ctx, profile);
 	if (!avd.success) return fail(ctx, avd.error);
 	const snapshot = await withSpinner(ctx, `ensuring quick-boot snapshot of ${avd.data}…`, async (sctx, spinner) => {
-		const result = await ensureAndroidSnapshot(androidGoldenDeps(sctx, resolveOwner(ctx), sleep), avd.data, {
-			explicit: true,
-		});
+		const result = await ensureAndroidSnapshot(
+			androidGoldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep),
+			avd.data,
+			{
+				explicit: true,
+			}
+		);
 		if (result.success && result.data)
 			spinner.succeed(`snapshot ${result.data.name} ${result.data.built ? "built" : "reused"}`);
 		else spinner.fail("snapshot failed");
@@ -70,7 +76,7 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 
 async function lsAndroid(ctx: CommandContext, sleep: Sleep | undefined, json: boolean): Promise<number> {
 	const { color } = ctx.ui;
-	const snapshots = await listAndroidSnapshots(androidGoldenDeps(ctx, resolveOwner(ctx), sleep));
+	const snapshots = await listAndroidSnapshots(androidGoldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep));
 	if (!snapshots.success) return fail(ctx, snapshots.error);
 	const text = table(
 		ctx,
@@ -93,7 +99,11 @@ async function ensure(ctx: CommandContext, sleep: Sleep | undefined, opts: Ensur
 	const profile = opts.profile ?? DEFAULT_PROFILE.ios;
 	if (!opts.json) heading(ctx, "golden ensure", profile);
 	const golden = await withSpinner(ctx, `ensuring golden ${profile} image…`, async (sctx, spinner) => {
-		const result = await ensureGolden(goldenDeps(sctx, resolveOwner(ctx), sleep), profile, opts.runtime);
+		const result = await ensureGolden(
+			goldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep),
+			profile,
+			opts.runtime
+		);
 		if (result.success) spinner.succeed(`golden ${result.data.name} ${result.data.built ? "built" : "reused"}`);
 		else spinner.fail("golden image failed");
 		return result;
@@ -115,7 +125,7 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, opts: PlatformO
 	const json = opts.json === true;
 	if (platform === "android") return lsAndroid(ctx, sleep, json);
 	const { color } = ctx.ui;
-	const goldens = await listGoldens(goldenDeps(ctx, resolveOwner(ctx), sleep));
+	const goldens = await listGoldens(goldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep));
 	if (!goldens.success) return fail(ctx, goldens.error);
 	const text = table(
 		ctx,
@@ -152,8 +162,8 @@ async function confirmPruneAll(ctx: CommandContext, sleep: Sleep | undefined, op
 	}
 	const goldens: Result<unknown[]> =
 		opts.platform === "android"
-			? await listAndroidSnapshots(androidGoldenDeps(ctx, resolveOwner(ctx), sleep))
-			: await listGoldens(goldenDeps(ctx, resolveOwner(ctx), sleep));
+			? await listAndroidSnapshots(androidGoldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep))
+			: await listGoldens(goldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep));
 	if (!goldens.success) return fail(ctx, goldens.error);
 	if (goldens.data.length === 0) return 0;
 	const answer = await ui.confirm(`Delete all ${goldens.data.length} golden image(s)?`, false);
@@ -176,8 +186,8 @@ async function prune(ctx: CommandContext, sleep: Sleep | undefined, opts: PruneO
 		all ? "deleting golden images…" : "pruning stale golden images…",
 		(sctx): AsyncResult<Array<{ name: string }>> =>
 			platform === "android"
-				? pruneAndroidSnapshots(androidGoldenDeps(sctx, resolveOwner(ctx), sleep), { all })
-				: pruneGoldens(goldenDeps(sctx, resolveOwner(ctx), sleep), { all })
+				? pruneAndroidSnapshots(androidGoldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep), { all })
+				: pruneGoldens(goldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep), { all })
 	);
 	if (!pruned.success) return fail(ctx, pruned.error);
 	const text =

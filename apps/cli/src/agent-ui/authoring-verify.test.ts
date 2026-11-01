@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { findSuite } from "@delacour/warden-core/affected/affected";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
-import { bunExec } from "@delacour/warden-core/exec";
+import { bunExec } from "@delacour/warden-runtime/exec";
 import { ok } from "@delacour/warden-types/result";
 import type { ProcHandle, SpawnOptions } from "../commands/batch";
 import { type TestContext, testContext } from "../testing";

@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { androidTools } from "@delacour/warden-core/providers/android";
-import type { Platform } from "@delacour/warden-core/types";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
+import { androidTools } from "@delacour/warden-providers/android-tools";
+import type { Platform } from "@delacour/warden-store/types";
 
 /** A failed job's screenshot is best effort: it never delays the batch past this. */
 export const SCREENSHOT_TIMEOUT_MS = 5_000;

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import type { Platform } from "../types";
-import type { E2eSpecEntryConfig } from "./affected.schema";
+import type { E2eSpecEntryConfig } from "@delacour/warden-config/affected.schema";
+import type { Platform } from "@delacour/warden-store/types";
 
 /**
  * A spec file under `specsDir`. `id` = its path below `specsDir` without the extension (`qa/login`).

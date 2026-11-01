@@ -1,5 +1,5 @@
-import type { Rect } from "../driver/driver.types";
-import type { QueryRole } from "../screen/roles";
+import type { Rect } from "@delacour/warden-driver/driver.types";
+import type { QueryRole } from "@delacour/warden-screen/roles";
 import { type NewStep, type Recording, recordingSchema, type Target } from "./recording.schema";
 
 /** Fixtures shared by the authoring tests: terse target builders and a recording that uses every step kind. */

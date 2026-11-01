@@ -1,39 +1,29 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
-import type { Platform } from "@delacour/warden-core/types";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
-import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
+import {
+	defaultNativeProfilers,
+	type NativeProfilers,
+	type NativeRun,
+	type StartNativeOptions,
+	startNative,
+	stopNative,
+} from "@delacour/warden-sdk/ops/perf/native";
+import { defaultNativeIo, type NativeAnalysis, type NativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
+import { displayPath } from "@delacour/warden-sdk/ops/perf/paths";
+import { activeSessionFor } from "@delacour/warden-sdk/ops/perf/session";
+import type { Platform } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { reportError, reportOk, type UiError, type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
 import type { PerfTarget } from "./device";
-import {
-	findRunningOneShot,
-	type HandleFile,
-	newOneShotDir,
-	readHandleFile,
-	sessionNativeDir,
-	writeHandleFile,
-} from "./native-state";
-import {
-	defaultNativeIo,
-	type NativeAnalysis,
-	type NativeHandle,
-	type NativeIo,
-	type NativeProfiler,
-	type NativeStopped,
-} from "./native-types";
 import { withPerfOptions } from "./options";
-import { displayPath } from "./paths";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
-import { activeSessionFor, updateSession } from "./session";
-
-export type { NativeAnalysis, NativeHandle, NativeIo, NativeProfiler } from "./native-types";
 
 export type PerfNativeOptions = PerfOptionValues & {
 	duration?: string;
@@ -45,166 +35,9 @@ export type PerfNativeOptions = PerfOptionValues & {
 };
 
 const DEFAULT_DURATION_MS = 10_000;
+
 /** headroom past `--duration` before the recorder's own `--time-limit` ends a recording nobody stopped */
 const LIMIT_SLACK_MS = 15_000;
-
-/** The profiler for a platform. iOS and Android load lazily so `perf --help` and every other subcommand skip them. */
-export type NativeProfilers = Record<Platform, () => Promise<NativeProfiler>>;
-
-export const defaultNativeProfilers: NativeProfilers = {
-	ios: async () => (await import("./native-ios")).iosNativeProfiler,
-	android: async () => (await import("./native-android")).androidNativeProfiler,
-};
-
-/** Where a recording lives: a running session's `native/`, or a one-shot dir. */
-export type NativeRun = { dir: string; sessionId?: string; handle: NativeHandle; app: string; leaks: boolean };
-
-export type StartNativeOptions = {
-	app: string;
-	leaks: boolean;
-	flavor?: string;
-	maxDurationMs: number;
-};
-
-/**
- * Begin a native recording on `target` and persist what `stop` needs (`native/handle.json`, plus a `native` capturer in
- * the device's running session). The capture API `perf start --native` (PRF-9) calls. `--leaks` is a MUTATE (cold launch):
- * the caller resolved `target` in `mutate` mode.
- */
-export async function startNative(
-	ctx: CommandContext,
-	deps: PerfDeps,
-	io: NativeIo,
-	profilers: NativeProfilers,
-	target: PerfTarget,
-	opts: StartNativeOptions,
-	session: PerfSession | undefined = activeSessionFor(ctx, deps.session, target.udid)
-): Promise<Result<NativeRun, UiError>> {
-	if (session?.capturers.some((c) => c.kind === "native" && c.state === "running")) {
-		return {
-			success: false,
-			error: uiError("session_active", `session ${session.id} already has a native recording`, {
-				hint: "warden perf native stop",
-			}),
-		};
-	}
-	if (session === undefined && findRunningOneShot(ctx, target.udid) !== undefined) {
-		return {
-			success: false,
-			error: uiError("session_active", `a native recording is already running on ${target.udid}`, {
-				hint: "warden perf native stop",
-			}),
-		};
-	}
-	const dir = session === undefined ? newOneShotDir(ctx, deps.session.random) : sessionNativeDir(ctx, session.id);
-	const profiler = await profilers[target.platform]();
-	const started = await profiler.start(ctx, deps, io, {
-		target,
-		app: opts.app,
-		dir,
-		leaks: opts.leaks,
-		...(opts.flavor === undefined ? {} : { flavor: opts.flavor }),
-		maxDurationMs: opts.maxDurationMs,
-	});
-	if (!started.success) return started;
-	const file: HandleFile = {
-		version: 1,
-		status: "running",
-		udid: target.udid,
-		platform: target.platform,
-		app: opts.app,
-		leaks: opts.leaks,
-		...(session === undefined ? {} : { sessionId: session.id }),
-		handle: started.data,
-	};
-	writeHandleFile(dir, file);
-	if (session !== undefined) {
-		updateSession(ctx, session.id, (s) => ({
-			...s,
-			capturers: [
-				...s.capturers.filter((c) => c.kind !== "native"),
-				{
-					kind: "native",
-					...(started.data.pid === undefined ? {} : { pid: started.data.pid }),
-					startedAtIso: started.data.startedAtIso,
-					out: started.data.out,
-					state: "running",
-				},
-			],
-		}));
-	}
-	return ok({
-		dir,
-		...(session === undefined ? {} : { sessionId: session.id }),
-		handle: started.data,
-		app: opts.app,
-		leaks: opts.leaks,
-	});
-}
-
-/** The recording running on `udid`: the session (`sessionId`, else the device's active one) first, else a one-shot. `perf stop` names the session because a capped one no longer counts as active. */
-export function findNativeRun(
-	ctx: CommandContext,
-	deps: PerfDeps,
-	udid: string,
-	sessionId?: string
-): { dir: string; file: HandleFile } | undefined {
-	const sessionKey = sessionId ?? activeSessionFor(ctx, deps.session, udid)?.id;
-	if (sessionKey !== undefined) {
-		const dir = sessionNativeDir(ctx, sessionKey);
-		const file = readHandleFile(dir);
-		if (file?.status === "running") return { dir, file };
-	}
-	return findRunningOneShot(ctx, udid);
-}
-
-export type StoppedNative = NativeStopped & { dir: string; sessionId?: string; app: string };
-
-/** Stop the recording `findNativeRun` finds, export + analyze it, and mark it stopped. */
-export async function stopNative(
-	ctx: CommandContext,
-	deps: PerfDeps,
-	io: NativeIo,
-	profilers: NativeProfilers,
-	target: PerfTarget,
-	opts: { analyze: boolean; yes?: boolean; sessionId?: string }
-): Promise<Result<StoppedNative, UiError>> {
-	const found = findNativeRun(ctx, deps, target.udid, opts.sessionId);
-	if (found === undefined) {
-		return {
-			success: false,
-			error: uiError("session_not_found", `no native recording is running on ${target.udid}`, {
-				hint: "warden perf native start",
-			}),
-		};
-	}
-	const { dir, file } = found;
-	const profiler = await profilers[file.platform]();
-	const stopped = await profiler.stop(ctx, deps, io, {
-		target,
-		app: file.app,
-		dir,
-		handle: file.handle,
-		analyze: opts.analyze,
-		...(opts.yes === true ? { yes: true } : {}),
-	});
-	writeHandleFile(dir, { ...file, status: "stopped" });
-	if (file.sessionId !== undefined) {
-		updateSession(ctx, file.sessionId, (s) => ({
-			...s,
-			capturers: s.capturers.map((c) =>
-				c.kind === "native" && c.state === "running" ? { ...c, state: stopped.success ? "stopped" : "failed" } : c
-			),
-		}));
-	}
-	if (!stopped.success) return stopped;
-	return ok({
-		...stopped.data,
-		dir,
-		...(file.sessionId === undefined ? {} : { sessionId: file.sessionId }),
-		app: file.app,
-	});
-}
 
 function nativeSuccess(
 	ctx: CommandContext,

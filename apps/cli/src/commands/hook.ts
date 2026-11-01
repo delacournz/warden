@@ -1,17 +1,18 @@
-import { processAlive } from "@delacour/warden-core/liveness";
+import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
+import { processAlive } from "@delacour/warden-store/liveness";
 import { backgroundAllowed, selfCommand, spawnDetached } from "../autogc";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { shutdownReleasedDevices } from "../device-shutdown";
 import { type HookDeps, type HookResult, handleSessionEnd } from "../hooks/claude-pretool";
 import { errorMessage } from "../hooks/json";
+import { leaseHostFromContext } from "../lease-host";
 
 function hookDeps(ctx: CommandContext): HookDeps {
 	return {
 		store: ctx.store,
 		now: ctx.now,
 		pidAlive: processAlive,
-		shutdown: (leases, owner) => shutdownReleasedDevices(ctx, leases, owner),
+		shutdown: (leases, owner) => shutdownReleasedDevices(leaseHostFromContext(ctx), leases, owner),
 		endInBackground: (sessionId) => {
 			if (!backgroundAllowed(ctx.env)) return false;
 			spawnDetached([...selfCommand(), "release", "--session", sessionId, "--shutdown"], {

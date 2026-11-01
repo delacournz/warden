@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Exec } from "@delacour/warden-core/exec";
-import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import { arrangeJsonSchema } from "@delacour/warden-sdk/contracts/arrange";
 import { wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { arrangeCommand } from "./arrange";
@@ -33,7 +34,9 @@ describe("warden arrange", () => {
 	test("--json", async () => {
 		ctx = testContext(["--json"], { os: "darwin", exec: windowsExec(["warden-iphone-17-1 – iOS 26.5"]) });
 		expect(await arrangeCommand.run(ctx)).toBe(0);
-		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ arranged: ["warden-iphone-17-1"], viewer: "simulator" });
+		const json: unknown = JSON.parse(ctx.stdout.join("\n"));
+		expect(json).toEqual({ arranged: ["warden-iphone-17-1"], viewer: "simulator" });
+		expect(arrangeJsonSchema.safeParse(json).success).toBe(true);
 	});
 
 	test("no windows → says so, exit 0", async () => {
@@ -123,7 +126,9 @@ describe("warden arrange", () => {
 		});
 		ctx.env = { ...ctx.env, WARDEN_ARRANGE: "1" };
 		expect(await arrangeCommand.run(ctx)).toBe(0);
-		expect(JSON.parse(ctx.stdout.join("\n"))).toEqual({ opened: ["warden-iphone-17-1"] });
+		const opened: unknown = JSON.parse(ctx.stdout.join("\n"));
+		expect(opened).toEqual({ opened: ["warden-iphone-17-1"] });
+		expect(arrangeJsonSchema.safeParse(opened).success).toBe(true);
 		expect(calls.filter((c) => c[0] === "open")).toEqual([["open", "-g", "devices://device/open?id=U1"]]);
 	});
 

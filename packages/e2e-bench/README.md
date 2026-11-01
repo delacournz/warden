@@ -132,7 +132,7 @@ A native test name that does not map to a canonical id is a parity breach: that 
 
 | Framework | Needs |
 |---|---|
-| warden | workspace deps; iOS helper built with `bun run --cwd packages/e2e native:build` |
+| warden | workspace deps; iOS helper built with `bun run --cwd packages/driver-ios native:build` |
 | argent | `bun add -g @swmansion/argent` |
 | agent-device | `bun add -g agent-device` |
 | tester-army | `bun install` (pinned `e2e` and `@e2e-dev/mobile`), Node `^22.22.3 \|\| >=24.8`, e.g. `nvm install 24` |

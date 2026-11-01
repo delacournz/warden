@@ -8,12 +8,12 @@ dist
 .DS_Store
 coverage
 
-# @delacour/warden-e2e native build outputs
-packages/e2e/native/idb-libraries
-packages/e2e/native/dist
-packages/e2e/native/ios/.build
-packages/e2e/native/ios-runner/RunnerCore/.build
-packages/e2e/native/ios-runner/**/xcuserdata
+# @delacour/warden-driver-ios native build outputs
+packages/driver-ios/native/idb-libraries
+packages/driver-ios/native/dist
+packages/driver-ios/native/ios/.build
+packages/driver-ios/native/ios-runner/RunnerCore/.build
+packages/driver-ios/native/ios-runner/**/xcuserdata
 
 # bench output
 .bench/

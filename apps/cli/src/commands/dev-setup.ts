@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
+import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { expoInstallCommand, missingPackages } from "../expo-app";

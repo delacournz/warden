@@ -4,18 +4,19 @@
  * process never races another — a clone never sees a half-built or deleted golden.
  */
 import { join } from "node:path";
+import { withBuildLock } from "@delacour/warden-builds/lock";
+import { GOLDEN_PREFIX } from "@delacour/warden-providers/golden-name";
+import { execWithin, realTimer, type Timer } from "@delacour/warden-providers/health";
+import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "@delacour/warden-providers/ios";
+import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
+import { type Exec, type ExecOptions, execError } from "@delacour/warden-runtime/exec";
+import { readXcode } from "@delacour/warden-runtime/xcode";
+import type { PidAlive } from "@delacour/warden-store/liveness";
+import type { Store } from "@delacour/warden-store/store";
+import type { Owner } from "@delacour/warden-store/types";
+import { textError } from "@delacour/warden-types/error";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { withBuildLock } from "../builds/lock";
-import { type Exec, type ExecOptions, execError } from "../exec";
-import type { PidAlive } from "../liveness";
-import { execWithin, realTimer, type Timer } from "../providers/health";
-import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "../providers/ios";
-import { parseAllSims, type SimctlSim } from "../sims/list";
-import type { Store } from "../store";
-import type { Owner } from "../types";
-import { readXcode } from "../xcode";
 import {
-	GOLDEN_PREFIX,
 	GOLDEN_RECIPE,
 	type GoldenInputs,
 	goldenKey,
@@ -146,7 +147,7 @@ async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): 
 		lookupCreateTarget(deps.exec, profile, runtime, deps.timer),
 		readXcodeBuild(deps),
 	]);
-	if (!target.success) return target;
+	if (!target.success) return textError(target);
 	if (!xcodeBuild.success) return xcodeBuild;
 	return ok({
 		profile,
@@ -159,7 +160,9 @@ async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): 
 
 async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const out = await simctl(deps, ["list", "devices", "-j"], IOS_TIMEOUTS.listMs);
-	return out.success ? parseAllSims(out.data) : out;
+	if (!out.success) return out;
+	const sims = parseAllSims(out.data);
+	return sims.success ? sims : err(sims.error.message);
 }
 
 async function readMigration(deps: GoldenDeps, udid: string): Promise<string> {

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
+import { type PerfPlan, readPlan, updatePlan, writePlan } from "@delacour/warden-sdk/ops/perf/plan";
 import { type TestContext, testContext } from "../testing";
-import { sessionDir } from "./paths";
-import { type PerfPlan, readPlan, updatePlan, writePlan } from "./plan";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());

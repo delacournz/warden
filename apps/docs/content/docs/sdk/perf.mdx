@@ -1,0 +1,83 @@
+---
+title: Perf
+description: Profile an app from the SDK - start-up time, CPU and memory, frames, logs, crashes and recorded perf sessions, with typed results and Findings.
+icon: Gauge
+---
+
+`session.perf` is the SDK face of `warden perf`; `warden.perf` lists and reads the sessions recorded on the machine. Both run the same engine as the CLI, so a result is the CLI's `--json` `result` (see the [contracts](/docs/sdk/contracts)).
+
+```ts
+import { createWardenClient } from "@delacour/warden-sdk";
+
+await using warden = createWardenClient({ lockPolicy: "wait" });
+const [lease] = await warden.leases.claim({ platform: "android" });
+await using session = await warden.sessions.open({ lease, app: "com.acme.shop" });
+
+const startup = await session.perf.startup({ runs: 5 });
+console.log(startup.summary.cold?.medianMs, startup.findings);
+
+await session.perf.start({ all: false, metrics: true, frames: true, logs: true });
+await session.perf.mark("open cart");
+const stopped = await session.perf.stop();
+console.log(stopped.report?.summary);
+```
+
+This is `packages/sdk/examples/perf.ts`.
+
+## Observe and mutate
+
+A session holds the device lease, so the calls that change the device run: `startup` (kills and relaunches the app), `memory({ snapshot: true })`, `frames({ reset: true })`, `heap.snapshot` and `start({ relaunch: true })`. `metrics`, `logs`, `crashes`, `js` and a plain `memory` / `frames` only read. A device warden did not lease never gets a session, so it is never touched.
+
+The app is `app` on the call, else the session's `app`, else the app in the foreground. No device or app guess is ever made silently: when none is found the call throws `app_not_found`.
+
+## `session.perf`
+
+Every method takes `opts?: { signal?: AbortSignal }` and throws a `WardenError`.
+
+| Method | Returns |
+|---|---|
+| `start({ app?, metrics?, frames?, logs?, js?, react?, native?, all?, relaunch?, reset?, maxDuration? })` | `{ sessionId, dir, app, maxDurationMs, capturers, plan, launch?, next, warnings }`. Arms a detached collector. One session per device (`session_active` otherwise). None named: metrics, frames, logs. |
+| `mark(label)` | `{ sessionId, label, atMs }`. Hangs and jank in the report are tagged with the last mark before them. |
+| `stop({ analyze? })` | `{ sessionId, status, stopReason, dir, reportPath?, report, warnings }`. Stops the captures in reverse order and builds the report. |
+| `status()` | The device's running session as a row, or `null`. |
+| `startup({ app?, cold?, warm?, runs?, method? })` | `StartupResult`: runs, median and p90 per kind, marks, findings. `method` is `approx` (default) or `xctrace` on iOS; Android uses `am start -W`. |
+| `metrics({ app?, interval?, duration? })` | `MetricsResult`: min / avg / p95 / max of CPU, RSS or PSS and fps, memory growth, findings, the samples file. |
+| `memory({ app?, snapshot? })` | `MemoryResult`: Android `meminfo` categories, iOS footprint and regions; with `snapshot` an hprof or memgraph and a leak summary. |
+| `frames({ app?, reset? })` | `FramesResult`: fps, jank %, dropped and frozen frames, worst windows. iOS returns `status: "unsupported"`. |
+| `js({ app?, duration?, samplingInterval?, metro? })` | `JsResult`: a Hermes CPU profile, source-mapped hotspots. Needs a dev client and Metro. |
+| `heap.snapshot({ app?, metro? })` | `HeapSnapshotResult`: the `.heapsnapshot` file and the top constructors. Freezes the JS thread while it is taken. |
+| `heap.diff(before, after)` | `HeapDiffResult`: constructor count and size deltas between two snapshot files. |
+| `logs({ app?, level?, grep?, since?, lines? })` | `LogsResult`: redacted entries, newest last. |
+| `logs({ follow: true, ... })` | `AsyncIterable<LogEntry>`. Ends when `signal` aborts. A stream that cannot start throws. |
+| `crashes({ app?, since?, symbolicate?, dsym? })` | `CrashesResult`: crashes and ANRs with the top frames and findings. |
+
+Closing the session stops a perf session it started.
+
+```ts
+const controller = new AbortController();
+for await (const line of session.perf.logs({ follow: true, level: "warn" }, { signal: controller.signal })) {
+  console.log(line.tag, line.msg);
+  if (line.level === "E") controller.abort();
+}
+```
+
+## `warden.perf`
+
+| Method | Returns |
+|---|---|
+| `ls({ device? })` | Recorded sessions, newest first (`id`, `device`, `app`, `status`, `startedAt`, `marks`). |
+| `report(id)` | The merged `PerfReportJson` of a finished session. `id` is an id, a unique prefix or `latest`. Built from the session's files when `report.json` is missing. A running session throws `session_active`. |
+
+## Findings
+
+Every result that analyses data carries `findings`: a `Finding` has a `kind` (`startup`, `jank`, `hang`, `memory-growth`, `leak`, `crash`, `anr`, `slow-commit`, `js-hotspot`, ...), a `severity` (`critical`, `warn`, `info`), `costMs`, `evidence`, `fix` and follow-up `next` commands. `Finding` and `PerfReportJson` are exported from `@delacour/warden-sdk`.
+
+## Not in the SDK yet
+
+`warden perf doctor`, `diff`, `record`, `react`, `native` and `query` stay CLI-only. The CLI still offers `--watch` sparklines for `metrics`; the SDK returns the series summary.
+
+## Agent tools
+
+`createWardenTools({ set: "all" })` adds the read-only `perf_startup`, `perf_metrics`, `perf_memory`, `perf_logs` and `perf_crashes`. See [AI SDK tools](/docs/sdk/ai-sdk).
+
+Errors: `session_active`, `session_not_found`, `app_not_found`, `device_not_leased`, `usage`, `tool_missing`, `interrupted`, `failed`.

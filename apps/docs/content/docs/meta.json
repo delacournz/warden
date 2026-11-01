@@ -13,6 +13,8 @@
 		"...e2e",
 		"---Devices & parallel---",
 		"...devices",
+		"---SDK---",
+		"...sdk",
 		"---Benchmarks---",
 		"...bench",
 		"---Reference---",

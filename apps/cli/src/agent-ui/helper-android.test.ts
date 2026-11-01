@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DriverError } from "@delacour/warden-e2e/driver/driver.types";
-import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
+import type { RemoteClient } from "@delacour/warden-device/remote/remote-client";
+import type { DriverError } from "@delacour/warden-driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import {

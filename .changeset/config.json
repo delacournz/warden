@@ -6,7 +6,7 @@
 	"baseBranch": "develop",
 	"updateInternalDependencies": "patch",
 	"privatePackages": { "version": true, "tag": false },
-	"fixed": [["@delacour/warden", "@delacour/warden-e2e"]],
+	"fixed": [["@delacour/warden", "@delacour/warden-e2e", "@delacour/warden-sdk"]],
 	"ignore": [
 		"@delacour/warden-docs",
 		"@delacour/warden-example",
@@ -19,6 +19,19 @@
 		"@delacour/warden-signoff",
 		"@delacour/warden-smoke",
 		"@delacour/warden-release",
-		"@delacour/warden-perf"
+		"@delacour/warden-perf",
+		"@delacour/warden-builds",
+		"@delacour/warden-config",
+		"@delacour/warden-device",
+		"@delacour/warden-devtools",
+		"@delacour/warden-driver",
+		"@delacour/warden-driver-android",
+		"@delacour/warden-driver-ios",
+		"@delacour/warden-leasing",
+		"@delacour/warden-providers",
+		"@delacour/warden-runtime",
+		"@delacour/warden-screen",
+		"@delacour/warden-store",
+		"@delacour/warden-cycles"
 	]
 }

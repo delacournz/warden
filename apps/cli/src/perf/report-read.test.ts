@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type TestContext, testContext } from "../testing";
-import { sessionDir } from "./paths";
+import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
 import {
 	loadReportInput,
 	nativeBrief,
@@ -10,8 +9,9 @@ import {
 	readSessionReport,
 	reportFor,
 	writeSessionReport,
-} from "./report-read";
-import { readSession } from "./session";
+} from "@delacour/warden-sdk/ops/perf/report-read";
+import { readSession } from "@delacour/warden-sdk/ops/perf/session";
+import { type TestContext, testContext } from "../testing";
 import { fixtureText, SEED_T0, samplesJsonl, seedSession, startupJson } from "./session-fixture.testing";
 
 let ctx: TestContext | undefined;

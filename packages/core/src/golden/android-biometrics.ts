@@ -4,9 +4,9 @@
  * `dumpsys fingerprint` reports one enrolled. Slow (tens of seconds), so it runs once in the snapshot build
  * and claims start enrolled. Idempotent: an already enrolled device is left alone. Emulator serials only.
  */
+import { BIOMETRIC_FINGER_ID, BIOMETRIC_PIN } from "@delacour/warden-providers/biometrics";
+import type { Exec } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { BIOMETRIC_FINGER_ID, BIOMETRIC_PIN } from "../biometrics";
-import type { Exec } from "../exec";
 
 const SHELL_TIMEOUT_MS = 15_000;
 const DUMP_PATH = "/sdcard/warden-ui.xml";

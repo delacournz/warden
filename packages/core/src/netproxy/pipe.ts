@@ -1,5 +1,5 @@
 import type { Socket } from "node:net";
-import { sliceSize, TokenBucket } from "./shaping";
+import { sliceSize, TokenBucket } from "@delacour/warden-config/shaping";
 
 /** Bytes queued in a pipe before its source is paused (backpressure keeps shaping honest and memory flat). */
 const HIGH_WATER = 64 * 1024;

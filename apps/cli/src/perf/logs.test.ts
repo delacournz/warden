@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LogStream } from "@delacour/warden-perf/logs/pid-follow";
+import { defaultLogDeps, type LogDeps, runLogCapture } from "@delacour/warden-sdk/ops/perf/logs";
 import { createPerfCommand } from "../commands/perf";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { defaultLogDeps, type LogDeps, perfLogs, registerLogs, runLogCapture } from "./logs";
+import { perfLogs, registerLogs } from "./logs";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { wardenHome } from "@delacour/warden-core/store";
+import { wardenHome } from "@delacour/warden-store/store";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { bundleRuntime } from "../npm/e2e-runtime-pack";
 import type { BuildInfo } from "../update/build-info";
@@ -64,7 +64,6 @@ export function runtimeDir(home: string, version: string): string {
 /** The fallback preload's text: `import … from "@delacour/warden-e2e"` in any spec resolves to `index.mjs` next to it. */
 function fallbackPreloadSource(): string {
 	return `import { plugin } from "bun";
-import { join } from "node:path";
 
 plugin({
 	name: "warden-e2e-runtime",

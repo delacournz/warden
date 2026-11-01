@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { NEVER_DISABLE } from "./slim";
 import {
 	DEFAULT_SLIM_PROFILE,
 	delta,
@@ -10,7 +9,8 @@ import {
 	SLIM_CATEGORIES,
 	slimmableSet,
 	validateProfile,
-} from "./slim.profile";
+} from "@delacour/warden-config/slim.profile";
+import { NEVER_DISABLE } from "@delacour/warden-providers/slim";
 
 describe("SLIM_CATEGORIES", () => {
 	test("15 categories with unique ids", () => {

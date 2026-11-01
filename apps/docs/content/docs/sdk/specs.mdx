@@ -1,0 +1,38 @@
+---
+title: Specs
+description: List e2e suites, compute affected specs and run a suite from the SDK.
+---
+
+`warden.specs` is the SDK face of `warden e2e` and `warden affected`.
+
+```ts
+import { createWardenClient } from "@delacour/warden-sdk";
+
+await using warden = createWardenClient();
+const suites = await warden.specs.list();
+const { platforms } = await warden.specs.affected({ suite: "mobile", base: "origin/main" });
+const report = await warden.specs.run({ suite: "mobile", specs: ["chats"], retry: 1 });
+```
+
+## `specs.list({ suite?, project? })`
+
+Suites from `warden.config.ts` with their `*.e2e.ts` specs: `id`, `file`, `required`, `platforms`. `project` keeps the suites of one `projects[].name`. An unknown suite throws `not_found` (`details.suites` lists the configured ones).
+
+## `specs.affected({ suite?, base?, platform?, files?, project? })`
+
+In-process, same engine as `warden affected`: git diff vs `base` (default: the suite's), import graph, specs. Returns per platform `selected` (each with `reasons`), `skipped`, `unreached`, plus the `changes` and `warnings`. `files` replaces the git diff (paths relative to the client's working directory).
+
+## `specs.run({ suite?, specs?, all?, base?, platform?, project?, retry?, onEvent? }, { signal })`
+
+Does not reimplement the scheduler: it spawns `warden e2e <suite> --json …` and parses stdout with `e2eReportSchema` (the `e2e-report.json` contract). With neither `specs` nor `all`, the CLI selects by git diff.
+
+- A failed gate still resolves; check `report.ok`.
+- Aborting the signal kills the child and throws `interrupted`.
+- No report on stdout throws `failed` with `details.exitCode` and `details.stderr`.
+- `onEvent` receives `{ kind: "log", line }` for each line the CLI writes to stderr. There is no structured progress stream yet.
+
+### Which CLI
+
+`createWardenClient({ cliCommand })` is the argv prefix, for example `["bun", "/repo/apps/cli/src/main.ts"]`. Default: `warden` on `PATH`, else the checkout's `apps/cli/src/main.ts` under bun. If it cannot be started, the call throws `tool_missing`.
+
+Errors: `not_found` (no suite or config), `usage` (several suites and none named, project mismatch), `config_invalid`, `failed`, `interrupted`, `tool_missing`.

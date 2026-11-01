@@ -1,15 +1,15 @@
 import { existsSync, statSync } from "node:fs";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { TRACE_PROCESSOR_VERSION } from "@delacour/warden-perf/android/trace-processor.data";
-import { reportError, UI_EXIT, type UiExitCode, uiError } from "../agent-ui/output";
-import type { CommandContext } from "../context";
-import type { PerfRegister } from "./register";
 import {
 	defaultTraceProcessorDeps,
 	resolveTraceProcessor,
 	type TraceProcessorDeps,
 	traceProcessorPath,
-} from "./trace-processor";
+} from "@delacour/warden-sdk/ops/perf/trace-processor";
+import { reportError, UI_EXIT, type UiExitCode, uiError } from "../agent-ui/output";
+import type { CommandContext } from "../context";
+import type { PerfRegister } from "./register";
 
 export type PerfToolsInstallOptions = { yes?: boolean; json?: boolean };
 

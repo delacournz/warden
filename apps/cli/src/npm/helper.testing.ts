@@ -8,7 +8,7 @@ export const FAKE_HELPER_MANIFEST = {
 	builtAt: "2026-10-16T00:00:00Z",
 };
 
-/** A tree shaped like `packages/e2e/native/dist` (what `native:build` stages), with placeholder contents. */
+/** A tree shaped like `packages/driver-ios/native/dist` (what `native:build` stages), with placeholder contents. */
 export function fakeHelperDist(
 	dir: string,
 	opts: { frameworks?: string[]; guest?: boolean; manifest?: boolean; binary?: boolean; inject?: boolean } = {}

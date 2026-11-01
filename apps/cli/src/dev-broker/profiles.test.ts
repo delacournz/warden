@@ -7,7 +7,7 @@ import {
 	type FakeMetro,
 	type FakeReply,
 	startFakeMetro,
-} from "@delacour/warden-e2e/devtools/devtools.testing";
+} from "@delacour/warden-devtools/testing/devtools";
 import { buildProfile } from "@delacour/warden-perf/js/js.testing";
 import { jsErr } from "@delacour/warden-perf/js/js.types";
 import { fakeGlobal, fakeHook, fakeRenderer } from "@delacour/warden-perf/react/react.testing";

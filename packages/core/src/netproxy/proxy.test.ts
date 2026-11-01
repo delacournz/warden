@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { connect, createServer, type Server, type Socket } from "node:net";
+import { seededRng, shapingFromCondition } from "@delacour/warden-config/shaping";
 import { getProxyStatus, setProxyConditions } from "./control";
 import { type ProxyEvent, type RunningProxy, startProxy } from "./proxy";
-import { seededRng, shapingFromCondition } from "./shaping";
 
 const FAKE_HOST = "api.test";
 

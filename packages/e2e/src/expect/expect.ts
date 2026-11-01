@@ -1,8 +1,8 @@
 import { type Expect as BunExpect, expect as bunExpect, type Matchers } from "bun:test";
-import { E2eError } from "../errors";
-import { isLocator, type Locator } from "../screen/locator";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
+import { isLocator, type Locator } from "@delacour/warden-screen/locator";
+import { LocatorAssertions } from "@delacour/warden-screen/matchers";
 import { getSession, type Session } from "../session";
-import { LocatorAssertions } from "./matchers";
 
 /** Receives a failure `expect.soft` kept instead of throwing. */
 export type SoftSink = (error: E2eError) => void;

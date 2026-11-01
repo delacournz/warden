@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { graphOf, makeFixtureRepo } from "../testing/fixture.testing";
 import { openImportCache } from "./cache";
-import { graphOf, makeFixtureRepo } from "./fixture.testing";
 import {
 	chainTo,
 	createImportGraph,

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openStore } from "@delacour/warden-core/store";
-import type { Owner } from "@delacour/warden-core/types";
+import { openStore } from "@delacour/warden-store/store";
+import type { Owner } from "@delacour/warden-store/types";
 import { gcCommand } from "../commands/gc";
 import { hookCommand } from "../commands/hook";
 import { releaseCommand } from "../commands/release";
@@ -26,7 +26,7 @@ import { readState } from "./state";
  * paths are capped at 104 bytes, so everything lives under a short `/tmp/wdn-*` directory.
  */
 
-const FAKE = join(import.meta.dir, "../../../../packages/e2e/native/scripts/fake-simd.ts");
+const FAKE = join(import.meta.dir, "../../../../packages/driver-ios/native/scripts/fake-simd.ts");
 const FIXTURE = join(import.meta.dir, "helper.race-fixture.ts");
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 const me: Owner = { kind: "agent", sessionId: "me", cwd: "/w" };

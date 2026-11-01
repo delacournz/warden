@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec } from "../exec";
-import { makeSuiteRepo } from "./fixture.testing";
+import { bunExec } from "@delacour/warden-runtime/exec";
+import { makeSuiteRepo } from "../testing/fixture.testing";
 import {
 	type GraphDoc,
 	type GraphRequest,

@@ -1,6 +1,6 @@
 import { Option } from "@commander-js/extra-typings";
-import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
-import { BUILD_KINDS } from "@delacour/warden-core/builds/kinds";
+import type { InstallMode } from "@delacour/warden-config/app-option.schema";
+import { BUILD_KINDS } from "@delacour/warden-config/build-kinds";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 
 export const INSTALL_MODES = ["clean", "reinstall"] as const satisfies readonly InstallMode[];

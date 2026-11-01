@@ -1,0 +1,56 @@
+{
+	"name": "@delacour/warden-driver",
+	"version": "0.1.0",
+	"description": "warden driver contract: Driver types, errors, refs, hash settle, gesture geometry, typing, observation cache, trace spans, the helper NDJSON protocol, FakeDriver",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./alert-buttons": "./src/alert-buttons.ts",
+		"./alerts": "./src/alerts.ts",
+		"./clock-recorder": "./src/clock-recorder.ts",
+		"./conditions/condition-events": "./src/conditions/condition-events.ts",
+		"./conditions/geo": "./src/conditions/geo.ts",
+		"./conditions/gpx": "./src/conditions/gpx.ts",
+		"./conditions/location-plan": "./src/conditions/location-plan.ts",
+		"./conditions/location-scenarios.data": "./src/conditions/location-scenarios.data.ts",
+		"./conditions/route-ticker": "./src/conditions/route-ticker.ts",
+		"./conditions/scheduler": "./src/conditions/scheduler.ts",
+		"./device-settings": "./src/device-settings.ts",
+		"./driver.types": "./src/driver.types.ts",
+		"./e2e-error": "./src/e2e-error.ts",
+		"./errors": "./src/errors.ts",
+		"./gesture-geometry": "./src/gesture-geometry.ts",
+		"./helper/simd-protocol": "./src/helper/simd-protocol.ts",
+		"./helper/simd-transport": "./src/helper/simd-transport.ts",
+		"./network-proxy": "./src/network-proxy.ts",
+		"./observation-cache": "./src/observation-cache.ts",
+		"./physical-conditions": "./src/physical-conditions.ts",
+		"./refs": "./src/refs.ts",
+		"./settle": "./src/settle.ts",
+		"./testing/conformance": "./src/testing/conformance.ts",
+		"./testing/driver": "./src/driver.testing.ts",
+		"./testing/network-proxy": "./src/network-proxy.testing.ts",
+		"./trace/span": "./src/trace/span.ts",
+		"./trace/span-detail": "./src/trace/span-detail.ts",
+		"./trace/trace-event": "./src/trace/trace-event.ts",
+		"./traced-driver": "./src/traced-driver.ts",
+		"./typing": "./src/typing.ts",
+		"./unwrap": "./src/unwrap.ts",
+		"./warden-error": "./src/warden-error.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-types": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

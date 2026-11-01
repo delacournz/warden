@@ -1,6 +1,8 @@
-import { formatDuration } from "@delacour/warden-core/duration";
-import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
-import { describeOwner, ownerLocation, type Resource } from "@delacour/warden-core/types";
+import { formatDuration } from "@delacour/warden-config/duration";
+import type { LsJson } from "@delacour/warden-sdk/contracts/leases";
+import { withLeaseState } from "@delacour/warden-sdk/lease-view";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { describeOwner, ownerLocation, type Resource } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
@@ -16,16 +18,17 @@ export function describeResource(resource: Resource): string {
 	}
 }
 
+const HEADERS = ["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL", "AGE", "HEARTBEAT"];
+
 function list(ctx: CommandContext, json: boolean): number {
 	const { color } = ctx.ui;
 	const now = ctx.now();
-	const leases = ctx
-		.store()
-		.listLeases()
-		.map((lease) => ({ ...lease, state: isLeaseAlive(lease, now, processAlive) ? "alive" : "stale" }));
+	const leases: LsJson["leases"] = withLeaseState(ctx.store().listLeases(), now, processAlive);
+	const withProvider = leases.some((l) => l.provider !== undefined);
 	const rows = leases.map((l) => [
 		l.id,
 		describeResource(l.resource),
+		...(withProvider ? [l.provider ?? "bundled"] : []),
 		l.state === "alive" ? color.green(l.state) : color.yellow(l.state),
 		describeOwner(l.owner),
 		ownerLocation(l.owner) ?? "",
@@ -36,8 +39,8 @@ function list(ctx: CommandContext, json: boolean): number {
 	const text =
 		leases.length === 0
 			? color.dim("no leases")
-			: table(ctx, ["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL", "AGE", "HEARTBEAT"], rows, {
-					column: 4,
+			: table(ctx, [...HEADERS.slice(0, 2), ...(withProvider ? ["PROVIDER"] : []), ...HEADERS.slice(2)], rows, {
+					column: withProvider ? 5 : 4,
 					keep: "end",
 				});
 	const stale = leases.filter((l) => l.state === "stale").length;

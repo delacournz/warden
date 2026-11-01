@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
 import { traceProcessorPin } from "@delacour/warden-perf/android/trace-processor.data";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import { type AndroidNativeDeps, createAndroidNativeProfiler } from "@delacour/warden-sdk/ops/perf/native-android";
+import type { NativeHandle, NativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
 import { type TestContext, testContext } from "../testing";
 import type { PerfTarget } from "./device";
-import { type AndroidNativeDeps, createAndroidNativeProfiler } from "./native-android";
-import type { NativeHandle, NativeIo } from "./native-types";
 import { fakePerfDeps } from "./testing";
 
 const fixture = (n: string) => readFileSync(join(import.meta.dir, "../../../../packages/perf/fixtures", n), "utf8");

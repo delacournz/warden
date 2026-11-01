@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type FakeReply, fakePage, startFakeMetro } from "@delacour/warden-e2e/devtools/devtools.testing";
-import type { ConsoleLine, NetworkEntry } from "@delacour/warden-e2e/devtools/devtools.types";
-import { openDevtoolsFacet } from "@delacour/warden-e2e/devtools/facet";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
+import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
+import { type FakeReply, fakePage, startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
+import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import { ok } from "@delacour/warden-types/result";
-import type { DevtoolsDeps } from "../agent-ui/devtools-cli";
 import type { UiDeps } from "../agent-ui/driver";
 import { uiDir } from "../agent-ui/paths";
 import { readState, writeState } from "../agent-ui/state";

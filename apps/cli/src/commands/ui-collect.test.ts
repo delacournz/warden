@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakePage, startFakeMetro } from "@delacour/warden-e2e/devtools/devtools.testing";
+import { fakePage, startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
 import { runLazyProgram } from "../command";
 import { type TestContext, testContext } from "../testing";
 import { COMMANDS } from "./registry";

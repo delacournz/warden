@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { recordCondition } from "@delacour/warden-core/conditions/conditions";
-import type { Exec } from "@delacour/warden-core/exec";
-import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
-import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
-import type { Owner } from "@delacour/warden-core/types";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
+import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { resolveUiDevice } from "./device";

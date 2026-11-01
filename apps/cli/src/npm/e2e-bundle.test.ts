@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { bunExec } from "@delacour/warden-core/exec";
-import { UIAD_DEX } from "@delacour/warden-e2e/driver/android/uiad-dex.generated";
+import { UIAD_DEX } from "@delacour/warden-driver-android/uiad-dex.generated";
+import { bunExec } from "@delacour/warden-runtime/exec";
 
 /** Bun writes node built-ins without the `node:` prefix. */
 const BUILTINS = new Set(["fs", "fs/promises", "path", "os", "crypto", "async_hooks", "child_process", "net"]);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveSources, type SourceDeps } from "./react-source";
+import { resolveSources, type SourceDeps } from "@delacour/warden-sdk/ops/perf/react-source";
 
 const project: Record<string, string> = {
 	"/p/src/Feed.tsx":

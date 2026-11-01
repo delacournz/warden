@@ -1,4 +1,3 @@
-import { clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type {
 	A11yCondition,
 	BatteryCondition,
@@ -8,8 +7,9 @@ import type {
 	PermissionCondition,
 	PermissionName,
 	PermissionState,
-} from "@delacour/warden-core/conditions/conditions.types";
-import { appliedA11y, resolveTextSize } from "@delacour/warden-core/conditions/text-size";
+} from "@delacour/warden-config/conditions.types";
+import { appliedA11y, resolveTextSize } from "@delacour/warden-config/text-size";
+import { clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { deviceInfo, fail, recordOf, resolveDeps, withPort } from "./conditions";

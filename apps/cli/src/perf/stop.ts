@@ -1,15 +1,16 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { renderReportMarkdown } from "@delacour/warden-perf/shared/report";
+import { finalizeSession, type SessionKit, type StopOutcome } from "@delacour/warden-sdk/ops/perf/orchestrate";
+import { runningSessionFor } from "@delacour/warden-sdk/ops/perf/session";
+import { stopResult } from "@delacour/warden-sdk/ops/perf/session-ops";
 import { ok } from "@delacour/warden-types/result";
 import { type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "./device";
 import { withPerfOptions } from "./options";
-import { defaultSessionKit, finalizeSession, type SessionKit, type StopOutcome } from "./orchestrate";
-import { sessionDir } from "./paths";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
-import { runningSessionFor } from "./session";
+import { defaultSessionKit } from "./session-kit";
 
 export type PerfStopOptions = PerfOptionValues & { analyze?: boolean; yes?: boolean };
 
@@ -17,14 +18,7 @@ export type PerfStopOptions = PerfOptionValues & { analyze?: boolean; yes?: bool
 export function stoppedSuccess(ctx: CommandContext, target: PerfTarget, out: StopOutcome): UiSuccess {
 	const { session, report } = out;
 	const info = { udid: target.udid, platform: target.platform, name: target.name };
-	const result = {
-		sessionId: session.id,
-		status: session.status,
-		stopReason: session.stopReason ?? null,
-		dir: sessionDir(ctx, session.id),
-		...(out.reportPath === undefined ? {} : { reportPath: out.reportPath }),
-		report: report ?? null,
-	};
+	const result = stopResult(ctx, out);
 	const text =
 		report === undefined
 			? `stopped ${session.id}\nnext:\n  warden perf report ${session.id}`

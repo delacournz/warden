@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { recordInstall } from "@delacour/warden-core/builds/cache";
-import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
-import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
+import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
+import { recordInstall } from "@delacour/warden-store/builds-table";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { checkPhone, ownedPackages, phoneStateError } from "./phone";
 

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
-import { wardenHome } from "@delacour/warden-core/store";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import { createSession, sessionDir } from "@delacour/warden-sdk/ops/perf/session";
+import type { StartupMark } from "@delacour/warden-sdk/ops/perf/startup";
+import { wardenHome } from "@delacour/warden-store/store";
 import { type TestContext, testContext } from "../testing";
-import { createSession, sessionDir } from "./session";
-import { perfStartup, type StartupIo, type StartupMark, type StartupOptions } from "./startup";
+import { perfStartup, type StartupIo, type StartupOptions } from "./startup";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

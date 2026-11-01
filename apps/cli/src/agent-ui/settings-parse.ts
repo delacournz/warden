@@ -7,7 +7,7 @@ import {
 	type PermissionState,
 	TEXT_SIZE_NAMES,
 	type TextSize,
-} from "@delacour/warden-core/conditions/conditions.types";
+} from "@delacour/warden-config/conditions.types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 
 const STATES: readonly PermissionState[] = ["granted", "denied", "unset"];

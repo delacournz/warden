@@ -39,8 +39,10 @@
     "@types/bun": "^1.3.8",
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3",
-    "@delacour/warden-core": "workspace:*",
-    "@delacour/warden-e2e": "workspace:*"
+    "@delacour/warden-config": "workspace:*",
+    "@delacour/warden-driver": "workspace:*",
+    "@delacour/warden-e2e": "workspace:*",
+    "@delacour/warden-screen": "workspace:*"
   },
   "scripts": {
     "prebuild": "bun expo prebuild",

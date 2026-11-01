@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
-import type { KindApp } from "@delacour/warden-core/builds/ensure-kind";
-import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
-import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import type { KindApp } from "@delacour/warden-builds/ensure-kind";
+import type { Snapshot } from "@delacour/warden-driver/driver.types";
+import { el, failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import type { VideoSpec } from "@delacour/warden-sdk/ops/video";
+import { wardenErr } from "@delacour/warden-types/error";
 import type { UiDeps } from "../agent-ui/driver";
 import { readState, updateState } from "../agent-ui/state";
-import type { VideoSpec } from "../agent-ui/video";
 import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -705,7 +706,7 @@ describe("open --kind", () => {
 
 	test("an install failure is the command's error and nothing is launched", async () => {
 		const h = harness([snapshotOf(LOGIN)], {
-			ensureApp: async () => ({ success: false, error: "repack: metro exploded" }),
+			ensureApp: async () => wardenErr("failed", "repack: metro exploded"),
 		});
 		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(1);
 		expect(h.driver.callsOf("app.launch")).toEqual([]);

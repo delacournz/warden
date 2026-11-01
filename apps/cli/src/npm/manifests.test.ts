@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { e2eManifest, mainManifest, type PackageMeta, platformManifest } from "./manifests";
+import { e2eManifest, mainManifest, type PackageMeta, platformManifest, sdkManifest } from "./manifests";
 import { RELEASE_TARGETS } from "./platforms";
 
 const meta: PackageMeta = { version: "0.3.0", description: "warden CLI", license: "MIT" };
@@ -124,5 +124,50 @@ describe("e2eManifest", () => {
 		expect(Object.keys(manifest.dependencies)).toEqual(["zod"]);
 		expect(manifest.repository).toEqual({ type: "git", url: "git+https://github.com/delacournz/warden.git" });
 		expect("repository" in e2eManifest(meta, {})).toBe(false);
+	});
+});
+
+describe("sdkManifest", () => {
+	const deps = { zod: "^4.4.3" };
+	const range = ">=7.0.0 <8";
+
+	test("public lock-step package: exact optional deps on every platform package, zod dependency, ai optional peer", () => {
+		const manifest = sdkManifest(meta, deps, range);
+		expect(manifest).toMatchObject({
+			name: "@delacour/warden-sdk",
+			version: "0.3.0",
+			type: "module",
+			license: "MIT",
+			engines: { bun: ">=1.3" },
+			dependencies: { zod: "^4.4.3" },
+			peerDependencies: { ai: ">=7.0.0 <8" },
+			peerDependenciesMeta: { ai: { optional: true } },
+			publishConfig: { access: "public" },
+		});
+		expect(Object.keys(manifest.optionalDependencies)).toEqual(
+			RELEASE_TARGETS.map((target) => `@delacour/warden-${target}`)
+		);
+		expect(new Set(Object.values(manifest.optionalDependencies))).toEqual(new Set(["0.3.0"]));
+	});
+
+	test("exports: ., ./ai-sdk, ./ai-sdk/tools.schema, ./plugins, ./plugins/conformance, ./contracts, each with types; nothing internal", () => {
+		const manifest = sdkManifest(meta, deps, range);
+		expect(manifest.exports).toEqual({
+			".": { types: "./index.d.ts", default: "./index.mjs" },
+			"./ai-sdk": { types: "./ai-sdk/tools.d.ts", default: "./ai-sdk/tools.mjs" },
+			"./ai-sdk/tools.schema": { types: "./ai-sdk/tools.schema.d.ts", default: "./ai-sdk/tools.schema.mjs" },
+			"./plugins": { types: "./plugins/entry.d.ts", default: "./plugins/entry.mjs" },
+			"./plugins/conformance": { types: "./plugins/conformance.d.ts", default: "./plugins/conformance.mjs" },
+			"./contracts": { types: "./contracts/index.d.ts", default: "./contracts/index.mjs" },
+			"./package.json": "./package.json",
+		});
+		expect(manifest.files).toEqual(["*.mjs", "*.d.ts", "ai-sdk", "plugins", "contracts", "types", "LICENSE"]);
+	});
+
+	test("no workspace-private dependency leaks; repo links only with a repository", () => {
+		const manifest = sdkManifest(withRepo, deps, range);
+		expect(JSON.stringify(manifest)).not.toContain("workspace:");
+		expect(manifest.repository).toEqual({ type: "git", url: "git+https://github.com/delacournz/warden.git" });
+		expect("repository" in sdkManifest(meta, deps, range)).toBe(false);
 	});
 });

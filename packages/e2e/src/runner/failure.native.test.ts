@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Exec } from "@delacour/warden-core/exec";
-import type { NativeFs } from "../devtools/native-log";
+import type { NativeFs } from "@delacour/warden-devtools/native-log";
+import type { Exec } from "@delacour/warden-runtime/exec";
 import { captureNativeArtifacts, nativeTarget } from "./failure";
 
 const fs: NativeFs = { listReports: () => [], copy: () => {}, write: () => {} };

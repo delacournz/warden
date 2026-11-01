@@ -1,0 +1,58 @@
+{
+	"name": "@delacour/warden-device",
+	"version": "0.1.0",
+	"description": "warden device: openDriver, createApp / createDevice / device link, alert reader, traced device",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./alert-reader": "./src/alert-reader.ts",
+		"./app": "./src/app.ts",
+		"./artifacts": "./src/artifacts.ts",
+		"./conditions/device-conditions": "./src/conditions/device-conditions.ts",
+		"./conditions/lease-clock-recorder": "./src/conditions/lease-clock-recorder.ts",
+		"./conditions/lease-network-proxy": "./src/conditions/lease-network-proxy.ts",
+		"./conditions/lease-recorder": "./src/conditions/lease-recorder.ts",
+		"./conditions/lease-store": "./src/conditions/lease-store.ts",
+		"./conditions/route-ticker.main": "./src/conditions/route-ticker.main.ts",
+		"./conditions/route-ticker.spawn": "./src/conditions/route-ticker.spawn.ts",
+		"./conditions/scheduler.config": "./src/conditions/scheduler.config.ts",
+		"./conditions/scheduler.main": "./src/conditions/scheduler.main.ts",
+		"./conditions/scheduler.spawn": "./src/conditions/scheduler.spawn.ts",
+		"./conditions/scheduler.targets": "./src/conditions/scheduler.targets.ts",
+		"./device": "./src/device.ts",
+		"./device-devtools": "./src/device-devtools.ts",
+		"./device-link": "./src/device-link.ts",
+		"./fixture-session": "./src/fixture-session.ts",
+		"./open": "./src/open.ts",
+		"./perf/budgets": "./src/perf/budgets.ts",
+		"./perf/device-perf": "./src/perf/device-perf.ts",
+		"./perf/perf.types": "./src/perf/perf.types.ts",
+		"./remote/remote-client": "./src/remote/remote-client.ts",
+		"./remote/remote-protocol": "./src/remote/remote-protocol.ts",
+		"./remote/remote-server": "./src/remote/remote-server.ts",
+		"./traced-device": "./src/traced-device.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-core": "workspace:*",
+		"@delacour/warden-devtools": "workspace:*",
+		"@delacour/warden-driver": "workspace:*",
+		"@delacour/warden-driver-android": "workspace:*",
+		"@delacour/warden-driver-ios": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-screen": "workspace:*",
+		"@delacour/warden-store": "workspace:*",
+		"@delacour/warden-types": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

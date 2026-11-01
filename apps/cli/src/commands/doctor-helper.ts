@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { parseSimctlDevices } from "@delacour/warden-core/providers/ios";
-import { wardenHome } from "@delacour/warden-core/store";
-import { DOCTOR_HINT, locateHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
+import { DOCTOR_HINT, locateHelper } from "@delacour/warden-driver-ios/locate-helper";
+import { parseSimctlDevices } from "@delacour/warden-providers/ios";
+import { wardenHome } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
 import { HELPER_MANIFEST, HELPER_TARGET, type HelperInfo, parseHelperManifest } from "../npm/helper";
 import { type BuildInfo, currentBuild } from "../update/build-info";
@@ -17,7 +17,7 @@ export type HelperDeps = {
 	arch: string;
 	/** the running warden (a compiled one ships the helper next to itself) */
 	execPath: string;
-	/** `packages/e2e/src/driver/ios` of a source checkout, anchors the `native/dist` lookup */
+	/** `packages/driver-ios/src` of a source checkout, anchors the `native/dist` lookup */
 	importDir: string;
 	version: string;
 	exists: (path: string) => boolean;
@@ -74,7 +74,7 @@ function readOrUndefined(path: string): string | undefined {
 /** Where a source checkout's e2e driver lives; `/` (matches nothing) for builds without a checkout. */
 export function importDirFor(build: BuildInfo): string {
 	const sourceDir = build.channel === "release" ? undefined : build.sourceDir;
-	return sourceDir ? join(sourceDir, "packages", "e2e", "src", "driver", "ios") : "/";
+	return sourceDir ? join(sourceDir, "packages", "driver-ios", "src") : "/";
 }
 
 export function realHelperDeps(): HelperDeps {

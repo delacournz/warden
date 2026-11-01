@@ -1,24 +1,18 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { CloseInfo } from "@delacour/warden-e2e/devtools/cdp";
-import { type ConsoleCapture, createConsoleCapture } from "@delacour/warden-e2e/devtools/console";
-import type {
-	ConsoleLevel,
-	ConsoleLine,
-	Fetch,
-	NetworkEntry,
-	Sleep,
-} from "@delacour/warden-e2e/devtools/devtools.types";
-import { appendJsonl, writeJsonl } from "@delacour/warden-e2e/devtools/jsonl";
-import { attachNetwork, type NetworkCapture } from "@delacour/warden-e2e/devtools/network";
-import { readRoute } from "@delacour/warden-e2e/devtools/route";
+import type { CloseInfo } from "@delacour/warden-devtools/cdp";
+import { type ConsoleCapture, createConsoleCapture } from "@delacour/warden-devtools/console";
+import type { ConsoleLevel, ConsoleLine, Fetch, NetworkEntry, Sleep } from "@delacour/warden-devtools/devtools.types";
+import { appendJsonl, writeJsonl } from "@delacour/warden-devtools/jsonl";
+import { attachNetwork, type NetworkCapture } from "@delacour/warden-devtools/network";
+import { readRoute } from "@delacour/warden-devtools/route";
 import {
 	type ConnectDevtoolsOptions,
 	connectDevtools,
 	type DevtoolsDevice,
 	type DevtoolsSession,
-} from "@delacour/warden-e2e/devtools/session";
-import { fetchTree, formatTree } from "@delacour/warden-e2e/devtools/tree";
+} from "@delacour/warden-devtools/session";
+import { fetchTree, formatTree } from "@delacour/warden-devtools/tree";
 import { ok } from "@delacour/warden-types/result";
 import {
 	consoleQuerySchema,

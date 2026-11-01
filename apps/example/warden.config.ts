@@ -1,9 +1,4 @@
-import type {
-	WardenConfig,
-	WardenE2eSpec,
-	WardenE2eSuite,
-	WardenVariant,
-} from "@delacour/warden-core/builds/define-config";
+import type { WardenConfig, WardenE2eSpec, WardenE2eSuite, WardenVariant } from "@delacour/warden-config/define-config";
 
 /** The example app's bundle id (iOS bundle identifier and Android package). */
 const BUNDLE_ID = "nz.co.delacour.warden.example";

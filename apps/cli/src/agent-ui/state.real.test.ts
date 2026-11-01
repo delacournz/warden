@@ -2,23 +2,30 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@delacour/warden-core/store";
-import { interactiveFilter, parseUiautomatorXml } from "@delacour/warden-e2e/driver/android/uiautomator";
+import type { Element, Snapshot } from "@delacour/warden-driver/driver.types";
+import { snapshotDataSchema } from "@delacour/warden-driver/helper/simd-protocol";
+import { snapshotHash } from "@delacour/warden-driver/settle";
 import {
 	REAL_DEV_LAUNCHER_DUMP,
 	REAL_DEV_LAUNCHER_SCREEN,
-} from "@delacour/warden-e2e/driver/android/uiautomator.fixture";
-import type { Element, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { toSnapshot } from "@delacour/warden-e2e/driver/ios/normalize";
-import { snapshotDataSchema } from "@delacour/warden-e2e/driver/ios/simd-protocol";
-import { storeSnapshot } from "./snapshot";
-import { preorder, readLastSnapshot } from "./state";
+} from "@delacour/warden-driver-android/testing/uiautomator.fixture";
+import { interactiveFilter, parseUiautomatorXml } from "@delacour/warden-driver-android/uiautomator";
+import { toSnapshot } from "@delacour/warden-driver-ios/normalize";
+import { preorder } from "@delacour/warden-sdk/ops/ref-store";
+import { openStore, type Store } from "@delacour/warden-store/store";
+import { readLastSnapshot } from "./state";
+import { createFileRefStore } from "./state-stores";
 
 /**
  * `last-snapshot.json` is validated with zod when read back. These tests push the snapshots the real backends
  * produced (the golden captures `warden-simd`'s Swift tests pin, and a real uiautomator dump) through
- * `storeSnapshot` and read them back: nothing may be rejected and no field may be dropped.
+ * the file ref store and read them back: nothing may be rejected and no field may be dropped.
  */
+
+/** Store `snapshot` as the device's next generation through the CLI's file-backed ref store. */
+function storeSnapshot(ctx: ReturnType<typeof context>, udid: string, snapshot: Snapshot): { generation: number } {
+	return createFileRefStore(ctx, udid).commit({ takenAt: ctx.now(), hash: snapshotHash(snapshot), snapshot });
+}
 
 const goldens = join(
 	import.meta.dir,
@@ -27,7 +34,7 @@ const goldens = join(
 	"..",
 	"..",
 	"packages",
-	"e2e",
+	"driver-ios",
 	"native",
 	"ios",
 	"Tests",

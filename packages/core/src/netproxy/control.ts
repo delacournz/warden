@@ -1,7 +1,6 @@
+import type { ConditionsUpdate, ProxyConditions } from "@delacour/warden-config/shaping";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { z } from "zod";
-import type { HostFault } from "../conditions/conditions.types";
-import type { ProxyConditions, ShapingParams } from "./shaping";
 
 /** Where a running proxy listens and how to steer it. Persisted as JSON so another process can find it. */
 export type ProxyHandle = {
@@ -26,9 +25,6 @@ export type ProxyStats = {
 };
 
 export type ProxyStatus = ProxyConditions & { pid: number; stats: ProxyStats };
-
-/** Replace `params` and/or `faults`; an omitted field keeps its current value. */
-export type ConditionsUpdate = { params?: ShapingParams; faults?: readonly HostFault[] };
 
 const nonNegative = z.number().finite().min(0);
 

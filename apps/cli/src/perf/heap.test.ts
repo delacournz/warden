@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildHeapSnapshot, fakeCdp } from "@delacour/warden-perf/js/js.testing";
 import { jsOk } from "@delacour/warden-perf/js/js.types";
+import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { ok } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfHeapDiff, perfHeapSnapshot } from "./heap";
-import type { JsDeps } from "./js-capture";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

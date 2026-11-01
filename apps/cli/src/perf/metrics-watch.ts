@@ -1,7 +1,7 @@
-import type { Platform } from "@delacour/warden-core/types";
 import type { MetricSample } from "@delacour/warden-perf/metrics/series";
+import type { FrameRateSource } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
+import type { Platform } from "@delacour/warden-store/types";
 import type { CommandContext } from "../context";
-import type { FrameRateSource } from "./metrics-sampler";
 import { eraseLines, renderWatch, type WatchFrame } from "./render-spark";
 
 /** What a `perf metrics` run reaches the terminal and the clock through; tests inject fakes. */
@@ -31,7 +31,7 @@ function gfxinfoFps(
 ): FrameRateSource | undefined {
 	if (target.platform !== "android") return undefined;
 	return async () => {
-		const { androidFrameRate } = await import("./frames");
+		const { androidFrameRate } = await import("@delacour/warden-sdk/ops/perf/frames");
 		return (await androidFrameRate(ctx, target.udid, app))?.fps;
 	};
 }

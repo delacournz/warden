@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RepackInput, repackApp } from "@delacour/warden-core/builds/repack";
+import type { AppDeps } from "@delacour/warden-builds/prepare";
+import type { RepackInput, repackApp } from "@delacour/warden-builds/repack";
 import { err, ok } from "@delacour/warden-types/result";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import type { AppDeps } from "./app";
 import { createRepackCommand } from "./repack";
 
 let ctx: TestContext | undefined;

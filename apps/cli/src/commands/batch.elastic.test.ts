@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import type { Exec } from "@delacour/warden-core/exec";
-import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import type { Exec } from "@delacour/warden-runtime/exec";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";

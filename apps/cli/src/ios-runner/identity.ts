@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { findWardenConfig } from "@delacour/warden-core/builds/config";
-import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warden-core/ios-runner/pack";
-import type { EnsureRunnerBuildInput, RunnerBuildError } from "@delacour/warden-core/ios-runner/runner-build.types";
+import { findWardenConfig } from "@delacour/warden-builds/config";
+import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warden-builds/ios-runner/pack";
+import type { EnsureRunnerBuildInput, RunnerBuildError } from "@delacour/warden-builds/ios-runner/runner-build.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type BuildInfo, currentBuild } from "../update/build-info";
@@ -30,7 +30,7 @@ export async function expectedRunnerIdentity(
 			const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
 			return found.success ? (found.data?.config.ios ?? {}) : {};
 		})();
-	const run = deps.expected ?? (await import("@delacour/warden-core/ios-runner/build")).expectedRunnerDerivedData;
+	const run = deps.expected ?? (await import("@delacour/warden-builds/ios-runner/build")).expectedRunnerDerivedData;
 	const res = await run({
 		configTeamId: ios.teamId,
 		env: { ...ctx.env },

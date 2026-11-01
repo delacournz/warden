@@ -6,6 +6,9 @@ export const NPM_PACKAGE = "@delacour/warden";
 /** `warden e2e`'s spec API (`test`, `expect`, the preload), published in lock-step with `@delacour/warden`. */
 export const E2E_PACKAGE = "@delacour/warden-e2e";
 
+/** `createWardenClient` and friends, published in lock-step with `@delacour/warden`. */
+export const SDK_PACKAGE = "@delacour/warden-sdk";
+
 /** Every `bun build --compile` target shipped as a GitHub release asset and an npm platform package. */
 export const RELEASE_TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] as const;
 export type ReleaseTarget = (typeof RELEASE_TARGETS)[number];

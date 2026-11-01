@@ -1,8 +1,8 @@
+import { seededRng } from "@delacour/warden-config/shaping";
 import { z } from "zod";
 import { conditionsUpdateSchema } from "./control";
 import { type HandleFile, removeHandleFile, writeHandleFile } from "./handle-file";
 import { startProxy } from "./proxy";
-import { seededRng } from "./shaping";
 
 const argvSchema = z.strictObject({
 	leaseId: z.string().min(1),

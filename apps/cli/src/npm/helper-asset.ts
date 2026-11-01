@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Exec, execError } from "@delacour/warden-core/exec";
+import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_GUEST, HELPER_MANIFEST, HELPER_SUMS_ASSET } from "./helper";
 

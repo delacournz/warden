@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { PRIORITY } from "@delacour/warden-core/queue";
-import type { Owner } from "@delacour/warden-core/types";
+import { PRIORITY } from "@delacour/warden-leasing/queue";
+import { queueJsonSchema } from "@delacour/warden-sdk/contracts/queue";
+import type { Owner } from "@delacour/warden-store/types";
 import { type TestContext, testContext } from "../testing";
 import { queueCommand } from "./queue";
 
@@ -37,6 +38,7 @@ describe("warden queue", () => {
 		row(ctx, "q_new_high", PRIORITY.high, 29 * 60_000);
 		expect(await queueCommand.run(ctx)).toBe(0);
 		const out = JSON.parse(ctx.stdout.join("\n"));
+		queueJsonSchema.parse(out);
 		expect(out.queue.map((r: { id: string }) => r.id)).toEqual(["q_old_low", "q_new_high"]);
 		expect(out.queue[0]).toMatchObject({
 			position: 1,

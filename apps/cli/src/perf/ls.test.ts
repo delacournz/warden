@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@delacour/warden-core/types";
+import { createSession, stopSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
+import type { Owner } from "@delacour/warden-store/types";
 import { type TestContext, testContext } from "../testing";
 import { perfLs } from "./ls";
-import { createSession, stopSession, updateSession } from "./session";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

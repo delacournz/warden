@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
-import type { ScreenInfo } from "@delacour/warden-e2e/driver/driver.types";
-import { parsePaths, splitAmount } from "../agent-ui/gestures";
+import type { ScreenInfo } from "@delacour/warden-driver/driver.types";
+import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { parsePaths } from "@delacour/warden-sdk/ops/gestures";
+import { splitAmount } from "../agent-ui/gestures";
 import { cleanupHarnesses, doc, harness, LOGIN } from "./ui.testing";
 
 afterEach(cleanupHarnesses);

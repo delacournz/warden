@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Exec, ExecResult } from "../exec";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { enrollFingerprint, findTapTarget, isPinEntry, parseFingerprintEnrolled } from "./android-biometrics";
 
 const out = (stdout: string, exitCode = 0): ExecResult => ({ exitCode, stdout, stderr: "" });

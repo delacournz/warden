@@ -2,13 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { el, fakeDriver as scriptedDriver, snapshotOf } from "./driver/driver.testing";
-import type { Driver, DriverResult } from "./driver/driver.types";
-import { canObserve } from "./driver/observation-cache";
+import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
+import { canObserve } from "@delacour/warden-driver/observation-cache";
+import { el, fakeDriver as scriptedDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { E2eEnv } from "./env";
-import { E2eError } from "./errors";
 import type { AttemptContext } from "./runner/fixtures.types";
-import type { TraceEvent, TraceWriter } from "./runner/trace";
+import type { TraceWriter } from "./runner/trace";
 import {
 	type AttemptBinding,
 	attemptSession,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CONFIG_FILE, JSON_CONFIG_FILE, parseWardenConfig } from "../builds/config";
+import { CONFIG_FILE, JSON_CONFIG_FILE, parseWardenConfig } from "@delacour/warden-builds/config";
 import { findBatchPreset } from "./preset";
 
 let dir: string;
@@ -91,28 +91,28 @@ describe("findBatchPreset", () => {
 		write(JSON_CONFIG_FILE, {
 			batches: { a: { platform: "ios", app: { installMode: "clean", resetKeychain: true }, cmd: ["x"] } },
 		});
-		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const res = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset).toMatchObject({ app: true, installMode: "clean", resetKeychain: true });
 	});
 
 	test("legacy app: { clean: true } resolves to installMode reinstall", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: { clean: true }, cmd: ["x"] } } });
-		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const res = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset).toMatchObject({ app: true, installMode: "reinstall" });
 	});
 
 	test("app: { variant } resolves to app + variant", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: { variant: "e2e" }, cmd: ["x"] } } });
-		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const res = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset).toMatchObject({ app: true, variant: "e2e" });
 	});
 
 	test("app: true leaves installMode unset", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", app: true, cmd: ["x"] } } });
-		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const res = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset?.app).toBe(true);
 		expect(res.data.preset?.installMode).toBeUndefined();
@@ -123,8 +123,8 @@ describe("findBatchPreset", () => {
 			headless: true,
 			batches: { a: { platform: "ios", cmd: ["x"] }, b: { platform: "ios", headless: false, cmd: ["x"] } },
 		});
-		const a = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
-		const b = findBatchPreset({ start: dir, stopAt: dir, name: "b" });
+		const a = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
+		const b = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "b" });
 		if (!a.success || !b.success) throw new Error("config");
 		expect(a.data.preset?.headless).toBe(true);
 		expect(b.data.preset?.headless).toBe(false);
@@ -138,13 +138,13 @@ describe("findBatchPreset", () => {
 				b: { platform: "ios", slim: false, cmd: ["x"] },
 			},
 		});
-		const a = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
-		const b = findBatchPreset({ start: dir, stopAt: dir, name: "b" });
+		const a = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
+		const b = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "b" });
 		if (!a.success || !b.success) throw new Error("config");
 		expect(a.data.preset?.slim).toEqual({ except: ["store"] });
 		expect(b.data.preset?.slim).toBe(false);
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
-		const none = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const none = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
 		expect(none.success && none.data.preset?.slim).toBeUndefined();
 	});
 
@@ -156,8 +156,8 @@ describe("findBatchPreset", () => {
 				b: { platform: "ios", biometrics: false, cmd: ["x"] },
 			},
 		});
-		const a = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
-		const b = findBatchPreset({ start: dir, stopAt: dir, name: "b" });
+		const a = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
+		const b = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "b" });
 		if (!a.success || !b.success) throw new Error("config");
 		expect(a.data.preset?.biometrics).toBe(true);
 		expect(b.data.preset?.biometrics).toBe(false);
@@ -165,7 +165,7 @@ describe("findBatchPreset", () => {
 
 	test("headless unset everywhere → undefined", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios", cmd: ["x"] } } });
-		const res = findBatchPreset({ start: dir, stopAt: dir, name: "a" });
+		const res = findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "a" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset?.headless).toBeUndefined();
 	});
@@ -178,7 +178,7 @@ describe("findBatchPreset", () => {
 	});
 
 	test("no config → no preset, no names", () => {
-		expect(findBatchPreset({ start: dir, stopAt: dir, name: "e2e" })).toEqual({
+		expect(findBatchPreset({ env: {}, start: dir, stopAt: dir, name: "e2e" })).toEqual({
 			success: true,
 			data: { names: [] },
 		});
@@ -186,12 +186,15 @@ describe("findBatchPreset", () => {
 
 	test("unknown name → no preset, lists the names", () => {
 		write(JSON_CONFIG_FILE, { batches: { b: { platform: "ios", cmd: ["x"] }, a: { platform: "ios", cmd: ["x"] } } });
-		expect(findBatchPreset({ start: dir, name: "nope" })).toEqual({ success: true, data: { names: ["a", "b"] } });
+		expect(findBatchPreset({ env: {}, start: dir, name: "nope" })).toEqual({
+			success: true,
+			data: { names: ["a", "b"] },
+		});
 	});
 
 	test("invalid config → error", () => {
 		write(JSON_CONFIG_FILE, { batches: { a: { platform: "ios" } } });
-		const res = findBatchPreset({ start: dir, name: "a" });
+		const res = findBatchPreset({ env: {}, start: dir, name: "a" });
 		expect(res.success).toBe(false);
 	});
 
@@ -199,7 +202,7 @@ describe("findBatchPreset", () => {
 		write(JSON_CONFIG_FILE, { projects: [salientProject], batches: { e2e: salientPreset } });
 		const root = join(dir, "apps/salient/app");
 		mkdirSync(join(root, "src"), { recursive: true });
-		const res = findBatchPreset({ start: join(root, "src"), stopAt: dir, name: "e2e" });
+		const res = findBatchPreset({ env: {}, start: join(root, "src"), stopAt: dir, name: "e2e" });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.preset).toEqual({
 			name: "e2e",
@@ -240,7 +243,7 @@ describe("findBatchPreset", () => {
 			},
 		});
 		mkdirSync(join(dir, "sub"));
-		const a = findBatchPreset({ start: join(dir, "sub"), name: "a" });
+		const a = findBatchPreset({ env: {}, start: join(dir, "sub"), name: "a" });
 		if (!a.success) throw new Error(a.error);
 		expect(a.data.preset).toMatchObject({
 			cwd: dir,
@@ -251,9 +254,9 @@ describe("findBatchPreset", () => {
 			serveReady: "tcp:8081",
 		});
 		expect(a.data.preset?.projectRoot).toBeUndefined();
-		const b = findBatchPreset({ start: dir, name: "b" });
+		const b = findBatchPreset({ env: {}, start: dir, name: "b" });
 		expect(b.success && b.data.preset).toMatchObject({ jobs: { kind: "stdin" }, serveReady: "file:/abs/ready" });
-		const c = findBatchPreset({ start: dir, name: "c" });
+		const c = findBatchPreset({ env: {}, start: dir, name: "c" });
 		expect(c.success && c.data.preset?.jobs).toEqual({ kind: "list", jobs: ["j1", "j2"] });
 	});
 });

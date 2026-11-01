@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { Device } from "@delacour/warden-e2e";
-import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
-import { createScreen } from "@delacour/warden-e2e/screen/screen";
-import { staticDriver, testHost } from "@delacour/warden-e2e/screen/screen.testing";
+import { createScreen } from "@delacour/warden-screen/screen";
+import { staticDriver, testHost } from "@delacour/warden-screen/testing/screen";
 import { ids } from "./ids";
 import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, SPEC_OPTIONS } from "./steps";
 

@@ -1,17 +1,15 @@
-import { processAlive } from "@delacour/warden-core/liveness";
 import { getProxyStatus } from "@delacour/warden-core/netproxy/control";
 import { handlePath, readHandleFile } from "@delacour/warden-core/netproxy/handle-file";
 import { ensureLeaseProxy } from "@delacour/warden-core/netproxy/lease-proxy";
-import { androidTools } from "@delacour/warden-core/providers/android";
-import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-e2e/conditions/route-ticker.spawn";
-import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-e2e/conditions/scheduler.spawn";
-import { leaseClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
-import { driverErr } from "@delacour/warden-e2e/driver/errors";
-import {
-	lazyLeaseNetworkProxy,
-	leaseNetworkProxy,
-	proxyConditionsFor,
-} from "@delacour/warden-e2e/driver/network-proxy";
+import { leaseClockRecorder } from "@delacour/warden-device/conditions/lease-clock-recorder";
+import { lazyLeaseNetworkProxy, leaseNetworkProxy } from "@delacour/warden-device/conditions/lease-network-proxy";
+import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-device/conditions/route-ticker.spawn";
+import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-device/conditions/scheduler.spawn";
+import { driverErr } from "@delacour/warden-driver/errors";
+import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
+import { androidTools } from "@delacour/warden-providers/android-tools";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { processCommand } from "@delacour/warden-store/process-identity";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
@@ -20,7 +18,6 @@ import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import type { UiDevice } from "./device";
 import { driverUiError } from "./driver";
 import type { UiError } from "./output";
-import { processCommand } from "./process-identity";
 
 const GEO_FIX_MS = 10_000;
 
@@ -63,12 +60,12 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		{ applyAndroidClock },
 		{ createAndroidSettings },
 	] = await Promise.all([
-		import("@delacour/warden-e2e/driver/android/adb-session"),
-		import("@delacour/warden-e2e/driver/android/android-network"),
-		import("@delacour/warden-e2e/driver/android/android-argv"),
-		import("@delacour/warden-e2e/driver/android/android-device"),
-		import("@delacour/warden-e2e/driver/android/android-clock"),
-		import("@delacour/warden-e2e/driver/android/android-settings"),
+		import("@delacour/warden-driver-android/adb-session"),
+		import("@delacour/warden-driver-android/android-network"),
+		import("@delacour/warden-driver-android/android-argv"),
+		import("@delacour/warden-driver-android/android-device"),
+		import("@delacour/warden-driver-android/android-clock"),
+		import("@delacour/warden-driver-android/android-settings"),
 	]);
 	const serial = device.udid;
 	const { adb } = androidTools(ctx.env);

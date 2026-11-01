@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { el, snapshotOf } from "../driver/driver.testing";
+import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { coordsTarget, targetFromElement } from "./target";
 
 describe("targetFromElement", () => {

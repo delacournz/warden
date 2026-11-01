@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { buildProfile, buildSourceMap, fakeCdp } from "@delacour/warden-perf/js/js.testing";
 import { jsOk } from "@delacour/warden-perf/js/js.types";
+import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
+import { createSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
 import { ok } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfJs } from "./js";
-import type { JsDeps } from "./js-capture";
-import { createSession, updateSession } from "./session";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

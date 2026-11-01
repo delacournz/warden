@@ -1,59 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { Option } from "@commander-js/extra-typings";
-import type { InstallMode } from "@delacour/warden-core/builds/app-option.schema";
-import { appChoices, bundleIdFor, type Project } from "@delacour/warden-core/builds/config";
-import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
-import { overlayDirFor, overlayDirUnlessRepoConfig } from "@delacour/warden-core/builds/overlay";
-import {
-	DEFAULT_METRO_PORT_SPEC,
-	DEFAULT_METRO_READY_TIMEOUT,
-	DEFAULT_READY_TIMEOUT_MS,
-} from "@delacour/warden-core/config.defaults";
-import { parseDuration } from "@delacour/warden-core/duration";
-import { bunExec } from "@delacour/warden-core/exec";
-import { readGitFacts, readGitFactsSync } from "@delacour/warden-core/git-facts";
-import { isPortFree } from "@delacour/warden-core/ports";
-import type { DeviceProvider } from "@delacour/warden-core/providers/provider.types";
-import { PRIORITY } from "@delacour/warden-core/queue";
-import { wardenHome } from "@delacour/warden-core/store";
-import type { Lease, Owner, Platform } from "@delacour/warden-core/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { stopHelperAfter } from "../agent-ui/stop-helper-after";
-import { maybeAutoGc } from "../autogc";
-import { type ClaimFlagValues, parseClaimFlags, parsePlatform, resolveOwner, withClaimOptions } from "../claim-flags";
-import { type Command, defineCommand } from "../command";
-import type { CommandContext } from "../context";
-import type { Broker, BrokerOptions } from "../dev-broker/broker";
-import type { BrokerResult } from "../dev-broker/broker.types";
-import {
-	controlSocketPath,
-	type DevControlResponse,
-	type DevFeature,
-	type DevFeatures,
-	serveDevControl,
-} from "../dev-control";
-import { removeDevSession, updateDevSession, writeDevSession } from "../dev-session";
-import { parseHudInterval } from "../dev-tui/hud";
-import { releaseDevices } from "../device-lease";
-import { shutdownReleasedDevices } from "../device-shutdown";
-import { missingPackages } from "../expo-app";
-import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
-import {
-	childEnv,
-	claimAll,
-	claimRunPorts,
-	exitCodeOf,
-	FORWARDED_SIGNALS,
-	holdLeases,
-	INTERRUPTED,
-	intervalEvery,
-	type LeaseSessionDeps,
-	processOnSignal,
-	type RunEnsureApp,
-	setHeadlessEnv,
-	splitCommand,
-} from "../lease-session";
+import { appChoices, bundleIdFor, type Project } from "@delacour/warden-builds/config";
+import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import {
 	adbReverseArgv,
 	bareAppLaunchArgvs,
@@ -68,14 +17,73 @@ import {
 	metroUrl,
 	resolveExpoBin,
 	resolveNodeBin,
-} from "../metro";
+} from "@delacour/warden-builds/metro";
+import { overlayDirFor, overlayDirUnlessRepoConfig } from "@delacour/warden-builds/overlay";
+import {
+	defaultAppDeps,
+	type EnsureOptions,
+	ensureAppFor,
+	projectContextFor,
+	projectStart,
+} from "@delacour/warden-builds/prepare";
+import type { InstallMode } from "@delacour/warden-config/app-option.schema";
+import {
+	DEFAULT_METRO_PORT_SPEC,
+	DEFAULT_METRO_READY_TIMEOUT,
+	DEFAULT_READY_TIMEOUT_MS,
+} from "@delacour/warden-config/config.defaults";
+import { parseDuration } from "@delacour/warden-config/duration";
+import { providerFor } from "@delacour/warden-core/host-deps";
+import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { isPortFree } from "@delacour/warden-leasing/ports";
+import { PRIORITY } from "@delacour/warden-leasing/queue";
+import {
+	childEnv,
+	claimAll,
+	claimRunPorts,
+	exitCodeOf,
+	FORWARDED_SIGNALS,
+	holdLeases,
+	INTERRUPTED,
+	intervalEvery,
+	type LeaseSessionDeps,
+	processOnSignal,
+	type RunEnsureApp,
+	setHeadlessEnv,
+} from "@delacour/warden-leasing/session";
+import { revealSimWindow } from "@delacour/warden-leasing/sim-windows";
+import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
+import { bunExec } from "@delacour/warden-runtime/exec";
+import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
+import { wardenHome } from "@delacour/warden-store/store";
+import type { Lease, Owner, Platform } from "@delacour/warden-store/types";
+import { textError } from "@delacour/warden-types/error";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { stopHelperAfter } from "../agent-ui/stop-helper-after";
+import { maybeAutoGc } from "../autogc";
+import { type ClaimFlagValues, parseClaimFlags, parsePlatform, withClaimOptions } from "../claim-flags";
+import { type Command, defineCommand } from "../command";
+import { appHostFromContext, type CommandContext } from "../context";
+import type { Broker, BrokerOptions } from "../dev-broker/broker";
+import type { BrokerResult } from "../dev-broker/broker.types";
+import {
+	controlSocketPath,
+	type DevControlResponse,
+	type DevFeature,
+	type DevFeatures,
+	serveDevControl,
+} from "../dev-control";
+import { removeDevSession, updateDevSession, writeDevSession } from "../dev-session";
+import { parseHudInterval } from "../dev-tui/hud";
+import { missingPackages } from "../expo-app";
+import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
+import { leaseHostFromContext } from "../lease-host";
+import { splitCommand } from "../lease-options";
 import { heading, note, reportError, warn } from "../output";
-import { projectContextFor } from "../project-context";
-import { providerFor } from "../providers";
-import { revealSimWindow } from "../sim-windows";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
-import { defaultAppDeps, type EnsureOptions, ensureAppFor, projectStart } from "./app";
 import { registerDevControl } from "./dev-control";
 import { registerDevLogs } from "./dev-logs";
 import { type DevOverlay, diagnoseDev, offerDevSetup } from "./dev-setup";
@@ -228,7 +236,7 @@ async function bootHeldDevice(
 	platform: Platform,
 	deviceId: string
 ): AsyncResult<void> {
-	const provider = providerFor(platform, ctx, owner);
+	const provider = providerFor(platform, appHostFromContext(ctx), owner);
 	const inventory = await provider.inventory();
 	// only a device known to be off is booted; anything else goes on as before (the install reports it)
 	const device = inventory.success ? inventory.data.find((d) => d.id === deviceId) : undefined;
@@ -261,7 +269,7 @@ async function bootAndWait(provider: DeviceProvider, deviceId: string): AsyncRes
 		return r.kind === "ready" ? ok(undefined) : err(r.error);
 	}
 	const boot = await provider.boot(deviceId);
-	return boot.success ? provider.waitReady(deviceId, DEFAULT_READY_TIMEOUT_MS) : boot;
+	return textError(boot.success ? await provider.waitReady(deviceId, DEFAULT_READY_TIMEOUT_MS) : boot);
 }
 
 /** `--udid` / `--lease` / the caller's single device lease of `platform`; undefined = claim one. */
@@ -331,7 +339,7 @@ async function showDevice(
  * Problems are warnings, never failures.
  */
 async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[]): Promise<void> {
-	const outcome = await shutdownReleasedDevices(ctx, leases, owner);
+	const outcome = await shutdownReleasedDevices(leaseHostFromContext(ctx), leases, owner);
 	for (const id of outcome.shutdown) note(ctx, `warden dev: shut down ${id}`);
 	for (const line of outcome.notes) warn(ctx, `warden dev: ${line}`);
 }
@@ -364,7 +372,7 @@ async function openSession(
 		if (result.success) {
 			installedApp = { source: result.data.source, hash: result.data.hash };
 			appTask.ok(`${result.data.source} ${result.data.hash.slice(0, 8)}`);
-		} else appTask.fail(result.error);
+		} else appTask.fail(result.error.message);
 		return result;
 	};
 	if (held.data === undefined) {
@@ -381,7 +389,7 @@ async function openSession(
 		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
 		let showing: Promise<void> | undefined;
 		const session = await claimAll(
-			ctx,
+			leaseHostFromContext(ctx),
 			{ ...deps, ensureApp: noteInstall },
 			owner,
 			{
@@ -404,7 +412,7 @@ async function openSession(
 			"dev"
 		);
 		await showing;
-		if (!session.success) return session;
+		if (!session.success) return textError(session);
 		const { outcome, ports, leaseIds } = session.data;
 		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
 		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
@@ -426,10 +434,17 @@ async function openSession(
 		return ok({ deviceId, deviceName: outcome.claimed[0]?.device.name, app: installed(), port, leaseIds, release });
 	}
 	const deviceId = held.data;
-	const ports = await claimRunPorts(ctx, owner, [opts.port], deps.pid, deps.isPortFree, "warden dev");
-	if (!ports.success) return ports;
+	const ports = await claimRunPorts(
+		leaseHostFromContext(ctx),
+		owner,
+		[opts.port],
+		deps.pid,
+		deps.isPortFree,
+		"warden dev"
+	);
+	if (!ports.success) return textError(ports);
 	const leaseIds = ports.data.map((p) => p.leaseId);
-	const release = () => releaseDevices(ctx, leaseIds, { touch: false }).then(() => undefined);
+	const release = () => releaseDevices(leaseHostFromContext(ctx), leaseIds, { touch: false }).then(() => undefined);
 	const port = ports.data[0]?.port;
 	if (port === undefined) {
 		await release();
@@ -442,7 +457,7 @@ async function openSession(
 		return booted;
 	}
 	const showing = showDevice(ctx, ui, platform, deviceId, opts.headless === true);
-	const ensured = await noteInstall(ctx, owner, platform, deviceId, app);
+	const ensured = await noteInstall(leaseHostFromContext(ctx), owner, platform, deviceId, app);
 	await showing;
 	if (!ensured.success) {
 		await release();
@@ -476,7 +491,7 @@ async function openDevClient(
 			: err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
 	};
 	const bundle = bundleIdFor(project, platform);
-	if (!bundle.success) return bundle;
+	if (!bundle.success) return textError(bundle);
 	if (project.framework === "react-native") {
 		for (const argv of bareAppLaunchArgvs(platform, deviceId, bundle.data, port)) {
 			const step = await run(argv);
@@ -511,7 +526,7 @@ async function openDevClient(
  */
 function preflight(project: Project, platform: Platform): Result<void> {
 	const bundle = bundleIdFor(project, platform);
-	if (!bundle.success) return bundle;
+	if (!bundle.success) return textError(bundle);
 	if (project.framework === "expo" && missingPackages(project.root, ["expo-dev-client"]).length > 0)
 		return err(`expo-dev-client isn't installed in ${project.root} — run: bunx expo install expo-dev-client`);
 	return ok(undefined);
@@ -574,12 +589,12 @@ async function restartDevice(
 	r: Running,
 	headless: boolean,
 	log: (line: string) => void
-) {
+): AsyncResult<void> {
 	const { deviceId } = r.session;
-	const provider = providerFor(r.platform, ctx, r.owner);
+	const provider = providerFor(r.platform, appHostFromContext(ctx), r.owner);
 	log(`shutting down ${deviceId}`);
 	const down = await provider.shutdown(deviceId);
-	if (!down.success) return down;
+	if (!down.success) return textError(down);
 	await stopHelperAfter(ctx)(deviceId);
 	log("booting");
 	const ready = await bootAndWait(provider, deviceId);
@@ -627,12 +642,14 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 	return {
 		openClient: (log) => openDevClient(scopedCtx(ctx, log), r.platform, deviceId, r.project, r.scheme, port),
 		reinstall: async (log) => {
-			const ensured = await deps.ensureApp(scopedCtx(ctx, log), r.owner, r.platform, deviceId, {
+			const ensured = await deps.ensureApp(leaseHostFromContext(scopedCtx(ctx, log)), r.owner, r.platform, deviceId, {
 				...r.app,
 				installMode: "reinstall",
 				buildOutput: log,
 			});
-			return ensured.success ? ok({ source: ensured.data.source, hash: ensured.data.hash }) : err(ensured.error);
+			return ensured.success
+				? ok({ source: ensured.data.source, hash: ensured.data.hash })
+				: err(ensured.error.message);
 		},
 		restartSim: (log) => restartDevice(scopedCtx(ctx, log), ui, r, opts.headless === true, log),
 		restartMetro: (log) => restartMetro(scopedCtx(ctx, log), r, swap),
@@ -1299,8 +1316,8 @@ export const defaultDevDeps: DevDeps = {
 	every: intervalEvery,
 	probe: (port, projectRoot) => metroOwner(bunExec, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
-	ensureApp: (ctx, owner, platform, deviceId, opts) =>
-		ensureAppFor(ctx, defaultAppDeps, owner, platform, deviceId, opts),
+	ensureApp: (host, owner, platform, deviceId, opts) =>
+		ensureAppFor(host, defaultAppDeps, owner, platform, deviceId, opts),
 	expoBin: (projectRoot) => resolveExpoBin(projectRoot, (cmd) => Bun.which(cmd)),
 	reactNativeBin: (projectRoot) => resolveNodeBin(projectRoot, "react-native", (cmd) => Bun.which(cmd)),
 };

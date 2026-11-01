@@ -1,12 +1,13 @@
-import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
-import { isEmulatorSerial } from "@delacour/warden-core/providers/android";
-import { DEVICE_LOCKED_HINT } from "@delacour/warden-core/providers/unlock-wait";
-import { PRIORITY } from "@delacour/warden-core/queue";
-import { isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-core/types";
+import { type CallerLease, ensureCallerLease } from "@delacour/warden-leasing/device-lease";
+import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
+import { PRIORITY } from "@delacour/warden-leasing/queue";
+import { isEmulatorSerial } from "@delacour/warden-providers/android";
+import { DEVICE_LOCKED_HINT } from "@delacour/warden-providers/unlock-wait";
+import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-store/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
-import { claimWithFlags, leasePidFor, parseClaimFlags, parsePlatform, resolveOwner } from "../claim-flags";
+import { claimWithFlags, parseClaimFlags, parsePlatform } from "../claim-flags";
 import type { CommandContext } from "../context";
-import { type CallerLease, ensureCallerLease } from "../device-lease";
 import { deviceTarget } from "../hooks/claude-pretool";
 import { awaitPhonesUnlocked, isLockedClaimError, lockedClaimMessage } from "../physical-lock";
 import { AMBIGUOUS_HINT, ambiguousMessage, pickPhysical } from "../physical-pick";
@@ -150,7 +151,7 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 	if (picked.kind !== "ok")
 		return fail(uiError("failed", `claim failed: ${picked.kind === "failed" ? picked.message : "cancelled"}`));
 	const outcome = await claimWithFlags(ctx, owner, picked.flags[0] ?? parsed.data, leasePidFor(owner));
-	if (!outcome.success) return fail(claimError(outcome.error));
+	if (!outcome.success) return fail(claimError(outcome.error.message));
 	const claimed = outcome.data.claimed[0];
 	if (!claimed) return fail(uiError("failed", "claim returned no device"));
 	return ok({
@@ -241,7 +242,7 @@ async function leaseCandidate(
 	const notReady = phone.kind === "phone" ? phoneStateError(candidate.id, phone.adbState) : undefined;
 	if (notReady) return fail(notReady);
 	if (claim && (action === "reclaimed" || action === "leased")) {
-		const { undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
+		const { undoOrphansWith } = await import("@delacour/warden-core/host-deps");
 		const report = await undoOrphansWith(
 			ctx.store(),
 			{ exec: ctx.exec, env: ctx.env, now: ctx.now },

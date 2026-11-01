@@ -1,4 +1,4 @@
-import { parseSelector } from "../screen/selector";
+import { parseSelector } from "@delacour/warden-screen/selector";
 import type { RecordedStep, Recording, Target } from "./recording.schema";
 
 /**

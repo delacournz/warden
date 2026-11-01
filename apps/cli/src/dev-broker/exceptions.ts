@@ -1,4 +1,4 @@
-import type { ConsoleLine } from "@delacour/warden-e2e/devtools/devtools.types";
+import type { ConsoleLine } from "@delacour/warden-devtools/devtools.types";
 
 /** React Native's error path: a thrown error reaches the console as `console.error` from these frames. */
 const RN_REPORTERS = new Set(["reportException", "handleException"]);

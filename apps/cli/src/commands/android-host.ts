@@ -1,4 +1,4 @@
-import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { Driver } from "@delacour/warden-driver/driver.types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -48,7 +48,7 @@ async function host(ctx: CommandContext, deps: AndroidHostDeps, opts: HostOption
 		reportError(ctx, "__android-host", `cannot open ${serial}: ${opened.error}`);
 		return EXIT_ENGINE;
 	}
-	const { serveDriver } = await import("@delacour/warden-e2e/driver/remote/remote-server");
+	const { serveDriver } = await import("@delacour/warden-device/remote/remote-server");
 	let finish: () => void = () => undefined;
 	const finished = new Promise<void>((resolve) => {
 		finish = resolve;

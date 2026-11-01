@@ -1,0 +1,2771 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`warden ui golden --json status 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "status",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "conditions": [],
+        "helper": {
+          "pid": null,
+          "running": false,
+          "socket": null,
+        },
+        "lease": {
+          "action": "own",
+          "heartbeatAt": 1000000,
+          "id": "l_<id>",
+          "label": null,
+          "owner": "agent me",
+          "source": "flag",
+          "ttlMs": 36000000,
+        },
+        "recording": null,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json close 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "close",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "app": null,
+        "helper": {
+          "how": "none",
+          "stopped": false,
+        },
+        "released": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json close --app 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "close",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "app": "com.example.app",
+        "helper": {
+          "how": "none",
+          "stopped": false,
+        },
+        "released": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json snapshot 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "snapshot",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "backend": "axbridge",
+        "diff": null,
+        "elements": [
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 0,
+            },
+            "ref": "@e1",
+            "role": "other",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 50,
+            },
+            "id": "welcome",
+            "name": "Welcome",
+            "ref": "@e2",
+            "role": "text",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 100,
+            },
+            "id": "email",
+            "name": "Email",
+            "ref": "@e3",
+            "role": "textbox",
+            "value": "a@b.co",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 150,
+            },
+            "hittable": true,
+            "id": "sign-in-submit",
+            "name": "Sign in",
+            "ref": "@e4",
+            "role": "button",
+          },
+          {
+            "enabled": false,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 200,
+            },
+            "id": "cancel",
+            "name": "Cancel",
+            "ref": "@e5",
+            "role": "button",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 400,
+              "width": 350,
+              "x": 20,
+              "y": 300,
+            },
+            "id": "list",
+            "ref": "@e6",
+            "role": "list",
+          },
+        ],
+        "generation": 1,
+        "hash": "3dsv3payroncc",
+        "omitted": 0,
+        "screen": {
+          "height": 844,
+          "scale": 3,
+          "width": 390,
+        },
+        "settle": null,
+        "shown": 6,
+        "total": 6,
+        "truncated": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json snapshot -i 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "snapshot",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "backend": "axbridge",
+        "diff": null,
+        "elements": [
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 50,
+            },
+            "id": "welcome",
+            "name": "Welcome",
+            "ref": "@e2",
+            "role": "text",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 100,
+            },
+            "id": "email",
+            "name": "Email",
+            "ref": "@e3",
+            "role": "textbox",
+            "value": "a@b.co",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 150,
+            },
+            "hittable": true,
+            "id": "sign-in-submit",
+            "name": "Sign in",
+            "ref": "@e4",
+            "role": "button",
+          },
+          {
+            "enabled": false,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 200,
+            },
+            "id": "cancel",
+            "name": "Cancel",
+            "ref": "@e5",
+            "role": "button",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 400,
+              "width": 350,
+              "x": 20,
+              "y": 300,
+            },
+            "id": "list",
+            "ref": "@e6",
+            "role": "list",
+          },
+        ],
+        "generation": 1,
+        "hash": "3dsv3payroncc",
+        "omitted": 0,
+        "screen": {
+          "height": 844,
+          "scale": 3,
+          "width": 390,
+        },
+        "settle": null,
+        "shown": 5,
+        "total": 6,
+        "truncated": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json snapshot --depth 1 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "snapshot",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "backend": "axbridge",
+        "diff": null,
+        "elements": [
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 0,
+            },
+            "ref": "@e1",
+            "role": "other",
+          },
+        ],
+        "generation": 1,
+        "hash": "3dsv3payroncc",
+        "omitted": 0,
+        "screen": {
+          "height": 844,
+          "scale": 3,
+          "width": 390,
+        },
+        "settle": null,
+        "shown": 1,
+        "total": 1,
+        "truncated": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json snapshot --settle 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "snapshot",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "backend": "axbridge",
+        "diff": null,
+        "elements": [
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 0,
+            },
+            "ref": "@e1",
+            "role": "other",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 50,
+            },
+            "id": "welcome",
+            "name": "Welcome",
+            "ref": "@e2",
+            "role": "text",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 100,
+            },
+            "id": "email",
+            "name": "Email",
+            "ref": "@e3",
+            "role": "textbox",
+            "value": "a@b.co",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 150,
+            },
+            "hittable": true,
+            "id": "sign-in-submit",
+            "name": "Sign in",
+            "ref": "@e4",
+            "role": "button",
+          },
+          {
+            "enabled": false,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 200,
+            },
+            "id": "cancel",
+            "name": "Cancel",
+            "ref": "@e5",
+            "role": "button",
+          },
+          {
+            "enabled": true,
+            "frame": {
+              "height": 400,
+              "width": 350,
+              "x": 20,
+              "y": 300,
+            },
+            "id": "list",
+            "ref": "@e6",
+            "role": "list",
+          },
+        ],
+        "generation": 1,
+        "hash": "3dsv3payroncc",
+        "omitted": 0,
+        "screen": {
+          "height": 844,
+          "scale": 3,
+          "width": 390,
+        },
+        "settle": {
+          "quiet": true,
+          "waitedMs": 250,
+        },
+        "shown": 6,
+        "total": 6,
+        "truncated": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json snapshot --depth bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "snapshot",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "message": "--depth must be a positive integer, got "x"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json find id 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "find",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "count": 1,
+        "elements": [
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 100,
+            },
+            "id": "email",
+            "name": "Email",
+            "ref": "@e3",
+            "role": "textbox",
+            "value": "a@b.co",
+          },
+        ],
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json find role 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "find",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "count": 2,
+        "elements": [
+          {
+            "enabled": true,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 150,
+            },
+            "hittable": true,
+            "id": "sign-in-submit",
+            "name": "Sign in",
+            "ref": "@e4",
+            "role": "button",
+          },
+          {
+            "enabled": false,
+            "frame": {
+              "height": 44,
+              "width": 390,
+              "x": 0,
+              "y": 200,
+            },
+            "id": "cancel",
+            "name": "Cancel",
+            "ref": "@e5",
+            "role": "button",
+          },
+        ],
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json find none 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "find",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "count": 0,
+        "elements": [],
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json find bad selector 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "find",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "message": "bad selector: unknown key "colour" (expected id, label, text, role, value, editable, nth)",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json open bundle 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "open",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "open",
+        "attached": false,
+        "bundleId": "com.example.app",
+        "relaunch": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json open relaunch 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "open",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "open",
+        "attached": false,
+        "bundleId": "com.example.app",
+        "relaunch": true,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json open url 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "open",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "open",
+        "url": "myapp://settings",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json open metro 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "open",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "open the bundle id first, then the URL",
+        "message": "--metro, --relaunch, --args, --kind and --project apply to a bundle id, not a URL",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press ref 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "press",
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 172,
+          },
+          "ref": "@e4",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press ref verify 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "press",
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 172,
+          },
+          "ref": "@e4",
+        },
+        "verified": true,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press stale ref 1`] = `
+{
+  "exit": 4,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "stale_ref",
+        "hint": "run \`warden ui snapshot\` again",
+        "message": "@e99 is not in snapshot generation 2",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press no snapshot 1`] = `
+{
+  "exit": 4,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "stale_ref",
+        "hint": "run \`warden ui snapshot\` again",
+        "message": "@e4 has no snapshot to point into",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press selector 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "press",
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 172,
+          },
+          "selector": "id=sign-in-submit",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press settle 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 2,
+      "ok": true,
+      "result": {
+        "action": "press",
+        "settled": {
+          "diff": {
+            "added": [],
+            "against": 1,
+            "removed": [],
+            "unchanged": 6,
+          },
+          "quiet": true,
+          "waitedMs": 250,
+        },
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 172,
+          },
+          "ref": "@e4",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press missing 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "target_not_found",
+        "hint": "run \`warden ui snapshot -i\` to see what is on screen",
+        "message": "id=nope matched nothing",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json press point 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "press",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "press",
+        "target": {
+          "point": {
+            "x": 120,
+            "y": 340,
+          },
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json tap selector 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "tap",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "press",
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 172,
+          },
+          "selector": "id=sign-in-submit",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json fill 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "fill",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "failed",
+        "details": {
+          "expected": "new@x.co",
+          "held": "a@b.co",
+        },
+        "message": "fill did not take: expected "new@x.co" but the field holds "a@b.co"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json fill no-verify 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "fill",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "fill",
+        "characters": 1,
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 122,
+          },
+          "selector": "id=email",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json fill secure 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "fill",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "fill",
+        "characters": 14,
+        "secure": true,
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 122,
+          },
+          "selector": "id=email",
+        },
+        "verified": "unconfirmed",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json fill usage 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "fill",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "warden ui fill <target> <text>",
+        "message": "fill needs a target and the text",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json fill point 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "fill",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "fill",
+        "characters": 3,
+        "target": {
+          "point": {
+            "x": 50,
+            "y": 60,
+          },
+        },
+        "verified": "unconfirmed",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json type 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "type",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "type",
+        "characters": 5,
+        "submitted": true,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json key 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "key",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "key",
+        "key": "Enter",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json key unknown 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "key",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "one of Enter, Backspace, Tab, Space, Escape, Delete, Up, Down, Left, Right",
+        "message": "unknown key "f13"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json scroll down 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "scroll",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "scroll",
+        "amount": 0.5,
+        "direction": "down",
+        "swipes": 1,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json scroll amount in 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "scroll",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "scroll",
+        "amount": 0.25,
+        "direction": "down",
+        "swipes": 1,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json scroll until missing 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "scroll",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "target_not_found",
+        "details": {
+          "swipes": 2,
+        },
+        "hint": "raise --max, scroll the other way, or check the selector with \`warden ui find\`",
+        "message": "id=far not on screen after 2 scrolls",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json scroll until present 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "scroll",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "scroll",
+        "amount": 0.5,
+        "direction": "down",
+        "swipes": 0,
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 122,
+          },
+          "ref": "@e3",
+          "selector": "id=email",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json scroll bad direction 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "scroll",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "up, down, left or right",
+        "message": "unknown direction "sideways"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json alert get 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "alert",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "alert",
+        "alert": null,
+        "buttons": [],
+        "present": false,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json alert accept 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "alert",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "no_alert",
+        "hint": "\`warden ui alert get\` reads it (an empty buttons list means none)",
+        "message": "no alert is showing to accept",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json alert bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "alert",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "accept, dismiss or get",
+        "message": "unknown alert action "maybe"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json home 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "home",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "home",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json back 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "back",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "failed",
+        "message": "device.back() is Android only: iOS has no back key",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen rotate read 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen rotate",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "screen-rotate",
+        "orientation": "portrait",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen rotate set 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen rotate",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "screen-rotate",
+        "orientation": "landscapeLeft",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen rotate bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen rotate",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "portrait, portrait-upside-down, landscape-left or landscape-right",
+        "message": "unknown orientation "sideways"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen appearance read 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen appearance",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "screen-appearance",
+        "appearance": "light",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen appearance set 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen appearance",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "screen-appearance",
+        "appearance": "dark",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen appearance bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen appearance",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "light or dark",
+        "message": "unknown appearance "blue"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen screenshot default 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen screenshot",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "screen-screenshot",
+        "path": "<HOME>/ui/0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D/shots/001.png",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json screen screenshot path 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen screenshot",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "screen-screenshot",
+        "path": "<HOME>/out/shot.png",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture swipe dir 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture swipe",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-swipe",
+        "from": {
+          "x": 195,
+          "y": 633,
+        },
+        "to": {
+          "x": 195,
+          "y": 211,
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture swipe points 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture swipe",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-swipe",
+        "from": {
+          "x": 10,
+          "y": 20,
+        },
+        "to": {
+          "x": 30,
+          "y": 40,
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture swipe from 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture swipe",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-swipe",
+        "from": {
+          "x": 282.5,
+          "y": 500,
+        },
+        "to": {
+          "x": 107.5,
+          "y": 500,
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture swipe bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture swipe",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "warden ui gesture swipe <up|down|left|right> | warden ui gesture swipe x1 y1 x2 y2",
+        "message": "swipe needs a direction or four coordinates",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture longpress 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture longpress",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-longpress",
+        "durationMs": 0,
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 122,
+          },
+          "selector": "id=email",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture longpress point 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture longpress",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-longpress",
+        "durationMs": 0,
+        "target": {
+          "point": {
+            "x": 100,
+            "y": 200,
+          },
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture pinch screen 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture pinch",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-pinch",
+        "center": {
+          "x": 195,
+          "y": 422,
+        },
+        "durationMs": 0,
+        "radius": 78,
+        "scale": 2,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture pinch target 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture pinch",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-pinch",
+        "center": {
+          "x": 195,
+          "y": 500,
+        },
+        "durationMs": 0,
+        "radius": 140,
+        "scale": 0.5,
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 500,
+          },
+          "selector": "id=list",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture pinch bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture pinch",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "warden ui gesture pinch [@eN|selector|x y] <scale>",
+        "message": "the scale must be between 0.1 and 10 and not 1, got "1"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture rotate 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture rotate",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-rotate",
+        "center": {
+          "x": 195,
+          "y": 422,
+        },
+        "degrees": 45,
+        "durationMs": 0,
+        "radius": 117,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture rotate target 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture rotate",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-rotate",
+        "center": {
+          "x": 195,
+          "y": 500,
+        },
+        "degrees": -45,
+        "durationMs": 0,
+        "radius": 105,
+        "target": {
+          "point": {
+            "x": 195,
+            "y": 500,
+          },
+          "selector": "id=list",
+        },
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture rotate bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture rotate",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "warden ui gesture rotate [@eN|selector|x y] <degrees>",
+        "message": "the degrees must be non-zero and at most 720 either way, got "0"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture path one 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture path",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-path",
+        "durationMs": 0,
+        "fingers": 1,
+        "paths": [
+          [
+            {
+              "x": 10,
+              "y": 20,
+            },
+            {
+              "x": 100,
+              "y": 200,
+            },
+            {
+              "x": 150,
+              "y": 50,
+            },
+          ],
+        ],
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture path two 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture path",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "gesture-path",
+        "durationMs": 0,
+        "fingers": 2,
+        "paths": [
+          [
+            {
+              "x": 1,
+              "y": 1,
+            },
+            {
+              "x": 9,
+              "y": 9,
+            },
+          ],
+          [
+            {
+              "x": 5,
+              "y": 5,
+            },
+            {
+              "x": 8,
+              "y": 8,
+            },
+          ],
+        ],
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json gesture path none 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "gesture path",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "warden ui gesture path --path 'x,y x,y …' [--path 'x,y x,y …']",
+        "message": "gesture path takes one or two --path (one per finger), got 0",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json wait visible 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "wait",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "element": {
+          "enabled": true,
+          "frame": {
+            "height": 44,
+            "width": 390,
+            "x": 0,
+            "y": 100,
+          },
+          "id": "email",
+          "name": "Email",
+          "ref": "@e3",
+          "role": "textbox",
+          "value": "a@b.co",
+        },
+        "matched": true,
+        "ref": "@e3",
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json wait timeout 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "wait",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "wait_target_absent",
+        "details": {
+          "matched": false,
+          "reason": "wait_target_absent",
+          "waitedMs": 250,
+        },
+        "hint": "\`warden ui snapshot -i\` shows what is on screen; --timeout <ms> waits longer",
+        "message": "id=continue did not appear within 250 ms",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json wait absent 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "wait",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "matched": true,
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json wait absent present 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "wait",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "wait_target_present",
+        "details": {
+          "matched": false,
+          "reason": "wait_target_present",
+          "waitedMs": 250,
+        },
+        "hint": "\`warden ui snapshot -i\` shows what is on screen; --timeout <ms> waits longer",
+        "message": "id=email still visible after 250 ms",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json wait text 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "wait",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "element": {
+          "enabled": true,
+          "frame": {
+            "height": 44,
+            "width": 390,
+            "x": 0,
+            "y": 50,
+          },
+          "id": "welcome",
+          "name": "Welcome",
+          "ref": "@e2",
+          "role": "text",
+        },
+        "matched": true,
+        "ref": "@e2",
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json wait stable 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "wait",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "generation": 1,
+      "ok": true,
+      "result": {
+        "matched": true,
+        "waitedMs": 300,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json wait bad 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "wait",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "wait <selector> | absent <selector> | text "…" | stable [ms]",
+        "message": "bad selector: unknown key "colour" (expected id, label, text, role, value, editable, nth)",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json is true 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "is",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "element": {
+          "enabled": true,
+          "frame": {
+            "height": 44,
+            "width": 390,
+            "x": 0,
+            "y": 100,
+          },
+          "id": "email",
+          "name": "Email",
+          "role": "textbox",
+          "value": "a@b.co",
+        },
+        "matched": true,
+        "state": "visible",
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json is false 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "is",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "element": {
+          "enabled": false,
+          "frame": {
+            "height": 44,
+            "width": 390,
+            "x": 0,
+            "y": 200,
+          },
+          "id": "cancel",
+          "name": "Cancel",
+          "role": "button",
+        },
+        "matched": false,
+        "reason": "not_enabled",
+        "state": "enabled",
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json is missing 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "is",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "matched": false,
+        "reason": "target_absent",
+        "state": "visible",
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json is bad state 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "is",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "message": "is needs a selector and a state: visible|hittable|enabled|checked|selected|focused",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json get text 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "get",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "element": {
+          "enabled": true,
+          "frame": {
+            "height": 44,
+            "width": 390,
+            "x": 0,
+            "y": 100,
+          },
+          "id": "email",
+          "name": "Email",
+          "role": "textbox",
+          "value": "a@b.co",
+        },
+        "matched": true,
+        "property": "value",
+        "value": "a@b.co",
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json get frame 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "get",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "element": {
+          "enabled": true,
+          "frame": {
+            "height": 44,
+            "width": 390,
+            "x": 0,
+            "y": 150,
+          },
+          "hittable": true,
+          "id": "sign-in-submit",
+          "name": "Sign in",
+          "role": "button",
+        },
+        "matched": true,
+        "property": "frame",
+        "value": {
+          "height": 44,
+          "width": 390,
+          "x": 0,
+          "y": 150,
+        },
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json get count 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "get",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "matched": true,
+        "property": "count",
+        "value": 2,
+        "waitedMs": 0,
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json get missing 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "get",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "target_not_found",
+        "hint": "run \`warden ui snapshot -i\` to see what is on screen",
+        "message": "id=nope matched nothing",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json get bad prop 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "get",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "message": "get needs a selector and a property: text|value|label|id|role|frame|count",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json eval no metro 1`] = `
+{
+  "exit": 3,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "eval",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "devtools_unavailable",
+        "hint": "start the dev client with \`warden ui open <bundle> --metro <url>\`",
+        "message": "no Metro found for this device: a release build, or the dev client was never pointed at one",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json tree no metro 1`] = `
+{
+  "exit": 3,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "tree",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "devtools_unavailable",
+        "hint": "start the dev client with \`warden ui open <bundle> --metro <url>\`",
+        "message": "no Metro found for this device: a release build, or the dev client was never pointed at one",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json logs no metro 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "logs",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "run \`warden ui logs start\` first",
+        "message": "no console log yet",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json logs mark 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "logs",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "logs",
+        "mark": "x",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json network no metro 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "network",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "run \`warden ui logs start\` first",
+        "message": "no network log yet",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json reload no metro 1`] = `
+{
+  "exit": 3,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "reload",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "devtools_unavailable",
+        "hint": "start the dev client with \`warden ui open <bundle> --metro <url>\`",
+        "message": "no Metro found for this device: a release build, or the dev client was never pointed at one",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json video start fake 1`] = `
+{
+  "exit": 0,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen video",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "durationMs": 0,
+      "ok": true,
+      "result": {
+        "action": "video",
+        "path": "<HOME>/ui/0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D/videos/001.mp4",
+        "pid": 4242,
+        "state": "recording",
+      },
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json video stop idle 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen video",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "\`warden ui screen video start\` first",
+        "message": "not recording",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;
+
+exports[`warden ui golden --json video bad action 1`] = `
+{
+  "exit": 1,
+  "stderr": [],
+  "stdout": [
+    {
+      "command": "screen video",
+      "device": {
+        "name": "sim",
+        "platform": "ios",
+        "udid": "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D",
+      },
+      "error": {
+        "code": "usage",
+        "hint": "start [path] or stop",
+        "message": "unknown video action "pause"",
+      },
+      "ok": false,
+    },
+  ],
+}
+`;

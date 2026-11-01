@@ -4,9 +4,9 @@ import type {
 	LocationScenario,
 	NetworkCondition,
 	NetworkPreset,
-} from "@delacour/warden-core/conditions/conditions.types";
-import { NETWORK_PRESET_NAMES, NETWORK_PRESETS } from "@delacour/warden-core/conditions/network.presets";
-import { parseDuration } from "@delacour/warden-core/duration";
+} from "@delacour/warden-config/conditions.types";
+import { parseDuration } from "@delacour/warden-config/duration";
+import { NETWORK_PRESET_NAMES, NETWORK_PRESETS } from "@delacour/warden-config/network.presets";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "./output";
 

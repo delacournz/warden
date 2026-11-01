@@ -1,8 +1,6 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { androidTools } from "@delacour/warden-core/providers/android";
-import { wardenHome } from "@delacour/warden-core/store";
 import { parsePackageFlags } from "@delacour/warden-perf/shared/app-detect";
 import {
 	parseAdbVersion,
@@ -11,6 +9,8 @@ import {
 	parseXctraceVersion,
 	xctraceDeviceDeadlock,
 } from "@delacour/warden-perf/shared/doctor-parse";
+import { androidTools } from "@delacour/warden-providers/android-tools";
+import { wardenHome } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
 import { emit } from "../output";
 import { SYMBOLS } from "../ui";

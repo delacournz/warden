@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { E2eError } from "../../errors";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { afterEach, describe, test } from "../../index";
 import { setRunnerTiming } from "../attempt";
 import type { Screen } from "../fixtures.types";

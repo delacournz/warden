@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { runAutoStop, untilCap } from "@delacour/warden-sdk/ops/perf/auto-stop";
+import { createSession, readSession, stopSession } from "@delacour/warden-sdk/ops/perf/session";
 import { type TestContext, testContext } from "../testing";
-import { runAutoStop, untilCap } from "./auto-stop";
-import { createSession, readSession, stopSession } from "./session";
 import { fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

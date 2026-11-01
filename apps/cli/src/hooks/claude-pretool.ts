@@ -1,7 +1,7 @@
-import type { PidAlive } from "@delacour/warden-core/liveness";
-import type { Store } from "@delacour/warden-core/store";
-import type { AgentOwner, Lease, Owner, Platform } from "@delacour/warden-core/types";
-import { releaseDevices } from "../device-lease";
+import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import type { PidAlive } from "@delacour/warden-store/liveness";
+import type { Store } from "@delacour/warden-store/store";
+import type { AgentOwner, Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { errorMessage, isRecord, stringField } from "./json";
 
 /** Claude Code hook outcome: exit 0 = allow, 2 = block (stderr is shown to the model). */

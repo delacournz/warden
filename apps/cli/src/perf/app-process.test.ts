@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { appPid, iosAppBundle } from "@delacour/warden-sdk/ops/perf/app-process";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { appPid, iosAppBundle } from "./app-process";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());

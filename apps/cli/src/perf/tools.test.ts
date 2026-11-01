@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { TraceProcessorPin } from "@delacour/warden-perf/android/trace-processor.data";
+import { type TraceProcessorDeps, traceProcessorPath } from "@delacour/warden-sdk/ops/perf/trace-processor";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { perfToolsInstall } from "./tools";
-import { type TraceProcessorDeps, traceProcessorPath } from "./trace-processor";
 
 const PAYLOAD = new TextEncoder().encode("fake-binary".repeat(100));
 const PIN: TraceProcessorPin = {

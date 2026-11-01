@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ReactTree } from "@delacour/warden-e2e/devtools/devtools.types";
+import type { ReactTree } from "@delacour/warden-devtools/devtools.types";
 import { filterTree } from "./tree-filter";
 
 const tree: ReactTree = {

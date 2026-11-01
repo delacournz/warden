@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { conditionsOf } from "./conditions/device-conditions";
-import { createDevice, type Device } from "./device";
-import { el, fakeDriver, snapshotOf } from "./driver/driver.testing";
+import { conditionsOf } from "@delacour/warden-device/conditions/device-conditions";
+import type { Device } from "@delacour/warden-device/device";
+import type { FixtureSession } from "@delacour/warden-device/fixture-session";
+import { traceDevice } from "@delacour/warden-device/traced-device";
+import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { runSpan, type SpanRunner } from "@delacour/warden-driver/trace/span";
+import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { E2eEnv } from "./env";
-import type { FixtureSession } from "./fixture-session";
-import { runSpan, type SpanRunner } from "./runner/span";
-import type { TraceEvent } from "./runner/trace";
-import { traceDevice } from "./traced-device";
+import { deviceFor as createDevice } from "./fixtures";
 
 const env: E2eEnv = {
 	udid: "UDID",

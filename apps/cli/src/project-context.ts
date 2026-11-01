@@ -1,4 +1,4 @@
-import { type ProjectContext, type ProjectContextInput, projectContext } from "@delacour/warden-core/builds/ensure";
+import { type ProjectContext, type ProjectContextInput, projectContext } from "@delacour/warden-builds/ensure";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 

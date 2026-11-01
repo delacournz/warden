@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
-import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
+import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-config/slim.profile";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
 	devicectlEntry,
 	devicectlJson,
 	FAKE_IPHONE_UDID,
-} from "@delacour/warden-core/providers/devicectl.fixtures";
-import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
-import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-core/sims/slim.profile";
+} from "@delacour/warden-providers/devicectl.fixtures";
+import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
+import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { claimJsonSchema } from "@delacour/warden-sdk/contracts/claim";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { fakeExec, type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
@@ -28,6 +29,7 @@ describe("warden claim", () => {
 		const c = setup(["ios", "--json", "--label", "e2e"]);
 		expect(await claimCommand.run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
+		claimJsonSchema.parse(out);
 		expect(out.udids).toEqual(["U2"]);
 		expect(out.leases[0]).toMatchObject({ udid: "U2", name: "warden-iphone-17-2", action: "reuse", label: "e2e" });
 		const [lease] = c.db.listLeases();

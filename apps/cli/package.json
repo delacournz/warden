@@ -20,14 +20,28 @@
 		"test": "bun test --timeout 20000",
 		"build:release": "bun scripts/build.ts --channel release",
 		"build:npm": "bun scripts/npm-packages.ts",
+		"build:npm:sdk": "bun scripts/npm-packages.ts --sdk-only",
 		"build:helper-asset": "bun scripts/helper-asset.ts"
 	},
 	"dependencies": {
 		"@clack/prompts": "^1.8.1",
 		"@commander-js/extra-typings": "^15.0.0",
+		"@delacour/warden-builds": "workspace:*",
+		"@delacour/warden-config": "workspace:*",
 		"@delacour/warden-core": "workspace:*",
+		"@delacour/warden-device": "workspace:*",
+		"@delacour/warden-devtools": "workspace:*",
+		"@delacour/warden-driver": "workspace:*",
+		"@delacour/warden-driver-android": "workspace:*",
+		"@delacour/warden-driver-ios": "workspace:*",
 		"@delacour/warden-e2e": "workspace:*",
+		"@delacour/warden-leasing": "workspace:*",
 		"@delacour/warden-perf": "workspace:*",
+		"@delacour/warden-providers": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-screen": "workspace:*",
+		"@delacour/warden-sdk": "workspace:*",
+		"@delacour/warden-store": "workspace:*",
 		"@delacour/warden-types": "workspace:*",
 		"@modelcontextprotocol/sdk": "1.32.2",
 		"@xterm/headless": "6",
@@ -37,7 +51,9 @@
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
+		"@arethetypeswrong/cli": "0.18.5",
 		"@delacour/warden-tsconfig": "workspace:*",
+		"publint": "0.3.25",
 		"typescript": "^5.9.3"
 	}
 }

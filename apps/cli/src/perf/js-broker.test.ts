@@ -3,13 +3,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hotspots } from "@delacour/warden-perf/js/hotspots";
+import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { ok } from "@delacour/warden-types/result";
 import { brokerErr } from "../dev-broker/broker.types";
 import { type BrokerServer, serveBroker } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
 import { type TestContext, testContext } from "../testing";
 import { perfJs } from "./js";
-import type { JsDeps } from "./js-capture";
 import { asMe, fakePerfDeps } from "./testing";
 
 const cleanup: Array<() => unknown> = [];

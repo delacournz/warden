@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { JSON_CONFIG_FILE } from "@delacour/warden-core/builds/config";
-import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-core/exec";
-import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { JSON_CONFIG_FILE } from "@delacour/warden-builds/config";
+import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-runtime/exec";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
@@ -588,14 +588,14 @@ describe("warden batch", () => {
 		c.ui = ui;
 		const h = harness();
 		let asked = 0;
-		h.deps.ensureApp = async (ctx, _owner, _platform, deviceId, opts) => {
+		h.deps.ensureApp = async (host, _owner, _platform, deviceId, opts) => {
 			// the first device builds; the second waits on that build; both install once it is done
 			if (asked++ === 0) {
 				opts.onPhase?.({ phase: "building", platform: "ios", hash: "b1fee19abc" });
 			} else opts.onPhase?.({ phase: "waiting" });
 			await Bun.sleep(5);
 			opts.onPhase?.({ phase: "installing" });
-			ctx.err(`installing on ${deviceId}`);
+			host.log?.({ kind: "progress", phase: "raw", message: `installing on ${deviceId}` });
 			opts.onPhase?.({ phase: "ready" });
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
@@ -604,7 +604,7 @@ describe("warden batch", () => {
 		const install = ui.events.findIndex((e) => e.includes("installing on"));
 		expect(leased).toBeGreaterThan(-1);
 		expect(leased).toBeLessThan(install);
-		const building = ui.events.findIndex((e) => e === "spin: building the ios app (fingerprint b1fee19)…");
+		const building = ui.events.indexOf("spin: building the ios app (fingerprint b1fee19)…");
 		const installing = ui.events.findIndex((e) => e.startsWith("spin: installing the app on"));
 		expect(building).toBeGreaterThan(leased);
 		expect(installing).toBeGreaterThan(building);

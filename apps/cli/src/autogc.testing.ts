@@ -1,5 +1,5 @@
-import type { Exec } from "@delacour/warden-core/exec";
-import type { Store } from "@delacour/warden-core/store";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import type { Store } from "@delacour/warden-store/store";
 import { AUTO_GC_META_KEY } from "./autogc";
 
 /**

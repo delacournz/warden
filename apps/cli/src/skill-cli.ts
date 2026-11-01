@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { wardenHome } from "@delacour/warden-core/store";
+import { wardenHome } from "@delacour/warden-store/store";
 import type { CommandContext } from "./context";
 import { SKILL_FILES, SKILL_NAME, SKILL_PATHS } from "./skill";
 

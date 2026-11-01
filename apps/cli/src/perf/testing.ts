@@ -1,10 +1,10 @@
-import type { Owner } from "@delacour/warden-core/types";
+import type { SessionDeps } from "@delacour/warden-sdk/ops/perf/session";
+import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
 import type { TestContext } from "../testing";
 import type { BootedDevice } from "./device";
 import type { PerfHostDeps } from "./host";
 import type { PerfDeps } from "./run";
-import type { SessionDeps } from "./session";
 
 export type FakePerfDeps = PerfDeps & {
 	session: SessionDeps & { alive: Set<number>; commands: Map<number, string>; killed: Array<[number, string]> };

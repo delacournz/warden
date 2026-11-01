@@ -1,6 +1,7 @@
 import { basename, relative } from "node:path";
+import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import { readResults, type TestResult as WardenTestResult } from "@delacour/warden-e2e/runner/results";
-import { readTrace, type TraceEvent } from "@delacour/warden-e2e/runner/trace";
+import { readTrace } from "@delacour/warden-e2e/runner/trace";
 import type { StepResult, TestResult } from "../../results/schema";
 
 /** One test from `results.jsonl`, before the manifest maps its name to a canonical id. */

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readConditionEvents } from "../conditions/condition-events";
+import { readConditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 import { readResults, type TestResult } from "./results";
 import { readTrace } from "./trace";
 

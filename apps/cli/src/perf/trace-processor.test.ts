@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { type TraceProcessorPin, traceProcessorFileName } from "@delacour/warden-perf/android/trace-processor.data";
-import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import {
 	downloadTraceProcessor,
 	resolveTraceProcessor,
 	type TraceProcessorDeps,
 	traceProcessorPath,
-} from "./trace-processor";
+} from "@delacour/warden-sdk/ops/perf/trace-processor";
+import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 
 const PAYLOAD = new TextEncoder().encode("#!fake trace_processor_shell\n".repeat(50));
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");

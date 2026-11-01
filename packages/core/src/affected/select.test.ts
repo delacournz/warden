@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import type { Platform } from "../types";
-import { type E2eSuiteConfig, e2eSuiteSchema } from "./affected.schema";
-import { graphOf, makeFixtureRepo } from "./fixture.testing";
+import { type E2eSuiteConfig, e2eSuiteSchema } from "@delacour/warden-config/affected.schema";
+import type { Platform } from "@delacour/warden-store/types";
+import { graphOf, makeFixtureRepo } from "../testing/fixture.testing";
 import type { ChangedFile } from "./git";
 import { type Reason, selectSpecs } from "./select";
 import { scanSpecs } from "./specs";

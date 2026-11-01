@@ -1,54 +1,15 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DumpRoute } from "@delacour/warden-e2e/driver/android/android-dump";
-import type { Element, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import type { Element, Snapshot } from "@delacour/warden-driver/driver.types";
+import type { DumpRoute } from "@delacour/warden-driver-android/android-dump";
+import type { HelperRecord } from "@delacour/warden-driver-ios/helper-state";
+import type { RecordingPointer, RecordingTarget } from "@delacour/warden-sdk/ops/authoring/pointer";
+import { preorder, type StoredSnapshot } from "@delacour/warden-sdk/ops/ref-store";
 import { z } from "zod";
 import type { CommandContext } from "../context";
 import { uiDir } from "./paths";
 
-/**
- * The device's resident `warden-simd`: its pid and socket, plus what it was started with. `binary` is the helper
- * executable (realpath + mtime) and `env` a hash of the `WARDEN_SIMD_*` environment it inherited: when either differs
- * at the next use the helper is replaced, not reused (unless `lease`, the lease it was spawned under, is still the
- * device's lease: a run never has its own helper replaced). `owner` is the lease owner at spawn (`ownerKey`), kept for
- * reference only. Fields are absent on records written by an older warden, which are not guessed at.
- */
-export type HelperRecord = {
-	pid: number;
-	socket: string;
-	owner?: string;
-	binary?: { path: string; mtimeMs: number };
-	env?: string;
-	lease?: string;
-};
-
-/** Where a finished recording goes: a spec file, or an exported function in a helpers module. */
-export type RecordingTarget =
-	| { kind: "spec"; path: string }
-	| { kind: "helper"; path: string; fn: string; prerequisite?: string };
-
-/**
- * The recording in progress (`warden ui record start`). The steps live in the journal at `recordingFile`; this is
- * where `record stop` writes them. `wrote` is set once stop has written the target, so a second stop after a failed
- * verify replaces its own file instead of refusing it as foreign.
- */
-export type RecordingPointer = {
-	name: string;
-	title?: string;
-	target: RecordingTarget;
-	/** ids module (`export const ids = { … } as const`) to merge test ids into */
-	ids?: string;
-	/** `--suite`: the `e2e.<name>` suite `record stop` verifies in */
-	suite?: string;
-	/** `--options <module#name>`: the shared `test.use` object to pass (module absolute); `"none"` = `--options none`, pass nothing. Absent = detect at stop */
-	options?: { module: string; name: string } | "none";
-	startedAt: number;
-	/** `record start --overwrite`: `stop` may replace the target without being asked again */
-	overwrite?: true;
-	wrote?: true;
-	/** route capture (dev client only): the route seen last, the one at `record start`, and consecutive failed reads (capture stops after a few) */
-	routes?: { initial?: string; last?: string; misses?: number };
-};
+export type { HelperRecord, RecordingPointer, RecordingTarget };
 
 /** `state.json`. `generation` bumps only on `snapshot`, `snapshot --settle` and `find`. */
 export type UiState = {
@@ -69,14 +30,6 @@ export type UiState = {
 	/** the device's active `warden perf` session: one per device, whoever owns the lease */
 	perf?: { sessionId: string };
 	updatedAt: number;
-};
-
-/** `last-snapshot.json`: the tree the `@eN` refs of `generation` point into. `takenAt` is `ctx.now()` ms. */
-export type StoredSnapshot = {
-	generation: number;
-	takenAt: number;
-	hash: string;
-	snapshot: Snapshot;
 };
 
 /** On disk `flat` is dropped (it aliases `elements`) and rebuilt on load. */
@@ -194,10 +147,6 @@ function readJson(path: string): unknown {
 	} catch {
 		return undefined;
 	}
-}
-
-export function preorder(elements: readonly Element[]): Element[] {
-	return elements.flatMap((element) => [element, ...preorder(element.children)]);
 }
 
 const generationKey = (udid: string): string => `ui_generation:${udid}`;

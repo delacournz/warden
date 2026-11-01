@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ExecResult } from "@delacour/warden-core/exec";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { fakeExec } from "../testing";
 
 type Handler = [prefix: string, result: Partial<ExecResult>];

@@ -13,7 +13,7 @@ import {
 	runJsCapture,
 	startJsProfile,
 	stopJsProfile,
-} from "./js-capture";
+} from "@delacour/warden-sdk/ops/perf/js-capture";
 
 const dirs: string[] = [];
 afterEach(() => {

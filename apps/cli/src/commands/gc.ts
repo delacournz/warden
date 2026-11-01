@@ -1,26 +1,27 @@
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-core/builds/builds.defaults";
-import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-core/builds/prune";
-import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
-import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
-import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
-import { staleShutdownBlock } from "@delacour/warden-core/shutdown-policy";
-import { type DeviceRecord, wardenHome } from "@delacour/warden-core/store";
-import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-core/types";
+import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-builds/builds.defaults";
+import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-builds/prune";
+import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
+import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import { androidSnapshotPass, providerFor } from "@delacour/warden-core/host-deps";
+import { mapBounded } from "@delacour/warden-leasing/bounded";
+import { closeSimWindowsAfter } from "@delacour/warden-leasing/close-sim-windows-after";
+import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { staleShutdownBlock } from "@delacour/warden-leasing/shutdown-policy";
+import type { GcJson } from "@delacour/warden-sdk/contracts/gc";
+import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
+import { type DeviceRecord, wardenHome } from "@delacour/warden-store/store";
+import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
-import { mapBounded } from "../bounded";
-import { resolveOwner } from "../claim-flags";
-import { closeSimWindowsAfter } from "../close-sim-windows-after";
 import { defineCommand } from "../command";
-import type { CommandContext } from "../context";
-import { releaseDevices } from "../device-lease";
-import { shutdownReleasedDevices } from "../device-shutdown";
-import { androidSnapshotPass } from "../golden-deps";
+import { appHostFromContext, type CommandContext } from "../context";
+import { leaseHostFromContext } from "../lease-host";
 import { emit, heading, plural, reportError } from "../output";
-import { providerFor } from "../providers";
 import { hasForegroundApp } from "../running-apps";
 import { withSpinner } from "../spinner-context";
 
@@ -40,7 +41,8 @@ type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
 
 /** Conditions a deleted lease left on devices nobody holds now are undone; a failed reset stays for the next pass. */
 async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<string>): Promise<string[]> {
-	const { orphanedDevices, undoOrphansWith } = await import("@delacour/warden-core/conditions/orphans");
+	const { orphanedDevices } = await import("@delacour/warden-core/conditions/orphans");
+	const { undoOrphansWith } = await import("@delacour/warden-core/host-deps");
 	const notes: string[] = [];
 	for (const device of orphanedDevices(ctx.store())) {
 		if (leased.has(`${device.platform}:${device.id}`)) continue;
@@ -96,10 +98,10 @@ async function gcPlatform(
 	const outcome: PlatformOutcome = { shutdown: [], forgotten: [], notes: [] };
 	const records = ctx.store().listDevices(platform);
 	if (records.length === 0) return outcome;
-	const provider = providerFor(platform, ctx, owner);
+	const provider = providerFor(platform, appHostFromContext(ctx), owner);
 	const inventory = await provider.inventory();
 	if (!inventory.success) {
-		outcome.notes.push(`${platform}: skipped (${inventory.error})`);
+		outcome.notes.push(`${platform}: skipped (${inventory.error.message})`);
 		return outcome;
 	}
 	const booted = new Set(
@@ -130,7 +132,7 @@ async function gcPlatform(
 	for (const { record, result } of results) {
 		if (result === undefined) outcome.notes.push(`${record.name}: in use again, left running`);
 		else if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
-		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error}`);
+		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error.message}`);
 	}
 	await closeShutDownWindows(ctx, platform, outcome);
 	return outcome;
@@ -255,7 +257,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const stale = store.listLeases().filter((l) => l.resource.kind === "device" && !isLeaseAlive(l, now, processAlive));
 	const shutDownIdle = async (sctx: CommandContext): Promise<GcOutcome> => {
 		// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
-		const orphaned = await shutdownReleasedDevices(sctx, stale, owner, async (lease) => {
+		const orphaned = await shutdownReleasedDevices(leaseHostFromContext(sctx), stale, owner, async (lease) => {
 			const r = lease.resource;
 			if (r.kind !== "device") return undefined;
 			return (
@@ -291,7 +293,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		const plan: GcPlan = { now, idleMs: idle.data, leased };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
 		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
-		const snapshotNotes = await androidSnapshotPass(sctx, owner);
+		const snapshotNotes = await androidSnapshotPass(appHostFromContext(sctx), owner);
 		return {
 			reclaimed,
 			shutdown: [
@@ -330,7 +332,8 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			: []),
 		...notes.map((n) => color.yellow(n)),
 	].join("\n");
-	emit(ctx, opts.json === true, { reclaimed, shutdown, forgotten, notes }, text);
+	const doc: GcJson = { reclaimed, shutdown, forgotten, notes };
+	emit(ctx, opts.json === true, doc, text);
 	return 0;
 }
 

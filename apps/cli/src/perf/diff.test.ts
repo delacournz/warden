@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
 import { type TestContext, testContext } from "../testing";
 import { perfDiff } from "./diff";
-import { sessionDir } from "./paths";
 import { SEED_T0, samplesJsonl, seedSession, startupJson } from "./session-fixture.testing";
 
 let ctx: TestContext | undefined;

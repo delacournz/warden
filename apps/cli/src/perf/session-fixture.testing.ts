@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
-import { sessionDir } from "./paths";
+import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
 
 /** `packages/perf/fixtures/<name>` as text. */
 export const fixtureText = (name: string): string =>

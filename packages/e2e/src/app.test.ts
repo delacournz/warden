@@ -1,13 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { createApp } from "./app";
-import { devtoolsErr } from "./devtools/devtools.types";
-import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
-import type { Platform, Snapshot } from "./driver/driver.types";
-import { cacheObservations } from "./driver/observation-cache";
+import { devtoolsErr } from "@delacour/warden-devtools/devtools.types";
+import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
+import { cacheObservations } from "@delacour/warden-driver/observation-cache";
+import {
+	type ElementSpec,
+	el,
+	type FakeDriver,
+	failWith,
+	fakeDriver,
+	snapshotOf,
+} from "@delacour/warden-driver/testing/driver";
+import { createScreen } from "@delacour/warden-screen/screen";
+import { testHost } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
-import { E2eError } from "./errors";
-import { createScreen } from "./screen/screen";
-import { testHost } from "./screen/screen.testing";
+import { appFor as createApp } from "./fixtures";
 
 const baseEnv: E2eEnv = {
 	udid: "UDID",

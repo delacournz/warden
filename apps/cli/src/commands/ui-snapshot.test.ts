@@ -1,12 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-	type ElementSpec,
-	el,
-	type FakeDriver,
-	fakeDriver,
-	snapshotOf,
-} from "@delacour/warden-e2e/driver/driver.testing";
-import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import type { Snapshot } from "@delacour/warden-driver/driver.types";
+import { type ElementSpec, el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { ok } from "@delacour/warden-types/result";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { readLastSnapshot, readState } from "../agent-ui/state";

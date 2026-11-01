@@ -6,15 +6,23 @@ import {
 	maxConcurrent,
 	totalCost,
 	ZERO_COST,
-} from "@delacour/warden-core/capacity";
-import type { InventoryDevice, Platform } from "@delacour/warden-core/types";
-import { CAPACITY_PLATFORMS, capacityEnabled, hostInventoryOf, pressureOf, readCapacityBasis } from "../capacity-deps";
-import { resolveOwner } from "../claim-flags";
+} from "@delacour/warden-leasing/capacity";
+import {
+	CAPACITY_PLATFORMS,
+	capacityEnabled,
+	hostInventoryOf,
+	pressureOf,
+	readCapacityBasis,
+} from "@delacour/warden-leasing/capacity-deps";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import type { CapacityJson } from "@delacour/warden-sdk/contracts/capacity";
+import type { InventoryDevice, Platform } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
+import { leaseHostFromContext } from "../lease-host";
 import { emit, table } from "../output";
 
-type PlatformUsage = { booted: number; warden: number; foreign: number; memMb: number; units: number };
+type PlatformUsage = CapacityJson["usage"]["ios"];
 
 const MB_PER_GB = 1024;
 
@@ -40,10 +48,10 @@ function usageOf(
 /** `warden capacity`: what the machine can run, what is running, and why a claim would queue. */
 async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const enabled = capacityEnabled(ctx.env);
-	const basis = await readCapacityBasis(ctx);
+	const basis = await readCapacityBasis(leaseHostFromContext(ctx));
 	const { host, budget, config } = basis;
 	const owner = resolveOwner(ctx);
-	const inventory = await hostInventoryOf(ctx, owner)();
+	const inventory = await hostInventoryOf(leaseHostFromContext(ctx), owner)();
 	const devices = inventory.success ? inventory.data : [];
 	const pressure = await pressureOf(ctx)();
 	const costs = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, deviceCost(p, config)])) as Record<Platform, Cost>;
@@ -74,7 +82,7 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const why = explain(verdict, used, budget);
 	const cpuLimit = Math.min(budget.cpu, budget.maxUnits);
 
-	const data = {
+	const data: CapacityJson = {
 		enabled,
 		host: {
 			os: host.os,

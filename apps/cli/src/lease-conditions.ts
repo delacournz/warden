@@ -1,9 +1,9 @@
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
 import { undoConditions } from "@delacour/warden-core/conditions/undo";
-import { bunExec, type Exec } from "@delacour/warden-core/exec";
-import { processAlive } from "@delacour/warden-core/liveness";
-import type { Store } from "@delacour/warden-core/store";
-import type { Lease } from "@delacour/warden-core/types";
+import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { processAlive } from "@delacour/warden-store/liveness";
+import type { Store } from "@delacour/warden-store/store";
+import type { Lease } from "@delacour/warden-store/types";
 
 /** What undoing a lease's conditions needs from a command/hook context; `exec` and `env` default to the real ones. */
 export type ConditionHost = {

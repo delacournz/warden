@@ -1,5 +1,12 @@
 import { HELPER_BINARY, HELPER_TARGET, type HelperInfo, helperFiles, type StagedHelper } from "./helper";
-import { E2E_PACKAGE, NPM_PACKAGE, platformPackageName, RELEASE_TARGETS, type ReleaseTarget } from "./platforms";
+import {
+	E2E_PACKAGE,
+	NPM_PACKAGE,
+	platformPackageName,
+	RELEASE_TARGETS,
+	type ReleaseTarget,
+	SDK_PACKAGE,
+} from "./platforms";
 
 /**
  * Fields every published package shares, taken from `apps/cli/package.json`. `repository`
@@ -56,6 +63,46 @@ export type E2eManifest = RepoLinks & {
 	engines: { bun: string };
 	publishConfig: PublishConfig;
 };
+
+export type SdkManifest = RepoLinks & {
+	name: string;
+	version: string;
+	description: string;
+	license: string;
+	type: "module";
+	keywords: string[];
+	exports: Record<string, string | { types: string; default: string }>;
+	files: string[];
+	/** third-party runtime imports the bundle leaves external (`zod`) */
+	dependencies: Record<string, string>;
+	/** the Vercel AI SDK, needed only by `./ai-sdk` */
+	peerDependencies: Record<string, string>;
+	peerDependenciesMeta: Record<string, { optional: true }>;
+	/** every platform package at the exact version, so `warden-simd` (darwin-arm64) is installed next to the SDK */
+	optionalDependencies: Record<string, string>;
+	engines: { bun: string };
+	publishConfig: PublishConfig;
+};
+
+/** Where the bundled SDK lands in `@delacour/warden-sdk`, by export key. `source` is relative to `packages/sdk/src`. */
+export const SDK_ENTRIES = {
+	".": { source: "index.ts", js: "index.mjs", types: "index.d.ts" },
+	"./ai-sdk": { source: "ai-sdk/tools.ts", js: "ai-sdk/tools.mjs", types: "ai-sdk/tools.d.ts" },
+	"./ai-sdk/tools.schema": {
+		source: "ai-sdk/tools.schema.ts",
+		js: "ai-sdk/tools.schema.mjs",
+		types: "ai-sdk/tools.schema.d.ts",
+	},
+	"./plugins": { source: "plugins/entry.ts", js: "plugins/entry.mjs", types: "plugins/entry.d.ts" },
+	"./plugins/conformance": {
+		source: "plugins/conformance.ts",
+		js: "plugins/conformance.mjs",
+		types: "plugins/conformance.d.ts",
+	},
+	"./contracts": { source: "contracts/index.ts", js: "contracts/index.mjs", types: "contracts/index.d.ts" },
+} as const;
+/** Declaration files the SDK entry `.d.ts` re-export. */
+export const SDK_TYPES_DIR = "types";
 
 /** Where the bundled spec API lands in `@delacour/warden-e2e`, with its declarations. */
 export const E2E_ENTRIES = {
@@ -166,6 +213,44 @@ export function e2eManifest(meta: PackageMeta, dependencies: Record<string, stri
 		files: ["*.mjs", "*.d.ts", E2E_TYPES_DIR, LICENSE_FILE],
 		peerDependencies: { [NPM_PACKAGE]: meta.version },
 		dependencies,
+		engines: { bun: ">=1.3" },
+		publishConfig: { access: "public" },
+	};
+}
+
+/**
+ * `@delacour/warden-sdk`: `createWardenClient` (`.`), the Vercel AI SDK tools (`./ai-sdk`), provider plugins
+ * (`./plugins`) and the zod `--json` contracts (`./contracts`), bundled from `packages/sdk`: the workspace-private
+ * packages are inlined, `zod` stays a dependency and `ai` an optional peer. `optionalDependencies` pin every platform
+ * package at the exact version so the iOS helper (`warden-simd`, shipped by `@delacour/warden-darwin-arm64`) resolves
+ * from the SDK's own install location. Bun only (`bun:sqlite`, `Bun.spawn`), like `@delacour/warden-e2e`.
+ */
+export function sdkManifest(meta: PackageMeta, dependencies: Record<string, string>, aiRange: string): SdkManifest {
+	return {
+		name: SDK_PACKAGE,
+		version: meta.version,
+		description:
+			"TypeScript SDK for warden: lease iOS simulators and Android emulators and drive apps from code or an AI agent",
+		license: meta.license,
+		...repoLinks(meta.repository),
+		type: "module",
+		keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "ai-sdk", "bun", "sdk"],
+		exports: {
+			...Object.fromEntries(
+				Object.entries(SDK_ENTRIES).map(([key, entry]) => [
+					key,
+					{ types: `./${entry.types}`, default: `./${entry.js}` },
+				])
+			),
+			"./package.json": "./package.json",
+		},
+		files: ["*.mjs", "*.d.ts", "ai-sdk", "plugins", "contracts", SDK_TYPES_DIR, LICENSE_FILE],
+		dependencies,
+		peerDependencies: { ai: aiRange },
+		peerDependenciesMeta: { ai: { optional: true } },
+		optionalDependencies: Object.fromEntries(
+			RELEASE_TARGETS.map((target) => [platformPackageName(target), meta.version])
+		),
 		engines: { bun: ">=1.3" },
 		publishConfig: { access: "public" },
 	};

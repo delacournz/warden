@@ -1,6 +1,6 @@
-import type { HostFault } from "../conditions/conditions.types";
+import type { HostFault } from "@delacour/warden-config/conditions.types";
+import { delayMs, faultFor, type ProxyConditions, type Rng } from "@delacour/warden-config/shaping";
 import type { ProxyEvent } from "./proxy";
-import { delayMs, faultFor, type ProxyConditions, type Rng } from "./shaping";
 
 /** What to do with one request once its target host is known. */
 export type Verdict = {

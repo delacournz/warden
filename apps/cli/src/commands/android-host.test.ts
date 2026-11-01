@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
-import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
-import { connectRemoteDriver } from "@delacour/warden-e2e/driver/remote/remote-client";
+import { connectRemoteDriver } from "@delacour/warden-device/remote/remote-client";
+import type { Driver } from "@delacour/warden-driver/driver.types";
+import { el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { createAndroidHostCommand } from "./android-host";

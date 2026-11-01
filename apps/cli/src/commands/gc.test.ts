@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { listBuilds, storeArtifact } from "@delacour/warden-core/builds/cache";
+import { storeArtifact } from "@delacour/warden-builds/cache";
 import { recordCondition } from "@delacour/warden-core/conditions/conditions";
-import type { Exec } from "@delacour/warden-core/exec";
-import type { Owner } from "@delacour/warden-core/types";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import { gcJsonSchema } from "@delacour/warden-sdk/contracts/gc";
+import { listBuilds } from "@delacour/warden-store/builds-table";
+import type { Owner } from "@delacour/warden-store/types";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { gcCommand } from "./gc";
@@ -52,6 +54,7 @@ describe("warden gc", () => {
 		const c = setup(["--json"], calls);
 		expect(await gcCommand.run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
+		gcJsonSchema.parse(out);
 		expect(out.reclaimed).toHaveLength(1);
 		expect(out.shutdown).toEqual([{ platform: "ios", id: "U1", name: "warden-iphone-17-1" }]);
 		const shutdowns = calls.filter((x) => x[1] === "simctl" && x[2] === "shutdown").map((x) => x[3]);
@@ -177,6 +180,7 @@ describe("warden gc", () => {
 		);
 		expect(await gcCommand.run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
+		gcJsonSchema.parse(out);
 		expect(out.shutdown.map((d: { id: string }) => d.id)).toContain("F");
 		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).toContain("F");
 	});
@@ -199,6 +203,7 @@ describe("warden gc", () => {
 		staleF(c, NOW - 5 * 60_000 - 60_000);
 		expect(await gcCommand.run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
+		gcJsonSchema.parse(out);
 		expect(out.reclaimed.length).toBe(2);
 		expect(c.db.listLeases().map((l) => l.resource)).not.toContainEqual(expect.objectContaining({ id: "F" }));
 		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).not.toContain("F");
@@ -267,6 +272,7 @@ describe("warden gc: build cache prune (17-11)", () => {
 		).toEqual(["mid", "new"]);
 		expect(existsSync(old)).toBe(false);
 		const out = JSON.parse(c.stdout.join("\n"));
+		gcJsonSchema.parse(out);
 		expect(out.notes.join("\n")).toContain("pruned 1 cached build");
 	});
 
@@ -308,6 +314,7 @@ describe("warden gc: build cache prune (17-11)", () => {
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(listBuilds(c.db)).toHaveLength(1);
 		const out = JSON.parse(c.stdout.join("\n"));
+		gcJsonSchema.parse(out);
 		expect(out.reclaimed).toHaveLength(1);
 		expect(out.notes.join("\n")).toContain("WARDEN_MAX_CACHE_SIZE");
 		expect(out.notes.join("\n")).toContain("build cache prune skipped");
@@ -371,6 +378,7 @@ describe("warden gc: parallel shutdown", () => {
 		const wanted = idle.map((s) => s.udid).sort();
 		expect([...slow.order].sort()).toEqual(wanted);
 		const out = JSON.parse(c.stdout.join("\n"));
+		gcJsonSchema.parse(out);
 		expect(out.shutdown.map((d: { id: string }) => d.id)).toEqual(idle.map((s) => s.udid).sort());
 		expect(calls.filter((x) => x[2] === "shutdown").map((x) => x[3])).toHaveLength(idle.length);
 	});
@@ -391,6 +399,7 @@ describe("warden gc: parallel shutdown", () => {
 		c.exec = slow.exec;
 		expect(await gcCommand.run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
+		gcJsonSchema.parse(out);
 		expect(out.shutdown.map((d: { id: string }) => d.id)).toEqual(
 			idle
 				.map((s) => s.udid)

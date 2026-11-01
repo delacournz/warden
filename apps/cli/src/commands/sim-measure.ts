@@ -1,5 +1,6 @@
-import { parseSimctlDevices } from "@delacour/warden-core/providers/ios";
 import { measureSims, type SimMeasurement } from "@delacour/warden-core/sims/slim.measure";
+import { parseSimctlDevices } from "@delacour/warden-providers/ios";
+import { textError } from "@delacour/warden-types/error";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
@@ -17,7 +18,7 @@ async function bootedUdids(ctx: CommandContext): AsyncResult<string[]> {
 	const res = await ctx.exec(["xcrun", "simctl", "list", "devices", "booted", "-j"]);
 	if (res.exitCode !== 0) return err(`simctl list devices: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
 	const devices = parseSimctlDevices(res.stdout);
-	if (!devices.success) return devices;
+	if (!devices.success) return textError(devices);
 	return ok(devices.data.filter((d) => d.state === "booted").map((d) => d.id));
 }
 

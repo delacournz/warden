@@ -1,0 +1,79 @@
+---
+title: TypeScript SDK
+description: "@delacour/warden-sdk - lease simulators and emulators, install builds and drive apps from TypeScript, a Vercel AI SDK agent or any tool that shells out."
+icon: Braces
+---
+
+`@delacour/warden-sdk` is the `warden` CLI as a typed library. Everything the CLI does for an agent (claim a device, build and install the app, read the screen, tap, type, read the console) is a method on one client, with typed results, typed errors and leases that cannot leak.
+
+## Why
+
+- **One lease registry.** The client uses the same `~/.warden/warden.db` as the CLI, so a script, a Claude session and a human sharing the Mac never get the same simulator.
+- **Typed end to end.** Every method takes and returns plain objects. Failures are a thrown [`WardenError`](/docs/sdk/client-api#errors) with a `code`, a `hint` and whether the device was touched (`dispatched`), so a caller knows if a retry is safe.
+- **Leases cannot leak.** The client and the session are `AsyncDisposable`: leave the `await using` scope and the session closes and the leases are released.
+- **Built to be wrapped.** An [AI SDK tool set](/docs/sdk/ai-sdk), zod [contracts](/docs/sdk/contracts) for every `--json` output, and [plugins](/docs/sdk/plugins) for device farms.
+
+## Install
+
+```bash
+bun add @delacour/warden-sdk
+```
+
+- **Bun only (v1).** The package uses `bun:sqlite` and `Bun.spawn`, like [`@delacour/warden-e2e`](/docs/guides/specs). It declares `engines.bun`. Add `"types": ["bun"]` to your `tsconfig.json`.
+- **Same version as the CLI.** The SDK, `@delacour/warden` and `@delacour/warden-e2e` are released in lock-step. Keep them equal: a store written by a newer warden is refused with `store_incompatible` (run `warden update`).
+- **iOS needs no extra install.** The SDK depends on `@delacour/warden-<os>-<cpu>`, whose `bin` ships the `warden-simd` helper on Apple Silicon; the driver finds it there after `WARDEN_SIMD`, `WARDEN_HELPER_DIR`, the executable's directory, a source build and `$WARDEN_HOME/simd`.
+- **Optional peers.** `ai` (`>=7 <8`) only for [`/ai-sdk`](/docs/sdk/ai-sdk). `zod` is a dependency.
+
+## Quickstart
+
+Claim a simulator, install the app, drive it, and let `await using` release everything. This is `packages/sdk/examples/quickstart.ts`.
+
+```ts
+import { createWardenClient, isWardenError } from "@delacour/warden-sdk";
+
+async function main(): Promise<void> {
+  await using warden = createWardenClient({ label: "qa-ios", lockPolicy: "wait" });
+
+  const [lease] = await warden.leases.claim({ platform: "ios", profile: "iphone-17-pro", count: 1 });
+  if (!lease) throw new Error("no lease returned");
+  await warden.apps.ensure({ lease, project: "." }); // fingerprint build cache, then install
+
+  await using session = await warden.sessions.open({ lease, app: "com.acme.app" });
+  await session.apps.open();
+  const snap = await session.capture.snapshot({ interactiveOnly: true }); // refs @e1, @e2, ...
+  await session.interactions.fill({ selector: "id=email", text: "a@b.co" });
+  await session.interactions.press({ ref: "@e3" });
+  await session.capture.screenshot({ path: "out.png", scale: 0.5 });
+  const logs = await session.devtools.console({ since: snap.takenAt });
+  console.log(`${snap.elements.length} elements, ${logs.length} console lines`);
+  // leaving scope: the session closes, the lease is released
+}
+
+main().catch((error: unknown) => {
+  if (isWardenError(error)) console.error(`${error.code}: ${error.message}${error.hint ? ` (${error.hint})` : ""}`);
+  else console.error(error);
+  process.exit(1);
+});
+```
+
+`lockPolicy: "wait"` queues behind a device someone else holds; `"reject"` fails fast with `device_busy`. The client only ever acts on devices it leased: it never shuts down, erases or installs on a device warden did not create or lease.
+
+## Entry points
+
+| Import | What |
+|---|---|
+| `@delacour/warden-sdk` | `createWardenClient`, `WardenError`, `isWardenError` and every public type. See [Client API](/docs/sdk/client-api) |
+| `@delacour/warden-sdk/ai-sdk` | `createWardenTools`: the tools for a Vercel AI SDK agent. See [AI SDK](/docs/sdk/ai-sdk) |
+| `@delacour/warden-sdk/ai-sdk/tools.schema` | the tool input schemas and descriptions, with no `ai` import (reusable by an MCP server) |
+| `@delacour/warden-sdk/plugins` | `defineProvider` and the `Driver` / `DeviceProvider` contracts. See [Plugins](/docs/sdk/plugins) |
+| `@delacour/warden-sdk/contracts` | zod schemas of every `warden ... --json` output. See [Contracts](/docs/sdk/contracts) |
+
+Nothing else is public: the packages behind the SDK (`warden-leasing`, `warden-driver`, ...) are bundled into it.
+
+<Cards>
+  <Card title="Client API" href="/docs/sdk/client-api" />
+  <Card title="AI SDK" href="/docs/sdk/ai-sdk" />
+  <Card title="Build an integration" href="/docs/sdk/build-an-integration" />
+  <Card title="Plugins" href="/docs/sdk/plugins" />
+  <Card title="Contracts" href="/docs/sdk/contracts" />
+</Cards>

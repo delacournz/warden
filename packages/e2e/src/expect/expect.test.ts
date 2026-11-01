@@ -1,12 +1,12 @@
 import type { Matchers } from "bun:test";
 import { expect as bun, describe, test } from "bun:test";
-import { el } from "../driver/driver.testing";
-import { E2eError } from "../errors";
-import type { Locator } from "../screen/locator";
-import { createScreen } from "../screen/screen";
-import { staticDriver, testHost } from "../screen/screen.testing";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
+import { el } from "@delacour/warden-driver/testing/driver";
+import type { Locator } from "@delacour/warden-screen/locator";
+import { LocatorAssertions } from "@delacour/warden-screen/matchers";
+import { createScreen } from "@delacour/warden-screen/screen";
+import { staticDriver, testHost } from "@delacour/warden-screen/testing/screen";
 import { createExpect, expect, softSinkFor } from "./expect";
-import { LocatorAssertions } from "./matchers";
 
 function screenWithButton() {
 	const host = testHost(staticDriver([el("button", { id: "x", label: "b" })]), { assertionTimeoutMs: 200 });

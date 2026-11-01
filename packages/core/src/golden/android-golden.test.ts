@@ -2,13 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { claimDevices } from "@delacour/warden-leasing/claim";
+import {
+	BOOT_WAIT_SCRIPT,
+	createAndroidProvider,
+	GOLDEN_PORT_LABEL,
+	type SpawnDetached,
+} from "@delacour/warden-providers/android";
+import { STAY_AWAKE_COMMAND } from "@delacour/warden-providers/android-keyguard";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
+import { openStore, type Store } from "@delacour/warden-store/store";
+import type { Owner } from "@delacour/warden-store/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { STAY_AWAKE_COMMAND } from "../android-keyguard";
-import { claimDevices } from "../claim";
-import type { Exec, ExecResult } from "../exec";
-import { BOOT_WAIT_SCRIPT, createAndroidProvider, GOLDEN_PORT_LABEL, type SpawnDetached } from "../providers/android";
-import { openStore, type Store } from "../store";
-import type { Owner } from "../types";
 import {
 	ANDROID_BIOMETRICS_RECIPE,
 	type AndroidGoldenDeps,
@@ -703,7 +708,7 @@ describe("a snapshot that does not load (R5)", () => {
 		if (!built.success || built.data === undefined) throw new Error("no build");
 		const p = provider(host);
 		const created = await p.create("w", "pixel-10");
-		if (!created.success) throw new Error(created.error);
+		if (!created.success) throw new Error(created.error.message);
 		writeFileSync(
 			join(dir, "logs", `${created.data.id}.log`),
 			`INFO    | Loading snapshot '${built.data.name}'...\nWARNING | Failed to load snapshot '${built.data.name}'\n`,
@@ -719,7 +724,7 @@ describe("a snapshot that does not load (R5)", () => {
 	async function claimSeeing(host: Host, at: number, logs: string[] = [], loads = false) {
 		const p = provider(host, logs, undefined, () => at);
 		const created = await p.create("w", "pixel-10");
-		if (!created.success) throw new Error(created.error);
+		if (!created.success) throw new Error(created.error.message);
 		const name = snapshotName(await currentKey(host));
 		const line = loads ? `Successfully loaded snapshot '${name}'` : `WARNING | Failed to load snapshot '${name}'`;
 		writeFileSync(join(dir, "logs", `${created.data.id}.log`), `${line}\n`, { flag: "a" });
@@ -796,7 +801,7 @@ describe("a snapshot that does not load (R5)", () => {
 		writeFileSync(join(dir, "logs", "emulator-5554.log"), `WARNING | Failed to load snapshot '${built.data.name}'\n`);
 		const p = provider(host);
 		const created = await p.create("w", "pixel-10");
-		if (!created.success) throw new Error(created.error);
+		if (!created.success) throw new Error(created.error.message);
 		expect(created.data.id).toBe("emulator-5554");
 		expect((await p.waitReady(created.data.id, 10_000)).success).toBe(true);
 		expect(existsSync(join(avdHomeDir, "Pixel_10.avd", "snapshots", built.data.name))).toBe(true);
@@ -979,7 +984,7 @@ describe("biometrics snapshots", () => {
 		const created = await provider(host, [], async () => ok(undefined)).create("w", "pixel-10+bio");
 		expect(created.success).toBe(false);
 		if (!created.success)
-			expect(created.error).toContain("warden golden ensure --platform android --profile pixel-10+bio");
+			expect(created.error.message).toContain("warden golden ensure --platform android --profile pixel-10+bio");
 		expect(host.spawned).toHaveLength(0);
 	});
 });

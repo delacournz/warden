@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
 import { resetInstrumentCache } from "@delacour/warden-perf/ios/instruments";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import { createIosNativeProfiler, type IosNativeFs } from "@delacour/warden-sdk/ops/perf/native-ios";
+import type { NativeIo, NativeStartInput } from "@delacour/warden-sdk/ops/perf/native-types";
 import { type TestContext, testContext } from "../testing";
-import { createIosNativeProfiler, type IosNativeFs } from "./native-ios";
-import type { NativeIo, NativeStartInput } from "./native-types";
 import { fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

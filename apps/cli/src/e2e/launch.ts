@@ -1,10 +1,10 @@
+import { bundleIdFor } from "@delacour/warden-builds/config";
+import { devClientLaunchArgs } from "@delacour/warden-builds/metro";
+import { appSwitches } from "@delacour/warden-config/app-option.schema";
 import type { Suite } from "@delacour/warden-core/affected/affected";
-import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
-import { bundleIdFor } from "@delacour/warden-core/builds/config";
-import type { Platform } from "@delacour/warden-core/types";
+import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { devClientLaunchArgs } from "../metro";
 import { projectContextFor } from "../project-context";
 
 /** What decides how a spec's app is launched, known before any device is leased. */

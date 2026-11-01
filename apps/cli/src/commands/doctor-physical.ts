@@ -1,15 +1,15 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { PROFILE_MARGIN_MS, type RunnerMeta, readRunnerMeta } from "@delacour/warden-core/ios-runner/cache";
-import { resolveTeam } from "@delacour/warden-core/ios-runner/signing";
-import { runnerRoot } from "@delacour/warden-core/ios-runner/stage";
-import { listPhysicalIos, readLockState } from "@delacour/warden-core/providers/devicectl";
-import { realTimer } from "@delacour/warden-core/providers/health";
-import { wardenHome } from "@delacour/warden-core/store";
-import { type InventoryDevice, physicalNotReadyReason } from "@delacour/warden-core/types";
-import { resolveOwner } from "../claim-flags";
-import type { CommandContext } from "../context";
-import { providerFor } from "../providers";
+import { PROFILE_MARGIN_MS, type RunnerMeta, readRunnerMeta } from "@delacour/warden-builds/ios-runner/cache";
+import { resolveTeam } from "@delacour/warden-builds/ios-runner/signing";
+import { runnerRoot } from "@delacour/warden-builds/ios-runner/stage";
+import { providerFor } from "@delacour/warden-core/host-deps";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { listPhysicalIos, readLockState } from "@delacour/warden-providers/devicectl";
+import { realTimer } from "@delacour/warden-providers/health";
+import { wardenHome } from "@delacour/warden-store/store";
+import { type InventoryDevice, physicalNotReadyReason } from "@delacour/warden-store/types";
+import { appHostFromContext, type CommandContext } from "../context";
 import type { CheckStatus, DoctorCheck } from "./doctor";
 
 /**
@@ -53,16 +53,13 @@ async function describeIos(ctx: CommandContext, d: InventoryDevice, facts: IosFa
 	return `${d.id} ${facts.deviceType} ${facts.osVersion}: ${parts.join(", ")}`;
 }
 
-function configTeamId(
-	ctx: CommandContext,
-	find: typeof import("@delacour/warden-core/builds/config").findWardenConfig
-) {
+function configTeamId(ctx: CommandContext, find: typeof import("@delacour/warden-builds/config").findWardenConfig) {
 	const found = find(ctx.cwd, undefined, ctx.env);
 	return found.success ? found.data?.config.ios?.teamId : undefined;
 }
 
 async function teamRow(ctx: CommandContext, hasPhones: boolean): Promise<{ row?: DoctorCheck; team?: string }> {
-	const { findWardenConfig } = await import("@delacour/warden-core/builds/config");
+	const { findWardenConfig } = await import("@delacour/warden-builds/config");
 	const resolved = await resolveTeam({
 		env: ctx.env,
 		exec: ctx.exec,
@@ -167,7 +164,7 @@ async function adbServerCount(ctx: CommandContext): Promise<number> {
 
 async function androidRows(ctx: CommandContext): Promise<DoctorCheck[]> {
 	const [inventory, servers] = await Promise.all([
-		providerFor("android", ctx, resolveOwner(ctx)).inventory(),
+		providerFor("android", appHostFromContext(ctx), resolveOwner(ctx)).inventory(),
 		adbServerCount(ctx),
 	]);
 	const phones = (inventory.success ? inventory.data : []).filter((d) => d.physical?.platform === "android");

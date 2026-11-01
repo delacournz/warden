@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import ts from "typescript";
 
@@ -9,17 +9,36 @@ import ts from "typescript";
  * package depends on none of them (the JS is bundled, the types are shipped).
  */
 const WORKSPACE_PACKAGES: Readonly<Record<string, string>> = {
+	"@delacour/warden-builds": "builds",
+	"@delacour/warden-config": "config",
 	"@delacour/warden-core": "core",
+	"@delacour/warden-leasing": "leasing",
+	"@delacour/warden-perf": "perf",
+	"@delacour/warden-providers": "providers",
+	"@delacour/warden-runtime": "runtime",
+	"@delacour/warden-store": "store",
 	"@delacour/warden-types": "types",
+	"@delacour/warden-device": "device",
+	"@delacour/warden-devtools": "devtools",
+	"@delacour/warden-driver": "driver",
+	"@delacour/warden-driver-android": "driver-android",
+	"@delacour/warden-driver-ios": "driver-ios",
 	"@delacour/warden-e2e": "e2e",
+	"@delacour/warden-screen": "screen",
 };
 
-const SPECIFIER = /(["'])(@delacour\/warden-(?:core|types|e2e))\/([^"']+)\1/g;
+const SPECIFIER = new RegExp(
+	`(["'])(${Object.keys(WORKSPACE_PACKAGES)
+		.sort((a, b) => b.length - a.length)
+		.map((name) => name.replace(/[/-]/g, "\\$&"))
+		.join("|")})\\/([^"']+)\\1`,
+	"g"
+);
 
 /**
  * `from "@delacour/warden-types/result"` → `from "../../types/src/result"` for a declaration file at `file`
  * under `typesDir`, where each workspace package's `src/` was emitted to `typesDir/<dir>/src`.
- * Their exports map is `./* → ./src/*.ts`, hence the fixed `src`.
+ * Their exports maps point `./<name>` at `./src/<name>.ts`, hence the fixed `src`.
  */
 export function rewriteWorkspaceSpecifiers(text: string, file: string, typesDir: string): string {
 	return text.replace(SPECIFIER, (match: string, quote: string, pkg: string, rest: string) => {
@@ -27,6 +46,23 @@ export function rewriteWorkspaceSpecifiers(text: string, file: string, typesDir:
 		if (dir === undefined) return match;
 		const target = relative(dirname(file), join(typesDir, dir, "src", rest));
 		return `${quote}${target.startsWith(".") ? target : `./${target}`}${quote}`;
+	});
+}
+
+const RELATIVE_SPECIFIER = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(["'])(\.{1,2}\/[^"']*)\2/g;
+
+/**
+ * `from "./foo"` → `from "./foo.js"` (or `./foo/index.js` for a directory) for a declaration file at `file`, so the
+ * package resolves under `module: node16`/`nodenext` (relative ESM imports need an extension there; `.js` maps to the
+ * sibling `.d.ts`). `exists` is injected. Specifiers that already end in an extension, and ones that resolve to nothing, stay.
+ */
+export function addEsmExtensions(text: string, file: string, exists: (path: string) => boolean): string {
+	return text.replace(RELATIVE_SPECIFIER, (match: string, lead: string, quote: string, spec: string) => {
+		if (/\.(?:m?js|cjs|json)$/.test(spec)) return match;
+		const target = resolve(dirname(file), spec);
+		if (exists(`${target}.d.ts`)) return `${lead}${quote}${spec}.js${quote}`;
+		if (exists(join(target, "index.d.ts"))) return `${lead}${quote}${spec.replace(/\/$/, "")}/index.js${quote}`;
+		return match;
 	});
 }
 
@@ -54,6 +90,8 @@ export type EmitDeclarationsInput = {
 	/** the `packages/` directory: declarations land at `outDir/<package dir>/src/**.d.ts` */
 	packagesDir: string;
 	outDir: string;
+	/** add `.js` to relative specifiers so the declarations resolve under `node16`/`nodenext` (see `addEsmExtensions`) */
+	esmExtensions?: boolean;
 };
 
 /**
@@ -86,6 +124,9 @@ export function emitDeclarations(input: EmitDeclarationsInput): Result<string[]>
 		writeFileSync(fileName, rewriteWorkspaceSpecifiers(text, fileName, input.outDir));
 		written.push(fileName);
 	});
+	if (input.esmExtensions) {
+		for (const file of written) writeFileSync(file, addEsmExtensions(readFileSync(file, "utf8"), file, existsSync));
+	}
 	const errors = result.diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error);
 	if (errors.length > 0) {
 		return err(

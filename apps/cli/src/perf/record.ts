@@ -1,11 +1,12 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS } from "@delacour/warden-perf/shared/caps";
+import { finalizeSession, type SessionKit, startPerf } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { ok } from "@delacour/warden-types/result";
 import { UI_EXIT, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
-import { defaultSessionKit, finalizeSession, type SessionKit, startPerf } from "./orchestrate";
 import { type PerfDeps, runPerf } from "./run";
+import { defaultSessionKit, startHooks } from "./session-kit";
 import { type PerfStartOptions, withCaptureOptions } from "./start";
 import { stoppedSuccess } from "./stop";
 
@@ -58,7 +59,7 @@ export function perfRecord(
 			};
 		}
 		const maxDuration = opts.maxDuration ?? `${Math.ceil((durationMs + CAP_SLACK_MS) / 1000)}s`;
-		const started = await startPerf(ctx, deps, kit, target, { ...opts, maxDuration });
+		const started = await startPerf(ctx, deps, kit, target, { ...opts, maxDuration }, startHooks(ctx, deps, opts));
 		if (!started.success) return started;
 		const interrupt = io.interrupt();
 		let interrupted: boolean;

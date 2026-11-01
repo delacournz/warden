@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { el, fakeDriver, snapshotOf } from "../driver/driver.testing";
-import { driverError } from "../driver/errors";
+import { driverError } from "@delacour/warden-driver/errors";
+import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { captureFailure } from "./failure";
 
 const dirs: string[] = [];

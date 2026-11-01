@@ -1,0 +1,44 @@
+{
+	"name": "@delacour/warden-devtools",
+	"version": "0.1.0",
+	"description": "warden RN devtools facet: Metro/CDP session, React tree, console, network",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./cdp": "./src/cdp.ts",
+		"./collector": "./src/collector.ts",
+		"./console": "./src/console.ts",
+		"./devtools.types": "./src/devtools.types.ts",
+		"./facet": "./src/facet.ts",
+		"./inspector": "./src/inspector.ts",
+		"./jsonl": "./src/jsonl.ts",
+		"./logbox": "./src/logbox.ts",
+		"./logbox.script": "./src/logbox.script.ts",
+		"./metro": "./src/metro.ts",
+		"./native-log": "./src/native-log.ts",
+		"./network": "./src/network.ts",
+		"./network.script": "./src/network.script.ts",
+		"./route": "./src/route.ts",
+		"./route.script": "./src/route.script.ts",
+		"./session": "./src/session.ts",
+		"./testing/devtools": "./src/devtools.testing.ts",
+		"./testing/facet": "./src/facet.testing.ts",
+		"./tree": "./src/tree.ts",
+		"./tree.script": "./src/tree.script.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-types": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

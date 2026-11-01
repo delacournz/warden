@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { SimctlSim } from "../sims/list";
+import { GOLDEN_PREFIX, isGoldenName } from "@delacour/warden-providers/golden-name";
+import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
 import {
-	GOLDEN_PREFIX,
 	GOLDEN_RECIPE,
 	goldenKey,
 	goldenName,
-	isGoldenName,
 	isSettled,
 	migrationDone,
 	parseXcodeBuild,

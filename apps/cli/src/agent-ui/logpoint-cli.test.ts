@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Command } from "@commander-js/extra-typings";
-import type { ConsoleLine } from "@delacour/warden-e2e/devtools/devtools.types";
+import type { ConsoleLine } from "@delacour/warden-devtools/devtools.types";
 import { type BrokerResult, brokerErr } from "../dev-broker/broker.types";
 import { type DevSessionRecord, writeDevSession } from "../dev-session";
 import { type TestContext, testContext } from "../testing";

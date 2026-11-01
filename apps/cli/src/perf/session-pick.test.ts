@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createSession } from "@delacour/warden-sdk/ops/perf/session";
+import { sessionByRef } from "@delacour/warden-sdk/ops/perf/session-ref";
 import { type TestContext, testContext } from "../testing";
-import { createSession } from "./session";
-import { pickSession, sessionByRef } from "./session-pick";
+import { pickSession } from "./session-pick";
 import { fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

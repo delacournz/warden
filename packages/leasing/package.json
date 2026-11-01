@@ -1,0 +1,51 @@
+{
+	"name": "@delacour/warden-leasing",
+	"version": "0.1.0",
+	"description": "warden leasing: allocation, claim, boot queue, host capacity, ports, owner detection",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./allocate": "./src/allocate.ts",
+		"./bounded": "./src/bounded.ts",
+		"./capacity": "./src/capacity.ts",
+		"./close-sim-windows-after": "./src/close-sim-windows-after.ts",
+		"./capacity-deps": "./src/capacity-deps.ts",
+		"./claim": "./src/claim.ts",
+		"./claim-request": "./src/claim-request.ts",
+		"./device-lease": "./src/device-lease.ts",
+		"./device-shutdown": "./src/device-shutdown.ts",
+		"./device-state": "./src/device-state.ts",
+		"./dev-session": "./src/dev-session.ts",
+		"./headless": "./src/headless.ts",
+		"./host": "./src/host.ts",
+		"./inventory": "./src/inventory.ts",
+		"./lease-host": "./src/lease-host.ts",
+		"./lease-select": "./src/lease-select.ts",
+		"./owner": "./src/owner.ts",
+		"./ports": "./src/ports.ts",
+		"./queue": "./src/queue.ts",
+		"./room": "./src/room.ts",
+		"./session": "./src/session.ts",
+		"./shutdown-policy": "./src/shutdown-policy.ts",
+		"./sim-windows": "./src/sim-windows.ts",
+		"./testing/lease-host.testing": "./src/testing/lease-host.testing.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-builds": "workspace:*",
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-providers": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-store": "workspace:*",
+		"@delacour/warden-types": "workspace:*"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

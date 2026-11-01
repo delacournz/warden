@@ -1,9 +1,9 @@
 import { isAbsolute, resolve } from "node:path";
+import { findWardenConfig } from "@delacour/warden-builds/config";
+import { appSwitches, type InstallMode } from "@delacour/warden-config/app-option.schema";
+import type { BatchPresetConfig } from "@delacour/warden-config/preset.schema";
+import type { Platform } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
-import { appSwitches, type InstallMode } from "../builds/app-option.schema";
-import { findWardenConfig } from "../builds/config";
-import type { Platform } from "../types";
-import type { BatchPresetConfig } from "./preset.schema";
 
 /** Where a batch's jobs come from. */
 export type BatchJobsSource =
@@ -121,6 +121,8 @@ export type FindBatchPresetInput = {
 	start: string;
 	/** stop walking up here (git toplevel); default filesystem root */
 	stopAt?: string;
+	/** the environment a config function receives and `WARDEN_HOME` is read from */
+	env: Record<string, string | undefined>;
 	name: string;
 };
 
@@ -129,7 +131,7 @@ export type FindBatchPresetInput = {
  * undefined when there is no config or no such preset; `names` lists the presets that exist.
  */
 export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: BatchPreset; names: string[] }> {
-	const found = findWardenConfig(input.start, input.stopAt);
+	const found = findWardenConfig(input.start, input.stopAt, input.env);
 	if (!found.success) return found;
 	if (!found.data) return ok({ names: [] });
 	const { dir, config } = found.data;

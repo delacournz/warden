@@ -4,9 +4,9 @@
  *   bun run release 0.2.0
  *   bun run release 0.2.0 --otp 123456
  *
- * Writes that version into the cli and e2e package.jsons, commits it on the current branch,
+ * Writes that version into the cli, e2e and sdk package.jsons, commits it on the current branch,
  * then builds and `npm publish`es the platform packages, `@delacour/warden`, and
- * `@delacour/warden-e2e` (platform packages first). A version already on npm is skipped: per package
+ * `@delacour/warden-e2e` and `@delacour/warden-sdk` (platform packages first). A version already on npm is skipped: per package
  * while publishing, and up front for the whole release, before anything is written or built, when
  * every package already has it.
  * Accounts with publish 2FA are asked for a one-time password after the build, so it has not
@@ -17,11 +17,15 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
-import { E2E_PACKAGE, NPM_PACKAGE, platformPackageName, RELEASE_TARGETS } from "../src/npm/platforms";
+import { E2E_PACKAGE, NPM_PACKAGE, platformPackageName, RELEASE_TARGETS, SDK_PACKAGE } from "../src/npm/platforms";
 import { parseVersion } from "../src/update/version";
 
 /** Source manifests whose `version` is the published lock-step version. Generated npm manifests copy the cli one. */
-export const VERSION_FILES = ["apps/cli/package.json", "packages/e2e/package.json"] as const;
+export const VERSION_FILES = [
+	"apps/cli/package.json",
+	"packages/e2e/package.json",
+	"packages/sdk/package.json",
+] as const;
 
 const VERSION_FIELD = /("version"[ \t]*:[ \t]*")[^"]*(")/;
 
@@ -65,18 +69,19 @@ export function applyVersion(root: string, version: string): string[] {
 	return changed;
 }
 
-/** Platform packages, then `@delacour/warden`, then `@delacour/warden-e2e` (exact peer on warden). */
+/** Platform packages, then `@delacour/warden`, then `@delacour/warden-e2e` (exact peer on warden) and `@delacour/warden-sdk` (exact optional deps on the platform packages). */
 export function publishPackageDirs(npmDir: string): string[] {
 	return [
 		...RELEASE_TARGETS.map((target) => join(npmDir, `warden-${target}`)),
 		join(npmDir, "warden"),
 		join(npmDir, "warden-e2e"),
+		join(npmDir, "warden-sdk"),
 	];
 }
 
 /** Every published package name, in publish order (see `publishPackageDirs`). */
 export function releasePackageNames(): string[] {
-	return [...RELEASE_TARGETS.map((target) => platformPackageName(target)), NPM_PACKAGE, E2E_PACKAGE];
+	return [...RELEASE_TARGETS.map((target) => platformPackageName(target)), NPM_PACKAGE, E2E_PACKAGE, SDK_PACKAGE];
 }
 
 export type ReleasePlan = { kind: "done" } | { kind: "publish"; pending: string[]; skipped: string[] };
@@ -163,10 +168,10 @@ async function repoLinks(root: string): Promise<"0" | "1"> {
 }
 
 async function buildPackages(root: string): Promise<void> {
-	const e2e = join(root, "packages", "e2e");
+	const driverIos = join(root, "packages", "driver-ios");
 	const cli = join(root, "apps", "cli");
-	await $`bun run --cwd ${e2e} native:deps`.cwd(root);
-	await $`bun run --cwd ${e2e} native:build`.cwd(root);
+	await $`bun run --cwd ${driverIos} native:deps`.cwd(root);
+	await $`bun run --cwd ${driverIos} native:build`.cwd(root);
 	await $`bun run --cwd ${cli} build:release`.cwd(root);
 	process.env.WARDEN_NPM_REPO_LINKS = await repoLinks(root);
 	await $`bun run --cwd ${cli} build:npm -- --require-helper`.cwd(root);

@@ -1,0 +1,82 @@
+{
+	"name": "@delacour/warden-sdk",
+	"version": "0.7.0",
+	"description": "warden TypeScript SDK: createWardenClient (typed client + sessions) over the typed ops",
+	"type": "module",
+	"private": true,
+	"engines": {
+		"bun": ">=1.2.0"
+	},
+	"exports": {
+		".": "./src/index.ts",
+		"./client": "./src/client.ts",
+		"./lease-view": "./src/lease-view.ts",
+		"./ai-sdk": "./src/ai-sdk/tools.ts",
+		"./ai-sdk/tools.schema": "./src/ai-sdk/tools.schema.ts",
+		"./plugins": "./src/plugins/entry.ts",
+		"./plugins/conformance": "./src/plugins/conformance.ts",
+		"./sdk.types": "./src/sdk.types.ts",
+		"./ops/act": "./src/ops/act.ts",
+		"./ops/authoring/*": "./src/ops/authoring/*.ts",
+		"./ops/actions": "./src/ops/actions.ts",
+		"./ops/controls": "./src/ops/controls.ts",
+		"./ops/broker-port": "./src/ops/broker-port.ts",
+		"./ops/devtools": "./src/ops/devtools.ts",
+		"./ops/diff": "./src/ops/diff.ts",
+		"./ops/errors": "./src/ops/errors.ts",
+		"./ops/gestures": "./src/ops/gestures.ts",
+		"./ops/open": "./src/ops/open.ts",
+		"./ops/paths": "./src/ops/paths.ts",
+		"./ops/perf/*": "./src/ops/perf/*.ts",
+		"./ops/query": "./src/ops/query.ts",
+		"./ops/record": "./src/ops/record.ts",
+		"./ops/ref-store": "./src/ops/ref-store.ts",
+		"./ops/scroll": "./src/ops/scroll.ts",
+		"./ops/session": "./src/ops/session.ts",
+		"./ops/snapshot": "./src/ops/snapshot.ts",
+		"./ops/state-store": "./src/ops/state-store.ts",
+		"./ops/target": "./src/ops/target.ts",
+		"./ops/video": "./src/ops/video.ts",
+		"./contracts": "./src/contracts/index.ts",
+		"./contracts/*": "./src/contracts/*.schema.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"zod": "^4.4.3",
+		"@delacour/warden-builds": "workspace:*",
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-core": "workspace:*",
+		"@delacour/warden-device": "workspace:*",
+		"@delacour/warden-devtools": "workspace:*",
+		"@delacour/warden-driver": "workspace:*",
+		"@delacour/warden-driver-android": "workspace:*",
+		"@delacour/warden-driver-ios": "workspace:*",
+		"@delacour/warden-e2e": "workspace:*",
+		"@delacour/warden-leasing": "workspace:*",
+		"@delacour/warden-perf": "workspace:*",
+		"@delacour/warden-providers": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-screen": "workspace:*",
+		"@delacour/warden-store": "workspace:*",
+		"@delacour/warden-types": "workspace:*"
+	},
+	"peerDependencies": {
+		"ai": ">=7.0.0 <8"
+	},
+	"peerDependenciesMeta": {
+		"ai": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*",
+		"ai": "7.0.137",
+		"typescript": "^5.9.3"
+	}
+}

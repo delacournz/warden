@@ -1,8 +1,8 @@
 import { dirname, isAbsolute, relative } from "node:path";
+import { isQueryRole } from "@delacour/warden-screen/roles";
+import { type ParsedSelector, parseSelector, type SelectorValue } from "@delacour/warden-screen/selector";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { LaunchMode } from "../runner/fixtures.types";
-import { isQueryRole } from "../screen/roles";
-import { type ParsedSelector, parseSelector, type SelectorValue } from "../screen/selector";
 import type {
 	GestureStep,
 	RecordedStep,

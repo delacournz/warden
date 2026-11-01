@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import {
+	launchApp,
+	type RelaunchIo,
+	resetAppData,
+	resolveLauncher,
+	terminateApp,
+} from "@delacour/warden-sdk/ops/perf/relaunch";
 import { type TestContext, testContext } from "../testing";
-import { launchApp, type RelaunchIo, resetAppData, resolveLauncher, terminateApp } from "./relaunch";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());

@@ -1,6 +1,6 @@
 import { join } from "node:path";
+import type { SlimProfile } from "@delacour/warden-config/slim.profile";
 import type { BatchWorker } from "@delacour/warden-core/batch/schedule";
-import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
 /** What `warden e2e` runs on each leased device before its first spec. */

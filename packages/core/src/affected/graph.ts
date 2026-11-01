@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import type ts from "typescript";
-import type { Platform } from "../types";
 import { type ImportCache, openImportCache } from "./cache";
 
 /** Files whose imports are followed; anything else (images, fonts, json…) is a leaf. */

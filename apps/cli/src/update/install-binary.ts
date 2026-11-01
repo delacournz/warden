@@ -1,6 +1,6 @@
 import { chmodSync, copyFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Exec } from "@delacour/warden-core/exec";
+import type { Exec } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 
 /**

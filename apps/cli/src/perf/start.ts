@@ -1,16 +1,22 @@
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
-import { formatDuration } from "@delacour/warden-core/duration";
+import { formatDuration } from "@delacour/warden-config/duration";
+import {
+	type SessionKit,
+	type StartOptions,
+	type StartOutcome,
+	startPerf,
+} from "@delacour/warden-sdk/ops/perf/orchestrate";
+import { activeSessionFor } from "@delacour/warden-sdk/ops/perf/session";
+import { startResult } from "@delacour/warden-sdk/ops/perf/session-ops";
 import { ok } from "@delacour/warden-types/result";
 import { type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "./device";
 import { withPerfOptions } from "./options";
-import { defaultSessionKit, type SessionKit, type StartOptions, type StartOutcome, startPerf } from "./orchestrate";
-import { sessionDir } from "./paths";
-import { type PerfDeps, runPerf } from "./run";
-import { activeSessionFor } from "./session";
+import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
+import { defaultSessionKit, startHooks } from "./session-kit";
 
-export type PerfStartOptions = StartOptions & { join?: boolean };
+export type PerfStartOptions = PerfOptionValues & StartOptions & { join?: boolean };
 
 const offset = (ms: number): string => `+${(ms / 1000).toFixed(1)}s`;
 
@@ -39,21 +45,7 @@ export function startedSuccess(
 	lines.push("next:", ...next.map((n) => `  ${n}`));
 	return {
 		device: infoOf(target),
-		result: {
-			sessionId: session.id,
-			dir: sessionDir(ctx, session.id),
-			app: session.app?.id ?? plan.app,
-			maxDurationMs: session.maxDurationMs,
-			capturers: session.capturers.map((c) => ({
-				kind: c.kind,
-				state: c.state,
-				...(c.out === undefined ? {} : { out: c.out }),
-			})),
-			plan,
-			...(out.launch === undefined ? {} : { launch: out.launch }),
-			...(out.leaseId === undefined ? {} : { leaseId: out.leaseId }),
-			next,
-		},
+		result: startResult(ctx, out, stopHint),
 		text: lines.join("\n"),
 		...(out.warnings.length > 0 ? { warnings: out.warnings } : {}),
 	};
@@ -103,7 +95,7 @@ export function perfStart(
 				].join("\n"),
 			});
 		}
-		const started = await startPerf(ctx, deps, kit, target, opts);
+		const started = await startPerf(ctx, deps, kit, target, opts, startHooks(ctx, deps, opts));
 		if (!started.success) return started;
 		return ok(startedSuccess(ctx, target, started.data, "warden perf stop"));
 	});

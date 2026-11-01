@@ -1,36 +1,29 @@
 import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
-import { defaultMax, profileSlug } from "@delacour/warden-core/allocate";
-import { biometricProfile, splitBiometricProfile } from "@delacour/warden-core/biometrics";
-import { maxConcurrent } from "@delacour/warden-core/capacity";
-import { type ClaimedDevice, type ClaimOutcome, claimDevices } from "@delacour/warden-core/claim";
-import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
-import { parseDuration } from "@delacour/warden-core/duration";
-import { isGoldenName } from "@delacour/warden-core/golden/golden";
-import { processAlive } from "@delacour/warden-core/liveness";
-import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
-import { listAvds } from "@delacour/warden-core/providers/android";
-import { PRIORITY, parsePriority } from "@delacour/warden-core/queue";
-import { slimSimulator } from "@delacour/warden-core/sims/slim";
-import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
-import { resolveSlim, type SlimSetting } from "@delacour/warden-core/slim-policy";
-import { type DeviceRequest, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-core/types";
+import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
+import { parseDuration } from "@delacour/warden-config/duration";
+import type { SlimProfile } from "@delacour/warden-config/slim.profile";
+import { resolveSlim, type SlimSetting } from "@delacour/warden-config/slim-policy";
+import { defaultMax } from "@delacour/warden-leasing/allocate";
+import type { ClaimOutcome, ClaimResult } from "@delacour/warden-leasing/claim";
+import {
+	bootedByClaim,
+	type ClaimHideOptions,
+	type ClaimRequest,
+	claimWithRequest,
+	parsePriorityFlag,
+	type SlimLayers,
+} from "@delacour/warden-leasing/claim-request";
+import { biometricProfile } from "@delacour/warden-providers/biometrics";
+import { isGoldenName } from "@delacour/warden-providers/golden-name";
+import { slimSimulator } from "@delacour/warden-providers/slim";
+import { type DeviceRequest, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-store/types";
+import { codedError, textError } from "@delacour/warden-types/error";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { stopHelperAfter } from "./agent-ui/stop-helper-after";
-import { buildCapacityDeps } from "./capacity-deps";
 import type { CommandContext } from "./context";
+import { leaseHostFromContext } from "./lease-host";
 import { applyPhysicalAllow, parsePhysicalIds, resolvePhysicalAllow } from "./physical-allow";
 import { awaitPhonesUnlocked } from "./physical-lock";
-import { providerFor } from "./providers";
-import {
-	autoArrangeSimWindows,
-	type DetachLock,
-	type HideDeps,
-	type HideStart,
-	hideSimWindows,
-	openDeviceHubWindows,
-	startHideSimWindows,
-} from "./sim-windows";
 
 /** Claim options shared by `claim` and `run` (typed by commander's extra-typings). */
 export function withClaimOptions<Args extends unknown[], Opts extends OptionValues, Globals extends OptionValues>(
@@ -138,46 +131,11 @@ export function withNamedPhysical<T extends PhysicalOptionValues>(
 	};
 }
 
-/** The layers `resolveSlim` merges for a claim. */
-export type SlimLayers = { flag?: boolean; config?: SlimSetting; topLevel?: SlimSetting };
-
-export type ClaimFlags = {
-	request: DeviceRequest;
-	/** how long the claim may wait for a free device / host capacity; 0 = fail at once */
-	waitMs: number;
-	/** `--priority`, when given (beats `WARDEN_PRIORITY` and the command's default) */
-	priority?: number;
-	/** the calling command's priority when neither `--priority` nor `WARDEN_PRIORITY` says */
-	defaultPriority?: number;
-	/** `--max` was not given: with capacity on, the pool grows to what the machine allows */
-	maxDefaulted?: true;
-	ttlMs: number;
-	label?: string;
-	/** iOS: close the claimed sims' Simulator.app windows instead of tiling them */
-	headless?: true;
-	/** iOS daemon slimming layers (flag > suite / preset > top-level config > `WARDEN_SLIM` > on); android ignores them */
-	slim?: SlimLayers;
-};
+/** The parsed claim flags: a typed {@link ClaimRequest}. */
+export type ClaimFlags = ClaimRequest;
 
 /** Claim queue wait when `--wait` is not given. */
 export const DEFAULT_WAIT = "30m";
-
-/** `interactive|high|normal|low` or a non-negative integer. */
-export function parsePriorityFlag(raw: string): Result<number> {
-	const parsed = parsePriority(raw);
-	return parsed.success ? parsed : err(`--priority: ${parsed.error}`);
-}
-
-/** Priority of a claim: `--priority`, else `WARDEN_PRIORITY`, else the command's default, else normal. */
-export function resolvePriority(flags: ClaimFlags, env: Record<string, string | undefined>): Result<number> {
-	if (flags.priority !== undefined) return ok(flags.priority);
-	const fromEnv = env.WARDEN_PRIORITY?.trim();
-	if (fromEnv) {
-		const parsed = parsePriorityFlag(fromEnv);
-		return parsed.success ? parsed : err(`WARDEN_PRIORITY=${fromEnv}: ${parsed.error}`);
-	}
-	return ok(flags.defaultPriority ?? PRIORITY.normal);
-}
 
 export function parsePlatform(value: string | undefined): Result<Platform> {
 	if (value === "ios" || value === "android") return ok(value);
@@ -212,7 +170,7 @@ export function parseClaimFlags(
 	const waitMs = values.wait === false ? ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
 	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
-	if (priority && !priority.success) return priority;
+	if (priority && !priority.success) return textError(priority);
 	const ttlMs = values.ttl === undefined ? ok(defaultTtlMs) : parseDuration(values.ttl);
 	if (!ttlMs.success) return ttlMs;
 
@@ -251,7 +209,7 @@ function parseTiming(
 	const waitMs = values.wait === false ? ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
 	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
-	if (priority && !priority.success) return priority;
+	if (priority && !priority.success) return textError(priority);
 	const ttlMs = values.ttl === undefined ? ok(defaultTtlMs) : parseDuration(values.ttl);
 	if (!ttlMs.success) return ttlMs;
 	return ok({ flags: { waitMs: waitMs.data, ttlMs: ttlMs.data, ...(priority ? { priority: priority.data } : {}) } });
@@ -320,81 +278,6 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
 	return flags;
 }
 
-/** Owner for this invocation: `--session`/hook id → CI → session env → the invoking shell (ppid). */
-export function resolveOwner(ctx: CommandContext, sessionId?: string): Owner {
-	const ownerCtx: OwnerContext = { env: ctx.env, pid: process.pid, ppid: process.ppid, cwd: ctx.cwd };
-	const git = readGitInfo(ctx.cwd, { cache: ctx.git });
-	if (git) ownerCtx.git = git;
-	if (sessionId) ownerCtx.sessionId = sessionId;
-	return detectOwner(ownerCtx);
-}
-
-/** Lookup-only owner for `--session S` (owner_key only uses the session id). */
-export function sessionOwner(sessionId: string, cwd = ""): Owner {
-	return { kind: "agent", sessionId, cwd };
-}
-
-/** User leases live as long as their shell; agent / CI leases rely on heartbeat + ttl. */
-export function leasePidFor(owner: Owner): number | undefined {
-	return owner.kind === "user" ? owner.pid : undefined;
-}
-
-/** Android `auto` profile → slug of the first AVD. */
-export function resolveAutoProfile(avds: readonly string[]): Result<string> {
-	const first = avds[0];
-	return first
-		? ok(profileSlug(first))
-		: err("no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
-}
-
-/** Simulator's close setting, shared with every other warden process through the context's store. */
-export function detachLockFor(ctx: CommandContext): DetachLock {
-	return { store: ctx.store(), pid: process.pid, pidAlive: processAlive };
-}
-
-/** `hideSimWindows` deps from a command context: problems are yellow `warden: …` lines; a device the close shut down loses its resident helper. */
-export function headlessDeps(ctx: CommandContext): HideDeps {
-	return {
-		exec: ctx.exec,
-		warn: (line) => ctx.err(ctx.ui.color.yellow(`warden: ${line}`)),
-		onShutDown: stopHelperAfter(ctx),
-		detachLock: detachLockFor(ctx),
-	};
-}
-
-export type ClaimHideOptions = {
-	/**
-	 * Headless iOS: return once the windows are closed and hand the rest of the hide here, instead of
-	 * awaiting it. The caller must not use a device in `start.down` before `start.settled` (it is being
-	 * booted again), and awaits `settled` before it ends (that puts Simulator's close setting back).
-	 */
-	onHide?: (start: HideStart) => void;
-	/** the platform the hide runs on (tests); defaults to `process.platform` */
-	os?: NodeJS.Platform;
-	/** polled while the claim waits (queue, pool): true ends it with `CLAIM_ABORTED` */
-	abort?: () => boolean;
-	/** the wait between two `lockState` reads while a physical iPhone is locked (tests; default: real time) */
-	unlockSleep?: (ms: number) => Promise<void>;
-};
-
-/**
- * The claimed devices this claim had to boot or create: the only ones whose Simulator.app window can
- * still be on its way. A device that was already running (`reuse`, not booted by the claim) keeps
- * the window — or the lack of one, when it booted headless — it had.
- */
-export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDevice[] {
-	return outcome.claimed.filter((c) => c.action !== "reuse" || c.lease.bootedByOwner === true);
-}
-
-/** Android `auto` profile → the first AVD; every other request as is. */
-async function resolveRequest(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
-	const { profile: base, biometrics } = splitBiometricProfile(request.profile);
-	if (request.physical || request.platform !== "android" || base !== "auto") return ok(request);
-	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
-	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
-	return profile.success ? ok({ ...request, profile: biometricProfile(profile.data, biometrics) }) : profile;
-}
-
 /**
  * An id-less physical claim only picks from the allowlist (`WARDEN_PHYSICAL_IDS`, else `physical.allow` in
  * `warden.config.ts`). A config that cannot be read fails the claim: guessing could take a device the list excludes.
@@ -404,7 +287,7 @@ export async function withPhysicalAllowlist(ctx: CommandContext, request: Device
 	let configAllow: string[] | undefined;
 	if (parsePhysicalIds(ctx.env.WARDEN_PHYSICAL_IDS) === undefined) {
 		// loaded here only: a plain claim never pays for the config loader
-		const { findWardenConfig } = await import("@delacour/warden-core/builds/config");
+		const { findWardenConfig } = await import("@delacour/warden-builds/config");
 		const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
 		if (!found.success) return err(`cannot read the physical-device allowlist from warden.config: ${found.error}`);
 		configAllow = found.data?.config.physical?.allow;
@@ -412,69 +295,33 @@ export async function withPhysicalAllowlist(ctx: CommandContext, request: Device
 	return ok(applyPhysicalAllow(request, resolvePhysicalAllow(ctx.env, configAllow)));
 }
 
-/** Run a device claim with the context's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
+/**
+ * Run a device claim with the context's store + provider (`claimWithRequest` over the command's lease host). Before it:
+ * an id-less physical claim is narrowed to the allowlist and a locked iPhone is waited for (nothing is held or queued
+ * while the person unlocks it). After it: sims the claim found already booted are slimmed.
+ */
 export async function claimWithFlags(
 	ctx: CommandContext,
 	owner: Owner,
 	flags: ClaimFlags,
 	pid: number | undefined,
 	options: ClaimHideOptions = {}
-): AsyncResult<ClaimOutcome> {
-	const resolved = await resolveRequest(ctx, flags.request);
-	if (!resolved.success) return resolved;
-	const allowed = await withPhysicalAllowlist(ctx, resolved.data);
-	if (!allowed.success) return allowed;
-	let request = allowed.data;
-	const priority = resolvePriority(flags, ctx.env);
-	if (!priority.success) return priority;
-	// a locked iPhone is waited for here, before any lease: nothing is held (or queued) while the person unlocks it
+): Promise<ClaimResult> {
+	const allowed = await withPhysicalAllowlist(ctx, flags.request);
+	if (!allowed.success) return codedError(allowed, "failed");
+	const request = allowed.data;
 	if (request.physical !== undefined && request.platform === "ios") {
 		const unlocked = await awaitPhonesUnlocked(ctx, owner, request, {
 			noWait: flags.waitMs === 0,
 			...(options.abort ? { abort: options.abort } : {}),
 			...(options.unlockSleep ? { sleep: options.unlockSleep } : {}),
 		});
-		if (!unlocked.success) return unlocked;
+		if (!unlocked.success) return codedError(unlocked, "failed");
 	}
-	const capacity = await buildCapacityDeps(ctx, owner);
-	if (capacity && flags.maxDefaulted) {
-		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
-		request = { ...request, max: Math.max(request.max, room) };
-	}
-	const slim = resolveSlim({ ...flags.slim, env: ctx.env });
-	if (!slim.success) return slim;
-	const outcome = await claimDevices({
-		store: ctx.store(),
-		provider: providerFor(
-			request.platform,
-			ctx,
-			owner,
-			request.platform === "ios"
-				? {
-						slim: slim.data,
-						physical: request.physical !== undefined,
-						...(request.physical?.ids ? { namedPhysical: request.physical.ids } : {}),
-					}
-				: {}
-		),
-		...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
-		owner,
-		request,
-		ttlMs: flags.ttlMs,
-		...(flags.label !== undefined ? { label: flags.label } : {}),
-		...(pid !== undefined ? { pid } : {}),
-		now: ctx.now,
-		pidAlive: processAlive,
-		waitMs: flags.waitMs,
-		priority: priority.data,
-		...(options.abort ? { abort: options.abort } : {}),
-		...(capacity ? { capacity } : {}),
-		orphans: { exec: ctx.exec, env: ctx.env },
-		log: (line) => ctx.err(`warden: ${line}`),
-	});
+	const outcome = await claimWithRequest(leaseHostFromContext(ctx), owner, { ...flags, request }, pid, options);
 	if (outcome.success && request.platform === "ios" && !request.physical) {
-		await slimReusedBooted(ctx, outcome.data, slim.data);
-		await settleIosWindows(ctx, outcome.data, flags, options);
+		const slim = resolveSlim({ ...flags.slim, env: ctx.env });
+		if (slim.success) await slimReusedBooted(ctx, outcome.data, slim.data);
 	}
 	return outcome;
 }
@@ -513,46 +360,4 @@ export function hintSlimmed(ctx: CommandContext, outcome: ClaimOutcome): void {
 		if (records.get(device.id)?.slimmedAt === undefined) continue;
 		ctx.err(`warden claim: ${device.name} is slimmed; warden sim slim ${device.id} --restore re-enables its daemons`);
 	}
-}
-
-/** After an iOS claim: headless closes the sims' windows (handing the rest to `onHide` when given); otherwise tile them. */
-async function settleIosWindows(
-	ctx: CommandContext,
-	outcome: ClaimOutcome,
-	flags: ClaimFlags,
-	options: ClaimHideOptions
-): Promise<void> {
-	const sims = outcome.claimed.map((c) => ({ udid: c.device.id, name: c.device.name }));
-	const deps = options.os === undefined ? headlessDeps(ctx) : { ...headlessDeps(ctx), os: options.os };
-	if (flags.headless && options.onHide) options.onHide(await startHideSimWindows(deps, sims));
-	else if (flags.headless) await hideSimWindows(deps, sims);
-	else {
-		const booted = bootedByClaim(outcome).map((c) => ({ udid: c.device.id, name: c.device.name }));
-		const windowDeps = options.os === undefined ? ctx : { exec: ctx.exec, env: ctx.env, os: options.os };
-		const opened = await openDeviceHubWindows(windowDeps, booted);
-		await autoArrangeSimWindows(
-			windowDeps,
-			booted.map((s) => s.name),
-			opened,
-			(missing) =>
-				openDeviceHubWindows(
-					windowDeps,
-					booted.filter((s) => missing.includes(s.name))
-				)
-		);
-	}
-}
-
-/** JSON shape of claimed devices, shared by `claim` and `run`. */
-export function claimedJson(outcome: ClaimOutcome) {
-	return outcome.claimed.map((c) => ({
-		leaseId: c.lease.id,
-		platform: c.device.platform,
-		udid: c.device.id,
-		name: c.device.name,
-		action: c.action,
-		ttlMs: c.lease.ttlMs,
-		...(c.lease.resource.kind === "device" && c.lease.resource.physical ? { physical: c.lease.resource.physical } : {}),
-		...(c.lease.label !== undefined ? { label: c.lease.label } : {}),
-	}));
 }

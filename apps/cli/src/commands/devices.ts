@@ -1,7 +1,11 @@
-import { markWardenDevices } from "@delacour/warden-core/inventory";
-import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
-import { listAvds } from "@delacour/warden-core/providers/android";
+import { providerFor } from "@delacour/warden-core/host-deps";
 import { measureSims } from "@delacour/warden-core/sims/slim.measure";
+import { markWardenDevices } from "@delacour/warden-leasing/inventory";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { listAvds } from "@delacour/warden-providers/android";
+import type { DeviceRowJson } from "@delacour/warden-sdk/contracts/devices";
+import { aliveDeviceLeases } from "@delacour/warden-sdk/lease-view";
+import { processAlive } from "@delacour/warden-store/liveness";
 import {
 	describeOwner,
 	type InventoryDevice,
@@ -9,43 +13,16 @@ import {
 	ownerLocation,
 	type Platform,
 	physicalNotReadyReason,
-} from "@delacour/warden-core/types";
+} from "@delacour/warden-store/types";
 import type { ChalkInstance } from "chalk";
-import { resolveOwner } from "../claim-flags";
 import { defineCommand } from "../command";
-import type { CommandContext } from "../context";
+import { appHostFromContext, type CommandContext } from "../context";
 import { emit, plural, reportError, table, warn } from "../output";
-import { providerFor } from "../providers";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 const BYTES_PER_MB = 1024 ** 2;
 
-export type DeviceRow = {
-	platform: Platform;
-	/** `physical` = a real phone/tablet (never created, booted or shut down by warden) */
-	kind: "virtual" | "physical";
-	name: string;
-	/** udid / serial; absent for an Android AVD that isn't running */
-	id?: string;
-	state: "booted" | "booting" | "shutdown" | "avd";
-	runtime?: string;
-	warden: boolean;
-	/** a golden image new sims are cloned from */
-	golden?: true;
-	/** reported bad — claims skip it until `warden sim unquarantine` */
-	quarantined?: { reason?: string };
-	/** simulator daemons switched off by `sim slim` */
-	slimmed?: true;
-	/** a real phone (never created, booted or shut down by warden); same as `kind: "physical"` */
-	physical?: true;
-	/** physical only: `usb` | `wifi` (Android), `wired` | `localNetwork` (iOS) */
-	transport?: string;
-	/** physical only, set when it cannot be used now: `<label>: <what to do>` (unauthorized, offline, unpaired, developer mode off) */
-	hint?: string;
-	/** real memory (summed phys_footprint of the sim's process tree), only with `--mem` */
-	footprintMb?: number;
-	lease?: { id: string; owner: string; where?: string };
-};
+export type DeviceRow = DeviceRowJson;
 
 function leaseInfo(lease: Lease): NonNullable<DeviceRow["lease"]> {
 	const where = ownerLocation(lease.owner);
@@ -62,9 +39,11 @@ function lockedHint(d: InventoryDevice): string | undefined {
 /** One platform's rows: every device (booted or not) plus, for Android, every AVD. */
 async function platformRows(ctx: CommandContext, platform: Platform, leases: Map<string, Lease>): Promise<DeviceRow[]> {
 	const store = ctx.store();
-	const inventory = await providerFor(platform, ctx, resolveOwner(ctx), { physical: true }).inventory();
+	const inventory = await providerFor(platform, appHostFromContext(ctx), resolveOwner(ctx), {
+		physical: true,
+	}).inventory();
 	if (!inventory.success) {
-		warn(ctx, `${platform}: skipped (${inventory.error})`);
+		warn(ctx, `${platform}: skipped (${inventory.error.message})`);
 		return [];
 	}
 	const records = new Map(store.listDevices(platform).map((r) => [r.id, r]));
@@ -96,7 +75,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 			rows.push(
 				...avds.data.map((name): DeviceRow => ({ platform, kind: "virtual", name, state: "avd", warden: false }))
 			);
-		else warn(ctx, `android avds: skipped (${avds.error})`);
+		else warn(ctx, `android avds: skipped (${avds.error.message})`);
 	}
 	return rows;
 }
@@ -154,12 +133,7 @@ async function devices(
 		return 1;
 	}
 	const now = ctx.now();
-	const leases = new Map<string, Lease>();
-	for (const lease of ctx.store().listLeases()) {
-		if (lease.resource.kind === "device" && isLeaseAlive(lease, now, processAlive)) {
-			leases.set(`${lease.resource.platform}:${lease.resource.id}`, lease);
-		}
-	}
+	const leases = aliveDeviceLeases(ctx.store().listLeases(), now, processAlive);
 	const platforms: readonly Platform[] = filter ? [filter] : PLATFORMS;
 	const all: DeviceRow[] = [];
 	for (const platform of platforms) all.push(...(await platformRows(ctx, platform, leases)));

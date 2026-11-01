@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
 import { defineCommand } from "../command";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { registerSimMeasure } from "./sim-measure";

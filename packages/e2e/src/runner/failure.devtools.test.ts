@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakePage, page, startFakeMetro } from "../devtools/devtools.testing";
-import type { DevtoolsFacet } from "../devtools/devtools.types";
-import { openDevtoolsFacet } from "../devtools/facet";
-import { stubFacet } from "../devtools/facet.testing";
+import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
+import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
+import { fakePage, page, startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
+import { stubFacet } from "@delacour/warden-devtools/testing/facet";
 import { captureDevtoolsArtifacts } from "./failure";
 
 const cleanup: (() => void)[] = [];

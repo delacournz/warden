@@ -15,12 +15,12 @@ async function defaultNetproxy(raw: string): Promise<void> {
 }
 
 async function defaultRouteTicker(raw: string): Promise<number> {
-	const { runRouteTicker } = await import("@delacour/warden-e2e/conditions/route-ticker.main");
+	const { runRouteTicker } = await import("@delacour/warden-device/conditions/route-ticker.main");
 	return runRouteTicker(raw);
 }
 
 async function defaultScheduler(raw: string): Promise<number> {
-	const { runScheduler } = await import("@delacour/warden-e2e/conditions/scheduler.main");
+	const { runScheduler } = await import("@delacour/warden-device/conditions/scheduler.main");
 	return runScheduler(raw);
 }
 

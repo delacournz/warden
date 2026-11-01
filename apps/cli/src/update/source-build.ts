@@ -1,8 +1,7 @@
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Exec } from "@delacour/warden-core/exec";
-import { execError } from "@delacour/warden-core/exec";
-import { RUNNER_BLOB } from "@delacour/warden-core/ios-runner/pack";
+import { RUNNER_BLOB } from "@delacour/warden-builds/ios-runner/pack";
+import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { RUNTIME_BLOB } from "../e2e/e2e-runtime";
 import { type BuildInfo, DEFINE_KEY } from "./build-info";

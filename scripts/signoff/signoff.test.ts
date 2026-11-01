@@ -35,7 +35,7 @@ function applicable(changed: string[]): string[] {
 
 describe("planChecks", () => {
 	test("a docs-only diff runs the always-on checks and nothing else", () => {
-		expect(applicable(["AGENTS.md", "packages/e2e/native/AGENTS.md"])).toEqual([...ALWAYS_CONTEXTS]);
+		expect(applicable(["AGENTS.md", "packages/driver-ios/native/AGENTS.md"])).toEqual([...ALWAYS_CONTEXTS]);
 	});
 
 	test("every always-on check is applicable even with an empty diff", () => {
@@ -47,13 +47,15 @@ describe("planChecks", () => {
 	});
 
 	test("a warden-simd change runs the native check", () => {
-		expect(applicable(["packages/e2e/native/ios/Sources/WardenSimd/main.swift"])).toContain("native");
+		expect(applicable(["packages/driver-ios/native/ios/Sources/WardenSimd/main.swift"])).toContain("native");
 	});
 
 	test("a warden-runner change runs the native check", () => {
-		expect(applicable(["packages/e2e/native/ios-runner/RunnerTests/XCUIExecutor.swift"])).toContain("native");
-		expect(applicable(["packages/e2e/native/ios-runner/WardenRunner.xcodeproj/project.pbxproj"])).toContain("native");
-		expect(applicable(["packages/e2e/native/ios-runner/RunnerCore/Sources/RunnerCore/Command.swift"])).toContain(
+		expect(applicable(["packages/driver-ios/native/ios-runner/RunnerTests/XCUIExecutor.swift"])).toContain("native");
+		expect(applicable(["packages/driver-ios/native/ios-runner/WardenRunner.xcodeproj/project.pbxproj"])).toContain(
+			"native"
+		);
+		expect(applicable(["packages/driver-ios/native/ios-runner/RunnerCore/Sources/RunnerCore/Command.swift"])).toContain(
 			"native"
 		);
 	});
@@ -61,7 +63,7 @@ describe("planChecks", () => {
 	test("the native check runs RunnerCore's tests and the unsigned runner build", () => {
 		const native = SIGNOFF_CHECKS.find((check) => check.context === "native");
 		const argvs = native?.run.map((command) => command.argv.join(" "));
-		expect(argvs).toContain("swift test --package-path packages/e2e/native/ios-runner/RunnerCore");
+		expect(argvs).toContain("swift test --package-path packages/driver-ios/native/ios-runner/RunnerCore");
 		expect(argvs).toContain(RUNNER_BUILD_ARGV.join(" "));
 		expect(RUNNER_BUILD_ARGV).toContain("CODE_SIGNING_ALLOWED=NO");
 	});
@@ -76,13 +78,15 @@ describe("planChecks", () => {
 	});
 
 	test("a markdown file alongside real source does not mask the real source", () => {
-		expect(applicable(["packages/e2e/native/AGENTS.md", "packages/e2e/native/ios/Package.swift"])).toContain("native");
+		expect(
+			applicable(["packages/driver-ios/native/AGENTS.md", "packages/driver-ios/native/ios/Package.swift"])
+		).toContain("native");
 	});
 
 	test("skipped entries carry a reason naming the paths that did not match", () => {
 		const native = planChecks(["apps/cli/src/cli.ts"]).find((entry) => entry.check.context === "native");
 		expect(native?.applicable).toBe(false);
-		expect(native?.reason).toContain("packages/e2e/native/**");
+		expect(native?.reason).toContain("packages/driver-ios/native/**");
 		expect(native?.filtered).toBe(false);
 	});
 });
@@ -288,7 +292,7 @@ describe("renderReport", () => {
 				context: "native",
 				label: "native (warden-simd)",
 				status: "skipped",
-				reason: "no files matched packages/e2e/native/**",
+				reason: "no files matched packages/driver-ios/native/**",
 				filtered: false,
 			},
 		],
@@ -311,7 +315,7 @@ describe("renderReport", () => {
 		expect(report).toContain("12s");
 		expect(report).toContain("3m 41s");
 		expect(report).toContain("a qualifying note");
-		expect(report).toContain("no files matched packages/e2e/native/**");
+		expect(report).toContain("no files matched packages/driver-ios/native/**");
 	});
 
 	test("a withheld umbrella is stated, not implied by an absent row", () => {
@@ -428,8 +432,8 @@ describe("turboTaskName", () => {
 	});
 
 	test("a non-turbo command has no task", () => {
-		expect(turboTaskName(["swift", "test", "--package-path", "packages/e2e/native/ios"])).toBeNull();
-		expect(turboTaskName(["bun", "run", "--cwd", "packages/e2e", "native:build"])).toBeNull();
+		expect(turboTaskName(["swift", "test", "--package-path", "packages/driver-ios/native/ios"])).toBeNull();
+		expect(turboTaskName(["bun", "run", "--cwd", "packages/driver-ios", "native:build"])).toBeNull();
 	});
 
 	test("a turbo invocation carrying only flags names no task", () => {
@@ -447,7 +451,7 @@ describe("describeTiming", () => {
 
 	test("a multi-command check breaks down per command", () => {
 		const detail = describeTiming([
-			{ label: "bun run --cwd packages/e2e native:build", durationMs: 110_000, tasks: [] },
+			{ label: "bun run --cwd packages/driver-ios native:build", durationMs: 110_000, tasks: [] },
 			{ label: "swift test", durationMs: 18_000, tasks: [] },
 		]);
 		expect(detail).toContain("1m 50s");
@@ -509,7 +513,7 @@ describe("drift guard", () => {
 		const steps = ((await ciWorkflow()).jobs.native?.steps ?? []).map((step) =>
 			(step.run ?? "").replace(/\s+/g, " ").trim()
 		);
-		expect(steps).toContain("swift test --package-path packages/e2e/native/ios-runner/RunnerCore");
+		expect(steps).toContain("swift test --package-path packages/driver-ios/native/ios-runner/RunnerCore");
 		expect(steps).toContain(RUNNER_BUILD_ARGV.join(" "));
 	});
 

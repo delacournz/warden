@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-core/config.defaults";
+import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-config/config.defaults";
+import type { ChildHandle } from "@delacour/warden-leasing/session";
+import { runJsonSchema } from "@delacour/warden-sdk/contracts/claim";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
-import { type ChildHandle, splitCommand, splitOperands } from "../lease-session";
+import { splitCommand, splitOperands } from "../lease-options";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createRunCommand, type RunChildStdout, type RunDeps } from "./run";
@@ -254,7 +256,7 @@ describe("warden run", () => {
 		const h = harness();
 		let settled = 0;
 		h.deps.ensureApp = async (_ctx, _owner, _platform, deviceId) => {
-			if (deviceId === "U1") return { success: false, error: "install failed" };
+			if (deviceId === "U1") return { success: false, error: { code: "build_failed", message: "install failed" } };
 			await new Promise((r) => setTimeout(r, 10));
 			settled++;
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
@@ -268,7 +270,10 @@ describe("warden run", () => {
 	test("--app failure → leases released, exit 1, child never spawned", async () => {
 		const c = setup(["ios", "--app", "--port", "8091:20", "--", "true"]);
 		const h = harness();
-		h.deps.ensureApp = async () => ({ success: false, error: "no build for fingerprint H" });
+		h.deps.ensureApp = async () => ({
+			success: false,
+			error: { code: "build_failed", message: "no build for fingerprint H" },
+		});
 		expect(await createRunCommand(h.deps).run(c)).toBe(1);
 		expect(h.spawned).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
@@ -306,6 +311,7 @@ describe("warden run", () => {
 		expect(lines).toHaveLength(1);
 		expect(h.spawned[0]?.stdout).toBe("stderr");
 		const out = JSON.parse(lines[0] ?? "");
+		runJsonSchema.parse(out);
 		expect(out).toMatchObject({ cmd: ["true"], ports: [] });
 		expect(out.leases).toHaveLength(1);
 		h.finish(0);

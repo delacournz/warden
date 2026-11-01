@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { findWardenConfig } from "@delacour/warden-builds/config";
 import { DEV_MENU_OFF_ARGS } from "@delacour/warden-core/affected/affected.defaults";
-import { findWardenConfig } from "@delacour/warden-core/builds/config";
 import { type TestContext, testContext } from "../testing";
 import { currentBuild } from "../update/build-info";
 import { initCommand } from "./init";

@@ -1,4 +1,4 @@
-import { E2eError } from "../../errors";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { test } from "../../index";
 import { getSession } from "../../session";
 import { fixtureLog as log } from "./fake-setup";

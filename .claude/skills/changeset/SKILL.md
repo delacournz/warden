@@ -1,16 +1,16 @@
 ---
 name: changeset
-description: Write a changeset for any change that ships in @delacour/warden or @delacour/warden-e2e. Use before committing, signing off or opening a PR that touches apps/cli, packages/e2e, packages/core, packages/perf, packages/types or skills/warden, when asked to "add a changeset", when a PR is missing one, or when a change already merged without one needs a retroactive changeset. Covers bump choice, body style and verification with changeset status.
+description: Write a changeset for any change that ships in @delacour/warden, @delacour/warden-e2e or @delacour/warden-sdk. Use before committing, signing off or opening a PR that touches apps/cli, packages/e2e, packages/core, packages/perf, packages/types or skills/warden, when asked to "add a changeset", when a PR is missing one, or when a change already merged without one needs a retroactive changeset. Covers bump choice, body style and verification with changeset status.
 ---
 
 # changeset
 
-Changesets own the versions of `@delacour/warden` and `@delacour/warden-e2e` (lock-step via `fixed`). Each `.changeset/*.md` becomes a CHANGELOG entry and a bump when `version.yml` opens the version PR. No changeset = the change ships with the next release unnamed and unversioned.
+Changesets own the versions of `@delacour/warden`, `@delacour/warden-e2e` and `@delacour/warden-sdk` (lock-step via `fixed`). Each `.changeset/*.md` becomes a CHANGELOG entry and a bump when `version.yml` opens the version PR. No changeset = the change ships with the next release unnamed and unversioned.
 
 ## 1. Decide whether one is needed
 
 ```bash
-git diff --stat origin/develop...HEAD -- apps/cli packages/e2e packages/core packages/perf packages/types skills/warden
+git diff --stat origin/develop...HEAD -- apps/cli packages/e2e packages/sdk packages/core packages/driver packages/driver-ios packages/driver-android packages/screen packages/devtools packages/device packages/perf packages/types skills/warden
 ```
 
 Non-empty output, excluding `*.test.ts`, `*.testing.ts`, `__snapshots__`, `*.golden/`, `fixtures/` → a changeset is needed. Empty → none (docs, example app, bench, scripts, CI, `.claude`, configs).
@@ -42,7 +42,7 @@ Path: `.changeset/<kebab-slug>.md`, slug names the change (`ui-record-authoring`
 
 Rules for the body:
 
-- Only `"@delacour/warden"` in the frontmatter. Never list `@delacour/warden-e2e`, `@delacour/warden-core` or any other workspace.
+- Only `"@delacour/warden"` in the frontmatter. Never list `@delacour/warden-e2e`, `@delacour/warden-sdk`, `@delacour/warden-core` or any other workspace.
 - Bullets, present tense, user-facing: what the user can now do / what now works, naming the command, flag, env var, option or error code in backticks.
 - No file paths, module names, "refactor", "cleanup", "wip". Internal-only bullets are dropped, not written.
 - Numbers only when they change a decision (a timeout default, a measured speed-up).

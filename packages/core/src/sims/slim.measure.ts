@@ -1,5 +1,5 @@
+import type { Exec } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import type { Exec } from "../exec";
 
 /** One process row from `ps -axo pid,ppid,comm`. */
 export type PsRow = { pid: number; ppid: number; command: string };

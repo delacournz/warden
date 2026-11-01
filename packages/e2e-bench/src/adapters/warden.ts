@@ -113,7 +113,7 @@ export function simdSocketPath(env: RunContext["env"], home: string, udid: strin
 const bunOf = (ctx: RunContext): string => ctx.env.WARDEN_BUN ?? ctx.exec.which("bun") ?? process.execPath;
 const cliOf = (ctx: RunContext): string => join(ctx.repoRoot, "apps/cli/src/cli.ts");
 const helperDirOf = (ctx: RunContext): string =>
-	ctx.env.WARDEN_HELPER_DIR ?? join(ctx.repoRoot, "packages/e2e/native/dist");
+	ctx.env.WARDEN_HELPER_DIR ?? join(ctx.repoRoot, "packages/driver-ios/native/dist");
 const suiteDirOf = (ctx: RunContext): string => join(ctx.packageRoot, "suites/warden");
 
 /** warden's own version: the preload refuses to run when `@delacour/warden-e2e` differs. */
@@ -145,7 +145,7 @@ async function doctor(ctx: RunContext, deps: WardenDeps): Promise<Doctor> {
 			return {
 				ok: false,
 				reason: `warden-simd helper missing at ${helper}`,
-				installHint: "bun run --cwd packages/e2e native:build",
+				installHint: "bun run --cwd packages/driver-ios native:build",
 			};
 		notes.push(`warden-simd: ${helper}`);
 	}

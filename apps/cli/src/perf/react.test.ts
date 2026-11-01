@@ -3,11 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { jsOk } from "@delacour/warden-perf/js/js.types";
 import { startReactProfile } from "@delacour/warden-perf/react/profiler";
 import { fakeGlobal, fakeHook, fakeRenderer, runtimeCdp } from "@delacour/warden-perf/react/react.testing";
+import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
+import { createSession } from "@delacour/warden-sdk/ops/perf/session";
 import { ok } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
-import type { JsDeps } from "./js-capture";
 import { perfReact, perfReactStart, perfReactStop } from "./react";
-import { createSession } from "./session";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

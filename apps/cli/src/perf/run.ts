@@ -1,3 +1,4 @@
+import { defaultSessionDeps, type SessionDeps } from "@delacour/warden-sdk/ops/perf/session";
 import type { Result } from "@delacour/warden-types/result";
 import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, uiError } from "../agent-ui/output";
 import type { UiOptionValues } from "../agent-ui/run";
@@ -14,7 +15,6 @@ import {
 	resolvePerfDevice,
 } from "./device";
 import { defaultPerfHostDeps, type PerfHostDeps } from "./host";
-import { defaultSessionDeps, type SessionDeps } from "./session";
 
 /** Everything `warden perf` subcommands reach the outside world through; tests inject fakes. */
 export type PerfDeps = {

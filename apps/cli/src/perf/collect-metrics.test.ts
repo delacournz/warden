@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeSamples } from "@delacour/warden-perf/metrics/series";
+import { COLLECT_METRICS_INTERVAL_MS, createMetricsTicker } from "@delacour/warden-sdk/ops/perf/collect-metrics";
 import { type TestContext, testContext } from "../testing";
-import { COLLECT_METRICS_INTERVAL_MS, createMetricsTicker } from "./collect-metrics";
 
 let ctx: TestContext | undefined;
 let dir: string | undefined;

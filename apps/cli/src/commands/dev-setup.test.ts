@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadProject } from "@delacour/warden-core/builds/config";
-import type { ProjectContext } from "@delacour/warden-core/builds/ensure";
+import { loadProject } from "@delacour/warden-builds/config";
+import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import { fakeExec, type ScriptedUi, scriptedUi, testContext } from "../testing";
 import { describeIssue, diagnoseDev, offerDevSetup } from "./dev-setup";
 

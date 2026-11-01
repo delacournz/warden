@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type {
 	ClockCondition,
 	ConditionRecord,
@@ -7,13 +6,15 @@ import type {
 	LocationCondition,
 	NetworkCondition,
 	OwnedProcess,
-} from "@delacour/warden-core/conditions/conditions.types";
-import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
-import { processAlive } from "@delacour/warden-core/liveness";
-import type { Lease } from "@delacour/warden-core/types";
-import type { SchedulerConfig } from "@delacour/warden-e2e/conditions/scheduler.config";
-import type { ClockState, NetworkState } from "@delacour/warden-e2e/driver/driver.types";
-import { physicalConditionOps } from "@delacour/warden-e2e/driver/physical-conditions";
+} from "@delacour/warden-config/conditions.types";
+import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
+import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
+import type { ClockState, NetworkState } from "@delacour/warden-driver/driver.types";
+import { physicalConditionOps } from "@delacour/warden-driver/physical-conditions";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { recordedIdentity } from "@delacour/warden-store/process-identity";
+import type { Lease } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
@@ -35,7 +36,6 @@ import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import { physicalDevice, type UiDevice } from "./device";
 import { driverUiError, fromDriver, type UiDeps } from "./driver";
 import { type UiError, type UiSuccess, uiError } from "./output";
-import { recordedIdentity } from "./process-identity";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { readState } from "./state";
 
@@ -520,7 +520,7 @@ async function moveLocation(
 			return saved.success ? locationSuccess(device, action, value) : saved;
 		});
 	}
-	const { planRoute } = await import("@delacour/warden-e2e/conditions/location-plan");
+	const { planRoute } = await import("@delacour/warden-driver/conditions/location-plan");
 	const { readFile } = await import("node:fs/promises");
 	const planned = await planRoute(value, (path) => readFile(path, "utf8"));
 	if (!planned.success) return fail("usage", planned.error);

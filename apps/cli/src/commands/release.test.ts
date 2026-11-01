@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@delacour/warden-core/types";
+import { releaseJsonSchema } from "@delacour/warden-sdk/contracts/leases";
+import type { Owner } from "@delacour/warden-store/types";
 import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { releaseCommand } from "./release";
@@ -86,6 +87,7 @@ describe("warden release", () => {
 		const shutdowns = calls.filter((x) => x[2] === "shutdown").map((x) => x[3]);
 		expect(shutdowns).toEqual(["U1"]);
 		const out = JSON.parse(c.stdout.join("\n"));
+		releaseJsonSchema.parse(out);
 		expect(out.shutdown).toEqual(["U1"]);
 		expect(out.notes.join(" ")).toContain("FOREIGN");
 		expect(c.db.listDevices("ios")[0]?.lastUsedAt).toBe(c.now());
@@ -139,6 +141,7 @@ describe("warden release", () => {
 		expect(c.db.getLease(foreign.id)).toBeUndefined();
 		expect(c.db.listDevices().map((d) => d.id)).toEqual(["2"]);
 		const out = JSON.parse(c.stdout.join("\n"));
+		releaseJsonSchema.parse(out);
 		expect(out.quarantined).toEqual(["2"]);
 		expect(out.notes.join(" ")).toContain("FOREIGN");
 	});

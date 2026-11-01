@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { displayPath } from "./paths";
+import { displayPath } from "@delacour/warden-sdk/ops/perf/paths";
 
 describe("displayPath", () => {
 	test("inside the cwd: relative", () => {

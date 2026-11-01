@@ -1,29 +1,13 @@
-import { formatDuration } from "@delacour/warden-core/duration";
-import { processAlive } from "@delacour/warden-core/liveness";
-import { effectivePriority, priorityName, queueOrder } from "@delacour/warden-core/queue";
-import { describeOwner, ownerLocation, type Platform } from "@delacour/warden-core/types";
+import { formatDuration } from "@delacour/warden-config/duration";
+import { effectivePriority, priorityName, queueOrder } from "@delacour/warden-leasing/queue";
+import type { QueueRowJson } from "@delacour/warden-sdk/contracts/queue";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { describeOwner, ownerLocation } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
 
-export type QueueRow = {
-	position: number;
-	id: string;
-	priority: string;
-	effectivePriority: number;
-	/** points earned by waiting (aging) */
-	aged: number;
-	ageMs: number;
-	platform: Platform;
-	profile: string;
-	units: number;
-	owner: string;
-	where?: string;
-	label?: string;
-	pid?: number;
-	/** the waiting process is gone; its row is reclaimed by the next claim */
-	stale?: true;
-};
+export type QueueRow = QueueRowJson;
 
 /** `warden queue`: claims waiting for host capacity, head first. */
 function queue(ctx: CommandContext, json: boolean): number {

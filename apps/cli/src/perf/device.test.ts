@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@delacour/warden-core/types";
+import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { type BootedDevice, PERF_LEASE_LABEL, type PerfDeviceDeps, resolvePerfDevice } from "./device";

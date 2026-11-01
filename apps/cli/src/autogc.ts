@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { cacheCap, cacheTotal } from "@delacour/warden-core/builds/prune";
-import { DEFAULT_IDLE_MS } from "@delacour/warden-core/config.defaults";
+import { cacheCap, cacheTotal } from "@delacour/warden-builds/prune";
+import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { androidSnapshotsDue } from "@delacour/warden-core/golden/android-snapshot-pending";
-import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
+import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
 import type { CommandContext } from "./context";
 
 /** Background `warden gc` is considered at most this often, machine-wide. */

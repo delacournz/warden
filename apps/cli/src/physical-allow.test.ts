@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DeviceRequest } from "@delacour/warden-core/types";
+import type { DeviceRequest } from "@delacour/warden-store/types";
 import { applyPhysicalAllow, parsePhysicalIds, resolvePhysicalAllow } from "./physical-allow";
 
 const IPHONE = "00008140-000A0B0C0D0E0F10";

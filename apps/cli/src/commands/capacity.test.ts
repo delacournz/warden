@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { capacityJsonSchema } from "@delacour/warden-sdk/contracts/capacity";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { capacityCommand } from "./capacity";
@@ -14,6 +15,7 @@ describe("warden capacity", () => {
 		ctx.env = { ...ctx.env, WARDEN_CAPACITY_HEADROOM_GB: "8", WARDEN_CAPACITY_MAX: "4" };
 		expect(await capacityCommand.run(ctx)).toBe(0);
 		const out = JSON.parse(ctx.stdout.join("\n"));
+		capacityJsonSchema.parse(out);
 		expect(out.enabled).toBe(true);
 		expect(out.budget.maxUnits).toBe(4);
 		expect(out.slimCost).toEqual({ ios: { memMb: 1792, cpu: 1 } });

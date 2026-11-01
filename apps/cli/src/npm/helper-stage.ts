@@ -20,7 +20,7 @@ function frameworkNames(dir: string): string[] {
 }
 
 /**
- * Copy the built helper (`packages/e2e/native/dist`: `warden-simd`, `Resources/`, `*.framework`, `manifest.json`)
+ * Copy the built helper (`packages/driver-ios/native/dist`: `warden-simd`, `Resources/`, `*.framework`, `manifest.json`)
  * into a platform package's `bin/`. No `warden-simd` in `distDir` → `undefined`, or an error with `required`
  * (the release build; there the injected dylib is required too). A dist that has a binary but is incomplete is always an error: never ship half a helper.
  * Symlinks inside the frameworks are copied as symlinks (`verbatimSymlinks`). `npm pack` drops them, which is fine:
@@ -36,7 +36,7 @@ export function stageHelper(input: {
 	if (!existsSync(join(distDir, HELPER_BINARY))) {
 		return required
 			? err(
-					`--require-helper: no ${HELPER_BINARY} in ${distDir} — run \`bun run --cwd packages/e2e native:deps && native:build\``
+					`--require-helper: no ${HELPER_BINARY} in ${distDir} — run \`bun run --cwd packages/driver-ios native:deps && native:build\``
 				)
 			: ok(undefined);
 	}

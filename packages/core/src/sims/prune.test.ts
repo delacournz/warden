@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Exec, ExecResult } from "../exec";
-import { type FixtureSim, simctlDevicesJson } from "../providers/ios.fixture";
-import { openStore, type Store } from "../store";
-import type { Owner } from "../types";
+import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
+import { openStore, type Store } from "@delacour/warden-store/store";
+import type { Owner } from "@delacour/warden-store/types";
 import { auditMachineSims, pruneSims, type SimsDeps } from "./prune";
 
 const DAY = 86_400_000;

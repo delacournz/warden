@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ConditionRecord } from "@delacour/warden-core/conditions/conditions.types";
+import type { ConditionRecord } from "@delacour/warden-config/conditions.types";
 import { conditionsLine } from "./condition-text";
 
 const rec = <R extends ConditionRecord>(r: Omit<R, "owned" | "setAt">): ConditionRecord =>

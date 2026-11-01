@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Platform } from "@delacour/warden-core/types";
-import type { DevtoolsFacet } from "@delacour/warden-e2e/devtools/devtools.types";
-import { stubFacet } from "@delacour/warden-e2e/devtools/facet.testing";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
+import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
+import type { Platform } from "@delacour/warden-store/types";
 import { ok } from "@delacour/warden-types/result";
 import { createUiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
@@ -17,7 +18,6 @@ import {
 	renderBenchTable,
 	summarize,
 } from "./bench";
-import type { DevtoolsDeps } from "./devtools-cli";
 import type { UiDeps } from "./driver";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";

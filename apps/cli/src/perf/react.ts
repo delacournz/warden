@@ -1,16 +1,10 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { formatDuration } from "@delacour/warden-core/duration";
+import { formatDuration } from "@delacour/warden-config/duration";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
-import { ok, type Result } from "@delacour/warden-types/result";
-import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
-import type { CommandContext } from "../context";
-import type { PerfTarget } from "./device";
-import { connectJs } from "./js";
-import { defaultJsDeps, type JsDeps } from "./js-capture";
-import { withPerfOptions } from "./options";
-import { displayPath } from "./paths";
+import { defaultJsDeps, type JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
+import { displayPath } from "@delacour/warden-sdk/ops/perf/paths";
 import {
 	type ReactCaptureResult,
 	reactOwner,
@@ -18,8 +12,14 @@ import {
 	runReactCapture,
 	startReactCapture,
 	stopReactCapture,
-} from "./react-capture";
-import { type ReactOut, reactOutFor } from "./react-out";
+} from "@delacour/warden-sdk/ops/perf/react-capture";
+import { type ReactOut, reactOutFor } from "@delacour/warden-sdk/ops/perf/react-out";
+import { ok, type Result } from "@delacour/warden-types/result";
+import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
+import type { CommandContext } from "../context";
+import type { PerfTarget } from "./device";
+import { connectJs } from "./js";
+import { withPerfOptions } from "./options";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
 
 export type PerfReactOptions = PerfOptionValues & { duration?: string; metro?: string; takeOver?: boolean };

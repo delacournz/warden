@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
-import type { ConditionsConfig } from "@delacour/warden-core/conditions/conditions.config";
-import type { Platform } from "@delacour/warden-core/types";
+import type { ConditionsConfig } from "@delacour/warden-config/conditions.config";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
+import type { Platform } from "@delacour/warden-store/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { sourceDirFromCliPath } from "../update/build-info";
 
@@ -129,7 +129,7 @@ export function specEnv(o: SpecEnvOptions): Record<string, string> {
  */
 export function helperDir(main: string, execPath: string): string {
 	const compiled = main.startsWith("/$bunfs/") || main.startsWith("B:/~BUN/");
-	return compiled ? dirname(execPath) : join(sourceDirFromCliPath(main), "packages/e2e/native/dist");
+	return compiled ? dirname(execPath) : join(sourceDirFromCliPath(main), "packages/driver-ios/native/dist");
 }
 
 const PERF_CAPTURES = ["all", "js", "react", "native", "metrics", "frames", "logs"] as const;

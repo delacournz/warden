@@ -1,5 +1,5 @@
 import { appendFileSync, writeFileSync } from "node:fs";
-import { el, type FakeDriver, fakeDriver, snapshotOf } from "../../driver/driver.testing";
+import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { defaultFixtureFactory } from "../../fixtures";
 import {
 	setDefaultDriverFactory,

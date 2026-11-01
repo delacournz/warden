@@ -1,0 +1,25 @@
+{
+	"name": "@delacour/warden-store",
+	"version": "0.1.0",
+	"description": "warden store: lease types, liveness, bun:sqlite store (owns every migration) and its typed builds/installs/fingerprints tables",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./builds-table": "./src/builds-table.ts",
+		"./liveness": "./src/liveness.ts",
+		"./process-identity": "./src/process-identity.ts",
+		"./store": "./src/store.ts",
+		"./types": "./src/types.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

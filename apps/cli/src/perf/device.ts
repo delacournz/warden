@@ -1,11 +1,12 @@
-import { isLeaseAlive, type PidAlive, processAlive } from "@delacour/warden-core/liveness";
-import { describeOwner, type Lease, type Owner, type Platform, sameOwner } from "@delacour/warden-core/types";
+import { ensureCallerLease } from "@delacour/warden-leasing/device-lease";
+import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
+import { isLeaseAlive, type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { describeOwner, type Lease, type Owner, type Platform, sameOwner } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { UiDeviceFlags, UiDeviceSource } from "../agent-ui/device";
 import { type UiDeviceInfo, type UiError, uiError } from "../agent-ui/output";
-import { leasePidFor, parsePlatform, resolveOwner } from "../claim-flags";
+import { parsePlatform } from "../claim-flags";
 import type { CommandContext } from "../context";
-import { ensureCallerLease } from "../device-lease";
 import { deviceTarget } from "../hooks/claude-pretool";
 
 /** Label on the leases `warden perf --claim` creates. */
@@ -50,10 +51,11 @@ export type PerfDeviceDeps = {
 export const defaultPerfDeviceDeps: PerfDeviceDeps = {
 	pidAlive: processAlive,
 	booted: async (ctx) => {
-		const { providerFor } = await import("../providers");
+		const { providerFor } = await import("@delacour/warden-core/host-deps");
+		const { appHostFromContext } = await import("../context");
 		const owner = resolveOwner(ctx);
 		const inventories = await Promise.all(
-			(["ios", "android"] as const).map((platform) => providerFor(platform, ctx, owner).inventory())
+			(["ios", "android"] as const).map((platform) => providerFor(platform, appHostFromContext(ctx), owner).inventory())
 		);
 		return inventories.flatMap((inventory) =>
 			inventory.success

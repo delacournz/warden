@@ -1,114 +1,31 @@
-import type { Driver, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
-import { settleByHash, snapshotHash } from "@delacour/warden-e2e/driver/settle";
-import { fieldValue } from "@delacour/warden-e2e/screen/actions";
-import { textOf } from "@delacour/warden-e2e/screen/locator";
-import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-e2e/screen/nodes";
-import { poll } from "@delacour/warden-e2e/screen/poll";
-import { renderEntryLine } from "@delacour/warden-e2e/screen/render";
+import { parseSelector } from "@delacour/warden-screen/selector";
 import {
-	formatSelector,
-	matchesSelector,
-	type ParsedSelector,
-	parseSelector,
-	pickMostSpecific,
-} from "@delacour/warden-e2e/screen/selector";
+	DEFAULT_STABLE_MS,
+	GET_PROPS,
+	type GetProp,
+	get,
+	IS_STATES,
+	type IsState,
+	is,
+	type WaitParams,
+	wait,
+} from "@delacour/warden-sdk/ops/query";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { recordTarget } from "./act";
-import type { UiDevice } from "./device";
-import { driverUiError, type UiDeps } from "./driver";
-import { type UiError, type UiErrorCode, type UiSuccess, uiError } from "./output";
-import { appendRecorded, evidenceOf, type RecordStep } from "./record";
-import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
-import { type ElementJson, elementJson, storeSnapshot } from "./snapshot";
+import type { UiDeps } from "./driver";
+import { type UiError, uiError } from "./output";
+import { runUi, type UiOptionValues } from "./run";
+import { opSessionFor, reply } from "./session";
 
-/** `wait stable` looks at the screen this often (a quiet window is judged on a fixed beat, so no back-off). */
-export const POLL_MS = 100;
-/** `wait stable` with no number: the screen must hold still this long. */
-export const DEFAULT_STABLE_MS = 250;
-
-const IS_STATES = ["visible", "hittable", "enabled", "checked", "selected", "focused"] as const;
-export type IsState = (typeof IS_STATES)[number];
-const GET_PROPS = ["text", "value", "label", "id", "role", "frame", "count"] as const;
-export type GetProp = (typeof GET_PROPS)[number];
+export type WaitOptionValues = UiOptionValues;
 
 function oneOf<T extends string>(list: readonly T[], word: string | undefined): word is T {
 	return list.some((item) => item === word);
 }
 
-/** The match of `selector` the query is about: `nth=` picks one, else the most specific (visible first) wins. */
-export function pickEntry(index: NodeIndex, selector: ParsedSelector): NodeEntry | undefined {
-	const { nth, ...rest } = selector;
-	const matches = index.entries.filter((entry) => matchesSelector(entry, rest));
-	return nth === undefined ? pickMostSpecific(matches, rest) : matches[nth];
-}
-
-function matchCount(index: NodeIndex, selector: ParsedSelector): number {
-	const { nth: _nth, ...rest } = selector;
-	return index.entries.filter((entry) => matchesSelector(entry, rest)).length;
-}
-
-type Verdict<T> = { done: true; value: T } | { done: false; reason: UiErrorCode };
-
-type Polled<T> =
-	| { hit: true; value: T; snapshot: Snapshot; waitedMs: number }
-	| { hit: false; reason: UiErrorCode; waitedMs: number };
-
-/**
- * Snapshot until `check` is satisfied or `timeoutMs` has passed (the last look is at the deadline): every 100 ms for the
- * first second, then every 250 ms. The loop and its schedule are `screen/poll.ts`'s, the ones the spec locators use.
- */
-async function pollScreen<T>(
-	ctx: CommandContext,
-	deps: UiDeps,
-	driver: Driver,
-	timeoutMs: number,
-	check: (index: NodeIndex) => Verdict<T>
-): Promise<Result<Polled<T>, UiError>> {
-	const start = ctx.now();
-	type Look = { failed: UiError } | { value: T; snapshot: Snapshot };
-	const result = await poll<Look, UiErrorCode>(
-		async () => {
-			const taken = await driver.snapshot();
-			if (!taken.success) return { done: true, value: { failed: driverUiError(taken.error) } };
-			const verdict = check(indexSnapshot(taken.data));
-			return verdict.done
-				? { done: true, value: { value: verdict.value, snapshot: taken.data } }
-				: { done: false, state: verdict.reason };
-		},
-		{ timeoutMs, now: ctx.now, sleep: (ms) => deps.sleep(ms) }
-	);
-	const waitedMs = Math.max(0, ctx.now() - start);
-	if (result.status === "done") {
-		const look = result.value;
-		if ("failed" in look) return { success: false, error: look.failed };
-		return ok({ hit: true, value: look.value, snapshot: look.snapshot, waitedMs });
-	}
-	const reason = result.status === "timeout" ? result.last : undefined;
-	return ok({ hit: false, reason: reason ?? "wait_target_absent", waitedMs });
-}
-
-function ownTexts(entry: NodeEntry): string[] {
-	return [entry.name, entry.value, entry.element.text].filter((t): t is string => t !== undefined && t !== "");
-}
-
-/** The innermost visible element that shows `wanted` (substring, case-sensitive). */
-export function findText(index: NodeIndex, wanted: string): NodeEntry | undefined {
-	const shows = (entry: NodeEntry): boolean => entry.visible && ownTexts(entry).some((t) => t.includes(wanted));
-	return index.entries.find((entry) => shows(entry) && !entry.children.some(shows));
-}
-
-export type WaitOptionValues = UiOptionValues;
-
-type WaitPlan =
-	| { mode: "visible"; selector: ParsedSelector }
-	| { mode: "absent"; selector: ParsedSelector }
-	| { mode: "text"; text: string }
-	| { mode: "stable"; quietMs: number };
-
-function parseWait(words: readonly string[]): Result<WaitPlan, UiError> {
+function parseWait(words: readonly string[]): Result<WaitParams, UiError> {
 	const [first, ...rest] = words;
-	const usage = (message: string): Result<WaitPlan, UiError> => ({
+	const usage = (message: string): Result<WaitParams, UiError> => ({
 		success: false,
 		error: uiError("usage", message, { hint: 'wait <selector> | absent <selector> | text "…" | stable [ms]' }),
 	});
@@ -128,232 +45,19 @@ function parseWait(words: readonly string[]): Result<WaitPlan, UiError> {
 	if (source.trim() === "") return usage("wait needs a selector");
 	const selector = parseSelector(source);
 	if (!selector.success) return usage(`bad selector: ${selector.error}`);
-	return ok({ mode, selector: selector.data });
-}
-
-function visibleVerdict(selector: ParsedSelector) {
-	return (index: NodeIndex): Verdict<NodeEntry> => {
-		const entry = pickEntry(index, selector);
-		if (entry?.visible) return { done: true, value: entry };
-		return { done: false, reason: entry ? "wait_target_hidden" : "wait_target_absent" };
-	};
-}
-
-function absentVerdict(selector: ParsedSelector) {
-	return (index: NodeIndex): Verdict<null> => {
-		const entry = pickEntry(index, selector);
-		return entry?.visible ? { done: false, reason: "wait_target_present" } : { done: true, value: null };
-	};
-}
-
-function textVerdict(wanted: string) {
-	return (index: NodeIndex): Verdict<NodeEntry> => {
-		const entry = findText(index, wanted);
-		return entry ? { done: true, value: entry } : { done: false, reason: "wait_text_absent" };
-	};
-}
-
-function waitFailure(plan: WaitPlan, reason: UiErrorCode, waitedMs: number): UiError {
-	const what =
-		plan.mode === "text"
-			? `text ${JSON.stringify(plan.text)}`
-			: plan.mode === "stable"
-				? "a stable screen"
-				: formatSelector(plan.selector);
-	const messages: Partial<Record<UiErrorCode, string>> = {
-		wait_target_absent: `${what} did not appear within ${waitedMs} ms`,
-		wait_target_hidden: `${what} is on the tree but not visible after ${waitedMs} ms`,
-		wait_target_present: `${what} still visible after ${waitedMs} ms`,
-		wait_text_absent: `${what} did not appear within ${waitedMs} ms`,
-		wait_not_stable: `screen kept changing for ${waitedMs} ms`,
-	};
-	return uiError(reason, messages[reason] ?? `${what}: ${reason}`, {
-		hint: "`warden ui snapshot -i` shows what is on screen; --timeout <ms> waits longer",
-		details: { matched: false, waitedMs, reason },
-	});
-}
-
-/** `wait stable [ms]`: the screen hash holds for `quietMs` (poll 100 ms) within the timeout. */
-async function waitStable(
-	ctx: CommandContext,
-	deps: UiDeps,
-	driver: Driver,
-	quietMs: number,
-	timeoutMs: number
-): Promise<Result<{ snapshot: Snapshot; waitedMs: number; quiet: boolean }, UiError>> {
-	let latest: Snapshot | undefined;
-	let failure: UiError | undefined;
-	const poll = async (): Promise<string> => {
-		const taken = await driver.snapshot();
-		if (!taken.success) {
-			failure = driverUiError(taken.error);
-			throw new Error(taken.error.message);
-		}
-		latest = taken.data;
-		return snapshotHash(taken.data);
-	};
-	try {
-		const outcome = await settleByHash(poll, { quietMs, timeoutMs, now: ctx.now, sleep: deps.sleep, pollMs: POLL_MS });
-		return latest ? ok({ snapshot: latest, ...outcome }) : { success: false, error: uiError("failed", "no snapshot") };
-	} catch (error) {
-		return {
-			success: false,
-			error: failure ?? uiError("failed", error instanceof Error ? error.message : String(error)),
-		};
-	}
-}
-
-type WaitHit = { entry?: NodeEntry; snapshot: Snapshot; waitedMs: number };
-
-async function runWait(
-	ctx: CommandContext,
-	deps: UiDeps,
-	driver: Driver,
-	plan: WaitPlan,
-	timeoutMs: number
-): Promise<Result<WaitHit, UiError>> {
-	if (plan.mode === "stable") {
-		const stable = await waitStable(ctx, deps, driver, plan.quietMs, timeoutMs);
-		if (!stable.success) return stable;
-		if (!stable.data.quiet) {
-			return { success: false, error: waitFailure(plan, "wait_not_stable", stable.data.waitedMs) };
-		}
-		return ok({ snapshot: stable.data.snapshot, waitedMs: stable.data.waitedMs });
-	}
-	const check =
-		plan.mode === "visible"
-			? visibleVerdict(plan.selector)
-			: plan.mode === "text"
-				? textVerdict(plan.text)
-				: absentVerdict(plan.selector);
-	const polled = await pollScreen<NodeEntry | null>(ctx, deps, driver, timeoutMs, check);
-	if (!polled.success) return polled;
-	if (!polled.data.hit) {
-		return { success: false, error: waitFailure(plan, polled.data.reason, polled.data.waitedMs) };
-	}
-	const { value, snapshot, waitedMs } = polled.data;
-	return ok({ ...(value ? { entry: value } : {}), snapshot, waitedMs });
+	return ok({ mode, selector: source });
 }
 
 /**
- * `warden ui wait <selector> | absent <selector> | text "…" | stable [ms]`: poll every 100 ms for the first second, then
- * every 250 ms (`stable` keeps 100 ms; default 5000 ms, `--timeout`)
- * until the element is visible / gone, the text shows, or the screen holds still. The screen that satisfied it is
- * stored as the next generation, so the printed `@eN` can be used straight away. A miss exits 1 with
+ * `warden ui wait <selector> | absent <selector> | text "…" | stable [ms]`: see the `wait` op. A miss exits 1 with
  * `wait_target_absent` / `wait_target_hidden` / `wait_target_present` / `wait_text_absent` / `wait_not_stable`.
  */
 export function uiWait(ctx: CommandContext, deps: UiDeps, words: string[], opts: WaitOptionValues): Promise<number> {
 	return runUi(ctx, deps, "wait", opts, async (device, env) => {
-		const plan = parseWait(words);
-		if (!plan.success) return plan;
-		const driver = await env.driver();
-		if (!driver.success) return driver;
-		const hit = await runWait(ctx, deps, driver.data, plan.data, env.timeoutMs);
-		if (!hit.success) return hit;
-		return waitOutcome(ctx, deps, env, device, plan.data, hit.data);
+		const params = parseWait(words);
+		if (!params.success) return params;
+		return reply(device, await wait(opSessionFor(ctx, deps, device, env), params.data));
 	});
-}
-
-/** The device fields every query result carries. */
-const deviceInfo = (device: UiDevice) => ({ udid: device.udid, platform: device.platform, name: device.name });
-
-/** The line `wait` prints: the matched element, or what the wait ended on when there is none. */
-function waitSummary(plan: WaitPlan, line: string | undefined, waitedMs: number): string {
-	if (line !== undefined) return `waited ${waitedMs} ms: ${line}`;
-	return plan.mode === "stable" ? `stable after ${waitedMs} ms` : `gone after ${waitedMs} ms`;
-}
-
-/** A satisfied `wait`: store its screen as the next generation, record a visible match, shape the result. */
-async function waitOutcome(
-	ctx: CommandContext,
-	deps: UiDeps,
-	env: UiRunEnv,
-	device: UiDevice,
-	plan: WaitPlan,
-	hit: WaitHit
-): Promise<Result<UiSuccess, UiError>> {
-	const { entry, snapshot, waitedMs } = hit;
-	const { generation, refs } = storeSnapshot(ctx, device.udid, snapshot);
-	const ref = entry ? refs.byId.get(entry.element.id) : undefined;
-	const line = entry ? renderEntryLine(entry, ref === undefined ? {} : { ref }) : undefined;
-	const element: ElementJson | undefined = entry ? elementJson(entry, ref) : undefined;
-	if (plan.mode === "visible" && entry) {
-		await recordQuery(ctx, deps, env, device.udid, {
-			action: "wait",
-			selector: plan.selector,
-			entry,
-			snapshot,
-			ref,
-			args: { state: "visible", timeoutMs: env.timeoutMs },
-		});
-	}
-	return ok({
-		device: deviceInfo(device),
-		generation,
-		result: { matched: true, ...(ref !== undefined ? { ref } : {}), ...(element ? { element } : {}), waitedMs },
-		text: waitSummary(plan, line, waitedMs),
-	});
-}
-
-type QueryRecord = {
-	action: "wait" | "is" | "get";
-	selector: ParsedSelector;
-	entry: NodeEntry;
-	snapshot: Snapshot;
-	ref?: string | undefined;
-	args: NonNullable<RecordStep["args"]>;
-};
-
-/**
- * Append a query that named an element to the active recording (`--no-record` skips it). The element and the
- * snapshot it was found in go along so the recording can build a durable selector chain; `stepsFromRecord`
- * (record-sink.ts) reads `args.state` / `args.timeoutMs` (wait), `args.state` / `args.not` (is), `args.property` /
- * `args.expected` (get).
- */
-async function recordQuery(
-	ctx: CommandContext,
-	deps: UiDeps,
-	env: UiRunEnv,
-	udid: string,
-	query: QueryRecord
-): Promise<void> {
-	if (!env.record) return;
-	const { frame, tapPoint } = query.entry.element;
-	const point = tapPoint ?? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
-	const target = recordTarget(
-		{ kind: "selector", selector: query.selector },
-		{
-			kind: "selector",
-			point,
-			element: query.entry.element,
-			snapshot: query.snapshot,
-			...(query.ref !== undefined ? { ref: query.ref } : {}),
-		}
-	);
-	const evidence = evidenceOf(target);
-	await appendRecorded(ctx, deps, udid, {
-		action: query.action,
-		target,
-		args: query.args,
-		...(evidence ? { evidence } : {}),
-	});
-}
-
-function isState(entry: NodeEntry, state: IsState): boolean {
-	switch (state) {
-		case "visible":
-			return entry.visible;
-		case "hittable":
-			return entry.element.hittable === true;
-		case "enabled":
-			return !entry.states.disabled;
-		case "checked":
-			return entry.states.checked === true;
-		case "selected":
-			return entry.states.selected;
-		case "focused":
-			return entry.states.focused;
-	}
 }
 
 /** Split `<selector…> <word>`: the last word names the state / property. */
@@ -361,183 +65,38 @@ function splitLast(words: readonly string[]): { selector: string; last: string |
 	return { selector: words.slice(0, -1).join(" "), last: words[words.length - 1] };
 }
 
-function parseQuerySelector(source: string, usage: string): Result<ParsedSelector, UiError> {
+function parseQuerySelector(source: string, usage: string): Result<string, UiError> {
 	if (source.trim() === "") return { success: false, error: uiError("usage", usage) };
 	const parsed = parseSelector(source);
 	if (!parsed.success) return { success: false, error: uiError("usage", `bad selector: ${parsed.error}`) };
-	return ok(parsed.data);
+	return ok(source);
 }
 
 /**
- * `warden ui is <selector…> visible|hittable|enabled|checked|selected|focused`: one look at the screen. Exit 0 when
- * true, 1 when false (also when nothing matches); only an engine failure exits higher. `--json` prints
- * `{ matched, state, element?, waitedMs, reason? }` either way.
+ * `warden ui is <selector…> visible|hittable|enabled|checked|selected|focused`: exit 0 when true, 1 when false (also
+ * when nothing matches); only an engine failure exits higher.
  */
 export function uiIs(ctx: CommandContext, deps: UiDeps, words: string[], opts: UiOptionValues): Promise<number> {
-	return runUi(ctx, deps, "is", opts, (device, env) => runIs(ctx, deps, words, env, device));
-}
-
-/** Why an `is` answered false: nothing matched, or the match is not in `state`. */
-function isReason(entry: NodeEntry | undefined, matched: boolean, state: IsState): string | undefined {
-	if (entry === undefined) return "target_absent";
-	return matched ? undefined : `not_${state}`;
-}
-
-type IsAnswer = {
-	entry: NodeEntry | undefined;
-	matched: boolean;
-	state: IsState;
-	waitedMs: number;
-	reason: string | undefined;
-};
-
-/** The `is` result: exit 0 when true, 1 when false, with the same JSON either way. */
-function isOutcome(device: UiDevice, answer: IsAnswer): UiSuccess {
-	const { entry, matched, state, waitedMs, reason } = answer;
-	return {
-		device: deviceInfo(device),
-		result: {
-			matched,
-			state,
-			...(entry ? { element: elementJson(entry, undefined) } : {}),
-			waitedMs,
-			...(reason !== undefined ? { reason } : {}),
-		},
-		text: matched ? "true" : "false",
-		...(matched ? {} : { exit: 1 as const }),
-	};
-}
-
-/** One `is`: parse, look at the screen once, record the element it named, answer. */
-async function runIs(
-	ctx: CommandContext,
-	deps: UiDeps,
-	words: string[],
-	env: UiRunEnv,
-	device: UiDevice
-): Promise<Result<UiSuccess, UiError>> {
-	const { selector: source, last: state } = splitLast(words);
-	const usage = `is needs a selector and a state: ${IS_STATES.join("|")}`;
-	if (!oneOf(IS_STATES, state)) return { success: false, error: uiError("usage", usage) };
-	const selector = parseQuerySelector(source, usage);
-	if (!selector.success) return selector;
-	const driver = await env.driver();
-	if (!driver.success) return driver;
-	const start = ctx.now();
-	const taken = await driver.data.snapshot();
-	if (!taken.success) return { success: false, error: driverUiError(taken.error) };
-	const entry = pickEntry(indexSnapshot(taken.data), selector.data);
-	const matched = entry !== undefined && isState(entry, state);
-	if (entry) {
-		await recordQuery(ctx, deps, env, device.udid, {
-			action: "is",
-			selector: selector.data,
-			entry,
-			snapshot: taken.data,
-			args: { state, ...(matched ? {} : { not: true }) },
-		});
-	}
-	const waitedMs = Math.max(0, ctx.now() - start);
-	return ok(isOutcome(device, { entry, matched, state, waitedMs, reason: isReason(entry, matched, state) }));
-}
-
-function frameText(entry: NodeEntry): string {
-	const { x, y, width, height } = entry.element.frame;
-	return `${x} ${y} ${width} ${height}`;
-}
-
-function propertyOf(
-	entry: NodeEntry,
-	prop: Exclude<GetProp, "count">
-): string | { x: number; y: number; width: number; height: number } {
-	switch (prop) {
-		case "text":
-			return textOf(entry);
-		case "value":
-			return entry.role === "textbox" || entry.role === "searchbox" ? fieldValue(entry) : (entry.value ?? "");
-		case "label":
-			return entry.element.label ?? "";
-		case "id":
-			return entry.element.identifier ?? "";
-		case "role":
-			return entry.role;
-		case "frame":
-			return entry.element.frame;
-	}
+	return runUi(ctx, deps, "is", opts, async (device, env) => {
+		const { selector: source, last: state } = splitLast(words);
+		const usage = `is needs a selector and a state: ${IS_STATES.join("|")}`;
+		if (!oneOf<IsState>(IS_STATES, state)) return { success: false, error: uiError("usage", usage) };
+		const selector = parseQuerySelector(source, usage);
+		if (!selector.success) return selector;
+		return reply(device, await is(opSessionFor(ctx, deps, device, env), { selector: selector.data, state }));
+	});
 }
 
 /**
- * `warden ui get <selector…> text|value|label|id|role|frame|count`: print one property of the element (stdout is the
- * bare value, `frame` is `x y w h`). `count` is how many elements match (0 is fine); the others need a match
- * (`target_not_found` exit 1).
+ * `warden ui get <selector…> text|value|label|id|role|frame|count`: stdout is the bare value, `frame` is `x y w h`.
  */
 export function uiGet(ctx: CommandContext, deps: UiDeps, words: string[], opts: UiOptionValues): Promise<number> {
-	return runUi(ctx, deps, "get", opts, (device, env) => runGet(ctx, deps, words, env, device));
-}
-
-/** `get <selector> count`: how many elements match (0 is a valid answer). */
-function countOutcome(device: UiDevice, count: number, waitedMs: number): UiSuccess {
-	return {
-		device: deviceInfo(device),
-		result: { matched: count > 0, property: "count", value: count, waitedMs },
-		text: String(count),
-	};
-}
-
-/** `get <selector> <property>`: the property's value, as JSON and as the bare text. */
-function propertyOutcome(
-	device: UiDevice,
-	prop: GetProp,
-	entry: NodeEntry,
-	value: ReturnType<typeof propertyOf>,
-	waitedMs: number
-): UiSuccess {
-	return {
-		device: deviceInfo(device),
-		result: { matched: true, property: prop, value, element: elementJson(entry, undefined), waitedMs },
-		text: typeof value === "string" ? value : frameText(entry),
-	};
-}
-
-/** One `get`: parse, look at the screen once, answer `count` or one property of the picked element. */
-async function runGet(
-	ctx: CommandContext,
-	deps: UiDeps,
-	words: string[],
-	env: UiRunEnv,
-	device: UiDevice
-): Promise<Result<UiSuccess, UiError>> {
-	const { selector: source, last: prop } = splitLast(words);
-	const usage = `get needs a selector and a property: ${GET_PROPS.join("|")}`;
-	if (!oneOf(GET_PROPS, prop)) return { success: false, error: uiError("usage", usage) };
-	const selector = parseQuerySelector(source, usage);
-	if (!selector.success) return selector;
-	const driver = await env.driver();
-	if (!driver.success) return driver;
-	const start = ctx.now();
-	const taken = await driver.data.snapshot();
-	if (!taken.success) return { success: false, error: driverUiError(taken.error) };
-	const index = indexSnapshot(taken.data);
-	const waitedMs = () => Math.max(0, ctx.now() - start);
-	if (prop === "count") return ok(countOutcome(device, matchCount(index, selector.data), waitedMs()));
-	const entry = pickEntry(index, selector.data);
-	if (!entry) {
-		return {
-			success: false,
-			error: uiError("target_not_found", `${formatSelector(selector.data)} matched nothing`, {
-				hint: "run `warden ui snapshot -i` to see what is on screen",
-			}),
-		};
-	}
-	const value = propertyOf(entry, prop);
-	if (typeof value === "string") {
-		await recordQuery(ctx, deps, env, device.udid, {
-			action: "get",
-			selector: selector.data,
-			entry,
-			snapshot: taken.data,
-			args: { property: prop, expected: value },
-		});
-	}
-	return ok(propertyOutcome(device, prop, entry, value, waitedMs()));
+	return runUi(ctx, deps, "get", opts, async (device, env) => {
+		const { selector: source, last: property } = splitLast(words);
+		const usage = `get needs a selector and a property: ${GET_PROPS.join("|")}`;
+		if (!oneOf<GetProp>(GET_PROPS, property)) return { success: false, error: uiError("usage", usage) };
+		const selector = parseQuerySelector(source, usage);
+		if (!selector.success) return selector;
+		return reply(device, await get(opSessionFor(ctx, deps, device, env), { selector: selector.data, property }));
+	});
 }

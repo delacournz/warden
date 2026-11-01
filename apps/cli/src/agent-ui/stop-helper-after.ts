@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isPhysicalIosId } from "@delacour/warden-core/types";
+import { isPhysicalIosId } from "@delacour/warden-store/types";
 import type { CommandContext } from "../context";
 import { deviceTarget } from "../hooks/claude-pretool";
 import type { stopAndroidHost, stopHelper, stopIosRunner } from "./helper";

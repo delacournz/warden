@@ -3,7 +3,7 @@
  * them per pass once the AVD is idle (see `android-golden.ts`). Kept in the store's `meta` table so every
  * process sees it; this module imports nothing heavy, because auto-gc reads it on the claim path.
  */
-import type { Store } from "../store";
+import type { Store } from "@delacour/warden-store/store";
 
 export const ANDROID_SNAPSHOT_PENDING_META_KEY = "android_snapshot_pending";
 /** A build that failed is retried after this long (a failing build would otherwise cold-boot the AVD every pass). */

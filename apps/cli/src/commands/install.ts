@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { wardenHome } from "@delacour/warden-core/store";
+import { wardenHome } from "@delacour/warden-store/store";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import { type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";

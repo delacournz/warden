@@ -7,14 +7,14 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openStore } from "@delacour/warden-core/store";
+import { openStore } from "@delacour/warden-store/store";
 import { defaultHelperDeps, ensureHelper } from "./helper";
 
 const [home, udid, socketPath, script, markerDir, startAt] = process.argv.slice(2);
 if (!home || !udid || !socketPath || !script || !markerDir || !startAt) {
 	throw new Error("usage: helper.race-fixture.ts <home> <udid> <socket> <script> <markerDir> <startAt>");
 }
-const fake = join(import.meta.dir, "../../../../packages/e2e/native/scripts/fake-simd.ts");
+const fake = join(import.meta.dir, "../../../../packages/driver-ios/native/scripts/fake-simd.ts");
 const store = openStore(join(home, "warden.db"));
 const wait = Number(startAt) - Date.now();
 if (wait > 0) await Bun.sleep(wait);

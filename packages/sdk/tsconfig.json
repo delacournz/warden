@@ -1,0 +1,5 @@
+{
+	"extends": "@delacour/warden-tsconfig/tsconfig.base.json",
+	"compilerOptions": { "outDir": "./dist", "types": ["bun"], "lib": ["es2022", "esnext.disposable"] },
+	"include": ["src", "examples"]
+}

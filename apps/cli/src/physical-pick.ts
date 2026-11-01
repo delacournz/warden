@@ -1,9 +1,9 @@
-import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
-import { type InventoryDevice, isPhysicalReady, type Owner, type Platform } from "@delacour/warden-core/types";
+import { providerFor } from "@delacour/warden-core/host-deps";
+import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
+import { type InventoryDevice, isPhysicalReady, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type ClaimFlags, withPhysicalAllowlist } from "./claim-flags";
-import type { CommandContext } from "./context";
+import { appHostFromContext, type CommandContext } from "./context";
 import { formatTable } from "./output";
-import { providerFor } from "./providers";
 
 /** The hint every `ambiguous_device` physical claim carries. */
 export const AMBIGUOUS_HINT = "pass --udid <id> (iOS) / --serial <id> (Android), or set WARDEN_PHYSICAL_IDS";
@@ -64,11 +64,11 @@ async function candidatesFor(
 	const { request } = flags;
 	const inventory = await providerFor(
 		request.platform,
-		ctx,
+		appHostFromContext(ctx),
 		owner,
 		request.platform === "ios" ? { physical: true } : {}
 	).inventory();
-	if (!inventory.success) return { ok: false, message: inventory.error };
+	if (!inventory.success) return { ok: false, message: inventory.error.message };
 	const now = ctx.now();
 	const held = new Set<string>();
 	for (const l of ctx.store().listLeases()) {

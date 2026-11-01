@@ -1,5 +1,5 @@
 import { loadavg } from "node:os";
-import { readXcode } from "@delacour/warden-core/xcode";
+import { readXcode } from "@delacour/warden-runtime/xcode";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { Host } from "../results/schema";
 import type { Exec } from "./exec";

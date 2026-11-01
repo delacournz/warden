@@ -3,10 +3,15 @@ import { join } from "node:path";
 import { DEFAULT_SAMPLING_INTERVAL_US } from "@delacour/warden-perf/js/cpu-profile";
 import type { JsCdp } from "@delacour/warden-perf/js/js.types";
 import type { MapFetch } from "@delacour/warden-perf/js/symbolicate";
+import {
+	fetchMapCapped,
+	type JsCapture,
+	startJsProfile,
+	stopJsProfile,
+} from "@delacour/warden-sdk/ops/perf/js-capture";
+import { startReactCapture, stopReactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
 import { ok } from "@delacour/warden-types/result";
 import { z } from "zod";
-import { fetchMapCapped, type JsCapture, startJsProfile, stopJsProfile } from "../perf/js-capture";
-import { startReactCapture, stopReactCapture } from "../perf/react-capture";
 import { type BrokerContext, type BrokerResult, brokerErr } from "./broker.types";
 import type { BrokerExtension } from "./extensions";
 import type {

@@ -1,0 +1,59 @@
+---
+title: Spec authoring
+description: session.record - turn a scripted or agent-driven session into an e2e spec, with the same journal, codegen and lints as warden ui record.
+icon: PenLine
+---
+
+`session.record` is the SDK face of `warden ui record`. While a recording is active, the session's interactions are journalled as steps; `stop` generates `<suite specsDir>/<name>.e2e.ts` (or an exported helper function), lints it, proposes the `specs.<id>` block for `warden.config.ts`, and can run the spec once on the device.
+
+The CLI and the SDK call the same engine ops (`@delacour/warden-sdk/ops/authoring/*`); `warden ui record --json` and `session.record.*` return the same result shapes.
+
+## Use
+
+This is `packages/sdk/examples/record.ts`.
+
+```ts
+const [lease] = await warden.leases.claim({ platform: "ios" });
+await using session = await warden.sessions.open({ lease, app: "com.apple.Preferences" });
+
+await session.record.start({ name: "open first row" });
+await session.apps.open({ app: "com.apple.Preferences" });
+const snapshot = await session.capture.snapshot({ interactiveOnly: true });
+await session.record.note("open the first row");
+await session.interactions.press({ ref: snapshot.elements[0].ref });
+
+const stopped = await session.record.stop({ verify: false });
+console.log(stopped.file, stopped.lints, stopped.configSnippet);
+```
+
+## API
+
+| Method | Does |
+|---|---|
+| `start({ name, to?, helper?, prerequisite?, ids?, options?, title?, suite?, overwrite? })` | begin recording this device; refuses a second recording and an existing target unless `overwrite` |
+| `note(text)` | a step boundary, written as a comment above the next action |
+| `undo({ count? })` | drop the last `count` steps (default 1, notes count) |
+| `use({ helper, suite? })` | run an exported helper (`module#fn`) on the device and, when it passes, record a call to it |
+| `status()` | `{ outcome: "recording", recording }` with step count, last steps and lints, or `{ outcome: "idle" }` |
+| `cancel()` | throw the recording away; a spec already written is left |
+| `stop({ verify?, overwrite?, suite? })` | write the file; returns the result plus `verified` and `configSnippet` |
+
+Every method throws a typed `WardenError` (`no_recording`, `recording_active`, `target_exists`, `empty_recording`, `verify_failed`, `verify_unavailable`, `helper_missing`, `use_failed`). A failed `stop` keeps the file **and** the journal under `$WARDEN_HOME/ui/<udid>/`: `undo`, fix the app, `stop` again, or `cancel`.
+
+## What is journalled
+
+Calls made through `session.interactions.*`, `session.apps.open` and `session.query.wait|is|get` become steps, with their targets resolved to a durable selector chain (never an `@eN` ref) and typed secrets replaced by the name of their `WARDEN_UI_SECRET_*` variable. `session.locator(...)` calls and raw driver calls are not recorded.
+
+On a dev client with Metro, the route the app lands on after a navigating action is recorded too, so `stop` can map the spec to route files in the config snippet.
+
+## Verifying the spec
+
+`stop` runs the written spec once through a spec runner your host provides. The SDK never spawns one by itself: the runner is the `authoring.verify` seam of `ClientSeams` (the second argument of `createWardenClient`); the `warden` CLI supplies the runner `warden e2e` uses. Without it `stop` fails with `verify_unavailable` and keeps the journal; pass `verify: false` to write the file without running it (a helper is never run).
+
+## AI SDK tools
+
+`createWardenTools({ set: "all" })` adds `record_start`, `record_note`, `record_stop` and `record_status`, so an agent can drive the app and leave a spec behind. See [AI SDK tools](/docs/sdk/ai-sdk).
+
+## Contracts
+
+The `--json` result of every `warden ui record` subcommand is a zod schema in `@delacour/warden-sdk/contracts` (`recordResultSchema` and the per-outcome schemas, discriminated on `outcome`).

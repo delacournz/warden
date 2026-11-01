@@ -1,7 +1,6 @@
-import type { ConsoleLine, StackFrame } from "@delacour/warden-e2e/devtools/devtools.types";
+import type { ConsoleLine, StackFrame } from "@delacour/warden-devtools/devtools.types";
 import { isBundleUrl } from "@delacour/warden-perf/js/bundle-url";
-import type { AsyncResult } from "@delacour/warden-types/result";
-import { err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { LineProcessor } from "./broker.types";
 import type { BrokerExtension } from "./extensions";

@@ -1,5 +1,4 @@
-import type { Exec } from "@delacour/warden-core/exec";
-import { execError } from "@delacour/warden-core/exec";
+import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { releaseTarget } from "../npm/platforms";
 

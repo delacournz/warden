@@ -77,12 +77,12 @@ jobs:
       - run: bun run check
       - run: bun run test
 
-      # The iOS driver helper (packages/e2e/native/dist), shipped in @delacour/warden-darwin-arm64 and as a release
+      # The iOS driver helper (packages/driver-ios/native/dist), shipped in @delacour/warden-darwin-arm64 and as a release
       # asset. The runner is arm64 (macos-latest): the helper is built for the machine it builds on.
       - name: Build warden-simd
         run: |
-          bun run --cwd packages/e2e native:deps
-          bun run --cwd packages/e2e native:build
+          bun run --cwd packages/driver-ios native:deps
+          bun run --cwd packages/driver-ios native:build
 
       - name: Build release binaries
         run: bun run --cwd apps/cli build:release
@@ -145,7 +145,7 @@ jobs:
           fi
 
       # Platform packages first so @delacour/warden's optionalDependencies resolve the moment it lands;
-      # @delacour/warden-e2e last (exact peer dependency on @delacour/warden, same version).
+      # @delacour/warden-e2e and @delacour/warden-sdk last (exact peer / optional dependencies on the packages above, same version).
       # Already-published versions are skipped, so a re-run finishes a partial publish.
       # Auth is OIDC trusted publishing (npm >= 11.5.1) only. Never pass NPM_TOKEN here: it is the
       # GitHub Packages read token for `bun install`, and npm would send it to registry.npmjs.org.
@@ -156,7 +156,7 @@ jobs:
         run: |
           provenance=""
           if [ "$REPO_PRIVATE" = "false" ]; then provenance="--provenance"; fi
-          for dir in dist/npm/warden-darwin-*/ dist/npm/warden-linux-*/ dist/npm/warden/ dist/npm/warden-e2e/; do
+          for dir in dist/npm/warden-darwin-*/ dist/npm/warden-linux-*/ dist/npm/warden/ dist/npm/warden-e2e/ dist/npm/warden-sdk/; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version > /dev/null 2>&1; then

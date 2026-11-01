@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { CrashDeps } from "@delacour/warden-sdk/ops/perf/crashes";
+import { createSession, sessionDir } from "@delacour/warden-sdk/ops/perf/session";
 import { createPerfCommand } from "../commands/perf";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { type CrashDeps, perfCrashes, registerCrashes } from "./crashes";
-import { createSession, sessionDir } from "./session";
+import { perfCrashes, registerCrashes } from "./crashes";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

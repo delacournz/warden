@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { MetricsSampler, MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "../agent-ui/output";
-import type { MetricsSampler, MetricsTarget } from "../perf/metrics-sampler";
 import { testContext } from "../testing";
 import { HUD_MIN_INTERVAL_MS, startHud } from "./hud";
 import { HUD_HISTORY, type HudFps, type HudSample } from "./model";

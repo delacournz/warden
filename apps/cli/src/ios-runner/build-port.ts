@@ -1,15 +1,15 @@
 import { join } from "node:path";
-import { findWardenConfig } from "@delacour/warden-core/builds/config";
-import type { BuildLockDeps } from "@delacour/warden-core/builds/lock";
-import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warden-core/ios-runner/pack";
+import { findWardenConfig } from "@delacour/warden-builds/config";
+import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warden-builds/ios-runner/pack";
 import type {
 	EnsureRunnerBuildInput,
 	RunnerBuild,
 	RunnerBuildError,
-} from "@delacour/warden-core/ios-runner/runner-build.types";
-import { processAlive } from "@delacour/warden-core/liveness";
+} from "@delacour/warden-builds/ios-runner/runner-build.types";
+import type { BuildLockDeps } from "@delacour/warden-builds/lock";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { processAlive } from "@delacour/warden-store/liveness";
 import type { AsyncResult } from "@delacour/warden-types/result";
-import { resolveOwner } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { type BuildInfo, currentBuild } from "../update/build-info";
 import type { RunnerBuildFailure, RunnerBuildPort } from "./types";
@@ -32,7 +32,7 @@ export function describeBuildError(error: RunnerBuildError): RunnerBuildFailure 
 }
 
 async function defaultEnsure(input: EnsureRunnerBuildInput): AsyncResult<RunnerBuild, RunnerBuildError> {
-	return (await import("@delacour/warden-core/ios-runner/build")).ensureRunnerBuild(input);
+	return (await import("@delacour/warden-builds/ios-runner/build")).ensureRunnerBuild(input);
 }
 
 function configuredIos(ctx: CommandContext): { teamId?: string; runnerBundleId?: string } {

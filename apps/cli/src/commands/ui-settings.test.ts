@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ConditionArea } from "@delacour/warden-config/conditions.types";
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
-import type { ConditionArea } from "@delacour/warden-core/conditions/conditions.types";
-import { failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import { failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { ok } from "@delacour/warden-types/result";
 import { updateState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";

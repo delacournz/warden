@@ -1,9 +1,5 @@
-import type {
-	ConditionRecord,
-	LocationCondition,
-	NetworkCondition,
-} from "@delacour/warden-core/conditions/conditions.types";
-import { formatDuration } from "@delacour/warden-core/duration";
+import type { ConditionRecord, LocationCondition, NetworkCondition } from "@delacour/warden-config/conditions.types";
+import { formatDuration } from "@delacour/warden-config/duration";
 
 /** One condition as a short human phrase: `3g`, `custom 800 ms / 780 kbps down`, `flap 10s up / 3s down`. */
 export function describeNetwork(condition: NetworkCondition): string {

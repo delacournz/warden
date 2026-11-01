@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Exec, ExecResult } from "../exec";
-import { openStore, type Store } from "../store";
-import type { DeviceResource, Owner } from "../types";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
+import { openStore, type Store } from "@delacour/warden-store/store";
+import type { DeviceResource, Owner } from "@delacour/warden-store/types";
 import { type DeleteDeps, type DeleteTarget, deleteSims } from "./delete";
 
 const NOW = 1_000_000;

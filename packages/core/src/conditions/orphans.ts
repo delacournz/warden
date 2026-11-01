@@ -1,9 +1,7 @@
-import type { Exec } from "../exec";
-import type { PidAlive } from "../liveness";
-import type { Store } from "../store";
-import type { Platform } from "../types";
+import type { ConditionArea, ConditionRecord } from "@delacour/warden-config/conditions.types";
+import type { Store } from "@delacour/warden-store/store";
+import type { Platform } from "@delacour/warden-store/types";
 import { type ConditionRow, toConditionRecord } from "./conditions";
-import type { ConditionArea, ConditionRecord } from "./conditions.types";
 import type { UndoDeps } from "./undo";
 
 /**
@@ -64,37 +62,4 @@ export async function undoOrphans(
 		report.reset.push(record.area);
 	}
 	return report;
-}
-
-/** What a claim or gc needs to undo orphans; the clock and liveness default to the real ones. */
-export type OrphanHost = {
-	exec: Exec;
-	env: Record<string, string | undefined>;
-	now?: () => number;
-	pidAlive?: PidAlive;
-	kill?: (pid: number) => void;
-};
-
-/** `undoOrphans` wired to a host: real kill / liveness and a proxy releaser that imports its module only for a network orphan. */
-export async function undoOrphansWith(
-	store: Store,
-	host: OrphanHost,
-	device: { platform: Platform; id: string }
-): Promise<OrphanUndoReport> {
-	const { processAlive } = await import("../liveness");
-	const pidAlive = host.pidAlive ?? processAlive;
-	const kill = host.kill ?? ((pid: number) => process.kill(pid, "SIGTERM"));
-	return undoOrphans(
-		{
-			store,
-			exec: host.exec,
-			env: host.env,
-			now: host.now ?? Date.now,
-			pidAlive,
-			kill,
-			releaseProxy: async (id) =>
-				(await import("../netproxy/lease-proxy")).releaseLeaseProxy({ store, env: host.env, kill, pidAlive }, id),
-		},
-		device
-	);
 }

@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { makeFixtureRepo } from "@delacour/warden-core/affected/fixture.testing";
 import { TYPESCRIPT_UNUSABLE_EXIT } from "@delacour/warden-core/affected/graph";
 import { type GraphRequest, parseGraphDoc } from "@delacour/warden-core/affected/graph-snapshot";
 import { buildGraphDoc } from "@delacour/warden-core/affected/graph-worker";
+import { makeFixtureRepo } from "@delacour/warden-core/testing/fixture.testing";
 import { err } from "@delacour/warden-types/result";
 import { main } from "../cli";
 import { type TestContext, testContext } from "../testing";

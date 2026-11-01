@@ -1,10 +1,10 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { DEFAULT_THRESHOLD_PCT, diffLines, diffReports } from "@delacour/warden-perf/shared/diff";
+import { reportFor } from "@delacour/warden-sdk/ops/perf/report-read";
+import { sessionByRef } from "@delacour/warden-sdk/ops/perf/session-ref";
 import { reportError, reportOk, UI_EXIT, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
-import { reportFor } from "./report-read";
-import { sessionByRef } from "./session-pick";
 
 export type PerfDiffOptions = { json?: true; failOn?: string; threshold?: string };
 

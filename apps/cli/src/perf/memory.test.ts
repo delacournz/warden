@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import type { MemoryIo } from "@delacour/warden-sdk/ops/perf/memory";
 import { type TestContext, testContext } from "../testing";
-import { type MemoryIo, perfMemory } from "./memory";
+import { perfMemory } from "./memory";
 import { asMe, fakePerfDeps, ME } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -229,7 +230,7 @@ describe("warden perf memory (Android)", () => {
 
 	test("the session dir is used when a session is active", async () => {
 		const { c, deps, calls } = setup(droid, hprofScript(), true);
-		const { createSession } = await import("./session");
+		const { createSession } = await import("@delacour/warden-sdk/ops/perf/session");
 		const made = createSession(c, deps.session, {
 			device: { udid: droid.id, platform: "android", name: droid.name },
 			target: { udid: droid.id, ownedByCaller: true },

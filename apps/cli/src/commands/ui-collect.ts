@@ -1,4 +1,4 @@
-import { runCollector } from "@delacour/warden-e2e/devtools/collector";
+import { runCollector } from "@delacour/warden-devtools/collector";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 

@@ -101,7 +101,7 @@ describe("helperDir", () => {
 	});
 
 	test("from source: the helper's build output in the checkout", () => {
-		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun")).toBe("/repo/packages/e2e/native/dist");
+		expect(helperDir("/repo/apps/cli/src/cli.ts", "/usr/bin/bun")).toBe("/repo/packages/driver-ios/native/dist");
 	});
 });
 

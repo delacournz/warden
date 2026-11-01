@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { connect, createServer, type Server, type Socket } from "node:net";
-import { type ConditionsUpdate, type ProxyHandle, type ProxyStats, type ProxyStatus, serveControl } from "./control";
+import type { ConditionsUpdate } from "@delacour/warden-config/shaping";
+import { delayMs, faultFor, NO_CONDITIONS, type ProxyConditions, type Rng } from "@delacour/warden-config/shaping";
+import { type ProxyHandle, type ProxyStats, type ProxyStatus, serveControl } from "./control";
 import { decide } from "./decide";
 import { Pipe } from "./pipe";
-import { delayMs, faultFor, NO_CONDITIONS, type ProxyConditions, type Rng } from "./shaping";
 
 const LOOPBACK = "127.0.0.1";
 const MAX_HEAD = 64 * 1024;

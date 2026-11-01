@@ -1,4 +1,4 @@
-import type { AppPhase } from "@delacour/warden-core/builds/resolve";
+import type { AppPhase } from "@delacour/warden-builds/resolve";
 
 /** The phases that mean the app is not on its way to a device yet, most upstream first. */
 const PENDING = ["building", "repacking", "fetching", "waiting"] as const;

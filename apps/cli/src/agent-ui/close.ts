@@ -1,7 +1,7 @@
-import { isPhysicalIosId, type Lease } from "@delacour/warden-core/types";
+import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import { isPhysicalIosId, type Lease } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { releaseDevices } from "../device-lease";
 import { releaseAfter } from "../perf/release-after";
 import type { UiDevice } from "./device";
 import { fromDriver, type UiDeps } from "./driver";

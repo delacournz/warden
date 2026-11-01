@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Exec, ExecResult } from "@delacour/warden-core/exec";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import type { BuildInfo } from "../update/build-info";
 import { installOrigin, recordInstallOrigin } from "../update/install-origin";

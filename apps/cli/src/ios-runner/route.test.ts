@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
-import type { Exec } from "@delacour/warden-core/exec";
+import type { Exec } from "@delacour/warden-runtime/exec";
 import { devicectlList, parseTunnel, readTunnelIp, waitTunnelConnected } from "./route";
 
 const UDID = "00008140-000A0B0C0D0E0F10";

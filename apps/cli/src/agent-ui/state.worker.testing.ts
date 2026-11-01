@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { openStore } from "@delacour/warden-core/store";
-import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { openStore } from "@delacour/warden-store/store";
 import { commitGeneration, type UiState, updateState, writeLastSnapshot } from "./state";
 
 /**

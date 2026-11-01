@@ -6,15 +6,16 @@
  *
  * Pure half: key, names, staleness plan, parsers. Side effects live in `ios-golden.ts`.
  */
+
+import { GOLDEN_PREFIX } from "@delacour/warden-providers/golden-name";
+import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
 import { err, ok, type Result } from "@delacour/warden-types/result";
-import type { SimctlSim } from "../sims/list";
 
 /**
  * Bump when what building a golden does to the device changes, so existing goldens go stale.
  * 2: `AutomationEnabled` written in the golden (16-7).
  */
 export const GOLDEN_RECIPE = 2;
-export const GOLDEN_PREFIX = "warden-golden";
 
 export type GoldenInputs = { xcodeBuild: string; runtimeId: string; runtimeBuild: string; deviceType: string };
 
@@ -42,10 +43,6 @@ export function olderRecipeNames(profile: string, inputs: GoldenInputs, recipe: 
 	return Array.from({ length: Math.max(0, recipe - 1) }, (_, i) =>
 		goldenName(profile, goldenKey(inputs, i + 1), i + 1)
 	);
-}
-
-export function isGoldenName(name: string): boolean {
-	return name.startsWith(`${GOLDEN_PREFIX}-`);
 }
 
 export type GoldenPlan = { kind: "reuse"; sim: SimctlSim; stale: SimctlSim[] } | { kind: "create"; stale: SimctlSim[] };

@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { TestResult } from "./results";
-import { clockOf, formatConsoleLine, openTrace, readTrace, shortName, type TraceEvent } from "./trace";
+import { clockOf, formatConsoleLine, openTrace, readTrace, shortName } from "./trace";
 
 const span = (op: string, ts: number, over: Partial<Extract<TraceEvent, { type: "span" }>> = {}): TraceEvent => ({
 	type: "span",

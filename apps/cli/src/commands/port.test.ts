@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Lease, Owner } from "@delacour/warden-core/types";
+import { portLeasesJsonSchema, portReleaseJsonSchema } from "@delacour/warden-sdk/contracts/leases";
+import type { Lease, Owner } from "@delacour/warden-store/types";
 import { type TestContext, testContext } from "../testing";
 import { portCommand } from "./port";
 
@@ -60,7 +61,7 @@ describe("warden port claim", () => {
 	test("--count + --ttl + --json", async () => {
 		const { code, c } = await run(["claim", "--from", FROM, "--count", "2", "--ttl", "5m", "--json"]);
 		expect(code).toBe(0);
-		const leases = JSON.parse(c.stdout.join("\n")) as Lease[];
+		const leases = portLeasesJsonSchema.parse(JSON.parse(c.stdout.join("\n"))) as Lease[];
 		expect(leases).toHaveLength(2);
 		expect(leases.every((l) => l.ttlMs === 300_000)).toBe(true);
 		expect(new Set(leases.map((l) => (l.resource.kind === "port" ? l.resource.port : 0))).size).toBe(2);
@@ -110,7 +111,7 @@ describe("warden port release", () => {
 
 		const forced = await run(["release", "47399", "--force", "--json"], c);
 		expect(forced.code).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n")).released).toHaveLength(1);
+		expect(portReleaseJsonSchema.parse(JSON.parse(c.stdout.join("\n"))).released).toHaveLength(1);
 		expect(ports(c)).toEqual([]);
 	});
 
@@ -167,7 +168,7 @@ describe("warden port ls", () => {
 		expect(text).not.toContain("sim");
 
 		await run(["ls", "--json"], c);
-		const leases = JSON.parse(c.stdout.join("\n")) as Lease[];
+		const leases = portLeasesJsonSchema.parse(JSON.parse(c.stdout.join("\n"))) as Lease[];
 		expect(leases.map((l) => l.resource)).toEqual([{ kind: "port", port: 8091 }]);
 	});
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "@commander-js/extra-typings";
-import { isEmptySelector, type LeaseSelector, selectorFrom, withSelectOptions } from "./lease-select";
+import { isEmptySelector, type LeaseSelector } from "@delacour/warden-leasing/lease-select";
+import { selectorFrom, withSelectOptions } from "./lease-select";
 
 function parse(argv: string[]): LeaseSelector {
 	let selector: LeaseSelector | undefined;

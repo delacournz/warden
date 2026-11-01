@@ -1,0 +1,227 @@
+---
+title: Client API
+description: Every namespace, method, option and error of createWardenClient, with the dispatched and retry semantics, AbortSignal and await using.
+icon: Code
+---
+
+```ts
+import { createWardenClient } from "@delacour/warden-sdk";
+const warden = createWardenClient(options?);
+```
+
+Every method takes its parameters first and `{ signal?: AbortSignal }` last, returns a `Promise` and **throws** a [`WardenError`](#errors). Internally warden returns results; the client unwraps them once at the boundary.
+
+## Client options
+
+| Option | Type | Meaning |
+|---|---|---|
+| `label` | `string` | shown next to the client's leases in `warden ls` |
+| `owner` | `{ kind: "agent"; sessionId; cwd? } \| { kind: "user"; pid?; cwd? } \| { kind: "ci"; runId }` | replaces the detected owner |
+| `lockPolicy` | `"wait" \| "reject"` | device held by someone else: queue for it (default) or fail with `device_busy` |
+| `priority` | `number` | claim queue priority; higher goes first |
+| `home` | `string` | `WARDEN_HOME` for this client |
+| `host` | `{ env?, cwd?, now?, exec?, sleep?, pidAlive? }` | injected seams (tests); defaults to the real machine |
+| `signal` | `AbortSignal` | cancels every in-flight call of this client |
+| `onEvent` | `(event: WardenEvent) => void` | progress and lifecycle events, see [events](/docs/sdk/build-an-integration#events) |
+| `providers` | `ProviderPlugin[]` | device-provider [plugins](/docs/sdk/plugins) (experimental) |
+
+## Lifecycle: `await using`
+
+The client and every session implement `Symbol.asyncDispose`.
+
+```ts
+await using warden = createWardenClient();          // dispose: release the leases this client claimed, close sessions
+await using session = await warden.sessions.open({ lease });  // dispose: close the driver; the lease stays with the client
+```
+
+- Disposing the client releases **only the leases it claimed** (shutting down devices it booted, per the shutdown policy) and stops the heartbeat that keeps those leases alive.
+- `client.close()` and `session.close()` do the same explicitly; both are idempotent.
+- A lease is an exclusive machine resource. Without `await using`, call `close()` in a `finally`; a process that dies leaves leases to expire (30 min, 5 min for an agent's bare claim) and `warden gc` reclaims them.
+
+## `client.devices`
+
+| Method | Returns |
+|---|---|
+| `list({ platform?, booted? })` | `DeviceInfo[]`: `platform`, `id`, `name`, `state`, `wardenCreated`, `leased`, `profile?`, `runtime?`, `quarantined?` |
+| `inventory({ platform?, booted? })` | `{ device, lease? }[]` |
+| `capacity({ platform? })` | `CapacityInfo[]`: `available`, `running`, `max`, `queued` per platform |
+| `viewer()` | `"simulator" \| "device-hub" \| "none"`: which app shows simulator windows (Xcode 27 uses Device Hub). Always `"none"` off macOS |
+| `arrange({ open? })` | `{ arranged, opened, viewer }`: tiles the open windows of warden sims in name order (what `warden arrange` does). `open: [udid, ...]` first asks Device Hub for those sims' windows (only while it runs). Never launches a viewer |
+
+`devices.*` see the bundled iOS and Android providers only; a [plugin](/docs/sdk/plugins)'s devices appear through `leases.claim({ provider })`.
+
+## `client.leases`
+
+| Method | Returns |
+|---|---|
+| `claim({ platform, profile?, runtime?, count?, adopt?, ttlMs?, lockPolicy?, provider?, shared? })` | `Lease[]`. Reuses, boots or creates a device; waits or rejects per `lockPolicy`. `shared: true` marks the leases shared (below) |
+| `list({ mine? })` | live leases on the machine; each `Lease` carries `shared?: boolean` |
+| `heartbeat(lease \| id)` | the extended `Lease` |
+| `release({ leaseIds?, shutdown? })` | `{ released, shutdown }`; the client's own leases when `leaseIds` is omitted |
+| `check(lease \| id)` | `{ state: "held", lease, expiresInMs } \| { state: "stale", lease } \| { state: "missing" }` |
+
+A **shared** lease (`lease.shared === true`) is what `warden dev` holds: the owner's other processes (`warden ui`, another SDK client) attach to the device instead of failing with `device_busy`, and never release it. Other owners still see it as foreign. `claim({ shared: true })` does the same marking for an SDK claim, right after the claim returns.
+
+Releasing a lease the client's owner does not hold fails with `lease_foreign`. `adopt: true` allows leasing a foreign device that matches the profile; without it a foreign device is never touched.
+
+## `client.ports`
+
+| Method | Returns |
+|---|---|
+| `claim({ spec?, ttlMs? })` | a port `Lease`; `spec` is a port, a range `8081-8090` or a list, first free wins |
+| `release(lease \| id)` | `void` |
+
+## `client.apps`
+
+| Method | Returns |
+|---|---|
+| `ensure({ lease \| udid \| serial, project?, profile?, force? })` | `EnsuredApp`: `bundleId`, `buildKey`, `cached`, `installed`. Fingerprint cache, then local cache, EAS, local build, then install |
+| `install({ lease \| udid \| serial, path })` | `void`; installs a prebuilt `.app` / `.apk` |
+| `builds.list({ platform? })` | cached `BuildInfo[]` |
+| `builds.prune({ olderThanMs?, keep? })` | keys removed |
+
+A build failure is `build_failed`; a bad `warden.config.ts` is `config_invalid`.
+
+## `client.metro`
+
+| Method | Returns |
+|---|---|
+| `start({ project?, port? })` | `{ running: true, port, url, pid, project }`; a free port is leased when `port` is omitted |
+| `stop({ project? })` | `void`; only a dev server this client started |
+| `status({ project? })` | `{ running: false } \| { running: true, ... }` |
+
+## `client.sessions`
+
+| Method | Returns |
+|---|---|
+| `open({ lease \| udid \| serial, app? })` | a [`Session`](#session) on a device the caller leases |
+| `end(sessionId)` | `void` |
+
+`open` refuses a device the caller does not lease (`device_foreign`, `device_not_leased`). iOS connects to the resident `warden-simd` helper; Android starts the on-device server. The driver is wrapped with a screen-observation cache and a trace.
+
+## Session
+
+`session.deviceId`, `session.platform` and `session.sessionId` identify it. `session.locator(selector)` returns `{ selector, press, fill, waitForVisible, count }`, an escape hatch to the e2e `Locator`.
+
+A **target** is `{ ref: "@e3" } | { selector: "id=email" } | { point: { x, y } }` (`ElementTarget` excludes the point). Refs belong to the latest snapshot: after the next `capture.snapshot` an older ref fails with `stale_ref`. Selector syntax is the [`warden ui` selector](/docs/guides/agent-ui#targets-and-selectors).
+
+| Namespace | Method | Parameters |
+|---|---|---|
+| `session.apps` | `open` | `{ app?, args?, env?, relaunch?, url? }` |
+| | `close`, `reinstall` | `{ app? }` |
+| | `restart` | as `open` |
+| | `clearData` | `{ app?, keychain? }` |
+| `session.capture` | `snapshot` | `{ interactiveOnly?, offscreen? }` returns `{ platform, takenAt, generation, screen, elements, text, truncated }`; each element has `ref`, `role`, `label?`, `identifier?`, `value?`, `frame`, `enabled`, ... |
+| | `screenshot` | `{ path?, scale?, format? }` returns `{ path?, width, height, bytes }` |
+| | `video.start` / `video.stop` | `{ path }` / none, returns `{ path, durationMs }` |
+| `session.interactions` | `press` | target `& { count? }` |
+| | `longPress` | target `& { durationMs? }` |
+| | `fill` | element target `& { text, clear? }` |
+| | `type` | `{ text, delayMs? }` into the focused field |
+| | `key` | `{ key, modifiers?, times? }` |
+| | `swipe` | `{ from, to, durationMs? }` |
+| | `scroll` | `{ direction, target?, amount?, until? }` |
+| | `pinch` / `rotate` | target `& { scale }` / `& { degrees }`, `durationMs?` |
+| | `gesture` | `{ paths: { points, durationMs? }[] }` (1-2 fingers) |
+| `session.query` | `find` | `{ selector, all? }` returns matching elements |
+| | `wait` | element target `& { for: "visible" \| "hidden" \| "present" \| "absent" \| "stable" }` or `{ for: "text", text }`, `timeoutMs?`; throws `wait_*` on timeout |
+| | `is` | element target `& { state }`, one of `visible`, `enabled`, `focused`, `selected`, `checked`, `hittable` |
+| | `get` | element target `& { property }`, one of `text`, `label`, `value`, `identifier`, `frame`, `role` |
+| `session.device` | `home`, `back` | none |
+| | `button` | a hardware button |
+| | `alert` | `{ action: "accept" \| "dismiss" \| { button } }`; no argument reads it |
+| | `orientation`, `appearance` | `{ set }` or none to read |
+| | `clipboard` | `{ set } \| { get: true }` |
+| | `openUrl` | `{ url }` |
+| `session.devtools` | `eval` | `{ expression }` in the app's Hermes runtime |
+| | `console` | `{ since?, level?, limit? }` |
+| | `network` | `{ since?, urlContains?, limit? }` |
+| | `tree` | `{ maxDepth? }`, the React component tree |
+| | `reload` | none |
+| | `route` | none; the Expo Router key of the focused screen (`(tabs)/todos`), `undefined` before a screen is focused |
+| | `nativeLogs` | `{ since?, level?, limit? }` returns the app's native log (iOS os_log, Android logcat), oldest first. `{ follow: true }` returns an `AsyncIterable` of new lines, polled until the call's `signal` aborts (it then ends without throwing) |
+
+`devtools.*` needs a dev build with Metro (`devtools_unavailable` otherwise); `nativeLogs` does not need Metro, only an app opened in the session (`usage` otherwise). `level` is a minimum: `debug` < `info` < `warn` < `error` (iOS has no `warn`).
+
+### HID recovery (iOS)
+
+On Xcode 27.1, quitting Device Hub invalidates the simulator's HID connection: it stays booted but every tap is discarded. An iOS session recovers once: the call that hits the error shuts the sim down, boots it again (no window), reopens the driver, runs `WARDEN_AFTER_REBOOT` if set (the CLI uses it to reopen the Device Hub window), and runs the call again. A second loss in the same session fails with the original error. The recovery emits a `warn` event.
+
+## Errors
+
+Every failure is a `WardenError` (`isWardenError(value)` narrows it):
+
+| Field | Meaning |
+|---|---|
+| `code` | machine-readable `WardenErrorCode`, append-only within a major version |
+| `message` | one-liner |
+| `hint` | what to do next (`warden update`, "run snapshot again", ...) |
+| `details` | structured context (device id, lease id, selector) |
+| `retryable` | `true` when the same call can succeed later (`device_busy`, `capacity_exhausted`, `probe_timeout`, `timeout`, `stale_ref`) |
+| `dispatched` | whether the call may have reached the device |
+
+### `dispatched`
+
+| Value | Meaning | Retry |
+|---|---|---|
+| `"no"` | failed before touching the device: bad arguments, ownership checks, a missing engine, a stale ref, a build or config error, a store newer than the SDK | safe |
+| `"unknown"` | the call may have been in flight (`failed`, `timeout`, `interrupted`, `probe_timeout`, `lease_busy`, ...) | only if the operation is idempotent (a second tap may tap twice) |
+| `"yes"` | part of the work ran before the failure | no |
+
+Codes with `dispatched: "no"`: `usage`, `wait_*`, `target_not_found`, `no_alert`, `device_foreign`, `device_busy`, `device_not_leased`, `no_device_leased`, `ambiguous_device`, `lease_not_found`, `engine_unavailable`, `devtools_unavailable`, `stale_ref`, `claim_aborted`, `capacity_exhausted`, `not_found`, `build_failed`, `config_invalid`, `store_incompatible`, `duplicate_provider`.
+
+```ts
+import { createWardenClient, isWardenError, type Session } from "@delacour/warden-sdk";
+
+/** Retry a call while the failure says the device was not touched and it can go away by itself. */
+export async function withRetry<T>(call: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      const safe = isWardenError(error) && error.retryable === true && error.dispatched === "no";
+      if (!safe || attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+}
+
+/** Tap a ref; on `stale_ref` take a fresh snapshot and look the element up again by its label. */
+export async function pressLabelled(session: Session, label: string): Promise<void> {
+  const snap = await session.capture.snapshot({ interactiveOnly: true });
+  const target = snap.elements.find((element) => element.label === label);
+  if (!target) throw new Error(`no element labelled ${label}`);
+  try {
+    await session.interactions.press({ ref: target.ref });
+  } catch (error) {
+    if (!isWardenError(error) || error.code !== "stale_ref") throw error;
+    const fresh = await session.query.find({ selector: `label=${JSON.stringify(label)}` });
+    const again = fresh[0];
+    if (!again) throw error;
+    await session.interactions.press({ ref: again.ref });
+  }
+}
+```
+
+Both are in `packages/sdk/examples/retry.ts`.
+
+## Cancellation: `AbortSignal`
+
+Every call accepts `{ signal }`, and the client takes one too. An abort stops claim waits, polling and running processes, and the call rejects with `interrupted` (`dispatched: "unknown"`). A claim that was waiting in the queue leaves it; nothing stays leased.
+
+```ts
+export async function canClaimWithin(ms: number): Promise<boolean> {
+  await using warden = createWardenClient({ lockPolicy: "wait" });
+  try {
+    await warden.leases.claim({ platform: "android" }, { signal: AbortSignal.timeout(ms) });
+    return true;
+  } catch (error) {
+    if (isWardenError(error) && error.code === "interrupted") return false;
+    throw error;
+  }
+}
+```
+
+## Store compatibility
+
+The client reads the store's schema version (`PRAGMA user_version`) the first time it opens the database. A store written by a newer warden is refused with `store_incompatible` and the hint `run warden update`; an older store is migrated forward. Keep `@delacour/warden`, `@delacour/warden-e2e` and `@delacour/warden-sdk` on one version.

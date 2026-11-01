@@ -3,11 +3,12 @@
  * judge it against the store, and delete the warden-owned ones the rules say `prune` may
  * (`canPrune`) through the shared `deleteSims` path. A sim leased since the audit is skipped.
  */
+
+import { listAllSims } from "@delacour/warden-providers/simctl-list";
+import type { PidAlive } from "@delacour/warden-store/liveness";
 import { type AsyncResult, ok } from "@delacour/warden-types/result";
-import type { PidAlive } from "../liveness";
 import { auditSims, type SimAudit } from "./audit";
 import { type DeleteDeps, deleteSims } from "./delete";
-import { listAllSims } from "./list";
 import { canPrune, judgeSims, type RulesInput, type SimEntry, type SimRuleOpts } from "./rules";
 
 export type SimsDeps = DeleteDeps & { pidAlive: PidAlive };

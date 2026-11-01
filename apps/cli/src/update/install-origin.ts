@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { wardenHome } from "@delacour/warden-core/store";
+import { wardenHome } from "@delacour/warden-store/store";
 
 /**
  * Where a standalone binary came from, when that can't be read off its path: `warden install` run via

@@ -271,10 +271,10 @@ describe("helperInfo", () => {
 describe("importDirFor", () => {
 	test("source checkouts anchor the native/dist lookup; release builds match nothing", () => {
 		expect(importDirFor({ channel: "dev", version: "1", sourceDir: "/src/warden" })).toBe(
-			"/src/warden/packages/e2e/src/driver/ios"
+			"/src/warden/packages/driver-ios/src"
 		);
 		expect(importDirFor({ channel: "local", version: "1", sourceDir: "/src/warden" })).toBe(
-			"/src/warden/packages/e2e/src/driver/ios"
+			"/src/warden/packages/driver-ios/src"
 		);
 		expect(importDirFor({ channel: "local", version: "1" })).toBe("/");
 		expect(importDirFor({ channel: "release", version: "1" })).toBe("/");

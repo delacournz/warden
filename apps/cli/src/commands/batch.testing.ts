@@ -1,7 +1,7 @@
-import type { SlimProfile } from "@delacour/warden-core/sims/slim.profile";
+import type { MetroOwner } from "@delacour/warden-builds/metro";
+import type { SlimProfile } from "@delacour/warden-config/slim.profile";
 import { memoryReadFrom } from "../batch/results.testing";
 import type { ReadySpec } from "../batch/serve";
-import type { MetroOwner } from "../metro";
 import type { BatchDeps, KillSignal, ProcHandle, SpawnOptions } from "./batch";
 
 export type Spawned = { cmd: string[]; opts: SpawnOptions; kills: KillSignal[]; finish: (code: number) => void };

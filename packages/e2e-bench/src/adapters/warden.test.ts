@@ -78,7 +78,7 @@ describe("wardenArgv / wardenSpecEnv", () => {
 describe("doctor", () => {
 	const exec = fakeExec([{ cmd: "bun", result: { stdout: "1.3.14\n" } }]);
 	const files = {
-		"/repo/packages/e2e/native/dist/warden-simd": "",
+		"/repo/packages/driver-ios/native/dist/warden-simd": "",
 		"/repo/apps/cli/package.json": '{"version":"0.1.0"}',
 	};
 
@@ -91,7 +91,7 @@ describe("doctor", () => {
 		const res = await createWardenAdapter(depsOf({ "/repo/apps/cli/package.json": '{"version":"0.1.0"}' })).doctor(
 			ctxOf(exec)
 		);
-		expect(res).toMatchObject({ ok: false, installHint: "bun run --cwd packages/e2e native:build" });
+		expect(res).toMatchObject({ ok: false, installHint: "bun run --cwd packages/driver-ios native:build" });
 	});
 
 	test("android needs no helper", async () => {

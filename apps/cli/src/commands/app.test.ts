@@ -2,12 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeApp, testProject } from "@delacour/warden-core/builds/builds.testing";
-import { getInstall, recordInstall, storeArtifact } from "@delacour/warden-core/builds/cache";
-import type { ExecResult } from "@delacour/warden-core/exec";
+import { storeArtifact } from "@delacour/warden-builds/cache";
+import { type AppDeps, kindAppInput } from "@delacour/warden-builds/prepare";
+import { fakeApp, testProject } from "@delacour/warden-builds/testing/builds.testing";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import { appEnsureJsonSchema, appFingerprintJsonSchema } from "@delacour/warden-sdk/contracts/dev";
+import { getInstall, recordInstall } from "@delacour/warden-store/builds-table";
+import { appHostFromContext } from "../context";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { type AppDeps, createAppCommand, kindAppInput } from "./app";
+import { createAppCommand } from "./app";
 
 let ctx: TestContext | undefined;
 let deviceDir: string | undefined;
@@ -98,6 +102,7 @@ describe("warden app fingerprint (native+js)", () => {
 		);
 		expect(await createAppCommand(deps).run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
+		appFingerprintJsonSchema.parse(out);
 		expect(out.native).toEqual({ ios: HASH });
 		expect(out.fingerprints.ios).toMatch(/^[0-9a-f]{40}$/);
 		expect(out.fingerprints.ios).not.toBe(HASH);
@@ -111,6 +116,7 @@ describe("warden app fingerprint", () => {
 		c.ui = ui;
 		expect(await createAppCommand(deps).run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
+		appFingerprintJsonSchema.parse(out);
 		expect(out).toMatchObject({ project: "demo", fingerprints: { ios: HASH, android: `${HASH}ff` } });
 		expect(ui.events[0]).toBe("spin: fingerprinting ios + android…");
 		expect(ui.events).toContain(`log: [warden] ios fingerprint: ${HASH}`);
@@ -195,7 +201,12 @@ describe("warden app ensure", () => {
 		const path = await seed(c);
 		const cmd = createAppCommand(deps);
 		expect(await cmd.run(c)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ appPath: path, hash: HASH, source: "cache", installed: true });
+		expect(appEnsureJsonSchema.parse(JSON.parse(c.stdout.join("\n")))).toEqual({
+			appPath: path,
+			hash: HASH,
+			source: "cache",
+			installed: true,
+		});
 		expect(getInstall(c.db, "ios", "U1", "com.demo")?.hash).toBe(HASH);
 
 		c.stdout.length = 0;
@@ -383,8 +394,12 @@ describe("warden app ensure on a physical iPhone", () => {
 		const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
 		const c = testContext([], { env: { HOME: "/h" } });
 		writeFileSync(join(c.cwd, "warden.config.json"), JSON.stringify({ ios: { teamId: "ABCDE12345" }, e2e: {} }));
-		const phone = kindAppInput(c, deps, owner, "ios", base, "release", { eas: false, build: true, physical: true });
-		const sim = kindAppInput(c, deps, owner, "ios", base, "release", { eas: false, build: true });
+		const phone = kindAppInput(appHostFromContext(c), deps, owner, "ios", base, "release", {
+			eas: false,
+			build: true,
+			physical: true,
+		});
+		const sim = kindAppInput(appHostFromContext(c), deps, owner, "ios", base, "release", { eas: false, build: true });
 		expect(phone.configTeamId).toBe("ABCDE12345");
 		expect(phone.physical).toBe(true);
 		expect(sim.configTeamId).toBeUndefined();
@@ -398,7 +413,11 @@ describe("kindAppInput bundle env", () => {
 	const bundleEnv = { EXPO_PUBLIC_API: "http://fake" };
 	const input = (kind: "dev" | "simulator" | "release") => {
 		const c = testContext([], { env: { HOME: "/h", EXPO_PUBLIC_API: "http://real" } });
-		return kindAppInput(c, deps, owner, "ios", project, kind, { eas: false, build: true, bundleEnv }).env;
+		return kindAppInput(appHostFromContext(c), deps, owner, "ios", project, kind, {
+			eas: false,
+			build: true,
+			bundleEnv,
+		}).env;
 	};
 
 	test("the kinds that bundle JS take it over the process env", () => {

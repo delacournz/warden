@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Owner } from "@delacour/warden-core/types";
-import type { DriverError } from "@delacour/warden-e2e/driver/driver.types";
-import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
+import type { DriverError } from "@delacour/warden-driver/driver.types";
+import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
+import type { Owner } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import {

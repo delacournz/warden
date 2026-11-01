@@ -1,11 +1,11 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { conditionsOf } from "../conditions/device-conditions";
-import { isRecoverableLoss } from "../driver/ios/hid-recovery";
-import { E2eError } from "../errors";
-import { perfStartFor } from "../perf/device-perf";
+import { attemptDir, hash6, specIdOf } from "@delacour/warden-device/artifacts";
+import { conditionsOf } from "@delacour/warden-device/conditions/device-conditions";
+import { perfStartFor } from "@delacour/warden-device/perf/device-perf";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
+import { isRecoverableLoss } from "@delacour/warden-driver-ios/hid-recovery";
 import { type AttemptBinding, attemptSession, type Session } from "../session";
-import { attemptDir, hash6, specIdOf } from "./artifacts";
 import {
 	CAPTURE_TIMEOUT_MS,
 	captureDevtoolsArtifacts,

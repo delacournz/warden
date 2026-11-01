@@ -1,6 +1,6 @@
+import { type Exec, execError } from "@delacour/warden-runtime/exec";
+import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { type Exec, execError } from "../exec";
-import { type GitFactsCache, readGitFacts } from "../git-facts";
 
 export type ChangeStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "type-changed";
 
@@ -49,7 +49,7 @@ export async function changedFiles(
 		const res = await exec(cmd, { cwd });
 		return res.exitCode === 0 ? ok(res.stdout) : err(execError(cmd, res));
 	};
-	const facts = await readGitFacts(exec, cwd, git);
+	const facts = await readGitFacts(exec, cwd, git ?? createGitFactsCache());
 	if (!facts) return err(`not a git checkout: ${cwd}`);
 	const mergeBase = await run(["merge-base", base, "HEAD"]);
 	if (!mergeBase.success) return err(`no merge-base with "${base}": ${mergeBase.error}`);

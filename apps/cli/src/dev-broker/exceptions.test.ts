@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ConsoleLine } from "@delacour/warden-e2e/devtools/devtools.types";
+import type { ConsoleLine } from "@delacour/warden-devtools/devtools.types";
 import { isAppException } from "./exceptions";
 
 const line = (over: Partial<ConsoleLine>): ConsoleLine => ({

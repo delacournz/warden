@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
 import { type TestContext, testContext } from "../testing";
-import { sessionDir } from "./paths";
 import { type PerfReportOptions, perfReport as report } from "./report";
 import { SEED_T0, samplesJsonl, seedSession } from "./session-fixture.testing";
 import { asMe, fakePerfDeps } from "./testing";

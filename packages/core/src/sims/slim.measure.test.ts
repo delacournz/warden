@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Exec, ExecResult } from "../exec";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { measureSim, measureSims, measureTree, parseMemUnit, parsePs, parseTopMem, treePids } from "./slim.measure";
 
 const MB = 1024 ** 2;

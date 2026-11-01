@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fakeApp } from "@delacour/warden-core/builds/builds.testing";
-import { getInstall, listBuilds, recordInstall, recordRepack, storeArtifact } from "@delacour/warden-core/builds/cache";
-import { buildLockKey, buildResource } from "@delacour/warden-core/builds/lock";
+import { recordRepack, storeArtifact } from "@delacour/warden-builds/cache";
+import { buildLockKey, buildResource } from "@delacour/warden-builds/lock";
+import { fakeApp } from "@delacour/warden-builds/testing/builds.testing";
+import { getInstall, listBuilds, recordInstall } from "@delacour/warden-store/builds-table";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
 

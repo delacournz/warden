@@ -1,5 +1,5 @@
-import type { Fetch } from "@delacour/warden-e2e/devtools/devtools.types";
-import type { DevtoolsSession } from "@delacour/warden-e2e/devtools/session";
+import type { Fetch } from "@delacour/warden-devtools/devtools.types";
+import type { DevtoolsSession } from "@delacour/warden-devtools/session";
 import { isBundleUrl } from "@delacour/warden-perf/js/bundle-url";
 import { ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";

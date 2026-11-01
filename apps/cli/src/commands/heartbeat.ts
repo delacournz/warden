@@ -1,13 +1,7 @@
+import { isEmptySelector, NOTHING_SELECTED, selectLeases } from "@delacour/warden-leasing/lease-select";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import {
-	isEmptySelector,
-	NOTHING_SELECTED,
-	type SelectOptionValues,
-	selectLeases,
-	selectorFrom,
-	withSelectOptions,
-} from "../lease-select";
+import { type SelectOptionValues, selectorFrom, withSelectOptions } from "../lease-select";
 import { emit, reportError } from "../output";
 
 type HeartbeatOpts = SelectOptionValues & { json?: true };

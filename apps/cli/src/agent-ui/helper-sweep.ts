@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
+import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
 import type { CommandContext } from "../context";
 import { androidHostDir, iosRunnerDir, simdDir, uiDir, uiRoot } from "./paths";
 
@@ -26,7 +26,7 @@ function recordedPid(
 	}
 }
 
-/** Every device that has a socket under `simd/` or a dir under `ui/`. */
+/** Every device that has a socket under `simd/` or a dir under `ui/` (plain directory reads). */
 export function knownUdids(host: Pick<CommandContext, "env">): string[] {
 	const udids = new Set<string>();
 	for (const sockets of [simdDir(host), androidHostDir(host), iosRunnerDir(host)]) {

@@ -1,8 +1,9 @@
-import { profileSlug, wardenDeviceName } from "@delacour/warden-core/allocate";
-import { execError } from "@delacour/warden-core/exec";
-import { isGoldenName } from "@delacour/warden-core/golden/golden";
-import { shortRuntime } from "@delacour/warden-core/providers/ios";
-import { parseAllSims, type SimctlSim } from "@delacour/warden-core/sims/list";
+import { wardenDeviceName } from "@delacour/warden-leasing/allocate";
+import { isGoldenName } from "@delacour/warden-providers/golden-name";
+import { shortRuntime } from "@delacour/warden-providers/ios";
+import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
+import { execError } from "@delacour/warden-runtime/exec";
+import { profileSlug } from "@delacour/warden-store/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -45,7 +46,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 	const listed = await ctx.exec(listCmd);
 	if (listed.exitCode !== 0) return fail(ctx, execError(listCmd, listed));
 	const sims = parseAllSims(listed.stdout);
-	if (!sims.success) return fail(ctx, sims.error);
+	if (!sims.success) return fail(ctx, sims.error.message);
 	const source = findSource(sims.data, ref);
 	if (!source.success) return fail(ctx, source.error);
 	if (source.data.state !== "Shutdown") {

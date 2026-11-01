@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@delacour/warden-core/types";
-import { snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
-import { blockMessage } from "../device-lease";
+import { snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { blockMessage } from "@delacour/warden-leasing/device-lease";
+import type { Owner } from "@delacour/warden-store/types";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { uiCommand } from "./ui";

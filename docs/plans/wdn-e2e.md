@@ -479,3 +479,13 @@ Still flaky / open:
 - Fix: stop the sheet existing. The sign-in fields opt out of AutoFill in e2e builds (`NO_AUTOFILL`, `autoComplete="off"` + `textContentType="oneTimeCode"`, gated on `EXPO_PUBLIC_E2E`); the alert probe shows no sheet for 16 s in 2 of 2 runs. `dismissSavePassword` is removed; `expectTodosAfterSignIn` still dismisses any system alert while waiting.
 - Verification: `warden e2e example-dev --flows todos` 5 of 5 (21-23 s each, was 19 s pass / 45-50 s fail). `--all` once: 4 of 6; the failures are other flakes: `devtools` after `reloadJs` ("screen unreadable" for the post-reload snapshots) and one `todos` run where typing dropped a character ("Wite e2e flows", under the two-device load), neither a reload of `todos`.
 
+
+
+## WSDK-4 layering (2026-10-24): moves of "frozen" files
+
+`driver/driver.types.ts` is unchanged. `env.ts` keeps the `WARDEN_*` names, `readEnv` and `E2eEnv`; what moved is who may read them:
+- `driver/`, `screen/context.ts`, `app.ts`, `device.ts` no longer import `env.ts` or read `process.env`. `DEFAULT_ASSERTION_TIMEOUT_MS` is applied by the runner (`ctx.assertionTimeoutMs`) and arrives as `ScreenHost.env.assertionTimeoutMs` (now required); `WARDEN_ANDROID_SETTEXT` arrives as `ScreenHost.env.androidSetText`, and `focusClearType`'s last parameter is `setTextOptIn: boolean` (was an env record defaulting to `process.env`).
+- `driver/open.ts`: `openDriver(env: E2eEnv, deps)` is now `openDriver({platform, id, appId?, host?: {exec?, home?}, log?, debug?, ios?: {simdPath?, helperDir?, socketPath?, ...seams}, android?: {adb?, uiad?, ...seams}})`; `openDriverFromEnv(env, {processEnv?, ...overrides})` is the old behaviour (reads `ANDROID_HOME`, `WARDEN_HOME`, `WARDEN_ANDROID_UIAD`, `WARDEN_E2E_DEBUG` from `processEnv`). `locateHelper` search order and the "explicit `WARDEN_SIMD` / `WARDEN_HELPER_DIR` that points at nothing is an error" rule are unchanged; without a `wardenHome` the staged-copy step is skipped. `androidStateDir(home)` takes its home.
+- `createApp({driver, appId, appPath?, launchArgs?, ...})` and `createDevice({driver, artifactsDir, appId?, ...})` take no `E2eEnv` / `FixtureSession`; `fixtures.ts` (`deviceFor`, `appFor`) adapts the session.
+- `runner/span.ts` -> `trace/span.ts`, `driver/span-detail.ts` -> `trace/span-detail.ts`, and the `TraceEvent` schema/type from `runner/trace.ts` -> `trace/trace-event.ts` (`runner/trace.ts` keeps the writer / reader / console formatting).
+- `session.ts` is the only `globalThis` user (plus `runner/scope.ts`'s `.only` flag).

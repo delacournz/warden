@@ -1,42 +1,12 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { formatDuration } from "@delacour/warden-core/duration";
-import { overCap } from "@delacour/warden-perf/shared/caps";
-import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
+import { formatDuration } from "@delacour/warden-config/duration";
+import { sessionRows } from "@delacour/warden-sdk/ops/perf/ls";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
 import { listPerfCandidates } from "./device";
 import type { PerfDeps } from "./run";
-import { listSessions } from "./session";
 
 export type PerfLsOptions = { json?: true; devices?: true; device?: string };
-
-type Row = {
-	id: string;
-	device: string;
-	platform: string;
-	app: string | null;
-	/** running · stopped · aborted, or overdue (still `running` on disk past its cap: the next `perf start` sweeps it) */
-	status: string;
-	startedAt: number;
-	maxDurationMs: number;
-	marks: number;
-};
-
-function rowOf(session: PerfSession, now: number): Row {
-	const overdue =
-		session.status === "running" &&
-		overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, now);
-	return {
-		id: session.id,
-		device: session.device.udid,
-		platform: session.device.platform,
-		app: session.app?.id ?? null,
-		status: overdue ? "overdue" : session.status,
-		startedAt: session.startedAt.wallMs,
-		maxDurationMs: session.maxDurationMs,
-		marks: session.marks.length,
-	};
-}
 
 /** `warden perf ls`: recorded sessions (newest first), or with `--devices` the warden devices a session could attach to. */
 export async function perfLs(ctx: CommandContext, deps: PerfDeps, opts: PerfLsOptions): Promise<number> {
@@ -56,9 +26,7 @@ export async function perfLs(ctx: CommandContext, deps: PerfDeps, opts: PerfLsOp
 		return 0;
 	}
 	const now = ctx.now();
-	const rows = listSessions(ctx)
-		.filter((s) => opts.device === undefined || s.device.udid === opts.device)
-		.map((s) => rowOf(s, now));
+	const rows = sessionRows(ctx, opts.device);
 	const text =
 		rows.length === 0
 			? color.dim("no perf sessions")

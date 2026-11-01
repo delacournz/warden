@@ -9,7 +9,7 @@ import {
 	fakePage,
 	fakeTarget,
 	startFakeMetro,
-} from "@delacour/warden-e2e/devtools/devtools.testing";
+} from "@delacour/warden-devtools/testing/devtools";
 import { type Broker, callBroker, startBroker } from "./broker";
 import {
 	createLogpointsExtension,

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { wardenHome } from "../store";
+import { wardenHome } from "@delacour/warden-store/store";
 import type { ProxyHandle } from "./control";
 
 /** `$WARDEN_HOME/netproxy/<leaseId>.json`: how another warden process finds a lease's proxy. */

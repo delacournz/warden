@@ -103,7 +103,12 @@ describe("startup cost", () => {
 	});
 
 	test("release, gc and the hook reach the helper only through it", () => {
-		for (const file of ["../commands/release.ts", "../commands/hook.ts", "../commands/gc.ts", "../lease-session.ts"]) {
+		for (const file of [
+			"../commands/release.ts",
+			"../commands/hook.ts",
+			"../commands/gc.ts",
+			"../../../../packages/leasing/src/session.ts",
+		]) {
 			const imports = staticImports(read(file));
 			expect(imports.filter((spec) => /agent-ui\/(close|helper)$/.test(spec ?? ""))).toEqual([]);
 		}

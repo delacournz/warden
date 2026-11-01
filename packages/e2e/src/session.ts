@@ -7,24 +7,24 @@
  */
 import { mkdirSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
-import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
-import { openDevtoolsFacet } from "./devtools/facet";
-import type { NativeLogDeps } from "./devtools/native-log";
-import type { Driver, DriverResult } from "./driver/driver.types";
+import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "@delacour/warden-devtools/devtools.types";
+import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
+import type { NativeLogDeps } from "@delacour/warden-devtools/native-log";
+import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
+import { cacheObservations } from "@delacour/warden-driver/observation-cache";
+import { runSpan, type SpanRunner } from "@delacour/warden-driver/trace/span";
+import { traceDriver } from "@delacour/warden-driver/traced-driver";
 import {
 	type HidRecoveryDeps,
 	rebootSim,
 	restartRunnerHost,
 	runAfterReboot,
 	stopResidentHelper,
-} from "./driver/ios/hid-recovery";
-import { cacheObservations } from "./driver/observation-cache";
-import { traceDriver } from "./driver/traced-driver";
+} from "@delacour/warden-driver-ios/hid-recovery";
 import { type E2eEnv, readEnv } from "./env";
-import { E2eError } from "./errors";
 import type { AttemptContext, FixtureFactory } from "./runner/fixtures.types";
 import { openResults, type ResultsWriter } from "./runner/results";
-import { runSpan, type SpanRunner } from "./runner/span";
 import { runStep } from "./runner/step";
 import type { TraceWriter } from "./runner/trace";
 
@@ -532,4 +532,25 @@ export function getSession(opts: SessionOptions = {}): Session {
 export async function resetSession(): Promise<void> {
 	await slot()[SESSION_KEY]?.close();
 	delete slot()[SESSION_KEY];
+}
+
+/**
+ * Whether a `.only` was collected. Kept on `globalThis` (with the session) because `preload.ts` checks it after
+ * collection, and the preload and the spec files can load separate copies of the runner modules (a module-level
+ * flag would always read false in the preload).
+ */
+const ONLY_KEY = Symbol.for("@delacour/warden-e2e/only");
+type OnlySlot = { [ONLY_KEY]?: boolean };
+
+/** Records that a `.only` was collected. */
+export function markOnly(): void {
+	(globalThis as OnlySlot)[ONLY_KEY] = true;
+}
+
+export function onlyWasSeen(): boolean {
+	return (globalThis as OnlySlot)[ONLY_KEY] === true;
+}
+
+export function resetOnly(): void {
+	delete (globalThis as OnlySlot)[ONLY_KEY];
 }

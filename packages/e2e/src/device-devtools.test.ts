@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { createDeviceDevtools, type DevtoolsSource } from "@delacour/warden-device/device-devtools";
+import type { FixtureSession } from "@delacour/warden-device/fixture-session";
+import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "@delacour/warden-devtools/devtools.types";
+import { stubFacet } from "@delacour/warden-devtools/testing/facet";
+import type { E2eError } from "@delacour/warden-driver/e2e-error";
+import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { ok } from "@delacour/warden-types/result";
-import { createDevice } from "./device";
-import { createDeviceDevtools, type DevtoolsSource } from "./device-devtools";
-import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools/devtools.types";
-import { stubFacet } from "./devtools/facet.testing";
-import { fakeDriver, snapshotOf } from "./driver/driver.testing";
 import type { E2eEnv } from "./env";
-import type { E2eError } from "./errors";
-import type { FixtureSession } from "./fixture-session";
+import { deviceFor as createDevice } from "./fixtures";
 
 function source(result: () => DevtoolsResult<DevtoolsFacet>) {
 	let opens = 0;

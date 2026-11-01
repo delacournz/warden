@@ -20,16 +20,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { profileSlug } from "../allocate";
-import { ensureUnlocked } from "../android-keyguard";
-import { biometricProfile, splitBiometricProfile } from "../biometrics";
-import { withBuildLock } from "../builds/lock";
-import type { Exec } from "../exec";
-import type { PidAlive } from "../liveness";
+import { withBuildLock } from "@delacour/warden-builds/lock";
 import {
 	type AdbEmulator,
-	androidTools,
 	createSpawnDetached,
 	EMU_CONSOLE_TIMEOUT_MS,
 	GOLDEN_PORT_LABEL,
@@ -41,9 +34,17 @@ import {
 	rejectedOption,
 	type SpawnDetached,
 	waitBootCompleted,
-} from "../providers/android";
-import { type Store, wardenHome } from "../store";
-import type { Owner } from "../types";
+} from "@delacour/warden-providers/android";
+import { ensureUnlocked } from "@delacour/warden-providers/android-keyguard";
+import { androidTools } from "@delacour/warden-providers/android-tools";
+import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import type { PidAlive } from "@delacour/warden-store/liveness";
+import { type Store, wardenHome } from "@delacour/warden-store/store";
+import type { Owner } from "@delacour/warden-store/types";
+import { profileSlug } from "@delacour/warden-store/types";
+import { textError } from "@delacour/warden-types/error";
+import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { enrollFingerprint } from "./android-biometrics";
 import {
 	ANDROID_SNAPSHOT_MAX_LOAD_FAILURES,
@@ -354,7 +355,7 @@ function deleteSnapshot(deps: AndroidGoldenDeps, avd: string, dir: string, name:
 /** Running emulators of `avd` (by console `avd name`): a writable instance must not start beside them. */
 async function instancesOf(deps: AndroidGoldenDeps, avd: string): AsyncResult<AdbEmulator[]> {
 	const emulators = await listEmulators(deps);
-	if (!emulators.success) return emulators;
+	if (!emulators.success) return textError(emulators);
 	const { adb } = androidTools(deps.env);
 	const names = await Promise.all(
 		emulators.data.map(async (emu) => {
@@ -442,7 +443,7 @@ async function saveFromInstance(
 ): AsyncResult<void> {
 	const t = timing(deps);
 	const booted = await waitBootCompleted({ ...deps, pollIntervalMs: 250 }, serial, t.bootTimeoutMs, launched);
-	let saved: Result<unknown> = booted;
+	let saved: Result<unknown> = textError(booted);
 	if (booted.success && biometrics) {
 		log(deps, `enrolling a fingerprint on ${serial} (PIN set for the lock screen)`);
 		saved = await enrollFingerprint({ exec: deps.exec, sleep: deps.sleep, adb: androidTools(deps.env).adb }, serial);
@@ -492,7 +493,7 @@ async function buildSnapshot(deps: AndroidGoldenDeps, target: string, dir: strin
 	log(deps, `building ${name} of ${avd} — one-time cold boot`);
 	const running = await listEmulators(deps);
 	const leased = leaseConsolePort(deps, `golden ${avd}`, running.success ? running.data : []);
-	if (!leased.success) return leased;
+	if (!leased.success) return textError(leased);
 	let pid: number | undefined;
 	try {
 		const serial = `emulator-${leased.data.port}`;
@@ -714,7 +715,7 @@ export async function invalidateAndroidSnapshot(deps: AndroidGoldenDeps, avd: st
 /** Every warden snapshot of every AVD, `current` = named for the AVD's key today. */
 export async function listAndroidSnapshots(deps: AndroidGoldenDeps): AsyncResult<AndroidSnapshotEntry[]> {
 	const avds = await listAvds(deps);
-	if (!avds.success) return avds;
+	if (!avds.success) return textError(avds);
 	const entries: AndroidSnapshotEntry[] = [];
 	for (const avd of avds.data) {
 		const dir = avdDir(deps.env, avd);

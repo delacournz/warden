@@ -1,25 +1,8 @@
-import { resolveHeadless } from "@delacour/warden-core/headless";
-import { isPortFree } from "@delacour/warden-core/ports";
-import type { Platform } from "@delacour/warden-core/types";
-import { ok, type Result } from "@delacour/warden-types/result";
-import { maybeAutoGc } from "../autogc";
+import { claimedJson } from "@delacour/warden-leasing/claim-request";
+import { resolveHeadless } from "@delacour/warden-leasing/headless";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { isPortFree } from "@delacour/warden-leasing/ports";
 import {
-	type ClaimFlagValues,
-	claimedJson,
-	isPhysicalClaim,
-	type PhysicalOptionValues,
-	parseClaimFlags,
-	resolveOwner,
-	resolvePlatform,
-	withClaimOptions,
-	withNamedPhysical,
-	withPhysicalOptions,
-} from "../claim-flags";
-import { type Command, defineCommand } from "../command";
-import type { CommandContext } from "../context";
-import {
-	type AppFlagValues,
-	appPhaseProgress,
 	type ChildHandle,
 	claimAll,
 	exitCodeOf,
@@ -27,13 +10,34 @@ import {
 	intervalEvery,
 	type LeaseArgs,
 	type LeaseSessionDeps,
-	leasedProgress,
 	leasedText,
-	parseAppFlags,
 	processOnSignal,
+} from "@delacour/warden-leasing/session";
+import type { RunJson } from "@delacour/warden-sdk/contracts/claim";
+import type { Platform } from "@delacour/warden-store/types";
+import { ok, type Result } from "@delacour/warden-types/result";
+import { maybeAutoGc, selfCommand } from "../autogc";
+import {
+	type ClaimFlagValues,
+	isPhysicalClaim,
+	type PhysicalOptionValues,
+	parseClaimFlags,
+	resolvePlatform,
+	withClaimOptions,
+	withNamedPhysical,
+	withPhysicalOptions,
+} from "../claim-flags";
+import { type Command, defineCommand } from "../command";
+import { appHostFromContext, type CommandContext } from "../context";
+import { leaseHostFromContext } from "../lease-host";
+import {
+	type AppFlagValues,
+	appPhaseProgress,
+	leasedProgress,
+	parseAppFlags,
 	splitOperands,
 	withLeaseOptions,
-} from "../lease-session";
+} from "../lease-options";
 import { heading, note, reportError } from "../output";
 import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
@@ -87,7 +91,7 @@ async function supervise(
 		reportError(ctx, "run", error instanceof Error ? error.message : String(error));
 		return 127;
 	}
-	const stop = holdLeases(ctx, deps, leaseIds, (signal) => child.kill(signal));
+	const stop = holdLeases(appHostFromContext(ctx), deps, leaseIds, (signal) => child.kill(signal));
 	try {
 		return await child.exited;
 	} finally {
@@ -130,9 +134,10 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 			const app = args.data.app !== undefined;
 			const onLeased = leasedProgress(spinner, ctx.ui.color, app);
 			const onAppPhase = appPhaseProgress(spinner, app);
-			const result = await claimAll(sctx, deps, owner, {
+			const result = await claimAll(leaseHostFromContext(sctx), deps, owner, {
 				...args.data,
 				flags,
+				self: selfCommand(),
 				...(onLeased ? { onLeased } : {}),
 				...(onAppPhase ? { onAppPhase } : {}),
 			});
@@ -144,9 +149,9 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	);
 	// after the claim: its own leases keep the background gc off the devices it just took (16-1)
 	maybeAutoGc(ctx);
-	if (!claimed.success) return reportClaimFailure(ctx, "run", claimed.error);
+	if (!claimed.success) return reportClaimFailure(ctx, "run", claimed.error.message);
 	const { outcome, ports, env, release, leaseIds } = claimed.data;
-	const summary = { leases: claimedJson(outcome), ports, cmd };
+	const summary: RunJson = { leases: claimedJson(outcome), ports, cmd };
 	// one line: the child runs on, so a reader takes the summary from the first stdout line
 	if (args.data.json) ctx.out(JSON.stringify(summary));
 	else note(ctx, `warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`);

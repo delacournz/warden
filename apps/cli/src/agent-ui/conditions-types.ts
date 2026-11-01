@@ -1,9 +1,9 @@
-import type { OwnedProcess } from "@delacour/warden-core/conditions/conditions.types";
+import type { OwnedProcess } from "@delacour/warden-config/conditions.types";
 import type { ProxyStatus } from "@delacour/warden-core/netproxy/control";
-import type { Lease } from "@delacour/warden-core/types";
-import type { TickerConfig } from "@delacour/warden-e2e/conditions/route-ticker";
-import type { SchedulerConfig } from "@delacour/warden-e2e/conditions/scheduler.config";
-import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
+import type { TickerConfig } from "@delacour/warden-driver/conditions/route-ticker";
+import type { Driver } from "@delacour/warden-driver/driver.types";
+import type { Lease } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";

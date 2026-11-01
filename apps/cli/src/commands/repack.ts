@@ -1,13 +1,14 @@
-import { type RepackResult, repackApp } from "@delacour/warden-core/builds/repack";
-import type { Platform } from "@delacour/warden-core/types";
+import { type AppDeps, defaultAppDeps, kindAppInput, projectStart } from "@delacour/warden-builds/prepare";
+import { type RepackResult, repackApp } from "@delacour/warden-builds/repack";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
-import { resolveOwner, resolvePlatform } from "../claim-flags";
+import { resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import type { CommandContext } from "../context";
+import { appHostFromContext, type CommandContext } from "../context";
 import { emit, heading, reportError } from "../output";
 import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
-import { type AppDeps, defaultAppDeps, kindAppInput, projectStart } from "./app";
 
 type RepackOpts = { project?: string; force?: true; json?: true };
 
@@ -49,11 +50,19 @@ async function repack(
 	if (!start.success) return start;
 	const project = await projectContextFor(ctx, { start: start.data });
 	if (!project.success) return project;
-	const { kind: _kind, ...input } = kindAppInput(ctx, deps, resolveOwner(ctx), platform, project.data, "simulator", {
-		eas: false,
-		build: true,
-		...(opts.force ? { force: true } : {}),
-	});
+	const { kind: _kind, ...input } = kindAppInput(
+		appHostFromContext(ctx),
+		deps,
+		resolveOwner(ctx),
+		platform,
+		project.data,
+		"simulator",
+		{
+			eas: false,
+			build: true,
+			...(opts.force ? { force: true } : {}),
+		}
+	);
 	const result = await run(input);
 	return result.success ? ok(report(platform, result.data)) : err(result.error);
 }

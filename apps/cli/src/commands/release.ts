@@ -1,19 +1,15 @@
-import { PENDING_PREFIX } from "@delacour/warden-core/claim";
-import { wardenNameProfile } from "@delacour/warden-core/inventory";
-import { describeOwner, type Lease, sameOwner } from "@delacour/warden-core/types";
-import { resolveOwner } from "../claim-flags";
+import { PENDING_PREFIX } from "@delacour/warden-leasing/claim";
+import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import { type ShutdownOutcome, shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
+import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
+import { isEmptySelector, NOTHING_SELECTED, selectLeases } from "@delacour/warden-leasing/lease-select";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import type { ReleaseJson } from "@delacour/warden-sdk/contracts/leases";
+import { describeOwner, type Lease, sameOwner } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { releaseDevices } from "../device-lease";
-import { type ShutdownOutcome, shutdownReleasedDevices } from "../device-shutdown";
-import {
-	isEmptySelector,
-	NOTHING_SELECTED,
-	type SelectOptionValues,
-	selectLeases,
-	selectorFrom,
-	withSelectOptions,
-} from "../lease-select";
+import { leaseHostFromContext } from "../lease-host";
+import { type SelectOptionValues, selectorFrom, withSelectOptions } from "../lease-select";
 import { emit, note, plural, reportError } from "../output";
 import { releaseAfter } from "../perf/release-after";
 import { withSpinner } from "../spinner-context";
@@ -95,7 +91,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 	const { shutdown, notes }: ShutdownOutcome =
 		opts.shutdown && devices.length > 0
 			? await withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {
-					const outcome = await shutdownReleasedDevices(sctx, leases, resolveOwner(ctx));
+					const outcome = await shutdownReleasedDevices(leaseHostFromContext(sctx), leases, resolveOwner(ctx));
 					spinner.succeed(
 						outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down"
 					);
@@ -124,19 +120,14 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 			: []),
 		...[...notes, ...bad.notes].map((n) => color.yellow(n)),
 	].join("\n");
-	emit(
-		ctx,
-		opts.json === true,
-		{
-			released: leases.map((l) => l.id),
-			shutdown,
-			quarantined: bad.quarantined,
-			unknown,
-			notes: [...notes, ...bad.notes],
-		},
-		text,
-		title
-	);
+	const doc: ReleaseJson = {
+		released: leases.map((l) => l.id),
+		shutdown,
+		quarantined: bad.quarantined,
+		unknown,
+		notes: [...notes, ...bad.notes],
+	};
+	emit(ctx, opts.json === true, doc, text, title);
 	return unknown.length > 0 ? 1 : 0;
 }
 

@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Exec } from "@delacour/warden-core/exec";
 import { androidSnapshotKey, readSnapshotInputs, snapshotName } from "@delacour/warden-core/golden/android-golden";
 import {
 	androidSnapshotsGivenUp,
 	recordAndroidSnapshotLoadFailure,
 } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { goldenKey, goldenName } from "@delacour/warden-core/golden/golden";
-import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "@delacour/warden-core/golden/golden.testing";
-import { androidGoldenDeps } from "../golden-deps";
+import { androidGoldenDeps } from "@delacour/warden-core/host-deps";
+import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "@delacour/warden-core/testing/golden.testing";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import { appHostFromContext } from "../context";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createGoldenCommand } from "./golden";
 
@@ -169,7 +170,7 @@ describe("warden golden --platform android (16-3)", () => {
 	}
 
 	async function current(c: TestContext): Promise<string> {
-		const read = await readSnapshotInputs(androidGoldenDeps(c, owner), "Pixel_10");
+		const read = await readSnapshotInputs(androidGoldenDeps(appHostFromContext(c), owner), "Pixel_10");
 		if (!read.success || read.data === undefined) throw new Error("no inputs");
 		return snapshotName(androidSnapshotKey(read.data.inputs));
 	}

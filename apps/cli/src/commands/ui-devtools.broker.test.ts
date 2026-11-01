@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ConsoleLine, NetworkEntry } from "@delacour/warden-e2e/devtools/devtools.types";
+import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
 import { ok } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { uiDir } from "../agent-ui/paths";

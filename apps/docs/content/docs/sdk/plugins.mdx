@@ -1,0 +1,105 @@
+---
+title: Provider and driver plugins
+description: Add a cloud or physical device farm to the SDK, and prove a driver keeps the contract.
+icon: Plug
+---
+
+Plugins are **experimental**. They are gated by `apiVersion: 1`.
+
+## Version policy
+
+- `apiVersion` is the version of the plugin contract (`DeviceProvider`, `ProviderDeps`, `Driver`, `defineProvider`).
+- A plugin built for another version is refused with `config_invalid`.
+- While the version is `1`, a minor SDK release may add optional members. A breaking change bumps `apiVersion` and the SDK accepts the old one for at least one minor release.
+
+## A device provider
+
+```ts
+import { defineProvider } from "@delacour/warden-sdk/plugins";
+
+export const farm = defineProvider({
+  apiVersion: 1,
+  name: "my-farm",
+  platform: "android",
+  setup: (ctx) => ({
+    platform: "android",
+    inventory: async () => ({ success: true, data: [] }),
+    create: async (name) => { /* ... */ },
+    boot: async (id) => { /* ... */ },
+    waitReady: async (id, timeoutMs) => { /* ... */ },
+    shutdown: async (id) => { /* ... */ },
+    driver: async (id) => openFarmDriver(id),
+  }),
+  dispose: () => closeFarmConnection(),
+});
+```
+
+```ts
+await using warden = createWardenClient({ providers: [farm] });
+const [lease] = await warden.leases.claim({ platform: "android", provider: "my-farm" });
+await using session = await warden.sessions.open({ lease });
+```
+
+- `ios`, `android` and `cloud` are reserved names. A reserved or repeated name fails with `duplicate_provider`.
+- `setup` runs on the first claim; `dispose` runs when the client closes.
+- A claim without `provider` always uses the bundled iOS or Android provider.
+- `sessions.open` on a plugin's lease calls the plugin's `driver(id)`. Without it the call fails with `engine_unavailable`.
+- A claim records the provider on the lease (`lease.provider`; absent = the bundled provider), so any process can find the plugin again.
+
+## Register in `warden.config.ts`
+
+```ts
+import { defineConfig } from "@delacour/warden/config";
+
+export default defineConfig({ providers: ["./farm.ts", "@acme/warden-farm"] });
+```
+
+Each entry is a module that default-exports a `defineProvider` result (`export default farm`). A relative path resolves against the config file; a package name resolves from the config's directory. The client loads the modules lazily: on a claim or session that names a plugin, and when `devices.*` enumerates. A config without `providers` costs nothing.
+
+- A name registered both in code and in the config fails with `duplicate_provider`, as does a reserved name.
+- A module that cannot be loaded, has no default export or has another `apiVersion` fails with `config_invalid`.
+
+## Across processes
+
+A plugin lease is recorded with its provider, so a second client (another script, a worker) over the same `WARDEN_HOME` and config can drive it:
+
+```ts
+await using other = createWardenClient();
+await using session = await other.sessions.open({ lease }); // lease.provider = "my-farm"
+```
+
+The plugin's devices must be visible to every process (a farm's own API, not memory): each process runs its own `setup`. `devices.list()`, `inventory()` and `capacity()` include plugin devices (`device.provider`, one `capacity` row per plugin with `provider` set and no host cap); a plugin whose `setup` or `inventory` fails is skipped with a `warn` event. `warden ls` shows a PROVIDER column when any lease has one; the CLI does not drive plugin devices.
+
+## Prove a driver
+
+```ts
+import { runDriverConformance } from "@delacour/warden-sdk/plugins/conformance";
+
+runDriverConformance("my farm", () => openFarmDriver("device-1"), { appId: "com.example.app" });
+```
+
+The suite checks that every method returns a result instead of throwing, the snapshot's flat and tree views agree, `tap`, `typeText`, `swipe`, `screenshot`, `settle` and `app.launch` resolve to typed results, and `close` is idempotent. The runnable example is `packages/sdk/examples/fake-provider.ts` (its default export is what a config's `providers` lists).
+
+## Prove a provider
+
+```ts
+import { runProviderConformance } from "@delacour/warden-sdk/plugins/conformance";
+
+runProviderConformance("my farm", () => farm);
+```
+
+It checks that the plugin lists its devices and capacity through `devices.*`, tags the claimed lease with its provider, and that a second client over the same `WARDEN_HOME` opens a session on that lease.
+
+## Events
+
+```ts
+const stop = warden.on("lease:claimed", (e) => console.log(e.lease.id));
+```
+
+Kinds: `lease:claimed`, `lease:released`, `device:booted`, `session:opened`, `session:closed`, `action`, plus the log kinds `progress`, `warn`, `debug`. `onEvent` still receives everything.
+
+## Limits (v1)
+
+- **The CLI does not drive plugin devices.** `warden ls` lists their leases; `warden ui` and `warden devices` use the bundled providers.
+- **A plugin's devices must live outside the process** for another process to see them.
+- Published from `@delacour/warden-sdk/plugins`; the conformance suites from `@delacour/warden-sdk/plugins/conformance`. Read [Build an integration](/docs/sdk/build-an-integration) to choose between a provider, a driver and the plain client.

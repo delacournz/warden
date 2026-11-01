@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProfile } from "@delacour/warden-perf/js/js.testing";
 import { loadCommitsFixture } from "@delacour/warden-perf/react/react.testing";
-import { analyzeAndWrite, loadCpuCorrelation } from "./react-capture";
-import type { SourceDeps } from "./react-source";
+import { analyzeAndWrite, loadCpuCorrelation } from "@delacour/warden-sdk/ops/perf/react-capture";
+import type { SourceDeps } from "@delacour/warden-sdk/ops/perf/react-source";
 
 const dirs: string[] = [];
 const tmp = () => {

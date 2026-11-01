@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Exec, ExecResult } from "@delacour/warden-core/exec";
-import { createGitFactsCache } from "@delacour/warden-core/git-facts";
-import type { HostFacts } from "@delacour/warden-core/host";
-import { openStore, type Store } from "@delacour/warden-core/store";
+import type { HostFacts } from "@delacour/warden-leasing/host";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
+import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { openStore, type Store } from "@delacour/warden-store/store";
 import { Chalk } from "chalk";
 import type { CommandContext } from "./context";
 import type { Choice, Spinner, Ui } from "./ui";

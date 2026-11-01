@@ -1,4 +1,4 @@
-import type { Driver } from "@delacour/warden-e2e/driver/driver.types";
+import type { Driver } from "@delacour/warden-driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";

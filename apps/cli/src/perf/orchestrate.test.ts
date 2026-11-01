@@ -1,16 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
-import type { Owner } from "@delacour/warden-core/types";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import type { NativeProfiler } from "@delacour/warden-sdk/ops/perf/native-types";
+import {
+	chooseCapturers,
+	finalizeSession,
+	type SessionKit,
+	type StartOptions,
+	startPerf,
+} from "@delacour/warden-sdk/ops/perf/orchestrate";
+import { readPlan } from "@delacour/warden-sdk/ops/perf/plan";
+import { listSessions, readSession, sessionDir, updateSession } from "@delacour/warden-sdk/ops/perf/session";
+import type { Owner } from "@delacour/warden-store/types";
 import { ok } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import type { PerfTarget } from "./device";
-import type { NativeProfiler } from "./native-types";
-import { chooseCapturers, finalizeSession, type SessionKit, type StartOptions, startPerf } from "./orchestrate";
-import { readPlan } from "./plan";
 import { perfRecord } from "./record";
-import { listSessions, readSession, sessionDir, updateSession } from "./session";
+import { startHooks } from "./session-kit";
 import { perfStart } from "./start";
 import { perfStop } from "./stop";
 import { asMe, fakePerfDeps } from "./testing";
@@ -18,6 +25,13 @@ import { asMe, fakePerfDeps } from "./testing";
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
+const startCli = (
+	c: TestContext,
+	deps: ReturnType<typeof fakePerfDeps>,
+	kit: SessionKit,
+	t: PerfTarget,
+	o: StartOptions
+) => startPerf(c, deps, kit, t, o, startHooks(c, deps, o));
 const fx = (name: string) =>
 	readFileSync(new URL(`../../../../packages/perf/fixtures/${name}`, import.meta.url), "utf8");
 
@@ -163,7 +177,7 @@ const startOpts = (o: Partial<StartOptions>): StartOptions => ({ ...o });
 describe("startPerf", () => {
 	test("opens a session, writes the plan, anchors the device clock and spawns the collector", async () => {
 		const { c, deps, kit, spawned } = setup();
-		const r = await startPerf(c, deps, kit, target(), startOpts({ app: APP, metrics: true, logs: true }));
+		const r = await startCli(c, deps, kit, target(), startOpts({ app: APP, metrics: true, logs: true }));
 		if (!r.success) throw new Error(r.error.message);
 		const { session, plan } = r.data;
 		expect(session.startedAt).toEqual({ wallMs: T0, deviceWallMs: T0 + 250 });
@@ -177,7 +191,7 @@ describe("startPerf", () => {
 
 	test("--max-duration beyond 5m is clamped with a warning", async () => {
 		const { c, deps, kit } = setup();
-		const r = await startPerf(c, deps, kit, target(), startOpts({ app: APP, metrics: true, maxDuration: "10m" }));
+		const r = await startCli(c, deps, kit, target(), startOpts({ app: APP, metrics: true, maxDuration: "10m" }));
 		if (!r.success) throw new Error(r.error.message);
 		expect(r.data.session.maxDurationMs).toBe(300_000);
 		expect(r.data.warnings[0]).toContain("capped at 5m");
@@ -185,15 +199,15 @@ describe("startPerf", () => {
 
 	test("a second start on the device is session_active", async () => {
 		const { c, deps, kit } = setup();
-		await startPerf(c, deps, kit, target(), startOpts({ app: APP, metrics: true }));
-		const again = await startPerf(c, deps, kit, target(), startOpts({ app: APP, metrics: true }));
+		await startCli(c, deps, kit, target(), startOpts({ app: APP, metrics: true }));
+		const again = await startCli(c, deps, kit, target(), startOpts({ app: APP, metrics: true }));
 		expect(again).toMatchObject({ success: false, error: { code: "session_active" } });
 	});
 
 	test("js/react without Metro fail those capturers with a warning, not the session", async () => {
 		const { c, deps, kit } = setup();
 		deps.host.metro = async () => undefined;
-		const r = await startPerf(c, deps, kit, target(), startOpts({ app: APP, js: true, react: true }));
+		const r = await startCli(c, deps, kit, target(), startOpts({ app: APP, js: true, react: true }));
 		if (!r.success) throw new Error(r.error.message);
 		expect(r.data.plan).toMatchObject({ js: false, react: false });
 		expect(
@@ -207,7 +221,7 @@ describe("startPerf", () => {
 
 	test("--relaunch on a free device takes a perf lease, arms Android native before launch and records the launch", async () => {
 		const { c, deps, kit, calls, nativeCalls } = setup();
-		const r = await startPerf(
+		const r = await startCli(
 			c,
 			deps,
 			kit,
@@ -231,7 +245,7 @@ describe("startPerf", () => {
 			{ resource: { kind: "device", platform: "android", id: EMU, name: "pixel" }, owner: other, ttlMs: 60_000 },
 			c.now()
 		);
-		const r = await startPerf(c, deps, kit, target({ holder: "agent other" }), startOpts({ app: APP, relaunch: true }));
+		const r = await startCli(c, deps, kit, target({ holder: "agent other" }), startOpts({ app: APP, relaunch: true }));
 		expect(r).toMatchObject({ success: false, error: { code: "device_foreign" } });
 		expect(spawned).toEqual([]);
 		expect(c.db.listLeases()).toHaveLength(1);
@@ -239,7 +253,7 @@ describe("startPerf", () => {
 
 	test("a failed launch aborts the session and gives the lease back", async () => {
 		const { c, deps, kit } = setup([["am start", { stdout: fx("am-start-error.txt") }]]);
-		const r = await startPerf(c, deps, kit, target(), startOpts({ app: APP, relaunch: true }));
+		const r = await startCli(c, deps, kit, target(), startOpts({ app: APP, relaunch: true }));
 		expect(r.success).toBe(false);
 		expect(c.db.listLeases()).toEqual([]);
 		expect(listSessions(c).map((s) => s.status)).toEqual(["aborted"]);
@@ -249,7 +263,7 @@ describe("startPerf", () => {
 describe("finalizeSession", () => {
 	async function started(opts: Partial<StartOptions>) {
 		const s = setup();
-		const r = await startPerf(s.c, s.deps, s.kit, target(), startOpts(opts));
+		const r = await startCli(s.c, s.deps, s.kit, target(), startOpts(opts));
 		if (!r.success) throw new Error(r.error.message);
 		return { ...s, id: r.data.session.id };
 	}
@@ -299,7 +313,7 @@ describe("finalizeSession", () => {
 		const s = setup();
 		const ios = target({ udid: "SIM-1", platform: "ios", name: "iphone" });
 		s.c.db.recordDevice({ platform: "ios", id: "SIM-1", name: "iphone" }, T0);
-		const r = await startPerf(s.c, s.deps, s.kit, ios, startOpts({ app: APP, metrics: true }));
+		const r = await startCli(s.c, s.deps, s.kit, ios, startOpts({ app: APP, metrics: true }));
 		if (!r.success) throw new Error(r.error.message);
 		const id = r.data.session.id;
 		const done = await finalizeSession(s.c, s.deps, s.kit, id, { reason: "user" });

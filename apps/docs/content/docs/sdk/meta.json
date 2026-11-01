@@ -1,0 +1,4 @@
+{
+	"title": "SDK",
+	"pages": ["index", "client-api", "ai-sdk", "authoring", "specs", "perf", "build-an-integration", "plugins", "contracts"]
+}

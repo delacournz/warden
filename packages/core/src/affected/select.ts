@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
-import type { Platform } from "../types";
-import type { E2eSuiteConfig } from "./affected.schema";
+import type { E2eSuiteConfig } from "@delacour/warden-config/affected.schema";
+import type { Platform } from "@delacour/warden-store/types";
 import type { ChangedFile } from "./git";
 import { chainTo, reachable, routerLayouts } from "./graph";
 import { type Spec, type SpecSettings, specPlatforms, specSettings } from "./specs";

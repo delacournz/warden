@@ -1,18 +1,19 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEV_CLIENT_ARGS, devClientLaunchArgv, type MetroProc } from "@delacour/warden-builds/metro";
+import type { EnsureOptions } from "@delacour/warden-builds/prepare";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { devJsonSchema } from "@delacour/warden-sdk/contracts/dev";
 import { ok } from "@delacour/warden-types/result";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
-import { resolveOwner } from "../claim-flags";
 import { main } from "../cli";
 import type { CommandContext } from "../context";
 import type { Broker } from "../dev-broker/broker";
 import { callDevControl } from "../dev-control";
 import { listDevSessions } from "../dev-session";
-import { DEV_CLIENT_ARGS, devClientLaunchArgv, type MetroProc } from "../metro";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
-import type { EnsureOptions } from "./app";
 import {
 	createDevCommand,
 	type DevDeps,
@@ -423,7 +424,7 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls);
 		const h = harness();
-		h.deps.ensureApp = async () => ({ success: false, error: "local build failed" });
+		h.deps.ensureApp = async () => ({ success: false, error: { code: "build_failed", message: "local build failed" } });
 		const kills: string[] = [];
 		const spawn = h.deps.spawn;
 		h.deps.spawn = (cmd, env, cwd, stdout) => {
@@ -522,6 +523,7 @@ describe("warden dev", () => {
 		const lines = c.stdout.join("\n").split("\n");
 		expect(lines).toHaveLength(1);
 		const doc = JSON.parse(lines[0] ?? "");
+		devJsonSchema.parse(doc);
 		expect(doc).toMatchObject({ udid: "U1", port: 8081, metroUrl: "http://127.0.0.1:8081" });
 		expect([...doc.leaseIds].sort()).toEqual([...leaseIds].sort());
 		expect(h.spawned[0]?.stdout).toBe("stderr");

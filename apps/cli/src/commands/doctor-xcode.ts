@@ -1,6 +1,6 @@
-import type { Exec } from "@delacour/warden-core/exec";
-import { readXcode } from "@delacour/warden-core/xcode";
-import { detectSimViewer } from "../sim-windows";
+import { detectSimViewer } from "@delacour/warden-leasing/sim-windows";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import { readXcode } from "@delacour/warden-runtime/xcode";
 import type { CheckStatus, DoctorCheck } from "./doctor";
 
 type Probe = { ok: true; detail: string } | { ok: false; detail: string };

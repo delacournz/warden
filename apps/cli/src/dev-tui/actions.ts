@@ -1,5 +1,4 @@
-import type { Result } from "@delacour/warden-types/result";
-import { ok } from "@delacour/warden-types/result";
+import { ok, type Result } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
 import type { ActionId, HudPerf } from "./model";
 

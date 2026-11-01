@@ -23,8 +23,9 @@ export type StopRunner = (ctx: Host, sessionId: string) => Promise<void>;
 
 /** Finalizes the session (reason `device-released`); the orchestrator and the perf package load only here. */
 const finalizeRecorded: StopRunner = async (ctx, sessionId) => {
-	const [{ finalizeSession, defaultSessionKit }, { defaultPerfDeps }] = await Promise.all([
-		import("./orchestrate"),
+	const [{ finalizeSession }, { defaultSessionKit }, { defaultPerfDeps }] = await Promise.all([
+		import("@delacour/warden-sdk/ops/perf/orchestrate"),
+		import("./session-kit"),
 		import("./run"),
 	]);
 	const full = ctx as CommandContext;

@@ -1,0 +1,97 @@
+---
+title: Build an integration
+description: Pick the right surface to wrap warden - the client, zod contracts for shell integrators, provider and driver plugins, and events.
+icon: Blocks
+---
+
+Pick the smallest surface that does the job.
+
+| You are building | Use |
+|---|---|
+| a Bun/TypeScript tool, CI step or test harness | the [client](/docs/sdk/client-api) |
+| an LLM agent in the Vercel AI SDK | [`createWardenTools`](/docs/sdk/ai-sdk) |
+| an MCP server or another agent framework | the [tool schemas](/docs/sdk/ai-sdk#schemas-without-ai) over the client |
+| a tool in another language, or a shell script | the `warden` binary with [`--json` and its contracts](/docs/sdk/contracts) |
+| a cloud or physical device farm | a [provider plugin](/docs/sdk/plugins) |
+| a different automation engine under the same API | a [driver](#a-driver) proven by the conformance suite |
+
+## Rules every integration follows
+
+- **Claim before use, release when done.** Prefer `await using`. Without it, `close()` in a `finally`.
+- **Never touch a device you did not lease.** The client enforces this (`device_foreign`); a shell integration must pass the claimed `udid` / `serial` on every call.
+- **Branch on `error.code`, not on message text.** Retry only `retryable` failures whose `dispatched` is `"no"` (see [errors](/docs/sdk/client-api#errors)).
+- **Pass a `signal`.** Agents get cancelled; a claim waiting in the queue must be able to stop.
+- **Refs expire.** Snapshot again after any action that changes the screen; use `id=` selectors for anything touched twice.
+
+## From a shell: contracts
+
+Any language can drive warden through the CLI: `warden claim ios --json`, `warden ui snapshot --json`, `warden release <id>`. In TypeScript, the [contracts](/docs/sdk/contracts) parse each output and turn drift into a type error; elsewhere, treat the `--json` envelope (`{ ok: true, ... }` / `{ ok: false, error: { code, message, hint } }` for `warden ui`) as the API. Exit codes and the envelope are documented in [Drive a device](/docs/guides/agent-ui).
+
+## A provider
+
+A provider tells warden how to list, create, boot and shut down devices on a farm. Register it with `createWardenClient({ providers: [farm] })` and claim with `provider: "my-farm"`. See [Plugins](/docs/sdk/plugins).
+
+## A driver
+
+A driver is what `sessions.open` talks to: the `Driver` contract (snapshot, tap, type, swipe, screenshot, settle, app lifecycle) returning typed results, never throwing. A provider hands one out through `driver(id)`. Prove it with the conformance suite from a `*.test.ts` file:
+
+```ts
+import { runDriverConformance } from "@delacour/warden-sdk/plugins/conformance";
+
+runDriverConformance("my farm", () => openFarmDriver("device-1"), { appId: "com.example.app" });
+```
+
+`Driver`, `DriverCapabilities`, `DriverError` and `Snapshot` are exported types of `@delacour/warden-sdk/plugins`.
+
+## Events
+
+`createWardenClient({ onEvent })` receives every event; `client.on(kind, handler)` subscribes to one kind and returns the unsubscribe function. A throwing handler never fails the call that emitted the event. This is `packages/sdk/examples/events.ts`.
+
+```ts
+import { createWardenClient, type WardenEvent } from "@delacour/warden-sdk";
+
+/** One log line per event; a `switch` on `kind` narrows each variant. */
+export function describeEvent(event: WardenEvent): string {
+  switch (event.kind) {
+    case "lease:claimed":
+      return `claimed ${event.lease.id}`;
+    case "lease:released":
+      return `released ${event.leaseId}`;
+    case "device:booted":
+      return `booted ${event.platform} ${event.deviceId}`;
+    case "session:opened":
+    case "session:closed":
+      return `${event.kind} ${event.sessionId}`;
+    case "action":
+      return `${event.op} ${event.ok ? "ok" : "failed"} in ${event.ms}ms`;
+    case "progress":
+    case "warn":
+    case "debug":
+      return `${event.kind}: ${event.message}`;
+  }
+}
+
+export async function traceActions(): Promise<number> {
+  let slow = 0;
+  await using warden = createWardenClient({ onEvent: (event) => console.error(describeEvent(event)) });
+  const stop = warden.on("action", (event) => {
+    if (event.ms > 1000) slow++;
+  });
+  await warden.devices.list();
+  stop();
+  return slow;
+}
+```
+
+| Kind | Payload |
+|---|---|
+| `lease:claimed` | `lease` |
+| `lease:released` | `leaseId` |
+| `device:booted` | `leaseId`, `deviceId`, `platform` |
+| `session:opened` / `session:closed` | `sessionId` (and `deviceId` on open) |
+| `action` | `sessionId`, `op`, `ok`, `ms` for every session call |
+| `progress` / `warn` / `debug` | `message` |
+
+## Test your integration without a device
+
+`createWardenClient(options, seams)` takes test seams: an injected `host` (`env`, `exec`, `now`, ...), a temp `home`, and a provider plugin whose `driver(id)` returns a scripted driver. `packages/sdk/examples/fake-provider.ts` is a complete in-memory farm that passes the conformance suite and can be claimed through the client; copy it as the starting point.

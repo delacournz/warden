@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
+import type { Exec } from "@delacour/warden-runtime/exec";
 import { z } from "zod";
-import type { Exec } from "../exec";
 
 /** What the graph walker is asked: one platform's imports reachable from `entries`. */
 export const graphRequestSchema = z.object({

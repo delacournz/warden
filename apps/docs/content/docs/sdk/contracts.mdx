@@ -1,0 +1,69 @@
+---
+title: Contracts
+description: Zod schemas for every warden --json output, so a tool that shells out gets typed, validated parsers.
+icon: FileBraces
+---
+
+`@delacour/warden-sdk/contracts` holds one [zod](https://zod.dev) schema per `warden ... --json` output. The CLI builds each document against the schema's inferred type and its tests parse the real output with the schema, so a shape change fails a test before it reaches you.
+
+```ts
+import { claimJsonSchema, lsJsonSchema, releaseJsonSchema } from "@delacour/warden-sdk/contracts";
+```
+
+## Parse a command
+
+This is `packages/sdk/examples/shell-integration.ts`.
+
+```ts
+import { claimJsonSchema, lsJsonSchema, releaseJsonSchema } from "@delacour/warden-sdk/contracts";
+
+async function warden(...args: string[]): Promise<unknown> {
+  const proc = Bun.spawn(["warden", ...args, "--json"], { stdout: "pipe", stderr: "inherit" });
+  const text = await new Response(proc.stdout).text();
+  if ((await proc.exited) !== 0) throw new Error(`warden ${args.join(" ")} failed: ${text}`);
+  return JSON.parse(text);
+}
+
+const claim = claimJsonSchema.parse(await warden("claim", "ios"));
+const [leased] = claim.leases;
+if (!leased) throw new Error("claim returned no lease");
+console.log(`claimed ${leased.name} (${leased.udid}), ${leased.action}`);
+
+const ls = lsJsonSchema.parse(await warden("ls"));
+console.log(`${ls.leases.filter((lease) => lease.state === "alive").length} live leases on the machine`);
+
+const released = releaseJsonSchema.parse(await warden("release", leased.leaseId));
+console.log(`released ${JSON.stringify(released)}`);
+```
+
+Every schema has an inferred type (`ClaimJson`, `LsJson`, ...) for code that only needs the shape.
+
+## Schemas
+
+| Command | Schema | Type |
+|---|---|---|
+| `warden claim --json` | `claimJsonSchema` (`claimedJsonSchema` for its `leases`) | `ClaimJson` |
+| `warden run --json` (first line) | `runJsonSchema` | `RunJson` |
+| `warden ls --json` | `lsJsonSchema` | `LsJson` |
+| `warden check --json` | `checkJsonSchema` | `CheckJson` |
+| `warden release --json` | `releaseJsonSchema` | `ReleaseJson` |
+| `warden port claim\|ls --json` | `portLeasesJsonSchema` | `PortLeasesJson` |
+| `warden port release --json` | `portReleaseJsonSchema` | `PortReleaseJson` |
+| `warden devices --json` | `devicesJsonSchema` (`deviceRowSchema` per row) | `DevicesJson` |
+| `warden capacity --json` | `capacityJsonSchema` | `CapacityJson` |
+| `warden queue --json` | `queueJsonSchema` | `QueueJson` |
+| `warden gc --json` | `gcJsonSchema` | `GcJson` |
+| `warden dev --json` | `devJsonSchema` | `DevJson` |
+| `warden app fingerprint --json` | `appFingerprintJsonSchema` | `AppFingerprintJson` |
+| `warden app ensure --json` | `appEnsureJsonSchema` | `AppEnsureJson` |
+| `warden ui <command> --json` | `uiJsonSchema`: `{ ok: true, result }` or `{ ok: false, error }`; `uiFindResultSchema`, `uiCloseResultSchema` and `elementJsonSchema` for the results | `UiJsonDoc` |
+| `warden perf <command> --json` (the `result` of the `uiJsonSchema` envelope) | `perfStartResultSchema`, `perfMarkResultSchema`, `perfStopResultSchema`, `perfReportResultSchema`, `perfLsResultSchema`, `perfStartupResultSchema`, `perfMetricsResultSchema`, `perfMemoryResultSchema`, `perfFramesResultSchema`, `perfJsResultSchema`, `perfHeapSnapshotResultSchema`, `perfHeapDiffResultSchema`, `perfLogsResultSchema`, `perfCrashesResultSchema`; `perfFindingSchema` and `perfReportSchema` for the shared parts ([perf](/docs/sdk/perf)) | `PerfStartupResultJson`, `PerfMetricsResultJson`, ... |
+| `e2e-report.json`, `warden e2e --json` | `e2eReportSchema` | `E2eReportJson` |
+
+Shared building blocks: `platformSchema`, `leaseSchema` (a lease row), `ownerSchema` (agent, user or CI) and `resourceSchema` (a device or a port).
+
+## Compatibility
+
+- Fields are added, not renamed or removed, within a major version; parse with the schema from the same release as the CLI you call. A newer CLI may add fields (zod object schemas ignore unknown keys).
+- A `warden ui` failure keeps the machine-readable `error.code` of the [client errors](/docs/sdk/client-api#errors) and the process exit code; branch on those.
+- The CLI imports these schemas as types only, so `zod` is never loaded on a `warden` cold start.

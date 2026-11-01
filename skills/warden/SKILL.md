@@ -72,6 +72,26 @@ Open the reference file for details before acting; this file only routes.
 
 By hand, specs need the preload: `bun test --preload @delacour/warden-e2e/preload <file>` (by hand needs bun; `warden e2e` / `ui record stop` don't).
 
+## SDK (`@delacour/warden-sdk`, Bun)
+
+For a TypeScript tool, agent or harness that must claim and drive devices in code instead of shelling out. Same leases and store as the CLI; keep it at the same version as `warden` (`store_incompatible` means run `warden update`).
+
+```ts
+import { createWardenClient, isWardenError } from "@delacour/warden-sdk";
+await using warden = createWardenClient({ label: "qa", lockPolicy: "wait" }); // "reject" = fail fast
+const [lease] = await warden.leases.claim({ platform: "ios" });
+await using session = await warden.sessions.open({ lease, app: "com.acme.app" });
+const snap = await session.capture.snapshot({ interactiveOnly: true }); // refs @e1…, stale after the next snapshot
+await session.interactions.press({ ref: snap.elements[0].ref });
+```
+
+- Namespaces: `devices`, `leases`, `ports`, `apps`, `metro`, `sessions`; a session has `apps`, `capture`, `interactions`, `query`, `device`, `devtools`, `locator(sel)`. Every call takes `{ signal }` last.
+- Throws `WardenError` (`code`, `hint`, `retryable`, `dispatched: "no" | "unknown" | "yes"`). Retry only `retryable` + `dispatched: "no"`; `stale_ref` = snapshot again.
+- Leave the scope (`await using`) or `close()` to release: never leak a lease. Only touches devices it leased.
+- `@delacour/warden-sdk/ai-sdk` `createWardenTools({ platform, app, set: "core" | "all" })` for a Vercel AI SDK agent (`ai` optional peer); tools return `{ ok: false, error: { code, hint } }` instead of throwing.
+- `@delacour/warden-sdk/contracts`: zod schemas for every `--json` output (`claimJsonSchema`, `lsJsonSchema`, `uiJsonSchema`, …) for tools that shell out. `/plugins`: `defineProvider` for device farms (experimental, in-process only).
+- Docs: `/docs/sdk`. Examples: `packages/sdk/examples/`.
+
 ## Facts
 
 - `--json`: stdout is one JSON document, success or failure; progress, Metro and child output go to stderr. A failure without its own report is `{"ok":false,"command":"builds rm","error":{"code":"usage"|"failed","message":"…"}}`, exit code unchanged. `warden dev` / `run` keep running: their document is the first stdout line.

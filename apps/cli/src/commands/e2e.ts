@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
+import { DEFAULT_E2E_KIND } from "@delacour/warden-builds/kinds";
 import {
 	type E2eDeviceLeg,
 	type E2eIsolation,
@@ -7,24 +7,27 @@ import {
 	type E2eSuiteConfig,
 	e2eMetroSchema,
 	suiteIsolation,
-} from "@delacour/warden-core/affected/affected.schema";
-import { compiledBinary } from "@delacour/warden-core/affected/graph-process";
-import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
-import { readySpec } from "@delacour/warden-core/batch/preset";
-import { appSwitches } from "@delacour/warden-core/builds/app-option.schema";
-import { type BuildKind, DEFAULT_E2E_KIND } from "@delacour/warden-core/builds/kinds";
+} from "@delacour/warden-config/affected.schema";
+import { appSwitches } from "@delacour/warden-config/app-option.schema";
+import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import {
 	DEFAULT_SPEC_ACTION_TIMEOUT,
 	DEFAULT_SPEC_ASSERTION_TIMEOUT,
 	DEFAULT_SPEC_TIMEOUT,
-} from "@delacour/warden-core/config.defaults";
-import { parseDuration } from "@delacour/warden-core/duration";
-import { resolveHeadless } from "@delacour/warden-core/headless";
-import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-core/sims/slim.profile";
-import type { Platform } from "@delacour/warden-core/types";
+} from "@delacour/warden-config/config.defaults";
+import { parseDuration } from "@delacour/warden-config/duration";
+import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-config/slim.profile";
+import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
+import { compiledBinary } from "@delacour/warden-core/affected/graph-process";
+import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
+import { readySpec } from "@delacour/warden-core/batch/preset";
+import { resolveHeadless } from "@delacour/warden-leasing/headless";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import type { E2eReportJson } from "@delacour/warden-sdk/contracts/e2e-report";
+import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { selfCommand } from "../autogc";
-import type { DeviceSetup, DeviceSetupSpec } from "../batch/setup";
+import type { DeviceSetupSpec } from "../batch/setup";
 import { realPath, type TrackedSpec } from "../batch/spec-progress";
 import type { WarmConnect } from "../batch/warm-drivers";
 import {
@@ -33,7 +36,6 @@ import {
 	isPhysicalClaim,
 	type PhysicalOptionValues,
 	parseClaimFlags,
-	resolveOwner,
 	withClaimOptions,
 	withNamedPhysical,
 	withPhysicalOptions,
@@ -52,7 +54,7 @@ import { selectPreload } from "../e2e/e2e-runtime";
 import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
-import { type AppFlagValues, withLeaseOptions } from "../lease-session";
+import { type AppFlagValues, withLeaseOptions } from "../lease-options";
 import { emit, note, reportError, success, warn } from "../output";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { currentBuild } from "../update/build-info";
@@ -100,24 +102,7 @@ export type E2eOpts = ClaimFlagValues &
 		dev?: true;
 	};
 
-export type E2eReport = {
-	suite: string;
-	platform: Platform;
-	base?: string;
-	/** `device`: one spec process per device ran a shard of the specs; `spec`: one process per spec */
-	isolate: E2eIsolation;
-	ok: boolean;
-	/** iOS: the run kept its devices' Simulator.app windows closed */
-	headless: boolean;
-	batchDir?: string;
-	specs: SpecVerdict[];
-	/** under CI: spec files with a `test.only` left in (the run fails) */
-	only?: string[];
-	/** per-device setup outcomes, when the suite has a `setup` */
-	setup?: DeviceSetup[];
-	/** the run stopped before any spec: a phone's runner would not start (`device_locked`, ...) */
-	error?: { code: string; message: string; udid: string };
-};
+export type E2eReport = E2eReportJson;
 
 /** The suite's run settings as option values (CLI flags passed explicitly win). */
 function suiteOpts(

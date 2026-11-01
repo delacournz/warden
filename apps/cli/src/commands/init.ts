@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { projectStart } from "@delacour/warden-builds/prepare";
 import { DEFAULT_SPECS_DIR } from "@delacour/warden-core/affected/affected.defaults";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { z } from "zod";
@@ -8,7 +9,6 @@ import type { CommandContext } from "../context";
 import { expoInstallCommand, missingPackages } from "../expo-app";
 import { emit, note, reportError, success, warn } from "../output";
 import { currentBuild } from "../update/build-info";
-import { projectStart } from "./app";
 import { type InitApp, SMOKE_SPEC_SOURCE, wardenConfigSource } from "./init.data";
 
 type InitOpts = { project?: string; bundleId?: string; force?: true; dryRun?: true; json?: true };

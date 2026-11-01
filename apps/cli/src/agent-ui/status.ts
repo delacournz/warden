@@ -1,5 +1,5 @@
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
-import { describeOwner, isPhysicalIosId } from "@delacour/warden-core/types";
+import { describeOwner, isPhysicalIosId } from "@delacour/warden-store/types";
 import { ok } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { conditionsLine } from "./condition-text";

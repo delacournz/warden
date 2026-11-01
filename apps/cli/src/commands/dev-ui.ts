@@ -1,7 +1,7 @@
-import type { Platform } from "@delacour/warden-core/types";
+import type { MetroTerminal } from "@delacour/warden-builds/metro";
+import type { Platform } from "@delacour/warden-store/types";
 import type { AsyncResult, Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import type { MetroTerminal } from "../metro";
 
 /** The steps a person watches in `warden dev`, in order; the action keys add `action:<name>` rows (`dev-tui/actions.ts`). */
 export type DevTaskId = "claim" | "show" | "app" | "metro" | "client" | "devtools" | "session";

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { bunExec } from "../exec";
-import { graphOf, makeFixtureRepo } from "./fixture.testing";
+import { bunExec } from "@delacour/warden-runtime/exec";
+import { graphOf, makeFixtureRepo } from "../testing/fixture.testing";
 import { reachable, TYPESCRIPT_MISSING } from "./graph";
 import { importsOfDoc, parseGraphDoc } from "./graph-snapshot";
 import { buildGraphDoc } from "./graph-worker";

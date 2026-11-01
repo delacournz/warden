@@ -1,7 +1,11 @@
-import { bunExec, type Exec } from "@delacour/warden-core/exec";
-import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-core/git-facts";
-import type { HostFacts } from "@delacour/warden-core/host";
-import { openStore, type Store } from "@delacour/warden-core/store";
+import type { AppHost } from "@delacour/warden-builds/prepare";
+import type { HostFacts } from "@delacour/warden-leasing/host";
+import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-runtime/git-facts";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { defaultDbPath, openStore, type Store, wardenHome } from "@delacour/warden-store/store";
+import type { WardenHost } from "@delacour/warden-types/host";
+import { renderLogEvent } from "./log-events";
 import { terminalUi, type Ui } from "./ui";
 
 /** Everything a command touches from the outside world — injectable for tests. */
@@ -73,17 +77,41 @@ export function lineWriter(stream: NodeJS.WritableStream): LineWriter {
 export const STDOUT = lineWriter(process.stdout);
 export const STDERR = lineWriter(process.stderr);
 
+/**
+ * The context as a {@link WardenHost}: the engine's injected effects. Its `log` renders each event on
+ * `ctx.err` exactly as the engine used to print it, so build it from the context in force where `err`
+ * is swapped (a spinner's).
+ */
+export function hostFromContext(ctx: CommandContext): WardenHost {
+	return {
+		env: ctx.env,
+		cwd: ctx.cwd,
+		home: wardenHome(ctx.env),
+		now: ctx.now,
+		exec: ctx.exec,
+		sleep: (ms) => Bun.sleep(ms),
+		pidAlive: processAlive,
+		log: (event) => renderLogEvent(ctx, event),
+	};
+}
+
+/** {@link hostFromContext} plus the shared store and git-facts memo: what app preparation reads. */
+export function appHostFromContext(ctx: CommandContext): AppHost {
+	return { ...hostFromContext(ctx), store: ctx.store, git: ctx.git };
+}
+
 export function defaultContext(argv: string[]): CommandContext {
+	const env = process.env;
 	let store: Store | undefined;
 	return {
 		argv,
-		env: process.env,
+		env,
 		cwd: process.cwd(),
 		now: () => Date.now(),
 		out: STDOUT.write,
 		err: STDERR.write,
 		store: () => {
-			store ??= openStore();
+			store ??= openStore(defaultDbPath(env));
 			return store;
 		},
 		exec: bunExec,

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@delacour/warden-core/types";
+import { checkJsonSchema } from "@delacour/warden-sdk/contracts/leases";
+import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { checkCommand } from "./check";
@@ -27,7 +28,9 @@ describe("warden check", () => {
 	test("free device → 0", async () => {
 		const c = setup(["--udid", "U9", "--json"]);
 		expect(await checkCommand.run(c)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ udid: "U9", free: true, mine: false });
+		const out = JSON.parse(c.stdout.join("\n"));
+		checkJsonSchema.parse(out);
+		expect(out).toMatchObject({ udid: "U9", free: true, mine: false });
 	});
 
 	test("leased by the given session → 0", async () => {

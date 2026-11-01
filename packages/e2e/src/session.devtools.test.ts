@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { devtoolsErr } from "@delacour/warden-devtools/devtools.types";
+import { startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
+import { stubFacet } from "@delacour/warden-devtools/testing/facet";
 import { ok } from "@delacour/warden-types/result";
-import { startFakeMetro } from "./devtools/devtools.testing";
-import { devtoolsErr } from "./devtools/devtools.types";
-import { stubFacet } from "./devtools/facet.testing";
 import type { E2eEnv } from "./env";
 import { createSession } from "./session";
 

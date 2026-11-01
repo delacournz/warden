@@ -1,6 +1,5 @@
-import { formatSize, parseSize } from "@delacour/warden-core/builds/prune";
-import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
-import { processAlive } from "@delacour/warden-core/liveness";
+import { formatSize, parseSize } from "@delacour/warden-builds/prune";
+import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
 import type { SimAudit } from "@delacour/warden-core/sims/audit";
 import { auditMachineSims, pruneSims, type SimsDeps, type SimsPruneResult } from "@delacour/warden-core/sims/prune";
 import {
@@ -17,9 +16,10 @@ import {
 	type RuntimeVerdict,
 } from "@delacour/warden-core/sims/runtimes";
 import { DEFAULT_SIM_IDLE_MS, DEFAULT_SIM_STALE_MS } from "@delacour/warden-core/sims/sims.defaults";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { processAlive } from "@delacour/warden-store/liveness";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
-import { resolveOwner } from "../claim-flags";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
 import { emit, heading, reportError, table, warn } from "../output";

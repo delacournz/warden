@@ -1,0 +1,40 @@
+{
+	"name": "@delacour/warden-config",
+	"version": "0.1.0",
+	"description": "warden config: zod schemas, defineConfig, durations, port specs and defaults (standalone leaf)",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./affected.schema": "./src/affected.schema.ts",
+		"./app-option.schema": "./src/app-option.schema.ts",
+		"./build-kinds": "./src/build-kinds.ts",
+		"./conditions.config": "./src/conditions.config.ts",
+		"./conditions.types": "./src/conditions.types.ts",
+		"./config.defaults": "./src/config.defaults.ts",
+		"./config.schema": "./src/config.schema.ts",
+		"./define-config": "./src/define-config.ts",
+		"./duration": "./src/duration.ts",
+		"./eas.schema": "./src/eas.schema.ts",
+		"./network.presets": "./src/network.presets.ts",
+		"./ports-spec": "./src/ports-spec.ts",
+		"./preset.schema": "./src/preset.schema.ts",
+		"./shaping": "./src/shaping.ts",
+		"./slim-policy": "./src/slim-policy.ts",
+		"./slim.profile": "./src/slim.profile.ts",
+		"./text-size": "./src/text-size.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-types": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

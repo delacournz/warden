@@ -1,107 +1,14 @@
-import type { Driver, Rect, ScreenInfo } from "@delacour/warden-e2e/driver/driver.types";
-import { contentPath, visibleRect } from "@delacour/warden-e2e/screen/actions";
-import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-e2e/screen/nodes";
-import { renderEntryLine } from "@delacour/warden-e2e/screen/render";
-import {
-	formatSelector,
-	matchesSelector,
-	type ParsedSelector,
-	parseSelector,
-	pickMostSpecific,
-} from "@delacour/warden-e2e/screen/selector";
+import { isWay, parseAmount } from "@delacour/warden-sdk/ops/actions";
+import { scroll } from "@delacour/warden-sdk/ops/scroll";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { finishAction, parseSettle } from "./act";
-import {
-	DEFAULT_SCROLL_MAX,
-	isWay,
-	parseAmount,
-	regionOf,
-	SCROLL_PAUSE_MS,
-	type ScrollOptionValues,
-	SWIPE_MS,
-	type Way,
-} from "./actions";
-import type { UiDevice } from "./device";
-import { driverUiError, fromDriver, type UiDeps } from "./driver";
-import { type UiError, type UiSuccess, uiError } from "./output";
-import type { RecordTarget } from "./record";
-import { runUi, type UiRunEnv } from "./run";
-import { storeSnapshot } from "./snapshot";
-import { positiveInt } from "./snapshot-command";
+import { type ActionOptionValues, parseSettle, positiveInt } from "./args";
+import type { UiDeps } from "./driver";
+import { type UiError, uiError } from "./output";
+import { runUi } from "./run";
+import { opSessionFor, reply } from "./session";
 
-/** The match of `selector` that is on the screen: `nth=` picks among the visible ones, else the most specific wins. */
-export function visibleMatch(index: NodeIndex, selector: ParsedSelector, screen: ScreenInfo): NodeEntry | undefined {
-	const { nth, ...rest } = selector;
-	const shown = index.entries.filter((entry) => {
-		if (entry.states.hidden || !matchesSelector(entry, rest)) return false;
-		const seen = visibleRect(entry.element.frame, screen);
-		return seen.width > 0 && seen.height > 0;
-	});
-	return nth === undefined ? pickMostSpecific(shown, rest) : shown[nth];
-}
-
-type ScrollRequest = { way: Way; amount: number; max: number; until?: ParsedSelector };
-
-function parseRequest(
-	direction: string,
-	amountRaw: string | undefined,
-	opts: ScrollOptionValues
-): Result<ScrollRequest, UiError> {
-	if (!isWay(direction)) {
-		return {
-			success: false,
-			error: uiError("usage", `unknown direction "${direction}"`, { hint: "up, down, left or right" }),
-		};
-	}
-	const amount = parseAmount(amountRaw);
-	if (!amount.success) return amount;
-	const max = opts.max === undefined ? ok(DEFAULT_SCROLL_MAX) : positiveInt("--max", opts.max);
-	if (!max.success) return max;
-	if (opts.until === undefined) return ok({ way: direction, amount: amount.data, max: max.data });
-	const until = parseSelector(opts.until);
-	if (!until.success) {
-		return { success: false, error: uiError("usage", `bad --until selector: ${until.error}`) };
-	}
-	return ok({ way: direction, amount: amount.data, max: max.data, until: until.data });
-}
-
-type Found = { ref: string | undefined; entry: NodeEntry };
-
-type ScrollRun = { swipes: number; found?: Found };
-
-/** One swipe, or (`until`) swipes until the selector is on screen, looking before each one, at most `max`. */
-async function scrollLoop(
-	ctx: CommandContext,
-	deps: UiDeps,
-	driver: Driver,
-	udid: string,
-	plan: ScrollRequest,
-	area: { rect: Rect; screen: ScreenInfo }
-): Promise<Result<ScrollRun, UiError>> {
-	const path = contentPath(plan.way, area.rect, plan.amount);
-	const swipe = async () =>
-		fromDriver(await driver.swipe(path.from, path.to, { durationMs: SWIPE_MS, momentum: false }));
-	if (plan.until === undefined) {
-		const swiped = await swipe();
-		return swiped.success ? ok({ swipes: 1 }) : swiped;
-	}
-	for (let swipes = 0; ; swipes += 1) {
-		const looked = await driver.snapshot();
-		if (!looked.success) return { success: false, error: driverUiError(looked.error) };
-		const entry = visibleMatch(indexSnapshot(looked.data), plan.until, area.screen);
-		if (entry) {
-			const stored = storeSnapshot(ctx, udid, looked.data);
-			return ok({ swipes, found: { ref: stored.refs.byId.get(entry.element.id), entry } });
-		}
-		if (swipes >= plan.max) return ok({ swipes });
-		const swiped = await swipe();
-		if (!swiped.success) return swiped;
-		await deps.sleep(SCROLL_PAUSE_MS);
-	}
-}
-
-const plural = (n: number): string => `${n} scroll${n === 1 ? "" : "s"}`;
+export type ScrollOptionValues = ActionOptionValues & { until?: string; in?: string; max?: string };
 
 /**
  * `warden ui scroll <up|down|left|right> [amount] [--until <selector>] [--in <target>] [--max n]`: scroll the content
@@ -115,70 +22,44 @@ export function uiScroll(
 	amountRaw: string | undefined,
 	opts: ScrollOptionValues
 ): Promise<number> {
-	return runUi(ctx, deps, "scroll", opts, (device, env) =>
-		runScroll(ctx, deps, { direction, amountRaw, opts }, device, env)
-	);
+	return runUi(ctx, deps, "scroll", opts, async (device, env) => {
+		const settle = parseSettle(opts.settle);
+		if (!settle.success) return settle;
+		const request = scrollRequest(direction, amountRaw, opts);
+		if (!request.success) return request;
+		return reply(
+			device,
+			await scroll(opSessionFor(ctx, deps, device, env), {
+				...request.data,
+				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
+			})
+		);
+	});
 }
 
-/** The words of one `warden ui scroll`. */
-type ScrollInput = { direction: string; amountRaw: string | undefined; opts: ScrollOptionValues };
+type ScrollParams = Parameters<typeof scroll>[1];
 
-/** The element `--until` found, as the target the recording stores (the selector and a point to land on). */
-function foundTarget(found: Found | undefined, until: ParsedSelector | undefined): RecordTarget | undefined {
-	if (!found || !until) return undefined;
-	const { entry, ref } = found;
-	const { frame, tapPoint } = entry.element;
-	return {
-		...(ref !== undefined ? { ref } : {}),
-		selector: formatSelector(until),
-		point: tapPoint ?? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 },
-	};
-}
-
-/** What `scroll` prints: the plain direction, or where `--until` found its element. */
-function scrollText(input: ScrollInput, found: Found | undefined, swipes: number): string {
-	if (!found) return `scrolled ${input.direction}`;
-	const line = renderEntryLine(found.entry, found.ref === undefined ? {} : { ref: found.ref });
-	return `found after ${plural(swipes)}: ${line}`;
-}
-
-/** One `scroll` on a claimed device: parse, find the region, swipe (until the selector shows), finish. */
-async function runScroll(
-	ctx: CommandContext,
-	deps: UiDeps,
-	input: ScrollInput,
-	device: UiDevice,
-	env: UiRunEnv
-): Promise<Result<UiSuccess, UiError>> {
-	const { direction, amountRaw, opts } = input;
-	const settle = parseSettle(opts.settle);
-	if (!settle.success) return settle;
-	const plan = parseRequest(direction, amountRaw, opts);
-	if (!plan.success) return plan;
-	const driver = await env.driver();
-	if (!driver.success) return driver;
-	const area = await regionOf(ctx, driver.data, device.udid, opts.in);
-	if (!area.success) return area;
-
-	const ran = await scrollLoop(ctx, deps, driver.data, device.udid, plan.data, area.data);
-	if (!ran.success) return ran;
-	const { swipes, found } = ran.data;
-	const { until } = plan.data;
-	if (until && !found) {
+/** The op's params from the words and flags (everything but `--settle`); usage errors for a bad direction, amount or `--max`. */
+function scrollRequest(
+	direction: string,
+	amountRaw: string | undefined,
+	opts: ScrollOptionValues
+): Result<ScrollParams, UiError> {
+	if (!isWay(direction)) {
 		return {
 			success: false,
-			error: uiError("target_not_found", `${formatSelector(until)} not on screen after ${plural(swipes)}`, {
-				hint: "raise --max, scroll the other way, or check the selector with `warden ui find`",
-				details: { swipes },
-			}),
+			error: uiError("usage", `unknown direction "${direction}"`, { hint: "up, down, left or right" }),
 		};
 	}
-	const where = foundTarget(found, until);
-	return finishAction(ctx, deps, env, device, driver.data, settle.data, {
-		action: "scroll",
-		text: scrollText(input, found, swipes),
-		...(where ? { target: where } : {}),
-		args: { direction, amount: plan.data.amount, ...(until ? { until: formatSelector(until) } : {}) },
-		extra: { direction, amount: plan.data.amount, swipes },
+	const amount = parseAmount(amountRaw);
+	if (!amount.success) return amount;
+	const max = opts.max === undefined ? undefined : positiveInt("--max", opts.max);
+	if (max && !max.success) return max;
+	return ok({
+		direction,
+		amount: amount.data,
+		...(max ? { max: max.data } : {}),
+		...(opts.until !== undefined ? { until: opts.until } : {}),
+		...(opts.in !== undefined ? { within: opts.in } : {}),
 	});
 }

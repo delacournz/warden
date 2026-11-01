@@ -1,17 +1,17 @@
-import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
-import { readLockState } from "@delacour/warden-core/providers/devicectl";
-import { realTimer } from "@delacour/warden-core/providers/health";
+import { providerFor } from "@delacour/warden-core/host-deps";
+import { readLockState } from "@delacour/warden-providers/devicectl";
+import { realTimer } from "@delacour/warden-providers/health";
 import {
 	DEVICE_LOCKED_CODE,
 	DEVICE_LOCKED_HINT,
 	isDeviceLockedError,
 	waitUnlocked,
-} from "@delacour/warden-core/providers/unlock-wait";
-import { type DeviceRequest, isPhysicalReady, type Owner } from "@delacour/warden-core/types";
+} from "@delacour/warden-providers/unlock-wait";
+import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
+import { type DeviceRequest, isPhysicalReady, type Owner } from "@delacour/warden-store/types";
 import { type AsyncResult, ok } from "@delacour/warden-types/result";
-import type { CommandContext } from "./context";
+import { appHostFromContext, type CommandContext } from "./context";
 import { reportError } from "./output";
-import { providerFor } from "./providers";
 
 /** A phone about to be claimed: its CoreDevice UDID and the name the person knows it by. */
 type Phone = { id: string; name: string };
@@ -23,7 +23,7 @@ type Phone = { id: string; name: string };
  */
 async function phonesToClaim(ctx: CommandContext, owner: Owner, request: DeviceRequest): Promise<Phone[]> {
 	const ids = request.physical?.ids;
-	const inventory = await providerFor("ios", ctx, owner, {
+	const inventory = await providerFor("ios", appHostFromContext(ctx), owner, {
 		physical: true,
 		...(ids ? { namedPhysical: ids } : {}),
 	}).inventory();

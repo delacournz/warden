@@ -1,12 +1,12 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
-import type { Store } from "../store";
 import {
 	CONDITION_AREAS,
 	type ConditionArea,
 	type ConditionRecord,
 	type ConditionValues,
 	type OwnedProcess,
-} from "./conditions.types";
+} from "@delacour/warden-config/conditions.types";
+import type { Store } from "@delacour/warden-store/store";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 
 export type ConditionRow = { area: ConditionArea; json: string; owned: string; set_at: number };
 

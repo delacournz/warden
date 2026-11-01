@@ -1,17 +1,22 @@
-import type { Platform } from "@delacour/warden-core/types";
-import type { Driver, Point } from "@delacour/warden-e2e/driver/driver.types";
-import { openDriver } from "@delacour/warden-e2e/driver/open";
-import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-e2e/driver/settle";
+import { openDriver } from "@delacour/warden-device/open";
+import type { Driver, Point } from "@delacour/warden-driver/driver.types";
+import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-driver/settle";
+import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
+import { androidTools } from "@delacour/warden-providers/android-tools";
+import { devtoolsError, withFacet } from "@delacour/warden-sdk/ops/devtools";
+import { takeSnapshot } from "@delacour/warden-sdk/ops/snapshot";
+import { wardenHome } from "@delacour/warden-store/store";
+import type { Platform } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
+import { positiveInt } from "./args";
 import type { UiDevice } from "./device";
-import { defaultDevtoolsDeps, devtoolsUiError, withFacet } from "./devtools-cli";
+import { defaultDevtoolsDeps } from "./devtools-cli";
 import { driverUiError, type UiDeps } from "./driver";
 import { socketPathFor, stopHelper } from "./helper";
 import type { UiError, UiSuccess } from "./output";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
-import { takeSnapshot } from "./snapshot";
-import { positiveInt } from "./snapshot-command";
+import { opSessionFor } from "./session";
 import { readState } from "./state";
 
 /** The metrics `warden ui bench` measures; names are the plan's ("Speed targets"). */
@@ -203,21 +208,13 @@ async function defaultOpenSecond(
 	device: UiDevice,
 	socketPath: string
 ): Promise<Result<Driver, UiError>> {
-	const opened = await openDriver(
-		{
-			udid: device.udid,
-			platform: device.platform,
-			bundleId: "",
-			launchArgs: [],
-			out: "",
-			timeoutMs: 0,
-			actionTimeoutMs: 0,
-			assertionTimeoutMs: 0,
-			logTimestamps: false,
-			simdSocket: socketPath,
-		},
-		{ exec: ctx.exec }
-	);
+	const opened = await openDriver({
+		platform: device.platform,
+		id: device.udid,
+		host: { exec: ctx.exec, home: wardenHome(ctx.env) },
+		ios: { socketPath },
+		android: { adb: androidTools(ctx.env).adb, uiad: uiadFromEnv(ctx.env) ?? false },
+	});
 	return opened.success ? opened : { success: false, error: driverUiError(opened.error) };
 }
 
@@ -268,6 +265,12 @@ async function benchColdStart(session: BenchSession): Promise<Result<undefined, 
 	return ok(undefined);
 }
 
+/** The SDK op session the iOS bench steps (settled snapshot, component tree) run through. */
+function benchOpSession(session: BenchSession) {
+	const { ctx, deps, device, env } = session;
+	return opSessionFor(ctx, deps, device, env, { devtools: deps.devtools ?? defaultDevtoolsDeps });
+}
+
 /** Warm snapshot and HID tap timings on the open driver. */
 async function benchWarm(session: BenchSession, driver: Driver, point: Point): Promise<Result<undefined, UiError>> {
 	const { clock, runs } = session;
@@ -287,11 +290,12 @@ async function benchPressSettle(
 	driver: Driver,
 	point: Point
 ): Promise<Result<undefined, UiError>> {
-	const { ctx, deps, device, clock } = session;
+	const { clock } = session;
+	const ops = benchOpSession(session);
 	const settle = await sample(clock, capped("pressSettle", session.runs), async () => {
 		const tapped = viaUi(await driver.tap(point));
 		if (!tapped.success) return tapped;
-		return takeSnapshot(ctx, deps, driver, device.udid, {
+		return takeSnapshot(ops, driver, {
 			interactiveOnly: true,
 			all: false,
 			settle: { budgetMs: DEFAULT_SETTLE_TIMEOUT_MS },
@@ -304,11 +308,11 @@ async function benchPressSettle(
 
 /** iOS: the dev client's component tree; skipped (not failed) when devtools is unreachable. */
 async function benchTree(session: BenchSession): Promise<void> {
-	const { ctx, deps, device, env, opts, clock, runs, targets } = session;
-	const tree = await withFacet(ctx, deps.devtools ?? defaultDevtoolsDeps, device, env, opts, async (facet) => {
+	const { opts, clock, runs, targets } = session;
+	const tree = await withFacet(benchOpSession(session), opts, async (facet) => {
 		const fetchTree = async () => {
 			const fetched = await facet.tree({ pixelRatio: 1 });
-			return fetched.success ? ok(undefined) : { success: false as const, error: devtoolsUiError(fetched.error) };
+			return fetched.success ? ok(undefined) : { success: false as const, error: devtoolsError(fetched.error) };
 		};
 		const probe = await fetchTree();
 		return probe.success ? sample(clock, runs, fetchTree) : probe;

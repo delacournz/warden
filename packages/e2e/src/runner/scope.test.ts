@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { E2eError } from "../errors";
+import { E2eError } from "@delacour/warden-driver/e2e-error";
+import { markOnly, onlyWasSeen, resetOnly } from "../session";
 import {
 	createScope,
 	currentScope,
 	hooksFor,
-	markOnly,
-	onlyWasSeen,
 	ownHook,
 	registrationDefaults,
-	resetOnly,
 	resolveUse,
 	runInScope,
 	scopeChain,

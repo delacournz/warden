@@ -39,7 +39,7 @@ The first match wins. An override that points at nothing is an error, never a fa
 1. `WARDEN_SIMD`: the path of the `warden-simd` file
 2. `WARDEN_HELPER_DIR`: a directory containing `warden-simd`
 3. next to the running `warden` binary (this is where the npm `@delacour/warden-darwin-arm64` package puts it)
-4. `packages/e2e/native/dist/` in a warden source checkout (`bun run --cwd packages/e2e native:deps && native:build`)
+4. `packages/driver-ios/native/dist/` in a warden source checkout (`bun run --cwd packages/driver-ios native:deps && native:build`)
 5. `$WARDEN_HOME/simd/<warden version>/`, filled by `warden doctor --fetch-helper`
 
 The helper needs its neighbours: `Resources/SimulatorFrameworkBridge-iOS` (the in-simulator guest) and two stub `*.framework` directories. They live in the same directory as the binary, and `manifest.json` next to them records the helper, idb and Xcode versions. Keep the directory together if you copy it.
@@ -106,7 +106,7 @@ The helper is ad-hoc signed without the hardened runtime, like Homebrew's `idb_c
 
 ## Android driver
 
-Android needs no helper and no `warden doctor` check: the driver is TypeScript over `adb` (`packages/e2e/src/driver/android/`), used by `warden ui` and the spec runner alike.
+Android needs no helper and no `warden doctor` check: the driver is TypeScript over `adb` (`packages/driver-android/src/`), used by `warden ui` and the spec runner alike.
 
 - **One resident shell.** Each driver keeps a single `adb -s <serial> shell` process and writes one line per command, `(<cmd>) 2>&1 </dev/null; echo "__WDN_<id>_$?__"`, then reads until that sentinel. Commands run one at a time, in order; the exit code is the number in the sentinel. A timeout (default 10 s) kills the shell and the next command starts a new one. If the shell dies, that command fails with `E_HELPER_CRASHED` and one respawn is allowed; a respawn that also dies before finishing a command makes the session give up. Binary output never goes through it: screenshots use a separate `adb exec-out screencap -p`, and so does one of the dump routes.
 - **Opening a driver** takes one probe command (`sys.boot_completed`, the sdk level, `wm size`, `wm density`), polled for up to 30 s (`E_NOT_BOOTED` after that), then one command that sets the three animation scales to 0.

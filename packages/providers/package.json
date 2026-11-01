@@ -1,0 +1,44 @@
+{
+	"name": "@delacour/warden-providers",
+	"version": "0.1.0",
+	"description": "warden device providers: iOS (simctl) and Android (adb/emulator) behind DeviceProvider",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./android": "./src/android.ts",
+		"./android-keyguard": "./src/android-keyguard.ts",
+		"./android-tools": "./src/android-tools.ts",
+		"./biometrics": "./src/biometrics.ts",
+		"./devicectl": "./src/devicectl.ts",
+		"./devicectl.fixtures": "./src/devicectl.fixtures.ts",
+		"./disabled-store": "./src/disabled-store.ts",
+		"./golden-name": "./src/golden-name.ts",
+		"./health": "./src/health.ts",
+		"./ios": "./src/ios.ts",
+		"./provider.types": "./src/provider.types.ts",
+		"./simctl-list": "./src/simctl-list.ts",
+		"./slim": "./src/slim.ts",
+		"./slim.launchd": "./src/slim.launchd.ts",
+		"./slim.offline": "./src/slim.offline.ts",
+		"./testing/android.fixtures": "./src/testing/android.fixtures.ts",
+		"./testing/ios.fixture": "./src/testing/ios.fixture.ts",
+		"./testing/simctl.testing": "./src/testing/simctl.testing.ts",
+		"./unlock-wait": "./src/unlock-wait.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-store": "workspace:*",
+		"@delacour/warden-types": "workspace:*"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

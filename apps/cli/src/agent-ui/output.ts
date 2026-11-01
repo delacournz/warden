@@ -1,4 +1,6 @@
-import type { Platform } from "@delacour/warden-core/types";
+import type { UiDeviceInfoJson, UiJsonDoc } from "@delacour/warden-sdk/contracts/ui";
+import { opError } from "@delacour/warden-sdk/ops/errors";
+import type { WardenError, WardenErrorCode } from "@delacour/warden-types/error";
 import type { CommandContext } from "../context";
 
 /**
@@ -51,32 +53,19 @@ export const UI_ERROR_EXIT = {
 
 export type UiErrorCode = keyof typeof UI_ERROR_EXIT;
 
-export type UiError = {
-	code: UiErrorCode;
-	message: string;
-	hint?: string;
-	details?: Record<string, unknown>;
-};
+/** `warden ui` reports the SDK's {@link WardenError}: its codes are a superset of {@link UiErrorCode}. */
+export type UiError = WardenError;
 
-export type UiDeviceInfo = { udid: string; platform: Platform; name?: string };
+export type UiDeviceInfo = UiDeviceInfoJson;
 
-/** `--json` envelope: exactly one document on stdout, success or failure. */
-export type UiJson =
-	| {
-			ok: true;
-			command: string;
-			device: UiDeviceInfo;
-			generation?: number;
-			durationMs: number;
-			/** the caller's `warden dev` lease this call used beside it (shared, not taken over; `close --release` keeps it) */
-			attachedTo?: string;
-			result: unknown;
-			warnings?: string[];
-	  }
-	| { ok: false; command: string; device?: UiDeviceInfo; error: UiError };
+/** `--json` envelope: exactly one document on stdout, success or failure (schema: `uiJsonSchema` in `@delacour/warden-sdk/contracts`). */
+export type UiJson = UiJsonDoc;
 
+const isUiErrorCode = (code: WardenErrorCode): code is UiErrorCode => code in UI_ERROR_EXIT;
+
+/** The exit code of an error; a code `warden ui` has no entry for (an SDK-only code) is a plain failure. */
 export function exitCodeFor(error: UiError): UiExitCode {
-	return UI_ERROR_EXIT[error.code];
+	return isUiErrorCode(error.code) ? UI_ERROR_EXIT[error.code] : UI_EXIT.failed;
 }
 
 export function uiError(
@@ -84,12 +73,7 @@ export function uiError(
 	message: string,
 	extra: { hint?: string; details?: Record<string, unknown> } = {}
 ): UiError {
-	return {
-		code,
-		message,
-		...(extra.hint !== undefined ? { hint: extra.hint } : {}),
-		...(extra.details !== undefined ? { details: extra.details } : {}),
-	};
+	return opError(code, message, extra);
 }
 
 /** Human form of an error: `message — hint`. */

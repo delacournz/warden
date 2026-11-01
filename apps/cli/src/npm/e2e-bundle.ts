@@ -7,7 +7,7 @@ export const E2E_EXTERNALS = ["bun:test", "zod"] as const;
 
 /**
  * Bundle `packages/e2e/src/{index,preload}.ts` into `<outDir>/{index,preload}.mjs` for Bun, workspace packages
- * (`@delacour/warden-core`, `-types`) inlined. `splitting` puts what the two entries share in a chunk, which
+ * (`@delacour/warden-*`) inlined. `splitting` puts what the two entries share in a chunk, which
  * matters: the preload registers the default driver on the same `session` module `test` reads, so the entries
  * must not each carry their own copy. `WARDEN_E2E_VERSION` is defined to the published version.
  */

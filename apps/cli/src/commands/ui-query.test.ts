@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { el, failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
-import type { Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+import type { Snapshot } from "@delacour/warden-driver/driver.types";
+import { el, failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { readLastSnapshot, readState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 

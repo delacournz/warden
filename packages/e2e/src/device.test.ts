@@ -2,17 +2,24 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eventKind, readConditionEvents } from "./conditions/condition-events";
-import { conditionsOf } from "./conditions/device-conditions";
-import { createDevice } from "./device";
-import { sheetlessFor } from "./device-link";
-import { type ElementSpec, el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "./driver/driver.testing";
-import type { Platform, Snapshot } from "./driver/driver.types";
+import { conditionsOf } from "@delacour/warden-device/conditions/device-conditions";
+import { sheetlessFor } from "@delacour/warden-device/device-link";
+import type { Clock, FixtureSession } from "@delacour/warden-device/fixture-session";
+import { eventKind, readConditionEvents } from "@delacour/warden-driver/conditions/condition-events";
+import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
+import type { E2eError } from "@delacour/warden-driver/e2e-error";
+import {
+	type ElementSpec,
+	el,
+	type FakeDriver,
+	failWith,
+	fakeDriver,
+	snapshotOf,
+} from "@delacour/warden-driver/testing/driver";
+import { createScreen } from "@delacour/warden-screen/screen";
+import { testHost } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
-import type { E2eError } from "./errors";
-import type { Clock, FixtureSession } from "./fixture-session";
-import { createScreen } from "./screen/screen";
-import { testHost } from "./screen/screen.testing";
+import { deviceFor as createDevice } from "./fixtures";
 
 const env: E2eEnv = {
 	udid: "UDID",

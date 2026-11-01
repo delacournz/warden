@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Exec, ExecResult } from "@delacour/warden-core/exec";
-import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
+import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type TestContext, testContext } from "../testing";
 import { createSimCommand } from "./sim";
 

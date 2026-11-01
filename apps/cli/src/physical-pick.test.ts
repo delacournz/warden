@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
-import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import {
 	DEVICECTL_LOCKSTATE_UNLOCKED,
 	devicectlEntry,
 	devicectlJson,
 	FAKE_IPAD_UDID,
 	FAKE_IPHONE_UDID,
-} from "@delacour/warden-core/providers/devicectl.fixtures";
-import type { Owner } from "@delacour/warden-core/types";
+} from "@delacour/warden-providers/devicectl.fixtures";
+import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
+import type { Owner } from "@delacour/warden-store/types";
 import { type ClaimFlags, parseClaimFlags } from "./claim-flags";
 import { pickPhysical } from "./physical-pick";
 import { OWNER_ENV } from "./simctl.testing";

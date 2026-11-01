@@ -11,17 +11,24 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { installedBundleIds } from "@delacour/warden-core/builds/cache";
-import { parseDuration } from "@delacour/warden-core/duration";
-import { type PidAlive, processAlive } from "@delacour/warden-core/liveness";
-import { type Store, wardenHome } from "@delacour/warden-core/store";
-import type { Owner } from "@delacour/warden-core/types";
-import type { ClockRecorder } from "@delacour/warden-e2e/driver/clock-recorder";
-import type { Driver, DriverError } from "@delacour/warden-e2e/driver/driver.types";
-import { resolveHelper } from "@delacour/warden-e2e/driver/ios/locate-helper";
-import type { SimdClient } from "@delacour/warden-e2e/driver/ios/simd-client";
-import type { NetworkProxyPort } from "@delacour/warden-e2e/driver/network-proxy";
-import type { RemoteClient } from "@delacour/warden-e2e/driver/remote/remote-client";
+import { parseDuration } from "@delacour/warden-config/duration";
+import type { RemoteClient } from "@delacour/warden-device/remote/remote-client";
+import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
+import type { Driver, DriverError } from "@delacour/warden-driver/driver.types";
+import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
+import { resolveHelper } from "@delacour/warden-driver-ios/locate-helper";
+import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
+import { installedBundleIds } from "@delacour/warden-store/builds-table";
+import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import {
+	mayBeRecorded,
+	type ProcessCommand,
+	processCommand,
+	recordedIdentity,
+	safeToSignal,
+} from "@delacour/warden-store/process-identity";
+import { type Store, wardenHome } from "@delacour/warden-store/store";
+import type { Owner } from "@delacour/warden-store/types";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { readServedIdentity } from "../ios-runner/served-identity";
@@ -30,7 +37,6 @@ import { DEVICE_LOCKED_HINT, driverUiError } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
 import { androidHostDir, fsSafeId, iosRunnerDir, simdDir } from "./paths";
-import { mayBeRecorded, type ProcessCommand, processCommand, recordedIdentity, safeToSignal } from "./process-identity";
 import { type HelperRecord, readState, type UiState, updateState } from "./state";
 
 /**
@@ -216,7 +222,7 @@ function isUpLine(line: string): boolean {
 
 export const defaultHelperDeps: HelperDeps<SimdClient> = {
 	connect: async (socketPath, options) =>
-		(await import("@delacour/warden-e2e/driver/ios/simd-client")).connectSimd({
+		(await import("@delacour/warden-driver-ios/simd-client")).connectSimd({
 			socketPath,
 			readyTimeoutMs: 2000,
 			...(options?.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: options.defaultTimeoutMs } : {}),
@@ -998,7 +1004,7 @@ export async function connectHelper(
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
 	const { client, socketPath } = helper.data;
-	const { openIosDriver } = await import("@delacour/warden-e2e/driver/ios/ios-driver");
+	const { openIosDriver } = await import("@delacour/warden-driver-ios/ios-driver");
 	const driver = await openIosDriver({
 		udid,
 		exec: ctx.exec,
@@ -1206,7 +1212,7 @@ const HELPER_KINDS: readonly HelperKind[] = [SIMD_KIND, ANDROID_HOST_KIND, IOS_R
 export const defaultAndroidHostDeps: HelperDeps<RemoteClient> = {
 	...defaultHelperDeps,
 	connect: async (socketPath, options) =>
-		(await import("@delacour/warden-e2e/driver/remote/remote-client")).connectRemoteDriver({
+		(await import("@delacour/warden-device/remote/remote-client")).connectRemoteDriver({
 			socketPath,
 			readyTimeoutMs: 2000,
 			...(options?.defaultTimeoutMs !== undefined ? { requestTimeoutMs: options.defaultTimeoutMs } : {}),
@@ -1271,7 +1277,7 @@ function iosRunnerDeps(host: CommandContext): HelperDeps {
 			expected: async () => (await import("../ios-runner/identity")).expectedRunnerIdentity(host),
 			served: (socketPath) => readServedIdentity(socketPath),
 			caller: async () => {
-				const { resolveOwner } = await import("../claim-flags");
+				const { resolveOwner } = await import("@delacour/warden-leasing/owner");
 				return ownerKey(resolveOwner(host));
 			},
 			note: (line) => host.err(line),
@@ -1292,7 +1298,7 @@ export async function connectIosRunner(
 	const host = await ensureIosRunner(ctx, udid, { ...opts, keepClient: true });
 	if (!host.success) return host;
 	const { client, socketPath } = host.data;
-	const { openIosDeviceDriver } = await import("@delacour/warden-e2e/driver/ios/device/device-driver");
+	const { openIosDeviceDriver } = await import("@delacour/warden-driver-ios/device/device-driver");
 	const bundleId = ctx.env.WARDEN_BUNDLE_ID?.trim();
 	const appPath = ctx.env.WARDEN_APP_PATH?.trim();
 	const driver = await openIosDeviceDriver({

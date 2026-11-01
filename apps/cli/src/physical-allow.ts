@@ -1,4 +1,4 @@
-import type { DeviceRequest } from "@delacour/warden-core/types";
+import type { DeviceRequest } from "@delacour/warden-store/types";
 
 /** `WARDEN_PHYSICAL_IDS`: comma-separated adb serials / CoreDevice UDIDs; blank or unset is no list. */
 export function parsePhysicalIds(raw: string | undefined): string[] | undefined {

@@ -1,0 +1,51 @@
+{
+	"name": "@delacour/warden-driver-ios",
+	"version": "0.1.0",
+	"description": "warden iOS driver: warden-simd NDJSON client, simctl ops, helper locator, and the Swift helper (native/)",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./device/capabilities": "./src/device/capabilities.ts",
+		"./device/device-driver": "./src/device/device-driver.ts",
+		"./device/devicectl": "./src/device/devicectl.ts",
+		"./device/runner-protocol": "./src/device/runner-protocol.ts",
+		"./helper": "./src/helper.ts",
+		"./helper-state": "./src/helper-state.ts",
+		"./hid-recovery": "./src/hid-recovery.ts",
+		"./inject": "./src/inject.ts",
+		"./ios-driver": "./src/ios-driver.ts",
+		"./ios-network": "./src/ios-network.ts",
+		"./ios-settings": "./src/ios-settings.ts",
+		"./locate-helper": "./src/locate-helper.ts",
+		"./normalize": "./src/normalize.ts",
+		"./requirements": "./src/requirements.ts",
+		"./simctl": "./src/simctl.ts",
+		"./simd-client": "./src/simd-client.ts",
+		"./testing/exec": "./src/exec.testing.ts",
+		"./testing/ios-runner": "./src/device/runner.testing.ts",
+		"./testing/simd": "./src/simd.testing.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src ./native/scripts",
+		"lint": "biome lint --write ./src ./native/scripts",
+		"check": "biome check ./src ./native/scripts",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"native:deps": "bun native/scripts/deps.ts",
+		"native:build": "bun native/scripts/build.ts && bun native/scripts/inject.ts",
+		"native:inject": "bun native/scripts/inject.ts"
+	},
+	"dependencies": {
+		"@delacour/warden-builds": "workspace:*",
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-core": "workspace:*",
+		"@delacour/warden-driver": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-store": "workspace:*",
+		"@delacour/warden-types": "workspace:*"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*",
+		"zod": "^4.4.3"
+	}
+}

@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import type { PidAlive } from "@delacour/warden-core/liveness";
+import type { DriverCapabilities, Snapshot } from "@delacour/warden-driver/driver.types";
 import {
 	type DriverCall,
 	type ElementSpec,
@@ -7,11 +7,11 @@ import {
 	type FakeDriver,
 	type FakeOverride,
 	fakeDriver,
-} from "@delacour/warden-e2e/driver/driver.testing";
-import type { DriverCapabilities, Snapshot } from "@delacour/warden-e2e/driver/driver.types";
+} from "@delacour/warden-driver/testing/driver";
+import type { RecordStep } from "@delacour/warden-sdk/ops/record";
+import type { PidAlive } from "@delacour/warden-store/liveness";
 import { ok } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
-import type { RecordStep } from "../agent-ui/record";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createUiCommand } from "./ui";
@@ -64,6 +64,11 @@ export type HarnessOptions = {
 	conditions?: UiDeps["conditions"];
 	/** the leased device's platform (default ios) */
 	platform?: "ios" | "android";
+
+	/** leave `deps.record` unset so the real flow recorder writes `.warden-ui/<name>.flow.json` under the temp cwd */
+	realRecorder?: boolean;
+	/** extra deps (devtools, bench) */
+	extraDeps?: Partial<UiDeps>;
 };
 
 const live: TestContext[] = [];
@@ -95,11 +100,16 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 		sleep: async (ms) => {
 			clock.t += ms;
 		},
-		record: {
-			append: async (_udid, step) => {
-				steps.push(step);
-			},
-		},
+		...(options.realRecorder
+			? {}
+			: {
+					record: {
+						append: async (_udid: string, step: RecordStep) => {
+							steps.push(step);
+						},
+					},
+				}),
+		...options.extraDeps,
 		...(options.video ? { video: options.video } : {}),
 		...(options.pidAlive ? { pidAlive: options.pidAlive } : {}),
 		...(options.ensureApp ? { ensureApp: options.ensureApp } : {}),

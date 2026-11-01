@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@delacour/warden-core/store";
-import { el, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { openStore, type Store } from "@delacour/warden-store/store";
 import { uiDir } from "./paths";
 import {
 	commitGeneration,

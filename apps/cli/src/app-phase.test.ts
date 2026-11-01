@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AppPhase } from "@delacour/warden-core/builds/resolve";
+import type { AppPhase } from "@delacour/warden-builds/resolve";
 import { appPhaseText, phaseTracker } from "./app-phase";
 
 const text = (...entries: Array<[string, AppPhase]>) => appPhaseText(new Map(entries));

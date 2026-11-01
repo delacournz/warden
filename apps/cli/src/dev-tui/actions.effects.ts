@@ -1,11 +1,11 @@
 import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { wardenHome } from "@delacour/warden-core/store";
+import type { StartOptions } from "@delacour/warden-sdk/ops/perf/orchestrate";
+import { wardenHome } from "@delacour/warden-store/store";
 import { ok } from "@delacour/warden-types/result";
 import type { DevActionHost, DevReady, MetroTerminal } from "../commands/dev-ui";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "../perf/device";
-import type { StartOptions } from "../perf/orchestrate";
 import type { ActionEffects, ActionFailure, FxResult, LogStream, PerfStarted, PerfStopped } from "./actions";
 import { stripAnsi } from "./ansi";
 
@@ -93,7 +93,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		},
 
 		async reveal(info) {
-			const { revealSimWindow } = await import("../sim-windows");
+			const { revealSimWindow } = await import("@delacour/warden-leasing/sim-windows");
 			const shown = await revealSimWindow(ctx, info.deviceId);
 			return shown.success ? ok(undefined) : failure(shown.error);
 		},
@@ -121,7 +121,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			const done = (async (): Promise<string | undefined> => {
 				if (info.bundleId === undefined) return "no bundle id for the dev client";
 				const [{ streamAppLogs, parseLogLine }, { formatEntry }] = await Promise.all([
-					import("../perf/logs"),
+					import("@delacour/warden-sdk/ops/perf/logs"),
 					import("@delacour/warden-perf/logs/filter"),
 				]);
 				const year = new Date(ctx.now()).getFullYear();
@@ -143,8 +143,9 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		},
 
 		async perfStart(info, mode, log): FxResult<PerfStarted> {
-			const [{ startPerf, defaultSessionKit }, { defaultPerfDeps }] = await Promise.all([
-				import("../perf/orchestrate"),
+			const [{ startPerf }, { defaultSessionKit }, { defaultPerfDeps }] = await Promise.all([
+				import("@delacour/warden-sdk/ops/perf/orchestrate"),
+				import("../perf/session-kit"),
 				import("../perf/run"),
 			]);
 			const app = info.bundleId === undefined ? {} : { app: info.bundleId };
@@ -171,12 +172,14 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 
 		async perfStop(info, sessionId, log): FxResult<PerfStopped> {
 			const [
-				{ finalizeSession, defaultSessionKit },
+				{ finalizeSession },
+				{ defaultSessionKit },
 				{ defaultPerfDeps },
 				{ renderReportMarkdown },
 				{ MAX_TEXT_LINES },
 			] = await Promise.all([
-				import("../perf/orchestrate"),
+				import("@delacour/warden-sdk/ops/perf/orchestrate"),
+				import("../perf/session-kit"),
 				import("../perf/run"),
 				import("@delacour/warden-perf/shared/report"),
 				import("@delacour/warden-perf/shared/caps"),

@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Exec } from "@delacour/warden-core/exec";
+import { resolveOwner } from "@delacour/warden-leasing/owner";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
 	DEVICECTL_LOCKSTATE_UNLOCKED,
 	devicectlEntry,
 	devicectlJson,
 	FAKE_IPHONE_UDID,
-} from "@delacour/warden-core/providers/devicectl.fixtures";
-import { UNLOCK_POLL_MS, UNLOCK_WAIT_MS } from "@delacour/warden-core/providers/unlock-wait";
-import { claimWithFlags, parseClaimFlags, resolveOwner } from "./claim-flags";
+} from "@delacour/warden-providers/devicectl.fixtures";
+import { UNLOCK_POLL_MS, UNLOCK_WAIT_MS } from "@delacour/warden-providers/unlock-wait";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import { claimWithFlags, parseClaimFlags } from "./claim-flags";
 import { isLockedClaimError, reportClaimFailure } from "./physical-lock";
 import { fakeSimctl, OWNER_ENV } from "./simctl.testing";
 import { type TestContext, testContext } from "./testing";
@@ -79,8 +80,8 @@ describe("claimWithFlags on a locked iPhone", () => {
 		});
 		expect(outcome.success).toBe(false);
 		if (outcome.success) return;
-		expect(isLockedClaimError(outcome.error)).toBe(true);
-		expect(outcome.error).toContain("Test iPhone is locked");
+		expect(isLockedClaimError(outcome.error.message)).toBe(true);
+		expect(outcome.error.message).toContain("Test iPhone is locked");
 		expect(at - 1_000_000).toBe(UNLOCK_WAIT_MS);
 		expect(c.stderr.filter((l) => l.includes("still locked"))).toHaveLength(3);
 		expect(c.db.listLeases()).toEqual([]);
@@ -100,7 +101,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 				},
 			}
 		);
-		expect(!outcome.success && isLockedClaimError(outcome.error)).toBe(true);
+		expect(!outcome.success && isLockedClaimError(outcome.error.message)).toBe(true);
 		expect(slept).toBe(0);
 		expect(c.stderr).toEqual([]);
 	});

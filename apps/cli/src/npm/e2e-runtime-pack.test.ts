@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { bunExec } from "@delacour/warden-core/exec";
+import { bunExec } from "@delacour/warden-runtime/exec";
 import { parseRuntime } from "../e2e/e2e-runtime";
 
 const SCRIPT = resolve(import.meta.dir, "../../scripts/e2e-runtime.ts");

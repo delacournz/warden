@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { BrokerPort } from "@delacour/warden-sdk/ops/broker-port";
 import { ok, type Result } from "@delacour/warden-types/result";
 import type {
 	BrokerError,
@@ -268,7 +269,7 @@ export function readTree(
 						},
 					}
 		);
-		const { formatTree } = await import("@delacour/warden-e2e/devtools/tree");
+		const { formatTree } = await import("@delacour/warden-devtools/tree");
 		const tree = {
 			...(reply.data.screen === undefined ? {} : { screen: reply.data.screen }),
 			components,
@@ -334,6 +335,8 @@ export function brokerSessions(env: Env, deps: BrokerClientDeps = {}): DevSessio
 	return listed.success ? listed.data.filter((s) => s.brokerSocket !== undefined) : [];
 }
 
+const CONSOLE_LEVELS = ["log", "info", "warn", "error", "debug"] as const;
+
 const SINCE_UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
 /** `--since`: a duration back from now (`30s`, `5m`, `2h`, `1d`, `250ms`) or an ISO time, as epoch ms. */
@@ -348,4 +351,40 @@ export function parseSince(raw: string, now: number): Result<number, UiError> {
 		};
 	}
 	return ok(at);
+}
+
+/** Undefined = no broker answers (or it vanished mid-call): the SDK op goes direct to Metro; other failures are the op's error. */
+function viaPort<T>(result: Result<T, UiError>): Result<T, UiError> | undefined {
+	return !result.success && (brokerGone(result.error) || result.error.details?.reason === "no_dev_session")
+		? undefined
+		: result;
+}
+
+/**
+ * The SDK devtools ops' {@link BrokerPort} over the dev-session registry and the broker socket of device `udid`.
+ * `deps` replace pid liveness and the socket call (tests).
+ */
+export function brokerPortFor(env: Env, udid: string, deps: BrokerClientDeps = {}): BrokerPort {
+	const target: BrokerTarget = { env, udid };
+	const direct = async <T>(run: Promise<Result<T, UiError>>) => viaPort(await run);
+	const needed = async <T>(run: Promise<Result<T, UiError>>): Promise<Result<T, UiError>> => run;
+	return {
+		available: async () => (await brokerFor(env, udid, deps)) !== undefined,
+		logDir: async () => (await brokerFor(env, udid, deps))?.session.logDir,
+		eval: ({ expression, timeoutMs }) => direct(evalExpr(target, { expression, timeoutMs }, deps)),
+		tree: ({ max, pixelRatio }) =>
+			direct(readTree(target, { ...(max === undefined ? {} : { max }), pixelRatio }, deps)),
+		reload: () => direct(reloadApp(target, deps)),
+		console: ({ level, ...query }) => {
+			const known = CONSOLE_LEVELS.find((candidate) => candidate === level);
+			return direct(queryConsole(target, { ...query, ...(known === undefined ? {} : { level: known }) }, deps));
+		},
+		exceptions: (query) => direct(queryExceptions(target, query, deps)),
+		network: ({ urlGrep, ...query }) =>
+			direct(queryNetwork(target, { ...query, ...(urlGrep === undefined ? {} : { urlGrep }) }, deps)),
+		networkEntry: (id) => direct(networkEntryById(target, id, deps)),
+		route: () => direct(readRoute(target, deps)),
+		status: () => needed(devtoolsStatus(target, deps)),
+		resume: () => needed(devtoolsResume(target, deps)),
+	};
 }

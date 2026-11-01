@@ -1,12 +1,17 @@
+import { runAutoStop } from "@delacour/warden-sdk/ops/perf/auto-stop";
+import type { SessionKit } from "@delacour/warden-sdk/ops/perf/orchestrate";
+import { readPlan } from "@delacour/warden-sdk/ops/perf/plan";
+import {
+	defaultSessionDeps,
+	readSession,
+	type SessionDeps,
+	updateSession,
+} from "@delacour/warden-sdk/ops/perf/session";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { reportError } from "../output";
-import { runAutoStop } from "../perf/auto-stop";
 import type { CollectorDeps } from "../perf/collector";
-import type { SessionKit } from "../perf/orchestrate";
-import { readPlan } from "../perf/plan";
 import type { PerfDeps } from "../perf/run";
-import { defaultSessionDeps, readSession, type SessionDeps, updateSession } from "../perf/session";
 
 /** What `perf-collect` reaches the outside world through; tests inject a sleep and a process table. */
 export type PerfCollectDeps = {
@@ -50,7 +55,8 @@ async function collect(ctx: CommandContext, deps: PerfCollectDeps, id: string | 
 			return 0;
 		}
 		const { runSessionCollector, defaultCollectorDeps } = await import("../perf/collector");
-		const { defaultSessionKit, finalizeSession } = await import("../perf/orchestrate");
+		const { finalizeSession } = await import("@delacour/warden-sdk/ops/perf/orchestrate");
+		const { defaultSessionKit } = await import("../perf/session-kit");
 		const { defaultPerfDeps } = await import("../perf/run");
 		const perf = deps.perf ?? defaultPerfDeps;
 		const kit = deps.kit ?? defaultSessionKit;

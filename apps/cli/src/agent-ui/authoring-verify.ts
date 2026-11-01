@@ -1,8 +1,7 @@
 import { join } from "node:path";
-import type { Suite } from "@delacour/warden-core/affected/affected";
-import type { Platform } from "@delacour/warden-core/types";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { readResults, type TestResult } from "@delacour/warden-e2e/runner/results";
+import type { VerifyInput, VerifyReport, VerifyTest } from "@delacour/warden-sdk/ops/authoring/deps";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import type { BatchDeps } from "../commands/batch";
 import { type SpecPlanDeps, specPlan } from "../commands/e2e";
@@ -10,39 +9,7 @@ import type { CommandContext } from "../context";
 import { runnerArgv, specEnv } from "../e2e/bun-runner";
 import { specLaunchArgs } from "../e2e/launch";
 
-/** Everything `record stop` needs to run the spec it just wrote once, on the device the recording was made on. */
-export type VerifyInput = {
-	udid: string;
-	platform: Platform;
-	deviceName?: string | undefined;
-	/** absolute path of the generated spec */
-	specPath: string;
-	suite: Suite;
-	/** where this run's `results.jsonl`, artifacts and `spec.log` go */
-	outDir: string;
-	/** the dev client's Metro (`ui open --metro`), when known */
-	metroUrl?: string | undefined;
-	/** the device's resident `warden-simd` socket, when one is running */
-	simdSocket?: string | undefined;
-};
-
-export type VerifyTest = {
-	title: string;
-	status: TestResult["status"];
-	durationMs: number;
-	error?: string;
-	/** the files the failed test left (`screen-at-failure.txt`, `failure.png`, …), absolute */
-	evidence: string[];
-};
-
-export type VerifyReport = {
-	passed: boolean;
-	exitCode: number;
-	outDir: string;
-	log: string;
-	results: string;
-	tests: VerifyTest[];
-};
+export type { VerifyInput, VerifyReport, VerifyTest };
 
 export type VerifyDeps = SpecPlanDeps & Pick<BatchDeps, "spawn" | "after" | "mkdir" | "readFile">;
 

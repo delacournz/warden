@@ -1,4 +1,4 @@
-import { type ConditionsConfig, parseConditionsEnv } from "@delacour/warden-core/conditions/conditions.config";
+import { type ConditionsConfig, parseConditionsEnv } from "@delacour/warden-config/conditions.config";
 import type { Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 

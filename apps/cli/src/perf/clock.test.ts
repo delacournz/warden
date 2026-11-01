@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readClockOffsetMs } from "@delacour/warden-sdk/ops/perf/clock";
 import { type TestContext, testContext } from "../testing";
-import { readClockOffsetMs } from "./clock";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());

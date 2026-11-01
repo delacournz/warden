@@ -104,26 +104,26 @@ describe("the landing's claims", () => {
 
 /** A number the copy quotes, the file that sets it and how it is written there. */
 const NUMBERS: readonly { copy: string; source: string; code: RegExp }[] = [
-	{ copy: "30 min", source: "packages/core/src/config.defaults.ts", code: /DEFAULT_TTL_MS = 30 \* 60_000/ },
+	{ copy: "30 min", source: "packages/config/src/config.defaults.ts", code: /DEFAULT_TTL_MS = 30 \* 60_000/ },
 	{
 		copy: "5 min for a bare agent",
-		source: "packages/core/src/config.defaults.ts",
+		source: "packages/config/src/config.defaults.ts",
 		code: /BARE_CLAIM_AGENT_TTL_MS = 5 \* 60_000/,
 	},
 	{
 		copy: "heartbeat every 30 s",
-		source: "packages/core/src/config.defaults.ts",
+		source: "packages/config/src/config.defaults.ts",
 		code: /HEARTBEAT_INTERVAL_MS = 30_000/,
 	},
-	{ copy: "within about 90 s", source: "packages/core/src/liveness.ts", code: /LOST_HEARTBEATS = 3\b/ },
-	{ copy: "leased for 20 min", source: "packages/core/src/config.defaults.ts", code: /DEFAULT_IDLE_MS = 20 \* 60_000/ },
+	{ copy: "within about 90 s", source: "packages/store/src/liveness.ts", code: /LOST_HEARTBEATS = 3\b/ },
+	{ copy: "leased for 20 min", source: "packages/config/src/config.defaults.ts", code: /DEFAULT_IDLE_MS = 20 \* 60_000/ },
 	{ copy: "--wait 30m", source: "apps/cli/src/claim-flags.ts", code: /DEFAULT_WAIT = "30m"/ },
 	{
 		copy: "3.7 s clone plus 11.9 s boot",
 		source: "packages/core/src/golden/golden.ts",
 		code: /146–239 s vs clone 3\.7 s \+ boot 11\.9 s/,
 	},
-	{ copy: "set aside for 24 h", source: "packages/core/src/claim.ts", code: /QUARANTINE_TTL_MS = 24 \* 60 \* 60_000/ },
+	{ copy: "set aside for 24 h", source: "packages/leasing/src/claim.ts", code: /QUARANTINE_TTL_MS = 24 \* 60 \* 60_000/ },
 	{ copy: "binds loopback", source: "packages/core/src/netproxy/proxy.ts", code: /const LOOPBACK = "127\.0\.0\.1"/ },
 ];
 

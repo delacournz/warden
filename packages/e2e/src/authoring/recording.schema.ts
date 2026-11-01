@@ -1,5 +1,5 @@
+import { QUERY_ROLES } from "@delacour/warden-screen/roles";
 import { z } from "zod";
-import { QUERY_ROLES } from "../screen/roles";
 
 /**
  * The recording journal (`v: 1`): what `warden ui record` appends to while an agent drives a device and what codegen

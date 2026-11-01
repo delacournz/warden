@@ -1,16 +1,16 @@
-import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
-import { formatDuration } from "@delacour/warden-core/duration";
-import { resolveHeadless } from "@delacour/warden-core/headless";
+import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
+import { formatDuration } from "@delacour/warden-config/duration";
+import { claimedJson } from "@delacour/warden-leasing/claim-request";
+import { resolveHeadless } from "@delacour/warden-leasing/headless";
+import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
+import type { ClaimedDeviceJson, ClaimJson } from "@delacour/warden-sdk/contracts/claim";
 import { maybeAutoGc } from "../autogc";
 import {
 	type ClaimFlagValues,
-	claimedJson,
 	claimWithFlags,
 	hintSlimmed,
 	isPhysicalClaim,
-	leasePidFor,
 	parseClaimFlags,
-	resolveOwner,
 	resolvePlatform,
 	withClaimOptions,
 	withPhysicalOptions,
@@ -69,7 +69,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	);
 	// after the claim: its own leases keep the background gc off the devices it just took (16-1)
 	maybeAutoGc(ctx);
-	if (!outcome.success) return reportClaimFailure(ctx, "claim", outcome.error);
+	if (!outcome.success) return reportClaimFailure(ctx, "claim", outcome.error.message);
 	if (opts.slim === false) hintSlimmed(ctx, outcome.data);
 	if (shortLived) {
 		warn(
@@ -77,11 +77,12 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 			`lease expires in ${formatDuration(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
 		);
 	}
-	const leases = claimedJson(outcome.data);
+	const leases: ClaimedDeviceJson[] = claimedJson(outcome.data);
+	const doc: ClaimJson = { leases, udids: leases.map((l) => l.udid), reclaimed: outcome.data.reclaimed };
 	emit(
 		ctx,
 		opts.json === true,
-		{ leases, udids: leases.map((l) => l.udid), reclaimed: outcome.data.reclaimed },
+		doc,
 		table(
 			ctx,
 			["LEASE", "UDID", "NAME", "ACTION"],

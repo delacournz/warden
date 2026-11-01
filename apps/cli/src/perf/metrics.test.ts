@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSamples } from "@delacour/warden-perf/metrics/series";
+import { createSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { perfMetrics } from "./metrics";
 import type { MetricsIo } from "./metrics-watch";
-import { createSession, updateSession } from "./session";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

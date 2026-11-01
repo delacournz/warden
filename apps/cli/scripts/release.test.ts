@@ -86,11 +86,11 @@ describe("applyVersion", () => {
 });
 
 describe("publish layout", () => {
-	test("version files are the cli and e2e manifests", () => {
-		expect(VERSION_FILES).toEqual(["apps/cli/package.json", "packages/e2e/package.json"]);
+	test("version files are the cli, e2e and sdk manifests", () => {
+		expect(VERSION_FILES).toEqual(["apps/cli/package.json", "packages/e2e/package.json", "packages/sdk/package.json"]);
 	});
 
-	test("platform packages publish before warden, and warden-e2e last", () => {
+	test("platform packages publish before warden, then warden-e2e and warden-sdk last", () => {
 		const dirs = publishPackageDirs("/dist/npm");
 		expect(dirs.slice(0, 4)).toEqual([
 			join("/dist/npm", "warden-darwin-arm64"),
@@ -98,8 +98,9 @@ describe("publish layout", () => {
 			join("/dist/npm", "warden-linux-arm64"),
 			join("/dist/npm", "warden-linux-x64"),
 		]);
-		expect(dirs.at(-2)).toBe(join("/dist/npm", "warden"));
-		expect(dirs.at(-1)).toBe(join("/dist/npm", "warden-e2e"));
+		expect(dirs.at(-3)).toBe(join("/dist/npm", "warden"));
+		expect(dirs.at(-2)).toBe(join("/dist/npm", "warden-e2e"));
+		expect(dirs.at(-1)).toBe(join("/dist/npm", "warden-sdk"));
 	});
 });
 
@@ -112,6 +113,7 @@ describe("releasePlan", () => {
 			"@delacour/warden-linux-x64",
 			"@delacour/warden",
 			"@delacour/warden-e2e",
+			"@delacour/warden-sdk",
 		]);
 	});
 

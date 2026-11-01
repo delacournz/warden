@@ -5,12 +5,12 @@ import { buildProfile, buildSourceMap, type FakeCdp, fakeCdp } from "@delacour/w
 import { jsOk } from "@delacour/warden-perf/js/js.types";
 import type { LogStream } from "@delacour/warden-perf/logs/pid-follow";
 import { decodeSamples } from "@delacour/warden-perf/metrics/series";
+import type { JsSession } from "@delacour/warden-sdk/ops/perf/js-capture";
+import { type PerfPlan, writePlan } from "@delacour/warden-sdk/ops/perf/plan";
+import { createSession, readSession, sessionDir, stopSession } from "@delacour/warden-sdk/ops/perf/session";
 import { ok } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { type CollectorDeps, runSessionCollector } from "./collector";
-import type { JsSession } from "./js-capture";
-import { type PerfPlan, writePlan } from "./plan";
-import { createSession, readSession, sessionDir, stopSession } from "./session";
 import { asMe, fakePerfDeps } from "./testing";
 
 let ctx: TestContext | undefined;

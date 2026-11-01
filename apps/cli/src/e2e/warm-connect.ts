@@ -1,4 +1,4 @@
-import { isPhysicalIosId } from "@delacour/warden-core/types";
+import { isPhysicalIosId } from "@delacour/warden-store/types";
 import { err, ok } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
 import type { WarmConnect } from "../batch/warm-drivers";
@@ -22,7 +22,7 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 	return async (udid) => {
 		if (isPhysicalIosId(udid)) return warmRunner(ctx, udid);
 		const { ensureHelper } = await import("../agent-ui/helper");
-		const { openIosDriver } = await import("@delacour/warden-e2e/driver/ios/ios-driver");
+		const { openIosDriver } = await import("@delacour/warden-driver-ios/ios-driver");
 		const helper = await ensureHelper(ctx, udid, { keepClient: true });
 		if (!helper.success) return err(`${helper.error.message}${helper.error.hint ? ` (${helper.error.hint})` : ""}`);
 		const { client, socketPath } = helper.data;
@@ -62,7 +62,7 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
  */
 async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmConnect> {
 	const { ensureIosRunner, stopIosRunner } = await import("../agent-ui/helper");
-	const { openIosDeviceDriver } = await import("@delacour/warden-e2e/driver/ios/device/device-driver");
+	const { openIosDeviceDriver } = await import("@delacour/warden-driver-ios/device/device-driver");
 	const host = await ensureIosRunner(ctx, udid, { keepClient: true });
 	if (!host.success) return err(runnerWarmError(host.error));
 	const { client, socketPath } = host.data;

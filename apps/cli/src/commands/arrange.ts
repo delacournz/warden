@@ -1,7 +1,7 @@
+import { type Arranged, arrangeSimWindows, reopenSimWindows } from "@delacour/warden-leasing/sim-windows";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, reportError } from "../output";
-import { type Arranged, arrangeSimWindows, reopenSimWindows } from "../sim-windows";
 
 /** Tile open Simulator.app (Xcode ≤ 26) / Device Hub (Xcode 27) windows of warden sims in name order. */
 async function arrange(ctx: CommandContext, json: boolean, open: readonly string[]): Promise<number> {

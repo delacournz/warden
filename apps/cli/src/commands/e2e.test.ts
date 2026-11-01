@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
-import { bunExec, type Exec } from "@delacour/warden-core/exec";
-import { PHONE_PROBE_SCRIPT } from "@delacour/warden-core/providers/android";
-import { PHONE_PROPS } from "@delacour/warden-core/providers/android.fixtures";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
+import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
+import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
+import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
+import { e2eReportSchema } from "@delacour/warden-sdk/contracts/e2e-report";
 import { jsonl, result } from "../batch/results.testing";
 import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
@@ -200,6 +201,7 @@ describe("warden e2e", () => {
 		const h = harness();
 		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
 		const report: E2eReport = JSON.parse(c.stdout.join("\n"));
+		e2eReportSchema.parse(report);
 		expect(report).toMatchObject({ suite: "fresh", platform: "ios", ok: true });
 		expect(report.specs.map((f) => f.id)).toEqual(["smoke"]);
 	});
@@ -506,7 +508,7 @@ describe("warden e2e", () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const h = harness();
-			h.deps.ensureApp = async () => ({ success: false, error: "no build" });
+			h.deps.ensureApp = async () => ({ success: false, error: { code: "build_failed", message: "no build" } });
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
 			expect(h.jobs()).toEqual([]);
@@ -600,7 +602,7 @@ describe("warden e2e", () => {
 			const h = harness({ prewarm: "hang" });
 			h.deps.ensureApp = async () => {
 				await waitFor(() => h.prewarmed.length === 1);
-				return { success: false, error: "no build" };
+				return { success: false, error: { code: "build_failed", message: "no build" } };
 			};
 			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
 			expect(h.events).toContain("prewarm:aborted");
@@ -1346,7 +1348,7 @@ describe("warden e2e", () => {
 				if (deviceId !== "P1")
 					return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 				failed = true;
-				return { success: false, error: "no build" };
+				return { success: false, error: { code: "build_failed", message: "no build" } };
 			};
 			const run = createE2eCommand(h.deps).run(c);
 			await waitFor(() => slimming && failed);

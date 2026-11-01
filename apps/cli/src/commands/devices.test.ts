@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ExecResult } from "@delacour/warden-core/exec";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
 	devicectlEntry,
 	devicectlJson,
 	FAKE_IPAD_UDID,
-} from "@delacour/warden-core/providers/devicectl.fixtures";
-import { simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
-import type { Owner } from "@delacour/warden-core/types";
+} from "@delacour/warden-providers/devicectl.fixtures";
+import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import { devicesJsonSchema } from "@delacour/warden-sdk/contracts/devices";
+import type { Owner } from "@delacour/warden-store/types";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { devicesCommand } from "./devices";
 
@@ -57,6 +58,7 @@ describe("warden devices", () => {
 		);
 		expect(await devicesCommand.run(c)).toBe(0);
 		const rows = JSON.parse(c.stdout.join("\n"));
+		devicesJsonSchema.parse(rows);
 		expect(rows).toEqual([
 			{
 				platform: "android",
@@ -144,6 +146,7 @@ describe("warden devices", () => {
 		const c = setup(["ios", "--json"]);
 		expect(await devicesCommand.run(c)).toBe(0);
 		const rows: Array<{ platform: string }> = JSON.parse(c.stdout.join("\n"));
+		devicesJsonSchema.parse(rows);
 		expect(rows.map((r) => r.platform)).toEqual(["ios", "ios"]);
 	});
 
@@ -160,6 +163,7 @@ describe("warden devices", () => {
 		const c = setup(["--json"], { adb: false });
 		expect(await devicesCommand.run(c)).toBe(0);
 		const rows: Array<{ platform: string }> = JSON.parse(c.stdout.join("\n"));
+		devicesJsonSchema.parse(rows);
 		expect(rows.map((r) => r.platform)).toEqual(["ios", "ios"]);
 		expect(c.stderr.join("\n")).toContain("android: skipped");
 	});

@@ -1,4 +1,4 @@
-import { formatSize } from "@delacour/warden-core/builds/prune";
+import { formatSize } from "@delacour/warden-builds/prune";
 import { deleteSims } from "@delacour/warden-core/sims/delete";
 import { judgeMachineSims } from "@delacour/warden-core/sims/prune";
 import {
@@ -8,7 +8,7 @@ import {
 	type SimEntry,
 	type SimRuleOpts,
 } from "@delacour/warden-core/sims/rules";
-import { describeOwner } from "@delacour/warden-core/types";
+import { describeOwner } from "@delacour/warden-store/types";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";

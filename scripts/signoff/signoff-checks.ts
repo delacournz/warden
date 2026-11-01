@@ -82,7 +82,7 @@ export const RUNNER_BUILD_ARGV = [
 	"xcodebuild",
 	"build-for-testing",
 	"-project",
-	"packages/e2e/native/ios-runner/WardenRunner.xcodeproj",
+	"packages/driver-ios/native/ios-runner/WardenRunner.xcodeproj",
 	"-scheme",
 	"WardenRunner",
 	"-destination",
@@ -120,17 +120,17 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 		context: "native",
 		label: "native (warden-simd, warden-runner)",
 		always: false,
-		paths: ["packages/e2e/native/**"],
+		paths: ["packages/driver-ios/native/**"],
 		workflow: "ci.yml",
 		// Swift, links idb's library package: deps (pinned idb tarball) + build + swift test against
 		// fixtures, no simulator. macOS only.
 		run: [
-			{ argv: ["bun", "run", "--cwd", "packages/e2e", "native:deps"] },
-			{ argv: ["bun", "run", "--cwd", "packages/e2e", "native:build"] },
-			{ argv: ["swift", "test", "--package-path", "packages/e2e/native/ios"] },
+			{ argv: ["bun", "run", "--cwd", "packages/driver-ios", "native:deps"] },
+			{ argv: ["bun", "run", "--cwd", "packages/driver-ios", "native:build"] },
+			{ argv: ["swift", "test", "--package-path", "packages/driver-ios/native/ios"] },
 			// warden-runner (real devices, XCUITest): RunnerCore's `swift test` runs on macOS, and the Xcode project
 			// must still compile for iOS. Unsigned: no team, no device, no profile.
-			{ argv: ["swift", "test", "--package-path", "packages/e2e/native/ios-runner/RunnerCore"] },
+			{ argv: ["swift", "test", "--package-path", "packages/driver-ios/native/ios-runner/RunnerCore"] },
 			{ argv: [...RUNNER_BUILD_ARGV] },
 		],
 		// SwiftPM holds an exclusive lock on its build dir; never two Swift builds at once.
@@ -140,7 +140,16 @@ export const SIGNOFF_CHECKS: readonly SignoffCheck[] = [
 		context: "cpu-guard",
 		label: "warden CPU guard (bench compare vs baseline)",
 		always: false,
-		paths: ["packages/e2e/**", "apps/cli/src/agent-ui/**"],
+		paths: [
+			"packages/e2e/**",
+			"packages/driver/**",
+			"packages/driver-ios/**",
+			"packages/driver-android/**",
+			"packages/screen/**",
+			"packages/device/**",
+			"packages/sdk/**",
+			"apps/cli/src/agent-ui/**",
+		],
 		workflow: "ci.yml",
 		mirroredInCi: false,
 		run: [{ argv: ["sh", "-c", CPU_GUARD_SCRIPT] }],

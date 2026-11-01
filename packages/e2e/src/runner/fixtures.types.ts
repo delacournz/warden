@@ -1,8 +1,8 @@
-import type { App } from "../app";
-import type { Device } from "../device";
-import type { Platform } from "../driver/driver.types";
-import type { E2eError } from "../errors";
-import type { Screen } from "../screen/screen";
+import type { App } from "@delacour/warden-device/app";
+import type { Device } from "@delacour/warden-device/device";
+import type { Platform } from "@delacour/warden-driver/driver.types";
+import type { E2eError } from "@delacour/warden-driver/e2e-error";
+import type { Screen } from "@delacour/warden-screen/screen";
 import type { Session } from "../session";
 import type { TraceWriter } from "./trace";
 

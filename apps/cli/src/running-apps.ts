@@ -1,5 +1,5 @@
-import type { Exec } from "@delacour/warden-core/exec";
-import type { Platform } from "@delacour/warden-core/types";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import type { Platform } from "@delacour/warden-store/types";
 
 /** Bundle ids of running apps in `launchctl list` output (`<pid> <status> UIKitApplication:<id>[…]`). */
 export function parseLaunchdApps(output: string): string[] {

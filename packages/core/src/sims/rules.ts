@@ -9,14 +9,14 @@
  *   for its device type, same name + runtime duplicate. Only the user deletes these (`sims delete`).
  * - goldens: never (that's `warden golden prune`, under the clone lock).
  */
-import { formatDuration } from "../duration";
-import { isGoldenName } from "../golden/golden";
-import { wardenNameProfile } from "../inventory";
-import { isLeaseAlive, type PidAlive } from "../liveness";
-import { shortRuntime } from "../providers/ios";
-import type { DeviceRecord } from "../store";
-import type { Lease, Owner } from "../types";
-import type { SimctlSim } from "./list";
+import { formatDuration } from "@delacour/warden-config/duration";
+import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
+import { isGoldenName } from "@delacour/warden-providers/golden-name";
+import { shortRuntime } from "@delacour/warden-providers/ios";
+import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
+import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
+import type { DeviceRecord } from "@delacour/warden-store/store";
+import type { Lease, Owner } from "@delacour/warden-store/types";
 
 export type SimOwner = "warden" | "golden" | "foreign";
 

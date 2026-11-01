@@ -1,12 +1,12 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { renderReportMarkdown } from "@delacour/warden-perf/shared/report";
+import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
+import { readSessionReport, writeSessionReport } from "@delacour/warden-sdk/ops/perf/report-read";
 import { reportError, reportOk, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { withPerfOptions } from "./options";
-import { sessionDir } from "./paths";
-import { readSessionReport, writeSessionReport } from "./report-read";
 import type { PerfDeps, PerfOptionValues } from "./run";
 import { pickSession } from "./session-pick";
 

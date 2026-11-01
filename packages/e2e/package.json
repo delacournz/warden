@@ -6,27 +6,39 @@
 	"private": true,
 	"exports": {
 		".": "./src/index.ts",
-		"./*": "./src/*.ts"
+		"./authoring/codegen": "./src/authoring/codegen.ts",
+		"./authoring/journal": "./src/authoring/journal.ts",
+		"./authoring/lint": "./src/authoring/lint.ts",
+		"./authoring/recording.schema": "./src/authoring/recording.schema.ts",
+		"./authoring/secrets": "./src/authoring/secrets.ts",
+		"./authoring/status": "./src/authoring/status.ts",
+		"./authoring/target": "./src/authoring/target.ts",
+		"./env": "./src/env.ts",
+		"./preload": "./src/preload.ts",
+		"./runner/results": "./src/runner/results.ts",
+		"./runner/trace": "./src/runner/trace.ts"
 	},
 	"scripts": {
-		"fmt": "biome format --write ./src ./native/scripts ./native/android/scripts",
-		"lint": "biome lint --write ./src ./native/scripts ./native/android/scripts",
-		"check": "biome check ./src ./native/scripts ./native/android/scripts",
+		"fmt": "biome format --write ./src ./scripts",
+		"lint": "biome lint --write ./src ./scripts",
+		"check": "biome check ./src ./scripts",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
-		"native:deps": "bun native/scripts/deps.ts",
-		"native:build": "bun native/scripts/build.ts && bun native/scripts/inject.ts",
-		"native:inject": "bun native/scripts/inject.ts",
-		"native:smoke": "bun native/scripts/smoke.ts",
-		"android:build": "bun native/android/scripts/build.ts",
-		"android:emit": "bun native/android/scripts/build.ts --emit-ts",
-		"android:smoke": "bun native/android/scripts/smoke.ts"
+		"native:smoke": "bun scripts/smoke.ts"
 	},
 	"dependencies": {
-		"@delacour/warden-core": "workspace:*",
+		"@delacour/warden-config": "workspace:*",
+		"@delacour/warden-device": "workspace:*",
+		"@delacour/warden-devtools": "workspace:*",
+		"@delacour/warden-driver": "workspace:*",
+		"@delacour/warden-driver-android": "workspace:*",
+		"@delacour/warden-driver-ios": "workspace:*",
+		"@delacour/warden-providers": "workspace:*",
+		"@delacour/warden-runtime": "workspace:*",
+		"@delacour/warden-screen": "workspace:*",
+		"@delacour/warden-store": "workspace:*",
 		"@delacour/warden-types": "workspace:*",
-		"zod": "^4.4.3",
-		"typescript": "^5.9.3"
+		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@delacour/warden-tsconfig": "workspace:*"

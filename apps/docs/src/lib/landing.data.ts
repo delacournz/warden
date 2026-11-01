@@ -93,21 +93,21 @@ export const WHAT_YOU_GET = {
 			command: "--ttl 30m",
 			body: "A leased device belongs to one holder until it releases it or the TTL runs out. Wrapper commands heartbeat every 30 s and release when they exit.",
 			href: "devices/leases",
-			proof: { source: "packages/core/src/config.defaults.ts" },
+			proof: { source: "packages/config/src/config.defaults.ts" },
 		},
 		{
 			title: "Devices on demand",
 			command: "warden capacity",
 			body: "Nothing free that fits? warden boots or creates one, up to what the Mac's RAM and CPU can hold, and shuts down idle ones first when it needs room.",
 			href: "devices/capacity",
-			proof: { source: "packages/core/src/capacity.ts" },
+			proof: { source: "packages/leasing/src/capacity.ts" },
 		},
 		{
 			title: "A fair queue",
 			command: "--wait 30m",
 			body: "Past capacity, claims wait their turn instead of failing, by `--priority` and age. `--no-wait` fails at once; `warden queue` shows where you are.",
 			href: "devices/capacity",
-			proof: { source: "packages/core/src/queue.ts" },
+			proof: { source: "packages/leasing/src/queue.ts" },
 		},
 		{
 			title: "New simulators in seconds",
@@ -121,14 +121,14 @@ export const WHAT_YOU_GET = {
 			command: "warden gc",
 			body: "A warden device nobody has leased for 20 min is shut down to free RAM. `warden sims prune` deletes long-unused ones to free disk.",
 			href: "devices/leases",
-			proof: { source: "packages/core/src/config.defaults.ts" },
+			proof: { source: "packages/config/src/config.defaults.ts" },
 		},
 		{
 			title: "Bad devices set aside",
 			command: "warden release --bad",
 			body: "A device that fails its health check at claim time is quarantined, and the claim tries another. Release one as bad yourself and it is set aside for 24 h.",
 			href: "devices/leases",
-			proof: { source: "packages/core/src/claim.ts" },
+			proof: { source: "packages/leasing/src/claim.ts" },
 		},
 		{
 			title: "Ports and builds too",
@@ -316,7 +316,7 @@ export const SAFE_BY_DEFAULT = {
 			command: "--adopt",
 			body: "A device warden didn't create or lease is read-only: never handed to an agent, shut down, erased or installed on unless you pass `--adopt`.",
 			href: "devices/leases",
-			proof: { source: "packages/core/src/allocate.ts" },
+			proof: { source: "packages/leasing/src/allocate.ts" },
 		},
 		{
 			title: "Every call checks the lease",
@@ -410,17 +410,17 @@ export const FAQ = {
 		{
 			q: "Does warden sandbox my agents?",
 			a: "No. It is advisory: the skill tells agents to use only devices a lease hands them, and raw `simctl` or `adb` are not intercepted. What it enforces is its own reach: `warden ui` refuses a device leased to someone else, and warden only shuts down, erases or deletes devices it created.",
-			proof: { source: "apps/cli/src/device-lease.ts" },
+			proof: { source: "packages/leasing/src/device-lease.ts" },
 		},
 		{
 			q: "What happens when an agent dies holding a device?",
 			a: "Every lease has a TTL (30 min, 5 min for a bare agent `warden claim`) and lives only while it is renewed. `warden run`, `dev`, `batch` and `e2e` heartbeat every 30 s and release when they exit, so a killed wrapper frees its device within about 90 s; one that vanishes costs the device until the TTL runs out.",
-			proof: { source: "packages/core/src/liveness.ts" },
+			proof: { source: "packages/store/src/liveness.ts" },
 		},
 		{
 			q: "What if every device is busy?",
 			a: "warden boots or creates another, up to a capacity it derives from the Mac's RAM and CPU. After that the claim waits in a queue ordered by priority and age, up to `--wait` (30 min by default); `--no-wait` fails at once.",
-			proof: { source: "packages/core/src/queue.ts" },
+			proof: { source: "packages/leasing/src/queue.ts" },
 		},
 		{
 			q: "Does it work on Android and real phones?",

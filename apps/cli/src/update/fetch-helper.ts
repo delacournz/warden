@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type Exec, execError } from "@delacour/warden-core/exec";
+import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_SUMS_ASSET, HELPER_TARGET } from "../npm/helper";
 import type { Fetch } from "./npm-registry";

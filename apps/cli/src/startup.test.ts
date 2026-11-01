@@ -38,6 +38,17 @@ async function loadedBy(args: string[], home: string = join(scratch, "home")): P
 	return (JSON.parse(line.slice(MARKER.length)) as string[]).map((f) => f.replaceAll("\\", "/"));
 }
 
+/** Every package of the e2e stack (split by WSDK-5): none of them may load on a cold start. */
+const E2E_STACK = [
+	"/packages/e2e/",
+	"/packages/driver/",
+	"/packages/driver-ios/",
+	"/packages/driver-android/",
+	"/packages/screen/",
+	"/packages/devtools/",
+	"/packages/flows/",
+	"/packages/device/",
+];
 const has = (files: string[], needle: string) => files.some((f) => f.includes(needle));
 const commandModules = (files: string[]) =>
 	files
@@ -49,7 +60,7 @@ describe("cold start", () => {
 	test("`warden version` imports its own command and no UI libraries, zod or e2e driver", async () => {
 		const files = await loadedBy(["version"]);
 		expect(commandModules(files)).toEqual(["version.ts"]);
-		for (const heavy of ["/node_modules/ora/", "/node_modules/@clack/", "/node_modules/zod/", "/packages/e2e/"])
+		for (const heavy of ["/node_modules/ora/", "/node_modules/@clack/", "/node_modules/zod/", ...E2E_STACK])
 			expect(has(files, heavy)).toBe(false);
 	});
 
@@ -86,7 +97,7 @@ describe("cold start: the commands agents call most", () => {
 		"/node_modules/zod/",
 		"/node_modules/ora/",
 		"/node_modules/@clack/",
-		"/packages/e2e/",
+		...E2E_STACK,
 		"/node_modules/typescript/",
 	];
 	/** `--help` where a real call would touch a device or a toolchain; the module graph is the same up to dispatch. */
@@ -132,7 +143,7 @@ describe("cold start: the dev dashboard is lazy", () => {
 
 describe("cold start: gc and release", () => {
 	const HEAVY = [
-		"/packages/e2e/",
+		...E2E_STACK,
 		"/node_modules/zod/",
 		"/node_modules/typescript/",
 		"/agent-ui/helper.ts",
@@ -187,9 +198,9 @@ describe("cold start: gc and release", () => {
 
 /** What opening a device loads: the iOS and Android drivers and the helper socket client. */
 const DRIVERS = [
-	"/packages/e2e/src/driver/ios/ios-driver.ts",
-	"/packages/e2e/src/driver/ios/simd-client.ts",
-	"/packages/e2e/src/driver/android/",
+	"/packages/driver-ios/src/ios-driver.ts",
+	"/packages/driver-ios/src/simd-client.ts",
+	"/packages/driver-android/src/",
 ];
 const loaded = (files: string[], needles: string[]) => needles.filter((needle) => has(files, needle));
 
@@ -210,7 +221,7 @@ describe("cold start: warden ui", () => {
 	const OTHERS = [
 		"/agent-ui/authoring-command.ts",
 		"/agent-ui/authoring-verify.ts",
-		"/agent-ui/record-sink.ts",
+		"/ops/authoring/sink.ts",
 		"/agent-ui/devtools-cli.ts",
 		"/agent-ui/bench.ts",
 		"/agent-ui/video.ts",
@@ -234,7 +245,7 @@ describe("cold start: warden ui", () => {
 			["ui", "location", "--help"],
 		]) {
 			const files = await loadedBy(args);
-			expect(loaded(files, [...OTHERS, "/packages/e2e/", "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
+			expect(loaded(files, [...OTHERS, ...E2E_STACK, "/node_modules/zod/", "/agent-ui/helper.ts"])).toEqual([]);
 			expect(loaded(files, ["/agent-ui/actions.ts", "/agent-ui/snapshot-command.ts", "/agent-ui/run.ts"])).toEqual([]);
 		}
 	});
@@ -288,7 +299,7 @@ describe("cold start: warden ui", () => {
 			["ui", "press", "@e1", "--json"],
 			["ui", "status", "--json"],
 		]) {
-			expect(loaded(await loadedBy(args), ["/agent-ui/record-sink.ts", "/agent-ui/authoring-verify.ts"])).toEqual([]);
+			expect(loaded(await loadedBy(args), ["/ops/authoring/sink.ts", "/agent-ui/authoring-verify.ts"])).toEqual([]);
 		}
 	});
 

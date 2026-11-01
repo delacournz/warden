@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExecResult } from "@delacour/warden-core/exec";
+import type { ExecResult } from "@delacour/warden-runtime/exec";
+import { createSampler } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import { type TestContext, testContext } from "../testing";
-import { createSampler } from "./metrics-sampler";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());

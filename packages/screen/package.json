@@ -1,0 +1,41 @@
+{
+	"name": "@delacour/warden-screen",
+	"version": "0.1.0",
+	"description": "warden screen: locator query model, roles, text matching, actions, polling, runner-free LocatorAssertions",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./actions": "./src/actions.ts",
+		"./context": "./src/context.ts",
+		"./field": "./src/field.ts",
+		"./locator": "./src/locator.ts",
+		"./matchers": "./src/matchers.ts",
+		"./nodes": "./src/nodes.ts",
+		"./poll": "./src/poll.ts",
+		"./query": "./src/query.ts",
+		"./render": "./src/render.ts",
+		"./roles": "./src/roles.ts",
+		"./screen": "./src/screen.ts",
+		"./selector": "./src/selector.ts",
+		"./testing/fixtures": "./src/fixtures.testing.ts",
+		"./testing/poll": "./src/poll.testing.ts",
+		"./testing/screen": "./src/screen.testing.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-devtools": "workspace:*",
+		"@delacour/warden-driver": "workspace:*",
+		"@delacour/warden-types": "workspace:*"
+	},
+	"devDependencies": {
+		"@delacour/warden-driver-android": "workspace:*",
+		"@delacour/warden-driver-ios": "workspace:*",
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

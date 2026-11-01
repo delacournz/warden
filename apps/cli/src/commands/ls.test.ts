@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Owner } from "@delacour/warden-core/types";
+import { lsJsonSchema } from "@delacour/warden-sdk/contracts/leases";
+import type { Owner } from "@delacour/warden-store/types";
 import { type TestContext, testContext } from "../testing";
 import { lsCommand } from "./ls";
 
@@ -51,7 +52,36 @@ describe("warden ls", () => {
 		ctx.db.insertLease({ resource: { kind: "port", port: 1 }, owner: agent, ttlMs: 60_000 }, ctx.now());
 		expect(await lsCommand.run(ctx)).toBe(0);
 		const out = JSON.parse(ctx.stdout.join("\n"));
+		lsJsonSchema.parse(out);
 		expect(out.leases[0]).toMatchObject({ state: "alive", resource: { kind: "port", port: 1 } });
+	});
+
+	function pluginLease(c: TestContext): void {
+		const lease = c.db.insertLease(
+			{
+				resource: { kind: "device", platform: "android", id: "farm-1", name: "farm device" },
+				owner: agent,
+				ttlMs: 60_000,
+			},
+			c.now()
+		);
+		c.db.setLeaseProvider([lease.id], "fake-farm");
+	}
+
+	test("a plugin lease adds a provider column", async () => {
+		ctx = testContext([]);
+		pluginLease(ctx);
+		expect(await lsCommand.run(ctx)).toBe(0);
+		expect(ctx.stdout.join("\n")).toContain("PROVIDER");
+		expect(ctx.stdout.join("\n")).toContain("fake-farm");
+	});
+
+	test("a plugin lease keeps its provider in --json", async () => {
+		ctx = testContext(["--json"]);
+		pluginLease(ctx);
+		expect(await lsCommand.run(ctx)).toBe(0);
+		const out = lsJsonSchema.parse(JSON.parse(ctx.stdout.join("\n")));
+		expect(out.leases[0]?.provider).toBe("fake-farm");
 	});
 
 	test("empty", async () => {

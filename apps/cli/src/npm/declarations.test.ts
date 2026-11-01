@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { emitDeclarations, entryDeclaration, rewriteWorkspaceSpecifiers } from "./declarations";
+import { addEsmExtensions, emitDeclarations, entryDeclaration, rewriteWorkspaceSpecifiers } from "./declarations";
 
 const TYPES = "/out/types";
 
@@ -10,9 +10,9 @@ describe("rewriteWorkspaceSpecifiers", () => {
 	test("workspace specifiers become relative paths into the emitted tree", () => {
 		const file = `${TYPES}/e2e/src/driver/open.d.ts`;
 		const text =
-			'import type { Result } from "@delacour/warden-types/result";\nimport { x } from "@delacour/warden-core/providers/ios";\n';
+			'import type { Result } from "@delacour/warden-types/result";\nimport { x } from "@delacour/warden-providers/ios";\n';
 		expect(rewriteWorkspaceSpecifiers(text, file, TYPES)).toBe(
-			'import type { Result } from "../../../types/src/result";\nimport { x } from "../../../core/src/providers/ios";\n'
+			'import type { Result } from "../../../types/src/result";\nimport { x } from "../../../providers/src/ios";\n'
 		);
 	});
 
@@ -21,6 +21,25 @@ describe("rewriteWorkspaceSpecifiers", () => {
 		expect(rewriteWorkspaceSpecifiers("import('@delacour/warden-e2e/b').B", file, TYPES)).toBe("import('./b').B");
 		const untouched = 'import { z } from "zod";\nimport "bun:test";\nimport "@delacour/warden-other/x";\n';
 		expect(rewriteWorkspaceSpecifiers(untouched, file, TYPES)).toBe(untouched);
+	});
+});
+
+describe("addEsmExtensions", () => {
+	const present = new Set(["/t/a/b.d.ts", "/t/a/dir/index.d.ts", "/t/c/x.schema.d.ts"]);
+	const exists = (path: string) => present.has(path);
+	const file = "/t/a/main.d.ts";
+
+	test("a file becomes ./b.js, a directory ./dir/index.js, a dotted name keeps its dot", () => {
+		const text =
+			'import { B } from "./b";\nexport * from "./dir";\nexport type { X } from "../c/x.schema";\nlet y: import("./b").B;\n';
+		expect(addEsmExtensions(text, file, exists)).toBe(
+			'import { B } from "./b.js";\nexport * from "./dir/index.js";\nexport type { X } from "../c/x.schema.js";\nlet y: import("./b.js").B;\n'
+		);
+	});
+
+	test("extensions, bare specifiers and unresolvable paths are left alone", () => {
+		const text = 'import "./b.js";\nimport "zod";\nimport "./missing";\nimport d from "./d.json";\n';
+		expect(addEsmExtensions(text, file, exists)).toBe(text);
 	});
 });
 

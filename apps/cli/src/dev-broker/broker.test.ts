@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ROUTE_EXPRESSION } from "@delacour/warden-devtools/route.script";
 import {
 	type FakeCdpRequest,
 	type FakeConnection,
@@ -11,8 +12,7 @@ import {
 	fakeTarget,
 	page,
 	startFakeMetro,
-} from "@delacour/warden-e2e/devtools/devtools.testing";
-import { ROUTE_EXPRESSION } from "@delacour/warden-e2e/devtools/route.script";
+} from "@delacour/warden-devtools/testing/devtools";
 import { type Broker, type BrokerOptions, callBroker, NEW_DEBUGGER_TAG, startBroker } from "./broker";
 import { brokerErr } from "./broker.types";
 

@@ -1,5 +1,3 @@
-import { profileSlug } from "@delacour/warden-core/allocate";
-import { splitBiometricProfile } from "@delacour/warden-core/biometrics";
 import {
 	type AndroidGoldenDeps,
 	buildPendingAndroidSnapshot,
@@ -16,8 +14,9 @@ import {
 	pendingAndroidSnapshots,
 } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { GoldenDeps } from "@delacour/warden-core/golden/ios-golden";
-import { processAlive } from "@delacour/warden-core/liveness";
-import type { Owner } from "@delacour/warden-core/types";
+import { splitBiometricProfile } from "@delacour/warden-providers/biometrics";
+import { processAlive } from "@delacour/warden-store/liveness";
+import { type Owner, profileSlug } from "@delacour/warden-store/types";
 import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 
@@ -53,7 +52,7 @@ export function androidGoldenDeps(ctx: CommandContext, owner: Owner, sleep: Slee
  * Loaded lazily: the config loader pulls in zod, which the claim's cold start must not.
  */
 async function configuredAndroidSnapshot(ctx: CommandContext): Promise<boolean | undefined> {
-	const { findWardenConfig } = await import("@delacour/warden-core/builds/config");
+	const { findWardenConfig } = await import("@delacour/warden-builds/config");
 	const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
 	return found.success ? found.data?.config.android?.snapshot : undefined;
 }

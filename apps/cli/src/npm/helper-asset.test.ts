@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunExec } from "@delacour/warden-core/exec";
+import { bunExec } from "@delacour/warden-runtime/exec";
 import { fakeHelperDist } from "./helper.testing";
 import { packHelper } from "./helper-asset";
 

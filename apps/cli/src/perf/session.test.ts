@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readState } from "../agent-ui/state";
-import { type TestContext, testContext } from "../testing";
 import {
 	activeSessionFor,
 	createSession,
@@ -13,7 +11,9 @@ import {
 	stopSession,
 	sweepSessions,
 	updateSession,
-} from "./session";
+} from "@delacour/warden-sdk/ops/perf/session";
+import { readState } from "../agent-ui/state";
+import { type TestContext, testContext } from "../testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());

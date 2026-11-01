@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { AttemptContext } from "./fixtures.types";
 import { runStep } from "./step";
-import type { TraceEvent } from "./trace";
 
 function attempt(controller = new AbortController()) {
 	const events: TraceEvent[] = [];

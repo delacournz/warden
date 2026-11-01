@@ -1,16 +1,16 @@
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
+import type { NetworkCondition } from "@delacour/warden-config/conditions.types";
+import type { ProxyConditions } from "@delacour/warden-config/shaping";
+import { claimPorts, isPortFree, releasePorts } from "@delacour/warden-leasing/ports";
+import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import type { Store } from "@delacour/warden-store/store";
+import type { Lease } from "@delacour/warden-store/types";
 import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
 import { recordCondition } from "../conditions/conditions";
-import type { NetworkCondition } from "../conditions/conditions.types";
-import { type PidAlive, processAlive } from "../liveness";
-import { claimPorts, isPortFree, releasePorts } from "../ports";
-import type { Store } from "../store";
-import type { Lease } from "../types";
 import { getProxyStatus, type ProxyHandle, setProxyConditions, stopProxy } from "./control";
 import { handlePath, readHandleFile, removeHandleFile } from "./handle-file";
 import type { NetproxyMainArgs } from "./netproxy.main";
-import type { ProxyConditions } from "./shaping";
 
 /** Where lease proxies listen unless told otherwise. */
 export const DEFAULT_PROXY_PORTS = { from: 19_080, span: 200 } as const;

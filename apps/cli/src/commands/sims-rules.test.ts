@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { MIXED_SIMS_RECORDS, mixedSims, simctlDevicesJson } from "@delacour/warden-core/providers/ios.fixture";
 import type { SimEntry, SimReason } from "@delacour/warden-core/sims/rules";
+import { MIXED_SIMS_RECORDS, mixedSims, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { simsCommand } from "./sims";

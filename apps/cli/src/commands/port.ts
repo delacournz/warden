@@ -1,20 +1,18 @@
-import { DEFAULT_TTL_MS } from "@delacour/warden-core/config.defaults";
-import { formatDuration, parseDuration } from "@delacour/warden-core/duration";
-import { isLeaseAlive, processAlive } from "@delacour/warden-core/liveness";
-import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-core/owner";
+import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
+import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import { DEFAULT_PORT_SPAN, parsePortSpec } from "@delacour/warden-config/ports-spec";
+import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-leasing/owner";
 import {
 	claimPorts,
-	DEFAULT_PORT_SPAN,
 	isPortFree,
 	listPortLeases,
 	type PortReleaseSelector,
-	parsePortSpec,
 	releasePorts,
-} from "@delacour/warden-core/ports";
-import type { Lease, Owner } from "@delacour/warden-core/types";
-import { describeOwner, ownerLocation } from "@delacour/warden-core/types";
-import type { Result } from "@delacour/warden-types/result";
-import { err, ok } from "@delacour/warden-types/result";
+} from "@delacour/warden-leasing/ports";
+import type { PortLeasesJson, PortReleaseJson } from "@delacour/warden-sdk/contracts/leases";
+import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
+import { describeOwner, type Lease, type Owner, ownerLocation } from "@delacour/warden-store/types";
+import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, reportError, table, warn } from "../output";
@@ -79,8 +77,9 @@ async function claim(ctx: CommandContext, opts: PortClaimOpts): Promise<number> 
 		},
 		{ now: ctx.now, pidAlive: processAlive, isPortFree: (port) => isPortFree(port) }
 	);
-	if (!res.success) return fail(ctx, "claim", res.error);
-	emit(ctx, opts.json === true, res.data, res.data.map((l) => String(portOf(l))).join("\n"));
+	if (!res.success) return fail(ctx, "claim", res.error.message);
+	const claimed: PortLeasesJson = res.data;
+	emit(ctx, opts.json === true, claimed, res.data.map((l) => String(portOf(l))).join("\n"));
 	return 0;
 }
 
@@ -111,7 +110,8 @@ async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOp
 	if (!selector.success) return fail(ctx, "release", selector.error);
 	const res = releasePorts(ctx.store(), selector.data, opts.force ? {} : { onlyOwner: me() });
 	const lines = res.released.map((l) => color.green(`released ${portOf(l)} (${l.id})`));
-	emit(ctx, opts.json === true, res, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
+	const doc: PortReleaseJson = res;
+	emit(ctx, opts.json === true, doc, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
 	for (const l of res.denied) {
 		warn(ctx, `port ${portOf(l)} is leased by ${describeOwner(l.owner)} — use --force to release it`);
 	}
@@ -147,7 +147,8 @@ function ls(ctx: CommandContext, json: boolean): number {
 					leases.map((l) => lsRow(ctx, l, now)),
 					{ column: 3, keep: "end", min: 16 }
 				);
-	emit(ctx, json, leases, text, { scope: "port ls", detail: plural(leases.length, "port lease") });
+	const doc: PortLeasesJson = leases;
+	emit(ctx, json, doc, text, { scope: "port ls", detail: plural(leases.length, "port lease") });
 	return 0;
 }
 

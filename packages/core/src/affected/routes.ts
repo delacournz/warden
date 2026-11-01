@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import type { Platform } from "../types";
+import type { Platform } from "@delacour/warden-store/types";
 import { LAYOUT_EXT, platformSuffixes } from "./graph";
 
 export type RouteEntries = {

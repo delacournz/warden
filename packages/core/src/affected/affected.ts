@@ -1,14 +1,20 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import {
+	CONFIG_FILE,
+	type ConfigSource,
+	type FoundConfig,
+	findWardenConfig,
+	loadProject,
+} from "@delacour/warden-builds/config";
+import { overlayDirUnlessRepoConfig } from "@delacour/warden-builds/overlay";
+import { type E2eSuiteConfig, e2eSuiteSchema } from "@delacour/warden-config/affected.schema";
+import { type ConditionsConfig, mergeConditionsConfig } from "@delacour/warden-config/conditions.config";
+import type { Exec } from "@delacour/warden-runtime/exec";
+import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
+import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delacour/warden-types/result";
-import { CONFIG_FILE, type ConfigSource, type FoundConfig, findWardenConfig, loadProject } from "../builds/config";
-import { overlayDirUnlessRepoConfig } from "../builds/overlay";
-import { type ConditionsConfig, mergeConditionsConfig } from "../conditions/conditions.config";
-import type { Exec } from "../exec";
-import { type GitFactsCache, readGitFacts } from "../git-facts";
-import type { Platform } from "../types";
 import { DEFAULT_E2E_COUNT, DEFAULT_SPECS_DIR, DEV_MENU_OFF_ARGS } from "./affected.defaults";
-import { type E2eSuiteConfig, e2eSuiteSchema } from "./affected.schema";
 import { type ChangedFile, changedFiles } from "./git";
 import { resolveTypescript, typescriptMissing, typescriptVersionProblem } from "./graph";
 import { graphEntries, type LoadedGraph, loadImportGraph } from "./graph-process";
@@ -73,8 +79,8 @@ export type AffectedInput = {
 	cacheDir?: string;
 	/** per-command memo of the git facts (default: a short-lived shared one) */
 	git?: GitFactsCache;
-	/** locates the `~/.warden` overlay (`WARDEN_HOME`); default `process.env` */
-	env?: Record<string, string | undefined>;
+	/** locates the `~/.warden` overlay (`WARDEN_HOME`) */
+	env: Record<string, string | undefined>;
 };
 
 export type Affected = {
@@ -142,11 +148,11 @@ function defaultSuite(
 export async function findSuite(
 	exec: Exec,
 	cwd: string,
-	name?: string,
-	git?: GitFactsCache,
-	env: Record<string, string | undefined> = process.env
+	name: string | undefined,
+	git: GitFactsCache | undefined,
+	env: Record<string, string | undefined>
 ): AsyncResult<Suite, SuiteError> {
-	const stopAt = (await readGitFacts(exec, cwd, git))?.toplevel;
+	const stopAt = (await readGitFacts(exec, cwd, git ?? createGitFactsCache()))?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(exec, cwd, stopAt, env, git);
 	const found = findWardenConfig(cwd, stopAt, env, overlay);
 	if (!found.success) return suiteError("config", found.error);

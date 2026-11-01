@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { ProxyStatus } from "@delacour/warden-core/netproxy/control";
-import type { TickerConfig } from "@delacour/warden-e2e/conditions/route-ticker";
-import type { SchedulerConfig } from "@delacour/warden-e2e/conditions/scheduler.config";
-import { failWith, snapshotOf } from "@delacour/warden-e2e/driver/driver.testing";
+import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
+import type { TickerConfig } from "@delacour/warden-driver/conditions/route-ticker";
+import { failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { ok } from "@delacour/warden-types/result";
 import { updateState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";

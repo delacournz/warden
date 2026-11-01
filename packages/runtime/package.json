@@ -1,0 +1,27 @@
+{
+	"name": "@delacour/warden-runtime",
+	"version": "0.1.0",
+	"description": "warden runtime seams: injectable process runner, git facts cache, node binary lookup",
+	"type": "module",
+	"private": true,
+	"exports": {
+		"./exec": "./src/exec.ts",
+		"./git-facts": "./src/git-facts.ts",
+		"./node-bin": "./src/node-bin.ts",
+		"./xcode": "./src/xcode.ts",
+		"./testing/exec.testing": "./src/testing/exec.testing.ts"
+	},
+	"scripts": {
+		"fmt": "biome format --write ./src",
+		"lint": "biome lint --write ./src",
+		"check": "biome check ./src",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@delacour/warden-types": "workspace:*"
+	},
+	"devDependencies": {
+		"@delacour/warden-tsconfig": "workspace:*"
+	}
+}

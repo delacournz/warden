@@ -1,8 +1,7 @@
 /**
  * Collection-time scopes (file roots, `describe` blocks, `test.use`). `roots` and `stack` are module state, filled and
- * read while one spec file is collected. The `.only` flag below is the exception: it lives on `globalThis` under a
- * `Symbol.for` key because `preload.ts` checks it after collection, and the preload and the spec files can load
- * separate copies of this module (a module-level flag would always read false in the preload).
+ * read while one spec file is collected. The `.only` flag is the exception: it lives on `globalThis`, which only `session.ts` touches
+ * (`markOnly`, `onlyWasSeen`, `resetOnly` there).
  */
 import { DEFAULT_ACTION_TIMEOUT_MS, DEFAULT_ASSERTION_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, readEnv } from "../env";
 import { callerFile } from "./callsite";
@@ -146,20 +145,4 @@ export function registrationDefaults(env: Readonly<Record<string, string | undef
 		platform: parsed?.platform,
 		deviceKind: parsed?.deviceKind,
 	};
-}
-
-const ONLY_KEY = Symbol.for("@delacour/warden-e2e/only");
-type OnlySlot = { [ONLY_KEY]?: boolean };
-
-/** Records that a `.only` was collected (kept on `globalThis`: the preload and the specs may be separate bundles). */
-export function markOnly(): void {
-	(globalThis as OnlySlot)[ONLY_KEY] = true;
-}
-
-export function onlyWasSeen(): boolean {
-	return (globalThis as OnlySlot)[ONLY_KEY] === true;
-}
-
-export function resetOnly(): void {
-	delete (globalThis as OnlySlot)[ONLY_KEY];
 }

@@ -1,5 +1,5 @@
+import { formatDuration } from "@delacour/warden-config/duration";
 import type { BatchEvent } from "@delacour/warden-core/batch/schedule";
-import { formatDuration } from "@delacour/warden-core/duration";
 import { SYMBOLS } from "../ui";
 import type { RunnerReport } from "./runner-report";
 import type { SpecMark } from "./spec-progress";
