@@ -156,7 +156,13 @@ async fn post_json(
         .json(&body)
         .send()
         .await?;
-    ok_or_failure(response).await?;
+    let status = response.status().as_u16();
+    let result = ok_or_failure(response).await;
+    match &result {
+        Ok(_) => log::info!("device {tail}: {status}"),
+        Err(e) => log::warn!("device {tail}: {status} {}", e.code),
+    }
+    result?;
     Ok(())
 }
 
