@@ -69,7 +69,7 @@ async function main() {
 	// resvg runs as WASM (portable under bun; no native addon).
 	await initWasm(readFileSync(require.resolve("@resvg/resvg-wasm/index_bg.wasm")));
 
-	// Static cuts of the site's two faces: the site ships them as variable fonts, which crash
+	// Static cuts of the site's faces: the site ships them as variable fonts, which crash
 	// satori's opentype parser, and satori reads WOFF but not WOFF2.
 	const font = (name: string, pkg: string, weight: 400 | 500 | 600 | 800) => ({
 		name,
@@ -82,6 +82,7 @@ async function main() {
 		font("Mona Sans", "mona-sans", 500),
 		font("Mona Sans", "mona-sans", 600),
 		font("Mona Sans", "mona-sans", 800),
+		font("Chakra Petch", "chakra-petch", 600),
 		font("Martian Mono", "martian-mono", 400),
 	];
 

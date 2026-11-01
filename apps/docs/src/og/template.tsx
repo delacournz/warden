@@ -20,6 +20,16 @@ const LAMP = "#ff6a3d";
 
 const SANS = "Mona Sans";
 const MONO = "Martian Mono";
+/** The hero's accent voice (`accent-voice` in app.css): Chakra Petch 600, a step larger than the words around it. */
+const ACCENT = "Chakra Petch";
+
+const accentWord = {
+	color: LAMP,
+	fontFamily: ACCENT,
+	fontWeight: 600,
+	fontSize: "1.08em",
+	letterSpacing: "0.005em",
+};
 
 const root = {
 	width: "1200px",
@@ -82,7 +92,7 @@ function lede(text: string): ReactElement {
 	return <div style={{ fontSize: 31, lineHeight: 1.4, color: INK_2, maxWidth: "940px" }}>{clamp(text, 150)}</div>;
 }
 
-/** Landing card: the hero headline in the display voice, "own simulator." in the accent, over the one-sentence pitch. */
+/** Landing card: the hero headline as the site sets it, "agent" and "simulator." in the accent voice, over the one-sentence pitch. */
 export function renderDefaultCard({ host, pitch }: { host: string; pitch: string }): ReactElement {
 	return (
 		<Card url={host}>
@@ -96,8 +106,15 @@ export function renderDefaultCard({ host, pitch }: { host: string; pitch: string
 					letterSpacing: "-0.04em",
 				}}
 			>
-				<span>Every agent gets its</span>
-				<span style={{ color: LAMP }}>own simulator.</span>
+				<div style={{ display: "flex", alignItems: "baseline", gap: "0.24em" }}>
+					<span>Every</span>
+					<span style={accentWord}>agent</span>
+					<span>gets</span>
+				</div>
+				<div style={{ display: "flex", alignItems: "baseline", gap: "0.24em" }}>
+					<span>its own</span>
+					<span style={accentWord}>simulator.</span>
+				</div>
 			</div>
 			{lede(pitch)}
 		</Card>
