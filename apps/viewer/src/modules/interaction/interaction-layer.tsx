@@ -26,6 +26,9 @@ import {
 } from "./touch-state.ts";
 import { classifyTypingKey, TYPING_BUFFER_MS } from "./typing-keys.ts";
 
+/** How long the "Typing" badge stays after the last key sent. */
+const TYPING_BADGE_MS = 1500;
+
 type ScreenElement = HTMLVideoElement | HTMLCanvasElement;
 
 type InteractionLayerProps = {
@@ -63,8 +66,9 @@ function isTextField(target: EventTarget | null): boolean {
  * feedback visuals, Alt two-finger mode, the right-click menu, and typing mode. It listens on the
  * wrapper with native listeners and sends the result through `actions` (device points, mapped
  * with `deviceSize`). Visuals and handlers are off when `enabled` is false. The overlays are siblings of the picture, in container
- * CSS px, and ignore pointer events. Typing mode starts after a tap and ends on Escape, and shows a
- * small "Typing" badge while it is on.
+ * CSS px, and ignore pointer events. Keystrokes go to the device whenever driving (outside dialogs
+ * and text fields); a small "Typing" badge shows while keys are being sent, until a short pause or
+ * Escape. A tap alone never shows it: the device may have no text field focused.
  */
 export function InteractionLayer({
 	enabled,
@@ -190,12 +194,11 @@ export function InteractionLayer({
 				clamp: true,
 				orientation: orientationRef.current,
 			});
-			const gesture = device ? single.up(device, client, t) : null;
+			if (device) single.up(device, client, t);
 			setTouch((current) => releaseTouch(current));
 			removeTimer = setTimeout(() => {
 				setTouch((current) => (current ? removeTouch(current, current.id) : current));
 			}, RELEASE_REMOVE_MS);
-			if (gesture === "tap") setTyping(true);
 		};
 
 		const pressTarget = (event: PointerEvent) => {
@@ -294,7 +297,13 @@ export function InteractionLayer({
 	}, [enabled, actions]);
 
 	useEffect(() => {
-		if (!enabled || !typing) return;
+		if (!enabled) return;
+		let badgeTimer: ReturnType<typeof setTimeout> | undefined;
+		const showBadge = () => {
+			setTyping(true);
+			clearTimeout(badgeTimer);
+			badgeTimer = setTimeout(() => setTyping(false), TYPING_BADGE_MS);
+		};
 		const batcher = createTextBatcher({
 			send: (text) => actionsRef.current.inputText({ text }),
 			delayMs: TYPING_BUFFER_MS,
@@ -306,12 +315,16 @@ export function InteractionLayer({
 			const action = classifyTypingKey(event);
 			if (!action || action.kind === "paste") return;
 			event.preventDefault();
-			if (action.kind === "text") batcher.push(action.text);
-			else if (action.kind === "key") {
+			if (action.kind === "text") {
+				showBadge();
+				batcher.push(action.text);
+			} else if (action.kind === "key") {
+				showBadge();
 				batcher.flush();
 				actionsRef.current.key({ key: action.key });
 			} else {
 				batcher.flush();
+				clearTimeout(badgeTimer);
 				setTyping(false);
 			}
 		};
@@ -326,9 +339,10 @@ export function InteractionLayer({
 		return () => {
 			window.removeEventListener("keydown", onKeyDown);
 			window.removeEventListener("paste", onPaste);
+			clearTimeout(badgeTimer);
 			batcher.flush();
 		};
-	}, [enabled, typing]);
+	}, [enabled]);
 
 	const choose = (choice: MenuChoice) => {
 		const point = menu?.point;
