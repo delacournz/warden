@@ -3,15 +3,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import type { NativeProfiler } from "@delacour/warden-sdk/ops/perf/native-types";
-import {
-	chooseCapturers,
-	finalizeSession,
-	type SessionKit,
-	type StartOptions,
-	startPerf,
-} from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { readPlan } from "@delacour/warden-sdk/ops/perf/plan";
-import { listSessions, readSession, sessionDir, updateSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfOrchestrator, type SessionKit, type StartOptions } from "@delacour/warden-sdk/ops/perf/orchestrate";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
@@ -31,7 +26,7 @@ const startCli = (
 	kit: SessionKit,
 	t: PerfTarget,
 	o: StartOptions
-) => startPerf(c, deps, kit, t, o, startHooks(c, deps, o));
+) => perfOrchestrator.startPerf(c, deps, kit, t, o, startHooks(c, deps, o));
 const fx = (name: string) =>
 	readFileSync(new URL(`../../../../packages/perf/fixtures/${name}`, import.meta.url), "utf8");
 
@@ -122,11 +117,11 @@ function setup(rules: Rule[] = []) {
 			pidAlive: () => true,
 			sleep: async (ms) => {
 				clock.now += ms;
-				const open = listSessions(c)[0];
+				const open = perfSessionStore.listSessions(c)[0];
 				if (open !== undefined) {
 					for (const kind of ["metrics", "logs"] as const) {
 						if (!open.capturers.some((cap) => cap.kind === kind))
-							updateSession(c, open.id, (s) => ({
+							perfSessionStore.updateSession(c, open.id, (s) => ({
 								...s,
 								capturers: [...s.capturers, { kind, startedAtIso: "x", state: "running" as const }],
 							}));
@@ -152,20 +147,20 @@ const target = (over: Partial<PerfTarget> = {}): PerfTarget => ({
 
 describe("chooseCapturers", () => {
 	test("none named: metrics, frames and logs", () => {
-		expect(chooseCapturers({})).toEqual({
+		expect(perfOrchestrator.chooseCapturers({})).toEqual({
 			success: true,
 			data: { metrics: true, frames: true, logs: true, js: false, react: false },
 		});
 	});
 
 	test("--all is everything including native", () => {
-		const r = chooseCapturers({ all: true });
+		const r = perfOrchestrator.chooseCapturers({ all: true });
 		expect(r).toMatchObject({ success: true, data: { js: true, react: true, native: { flavor: "" } } });
 	});
 
 	test("a flavor must be perfetto or simpleperf", () => {
-		expect(chooseCapturers({ native: "bogus" }).success).toBe(false);
-		expect(chooseCapturers({ native: "simpleperf" })).toMatchObject({
+		expect(perfOrchestrator.chooseCapturers({ native: "bogus" }).success).toBe(false);
+		expect(perfOrchestrator.chooseCapturers({ native: "simpleperf" })).toMatchObject({
 			success: true,
 			data: { native: { flavor: "simpleperf" }, metrics: false },
 		});
@@ -183,7 +178,7 @@ describe("startPerf", () => {
 		expect(session.startedAt).toEqual({ wallMs: T0, deviceWallMs: T0 + 250 });
 		expect(session.app).toEqual({ id: APP, source: "flag" });
 		expect(plan).toMatchObject({ app: APP, metrics: true, logs: true, js: false, relaunch: false });
-		expect(readPlan(c, session.id)).toEqual(plan);
+		expect(perfPlans.readPlan(c, session.id)).toEqual(plan);
 		expect(spawned).toEqual([["warden", "perf-collect", "--session", session.id]]);
 		expect(session.capturers.find((x) => x.kind === "collector")?.pid).toBe(4242);
 		expect(r.data.warnings).toEqual([]);
@@ -234,7 +229,9 @@ describe("startPerf", () => {
 		const order = calls.map((l) => (l.includes("force-stop") ? "stop" : l.includes("am start") ? "launch" : ""));
 		expect(order.filter(Boolean)).toEqual(["stop", "launch"]);
 		expect(nativeCalls).toEqual(["start"]);
-		const startup = JSON.parse(readFileSync(join(sessionDir(c, r.data.session.id), "metrics", "startup.json"), "utf8"));
+		const startup = JSON.parse(
+			readFileSync(join(perfPaths.sessionDir(c, r.data.session.id), "metrics", "startup.json"), "utf8")
+		);
 		expect(startup).toMatchObject({ method: "am-start", summary: { cold: { medianMs: 1834 } } });
 		expect(r.data.launch?.kind).toBe("launched");
 	});
@@ -256,7 +253,7 @@ describe("startPerf", () => {
 		const r = await startCli(c, deps, kit, target(), startOpts({ app: APP, relaunch: true }));
 		expect(r.success).toBe(false);
 		expect(c.db.listLeases()).toEqual([]);
-		expect(listSessions(c).map((s) => s.status)).toEqual(["aborted"]);
+		expect(perfSessionStore.listSessions(c).map((s) => s.status)).toEqual(["aborted"]);
 	});
 });
 
@@ -276,9 +273,9 @@ describe("finalizeSession", () => {
 			metrics: true,
 			frames: true,
 		});
-		mkdirSync(join(sessionDir(c, id), "metrics"), { recursive: true });
+		mkdirSync(join(perfPaths.sessionDir(c, id), "metrics"), { recursive: true });
 		writeFileSync(
-			join(sessionDir(c, id), "metrics", "samples.jsonl"),
+			join(perfPaths.sessionDir(c, id), "metrics", "samples.jsonl"),
 			[1, 2, 3]
 				.map((n) =>
 					JSON.stringify({
@@ -293,20 +290,20 @@ describe("finalizeSession", () => {
 				.join("\n")
 		);
 		deps.session.alive.add(4242);
-		const r = await finalizeSession(c, deps, kit, id, { reason: "user" });
+		const r = await perfOrchestrator.finalizeSession(c, deps, kit, id, { reason: "user" });
 		if (!r.success) throw new Error(r.error.message);
 		expect(deps.session.killed).toEqual([[4242, "SIGTERM"]]);
 		expect(nativeCalls).toEqual(["start", "stop"]);
 		expect(c.db.listLeases()).toEqual([]);
-		expect(readSession(c, id)).toMatchObject({ status: "stopped", stopReason: "user" });
+		expect(perfSessionStore.readSession(c, id)).toMatchObject({ status: "stopped", stopReason: "user" });
 		const report = r.data.report;
 		expect(report?.metrics).toMatchObject({ cpuP95Pct: 30, hangCount: 1, startupColdMs: 1834 });
 		expect(report?.sections.map((s) => s.id)).toEqual(["startup", "frames", "native-cpu", "hangs", "memory", "logs"]);
-		expect(existsSync(join(sessionDir(c, id), "report.md"))).toBe(true);
-		expect(existsSync(join(sessionDir(c, id), "report.json"))).toBe(true);
-		expect(existsSync(join(sessionDir(c, id), "frames.json"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "report.md"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "report.json"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "frames.json"))).toBe(true);
 		expect(r.data.warnings.filter((w) => w.startsWith("crashes:"))).toEqual([]);
-		expect(existsSync(join(sessionDir(c, id), "crashes", "summary.json"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "crashes", "summary.json"))).toBe(true);
 	});
 
 	test("iOS with no crashes: crashes/summary.json is still written (the dir is created)", async () => {
@@ -316,33 +313,35 @@ describe("finalizeSession", () => {
 		const r = await startCli(s.c, s.deps, s.kit, ios, startOpts({ app: APP, metrics: true }));
 		if (!r.success) throw new Error(r.error.message);
 		const id = r.data.session.id;
-		const done = await finalizeSession(s.c, s.deps, s.kit, id, { reason: "user" });
+		const done = await perfOrchestrator.finalizeSession(s.c, s.deps, s.kit, id, { reason: "user" });
 		if (!done.success) throw new Error(done.error.message);
 		expect(done.data.warnings.filter((w) => w.startsWith("crashes:"))).toEqual([]);
-		expect(existsSync(join(sessionDir(s.c, id), "crashes", "summary.json"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(s.c, id), "crashes", "summary.json"))).toBe(true);
 	});
 
 	test("never signals a collector pid that is no longer the collector", async () => {
 		const { c, deps, kit, id } = await started({ app: APP, metrics: true });
 		deps.session.commands.set(4242, "some other process");
 		deps.session.alive.add(4242);
-		await finalizeSession(c, deps, kit, id, { reason: "user", analyze: false });
+		await perfOrchestrator.finalizeSession(c, deps, kit, id, { reason: "user", analyze: false });
 		expect(deps.session.killed).toEqual([]);
 	});
 
 	test("--no-analyze stops without a report; finalize again builds it later", async () => {
 		const { c, deps, kit, id } = await started({ app: APP, metrics: true });
-		const r = await finalizeSession(c, deps, kit, id, { reason: "user", analyze: false });
+		const r = await perfOrchestrator.finalizeSession(c, deps, kit, id, { reason: "user", analyze: false });
 		if (!r.success) throw new Error(r.error.message);
 		expect(r.data.report).toBeUndefined();
-		expect(existsSync(join(sessionDir(c, id), "report.json"))).toBe(false);
-		const again = await finalizeSession(c, deps, kit, id, { reason: "user" });
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "report.json"))).toBe(false);
+		const again = await perfOrchestrator.finalizeSession(c, deps, kit, id, { reason: "user" });
 		expect(again.success && again.data.report?.sessionId).toBe(id);
 	});
 
 	test("an unknown session is session_not_found", async () => {
 		const { c, deps, kit } = setup();
-		expect(await finalizeSession(c, deps, kit, "20260101-000000-abcdef", { reason: "user" })).toMatchObject({
+		expect(
+			await perfOrchestrator.finalizeSession(c, deps, kit, "20260101-000000-abcdef", { reason: "user" })
+		).toMatchObject({
 			success: false,
 			error: { code: "session_not_found" },
 		});
@@ -386,7 +385,7 @@ describe("start / stop / record commands", () => {
 		expect(code).toBe(0);
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc.command).toBe("perf record");
-		expect(readSession(c, doc.result.sessionId)?.maxDurationMs).toBe(15_000);
+		expect(perfSessionStore.readSession(c, doc.result.sessionId)?.maxDurationMs).toBe(15_000);
 		expect(clock.now - T0).toBeGreaterThanOrEqual(5000);
 	});
 

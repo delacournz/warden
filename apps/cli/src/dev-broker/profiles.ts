@@ -3,13 +3,8 @@ import { join } from "node:path";
 import { DEFAULT_SAMPLING_INTERVAL_US } from "@delacour/warden-perf/js/cpu-profile";
 import type { JsCdp } from "@delacour/warden-perf/js/js.types";
 import type { MapFetch } from "@delacour/warden-perf/js/symbolicate";
-import {
-	fetchMapCapped,
-	type JsCapture,
-	startJsProfile,
-	stopJsProfile,
-} from "@delacour/warden-sdk/ops/perf/js-capture";
-import { startReactCapture, stopReactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
+import { type JsCapture, jsCaptureService } from "@delacour/warden-sdk/ops/perf/js-capture";
+import { reactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
 import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type BrokerContext, type BrokerResult, brokerErr } from "./broker.types";
@@ -44,7 +39,11 @@ export type ProfilesDeps = {
 	fetchMap: MapFetch;
 };
 
-const defaultDeps = (): ProfilesDeps => ({ now: Date.now, cwd: process.cwd(), fetchMap: fetchMapCapped });
+const defaultDeps = (): ProfilesDeps => ({
+	now: Date.now,
+	cwd: process.cwd(),
+	fetchMap: jsCaptureService.fetchMapCapped,
+});
 
 type Active =
 	| { kind: "cpu"; startedAt: number; capture: JsCapture }
@@ -122,7 +121,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 			intervalUs: number | undefined,
 			startedAt: number
 		): Promise<BrokerResult<Active>> {
-			const capture = await startJsProfile(cdp, {
+			const capture = await jsCaptureService.startJsProfile(cdp, {
 				samplingIntervalUs: intervalUs ?? DEFAULT_SAMPLING_INTERVAL_US,
 				now: deps.now,
 			});
@@ -140,7 +139,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 		}
 
 		async function beginReact(cdp: JsCdp, startedAt: number): Promise<BrokerResult<Active>> {
-			const started = await startReactCapture(cdp, { owner: BROKER_REACT_OWNER, force: true });
+			const started = await reactCapture.startReactCapture(cdp, { owner: BROKER_REACT_OWNER, force: true });
 			if (!started.success) return cdpErr(`${started.error.code}: ${started.error.message}`, started.error.hint);
 			return resultFactory.ok({ kind: "react", startedAt, hostWallMs: startedAt });
 		}
@@ -176,7 +175,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 			recording: Extract<Active, { kind: "cpu" }>,
 			dir: string
 		): Promise<BrokerResult<ProfileStopData>> {
-			const stopped = await stopJsProfile(
+			const stopped = await jsCaptureService.stopJsProfile(
 				{ ...recording.capture, cdp },
 				{ dir, metroUrl: extension.metroUrl, fetchMap: deps.fetchMap, projectRoot: deps.cwd }
 			);
@@ -223,7 +222,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 			recording: Extract<Active, { kind: "react" }>,
 			dir: string
 		): Promise<BrokerResult<ProfileStopData>> {
-			const stopped = await stopReactCapture(cdp, {
+			const stopped = await reactCapture.stopReactCapture(cdp, {
 				dir,
 				cwd: deps.cwd,
 				owner: BROKER_REACT_OWNER,

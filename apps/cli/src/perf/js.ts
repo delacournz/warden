@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { type Hotspots, hotspotsAnalyzer } from "@delacour/warden-perf/js/hotspots";
-import { connectJsApp, type JsParams, type JsPlan, jsSuccess, jsWork, planJs } from "@delacour/warden-sdk/ops/perf/js";
+import { type JsParams, type JsPlan, perfJsOps } from "@delacour/warden-sdk/ops/perf/js";
 import {
 	defaultJsDeps,
 	type JsDeps,
 	type JsProfileResult,
 	type JsSession,
 } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { type JsOut, jsOutFor } from "@delacour/warden-sdk/ops/perf/js-out";
+import { type JsOut, jsOutPaths } from "@delacour/warden-sdk/ops/perf/js-out";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -33,7 +33,7 @@ export async function connectJs(
 ): Promise<Result<Connected, UiError>> {
 	const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 	if (!app.success) return app;
-	const connected = await connectJsApp(ctx, deps, js, target, app.data.id, opts.metro, timeoutMs);
+	const connected = await perfJsOps.connectJsApp(ctx, deps, js, target, app.data.id, opts.metro, timeoutMs);
 	if (!connected.success) return connected;
 	return resultFactory.ok({
 		...connected.data,
@@ -88,7 +88,9 @@ async function brokeredProfile(
 			section: hotspotsAnalyzer.hotspotsSection(hotspots),
 		};
 		const app = await resolveApp(ctx, { platform: target.platform, id: udid }, opts.app);
-		return resultFactory.ok(jsSuccess(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs));
+		return resultFactory.ok(
+			perfJsOps.jsSuccess(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs)
+		);
 	} catch (error) {
 		return { success: false, error: uiError("failed", `cannot read ${summary.hotspotsPath}: ${String(error)}`) };
 	}
@@ -113,9 +115,9 @@ export function perfJs(
 	js: JsDeps = defaultJsDeps
 ): Promise<number> {
 	return runPerf(ctx, deps, "js", "observe", opts, async (target, env) => {
-		const planned = planJs(opts);
+		const planned = perfJsOps.planJs(opts);
 		if (!planned.success) return planned;
-		const out = jsOutFor(ctx, deps.session, target.udid, "js");
+		const out = jsOutPaths.jsOutFor(ctx, deps.session, target.udid, "js");
 		if (out.jsCapturing) return { success: false, error: capturingError(out, target.udid) };
 		const brokered = await brokeredProfile(ctx, target, opts, planned.data, out, js.sleep);
 		if (brokered !== undefined) return brokered;
@@ -128,7 +130,7 @@ export function perfJs(
 				return opened.success ? resultFactory.ok(resumeBrokerOnClose(ctx, target.udid, opened.data)) : opened;
 			},
 		};
-		return jsWork(ctx, deps, resuming, target, app.data.id, planned.data, opts.metro, env.timeoutMs);
+		return perfJsOps.jsWork(ctx, deps, resuming, target, app.data.id, planned.data, opts.metro, env.timeoutMs);
 	});
 }
 

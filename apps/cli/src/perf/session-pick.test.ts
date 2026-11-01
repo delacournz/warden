@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createSession } from "@delacour/warden-sdk/ops/perf/session";
-import { sessionByRef } from "@delacour/warden-sdk/ops/perf/session-ref";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionRefs } from "@delacour/warden-sdk/ops/perf/session-ref";
 import { type TestContext, testContext } from "../testing";
 import { pickSession } from "./session-pick";
 import { fakePerfDeps } from "./testing";
@@ -17,7 +17,7 @@ function setup() {
 	const deps = fakePerfDeps([sim]);
 	const ids: string[] = [];
 	for (const udid of ["U1", "U2"]) {
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid, platform: "ios", name: sim.name },
 			target: { udid, ownedByCaller: true },
 			maxDurationMs: 30_000,
@@ -32,21 +32,30 @@ function setup() {
 describe("sessionByRef", () => {
 	test("exact id, unique prefix and latest resolve", () => {
 		const { c, ids } = setup();
-		expect(sessionByRef(c, ids[0] ?? "")).toMatchObject({ success: true });
-		expect(sessionByRef(c, (ids[0] ?? "").slice(0, 20))).toMatchObject({ success: true, data: { id: ids[0] } });
-		expect(sessionByRef(c, "latest")).toMatchObject({ success: true, data: { id: ids[1] } });
+		expect(perfSessionRefs.sessionByRef(c, ids[0] ?? "")).toMatchObject({ success: true });
+		expect(perfSessionRefs.sessionByRef(c, (ids[0] ?? "").slice(0, 20))).toMatchObject({
+			success: true,
+			data: { id: ids[0] },
+		});
+		expect(perfSessionRefs.sessionByRef(c, "latest")).toMatchObject({ success: true, data: { id: ids[1] } });
 	});
 
 	test("ambiguous prefix and unknown ref are session_not_found", () => {
 		const { c } = setup();
-		expect(sessionByRef(c, "2026")).toMatchObject({ success: false, error: { code: "session_not_found" } });
-		expect(sessionByRef(c, "zzz")).toMatchObject({ success: false, error: { code: "session_not_found" } });
+		expect(perfSessionRefs.sessionByRef(c, "2026")).toMatchObject({
+			success: false,
+			error: { code: "session_not_found" },
+		});
+		expect(perfSessionRefs.sessionByRef(c, "zzz")).toMatchObject({
+			success: false,
+			error: { code: "session_not_found" },
+		});
 	});
 
 	test("no sessions: latest is session_not_found", () => {
 		const c = testContext([]);
 		ctx = c;
-		expect(sessionByRef(c, "latest")).toMatchObject({ success: false });
+		expect(perfSessionRefs.sessionByRef(c, "latest")).toMatchObject({ success: false });
 	});
 });
 

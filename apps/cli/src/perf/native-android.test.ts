@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { traceProcessorPins } from "@delacour/warden-perf/android/trace-processor.data";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { type AndroidNativeDeps, createAndroidNativeProfiler } from "@delacour/warden-sdk/ops/perf/native-android";
+import { type AndroidNativeDeps, androidNativeCapture } from "@delacour/warden-sdk/ops/perf/native-android";
 import type { NativeHandle, NativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
 import { type TestContext, testContext } from "../testing";
 import type { PerfTarget } from "./device";
@@ -109,7 +109,7 @@ function setup(
 	return env;
 }
 
-const profiler = () => createAndroidNativeProfiler(env.deps);
+const profiler = () => androidNativeCapture.createAndroidNativeProfiler(env.deps);
 const perfDeps = () => fakePerfDeps([]);
 
 async function started(flavor?: string): Promise<NativeHandle> {
@@ -389,7 +389,7 @@ describe("analyze", () => {
 				},
 			},
 		};
-		await createAndroidNativeProfiler(deps).analyze(env.c, perfDeps(), {
+		await androidNativeCapture.createAndroidNativeProfiler(deps).analyze(env.c, perfDeps(), {
 			target: TARGET,
 			app: APP,
 			dir: env.dir,

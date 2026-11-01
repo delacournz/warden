@@ -6,8 +6,9 @@ import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { LogStream } from "@delacour/warden-perf/logs/pid-follow";
 import { sampleSeries } from "@delacour/warden-perf/metrics/series";
 import type { JsSession } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { type PerfPlan, writePlan } from "@delacour/warden-sdk/ops/perf/plan";
-import { createSession, readSession, sessionDir, stopSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { type PerfPlan, perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { type CollectorDeps, runSessionCollector } from "./collector";
@@ -78,7 +79,7 @@ function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpaw
 	ctx = c;
 	asMe(c);
 	const perfDeps = fakePerfDeps([{ platform: "android", id: EMU, name: "pixel" }], {}, { metro: async () => METRO });
-	const made = createSession(c, perfDeps.session, {
+	const made = perfSessionStore.createSession(c, perfDeps.session, {
 		device: { udid: EMU, platform: "android", name: "pixel" },
 		target: { udid: EMU, ownedByCaller: false },
 		app: { id: APP, source: "flag" },
@@ -86,7 +87,7 @@ function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpaw
 	});
 	if (!made.success) throw new Error(made.error.message);
 	const id = made.data.id;
-	writePlan(c, id, plan(opts.plan));
+	perfPlans.writePlan(c, id, plan(opts.plan));
 
 	const hooks = { sleeps: 0, onSleep: (_n: number) => {} };
 	const sleep = async (ms: number) => {
@@ -142,7 +143,7 @@ function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpaw
 		log: (line) => log.push(line),
 		finalize: async (sid) => {
 			finalized.push(sid);
-			const s = readSession(c, sid);
+			const s = perfSessionStore.readSession(c, sid);
 			snapshots.push(Object.fromEntries((s?.capturers ?? []).map((x) => [x.kind, x.state])));
 		},
 	};
@@ -165,7 +166,7 @@ function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpaw
 }
 
 const states = (h: Harness) =>
-	Object.fromEntries((readSession(h.c, h.id)?.capturers ?? []).map((x) => [x.kind, x.state]));
+	Object.fromEntries((perfSessionStore.readSession(h.c, h.id)?.capturers ?? []).map((x) => [x.kind, x.state]));
 
 describe("runSessionCollector", () => {
 	test("an unknown session or one with no plan is missing and starts nothing", async () => {
@@ -194,7 +195,7 @@ describe("runSessionCollector", () => {
 		const h = setup({ plan: { metrics: true }, maxDurationMs: 4_000 });
 		await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		const rows = sampleSeries.decodeSamples(
-			readFileSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8")
+			readFileSync(join(perfPaths.sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8")
 		);
 		expect(rows.length).toBeGreaterThanOrEqual(2);
 		expect(rows[0]).toMatchObject({ pid: 4321, cpuPct: 25 });
@@ -203,16 +204,16 @@ describe("runSessionCollector", () => {
 		expect(at).toEqual([...at].sort((a, b) => a - b));
 		expect(new Set(at).size).toBe(at.length);
 		expect(at.every((ms) => ms % 1000 === 0)).toBe(true);
-		expect(readSession(h.c, h.id)?.capturers.find((x) => x.kind === "metrics")).toMatchObject({
+		expect(perfSessionStore.readSession(h.c, h.id)?.capturers.find((x) => x.kind === "metrics")).toMatchObject({
 			state: "stopped",
-			out: join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"),
+			out: join(perfPaths.sessionDir(h.c, h.id), "metrics", "samples.jsonl"),
 		});
 	});
 
 	test("logs: redacted lines land in logs/device.log and the stream is killed on stop", async () => {
 		const h = setup({ plan: { logs: true } });
 		await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
-		const text = readFileSync(join(sessionDir(h.c, h.id), "logs", "device.log"), "utf8");
+		const text = readFileSync(join(perfPaths.sessionDir(h.c, h.id), "logs", "device.log"), "utf8");
 		expect(text).toContain("I/App: second");
 		expect(text).not.toContain("hunter2");
 		expect(h.logKills.length).toBeGreaterThanOrEqual(1);
@@ -226,8 +227,8 @@ describe("runSessionCollector", () => {
 		expect(r).toEqual({ success: true, data: "capped" });
 		expect(h.finalized).toEqual([h.id]);
 		expect(h.snapshots[0]).toEqual({ metrics: "stopped", logs: "stopped" });
-		expect(existsSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"))).toBe(true);
-		expect(existsSync(join(sessionDir(h.c, h.id), "logs", "device.log"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(h.c, h.id), "metrics", "samples.jsonl"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(h.c, h.id), "logs", "device.log"))).toBe(true);
 	});
 
 	test("an abort stops early, flushes captures and never finalizes", async () => {
@@ -241,8 +242,12 @@ describe("runSessionCollector", () => {
 		expect(h.finalized).toEqual([]);
 		expect(h.clock.now).toBeLessThan(T0 + 120_000);
 		expect(states(h)).toEqual({ metrics: "stopped", logs: "stopped" });
-		expect(readFileSync(join(sessionDir(h.c, h.id), "logs", "device.log"), "utf8")).toContain("I/App: second");
-		expect(readFileSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8").length).toBeGreaterThan(0);
+		expect(readFileSync(join(perfPaths.sessionDir(h.c, h.id), "logs", "device.log"), "utf8")).toContain(
+			"I/App: second"
+		);
+		expect(
+			readFileSync(join(perfPaths.sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8").length
+		).toBeGreaterThan(0);
 	});
 
 	test("an already-aborted signal runs no ticks and no finalize", async () => {
@@ -257,7 +262,7 @@ describe("runSessionCollector", () => {
 	test("a session someone else stopped ends the run without finalize", async () => {
 		const h = setup({ plan: { metrics: true }, maxDurationMs: 120_000 });
 		h.hooks.onSleep = (n) => {
-			if (n === 2) stopSession(h.c, h.perfDeps.session, h.id, "user", { signalCollector: false });
+			if (n === 2) perfSessionStore.stopSession(h.c, h.perfDeps.session, h.id, "user", { signalCollector: false });
 		};
 		const r = await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
 		expect(r).toEqual({ success: true, data: "ended" });
@@ -271,7 +276,7 @@ describe("runSessionCollector", () => {
 		expect(states(h)).toEqual({ logs: "failed", metrics: "stopped" });
 		expect(h.log.join("\n")).toContain("logs: logcat exploded");
 		const rows = sampleSeries.decodeSamples(
-			readFileSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8")
+			readFileSync(join(perfPaths.sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8")
 		);
 		expect(rows.length).toBeGreaterThanOrEqual(2);
 		expect(h.finalized).toEqual([h.id]);
@@ -290,10 +295,10 @@ describe("runSessionCollector", () => {
 		expect(midRun).toEqual({ stopSent: false, closed: 0 });
 		expect(h.cdp.sent.some((s) => s.method === "Profiler.stop")).toBe(true);
 		expect(h.closes()).toBe(1);
-		const dir = join(sessionDir(h.c, h.id), "js");
+		const dir = join(perfPaths.sessionDir(h.c, h.id), "js");
 		expect(existsSync(join(dir, "cpu.cpuprofile"))).toBe(true);
 		expect(JSON.parse(readFileSync(join(dir, "hotspots.json"), "utf8")).topSelf[0]).toMatchObject({ name: "render" });
-		expect(readSession(h.c, h.id)?.capturers.find((x) => x.kind === "js")).toMatchObject({
+		expect(perfSessionStore.readSession(h.c, h.id)?.capturers.find((x) => x.kind === "js")).toMatchObject({
 			state: "stopped",
 			out: dir,
 		});

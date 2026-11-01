@@ -3,12 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { type TraceProcessorPin, traceProcessorPins } from "@delacour/warden-perf/android/trace-processor.data";
-import {
-	downloadTraceProcessor,
-	resolveTraceProcessor,
-	type TraceProcessorDeps,
-	traceProcessorPath,
-} from "@delacour/warden-sdk/ops/perf/trace-processor";
+import { type TraceProcessorDeps, traceProcessorService } from "@delacour/warden-sdk/ops/perf/trace-processor";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 
 const PAYLOAD = new TextEncoder().encode("#!fake trace_processor_shell\n".repeat(50));
@@ -70,9 +65,9 @@ describe("downloadTraceProcessor", () => {
 	test("streams, verifies sha256, chmod 755, renames into tools/", async () => {
 		setup();
 		const f = fake();
-		const res = await downloadTraceProcessor(c, f.deps);
+		const res = await traceProcessorService.downloadTraceProcessor(c, f.deps);
 		expect(res.success).toBe(true);
-		const path = traceProcessorPath(c);
+		const path = traceProcessorService.traceProcessorPath(c);
 		expect(path.endsWith(traceProcessorPins.fileName())).toBe(true);
 		expect(statSync(path).mode & 0o777).toBe(0o755);
 		expect(statSync(path).size).toBe(PAYLOAD.byteLength);
@@ -84,7 +79,7 @@ describe("downloadTraceProcessor", () => {
 	test("non-rich stderr: exactly one start and one done line, nothing on stdout", async () => {
 		setup();
 		const f = fake();
-		await downloadTraceProcessor(c, f.deps);
+		await traceProcessorService.downloadTraceProcessor(c, f.deps);
 		expect(f.err).toHaveLength(2);
 		expect(f.err[0]).toStartWith("downloading trace_processor");
 		expect(f.err[1]).toStartWith("downloaded trace_processor");
@@ -94,7 +89,7 @@ describe("downloadTraceProcessor", () => {
 	test("rich stderr: redraws the bar with percent and speed", async () => {
 		setup({}, false, { rich: true });
 		const f = fake();
-		await downloadTraceProcessor(c, f.deps);
+		await traceProcessorService.downloadTraceProcessor(c, f.deps);
 		const bars = f.err.filter((s) => s.startsWith("\r"));
 		expect(bars.length).toBeGreaterThan(1);
 		expect(bars.at(-1)).toContain("100%");
@@ -105,22 +100,22 @@ describe("downloadTraceProcessor", () => {
 	test("checksum mismatch installs nothing", async () => {
 		setup();
 		const f = fake({}, new TextEncoder().encode("tampered"));
-		const res = await downloadTraceProcessor(c, f.deps);
+		const res = await traceProcessorService.downloadTraceProcessor(c, f.deps);
 		expect(res).toMatchObject({ success: false, error: { code: "tool_missing" } });
-		expect(existsSync(traceProcessorPath(c))).toBe(false);
-		const dir = dirname(traceProcessorPath(c));
+		expect(existsSync(traceProcessorService.traceProcessorPath(c))).toBe(false);
+		const dir = dirname(traceProcessorService.traceProcessorPath(c));
 		expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
 	});
 
 	test("HTTP failure and unsupported hosts are tool_missing", async () => {
 		setup();
 		const bad = fake({ fetch: async () => new Response("no", { status: 404 }) });
-		expect(await downloadTraceProcessor(c, bad.deps)).toMatchObject({
+		expect(await traceProcessorService.downloadTraceProcessor(c, bad.deps)).toMatchObject({
 			success: false,
 			error: { code: "tool_missing" },
 		});
 		const none = fake({ pinFor: () => undefined });
-		expect(await downloadTraceProcessor(c, none.deps)).toMatchObject({
+		expect(await traceProcessorService.downloadTraceProcessor(c, none.deps)).toMatchObject({
 			success: false,
 			error: { code: "tool_missing" },
 		});
@@ -130,11 +125,14 @@ describe("downloadTraceProcessor", () => {
 describe("resolveTraceProcessor", () => {
 	test("cached binary: no prompt, no fetch", async () => {
 		setup({}, true);
-		const path = traceProcessorPath(c);
+		const path = traceProcessorService.traceProcessorPath(c);
 		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, "x");
 		const f = fake();
-		expect(await resolveTraceProcessor(c, f.deps, { yes: false })).toEqual({ success: true, data: path });
+		expect(await traceProcessorService.resolveTraceProcessor(c, f.deps, { yes: false })).toEqual({
+			success: true,
+			data: path,
+		});
 		expect(f.urls).toEqual([]);
 		expect(ui.events).toEqual([]);
 	});
@@ -142,7 +140,7 @@ describe("resolveTraceProcessor", () => {
 	test("WARDEN_TRACE_PROCESSOR wins; a missing override never downloads", async () => {
 		setup({ WARDEN_TRACE_PROCESSOR: "/nope/tp" });
 		const f = fake();
-		const res = await resolveTraceProcessor(c, f.deps, { yes: true });
+		const res = await traceProcessorService.resolveTraceProcessor(c, f.deps, { yes: true });
 		expect(res).toMatchObject({ success: false, error: { code: "tool_missing" } });
 		expect(f.urls).toEqual([]);
 	});
@@ -150,7 +148,7 @@ describe("resolveTraceProcessor", () => {
 	test("non-interactive without --yes: tool_missing with the install hint, no download", async () => {
 		setup();
 		const f = fake();
-		const res = await resolveTraceProcessor(c, f.deps, { yes: false });
+		const res = await traceProcessorService.resolveTraceProcessor(c, f.deps, { yes: false });
 		expect(res).toMatchObject({
 			success: false,
 			error: { code: "tool_missing", hint: "warden perf tools install trace-processor --yes" },
@@ -161,7 +159,7 @@ describe("resolveTraceProcessor", () => {
 	test("--yes downloads without asking", async () => {
 		setup();
 		const f = fake();
-		const res = await resolveTraceProcessor(c, f.deps, { yes: true });
+		const res = await traceProcessorService.resolveTraceProcessor(c, f.deps, { yes: true });
 		expect(res.success).toBe(true);
 		expect(ui.events).toEqual([]);
 	});
@@ -169,7 +167,7 @@ describe("resolveTraceProcessor", () => {
 	test("interactive: asks, downloads on yes", async () => {
 		setup({}, true, { confirm: [true] });
 		const f = fake();
-		const res = await resolveTraceProcessor(c, f.deps, { yes: false });
+		const res = await traceProcessorService.resolveTraceProcessor(c, f.deps, { yes: false });
 		expect(res.success).toBe(true);
 		expect(ui.events[0]).toContain("Download trace_processor v");
 		expect(ui.events[0]).toContain("MB");
@@ -179,7 +177,7 @@ describe("resolveTraceProcessor", () => {
 		for (const answer of [false, undefined]) {
 			setup({}, true, { confirm: [answer] });
 			const f = fake();
-			const res = await resolveTraceProcessor(c, f.deps, { yes: false });
+			const res = await traceProcessorService.resolveTraceProcessor(c, f.deps, { yes: false });
 			expect(res).toMatchObject({ success: false, error: { code: "tool_missing" } });
 			expect(f.urls).toEqual([]);
 			c.cleanup();

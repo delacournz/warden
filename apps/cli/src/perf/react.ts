@@ -4,16 +4,9 @@ import { perfDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { DEV_BUILD_BANNER, markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import { defaultJsDeps, type JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { displayPath } from "@delacour/warden-sdk/ops/perf/paths";
-import {
-	type ReactCaptureResult,
-	reactOwner,
-	reactUiError,
-	runReactCapture,
-	startReactCapture,
-	stopReactCapture,
-} from "@delacour/warden-sdk/ops/perf/react-capture";
-import { type ReactOut, reactOutFor } from "@delacour/warden-sdk/ops/perf/react-out";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { type ReactCaptureResult, reactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
+import { type ReactOut, reactOutPaths } from "@delacour/warden-sdk/ops/perf/react-out";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -53,7 +46,7 @@ function stoppedSuccess(
 		...(analysis.hotCommits.length > 0 && !hasCpu
 			? ["warden perf record --js --react --duration 10s   (adds the JS functions inside each hot commit)"]
 			: []),
-		`full report: ${displayPath(ctx, result.findingsPath)}`,
+		`full report: ${perfPaths.displayPath(ctx, result.findingsPath)}`,
 	];
 	const text = markdownRenderer.renderMarkdown(
 		{
@@ -101,23 +94,23 @@ export function perfReact(
 	return runPerf(ctx, deps, "react", "observe", opts, async (target, env) => {
 		const duration = planDuration(opts);
 		if (!duration.success) return duration;
-		const out = reactOutFor(ctx, deps.session, target.udid);
+		const out = reactOutPaths.reactOutFor(ctx, deps.session, target.udid);
 		const connected = await connectJs(ctx, deps, js, target, opts, env.timeoutMs);
 		if (!connected.success) return connected;
 		const { session, app } = connected.data;
 		try {
-			const captured = await runReactCapture(session, {
+			const captured = await reactCapture.runReactCapture(session, {
 				dir: out.dir,
 				...(out.jsDir === undefined ? {} : { jsDir: out.jsDir }),
 				cwd: ctx.cwd,
 				...(out.sessionId === undefined ? {} : { sessionId: out.sessionId }),
-				owner: await reactOwner(ctx),
+				owner: await reactCapture.reactOwner(ctx),
 				force: opts.takeOver === true,
 				durationMs: duration.data,
 				sleep: js.sleep,
 				now: ctx.now,
 			});
-			if (!captured.success) return { success: false, error: reactUiError(captured.error) };
+			if (!captured.success) return { success: false, error: reactCapture.reactUiError(captured.error) };
 			return resultFactory.ok(stoppedSuccess(ctx, target, app, out, captured.data));
 		} finally {
 			session.close();
@@ -137,8 +130,11 @@ export function perfReactStart(
 		if (!connected.success) return connected;
 		const { session, app } = connected.data;
 		try {
-			const started = await startReactCapture(session, { owner: await reactOwner(ctx), force: opts.takeOver === true });
-			if (!started.success) return { success: false, error: reactUiError(started.error) };
+			const started = await reactCapture.startReactCapture(session, {
+				owner: await reactCapture.reactOwner(ctx),
+				force: opts.takeOver === true,
+			});
+			if (!started.success) return { success: false, error: reactCapture.reactUiError(started.error) };
 			const next = ["warden perf react stop   (after the interaction; max 5m before the marker goes stale)"];
 			const s = started.data;
 			return resultFactory.ok({
@@ -164,20 +160,20 @@ export function perfReactStop(
 	js: JsDeps = defaultJsDeps
 ): Promise<number> {
 	return runPerf(ctx, deps, "react stop", "observe", opts, async (target, env) => {
-		const out = reactOutFor(ctx, deps.session, target.udid);
+		const out = reactOutPaths.reactOutFor(ctx, deps.session, target.udid);
 		const connected = await connectJs(ctx, deps, js, target, opts, env.timeoutMs);
 		if (!connected.success) return connected;
 		const { session, app } = connected.data;
 		try {
-			const stopped = await stopReactCapture(session, {
+			const stopped = await reactCapture.stopReactCapture(session, {
 				dir: out.dir,
 				...(out.jsDir === undefined ? {} : { jsDir: out.jsDir }),
 				cwd: ctx.cwd,
 				...(out.sessionId === undefined ? {} : { sessionId: out.sessionId }),
-				owner: await reactOwner(ctx),
+				owner: await reactCapture.reactOwner(ctx),
 				force: opts.takeOver === true,
 			});
-			if (!stopped.success) return { success: false, error: reactUiError(stopped.error) };
+			if (!stopped.success) return { success: false, error: reactCapture.reactUiError(stopped.error) };
 			return resultFactory.ok(stoppedSuccess(ctx, target, app, out, stopped.data));
 		} finally {
 			session.close();

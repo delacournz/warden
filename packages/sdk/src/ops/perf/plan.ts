@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { writeFileAtomic } from "./device-state";
+import { perfDeviceState } from "./device-state";
 import type { PerfEnv } from "./env";
-import { sessionDir } from "./paths";
+import { perfPaths } from "./paths";
 
 export const PLAN_FILE = "plan.json";
 
@@ -31,31 +31,34 @@ export const planSchema = z.object({
 
 export type PerfPlan = z.infer<typeof planSchema>;
 
-export function writePlan(ctx: Pick<PerfEnv, "env">, id: string, plan: PerfPlan): void {
-	const dir = sessionDir(ctx, id);
-	mkdirSync(dir, { recursive: true });
-	writeFileAtomic(join(dir, PLAN_FILE), `${JSON.stringify(plan, null, 2)}\n`);
-}
+/** PerfPlans: plan. */
+export class PerfPlans {
+	writePlan(ctx: Pick<PerfEnv, "env">, id: string, plan: PerfPlan): void {
+		const dir = perfPaths.sessionDir(ctx, id);
+		mkdirSync(dir, { recursive: true });
+		perfDeviceState.writeFileAtomic(join(dir, PLAN_FILE), `${JSON.stringify(plan, null, 2)}\n`);
+	}
 
-/** `plan.json` of a session; undefined when missing or malformed. */
-export function readPlan(ctx: Pick<PerfEnv, "env">, id: string): PerfPlan | undefined {
-	try {
-		const parsed = planSchema.safeParse(JSON.parse(readFileSync(join(sessionDir(ctx, id), PLAN_FILE), "utf8")));
-		return parsed.success ? parsed.data : undefined;
-	} catch {
-		return undefined;
+	/** `plan.json` of a session; undefined when missing or malformed. */
+	readPlan(ctx: Pick<PerfEnv, "env">, id: string): PerfPlan | undefined {
+		try {
+			const parsed = planSchema.safeParse(
+				JSON.parse(readFileSync(join(perfPaths.sessionDir(ctx, id), PLAN_FILE), "utf8"))
+			);
+			return parsed.success ? parsed.data : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** Rewrite one session's plan (e.g. record the lease taken). */
+	updatePlan(ctx: Pick<PerfEnv, "env">, id: string, change: (plan: PerfPlan) => PerfPlan): PerfPlan | undefined {
+		const current = this.readPlan(ctx, id);
+		if (current === undefined) return undefined;
+		const next = change(current);
+		this.writePlan(ctx, id, next);
+		return next;
 	}
 }
 
-/** Rewrite one session's plan (e.g. record the lease taken). */
-export function updatePlan(
-	ctx: Pick<PerfEnv, "env">,
-	id: string,
-	change: (plan: PerfPlan) => PerfPlan
-): PerfPlan | undefined {
-	const current = readPlan(ctx, id);
-	if (current === undefined) return undefined;
-	const next = change(current);
-	writePlan(ctx, id, next);
-	return next;
-}
+export const perfPlans = new PerfPlans();

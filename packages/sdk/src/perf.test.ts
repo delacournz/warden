@@ -24,7 +24,7 @@ import {
 import type { ClientSeams } from "./core";
 import { isWardenError } from "./errors";
 import type { SessionKit } from "./ops/perf/orchestrate";
-import { listSessions, updateSession } from "./ops/perf/session";
+import { perfSessionStore } from "./ops/perf/session";
 import type { PerfEngineDeps } from "./ops/perf/types";
 import type { Session } from "./sdk.types";
 
@@ -102,11 +102,11 @@ function fakeProcs(store: Store) {
 			pidAlive: (pid) => alive.has(pid),
 			sleep: async () => {
 				const ctx = { env: { WARDEN_HOME: home }, now: Date.now, store: () => store };
-				const open = listSessions(ctx)[0];
+				const open = perfSessionStore.listSessions(ctx)[0];
 				if (open === undefined) return;
 				for (const kind of ["metrics", "logs"] as const) {
 					if (!open.capturers.some((c) => c.kind === kind))
-						updateSession(ctx, open.id, (s) => ({
+						perfSessionStore.updateSession(ctx, open.id, (s) => ({
 							...s,
 							capturers: [...s.capturers, { kind, startedAtIso: "x", state: "running" as const }],
 						}));

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
-import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 
 /** `packages/perf/fixtures/<name>` as text. */
 export const fixtureText = (name: string): string =>
@@ -36,7 +36,7 @@ export function seedSession(ctx: { env: Record<string, string | undefined> }, op
 		capturers: [],
 		marks: [],
 	};
-	const dir = sessionDir(ctx, opts.id);
+	const dir = perfPaths.sessionDir(ctx, opts.id);
 	writeSessionFile(dir, "session.json", session);
 	for (const [rel, content] of Object.entries(opts.files ?? {})) writeSessionFile(dir, rel, content);
 	return session;

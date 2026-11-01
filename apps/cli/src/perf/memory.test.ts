@@ -230,8 +230,8 @@ describe("warden perf memory (Android)", () => {
 
 	test("the session dir is used when a session is active", async () => {
 		const { c, deps, calls } = setup(droid, hprofScript(), true);
-		const { createSession } = await import("@delacour/warden-sdk/ops/perf/session");
-		const made = createSession(c, deps.session, {
+		const { perfSessionStore } = await import("@delacour/warden-sdk/ops/perf/session");
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: droid.id, platform: "android", name: droid.name },
 			target: { udid: droid.id, ownedByCaller: true },
 			maxDurationMs: 60_000,

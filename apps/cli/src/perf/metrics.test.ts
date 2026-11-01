@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sampleSeries } from "@delacour/warden-perf/metrics/series";
-import { createSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { perfMetrics } from "./metrics";
 import type { MetricsIo } from "./metrics-watch";
@@ -141,7 +141,7 @@ describe("warden perf metrics (one-shot)", () => {
 
 	test("an active session gets the series in its own metrics/samples.jsonl, timed from the session start", async () => {
 		const { c, clock, deps, io } = setup();
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: droid.id, platform: "android", name: droid.name },
 			target: { udid: droid.id, ownedByCaller: false },
 			maxDurationMs: 60_000,
@@ -159,13 +159,13 @@ describe("warden perf metrics (one-shot)", () => {
 
 	test("while the session's collector samples metrics, a hand-run writes samples-manual.jsonl instead", async () => {
 		const { c, deps, io } = setup();
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: droid.id, platform: "android", name: droid.name },
 			target: { udid: droid.id, ownedByCaller: false },
 			maxDurationMs: 60_000,
 		});
 		if (!made.success) throw new Error("create");
-		updateSession(c, made.data.id, (s) => ({
+		perfSessionStore.updateSession(c, made.data.id, (s) => ({
 			...s,
 			capturers: [{ kind: "metrics", startedAtIso: "x", state: "running" }],
 		}));

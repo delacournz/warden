@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NativeProfilers } from "@delacour/warden-sdk/ops/perf/native";
-import { findRunningOneShot, readHandleFile } from "@delacour/warden-sdk/ops/perf/native-state";
+import { nativeStateFiles } from "@delacour/warden-sdk/ops/perf/native-state";
 import type { NativeAnalysis, NativeIo, NativeProfiler } from "@delacour/warden-sdk/ops/perf/native-types";
-import { createSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
@@ -92,7 +92,7 @@ describe("warden perf native", () => {
 		expect(dir).toContain(root);
 		expect(readFileSync(join(dir, "..", "report.md"), "utf8")).toContain("parseCatalog");
 		expect(JSON.parse(readFileSync(join(dir, "..", "report.json"), "utf8")).native).toEqual({ sampleCount: 10 });
-		expect(readHandleFile(dir)?.status).toBe("stopped");
+		expect(nativeStateFiles.readHandleFile(dir)?.status).toBe("stopped");
 	});
 
 	test("start then stop across invocations via handle.json", async () => {
@@ -100,7 +100,7 @@ describe("warden perf native", () => {
 		expect(await run(s, "start")).toBe(0);
 		const started = JSON.parse(s.c.stdout.join("\n"));
 		expect(started.result).toMatchObject({ action: "start", state: "recording", pid: 900 });
-		expect(findRunningOneShot(s.c, "U1")?.file.handle.pid).toBe(900);
+		expect(nativeStateFiles.findRunningOneShot(s.c, "U1")?.file.handle.pid).toBe(900);
 		// a second start is refused while one runs
 		s.c.stdout.length = 0;
 		expect(await run(s, "start")).toBe(1);
@@ -108,7 +108,7 @@ describe("warden perf native", () => {
 		s.c.stdout.length = 0;
 		expect(await run(s, "stop")).toBe(0);
 		expect(s.log.at(-1)).toBe("stop analyze=true");
-		expect(findRunningOneShot(s.c, "U1")).toBeUndefined();
+		expect(nativeStateFiles.findRunningOneShot(s.c, "U1")).toBeUndefined();
 	});
 
 	test("stop with nothing running is session_not_found", async () => {
@@ -119,7 +119,7 @@ describe("warden perf native", () => {
 
 	test("inside a session the recording lands in native/ and is a capturer", async () => {
 		const s = setup();
-		const made = createSession(s.c, s.deps.session, {
+		const made = perfSessionStore.createSession(s.c, s.deps.session, {
 			device: { udid: "U1", platform: "ios" },
 			target: { udid: "U1", ownedByCaller: false },
 			maxDurationMs: 30_000,

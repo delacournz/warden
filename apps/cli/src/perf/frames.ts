@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { framesWork } from "@delacour/warden-sdk/ops/perf/frames";
+import { perfFramesOps } from "@delacour/warden-sdk/ops/perf/frames";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
 import { withPerfOptions } from "./options";
@@ -17,7 +17,7 @@ export function perfFrames(ctx: CommandContext, deps: PerfDeps, opts: PerfFrames
 	return runPerf(ctx, deps, "frames", reset ? "mutate" : "observe", opts, async (target) => {
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
-		return framesWork(ctx, deps, target, app.data.id, reset);
+		return perfFramesOps.framesWork(ctx, deps, target, app.data.id, reset);
 	});
 }
 

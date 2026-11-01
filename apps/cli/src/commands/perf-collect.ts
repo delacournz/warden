@@ -1,12 +1,7 @@
-import { runAutoStop } from "@delacour/warden-sdk/ops/perf/auto-stop";
+import { autoStop } from "@delacour/warden-sdk/ops/perf/auto-stop";
 import type { SessionKit } from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { readPlan } from "@delacour/warden-sdk/ops/perf/plan";
-import {
-	defaultSessionDeps,
-	readSession,
-	type SessionDeps,
-	updateSession,
-} from "@delacour/warden-sdk/ops/perf/session";
+import { perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
+import { defaultSessionDeps, perfSessionStore, type SessionDeps } from "@delacour/warden-sdk/ops/perf/session";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { reportError } from "../output";
@@ -29,7 +24,7 @@ async function collect(ctx: CommandContext, deps: PerfCollectDeps, id: string | 
 		reportError(ctx, "perf-collect", "--session <id> is required");
 		return 1;
 	}
-	const session = readSession(ctx, id);
+	const session = perfSessionStore.readSession(ctx, id);
 	if (session === undefined || session.status !== "running") {
 		reportError(ctx, "perf-collect", `no running perf session ${id}`);
 		return 1;
@@ -40,22 +35,22 @@ async function collect(ctx: CommandContext, deps: PerfCollectDeps, id: string | 
 	process.once("SIGINT", stop);
 	deps.signal?.addEventListener("abort", stop, { once: true });
 	try {
-		updateSession(ctx, id, (s) => ({
+		perfSessionStore.updateSession(ctx, id, (s) => ({
 			...s,
 			capturers: [
 				...s.capturers.filter((c) => c.kind !== "collector"),
 				{ kind: "collector", pid: process.pid, startedAtIso: new Date(ctx.now()).toISOString(), state: "running" },
 			],
 		}));
-		if (readPlan(ctx, id) === undefined) {
-			await runAutoStop(ctx, deps.session ?? defaultSessionDeps, id, {
+		if (perfPlans.readPlan(ctx, id) === undefined) {
+			await autoStop.runAutoStop(ctx, deps.session ?? defaultSessionDeps, id, {
 				sleep: deps.sleep ?? ((ms) => Bun.sleep(ms)),
 				signal: controller.signal,
 			});
 			return 0;
 		}
 		const { runSessionCollector, defaultCollectorDeps } = await import("../perf/collector");
-		const { finalizeSession } = await import("@delacour/warden-sdk/ops/perf/orchestrate");
+		const { perfOrchestrator } = await import("@delacour/warden-sdk/ops/perf/orchestrate");
 		const { defaultSessionKit } = await import("../perf/session-kit");
 		const { defaultPerfDeps } = await import("../perf/run");
 		const perf = deps.perf ?? defaultPerfDeps;
@@ -64,7 +59,7 @@ async function collect(ctx: CommandContext, deps: PerfCollectDeps, id: string | 
 			...defaultCollectorDeps((line) => ctx.err(line)),
 			...deps.collector,
 			finalize: (sessionId) =>
-				finalizeSession(ctx, perf, kit, sessionId, { reason: "max-duration", fromCollector: true }),
+				perfOrchestrator.finalizeSession(ctx, perf, kit, sessionId, { reason: "max-duration", fromCollector: true }),
 		};
 		const outcome = await runSessionCollector(ctx, perf, collectorDeps, id, controller.signal);
 		return outcome.success ? 0 : 1;

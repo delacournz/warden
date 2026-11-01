@@ -1,16 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
-import {
-	loadReportInput,
-	nativeBrief,
-	readCommitsFile,
-	readSessionReport,
-	reportFor,
-	writeSessionReport,
-} from "@delacour/warden-sdk/ops/perf/report-read";
-import { readSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { type TestContext, testContext } from "../testing";
 import { fixtureText, SEED_T0, samplesJsonl, seedSession, startupJson } from "./session-fixture.testing";
 
@@ -26,9 +19,9 @@ function setup() {
 }
 
 function load(c: TestContext, id = ID) {
-	const session = readSession(c, id);
+	const session = perfSessionStore.readSession(c, id);
 	if (session === undefined) throw new Error("seed");
-	return { session, input: loadReportInput(c, session) };
+	return { session, input: reportReader.loadReportInput(c, session) };
 }
 
 describe("loadReportInput", () => {
@@ -160,11 +153,11 @@ describe("readCommitsFile", () => {
 	test("parses the React fixture; schema-invalid or corrupt JSON is undefined", () => {
 		const c = setup();
 		seedSession(c, { id: ID, files: { "react/commits.json": fixtureText("react-commits.json") } });
-		expect(readCommitsFile(sessionDir(c, ID))?.commits).toHaveLength(39);
-		writeFileSync(join(sessionDir(c, ID), "react", "commits.json"), JSON.stringify({ version: 2 }));
-		expect(readCommitsFile(sessionDir(c, ID))).toBeUndefined();
-		writeFileSync(join(sessionDir(c, ID), "react", "commits.json"), "{");
-		expect(readCommitsFile(sessionDir(c, ID))).toBeUndefined();
+		expect(reportReader.readCommitsFile(perfPaths.sessionDir(c, ID))?.commits).toHaveLength(39);
+		writeFileSync(join(perfPaths.sessionDir(c, ID), "react", "commits.json"), JSON.stringify({ version: 2 }));
+		expect(reportReader.readCommitsFile(perfPaths.sessionDir(c, ID))).toBeUndefined();
+		writeFileSync(join(perfPaths.sessionDir(c, ID), "react", "commits.json"), "{");
+		expect(reportReader.readCommitsFile(perfPaths.sessionDir(c, ID))).toBeUndefined();
 	});
 });
 
@@ -173,42 +166,45 @@ describe("report files", () => {
 		const c = setup();
 		seedSession(c, { id: ID, files: { "metrics/samples.jsonl": samplesJsonl(SEED_T0, [10, 20, 30]) } });
 		const { session } = load(c);
-		const report = writeSessionReport(c, session);
-		expect(existsSync(join(sessionDir(c, ID), "report.md"))).toBe(true);
-		expect(readFileSync(join(sessionDir(c, ID), "report.md"), "utf8")).toContain(`perf session ${ID}`);
-		expect(readSessionReport(c, ID)).toEqual(report);
+		const report = reportReader.writeSessionReport(c, session);
+		expect(existsSync(join(perfPaths.sessionDir(c, ID), "report.md"))).toBe(true);
+		expect(readFileSync(join(perfPaths.sessionDir(c, ID), "report.md"), "utf8")).toContain(`perf session ${ID}`);
+		expect(reportReader.readSessionReport(c, ID)).toEqual(report);
 		expect(report).toMatchObject({ version: 1, sessionId: ID, metrics: { cpuP95Pct: 30 } });
 	});
 
 	test("readSessionReport is undefined for a missing, corrupt or wrong-version report", () => {
 		const c = setup();
 		seedSession(c, { id: ID });
-		expect(readSessionReport(c, ID)).toBeUndefined();
-		writeFileSync(join(sessionDir(c, ID), "report.json"), "{oops");
-		expect(readSessionReport(c, ID)).toBeUndefined();
-		writeFileSync(join(sessionDir(c, ID), "report.json"), JSON.stringify({ version: 2, sessionId: ID, metrics: {} }));
-		expect(readSessionReport(c, ID)).toBeUndefined();
+		expect(reportReader.readSessionReport(c, ID)).toBeUndefined();
+		writeFileSync(join(perfPaths.sessionDir(c, ID), "report.json"), "{oops");
+		expect(reportReader.readSessionReport(c, ID)).toBeUndefined();
+		writeFileSync(
+			join(perfPaths.sessionDir(c, ID), "report.json"),
+			JSON.stringify({ version: 2, sessionId: ID, metrics: {} })
+		);
+		expect(reportReader.readSessionReport(c, ID)).toBeUndefined();
 	});
 
 	test("reportFor prefers the written report, rebuilds over a corrupt one, and is undefined for no session", () => {
 		const c = setup();
 		seedSession(c, { id: ID, files: { "metrics/samples.jsonl": samplesJsonl(SEED_T0, [10, 20, 30]) } });
-		const built = reportFor(c, ID);
+		const built = reportReader.reportFor(c, ID);
 		expect(built?.metrics.cpuP95Pct).toBe(30);
-		const path = join(sessionDir(c, ID), "report.json");
+		const path = join(perfPaths.sessionDir(c, ID), "report.json");
 		const edited = { ...built, summary: ["edited on disk"] };
 		writeFileSync(path, JSON.stringify(edited));
-		expect(reportFor(c, ID)?.summary).toEqual(["edited on disk"]);
+		expect(reportReader.reportFor(c, ID)?.summary).toEqual(["edited on disk"]);
 		writeFileSync(path, "{corrupt");
-		expect(reportFor(c, ID)?.metrics.cpuP95Pct).toBe(30);
+		expect(reportReader.reportFor(c, ID)?.metrics.cpuP95Pct).toBe(30);
 		expect(JSON.parse(readFileSync(path, "utf8")).version).toBe(1);
-		expect(reportFor(c, "20260101-000000-abcdef")).toBeUndefined();
+		expect(reportReader.reportFor(c, "20260101-000000-abcdef")).toBeUndefined();
 	});
 });
 
 describe("nativeBrief", () => {
 	test("iOS: hangs, hotspots and the trace start", () => {
-		const brief = nativeBrief(
+		const brief = reportReader.nativeBrief(
 			"ios",
 			{
 				traceStartWallMs: 99,
@@ -225,7 +221,7 @@ describe("nativeBrief", () => {
 	});
 
 	test("Android perfetto: hangs read durMs and jankType; functions from cpu", () => {
-		const brief = nativeBrief("android", {
+		const brief = reportReader.nativeBrief("android", {
 			mode: "perfetto",
 			hangs: { hangs: [{ atMs: 3200, durMs: 412, jankType: "App Deadline Missed" }] },
 			cpu: { functions: [{ function: "layout", selfPct: 12 }] },
@@ -237,13 +233,17 @@ describe("nativeBrief", () => {
 	});
 
 	test("Android simpleperf: symbols from top; handle start used when the report has none", () => {
-		const brief = nativeBrief("android", { mode: "simpleperf", top: [{ symbol: "memcpy", percent: 8 }] }, 42);
+		const brief = reportReader.nativeBrief(
+			"android",
+			{ mode: "simpleperf", top: [{ symbol: "memcpy", percent: 8 }] },
+			42
+		);
 		expect(brief).toEqual({ traceStartWallMs: 42, hangs: [], topFunctions: [{ name: "memcpy", selfPct: 8 }] });
 	});
 
 	test("a non-object report is empty and top functions cap at 10", () => {
-		expect(nativeBrief("ios", "garbage")).toEqual({ hangs: [], topFunctions: [] });
+		expect(reportReader.nativeBrief("ios", "garbage")).toEqual({ hangs: [], topFunctions: [] });
 		const many = Array.from({ length: 15 }, (_, i) => ({ frame: `f${i}`, selfPct: i }));
-		expect(nativeBrief("ios", { hotspots: many }).topFunctions).toHaveLength(10);
+		expect(reportReader.nativeBrief("ios", { hotspots: many }).topFunctions).toHaveLength(10);
 	});
 });

@@ -31,8 +31,8 @@ function gfxinfoFps(
 ): FrameRateSource | undefined {
 	if (target.platform !== "android") return undefined;
 	return async () => {
-		const { androidFrameRate } = await import("@delacour/warden-sdk/ops/perf/frames");
-		return (await androidFrameRate(ctx, target.udid, app))?.fps;
+		const { perfFramesOps } = await import("@delacour/warden-sdk/ops/perf/frames");
+		return (await perfFramesOps.androidFrameRate(ctx, target.udid, app))?.fps;
 	};
 }
 

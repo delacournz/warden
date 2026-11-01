@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { instrumentChecker } from "@delacour/warden-perf/ios/instruments";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { createIosNativeProfiler, type IosNativeFs } from "@delacour/warden-sdk/ops/perf/native-ios";
+import { type IosNativeFs, iosNativeCapture } from "@delacour/warden-sdk/ops/perf/native-ios";
 import type { NativeIo, NativeStartInput } from "@delacour/warden-sdk/ops/perf/native-types";
 import { type TestContext, testContext } from "../testing";
 import { fakePerfDeps } from "./testing";
@@ -120,7 +120,7 @@ const input = (dir: string, extra: Partial<NativeStartInput> = {}): NativeStartI
 describe("start", () => {
 	test("attach: Time Profiler + Hangs on the device, detached", async () => {
 		const s = setup(rules("26.3"));
-		const res = await createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
 		if (!res.success) throw new Error(res.error.message);
 		expect(s.spawned[0]?.join(" ")).toBe(
 			`xcrun xctrace record --template Time Profiler --instrument Hangs --output ${s.dir}/ios.trace --no-prompt --time-limit 20s --device U1 --attach 4242`
@@ -135,7 +135,7 @@ describe("start", () => {
 
 	test("Xcode 26.4+ records all processes (no --device)", async () => {
 		const s = setup(rules("26.4.1"));
-		const res = await createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
 		if (!res.success) throw new Error(res.error.message);
 		expect(s.spawned[0]).toContain("--all-processes");
 		expect(s.spawned[0]).not.toContain("--device");
@@ -144,7 +144,9 @@ describe("start", () => {
 
 	test("--leaks cold-launches with MallocStackLogging under the recorder", async () => {
 		const s = setup(rules("26.3"));
-		const res = await createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir, { leaks: true }));
+		const res = await iosNativeCapture
+			.createIosNativeProfiler(s.fs)
+			.start(s.c, s.deps, s.io, input(s.dir, { leaks: true }));
 		if (!res.success) throw new Error(res.error.message);
 		const argv = s.spawned[0]?.join(" ") ?? "";
 		expect(argv).toContain("--instrument Hangs --instrument Leaks --instrument Allocations");
@@ -154,7 +156,9 @@ describe("start", () => {
 
 	test("--leaks on Xcode 26.4+: recorder first, then simctl launch with the child env", async () => {
 		const s = setup(rules("27.1"));
-		const res = await createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir, { leaks: true }));
+		const res = await iosNativeCapture
+			.createIosNativeProfiler(s.fs)
+			.start(s.c, s.deps, s.io, input(s.dir, { leaks: true }));
 		if (!res.success) throw new Error(res.error.message);
 		expect(s.spawned[0]).toContain("--all-processes");
 		const i = s.calls.findIndex((c) => c.includes("simctl launch"));
@@ -165,14 +169,14 @@ describe("start", () => {
 
 	test("an app that is not running is app_not_found", async () => {
 		const s = setup(rules("26.3", [["launchctl list", { stdout: "" }]]));
-		const res = await createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error.code).toBe("app_not_found");
 	});
 
 	test("a missing Hangs instrument fails naming alternatives", async () => {
 		const s = setup([["xctrace list instruments", { stdout: "Hitches\nLeaks\n" }], ...rules("26.3")]);
-		const res = await createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
 		expect(res.success).toBe(false);
 		if (!res.success) {
 			expect(res.error.code).toBe("unsupported");
@@ -182,7 +186,7 @@ describe("start", () => {
 
 	test("a recorder that dies at once reports its log", async () => {
 		const s = setup(rules("26.3"), { recorderDies: true });
-		const res = await createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).start(s.c, s.deps, s.io, input(s.dir));
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error.message).toContain("Failed to attach");
 	});
@@ -195,7 +199,7 @@ describe("stop", () => {
 		const s = setup(rules("26.3"));
 		s.alive.add(900);
 		s.commands.set(900, `xctrace record --output ${s.dir}/ios.trace`);
-		const res = await createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
 			target,
 			app: "a",
 			dir: s.dir,
@@ -211,7 +215,7 @@ describe("stop", () => {
 		const s = setup(rules("26.3"));
 		s.alive.add(900);
 		s.commands.set(900, "/usr/bin/some-other-program");
-		const res = await createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
 			target,
 			app: "a",
 			dir: s.dir,
@@ -227,7 +231,7 @@ describe("stop", () => {
 		s.alive.add(900);
 		s.stubborn.value = true;
 		s.commands.set(900, `xctrace record --output ${s.dir}/ios.trace`);
-		const res = await createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
 			target,
 			app: "a",
 			dir: s.dir,
@@ -243,7 +247,7 @@ describe("stop", () => {
 
 	test("no trace on disk is a failure carrying the xctrace log", async () => {
 		const s = setup(rules("26.3"), { traceExists: false });
-		const res = await createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
+		const res = await iosNativeCapture.createIosNativeProfiler(s.fs).stop(s.c, s.deps, s.io, {
 			target,
 			app: "a",
 			dir: s.dir,
@@ -278,7 +282,7 @@ describe("stop with analysis", () => {
 			startWallMs: 1000,
 			state: { allProcesses: true, appPid: 4242 },
 		};
-		const res = await createIosNativeProfiler(fs).stop(s.c, s.deps, s.io, {
+		const res = await iosNativeCapture.createIosNativeProfiler(fs).stop(s.c, s.deps, s.io, {
 			target,
 			app: "a",
 			dir: s.dir,

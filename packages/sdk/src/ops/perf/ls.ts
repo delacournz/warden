@@ -1,7 +1,7 @@
 import { captureCaps } from "@delacour/warden-perf/shared/caps";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import type { PerfEnv } from "./env";
-import { listSessions } from "./session";
+import { perfSessionStore } from "./session";
 
 /** One recorded perf session as `perf ls` lists it. */
 export type SessionRow = {
@@ -16,27 +16,33 @@ export type SessionRow = {
 	marks: number;
 };
 
-/** The listing row of a session at time `now`. */
-export function rowOf(session: PerfSession, now: number): SessionRow {
-	const overdue =
-		session.status === "running" &&
-		captureCaps.overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, now);
-	return {
-		id: session.id,
-		device: session.device.udid,
-		platform: session.device.platform,
-		app: session.app?.id ?? null,
-		status: overdue ? "overdue" : session.status,
-		startedAt: session.startedAt.wallMs,
-		maxDurationMs: session.maxDurationMs,
-		marks: session.marks.length,
-	};
+/** PerfLs: ls. */
+export class PerfLs {
+	/** The listing row of a session at time `now`. */
+	rowOf(session: PerfSession, now: number): SessionRow {
+		const overdue =
+			session.status === "running" &&
+			captureCaps.overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, now);
+		return {
+			id: session.id,
+			device: session.device.udid,
+			platform: session.device.platform,
+			app: session.app?.id ?? null,
+			status: overdue ? "overdue" : session.status,
+			startedAt: session.startedAt.wallMs,
+			maxDurationMs: session.maxDurationMs,
+			marks: session.marks.length,
+		};
+	}
+
+	/** Recorded sessions, newest first, optionally only one device's. */
+	sessionRows(env: Pick<PerfEnv, "env" | "now">, device?: string): SessionRow[] {
+		const now = env.now();
+		return perfSessionStore
+			.listSessions(env)
+			.filter((s) => device === undefined || s.device.udid === device)
+			.map((s) => this.rowOf(s, now));
+	}
 }
 
-/** Recorded sessions, newest first, optionally only one device's. */
-export function sessionRows(env: Pick<PerfEnv, "env" | "now">, device?: string): SessionRow[] {
-	const now = env.now();
-	return listSessions(env)
-		.filter((s) => device === undefined || s.device.udid === device)
-		.map((s) => rowOf(s, now));
-}
+export const perfLsOps = new PerfLs();

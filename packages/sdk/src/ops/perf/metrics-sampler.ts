@@ -6,7 +6,7 @@ import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opErrors } from "../errors";
-import { appPid, type IosAppBundle, iosAppBundle } from "./app-process";
+import { appProcess, type IosAppBundle } from "./app-process";
 import type { PerfEnv } from "./env";
 
 export type MetricsTarget = { udid: string; platform: Platform; app: string };
@@ -22,133 +22,144 @@ export type MetricsSampler = {
 	sample: () => Promise<Result<MetricSample, WardenError>>;
 };
 
-const notRunning = (target: MetricsTarget): WardenError =>
-	opErrors.opError("app_not_found", `${target.app} is not running on ${target.udid}`, {
-		hint: "launch the app first (warden ui open <app>)",
-	});
-
-/** `ps` for one pid, same columns as `PS_ARGS` so `parsePs` reads it unchanged. */
-const psPidArgs = (pid: number): string[] => ["ps", "-o", "pid,ppid,rss,%cpu,time,lstart,command", "-p", String(pid)];
-
-/**
- * iOS simulator: simulator processes are host processes and the sim runtime ships no `ps`, so this reads host
- * `ps` for the pid this sim's `launchctl` reports for the app (a system app's executable path is shared by
- * every sim of a runtime), checked against the app's executable. CPU % is the delta of cumulative CPU time over
- * the wall time between readings (`ps %cpu` is a decaying average, useless for a rate); the first reading is the
- * baseline and has no CPU %.
- *
- * Cost: at a 1 s interval the old per-sample `simctl spawn launchctl list` (~95 ms CPU) plus host-wide
- * `ps -axo` (~53 ms) used ~16% of a core. The pid is now resolved once and each sample is a pid-scoped
- * `ps -p` (~2 ms); it is re-resolved only when `ps` has no row for it (process gone) or the row's `lstart`
- * differs from the one recorded at resolution (pid reused). Measured 60 s watch at 1 s: before ~16% of a core, after 0.70 CPU-s over 60.5 s (~1.2%, children included; warden itself 0.24 s).
- */
-function iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, startMs: number): MetricsSampler {
-	const prev: CpuReadings = new Map();
-	let lastWallMs: number | undefined;
-	let cached: { pid: number; startedAt?: string } | undefined;
-	const resolve = async (): Promise<number | undefined> => {
-		const pid = await appPid(ctx, { platform: "ios", id: target.udid }, target.app);
-		cached = pid === undefined ? undefined : { pid };
-		return pid;
-	};
-	type Read = { kind: "row"; row: PsRow } | { kind: "gone" } | { kind: "error"; error: WardenError };
-	const read = async (pid: number): Promise<Read> => {
-		const res = await ctx.exec(psPidArgs(pid), { timeoutMs: 10_000, env: PS_ENV });
-		const row = psParser.findByExecutable(
-			psParser.parsePs(res.stdout).filter((r) => r.pid === pid),
-			bundle.executablePath
-		);
-		if (row !== undefined) return { kind: "row", row };
-		if (res.exitCode !== 0 && res.stderr.trim() !== "") {
-			return { kind: "error", error: opErrors.opError("failed", `ps failed: ${res.stderr.trim()}`) };
-		}
-		return { kind: "gone" };
-	};
-	const usable = (r: Read): r is { kind: "row"; row: PsRow } =>
-		r.kind === "row" && (cached?.startedAt === undefined || r.row.startedAt === cached.startedAt);
-	const locate = async (): Promise<Result<PsRow, WardenError>> => {
-		const pid = cached?.pid ?? (await resolve());
-		if (pid === undefined) return { success: false, error: notRunning(target) };
-		let got = await read(pid);
-		if (!usable(got) && got.kind !== "error") {
-			const fresh = await resolve();
-			if (fresh === undefined) return { success: false, error: notRunning(target) };
-			got = await read(fresh);
-		}
-		if (got.kind === "error") return { success: false, error: got.error };
-		if (got.kind === "gone") return { success: false, error: notRunning(target) };
-		if (cached !== undefined) cached.startedAt ??= got.row.startedAt;
-		return resultFactory.ok(got.row);
-	};
-	return {
-		sample: async () => {
-			const located = await locate();
-			if (!located.success) return located;
-			const row = located.data;
-			const wallMs = ctx.now();
-			const baseline = lastWallMs === undefined;
-			const cpuSec = psParser.cpuDeltas([row], prev, baseline).get(row.pid);
-			const dtSec = baseline ? 0 : (wallMs - (lastWallMs ?? wallMs)) / 1000;
-			lastWallMs = wallMs;
-			return resultFactory.ok({
-				wallMs,
-				atMs: wallMs - startMs,
-				pid: row.pid,
-				...(!baseline && dtSec > 0 && cpuSec !== undefined ? { cpuPct: round1((cpuSec / dtSec) * 100) } : {}),
-				rssKb: row.rssKb,
-			});
-		},
-	};
-}
-
-/**
- * Android: `top -n 1 -b -p <pid>` for CPU % and RES (fallback RSS), `dumpsys meminfo <pkg>` for TOTAL PSS/RSS.
- * The pid is cached and re-resolved once when top no longer lists it (the app restarted).
- */
-function androidSampler(ctx: PerfEnv, target: MetricsTarget, startMs: number): MetricsSampler {
-	const adb = androidToolsLocator.locate(ctx.env).adb;
-	let pid: number | undefined;
-	const top = async (p: number) => {
-		const res = await ctx.exec([adb, "-s", target.udid, "shell", "top", "-n", "1", "-b", "-p", String(p)], {
-			timeoutMs: 10_000,
+/** MetricsSamplers: metrics sampler. */
+export class MetricsSamplers {
+	private readonly notRunning = (target: MetricsTarget): WardenError =>
+		opErrors.opError("app_not_found", `${target.app} is not running on ${target.udid}`, {
+			hint: "launch the app first (warden ui open <app>)",
 		});
-		return res.exitCode === 0 ? psParser.parseAdbTop(res.stdout).find((r) => r.pid === p) : undefined;
-	};
-	return {
-		sample: async () => {
-			pid ??= await appPid(ctx, { platform: "android", id: target.udid }, target.app);
-			let row = pid === undefined ? undefined : await top(pid);
-			if (row === undefined) {
-				pid = await appPid(ctx, { platform: "android", id: target.udid }, target.app);
-				row = pid === undefined ? undefined : await top(pid);
+
+	/** `ps` for one pid, same columns as `PS_ARGS` so `parsePs` reads it unchanged. */
+	private readonly psPidArgs = (pid: number): string[] => [
+		"ps",
+		"-o",
+		"pid,ppid,rss,%cpu,time,lstart,command",
+		"-p",
+		String(pid),
+	];
+
+	/**
+	 * iOS simulator: simulator processes are host processes and the sim runtime ships no `ps`, so this reads host
+	 * `ps` for the pid this sim's `launchctl` reports for the app (a system app's executable path is shared by
+	 * every sim of a runtime), checked against the app's executable. CPU % is the delta of cumulative CPU time over
+	 * the wall time between readings (`ps %cpu` is a decaying average, useless for a rate); the first reading is the
+	 * baseline and has no CPU %.
+	 *
+	 * Cost: at a 1 s interval the old per-sample `simctl spawn launchctl list` (~95 ms CPU) plus host-wide
+	 * `ps -axo` (~53 ms) used ~16% of a core. The pid is now resolved once and each sample is a pid-scoped
+	 * `ps -p` (~2 ms); it is re-resolved only when `ps` has no row for it (process gone) or the row's `lstart`
+	 * differs from the one recorded at resolution (pid reused). Measured 60 s watch at 1 s: before ~16% of a core, after 0.70 CPU-s over 60.5 s (~1.2%, children included; warden itself 0.24 s).
+	 */
+	private iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, startMs: number): MetricsSampler {
+		const prev: CpuReadings = new Map();
+		let lastWallMs: number | undefined;
+		let cached: { pid: number; startedAt?: string } | undefined;
+		const resolve = async (): Promise<number | undefined> => {
+			const pid = await appProcess.appPid(ctx, { platform: "ios", id: target.udid }, target.app);
+			cached = pid === undefined ? undefined : { pid };
+			return pid;
+		};
+		type Read = { kind: "row"; row: PsRow } | { kind: "gone" } | { kind: "error"; error: WardenError };
+		const read = async (pid: number): Promise<Read> => {
+			const res = await ctx.exec(this.psPidArgs(pid), { timeoutMs: 10_000, env: PS_ENV });
+			const row = psParser.findByExecutable(
+				psParser.parsePs(res.stdout).filter((r) => r.pid === pid),
+				bundle.executablePath
+			);
+			if (row !== undefined) return { kind: "row", row };
+			if (res.exitCode !== 0 && res.stderr.trim() !== "") {
+				return { kind: "error", error: opErrors.opError("failed", `ps failed: ${res.stderr.trim()}`) };
 			}
-			if (pid === undefined || row === undefined) return { success: false, error: notRunning(target) };
-			const mem = await ctx.exec([adb, "-s", target.udid, "shell", "dumpsys", "meminfo", target.app], {
-				timeoutMs: 15_000,
+			return { kind: "gone" };
+		};
+		const usable = (r: Read): r is { kind: "row"; row: PsRow } =>
+			r.kind === "row" && (cached?.startedAt === undefined || r.row.startedAt === cached.startedAt);
+		const locate = async (): Promise<Result<PsRow, WardenError>> => {
+			const pid = cached?.pid ?? (await resolve());
+			if (pid === undefined) return { success: false, error: this.notRunning(target) };
+			let got = await read(pid);
+			if (!usable(got) && got.kind !== "error") {
+				const fresh = await resolve();
+				if (fresh === undefined) return { success: false, error: this.notRunning(target) };
+				got = await read(fresh);
+			}
+			if (got.kind === "error") return { success: false, error: got.error };
+			if (got.kind === "gone") return { success: false, error: this.notRunning(target) };
+			if (cached !== undefined) cached.startedAt ??= got.row.startedAt;
+			return resultFactory.ok(got.row);
+		};
+		return {
+			sample: async () => {
+				const located = await locate();
+				if (!located.success) return located;
+				const row = located.data;
+				const wallMs = ctx.now();
+				const baseline = lastWallMs === undefined;
+				const cpuSec = psParser.cpuDeltas([row], prev, baseline).get(row.pid);
+				const dtSec = baseline ? 0 : (wallMs - (lastWallMs ?? wallMs)) / 1000;
+				lastWallMs = wallMs;
+				return resultFactory.ok({
+					wallMs,
+					atMs: wallMs - startMs,
+					pid: row.pid,
+					...(!baseline && dtSec > 0 && cpuSec !== undefined ? { cpuPct: this.round1((cpuSec / dtSec) * 100) } : {}),
+					rssKb: row.rssKb,
+				});
+			},
+		};
+	}
+
+	/**
+	 * Android: `top -n 1 -b -p <pid>` for CPU % and RES (fallback RSS), `dumpsys meminfo <pkg>` for TOTAL PSS/RSS.
+	 * The pid is cached and re-resolved once when top no longer lists it (the app restarted).
+	 */
+	private androidSampler(ctx: PerfEnv, target: MetricsTarget, startMs: number): MetricsSampler {
+		const adb = androidToolsLocator.locate(ctx.env).adb;
+		let pid: number | undefined;
+		const top = async (p: number) => {
+			const res = await ctx.exec([adb, "-s", target.udid, "shell", "top", "-n", "1", "-b", "-p", String(p)], {
+				timeoutMs: 10_000,
 			});
-			const info = mem.exitCode === 0 ? meminfoParser.parseMeminfo(mem.stdout) : undefined;
-			const wallMs = ctx.now();
-			return resultFactory.ok({
-				wallMs,
-				atMs: wallMs - startMs,
-				pid,
-				cpuPct: row.cpuPct,
-				rssKb: info?.totalRssKb ?? Math.round(row.rssBytes / 1024),
-				...(info !== undefined ? { pssKb: info.totalPssKb } : {}),
-			});
-		},
+			return res.exitCode === 0 ? psParser.parseAdbTop(res.stdout).find((r) => r.pid === p) : undefined;
+		};
+		return {
+			sample: async () => {
+				pid ??= await appProcess.appPid(ctx, { platform: "android", id: target.udid }, target.app);
+				let row = pid === undefined ? undefined : await top(pid);
+				if (row === undefined) {
+					pid = await appProcess.appPid(ctx, { platform: "android", id: target.udid }, target.app);
+					row = pid === undefined ? undefined : await top(pid);
+				}
+				if (pid === undefined || row === undefined) return { success: false, error: this.notRunning(target) };
+				const mem = await ctx.exec([adb, "-s", target.udid, "shell", "dumpsys", "meminfo", target.app], {
+					timeoutMs: 15_000,
+				});
+				const info = mem.exitCode === 0 ? meminfoParser.parseMeminfo(mem.stdout) : undefined;
+				const wallMs = ctx.now();
+				return resultFactory.ok({
+					wallMs,
+					atMs: wallMs - startMs,
+					pid,
+					cpuPct: row.cpuPct,
+					rssKb: info?.totalRssKb ?? Math.round(row.rssBytes / 1024),
+					...(info !== undefined ? { pssKb: info.totalPssKb } : {}),
+				});
+			},
+		};
+	}
+
+	private readonly round1 = (n: number): number => Math.round(n * 10) / 10;
+
+	/** A sampler for the app on the device; fails when an iOS app is not installed. Observe-only: reads, never touches the app. */
+	readonly createSampler = async (
+		ctx: PerfEnv,
+		target: MetricsTarget,
+		startMs: number
+	): Promise<Result<MetricsSampler, WardenError>> => {
+		if (target.platform === "android") return resultFactory.ok(this.androidSampler(ctx, target, startMs));
+		const bundle = await appProcess.iosAppBundle(ctx, target.udid, target.app);
+		return bundle.success ? resultFactory.ok(this.iosSampler(ctx, target, bundle.data, startMs)) : bundle;
 	};
 }
 
-const round1 = (n: number): number => Math.round(n * 10) / 10;
-
-/** A sampler for the app on the device; fails when an iOS app is not installed. Observe-only: reads, never touches the app. */
-export async function createSampler(
-	ctx: PerfEnv,
-	target: MetricsTarget,
-	startMs: number
-): Promise<Result<MetricsSampler, WardenError>> {
-	if (target.platform === "android") return resultFactory.ok(androidSampler(ctx, target, startMs));
-	const bundle = await iosAppBundle(ctx, target.udid, target.app);
-	return bundle.success ? resultFactory.ok(iosSampler(ctx, target, bundle.data, startMs)) : bundle;
-}
+export const metricsSamplers = new MetricsSamplers();

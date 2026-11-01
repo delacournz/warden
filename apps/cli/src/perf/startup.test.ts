@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { createSession, sessionDir } from "@delacour/warden-sdk/ops/perf/session";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { StartupMark } from "@delacour/warden-sdk/ops/perf/startup";
 import { storeLocator } from "@delacour/warden-store/store";
 import { type TestContext, testContext } from "../testing";
@@ -191,14 +192,14 @@ describe("perf startup: android", () => {
 
 	test("writes into the active session when there is one", async () => {
 		const { c, io, deps } = setup(droid, androidRules({ stdout: amStart(1000) }));
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: droid.id, platform: "android", name: droid.name },
 			target: { udid: droid.id, ownedByCaller: true },
 			maxDurationMs: 60_000,
 		});
 		if (!made.success) throw new Error("create");
 		await run(c, deps, io, { runs: "1" });
-		expect(json(c).result.path).toBe(join(sessionDir(c, made.data.id), "metrics", "startup.json"));
+		expect(json(c).result.path).toBe(join(perfPaths.sessionDir(c, made.data.id), "metrics", "startup.json"));
 	});
 });
 

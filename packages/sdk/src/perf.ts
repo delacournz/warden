@@ -201,8 +201,8 @@ export class SessionPerfService {
 	}
 
 	private async appFor(flag: string | undefined): Promise<{ id: string }> {
-		const { resolveAppWith } = await import("./ops/perf/app");
-		return coreRuntime.unwrap(await resolveAppWith(this.env, this.device, flag ?? this.init.appId));
+		const { perfApp } = await import("./ops/perf/app");
+		return coreRuntime.unwrap(await perfApp.resolveAppWith(this.env, this.device, flag ?? this.init.appId));
 	}
 
 	private async done<R>(outcome: Promise<Result<{ result: R }, EngineError>>): Promise<R> {
@@ -211,10 +211,10 @@ export class SessionPerfService {
 
 	private logsOnce(params: PerfLogsParams, opts: CallOptions | undefined): Promise<LogsResult> {
 		return this.run(opts, async () => {
-			const { logsWork, parseFlags } = await import("./ops/perf/logs");
-			const flags = coreRuntime.unwrap(parseFlags(perfPlans.logFlags(params)));
+			const { perfLogsOps } = await import("./ops/perf/logs");
+			const flags = coreRuntime.unwrap(perfLogsOps.parseFlags(perfPlans.logFlags(params)));
 			const app = await this.appFor(params.app);
-			return this.done(logsWork(this.env, this.target, app, flags, TIMEOUT_MS));
+			return this.done(perfLogsOps.logsWork(this.env, this.target, app, flags, TIMEOUT_MS));
 		});
 	}
 
@@ -230,11 +230,18 @@ export class SessionPerfService {
 		const onAbort = (): void => stop.abort();
 		signal?.addEventListener("abort", onAbort, { once: true });
 		try {
-			const { followLogEntries, LogStreamError, parseFlags, defaultLogDeps } = await import("./ops/perf/logs");
-			const flags = coreRuntime.unwrap(parseFlags(perfPlans.logFlags(params)));
+			const { LogStreamError, defaultLogDeps, perfLogsOps } = await import("./ops/perf/logs");
+			const flags = coreRuntime.unwrap(perfLogsOps.parseFlags(perfPlans.logFlags(params)));
 			const app = await this.appFor(params.app);
 			try {
-				yield* followLogEntries(env, target, app, flags, stop.signal, core.seams.perf?.logs ?? defaultLogDeps);
+				yield* perfLogsOps.followLogEntries(
+					env,
+					target,
+					app,
+					flags,
+					stop.signal,
+					core.seams.perf?.logs ?? defaultLogDeps
+				);
 			} catch (error) {
 				throw error instanceof LogStreamError
 					? sdkErrors.toWardenError(error.error)
@@ -263,7 +270,7 @@ export class SessionPerfService {
 	private readonly start: SessionPerfNamespace["start"] = (params, opts) =>
 		this.run(opts, async (): Promise<PerfStartResult> => {
 			const { env, target, device } = this;
-			const [{ startPerf }, { startResult }, { resolveAppWith }, deps, kit] = await Promise.all([
+			const [{ perfOrchestrator }, { perfSessionOps }, { perfApp }, deps, kit] = await Promise.all([
 				import("./ops/perf/orchestrate"),
 				import("./ops/perf/session-ops"),
 				import("./ops/perf/app"),
@@ -271,13 +278,13 @@ export class SessionPerfService {
 				this.host.kit(),
 			]);
 			const out = coreRuntime.unwrap(
-				await startPerf(env, deps, kit, target, params ?? {}, {
-					resolveApp: (_target, flag) => resolveAppWith(env, device, flag ?? this.init.appId),
+				await perfOrchestrator.startPerf(env, deps, kit, target, params ?? {}, {
+					resolveApp: (_target, flag) => perfApp.resolveAppWith(env, device, flag ?? this.init.appId),
 				})
 			);
 			this.ownId = out.session.id;
 			return {
-				...startResult(env, out, "session.perf.stop()"),
+				...perfSessionOps.startResult(env, out, "session.perf.stop()"),
 				next: ["session.perf.mark(label)", "session.perf.stop()"],
 				warnings: out.warnings,
 			};
@@ -286,14 +293,14 @@ export class SessionPerfService {
 	private readonly stop: SessionPerfNamespace["stop"] = (params, opts) =>
 		this.run(opts, async (): Promise<PerfStopResult> => {
 			const { env, target } = this;
-			const [{ finalizeSession }, { runningSessionFor }, { stopResult }, deps, kit] = await Promise.all([
+			const [{ perfOrchestrator }, { perfSessionStore }, { perfSessionOps }, deps, kit] = await Promise.all([
 				import("./ops/perf/orchestrate"),
 				import("./ops/perf/session"),
 				import("./ops/perf/session-ops"),
 				this.host.deps(),
 				this.host.kit(),
 			]);
-			const running = runningSessionFor(env, target.udid);
+			const running = perfSessionStore.runningSessionFor(env, target.udid);
 			if (running === undefined) {
 				throw new WardenError({
 					code: "session_not_found",
@@ -302,23 +309,26 @@ export class SessionPerfService {
 				});
 			}
 			const out = coreRuntime.unwrap(
-				await finalizeSession(env, deps, kit, running.id, { reason: "user", analyze: params?.analyze !== false })
+				await perfOrchestrator.finalizeSession(env, deps, kit, running.id, {
+					reason: "user",
+					analyze: params?.analyze !== false,
+				})
 			);
 			if (this.ownId === running.id) this.ownId = undefined;
-			return { ...stopResult(env, out), warnings: out.warnings };
+			return { ...perfSessionOps.stopResult(env, out), warnings: out.warnings };
 		});
 
 	private readonly metrics: SessionPerfNamespace["metrics"] = (params, opts) =>
 		this.run(opts, async (signal) => {
 			const { env, target } = this;
-			const [{ metricsSeries, planSeries }, { androidFrameRate }, deps] = await Promise.all([
+			const [{ perfMetricsOps }, { perfFramesOps }, deps] = await Promise.all([
 				import("./ops/perf/metrics"),
 				import("./ops/perf/frames"),
 				this.host.deps(),
 			]);
 			const p = params ?? {};
 			const planned = coreRuntime.unwrap(
-				planSeries({
+				perfMetricsOps.planSeries({
 					...(p.interval !== undefined ? { interval: p.interval } : {}),
 					...(p.duration !== undefined ? { duration: p.duration } : {}),
 				})
@@ -329,11 +339,11 @@ export class SessionPerfService {
 			signal?.addEventListener("abort", onAbort, { once: true });
 			try {
 				const result = await this.done(
-					metricsSeries(env, deps, target, app.id, planned, {
+					perfMetricsOps.metricsSeries(env, deps, target, app.id, planned, {
 						sleep: perfPlans.sleepUntil,
 						signal: abort.signal,
 						...(target.platform === "android"
-							? { fps: async () => (await androidFrameRate(env, target.udid, app.id))?.fps }
+							? { fps: async () => (await perfFramesOps.androidFrameRate(env, target.udid, app.id))?.fps }
 							: {}),
 					})
 				);
@@ -357,72 +367,74 @@ export class SessionPerfService {
 			metrics: this.metrics,
 			mark: (label, opts) =>
 				run(opts, async () => {
-					const [{ markWork }, deps] = await Promise.all([import("./ops/perf/session-ops"), host.deps()]);
-					return done(markWork(env, deps, target, label));
+					const [{ perfSessionOps }, deps] = await Promise.all([import("./ops/perf/session-ops"), host.deps()]);
+					return done(perfSessionOps.markWork(env, deps, target, label));
 				}),
 			status: (opts) =>
 				run(opts, async () => {
-					const [{ activeSessionFor }, { rowOf }, deps] = await Promise.all([
+					const [{ perfSessionStore }, { perfLsOps }, deps] = await Promise.all([
 						import("./ops/perf/session"),
 						import("./ops/perf/ls"),
 						host.deps(),
 					]);
-					const session = activeSessionFor(env, deps.session, target.udid);
-					return session === undefined ? null : rowOf(session, env.now());
+					const session = perfSessionStore.activeSessionFor(env, deps.session, target.udid);
+					return session === undefined ? null : perfLsOps.rowOf(session, env.now());
 				}),
 			startup: (params, opts) =>
 				run(opts, async () => {
-					const [{ startupWork, defaultStartupIo }, deps] = await Promise.all([
+					const [{ defaultStartupIo, perfStartupOps }, deps] = await Promise.all([
 						import("./ops/perf/startup"),
 						host.deps(),
 					]);
 					const p = params ?? {};
 					const plan = await perfPlans.startupPlan(p, target.platform);
 					const app = await appFor(p.app);
-					return done(startupWork(env, deps, target, app.id, plan, core.seams.perf?.startup ?? defaultStartupIo));
+					return done(
+						perfStartupOps.startupWork(env, deps, target, app.id, plan, core.seams.perf?.startup ?? defaultStartupIo)
+					);
 				}),
 			memory: (params, opts) =>
 				run(opts, async () => {
-					const [{ memoryWork, realMemoryIo }, { artifactDirFor }, deps] = await Promise.all([
+					const [{ realMemoryIo, perfMemoryOps }, { metricsOutPaths }, deps] = await Promise.all([
 						import("./ops/perf/memory"),
 						import("./ops/perf/metrics-out"),
 						host.deps(),
 					]);
 					const p = params ?? {};
 					const app = await appFor(p.app);
-					const out = artifactDirFor(env, deps.session, target.udid);
+					const out = metricsOutPaths.artifactDirFor(env, deps.session, target.udid);
 					const io = core.seams.perf?.memory ?? realMemoryIo;
-					return done(memoryWork(env, target, app.id, p.snapshot === true, out.dir, io));
+					return done(perfMemoryOps.memoryWork(env, target, app.id, p.snapshot === true, out.dir, io));
 				}),
 			frames: (params, opts) =>
 				run(opts, async () => {
-					const [{ framesWork }, deps] = await Promise.all([import("./ops/perf/frames"), host.deps()]);
+					const [{ perfFramesOps }, deps] = await Promise.all([import("./ops/perf/frames"), host.deps()]);
 					const p = params ?? {};
 					const app = await appFor(p.app);
-					return done(framesWork(env, deps, target, app.id, p.reset === true));
+					return done(perfFramesOps.framesWork(env, deps, target, app.id, p.reset === true));
 				}),
 			js: (params, opts) =>
 				run(opts, async () => {
-					const [{ jsWork, planJs }, { defaultJsDeps }, deps] = await Promise.all([
+					const [{ perfJsOps }, { defaultJsDeps }, deps] = await Promise.all([
 						import("./ops/perf/js"),
 						import("./ops/perf/js-capture"),
 						host.deps(),
 					]);
 					const p = params ?? {};
 					const planned = coreRuntime.unwrap(
-						planJs({
+						perfJsOps.planJs({
 							...(p.duration !== undefined ? { duration: p.duration } : {}),
 							...(p.samplingInterval !== undefined ? { samplingInterval: String(p.samplingInterval) } : {}),
 						})
 					);
 					const app = await appFor(p.app);
 					const js = core.seams.perf?.js ?? defaultJsDeps;
-					return done(jsWork(env, deps, js, target, app.id, planned, p.metro, TIMEOUT_MS));
+					return done(perfJsOps.jsWork(env, deps, js, target, app.id, planned, p.metro, TIMEOUT_MS));
 				}),
 			heap: {
 				snapshot: (params: PerfHeapSnapshotParams | undefined, opts) =>
 					run(opts, async () => {
-						const [{ heapSnapshotWork }, { defaultJsDeps }, deps] = await Promise.all([
+						const [{ perfHeap }, { defaultJsDeps }, deps] = await Promise.all([
 							import("./ops/perf/heap"),
 							import("./ops/perf/js-capture"),
 							host.deps(),
@@ -430,18 +442,18 @@ export class SessionPerfService {
 						const p = params ?? {};
 						const app = await appFor(p.app);
 						const js = core.seams.perf?.js ?? defaultJsDeps;
-						return done(heapSnapshotWork(env, deps, js, target, app.id, p.metro, TIMEOUT_MS));
+						return done(perfHeap.heapSnapshotWork(env, deps, js, target, app.id, p.metro, TIMEOUT_MS));
 					}),
 				diff: (before, after, opts) =>
 					run(opts, async () => {
-						const { heapDiffWork } = await import("./ops/perf/heap");
-						return coreRuntime.unwrap(heapDiffWork(env, before, after)).result;
+						const { perfHeap } = await import("./ops/perf/heap");
+						return coreRuntime.unwrap(perfHeap.heapDiffWork(env, before, after)).result;
 					}),
 			},
 			logs: this.buildLogs(),
 			crashes: (params: PerfCrashesParams | undefined, opts) =>
 				run(opts, async () => {
-					const [{ crashesWork, defaultCrashDeps }, deps] = await Promise.all([
+					const [{ defaultCrashDeps, perfCrashesOps }, deps] = await Promise.all([
 						import("./ops/perf/crashes"),
 						host.deps(),
 					]);
@@ -452,10 +464,10 @@ export class SessionPerfService {
 						...(p.symbolicate === true ? { symbolicate: true as const } : {}),
 						...(p.dsym !== undefined ? { dsym: p.dsym } : {}),
 					};
-					const { resolveAppWith } = await import("./ops/perf/app");
-					const resolve = (flag: string | undefined) => resolveAppWith(env, device, flag ?? init.appId);
+					const { perfApp } = await import("./ops/perf/app");
+					const resolve = (flag: string | undefined) => perfApp.resolveAppWith(env, device, flag ?? init.appId);
 					const crashDeps = core.seams.perf?.crashes ?? defaultCrashDeps;
-					return done(crashesWork(env, deps, target, flags, TIMEOUT_MS, resolve, crashDeps));
+					return done(perfCrashesOps.crashesWork(env, deps, target, flags, TIMEOUT_MS, resolve, crashDeps));
 				}),
 		};
 	}
@@ -466,14 +478,14 @@ export class SessionPerfService {
 		this.ownId = undefined;
 		const { env, target } = this;
 		try {
-			const [{ finalizeSession }, { runningSessionFor }, deps, kit] = await Promise.all([
+			const [{ perfOrchestrator }, { perfSessionStore }, deps, kit] = await Promise.all([
 				import("./ops/perf/orchestrate"),
 				import("./ops/perf/session"),
 				this.host.deps(),
 				this.host.kit(),
 			]);
-			if (runningSessionFor(env, target.udid)?.id !== id) return;
-			await finalizeSession(env, deps, kit, id, { reason: "device-released", analyze: false });
+			if (perfSessionStore.runningSessionFor(env, target.udid)?.id !== id) return;
+			await perfOrchestrator.finalizeSession(env, deps, kit, id, { reason: "device-released", analyze: false });
 		} catch {
 			// the lease is released either way; a stale record is swept by the next start
 		}
@@ -490,16 +502,16 @@ export class PerfService {
 		return {
 			ls: (params, opts) =>
 				coreRuntime.guarded(core.signalFor(opts), async () => {
-					const { sessionRows } = await import("./ops/perf/ls");
-					return sessionRows(env, params?.device);
+					const { perfLsOps } = await import("./ops/perf/ls");
+					return perfLsOps.sessionRows(env, params?.device);
 				}),
 			report: (id, opts) =>
 				coreRuntime.guarded(core.signalFor(opts), async () => {
-					const [{ sessionByRef }, { readSessionReport, writeSessionReport }] = await Promise.all([
+					const [{ perfSessionRefs }, { reportReader }] = await Promise.all([
 						import("./ops/perf/session-ref"),
 						import("./ops/perf/report-read"),
 					]);
-					const session = coreRuntime.unwrap(sessionByRef(env, id));
+					const session = coreRuntime.unwrap(perfSessionRefs.sessionByRef(env, id));
 					if (session.status === "running") {
 						throw new WardenError({
 							code: "session_active",
@@ -507,7 +519,7 @@ export class PerfService {
 							hint: "stop it first: session.perf.stop()",
 						});
 					}
-					return readSessionReport(env, session.id) ?? writeSessionReport(env, session);
+					return reportReader.readSessionReport(env, session.id) ?? reportReader.writeSessionReport(env, session);
 				}),
 		};
 	}

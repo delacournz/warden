@@ -4,7 +4,7 @@ import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import { reactProfiler } from "@delacour/warden-perf/react/profiler";
 import { reactFixtures } from "@delacour/warden-perf/react/react.testing";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { createSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfReact, perfReactStart, perfReactStop } from "./react";
@@ -126,7 +126,7 @@ describe("warden perf react", () => {
 
 	test("into a running session: that session's react dir", async () => {
 		const s = setup();
-		const made = createSession(s.c, s.deps.session, {
+		const made = perfSessionStore.createSession(s.c, s.deps.session, {
 			device: { udid: "U1", platform: "ios", name: sim.name },
 			target: { udid: "U1", ownedByCaller: false },
 			maxDurationMs: 30_000,

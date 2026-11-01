@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
 import { reactFixtures } from "@delacour/warden-perf/react/react.testing";
-import { analyzeAndWrite, loadCpuCorrelation } from "@delacour/warden-sdk/ops/perf/react-capture";
+import { reactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
 import type { SourceDeps } from "@delacour/warden-sdk/ops/perf/react-source";
 
 const dirs: string[] = [];
@@ -24,7 +24,7 @@ describe("analyzeAndWrite", () => {
 		const out = tmp();
 		const file = reactFixtures.loadCommitsFixture();
 		const project: Record<string, string> = { "/work/shop/src/Feed.tsx": "export const FeedRow = memo(() => null);" };
-		const result = analyzeAndWrite(file, {
+		const result = reactCapture.analyzeAndWrite(file, {
 			dir: join(out, "react"),
 			cwd: "/work/shop",
 			sessionId: "20261024-100000-abc123",
@@ -68,7 +68,12 @@ describe("analyzeAndWrite", () => {
 				topTotal: [],
 			})
 		);
-		const result = analyzeAndWrite(file, { dir: join(out, "react"), jsDir, cwd: out, sourceDeps: noProject });
+		const result = reactCapture.analyzeAndWrite(file, {
+			dir: join(out, "react"),
+			jsDir,
+			cwd: out,
+			sourceDeps: noProject,
+		});
 		const first = result.analysis.hotCommits.find((h) => h.index === 0);
 		expect(first?.cpu[0]).toMatchObject({ name: "sortRows", file: "src/sort.ts", line: 31 });
 		expect(first?.cpu[0]?.selfMs).toBeGreaterThan(50);
@@ -77,8 +82,8 @@ describe("analyzeAndWrite", () => {
 
 	test("no JS profile, or one without a clock anchor, means no correlation", () => {
 		const out = tmp();
-		expect(loadCpuCorrelation(undefined)).toBeUndefined();
-		expect(loadCpuCorrelation(join(out, "missing"))).toBeUndefined();
+		expect(reactCapture.loadCpuCorrelation(undefined)).toBeUndefined();
+		expect(reactCapture.loadCpuCorrelation(join(out, "missing"))).toBeUndefined();
 		const jsDir = join(out, "js");
 		mkdirSync(jsDir);
 		writeFileSync(
@@ -86,6 +91,6 @@ describe("analyzeAndWrite", () => {
 			JSON.stringify(jsFixtures.buildProfile([{ id: 1, name: "(root)" }], [[1, 0]]))
 		);
 		writeFileSync(join(jsDir, "hotspots.json"), JSON.stringify({ topSelf: [] }));
-		expect(loadCpuCorrelation(jsDir)).toBeUndefined();
+		expect(reactCapture.loadCpuCorrelation(jsDir)).toBeUndefined();
 	});
 });

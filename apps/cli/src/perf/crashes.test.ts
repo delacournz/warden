@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CrashDeps } from "@delacour/warden-sdk/ops/perf/crashes";
-import { createSession, sessionDir } from "@delacour/warden-sdk/ops/perf/session";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { createPerfCommand } from "../commands/perf";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { perfCrashes, registerCrashes } from "./crashes";
@@ -93,14 +94,14 @@ describe("perf crashes ios", () => {
 
 	test("copies the raw report into the active session", async () => {
 		const { c, deps, crashDeps } = setup("ios", iosHandlers());
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: SIM1, platform: "ios", name: "dev" },
 			target: { udid: SIM1, ownedByCaller: false },
 			maxDurationMs: 30_000,
 		});
 		if (!made.success) throw new Error("session");
 		await perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps);
-		const copied = join(sessionDir(c, made.data.id), "crashes", "shopapp-sim1-2026-10-24-100211.ips");
+		const copied = join(perfPaths.sessionDir(c, made.data.id), "crashes", "shopapp-sim1-2026-10-24-100211.ips");
 		expect(existsSync(copied)).toBe(true);
 		expect(json(c).result.crashes[0].file).toBe(copied);
 	});
@@ -183,14 +184,14 @@ describe("perf crashes android", () => {
 
 	test("raw logs go into the active session, redacted", async () => {
 		const { c, deps, crashDeps } = setup("android", androidHandlers());
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: EMU, platform: "android", name: "dev" },
 			target: { udid: EMU, ownedByCaller: false },
 			maxDurationMs: 30_000,
 		});
 		if (!made.success) throw new Error("session");
 		await perfCrashes(c, deps, { json: true, app: "com.acme.shop" }, crashDeps);
-		const dir = join(sessionDir(c, made.data.id), "crashes");
+		const dir = join(perfPaths.sessionDir(c, made.data.id), "crashes");
 		for (const f of ["logcat-crash.txt", "dropbox-data_app_crash.txt", "dropbox-data_app_anr.txt"])
 			expect(existsSync(join(dir, f))).toBe(true);
 	});

@@ -2,7 +2,7 @@ import { metroTools } from "@delacour/warden-builds/metro";
 import { metroFinder } from "@delacour/warden-devtools/metro";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { leaseModel } from "@delacour/warden-store/types";
-import { readMetroUrl } from "./device-state";
+import { perfDeviceState } from "./device-state";
 import type { PerfHostDeps } from "./types";
 
 /** Real host facts: the Metro lookup the device's remembered URL, `WARDEN_METRO_URL` and the owner's leased ports feed. */
@@ -10,7 +10,7 @@ export const defaultPerfHostDeps: PerfHostDeps = {
 	platform: process.platform,
 	metro: async (env, udid) => {
 		const owner = ownerResolver.resolve(env);
-		const stateUrl = udid === undefined ? undefined : readMetroUrl(env, udid);
+		const stateUrl = udid === undefined ? undefined : perfDeviceState.readMetroUrl(env, udid);
 		const portLeases = env
 			.store()
 			.listLeases()

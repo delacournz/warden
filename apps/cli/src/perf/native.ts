@@ -9,13 +9,12 @@ import {
 	defaultNativeProfilers,
 	type NativeProfilers,
 	type NativeRun,
+	perfNativeOps,
 	type StartNativeOptions,
-	startNative,
-	stopNative,
 } from "@delacour/warden-sdk/ops/perf/native";
 import { defaultNativeIo, type NativeAnalysis, type NativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
-import { displayPath } from "@delacour/warden-sdk/ops/perf/paths";
-import { activeSessionFor } from "@delacour/warden-sdk/ops/perf/session";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { reportError, reportOk, type UiError, type UiSuccess, uiError } from "../agent-ui/output";
@@ -55,7 +54,7 @@ function nativeSuccess(
 ): UiSuccess {
 	const { analysis } = input;
 	const findings: Finding[] = analysis?.findings ?? [];
-	const rel = displayPath(ctx, input.out);
+	const rel = perfPaths.displayPath(ctx, input.out);
 	const next = [
 		`open ${rel}   (Instruments)`,
 		...(target.platform === "ios" ? ["warden perf native --leaks   (cold launch, leak check)"] : []),
@@ -167,14 +166,14 @@ async function stopAndReport(
 	analyze: boolean,
 	yes: boolean | undefined
 ): Promise<Result<UiSuccess, UiError>> {
-	const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze, yes });
+	const stopped = await perfNativeOps.stopNative(ctx, deps, io, profilers, target, { analyze, yes });
 	if (!stopped.success) return stopped;
 	return resultFactory.ok(nativeSuccess(ctx, target, stopped.data));
 }
 
 /** `start`: the detached recording's report, with the follow-up `stop` hint. */
 function startedReport(ctx: CommandContext, target: PerfTarget, app: string, run: NativeRun): UiSuccess {
-	const rel = displayPath(ctx, run.handle.out);
+	const rel = perfPaths.displayPath(ctx, run.handle.out);
 	return {
 		device: { udid: target.udid, platform: target.platform, name: target.name },
 		result: {
@@ -229,10 +228,10 @@ export function perfNative(
 		if (!duration.success) return duration;
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
-		const session = activeSessionFor(ctx, deps.session, target.udid);
+		const session = perfSessionStore.activeSessionFor(ctx, deps.session, target.udid);
 		const maxDurationMs =
 			action === "start" ? (session?.maxDurationMs ?? HARD_MAX_DURATION_MS) : duration.data + LIMIT_SLACK_MS;
-		const started = await startNative(
+		const started = await perfNativeOps.startNative(
 			ctx,
 			deps,
 			io,

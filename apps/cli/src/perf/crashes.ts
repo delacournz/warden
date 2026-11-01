@@ -2,8 +2,8 @@ import type { Command as Commander } from "@commander-js/extra-typings";
 import {
 	type CrashDeps,
 	type CrashesParams,
-	crashesWork,
 	defaultCrashDeps,
+	perfCrashesOps,
 } from "@delacour/warden-sdk/ops/perf/crashes";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
@@ -22,7 +22,7 @@ export async function perfCrashes(
 	crashDeps: CrashDeps = defaultCrashDeps
 ): Promise<number> {
 	return runPerf(ctx, deps, "crashes", "observe", opts, (target, env) =>
-		crashesWork(
+		perfCrashesOps.crashesWork(
 			ctx,
 			deps,
 			target,

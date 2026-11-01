@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { TraceProcessorPin } from "@delacour/warden-perf/android/trace-processor.data";
-import { type TraceProcessorDeps, traceProcessorPath } from "@delacour/warden-sdk/ops/perf/trace-processor";
+import { type TraceProcessorDeps, traceProcessorService } from "@delacour/warden-sdk/ops/perf/trace-processor";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { perfToolsInstall } from "./tools";
 
@@ -36,7 +36,7 @@ describe("perf tools install", () => {
 		const urls: string[] = [];
 		const code = await perfToolsInstall(c, deps(urls), "trace-processor", { yes: true, json: true });
 		expect(code).toBe(0);
-		expect(existsSync(traceProcessorPath(c))).toBe(true);
+		expect(existsSync(traceProcessorService.traceProcessorPath(c))).toBe(true);
 		expect(c.stdout).toHaveLength(1);
 		const doc = JSON.parse(c.stdout[0] ?? "");
 		expect(doc).toMatchObject({

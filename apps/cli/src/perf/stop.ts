@@ -1,9 +1,9 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { reportBuilder } from "@delacour/warden-perf/shared/report";
-import { finalizeSession, type SessionKit, type StopOutcome } from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { runningSessionFor } from "@delacour/warden-sdk/ops/perf/session";
-import { stopResult } from "@delacour/warden-sdk/ops/perf/session-ops";
+import { perfOrchestrator, type SessionKit, type StopOutcome } from "@delacour/warden-sdk/ops/perf/orchestrate";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionOps } from "@delacour/warden-sdk/ops/perf/session-ops";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -18,7 +18,7 @@ export type PerfStopOptions = PerfOptionValues & { analyze?: boolean; yes?: bool
 export function stoppedSuccess(ctx: CommandContext, target: PerfTarget, out: StopOutcome): UiSuccess {
 	const { session, report } = out;
 	const info = { udid: target.udid, platform: target.platform, name: target.name };
-	const result = stopResult(ctx, out);
+	const result = perfSessionOps.stopResult(ctx, out);
 	const text =
 		report === undefined
 			? `stopped ${session.id}\nnext:\n  warden perf report ${session.id}`
@@ -38,7 +38,7 @@ export function perfStop(
 	kit: SessionKit = defaultSessionKit
 ): Promise<number> {
 	return runPerf(ctx, deps, "stop", "observe", opts, async (target) => {
-		const session = runningSessionFor(ctx, target.udid);
+		const session = perfSessionStore.runningSessionFor(ctx, target.udid);
 		if (session === undefined) {
 			return {
 				success: false,
@@ -47,7 +47,7 @@ export function perfStop(
 				}),
 			};
 		}
-		const stopped = await finalizeSession(ctx, deps, kit, session.id, {
+		const stopped = await perfOrchestrator.finalizeSession(ctx, deps, kit, session.id, {
 			reason: "user",
 			analyze: opts.analyze !== false,
 			...(opts.yes === true ? { yes: true } : {}),

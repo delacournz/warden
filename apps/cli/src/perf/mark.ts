@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { markWork } from "@delacour/warden-sdk/ops/perf/session-ops";
+import { perfSessionOps } from "@delacour/warden-sdk/ops/perf/session-ops";
 import type { CommandContext } from "../context";
 import { withPerfOptions } from "./options";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
@@ -11,7 +11,9 @@ export function perfMark(
 	words: readonly string[],
 	opts: PerfOptionValues
 ): Promise<number> {
-	return runPerf(ctx, deps, "mark", "observe", opts, (target) => markWork(ctx, deps, target, words.join(" ")));
+	return runPerf(ctx, deps, "mark", "observe", opts, (target) =>
+		perfSessionOps.markWork(ctx, deps, target, words.join(" "))
+	);
 }
 
 /** Wire `mark` onto `warden perf`. */

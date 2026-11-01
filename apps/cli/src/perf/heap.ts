@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { heapDiffWork, heapSnapshotWork } from "@delacour/warden-sdk/ops/perf/heap";
+import { perfHeap } from "@delacour/warden-sdk/ops/perf/heap";
 import { defaultJsDeps, type JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { reportError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -25,7 +25,7 @@ export function perfHeapSnapshot(
 	return runPerf(ctx, deps, "heap snapshot", "mutate", opts, async (target, env) => {
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
-		return heapSnapshotWork(ctx, deps, js, target, app.data.id, opts.metro, env.timeoutMs);
+		return perfHeap.heapSnapshotWork(ctx, deps, js, target, app.data.id, opts.metro, env.timeoutMs);
 	});
 }
 
@@ -35,7 +35,7 @@ export type PerfHeapDiffOptions = { json?: boolean };
 export function perfHeapDiff(ctx: CommandContext, a: string, b: string, opts: PerfHeapDiffOptions): number {
 	const json = opts.json === true;
 	const report = { command: "perf heap diff", label: "perf heap diff", json, startedAt: ctx.now() };
-	const diff = heapDiffWork(ctx, a, b);
+	const diff = perfHeap.heapDiffWork(ctx, a, b);
 	if (!diff.success) return reportError(ctx, report, diff.error);
 	emit(ctx, json, diff.data.result, diff.data.text, { scope: "perf heap diff" });
 	return 0;

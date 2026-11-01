@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createSession, stopSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { Owner } from "@delacour/warden-store/types";
 import { type TestContext, testContext } from "../testing";
 import { perfLs } from "./ls";
@@ -22,7 +22,7 @@ function setup() {
 }
 
 const open = (c: TestContext, deps: ReturnType<typeof fakePerfDeps>, n: number, app?: string) =>
-	createSession(c, deps.session, {
+	perfSessionStore.createSession(c, deps.session, {
 		device: { udid: `U${n}`, platform: "ios", name: sim(n).name },
 		target: { udid: `U${n}`, ownedByCaller: false },
 		...(app ? { app: { id: app, source: "flag" as const } } : {}),
@@ -43,8 +43,8 @@ describe("warden perf ls", () => {
 		clock.now += 60_000;
 		const b = open(c, deps, 2);
 		if (!a.success || !b.success) throw new Error("create");
-		updateSession(c, a.data.id, (s) => ({ ...s, marks: [{ label: "x", wallMs: T0, atMs: 0 }] }));
-		stopSession(c, deps.session, a.data.id, "user");
+		perfSessionStore.updateSession(c, a.data.id, (s) => ({ ...s, marks: [{ label: "x", wallMs: T0, atMs: 0 }] }));
+		perfSessionStore.stopSession(c, deps.session, a.data.id, "user");
 		expect(await perfLs(c, deps, { json: true })).toBe(0);
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc.sessions.map((s: { id: string }) => s.id)).toEqual([b.data.id, a.data.id]);

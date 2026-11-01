@@ -3,8 +3,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { SessionKit } from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { writePlan } from "@delacour/warden-sdk/ops/perf/plan";
-import { createSession, readSession, sessionDir, stopSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { fakePerfDeps } from "../perf/testing";
 import { type TestContext, testContext } from "../testing";
@@ -21,7 +22,7 @@ function setup(maxDurationMs: number) {
 	const c = testContext([], { now: () => clock.now });
 	ctx = c;
 	const deps = fakePerfDeps([sim]);
-	const made = createSession(c, deps.session, {
+	const made = perfSessionStore.createSession(c, deps.session, {
 		device: { udid: "U1", platform: "ios", name: sim.name },
 		target: { udid: "U1", ownedByCaller: true },
 		maxDurationMs,
@@ -39,7 +40,7 @@ describe("warden perf-collect", () => {
 		c.argv = ["--session", id];
 		const command = createPerfCollectCommand({ sleep, session: deps.session });
 		expect(await command.run(c)).toBe(0);
-		const s = readSession(c, id);
+		const s = perfSessionStore.readSession(c, id);
 		expect(s).toMatchObject({ status: "stopped", stopReason: "max-duration" });
 		expect(s?.capturers).toEqual([
 			{ kind: "collector", pid: process.pid, startedAtIso: new Date(T0).toISOString(), state: "stopped" },
@@ -59,11 +60,11 @@ describe("warden perf-collect", () => {
 
 	test("a session that already stopped is exit 1 and is left untouched", async () => {
 		const { c, deps, id, sleep } = setup(3_000);
-		stopSession(c, deps.session, id, "user", { signalCollector: false });
+		perfSessionStore.stopSession(c, deps.session, id, "user", { signalCollector: false });
 		c.argv = ["--session", id];
 		const command = createPerfCollectCommand({ sleep, session: deps.session });
 		expect(await command.run(c)).toBe(1);
-		expect(readSession(c, id)).toMatchObject({ stopReason: "user", capturers: [] });
+		expect(perfSessionStore.readSession(c, id)).toMatchObject({ stopReason: "user", capturers: [] });
 		expect(c.stderr.join("\n")).toContain(`no running perf session ${id}`);
 	});
 
@@ -90,14 +91,14 @@ describe("warden perf-collect with a plan", () => {
 		});
 		ctx = c;
 		const deps = fakePerfDeps([{ platform: "android", id: EMU, name: "pixel" }]);
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: EMU, platform: "android", name: "pixel" },
 			target: { udid: EMU, ownedByCaller: false },
 			app: { id: APP, source: "flag" },
 			maxDurationMs,
 		});
 		if (!made.success) throw new Error("create");
-		writePlan(c, made.data.id, {
+		perfPlans.writePlan(c, made.data.id, {
 			version: 1,
 			app: APP,
 			cwd: "/app",
@@ -154,10 +155,11 @@ describe("warden perf-collect with a plan", () => {
 		c.argv = ["--session", id];
 		const command = createPerfCollectCommand({ perf: deps, kit, collector, session: deps.session });
 		expect(await command.run(c)).toBe(0);
-		expect(readSession(c, id)).toMatchObject({ status: "stopped", stopReason: "max-duration" });
-		expect(existsSync(join(sessionDir(c, id), "metrics", "samples.jsonl"))).toBe(true);
-		expect(existsSync(join(sessionDir(c, id), "report.json"))).toBe(true);
-		const kinds = readSession(c, id)
+		expect(perfSessionStore.readSession(c, id)).toMatchObject({ status: "stopped", stopReason: "max-duration" });
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "metrics", "samples.jsonl"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "report.json"))).toBe(true);
+		const kinds = perfSessionStore
+			.readSession(c, id)
 			?.capturers.map((x) => x.kind)
 			.sort();
 		expect(kinds).toEqual(["collector", "metrics"]);
@@ -179,8 +181,8 @@ describe("warden perf-collect with a plan", () => {
 			signal: stop.signal,
 		});
 		expect(await command.run(c)).toBe(0);
-		expect(readSession(c, id)).toMatchObject({ status: "running" });
-		expect(readSession(c, id)?.capturers.find((x) => x.kind === "metrics")?.state).toBe("stopped");
-		expect(existsSync(join(sessionDir(c, id), "report.json"))).toBe(false);
+		expect(perfSessionStore.readSession(c, id)).toMatchObject({ status: "running" });
+		expect(perfSessionStore.readSession(c, id)?.capturers.find((x) => x.kind === "metrics")?.state).toBe("stopped");
+		expect(existsSync(join(perfPaths.sessionDir(c, id), "report.json"))).toBe(false);
 	});
 });

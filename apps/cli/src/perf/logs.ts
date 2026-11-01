@@ -4,14 +4,10 @@ import { LOG_LEVELS, type LogLevel } from "@delacour/warden-perf/logs/levels";
 import {
 	DEFAULT_LOG_LINES,
 	defaultLogDeps,
-	deviceNaiveNow,
 	type LogDeps,
 	type LogFlags,
-	logsWork,
 	type ParsedFlags,
-	parseFlags,
-	parseLogLine,
-	streamAppLogs,
+	perfLogsOps,
 } from "@delacour/warden-sdk/ops/perf/logs";
 import type { Result } from "@delacour/warden-types/result";
 import { reportError, UI_EXIT, type UiError, uiError } from "../agent-ui/output";
@@ -33,13 +29,13 @@ export async function perfLogs(
 	opts: PerfLogsOptions,
 	logDeps: LogDeps = defaultLogDeps
 ): Promise<number> {
-	const flags = parseFlags(opts);
+	const flags = perfLogsOps.parseFlags(opts);
 	if (opts.follow === true) return followLogs(ctx, deps, opts, flags, logDeps);
 	return runPerf(ctx, deps, "logs", "observe", opts, async (target, env) => {
 		if (!flags.success) return flags;
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
-		return logsWork(ctx, target, app.data, flags.data, env.timeoutMs);
+		return perfLogsOps.logsWork(ctx, target, app.data, flags.data, env.timeoutMs);
 	});
 }
 
@@ -60,19 +56,19 @@ async function followLogs(
 		const app = await resolveApp(ctx, { platform: target.data.platform, id: target.data.udid }, opts.app);
 		if (!app.success) return reportError(ctx, report, app.error, info);
 		const filter: LogFilter = { ...flags.data.filter };
-		const naiveNow = await deviceNaiveNow(ctx, target.data);
+		const naiveNow = await perfLogsOps.deviceNaiveNow(ctx, target.data);
 		if (flags.data.sinceDurationMs !== undefined) filter.sinceMs = naiveNow - flags.data.sinceDurationMs;
 		const year = new Date(naiveNow).getUTCFullYear();
 		const interrupt = logDeps.interrupt();
 		try {
-			const done = await streamAppLogs(
+			const done = await perfLogsOps.streamAppLogs(
 				ctx,
 				target.data,
 				app.data,
 				{
 					signal: interrupt.signal,
 					onLine: (raw) => {
-						const entry = parseLogLine(target.data.platform, raw, year);
+						const entry = perfLogsOps.parseLogLine(target.data.platform, raw, year);
 						if (entry === undefined || !logMatcher.matchesFilter(entry, filter)) return;
 						ctx.out(json ? JSON.stringify(entry) : logMatcher.formatEntry(entry));
 					},

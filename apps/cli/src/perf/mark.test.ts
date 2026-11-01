@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createSession, readSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { type TestContext, testContext } from "../testing";
 import { perfMark } from "./mark";
 import { asMe, fakePerfDeps } from "./testing";
@@ -20,7 +20,7 @@ function setup() {
 }
 
 const start = (c: TestContext, deps: ReturnType<typeof fakePerfDeps>) =>
-	createSession(c, deps.session, {
+	perfSessionStore.createSession(c, deps.session, {
 		device: { udid: "U1", platform: "ios", name: sim.name },
 		target: { udid: "U1", ownedByCaller: false },
 		maxDurationMs: 30_000,
@@ -39,7 +39,9 @@ describe("warden perf mark", () => {
 			command: "perf mark",
 			result: { sessionId: made.data.id, label: "scroll feed", atMs: 3200 },
 		});
-		expect(readSession(c, made.data.id)?.marks).toEqual([{ label: "scroll feed", wallMs: T0 + 3_200, atMs: 3_200 }]);
+		expect(perfSessionStore.readSession(c, made.data.id)?.marks).toEqual([
+			{ label: "scroll feed", wallMs: T0 + 3_200, atMs: 3_200 },
+		]);
 	});
 
 	test("text mode says what was marked", async () => {

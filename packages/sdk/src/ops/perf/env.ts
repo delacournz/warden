@@ -38,11 +38,16 @@ export type PerfEnv = {
 /** A {@link PerfEnv} that can also style text and ask for consent (the steps that render or download). */
 export type PerfUiEnv = PerfEnv & { ui: PerfUi; err: (line: string) => void };
 
-const same = (text: string): string => text;
+/** Colouring that leaves the text as it is. */
+class PlainColors {
+	readonly same = (text: string): string => text;
+}
+
+const plainColors = new PlainColors();
 
 /** A {@link PerfUi} with no colour and no prompts (SDK callers, tests). */
 export const plainUi: PerfUi = {
-	color: { dim: same, green: same, red: same, yellow: same },
+	color: { dim: plainColors.same, green: plainColors.same, red: plainColors.same, yellow: plainColors.same },
 	interactive: false,
 	rich: false,
 	confirm: async () => false,

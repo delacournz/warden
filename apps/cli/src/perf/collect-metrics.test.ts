@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sampleSeries } from "@delacour/warden-perf/metrics/series";
-import { COLLECT_METRICS_INTERVAL_MS, createMetricsTicker } from "@delacour/warden-sdk/ops/perf/collect-metrics";
+import { COLLECT_METRICS_INTERVAL_MS, metricsTickers } from "@delacour/warden-sdk/ops/perf/collect-metrics";
 import { type TestContext, testContext } from "../testing";
 
 let ctx: TestContext | undefined;
@@ -37,7 +37,7 @@ const target = { udid: "emulator-5554", platform: "android", app: "nz.co.x" } as
 describe("createMetricsTicker", () => {
 	test("each tick appends a sample row timed from the session start", async () => {
 		const { c, clock } = setup({ running: () => true });
-		const made = await createMetricsTicker(c, { target, sessionDir: dir ?? "", startMs: 49_000 });
+		const made = await metricsTickers.createMetricsTicker(c, { target, sessionDir: dir ?? "", startMs: 49_000 });
 		if (!made.success) throw new Error("create");
 		await made.data.tick();
 		clock.now += COLLECT_METRICS_INTERVAL_MS;
@@ -50,7 +50,7 @@ describe("createMetricsTicker", () => {
 	test("the app being down is a gap: undefined, nothing written, no throw", async () => {
 		let up = true;
 		const { c } = setup({ running: () => up });
-		const made = await createMetricsTicker(c, { target, sessionDir: dir ?? "", startMs: 0 });
+		const made = await metricsTickers.createMetricsTicker(c, { target, sessionDir: dir ?? "", startMs: 0 });
 		if (!made.success) throw new Error("create");
 		await made.data.tick();
 		up = false;
@@ -61,7 +61,12 @@ describe("createMetricsTicker", () => {
 
 	test("a supplied frame-rate source adds fps to the row", async () => {
 		const { c } = setup({ running: () => true });
-		const made = await createMetricsTicker(c, { target, sessionDir: dir ?? "", startMs: 0, fps: async () => 58.5 });
+		const made = await metricsTickers.createMetricsTicker(c, {
+			target,
+			sessionDir: dir ?? "",
+			startMs: 0,
+			fps: async () => 58.5,
+		});
 		if (!made.success) throw new Error("create");
 		expect(await made.data.tick()).toMatchObject({ fps: 58.5 });
 	});

@@ -50,88 +50,6 @@ export type JsDeps = {
 	sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 };
 
-/** Read a response body, aborting the moment it passes `maxBytes`. */
-async function readCapped(res: Response, maxBytes: number): Promise<JsResult<string>> {
-	const tooBig = () => jsResultFactory.err("too_large", `source map is over ${maxBytes / 1024 / 1024}MiB`);
-	const declared = Number(res.headers.get("content-length"));
-	if (Number.isFinite(declared) && declared > maxBytes) return tooBig();
-	const reader = res.body?.getReader();
-	if (reader === undefined) return jsResultFactory.ok("");
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		size += value.byteLength;
-		if (size > maxBytes) {
-			await reader.cancel();
-			return tooBig();
-		}
-		chunks.push(value);
-	}
-	return jsResultFactory.ok(Buffer.concat(chunks).toString("utf8"));
-}
-
-/** `fetch` with no redirects (a redirect could leave Metro's host), a timeout and a byte cap. */
-export const fetchMapCapped: MapFetch = async (url, maxBytes) => {
-	try {
-		const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(MAP_FETCH_TIMEOUT_MS) });
-		if (!res.ok) return jsResultFactory.err("cdp_failed", `${url} answered ${res.status}`);
-		return await readCapped(res, maxBytes);
-	} catch (error) {
-		return jsResultFactory.err("cdp_failed", `${url}: ${error instanceof Error ? error.message : String(error)}`);
-	}
-};
-
-const abortableSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
-	new Promise((resolve) => {
-		if (signal?.aborted) return resolve();
-		const timer = setTimeout(done, ms);
-		function done() {
-			clearTimeout(timer);
-			signal?.removeEventListener("abort", done);
-			resolve();
-		}
-		signal?.addEventListener("abort", done, { once: true });
-	});
-
-export const defaultJsDeps: JsDeps = {
-	open: async (o) => {
-		const { devtoolsConnector } = await import("@delacour/warden-devtools/session");
-		return devtoolsConnector.connect({
-			metroUrl: o.metroUrl,
-			device: {
-				...(o.appId === undefined ? {} : { appId: o.appId }),
-				...(o.deviceName === undefined ? {} : { deviceName: o.deviceName }),
-			},
-			fetch,
-			WebSocket,
-			timeoutMs: o.timeoutMs,
-		});
-	},
-	fetchMap: fetchMapCapped,
-	sleep: abortableSleep,
-};
-
-/** A JS profiling failure as a `warden perf` error: a runtime without the method is `engine_unavailable` (exit 3). */
-export function jsUiError(error: JsError): WardenError {
-	const extra = { ...(error.hint === undefined ? {} : { hint: error.hint }), details: { js: error.code } };
-	if (error.code === "unsupported")
-		return opErrors.opError("engine_unavailable", `unsupported: ${error.message}`, extra);
-	return opErrors.opError("failed", error.message, extra);
-}
-
-/** A devtools failure (no Metro target, socket) as a `warden perf` error: no dev client is exit 3. */
-export function devtoolsPerfError(error: { code: string; message: string }): WardenError {
-	const unreachable = error.code === "devtools_unavailable" || error.code === "device_mismatch";
-	return unreachable
-		? opErrors.opError("devtools_unavailable", error.message, {
-				hint: "start the dev client with `warden ui open <bundle> --metro <url>`",
-				details: { devtools: error.code },
-			})
-		: opErrors.opError("failed", `${error.code}: ${error.message}`, { details: { devtools: error.code } });
-}
-
 /** The running capture: hold it between `startJsProfile` and `stopJsProfile`. */
 export type JsCapture = {
 	cdp: JsCdp;
@@ -142,26 +60,6 @@ export type JsCapture = {
 	/** `__DEV__` of the app, when it could be read */
 	dev: boolean | undefined;
 };
-
-/**
- * Begin a Hermes CPU profile: collect `Debugger.scriptParsed` (the source-map locations), `Profiler.start` at
- * `samplingIntervalUs`, and note the device clock against the host clock. The profiler lives only as long as
- * `cdp`'s socket: whoever calls this keeps the session open until `stopJsProfile`.
- */
-export async function startJsProfile(
-	cdp: JsCdp,
-	options: { samplingIntervalUs?: number; now?: () => number } = {}
-): Promise<JsResult<JsCapture>> {
-	const scripts = await jsSymbolicator.collectScripts(cdp);
-	const dev = await jsCdpReader.readDevFlag(cdp);
-	const hostWallMs = (options.now ?? Date.now)();
-	const started = await cpuProfileCapture.startProfile(cdp, { samplingIntervalUs: options.samplingIntervalUs });
-	if (!started.success) {
-		scripts.dispose();
-		return started;
-	}
-	return jsResultFactory.ok({ cdp, scripts, start: started.data, hostWallMs, dev });
-}
 
 export type JsOutputs = {
 	/** `<session>/js` */
@@ -180,44 +78,6 @@ export type JsProfileResult = {
 	section: ReportSection;
 };
 
-function frames(profile: CpuProfile) {
-	return profile.nodes.map((node) => node.callFrame);
-}
-
-/**
- * End the profile: `Profiler.stop`, write `js/cpu.cpuprofile` (valid Chrome `.cpuprofile`), map every frame
- * through the app's source maps, and write `js/hotspots.json`.
- */
-export async function stopJsProfile(capture: JsCapture, out: JsOutputs): Promise<JsResult<JsProfileResult>> {
-	const stopped = await cpuProfileCapture.stopProfile(capture.cdp);
-	capture.scripts.dispose();
-	if (!stopped.success) return stopped;
-	const profile = stopped.data;
-	mkdirSync(out.dir, { recursive: true });
-	const cpuPath = join(out.dir, CPU_FILE);
-	writeFileSync(cpuPath, JSON.stringify(profile));
-	const maps = await jsSymbolicator.loadSourceMaps(frames(profile), capture.scripts.scripts, {
-		metroUrl: out.metroUrl,
-		fetchMap: out.fetchMap,
-		...(out.projectRoot === undefined ? {} : { projectRoot: out.projectRoot }),
-	});
-	const hotspots = hotspotsAnalyzer.analyzeProfile(profile, maps.resolve, {
-		samplingIntervalUs: capture.start.samplingIntervalUs,
-		...(capture.dev === undefined ? {} : { dev: capture.dev }),
-		warnings: maps.warnings,
-		anchor: { hostWallMs: capture.hostWallMs, deviceWallMs: capture.start.deviceWallMs },
-	});
-	const hotspotsPath = join(out.dir, HOTSPOTS_FILE);
-	writeFileSync(hotspotsPath, `${JSON.stringify(hotspots, null, 2)}\n`);
-	return jsResultFactory.ok({
-		cpuPath,
-		hotspotsPath,
-		hotspots,
-		findings: hotspotsAnalyzer.hotspotFindings(hotspots),
-		section: hotspotsAnalyzer.hotspotsSection(hotspots),
-	});
-}
-
 export type RunJsCaptureOptions = JsOutputs & {
 	durationMs: number;
 	samplingIntervalUs?: number;
@@ -229,21 +89,166 @@ export type RunJsCaptureOptions = JsOutputs & {
 	onStarted?: (capture: JsCapture) => void;
 };
 
-/**
- * Start, wait `durationMs` (or until `signal` aborts), stop and write. This is what the session collector calls:
- * Hermes profiles only while the inspector socket that started it stays open, so a CLI that exits between
- * `perf start` and `perf stop` cannot hold it; the long-running `perf-collect` process holds `cdp` for the whole
- * capture and `stop` signals it.
- */
-export async function runJsCapture(cdp: JsCdp, options: RunJsCaptureOptions): Promise<JsResult<JsProfileResult>> {
-	const started = await startJsProfile(cdp, {
-		samplingIntervalUs: options.samplingIntervalUs ?? DEFAULT_SAMPLING_INTERVAL_US,
-		...(options.now === undefined ? {} : { now: options.now }),
-	});
-	if (!started.success) return started;
-	options.onStarted?.(started.data);
-	await options.sleep(options.durationMs, options.signal);
-	return stopJsProfile(started.data, options);
+export { MAX_SOURCE_MAP_BYTES };
+
+/** JsCaptureService: js capture. */
+export class JsCaptureService {
+	/** Read a response body, aborting the moment it passes `maxBytes`. */
+	private async readCapped(res: Response, maxBytes: number): Promise<JsResult<string>> {
+		const tooBig = () => jsResultFactory.err("too_large", `source map is over ${maxBytes / 1024 / 1024}MiB`);
+		const declared = Number(res.headers.get("content-length"));
+		if (Number.isFinite(declared) && declared > maxBytes) return tooBig();
+		const reader = res.body?.getReader();
+		if (reader === undefined) return jsResultFactory.ok("");
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			size += value.byteLength;
+			if (size > maxBytes) {
+				await reader.cancel();
+				return tooBig();
+			}
+			chunks.push(value);
+		}
+		return jsResultFactory.ok(Buffer.concat(chunks).toString("utf8"));
+	}
+
+	/** `fetch` with no redirects (a redirect could leave Metro's host), a timeout and a byte cap. */
+	readonly fetchMapCapped: MapFetch = async (url, maxBytes) => {
+		try {
+			const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(MAP_FETCH_TIMEOUT_MS) });
+			if (!res.ok) return jsResultFactory.err("cdp_failed", `${url} answered ${res.status}`);
+			return await this.readCapped(res, maxBytes);
+		} catch (error) {
+			return jsResultFactory.err("cdp_failed", `${url}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	};
+
+	readonly abortableSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+		new Promise((resolve) => {
+			if (signal?.aborted) return resolve();
+			const timer = setTimeout(done, ms);
+			function done() {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", done);
+				resolve();
+			}
+			signal?.addEventListener("abort", done, { once: true });
+		});
+
+	/** A JS profiling failure as a `warden perf` error: a runtime without the method is `engine_unavailable` (exit 3). */
+	jsUiError(error: JsError): WardenError {
+		const extra = { ...(error.hint === undefined ? {} : { hint: error.hint }), details: { js: error.code } };
+		if (error.code === "unsupported")
+			return opErrors.opError("engine_unavailable", `unsupported: ${error.message}`, extra);
+		return opErrors.opError("failed", error.message, extra);
+	}
+
+	/** A devtools failure (no Metro target, socket) as a `warden perf` error: no dev client is exit 3. */
+	devtoolsPerfError(error: { code: string; message: string }): WardenError {
+		const unreachable = error.code === "devtools_unavailable" || error.code === "device_mismatch";
+		return unreachable
+			? opErrors.opError("devtools_unavailable", error.message, {
+					hint: "start the dev client with `warden ui open <bundle> --metro <url>`",
+					details: { devtools: error.code },
+				})
+			: opErrors.opError("failed", `${error.code}: ${error.message}`, { details: { devtools: error.code } });
+	}
+
+	/**
+	 * Begin a Hermes CPU profile: collect `Debugger.scriptParsed` (the source-map locations), `Profiler.start` at
+	 * `samplingIntervalUs`, and note the device clock against the host clock. The profiler lives only as long as
+	 * `cdp`'s socket: whoever calls this keeps the session open until `stopJsProfile`.
+	 */
+	async startJsProfile(
+		cdp: JsCdp,
+		options: { samplingIntervalUs?: number; now?: () => number } = {}
+	): Promise<JsResult<JsCapture>> {
+		const scripts = await jsSymbolicator.collectScripts(cdp);
+		const dev = await jsCdpReader.readDevFlag(cdp);
+		const hostWallMs = (options.now ?? Date.now)();
+		const started = await cpuProfileCapture.startProfile(cdp, { samplingIntervalUs: options.samplingIntervalUs });
+		if (!started.success) {
+			scripts.dispose();
+			return started;
+		}
+		return jsResultFactory.ok({ cdp, scripts, start: started.data, hostWallMs, dev });
+	}
+
+	private frames(profile: CpuProfile) {
+		return profile.nodes.map((node) => node.callFrame);
+	}
+
+	/**
+	 * End the profile: `Profiler.stop`, write `js/cpu.cpuprofile` (valid Chrome `.cpuprofile`), map every frame
+	 * through the app's source maps, and write `js/hotspots.json`.
+	 */
+	async stopJsProfile(capture: JsCapture, out: JsOutputs): Promise<JsResult<JsProfileResult>> {
+		const stopped = await cpuProfileCapture.stopProfile(capture.cdp);
+		capture.scripts.dispose();
+		if (!stopped.success) return stopped;
+		const profile = stopped.data;
+		mkdirSync(out.dir, { recursive: true });
+		const cpuPath = join(out.dir, CPU_FILE);
+		writeFileSync(cpuPath, JSON.stringify(profile));
+		const maps = await jsSymbolicator.loadSourceMaps(this.frames(profile), capture.scripts.scripts, {
+			metroUrl: out.metroUrl,
+			fetchMap: out.fetchMap,
+			...(out.projectRoot === undefined ? {} : { projectRoot: out.projectRoot }),
+		});
+		const hotspots = hotspotsAnalyzer.analyzeProfile(profile, maps.resolve, {
+			samplingIntervalUs: capture.start.samplingIntervalUs,
+			...(capture.dev === undefined ? {} : { dev: capture.dev }),
+			warnings: maps.warnings,
+			anchor: { hostWallMs: capture.hostWallMs, deviceWallMs: capture.start.deviceWallMs },
+		});
+		const hotspotsPath = join(out.dir, HOTSPOTS_FILE);
+		writeFileSync(hotspotsPath, `${JSON.stringify(hotspots, null, 2)}\n`);
+		return jsResultFactory.ok({
+			cpuPath,
+			hotspotsPath,
+			hotspots,
+			findings: hotspotsAnalyzer.hotspotFindings(hotspots),
+			section: hotspotsAnalyzer.hotspotsSection(hotspots),
+		});
+	}
+
+	/**
+	 * Start, wait `durationMs` (or until `signal` aborts), stop and write. This is what the session collector calls:
+	 * Hermes profiles only while the inspector socket that started it stays open, so a CLI that exits between
+	 * `perf start` and `perf stop` cannot hold it; the long-running `perf-collect` process holds `cdp` for the whole
+	 * capture and `stop` signals it.
+	 */
+	async runJsCapture(cdp: JsCdp, options: RunJsCaptureOptions): Promise<JsResult<JsProfileResult>> {
+		const started = await this.startJsProfile(cdp, {
+			samplingIntervalUs: options.samplingIntervalUs ?? DEFAULT_SAMPLING_INTERVAL_US,
+			...(options.now === undefined ? {} : { now: options.now }),
+		});
+		if (!started.success) return started;
+		options.onStarted?.(started.data);
+		await options.sleep(options.durationMs, options.signal);
+		return this.stopJsProfile(started.data, options);
+	}
 }
 
-export { MAX_SOURCE_MAP_BYTES };
+export const jsCaptureService = new JsCaptureService();
+
+export const defaultJsDeps: JsDeps = {
+	open: async (o) => {
+		const { devtoolsConnector } = await import("@delacour/warden-devtools/session");
+		return devtoolsConnector.connect({
+			metroUrl: o.metroUrl,
+			device: {
+				...(o.appId === undefined ? {} : { appId: o.appId }),
+				...(o.deviceName === undefined ? {} : { deviceName: o.deviceName }),
+			},
+			fetch,
+			WebSocket,
+			timeoutMs: o.timeoutMs,
+		});
+	},
+	fetchMap: jsCaptureService.fetchMapCapped,
+	sleep: jsCaptureService.abortableSleep,
+};

@@ -1,6 +1,6 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { type MemoryIo, memoryWork, realMemoryIo } from "@delacour/warden-sdk/ops/perf/memory";
-import { artifactDirFor } from "@delacour/warden-sdk/ops/perf/metrics-out";
+import { type MemoryIo, perfMemoryOps, realMemoryIo } from "@delacour/warden-sdk/ops/perf/memory";
+import { metricsOutPaths } from "@delacour/warden-sdk/ops/perf/metrics-out";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
 import { withPerfOptions } from "./options";
@@ -23,8 +23,8 @@ export function perfMemory(
 	return runPerf(ctx, deps, "memory", snapshot ? "mutate" : "observe", opts, async (target) => {
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
-		const out = artifactDirFor(ctx, deps.session, target.udid);
-		return memoryWork(ctx, target, app.data.id, snapshot, out.dir, io);
+		const out = metricsOutPaths.artifactDirFor(ctx, deps.session, target.udid);
+		return perfMemoryOps.memoryWork(ctx, target, app.data.id, snapshot, out.dir, io);
 	});
 }
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LogStream } from "@delacour/warden-perf/logs/pid-follow";
-import { defaultLogDeps, type LogDeps, runLogCapture } from "@delacour/warden-sdk/ops/perf/logs";
+import { defaultLogDeps, type LogDeps, perfLogsOps } from "@delacour/warden-sdk/ops/perf/logs";
 import { createPerfCommand } from "../commands/perf";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { perfLogs, registerLogs } from "./logs";
@@ -191,7 +191,7 @@ describe("runLogCapture", () => {
 		const { c } = setup("android", androidHandlers());
 		const { deps, controller } = fakeLogDeps(ANDROID.split("\n").filter(Boolean));
 		const out = join(c.cwd, "logs", "device.log");
-		const done = await runLogCapture(
+		const done = await perfLogsOps.runLogCapture(
 			c,
 			{ udid: EMU, platform: "android" },
 			{ id: "com.acme.shop" },

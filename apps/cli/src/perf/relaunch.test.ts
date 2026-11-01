@@ -2,13 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import {
-	launchApp,
-	type RelaunchIo,
-	resetAppData,
-	resolveLauncher,
-	terminateApp,
-} from "@delacour/warden-sdk/ops/perf/relaunch";
+import { appRelauncher, type RelaunchIo } from "@delacour/warden-sdk/ops/perf/relaunch";
 import { type TestContext, testContext } from "../testing";
 
 let ctx: TestContext | undefined;
@@ -45,18 +39,18 @@ function io(): RelaunchIo & { removed: string[] } {
 describe("terminateApp", () => {
 	test("android force-stops", async () => {
 		const { c, calls } = setup([["am force-stop", {}]]);
-		expect((await terminateApp(c, droid, "com.acme.shop")).success).toBe(true);
+		expect((await appRelauncher.terminateApp(c, droid, "com.acme.shop")).success).toBe(true);
 		expect(calls[0]).toContain("-s emulator-5554 shell am force-stop com.acme.shop");
 	});
 
 	test("ios: an app that was not running is fine", async () => {
 		const { c } = setup([["simctl terminate", { exitCode: 3, stderr: "found nothing to terminate" }]]);
-		expect((await terminateApp(c, sim, "com.acme.shop")).success).toBe(true);
+		expect((await appRelauncher.terminateApp(c, sim, "com.acme.shop")).success).toBe(true);
 	});
 
 	test("ios: any other failure is reported", async () => {
 		const { c } = setup([["simctl terminate", { exitCode: 1, stderr: "Invalid device" }]]);
-		const r = await terminateApp(c, sim, "com.acme.shop");
+		const r = await appRelauncher.terminateApp(c, sim, "com.acme.shop");
 		expect(r.success).toBe(false);
 		if (!r.success) expect(r.error.message).toContain("Invalid device");
 	});
@@ -65,7 +59,7 @@ describe("terminateApp", () => {
 describe("resolveLauncher", () => {
 	test("component from the last line", async () => {
 		const { c } = setup([["resolve-activity", { stdout: fx("resolve-activity.txt") }]]);
-		expect(await resolveLauncher(c, droid, "com.acme.shop")).toEqual({
+		expect(await appRelauncher.resolveLauncher(c, droid, "com.acme.shop")).toEqual({
 			success: true,
 			data: "com.acme.shop/.MainActivity",
 		});
@@ -73,7 +67,7 @@ describe("resolveLauncher", () => {
 
 	test("no launcher: app_not_found", async () => {
 		const { c } = setup([["resolve-activity", { stdout: fx("resolve-activity-none.txt") }]]);
-		const r = await resolveLauncher(c, droid, "com.acme.shop");
+		const r = await appRelauncher.resolveLauncher(c, droid, "com.acme.shop");
 		expect(r.success).toBe(false);
 		if (!r.success) expect(r.error.code).toBe("app_not_found");
 	});
@@ -85,7 +79,7 @@ describe("launchApp", () => {
 			["resolve-activity", { stdout: fx("resolve-activity.txt") }],
 			["am start", { stdout: fx("am-start-cold.txt") }],
 		]);
-		const r = await launchApp(c, droid, "com.acme.shop", { cold: true }, io());
+		const r = await appRelauncher.launchApp(c, droid, "com.acme.shop", { cold: true }, io());
 		expect(r).toMatchObject({
 			kind: "launched",
 			wallMs: 120,
@@ -97,20 +91,26 @@ describe("launchApp", () => {
 
 	test("android: a given component skips the resolve", async () => {
 		const { c, calls } = setup([["am start", { stdout: fx("am-start-warm.txt") }]]);
-		await launchApp(c, droid, "com.acme.shop", { cold: false, component: "com.acme.shop/.MainActivity" }, io());
+		await appRelauncher.launchApp(
+			c,
+			droid,
+			"com.acme.shop",
+			{ cold: false, component: "com.acme.shop/.MainActivity" },
+			io()
+		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]).not.toContain("-S");
 	});
 
 	test("android: an activity that does not exist fails", async () => {
 		const { c } = setup([["am start", { stdout: fx("am-start-error.txt") }]]);
-		const r = await launchApp(c, droid, "com.acme.shop", { cold: true, component: "x/.Y" }, io());
+		const r = await appRelauncher.launchApp(c, droid, "com.acme.shop", { cold: true, component: "x/.Y" }, io());
 		expect(r).toMatchObject({ kind: "failed", reason: "launch_failed" });
 	});
 
 	test("android: no launcher activity", async () => {
 		const { c } = setup([["resolve-activity", { stdout: fx("resolve-activity-none.txt") }]]);
-		expect(await launchApp(c, droid, "com.acme.shop", { cold: true }, io())).toMatchObject({
+		expect(await appRelauncher.launchApp(c, droid, "com.acme.shop", { cold: true }, io())).toMatchObject({
 			kind: "failed",
 			reason: "no_launcher",
 		});
@@ -118,14 +118,14 @@ describe("launchApp", () => {
 
 	test("ios cold: --terminate-running-process, pid parsed", async () => {
 		const { c, calls } = setup([["simctl launch", { stdout: "com.acme.shop: 4242\n" }]]);
-		const r = await launchApp(c, sim, "com.acme.shop", { cold: true }, io());
+		const r = await appRelauncher.launchApp(c, sim, "com.acme.shop", { cold: true }, io());
 		expect(r).toEqual({ kind: "launched", wallMs: 120, pid: 4242 });
 		expect(calls[0]).toBe("xcrun simctl launch --terminate-running-process U1 com.acme.shop");
 	});
 
 	test("ios: launch failure", async () => {
 		const { c } = setup([["simctl launch", { exitCode: 1, stderr: "The request was denied" }]]);
-		const r = await launchApp(c, sim, "com.acme.shop", { cold: false }, io());
+		const r = await appRelauncher.launchApp(c, sim, "com.acme.shop", { cold: false }, io());
 		expect(r).toMatchObject({ kind: "failed", reason: "launch_failed" });
 	});
 });
@@ -133,13 +133,13 @@ describe("launchApp", () => {
 describe("resetAppData", () => {
 	test("android: pm clear", async () => {
 		const { c, calls } = setup([["pm clear", { stdout: "Success\n" }]]);
-		expect((await resetAppData(c, droid, "com.acme.shop", io())).success).toBe(true);
+		expect((await appRelauncher.resetAppData(c, droid, "com.acme.shop", io())).success).toBe(true);
 		expect(calls[0]).toContain("shell pm clear com.acme.shop");
 	});
 
 	test("android: pm clear failure", async () => {
 		const { c } = setup([["pm clear", { stdout: "Failed\n" }]]);
-		expect((await resetAppData(c, droid, "com.acme.shop", io())).success).toBe(false);
+		expect((await appRelauncher.resetAppData(c, droid, "com.acme.shop", io())).success).toBe(false);
 	});
 
 	const bundle: Rule[] = [
@@ -150,7 +150,7 @@ describe("resetAppData", () => {
 	test("ios: copies the .app aside BEFORE uninstalling, reinstalls from the copy, cleans up", async () => {
 		const { c, calls } = setup([...bundle, ["cp -R", {}], ["simctl uninstall", {}], ["simctl install", {}]]);
 		const fake = io();
-		expect((await resetAppData(c, sim, "com.acme.shop", fake)).success).toBe(true);
+		expect((await appRelauncher.resetAppData(c, sim, "com.acme.shop", fake)).success).toBe(true);
 		const order = calls.map((l) => l.split(" ").slice(0, 3).join(" "));
 		expect(order.indexOf("cp -R /Dev/U1/Bundle/Shop.app")).toBeGreaterThan(-1);
 		expect(order.indexOf("cp -R /Dev/U1/Bundle/Shop.app")).toBeLessThan(order.indexOf("xcrun simctl uninstall"));
@@ -160,7 +160,7 @@ describe("resetAppData", () => {
 
 	test("ios: copy failure never uninstalls", async () => {
 		const { c, calls } = setup([...bundle, ["cp -R", { exitCode: 1, stderr: "no space" }]]);
-		const r = await resetAppData(c, sim, "com.acme.shop", io());
+		const r = await appRelauncher.resetAppData(c, sim, "com.acme.shop", io());
 		expect(r.success).toBe(false);
 		expect(calls.some((l) => l.includes("uninstall"))).toBe(false);
 	});
@@ -173,7 +173,7 @@ describe("resetAppData", () => {
 			["simctl install", { exitCode: 1, stderr: "bad" }],
 		]);
 		const fake = io();
-		const r = await resetAppData(c, sim, "com.acme.shop", fake);
+		const r = await appRelauncher.resetAppData(c, sim, "com.acme.shop", fake);
 		expect(r.success).toBe(false);
 		if (!r.success) expect(r.error.hint).toContain("/scratch/Shop.app");
 		expect(fake.removed).toEqual([]);
@@ -181,7 +181,7 @@ describe("resetAppData", () => {
 
 	test("ios: not installed", async () => {
 		const { c } = setup([["simctl get_app_container", { exitCode: 2 }]]);
-		const r = await resetAppData(c, sim, "com.acme.shop", io());
+		const r = await appRelauncher.resetAppData(c, sim, "com.acme.shop", io());
 		expect(r.success).toBe(false);
 		if (!r.success) expect(r.error.code).toBe("app_not_found");
 	});

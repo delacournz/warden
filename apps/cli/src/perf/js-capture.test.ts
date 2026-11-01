@@ -4,16 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
 import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
-import {
-	CPU_FILE,
-	devtoolsPerfError,
-	fetchMapCapped,
-	HOTSPOTS_FILE,
-	jsUiError,
-	runJsCapture,
-	startJsProfile,
-	stopJsProfile,
-} from "@delacour/warden-sdk/ops/perf/js-capture";
+import { CPU_FILE, HOTSPOTS_FILE, jsCaptureService } from "@delacour/warden-sdk/ops/perf/js-capture";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -59,13 +50,13 @@ function profilerCdp() {
 describe("startJsProfile / stopJsProfile", () => {
 	test("writes a valid cpuprofile and source-mapped hotspots, with the alignment anchor", async () => {
 		const cdp = profilerCdp();
-		const started = await startJsProfile(cdp, { samplingIntervalUs: 100, now: () => 5_000 });
+		const started = await jsCaptureService.startJsProfile(cdp, { samplingIntervalUs: 100, now: () => 5_000 });
 		if (!started.success) throw new Error("start");
 		expect(started.data.hostWallMs).toBe(5_000);
 		expect(started.data.start.deviceWallMs).toBe(1_700_000_000_000);
 		expect(started.data.dev).toBe(true);
 		const dir = tmp();
-		const stopped = await stopJsProfile(started.data, {
+		const stopped = await jsCaptureService.stopJsProfile(started.data, {
 			dir,
 			metroUrl: "http://127.0.0.1:8081",
 			projectRoot: "/app",
@@ -87,17 +78,17 @@ describe("startJsProfile / stopJsProfile", () => {
 
 	test("Profiler.start unsupported: typed error, no files", async () => {
 		const cdp = jsFixtures.fakeCdp({ "Profiler.start": { __error: "'Profiler.start' wasn't found" } });
-		const started = await startJsProfile(cdp);
+		const started = await jsCaptureService.startJsProfile(cdp);
 		expect(started).toMatchObject({ success: false, error: { code: "unsupported" } });
 		expect(cdp.sent.at(-1)?.method).toBe("Debugger.disable");
 	});
 
 	test("a failed Profiler.stop writes nothing", async () => {
 		const cdp = jsFixtures.fakeCdp({ "Profiler.stop": { __error: "socket closed" } });
-		const started = await startJsProfile(cdp);
+		const started = await jsCaptureService.startJsProfile(cdp);
 		if (!started.success) throw new Error("start");
 		const dir = tmp();
-		const stopped = await stopJsProfile(started.data, {
+		const stopped = await jsCaptureService.stopJsProfile(started.data, {
 			dir,
 			metroUrl: undefined,
 			fetchMap: async () => jsResultFactory.ok(""),
@@ -107,9 +98,9 @@ describe("startJsProfile / stopJsProfile", () => {
 	});
 
 	test("with no Metro the profile is written and hotspots say frames are unmapped", async () => {
-		const started = await startJsProfile(profilerCdp());
+		const started = await jsCaptureService.startJsProfile(profilerCdp());
 		if (!started.success) throw new Error("start");
-		const stopped = await stopJsProfile(started.data, {
+		const stopped = await jsCaptureService.stopJsProfile(started.data, {
 			dir: tmp(),
 			metroUrl: undefined,
 			fetchMap: async () => jsResultFactory.ok(""),
@@ -123,7 +114,7 @@ describe("runJsCapture", () => {
 		const cdp = profilerCdp();
 		const slept: number[] = [];
 		let anchor: number | undefined;
-		const result = await runJsCapture(cdp, {
+		const result = await jsCaptureService.runJsCapture(cdp, {
 			dir: tmp(),
 			metroUrl: "http://127.0.0.1:8081",
 			fetchMap: async () => jsResultFactory.ok(map),
@@ -151,7 +142,7 @@ describe("runJsCapture", () => {
 	test("an aborted signal still stops and writes what was captured", async () => {
 		const ctl = new AbortController();
 		const dir = tmp();
-		const result = await runJsCapture(profilerCdp(), {
+		const result = await jsCaptureService.runJsCapture(profilerCdp(), {
 			dir,
 			metroUrl: undefined,
 			fetchMap: async () => jsResultFactory.ok(""),
@@ -172,8 +163,11 @@ describe("fetchMapCapped", () => {
 		const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x".repeat(100)) });
 		try {
 			const url = `http://127.0.0.1:${server.port}/m.map`;
-			expect(await fetchMapCapped(url, 1000)).toEqual({ success: true, data: "x".repeat(100) });
-			expect(await fetchMapCapped(url, 10)).toMatchObject({ success: false, error: { code: "too_large" } });
+			expect(await jsCaptureService.fetchMapCapped(url, 1000)).toEqual({ success: true, data: "x".repeat(100) });
+			expect(await jsCaptureService.fetchMapCapped(url, 10)).toMatchObject({
+				success: false,
+				error: { code: "too_large" },
+			});
 		} finally {
 			await server.stop(true);
 		}
@@ -194,7 +188,7 @@ describe("fetchMapCapped", () => {
 				),
 		});
 		try {
-			const got = await fetchMapCapped(`http://127.0.0.1:${server.port}/`, 250);
+			const got = await jsCaptureService.fetchMapCapped(`http://127.0.0.1:${server.port}/`, 250);
 			expect(got).toMatchObject({ success: false, error: { code: "too_large" } });
 		} finally {
 			await server.stop(true);
@@ -208,7 +202,7 @@ describe("fetchMapCapped", () => {
 			fetch: () => new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } }),
 		});
 		try {
-			expect((await fetchMapCapped(`http://127.0.0.1:${server.port}/`, 1000)).success).toBe(false);
+			expect((await jsCaptureService.fetchMapCapped(`http://127.0.0.1:${server.port}/`, 1000)).success).toBe(false);
 		} finally {
 			await server.stop(true);
 		}
@@ -217,7 +211,7 @@ describe("fetchMapCapped", () => {
 	test("a non-200 answer is a failure", async () => {
 		const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no", { status: 404 }) });
 		try {
-			expect((await fetchMapCapped(`http://127.0.0.1:${server.port}/`, 1000)).success).toBe(false);
+			expect((await jsCaptureService.fetchMapCapped(`http://127.0.0.1:${server.port}/`, 1000)).success).toBe(false);
 		} finally {
 			await server.stop(true);
 		}
@@ -226,16 +220,18 @@ describe("fetchMapCapped", () => {
 
 describe("error mapping", () => {
 	test("unsupported is engine_unavailable with the hint; others fail", () => {
-		expect(jsUiError({ code: "unsupported", message: "x", hint: "h" })).toMatchObject({
+		expect(jsCaptureService.jsUiError({ code: "unsupported", message: "x", hint: "h" })).toMatchObject({
 			code: "engine_unavailable",
 			hint: "h",
 			details: { js: "unsupported" },
 		});
-		expect(jsUiError({ code: "cdp_failed", message: "x" }).code).toBe("failed");
+		expect(jsCaptureService.jsUiError({ code: "cdp_failed", message: "x" }).code).toBe("failed");
 	});
 
 	test("no dev client is devtools_unavailable", () => {
-		expect(devtoolsPerfError({ code: "devtools_unavailable", message: "m" }).code).toBe("devtools_unavailable");
-		expect(devtoolsPerfError({ code: "cdp_timeout", message: "m" }).code).toBe("failed");
+		expect(jsCaptureService.devtoolsPerfError({ code: "devtools_unavailable", message: "m" }).code).toBe(
+			"devtools_unavailable"
+		);
+		expect(jsCaptureService.devtoolsPerfError({ code: "cdp_timeout", message: "m" }).code).toBe("failed");
 	});
 });

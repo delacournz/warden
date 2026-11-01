@@ -7,10 +7,10 @@ import { perfDuration } from "@delacour/warden-perf/metrics/duration";
 import { type NamedFrame, sessionQuery } from "@delacour/warden-perf/shared/query";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { defaultNativeProfilers, type NativeProfilers } from "@delacour/warden-sdk/ops/perf/native";
-import { sessionNativeDir } from "@delacour/warden-sdk/ops/perf/native-state";
-import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
-import { loadCpuCorrelation } from "@delacour/warden-sdk/ops/perf/react-capture";
-import { readCommitsFile } from "@delacour/warden-sdk/ops/perf/report-read";
+import { nativeStateFiles } from "@delacour/warden-sdk/ops/perf/native-state";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { reactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
+import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { reportError, reportOk, type UiError, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -113,7 +113,7 @@ export function hangLines(platform: "ios" | "android", report: unknown): string[
 	return (isRecord(root) ? arr(root.hangs) : []).flatMap((h) => (isRecord(h) ? [androidHangLine(h)] : []));
 }
 
-type CommitsFile = NonNullable<ReturnType<typeof readCommitsFile>>;
+type CommitsFile = NonNullable<ReturnType<typeof reportReader.readCommitsFile>>;
 type CommitsQuery = {
 	commits: CommitsFile["commits"];
 	opts: PerfQueryOptions;
@@ -188,7 +188,7 @@ const COMMIT_ANSWERS = new Map<string, (q: CommitsQuery) => Result<Answer, UiErr
 ]);
 
 function commitsAnswer(dir: string, opts: PerfQueryOptions, rest: readonly string[]): Result<Answer, UiError> {
-	const file = readCommitsFile(dir);
+	const file = reportReader.readCommitsFile(dir);
 	if (file === undefined) return missing("React profile", "record with --react: warden perf record --react");
 	const limit = opts.limit === undefined ? undefined : Number(opts.limit);
 	const by = opts.by ?? "component";
@@ -285,7 +285,7 @@ function cpuAnswer(dir: string, session: PerfSession, opts: PerfQueryOptions): R
 	const native = nativeReportOf(dir);
 	if (profile === undefined && native === undefined)
 		return missing("CPU profile", "record with --js or --native: warden perf record --js");
-	const label: NamedFrame = loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous;
+	const label: NamedFrame = reactCapture.loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous;
 	if (opts.tree === true || opts.window !== undefined) {
 		if (profile === undefined) return missing("JS CPU profile", "record with --js: warden perf record --js");
 		if (opts.tree === true) return cpuTreeAnswer(profile, label);
@@ -306,7 +306,7 @@ async function rerunHangs(
 	if (opts.window !== undefined && window === undefined)
 		return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${opts.window}"`) };
 	const profiler = await profilers.android();
-	const trace = join(sessionNativeDir(ctx, session.id), "android.perfetto-trace");
+	const trace = join(nativeStateFiles.sessionNativeDir(ctx, session.id), "android.perfetto-trace");
 	const analysis = await profiler.analyze(ctx, deps, {
 		target: {
 			udid: session.device.udid,
@@ -316,7 +316,7 @@ async function rerunHangs(
 			mode: "observe",
 		},
 		app: session.app?.id ?? "",
-		dir: sessionNativeDir(ctx, session.id),
+		dir: nativeStateFiles.sessionNativeDir(ctx, session.id),
 		trace,
 		...(window === undefined ? {} : { windowMs: { startMs: window.fromMs, endMs: window.toMs } }),
 		...(opts.yes === true ? { yes: true } : {}),
@@ -372,7 +372,11 @@ function callersStackAnswer(
 	const lines: string[] = [];
 	const result: Record<string, unknown> = { sub: "callers", fn };
 	if (profile !== undefined) {
-		const rows = sessionQuery.jsCallers(profile, loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous, fn);
+		const rows = sessionQuery.jsCallers(
+			profile,
+			reactCapture.loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous,
+			fn
+		);
 		result.js = rows;
 		lines.push(
 			`JS callers of ${fn}:`,
@@ -488,7 +492,7 @@ export async function perfQuery(
 		const picked = await pickSession(ctx, deps, opts, id);
 		if (!picked.success) return reportError(ctx, meta, picked.error);
 		const session = picked.data;
-		const dir = sessionDir(ctx, session.id);
+		const dir = perfPaths.sessionDir(ctx, session.id);
 		let answer: Result<Answer, UiError>;
 		if (topic === "commits") answer = commitsAnswer(dir, opts, rest);
 		else if (topic === "cpu") answer = cpuAnswer(dir, session, opts);

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { type TestContext, testContext } from "../testing";
 import { type PerfReportOptions, perfReport as report } from "./report";
 import { SEED_T0, samplesJsonl, seedSession } from "./session-fixture.testing";
@@ -40,19 +40,19 @@ const lastJson = (c: TestContext) => JSON.parse(c.stdout.at(-1) ?? "null");
 describe("warden perf report", () => {
 	test("by id: builds report.json + report.md on first read and returns the envelope", async () => {
 		const { c, deps } = setup();
-		expect(existsSync(join(sessionDir(c, OLD), "report.json"))).toBe(false);
+		expect(existsSync(join(perfPaths.sessionDir(c, OLD), "report.json"))).toBe(false);
 		expect(await perfReport(c, deps, OLD, { json: true })).toBe(0);
 		const doc = lastJson(c);
 		expect(doc).toMatchObject({
 			ok: true,
 			command: "perf report",
 			device: { udid: "emulator-5554", platform: "android", name: "pixel" },
-			result: { sessionId: OLD, dir: sessionDir(c, OLD), report: { version: 1, sessionId: OLD } },
+			result: { sessionId: OLD, dir: perfPaths.sessionDir(c, OLD), report: { version: 1, sessionId: OLD } },
 		});
 		expect(doc.result.report.metrics.cpuP95Pct).toBe(20);
 		expect(doc.durationMs).toBe(0);
-		expect(existsSync(join(sessionDir(c, OLD), "report.json"))).toBe(true);
-		expect(existsSync(join(sessionDir(c, OLD), "report.md"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(c, OLD), "report.json"))).toBe(true);
+		expect(existsSync(join(perfPaths.sessionDir(c, OLD), "report.md"))).toBe(true);
 	});
 
 	test("no id: the newest session for the resolved device, not the newest overall", async () => {
@@ -110,7 +110,7 @@ describe("warden perf report", () => {
 	test("a written report.json is served as is; --rebuild regenerates it from the files", async () => {
 		const { c, deps } = setup();
 		await perfReport(c, deps, OLD, { json: true });
-		const path = join(sessionDir(c, OLD), "report.json");
+		const path = join(perfPaths.sessionDir(c, OLD), "report.json");
 		const edited = { ...JSON.parse(readFileSync(path, "utf8")), summary: ["EDITED"] };
 		writeFileSync(path, JSON.stringify(edited));
 		await perfReport(c, deps, OLD, { json: true });
@@ -128,7 +128,7 @@ describe("warden perf report", () => {
 
 	test("a corrupt session.json is not a session: not found", async () => {
 		const { c, deps } = setup();
-		writeFileSync(join(sessionDir(c, OLD), "session.json"), "{");
+		writeFileSync(join(perfPaths.sessionDir(c, OLD), "session.json"), "{");
 		expect(await perfReport(c, deps, OLD, { json: true })).toBe(1);
 		expect(lastJson(c).error.code).toBe("session_not_found");
 	});

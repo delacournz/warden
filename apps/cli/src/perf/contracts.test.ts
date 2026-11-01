@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { perfFramesResultSchema, perfLsResultSchema, perfMarkResultSchema } from "@delacour/warden-sdk/contracts/perf";
 import { uiJsonSchema } from "@delacour/warden-sdk/contracts/ui";
-import { createSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { perfFrames } from "./frames";
 import { perfLs } from "./ls";
@@ -44,7 +44,7 @@ test("perf frames --json is a ui envelope whose result parses as the frames cont
 
 test("perf mark and perf ls --json results parse as their contracts", async () => {
 	const { c, deps } = setup();
-	const made = createSession(c, deps.session, {
+	const made = perfSessionStore.createSession(c, deps.session, {
 		device: { udid: emu.id, platform: "android", name: emu.name },
 		target: { udid: emu.id, ownedByCaller: false },
 		maxDurationMs: 60_000,

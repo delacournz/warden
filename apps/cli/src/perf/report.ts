@@ -1,8 +1,8 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { reportBuilder } from "@delacour/warden-perf/shared/report";
-import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
-import { readSessionReport, writeSessionReport } from "@delacour/warden-sdk/ops/perf/report-read";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
 import { reportError, reportOk, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
@@ -37,12 +37,12 @@ export async function perfReport(
 		}
 		const report =
 			opts.rebuild === true
-				? writeSessionReport(ctx, session)
-				: (readSessionReport(ctx, session.id) ?? writeSessionReport(ctx, session));
+				? reportReader.writeSessionReport(ctx, session)
+				: (reportReader.readSessionReport(ctx, session.id) ?? reportReader.writeSessionReport(ctx, session));
 		const text = reportBuilder.renderReportMarkdown(report, opts.full === true ? {} : { maxLines: MAX_TEXT_LINES });
 		return reportOk(ctx, meta, {
 			device: { udid: report.device.udid, platform: report.device.platform, name: report.device.name },
-			result: { sessionId: session.id, dir: sessionDir(ctx, session.id), report },
+			result: { sessionId: session.id, dir: perfPaths.sessionDir(ctx, session.id), report },
 			text,
 		});
 	} catch (error) {

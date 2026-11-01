@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { createSampler } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
+import { metricsSamplers } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import { type TestContext, testContext } from "../testing";
 
 let ctx: TestContext | undefined;
@@ -53,7 +53,7 @@ const iosScript =
 describe("iOS sampler", () => {
 	test("first reading is the baseline: rss, no cpu", async () => {
 		const { c } = setup(iosScript(() => fx("ps-timed-app.txt")));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 10_000);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 10_000);
 		if (!s.success) throw new Error(s.error.message);
 		const first = await s.data.sample();
 		expect(first).toEqual({ success: true, data: { wallMs: 10_000, atMs: 0, pid: 845, rssKb: 312400 } });
@@ -63,7 +63,7 @@ describe("iOS sampler", () => {
 		let cpu = "1:12.34";
 		let rss = 312400;
 		const { c, clock } = setup(iosScript(() => psWith(cpu, rss)));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 10_000);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 10_000);
 		if (!s.success) throw new Error(s.error.message);
 		await s.data.sample();
 		clock.now += 2000;
@@ -78,7 +78,7 @@ describe("iOS sampler", () => {
 
 	test("matches the app's own executable, not a same-named process elsewhere or an extension", async () => {
 		const { c } = setup(iosScript(() => fx("ps-timed-app.txt")));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		const r = await s.data.sample();
 		expect(r.success && r.data.pid).toBe(845);
@@ -91,7 +91,7 @@ describe("iOS sampler", () => {
 				() => "-"
 			)
 		);
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		const r = await s.data.sample();
 		expect(r).toMatchObject({ success: false, error: { code: "app_not_found" } });
@@ -99,13 +99,13 @@ describe("iOS sampler", () => {
 
 	test("app not installed: app_not_found from the bundle lookup", async () => {
 		const { c } = setup(() => ({ exitCode: 1, stderr: "No such file" }));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		expect(s).toMatchObject({ success: false, error: { code: "app_not_found" } });
 	});
 
 	test("only reads: get_app_container, plutil, launchctl list and pid-scoped host ps (the sim runtime has no ps)", async () => {
 		const { c, calls } = setup(iosScript(() => fx("ps-timed-app.txt")));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (s.success) await s.data.sample();
 		expect(
 			calls.every((cmd) =>
@@ -132,7 +132,7 @@ describe("iOS sampler", () => {
 			if (cmd.startsWith("ps -o")) return { stdout: rows };
 			return undefined;
 		});
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error(s.error.message);
 		const r = await s.data.sample();
 		expect(r.success && r.data).toMatchObject({ pid: 845, rssKb: 50000 });
@@ -140,7 +140,7 @@ describe("iOS sampler", () => {
 
 	test("pid resolved once across N samples; ps is pid-scoped", async () => {
 		const { c, clock, calls } = setup(iosScript(() => fx("ps-timed-app.txt")));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		for (let i = 0; i < 5; i++) {
 			clock.now += 1000;
@@ -160,7 +160,7 @@ describe("iOS sampler", () => {
 				() => pid
 			)
 		);
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		await s.data.sample();
 		pid = 999;
@@ -174,7 +174,7 @@ describe("iOS sampler", () => {
 		let started = "Sat Oct 24 09:14:55 2026";
 		const ps = () => psWith("0:05.00", 300000).replace("Sat Oct 24 09:14:55 2026", started);
 		const { c, clock, calls } = setup(iosScript(ps));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		await s.data.sample();
 		started = "Sat Oct 24 09:30:00 2026";
@@ -188,7 +188,7 @@ describe("iOS sampler", () => {
 	test("first sample has no cpuPct, second has the delta", async () => {
 		let cpu = "1:00.00";
 		const { c, clock } = setup(iosScript(() => psWith(cpu, 300000)));
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		const first = await s.data.sample();
 		expect(first.success && first.data.cpuPct).toBeUndefined();
@@ -207,7 +207,7 @@ describe("iOS sampler", () => {
 				() => (alive ? 845 : "-")
 			)
 		);
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		await s.data.sample();
 		alive = false;
@@ -222,7 +222,7 @@ describe("iOS sampler", () => {
 				() => pid
 			)
 		);
-		const s = await createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "U1", platform: "ios", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		await s.data.sample();
 		pid = 999;
@@ -243,7 +243,7 @@ const androidScript =
 describe("Android sampler", () => {
 	test("cpu from top, PSS/RSS from dumpsys meminfo", async () => {
 		const { c, calls } = setup(androidScript({}));
-		const s = await createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 10_000);
+		const s = await metricsSamplers.createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 10_000);
 		if (!s.success) throw new Error("create");
 		const r = await s.data.sample();
 		expect(r).toEqual({
@@ -256,7 +256,7 @@ describe("Android sampler", () => {
 
 	test("meminfo unavailable: RES from top, no pss", async () => {
 		const { c } = setup(androidScript({ meminfo: () => fx("dumpsys-meminfo-none.txt") }));
-		const s = await createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		const r = await s.data.sample();
 		expect(r).toMatchObject({ success: true, data: { rssKb: 256000, cpuPct: 25 } });
@@ -267,7 +267,7 @@ describe("Android sampler", () => {
 		let pid = "999\n";
 		const top = () => (pid.startsWith("4321") ? fx("adb-top.txt") : "");
 		const { c } = setup(androidScript({ pids: () => pid, top }));
-		const s = await createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		pid = "4321\n";
 		const r = await s.data.sample();
@@ -276,7 +276,7 @@ describe("Android sampler", () => {
 
 	test("not running: app_not_found", async () => {
 		const { c } = setup(androidScript({ pids: () => "", top: () => "" }));
-		const s = await createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 0);
+		const s = await metricsSamplers.createSampler(c, { udid: "emulator-5554", platform: "android", app: APP }, 0);
 		if (!s.success) throw new Error("create");
 		expect(await s.data.sample()).toMatchObject({ success: false, error: { code: "app_not_found" } });
 	});

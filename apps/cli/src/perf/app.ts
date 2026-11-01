@@ -1,4 +1,4 @@
-import { foregroundApp as detectForeground, type PerfAppRef, resolveAppWith } from "@delacour/warden-sdk/ops/perf/app";
+import { type PerfAppRef, perfApp } from "@delacour/warden-sdk/ops/perf/app";
 import type { Platform } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
@@ -10,7 +10,7 @@ type DeviceRef = { platform: Platform; id: string };
 
 /** The app in the foreground (iOS: the one running non-system app), or undefined. */
 export function foregroundApp(ctx: CommandContext, device: DeviceRef): Promise<string | undefined> {
-	return detectForeground(ctx, device);
+	return perfApp.foregroundApp(ctx, device);
 }
 
 /** The bundle id / package `warden.config.ts` (or the app config) names for this platform. */
@@ -29,5 +29,5 @@ export function resolveApp(
 	device: DeviceRef,
 	flag: string | undefined
 ): Promise<Result<PerfAppRef, UiError>> {
-	return resolveAppWith(ctx, device, flag, (platform) => configApp(ctx, platform));
+	return perfApp.resolveAppWith(ctx, device, flag, (platform) => configApp(ctx, platform));
 }

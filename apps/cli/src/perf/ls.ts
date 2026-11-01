@@ -1,6 +1,6 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { durationParser } from "@delacour/warden-config/duration";
-import { sessionRows } from "@delacour/warden-sdk/ops/perf/ls";
+import { perfLsOps } from "@delacour/warden-sdk/ops/perf/ls";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
 import { listPerfCandidates } from "./device";
@@ -26,7 +26,7 @@ export async function perfLs(ctx: CommandContext, deps: PerfDeps, opts: PerfLsOp
 		return 0;
 	}
 	const now = ctx.now();
-	const rows = sessionRows(ctx, opts.device);
+	const rows = perfLsOps.sessionRows(ctx, opts.device);
 	const text =
 		rows.length === 0
 			? color.dim("no perf sessions")

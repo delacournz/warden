@@ -4,10 +4,10 @@ import {
 	DEFAULT_RUNS,
 	defaultStartupIo,
 	MAX_RUNS,
+	perfStartupOps,
 	type StartupIo,
 	type StartupKind,
 	type StartupPlan,
-	startupWork,
 } from "@delacour/warden-sdk/ops/perf/startup";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -69,7 +69,7 @@ export function perfStartup(
 		if (!plan.success) return plan;
 		const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 		if (!app.success) return app;
-		return startupWork(ctx, deps, target, app.data.id, plan.data, io);
+		return perfStartupOps.startupWork(ctx, deps, target, app.data.id, plan.data, io);
 	});
 }
 

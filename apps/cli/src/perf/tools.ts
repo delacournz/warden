@@ -3,9 +3,8 @@ import type { Command as Commander } from "@commander-js/extra-typings";
 import { TRACE_PROCESSOR_VERSION } from "@delacour/warden-perf/android/trace-processor.data";
 import {
 	defaultTraceProcessorDeps,
-	resolveTraceProcessor,
 	type TraceProcessorDeps,
-	traceProcessorPath,
+	traceProcessorService,
 } from "@delacour/warden-sdk/ops/perf/trace-processor";
 import { reportError, UI_EXIT, type UiExitCode, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -32,9 +31,9 @@ export async function perfToolsInstall(
 	if (tool !== "trace-processor") {
 		return reportError(ctx, report, uiError("usage", `unknown tool "${tool}" (known: ${PERF_TOOLS.join(", ")})`));
 	}
-	const path = traceProcessorPath(ctx);
+	const path = traceProcessorService.traceProcessorPath(ctx);
 	const had = existsSync(path);
-	const resolved = await resolveTraceProcessor(ctx, deps, { yes: opts.yes === true });
+	const resolved = await traceProcessorService.resolveTraceProcessor(ctx, deps, { yes: opts.yes === true });
 	if (!resolved.success) return reportError(ctx, report, resolved.error);
 	const bytes = statSync(resolved.data).size;
 	const result = { tool, version: TRACE_PROCESSOR_VERSION, path: resolved.data, bytes, downloaded: !had };

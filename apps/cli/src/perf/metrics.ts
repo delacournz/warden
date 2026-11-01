@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { type MetricsParams, metricsSeries, planSeries } from "@delacour/warden-sdk/ops/perf/metrics";
+import { type MetricsParams, perfMetricsOps } from "@delacour/warden-sdk/ops/perf/metrics";
 import type { Result } from "@delacour/warden-types/result";
 import type { UiError, UiSuccess } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -25,7 +25,7 @@ async function metricsWork(
 	display: Display,
 	target: PerfTarget
 ): Promise<Result<UiSuccess, UiError>> {
-	const planned = planSeries(opts);
+	const planned = perfMetricsOps.planSeries(opts);
 	if (!planned.success) return planned;
 	const app = await resolveApp(ctx, { platform: target.platform, id: target.udid }, opts.app);
 	if (!app.success) return app;
@@ -35,7 +35,7 @@ async function metricsWork(
 			: baseIo;
 	const title = `${app.data.id} on ${describeTarget(target)}`;
 	const redraw = display.live ? createRedraw(io, ctx.ui.columns, ctx.ui.color.dim) : undefined;
-	return metricsSeries(ctx, deps, target, app.data.id, planned.data, io, (sample, all) => {
+	return perfMetricsOps.metricsSeries(ctx, deps, target, app.data.id, planned.data, io, (sample, all) => {
 		if (redraw) redraw(buildFrame(title, all, io.fps !== undefined));
 		else if (display.ndjson) ctx.out(JSON.stringify({ type: "sample", ...sample }));
 	});

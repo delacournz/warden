@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
 import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { createSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfJs } from "./js";
@@ -130,7 +130,7 @@ describe("warden perf js", () => {
 
 	test("into a running session: that session's js dir; its collector holding the profiler refuses", async () => {
 		const s = setup();
-		const made = createSession(s.c, s.deps.session, {
+		const made = perfSessionStore.createSession(s.c, s.deps.session, {
 			device: { udid: "U1", platform: "ios", name: sim.name },
 			target: { udid: "U1", ownedByCaller: false },
 			maxDurationMs: 30_000,
@@ -141,7 +141,7 @@ describe("warden perf js", () => {
 		expect(doc.result.sessionId).toBe(made.data.id);
 		expect(doc.result.dir).toContain(`/perf/${made.data.id}/js`);
 
-		updateSession(s.c, made.data.id, (x) => ({
+		perfSessionStore.updateSession(s.c, made.data.id, (x) => ({
 			...x,
 			capturers: [{ kind: "js", startedAtIso: "t", state: "running" }],
 		}));

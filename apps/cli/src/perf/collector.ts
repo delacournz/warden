@@ -1,15 +1,15 @@
 import { join } from "node:path";
 import type { Capturer } from "@delacour/warden-perf/shared/session.schema";
-import { untilCap } from "@delacour/warden-sdk/ops/perf/auto-stop";
-import { COLLECT_METRICS_INTERVAL_MS, createMetricsTicker } from "@delacour/warden-sdk/ops/perf/collect-metrics";
-import { androidFrameRate } from "@delacour/warden-sdk/ops/perf/frames";
-import { defaultJsDeps, JS_DIR, type JsDeps, runJsCapture } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { defaultLogDeps, type LogDeps, runLogCapture } from "@delacour/warden-sdk/ops/perf/logs";
+import { autoStop } from "@delacour/warden-sdk/ops/perf/auto-stop";
+import { COLLECT_METRICS_INTERVAL_MS, metricsTickers } from "@delacour/warden-sdk/ops/perf/collect-metrics";
+import { perfFramesOps } from "@delacour/warden-sdk/ops/perf/frames";
+import { defaultJsDeps, JS_DIR, type JsDeps, jsCaptureService } from "@delacour/warden-sdk/ops/perf/js-capture";
+import { defaultLogDeps, type LogDeps, perfLogsOps } from "@delacour/warden-sdk/ops/perf/logs";
 import { SAMPLES_FILE } from "@delacour/warden-sdk/ops/perf/metrics-out";
-import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
-import { type PerfPlan, readPlan } from "@delacour/warden-sdk/ops/perf/plan";
-import { reactOwner, startReactCapture, stopReactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
-import { readSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { type PerfPlan, perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
+import { reactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -47,7 +47,7 @@ type Sink = (kind: Capturer["kind"], patch: Partial<Omit<Capturer, "kind">>) => 
 
 function capturerSink(ctx: CommandContext, id: string): Sink {
 	return (kind, patch) => {
-		updateSession(ctx, id, (s) => {
+		perfSessionStore.updateSession(ctx, id, (s) => {
 			const prior = s.capturers.find((c) => c.kind === kind);
 			const next: Capturer = {
 				kind,
@@ -78,8 +78,10 @@ type Env = {
 async function metricsTask(e: Env): Promise<void> {
 	const { ctx, plan, target } = e;
 	const fps =
-		target.platform === "android" ? async () => (await androidFrameRate(ctx, target.udid, plan.app))?.fps : undefined;
-	const ticker = await createMetricsTicker(ctx, {
+		target.platform === "android"
+			? async () => (await perfFramesOps.androidFrameRate(ctx, target.udid, plan.app))?.fps
+			: undefined;
+	const ticker = await metricsTickers.createMetricsTicker(ctx, {
 		target: { udid: target.udid, platform: target.platform, app: plan.app },
 		sessionDir: e.dir,
 		startMs: e.startMs,
@@ -101,7 +103,7 @@ async function metricsTask(e: Env): Promise<void> {
 async function logsTask(e: Env): Promise<void> {
 	const out = join(e.dir, "logs", "device.log");
 	e.set("logs", { state: "running", out });
-	const done = await runLogCapture(
+	const done = await perfLogsOps.runLogCapture(
 		e.ctx,
 		{ udid: e.target.udid, platform: e.target.platform },
 		{ id: e.plan.app },
@@ -131,15 +133,15 @@ async function attach(e: Env) {
 	}
 }
 
-type Cdp = Parameters<typeof startReactCapture>[0];
+type Cdp = Parameters<typeof reactCapture.startReactCapture>[0];
 
 /** Start the React profile over `cdp`; returns the host wall clock when it began, or undefined when it failed. */
 async function startReact(
 	e: Env,
 	cdp: Cdp,
-	owner: Awaited<ReturnType<typeof reactOwner>>
+	owner: Awaited<ReturnType<typeof reactCapture.reactOwner>>
 ): Promise<number | undefined> {
-	const started = await startReactCapture(cdp, { owner });
+	const started = await reactCapture.startReactCapture(cdp, { owner });
 	if (!started.success) {
 		e.deps.log(`react: ${started.error.message}`);
 		e.set("react", { state: "failed" });
@@ -151,7 +153,7 @@ async function startReact(
 
 /** Run the Hermes CPU capture for `durationMs` and record its final state. */
 async function runJs(e: Env, cdp: Cdp, metro: string | undefined, jsDir: string, durationMs: number): Promise<void> {
-	const captured = await runJsCapture(cdp, {
+	const captured = await jsCaptureService.runJsCapture(cdp, {
 		dir: jsDir,
 		metroUrl: metro,
 		fetchMap: e.deps.js.fetchMap,
@@ -170,11 +172,11 @@ async function runJs(e: Env, cdp: Cdp, metro: string | undefined, jsDir: string,
 async function stopReact(
 	e: Env,
 	cdp: Cdp,
-	owner: Awaited<ReturnType<typeof reactOwner>>,
+	owner: Awaited<ReturnType<typeof reactCapture.reactOwner>>,
 	jsDir: string,
 	hostWallMs: number
 ): Promise<void> {
-	const stopped = await stopReactCapture(cdp, {
+	const stopped = await reactCapture.stopReactCapture(cdp, {
 		dir: join(e.dir, "react"),
 		jsDir,
 		cwd: e.plan.cwd,
@@ -198,7 +200,7 @@ async function cdpTask(e: Env): Promise<void> {
 	}
 	const { session: cdp, metro } = conn.data;
 	const jsDir = join(e.dir, JS_DIR);
-	const owner = await reactOwner(e.ctx);
+	const owner = await reactCapture.reactOwner(e.ctx);
 	const remaining = () => Math.max(1, e.startMs + e.maxDurationMs - e.ctx.now());
 	try {
 		const reactHostMs = plan.react ? await startReact(e, cdp, owner) : undefined;
@@ -238,8 +240,8 @@ export async function runSessionCollector(
 	id: string,
 	external: AbortSignal
 ): Promise<Result<CollectOutcome, UiError>> {
-	const session = readSession(ctx, id);
-	const plan = readPlan(ctx, id);
+	const session = perfSessionStore.readSession(ctx, id);
+	const plan = perfPlans.readPlan(ctx, id);
 	if (session === undefined || plan === undefined) return resultFactory.ok("missing");
 	const inner = new AbortController();
 	const forward = () => inner.abort();
@@ -265,13 +267,16 @@ export async function runSessionCollector(
 		maxDurationMs: session.maxDurationMs,
 		signal: inner.signal,
 		set,
-		dir: sessionDir(ctx, id),
+		dir: perfPaths.sessionDir(ctx, id),
 	};
 	const tasks: Array<Promise<void>> = [];
 	if (plan.metrics) tasks.push(guarded("metrics", env, metricsTask));
 	if (plan.logs) tasks.push(guarded("logs", env, logsTask));
 	if (plan.js || plan.react) tasks.push(guarded("devtools", env, cdpTask));
-	const outcome = await untilCap(ctx, id, { sleep: (ms) => deps.sleep(ms, inner.signal), signal: inner.signal });
+	const outcome = await autoStop.untilCap(ctx, id, {
+		sleep: (ms) => deps.sleep(ms, inner.signal),
+		signal: inner.signal,
+	});
 	inner.abort();
 	await Promise.allSettled(tasks);
 	external.removeEventListener("abort", forward);

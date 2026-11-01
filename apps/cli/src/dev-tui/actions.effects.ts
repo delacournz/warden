@@ -121,19 +121,19 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			const controller = new AbortController();
 			const done = (async (): Promise<string | undefined> => {
 				if (info.bundleId === undefined) return "no bundle id for the dev client";
-				const [{ streamAppLogs, parseLogLine }, { logMatcher }] = await Promise.all([
+				const [{ perfLogsOps }, { logMatcher }] = await Promise.all([
 					import("@delacour/warden-sdk/ops/perf/logs"),
 					import("@delacour/warden-perf/logs/filter"),
 				]);
 				const year = new Date(ctx.now()).getFullYear();
-				const ended = await streamAppLogs(
+				const ended = await perfLogsOps.streamAppLogs(
 					ctx,
 					{ udid: info.deviceId, platform: info.platform },
 					{ id: info.bundleId },
 					{
 						signal: controller.signal,
 						onLine: (raw) => {
-							const entry = parseLogLine(info.platform, raw, year);
+							const entry = perfLogsOps.parseLogLine(info.platform, raw, year);
 							if (entry !== undefined) onLine(logMatcher.formatEntry(entry));
 						},
 					}
@@ -144,7 +144,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		},
 
 		async perfStart(info, mode, log): FxResult<PerfStarted> {
-			const [{ startPerf }, { defaultSessionKit }, { defaultPerfDeps }] = await Promise.all([
+			const [{ perfOrchestrator }, { defaultSessionKit }, { defaultPerfDeps }] = await Promise.all([
 				import("@delacour/warden-sdk/ops/perf/orchestrate"),
 				import("../perf/session-kit"),
 				import("../perf/run"),
@@ -154,7 +154,13 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 				mode === "all"
 					? { all: true, relaunch: true, ...app }
 					: { metrics: true, logs: true, ...(info.platform === "android" ? { frames: true } : {}), ...app };
-			const started = await startPerf(scoped(log), defaultPerfDeps, defaultSessionKit, perfTarget(info), options);
+			const started = await perfOrchestrator.startPerf(
+				scoped(log),
+				defaultPerfDeps,
+				defaultSessionKit,
+				perfTarget(info),
+				options
+			);
 			if (!started.success) {
 				const { code, message } = started.error;
 				return failure(message, code === "session_active" ? "session_active" : undefined);
@@ -172,7 +178,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		},
 
 		async perfStop(info, sessionId, log): FxResult<PerfStopped> {
-			const [{ finalizeSession }, { defaultSessionKit }, { defaultPerfDeps }, { reportBuilder }, { MAX_TEXT_LINES }] =
+			const [{ perfOrchestrator }, { defaultSessionKit }, { defaultPerfDeps }, { reportBuilder }, { MAX_TEXT_LINES }] =
 				await Promise.all([
 					import("@delacour/warden-sdk/ops/perf/orchestrate"),
 					import("../perf/session-kit"),
@@ -181,10 +187,16 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 					import("@delacour/warden-perf/shared/caps"),
 				]);
 			void info;
-			const stopped = await finalizeSession(scoped(log), defaultPerfDeps, defaultSessionKit, sessionId, {
-				reason: "user",
-				analyze: true,
-			});
+			const stopped = await perfOrchestrator.finalizeSession(
+				scoped(log),
+				defaultPerfDeps,
+				defaultSessionKit,
+				sessionId,
+				{
+					reason: "user",
+					analyze: true,
+				}
+			);
 			if (!stopped.success) {
 				const { code, message } = stopped.error;
 				return failure(message, code === "session_not_found" ? "session_not_found" : undefined);

@@ -4,7 +4,9 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { HUD_HISTORY, type HudFps, type HudSample } from "./model";
 
-type SamplerResult = Awaited<ReturnType<typeof import("@delacour/warden-sdk/ops/perf/metrics-sampler").createSampler>>;
+type SamplerResult = Awaited<
+	ReturnType<typeof import("@delacour/warden-sdk/ops/perf/metrics-sampler").metricsSamplers.createSampler>
+>;
 
 /** The HUD never samples faster than this, whatever `--hud-interval` says. */
 export const HUD_MIN_INTERVAL_MS = 200;
@@ -48,13 +50,13 @@ const sameTarget = (a: MetricsTarget, b: MetricsTarget): boolean =>
 	a.udid === b.udid && a.platform === b.platform && a.app === b.app;
 
 async function defaultSampler(ctx: CommandContext, target: MetricsTarget, startMs: number): Promise<SamplerResult> {
-	const { createSampler } = await import("@delacour/warden-sdk/ops/perf/metrics-sampler");
-	return createSampler(ctx, target, startMs);
+	const { metricsSamplers } = await import("@delacour/warden-sdk/ops/perf/metrics-sampler");
+	return metricsSamplers.createSampler(ctx, target, startMs);
 }
 
 async function defaultFps(ctx: CommandContext, target: MetricsTarget): Promise<HudFps | undefined> {
-	const { androidFrameRate } = await import("@delacour/warden-sdk/ops/perf/frames");
-	return androidFrameRate(ctx, target.udid, target.app);
+	const { perfFramesOps } = await import("@delacour/warden-sdk/ops/perf/frames");
+	return perfFramesOps.androidFrameRate(ctx, target.udid, target.app);
 }
 
 const defaultSchedule = (fn: () => Promise<void>, ms: number): (() => void) => {

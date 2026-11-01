@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { androidFrameRate, FRAMES_FILE } from "@delacour/warden-sdk/ops/perf/frames";
-import { createSession, sessionDir } from "@delacour/warden-sdk/ops/perf/session";
+import { FRAMES_FILE, perfFramesOps } from "@delacour/warden-sdk/ops/perf/frames";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { perfFrames } from "./frames";
 import { asMe, fakePerfDeps } from "./testing";
@@ -63,7 +64,7 @@ describe("warden perf frames", () => {
 
 	test("an active session: offsets are session-relative, marks tag windows, frames.json lands in the session dir", async () => {
 		const { c, clock, deps } = setup(emu, [[READ, { stdout: fx("gfxinfo-60hz.txt") }]]);
-		const made = createSession(c, deps.session, {
+		const made = perfSessionStore.createSession(c, deps.session, {
 			device: { udid: emu.id, platform: "android", name: emu.name },
 			target: { udid: emu.id, ownedByCaller: false },
 			maxDurationMs: 60_000,
@@ -74,7 +75,7 @@ describe("warden perf frames", () => {
 		const { result } = json(c);
 		expect(result.session).toBe(made.data.id);
 		expect(result.worstWindows[0].startOffsetMs).toBeLessThanOrEqual(10_000);
-		const file = join(sessionDir(c, made.data.id), FRAMES_FILE);
+		const file = join(perfPaths.sessionDir(c, made.data.id), FRAMES_FILE);
 		expect(JSON.parse(readFileSync(file, "utf8")).session).toBe(made.data.id);
 	});
 
@@ -82,7 +83,7 @@ describe("warden perf frames", () => {
 		const { c, deps } = setup(emu, [[READ, { stdout: fx("gfxinfo-120hz.txt") }]]);
 		await perfFrames(c, deps, { json: true, app: "com.example.app" });
 		expect(json(c).result.session).toBeUndefined();
-		expect(existsSync(join(sessionDir(c, "x"), FRAMES_FILE))).toBe(false);
+		expect(existsSync(join(perfPaths.sessionDir(c, "x"), FRAMES_FILE))).toBe(false);
 	});
 
 	test("app not running: app_not_found with a launch hint", async () => {
@@ -104,7 +105,7 @@ describe("warden perf frames", () => {
 describe("androidFrameRate", () => {
 	test("fps and sample jank % from one read", async () => {
 		const { c } = setup(emu, [[READ, { stdout: fx("gfxinfo-60hz.txt") }]]);
-		const r = await androidFrameRate(c, emu.id, "com.example.app");
+		const r = await perfFramesOps.androidFrameRate(c, emu.id, "com.example.app");
 		expect(r?.fps).toBeGreaterThan(30);
 		expect(r?.fps).toBeLessThanOrEqual(60);
 		expect(r?.jankPct).toBeGreaterThan(0);
@@ -112,8 +113,8 @@ describe("androidFrameRate", () => {
 
 	test("failed read or no process: undefined", async () => {
 		const { c } = setup(emu, [[READ, { stdout: fx("gfxinfo-no-process.txt") }]]);
-		expect(await androidFrameRate(c, emu.id, "com.example.app")).toBeUndefined();
+		expect(await perfFramesOps.androidFrameRate(c, emu.id, "com.example.app")).toBeUndefined();
 		const bad = setup(emu, [[READ, { exitCode: 1 }]]);
-		expect(await androidFrameRate(bad.c, emu.id, "com.example.app")).toBeUndefined();
+		expect(await perfFramesOps.androidFrameRate(bad.c, emu.id, "com.example.app")).toBeUndefined();
 	});
 });

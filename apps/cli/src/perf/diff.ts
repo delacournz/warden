@@ -1,7 +1,7 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { DEFAULT_THRESHOLD_PCT, reportDiffer } from "@delacour/warden-perf/shared/diff";
-import { reportFor } from "@delacour/warden-sdk/ops/perf/report-read";
-import { sessionByRef } from "@delacour/warden-sdk/ops/perf/session-ref";
+import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
+import { perfSessionRefs } from "@delacour/warden-sdk/ops/perf/session-ref";
 import { reportError, reportOk, UI_EXIT, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
@@ -32,11 +32,11 @@ export async function perfDiff(ctx: CommandContext, a: string, b: string, opts: 
 				meta,
 				uiError("usage", `--threshold must be a percentage like 10%, got "${opts.threshold}"`)
 			);
-		const sessions = [sessionByRef(ctx, a), sessionByRef(ctx, b)] as const;
+		const sessions = [perfSessionRefs.sessionByRef(ctx, a), perfSessionRefs.sessionByRef(ctx, b)] as const;
 		for (const s of sessions) if (!s.success) return reportError(ctx, meta, s.error);
 		const [first, second] = sessions;
 		if (!first.success || !second.success) return UI_EXIT.failed;
-		const reports = [reportFor(ctx, first.data.id), reportFor(ctx, second.data.id)] as const;
+		const reports = [reportReader.reportFor(ctx, first.data.id), reportReader.reportFor(ctx, second.data.id)] as const;
 		const [ra, rb] = reports;
 		if (ra === undefined || rb === undefined)
 			return reportError(ctx, meta, uiError("session_not_found", "could not build a report for one of the sessions"));

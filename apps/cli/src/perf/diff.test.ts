@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
+import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { type TestContext, testContext } from "../testing";
 import { perfDiff } from "./diff";
 import { SEED_T0, samplesJsonl, seedSession, startupJson } from "./session-fixture.testing";
@@ -119,7 +119,7 @@ describe("warden perf diff", () => {
 	test("builds the missing reports on the way and leaves report.json behind", async () => {
 		const c = setup({ cold: 1000, cpu: [10, 20] }, { cold: 1300, cpu: [10, 20] });
 		await run(c, A, B);
-		for (const id of [A, B]) expect(existsSync(join(sessionDir(c, id), "report.json"))).toBe(true);
+		for (const id of [A, B]) expect(existsSync(join(perfPaths.sessionDir(c, id), "report.json"))).toBe(true);
 		const again = await run(c, A, B);
 		expect(again.doc.result.regressions).toBe(1);
 	});

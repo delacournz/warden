@@ -1,13 +1,13 @@
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { durationParser } from "@delacour/warden-config/duration";
 import {
+	perfOrchestrator,
 	type SessionKit,
 	type StartOptions,
 	type StartOutcome,
-	startPerf,
 } from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { activeSessionFor } from "@delacour/warden-sdk/ops/perf/session";
-import { startResult } from "@delacour/warden-sdk/ops/perf/session-ops";
+import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
+import { perfSessionOps } from "@delacour/warden-sdk/ops/perf/session-ops";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
@@ -45,7 +45,7 @@ export function startedSuccess(
 	lines.push("next:", ...next.map((n) => `  ${n}`));
 	return {
 		device: infoOf(target),
-		result: startResult(ctx, out, stopHint),
+		result: perfSessionOps.startResult(ctx, out, stopHint),
 		text: lines.join("\n"),
 		...(out.warnings.length > 0 ? { warnings: out.warnings } : {}),
 	};
@@ -64,7 +64,7 @@ export function perfStart(
 ): Promise<number> {
 	return runPerf(ctx, deps, "start", "observe", opts, async (target) => {
 		if (opts.join === true) {
-			const live = activeSessionFor(ctx, deps.session, target.udid);
+			const live = perfSessionStore.activeSessionFor(ctx, deps.session, target.udid);
 			if (live === undefined) {
 				return {
 					success: false,
@@ -95,7 +95,7 @@ export function perfStart(
 				].join("\n"),
 			});
 		}
-		const started = await startPerf(ctx, deps, kit, target, opts, startHooks(ctx, deps, opts));
+		const started = await perfOrchestrator.startPerf(ctx, deps, kit, target, opts, startHooks(ctx, deps, opts));
 		if (!started.success) return started;
 		return resultFactory.ok(startedSuccess(ctx, target, started.data, "warden perf stop"));
 	});

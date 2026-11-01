@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveSources, type SourceDeps } from "@delacour/warden-sdk/ops/perf/react-source";
+import { reactSources, type SourceDeps } from "@delacour/warden-sdk/ops/perf/react-source";
 
 const project: Record<string, string> = {
 	"/p/src/Feed.tsx":
@@ -18,13 +18,18 @@ const deps: SourceDeps = {
 
 describe("resolveSources", () => {
 	test("device _debugSource wins and is made project-relative", () => {
-		const got = resolveSources(["FeedList"], "/p", { FeedList: { file: "/p/src/other/FeedList.tsx", line: 9 } }, deps);
+		const got = reactSources.resolveSources(
+			["FeedList"],
+			"/p",
+			{ FeedList: { file: "/p/src/other/FeedList.tsx", line: 9 } },
+			deps
+		);
 		expect(got.get("FeedList")).toEqual({ file: "src/other/FeedList.tsx", line: 9 });
 	});
 
 	test("greps the project for the rest, one pass, stops once all are found", () => {
 		reads.length = 0;
-		const got = resolveSources(["FeedRow", "Avatar", "Memo(FeedList)"], "/p", {}, deps);
+		const got = reactSources.resolveSources(["FeedRow", "Avatar", "Memo(FeedList)"], "/p", {}, deps);
 		expect(got.get("FeedRow")).toEqual({ file: "src/Feed.tsx", line: 2 });
 		expect(got.get("Avatar")).toEqual({ file: "src/Avatar.tsx", line: 2 });
 		expect(got.get("Memo(FeedList)")).toEqual({ file: "src/Feed.tsx", line: 1 });
@@ -32,7 +37,7 @@ describe("resolveSources", () => {
 	});
 
 	test("names that cannot be a declaration, or are not in the project, are absent", () => {
-		const got = resolveSources(["Context.Consumer", "Unknown#3", "Missing"], "/p", {}, deps);
+		const got = reactSources.resolveSources(["Context.Consumer", "Unknown#3", "Missing"], "/p", {}, deps);
 		expect(got.size).toBe(0);
 	});
 });
