@@ -712,6 +712,15 @@ pub async fn open_url(
     .await
 }
 
+/// Write on the blocking pool so a slow disk never holds a runtime worker (the native stream
+/// shares it).
+async fn write_file(path: std::path::PathBuf, bytes: Vec<u8>) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(path, bytes))
+        .await
+        .map_err(|e| ApiError::new("WRITE", e.to_string()))?
+        .map_err(|e| ApiError::new("WRITE", e.to_string()))
+}
+
 /// Fetch a PNG, ask where to save it, write it. Returns the path, or None when the panel was
 /// cancelled.
 #[tauri::command]
@@ -730,19 +739,21 @@ pub async fn screenshot(
         .await?;
     let bytes = ok_or_failure(response).await?.bytes().await?;
     let name = format!("{}-screenshot.png", c.device_id);
-    let Some(path) = app
-        .dialog()
+    let (picked_tx, picked_rx) = tokio::sync::oneshot::channel();
+    app.dialog()
         .file()
         .add_filter("PNG image", &["png"])
         .set_file_name(name)
-        .blocking_save_file()
-    else {
+        .save_file(move |picked| {
+            let _ = picked_tx.send(picked);
+        });
+    let Ok(Some(path)) = picked_rx.await else {
         return Ok(None);
     };
     let path = path
         .into_path()
         .map_err(|e| ApiError::new("BAD_PATH", e.to_string()))?;
-    std::fs::write(&path, &bytes).map_err(|e| ApiError::new("WRITE", e.to_string()))?;
+    write_file(path.clone(), bytes.to_vec()).await?;
     Ok(Some(path.display().to_string()))
 }
 
@@ -841,6 +852,17 @@ fn lock_aspect(window: &tauri::WebviewWindow, lock: crate::aspect::Lock) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn write_file_writes_off_the_runtime_workers() {
+        let path =
+            std::env::temp_dir().join(format!("warden-viewer-write-{}.bin", std::process::id()));
+        write_file(path.clone(), vec![1, 2, 3]).await.unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), vec![1, 2, 3]);
+        let _ = std::fs::remove_file(&path);
+        let missing = std::env::temp_dir().join("warden-viewer-no-such-dir/x.bin");
+        assert_eq!(write_file(missing, vec![]).await.unwrap_err().code, "WRITE");
+    }
 
     #[test]
     fn parses_ice_servers_from_the_stream_info() {
