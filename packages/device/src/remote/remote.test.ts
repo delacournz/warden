@@ -6,8 +6,8 @@ import type { Driver, DriverCapabilities } from "@delacour/warden-driver/driver.
 import { observations } from "@delacour/warden-driver/observation-cache";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { deviceTyping } from "@delacour/warden-driver/typing";
-import { connectRemoteDriver, type RemoteClient } from "./remote-client";
-import { type RemoteServer, serveDriver } from "./remote-server";
+import { type RemoteClient, remoteDriverConnector } from "./remote-client";
+import { DriverServer, type RemoteServer, type ServeDriverOptions } from "./remote-server";
 
 const dirs: string[] = [];
 const servers: RemoteServer[] = [];
@@ -25,14 +25,18 @@ afterEach(async () => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function serve(driver: Driver, opts: Partial<Parameters<typeof serveDriver>[0]> = {}): Promise<RemoteServer> {
-	const server = await serveDriver({ driver, socketPath: socketPath(), ...opts });
+async function serve(driver: Driver, opts: Partial<ServeDriverOptions> = {}): Promise<RemoteServer> {
+	const server = await new DriverServer({ driver, socketPath: socketPath(), ...opts }).start();
 	servers.push(server);
 	return server;
 }
 
 async function connect(server: RemoteServer, opts: { requestTimeoutMs?: number } = {}): Promise<RemoteClient> {
-	const connected = await connectRemoteDriver({ socketPath: server.socketPath, readyTimeoutMs: 2000, ...opts });
+	const connected = await remoteDriverConnector.connect({
+		socketPath: server.socketPath,
+		readyTimeoutMs: 2000,
+		...opts,
+	});
 	if (!connected.success) throw new Error(connected.error.message);
 	clients.push(connected.data);
 	return connected.data;

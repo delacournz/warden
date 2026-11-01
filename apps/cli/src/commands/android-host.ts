@@ -48,12 +48,12 @@ async function host(ctx: CommandContext, deps: AndroidHostDeps, opts: HostOption
 		reportError(ctx, "__android-host", `cannot open ${serial}: ${opened.error}`);
 		return EXIT_ENGINE;
 	}
-	const { serveDriver } = await import("@delacour/warden-device/remote/remote-server");
+	const { DriverServer } = await import("@delacour/warden-device/remote/remote-server");
 	let finish: () => void = () => undefined;
 	const finished = new Promise<void>((resolve) => {
 		finish = resolve;
 	});
-	const server = await serveDriver({
+	const server = await new DriverServer({
 		driver: opened.data,
 		socketPath: socket,
 		idleMs: idle.data,
@@ -64,7 +64,7 @@ async function host(ctx: CommandContext, deps: AndroidHostDeps, opts: HostOption
 		},
 		onShutdown: () => finish(),
 		log: (line) => ctx.err(line),
-	});
+	}).start();
 	process.once("SIGTERM", finish);
 	process.once("SIGINT", finish);
 	deps.signal?.addEventListener("abort", finish, { once: true });

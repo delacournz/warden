@@ -6,7 +6,7 @@ import { networkProxyShaping } from "@delacour/warden-driver/network-proxy";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type LazyLeaseProxyOptions, lazyLeaseNetworkProxy } from "./lease-network-proxy";
+import { LazyLeaseNetworkProxy, type LazyLeaseProxyOptions } from "./lease-network-proxy";
 
 describe("lazyLeaseNetworkProxy", () => {
 	let dir: string;
@@ -34,7 +34,7 @@ describe("lazyLeaseNetworkProxy", () => {
 	});
 
 	const proxy = (leaseId: string, extra: Partial<LazyLeaseProxyOptions> = {}) =>
-		lazyLeaseNetworkProxy({
+		new LazyLeaseNetworkProxy({
 			leaseId,
 			env: { WARDEN_HOME: dir },
 			now: () => 1,

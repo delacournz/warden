@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { parseSchedulerConfig } from "./scheduler.config";
+import { schedulerConfigs } from "./scheduler.config";
 
-const parse = (v: unknown) => parseSchedulerConfig(JSON.stringify(v));
+const parse = (v: unknown) => schedulerConfigs.parse(JSON.stringify(v));
 const android = { platform: "android", id: "emulator-5554", adb: "adb" };
 
 describe("parseSchedulerConfig", () => {
@@ -37,6 +37,6 @@ describe("parseSchedulerConfig", () => {
 		["step with nothing to apply", { ...android, mode: "timeline", steps: [{ atMs: 0 }] }],
 		["unknown mode", { ...android, mode: "x" }],
 	])("rejects %s", (_name, value) => {
-		expect(parseSchedulerConfig(typeof value === "string" ? value : JSON.stringify(value)).success).toBe(false);
+		expect(schedulerConfigs.parse(typeof value === "string" ? value : JSON.stringify(value)).success).toBe(false);
 	});
 });

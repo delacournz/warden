@@ -1,8 +1,8 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { attemptDir, hash6, specIdOf } from "@delacour/warden-device/artifacts";
-import { conditionsOf } from "@delacour/warden-device/conditions/device-conditions";
-import { perfStartFor } from "@delacour/warden-device/perf/device-perf";
+import { artifactPaths } from "@delacour/warden-device/artifacts";
+import { conditionRegistry } from "@delacour/warden-device/conditions/device-conditions";
+import { perfLauncher } from "@delacour/warden-device/perf/device-perf";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { hidRecovery } from "@delacour/warden-driver-ios/hid-recovery";
 import { type AttemptBinding, type Session, sessions } from "../session";
@@ -234,7 +234,12 @@ export class AttemptRunner {
 		const device = { udid: env.udid, platform: env.platform };
 		const clock = !env.logTimestamps;
 		const short = consoleLines.shortName(spec.file);
-		const dir = attemptDir(session.out, specIdOf(spec.file, env.specsDir), spec.title, hash6(spec.file, ...spec.title));
+		const dir = artifactPaths.attemptDir(
+			session.out,
+			artifactPaths.specIdOf(spec.file, env.specsDir),
+			spec.title,
+			artifactPaths.hash6(spec.file, ...spec.title)
+		);
 		const print = (line: string | undefined): void => {
 			if (line !== undefined) session.log(line);
 		};
@@ -392,7 +397,7 @@ export class AttemptRunner {
 		const perfNames = session.env.perf;
 		if (perfNames !== undefined) {
 			const { perf } = base.device;
-			await session.step("perf", "perf.start", () => perf.start(perfStartFor(perfNames)));
+			await session.step("perf", "perf.start", () => perf.start(perfLauncher.startOptionsFor(perfNames)));
 			// the body may have stopped it (to pass its own budgets); then there is nothing left to end
 			teardowns.push({
 				name: "perf",
@@ -401,7 +406,7 @@ export class AttemptRunner {
 				},
 			});
 		}
-		const conditions = conditionsOf(base.device);
+		const conditions = conditionRegistry.of(base.device);
 		if (conditions !== undefined) {
 			// registered before it is applied, so a half-applied baseline is still put back
 			teardowns.push({ name: "conditions", run: () => conditions.teardown(), when: () => conditions.dirty() });

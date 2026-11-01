@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { spawnDetachedScheduler } from "./scheduler.spawn";
+import { schedulerSpawner } from "./scheduler.spawn";
 
 describe("spawnDetachedScheduler", () => {
 	const config = {
@@ -12,7 +12,7 @@ describe("spawnDetachedScheduler", () => {
 
 	test("spawns runtime + main + config and returns the pid as an OwnedProcess", () => {
 		let argv: readonly string[] = [];
-		const res = spawnDetachedScheduler(
+		const res = schedulerSpawner.detached(
 			config,
 			(a) => {
 				argv = a;
@@ -27,13 +27,13 @@ describe("spawnDetachedScheduler", () => {
 	});
 
 	test("a spawn that yields nothing is an error", () => {
-		expect(spawnDetachedScheduler(config, () => undefined).success).toBe(false);
+		expect(schedulerSpawner.detached(config, () => undefined).success).toBe(false);
 	});
 });
 
 describe("spawnDetachedSchedulerVia", () => {
 	test("runs the command prefix with the config JSON appended", async () => {
-		const { spawnDetachedSchedulerVia } = await import("./scheduler.spawn");
+		const { schedulerSpawner } = await import("./scheduler.spawn");
 		let argv: readonly string[] = [];
 		const config = {
 			platform: "android",
@@ -42,7 +42,7 @@ describe("spawnDetachedSchedulerVia", () => {
 			mode: "flap",
 			flap: { upMs: 1000, downMs: 500 },
 		} as const;
-		const res = spawnDetachedSchedulerVia(config, ["/bin/warden", "__scheduler"], (a) => {
+		const res = schedulerSpawner.via(config, ["/bin/warden", "__scheduler"], (a) => {
 			argv = a;
 			return { pid: 9 };
 		});

@@ -1,12 +1,12 @@
 import { join } from "node:path";
-import { type App, createApp } from "@delacour/warden-device/app";
+import { type App, AppController } from "@delacour/warden-device/app";
 import type { DeviceConditions } from "@delacour/warden-device/conditions/device-conditions";
-import { type AlertAction, createDevice, createSessionConditions, type Device } from "@delacour/warden-device/device";
+import { type AlertAction, type Device, DeviceImpl, sessionConditions } from "@delacour/warden-device/device";
 import type { DevtoolsSource } from "@delacour/warden-device/device-devtools";
-import { linkInFlight } from "@delacour/warden-device/device-link";
+import { deviceLinks } from "@delacour/warden-device/device-link";
 import type { Clock, FixtureSession } from "@delacour/warden-device/fixture-session";
 import type { PerfExec } from "@delacour/warden-device/perf/device-perf";
-import { traceDevice } from "@delacour/warden-device/traced-device";
+import { deviceTracer } from "@delacour/warden-device/traced-device";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
@@ -53,7 +53,7 @@ export class SessionFixtures {
 		const answerSystemAlert =
 			device === undefined || alerts === undefined || alerts === "off"
 				? undefined
-				: async () => !linkInFlight(session) && (await this.answerAlertQuietly(device, alerts));
+				: async () => !deviceLinks.linkInFlight(session) && (await this.answerAlertQuietly(device, alerts));
 		// the facet is attached on the first tree read; without a Metro URL (release build) there is nothing to read
 		const reactTree: Pick<DevtoolsFacet, "tree"> | undefined =
 			session.env.metroUrl === undefined
@@ -92,14 +92,14 @@ export class SessionFixtures {
 			env.metroUrl === undefined || attach === undefined || peekDevtools === undefined
 				? undefined
 				: { devtools: () => attach.call(session), peekDevtools: () => peekDevtools.call(session) };
-		return createDevice({
+		return new DeviceImpl({
 			driver,
 			appId: env.bundleId,
 			artifactsDir: () => session.attemptDir ?? join(session.out, "adhoc"),
 			signal: () => session.signal,
 			trace: () => session.trace,
 			linkScope: session,
-			conditions: conditions ?? createSessionConditions(session, driver, env),
+			conditions: conditions ?? sessionConditions.create(session, driver, env),
 			...(devtools === undefined ? {} : { devtools }),
 			...(clock === undefined ? {} : { clock }),
 			...(env.udid === undefined
@@ -126,7 +126,7 @@ export class SessionFixtures {
 		conditions,
 		injectWanted = conditions?.internals.wantsInject,
 	}: SessionFixtureInput & { log?: (line: string) => void; injectWanted?: () => boolean }): App {
-		return createApp({
+		return new AppController({
 			driver,
 			appId: env.bundleId,
 			launchArgs: env.launchArgs,
@@ -152,8 +152,8 @@ export class SessionFixtures {
 	defaultFixtureFactory = async (ctx: FixtureContext): Promise<BaseFixtures> => {
 		const { session } = ctx;
 		const driver = await session.driver();
-		const conditions = createSessionConditions(session, driver, session.env);
-		const device = traceDevice(this.deviceFor({ session, driver, env: session.env, conditions }), session.span);
+		const conditions = sessionConditions.create(session, driver, session.env);
+		const device = deviceTracer.trace(this.deviceFor({ session, driver, env: session.env, conditions }), session.span);
 		return {
 			app: this.appFor({ session, driver, env: session.env, conditions }),
 			device,

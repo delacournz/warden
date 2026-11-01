@@ -61,43 +61,50 @@ const DECOR_IDS: ReadonlySet<string> = new Set([
 	"splashscreen_branding_view",
 ]);
 
-/** A visible control or a visible element with a testID: what a launch screen has none of. */
-function isContent(element: Element, parent: Element | undefined, platform: Snapshot["platform"]): boolean {
-	if (element.hidden === true) return false;
-	const id = element.identifier;
-	if (id !== undefined && id !== "" && !(platform === "android" && DECOR_IDS.has(id))) return true;
-	return roleResolver.isInteractiveRole(roleResolver.resolveRole(element, parent).role);
-}
-
-function hasContent(snapshot: Snapshot): boolean {
-	const visit = (element: Element, parent: Element | undefined): boolean =>
-		isContent(element, parent, snapshot.platform) || element.children.some((child) => visit(child, element));
-	return snapshot.elements.some((element) => visit(element, undefined));
-}
-
 type ParsedWait = { kind: "none" } | { kind: "quiet" } | { kind: "until"; until: Locator; timeout?: number };
 
-function parseWait(wait: OpenOptions["wait"]): ParsedWait {
-	if (wait === undefined || wait === "none") return { kind: "none" };
-	if (wait === "quiet") return { kind: "quiet" };
-	if (typeof wait === "object" && wait !== null && locatorSupport.isLocator(wait.until)) {
-		const { timeout } = wait;
-		if (timeout !== undefined && (!Number.isFinite(timeout) || timeout < 0)) {
-			throw new E2eError("INVALID_ARGUMENT", `app.open wait timeout must be a non-negative number, got ${timeout}`);
-		}
-		return timeout === undefined ? { kind: "until", until: wait.until } : { kind: "until", until: wait.until, timeout };
+/** Reads what a launched app's first screen shows and what `app.open({ wait })` asks for. */
+class OpenScreens {
+	/** A visible control or a visible element with a testID: what a launch screen has none of. */
+	hasContent(snapshot: Snapshot): boolean {
+		const visit = (element: Element, parent: Element | undefined): boolean =>
+			this.isContent(element, parent, snapshot.platform) || element.children.some((child) => visit(child, element));
+		return snapshot.elements.some((element) => visit(element, undefined));
 	}
-	throw new E2eError(
-		"INVALID_ARGUMENT",
-		`app.open wait must be "quiet", "none" or { until: <locator made by screen> }, got ${describeWait(wait)}`
-	);
+
+	parseWait(wait: OpenOptions["wait"]): ParsedWait {
+		if (wait === undefined || wait === "none") return { kind: "none" };
+		if (wait === "quiet") return { kind: "quiet" };
+		if (typeof wait === "object" && wait !== null && locatorSupport.isLocator(wait.until)) {
+			const { timeout } = wait;
+			if (timeout !== undefined && (!Number.isFinite(timeout) || timeout < 0)) {
+				throw new E2eError("INVALID_ARGUMENT", `app.open wait timeout must be a non-negative number, got ${timeout}`);
+			}
+			return timeout === undefined
+				? { kind: "until", until: wait.until }
+				: { kind: "until", until: wait.until, timeout };
+		}
+		throw new E2eError(
+			"INVALID_ARGUMENT",
+			`app.open wait must be "quiet", "none" or { until: <locator made by screen> }, got ${this.describeWait(wait)}`
+		);
+	}
+
+	private isContent(element: Element, parent: Element | undefined, platform: Snapshot["platform"]): boolean {
+		if (element.hidden === true) return false;
+		const id = element.identifier;
+		if (id !== undefined && id !== "" && !(platform === "android" && DECOR_IDS.has(id))) return true;
+		return roleResolver.isInteractiveRole(roleResolver.resolveRole(element, parent).role);
+	}
+
+	private describeWait(wait: unknown): string {
+		if (typeof wait === "string") return JSON.stringify(wait);
+		if (wait === null || typeof wait !== "object") return String(wait);
+		return `{ ${Object.keys(wait).join(", ")} }`;
+	}
 }
 
-function describeWait(wait: unknown): string {
-	if (typeof wait === "string") return JSON.stringify(wait);
-	if (wait === null || typeof wait !== "object") return String(wait);
-	return `{ ${Object.keys(wait).join(", ")} }`;
-}
+const openScreens = new OpenScreens();
 
 /** The app under test (`WARDEN_BUNDLE_ID`). */
 export type App = {
@@ -143,132 +150,150 @@ export type AppDeps = {
 	onLaunched?: () => void;
 };
 
-const stderrLog = (line: string): void => {
-	process.stderr.write(`${line}\n`);
-};
+/** The {@link App} over a {@link Driver}. */
+export class AppController implements App {
+	private readonly stderrLog = (line: string): void => {
+		process.stderr.write(`${line}\n`);
+	};
 
-export function createApp({
-	driver,
-	appId: bundleId,
-	appPath,
-	launchArgs = [],
-	assertionTimeoutMs,
-	signal: signalOf,
-	log = stderrLog,
-	clock = systemClock,
-	injectWanted,
-	onLaunched,
-}: AppDeps): App {
-	let droppedLogged = false;
+	private readonly bundleId: string;
+	private readonly launchArgs: readonly string[];
+	private readonly log: (line: string) => void;
+	private readonly clock: Clock;
+	private droppedLogged = false;
+
+	constructor(private readonly deps: AppDeps) {
+		this.bundleId = deps.appId;
+		this.launchArgs = deps.launchArgs ?? [];
+		this.log = deps.log ?? this.stderrLog;
+		this.clock = deps.clock ?? systemClock;
+	}
+
+	readonly open = async (options: OpenOptions = {}): Promise<void> => {
+		const { driver, assertionTimeoutMs, injectWanted, onLaunched } = this.deps;
+		const wait = openScreens.parseWait(options.wait);
+		const opts: LaunchOptions = {
+			args: [...this.envLaunchArgs(), ...(options.args ?? [])],
+			relaunch: true,
+		};
+		if (options.env !== undefined) opts.env = options.env;
+		if (driver.platform === "ios" && injectWanted?.() === true) opts.inject = true;
+		await driverCalls.unwrap(() => driver.app.launch(this.bundleId, opts), `launch ${this.bundleId}`, this.signal());
+		onLaunched?.();
+		if (options.url !== undefined) {
+			const url = options.url;
+			await driverCalls.unwrap(() => driver.app.openUrl(url), `open ${url}`, this.signal());
+		}
+		if (wait.kind === "quiet") {
+			await this.waitForContent();
+			await this.waitUntilQuiet();
+		}
+		if (wait.kind === "until") {
+			await wait.until.waitFor({ state: "visible", timeout: wait.timeout ?? assertionTimeoutMs });
+			await this.waitUntilQuiet();
+		}
+	};
+
+	readonly close = (): Promise<void> =>
+		driverCalls.unwrap(
+			() => this.deps.driver.app.terminate(this.bundleId),
+			`terminate ${this.bundleId}`,
+			this.signal()
+		);
+
+	readonly restart = async (): Promise<void> => {
+		await this.open();
+	};
+
+	readonly reinstall = async (): Promise<void> => {
+		const { driver, appPath } = this.deps;
+		const bundleId = this.bundleId;
+		const path = appPath;
+		if (path === undefined) {
+			throw new E2eError("INVALID_ARGUMENT", "app.reinstall() needs WARDEN_APP_PATH (the build to install) to be set");
+		}
+		const installed = await driverCalls.unwrap(
+			() => driver.app.isInstalled(bundleId),
+			`check ${bundleId}`,
+			this.signal()
+		);
+		if (installed)
+			await driverCalls.unwrap(() => driver.app.uninstall(bundleId), `uninstall ${bundleId}`, this.signal());
+		await driverCalls.unwrap(() => driver.app.install(path), `install ${path}`, this.signal());
+	};
+
+	readonly clearData = async (): Promise<void> => {
+		const bundleId = this.bundleId;
+		await driverCalls.unwrap(
+			() => this.deps.driver.app.clearData(bundleId, { keychain: true }),
+			`clear data ${bundleId}`,
+			this.signal()
+		);
+	};
+
+	readonly isRunning = (): Promise<boolean> =>
+		driverCalls.unwrap(
+			() => this.deps.driver.app.isRunning(this.bundleId),
+			`check ${this.bundleId} running`,
+			this.signal()
+		);
+
+	private signal(): AbortSignal | undefined {
+		return this.deps.signal?.();
+	}
+
 	/**
 	 * `WARDEN_LAUNCH_ARGS` as this platform can take them. Android launches have no args (the dev client reaches Metro
 	 * through `adb reverse` and its default url), so the env's args (Metro's `--initialUrl`, `spec.launchArgs`) are
 	 * dropped there, with one log line; explicit `open({ args })` are kept so they still fail loudly.
 	 */
-	const envLaunchArgs = (): readonly string[] => {
-		if (driver.platform !== "android" || launchArgs.length === 0) return launchArgs;
-		if (!droppedLogged) {
-			droppedLogged = true;
-			log(`[warden-e2e] Android launch takes no args: ignoring WARDEN_LAUNCH_ARGS ${JSON.stringify(launchArgs)}`);
+	private envLaunchArgs(): readonly string[] {
+		if (this.deps.driver.platform !== "android" || this.launchArgs.length === 0) return this.launchArgs;
+		if (!this.droppedLogged) {
+			this.droppedLogged = true;
+			this.log(
+				`[warden-e2e] Android launch takes no args: ignoring WARDEN_LAUNCH_ARGS ${JSON.stringify(this.launchArgs)}`
+			);
 		}
 		return [];
-	};
+	}
+
 	/** One fresh look at the whole screen (never a kept snapshot); undefined when the read failed (the app is starting). */
-	const look = async (): Promise<Snapshot | undefined> => {
+	private async look(): Promise<Snapshot | undefined> {
+		const { driver } = this.deps;
 		const read = await driverCalls.settled(
 			() => (observations.canObserve(driver) ? driver.observe({ reuse: false }) : driver.snapshot()),
-			`read ${bundleId}`,
-			signalOf?.()
+			`read ${this.bundleId}`,
+			this.signal()
 		);
 		return read.success ? read.data : undefined;
-	};
+	}
 
 	/** Polls until the screen has content (see `OpenOptions.wait`), at most `DEFAULT_SETTLE_TIMEOUT_MS`; never an error. */
-	const waitForContent = async (): Promise<void> => {
-		const deadline = clock.now() + DEFAULT_SETTLE_TIMEOUT_MS;
+	private async waitForContent(): Promise<void> {
+		const deadline = this.clock.now() + DEFAULT_SETTLE_TIMEOUT_MS;
 		for (let poll = 0; ; poll++) {
-			const snapshot = await look();
-			if (snapshot !== undefined && hasContent(snapshot)) return;
-			const left = deadline - clock.now();
+			const snapshot = await this.look();
+			if (snapshot !== undefined && openScreens.hasContent(snapshot)) return;
+			const left = deadline - this.clock.now();
 			if (left <= 0) return;
 			const gap = CONTENT_POLL_MS[Math.min(poll, CONTENT_POLL_MS.length - 1)] ?? 100;
-			await clock.sleep(Math.min(gap, left));
+			await this.clock.sleep(Math.min(gap, left));
 		}
-	};
+	}
 
 	/**
 	 * One `settle` (250 ms of quiet, at most 3 s); a driver that cannot settle is left alone, as `device.settle()`
 	 * would poll instead. iOS: after a launch that rebound the helper the app is in front already.
 	 */
-	const waitUntilQuiet = async (): Promise<void> => {
+	private async waitUntilQuiet(): Promise<void> {
+		const { driver } = this.deps;
 		const quiet = await driverCalls.settled(
 			() => driver.settle({ quietMs: DEFAULT_SETTLE_QUIET_MS, timeoutMs: DEFAULT_SETTLE_TIMEOUT_MS }),
-			`wait for ${bundleId}`,
-			signalOf?.()
+			`wait for ${this.bundleId}`,
+			this.signal()
 		);
 		if (!quiet.success && quiet.error.code !== "E_UNSUPPORTED")
-			throw driverCalls.toE2eError(quiet.error, `wait for ${bundleId}`);
-	};
-
-	const launch = async (options: OpenOptions = {}): Promise<void> => {
-		const wait = parseWait(options.wait);
-		const opts: LaunchOptions = {
-			args: [...envLaunchArgs(), ...(options.args ?? [])],
-			relaunch: true,
-		};
-		if (options.env !== undefined) opts.env = options.env;
-		if (driver.platform === "ios" && injectWanted?.() === true) opts.inject = true;
-		await driverCalls.unwrap(() => driver.app.launch(bundleId, opts), `launch ${bundleId}`, signalOf?.());
-		onLaunched?.();
-		if (options.url !== undefined) {
-			const url = options.url;
-			await driverCalls.unwrap(() => driver.app.openUrl(url), `open ${url}`, signalOf?.());
-		}
-		if (wait.kind === "quiet") {
-			await waitForContent();
-			await waitUntilQuiet();
-		}
-		if (wait.kind === "until") {
-			await wait.until.waitFor({ state: "visible", timeout: wait.timeout ?? assertionTimeoutMs });
-			await waitUntilQuiet();
-		}
-	};
-
-	const terminate = (): Promise<void> =>
-		driverCalls.unwrap(() => driver.app.terminate(bundleId), `terminate ${bundleId}`, signalOf?.());
-
-	return {
-		open: launch,
-		close: terminate,
-		async restart() {
-			await launch();
-		},
-		async reinstall() {
-			const path = appPath;
-			if (path === undefined) {
-				throw new E2eError(
-					"INVALID_ARGUMENT",
-					"app.reinstall() needs WARDEN_APP_PATH (the build to install) to be set"
-				);
-			}
-			const installed = await driverCalls.unwrap(
-				() => driver.app.isInstalled(bundleId),
-				`check ${bundleId}`,
-				signalOf?.()
-			);
-			if (installed)
-				await driverCalls.unwrap(() => driver.app.uninstall(bundleId), `uninstall ${bundleId}`, signalOf?.());
-			await driverCalls.unwrap(() => driver.app.install(path), `install ${path}`, signalOf?.());
-		},
-		async clearData() {
-			await driverCalls.unwrap(
-				() => driver.app.clearData(bundleId, { keychain: true }),
-				`clear data ${bundleId}`,
-				signalOf?.()
-			);
-		},
-		isRunning() {
-			return driverCalls.unwrap(() => driver.app.isRunning(bundleId), `check ${bundleId} running`, signalOf?.());
-		},
-	};
+			throw driverCalls.toE2eError(quiet.error, `wait for ${this.bundleId}`);
+	}
 }

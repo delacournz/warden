@@ -1,7 +1,7 @@
-import { leaseClockRecorder } from "@delacour/warden-device/conditions/lease-clock-recorder";
-import { lazyLeaseNetworkProxy } from "@delacour/warden-device/conditions/lease-network-proxy";
+import { LeaseClockRecorder } from "@delacour/warden-device/conditions/lease-clock-recorder";
+import { LazyLeaseNetworkProxy } from "@delacour/warden-device/conditions/lease-network-proxy";
 import { type StoreOpener, sharedStoreOpener } from "@delacour/warden-device/conditions/lease-store";
-import { type OpenDriverOptions, openDriver } from "@delacour/warden-device/open";
+import { driverOpener, type OpenDriverOptions } from "@delacour/warden-device/open";
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
@@ -42,11 +42,11 @@ export class EnvDriverOpener {
 	): NetworkProxyPort | undefined {
 		if (env.leaseId === undefined) return undefined;
 		const processEnv = options.processEnv ?? process.env;
-		return lazyLeaseNetworkProxy({
+		return new LazyLeaseNetworkProxy({
 			leaseId: env.leaseId,
 			env: { ...processEnv },
 			now: Date.now,
-			openStore: options.openStore ?? sharedStoreOpener(processEnv),
+			openStore: options.openStore ?? sharedStoreOpener.opener(processEnv),
 			command: env.netproxyCommand,
 		});
 	}
@@ -61,12 +61,12 @@ export class EnvDriverOpener {
 	): ClockRecorder | undefined {
 		const leaseId = env.leaseId;
 		if (leaseId === undefined) return undefined;
-		const open = options.openStore ?? sharedStoreOpener(options.processEnv ?? process.env);
+		const open = options.openStore ?? sharedStoreOpener.opener(options.processEnv ?? process.env);
 		return (condition) => {
 			try {
 				const store = open();
 				if (!store.success) throw new Error(store.error);
-				leaseClockRecorder(store.data, leaseId)(condition);
+				new LeaseClockRecorder(store.data, leaseId).record(condition);
 			} catch (error) {
 				this.log(
 					`[warden-e2e] could not record the clock condition on lease ${leaseId}: ${error instanceof Error ? error.message : String(error)}`
@@ -85,7 +85,7 @@ export class EnvDriverOpener {
 		const lease = { processEnv, ...(openStore === undefined ? {} : { openStore }) };
 		const networkProxy = rest.networkProxy ?? this.leaseProxyFor(env, lease);
 		const clockRecorder = rest.clockRecorder ?? this.leaseClockRecorderFor(env, lease);
-		return openDriver({
+		return driverOpener.open({
 			...rest,
 			...(networkProxy === undefined ? {} : { networkProxy }),
 			...(clockRecorder === undefined ? {} : { clockRecorder }),

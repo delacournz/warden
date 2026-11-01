@@ -27,49 +27,46 @@ export type DeviceDevtools = {
 	connect(): Promise<DevtoolsFacet>;
 };
 
-export function createDeviceDevtools(source: DevtoolsSource): DeviceDevtools {
-	const connect = async (): Promise<DevtoolsFacet> => {
-		const attached = await source.devtools();
+/** The `device.devtools` object over a {@link DevtoolsSource}. */
+export class DeviceDevtoolsFacade implements DeviceDevtools {
+	constructor(private readonly source: DevtoolsSource) {}
+
+	readonly connect = async (): Promise<DevtoolsFacet> => {
+		const attached = await this.source.devtools();
 		if (attached.success) return attached.data;
 		throw new E2eError("SESSION", `devtools unavailable: ${attached.error.message}`);
 	};
 
-	/** The facet, or the failure as a result for the members that return one. */
-	const attach = (): Promise<DevtoolsResult<DevtoolsFacet>> => source.devtools();
+	readonly network: DeviceDevtools["network"] = {
+		entries: async (query) => (await this.connect()).network.entries(query),
+		clear: async () => {
+			await (await this.connect()).network.clear();
+		},
+	};
 
-	return {
-		async evaluate(expression, options) {
-			const attached = await attach();
-			if (!attached.success) return { success: false, error: attached.error };
-			return attached.data.evaluate(expression, options);
+	readonly console: DeviceDevtools["console"] = {
+		lines: async () => (await this.connect()).console.lines(),
+		clear: async () => {
+			(await this.connect()).console.clear();
 		},
-		async reloadJs() {
-			const attached = await attach();
-			return attached.success ? attached.data.reloadJs() : attached;
+		mark: async (label) => {
+			(await this.connect()).console.mark(label);
 		},
-		async tree(options) {
-			const attached = await attach();
-			return attached.success ? attached.data.tree(options) : attached;
-		},
-		network: {
-			async entries(query) {
-				return (await connect()).network.entries(query);
-			},
-			async clear() {
-				await (await connect()).network.clear();
-			},
-		},
-		console: {
-			async lines() {
-				return (await connect()).console.lines();
-			},
-			async clear() {
-				(await connect()).console.clear();
-			},
-			async mark(label) {
-				(await connect()).console.mark(label);
-			},
-		},
-		connect,
+	};
+
+	readonly evaluate: DevtoolsFacet["evaluate"] = async (expression, options) => {
+		const attached = await this.source.devtools();
+		if (!attached.success) return { success: false, error: attached.error };
+		return attached.data.evaluate(expression, options);
+	};
+
+	readonly reloadJs: DevtoolsFacet["reloadJs"] = async () => {
+		const attached = await this.source.devtools();
+		return attached.success ? attached.data.reloadJs() : attached;
+	};
+
+	readonly tree: DevtoolsFacet["tree"] = async (options) => {
+		const attached = await this.source.devtools();
+		return attached.success ? attached.data.tree(options) : attached;
 	};
 }

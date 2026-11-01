@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { spawnDetachedTicker } from "./route-ticker.spawn";
+import { routeTickerSpawner } from "./route-ticker.spawn";
 
 describe("spawnDetachedTicker", () => {
 	const config = { adb: "adb", serial: "emulator-5554", points: [{ lat: 1, lon: 2 }] };
 
 	test("spawns runtime + main + config and returns the pid as an OwnedProcess", () => {
 		let argv: readonly string[] = [];
-		const res = spawnDetachedTicker(
+		const res = routeTickerSpawner.detached(
 			config,
 			(a) => {
 				argv = a;
@@ -21,16 +21,16 @@ describe("spawnDetachedTicker", () => {
 	});
 
 	test("a spawn that yields nothing is an error", () => {
-		expect(spawnDetachedTicker(config, () => undefined).success).toBe(false);
+		expect(routeTickerSpawner.detached(config, () => undefined).success).toBe(false);
 	});
 });
 
 describe("spawnDetachedTickerVia", () => {
 	test("runs the command prefix with the config JSON appended", async () => {
-		const { spawnDetachedTickerVia } = await import("./route-ticker.spawn");
+		const { routeTickerSpawner } = await import("./route-ticker.spawn");
 		let argv: readonly string[] = [];
 		const config = { adb: "adb", serial: "emulator-5554", points: [{ lat: 1, lon: 2 }] };
-		const res = spawnDetachedTickerVia(config, ["/bin/warden", "__route-ticker"], (a) => {
+		const res = routeTickerSpawner.via(config, ["/bin/warden", "__route-ticker"], (a) => {
 			argv = a;
 			return { pid: 5 };
 		});

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { checkBudgets, describeBreaches, measured, parseBudgets } from "./budgets";
+import { perfBudgets } from "./budgets";
 import type { PerfMetrics } from "./perf.types";
 
 const report = (metrics: Partial<PerfMetrics>) => ({ metrics: { topFunctions: [], ...metrics } });
 
 describe("checkBudgets", () => {
 	test("lists every metric over its ceiling", () => {
-		const breaches = checkBudgets(report({ startupColdMs: 2500, jankPct: 1, topCommitMs: 80 }), {
+		const breaches = perfBudgets.check(report({ startupColdMs: 2500, jankPct: 1, topCommitMs: 80 }), {
 			startupColdMs: 2000,
 			jankPct: 5,
 			maxCommitMs: 50,
@@ -18,30 +18,30 @@ describe("checkBudgets", () => {
 	});
 
 	test("a value equal to the budget passes", () => {
-		expect(checkBudgets(report({ jankPct: 5 }), { jankPct: 5 })).toEqual([]);
+		expect(perfBudgets.check(report({ jankPct: 5 }), { jankPct: 5 })).toEqual([]);
 	});
 
 	test("a metric the report lacks cannot breach", () => {
-		expect(checkBudgets(report({}), { startupColdMs: 1, peakMemoryMb: 1 })).toEqual([]);
+		expect(perfBudgets.check(report({}), { startupColdMs: 1, peakMemoryMb: 1 })).toEqual([]);
 	});
 
 	test("overrides replace the config per key", () => {
 		const r = report({ jankPct: 8, cpuP95Pct: 90 });
-		expect(checkBudgets(r, { jankPct: 5, p95CpuPct: 80 }, { jankPct: 10 })).toEqual([
+		expect(perfBudgets.check(r, { jankPct: 5, p95CpuPct: 80 }, { jankPct: 10 })).toEqual([
 			{ metric: "p95CpuPct", value: 90, budget: 80 },
 		]);
 	});
 
 	test("peak memory is the larger of PSS and RSS in MB", () => {
-		expect(measured(report({ peakPssKb: 204_800 }), "peakMemoryMb")).toBe(200);
-		expect(measured(report({ peakRssKb: 102_400, peakPssKb: 51_200 }), "peakMemoryMb")).toBe(100);
-		expect(checkBudgets(report({ peakPssKb: 204_800 }), { peakMemoryMb: 150 })).toHaveLength(1);
+		expect(perfBudgets.measured(report({ peakPssKb: 204_800 }), "peakMemoryMb")).toBe(200);
+		expect(perfBudgets.measured(report({ peakRssKb: 102_400, peakPssKb: 51_200 }), "peakMemoryMb")).toBe(100);
+		expect(perfBudgets.check(report({ peakPssKb: 204_800 }), { peakMemoryMb: 150 })).toHaveLength(1);
 	});
 });
 
 describe("describeBreaches", () => {
 	test("names metric, value, budget and the report", () => {
-		const text = describeBreaches([{ metric: "jankPct", value: 12.34, budget: 5 }], "/o/perf/report.json");
+		const text = perfBudgets.describe([{ metric: "jankPct", value: 12.34, budget: 5 }], "/o/perf/report.json");
 		expect(text).toContain("perf_budget: 1 metric over budget");
 		expect(text).toContain("jankPct: 12.3 > budget 5");
 		expect(text).toContain("report: /o/perf/report.json");
@@ -50,10 +50,10 @@ describe("describeBreaches", () => {
 
 describe("parseBudgets", () => {
 	test("keeps known numeric keys only", () => {
-		expect(parseBudgets('{"jankPct":5,"bogus":1,"startupColdMs":"x"}')).toEqual({ jankPct: 5 });
+		expect(perfBudgets.parse('{"jankPct":5,"bogus":1,"startupColdMs":"x"}')).toEqual({ jankPct: 5 });
 	});
 	test("bad json is empty", () => {
-		expect(parseBudgets("{nope")).toEqual({});
-		expect(parseBudgets(undefined)).toEqual({});
+		expect(perfBudgets.parse("{nope")).toEqual({});
+		expect(perfBudgets.parse(undefined)).toEqual({});
 	});
 });

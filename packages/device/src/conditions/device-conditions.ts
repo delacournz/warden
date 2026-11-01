@@ -154,7 +154,7 @@ export type TimelineStepInput = {
 	location?: LocationCondition | LatLon;
 };
 
-/** What the runner needs of a device's conditions; reached through {@link conditionsOf}, not on `Device`. */
+/** What the runner needs of a device's conditions; reached through {@link ConditionRegistry.of}, not on `Device`. */
 export type ConditionsInternals = {
 	/** the suite declares a network or clock condition, or one is active: iOS must launch with the dylib */
 	wantsInject(): boolean;
@@ -219,112 +219,269 @@ type ConditionChange = ConditionEvent extends infer E
 
 const ONLINE: NetworkCondition = { kind: "online" };
 const REAL_CLOCK: ClockCondition = { kind: "real" };
-
-/** The a11y op a suite's `conditions.a11y` means (its resolved `fontScale` is not an input). */
-function a11yOpOf(config: A11yCondition): A11yOp {
-	const { fontScale: _scale, ...op } = config;
-	return op;
-}
-
-const stderrLog = (line: string): void => {
-	process.stderr.write(`${line}\n`);
-};
-
-function invalid(message: string): E2eError {
-	return new E2eError("INVALID_ARGUMENT", message);
-}
-
-function durationMs(value: Duration, what: string): number {
-	if (typeof value === "number") {
-		if (!Number.isFinite(value) || value < 0) throw invalid(`${what} must be 0 or more, got ${String(value)}`);
-		return value;
-	}
-	const parsed = durationParser.parse(value);
-	if (!parsed.success) throw invalid(`${what}: ${parsed.error}`);
-	return parsed.data;
-}
-
-function network(input: NetworkInput): NetworkCondition {
-	const condition = conditionsConfigs.toNetworkCondition(input);
-	if (!condition.success) throw invalid(condition.error);
-	return condition.data;
-}
-
-function instant(at: ClockInput): Date {
-	const date = at instanceof Date ? new Date(at.getTime()) : new Date(at);
-	if (Number.isNaN(date.getTime()))
-		throw invalid(`invalid time ${JSON.stringify(at)} (use an ISO 8601 string, a Date or epoch ms)`);
-	return date;
-}
-
-function validatePoint(point: { lat: number; lon: number }): void {
-	const ok =
-		Number.isFinite(point.lat) && Number.isFinite(point.lon) && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180;
-	if (!ok) throw invalid(`invalid location ${point.lat},${point.lon} (lat within 90, lon within 180)`);
-}
-
 const SCENARIOS: readonly LocationScenario[] = ["city-run", "city-bike", "freeway"];
 
-function locationOf(input: LocationCondition | LatLon): LocationCondition {
-	if ("kind" in input) return input;
-	validatePoint(input);
-	return { kind: "point", lat: input.lat, lon: input.lon };
+/** Validates and converts what a spec passes to `device.network` / `location` / `clock` into the conditions the driver takes. */
+class ConditionInputs {
+	/** The a11y op a suite's `conditions.a11y` means (its resolved `fontScale` is not an input). */
+	a11yOpOf(config: A11yCondition): A11yOp {
+		const { fontScale: _scale, ...op } = config;
+		return op;
+	}
+
+	invalid(message: string): E2eError {
+		return new E2eError("INVALID_ARGUMENT", message);
+	}
+
+	durationMs(value: Duration, what: string): number {
+		if (typeof value === "number") {
+			if (!Number.isFinite(value) || value < 0) throw this.invalid(`${what} must be 0 or more, got ${String(value)}`);
+			return value;
+		}
+		const parsed = durationParser.parse(value);
+		if (!parsed.success) throw this.invalid(`${what}: ${parsed.error}`);
+		return parsed.data;
+	}
+
+	network(input: NetworkInput): NetworkCondition {
+		const condition = conditionsConfigs.toNetworkCondition(input);
+		if (!condition.success) throw this.invalid(condition.error);
+		return condition.data;
+	}
+
+	instant(at: ClockInput): Date {
+		const date = at instanceof Date ? new Date(at.getTime()) : new Date(at);
+		if (Number.isNaN(date.getTime()))
+			throw this.invalid(`invalid time ${JSON.stringify(at)} (use an ISO 8601 string, a Date or epoch ms)`);
+		return date;
+	}
+
+	validatePoint(point: { lat: number; lon: number }): void {
+		const ok =
+			Number.isFinite(point.lat) &&
+			Number.isFinite(point.lon) &&
+			Math.abs(point.lat) <= 90 &&
+			Math.abs(point.lon) <= 180;
+		if (!ok) throw this.invalid(`invalid location ${point.lat},${point.lon} (lat within 90, lon within 180)`);
+	}
+
+	locationOf(input: LocationCondition | LatLon): LocationCondition {
+		if ("kind" in input) return input;
+		this.validatePoint(input);
+		return { kind: "point", lat: input.lat, lon: input.lon };
+	}
 }
 
-const registry = new WeakMap<object, ConditionsInternals>();
+const inputs = new ConditionInputs();
 
-/** Ties a device (or a wrapper of it) to its conditions' runner hooks; `Device` itself does not expose them. */
-export function registerConditions(device: object, internals: ConditionsInternals): void {
-	registry.set(device, internals);
+/** Ties a device to its conditions' runner hooks, and opens the condition sink of a session. */
+export class ConditionRegistry {
+	private readonly registry = new WeakMap<object, ConditionsInternals>();
+
+	/** Ties a device (or a wrapper of it) to its conditions' runner hooks; `Device` itself does not expose them. */
+	register(device: object, internals: ConditionsInternals): void {
+		this.registry.set(device, internals);
+	}
+
+	/** The runner hooks of a device made by `DeviceImpl` (or a `DeviceTracer` wrapper of one). */
+	of(device: object): ConditionsInternals | undefined {
+		return this.registry.get(device);
+	}
+
+	/** The condition sink for a session: events append to its `results.jsonl`; none without one. */
+	sinkFor(session: { results?: { path: string } }): ConditionSink | undefined {
+		return session.results === undefined ? undefined : conditionEvents.openSink(session.results.path);
+	}
 }
 
-/** The runner hooks of a device made by `createDevice` (or a `traceDevice` wrapper of one). */
-export function conditionsOf(device: object): ConditionsInternals | undefined {
-	return registry.get(device);
-}
+export const conditionRegistry = new ConditionRegistry();
 
-/** The condition sink for a session: events append to its `results.jsonl`; none without one. */
-export function conditionSinkFor(session: { results?: { path: string } }): ConditionSink | undefined {
-	return session.results === undefined ? undefined : conditionEvents.openSink(session.results.path);
-}
-
-export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceConditions {
-	const { driver, env } = deps;
-	const ticker = deps.tickerClock ?? realTickerClock;
-	const log = deps.log ?? stderrLog;
-	const normalized = conditionsConfigs.normalizeConditions(env.conditions ?? {});
-	if (!normalized.success) throw new E2eError("SESSION", `invalid conditions: ${normalized.error}`);
-	const baseline: SuiteConditions = normalized.data.conditions;
-
-	let currentNetwork: NetworkCondition = ONLINE;
-	let currentFaults: readonly HostFault[] = [];
-	let currentClock: ClockCondition = REAL_CLOCK;
-	/** when `currentClock` was set: a fixed clock has run on since */
-	let clockSetAt = ticker.now();
-	let networkDirty = false;
-	let locationDirty = false;
-	let clockDirty = false;
-	let permissionsDirty = false;
-	let localeDirty = false;
-	let a11yDirty = false;
-	let batteryDirty = false;
-	/** permission states this test set, per name, and the app they are for */
-	const permissionStates = new Map<PermissionName, PermissionState>();
-	let permissionBundle: string | undefined;
-	let currentLocale: LocaleCondition = {};
-	let currentA11y: A11yCondition = {};
-	let flap: { run: ConditionRun; options: FlapOptions } | undefined;
-	const runs = new Set<ConditionRun>();
-
-	const recorder = deps.recorder;
-
-	const emit = (event: ConditionChange): void => {
-		deps.sink?.({ ...event, type: "condition", at: ticker.now() });
+/** `device.network` / `location` / `clock` / `permissions` / ... over one {@link Driver}, with the state to put back. */
+export class DeviceConditionsImpl implements DeviceConditions {
+	private readonly stderrLog = (line: string): void => {
+		process.stderr.write(`${line}\n`);
 	};
 
+	private readonly driver: Driver;
+	private readonly env: ConditionsEnv;
+	private readonly ticker: TickerClock;
+	private readonly log: (line: string) => void;
+	private readonly baseline: SuiteConditions;
+	private readonly recorder: ConditionRecorder | undefined;
+
+	private currentNetwork: NetworkCondition = ONLINE;
+	private currentFaults: readonly HostFault[] = [];
+	private currentClock: ClockCondition = REAL_CLOCK;
+	/** when `currentClock` was set: a fixed clock has run on since */
+	private clockSetAt: number;
+	private networkDirty = false;
+	private locationDirty = false;
+	private clockDirty = false;
+	private permissionsDirty = false;
+	private localeDirty = false;
+	private a11yDirty = false;
+	private batteryDirty = false;
+	/** permission states this test set, per name, and the app they are for */
+	private readonly permissionStates = new Map<PermissionName, PermissionState>();
+	private permissionBundle: string | undefined;
+	private currentLocale: LocaleCondition = {};
+	private currentA11y: A11yCondition = {};
+	private flap: { run: ConditionRun; options: FlapOptions } | undefined;
+	private readonly runs = new Set<ConditionRun>();
+
+	readonly internals: ConditionsInternals;
+
+	constructor(private readonly deps: DeviceConditionsDeps) {
+		this.driver = deps.driver;
+		this.env = deps.env;
+		this.ticker = deps.tickerClock ?? realTickerClock;
+		this.log = deps.log ?? this.stderrLog;
+		this.recorder = deps.recorder;
+		const normalized = conditionsConfigs.normalizeConditions(this.env.conditions ?? {});
+		if (!normalized.success) throw new E2eError("SESSION", `invalid conditions: ${normalized.error}`);
+		this.baseline = normalized.data.conditions;
+		this.clockSetAt = this.ticker.now();
+		this.internals = this.buildInternals();
+	}
+
+	readonly network: DeviceNetwork = {
+		set: (input, options) => this.setNetwork(input, options),
+		during: async (condition, fn, options) => {
+			const previous = this.currentNetwork;
+			const previousFlap = this.flap?.options;
+			await this.setNetwork(condition, options);
+			let result: Awaited<ReturnType<typeof fn>>;
+			try {
+				result = await fn();
+			} catch (error) {
+				await this.restoreNetwork(previous, previousFlap, options).catch((restoreError: unknown) =>
+					this.log(
+						`[warden-e2e] network.during: restoring the previous network failed: ${String(restoreError instanceof Error ? restoreError.message : restoreError)}`
+					)
+				);
+				throw error;
+			}
+			await this.restoreNetwork(previous, previousFlap, options);
+			return result;
+		},
+		flap: (options) => this.startFlapRun(options),
+		fault: (rules) => this.setFaults("match" in rules ? [rules] : rules),
+		status: async () => ({
+			condition: this.currentNetwork,
+			faults: this.currentFaults,
+			flapping: this.flap !== undefined,
+		}),
+		reset: () => this.resetNetwork(),
+	};
+
+	readonly location: DeviceLocation = {
+		set: async (point) => {
+			inputs.validatePoint(point);
+			await this.applyLocation({
+				kind: "point",
+				lat: point.lat,
+				lon: point.lon,
+				...(point.altM === undefined ? {} : { altM: point.altM }),
+			});
+		},
+		route: async (points, options = {}) => {
+			const pace = {
+				...(options.speedMps === undefined ? {} : { speedMps: options.speedMps }),
+			};
+			if ("gpx" in points) {
+				await this.applyLocation({ kind: "gpx", path: resolve(points.gpx), ...pace });
+				return;
+			}
+			if (points.length === 0) throw inputs.invalid("a route needs at least one point");
+			for (const point of points) inputs.validatePoint(point);
+			await this.applyLocation({
+				kind: "route",
+				points,
+				...pace,
+				...(options.intervalS === undefined ? {} : { intervalS: options.intervalS }),
+				...(options.loop === undefined ? {} : { loop: options.loop }),
+			});
+		},
+		scenario: async (name) => {
+			if (!SCENARIOS.includes(name)) {
+				throw inputs.invalid(`unknown scenario "${String(name)}" (use ${SCENARIOS.join(", ")})`);
+			}
+			await this.applyLocation({ kind: "scenario", name });
+		},
+		clear: () => this.applyLocation({ kind: "clear" }),
+	};
+
+	readonly clock: DeviceClock = {
+		set: async (at, options) => {
+			await this.applyClock(this.clockFor(at, options?.frozen));
+		},
+		advance: async (by) => {
+			await this.applyClock(this.advanced(inputs.durationMs(by, "advance")));
+		},
+		during: async (at, fn, options) => {
+			const previous = this.currentClock;
+			await this.applyClock(this.clockFor(at, options?.frozen));
+			let result: Awaited<ReturnType<typeof fn>>;
+			try {
+				result = await fn();
+			} catch (error) {
+				await this.applyClock(previous).catch((restoreError: unknown) =>
+					this.log(
+						`[warden-e2e] clock.during: restoring the previous clock failed: ${String(restoreError instanceof Error ? restoreError.message : restoreError)}`
+					)
+				);
+				throw error;
+			}
+			await this.applyClock(previous);
+			return result;
+		},
+		reset: async () => {
+			await this.applyClock(this.baseline.clock ?? REAL_CLOCK);
+			this.clockDirty = false;
+		},
+		status: () => this.currentClock,
+	};
+
+	readonly permissions: DevicePermissions = {
+		set: (grants, options) => this.applyPermissions(grants, options),
+		reset: async (options) => {
+			const baselinePermissions = this.baseline.permissions ?? {};
+			const back: PermissionGrants = {};
+			for (const name of this.permissionStates.keys()) back[name] = baselinePermissions[name] ?? "unset";
+			if (Object.keys(back).length === 0) return;
+			await this.applyPermissions(
+				back,
+				options ?? (this.permissionBundle ? { bundleId: this.permissionBundle } : undefined)
+			);
+			this.permissionsDirty = false;
+			this.permissionStates.clear();
+			this.recorder?.settle("permission", { grants: [] }, true);
+		},
+	};
+
+	readonly timezone: DeviceConditions["timezone"] = (tz) => this.applyTimezone(tz);
+	readonly locale: DeviceConditions["locale"] = (tag, options) => this.applyLocale(tag, options);
+	readonly a11y: DeviceConditions["a11y"] = (op) => this.applyA11y(op);
+	readonly battery: DeviceConditions["battery"] = (op) => this.applyBattery(op);
+	readonly timeline: DeviceConditions["timeline"] = (steps) => this.startTimelineRun(steps);
+
+	readonly memoryWarning: DeviceConditions["memoryWarning"] = async (options) => {
+		const op = this.settingOp("memoryWarning");
+		await this.call("memoryWarning", () => op(options ?? { bundleId: this.env.bundleId }));
+	};
+
+	readonly push: DeviceConditions["push"] = async (payload, options) => {
+		const op = this.settingOp("push");
+		await this.call("push", () => op(payload, options ?? { bundleId: this.env.bundleId }));
+	};
+
+	private emit(event: ConditionChange): void {
+		this.deps.sink?.({ ...event, type: "condition", at: this.ticker.now() });
+	}
+
 	/** One driver call: raced against the attempt's signal, a failure thrown as an `E2eError`. */
-	async function call<T>(what: string, run: () => DriverResult<T>): Promise<T> {
-		const result = await driverCalls.settled(run, what, deps.signal());
+	private async call<T>(what: string, run: () => DriverResult<T>): Promise<T> {
+		const result = await driverCalls.settled(run, what, this.deps.signal());
 		if (result.success) return result.data;
 		const error = driverCalls.toE2eError(result.error, what);
 		if (result.error.code === "E_NETWORK_RELAUNCH") {
@@ -337,64 +494,67 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	}
 
 	/** a flap or timeline step that landed is on the lease too: a crash mid-flap can be undone */
-	const target = (options?: NetworkSetOptions): SchedulerTarget => ({
-		network: async (condition) => {
-			const result = await driver.network(
-				condition,
-				options?.relaunch === undefined ? undefined : { relaunch: options.relaunch }
-			);
-			if (result.success) recorder?.record("network", condition);
-			return result;
-		},
-		location: async (op) => {
-			const result = await driver.location(op);
-			if (result.success) recorder?.record("location", op);
-			return result;
-		},
-	});
+	private target(options?: NetworkSetOptions): SchedulerTarget {
+		const { driver, recorder } = this;
+		return {
+			network: async (condition) => {
+				const result = await driver.network(
+					condition,
+					options?.relaunch === undefined ? undefined : { relaunch: options.relaunch }
+				);
+				if (result.success) recorder?.record("network", condition);
+				return result;
+			},
+			location: async (op) => {
+				const result = await driver.location(op);
+				if (result.success) recorder?.record("location", op);
+				return result;
+			},
+		};
+	}
 
-	function track(scheduler: Scheduler): ConditionRun {
+	private track(scheduler: Scheduler): ConditionRun {
 		const run: ConditionRun = {
-			async stop() {
+			stop: async () => {
 				scheduler.stop();
 				const outcome = await scheduler.done;
-				runs.delete(run);
-				if (flap?.run === run) flap = undefined;
+				this.runs.delete(run);
+				if (this.flap?.run === run) this.flap = undefined;
 				return outcome;
 			},
 			done: scheduler.done,
 			status: () => scheduler.current(),
 		};
-		runs.add(run);
+		this.runs.add(run);
 		return run;
 	}
 
-	async function stopFlap(): Promise<void> {
-		const running = flap;
+	private async stopFlap(): Promise<void> {
+		const running = this.flap;
 		if (running === undefined) return;
 		await running.run.stop();
 	}
 
-	async function applyNetwork(condition: NetworkCondition, options?: NetworkSetOptions): Promise<NetworkState> {
-		await stopFlap();
-		networkDirty = true;
+	private async applyNetwork(condition: NetworkCondition, options?: NetworkSetOptions): Promise<NetworkState> {
+		await this.stopFlap();
+		this.networkDirty = true;
 		const opts = options?.relaunch === undefined ? undefined : { relaunch: options.relaunch };
-		const state = await call("network", () => driver.network(condition, opts));
-		currentNetwork = condition;
-		recorder?.record("network", condition);
-		emit({ area: "network", value: condition });
+		const state = await this.call("network", () => this.driver.network(condition, opts));
+		this.currentNetwork = condition;
+		this.recorder?.record("network", condition);
+		this.emit({ area: "network", value: condition });
 		return state;
 	}
 
-	async function startFlapRun(options: FlapOptions, netOptions?: NetworkSetOptions): Promise<ConditionRun> {
-		const upMs = durationMs(options.up, "flap up");
-		const downMs = durationMs(options.down, "flap down");
-		if (!(upMs > 0 && downMs > 0)) throw invalid("flap needs up and down above 0");
-		const base = options.base === undefined ? ONLINE : network(options.base);
-		if (base.kind === "flap") throw invalid("flap base cannot itself be a flap");
-		await applyNetwork(base, netOptions);
+	private async startFlapRun(options: FlapOptions, netOptions?: NetworkSetOptions): Promise<ConditionRun> {
+		const upMs = inputs.durationMs(options.up, "flap up");
+		const downMs = inputs.durationMs(options.down, "flap down");
+		if (!(upMs > 0 && downMs > 0)) throw inputs.invalid("flap needs up and down above 0");
+		const base = options.base === undefined ? ONLINE : inputs.network(options.base);
+		if (base.kind === "flap") throw inputs.invalid("flap base cannot itself be a flap");
+		await this.applyNetwork(base, netOptions);
 		const scheduler = schedulers.startFlap(
-			target(netOptions),
+			this.target(netOptions),
 			{
 				upMs,
 				downMs,
@@ -403,25 +563,25 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 				...(options.jitterPct === undefined ? {} : { jitterPct: options.jitterPct }),
 				...(options.seed === undefined ? {} : { seed: options.seed }),
 			},
-			{ ...ticker, ...(deps.sink === undefined ? {} : { sink: deps.sink }) }
+			{ ...this.ticker, ...(this.deps.sink === undefined ? {} : { sink: this.deps.sink }) }
 		);
-		const run = track(scheduler);
-		flap = { run, options };
-		currentNetwork = {
+		const run = this.track(scheduler);
+		this.flap = { run, options };
+		this.currentNetwork = {
 			kind: "flap",
 			upMs,
 			downMs,
 			base,
 			...(options.jitterPct === undefined ? {} : { jitterPct: options.jitterPct }),
 		};
-		emit({ area: "network", value: currentNetwork });
+		this.emit({ area: "network", value: this.currentNetwork });
 		return run;
 	}
 
-	async function setNetwork(input: NetworkInput, options?: NetworkSetOptions): Promise<NetworkState> {
-		const condition = network(input);
+	private async setNetwork(input: NetworkInput, options?: NetworkSetOptions): Promise<NetworkState> {
+		const condition = inputs.network(input);
 		if (condition.kind === "flap") {
-			await startFlapRun(
+			await this.startFlapRun(
 				{
 					up: condition.upMs,
 					down: condition.downMs,
@@ -432,325 +592,221 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 			);
 			return { online: true, condition, needsProxy: [] };
 		}
-		return applyNetwork(condition, options);
+		return this.applyNetwork(condition, options);
 	}
 
-	async function restoreNetwork(
+	private async restoreNetwork(
 		previous: NetworkCondition,
 		previousFlap: FlapOptions | undefined,
 		options?: NetworkSetOptions
 	): Promise<void> {
-		if (previous.kind === "flap" && previousFlap !== undefined) await startFlapRun(previousFlap, options);
-		else await applyNetwork(previous, options);
+		if (previous.kind === "flap" && previousFlap !== undefined) await this.startFlapRun(previousFlap, options);
+		else await this.applyNetwork(previous, options);
 	}
 
-	async function resetNetwork(): Promise<void> {
-		await stopFlap();
-		if (currentFaults.length > 0) await setFaults([]);
-		const goal = baseline.network ?? ONLINE;
-		await applyNetwork(goal);
-		networkDirty = false;
-		recorder?.settle("network", goal, goal.kind === "online");
+	private async resetNetwork(): Promise<void> {
+		await this.stopFlap();
+		if (this.currentFaults.length > 0) await this.setFaults([]);
+		const goal = this.baseline.network ?? ONLINE;
+		await this.applyNetwork(goal);
+		this.networkDirty = false;
+		this.recorder?.settle("network", goal, goal.kind === "online");
 	}
 
-	async function setFaults(rules: readonly HostFault[]): Promise<{ notes: readonly string[] }> {
-		networkDirty = true;
-		const result = await call("network faults", () => driver.networkFaults(rules));
-		currentFaults = rules;
-		recorder?.record("network", currentNetwork);
-		emit({ area: "faults", value: { kind: "faults", rules } });
+	private async setFaults(rules: readonly HostFault[]): Promise<{ notes: readonly string[] }> {
+		this.networkDirty = true;
+		const result = await this.call("network faults", () => this.driver.networkFaults(rules));
+		this.currentFaults = rules;
+		this.recorder?.record("network", this.currentNetwork);
+		this.emit({ area: "faults", value: { kind: "faults", rules } });
 		return result;
 	}
 
-	const networkApi: DeviceNetwork = {
-		set: setNetwork,
-		async during(condition, fn, options) {
-			const previous = currentNetwork;
-			const previousFlap = flap?.options;
-			await setNetwork(condition, options);
-			let result: Awaited<ReturnType<typeof fn>>;
-			try {
-				result = await fn();
-			} catch (error) {
-				await restoreNetwork(previous, previousFlap, options).catch((restoreError: unknown) =>
-					log(
-						`[warden-e2e] network.during: restoring the previous network failed: ${String(restoreError instanceof Error ? restoreError.message : restoreError)}`
-					)
-				);
-				throw error;
-			}
-			await restoreNetwork(previous, previousFlap, options);
-			return result;
-		},
-		flap: (options) => startFlapRun(options),
-		fault: (rules) => setFaults("match" in rules ? [rules] : rules),
-		async status() {
-			return { condition: currentNetwork, faults: currentFaults, flapping: flap !== undefined };
-		},
-		reset: resetNetwork,
-	};
-
-	async function applyLocation(op: LocationCondition): Promise<void> {
-		locationDirty = true;
-		await call("location", () => driver.location(op));
-		recorder?.record("location", op);
-		emit({ area: "location", value: op });
+	private async applyLocation(op: LocationCondition): Promise<void> {
+		this.locationDirty = true;
+		await this.call("location", () => this.driver.location(op));
+		this.recorder?.record("location", op);
+		this.emit({ area: "location", value: op });
 	}
 
-	const locationApi: DeviceLocation = {
-		async set(point) {
-			validatePoint(point);
-			await applyLocation({
-				kind: "point",
-				lat: point.lat,
-				lon: point.lon,
-				...(point.altM === undefined ? {} : { altM: point.altM }),
-			});
-		},
-		async route(points, options = {}) {
-			const pace = {
-				...(options.speedMps === undefined ? {} : { speedMps: options.speedMps }),
-			};
-			if ("gpx" in points) {
-				await applyLocation({ kind: "gpx", path: resolve(points.gpx), ...pace });
-				return;
-			}
-			if (points.length === 0) throw invalid("a route needs at least one point");
-			for (const point of points) validatePoint(point);
-			await applyLocation({
-				kind: "route",
-				points,
-				...pace,
-				...(options.intervalS === undefined ? {} : { intervalS: options.intervalS }),
-				...(options.loop === undefined ? {} : { loop: options.loop }),
-			});
-		},
-		async scenario(name) {
-			if (!SCENARIOS.includes(name)) throw invalid(`unknown scenario "${String(name)}" (use ${SCENARIOS.join(", ")})`);
-			await applyLocation({ kind: "scenario", name });
-		},
-		clear: () => applyLocation({ kind: "clear" }),
-	};
-
-	async function applyClock(condition: ClockCondition): Promise<void> {
+	private async applyClock(condition: ClockCondition): Promise<void> {
+		const { driver } = this;
 		// a remote driver offers only the ops its server has, so `clock` can be missing at runtime
 		const op: Driver["clock"] | undefined = driver.clock;
-		clockDirty = true;
+		this.clockDirty = true;
 		if (typeof op !== "function") {
 			throw driverCalls.toE2eError(
 				{ code: "E_UNSUPPORTED", message: "this driver has no clock condition", retryable: false },
 				"clock"
 			);
 		}
-		await call("clock", () => op.call(driver, condition));
-		currentClock = condition;
-		clockSetAt = ticker.now();
-		emit({ area: "clock", value: condition });
+		await this.call("clock", () => op.call(driver, condition));
+		this.currentClock = condition;
+		this.clockSetAt = this.ticker.now();
+		this.emit({ area: "clock", value: condition });
 	}
 
-	function clockFor(at: ClockInput, frozen: boolean | undefined): ClockCondition {
-		const iso = instant(at).toISOString();
+	private clockFor(at: ClockInput, frozen: boolean | undefined): ClockCondition {
+		const iso = inputs.instant(at).toISOString();
 		return frozen === true ? { kind: "frozen", at: iso } : { kind: "fixed", at: iso };
 	}
 
-	function advanced(by: number): ClockCondition {
-		switch (currentClock.kind) {
+	private advanced(by: number): ClockCondition {
+		const current = this.currentClock;
+		switch (current.kind) {
 			case "real":
 				return { kind: "offset", ms: by };
 			case "offset":
-				return { kind: "offset", ms: currentClock.ms + by };
+				return { kind: "offset", ms: current.ms + by };
 			case "frozen":
-				return { kind: "frozen", at: new Date(Date.parse(currentClock.at) + by).toISOString() };
+				return { kind: "frozen", at: new Date(Date.parse(current.at) + by).toISOString() };
 			case "fixed": {
-				const now = Date.parse(currentClock.at) + (ticker.now() - clockSetAt);
+				const now = Date.parse(current.at) + (this.ticker.now() - this.clockSetAt);
 				return { kind: "fixed", at: new Date(now + by).toISOString() };
 			}
 		}
 	}
 
-	const clockApi: DeviceClock = {
-		async set(at, options) {
-			await applyClock(clockFor(at, options?.frozen));
-		},
-		async advance(by) {
-			await applyClock(advanced(durationMs(by, "advance")));
-		},
-		async during(at, fn, options) {
-			const previous = currentClock;
-			await applyClock(clockFor(at, options?.frozen));
-			let result: Awaited<ReturnType<typeof fn>>;
-			try {
-				result = await fn();
-			} catch (error) {
-				await applyClock(previous).catch((restoreError: unknown) =>
-					log(
-						`[warden-e2e] clock.during: restoring the previous clock failed: ${String(restoreError instanceof Error ? restoreError.message : restoreError)}`
-					)
-				);
-				throw error;
-			}
-			await applyClock(previous);
-			return result;
-		},
-		async reset() {
-			await applyClock(baseline.clock ?? REAL_CLOCK);
-			clockDirty = false;
-		},
-		status: () => currentClock,
-	};
-
 	/** a remote driver offers only the ops its server has, so a setting op can be missing at runtime */
-	function settingOp<K extends "permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push">(
+	private settingOp<K extends "permissions" | "timezone" | "locale" | "a11y" | "battery" | "memoryWarning" | "push">(
 		name: K
 	): Driver[K] {
-		const op: Driver[K] | undefined = driver[name];
+		const op: Driver[K] | undefined = this.driver[name];
 		if (typeof op !== "function") {
 			throw driverCalls.toE2eError(
 				{ code: "E_UNSUPPORTED", message: `this driver has no ${name} op`, retryable: false },
 				name
 			);
 		}
-		return op.bind(driver) as Driver[K];
+		return op.bind(this.driver) as Driver[K];
 	}
 
-	const recordPermissions = (bundleId: string): void => {
+	private recordPermissions(bundleId: string): void {
 		const value: PermissionCondition = {
-			grants: [...permissionStates].map(([permission, state]) => ({ bundleId, permission, state })),
+			grants: [...this.permissionStates].map(([permission, state]) => ({ bundleId, permission, state })),
 		};
-		recorder?.record("permission", value);
-		emit({ area: "permission", value });
-	};
+		this.recorder?.record("permission", value);
+		this.emit({ area: "permission", value });
+	}
 
-	async function applyPermissions(grants: PermissionGrants, options?: SettingOptions): Promise<PermissionsState> {
-		permissionsDirty = true;
-		const op = settingOp("permissions");
-		const state = await call("permissions", () => op(grants, options ?? { bundleId: env.bundleId }));
-		for (const { permission, state: applied } of state.applied) permissionStates.set(permission, applied);
-		permissionBundle = state.bundleId;
-		recordPermissions(state.bundleId);
+	private async applyPermissions(grants: PermissionGrants, options?: SettingOptions): Promise<PermissionsState> {
+		this.permissionsDirty = true;
+		const op = this.settingOp("permissions");
+		const state = await this.call("permissions", () => op(grants, options ?? { bundleId: this.env.bundleId }));
+		for (const { permission, state: applied } of state.applied) this.permissionStates.set(permission, applied);
+		this.permissionBundle = state.bundleId;
+		this.recordPermissions(state.bundleId);
 		return state;
 	}
 
-	const permissionsApi: DevicePermissions = {
-		set: applyPermissions,
-		async reset(options) {
-			const baselinePermissions = baseline.permissions ?? {};
-			const back: PermissionGrants = {};
-			for (const name of permissionStates.keys()) back[name] = baselinePermissions[name] ?? "unset";
-			if (Object.keys(back).length === 0) return;
-			await applyPermissions(back, options ?? (permissionBundle ? { bundleId: permissionBundle } : undefined));
-			permissionsDirty = false;
-			permissionStates.clear();
-			recorder?.settle("permission", { grants: [] }, true);
-		},
-	};
-
-	function recordLocale(): void {
-		const empty = currentLocale.locale === undefined && currentLocale.timezone === undefined;
-		if (empty) recorder?.settle("locale", currentLocale, true);
-		else recorder?.record("locale", currentLocale);
-		emit({ area: "locale", value: currentLocale });
+	private recordLocale(): void {
+		const current = this.currentLocale;
+		const empty = current.locale === undefined && current.timezone === undefined;
+		if (empty) this.recorder?.settle("locale", current, true);
+		else this.recorder?.record("locale", current);
+		this.emit({ area: "locale", value: current });
 	}
 
-	async function applyTimezone(tz: string | null): Promise<TimezoneState> {
-		localeDirty = true;
-		const op = settingOp("timezone");
-		const previous = currentLocale.previousTimezone;
-		const state = await call("timezone", () => op(tz, previous === undefined ? undefined : { previous }));
-		const { timezone: _gone, ...rest } = currentLocale;
-		currentLocale = {
+	private async applyTimezone(tz: string | null): Promise<TimezoneState> {
+		this.localeDirty = true;
+		const op = this.settingOp("timezone");
+		const previous = this.currentLocale.previousTimezone;
+		const state = await this.call("timezone", () => op(tz, previous === undefined ? undefined : { previous }));
+		const { timezone: _gone, ...rest } = this.currentLocale;
+		this.currentLocale = {
 			...rest,
 			...(tz === null ? {} : { timezone: tz }),
 			...((previous ?? state.previous) ? { previousTimezone: previous ?? state.previous } : {}),
 		};
-		recordLocale();
+		this.recordLocale();
 		return state;
 	}
 
-	async function applyLocale(tag: string | null, options?: SettingOptions): Promise<LocaleState> {
-		localeDirty = true;
-		const op = settingOp("locale");
-		const state = await call("locale", () => op(tag, options ?? { bundleId: env.bundleId }));
-		const { locale: _gone, ...rest } = currentLocale;
-		currentLocale = {
+	private async applyLocale(tag: string | null, options?: SettingOptions): Promise<LocaleState> {
+		this.localeDirty = true;
+		const op = this.settingOp("locale");
+		const state = await this.call("locale", () => op(tag, options ?? { bundleId: this.env.bundleId }));
+		const { locale: _gone, ...rest } = this.currentLocale;
+		this.currentLocale = {
 			...rest,
 			...(tag === null ? {} : { locale: tag }),
 			...(state.bundleId === undefined ? {} : { bundleId: state.bundleId }),
 		};
-		recordLocale();
+		this.recordLocale();
 		return state;
 	}
 
-	function checkedA11y(op: A11yOp | null): void {
+	private checkedA11y(op: A11yOp | null): void {
 		if (op === null) return;
 		if (op.textSize !== undefined) {
 			const size = textSizes.resolveTextSize(op.textSize);
-			if (!size.success) throw invalid(size.error);
+			if (!size.success) throw inputs.invalid(size.error);
 		}
 		if (Object.keys(op).length === 0)
-			throw invalid("a11y needs at least one of textSize, boldText, contrast, reduceMotion");
+			throw inputs.invalid("a11y needs at least one of textSize, boldText, contrast, reduceMotion");
 	}
 
-	async function applyA11y(op: A11yOp | null): Promise<A11yState> {
-		checkedA11y(op);
-		a11yDirty = true;
-		const run = settingOp("a11y");
-		const state = await call("a11y", () => run(op));
+	private async applyA11y(op: A11yOp | null): Promise<A11yState> {
+		this.checkedA11y(op);
+		this.a11yDirty = true;
+		const run = this.settingOp("a11y");
+		const state = await this.call("a11y", () => run(op));
 		const resolved = op?.textSize === undefined ? undefined : textSizes.resolveTextSize(op.textSize);
-		currentA11y =
+		this.currentA11y =
 			op === null
 				? {}
 				: {
-						...currentA11y,
+						...this.currentA11y,
 						...textSizes.appliedA11y(op, state.applied),
 						...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
 					};
-		if (Object.keys(currentA11y).length === 0) recorder?.settle("a11y", currentA11y, true);
-		else recorder?.record("a11y", currentA11y);
-		emit({ area: "a11y", value: currentA11y });
+		if (Object.keys(this.currentA11y).length === 0) this.recorder?.settle("a11y", this.currentA11y, true);
+		else this.recorder?.record("a11y", this.currentA11y);
+		this.emit({ area: "a11y", value: this.currentA11y });
 		return state;
 	}
 
-	async function applyBattery(op: BatteryOp | null): Promise<BatteryState> {
-		batteryDirty = true;
-		const run = settingOp("battery");
-		const state = await call("battery", () => run(op));
+	private async applyBattery(op: BatteryOp | null): Promise<BatteryState> {
+		this.batteryDirty = true;
+		const run = this.settingOp("battery");
+		const state = await this.call("battery", () => run(op));
 		const value: BatteryCondition = op === null ? {} : { ...op, cosmetic: state.cosmetic };
-		if (op === null) recorder?.settle("battery", value, true);
-		else recorder?.record("battery", value);
-		emit({ area: "battery", value });
+		if (op === null) this.recorder?.settle("battery", value, true);
+		else this.recorder?.record("battery", value);
+		this.emit({ area: "battery", value });
 		return state;
 	}
 
-	async function startTimelineRun(steps: readonly TimelineStepInput[]): Promise<ConditionRun> {
+	private async startTimelineRun(steps: readonly TimelineStepInput[]): Promise<ConditionRun> {
 		const converted: TimelineStep[] = steps.map((step, index) => {
-			const atMs = durationMs(step.at, `timeline step ${index} at`);
+			const atMs = inputs.durationMs(step.at, `timeline step ${index} at`);
 			const converted: TimelineStep = { atMs };
 			if (step.network !== undefined) {
-				const condition = network(step.network);
-				if (condition.kind === "flap") throw invalid(`timeline step ${index}: use device.network.flap for a flap`);
+				const condition = inputs.network(step.network);
+				if (condition.kind === "flap")
+					throw inputs.invalid(`timeline step ${index}: use device.network.flap for a flap`);
 				converted.network = condition;
 			}
-			if (step.location !== undefined) converted.location = locationOf(step.location);
+			if (step.location !== undefined) converted.location = inputs.locationOf(step.location);
 			return converted;
 		});
-		networkDirty = true;
-		locationDirty = true;
-		const scheduler = schedulers.startTimeline(target(), converted, {
-			...ticker,
-			...(deps.sink === undefined ? {} : { sink: deps.sink }),
+		this.networkDirty = true;
+		this.locationDirty = true;
+		const scheduler = schedulers.startTimeline(this.target(), converted, {
+			...this.ticker,
+			...(this.deps.sink === undefined ? {} : { sink: this.deps.sink }),
 		});
 		const status = scheduler.current();
-		if (status.state === "failed") throw invalid(status.error);
-		const run = track(scheduler);
+		if (status.state === "failed") throw inputs.invalid(status.error);
+		const run = this.track(scheduler);
 		const last = converted.at(-1);
-		if (last?.network !== undefined) currentNetwork = last.network;
+		if (last?.network !== undefined) this.currentNetwork = last.network;
 		return run;
 	}
 
-	async function stopRuns(): Promise<void> {
+	private async stopRuns(): Promise<void> {
 		const failures: string[] = [];
-		for (const run of [...runs]) {
+		for (const run of [...this.runs]) {
 			const outcome = await run.stop();
 			if (outcome.stopped === "failed") failures.push(outcome.error);
 		}
@@ -762,127 +818,114 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		}
 	}
 
-	const declared =
-		baseline.network !== undefined ||
-		baseline.location !== undefined ||
-		baseline.clock !== undefined ||
-		baseline.permissions !== undefined ||
-		baseline.locale !== undefined ||
-		baseline.timezone !== undefined ||
-		baseline.a11y !== undefined;
-
-	const internals: ConditionsInternals = {
-		declared,
-		dirty: () =>
-			networkDirty ||
-			locationDirty ||
-			clockDirty ||
-			permissionsDirty ||
-			localeDirty ||
-			a11yDirty ||
-			batteryDirty ||
-			runs.size > 0,
-		wantsInject: () =>
+	private buildInternals(): ConditionsInternals {
+		const { baseline } = this;
+		const declared =
 			baseline.network !== undefined ||
+			baseline.location !== undefined ||
 			baseline.clock !== undefined ||
-			currentNetwork.kind !== "online" ||
-			currentClock.kind !== "real",
-		async applyBaseline() {
-			if (baseline.permissions !== undefined) {
-				for (const [name, state] of Object.entries(baseline.permissions))
-					permissionStates.set(name as PermissionName, state);
-				await applyPermissions(baseline.permissions);
-			}
-			const steps: ReadonlyArray<readonly [unknown, () => Promise<unknown>]> = [
-				[baseline.timezone, () => applyTimezone(baseline.timezone ?? null)],
-				[baseline.locale, () => applyLocale(baseline.locale ?? null)],
-				[baseline.a11y, () => applyA11y(a11yOpOf(baseline.a11y as NonNullable<typeof baseline.a11y>))],
-				[baseline.clock, () => applyClock(baseline.clock as NonNullable<typeof baseline.clock>)],
-				[baseline.location, () => applyLocation(baseline.location as NonNullable<typeof baseline.location>)],
-				[
-					baseline.network,
-					() => applyNetwork(baseline.network as NonNullable<typeof baseline.network>, { relaunch: true }),
-				],
-			];
-			for (const [wanted, apply] of steps) if (wanted !== undefined) await apply();
-			networkDirty = false;
-			locationDirty = false;
-			clockDirty = false;
-			permissionsDirty = false;
-			localeDirty = false;
-			a11yDirty = false;
-			batteryDirty = false;
-		},
-		async teardown() {
-			const errors: unknown[] = [];
-			const attempt = async (run: () => Promise<void>): Promise<void> => {
-				try {
-					await run();
-				} catch (error) {
-					errors.push(error);
-				}
-			};
-			await attempt(stopRuns);
-			const steps: ReadonlyArray<readonly [boolean, () => Promise<void>]> = [
-				[networkDirty, resetNetwork],
-				[
-					locationDirty,
-					async () => {
-						const goal = baseline.location ?? { kind: "clear" };
-						await applyLocation(goal);
-						locationDirty = false;
-						recorder?.settle("location", goal, goal.kind === "clear");
-					},
-				],
-				[clockDirty, clockApi.reset],
-				[permissionsDirty, () => permissionsApi.reset()],
-				[
-					localeDirty,
-					async () => {
-						await applyTimezone(baseline.timezone ?? null);
-						await applyLocale(baseline.locale ?? null);
-						localeDirty = false;
-					},
-				],
-				[
-					a11yDirty,
-					async () => {
-						await applyA11y(null);
-						if (baseline.a11y !== undefined) await applyA11y(a11yOpOf(baseline.a11y));
-						a11yDirty = false;
-					},
-				],
-				[
-					batteryDirty,
-					async () => {
-						await applyBattery(null);
-						batteryDirty = false;
-					},
-				],
-			];
-			for (const [dirty, run] of steps) if (dirty) await attempt(run);
-			if (errors.length > 0) throw errors[0];
-		},
-	};
+			baseline.permissions !== undefined ||
+			baseline.locale !== undefined ||
+			baseline.timezone !== undefined ||
+			baseline.a11y !== undefined;
+		return {
+			declared,
+			dirty: () =>
+				this.networkDirty ||
+				this.locationDirty ||
+				this.clockDirty ||
+				this.permissionsDirty ||
+				this.localeDirty ||
+				this.a11yDirty ||
+				this.batteryDirty ||
+				this.runs.size > 0,
+			wantsInject: () =>
+				baseline.network !== undefined ||
+				baseline.clock !== undefined ||
+				this.currentNetwork.kind !== "online" ||
+				this.currentClock.kind !== "real",
+			applyBaseline: () => this.applyBaseline(),
+			teardown: () => this.teardown(),
+		};
+	}
 
-	return {
-		network: networkApi,
-		location: locationApi,
-		clock: clockApi,
-		permissions: permissionsApi,
-		timezone: applyTimezone,
-		locale: applyLocale,
-		a11y: applyA11y,
-		battery: applyBattery,
-		memoryWarning: async (options) => {
-			const op = settingOp("memoryWarning");
-			await call("memoryWarning", () => op(options ?? { bundleId: env.bundleId }));
-		},
-		push: async (payload, options) => {
-			const op = settingOp("push");
-			await call("push", () => op(payload, options ?? { bundleId: env.bundleId }));
-		},
-		timeline: startTimelineRun,
-		internals,
-	};
+	private async applyBaseline(): Promise<void> {
+		const { baseline } = this;
+		if (baseline.permissions !== undefined) {
+			for (const [name, state] of Object.entries(baseline.permissions))
+				this.permissionStates.set(name as PermissionName, state);
+			await this.applyPermissions(baseline.permissions);
+		}
+		const steps: ReadonlyArray<readonly [unknown, () => Promise<unknown>]> = [
+			[baseline.timezone, () => this.applyTimezone(baseline.timezone ?? null)],
+			[baseline.locale, () => this.applyLocale(baseline.locale ?? null)],
+			[baseline.a11y, () => this.applyA11y(inputs.a11yOpOf(baseline.a11y as NonNullable<typeof baseline.a11y>))],
+			[baseline.clock, () => this.applyClock(baseline.clock as NonNullable<typeof baseline.clock>)],
+			[baseline.location, () => this.applyLocation(baseline.location as NonNullable<typeof baseline.location>)],
+			[
+				baseline.network,
+				() => this.applyNetwork(baseline.network as NonNullable<typeof baseline.network>, { relaunch: true }),
+			],
+		];
+		for (const [wanted, apply] of steps) if (wanted !== undefined) await apply();
+		this.networkDirty = false;
+		this.locationDirty = false;
+		this.clockDirty = false;
+		this.permissionsDirty = false;
+		this.localeDirty = false;
+		this.a11yDirty = false;
+		this.batteryDirty = false;
+	}
+
+	private async teardown(): Promise<void> {
+		const { baseline, recorder } = this;
+		const errors: unknown[] = [];
+		const attempt = async (run: () => Promise<void>): Promise<void> => {
+			try {
+				await run();
+			} catch (error) {
+				errors.push(error);
+			}
+		};
+		await attempt(() => this.stopRuns());
+		const steps: ReadonlyArray<readonly [boolean, () => Promise<void>]> = [
+			[this.networkDirty, () => this.resetNetwork()],
+			[
+				this.locationDirty,
+				async () => {
+					const goal = baseline.location ?? { kind: "clear" };
+					await this.applyLocation(goal);
+					this.locationDirty = false;
+					recorder?.settle("location", goal, goal.kind === "clear");
+				},
+			],
+			[this.clockDirty, this.clock.reset],
+			[this.permissionsDirty, () => this.permissions.reset()],
+			[
+				this.localeDirty,
+				async () => {
+					await this.applyTimezone(baseline.timezone ?? null);
+					await this.applyLocale(baseline.locale ?? null);
+					this.localeDirty = false;
+				},
+			],
+			[
+				this.a11yDirty,
+				async () => {
+					await this.applyA11y(null);
+					if (baseline.a11y !== undefined) await this.applyA11y(inputs.a11yOpOf(baseline.a11y));
+					this.a11yDirty = false;
+				},
+			],
+			[
+				this.batteryDirty,
+				async () => {
+					await this.applyBattery(null);
+					this.batteryDirty = false;
+				},
+			],
+		];
+		for (const [dirty, run] of steps) if (dirty) await attempt(run);
+		if (errors.length > 0) throw errors[0];
+	}
 }

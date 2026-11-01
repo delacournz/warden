@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { openDriver } from "@delacour/warden-device/open";
+import { driverOpener } from "@delacour/warden-device/open";
 import type { Driver, DriverResult, Element, Role } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverErrors } from "@delacour/warden-driver/errors";
@@ -435,7 +435,7 @@ export class WardenSession implements Session {
 				this.dev.id
 			);
 		}
-		const opened = await openDriver({
+		const opened = await driverOpener.open({
 			platform: "android",
 			id: this.dev.id,
 			...(this.appId !== undefined ? { appId: this.appId } : {}),

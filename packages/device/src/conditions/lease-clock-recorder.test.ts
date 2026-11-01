@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
-import { leaseClockRecorder } from "./lease-clock-recorder";
+import { LeaseClockRecorder } from "./lease-clock-recorder";
 
 let dir: string;
 let store: Store;
@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe("leaseClockRecorder", () => {
 	test("a mocked clock is recorded on the lease as the clock area, and real forgets it", () => {
-		const record = leaseClockRecorder(store, leaseId, () => 42);
+		const record = new LeaseClockRecorder(store, leaseId, () => 42).record;
 		record({ kind: "offset", ms: 86_400_000 });
 		expect(leaseConditions.active(store, leaseId)).toEqual([
 			{ area: "clock", value: { kind: "offset", ms: 86_400_000 }, owned: [], setAt: 42 },

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { conditionsOf } from "@delacour/warden-device/conditions/device-conditions";
-import { sheetlessFor } from "@delacour/warden-device/device-link";
+import { conditionRegistry } from "@delacour/warden-device/conditions/device-conditions";
+import { deviceLinks } from "@delacour/warden-device/device-link";
 import type { Clock, FixtureSession } from "@delacour/warden-device/fixture-session";
 import { conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
@@ -851,7 +851,7 @@ describe('the "Open in …?" sheet under systemAlerts', () => {
 		const { device, session, screen, sheetState } = lateSheet();
 		await device.openLink("myapp://x", { until: screen.getByTestId("target") });
 		expect(sheetState()).toBe("opened");
-		expect(sheetlessFor(session).has("myapp")).toBe(false);
+		expect(deviceLinks.sheetlessFor(session).has("myapp")).toBe(false);
 	});
 
 	test('dismiss never presses Cancel on an "Open in …?" sheet: it opens the link the test asked for', async () => {
@@ -1177,7 +1177,7 @@ describe("device conditions", () => {
 		const { driver, device } = setup();
 		const run = await device.network.flap({ up: "1h", down: "1h" });
 		expect(run.status().state).toBe("running");
-		await conditionsOf(device)?.teardown();
+		await conditionRegistry.of(device)?.teardown();
 		expect(run.status().state).toBe("stopped");
 		expect(driver.callsOf("network").at(-1)?.op).toEqual({ kind: "online" });
 	});

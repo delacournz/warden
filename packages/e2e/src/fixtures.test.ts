@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { whileLinkInFlight } from "@delacour/warden-device/device-link";
+import { deviceLinks } from "@delacour/warden-device/device-link";
 import { devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -129,7 +129,7 @@ describe("screenHostFor systemAlerts", () => {
 				return true;
 			},
 		});
-		const answered = await whileLinkInFlight(ctx.session, async () => host.answerSystemAlert?.());
+		const answered = await deviceLinks.whileLinkInFlight(ctx.session, async () => host.answerSystemAlert?.());
 		expect(answered).toBe(false);
 		expect(asked).toEqual([]);
 		expect(await host.answerSystemAlert?.()).toBe(true);

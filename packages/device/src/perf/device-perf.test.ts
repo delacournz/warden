@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { createDevicePerf, type PerfExec, perfStartFor } from "./device-perf";
+import { DevicePerfImpl, type PerfExec, perfLauncher } from "./device-perf";
 
 const ok = (result: unknown) => ({
 	code: 0,
@@ -38,7 +38,13 @@ function setup(metrics: Record<string, unknown>, budgets = {}) {
 	};
 	const files = new Set<string>();
 	const attempt = join(root, "attempt");
-	const perf = createDevicePerf({ exec, udid: "U1", budgets, attemptDir: () => attempt, addFile: (f) => files.add(f) });
+	const perf = new DevicePerfImpl({
+		exec,
+		udid: "U1",
+		budgets,
+		attemptDir: () => attempt,
+		addFile: (f) => files.add(f),
+	});
 	return { perf, calls, files, attempt };
 }
 
@@ -102,12 +108,12 @@ describe("device.perf", () => {
 			stdout: JSON.stringify({ ok: false, error: { code: "session_active", message: "busy" } }),
 			stderr: "",
 		});
-		const perf = createDevicePerf({ exec, udid: "U", budgets: {}, attemptDir: () => undefined });
+		const perf = new DevicePerfImpl({ exec, udid: "U", budgets: {}, attemptDir: () => undefined });
 		await expect(perf.start()).rejects.toThrow("session_active: busy");
 	});
 
 	test("without WARDEN_BIN it says so", async () => {
-		const perf = createDevicePerf({
+		const perf = new DevicePerfImpl({
 			exec: async () => ok({}),
 			udid: "U",
 			budgets: {},
@@ -120,8 +126,8 @@ describe("device.perf", () => {
 
 describe("perfStartFor", () => {
 	test("all, a list, nothing known", () => {
-		expect(perfStartFor(["all"])).toEqual({ all: true });
-		expect(perfStartFor(["react", "js", "x"])).toEqual({ js: true, react: true });
-		expect(perfStartFor([])).toEqual({});
+		expect(perfLauncher.startOptionsFor(["all"])).toEqual({ all: true });
+		expect(perfLauncher.startOptionsFor(["react", "js", "x"])).toEqual({ js: true, react: true });
+		expect(perfLauncher.startOptionsFor([])).toEqual({});
 	});
 });

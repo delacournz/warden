@@ -22,7 +22,7 @@ export type AlertReaderDeps = {
 	signal: () => AbortSignal | undefined;
 };
 
-/** `readAlert(backend?, modalLooks?)`: see {@link createAlertReader}. */
+/** `readAlert(backend?, modalLooks?)`: see {@link DeviceAlertReader}. */
 export type AlertReader = (backend?: AlertBackend, modalLooks?: number) => Promise<AlertInfo | null>;
 
 /**
@@ -36,45 +36,50 @@ export type AlertReader = (backend?: AlertBackend, modalLooks?: number) => Promi
  * fails, for one read instead of two. If that fails too, or there is no `backend`, the two-reader `driver.alert()`
  * answers instead, retrying a transient failure after a short sleep.
  */
-export function createAlertReader({ driver, clock, signal }: AlertReaderDeps): AlertReader {
-	const read = (backend?: AlertBackend) =>
-		driverCalls.settled(
+export class DeviceAlertReader {
+	constructor(private readonly deps: AlertReaderDeps) {}
+
+	/** The reader as a callable: `readAlert(backend?, modalLooks?)`. */
+	readonly read: AlertReader = async (backend, modalLooks = ALERT_MODAL_LOOKS) => {
+		if (backend !== undefined && alertCapabilities.canReadAlertOn(this.deps.driver)) {
+			const one = await this.readOne(backend, modalLooks);
+			if (one.success) return one.data;
+			// the bridge answers nothing for ~0.2 s after a launch: ask the host reader once rather than the bridge again
+			if (backend === "axbridge") {
+				const host = await this.readOne("ax", 0);
+				if (host.success) return host.data;
+			}
+		}
+		return this.readBoth();
+	};
+
+	private readFrom(backend?: AlertBackend) {
+		const { driver, signal } = this.deps;
+		return driverCalls.settled(
 			() =>
 				backend !== undefined && alertCapabilities.canReadAlertOn(driver) ? driver.alertOn(backend) : driver.alert(),
 			"read alert",
 			signal()
 		);
+	}
 
-	const readOne = async (backend: AlertBackend, modalLooks: number): Promise<Result<AlertInfo | null, DriverError>> => {
+	private async readOne(backend: AlertBackend, modalLooks: number): Promise<Result<AlertInfo | null, DriverError>> {
 		for (let looked = 0; ; looked += 1) {
-			const result = await read(backend);
+			const result = await this.readFrom(backend);
 			if (!result.success) return result;
 			const info = result.data;
 			if (info === null || info.buttons.length > 0 || looked >= modalLooks) return result;
-			await clock.sleep(ALERT_MODAL_RETRY_MS);
+			await this.deps.clock.sleep(ALERT_MODAL_RETRY_MS);
 		}
-	};
+	}
 
-	const readBoth = async (): Promise<AlertInfo | null> => {
+	private async readBoth(): Promise<AlertInfo | null> {
 		for (let failures = 1; ; failures += 1) {
-			const result = await read();
+			const result = await this.readFrom();
 			if (result.success) return result.data;
 			if (!result.error.retryable || failures >= ALERT_READ_ATTEMPTS)
 				throw driverCalls.toE2eError(result.error, "read alert");
-			await clock.sleep(ALERT_READ_RETRY_MS);
+			await this.deps.clock.sleep(ALERT_READ_RETRY_MS);
 		}
-	};
-
-	return async (backend, modalLooks = ALERT_MODAL_LOOKS) => {
-		if (backend !== undefined && alertCapabilities.canReadAlertOn(driver)) {
-			const one = await readOne(backend, modalLooks);
-			if (one.success) return one.data;
-			// the bridge answers nothing for ~0.2 s after a launch: ask the host reader once rather than the bridge again
-			if (backend === "axbridge") {
-				const host = await readOne("ax", 0);
-				if (host.success) return host.data;
-			}
-		}
-		return readBoth();
-	};
+	}
 }

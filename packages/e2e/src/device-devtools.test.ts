@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createDeviceDevtools, type DevtoolsSource } from "@delacour/warden-device/device-devtools";
+import { DeviceDevtoolsFacade, type DevtoolsSource } from "@delacour/warden-device/device-devtools";
 import type { FixtureSession } from "@delacour/warden-device/fixture-session";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
@@ -28,7 +28,7 @@ describe("createDeviceDevtools", () => {
 	test("nothing is opened until a call needs the app", async () => {
 		const stub = facetStubs.create();
 		const { src, opens } = source(() => resultFactory.ok(stub.facet));
-		const devtools = createDeviceDevtools(src);
+		const devtools = new DeviceDevtoolsFacade(src);
 		expect(opens()).toBe(0);
 		await devtools.evaluate("1 + 1");
 		expect(opens()).toBe(1);
@@ -38,7 +38,7 @@ describe("createDeviceDevtools", () => {
 	test("evaluate, reloadJs and tree pass the facet's answer through", async () => {
 		const stub = facetStubs.create();
 		stub.tree = { components: [{ id: 0, name: "View", parent: null }], truncated: false };
-		const devtools = createDeviceDevtools(source(() => resultFactory.ok(stub.facet)).src);
+		const devtools = new DeviceDevtoolsFacade(source(() => resultFactory.ok(stub.facet)).src);
 		expect(await devtools.reloadJs()).toEqual(resultFactory.ok({ method: "expo" }));
 		const tree = await devtools.tree({ all: true });
 		expect(tree.success && tree.data.components).toHaveLength(1);
@@ -48,7 +48,7 @@ describe("createDeviceDevtools", () => {
 	test("console and network are async: they wait for the attach", async () => {
 		const stub = facetStubs.create();
 		stub.consoleLines = [{ ts: 1, level: "log", kind: "console", text: "hi" }];
-		const devtools = createDeviceDevtools(source(() => resultFactory.ok(stub.facet)).src);
+		const devtools = new DeviceDevtoolsFacade(source(() => resultFactory.ok(stub.facet)).src);
 		expect((await devtools.console.lines()).map((l) => l.text)).toEqual(["hi"]);
 		await devtools.console.mark("here");
 		expect((await devtools.console.lines()).map((l) => l.text)).toEqual(["hi", "here"]);
@@ -58,7 +58,7 @@ describe("createDeviceDevtools", () => {
 	});
 
 	test("an attach that fails fails the call with the reason, not a throw", async () => {
-		const devtools = createDeviceDevtools(
+		const devtools = new DeviceDevtoolsFacade(
 			source(() => devtoolsErrors.err("devtools_unavailable", "Metro is down")).src
 		);
 		const evaluated = await devtools.evaluate("1");
@@ -71,7 +71,7 @@ describe("createDeviceDevtools", () => {
 	});
 
 	test("reads of console/network throw SESSION when the app cannot be reached", async () => {
-		const devtools = createDeviceDevtools(
+		const devtools = new DeviceDevtoolsFacade(
 			source(() => devtoolsErrors.err("devtools_unavailable", "Metro is down")).src
 		);
 		const error = await devtools.console.lines().catch((e: unknown) => e);
@@ -81,7 +81,7 @@ describe("createDeviceDevtools", () => {
 
 	test("connect() hands out the whole facet", async () => {
 		const stub = facetStubs.create();
-		const devtools = createDeviceDevtools(source(() => resultFactory.ok(stub.facet)).src);
+		const devtools = new DeviceDevtoolsFacade(source(() => resultFactory.ok(stub.facet)).src);
 		expect(await devtools.connect()).toBe(stub.facet);
 	});
 });

@@ -9,8 +9,8 @@ import type { Exec } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type ConditionsEnv, createDeviceConditions } from "./device-conditions";
-import { createLeaseRecorder, leaseRecorderFor } from "./lease-recorder";
+import { type ConditionsEnv, DeviceConditionsImpl } from "./device-conditions";
+import { LeaseRecorder, leaseRecorderResolver } from "./lease-recorder";
 import { sharedStoreOpener } from "./lease-store";
 
 let dir: string;
@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 const recorder = (log: string[] = []) =>
-	createLeaseRecorder({
+	new LeaseRecorder({
 		leaseId: lease.id,
 		openStore: () => resultFactory.ok(store),
 		now: () => 42,
@@ -69,7 +69,7 @@ describe("createLeaseRecorder", () => {
 
 	test("settle keeps the row while a process it owns is alive, so release still stops it", () => {
 		leaseConditions.record(store, lease.id, "network", { kind: "offline" }, 1, [{ kind: "pid", pid: 4242 }]);
-		const alive = createLeaseRecorder({
+		const alive = new LeaseRecorder({
 			leaseId: lease.id,
 			openStore: () => resultFactory.ok(store),
 			pidAlive: () => true,
@@ -79,7 +79,7 @@ describe("createLeaseRecorder", () => {
 		expect(leaseConditions.active(store, lease.id)).toMatchObject([
 			{ area: "network", value: { kind: "online" }, owned: [{ pid: 4242 }] },
 		]);
-		const dead = createLeaseRecorder({
+		const dead = new LeaseRecorder({
 			leaseId: lease.id,
 			openStore: () => resultFactory.ok(store),
 			pidAlive: () => false,
@@ -91,19 +91,19 @@ describe("createLeaseRecorder", () => {
 
 	test("a store that cannot open, or a lease that is gone, is logged and never thrown", () => {
 		const log: string[] = [];
-		createLeaseRecorder({
+		new LeaseRecorder({
 			leaseId: lease.id,
 			openStore: () => resultFactory.err("disk on fire"),
 			log: (l) => log.push(l),
 		}).record("clock", { kind: "real" });
-		createLeaseRecorder({
+		new LeaseRecorder({
 			leaseId: lease.id,
 			openStore: () => {
 				throw new Error("boom");
 			},
 			log: (l) => log.push(l),
 		}).settle("clock", { kind: "real" }, true);
-		createLeaseRecorder({ leaseId: "nope", openStore: () => resultFactory.ok(store), log: (l) => log.push(l) }).record(
+		new LeaseRecorder({ leaseId: "nope", openStore: () => resultFactory.ok(store), log: (l) => log.push(l) }).record(
 			"clock",
 			{
 				kind: "real",
@@ -118,17 +118,17 @@ describe("createLeaseRecorder", () => {
 
 describe("leaseRecorderFor", () => {
 	test("none without a lease id", () => {
-		expect(leaseRecorderFor({})).toBeUndefined();
-		expect(leaseRecorderFor({ leaseId: "L" })).toBeDefined();
+		expect(leaseRecorderResolver.forEnv({})).toBeUndefined();
+		expect(leaseRecorderResolver.forEnv({ leaseId: "L" })).toBeDefined();
 	});
 });
 
 describe("sharedStoreOpener", () => {
 	test("opens the store at WARDEN_HOME on first call and reuses it", () => {
-		const open = sharedStoreOpener({ WARDEN_HOME: dir });
+		const open = sharedStoreOpener.opener({ WARDEN_HOME: dir });
 		const first = open();
 		expect(first.success).toBe(true);
-		expect(sharedStoreOpener({ WARDEN_HOME: dir })()).toEqual(first);
+		expect(sharedStoreOpener.opener({ WARDEN_HOME: dir })()).toEqual(first);
 	});
 });
 
@@ -142,7 +142,7 @@ describe("a spec that dies mid-test", () => {
 			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
 			platform: "android",
 		});
-		const conditions = createDeviceConditions({
+		const conditions = new DeviceConditionsImpl({
 			driver,
 			env,
 			signal: () => undefined,
@@ -177,7 +177,7 @@ describe("a spec that dies mid-test", () => {
 			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
 			platform: "android",
 		});
-		const conditions = createDeviceConditions({
+		const conditions = new DeviceConditionsImpl({
 			driver,
 			env,
 			signal: () => undefined,
@@ -196,7 +196,7 @@ describe("a spec that dies mid-test", () => {
 			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
 			platform: "android",
 		});
-		const conditions = createDeviceConditions({
+		const conditions = new DeviceConditionsImpl({
 			driver,
 			env: { ...env, conditions: { network: "3g" } },
 			signal: () => undefined,
@@ -217,12 +217,12 @@ describe("a spec that dies mid-test", () => {
 			platform: "android",
 		});
 		const log: string[] = [];
-		const broken = createLeaseRecorder({
+		const broken = new LeaseRecorder({
 			leaseId: lease.id,
 			openStore: () => resultFactory.err("locked"),
 			log: (l) => log.push(l),
 		});
-		const conditions = createDeviceConditions({
+		const conditions = new DeviceConditionsImpl({
 			driver,
 			env,
 			signal: () => undefined,

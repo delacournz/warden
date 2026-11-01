@@ -7,7 +7,7 @@ import { MemoryAndroidState } from "@delacour/warden-driver-android/android-stat
 import { FakeAndroidHost } from "@delacour/warden-driver-android/testing/android-host";
 import { fakeExec } from "@delacour/warden-driver-ios/testing/exec";
 import { fakeSimd } from "@delacour/warden-driver-ios/testing/simd";
-import { androidOptions, openDriver } from "./open";
+import { driverOpener } from "./open";
 
 const PHONE = "00008140-000A0B0C0D0E0F10";
 
@@ -16,7 +16,7 @@ const base = (platform: "ios" | "android") => ({ platform, id: "UDID-1", appId: 
 describe("openDriver", () => {
 	test("ios opens the iOS driver on the id, using simdPath as the helper", async () => {
 		const helper = fakeSimd.build(() => ({ data: null }));
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			...base("ios"),
 			host: { exec: fakeExec.build([["xcrun", {}]]) },
 			ios: { simdPath: "/x/warden-simd", spawn: helper.spawn, exists: (path) => path === "/x/warden-simd" },
@@ -32,7 +32,7 @@ describe("openDriver", () => {
 	test("debug turns the latency log on", async () => {
 		const helper = fakeSimd.build(() => ({ data: null }));
 		const logs: string[] = [];
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			...base("ios"),
 			debug: true,
 			log: (line) => logs.push(line),
@@ -53,7 +53,7 @@ describe("openDriver", () => {
 				{ match: "wm density", reply: "Physical density: 420\n" },
 			],
 		});
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			...base("android"),
 			host: { exec: host.exec },
 			android: {
@@ -78,7 +78,7 @@ describe("openDriver", () => {
 				{ match: "wm density", reply: "Physical density: 420\n" },
 			],
 		});
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			...base("android"),
 			host: { exec: host.exec },
 			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary, state: new MemoryAndroidState() },
@@ -105,7 +105,7 @@ describe("openDriver", () => {
 				},
 			],
 		});
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			...base("android"),
 			host: { exec: host.exec, home },
 			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary },
@@ -120,7 +120,7 @@ describe("openDriver", () => {
 	});
 
 	test("a missing helper is E_HELPER_MISSING", async () => {
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			...base("ios"),
 			host: { exec: fakeExec.build([["xcrun", {}]]), home: "/nowhere/.warden" },
 			ios: { exists: () => false, execPath: "/nowhere/warden", importDir: "/nowhere/packages/driver-ios/src" },
@@ -129,7 +129,7 @@ describe("openDriver", () => {
 	});
 
 	test("an explicit simdPath that points at nothing is an error, not a fall-through", async () => {
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			...base("ios"),
 			host: { exec: fakeExec.build([["xcrun", {}]]) },
 			ios: { simdPath: "/stale/warden-simd", exists: (path) => path !== "/stale/warden-simd" },
@@ -142,7 +142,7 @@ describe("openDriver", () => {
 		const previous = process.env.WARDEN_SIMD;
 		process.env.WARDEN_SIMD = "/from-process-env/warden-simd";
 		try {
-			const result = await openDriver({
+			const result = await driverOpener.open({
 				...base("ios"),
 				host: { exec: fakeExec.build([["xcrun", {}]]) },
 				ios: { exists: () => false, execPath: "/nowhere/warden", importDir: "/nowhere/x/y/z" },
@@ -157,12 +157,14 @@ describe("openDriver", () => {
 
 describe("androidOptions and the resident server", () => {
 	test("is on by default", () => {
-		expect(androidOptions({ ...base("android"), android: { state: new MemoryAndroidState() } }, false).uiad).toBe(true);
+		expect(
+			driverOpener.androidOptions({ ...base("android"), android: { state: new MemoryAndroidState() } }, false).uiad
+		).toBe(true);
 	});
 
 	test("an injected shell is a test: the server, which spawns its own adb, stays off", () => {
 		const host = new FakeAndroidHost();
-		const options = androidOptions(
+		const options = driverOpener.androidOptions(
 			{ ...base("android"), android: { spawn: host.spawn, state: new MemoryAndroidState() } },
 			false
 		);
@@ -170,7 +172,7 @@ describe("androidOptions and the resident server", () => {
 	});
 
 	test("a caller's own choice wins", () => {
-		const options = androidOptions(
+		const options = driverOpener.androidOptions(
 			{ ...base("android"), android: { uiad: false, state: new MemoryAndroidState() } },
 			false
 		);
@@ -178,14 +180,14 @@ describe("androidOptions and the resident server", () => {
 	});
 
 	test("no home, no saved state", () => {
-		expect(androidOptions(base("android"), false).state).toBeUndefined();
+		expect(driverOpener.androidOptions(base("android"), false).state).toBeUndefined();
 	});
 });
 
 describe("a physical iPhone", () => {
 	test("opens the device driver, not warden-simd: without a runner socket it says so", async () => {
 		const helper = fakeSimd.build(() => ({ data: null }));
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			platform: "ios",
 			id: PHONE,
 			host: { exec: fakeExec.build([]) },
@@ -197,7 +199,7 @@ describe("a physical iPhone", () => {
 	});
 
 	test("connects to the runner socket it is given", async () => {
-		const result = await openDriver({
+		const result = await driverOpener.open({
 			platform: "ios",
 			id: PHONE,
 			host: { exec: fakeExec.build([]) },
@@ -210,19 +212,20 @@ describe("a physical iPhone", () => {
 
 describe("the lease's shaping proxy and clock recorder", () => {
 	test("none unless given: network stays unsupported, as under a bare bun test", () => {
-		expect(androidOptions({ ...base("android") }, false).networkProxy).toBeUndefined();
-		expect(androidOptions({ ...base("android") }, false).clockRecorder).toBeUndefined();
+		expect(driverOpener.androidOptions({ ...base("android") }, false).networkProxy).toBeUndefined();
+		expect(driverOpener.androidOptions({ ...base("android") }, false).clockRecorder).toBeUndefined();
 	});
 
 	test("android gets the given proxy and recorder; a proxy in android wins", () => {
 		const given = new FakeProxy();
 		const own = new FakeProxy();
 		const clockRecorder = () => {};
-		const options = androidOptions({ ...base("android"), networkProxy: given, clockRecorder }, false);
+		const options = driverOpener.androidOptions({ ...base("android"), networkProxy: given, clockRecorder }, false);
 		expect(options.networkProxy).toBe(given);
 		expect(options.clockRecorder).toBe(clockRecorder);
 		expect(
-			androidOptions({ ...base("android"), networkProxy: given, android: { networkProxy: own } }, false).networkProxy
+			driverOpener.androidOptions({ ...base("android"), networkProxy: given, android: { networkProxy: own } }, false)
+				.networkProxy
 		).toBe(own);
 	});
 });

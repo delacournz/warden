@@ -2,8 +2,8 @@ import type { DriverCapabilities, DriverError, Element, Snapshot } from "@delaco
 import { z } from "zod";
 
 /**
- * The wire between a process that holds a `Driver` open (`serveDriver`, e.g. `warden __android-host`) and the short
- * `warden ui` processes that use it (`connectRemoteDriver`). NDJSON over a unix socket, one line per message:
+ * The wire between a process that holds a `Driver` open (`DriverServer`, e.g. `warden __android-host`) and the short
+ * `warden ui` processes that use it (`remoteDriverConnector`). NDJSON over a unix socket, one line per message:
  * - server → client, once per connection: {@link ReadyEvent};
  * - client → server: `{id, op, args}`, `op` a `Driver` method (`tap`, `app.launch`, an optional capability such as
  *   `pressKeyRepeat`) or a control op (`ping`, `shutdown`);
@@ -76,10 +76,6 @@ const REMOTE_OPS: ReadonlySet<string> = new Set<string>([
 	...CONTROL_OPS,
 ]);
 
-export function isRemoteOp(op: string): op is RemoteOp {
-	return REMOTE_OPS.has(op);
-}
-
 /** How the client answers `alertIn(snapshot)` (synchronous, so it cannot cross the wire): `android` = `detectAlert`. */
 export type LocalAlertIn = "android";
 
@@ -131,51 +127,60 @@ export const responseSchema = z.object({
 });
 export type RemoteResponse = z.infer<typeof responseSchema>;
 
-/** A `DriverError` off the wire: its `code` is a string the server took from a `DriverError`, so it is one. */
-export function wireError(error: z.infer<typeof driverErrorSchema>): DriverError {
-	return error as DriverError;
-}
-
-/**
- * JSON turns `undefined` in an array into `null`, and a destructuring default only applies to `undefined`, so the
- * server maps every `null` argument back (no `Driver` method takes `null` on purpose) and trailing ones are dropped.
- */
-export function argsFromWire(args: readonly unknown[]): unknown[] {
-	const out = args.map((arg) => (arg === null ? undefined : arg));
-	while (out.length > 0 && out[out.length - 1] === undefined) out.pop();
-	return out;
-}
-
 /** A snapshot on the wire: `flat` is left out (it holds the same objects as `elements`) and rebuilt by the client. */
 export type WireSnapshot = Omit<Snapshot, "flat">;
-
-export function snapshotToWire(snapshot: Snapshot): WireSnapshot {
-	const { flat: _flat, ...rest } = snapshot;
-	return rest;
-}
-
-function preorder(elements: readonly Element[]): Element[] {
-	return elements.flatMap((element) => [element, ...preorder(element.children)]);
-}
-
-/** The snapshot back with `flat` holding the very nodes of `elements`, in preorder, as every driver builds it. */
-export function snapshotFromWire(wire: WireSnapshot): Snapshot {
-	return { ...wire, flat: preorder(wire.elements) };
-}
 
 /** A screenshot's bytes cross as base64. */
 export type WireScreenshot = { path?: string; pngBase64?: string };
 
-export function screenshotToWire(shot: { path?: string; png?: Uint8Array }): WireScreenshot {
-	return {
-		...(shot.path !== undefined ? { path: shot.path } : {}),
-		...(shot.png !== undefined ? { pngBase64: Buffer.from(shot.png).toString("base64") } : {}),
-	};
+/** Converts between a `Driver`'s values and what crosses the remote wire. */
+export class RemoteWire {
+	isRemoteOp(op: string): op is RemoteOp {
+		return REMOTE_OPS.has(op);
+	}
+
+	/** A `DriverError` off the wire: its `code` is a string the server took from a `DriverError`, so it is one. */
+	wireError(error: z.infer<typeof driverErrorSchema>): DriverError {
+		return error as DriverError;
+	}
+
+	/**
+	 * JSON turns `undefined` in an array into `null`, and a destructuring default only applies to `undefined`, so the
+	 * server maps every `null` argument back (no `Driver` method takes `null` on purpose) and trailing ones are dropped.
+	 */
+	argsFromWire(args: readonly unknown[]): unknown[] {
+		const out = args.map((arg) => (arg === null ? undefined : arg));
+		while (out.length > 0 && out[out.length - 1] === undefined) out.pop();
+		return out;
+	}
+
+	snapshotToWire(snapshot: Snapshot): WireSnapshot {
+		const { flat: _flat, ...rest } = snapshot;
+		return rest;
+	}
+
+	/** The snapshot back with `flat` holding the very nodes of `elements`, in preorder, as every driver builds it. */
+	snapshotFromWire(wire: WireSnapshot): Snapshot {
+		return { ...wire, flat: this.preorder(wire.elements) };
+	}
+
+	screenshotToWire(shot: { path?: string; png?: Uint8Array }): WireScreenshot {
+		return {
+			...(shot.path !== undefined ? { path: shot.path } : {}),
+			...(shot.png !== undefined ? { pngBase64: Buffer.from(shot.png).toString("base64") } : {}),
+		};
+	}
+
+	screenshotFromWire(wire: WireScreenshot): { path?: string; png?: Uint8Array } {
+		return {
+			...(wire.path !== undefined ? { path: wire.path } : {}),
+			...(wire.pngBase64 !== undefined ? { png: new Uint8Array(Buffer.from(wire.pngBase64, "base64")) } : {}),
+		};
+	}
+
+	private preorder(elements: readonly Element[]): Element[] {
+		return elements.flatMap((element) => [element, ...this.preorder(element.children)]);
+	}
 }
 
-export function screenshotFromWire(wire: WireScreenshot): { path?: string; png?: Uint8Array } {
-	return {
-		...(wire.path !== undefined ? { path: wire.path } : {}),
-		...(wire.pngBase64 !== undefined ? { png: new Uint8Array(Buffer.from(wire.pngBase64, "base64")) } : {}),
-	};
-}
+export const remoteWire = new RemoteWire();

@@ -6,7 +6,7 @@ import type { Driver, Platform } from "@delacour/warden-driver/driver.types";
 import type { E2eError } from "@delacour/warden-driver/e2e-error";
 import { type DriverCall, driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type ConditionsEnv, createDeviceConditions, type DeviceConditions } from "./device-conditions";
+import { type ConditionsEnv, type DeviceConditions, DeviceConditionsImpl } from "./device-conditions";
 
 const env: ConditionsEnv = {
 	bundleId: "com.example.app",
@@ -48,7 +48,7 @@ function setup(
 	}
 	const events: ConditionEvent[] = [];
 	const clock = stuckClock();
-	const c = createDeviceConditions({
+	const c = new DeviceConditionsImpl({
 		driver,
 		env: { ...env, ...(opts.conditions === undefined ? {} : { conditions: opts.conditions }) },
 		signal: () => undefined,
@@ -95,7 +95,7 @@ describe("device.network", () => {
 					? { error: { code: "E_NETWORK_RELAUNCH", message: "running without dylib", retryable: false } }
 					: undefined,
 		});
-		const c = createDeviceConditions({ driver, env, signal: () => undefined, tickerClock: stuckClock() });
+		const c = new DeviceConditionsImpl({ driver, env, signal: () => undefined, tickerClock: stuckClock() });
 		const error = await c.network.set("offline").catch((e: E2eError) => e);
 		expect(error).toMatchObject({ code: "ACTION_FAILED" });
 		expect((error as E2eError).message).toContain("relaunch: true");
@@ -191,7 +191,7 @@ describe("device.network.during", () => {
 				return calls === 2 ? { error: { code: "E_IO", message: "adb gone", retryable: false } } : undefined;
 			},
 		});
-		const c = createDeviceConditions({
+		const c = new DeviceConditionsImpl({
 			driver,
 			env,
 			signal: () => undefined,

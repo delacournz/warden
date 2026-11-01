@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { connectRemoteDriver } from "@delacour/warden-device/remote/remote-client";
+import { remoteDriverConnector } from "@delacour/warden-device/remote/remote-client";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -40,7 +40,7 @@ describe("warden __android-host", () => {
 		const { c, socket, done } = run(async () => resultFactory.ok(driver));
 		const line = await waitFor(() => c.stdout[0]);
 		expect(JSON.parse(line)).toEqual({ event: "ready", socket, pid: process.pid });
-		const client = await connectRemoteDriver({ socketPath: socket });
+		const client = await remoteDriverConnector.connect({ socketPath: socket });
 		if (!client.success) throw new Error(client.error.message);
 		expect(await client.data.driver().tap({ x: 1, y: 2 })).toEqual({ success: true, data: undefined });
 		expect((await client.data.request("shutdown")).success).toBe(true);
@@ -54,7 +54,7 @@ describe("warden __android-host", () => {
 		const driver = new FakeDriver({ screens: [screen], platform: "android", id: SERIAL });
 		const { socket, done } = run(async () => resultFactory.ok(driver));
 		await waitFor(() => (ctx?.stdout[0] !== undefined ? true : undefined));
-		const client = await connectRemoteDriver({ socketPath: socket });
+		const client = await remoteDriverConnector.connect({ socketPath: socket });
 		if (!client.success) throw new Error(client.error.message);
 		expect(client.data.ready.alertIn).toBe("android");
 		await client.data.request("shutdown");

@@ -1,4 +1,4 @@
-import { openDriver } from "@delacour/warden-device/open";
+import { driverOpener } from "@delacour/warden-device/open";
 import type { Driver, Point } from "@delacour/warden-driver/driver.types";
 import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-driver/settle";
 import { uiadBackendRules } from "@delacour/warden-driver-android/uiad-backend";
@@ -208,7 +208,7 @@ async function defaultOpenSecond(
 	device: UiDevice,
 	socketPath: string
 ): Promise<Result<Driver, UiError>> {
-	const opened = await openDriver({
+	const opened = await driverOpener.open({
 		platform: device.platform,
 		id: device.udid,
 		host: { exec: ctx.exec, home: storeLocator.wardenHome(ctx.env) },

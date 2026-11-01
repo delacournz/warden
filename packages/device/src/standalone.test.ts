@@ -6,8 +6,8 @@ import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driv
 import { screenFactory } from "@delacour/warden-screen/screen";
 import { FakeClock } from "@delacour/warden-screen/testing/poll";
 import { screenTesting } from "@delacour/warden-screen/testing/screen";
-import { createApp } from "./app";
-import { createDevice } from "./device";
+import { AppController } from "./app";
+import { DeviceImpl } from "./device";
 
 /**
  * The layers below the runner, used the way an SDK host would: no `WARDEN_*` env, no `FixtureSession`, no
@@ -57,7 +57,7 @@ describe("driver, screen, device and app without the runner", () => {
 			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })])],
 		});
 		const events: unknown[] = [];
-		const device = createDevice({
+		const device = new DeviceImpl({
 			driver,
 			artifactsDir: dir,
 			appId,
@@ -75,7 +75,7 @@ describe("driver, screen, device and app without the runner", () => {
 		const driver = new FakeDriver({
 			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Next" })])],
 		});
-		const app = createApp({
+		const app = new AppController({
 			driver,
 			appId,
 			launchArgs: ["--initialUrl", "http://localhost:8081"],
@@ -95,7 +95,7 @@ describe("driver, screen, device and app without the runner", () => {
 
 	test("app.reinstall without an appPath says what is missing", async () => {
 		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
-		const app = createApp({ driver, appId });
+		const app = new AppController({ driver, appId });
 		await expect(app.reinstall()).rejects.toThrow("WARDEN_APP_PATH");
 	});
 
@@ -104,7 +104,7 @@ describe("driver, screen, device and app without the runner", () => {
 			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Next" })])],
 		});
 		const controller = new AbortController();
-		const app = createApp({ driver, appId, signal: () => controller.signal, clock: new FakeClock() });
+		const app = new AppController({ driver, appId, signal: () => controller.signal, clock: new FakeClock() });
 		await app.open();
 		expect(driver.callsOf("app.launch")).toHaveLength(1);
 	});

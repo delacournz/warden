@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { conditionsOf } from "@delacour/warden-device/conditions/device-conditions";
+import { conditionRegistry } from "@delacour/warden-device/conditions/device-conditions";
 import type { Device } from "@delacour/warden-device/device";
 import type { FixtureSession } from "@delacour/warden-device/fixture-session";
-import { traceDevice } from "@delacour/warden-device/traced-device";
+import { deviceTracer } from "@delacour/warden-device/traced-device";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { type SpanRunner, spans as spanWriter } from "@delacour/warden-driver/trace/span";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
@@ -36,7 +36,7 @@ function setup(platform: "ios" | "android" = "ios") {
 		],
 	});
 	const session: FixtureSession = { out: "/tmp/out", span };
-	const device = traceDevice(sessionFixtures.deviceFor({ session, driver, env: { ...env, platform } }), span);
+	const device = deviceTracer.trace(sessionFixtures.deviceFor({ session, driver, env: { ...env, platform } }), span);
 	const spans = () => events.flatMap((e) => (e.type === "span" ? [e] : []));
 	return { device, driver, spans };
 }
@@ -99,7 +99,7 @@ describe("traceDevice", () => {
 
 	test("the wrapped device keeps its runner hooks", () => {
 		const { device } = setup();
-		expect(conditionsOf(device)).toBeDefined();
+		expect(conditionRegistry.of(device)).toBeDefined();
 	});
 
 	test("results and arguments pass through", async () => {
@@ -134,7 +134,10 @@ describe("traceDevice", () => {
 					? { data: { quiet: false, waitedMs: 8000, via: "stream", reason: "frontmost_mismatch", frontmostPid: 7 } }
 					: undefined,
 		});
-		const device = traceDevice(sessionFixtures.deviceFor({ session: { out: "/tmp/out", span }, driver, env }), span);
+		const device = deviceTracer.trace(
+			sessionFixtures.deviceFor({ session: { out: "/tmp/out", span }, driver, env }),
+			span
+		);
 		await device.settle();
 		expect(events[0]).toMatchObject({
 			op: "device.settle",
@@ -157,7 +160,7 @@ describe("traceDevice", () => {
 				return undefined;
 			},
 		} as Device;
-		const wrapped = traceDevice(stub, async (_op, fn) => fn());
+		const wrapped = deviceTracer.trace(stub, async (_op, fn) => fn());
 		expect(reads).toBe(0);
 		expect(wrapped.devtools).toBeUndefined();
 		expect(reads).toBe(1);
@@ -165,6 +168,6 @@ describe("traceDevice", () => {
 
 	test("without a span runner the device is returned as is", () => {
 		const device = setup().device;
-		expect(traceDevice(device, undefined)).toBe(device);
+		expect(deviceTracer.trace(device, undefined)).toBe(device);
 	});
 });

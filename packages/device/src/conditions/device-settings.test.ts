@@ -4,7 +4,7 @@ import type { ConditionEvent } from "@delacour/warden-driver/conditions/conditio
 import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { type DriverCall, driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
-import { type ConditionsEnv, createDeviceConditions } from "./device-conditions";
+import { type ConditionsEnv, DeviceConditionsImpl } from "./device-conditions";
 import type { ConditionRecorder } from "./lease-recorder";
 
 const env: ConditionsEnv = {
@@ -32,7 +32,7 @@ function setup(
 		settle: <A extends ConditionArea>(area: A, value: ConditionValues[A]) =>
 			void recorded.push({ kind: "settle", area, value }),
 	};
-	const c = createDeviceConditions({
+	const c = new DeviceConditionsImpl({
 		driver,
 		env: { ...env, ...(conditions ? { conditions } : {}) },
 		signal: () => undefined,
@@ -182,7 +182,7 @@ describe("memory warning and push", () => {
 					? { error: { code: "E_UNSUPPORTED", message: "no way", retryable: false } }
 					: undefined,
 		});
-		const c = createDeviceConditions({ driver, env, signal: () => undefined, tickerClock: clock });
+		const c = new DeviceConditionsImpl({ driver, env, signal: () => undefined, tickerClock: clock });
 		await expect(c.memoryWarning()).rejects.toMatchObject({ message: expect.stringContaining("no way") });
 	});
 });

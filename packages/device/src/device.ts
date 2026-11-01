@@ -32,35 +32,26 @@ import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import { driverCalls } from "@delacour/warden-driver/unwrap";
 import type { Locator } from "@delacour/warden-screen/locator";
 import { snapshotRenderer } from "@delacour/warden-screen/render";
-import { createAlertReader } from "./alert-reader";
-import { screenshotPath } from "./artifacts";
+import { DeviceAlertReader } from "./alert-reader";
+import { artifactPaths } from "./artifacts";
 import {
 	type ConditionRun,
 	type ConditionsEnv,
-	conditionSinkFor,
-	createDeviceConditions,
+	conditionRegistry,
 	type DeviceClock,
 	type DeviceConditions,
+	DeviceConditionsImpl,
 	type DeviceLocation,
 	type DeviceNetwork,
 	type DevicePermissions,
-	registerConditions,
 	type TimelineStepInput,
 } from "./conditions/device-conditions";
-import { type ConditionRecorder, leaseRecorderFor } from "./conditions/lease-recorder";
-import { createDeviceDevtools, type DeviceDevtools, type DevtoolsSource } from "./device-devtools";
-import {
-	isOpenInSheet,
-	linkInFlight,
-	linkKey,
-	OPEN_LINK_WAIT_MS,
-	sheetlessFor,
-	waitForLink,
-	whileLinkInFlight,
-} from "./device-link";
+import { type ConditionRecorder, leaseRecorderResolver } from "./conditions/lease-recorder";
+import { type DeviceDevtools, DeviceDevtoolsFacade, type DevtoolsSource } from "./device-devtools";
+import { deviceLinks, OPEN_LINK_WAIT_MS } from "./device-link";
 import { type Clock, type FixtureSession, systemClock } from "./fixture-session";
-import { parseBudgets } from "./perf/budgets";
-import { createDevicePerf, type DevicePerf, type PerfExec, spawnWarden } from "./perf/device-perf";
+import { perfBudgets } from "./perf/budgets";
+import { type DevicePerf, DevicePerfImpl, type PerfExec, perfLauncher } from "./perf/device-perf";
 
 export type AlertAction = "accept" | "dismiss" | { button: string };
 
@@ -234,323 +225,368 @@ export type DevicePerfSource = {
 	addFile?: (relative: string) => void;
 };
 
-function nextShotNumber(dir: string, issued: ReadonlyMap<string, number>): number {
-	let highest = issued.get(dir) ?? 0;
-	try {
-		for (const file of readdirSync(join(dir, "screenshots"))) {
-			const n = /^(\d{3})-/.exec(file)?.[1];
-			if (n !== undefined) highest = Math.max(highest, Number(n));
+/** The button `device.alert(action)` presses; undefined = none to press. */
+class AlertTargets {
+	/**
+	 * Android `accept`/`dismiss` go by the permission prompt's ids, then the names, then `AlertDialog`'s
+	 * `button1`/`button2` (React Native fills those by position).
+	 */
+	targetFor(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
+		const { buttons } = info;
+		if (action === "accept") {
+			if (platform !== "android") return alertButtons.firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
+			return (
+				this.androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
+				alertButtons.firstOf(buttons, ACCEPT_BUTTONS) ??
+				this.androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
+				buttons[buttons.length - 1]
+			);
 		}
-	} catch {
-		// no screenshots directory yet
+		// Cancel on "Open in …?" only throws away a link the test opened: open it
+		if (action === "dismiss" && deviceLinks.isOpenInSheet(info)) return alertButtons.findButton(buttons, "Open");
+		if (action === "dismiss") {
+			if (platform !== "android") return alertButtons.firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
+			return (
+				this.androidButton(buttons, ANDROID_PERMISSION_DENY_IDS) ??
+				alertButtons.firstOf(buttons, DISMISS_BUTTONS) ??
+				this.androidButton(buttons, [ANDROID_NEGATIVE_ID]) ??
+				buttons[0]
+			);
+		}
+		const target = alertButtons.findButton(buttons, action.button);
+		if (target === undefined) {
+			throw new E2eError(
+				"ACTION_FAILED",
+				`alert has no "${action.button}" button (buttons: ${this.buttonNames(info)})`
+			);
+		}
+		return target;
 	}
-	return highest + 1;
+
+	buttonNames(info: AlertInfo): string {
+		return info.buttons.map((b) => alertButtons.nameOf(b) ?? "?").join(", ");
+	}
+
+	/** The first of `buttons` whose id is in `ids`, in that list's order. */
+	private androidButton(buttons: readonly Element[], ids: readonly string[]): Element | undefined {
+		for (const id of ids) {
+			const found = buttons.find((button) => button.identifier === id);
+			if (found !== undefined) return found;
+		}
+		return undefined;
+	}
 }
 
-/** The first of `buttons` whose id is in `ids`, in that list's order. */
-function androidButton(buttons: readonly Element[], ids: readonly string[]): Element | undefined {
-	for (const id of ids) {
-		const found = buttons.find((button) => button.identifier === id);
-		if (found !== undefined) return found;
-	}
-	return undefined;
-}
+const alertTargets = new AlertTargets();
 
-/** The button `device.alert(action)` presses; undefined = none to press. Android `accept`/`dismiss` go by the permission
- * prompt's ids, then the names, then `AlertDialog`'s `button1`/`button2` (React Native fills those by position). */
 const ALERT_PRESS_ATTEMPTS = 3;
 const ALERT_PRESS_SETTLE_MS = 250;
 
-function buttonNames(info: AlertInfo): string {
-	return info.buttons.map((b) => alertButtons.nameOf(b) ?? "?").join(", ");
-}
+/** The {@link Device} over a {@link Driver}: one per test attempt, every call honours the attempt's signal. */
+export class DeviceImpl implements Device {
+	private readonly driver: Driver;
+	private readonly artifactsDir: string | (() => string);
+	private readonly appId: string;
+	private readonly clockSource: Clock;
+	private readonly linkScope: object;
+	private readonly devtoolsSource: DevtoolsSource | undefined;
+	private readonly readAlert: DeviceAlertReader["read"];
+	private readonly issued = new Map<string, number>();
+	private devtoolsFacade: DeviceDevtools | undefined;
 
-function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
-	const { buttons } = info;
-	if (action === "accept") {
-		if (platform !== "android") return alertButtons.firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
-		return (
-			androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
-			alertButtons.firstOf(buttons, ACCEPT_BUTTONS) ??
-			androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
-			buttons[buttons.length - 1]
-		);
-	}
-	// Cancel on "Open in …?" only throws away a link the test opened: open it
-	if (action === "dismiss" && isOpenInSheet(info)) return alertButtons.findButton(buttons, "Open");
-	if (action === "dismiss") {
-		if (platform !== "android") return alertButtons.firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
-		return (
-			androidButton(buttons, ANDROID_PERMISSION_DENY_IDS) ??
-			alertButtons.firstOf(buttons, DISMISS_BUTTONS) ??
-			androidButton(buttons, [ANDROID_NEGATIVE_ID]) ??
-			buttons[0]
-		);
-	}
-	const target = alertButtons.findButton(buttons, action.button);
-	if (target === undefined) {
-		const names = buttons.map((b) => alertButtons.nameOf(b) ?? "?").join(", ");
-		throw new E2eError("ACTION_FAILED", `alert has no "${action.button}" button (buttons: ${names})`);
-	}
-	return target;
-}
+	readonly perf: DevicePerf;
+	readonly network: DeviceNetwork;
+	readonly location: DeviceLocation;
+	readonly clock: DeviceClock;
+	readonly permissions: DevicePermissions;
+	readonly timezone: DeviceConditions["timezone"];
+	readonly locale: DeviceConditions["locale"];
+	readonly a11y: DeviceConditions["a11y"];
+	readonly battery: DeviceConditions["battery"];
+	readonly memoryWarning: DeviceConditions["memoryWarning"];
+	readonly push: DeviceConditions["push"];
+	readonly timeline: Device["timeline"];
 
-export function createDevice({
-	driver,
-	artifactsDir,
-	appId = "",
-	signal: signalOf,
-	trace,
-	devtools: devtoolsSource,
-	linkScope = {},
-	clock = systemClock,
-	perf: perfDeps,
-	conditionsEnv = { bundleId: appId },
-	conditionSink,
-	conditionRecorder,
-	conditions = createDeviceConditions({
-		driver,
-		env: conditionsEnv,
-		signal: () => signalOf?.(),
-		...(conditionSink === undefined ? {} : { sink: conditionSink }),
-		...(conditionRecorder === undefined ? {} : { recorder: conditionRecorder }),
-	}),
-}: DeviceDeps): Device {
-	const issued = new Map<string, number>();
-	// the signal is read per call: the runner swaps it for every attempt
-	const signal = (): AbortSignal | undefined => signalOf?.();
-	const biometric = (op: BiometricOp): Promise<BiometricState> =>
-		driverCalls.unwrap(() => driver.biometrics(op), `biometrics ${op}`, signal());
+	constructor(private readonly deps: DeviceDeps) {
+		const { driver, artifactsDir, perf: perfDeps } = deps;
+		const appId = deps.appId ?? "";
+		this.driver = driver;
+		this.artifactsDir = artifactsDir;
+		this.appId = appId;
+		this.clockSource = deps.clock ?? systemClock;
+		this.linkScope = deps.linkScope ?? {};
+		this.devtoolsSource = deps.devtools;
+		this.readAlert = new DeviceAlertReader({ driver, clock: this.clockSource, signal: () => this.signal() }).read;
+		const conditionsEnv = deps.conditionsEnv ?? { bundleId: appId };
+		const conditions =
+			deps.conditions ??
+			new DeviceConditionsImpl({
+				driver,
+				env: conditionsEnv,
+				signal: () => deps.signal?.(),
+				...(deps.conditionSink === undefined ? {} : { sink: deps.conditionSink }),
+				...(deps.conditionRecorder === undefined ? {} : { recorder: deps.conditionRecorder }),
+			});
+		this.perf = new DevicePerfImpl({
+			exec: perfDeps?.exec ?? perfLauncher.spawnWarden(perfDeps?.wardenBin),
+			udid: perfDeps?.udid ?? "",
+			budgets: perfBudgets.parse(perfDeps?.budgets),
+			attemptDir: () => this.currentArtifactsDir(),
+			...(perfDeps?.addFile ? { addFile: perfDeps.addFile } : {}),
+			...(perfDeps === undefined || (perfDeps.wardenBin === undefined && perfDeps.exec === undefined)
+				? { unavailable: "WARDEN_BIN is not set (run the spec with `warden e2e`)" }
+				: {}),
+		});
+		this.network = conditions.network;
+		this.location = conditions.location;
+		this.clock = conditions.clock;
+		this.permissions = conditions.permissions;
+		this.timezone = conditions.timezone;
+		this.locale = conditions.locale;
+		this.a11y = conditions.a11y;
+		this.battery = conditions.battery;
+		this.memoryWarning = conditions.memoryWarning;
+		this.push = conditions.push;
+		this.timeline = (steps) => conditions.timeline(steps);
+		conditionRegistry.register(this, conditions.internals);
+	}
 
-	const pressAlertButton = async (button: Element, action: string): Promise<void> => {
-		await driverCalls.unwrap(() => driver.tap(alertButtons.centre(button)), action, signal());
+	get devtools(): DeviceDevtools | undefined {
+		const source = this.devtoolsSource;
+		if (source === undefined) return undefined;
+		if (this.devtoolsFacade === undefined) {
+			this.devtoolsFacade = new DeviceDevtoolsFacade(source);
+			void source.devtools();
+		}
+		return this.devtoolsFacade;
+	}
+
+	readonly alert = async (action: AlertAction): Promise<boolean> => {
+		const { driver } = this;
+		// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone
+		const info = await this.readAlert("axbridge");
+		if (info === null || info.buttons.length === 0) return false;
+		// openLink is answering this sheet itself and must see it to know the link has one
+		if (deviceLinks.isOpenInSheet(info) && typeof action === "string" && deviceLinks.linkInFlight(this.linkScope))
+			return false;
+		if (driver.platform === "android" && alertButtons.isAutofillSaveSheet(info.buttons))
+			return this.closeAutofillSheet(action);
+		const target = alertTargets.targetFor(info, action, driver.platform);
+		if (target === undefined) return false;
+		await this.pressAlertButton(target, "press alert button");
+		if (driver.platform === "ios") await this.confirmAlertGone(info, target);
+		return true;
 	};
 
-	const readAlert = createAlertReader({ driver, clock, signal });
+	readonly openLink = async (url: string, options: OpenLinkOptions = {}): Promise<void> => {
+		const { driver } = this;
+		const waitMs = options.waitMs ?? OPEN_LINK_WAIT_MS;
+		if (!Number.isFinite(waitMs) || waitMs < 0) {
+			throw new E2eError("INVALID_ARGUMENT", `openLink waitMs must be a non-negative number, got ${String(waitMs)}`);
+		}
+		await driverCalls.unwrap(() => driver.app.openUrl(url), `open ${url}`, this.signal());
+		const answersSheet = options.accept !== false && driver.platform === "ios" && driver.capabilities.alerts;
+		if (!answersSheet && options.until === undefined) return;
+		await deviceLinks.whileLinkInFlight(this.linkScope, () =>
+			deviceLinks.waitForLink(
+				{
+					clock: this.clockSource,
+					readAlert: this.readAlert,
+					press: (button) => this.pressAlertButton(button, "accept open-in sheet"),
+					appInFront: () => this.appInFront(),
+					isVisible: (locator) => this.isVisible(locator),
+					sheetless: deviceLinks.sheetlessFor(this.linkScope),
+				},
+				{
+					key: deviceLinks.linkKey(url),
+					answersSheet,
+					waitMs,
+					...(options.until === undefined ? {} : { until: options.until }),
+				}
+			)
+		);
+	};
+
+	readonly home = async (): Promise<void> => {
+		await driverCalls.unwrap(() => this.driver.pressButton("home"), "press home", this.signal());
+	};
+
+	readonly back = async (): Promise<void> => {
+		if (this.driver.platform === "ios") {
+			throw new E2eError("INVALID_ARGUMENT", "device.back() is Android only: iOS has no back key");
+		}
+		await driverCalls.unwrap(() => this.driver.pressButton("back"), "press back", this.signal());
+	};
+
+	readonly orientation = (set?: Orientation): Promise<Orientation> =>
+		driverCalls.unwrap(() => this.driver.orientation(set), "orientation", this.signal());
+
+	readonly appearance = (set?: "light" | "dark"): Promise<"light" | "dark"> =>
+		driverCalls.unwrap(() => this.driver.appearance(set), "appearance", this.signal());
+
+	readonly biometrics: DeviceBiometrics = {
+		status: () => this.biometric("status"),
+		enroll: () => this.biometric("enroll"),
+		unenroll: () => this.biometric("unenroll"),
+		match: () => this.biometric("match"),
+		fail: () => this.biometric("fail"),
+	};
+
+	readonly clipboard = (): Promise<string> =>
+		driverCalls.unwrap(() => this.driver.clipboard(), "read clipboard", this.signal());
+
+	readonly setClipboard = async (text: string): Promise<void> => {
+		await driverCalls.unwrap(() => this.driver.clipboard(text), "set clipboard", this.signal());
+	};
+
+	readonly hideKeyboard = async (): Promise<void> => {
+		const { driver } = this;
+		const snapshot = await this.readSnapshot();
+		if (!snapshot.flat.some((element) => element.role === "keyboard")) return;
+		if (driver.platform === "ios") await driverCalls.unwrap(() => driver.key("Enter"), "hide keyboard", this.signal());
+		else await driverCalls.unwrap(() => driver.pressButton("back"), "hide keyboard", this.signal());
+	};
+
+	readonly screenshot = async (name: string): Promise<string> => {
+		const dir = this.currentArtifactsDir();
+		const n = this.nextShotNumber(dir);
+		this.issued.set(dir, n);
+		const path = artifactPaths.screenshotPath(dir, n, name);
+		mkdirSync(dirname(path), { recursive: true });
+		const shot = await driverCalls.unwrap(() => this.driver.screenshot({ path }), "screenshot", this.signal());
+		if (shot.path === undefined && shot.png !== undefined) writeFileSync(path, shot.png);
+		this.deps.trace?.()?.write({ type: "screenshot", ts: this.clockSource.now(), kind: "device", label: name, path });
+		return path;
+	};
+
+	readonly snapshot = async (options: SnapshotTextOptions = {}): Promise<string> => {
+		const interactiveOnly = options.interactiveOnly ?? false;
+		const snapshot = await this.readSnapshot({ interactiveOnly });
+		const rendered = snapshotRenderer.renderSnapshot(snapshot, { interactiveOnly, refs: new Map() });
+		return [snapshotRenderer.renderHeader({ snapshot, rendered, interactiveOnly }), ...rendered.lines].join("\n");
+	};
+
+	readonly settle = async (options: SettleOptions = {}): Promise<SettleDetail> => {
+		const clock = this.clockSource;
+		const quietMs = options.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
+		const timeoutMs = options.timeout ?? DEFAULT_SETTLE_TIMEOUT_MS;
+		const native = await driverCalls.settled(() => this.driver.settle({ quietMs, timeoutMs }), "settle", this.signal());
+		if (native.success) return settler.detailOf(native.data);
+		if (native.error.code !== "E_UNSUPPORTED") throw driverCalls.toE2eError(native.error, "settle");
+		const polled = await settler.byHash(async () => settler.snapshotHash(await this.readSnapshot()), {
+			quietMs,
+			timeoutMs,
+			now: clock.now,
+			sleep: clock.sleep,
+		});
+		return { ...polled, via: "hash" };
+	};
+
+	/** the signal is read per call: the runner swaps it for every attempt */
+	private signal(): AbortSignal | undefined {
+		return this.deps.signal?.();
+	}
+
+	private currentArtifactsDir(): string {
+		return typeof this.artifactsDir === "string" ? this.artifactsDir : this.artifactsDir();
+	}
+
+	private nextShotNumber(dir: string): number {
+		let highest = this.issued.get(dir) ?? 0;
+		try {
+			for (const file of readdirSync(join(dir, "screenshots"))) {
+				const n = /^(\d{3})-/.exec(file)?.[1];
+				if (n !== undefined) highest = Math.max(highest, Number(n));
+			}
+		} catch {
+			// no screenshots directory yet
+		}
+		return highest + 1;
+	}
+
+	private biometric(op: BiometricOp): Promise<BiometricState> {
+		return driverCalls.unwrap(() => this.driver.biometrics(op), `biometrics ${op}`, this.signal());
+	}
+
+	private async pressAlertButton(button: Element, action: string): Promise<void> {
+		await driverCalls.unwrap(() => this.driver.tap(alertButtons.centre(button)), action, this.signal());
+	}
 
 	/** "Never" and "Continue" both change the user's Google account: only Back closes the autofill "Save password?" sheet. */
-	const closeAutofillSheet = async (action: AlertAction): Promise<true> => {
+	private async closeAutofillSheet(action: AlertAction): Promise<true> {
 		if (typeof action !== "string") {
 			throw new E2eError(
 				"ACTION_FAILED",
 				`the autofill "Save password?" sheet is closed with Back only, never "${action.button}": use accept or dismiss`
 			);
 		}
-		await driverCalls.unwrap(() => driver.pressButton("back"), "dismiss autofill save sheet", signal());
+		await driverCalls.unwrap(() => this.driver.pressButton("back"), "dismiss autofill save sheet", this.signal());
 		return true;
-	};
+	}
 
 	/**
 	 * A press on an iOS sheet that is still animating in (LocalAuthentication's "Face Not Recognized") lands on nothing and
 	 * reports success, so `answered` is only true once the alert is gone or has become a different one. Presses again
 	 * (`ALERT_PRESS_ATTEMPTS` in all) while the same buttons show; `ACTION_FAILED` when they never leave.
 	 */
-	const confirmAlertGone = async (shown: AlertInfo, pressed: Element): Promise<void> => {
+	private async confirmAlertGone(shown: AlertInfo, pressed: Element): Promise<void> {
 		let target = pressed;
 		for (let attempt = 1; ; attempt += 1) {
-			await clock.sleep(ALERT_PRESS_SETTLE_MS);
-			const now = await readAlert("axbridge", 0);
-			if (now === null || buttonNames(now) !== buttonNames(shown)) return;
+			await this.clockSource.sleep(ALERT_PRESS_SETTLE_MS);
+			const now = await this.readAlert("axbridge", 0);
+			if (now === null || alertTargets.buttonNames(now) !== alertTargets.buttonNames(shown)) return;
 			if (attempt >= ALERT_PRESS_ATTEMPTS) {
 				throw new E2eError(
 					"ACTION_FAILED",
-					`alert still showing after pressing "${alertButtons.nameOf(pressed) ?? "?"}" ${ALERT_PRESS_ATTEMPTS} times (buttons: ${buttonNames(now)})`
+					`alert still showing after pressing "${alertButtons.nameOf(pressed) ?? "?"}" ${ALERT_PRESS_ATTEMPTS} times (buttons: ${alertTargets.buttonNames(now)})`
 				);
 			}
 			target = now.buttons.find((b) => alertButtons.nameOf(b) === alertButtons.nameOf(pressed)) ?? target;
-			await pressAlertButton(target, "press alert button again");
+			await this.pressAlertButton(target, "press alert button again");
 		}
-	};
+	}
 
 	/** Whether the app under test is in front; `undefined` when the driver (or the bundle id) cannot say. */
-	const appInFront = async (): Promise<boolean | undefined> => {
+	private async appInFront(): Promise<boolean | undefined> {
+		const { driver, appId } = this;
 		if (appId === "" || !alertCapabilities.canProbeFrontmost(driver)) return undefined;
-		const result = await driverCalls.settled(() => driver.isFrontmost(appId), "probe frontmost app", signal());
+		const result = await driverCalls.settled(() => driver.isFrontmost(appId), "probe frontmost app", this.signal());
 		return result.success ? result.data : undefined;
-	};
+	}
 
 	/** `until.isVisible()`; a locator that cannot answer yet (several matches, a driver hiccup) is not visible yet. */
-	const isVisible = async (locator: Locator): Promise<boolean> => {
+	private async isVisible(locator: Locator): Promise<boolean> {
 		try {
 			return await locator.isVisible();
 		} catch (error) {
-			if (signal()?.aborted) throw error;
+			if (this.signal()?.aborted) throw error;
 			return false;
 		}
-	};
+	}
 
-	const readSnapshot = (opts?: { interactiveOnly?: boolean }): Promise<Snapshot> =>
-		driverCalls.unwrap(() => driver.snapshot(opts), "snapshot", signal());
-
-	let devtools: DeviceDevtools | undefined;
-	const lazyDevtools = (): DeviceDevtools | undefined => {
-		if (devtoolsSource === undefined) return undefined;
-		if (devtools === undefined) {
-			devtools = createDeviceDevtools(devtoolsSource);
-			void devtoolsSource.devtools();
-		}
-		return devtools;
-	};
-
-	const perf = createDevicePerf({
-		exec: perfDeps?.exec ?? spawnWarden(perfDeps?.wardenBin),
-		udid: perfDeps?.udid ?? "",
-		budgets: parseBudgets(perfDeps?.budgets),
-		attemptDir: () => (typeof artifactsDir === "string" ? artifactsDir : artifactsDir()),
-		...(perfDeps?.addFile ? { addFile: perfDeps.addFile } : {}),
-		...(perfDeps === undefined || (perfDeps.wardenBin === undefined && perfDeps.exec === undefined)
-			? { unavailable: "WARDEN_BIN is not set (run the spec with `warden e2e`)" }
-			: {}),
-	});
-
-	const device: Device = {
-		get devtools() {
-			return lazyDevtools();
-		},
-		perf,
-		network: conditions.network,
-		location: conditions.location,
-		clock: conditions.clock,
-		permissions: conditions.permissions,
-		timezone: conditions.timezone,
-		locale: conditions.locale,
-		a11y: conditions.a11y,
-		battery: conditions.battery,
-		memoryWarning: conditions.memoryWarning,
-		push: conditions.push,
-		timeline: (steps) => conditions.timeline(steps),
-
-		async alert(action) {
-			// the bridge also sees what the app itself shows (Keychain "Save Password?"), so it answers "none" alone
-			const info = await readAlert("axbridge");
-			if (info === null || info.buttons.length === 0) return false;
-			// openLink is answering this sheet itself and must see it to know the link has one
-			if (isOpenInSheet(info) && typeof action === "string" && linkInFlight(linkScope)) return false;
-			if (driver.platform === "android" && alertButtons.isAutofillSaveSheet(info.buttons))
-				return closeAutofillSheet(action);
-			const target = alertTarget(info, action, driver.platform);
-			if (target === undefined) return false;
-			await pressAlertButton(target, "press alert button");
-			if (driver.platform === "ios") await confirmAlertGone(info, target);
-			return true;
-		},
-
-		async openLink(url, options = {}) {
-			const waitMs = options.waitMs ?? OPEN_LINK_WAIT_MS;
-			if (!Number.isFinite(waitMs) || waitMs < 0) {
-				throw new E2eError("INVALID_ARGUMENT", `openLink waitMs must be a non-negative number, got ${String(waitMs)}`);
-			}
-			await driverCalls.unwrap(() => driver.app.openUrl(url), `open ${url}`, signal());
-			const answersSheet = options.accept !== false && driver.platform === "ios" && driver.capabilities.alerts;
-			if (!answersSheet && options.until === undefined) return;
-			await whileLinkInFlight(linkScope, () =>
-				waitForLink(
-					{
-						clock,
-						readAlert,
-						press: (button) => pressAlertButton(button, "accept open-in sheet"),
-						appInFront,
-						isVisible,
-						sheetless: sheetlessFor(linkScope),
-					},
-					{ key: linkKey(url), answersSheet, waitMs, ...(options.until === undefined ? {} : { until: options.until }) }
-				)
-			);
-		},
-
-		async home() {
-			await driverCalls.unwrap(() => driver.pressButton("home"), "press home", signal());
-		},
-
-		async back() {
-			if (driver.platform === "ios") {
-				throw new E2eError("INVALID_ARGUMENT", "device.back() is Android only: iOS has no back key");
-			}
-			await driverCalls.unwrap(() => driver.pressButton("back"), "press back", signal());
-		},
-
-		orientation(set) {
-			return driverCalls.unwrap(() => driver.orientation(set), "orientation", signal());
-		},
-
-		appearance(set) {
-			return driverCalls.unwrap(() => driver.appearance(set), "appearance", signal());
-		},
-
-		biometrics: {
-			status: () => biometric("status"),
-			enroll: () => biometric("enroll"),
-			unenroll: () => biometric("unenroll"),
-			match: () => biometric("match"),
-			fail: () => biometric("fail"),
-		},
-
-		clipboard() {
-			return driverCalls.unwrap(() => driver.clipboard(), "read clipboard", signal());
-		},
-
-		async setClipboard(text) {
-			await driverCalls.unwrap(() => driver.clipboard(text), "set clipboard", signal());
-		},
-
-		async hideKeyboard() {
-			const snapshot = await readSnapshot();
-			if (!snapshot.flat.some((element) => element.role === "keyboard")) return;
-			if (driver.platform === "ios") await driverCalls.unwrap(() => driver.key("Enter"), "hide keyboard", signal());
-			else await driverCalls.unwrap(() => driver.pressButton("back"), "hide keyboard", signal());
-		},
-
-		async screenshot(name) {
-			const dir = typeof artifactsDir === "string" ? artifactsDir : artifactsDir();
-			const n = nextShotNumber(dir, issued);
-			issued.set(dir, n);
-			const path = screenshotPath(dir, n, name);
-			mkdirSync(dirname(path), { recursive: true });
-			const shot = await driverCalls.unwrap(() => driver.screenshot({ path }), "screenshot", signal());
-			if (shot.path === undefined && shot.png !== undefined) writeFileSync(path, shot.png);
-			trace?.()?.write({ type: "screenshot", ts: clock.now(), kind: "device", label: name, path });
-			return path;
-		},
-
-		async snapshot(options = {}) {
-			const interactiveOnly = options.interactiveOnly ?? false;
-			const snapshot = await readSnapshot({ interactiveOnly });
-			const rendered = snapshotRenderer.renderSnapshot(snapshot, { interactiveOnly, refs: new Map() });
-			return [snapshotRenderer.renderHeader({ snapshot, rendered, interactiveOnly }), ...rendered.lines].join("\n");
-		},
-
-		async settle(options = {}) {
-			const quietMs = options.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
-			const timeoutMs = options.timeout ?? DEFAULT_SETTLE_TIMEOUT_MS;
-			const native = await driverCalls.settled(() => driver.settle({ quietMs, timeoutMs }), "settle", signal());
-			if (native.success) return settler.detailOf(native.data);
-			if (native.error.code !== "E_UNSUPPORTED") throw driverCalls.toE2eError(native.error, "settle");
-			const polled = await settler.byHash(async () => settler.snapshotHash(await readSnapshot()), {
-				quietMs,
-				timeoutMs,
-				now: clock.now,
-				sleep: clock.sleep,
-			});
-			return { ...polled, via: "hash" };
-		},
-	};
-	registerConditions(device, conditions.internals);
-	return device;
+	private readSnapshot(opts?: { interactiveOnly?: boolean }): Promise<Snapshot> {
+		return driverCalls.unwrap(() => this.driver.snapshot(opts), "snapshot", this.signal());
+	}
 }
 
-/** The conditions of one attempt's device: events go to the session's `results.jsonl`, calls honour its signal. */
-export function createSessionConditions(
-	session: Pick<FixtureSession, "results" | "signal">,
-	driver: Driver,
-	env: ConditionsEnv,
-	recorder: ConditionRecorder | undefined = leaseRecorderFor(env)
-): DeviceConditions {
-	const sink = conditionSinkFor(session);
-	return createDeviceConditions({
-		driver,
-		env,
-		signal: () => session.signal,
-		...(sink === undefined ? {} : { sink }),
-		...(recorder === undefined ? {} : { recorder }),
-	});
+/** Builds the conditions of one attempt's device. */
+export class SessionConditions {
+	/** The conditions of one attempt's device: events go to the session's `results.jsonl`, calls honour its signal. */
+	create(
+		session: Pick<FixtureSession, "results" | "signal">,
+		driver: Driver,
+		env: ConditionsEnv,
+		recorder: ConditionRecorder | undefined = leaseRecorderResolver.forEnv(env)
+	): DeviceConditions {
+		const sink = conditionRegistry.sinkFor(session);
+		return new DeviceConditionsImpl({
+			driver,
+			env,
+			signal: () => session.signal,
+			...(sink === undefined ? {} : { sink }),
+			...(recorder === undefined ? {} : { recorder }),
+		});
+	}
 }
+
+export const sessionConditions = new SessionConditions();

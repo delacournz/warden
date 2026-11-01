@@ -1207,7 +1207,7 @@ const HELPER_KINDS: readonly HelperKind[] = [SIMD_KIND, ANDROID_HOST_KIND, IOS_R
 export const defaultAndroidHostDeps: HelperDeps<RemoteClient> = {
 	...defaultHelperDeps,
 	connect: async (socketPath, options) =>
-		(await import("@delacour/warden-device/remote/remote-client")).connectRemoteDriver({
+		(await import("@delacour/warden-device/remote/remote-client")).remoteDriverConnector.connect({
 			socketPath,
 			readyTimeoutMs: 2000,
 			...(options?.defaultTimeoutMs !== undefined ? { requestTimeoutMs: options.defaultTimeoutMs } : {}),

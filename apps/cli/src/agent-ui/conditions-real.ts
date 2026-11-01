@@ -1,10 +1,10 @@
 import { proxyControl } from "@delacour/warden-core/netproxy/control";
 import { handleFiles } from "@delacour/warden-core/netproxy/handle-file";
 import { LeaseProxyService } from "@delacour/warden-core/netproxy/lease-proxy";
-import { leaseClockRecorder } from "@delacour/warden-device/conditions/lease-clock-recorder";
-import { lazyLeaseNetworkProxy, leaseNetworkProxy } from "@delacour/warden-device/conditions/lease-network-proxy";
-import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-device/conditions/route-ticker.spawn";
-import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-device/conditions/scheduler.spawn";
+import { LeaseClockRecorder } from "@delacour/warden-device/conditions/lease-clock-recorder";
+import { LazyLeaseNetworkProxy, LeaseNetworkProxy } from "@delacour/warden-device/conditions/lease-network-proxy";
+import { routeTickerSpawner } from "@delacour/warden-device/conditions/route-ticker.spawn";
+import { schedulerSpawner } from "@delacour/warden-device/conditions/scheduler.spawn";
 import { driverErrors } from "@delacour/warden-driver/errors";
 import { networkProxyShaping } from "@delacour/warden-driver/network-proxy";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
@@ -30,14 +30,14 @@ function proxyDeps(ctx: CommandContext) {
 export function leaseDriverExtras(ctx: CommandContext, device: UiDevice) {
 	const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
 	return {
-		networkProxy: lazyLeaseNetworkProxy({
+		networkProxy: new LazyLeaseNetworkProxy({
 			leaseId: device.lease.id,
 			env: ctx.env,
 			now: ctx.now,
 			openStore: () => ({ success: true, data: ctx.store() }),
 			...(command ? { command } : {}),
 		}),
-		clockRecorder: leaseClockRecorder(ctx.store(), device.lease.id, ctx.now),
+		clockRecorder: new LeaseClockRecorder(ctx.store(), device.lease.id, ctx.now).record,
 	};
 }
 
@@ -70,7 +70,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		adb,
 		serial,
 		clock: realClock,
-		proxy: leaseNetworkProxy(proxyDeps(ctx), device.lease),
+		proxy: new LeaseNetworkProxy(proxyDeps(ctx), device.lease),
 	});
 	const settings = new AndroidSettings({ session, serial }).ops();
 	return resultFactory.ok({
@@ -97,7 +97,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 	});
 }
 
-type Spawn = Parameters<typeof spawnDetachedTickerVia>[2];
+type Spawn = Parameters<typeof routeTickerSpawner.via>[2];
 
 /**
  * How the detached scheduler / ticker start: a compiled warden has no script to hand `bun`, so it runs its own hidden
@@ -105,13 +105,13 @@ type Spawn = Parameters<typeof spawnDetachedTickerVia>[2];
  */
 export function conditionSpawners(main: string = Bun.main, execPath: string = process.execPath, spawn?: Spawn) {
 	return {
-		spawnScheduler: (config: Parameters<typeof spawnDetachedScheduler>[0]) => {
+		spawnScheduler: (config: Parameters<typeof schedulerSpawner.detached>[0]) => {
 			const via = compiledSubcommand("__scheduler", main, execPath);
-			return via ? spawnDetachedSchedulerVia(config, via, spawn) : spawnDetachedScheduler(config, spawn);
+			return via ? schedulerSpawner.via(config, via, spawn) : schedulerSpawner.detached(config, spawn);
 		},
-		spawnTicker: (config: Parameters<typeof spawnDetachedTicker>[0]) => {
+		spawnTicker: (config: Parameters<typeof routeTickerSpawner.detached>[0]) => {
 			const via = compiledSubcommand("__route-ticker", main, execPath);
-			return via ? spawnDetachedTickerVia(config, via, spawn) : spawnDetachedTicker(config, spawn);
+			return via ? routeTickerSpawner.via(config, via, spawn) : routeTickerSpawner.detached(config, spawn);
 		},
 	};
 }

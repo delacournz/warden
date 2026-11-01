@@ -12,8 +12,8 @@ import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { leaseModel } from "@delacour/warden-store/types";
 
 /**
- * Everything {@link openDriver} needs, as values: it reads no environment variable and no global. The edge
- * ({@link openDriverFromEnv}, `warden ui`, an SDK host) turns its env into these.
+ * Everything {@link DriverOpener.open} needs, as values: it reads no environment variable and no global. The edge
+ * (`openDriverFromEnv`, `warden ui`, an SDK host) turns its env into these.
  */
 export type OpenDriverOptions = {
 	platform: "ios" | "android";
@@ -57,94 +57,100 @@ export type OpenDriverOptions = {
 	clockRecorder?: ClockRecorder;
 };
 
-const stderrLog = (line: string): void => {
-	process.stderr.write(`${line}\n`);
-};
-
-/** The lease's proxy and clock recorder, unless the platform opener's own seams already name one. */
-function leaseSeams(
-	options: Pick<OpenDriverOptions, "networkProxy" | "clockRecorder">,
-	own: Pick<OpenDriverOptions, "networkProxy" | "clockRecorder">
-): Pick<OpenDriverOptions, "networkProxy" | "clockRecorder"> {
-	const networkProxy = own.networkProxy ?? options.networkProxy;
-	const clockRecorder = own.clockRecorder ?? options.clockRecorder;
-	return {
-		...(networkProxy === undefined ? {} : { networkProxy }),
-		...(clockRecorder === undefined ? {} : { clockRecorder }),
+/** Opens the `Driver` for a leased device, by platform. */
+export class DriverOpener {
+	private readonly stderrLog = (line: string): void => {
+		process.stderr.write(`${line}\n`);
 	};
-}
 
-/**
- * The Android opener's options: the serial and app package, the `state` store under `<home>/android` (a caller's own
- * `android.state` wins) that remembers the dump route that worked and the animation scales to put back, the resident
- * `warden-uiad` server (unless the caller said otherwise or injected a shell `spawn`), and the injected seams.
- */
-export function androidOptions(options: OpenDriverOptions, debug: boolean): AndroidDriverOptions {
-	const android: NonNullable<OpenDriverOptions["android"]> = options.android ?? {};
-	const log = options.log ?? (debug ? stderrLog : undefined);
-	const home = options.host?.home;
-	const state =
-		android.state ??
-		(home === undefined
-			? undefined
-			: new FileAndroidStateStore({ dir: androidState.androidStateDir(home), ...(log ? { log } : {}) }));
-	const appPackage = android.appPackage ?? options.appId;
-	return {
-		...android,
-		...leaseSeams(options, android),
-		serial: options.id,
-		adb: android.adb ?? "adb",
-		exec: options.host?.exec ?? processExec.run,
-		...(appPackage === undefined ? {} : { appPackage }),
-		...(android.uiad === undefined && android.spawn === undefined ? { uiad: true } : {}),
-		...(state === undefined ? {} : { state }),
-		...(log ? { log } : {}),
-	};
-}
+	/** Open the `Driver` for the device in `options`, by platform. Reads no environment: see `openDriverFromEnv`. */
+	async open(options: OpenDriverOptions): DriverResult<Driver> {
+		const debug = options.debug ?? false;
+		switch (options.platform) {
+			case "ios":
+				if (leaseModel.isPhysicalIosId(options.id))
+					return iosDeviceDriverOpener.open(this.iosDeviceOptions(options, debug));
+				return iosDriverOpener.open(this.iosOptions(options, debug));
+			case "android":
+				return androidDrivers.open(this.androidOptions(options, debug));
+		}
+	}
 
-/** The iOS opener's options: the helper locations as the env-shaped names `openIosDriver` reads, and the injected seams. */
-function iosOptions(options: OpenDriverOptions, debug: boolean): OpenIosDriverOptions {
-	const { simdPath, helperDir, socketPath, ...seams } = options.ios ?? {};
-	const home = options.host?.home;
-	return {
-		...seams,
-		...leaseSeams(options, seams),
-		...(seams.bundleId === undefined && options.appId !== undefined ? { bundleId: options.appId } : {}),
-		udid: options.id,
-		env: {
-			...(simdPath === undefined ? {} : { simd: simdPath }),
-			...(helperDir === undefined ? {} : { helperDir }),
-			...(socketPath === undefined ? {} : { simdSocket: socketPath }),
-		},
-		exec: options.host?.exec ?? processExec.run,
-		debug,
-		...(home === undefined ? {} : { wardenHome: home }),
-		...(options.log ? { log: options.log } : debug ? { log: stderrLog } : {}),
-	};
-}
+	/**
+	 * The Android opener's options: the serial and app package, the `state` store under `<home>/android` (a caller's own
+	 * `android.state` wins) that remembers the dump route that worked and the animation scales to put back, the resident
+	 * `warden-uiad` server (unless the caller said otherwise or injected a shell `spawn`), and the injected seams.
+	 */
+	androidOptions(options: OpenDriverOptions, debug: boolean): AndroidDriverOptions {
+		const android: NonNullable<OpenDriverOptions["android"]> = options.android ?? {};
+		const log = options.log ?? (debug ? this.stderrLog : undefined);
+		const home = options.host?.home;
+		const state =
+			android.state ??
+			(home === undefined
+				? undefined
+				: new FileAndroidStateStore({ dir: androidState.androidStateDir(home), ...(log ? { log } : {}) }));
+		const appPackage = android.appPackage ?? options.appId;
+		return {
+			...android,
+			...this.leaseSeams(options, android),
+			serial: options.id,
+			adb: android.adb ?? "adb",
+			exec: options.host?.exec ?? processExec.run,
+			...(appPackage === undefined ? {} : { appPackage }),
+			...(android.uiad === undefined && android.spawn === undefined ? { uiad: true } : {}),
+			...(state === undefined ? {} : { state }),
+			...(log ? { log } : {}),
+		};
+	}
 
-/** The physical iPhone opener's options: the runner socket, app and bundle id, and the injected seams. */
-function iosDeviceOptions(options: OpenDriverOptions, debug: boolean): OpenIosDeviceDriverOptions {
-	const { runnerSocket, appPath, ...seams } = options.iosDevice ?? {};
-	return {
-		...seams,
-		udid: options.id,
-		exec: options.host?.exec ?? processExec.run,
-		...(runnerSocket === undefined ? {} : { socketPath: runnerSocket }),
-		...(appPath === undefined ? {} : { appPath }),
-		...(options.appId === undefined ? {} : { bundleId: options.appId }),
-		...(options.log ? { log: options.log } : debug ? { log: stderrLog } : {}),
-	};
-}
+	/** The lease's proxy and clock recorder, unless the platform opener's own seams already name one. */
+	private leaseSeams(
+		options: Pick<OpenDriverOptions, "networkProxy" | "clockRecorder">,
+		own: Pick<OpenDriverOptions, "networkProxy" | "clockRecorder">
+	): Pick<OpenDriverOptions, "networkProxy" | "clockRecorder"> {
+		const networkProxy = own.networkProxy ?? options.networkProxy;
+		const clockRecorder = own.clockRecorder ?? options.clockRecorder;
+		return {
+			...(networkProxy === undefined ? {} : { networkProxy }),
+			...(clockRecorder === undefined ? {} : { clockRecorder }),
+		};
+	}
 
-/** Open the `Driver` for the device in `options`, by platform. Reads no environment: see {@link openDriverFromEnv}. */
-export async function openDriver(options: OpenDriverOptions): DriverResult<Driver> {
-	const debug = options.debug ?? false;
-	switch (options.platform) {
-		case "ios":
-			if (leaseModel.isPhysicalIosId(options.id)) return iosDeviceDriverOpener.open(iosDeviceOptions(options, debug));
-			return iosDriverOpener.open(iosOptions(options, debug));
-		case "android":
-			return androidDrivers.open(androidOptions(options, debug));
+	/** The iOS opener's options: the helper locations as the env-shaped names `openIosDriver` reads, and the injected seams. */
+	private iosOptions(options: OpenDriverOptions, debug: boolean): OpenIosDriverOptions {
+		const { simdPath, helperDir, socketPath, ...seams } = options.ios ?? {};
+		const home = options.host?.home;
+		return {
+			...seams,
+			...this.leaseSeams(options, seams),
+			...(seams.bundleId === undefined && options.appId !== undefined ? { bundleId: options.appId } : {}),
+			udid: options.id,
+			env: {
+				...(simdPath === undefined ? {} : { simd: simdPath }),
+				...(helperDir === undefined ? {} : { helperDir }),
+				...(socketPath === undefined ? {} : { simdSocket: socketPath }),
+			},
+			exec: options.host?.exec ?? processExec.run,
+			debug,
+			...(home === undefined ? {} : { wardenHome: home }),
+			...(options.log ? { log: options.log } : debug ? { log: this.stderrLog } : {}),
+		};
+	}
+
+	/** The physical iPhone opener's options: the runner socket, app and bundle id, and the injected seams. */
+	private iosDeviceOptions(options: OpenDriverOptions, debug: boolean): OpenIosDeviceDriverOptions {
+		const { runnerSocket, appPath, ...seams } = options.iosDevice ?? {};
+		return {
+			...seams,
+			udid: options.id,
+			exec: options.host?.exec ?? processExec.run,
+			...(runnerSocket === undefined ? {} : { socketPath: runnerSocket }),
+			...(appPath === undefined ? {} : { appPath }),
+			...(options.appId === undefined ? {} : { bundleId: options.appId }),
+			...(options.log ? { log: options.log } : debug ? { log: this.stderrLog } : {}),
+		};
 	}
 }
+
+export const driverOpener = new DriverOpener();

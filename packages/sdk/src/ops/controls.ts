@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createDevice, type Device } from "@delacour/warden-device/device";
+import { type Device, DeviceImpl } from "@delacour/warden-device/device";
 import type { BiometricOp, BiometricState, Driver, Orientation } from "@delacour/warden-driver/driver.types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -9,11 +9,11 @@ import { fail, fromDriver, opError } from "./errors";
 import { uiDir } from "./paths";
 import type { OpOutcome, OpSession } from "./session";
 
-/** `createDevice` over an op session's driver: alerts, `openLink`, home/back, driven by the session's clock. */
+/** `DeviceImpl` over an op session's driver: alerts, `openLink`, home/back, driven by the session's clock. */
 export function deviceFacade(session: OpSession, driver: Driver): Device {
 	const { app } = session.state.read();
 	const out = join(uiDir(session.host.home, session.device.id), "e2e");
-	return createDevice({
+	return new DeviceImpl({
 		driver,
 		artifactsDir: join(out, "adhoc"),
 		...(app === undefined ? {} : { appId: app }),
@@ -21,7 +21,7 @@ export function deviceFacade(session: OpSession, driver: Driver): Device {
 	});
 }
 
-/** Run `work`, turning an `E2eError` thrown by the `createDevice` facade into an op error. */
+/** Run `work`, turning an `E2eError` thrown by the `DeviceImpl` facade into an op error. */
 export async function viaFacade<T>(work: () => Promise<T>): Promise<Result<T, WardenError>> {
 	try {
 		return resultFactory.ok(await work());

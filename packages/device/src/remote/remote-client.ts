@@ -20,12 +20,10 @@ import {
 	type ReadyEvent,
 	type RemoteOp,
 	readyEventSchema,
+	remoteWire,
 	responseSchema,
-	screenshotFromWire,
-	snapshotFromWire,
 	type WireScreenshot,
 	type WireSnapshot,
-	wireError,
 } from "./remote-protocol";
 
 /** Long enough for any single driver op (an install, a 60 s gesture); a hung host is still noticed. */
@@ -56,32 +54,43 @@ export type ConnectRemoteOptions = {
 type Pending = { resolve: (result: Result<unknown, DriverError>) => void; timer: ReturnType<typeof setTimeout> };
 
 /**
- * Connect to a `serveDriver` socket and wait for its `ready` event (protocol checked). Every request gets an id and a
- * timeout (`E_TIMEOUT`); the connection closing fails what is in flight, and everything after, with `E_HELPER_CRASHED`
- * (a tap in flight may have landed: callers must not resend input on it).
+ * The wire state of one connection: request ids, what is in flight, the capabilities the host last reported, and
+ * the failure that closed it.
  */
-export async function connectRemoteDriver(options: ConnectRemoteOptions): Promise<Result<RemoteClient, DriverError>> {
-	const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-	const pending = new Map<number, Pending>();
-	let nextId = 1;
-	let closed: DriverError | undefined;
-	let capabilities: DriverCapabilities | undefined;
-	let onReady: (ready: Result<ReadyEvent, DriverError>) => void = () => undefined;
-	const readyPromise = new Promise<Result<ReadyEvent, DriverError>>((resolve) => {
-		onReady = resolve;
-	});
+class RemoteLink {
+	capabilities: DriverCapabilities | undefined;
+	readonly readyPromise: Promise<Result<ReadyEvent, DriverError>>;
+	private readonly pending = new Map<number, Pending>();
+	private nextId = 1;
+	private closed: DriverError | undefined;
+	private transport: Transport | undefined;
+	private onReady: (ready: Result<ReadyEvent, DriverError>) => void = () => undefined;
 
-	const failAll = (error: DriverError) => {
-		closed ??= error;
-		onReady({ success: false, error });
-		for (const [id, entry] of pending) {
-			clearTimeout(entry.timer);
-			pending.delete(id);
-			entry.resolve({ success: false, error });
-		}
+	constructor(private readonly requestTimeoutMs: number) {
+		this.readyPromise = new Promise<Result<ReadyEvent, DriverError>>((resolve) => {
+			this.onReady = resolve;
+		});
+	}
+
+	attach(transport: Transport): void {
+		this.transport = transport;
+	}
+
+	readonly reportReady = (ready: Result<ReadyEvent, DriverError>): void => {
+		this.onReady(ready);
 	};
 
-	const onLine = (line: string) => {
+	failAll(error: DriverError): void {
+		this.closed ??= error;
+		this.onReady({ success: false, error });
+		for (const [id, entry] of this.pending) {
+			clearTimeout(entry.timer);
+			this.pending.delete(id);
+			entry.resolve({ success: false, error });
+		}
+	}
+
+	readonly onLine = (line: string): void => {
 		let raw: unknown;
 		try {
 			raw = JSON.parse(line);
@@ -90,107 +99,72 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		}
 		const ready = readyEventSchema.safeParse(raw);
 		if (ready.success) {
-			capabilities = ready.data.capabilities;
-			onReady({ success: true, data: ready.data });
+			this.capabilities = ready.data.capabilities;
+			this.onReady({ success: true, data: ready.data });
 			return;
 		}
 		const response = responseSchema.safeParse(raw);
 		if (!response.success) return;
 		const { id, result } = response.data;
-		if (response.data.capabilities !== undefined) capabilities = response.data.capabilities;
-		const entry = pending.get(id);
+		if (response.data.capabilities !== undefined) this.capabilities = response.data.capabilities;
+		const entry = this.pending.get(id);
 		if (entry === undefined) return;
 		clearTimeout(entry.timer);
-		pending.delete(id);
+		this.pending.delete(id);
 		entry.resolve(
-			result.success ? { success: true, data: result.data } : { success: false, error: wireError(result.error) }
+			result.success
+				? { success: true, data: result.data }
+				: { success: false, error: remoteWire.wireError(result.error) }
 		);
 	};
 
-	const opened = await simdTransports.socket({ socketPath: options.socketPath })({
-		onLine,
-		onDiagnostic: () => undefined,
-		onClose: () =>
-			failAll(driverErrors.make("E_HELPER_CRASHED", `the driver host on ${options.socketPath} closed the connection`)),
-	});
-	if (!opened.success) return opened;
-	const transport: Transport = opened.data;
-
-	const timeout = setTimeout(
-		() => onReady({ success: false, error: driverErrors.make("E_TIMEOUT", `no ready event on ${options.socketPath}`) }),
-		options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
-	);
-	const ready = await readyPromise;
-	clearTimeout(timeout);
-	if (!ready.success) {
-		await transport.close();
-		return ready;
-	}
-	if (ready.data.protocol !== REMOTE_PROTOCOL) {
-		await transport.close();
-		return {
-			success: false,
-			error: driverErrors.make(
-				"E_HELPER_CRASHED",
-				`the driver host speaks protocol ${ready.data.protocol}, this warden expects ${REMOTE_PROTOCOL}`,
-				{ retryable: false }
-			),
-		};
-	}
-	const hello = ready.data;
-
-	const send = (op: string, args: readonly unknown[], opts: RequestOptions = {}): DriverResult<unknown> => {
-		if (closed !== undefined) return Promise.resolve({ success: false, error: closed });
-		const id = nextId++;
+	send(op: string, args: readonly unknown[], opts: RequestOptions = {}): DriverResult<unknown> {
+		if (this.closed !== undefined) return Promise.resolve({ success: false, error: this.closed });
+		const transport = this.transport;
+		if (transport === undefined) {
+			return Promise.resolve({ success: false, error: driverErrors.make("E_HELPER_CRASHED", "not connected") });
+		}
+		const id = this.nextId++;
 		return new Promise((resolve) => {
-			const ms = opts.timeoutMs ?? requestTimeoutMs;
+			const ms = opts.timeoutMs ?? this.requestTimeoutMs;
 			const timer = setTimeout(() => {
-				pending.delete(id);
+				this.pending.delete(id);
 				resolve({ success: false, error: driverErrors.make("E_TIMEOUT", `\`${op}\` got no answer within ${ms} ms`) });
 			}, ms);
-			pending.set(id, { resolve, timer });
+			this.pending.set(id, { resolve, timer });
 			transport.send(`${JSON.stringify({ id, op, args })}\n`);
 		});
+	}
+
+	readonly close = async (): Promise<void> => {
+		await this.transport?.close();
+		this.failAll(driverErrors.make("E_HELPER_CRASHED", "the remote driver connection is closed"));
 	};
+}
 
-	/** The op's own `DriverResult`, typed by the `Driver` method it serves (the host is this warden's own build). */
-	const call = <T>(op: RemoteOp, ...args: unknown[]): DriverResult<T> => send(op, args) as DriverResult<T>;
+/** A connected {@link RemoteClient}: the `Driver` surface sent over a {@link RemoteLink}. */
+class RemoteClientImpl implements RemoteClient {
+	constructor(
+		readonly ready: ReadyEvent,
+		private readonly link: RemoteLink
+	) {}
 
-	const close = async () => {
-		await transport.close();
-		failAll(driverErrors.make("E_HELPER_CRASHED", "the remote driver connection is closed"));
-	};
+	readonly request: RemoteClient["request"] = (op, _params, opts) => this.link.send(op, [], opts);
 
-	const app: AppCommands = {
-		launch: (bundleId, opts) => call("app.launch", bundleId, opts),
-		terminate: (bundleId) => call("app.terminate", bundleId),
-		openUrl: (url) => call("app.openUrl", url),
-		install: (path) => call("app.install", path),
-		uninstall: (bundleId) => call("app.uninstall", bundleId),
-		isInstalled: (bundleId) => call("app.isInstalled", bundleId),
-		isRunning: (bundleId) => call("app.isRunning", bundleId),
-		clearData: (bundleId, opts) => call("app.clearData", bundleId, opts),
-	};
+	readonly close = (): Promise<void> => this.link.close();
 
-	const snapshot: Driver["snapshot"] = async (opts) => {
-		const taken = await call<WireSnapshot>("snapshot", opts);
-		return taken.success ? { success: true, data: snapshotFromWire(taken.data) } : taken;
-	};
-
-	const screenshot: Driver["screenshot"] = async (opts) => {
-		const shot = await call<WireScreenshot>("screenshot", opts);
-		return shot.success ? { success: true, data: screenshotFromWire(shot.data) } : shot;
-	};
-
-	const buildDriver = (): RemoteDriver => {
+	readonly driver = (): RemoteDriver => {
+		const hello = this.ready;
+		const link = this.link;
+		const call = <T>(op: RemoteOp, ...args: unknown[]): DriverResult<T> => this.call<T>(op, ...args);
 		const base: Driver = {
 			platform: hello.platform,
 			id: hello.id,
 			get capabilities(): DriverCapabilities {
-				return capabilities ?? hello.capabilities;
+				return link.capabilities ?? hello.capabilities;
 			},
 			health: () => call("health"),
-			snapshot,
+			snapshot: this.snapshot,
 			elementAtPoint: (point, opts) => call("elementAtPoint", point, opts),
 			tap: (point, opts) => call("tap", point, opts),
 			longPress: (point, opts) => call("longPress", point, opts),
@@ -202,7 +176,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			typeText: (text) => call("typeText", text),
 			key: (key, modifiers) => call("key", key, modifiers),
 			pressButton: (button) => call("pressButton", button),
-			screenshot,
+			screenshot: this.screenshot,
 			orientation: (set) => call("orientation", set),
 			settle: (opts) => call("settle", opts),
 			alert: () => call<AlertInfo | null>("alert"),
@@ -220,8 +194,8 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			memoryWarning: (opts) => call("memoryWarning", opts),
 			push: (payload, opts) => call("push", payload, opts),
 			biometrics: (op) => call("biometrics", op),
-			app,
-			close,
+			app: this.appCommands(),
+			close: this.close,
 		};
 		const offered = new Set(hello.optional);
 		return Object.assign(
@@ -237,13 +211,83 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		);
 	};
 
-	return {
-		success: true,
-		data: {
-			ready: hello,
-			request: (op, _params, opts) => send(op, [], opts),
-			driver: buildDriver,
-			close,
-		},
+	private readonly snapshot: Driver["snapshot"] = async (opts) => {
+		const taken = await this.call<WireSnapshot>("snapshot", opts);
+		return taken.success ? { success: true, data: remoteWire.snapshotFromWire(taken.data) } : taken;
 	};
+
+	private readonly screenshot: Driver["screenshot"] = async (opts) => {
+		const shot = await this.call<WireScreenshot>("screenshot", opts);
+		return shot.success ? { success: true, data: remoteWire.screenshotFromWire(shot.data) } : shot;
+	};
+
+	/** The op's own `DriverResult`, typed by the `Driver` method it serves (the host is this warden's own build). */
+	private call<T>(op: RemoteOp, ...args: unknown[]): DriverResult<T> {
+		return this.link.send(op, args) as DriverResult<T>;
+	}
+
+	private appCommands(): AppCommands {
+		return {
+			launch: (bundleId, opts) => this.call("app.launch", bundleId, opts),
+			terminate: (bundleId) => this.call("app.terminate", bundleId),
+			openUrl: (url) => this.call("app.openUrl", url),
+			install: (path) => this.call("app.install", path),
+			uninstall: (bundleId) => this.call("app.uninstall", bundleId),
+			isInstalled: (bundleId) => this.call("app.isInstalled", bundleId),
+			isRunning: (bundleId) => this.call("app.isRunning", bundleId),
+			clearData: (bundleId, opts) => this.call("app.clearData", bundleId, opts),
+		};
+	}
 }
+
+/** Connects to a served driver. */
+export class RemoteDriverConnector {
+	/**
+	 * Connect to a `DriverServer` socket and wait for its `ready` event (protocol checked). Every request gets an id and a
+	 * timeout (`E_TIMEOUT`); the connection closing fails what is in flight, and everything after, with `E_HELPER_CRASHED`
+	 * (a tap in flight may have landed: callers must not resend input on it).
+	 */
+	async connect(options: ConnectRemoteOptions): Promise<Result<RemoteClient, DriverError>> {
+		const link = new RemoteLink(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+		const opened = await simdTransports.socket({ socketPath: options.socketPath })({
+			onLine: link.onLine,
+			onDiagnostic: () => undefined,
+			onClose: () =>
+				link.failAll(
+					driverErrors.make("E_HELPER_CRASHED", `the driver host on ${options.socketPath} closed the connection`)
+				),
+		});
+		if (!opened.success) return opened;
+		const transport: Transport = opened.data;
+		link.attach(transport);
+
+		const timeout = setTimeout(
+			() =>
+				link.reportReady({
+					success: false,
+					error: driverErrors.make("E_TIMEOUT", `no ready event on ${options.socketPath}`),
+				}),
+			options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
+		);
+		const ready = await link.readyPromise;
+		clearTimeout(timeout);
+		if (!ready.success) {
+			await transport.close();
+			return ready;
+		}
+		if (ready.data.protocol !== REMOTE_PROTOCOL) {
+			await transport.close();
+			return {
+				success: false,
+				error: driverErrors.make(
+					"E_HELPER_CRASHED",
+					`the driver host speaks protocol ${ready.data.protocol}, this warden expects ${REMOTE_PROTOCOL}`,
+					{ retryable: false }
+				),
+			};
+		}
+		return { success: true, data: new RemoteClientImpl(ready.data, link) };
+	}
+}
+
+export const remoteDriverConnector = new RemoteDriverConnector();
