@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { CapacityDeps } from "@delacour/warden-leasing/claim";
 import type { InventoryDevice } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
-import { claimLateWorkers, type LateWorker, planElastic } from "./elastic";
-import { type BatchHandle, type BatchWorker, runBatch } from "./schedule";
+import { ElasticPlanner, type LateWorker, lateWorkerClaimer } from "./elastic";
+import { type BatchHandle, type BatchWorker, batchScheduler } from "./schedule";
 
 const capacity = (cpu: number, booted: number): CapacityDeps => ({
 	budget: { memMb: 1_000_000, cpu, maxUnits: Number.POSITIVE_INFINITY },
@@ -19,15 +19,15 @@ const capacity = (cpu: number, booted: number): CapacityDeps => ({
 
 describe("planElastic", () => {
 	test("4 wanted, 2 fit: 2 now, 2 later", async () => {
-		expect(await planElastic(capacity(2, 0), "ios", 4)).toEqual({ first: 2, extra: 2 });
+		expect(await new ElasticPlanner(capacity(2, 0)).plan("ios", 4)).toEqual({ first: 2, extra: 2 });
 	});
 	test("a full host still claims one worker first", async () => {
-		expect(await planElastic(capacity(2, 2), "ios", 3)).toEqual({ first: 1, extra: 2 });
+		expect(await new ElasticPlanner(capacity(2, 2)).plan("ios", 3)).toEqual({ first: 1, extra: 2 });
 	});
 	test("everything fits, one worker or capacity off: no plan", async () => {
-		expect(await planElastic(capacity(8, 0), "ios", 4)).toBeUndefined();
-		expect(await planElastic(capacity(2, 0), "ios", 1)).toBeUndefined();
-		expect(await planElastic(undefined, "ios", 4)).toBeUndefined();
+		expect(await new ElasticPlanner(capacity(8, 0)).plan("ios", 4)).toBeUndefined();
+		expect(await new ElasticPlanner(capacity(2, 0)).plan("ios", 1)).toBeUndefined();
+		expect(await new ElasticPlanner(undefined).plan("ios", 4)).toBeUndefined();
 	});
 });
 
@@ -39,7 +39,7 @@ const flush = async () => {
 function harness(jobs: string[], signal?: AbortSignal) {
 	const pending = new Map<string, { worker: number; settle: (code: number) => void }>();
 	let handle: BatchHandle | undefined;
-	const done = runBatch({
+	const done = batchScheduler.run({
 		workers: [{ worker: 0, udid: "U0" }],
 		jobs,
 		retry: 0,
@@ -62,7 +62,7 @@ describe("claimLateWorkers", () => {
 		await flush();
 		const logs: string[] = [];
 		const dropped: number[] = [];
-		const late = claimLateWorkers({
+		const late = lateWorkerClaimer.claim({
 			count: 1,
 			firstWorker: 1,
 			handle: h.handle(),
@@ -90,7 +90,7 @@ describe("claimLateWorkers", () => {
 		const dropped: number[] = [];
 		const logs: string[] = [];
 		let land: (w: LateWorker) => void = () => {};
-		const late = claimLateWorkers({
+		const late = lateWorkerClaimer.claim({
 			count: 2,
 			firstWorker: 1,
 			handle: h.handle(),
@@ -119,7 +119,7 @@ describe("claimLateWorkers", () => {
 		const logs: string[] = [];
 		const seen: boolean[] = [];
 		let fail: () => void = () => {};
-		const late = claimLateWorkers({
+		const late = lateWorkerClaimer.claim({
 			count: 3,
 			firstWorker: 1,
 			handle: h.handle(),
@@ -150,7 +150,7 @@ describe("claimLateWorkers", () => {
 		const h = harness(["a", "b"], ac.signal);
 		await flush();
 		const logs: string[] = [];
-		const late = claimLateWorkers({
+		const late = lateWorkerClaimer.claim({
 			count: 2,
 			firstWorker: 1,
 			handle: h.handle(),
@@ -179,7 +179,7 @@ describe("claimLateWorkers", () => {
 		const h = harness(["a", "b"], ac.signal);
 		await flush();
 		const dropped: BatchWorker[] = [];
-		const late = claimLateWorkers({
+		const late = lateWorkerClaimer.claim({
 			count: 1,
 			firstWorker: 1,
 			handle: h.handle(),

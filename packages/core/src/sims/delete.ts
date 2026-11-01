@@ -33,43 +33,45 @@ const DELETE_LEASE_TTL_MS = 10 * 60_000;
 
 type Reservation = { kind: "ours"; lease: Lease } | { kind: "held"; by: Owner };
 
-function reserve(deps: DeleteDeps, resource: DeviceResource, label: string): Reservation {
-	const { store } = deps;
-	return store.transaction((): Reservation => {
-		const held = store.findLeaseByResource(resource);
-		if (held) return { kind: "held", by: held.owner };
-		const lease = store.insertLease(
-			{ resource, owner: deps.owner, ttlMs: DELETE_LEASE_TTL_MS, pid: deps.pid, label },
-			deps.now()
-		);
-		return { kind: "ours", lease };
-	});
-}
+export class SimDeleter {
+	constructor(private readonly deps: DeleteDeps) {}
 
-export async function deleteSims<T extends DeleteTarget>(
-	deps: DeleteDeps,
-	targets: readonly T[],
-	opts: { label: string }
-): Promise<DeleteResult<T>> {
-	const result: DeleteResult<T> = { removed: [], skipped: [], failed: [] };
-	for (const entry of targets) {
-		const resource: DeviceResource = { kind: "device", platform: "ios", id: entry.udid, name: entry.name };
-		const reservation = reserve(deps, resource, opts.label);
-		if (reservation.kind === "held") {
-			result.skipped.push({ entry, heldBy: reservation.by });
-			continue;
-		}
-		try {
-			const deleted = await new Simctl(deps.exec).deleteSim(entry.udid, { shutdown: entry.isAvailable });
-			if (!deleted.success) {
-				result.failed.push({ entry, error: deleted.error.message });
+	async run<T extends DeleteTarget>(targets: readonly T[], opts: { label: string }): Promise<DeleteResult<T>> {
+		const { deps } = this;
+		const result: DeleteResult<T> = { removed: [], skipped: [], failed: [] };
+		for (const entry of targets) {
+			const resource: DeviceResource = { kind: "device", platform: "ios", id: entry.udid, name: entry.name };
+			const reservation = this.reserve(resource, opts.label);
+			if (reservation.kind === "held") {
+				result.skipped.push({ entry, heldBy: reservation.by });
 				continue;
 			}
-			deps.store.forgetDevice("ios", entry.udid);
-			result.removed.push(entry);
-		} finally {
-			deps.store.deleteLeases([reservation.lease.id]);
+			try {
+				const deleted = await new Simctl(deps.exec).deleteSim(entry.udid, { shutdown: entry.isAvailable });
+				if (!deleted.success) {
+					result.failed.push({ entry, error: deleted.error.message });
+					continue;
+				}
+				deps.store.forgetDevice("ios", entry.udid);
+				result.removed.push(entry);
+			} finally {
+				deps.store.deleteLeases([reservation.lease.id]);
+			}
 		}
+		return result;
 	}
-	return result;
+
+	private reserve(resource: DeviceResource, label: string): Reservation {
+		const { deps } = this;
+		const { store } = deps;
+		return store.transaction((): Reservation => {
+			const held = store.findLeaseByResource(resource);
+			if (held) return { kind: "held", by: held.owner };
+			const lease = store.insertLease(
+				{ resource, owner: deps.owner, ttlMs: DELETE_LEASE_TTL_MS, pid: deps.pid, label },
+				deps.now()
+			);
+			return { kind: "ours", lease };
+		});
+	}
 }

@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { type Affected, type AffectedInput, computeAffected } from "@delacour/warden-core/affected/affected";
+import { type Affected, type AffectedInput, affectedService } from "@delacour/warden-core/affected/affected";
 import type { Reason, Selection } from "@delacour/warden-core/affected/select";
-import { parseJobList } from "@delacour/warden-core/batch/expand";
+import { batchJobs } from "@delacour/warden-core/batch/expand";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -25,7 +25,7 @@ export type AffectedOpts = {
 	specs?: string;
 };
 
-/** Option values → `computeAffected` input; parsed imports are cached under `$WARDEN_HOME/affected`. */
+/** Option values → `affectedService.compute` input; parsed imports are cached under `$WARDEN_HOME/affected`. */
 export function affectedInput(
 	ctx: CommandContext,
 	suite: string | undefined,
@@ -49,9 +49,9 @@ export function affectedInput(
 		...(suite !== undefined ? { suite } : {}),
 		...(opts.base !== undefined ? { base: opts.base } : {}),
 		...(platform ? { platform } : {}),
-		...(opts.files !== undefined ? { files: parseJobList(opts.files) } : {}),
+		...(opts.files !== undefined ? { files: batchJobs.parseList(opts.files) } : {}),
 		...(opts.specs !== undefined
-			? { only: { mode: "specs" as const, patterns: parseJobList(opts.specs) } }
+			? { only: { mode: "specs" as const, patterns: batchJobs.parseList(opts.specs) } }
 			: opts.all
 				? { only: { mode: "all" as const } }
 				: {}),
@@ -132,7 +132,7 @@ export async function runAffected(
 	opts: AffectedOpts
 ): AsyncResult<Affected> {
 	const input = affectedInput(ctx, suite, opts);
-	return input.success ? computeAffected(input.data) : input;
+	return input.success ? affectedService.compute(input.data) : input;
 }
 
 /**

@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { findSuite } from "@delacour/warden-core/affected/affected";
-import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { affectedService } from "@delacour/warden-core/affected/affected";
+import { fixtureRepos } from "@delacour/warden-core/affected/fixture.testing";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { ProcHandle, SpawnOptions } from "../commands/batch";
@@ -29,12 +29,12 @@ const RESULT = (file: string, status: string) =>
 	})}\n`;
 
 async function setup(code: number, results: string | undefined) {
-	const repo = await makeSuiteRepo();
+	const repo = await fixtureRepos.createSuite();
 	cleanup.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 	const ctx: TestContext = testContext([], { exec: processExec.run });
 	cleanup.push(ctx.cleanup);
 	ctx.cwd = repo.dir;
-	const suite = await findSuite(ctx.exec, repo.dir, undefined, ctx.git, ctx.env);
+	const suite = await affectedService.findSuite(ctx.exec, repo.dir, undefined, ctx.git, ctx.env);
 	if (!suite.success) throw new Error(suite.error.message);
 	const spawned: { argv: string[]; opts: SpawnOptions }[] = [];
 	const timers: number[] = [];

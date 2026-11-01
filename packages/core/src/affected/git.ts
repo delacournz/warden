@@ -16,52 +16,56 @@ const STATUS: Record<string, ChangeStatus> = {
 	T: "type-changed",
 };
 
-/** `git diff --name-status -z` output → changed files (rename/copy records carry two paths). */
-export function parseNameStatus(out: string): ChangedFile[] {
-	const parts = out.split("\0").filter((p) => p.length > 0);
-	const files: ChangedFile[] = [];
-	for (let i = 0; i < parts.length; ) {
-		const code = parts[i++]?.[0] ?? "M";
-		const status = STATUS[code] ?? "modified";
-		if (status === "renamed" || status === "copied") {
-			const from = parts[i++] ?? "";
-			files.push({ path: parts[i++] ?? "", status, from });
-		} else {
-			files.push({ path: parts[i++] ?? "", status });
+export class GitChanges {
+	/** `git diff --name-status -z` output → changed files (rename/copy records carry two paths). */
+	parse(out: string): ChangedFile[] {
+		const parts = out.split("\0").filter((p) => p.length > 0);
+		const files: ChangedFile[] = [];
+		for (let i = 0; i < parts.length; ) {
+			const code = parts[i++]?.[0] ?? "M";
+			const status = STATUS[code] ?? "modified";
+			if (status === "renamed" || status === "copied") {
+				const from = parts[i++] ?? "";
+				files.push({ path: parts[i++] ?? "", status, from });
+			} else {
+				files.push({ path: parts[i++] ?? "", status });
+			}
 		}
+		return files;
 	}
-	return files;
+
+	/**
+	 * Everything that differs from `merge-base(base, HEAD)`: commits on the branch, staged and unstaged
+	 * edits, and untracked (non-ignored) files. Paths are relative to `top`, the repo root, which comes from the git
+	 * facts (`git`, else the shared short-lived cache) so a caller that already asked for them does not spawn again.
+	 */
+	async list(
+		exec: Exec,
+		cwd: string,
+		base: string,
+		git?: GitFactsCache
+	): AsyncResult<{ top: string; mergeBase: string; files: ChangedFile[] }> {
+		const run = async (args: string[]) => {
+			const cmd = ["git", ...args];
+			const res = await exec(cmd, { cwd });
+			return res.exitCode === 0 ? resultFactory.ok(res.stdout) : resultFactory.err(execErrors.format(cmd, res));
+		};
+		const facts = await gitFactsReader.read(exec, cwd, git ?? new GitFactsCache());
+		if (!facts) return resultFactory.err(`not a git checkout: ${cwd}`);
+		const mergeBase = await run(["merge-base", base, "HEAD"]);
+		if (!mergeBase.success) return resultFactory.err(`no merge-base with "${base}": ${mergeBase.error}`);
+		const mb = mergeBase.data.trim();
+		const diff = await run(["diff", "--name-status", "-M", "-z", mb, "--"]);
+		if (!diff.success) return diff;
+		const untracked = await run(["ls-files", "--others", "--exclude-standard", "--full-name", "-z"]);
+		if (!untracked.success) return untracked;
+		const files = this.parse(diff.data);
+		const seen = new Set(files.map((f) => f.path));
+		for (const path of untracked.data.split("\0")) {
+			if (path && !seen.has(path)) files.push({ path, status: "added" });
+		}
+		return resultFactory.ok({ top: facts.toplevel, mergeBase: mb, files });
+	}
 }
 
-/**
- * Everything that differs from `merge-base(base, HEAD)`: commits on the branch, staged and unstaged
- * edits, and untracked (non-ignored) files. Paths are relative to `top`, the repo root, which comes from the git
- * facts (`git`, else the shared short-lived cache) so a caller that already asked for them does not spawn again.
- */
-export async function changedFiles(
-	exec: Exec,
-	cwd: string,
-	base: string,
-	git?: GitFactsCache
-): AsyncResult<{ top: string; mergeBase: string; files: ChangedFile[] }> {
-	const run = async (args: string[]) => {
-		const cmd = ["git", ...args];
-		const res = await exec(cmd, { cwd });
-		return res.exitCode === 0 ? resultFactory.ok(res.stdout) : resultFactory.err(execErrors.format(cmd, res));
-	};
-	const facts = await gitFactsReader.read(exec, cwd, git ?? new GitFactsCache());
-	if (!facts) return resultFactory.err(`not a git checkout: ${cwd}`);
-	const mergeBase = await run(["merge-base", base, "HEAD"]);
-	if (!mergeBase.success) return resultFactory.err(`no merge-base with "${base}": ${mergeBase.error}`);
-	const mb = mergeBase.data.trim();
-	const diff = await run(["diff", "--name-status", "-M", "-z", mb, "--"]);
-	if (!diff.success) return diff;
-	const untracked = await run(["ls-files", "--others", "--exclude-standard", "--full-name", "-z"]);
-	if (!untracked.success) return untracked;
-	const files = parseNameStatus(diff.data);
-	const seen = new Set(files.map((f) => f.path));
-	for (const path of untracked.data.split("\0")) {
-		if (path && !seen.has(path)) files.push({ path, status: "added" });
-	}
-	return resultFactory.ok({ top: facts.toplevel, mergeBase: mb, files });
-}
+export const gitChanges = new GitChanges();

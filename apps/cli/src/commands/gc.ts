@@ -4,7 +4,7 @@ import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-builds/builds.defaults"
 import { GC_PRUNE_GRACE_MS, prune } from "@delacour/warden-builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { durationParser } from "@delacour/warden-config/duration";
-import { androidSnapshotPass, providerFor } from "@delacour/warden-core/host-deps";
+import { hostDeps } from "@delacour/warden-core/host-deps";
 import { boundedRunner } from "@delacour/warden-leasing/bounded";
 import { SimWindowCloser } from "@delacour/warden-leasing/close-sim-windows-after";
 import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
@@ -41,12 +41,16 @@ type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
 
 /** Conditions a deleted lease left on devices nobody holds now are undone; a failed reset stays for the next pass. */
 async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<string>): Promise<string[]> {
-	const { orphanedDevices } = await import("@delacour/warden-core/conditions/orphans");
-	const { undoOrphansWith } = await import("@delacour/warden-core/host-deps");
+	const { orphanConditions } = await import("@delacour/warden-core/conditions/orphans");
+	const { hostDeps: orphanDeps } = await import("@delacour/warden-core/host-deps");
 	const notes: string[] = [];
-	for (const device of orphanedDevices(ctx.store())) {
+	for (const device of orphanConditions.devices(ctx.store())) {
 		if (leased.has(`${device.platform}:${device.id}`)) continue;
-		const report = await undoOrphansWith(ctx.store(), { exec: ctx.exec, env: ctx.env, now: ctx.now }, device);
+		const report = await orphanDeps.undoOrphansWith(
+			ctx.store(),
+			{ exec: ctx.exec, env: ctx.env, now: ctx.now },
+			device
+		);
 		notes.push(...report.errors.map((e) => `leftover conditions on ${device.id}: ${e}`));
 	}
 	return notes;
@@ -95,7 +99,7 @@ async function gcPlatform(
 	const outcome: PlatformOutcome = { shutdown: [], forgotten: [], notes: [] };
 	const records = ctx.store().listDevices(platform);
 	if (records.length === 0) return outcome;
-	const provider = providerFor(platform, appHostFromContext(ctx), owner);
+	const provider = hostDeps.providerFor(platform, appHostFromContext(ctx), owner);
 	const inventory = await provider.inventory();
 	if (!inventory.success) {
 		outcome.notes.push(`${platform}: skipped (${inventory.error.message})`);
@@ -292,7 +296,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		const plan: GcPlan = { now, idleMs: idle.data, leased };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
 		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
-		const snapshotNotes = await androidSnapshotPass(appHostFromContext(sctx), owner);
+		const snapshotNotes = await hostDeps.androidSnapshotPass(appHostFromContext(sctx), owner);
 		return {
 			reclaimed,
 			shutdown: [

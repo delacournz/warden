@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { activeConditions } from "../conditions/conditions";
-import { getProxyStatus } from "./control";
-import { handlePath } from "./handle-file";
-import { ensureLeaseProxy, type LeaseProxyDeps, releaseLeaseProxy } from "./lease-proxy";
+import { leaseConditions } from "../conditions/conditions";
+import { proxyControl } from "./control";
+import { handleFiles } from "./handle-file";
+import { type LeaseProxyDeps, LeaseProxyService } from "./lease-proxy";
 
 const owner: Owner = { kind: "agent", sessionId: "s1", cwd: "/tmp" };
 
@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-	await releaseLeaseProxy(deps, leaseId);
+	await new LeaseProxyService(deps).release(leaseId);
 	for (const pid of spawned.splice(0)) {
 		try {
 			process.kill(pid, "SIGKILL");
@@ -43,9 +43,9 @@ afterEach(async () => {
 
 const lease = () => ({ id: leaseId, owner, ttlMs: 60_000 });
 
-describe("ensureLeaseProxy", () => {
+describe("LeaseProxyService", () => {
 	test("spawns a detached proxy, claims its port, records the pid for undo", async () => {
-		const result = await ensureLeaseProxy(deps, lease(), {
+		const result = await new LeaseProxyService(deps).ensure(lease(), {
 			condition: { kind: "preset", preset: "3g" },
 			conditions: { params: { latencyMs: 10 }, faults: [] },
 		});
@@ -60,23 +60,23 @@ describe("ensureLeaseProxy", () => {
 		expect(portLease?.resource).toEqual({ kind: "port", port: handle.port });
 		expect(portLease?.pid).toBe(handle.pid);
 
-		const [record] = activeConditions(store, leaseId);
+		const [record] = leaseConditions.active(store, leaseId);
 		expect(record?.area).toBe("network");
 		expect(record?.owned).toEqual([{ kind: "pid", pid: handle.pid }]);
 
-		const status = await getProxyStatus(handle);
+		const status = await proxyControl.status(handle);
 		expect(status.success && status.data.params.latencyMs).toBe(10);
-		expect(statSync(handlePath(leaseId, deps.env)).mode & 0o077).toBe(0);
+		expect(statSync(handleFiles.path(leaseId, deps.env)).mode & 0o077).toBe(0);
 	});
 
 	test("a second call reuses the proxy and reconfigures it live", async () => {
-		const first = await ensureLeaseProxy(deps, lease(), {
+		const first = await new LeaseProxyService(deps).ensure(lease(), {
 			condition: { kind: "custom", latencyMs: 10 },
 			conditions: { params: { latencyMs: 10 }, faults: [] },
 		});
 		if (!first.success) throw new Error(first.error);
 		spawned.push(first.data.handle.pid);
-		const second = await ensureLeaseProxy(deps, lease(), {
+		const second = await new LeaseProxyService(deps).ensure(lease(), {
 			condition: { kind: "offline" },
 			conditions: { params: { offline: "refuse" }, faults: [] },
 		});
@@ -84,33 +84,35 @@ describe("ensureLeaseProxy", () => {
 		expect(second.data.reused).toBe(true);
 		expect(second.data.handle.pid).toBe(first.data.handle.pid);
 		expect(second.data.handle.port).toBe(first.data.handle.port);
-		const status = await getProxyStatus(second.data.handle);
+		const status = await proxyControl.status(second.data.handle);
 		expect(status.success && status.data.params.offline).toBe("refuse");
-		expect(activeConditions(store, leaseId)[0]?.value).toEqual({ kind: "offline" });
+		expect(leaseConditions.active(store, leaseId)[0]?.value).toEqual({ kind: "offline" });
 	});
 
 	test("release stops the process and frees the port lease", async () => {
-		const result = await ensureLeaseProxy(deps, lease(), {
+		const result = await new LeaseProxyService(deps).ensure(lease(), {
 			condition: { kind: "online" },
 			conditions: { params: {}, faults: [] },
 		});
 		if (!result.success) throw new Error(result.error);
 		const { handle, portLeaseId } = result.data;
 		spawned.push(handle.pid);
-		expect(await releaseLeaseProxy(deps, leaseId)).toBe(true);
+		expect(await new LeaseProxyService(deps).release(leaseId)).toBe(true);
 		for (let i = 0; i < 40 && liveness.processAlive(handle.pid); i++) await Bun.sleep(25);
 		expect(liveness.processAlive(handle.pid)).toBe(false);
 		expect(store.getLease(portLeaseId)).toBeUndefined();
-		expect(existsSync(handlePath(leaseId, deps.env))).toBe(false);
-		expect(await releaseLeaseProxy(deps, leaseId)).toBe(false);
+		expect(existsSync(handleFiles.path(leaseId, deps.env))).toBe(false);
+		expect(await new LeaseProxyService(deps).release(leaseId)).toBe(false);
 	});
 
 	test("a proxy that never starts fails cleanly and frees the port", async () => {
-		const result = await ensureLeaseProxy(
-			{ ...deps, spawn: () => process.pid + 100_000, readyTimeoutMs: 200, pidAlive: () => false, kill: () => {} },
-			lease(),
-			{ condition: { kind: "online" }, conditions: { params: {}, faults: [] } }
-		);
+		const result = await new LeaseProxyService({
+			...deps,
+			spawn: () => process.pid + 100_000,
+			readyTimeoutMs: 200,
+			pidAlive: () => false,
+			kill: () => {},
+		}).ensure(lease(), { condition: { kind: "online" }, conditions: { params: {}, faults: [] } });
 		expect(result.success).toBe(false);
 		expect(store.listLeases().filter((l) => l.resource.kind === "port")).toHaveLength(0);
 	});

@@ -50,8 +50,8 @@ export async function walk(
 
 /** The walker, imported on use (it loads the compiler). */
 async function defaultBuild(request: GraphRequest): AsyncResult<GraphDoc> {
-	const { buildGraphDoc } = await import("@delacour/warden-core/affected/graph-worker");
-	return buildGraphDoc(request);
+	const { graphWorker } = await import("@delacour/warden-core/affected/graph-worker");
+	return graphWorker.build(request);
 }
 
 export const affectedGraphCommand = defineCommand({

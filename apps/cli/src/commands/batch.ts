@@ -4,15 +4,20 @@ import type { Command as Commander, OptionValues } from "@commander-js/extra-typ
 import { type Metro, type MetroOwner, MetroRunner, metroTools } from "@delacour/warden-builds/metro";
 import { durationParser } from "@delacour/warden-config/duration";
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
-import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "@delacour/warden-core/batch/elastic";
-import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
-import { type BatchJobsSource, type BatchPreset, findBatchPreset } from "@delacour/warden-core/batch/preset";
+import {
+	type ElasticPlan,
+	ElasticPlanner,
+	type LateWorker,
+	lateWorkerClaimer,
+} from "@delacour/warden-core/batch/elastic";
+import { batchJobs } from "@delacour/warden-core/batch/expand";
+import { type BatchJobsSource, type BatchPreset, batchPresets } from "@delacour/warden-core/batch/preset";
 import {
 	type BatchEvent,
 	type BatchHandle,
 	type BatchSummary,
 	type BatchWorker,
-	runBatch,
+	batchScheduler,
 } from "@delacour/warden-core/batch/schedule";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { CapacityDepsBuilder } from "@delacour/warden-leasing/capacity-deps";
@@ -264,7 +269,7 @@ function parseJobsSource(opts: BatchOpts, cwd: string, fallback?: BatchJobsSourc
 		return resultFactory.ok(
 			opts.jobsFrom === "-" ? { kind: "stdin" } : { kind: "file", path: absolute(cwd, opts.jobsFrom) }
 		);
-	const jobs = parseJobList(opts.jobs ?? "");
+	const jobs = batchJobs.parseList(opts.jobs ?? "");
 	return jobs.length > 0 ? resultFactory.ok({ kind: "list", jobs }) : resultFactory.err("--jobs is empty");
 }
 
@@ -278,7 +283,7 @@ function parseServe(opts: BatchOpts, cwd: string): Result<Serve | undefined> {
 	if (!timeoutMs.success) return resultFactory.err(`--serve-timeout: ${timeoutMs.error}`);
 	if (opts.serveReady === undefined) return resultFactory.ok({ cmd: opts.serve, timeoutMs: timeoutMs.data });
 	// validated now with stand-in values; parsed for real once the port is leased
-	const ready = parseReadySpec(expandText(opts.serveReady, { port: 1, metroUrl: "http://127.0.0.1:1" }), cwd);
+	const ready = parseReadySpec(batchJobs.expand(opts.serveReady, { port: 1, metroUrl: "http://127.0.0.1:1" }), cwd);
 	if (!ready.success) return ready;
 	return resultFactory.ok({ cmd: opts.serve, timeoutMs: timeoutMs.data, ready: { spec: opts.serveReady, cwd } });
 }
@@ -343,7 +348,7 @@ async function commandJobs(ctx: CommandContext, args: BatchArgs, command: string
 	const cmd = ["sh", "-c", command];
 	const res = await ctx.exec(cmd, { cwd: args.cwd, env: { ...ctx.env, ...args.env } });
 	if (res.exitCode !== 0) return resultFactory.err(`jobsFrom.command: ${execErrors.format(cmd, res)}`);
-	const jobs = parseJobLines(res.stdout);
+	const jobs = batchJobs.parseLines(res.stdout);
 	return jobs.length > 0 ? resultFactory.ok(jobs) : resultFactory.err(`jobsFrom.command: no jobs from \`${command}\``);
 }
 
@@ -352,7 +357,9 @@ async function loadJobs(ctx: CommandContext, deps: BatchDeps, args: BatchArgs): 
 	if (source.kind === "list") return resultFactory.ok(source.jobs);
 	if (source.kind === "command") return commandJobs(ctx, args, source.command);
 	try {
-		const jobs = parseJobLines(source.kind === "stdin" ? await ctx.readStdin() : await deps.readFile(source.path));
+		const jobs = batchJobs.parseLines(
+			source.kind === "stdin" ? await ctx.readStdin() : await deps.readFile(source.path)
+		);
 		return jobs.length > 0 ? resultFactory.ok(jobs) : resultFactory.err("--jobs-from: no jobs");
 	} catch (error) {
 		return resultFactory.err(`--jobs-from: ${error instanceof Error ? error.message : String(error)}`);
@@ -855,7 +862,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			WARDEN_PASS: String(pass),
 		};
 		const suffix = o.passes > 1 ? `.pass${pass}` : "";
-		const log = join(o.logDir, `${w.worker}-${seq}-${jobSlug(id)}${suffix}.log`);
+		const log = join(o.logDir, `${w.worker}-${seq}-${batchJobs.slug(id)}${suffix}.log`);
 		const vars = {
 			job,
 			udid: w.udid,
@@ -864,7 +871,7 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 			...o.vars,
 			...(leg !== undefined ? { leg } : {}),
 		};
-		const argv = expandArgv(o.hooks.argvFor ? await o.hooks.argvFor(job, input) : o.cmd, vars);
+		const argv = batchJobs.expandArgv(o.hooks.argvFor ? await o.hooks.argvFor(job, input) : o.cmd, vars);
 		return { job, env, log, argv };
 	};
 	const spawnOnce = async (w: BatchWorker, id: string, seq: number, attempt: number, pass: number): Promise<number> => {
@@ -1299,7 +1306,7 @@ async function runPools(
 			const pool = await queued;
 			pools.push(pool);
 			o.onQueue(pool);
-			return runBatch({
+			return batchScheduler.run({
 				workers: pool.workers,
 				jobs: pool.jobs,
 				retry: o.retry,
@@ -1445,10 +1452,15 @@ async function startServe(
 ): AsyncResult<void> {
 	const log = join(o.r.logDir, "serve.log");
 	const ready = serve.ready
-		? parseReadySpec(expandText(serve.ready.spec, o.vars), serve.ready.cwd)
+		? parseReadySpec(batchJobs.expand(serve.ready.spec, o.vars), serve.ready.cwd)
 		: resultFactory.ok(undefined);
 	if (!ready.success) return ready;
-	const proc = deps.spawn(["sh", "-c", expandText(serve.cmd, o.vars)], { env: o.env, log, group: true, cwd: o.cwd });
+	const proc = deps.spawn(["sh", "-c", batchJobs.expand(serve.cmd, o.vars)], {
+		env: o.env,
+		log,
+		group: true,
+		cwd: o.cwd,
+	});
 	o.services.serve = proc;
 	const up = await waitReady(ctx, deps, serve, ready.data, proc, o.r.interrupted);
 	return up.success ? up : resultFactory.err(`${up.error} (log: ${log})`);
@@ -1794,7 +1806,7 @@ function elasticRun(
 		start: (q, handle) => {
 			queue = q;
 			if (!plan) return;
-			claims = claimLateWorkers({
+			claims = lateWorkerClaimer.claim({
 				count: plan.plan.extra,
 				firstWorker: plan.plan.first,
 				handle,
@@ -2023,7 +2035,7 @@ async function resolveTarget(
 		return platform.success ? resultFactory.ok({ platform: platform.data }) : platform;
 	}
 	const stopAt = (await gitFactsReader.read(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
-	const found = findBatchPreset({ start: ctx.cwd, env: ctx.env, name: target, ...(stopAt ? { stopAt } : {}) });
+	const found = batchPresets.find({ start: ctx.cwd, env: ctx.env, name: target, ...(stopAt ? { stopAt } : {}) });
 	if (!found.success) return found;
 	const { preset, names } = found.data;
 	if (!preset) {
@@ -2382,8 +2394,7 @@ async function elasticSplit(
 	const whole = { lease: args, extra: 0, setup: undefined };
 	// phones are not created: a physical request claims exactly the devices it names
 	if (args.legs || request.count < 2 || request.physical !== undefined) return whole;
-	const plan = await planElastic(
-		await new CapacityDepsBuilder(leaseHostFromContext(ctx)).build(owner),
+	const plan = await new ElasticPlanner(await new CapacityDepsBuilder(leaseHostFromContext(ctx)).build(owner)).plan(
 		request.platform,
 		request.count
 	);

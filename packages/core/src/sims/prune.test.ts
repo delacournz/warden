@@ -6,7 +6,7 @@ import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/test
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { auditMachineSims, pruneSims, type SimsDeps } from "./prune";
+import { type SimsDeps, SimsPruner } from "./prune";
 
 const DAY = 86_400_000;
 const NOW = 100 * DAY;
@@ -66,7 +66,7 @@ const record = (id: string, lastUsedAt: number) => {
 describe("pruneSims", () => {
 	test("dry run deletes nothing", async () => {
 		const host: Host = { sims: [sim("A", "warden-iphone-17-1")], calls: [] };
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: true });
+		const result = await new SimsPruner(deps(host)).prune({ idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: true });
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["A"]);
 		expect(host.calls.some((c) => c.includes("delete") || c.includes("shutdown"))).toBe(false);
 	});
@@ -83,7 +83,7 @@ describe("pruneSims", () => {
 			],
 			calls: [],
 		};
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
+		const result = await new SimsPruner(deps(host)).prune({ idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["A"]);
 		expect(result.success && result.data.freedBytes).toBe(GB);
 		expect(host.sims.map((s) => s.udid)).toEqual(["R", "F", "G"]);
@@ -101,7 +101,7 @@ describe("pruneSims", () => {
 					store.findLeaseByResource({ kind: "device", platform: "ios", id: udid, name: "" }) !== undefined
 				),
 		};
-		await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
+		await new SimsPruner(deps(host)).prune({ idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		expect(leasedDuring).toEqual([true]);
 	});
 
@@ -114,7 +114,7 @@ describe("pruneSims", () => {
 		// the audit's lease snapshot predates the claim
 		const listLeases = store.listLeases.bind(store);
 		store.listLeases = () => [];
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
+		const result = await new SimsPruner(deps(host)).prune({ idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		store.listLeases = listLeases;
 		expect(result.success && result.data.removed).toEqual([]);
 		expect(result.success && result.data.skipped.map((e) => e.udid)).toEqual(["A"]);
@@ -128,7 +128,7 @@ describe("pruneSims", () => {
 			calls: [],
 			failDelete: "A",
 		};
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
+		const result = await new SimsPruner(deps(host)).prune({ idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false });
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["B"]);
 		expect(result.success && result.data.failed.map((f) => f.entry.udid)).toEqual(["A"]);
 		expect(store.listLeases()).toEqual([]);
@@ -138,7 +138,12 @@ describe("pruneSims", () => {
 		record("A", NOW - 3 * DAY);
 		record("B", NOW - DAY);
 		const host: Host = { sims: [sim("A", "warden-iphone-17-1"), sim("B", "warden-iphone-17-2")], calls: [] };
-		const result = await pruneSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY, dryRun: false, maxBytes: GB });
+		const result = await new SimsPruner(deps(host)).prune({
+			idleMs: 7 * DAY,
+			staleMs: 30 * DAY,
+			dryRun: false,
+			maxBytes: GB,
+		});
 		expect(result.success && result.data.removed.map((e) => e.udid)).toEqual(["A"]);
 	});
 });
@@ -150,7 +155,7 @@ describe("auditMachineSims", () => {
 			NOW
 		);
 		const host: Host = { sims: [sim("A", "warden-iphone-17-1")], calls: [] };
-		const audit = await auditMachineSims(deps(host), { idleMs: 7 * DAY, staleMs: 30 * DAY });
+		const audit = await new SimsPruner(deps(host)).audit({ idleMs: 7 * DAY, staleMs: 30 * DAY });
 		expect(audit.success && audit.data.entries[0]?.verdict).toEqual({ kind: "keep", reason: "leased" });
 	});
 });

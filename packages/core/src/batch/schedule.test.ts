@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type BatchEvent, type BatchHandle, type BatchWorker, runBatch } from "./schedule";
+import { type BatchEvent, type BatchHandle, type BatchWorker, batchScheduler } from "./schedule";
 
 const WORKERS: BatchWorker[] = [
 	{ worker: 0, udid: "U0" },
@@ -32,7 +32,7 @@ describe("runBatch", () => {
 		const m = manual();
 		let clock = 100;
 		const events: BatchEvent[] = [];
-		const done = runBatch({
+		const done = batchScheduler.run({
 			workers: WORKERS,
 			jobs: ["a", "b", "c", "d"],
 			retry: 0,
@@ -78,7 +78,7 @@ describe("runBatch", () => {
 	test("a failed job is retried on the same worker, before new jobs", async () => {
 		const m = manual();
 		const events: BatchEvent[] = [];
-		const done = runBatch({
+		const done = batchScheduler.run({
 			workers: WORKERS,
 			jobs: ["a", "b", "c"],
 			retry: 1,
@@ -105,7 +105,7 @@ describe("runBatch", () => {
 	});
 
 	test("retries exhausted → ok false, other jobs still run", async () => {
-		const summary = await runBatch({
+		const summary = await batchScheduler.run({
 			workers: WORKERS,
 			jobs: ["bad", "good", "also"],
 			retry: 2,
@@ -120,7 +120,7 @@ describe("runBatch", () => {
 	});
 
 	test("a thrown run counts as a failure (exit 1)", async () => {
-		const summary = await runBatch({
+		const summary = await batchScheduler.run({
 			workers: WORKERS.slice(0, 1),
 			jobs: ["x"],
 			retry: 0,
@@ -135,7 +135,7 @@ describe("runBatch", () => {
 
 	test("uneven job lengths: a fast worker drains the queue", async () => {
 		const order: string[] = [];
-		const summary = await runBatch({
+		const summary = await batchScheduler.run({
 			workers: WORKERS,
 			jobs: ["slow", "f1", "f2", "f3"],
 			retry: 0,
@@ -152,7 +152,7 @@ describe("runBatch", () => {
 
 	test("no jobs → done immediately, ok, every worker idle", async () => {
 		const events: BatchEvent[] = [];
-		const summary = await runBatch({
+		const summary = await batchScheduler.run({
 			workers: WORKERS,
 			jobs: [],
 			retry: 0,
@@ -167,7 +167,7 @@ describe("runBatch", () => {
 	test("abort: running jobs finish, no new jobs start, ok false", async () => {
 		const m = manual();
 		const controller = new AbortController();
-		const done = runBatch({
+		const done = batchScheduler.run({
 			workers: WORKERS,
 			jobs: ["a", "b", "c", "d"],
 			retry: 0,
@@ -192,7 +192,7 @@ describe("runBatch elastic workers", () => {
 		let clock = 0;
 		const events: BatchEvent[] = [];
 		let handle: BatchHandle | undefined;
-		const done = runBatch({
+		const done = batchScheduler.run({
 			workers: [WORKERS[0] as BatchWorker],
 			jobs: ["a", "b", "c"],
 			retry: 0,
@@ -226,7 +226,7 @@ describe("runBatch elastic workers", () => {
 	test("a worker arriving after the queue drained is refused and the run still ends", async () => {
 		const m = manual();
 		let handle: BatchHandle | undefined;
-		const done = runBatch({
+		const done = batchScheduler.run({
 			workers: [WORKERS[0] as BatchWorker],
 			jobs: ["a"],
 			retry: 0,
@@ -248,7 +248,7 @@ describe("runBatch elastic workers", () => {
 		const m = manual();
 		const ac = new AbortController();
 		let handle: BatchHandle | undefined;
-		const done = runBatch({
+		const done = batchScheduler.run({
 			workers: [WORKERS[0] as BatchWorker],
 			jobs: ["a", "b"],
 			retry: 0,

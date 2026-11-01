@@ -5,7 +5,7 @@
  * and claims start enrolled. Idempotent: an already enrolled device is left alone. Emulator serials only.
  */
 import { BIOMETRIC_FINGER_ID, BIOMETRIC_PIN } from "@delacour/warden-providers/biometrics";
-import type { Exec } from "@delacour/warden-runtime/exec";
+import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 const SHELL_TIMEOUT_MS = 15_000;
@@ -17,36 +17,41 @@ const SETTINGS_PACKAGE = "com.android.settings";
 /** Wizard buttons answered, by whole text. `Skip` / `Cancel` / `Not now` are deliberately absent. */
 const WIZARD_BUTTONS = /^(next|more|agree|i agree|start|done|got it|ok|continue)$/i;
 
-/**
- * Whether `dumpsys fingerprint` lists an enrolled fingerprint: the JSON `"prints":[{"id":0,"count":N,…}]` of Android 10+
- * (`count` = fingerprints enrolled for that user) or the older `Enrolled fingerprints: N` / `prints: N` lines.
- */
-export function parseFingerprintEnrolled(dump: string): boolean {
-	const counts = [...dump.matchAll(/"count"\s*:\s*(\d+)/g)].map((m) => Number(m[1]));
-	if (counts.length > 0) return counts.some((n) => n > 0);
-	const legacy = [...dump.matchAll(/(?:enrolled fingerprints?|prints)\s*[:=]\s*(\d+)/gi)].map((m) => Number(m[1]));
-	return legacy.some((n) => n > 0);
-}
-
 export type TapTarget = { label: string; x: number; y: number };
 
-/** Centre of the first wizard button in a `uiautomator dump`. */
-export function findTapTarget(xml: string): TapTarget | undefined {
-	for (const match of xml.matchAll(/<node\b[^>]*>/g)) {
-		const tag = match[0];
-		const label = /\btext="([^"]*)"/.exec(tag)?.[1]?.trim();
-		const bounds = /\bbounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(tag);
-		if (!label || !bounds || !WIZARD_BUTTONS.test(label)) continue;
-		const [x1, y1, x2, y2] = bounds.slice(1).map(Number) as [number, number, number, number];
-		return { label, x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) };
+/** Pure readers of `dumpsys fingerprint` and of the enrollment wizard's `uiautomator dump`. */
+export class AndroidBiometrics {
+	/**
+	 * Whether `dumpsys fingerprint` lists an enrolled fingerprint: the JSON `"prints":[{"id":0,"count":N,…}]` of Android 10+
+	 * (`count` = fingerprints enrolled for that user) or the older `Enrolled fingerprints: N` / `prints: N` lines.
+	 */
+	isEnrolled(dump: string): boolean {
+		const counts = [...dump.matchAll(/"count"\s*:\s*(\d+)/g)].map((m) => Number(m[1]));
+		if (counts.length > 0) return counts.some((n) => n > 0);
+		const legacy = [...dump.matchAll(/(?:enrolled fingerprints?|prints)\s*[:=]\s*(\d+)/gi)].map((m) => Number(m[1]));
+		return legacy.some((n) => n > 0);
 	}
-	return undefined;
+
+	/** Centre of the first wizard button in a `uiautomator dump`. */
+	findTapTarget(xml: string): TapTarget | undefined {
+		for (const match of xml.matchAll(/<node\b[^>]*>/g)) {
+			const tag = match[0];
+			const label = /\btext="([^"]*)"/.exec(tag)?.[1]?.trim();
+			const bounds = /\bbounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(tag);
+			if (!label || !bounds || !WIZARD_BUTTONS.test(label)) continue;
+			const [x1, y1, x2, y2] = bounds.slice(1).map(Number) as [number, number, number, number];
+			return { label, x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) };
+		}
+		return undefined;
+	}
+
+	/** The lock-screen credential entry the wizard asks before it starts. */
+	isPinEntry(xml: string): boolean {
+		return /resource-id="[^"]*(password_entry|pin_entry|pinEntry)[^"]*"/.test(xml);
+	}
 }
 
-/** The lock-screen credential entry the wizard asks before it starts. */
-export function isPinEntry(xml: string): boolean {
-	return /resource-id="[^"]*(password_entry|pin_entry|pinEntry)[^"]*"/.test(xml);
-}
+export const androidBiometrics = new AndroidBiometrics();
 
 export type EnrollDeps = {
 	exec: Exec;
@@ -59,46 +64,58 @@ export type EnrollDeps = {
 	stepMs?: number;
 };
 
-export async function enrollFingerprint(deps: EnrollDeps, serial: string): AsyncResult<{ alreadyEnrolled: boolean }> {
-	if (!/^emulator-\d+$/.test(serial))
-		return resultFactory.err(`refusing to enroll a fingerprint on ${serial}: emulators only`);
-	const { adb } = deps;
-	const shell = (...args: string[]) =>
-		deps.exec([adb, "-s", serial, "shell", ...args], { timeoutMs: SHELL_TIMEOUT_MS });
-	const enrolled = async () => parseFingerprintEnrolled((await shell("dumpsys", "fingerprint")).stdout);
+type Shell = (...args: string[]) => Promise<ExecResult>;
 
-	if (await enrolled()) return resultFactory.ok({ alreadyEnrolled: true });
+/** Enrolls the emulator's virtual fingerprint through the system wizard. */
+export class FingerprintEnroller {
+	constructor(private readonly deps: EnrollDeps) {}
 
-	const pin = await shell("locksettings", "set-pin", BIOMETRIC_PIN);
-	if (pin.exitCode !== 0 && !/already/i.test(`${pin.stdout}${pin.stderr}`)) {
-		return resultFactory.err(
-			`${serial}: locksettings set-pin failed: ${`${pin.stdout}${pin.stderr}`.trim().slice(0, 200)}`
-		);
+	async enroll(serial: string): AsyncResult<{ alreadyEnrolled: boolean }> {
+		if (!/^emulator-\d+$/.test(serial))
+			return resultFactory.err(`refusing to enroll a fingerprint on ${serial}: emulators only`);
+		const { deps } = this;
+		const { adb } = deps;
+		const shell: Shell = (...args) => deps.exec([adb, "-s", serial, "shell", ...args], { timeoutMs: SHELL_TIMEOUT_MS });
+		const enrolled = async () => androidBiometrics.isEnrolled((await shell("dumpsys", "fingerprint")).stdout);
+
+		if (await enrolled()) return resultFactory.ok({ alreadyEnrolled: true });
+
+		const pin = await shell("locksettings", "set-pin", BIOMETRIC_PIN);
+		if (pin.exitCode !== 0 && !/already/i.test(`${pin.stdout}${pin.stderr}`)) {
+			return resultFactory.err(
+				`${serial}: locksettings set-pin failed: ${`${pin.stdout}${pin.stderr}`.trim().slice(0, 200)}`
+			);
+		}
+		const started = await shell("am", "start", "-a", "android.settings.FINGERPRINT_ENROLL");
+		if (started.exitCode !== 0)
+			return resultFactory.err(`${serial}: cannot open the fingerprint wizard: ${started.stderr.trim()}`);
+
+		const steps = deps.maxSteps ?? 60;
+		for (let i = 0; i < steps; i++) {
+			await this.answerWizard(shell);
+			await deps.exec([adb, "-s", serial, "emu", "finger", "touch", String(BIOMETRIC_FINGER_ID)], {
+				timeoutMs: SHELL_TIMEOUT_MS,
+			});
+			await deps.sleep(deps.stepMs ?? 700);
+			if (await enrolled()) {
+				await shell("am", "force-stop", SETTINGS_PACKAGE);
+				await shell("input", "keyevent", KEYCODE_HOME);
+				return resultFactory.ok({ alreadyEnrolled: false });
+			}
+		}
+		return resultFactory.err(`${serial}: fingerprint enrollment did not finish in ${steps} wizard rounds`);
 	}
-	const started = await shell("am", "start", "-a", "android.settings.FINGERPRINT_ENROLL");
-	if (started.exitCode !== 0)
-		return resultFactory.err(`${serial}: cannot open the fingerprint wizard: ${started.stderr.trim()}`);
 
-	const steps = deps.maxSteps ?? 60;
-	for (let i = 0; i < steps; i++) {
+	/** One wizard round: dump the screen, then type the PIN or tap the first button. */
+	private async answerWizard(shell: Shell): Promise<void> {
 		await shell("uiautomator", "dump", DUMP_PATH);
 		const xml = (await shell("cat", DUMP_PATH)).stdout;
-		if (isPinEntry(xml)) {
+		if (androidBiometrics.isPinEntry(xml)) {
 			await shell("input", "text", BIOMETRIC_PIN);
 			await shell("input", "keyevent", KEYCODE_ENTER);
-		} else {
-			const target = findTapTarget(xml);
-			if (target) await shell("input", "tap", String(target.x), String(target.y));
+			return;
 		}
-		await deps.exec([adb, "-s", serial, "emu", "finger", "touch", String(BIOMETRIC_FINGER_ID)], {
-			timeoutMs: SHELL_TIMEOUT_MS,
-		});
-		await deps.sleep(deps.stepMs ?? 700);
-		if (await enrolled()) {
-			await shell("am", "force-stop", SETTINGS_PACKAGE);
-			await shell("input", "keyevent", KEYCODE_HOME);
-			return resultFactory.ok({ alreadyEnrolled: false });
-		}
+		const target = androidBiometrics.findTapTarget(xml);
+		if (target) await shell("input", "tap", String(target.x), String(target.y));
 	}
-	return resultFactory.err(`${serial}: fingerprint enrollment did not finish in ${steps} wizard rounds`);
 }

@@ -2,7 +2,7 @@ import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import type { AppDeps, AppHost } from "@delacour/warden-builds/prepare";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { providerFor } from "@delacour/warden-core/host-deps";
+import { hostDeps } from "@delacour/warden-core/host-deps";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { stopHelper } from "@delacour/warden-driver-ios/helper";
 import { allocator } from "@delacour/warden-leasing/allocate";
@@ -261,7 +261,7 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 		return {
 			...app,
 			...(seams.hostFacts ? { hostFacts: seams.hostFacts } : {}),
-			providerFor: seams.providerFor ?? ((platform, who) => providerFor(platform, app, who)),
+			providerFor: seams.providerFor ?? ((platform, who) => hostDeps.providerFor(platform, app, who)),
 			stopHelper:
 				seams.stopHelper ??
 				(async (udid) => {

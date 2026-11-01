@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { neutralizeInjectState } from "@delacour/warden-core/conditions/inject-state";
+import { injectState } from "@delacour/warden-core/conditions/inject-state";
 import {
 	createInjectChannel,
 	encodeInjectState,
@@ -53,7 +53,7 @@ describe("release reset (core)", () => {
 			const path = injectStatePath(dir, "U1");
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, encodeInjectState({ seq: 3, offline: true, clockOffsetMs: 5, clockFrozenMs: 9 }));
-			expect(neutralizeInjectState(path)).toBeUndefined();
+			expect(injectState.neutralize(path)).toBeUndefined();
 			expect(parseInjectState(readFileSync(path, "utf8"))).toEqual({ seq: 4, offline: false, clockOffsetMs: 0 });
 		} finally {
 			rmSync(dir, { recursive: true, force: true });

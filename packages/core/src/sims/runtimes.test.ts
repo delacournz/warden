@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SimEntry } from "./rules";
-import { auditRuntimes, type DiskRuntime, parseRuntimeList } from "./runtimes";
+import { type DiskRuntime, runtimeAuditor } from "./runtimes";
 
 const GB = 1024 ** 3;
 const RT = "com.apple.CoreSimulator.SimRuntime.";
@@ -62,7 +62,7 @@ function sim(udid: string, short: string, verdict: SimEntry["verdict"]): SimEntr
 
 describe("parseRuntimeList", () => {
 	test("reads `simctl runtime list -j`, skipping malformed entries", () => {
-		const parsed = parseRuntimeList(RUNTIME_LIST_JSON);
+		const parsed = runtimeAuditor.parse(RUNTIME_LIST_JSON);
 		expect(parsed.success && parsed.data).toEqual([
 			{
 				identifier: "5A8D2AC8-603C-4B91-B39C-8C6B72F48495",
@@ -89,7 +89,7 @@ describe("parseRuntimeList", () => {
 	});
 
 	test("invalid JSON is an error", () => {
-		expect(parseRuntimeList("nope").success).toBe(false);
+		expect(runtimeAuditor.parse("nope").success).toBe(false);
 	});
 });
 
@@ -98,7 +98,7 @@ describe("auditRuntimes", () => {
 	const drop = { kind: "delete", reason: "idle" } as const;
 
 	test("counts sims per runtime and gives each runtime a verdict", () => {
-		const report = auditRuntimes(
+		const report = runtimeAuditor.audit(
 			[runtime("iOS-26-1"), runtime("iOS-26-3"), runtime("iOS-26-5"), runtime("iOS-18-0", { deletable: false })],
 			[sim("A", "iOS-26-5", keep), sim("F", "iOS-26-5", { kind: "foreign" }), sim("B", "iOS-26-3", drop)]
 		);
@@ -113,7 +113,7 @@ describe("auditRuntimes", () => {
 	});
 
 	test("sorted by size desc", () => {
-		const report = auditRuntimes([runtime("iOS-26-1", { sizeBytes: GB }), runtime("iOS-26-5")], []);
+		const report = runtimeAuditor.audit([runtime("iOS-26-1", { sizeBytes: GB }), runtime("iOS-26-5")], []);
 		expect(report.entries.map((e) => e.runtime)).toEqual(["iOS-26-5", "iOS-26-1"]);
 	});
 });

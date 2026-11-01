@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { launchSettingsPath, readLaunchSettings, writeLaunchSettings } from "./launch-settings";
+import { launchSettingsFile } from "./launch-settings";
 
 const dirs: string[] = [];
 const home = () => {
@@ -16,20 +16,20 @@ afterEach(() => {
 
 describe("launch settings", () => {
 	test("path is per device", () => {
-		expect(launchSettingsPath("/h", "U1")).toBe("/h/launch-settings/U1.json");
+		expect(launchSettingsFile.path("/h", "U1")).toBe("/h/launch-settings/U1.json");
 	});
 	test("round-trips and an empty write removes the file", () => {
-		const path = launchSettingsPath(home(), "U1");
-		expect(readLaunchSettings(path)).toEqual({});
-		expect(writeLaunchSettings(path, { timezone: "Asia/Tokyo", locale: "fr-FR" })).toBeUndefined();
-		expect(readLaunchSettings(path)).toEqual({ timezone: "Asia/Tokyo", locale: "fr-FR" });
-		expect(writeLaunchSettings(path, {})).toBeUndefined();
+		const path = launchSettingsFile.path(home(), "U1");
+		expect(launchSettingsFile.read(path)).toEqual({});
+		expect(launchSettingsFile.write(path, { timezone: "Asia/Tokyo", locale: "fr-FR" })).toBeUndefined();
+		expect(launchSettingsFile.read(path)).toEqual({ timezone: "Asia/Tokyo", locale: "fr-FR" });
+		expect(launchSettingsFile.write(path, {})).toBeUndefined();
 		expect(existsSync(path)).toBe(false);
 	});
 	test("an unreadable file reads as none", () => {
-		const path = launchSettingsPath(home(), "U1");
-		expect(writeLaunchSettings(path, { locale: "de" })).toBeUndefined();
+		const path = launchSettingsFile.path(home(), "U1");
+		expect(launchSettingsFile.write(path, { locale: "de" })).toBeUndefined();
 		writeFileSync(path, "{nope");
-		expect(readLaunchSettings(path)).toEqual({});
+		expect(launchSettingsFile.read(path)).toEqual({});
 	});
 });

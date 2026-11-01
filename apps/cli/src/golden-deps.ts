@@ -1,18 +1,10 @@
 import {
+	AndroidGolden,
 	type AndroidGoldenDeps,
-	buildPendingAndroidSnapshot,
-	ensureAndroidSnapshot,
-	explicitAndroidSnapshot,
-	invalidateAndroidSnapshot,
+	androidSnapshotModel,
 	type SnapshotPass,
-	snapshotForClaim,
 } from "@delacour/warden-core/golden/android-golden";
-import {
-	androidSnapshotsGivenUp,
-	clearAndroidSnapshotPending,
-	onCi,
-	pendingAndroidSnapshots,
-} from "@delacour/warden-core/golden/android-snapshot-pending";
+import { AndroidSnapshotPending, ciEnvironment } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { GoldenDeps } from "@delacour/warden-core/golden/ios-golden";
 import { biometricProfiles } from "@delacour/warden-providers/biometrics";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -62,7 +54,7 @@ async function configuredAndroidSnapshot(ctx: CommandContext): Promise<boolean |
  * nearest config, else on. An unrecognised env value is warned about and left to the config.
  */
 export async function androidSnapshotOn(ctx: CommandContext): Promise<boolean> {
-	const explicit = explicitAndroidSnapshot(ctx.env, (value) =>
+	const explicit = androidSnapshotModel.explicit(ctx.env, (value) =>
 		ctx.err(
 			`warden: WARDEN_ANDROID_SNAPSHOT=${value} is not one of 0/1/true/false/on/off/yes/no — using android.snapshot from the config`
 		)
@@ -84,9 +76,9 @@ export function androidSnapshotHook(
 	return async (avd) => {
 		if (!(await androidSnapshotOn(ctx))) return resultFactory.ok(undefined);
 		const deps = androidGoldenDeps(ctx, owner, sleep);
-		if (!biometricProfiles.split(avd).biometrics) return snapshotForClaim(deps, avd);
+		if (!biometricProfiles.split(avd).biometrics) return new AndroidGolden(deps).forClaim(avd);
 		// a biometrics claim must start enrolled: build the snapshot now (once, under the AVD's lock) rather than cold-boot plain
-		const ensured = await ensureAndroidSnapshot({ ...deps, prewarmHint: true }, avd);
+		const ensured = await new AndroidGolden({ ...deps, prewarmHint: true }).ensure(avd);
 		return ensured.success ? resultFactory.ok(ensured.data?.name) : ensured;
 	};
 }
@@ -97,7 +89,7 @@ export function androidSnapshotFailedHook(
 	owner: Owner,
 	sleep?: Sleep
 ): (avd: string, name: string) => AsyncResult<void> {
-	return (avd, name) => invalidateAndroidSnapshot(androidGoldenDeps(ctx, owner, sleep), avd, name);
+	return (avd, name) => new AndroidGolden(androidGoldenDeps(ctx, owner, sleep)).invalidate(avd, name);
 }
 
 /**
@@ -108,14 +100,14 @@ export function androidSnapshotFailedHook(
 export async function androidSnapshotPass(
 	ctx: CommandContext,
 	owner: Owner,
-	build: (deps: AndroidGoldenDeps) => AsyncResult<SnapshotPass> = buildPendingAndroidSnapshot
+	build: (deps: AndroidGoldenDeps) => AsyncResult<SnapshotPass> = (deps) => new AndroidGolden(deps).buildPending()
 ): Promise<string[]> {
-	if (onCi(ctx.env)) return [];
-	const givenUp = androidSnapshotsGivenUp(ctx.store());
-	const due = pendingAndroidSnapshots(ctx.store(), ctx.now()).length > 0;
+	if (ciEnvironment.active(ctx.env)) return [];
+	const givenUp = new AndroidSnapshotPending(ctx.store()).givenUp();
+	const due = new AndroidSnapshotPending(ctx.store()).pending(ctx.now()).length > 0;
 	if (!due && givenUp.length === 0) return [];
 	if (!(await androidSnapshotOn(ctx))) {
-		clearAndroidSnapshotPending(ctx.store());
+		new AndroidSnapshotPending(ctx.store()).clear();
 		return [];
 	}
 	const notes = givenUp.map(

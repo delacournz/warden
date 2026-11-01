@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { specIdOf } from "@delacour/warden-core/affected/specs";
+import { specScanner } from "@delacour/warden-core/affected/specs";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { E2eReportJson } from "../../contracts/e2e-report.schema";
 import type { Core } from "../../core";
@@ -41,7 +41,7 @@ function reportOf(
 export function specsVerify(core: Core): NonNullable<AuthoringDeps["verify"]> {
 	return async (input: VerifyInput): AsyncResult<VerifyReport> => {
 		const specsDir = join(input.suite.configDir, input.suite.config.specsDir);
-		const id = specIdOf(input.specPath, specsDir);
+		const id = specScanner.idOf(input.specPath, specsDir);
 		const argv = [
 			...resolveCliCommand(core.options.cliCommand),
 			...e2eArgs({

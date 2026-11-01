@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { fixtureRepos } from "@delacour/warden-core/affected/fixture.testing";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
@@ -21,7 +21,7 @@ let ctx: TestContext | undefined;
 const SPEC_ISOLATION = { isolate: "spec" };
 
 beforeEach(async () => {
-	({ dir, write } = await makeSuiteRepo(SPEC_ISOLATION));
+	({ dir, write } = await fixtureRepos.createSuite(SPEC_ISOLATION));
 });
 afterEach(() => {
 	ctx?.cleanup();
@@ -32,13 +32,13 @@ afterEach(() => {
 /** Swap the fixture for one whose suite has `overrides` (one spec process per spec unless they say otherwise). */
 async function resuite(overrides: Record<string, unknown>, config: Record<string, unknown> = {}): Promise<void> {
 	rmSync(dir, { recursive: true, force: true });
-	({ dir, write } = await makeSuiteRepo({ ...SPEC_ISOLATION, ...overrides }, config));
+	({ dir, write } = await fixtureRepos.createSuite({ ...SPEC_ISOLATION, ...overrides }, config));
 }
 
 /** Swap the fixture for a suite that says nothing about `isolate`, plus `overrides`. */
 async function resuiteDefault(overrides: Record<string, unknown> = {}): Promise<void> {
 	rmSync(dir, { recursive: true, force: true });
-	({ dir, write } = await makeSuiteRepo(overrides));
+	({ dir, write } = await fixtureRepos.createSuite(overrides));
 }
 
 function setup(argv: string[], calls: string[][] = []): TestContext {

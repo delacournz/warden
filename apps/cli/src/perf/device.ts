@@ -51,11 +51,13 @@ export type PerfDeviceDeps = {
 export const defaultPerfDeviceDeps: PerfDeviceDeps = {
 	pidAlive: liveness.processAlive,
 	booted: async (ctx) => {
-		const { providerFor } = await import("@delacour/warden-core/host-deps");
+		const { hostDeps } = await import("@delacour/warden-core/host-deps");
 		const { appHostFromContext } = await import("../context");
 		const owner = ownerResolver.resolve(ctx);
 		const inventories = await Promise.all(
-			(["ios", "android"] as const).map((platform) => providerFor(platform, appHostFromContext(ctx), owner).inventory())
+			(["ios", "android"] as const).map((platform) =>
+				hostDeps.providerFor(platform, appHostFromContext(ctx), owner).inventory()
+			)
 		);
 		return inventories.flatMap((inventory) =>
 			inventory.success

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSpec, scanSpecs, specPlatforms, specSettings } from "./specs";
+import { specScanner } from "./specs";
 
 let dir: string;
 
@@ -27,7 +27,7 @@ describe("parseSpec / scanSpecs (*.e2e.ts)", () => {
 			'import { openApp } from "../helpers/app";',
 			'import "../helpers";',
 		].join("\n");
-		expect(parseSpec(file, dir, text)).toEqual({
+		expect(specScanner.parse(file, dir, text)).toEqual({
 			id: "auth/sign-in",
 			file,
 			kind: "e2e",
@@ -44,7 +44,7 @@ describe("parseSpec / scanSpecs (*.e2e.ts)", () => {
 		write("types.d.ts", "export {};\n");
 		write("__baselines__/a/shot.e2e.ts", "export {};\n");
 		write(".hidden/c.e2e.ts", "export {};\n");
-		const scan = scanSpecs(dir);
+		const scan = specScanner.scan(dir);
 		expect(scan.specs.map((f) => [f.id, f.kind])).toEqual([
 			["helpers/app", "fragment"],
 			["helpers/ids", "fragment"],
@@ -62,21 +62,21 @@ describe("specSettings / specPlatforms", () => {
 	};
 
 	test("exact key + globs merge; exact settings win", () => {
-		expect(specSettings("store-ios-02-chats", specs)).toEqual({
+		expect(specScanner.settings("store-ios-02-chats", specs)).toEqual({
 			entries: ["src/app/chats.tsx", "src/app/_layout.tsx"],
 			paths: ["src/chat/**"],
 			required: false,
 		});
-		expect(specSettings("qa-x", specs)).toEqual({ entries: [], paths: [] });
+		expect(specScanner.settings("qa-x", specs)).toEqual({ entries: [], paths: [] });
 	});
 
 	test("platforms: config > id token > both", () => {
 		const base = { file: "", kind: "e2e" as const, runs: [] };
-		expect(specPlatforms({ ...base, id: "store-ios-01" }, { entries: [], paths: [] })).toEqual(["ios"]);
-		expect(specPlatforms({ ...base, id: "android/login" }, { entries: [], paths: [] })).toEqual(["android"]);
-		expect(specPlatforms({ ...base, id: "biosphere" }, { entries: [], paths: [] })).toEqual(["ios", "android"]);
-		expect(specPlatforms({ ...base, id: "store-ios-01" }, { entries: [], paths: [], platforms: ["android"] })).toEqual([
-			"android",
-		]);
+		expect(specScanner.platforms({ ...base, id: "store-ios-01" }, { entries: [], paths: [] })).toEqual(["ios"]);
+		expect(specScanner.platforms({ ...base, id: "android/login" }, { entries: [], paths: [] })).toEqual(["android"]);
+		expect(specScanner.platforms({ ...base, id: "biosphere" }, { entries: [], paths: [] })).toEqual(["ios", "android"]);
+		expect(
+			specScanner.platforms({ ...base, id: "store-ios-01" }, { entries: [], paths: [], platforms: ["android"] })
+		).toEqual(["android"]);
 	});
 });

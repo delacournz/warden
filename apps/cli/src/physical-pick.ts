@@ -1,4 +1,4 @@
-import { providerFor } from "@delacour/warden-core/host-deps";
+import { hostDeps } from "@delacour/warden-core/host-deps";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type InventoryDevice, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type ClaimFlags, withPhysicalAllowlist } from "./claim-flags";
@@ -62,12 +62,9 @@ async function candidatesFor(
 	taken: ReadonlySet<string>
 ): Promise<Found> {
 	const { request } = flags;
-	const inventory = await providerFor(
-		request.platform,
-		appHostFromContext(ctx),
-		owner,
-		request.platform === "ios" ? { physical: true } : {}
-	).inventory();
+	const inventory = await hostDeps
+		.providerFor(request.platform, appHostFromContext(ctx), owner, request.platform === "ios" ? { physical: true } : {})
+		.inventory();
 	if (!inventory.success) return { ok: false, message: inventory.error.message };
 	const now = ctx.now();
 	const held = new Set<string>();

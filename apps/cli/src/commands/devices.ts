@@ -1,5 +1,5 @@
-import { providerFor } from "@delacour/warden-core/host-deps";
-import { measureSims } from "@delacour/warden-core/sims/slim.measure";
+import { hostDeps } from "@delacour/warden-core/host-deps";
+import { SimMeasure } from "@delacour/warden-core/sims/slim.measure";
 import { inventoryMarker } from "@delacour/warden-leasing/inventory";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Adb } from "@delacour/warden-providers/android";
@@ -32,9 +32,11 @@ function lockedHint(d: InventoryDevice): string | undefined {
 /** One platform's rows: every device (booted or not) plus, for Android, every AVD. */
 async function platformRows(ctx: CommandContext, platform: Platform, leases: Map<string, Lease>): Promise<DeviceRow[]> {
 	const store = ctx.store();
-	const inventory = await providerFor(platform, appHostFromContext(ctx), ownerResolver.resolve(ctx), {
-		physical: true,
-	}).inventory();
+	const inventory = await hostDeps
+		.providerFor(platform, appHostFromContext(ctx), ownerResolver.resolve(ctx), {
+			physical: true,
+		})
+		.inventory();
 	if (!inventory.success) {
 		warn(ctx, `${platform}: skipped (${inventory.error.message})`);
 		return [];
@@ -102,10 +104,7 @@ function wardenCell(color: ChalkInstance, r: DeviceRow, none: string): string {
 /** One `ps` + `top` snapshot for every booted iOS sim, written onto its row as `footprintMb`. */
 async function addFootprints(ctx: CommandContext, rows: DeviceRow[]): Promise<void> {
 	const booted = rows.filter((r) => r.platform === "ios" && r.state === "booted" && r.id !== undefined);
-	const results = await measureSims(
-		ctx.exec,
-		booted.flatMap((r) => (r.id !== undefined ? [r.id] : []))
-	);
+	const results = await new SimMeasure(ctx.exec).sims(booted.flatMap((r) => (r.id !== undefined ? [r.id] : [])));
 	for (const row of booted) {
 		const res = row.id !== undefined ? results.get(row.id) : undefined;
 		if (res?.success) row.footprintMb = Math.round(res.data.footprintBytes / BYTES_PER_MB);

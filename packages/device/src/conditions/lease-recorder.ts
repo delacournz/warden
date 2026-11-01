@@ -1,5 +1,5 @@
 import type { ConditionArea, ConditionValues } from "@delacour/warden-config/conditions.types";
-import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type StoreOpener, sharedStoreOpener } from "./lease-store";
 
@@ -41,7 +41,7 @@ export function createLeaseRecorder(o: LeaseRecorderOptions): ConditionRecorder 
 			try {
 				const store = open();
 				if (!store.success) return failed(area, store.error);
-				const recorded = recordCondition(store.data, o.leaseId, area, value, now());
+				const recorded = leaseConditions.record(store.data, o.leaseId, area, value, now());
 				if (!recorded.success) failed(area, recorded.error);
 			} catch (error) {
 				failed(area, error instanceof Error ? error.message : String(error));
@@ -51,13 +51,13 @@ export function createLeaseRecorder(o: LeaseRecorderOptions): ConditionRecorder 
 			try {
 				const store = open();
 				if (!store.success) return failed(area, store.error);
-				const row = activeConditions(store.data, o.leaseId).find((r) => r.area === area);
+				const row = leaseConditions.active(store.data, o.leaseId).find((r) => r.area === area);
 				const held = row?.owned.some((p) => alive(p.pid)) ?? false;
 				if (neutral && !held) {
-					clearCondition(store.data, o.leaseId, area);
+					leaseConditions.clear(store.data, o.leaseId, area);
 					return;
 				}
-				const recorded = recordCondition(store.data, o.leaseId, area, value, now());
+				const recorded = leaseConditions.record(store.data, o.leaseId, area, value, now());
 				if (!recorded.success) failed(area, recorded.error);
 			} catch (error) {
 				failed(area, error instanceof Error ? error.message : String(error));

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { fixtureRepos } from "@delacour/warden-core/affected/fixture.testing";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
@@ -174,7 +174,7 @@ function routeDevtools(route: { current: string[] | "release" }): DevtoolsDeps {
 
 /** A harness whose working directory is a repo with an `e2e.mobile` suite (specs under `specs/`), so verify has a suite. */
 async function suiteHarness(): Promise<Harness> {
-	const repo = await makeSuiteRepo();
+	const repo = await fixtureRepos.createSuite();
 	cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 	return harness({ cwd: repo.dir, exec: true });
 }
@@ -207,7 +207,7 @@ describe("record start", () => {
 	});
 
 	test("defaults to <suite specsDir>/<slug>.e2e.ts from warden config", async () => {
-		const repo = await makeSuiteRepo();
+		const repo = await fixtureRepos.createSuite();
 		cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 		const h = harness({ cwd: repo.dir, exec: true });
 		expect(await h.run("record", "start", "onboarding", "--json")).toBe(0);
@@ -215,7 +215,7 @@ describe("record start", () => {
 	});
 
 	test("several suites need --suite; the error lists them", async () => {
-		const repo = await makeSuiteRepo();
+		const repo = await fixtureRepos.createSuite();
 		cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 		const config = JSON.parse(readFileSync(join(repo.dir, "warden.config.json"), "utf8"));
 		config.e2e.web = { ...config.e2e.mobile, specsDir: "web-specs" };
@@ -230,7 +230,7 @@ describe("record start", () => {
 	});
 
 	test("--to with several suites still needs --suite: fails at start, not at `use` or `stop`", async () => {
-		const repo = await makeSuiteRepo();
+		const repo = await fixtureRepos.createSuite();
 		cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 		const config = JSON.parse(readFileSync(join(repo.dir, "warden.config.json"), "utf8"));
 		config.e2e.web = { ...config.e2e.mobile, specsDir: "web-specs" };
@@ -559,7 +559,7 @@ describe("record start --help", () => {
 describe("route capture", () => {
 	/** a suite repo whose router root has the screens the test navigates between */
 	async function routeHarness(route: { current: string[] | "release" }): Promise<Harness> {
-		const repo = await makeSuiteRepo();
+		const repo = await fixtureRepos.createSuite();
 		cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 		const config = JSON.parse(readFileSync(join(repo.dir, "warden.config.json"), "utf8"));
 		config.e2e.mobile.routerRoot = "src/app";
@@ -645,7 +645,7 @@ describe("record use", () => {
 
 	/** a suite repo with `e2e/helpers.ts`, and a stub that keeps the generated spec the helper ran in */
 	async function useHarness(route?: { current: string[] | "release" }): Promise<Harness & { ran: string[] }> {
-		const repo = await makeSuiteRepo();
+		const repo = await fixtureRepos.createSuite();
 		cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 		if (route) {
 			const config = JSON.parse(readFileSync(join(repo.dir, "warden.config.json"), "utf8"));
@@ -775,7 +775,7 @@ describe("shared spec options and launch", () => {
 
 	/** a suite repo whose specs dir has a spec sharing `SPEC_OPTIONS` through `helpers/steps.ts`, plus `e2e/helpers.ts` */
 	async function sharedHarness(helper = STATIC): Promise<Harness & { ran: string[] }> {
-		const repo = await makeSuiteRepo();
+		const repo = await fixtureRepos.createSuite();
 		cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 		mkdirSync(join(repo.dir, "specs", "helpers"), { recursive: true });
 		writeFileSync(join(repo.dir, "specs", "helpers", "steps.ts"), SHARED);
@@ -881,7 +881,7 @@ describe("helper routes", () => {
 
 	/** a suite repo with a router root, the screens below it, and a dev client that answers `route.current` */
 	async function routeSuite(route: { current: string[] | "release" }): Promise<Harness> {
-		const repo = await makeSuiteRepo();
+		const repo = await fixtureRepos.createSuite();
 		cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 		const config = JSON.parse(readFileSync(join(repo.dir, "warden.config.json"), "utf8"));
 		config.e2e.mobile.routerRoot = "src/app";

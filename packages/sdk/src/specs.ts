@@ -1,13 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-	type Affected,
-	computeAffected,
-	findSuite,
-	type Suite,
-	type SuiteError,
-} from "@delacour/warden-core/affected/affected";
-import { scanSpecs, specPlatforms, specSettings } from "@delacour/warden-core/affected/specs";
+import { type Affected, affectedService, type Suite, type SuiteError } from "@delacour/warden-core/affected/affected";
+import { specScanner } from "@delacour/warden-core/affected/specs";
 import { storeLocator } from "@delacour/warden-store/store";
 import { e2eReportSchema } from "./contracts/e2e-report.schema";
 import type { Core } from "./core";
@@ -44,7 +38,7 @@ function suiteFailure(error: SuiteError): WardenError {
 }
 
 async function loadSuite(core: Core, name: string | undefined): Promise<Suite> {
-	const found = await findSuite(core.host.exec, core.host.cwd, name, core.git, core.host.env);
+	const found = await affectedService.findSuite(core.host.exec, core.host.cwd, name, core.git, core.host.env);
 	if (!found.success) throw suiteFailure(found.error);
 	return found.data;
 }
@@ -60,16 +54,16 @@ function checkProject(suite: Suite, project: string | undefined): void {
 function suiteInfo(suite: Suite): SuiteInfo {
 	const { config, configDir } = suite;
 	const specsDir = join(configDir, config.specsDir);
-	const scan = scanSpecs(specsDir);
+	const scan = specScanner.scan(specsDir);
 	const specs = scan.specs
 		.filter((spec) => spec.kind === "e2e")
 		.map((spec) => {
-			const settings = specSettings(spec.id, config.specs);
+			const settings = specScanner.settings(spec.id, config.specs);
 			return {
 				id: spec.id,
 				file: spec.file,
 				required: settings.required ?? true,
-				platforms: specPlatforms(spec, settings),
+				platforms: specScanner.platforms(spec, settings),
 			};
 		});
 	return {
@@ -87,7 +81,7 @@ function suiteInfo(suite: Suite): SuiteInfo {
 /** The suite names to list: the one asked for, else every configured one (a lone suite needs no name). */
 async function suiteNames(core: Core, name: string | undefined): Promise<Array<string | undefined>> {
 	if (name !== undefined) return [name];
-	const found = await findSuite(core.host.exec, core.host.cwd, undefined, core.git, core.host.env);
+	const found = await affectedService.findSuite(core.host.exec, core.host.cwd, undefined, core.git, core.host.env);
 	if (found.success) return [undefined];
 	if (found.error.code === "several_suites" && found.error.suites) return found.error.suites;
 	throw suiteFailure(found.error);
@@ -117,7 +111,7 @@ function affectedResult(affected: Affected): SpecsAffectedResult {
 async function affectedSpecs(core: Core, params: SpecsAffectedParams | undefined): Promise<SpecsAffectedResult> {
 	const suite = await loadSuite(core, params?.suite);
 	checkProject(suite, params?.project);
-	const result = await computeAffected({
+	const result = await affectedService.compute({
 		exec: core.host.exec,
 		cwd: core.host.cwd,
 		git: core.git,

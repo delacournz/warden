@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { LatLon } from "@delacour/warden-config/conditions.types";
-import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
+import { androidBiometrics } from "@delacour/warden-core/golden/android-biometrics";
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { ConditionSink } from "@delacour/warden-driver/conditions/condition-events";
 import { locationPlanner } from "@delacour/warden-driver/conditions/location-plan";
@@ -782,7 +782,7 @@ function buildDriver(
 		}
 		const dump = await runChecked(session, shellCommand(dumpsysFingerprintArgv()), "E_UNSUPPORTED");
 		if (!dump.success) return dump;
-		const state: BiometricState = { enrolled: parseFingerprintEnrolled(dump.data), modality: "fingerprint" };
+		const state: BiometricState = { enrolled: androidBiometrics.isEnrolled(dump.data), modality: "fingerprint" };
 		return { success: true, data: state };
 	};
 

@@ -1,10 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-	launchSettingsPath,
-	readLaunchSettings,
-	writeLaunchSettings,
-} from "@delacour/warden-core/conditions/launch-settings";
+import { launchSettingsFile } from "@delacour/warden-core/conditions/launch-settings";
 import type { AlertBackend, ProbesFrontmost, ReadsAlertOn } from "@delacour/warden-driver/alerts";
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type {
@@ -883,8 +879,8 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 
 /** Timezone / locale staged in a file per device, so a later `warden ui open` (another process) launches with them. */
 function stagedSettingsFor(wardenHome: string, udid: string): StagedSettings {
-	const path = launchSettingsPath(wardenHome, udid);
-	return { read: () => readLaunchSettings(path), write: (next) => writeLaunchSettings(path, next) };
+	const path = launchSettingsFile.path(wardenHome, udid);
+	return { read: () => launchSettingsFile.read(path), write: (next) => launchSettingsFile.write(path, next) };
 }
 
 type NetworkFactory = NonNullable<Parameters<typeof createIosDriver>[2]["network"]>;

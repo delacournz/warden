@@ -60,8 +60,8 @@ export function clearPointer(session: OpSession): void {
 }
 
 async function defaultFindSuite(session: OpSession, name: string | undefined): AsyncResult<Suite, SuiteError> {
-	const { findSuite } = await import("@delacour/warden-core/affected/affected");
-	return findSuite(session.host.exec, session.host.cwd, name, undefined, session.host.env);
+	const { affectedService } = await import("@delacour/warden-core/affected/affected");
+	return affectedService.findSuite(session.host.exec, session.host.cwd, name, undefined, session.host.env);
 }
 
 /** The suite the recording belongs to: the injected lookup, else the nearest warden config. */

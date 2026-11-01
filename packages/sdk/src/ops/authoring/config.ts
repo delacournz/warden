@@ -80,7 +80,7 @@ export type SpecConfigInput = {
 		entries: string[];
 		unresolved: string[];
 	};
-	/** the id of a spec file below `specsDir` (core's `specIdOf`) */
+	/** the id of a spec file below `specsDir` (core's `specScanner.idOf`) */
 	specId: (file: string, specsDir: string) => string;
 };
 

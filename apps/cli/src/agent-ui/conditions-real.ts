@@ -1,6 +1,6 @@
-import { getProxyStatus } from "@delacour/warden-core/netproxy/control";
-import { handlePath, readHandleFile } from "@delacour/warden-core/netproxy/handle-file";
-import { ensureLeaseProxy } from "@delacour/warden-core/netproxy/lease-proxy";
+import { proxyControl } from "@delacour/warden-core/netproxy/control";
+import { handleFiles } from "@delacour/warden-core/netproxy/handle-file";
+import { LeaseProxyService } from "@delacour/warden-core/netproxy/lease-proxy";
 import { leaseClockRecorder } from "@delacour/warden-device/conditions/lease-clock-recorder";
 import { lazyLeaseNetworkProxy, leaseNetworkProxy } from "@delacour/warden-device/conditions/lease-network-proxy";
 import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-device/conditions/route-ticker.spawn";
@@ -136,19 +136,19 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 		process.kill(pid, "SIGTERM");
 	},
 	proxyStatus: async (ctx, leaseId) => {
-		const handle = readHandleFile(handlePath(leaseId, ctx.env));
+		const handle = handleFiles.read(handleFiles.path(leaseId, ctx.env));
 		if (!handle || !liveness.processAlive(handle.pid)) return undefined;
-		const status = await getProxyStatus(handle);
+		const status = await proxyControl.status(handle);
 		return status.success ? { ...status.data, port: handle.port } : undefined;
 	},
 	proxyPid: (ctx, leaseId) => {
-		const handle = readHandleFile(handlePath(leaseId, ctx.env));
+		const handle = handleFiles.read(handleFiles.path(leaseId, ctx.env));
 		return handle && liveness.processAlive(handle.pid) ? handle.pid : undefined;
 	},
 	command: processCommand,
 	adb: (ctx) => androidToolsLocator.locate(ctx.env).adb,
 	ensureProxy: async (ctx, lease) => {
-		const started = await ensureLeaseProxy(proxyDeps(ctx), lease, {
+		const started = await new LeaseProxyService(proxyDeps(ctx)).ensure(lease, {
 			condition: { kind: "online" },
 			conditions: networkProxyShaping.conditionsFor({ kind: "online" }, []),
 		});

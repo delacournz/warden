@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import type { ProxyStatus } from "@delacour/warden-core/netproxy/control";
 import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
 import type { TickerConfig } from "@delacour/warden-driver/conditions/route-ticker";
@@ -87,7 +87,7 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 
 const lease = (s: Setup) => s.h.c.store().listLeases()[0]?.id as string;
 const stored = (s: Setup, area: "network" | "location") =>
-	activeConditions(s.h.c.store(), lease(s)).find((r) => r.area === area);
+	leaseConditions.active(s.h.c.store(), lease(s)).find((r) => r.area === area);
 
 describe("conditions on a physical device", () => {
 	for (const platform of ["ios", "android"] as const) {
@@ -106,7 +106,7 @@ describe("conditions on a physical device", () => {
 			}
 			expect(s.h.driver.calls).toEqual([]);
 			expect(s.schedulers).toEqual([]);
-			expect(activeConditions(s.h.c.store(), lease(s))).toEqual([]);
+			expect(leaseConditions.active(s.h.c.store(), lease(s))).toEqual([]);
 		});
 	}
 });
@@ -171,7 +171,7 @@ describe("net <condition>", () => {
 		const out = doc(failing.c);
 		expect(out.error.message).toContain("E_NETWORK_RELAUNCH");
 		expect(out.error.details).toEqual({ driver: "E_NETWORK_RELAUNCH" });
-		expect(activeConditions(failing.c.store(), failing.c.store().listLeases()[0]?.id as string)).toEqual([]);
+		expect(leaseConditions.active(failing.c.store(), failing.c.store().listLeases()[0]?.id as string)).toEqual([]);
 	});
 
 	test("E_UNSUPPORTED (a physical device) is reported verbatim", async () => {
@@ -221,7 +221,7 @@ describe("net <condition>", () => {
 	test("a running flap is stopped first and its pid is dropped from the lease", async () => {
 		const s = setup();
 		s.alive.add(777);
-		recordCondition(s.h.c.store(), lease(s), "network", { kind: "flap", upMs: 1000, downMs: 500 }, 1, [
+		leaseConditions.record(s.h.c.store(), lease(s), "network", { kind: "flap", upMs: 1000, downMs: 500 }, 1, [
 			{ kind: "pid", pid: 777 },
 		]);
 		expect(await s.h.run("network", "set", "offline")).toBe(0);
@@ -354,7 +354,7 @@ describe("net fault", () => {
 
 	test("refuses while a flap runs", async () => {
 		const s = setup();
-		recordCondition(s.h.c.store(), lease(s), "network", { kind: "flap", upMs: 1000, downMs: 500 }, 1, []);
+		leaseConditions.record(s.h.c.store(), lease(s), "network", { kind: "flap", upMs: 1000, downMs: 500 }, 1, []);
 		expect(await s.h.run("network", "fault", "h", "reset")).toBe(1);
 		expect(s.h.driver.callsOf("networkFaults")).toHaveLength(0);
 	});
@@ -552,7 +552,7 @@ describe("ui status", () => {
 });
 
 describe("clock", () => {
-	const clockOf = (s: Setup) => activeConditions(s.h.c.store(), lease(s)).find((r) => r.area === "clock");
+	const clockOf = (s: Setup) => leaseConditions.active(s.h.c.store(), lease(s)).find((r) => r.area === "clock");
 
 	test("set: a fixed instant, recorded on the lease", async () => {
 		const s = setup();
@@ -597,7 +597,7 @@ describe("clock", () => {
 		});
 		expect(await h.run("clock", "set", "2026-01-01T00:00:00Z", "--frozen", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
-		expect(activeConditions(h.c.store(), h.c.store().listLeases()[0]?.id as string)).toEqual([]);
+		expect(leaseConditions.active(h.c.store(), h.c.store().listLeases()[0]?.id as string)).toEqual([]);
 	});
 
 	test("status reads the record without opening the device", async () => {

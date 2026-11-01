@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { prune } from "@delacour/warden-builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
-import { androidSnapshotsDue } from "@delacour/warden-core/golden/android-snapshot-pending";
+import { AndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { CommandContext } from "./context";
 
@@ -69,7 +69,7 @@ export function maybeAutoGc(
 		work.staleLeases === 0 &&
 		work.idleDevices === 0 &&
 		!cacheOverCap(ctx) &&
-		!androidSnapshotsDue(store, ctx.env, now)
+		!new AndroidSnapshotPending(store).due(ctx.env, now)
 	)
 		return;
 	run([...(opts.nice ?? niceCommand()), ...self, "gc", "--quiet"]);

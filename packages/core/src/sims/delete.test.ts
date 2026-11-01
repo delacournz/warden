@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { DeviceResource, Owner } from "@delacour/warden-store/types";
-import { type DeleteDeps, type DeleteTarget, deleteSims } from "./delete";
+import { type DeleteDeps, type DeleteTarget, SimDeleter } from "./delete";
 
 const NOW = 1_000_000;
 const ME: Owner = { kind: "agent", sessionId: "me", cwd: "/" };
@@ -47,7 +47,7 @@ describe("deleteSims", () => {
 	test("shuts down an available sim, deletes it under our lease, forgets it, releases the lease", async () => {
 		store.recordDevice({ platform: "ios", id: "A", name: "warden-iphone-17-1" }, NOW);
 		const host = newHost();
-		const result = await deleteSims(deps(host), [target("A")], { label: "sims prune" });
+		const result = await new SimDeleter(deps(host)).run([target("A")], { label: "sims prune" });
 		expect(result.removed.map((t) => t.udid)).toEqual(["A"]);
 		expect(host.calls).toEqual(["xcrun simctl shutdown A", "xcrun simctl delete A"]);
 		expect(host.leasedDuring).toEqual([true, true]);
@@ -57,13 +57,13 @@ describe("deleteSims", () => {
 
 	test("an unavailable sim is deleted without a shutdown", async () => {
 		const host = newHost();
-		await deleteSims(deps(host), [target("A", false)], { label: "sims delete" });
+		await new SimDeleter(deps(host)).run([target("A", false)], { label: "sims delete" });
 		expect(host.calls).toEqual(["xcrun simctl delete A"]);
 	});
 
 	test("already shut down is fine", async () => {
 		const host = newHost({ "xcrun simctl shutdown A": "Unable to shutdown device in current state: Shutdown" });
-		const result = await deleteSims(deps(host), [target("A")], { label: "sims delete" });
+		const result = await new SimDeleter(deps(host)).run([target("A")], { label: "sims delete" });
 		expect(result.removed.map((t) => t.udid)).toEqual(["A"]);
 	});
 
@@ -71,7 +71,9 @@ describe("deleteSims", () => {
 		store.insertLease({ resource: resource("A"), owner: OTHER, ttlMs: 60_000 }, NOW);
 		store.insertLease({ resource: resource("B"), owner: OTHER, ttlMs: 1 }, 0);
 		const host = newHost();
-		const result = await deleteSims(deps(host), [target("A"), target("B"), target("C")], { label: "sims delete" });
+		const result = await new SimDeleter(deps(host)).run([target("A"), target("B"), target("C")], {
+			label: "sims delete",
+		});
 		expect(result.skipped.map((s) => [s.entry.udid, s.heldBy])).toEqual([
 			["A", OTHER],
 			["B", OTHER],
@@ -84,7 +86,7 @@ describe("deleteSims", () => {
 	test("a failed delete is collected, keeps the record, releases the lease and carries on", async () => {
 		store.recordDevice({ platform: "ios", id: "A", name: "warden-iphone-17-1" }, NOW);
 		const host = newHost({ "xcrun simctl delete A": "boom" });
-		const result = await deleteSims(deps(host), [target("A"), target("B")], { label: "sims prune" });
+		const result = await new SimDeleter(deps(host)).run([target("A"), target("B")], { label: "sims prune" });
 		expect(result.failed.map((f) => f.entry.udid)).toEqual(["A"]);
 		expect(result.failed[0]?.error).toContain("boom");
 		expect(result.removed.map((t) => t.udid)).toEqual(["B"]);

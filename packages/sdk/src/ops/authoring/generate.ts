@@ -171,7 +171,7 @@ export async function configForTarget(
 ): Promise<RecordSpecConfig | null> {
 	const { target } = pointer;
 	if (target.kind !== "spec") return null;
-	const [final, found, { routeEntries }, { specIdOf }] = await Promise.all([
+	const [final, found, { routeResolver }, { specScanner }] = await Promise.all([
 		readCurrentRoute(session),
 		findSuiteOf(session, suiteName),
 		import("@delacour/warden-core/affected/routes"),
@@ -184,8 +184,8 @@ export async function configForTarget(
 		suite: found.success ? found.data : undefined,
 		devicePlatform: session.device.platform,
 		helperGaps: helpersWithGaps(recording.steps),
-		resolveRoutes: routeEntries,
-		specId: specIdOf,
+		resolveRoutes: (...args) => routeResolver.entries(...args),
+		specId: (...args) => specScanner.idOf(...args),
 	});
 }
 

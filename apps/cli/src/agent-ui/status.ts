@@ -1,4 +1,4 @@
-import { activeConditions } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { leaseModel } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -27,7 +27,7 @@ function helperKindOf(device: Pick<UiDevice, "platform" | "udid">): HelperKind {
 export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "status", opts, async (device: UiDevice) => {
 		const { lease } = device;
-		const conditions = activeConditions(ctx.store(), lease.id);
+		const conditions = leaseConditions.active(ctx.store(), lease.id);
 		const conditionsText = conditionsLine(conditions);
 		const result = {
 			lease: {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { measureSim, measureSims, measureTree, parseMemUnit, parsePs, parseTopMem, treePids } from "./slim.measure";
+import { SimMeasure, simMemParser } from "./slim.measure";
 
 const MB = 1024 ** 2;
 
@@ -29,26 +29,26 @@ const TOP = [
 
 describe("parseMemUnit", () => {
 	test("units and suffixes", () => {
-		expect(parseMemUnit("168M+")).toBe(168 * MB);
-		expect(parseMemUnit("1024K")).toBe(1024 * 1024);
-		expect(parseMemUnit("1.2G")).toBe(Math.round(1.2 * 1024 ** 3));
-		expect(parseMemUnit("12B")).toBe(12);
-		expect(parseMemUnit("2M-")).toBe(2 * MB);
+		expect(simMemParser.parseMemUnit("168M+")).toBe(168 * MB);
+		expect(simMemParser.parseMemUnit("1024K")).toBe(1024 * 1024);
+		expect(simMemParser.parseMemUnit("1.2G")).toBe(Math.round(1.2 * 1024 ** 3));
+		expect(simMemParser.parseMemUnit("12B")).toBe(12);
+		expect(simMemParser.parseMemUnit("2M-")).toBe(2 * MB);
 	});
 	test("garbage is undefined", () => {
-		expect(parseMemUnit("abc")).toBeUndefined();
-		expect(parseMemUnit("")).toBeUndefined();
+		expect(simMemParser.parseMemUnit("abc")).toBeUndefined();
+		expect(simMemParser.parseMemUnit("")).toBeUndefined();
 	});
 });
 
 describe("parsePs / parseTopMem", () => {
 	test("ps rows keep basename of comm", () => {
-		const snap = parsePs(PS);
+		const snap = simMemParser.parsePs(PS);
 		expect(snap.get(102)).toEqual({ pid: 102, ppid: 101, command: "MyApp" });
 		expect(snap.size).toBe(6);
 	});
 	test("top skips headers", () => {
-		const mem = parseTopMem(TOP);
+		const mem = simMemParser.parseTopMem(TOP);
 		expect(mem.get(101)).toBe(168 * MB);
 		expect(mem.get(201)).toBe(1024 * 1024);
 		expect(mem.has(0)).toBe(false);
@@ -57,16 +57,16 @@ describe("parsePs / parseTopMem", () => {
 
 describe("treePids / measureTree", () => {
 	test("follows children transitively", () => {
-		expect(treePids(100, parsePs(PS)).sort()).toEqual([100, 101, 102]);
+		expect(simMemParser.treePids(100, simMemParser.parsePs(PS)).sort()).toEqual([100, 101, 102]);
 	});
 	test("sums footprint and sorts top by bytes", () => {
-		const m = measureTree(100, parsePs(PS), parseTopMem(TOP));
+		const m = simMemParser.measureTree(100, simMemParser.parsePs(PS), simMemParser.parseTopMem(TOP));
 		expect(m.processes).toBe(3);
 		expect(m.footprintBytes).toBe(2 * MB + 168 * MB + Math.round(1.2 * 1024 ** 3));
 		expect(m.top.map((t) => t.command)).toEqual(["MyApp", "backboardd", "launchd_sim"]);
 	});
 	test("process missing from top counts as 0", () => {
-		const m = measureTree(200, parsePs(PS), new Map());
+		const m = simMemParser.measureTree(200, simMemParser.parsePs(PS), new Map());
 		expect(m.processes).toBe(2);
 		expect(m.footprintBytes).toBe(0);
 	});
@@ -92,19 +92,19 @@ function exec(pgrepByUdid: Record<string, string>): { exec: Exec; calls: string[
 describe("measureSim", () => {
 	test("measures the tree under the first pgrep pid", async () => {
 		const { exec: run } = exec({ A: "100\n999\n" });
-		const res = await measureSim(run, "A");
+		const res = await new SimMeasure(run).sim("A");
 		expect(res).toMatchObject({ success: true, data: { udid: "A", processes: 3 } });
 	});
 	test("not booted when pgrep finds nothing", async () => {
 		const { exec: run } = exec({});
-		expect(await measureSim(run, "A")).toEqual({ success: false, error: "A: not booted" });
+		expect(await new SimMeasure(run).sim("A")).toEqual({ success: false, error: "A: not booted" });
 	});
 });
 
 describe("measureSims", () => {
 	test("one ps and one top for all sims", async () => {
 		const { exec: run, calls } = exec({ A: "100", B: "200" });
-		const res = await measureSims(run, ["A", "B", "C"]);
+		const res = await new SimMeasure(run).sims(["A", "B", "C"]);
 		expect(calls.filter((c) => c.startsWith("ps")).length).toBe(1);
 		expect(calls.filter((c) => c.startsWith("top")).length).toBe(1);
 		expect(res.get("A")).toMatchObject({ success: true });
@@ -113,7 +113,7 @@ describe("measureSims", () => {
 	});
 	test("no booted sims runs no ps/top", async () => {
 		const { exec: run, calls } = exec({});
-		await measureSims(run, ["C"]);
+		await new SimMeasure(run).sims(["C"]);
 		expect(calls.some((c) => c.startsWith("ps") || c.startsWith("top"))).toBe(false);
 	});
 });

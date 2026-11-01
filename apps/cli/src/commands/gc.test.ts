@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildCache } from "@delacour/warden-builds/cache";
-import { recordCondition } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { gcJsonSchema } from "@delacour/warden-sdk/contracts/gc";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
@@ -73,7 +73,7 @@ describe("warden gc", () => {
 			{ resource: { kind: "device", platform: "ios", id: "U1", name: "U1" }, owner: agent, ttlMs: 1 },
 			0
 		);
-		recordCondition(c.db, l.id, "battery", { level: 5, charging: false, cosmetic: true }, 1);
+		leaseConditions.record(c.db, l.id, "battery", { level: 5, charging: false, cosmetic: true }, 1);
 		c.db.db.exec(`DELETE FROM leases WHERE id = '${l.id}'`);
 		c.db.db.exec(
 			"INSERT INTO orphan_conditions VALUES ('ios', 'U2', 'battery', 'old', '{\"level\":5,\"charging\":false,\"cosmetic\":true}', '[]', 1, 1)"

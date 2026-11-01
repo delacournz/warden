@@ -12,37 +12,27 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { makeSuiteRepo } from "../testing/fixture.testing";
-import {
-	type GraphDoc,
-	type GraphRequest,
-	graphDoc,
-	importsOfDoc,
-	parseGraphDoc,
-	readSnapshot,
-	snapshotKey,
-	statusPaths,
-	writeSnapshot,
-} from "./graph-snapshot";
+import { fixtureRepos } from "../testing/fixture.testing";
+import { type GraphDoc, type GraphRequest, graphSnapshots } from "./graph-snapshot";
 
 describe("graphDoc / importsOfDoc", () => {
 	const graph: Record<string, string[]> = { "/a": ["/c", "/b"], "/b": ["/c"], "/c": [] };
-	const doc = graphDoc(["/a", "/b", "/c"], (file) => graph[file] ?? []);
+	const doc = graphSnapshots.doc(["/a", "/b", "/c"], (file) => graph[file] ?? []);
 
 	test("one table of files and index edges; import order is kept", () => {
 		expect(doc).toEqual({ version: 1, files: ["/a", "/b", "/c"], edges: [[2, 1], [2], []] });
-		const imports = importsOfDoc(doc);
+		const imports = graphSnapshots.importsOf(doc);
 		expect(imports("/a")).toEqual(["/c", "/b"]);
 		expect(imports("/b")).toEqual(["/c"]);
 		expect(imports("/c")).toEqual([]);
 	});
 
 	test("a file the walk never reached has no imports", () => {
-		expect(importsOfDoc(doc)("/elsewhere")).toEqual([]);
+		expect(graphSnapshots.importsOf(doc)("/elsewhere")).toEqual([]);
 	});
 
 	test("an import outside the walked files is dropped", () => {
-		expect(graphDoc(["/a"], () => ["/missing"]).edges).toEqual([[]]);
+		expect(graphSnapshots.doc(["/a"], () => ["/missing"]).edges).toEqual([[]]);
 	});
 });
 
@@ -50,7 +40,7 @@ describe("parseGraphDoc", () => {
 	const ok: GraphDoc = { version: 1, files: ["/a", "/b"], edges: [[1], []] };
 
 	test("the exact format round-trips", () => {
-		expect(parseGraphDoc(JSON.stringify(ok))).toEqual(ok);
+		expect(graphSnapshots.parse(JSON.stringify(ok))).toEqual(ok);
 	});
 
 	test.each([
@@ -63,22 +53,26 @@ describe("parseGraphDoc", () => {
 		["a non-string file", JSON.stringify({ ...ok, files: ["/a", 2] })],
 		["edges that are not lists", JSON.stringify({ ...ok, edges: [1, []] })],
 	])("%s is no table", (_name, text) => {
-		expect(parseGraphDoc(text)).toBeUndefined();
+		expect(graphSnapshots.parse(text)).toBeUndefined();
 	});
 });
 
 describe("statusPaths", () => {
 	test("modified, untracked and deleted paths", () => {
-		expect(statusPaths(" M src/a.ts\0?? src/b.ts\0D  gone.ts\0")).toEqual(["src/a.ts", "src/b.ts", "gone.ts"]);
+		expect(graphSnapshots.statusPaths(" M src/a.ts\0?? src/b.ts\0D  gone.ts\0")).toEqual([
+			"src/a.ts",
+			"src/b.ts",
+			"gone.ts",
+		]);
 	});
 
 	test("a rename lists both paths", () => {
-		expect(statusPaths("R  new.ts\0old.ts\0 M other.ts\0")).toEqual(["new.ts", "old.ts", "other.ts"]);
-		expect(statusPaths("RM new.ts\0old.ts\0")).toEqual(["new.ts", "old.ts"]);
+		expect(graphSnapshots.statusPaths("R  new.ts\0old.ts\0 M other.ts\0")).toEqual(["new.ts", "old.ts", "other.ts"]);
+		expect(graphSnapshots.statusPaths("RM new.ts\0old.ts\0")).toEqual(["new.ts", "old.ts"]);
 	});
 
 	test("nothing", () => {
-		expect(statusPaths("")).toEqual([]);
+		expect(graphSnapshots.statusPaths("")).toEqual([]);
 	});
 });
 
@@ -86,7 +80,7 @@ describe("snapshotKey", () => {
 	let dir: string;
 	let write: (path: string, text: string) => void;
 	beforeEach(async () => {
-		({ dir, write } = await makeSuiteRepo());
+		({ dir, write } = await fixtureRepos.createSuite());
 	});
 	afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -97,7 +91,7 @@ describe("snapshotKey", () => {
 		...extra,
 	});
 	const key = (extra: Partial<GraphRequest> = {}, ignoreDir?: string) =>
-		snapshotKey(processExec.run, request(extra), ignoreDir);
+		graphSnapshots.key(processExec.run, request(extra), ignoreDir);
 	const git = (...args: string[]) => {
 		const res = Bun.spawnSync(["git", ...args], { cwd: dir });
 		if (res.exitCode !== 0) throw new Error(res.stderr.toString());
@@ -173,8 +167,8 @@ describe("snapshotKey", () => {
 		const empty = mkdtempSync(join(tmpdir(), "warden-empty-"));
 		try {
 			Bun.spawnSync(["git", "init", "-q"], { cwd: empty });
-			expect(await snapshotKey(processExec.run, request({ repoRoot: plain }))).toBeUndefined();
-			expect(await snapshotKey(processExec.run, request({ repoRoot: empty }))).toBeUndefined();
+			expect(await graphSnapshots.key(processExec.run, request({ repoRoot: plain }))).toBeUndefined();
+			expect(await graphSnapshots.key(processExec.run, request({ repoRoot: empty }))).toBeUndefined();
 		} finally {
 			rmSync(plain, { recursive: true, force: true });
 			rmSync(empty, { recursive: true, force: true });
@@ -191,29 +185,29 @@ describe("readSnapshot / writeSnapshot", () => {
 
 	const sha = (n: number) => n.toString(16).padStart(40, "0");
 	const key = (n: number) => `${sha(n)}-${"a".repeat(16)}`;
-	const doc = graphDoc(["/a"], () => []);
+	const doc = graphSnapshots.doc(["/a"], () => []);
 
 	test("a snapshot reads back; none, or a corrupt one, is a miss", () => {
 		const nested = join(dir, "affected");
-		expect(readSnapshot(nested, key(1))).toBeUndefined();
-		writeSnapshot(nested, key(1), doc);
-		expect(readSnapshot(nested, key(1))).toEqual(doc);
+		expect(graphSnapshots.read(nested, key(1))).toBeUndefined();
+		graphSnapshots.write(nested, key(1), doc);
+		expect(graphSnapshots.read(nested, key(1))).toEqual(doc);
 		writeFileSync(join(nested, `${key(2)}.json`), "{torn");
-		expect(readSnapshot(nested, key(2))).toBeUndefined();
+		expect(graphSnapshots.read(nested, key(2))).toBeUndefined();
 	});
 
 	test("no partial file is left behind", () => {
-		writeSnapshot(dir, key(1), doc);
+		graphSnapshots.write(dir, key(1), doc);
 		expect(readdirSync(dir)).toEqual([`${key(1)}.json`]);
 	});
 
 	test("only the newest 24 snapshots are kept; other files are left alone", () => {
 		writeFileSync(join(dir, "abcdef.json"), "{}");
 		for (let n = 1; n <= 30; n++) {
-			writeSnapshot(dir, key(n), doc);
+			graphSnapshots.write(dir, key(n), doc);
 			utimesSync(join(dir, `${key(n)}.json`), new Date(2026, 0, 1, 0, n), new Date(2026, 0, 1, 0, n));
 		}
-		writeSnapshot(dir, key(31), doc);
+		graphSnapshots.write(dir, key(31), doc);
 		const left = readdirSync(dir).filter((f) => f !== "abcdef.json");
 		expect(left).toHaveLength(24);
 		expect(existsSync(join(dir, `${key(31)}.json`))).toBe(true);
@@ -224,6 +218,6 @@ describe("readSnapshot / writeSnapshot", () => {
 	test("a cache dir that cannot be written is not an error", () => {
 		const file = join(dir, "file");
 		writeFileSync(file, "");
-		expect(() => writeSnapshot(join(file, "inside"), key(1), doc)).not.toThrow();
+		expect(() => graphSnapshots.write(join(file, "inside"), key(1), doc)).not.toThrow();
 	});
 });

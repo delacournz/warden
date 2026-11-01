@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { proxyShaping, rngFactory } from "@delacour/warden-config/shaping";
-import { getProxyStatus, setProxyConditions } from "./control";
-import { type ProxyEvent, type RunningProxy, startProxy } from "./proxy";
+import { proxyControl } from "./control";
+import { type ProxyEvent, ProxyServer, type RunningProxy } from "./proxy";
 
 const FAKE_HOST = "api.test";
 
@@ -30,11 +30,14 @@ afterEach(async () => {
 	for (const server of extraServers.splice(0)) server.close();
 });
 
-async function start(options: Parameters<typeof startProxy>[0] = {}, toPort?: number): Promise<RunningProxy> {
-	proxy = await startProxy({
+async function start(
+	options: ConstructorParameters<typeof ProxyServer>[0] = {},
+	toPort?: number
+): Promise<RunningProxy> {
+	proxy = await new ProxyServer({
 		resolve: (_host, port) => ({ host: "127.0.0.1", port: toPort ?? (port === 80 ? (upstream.port ?? 0) : port) }),
 		...options,
-	});
+	}).start();
 	return proxy;
 }
 
@@ -186,7 +189,7 @@ describe("shaping", () => {
 		// 40 KB at 160 kbps = 20 KB/s => 2 s if left alone
 		const pending = request(p, "/big/40000", { timeoutMs: 8000 });
 		await Bun.sleep(250);
-		const applied = await setProxyConditions(p.handle, { params: {} });
+		const applied = await proxyControl.setConditions(p.handle, { params: {} });
 		expect(applied.success).toBe(true);
 		const reply = ok(await pending);
 		expect(reply.body.length).toBeGreaterThanOrEqual(40000);
@@ -203,18 +206,18 @@ describe("shaping", () => {
 		const replies = await Promise.all([1, 2, 3, 4, 5, 6].map(() => request(p, "/", { timeoutMs: 400 })));
 		expect(replies.every((r) => !("status" in r))).toBe(true);
 		expect(events.filter((e) => e.kind === "loss")).toHaveLength(6);
-		await setProxyConditions(p.handle, { params: { lossPct: 0 } });
+		await proxyControl.setConditions(p.handle, { params: { lossPct: 0 } });
 		expect(ok(await request(p, "/")).status).toBe(200);
 	});
 
 	test("loss outcomes follow the injected RNG", async () => {
 		const run = async (seed: number): Promise<string[]> => {
 			const events: ProxyEvent[] = [];
-			const p = await startProxy({
+			const p = await new ProxyServer({
 				conditions: { params: { lossPct: 100 } },
 				rng: rngFactory.seeded(seed),
 				onEvent: (e) => events.push(e),
-			});
+			}).start();
 			for (let i = 0; i < 8; i++) await request(p, "/", { timeoutMs: 60 });
 			await p.close();
 			return events.flatMap((e) => (e.kind === "loss" ? [e.outcome] : []));
@@ -274,7 +277,7 @@ describe("host faults", () => {
 
 	test("faults replaced live", async () => {
 		const p = await start({ conditions: { faults } });
-		await setProxyConditions(p.handle, { faults: [] });
+		await proxyControl.setConditions(p.handle, { faults: [] });
 		expect(ok(await request(p, "/", { host: "a.fail.test" })).status).toBe(200);
 	});
 });
@@ -292,16 +295,16 @@ describe("offline", () => {
 		expect("timeout" in (await request(p, "/", { timeoutMs: 300 }))).toBe(true);
 		const held = request(p, "/", { timeoutMs: 3000 });
 		await Bun.sleep(100);
-		await setProxyConditions(p.handle, { params: {} });
+		await proxyControl.setConditions(p.handle, { params: {} });
 		expect("closed" in (await held)).toBe(true);
 		expect(ok(await request(p, "/")).status).toBe(200);
 	});
 
 	test("offline then online on a live listener", async () => {
 		const p = await start();
-		await setProxyConditions(p.handle, { params: { offline: "refuse" } });
+		await proxyControl.setConditions(p.handle, { params: { offline: "refuse" } });
 		expect("closed" in (await request(p, "/"))).toBe(true);
-		await setProxyConditions(p.handle, { params: {} });
+		await proxyControl.setConditions(p.handle, { params: {} });
 		expect(ok(await request(p, "/")).status).toBe(200);
 	});
 });
@@ -317,7 +320,7 @@ describe("going offline", () => {
 			socket.on("close", () => resolve(true));
 			setTimeout(() => resolve(false), 1500);
 		});
-		await setProxyConditions(p.handle, { params: { offline: "refuse" } });
+		await proxyControl.setConditions(p.handle, { params: { offline: "refuse" } });
 		expect(await closed).toBe(true);
 	});
 
@@ -329,7 +332,7 @@ describe("going offline", () => {
 		socket.on("close", () => {
 			closed = true;
 		});
-		await setProxyConditions(p.handle, { params: { latencyMs: 20 } });
+		await proxyControl.setConditions(p.handle, { params: { latencyMs: 20 } });
 		await Bun.sleep(150);
 		expect(closed).toBe(false);
 		socket.destroy();
@@ -363,7 +366,7 @@ describe("changing faults", () => {
 			const p = await startWithEcho();
 			const target = await openTunnel(p, "speed.test");
 			const other = await openTunnel(p, "other.test");
-			await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action }] });
+			await proxyControl.setConditions(p.handle, { faults: [{ match: "speed.test", action }] });
 			await Bun.sleep(150);
 			expect(target.closed()).toBe(true);
 			expect(other.closed()).toBe(false);
@@ -373,12 +376,18 @@ describe("changing faults", () => {
 
 	test("a changed fault cuts the tunnel; resending the same fault does not", async () => {
 		const p = await startWithEcho();
-		await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action: { kind: "delay", ms: 10 } }] });
+		await proxyControl.setConditions(p.handle, {
+			faults: [{ match: "speed.test", action: { kind: "delay", ms: 10 } }],
+		});
 		const tunnel = await openTunnel(p, "speed.test");
-		await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action: { kind: "delay", ms: 10 } }] });
+		await proxyControl.setConditions(p.handle, {
+			faults: [{ match: "speed.test", action: { kind: "delay", ms: 10 } }],
+		});
 		await Bun.sleep(150);
 		expect(tunnel.closed()).toBe(false);
-		await setProxyConditions(p.handle, { faults: [{ match: "speed.test", action: { kind: "delay", ms: 500 } }] });
+		await proxyControl.setConditions(p.handle, {
+			faults: [{ match: "speed.test", action: { kind: "delay", ms: 500 } }],
+		});
 		await Bun.sleep(150);
 		expect(tunnel.closed()).toBe(true);
 	});
@@ -386,7 +395,7 @@ describe("changing faults", () => {
 	test("clearing faults leaves established tunnels up", async () => {
 		const p = await startWithEcho();
 		const tunnel = await openTunnel(p, "speed.test");
-		await setProxyConditions(p.handle, { faults: [] });
+		await proxyControl.setConditions(p.handle, { faults: [] });
 		await Bun.sleep(150);
 		expect(tunnel.closed()).toBe(false);
 		tunnel.socket.destroy();
@@ -397,7 +406,7 @@ describe("control channel", () => {
 	test("status reports conditions, pid and counters", async () => {
 		const p = await start({ conditions: { params: { latencyMs: 5 } } });
 		await request(p, "/");
-		const status = await getProxyStatus(p.handle);
+		const status = await proxyControl.status(p.handle);
 		expect(status.success && status.data.params.latencyMs).toBe(5);
 		expect(status.success && status.data.stats.connections).toBe(1);
 		expect(status.success && status.data.pid).toBe(process.pid);
@@ -407,13 +416,13 @@ describe("control channel", () => {
 		const p = await start();
 		const res = await fetch(`http://127.0.0.1:${p.handle.controlPort}/status`);
 		expect(res.status).toBe(403);
-		const wrong = await getProxyStatus({ ...p.handle, token: "nope" });
+		const wrong = await proxyControl.status({ ...p.handle, token: "nope" });
 		expect(wrong.success).toBe(false);
 	});
 
 	test("rejects an invalid update", async () => {
 		const p = await start();
-		const bad = await setProxyConditions(p.handle, { params: { lossPct: 400 } });
+		const bad = await proxyControl.setConditions(p.handle, { params: { lossPct: 400 } });
 		expect(bad.success).toBe(false);
 		expect(p.conditions().params.lossPct).toBeUndefined();
 	});

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
-import { undoConditions } from "@delacour/warden-core/conditions/undo";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
+import { ConditionUndo } from "@delacour/warden-core/conditions/undo";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
@@ -46,7 +46,7 @@ const recorder = (log: string[] = []) =>
 describe("createLeaseRecorder", () => {
 	test("record writes the area to the lease", () => {
 		recorder().record("network", { kind: "offline" });
-		expect(activeConditions(store, lease.id)).toMatchObject([
+		expect(leaseConditions.active(store, lease.id)).toMatchObject([
 			{ area: "network", value: { kind: "offline" }, setAt: 42 },
 		]);
 	});
@@ -55,20 +55,20 @@ describe("createLeaseRecorder", () => {
 		const r = recorder();
 		r.record("location", { kind: "point", lat: 1, lon: 2 });
 		r.settle("location", { kind: "clear" }, true);
-		expect(activeConditions(store, lease.id)).toEqual([]);
+		expect(leaseConditions.active(store, lease.id)).toEqual([]);
 	});
 
 	test("settle keeps a non-neutral baseline as the recorded value", () => {
 		const r = recorder();
 		r.record("network", { kind: "offline" });
 		r.settle("network", { kind: "preset", preset: "3g" }, false);
-		expect(activeConditions(store, lease.id)).toMatchObject([
+		expect(leaseConditions.active(store, lease.id)).toMatchObject([
 			{ area: "network", value: { kind: "preset", preset: "3g" } },
 		]);
 	});
 
 	test("settle keeps the row while a process it owns is alive, so release still stops it", () => {
-		recordCondition(store, lease.id, "network", { kind: "offline" }, 1, [{ kind: "pid", pid: 4242 }]);
+		leaseConditions.record(store, lease.id, "network", { kind: "offline" }, 1, [{ kind: "pid", pid: 4242 }]);
 		const alive = createLeaseRecorder({
 			leaseId: lease.id,
 			openStore: () => resultFactory.ok(store),
@@ -76,7 +76,7 @@ describe("createLeaseRecorder", () => {
 			log: () => {},
 		});
 		alive.settle("network", { kind: "online" }, true);
-		expect(activeConditions(store, lease.id)).toMatchObject([
+		expect(leaseConditions.active(store, lease.id)).toMatchObject([
 			{ area: "network", value: { kind: "online" }, owned: [{ pid: 4242 }] },
 		]);
 		const dead = createLeaseRecorder({
@@ -86,7 +86,7 @@ describe("createLeaseRecorder", () => {
 			log: () => {},
 		});
 		dead.settle("network", { kind: "online" }, true);
-		expect(activeConditions(store, lease.id)).toEqual([]);
+		expect(leaseConditions.active(store, lease.id)).toEqual([]);
 	});
 
 	test("a store that cannot open, or a lease that is gone, is logged and never thrown", () => {
@@ -152,20 +152,24 @@ describe("a spec that dies mid-test", () => {
 		await conditions.network.set("offline");
 		await conditions.location.set({ lat: -36.85, lon: 174.76 });
 		// the process dies here: no teardown runs
-		expect(activeConditions(store, lease.id).map((r) => r.area)).toEqual(["network", "location"]);
+		expect(leaseConditions.active(store, lease.id).map((r) => r.area)).toEqual(["network", "location"]);
 
 		const calls: string[][] = [];
 		const exec: Exec = async (cmd) => {
 			calls.push([...cmd]);
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const undone = await undoConditions(
-			{ store, exec, env: {}, now: () => 9, pidAlive: () => false, kill: () => {} },
-			lease
-		);
+		const undone = await new ConditionUndo({
+			store,
+			exec,
+			env: {},
+			now: () => 9,
+			pidAlive: () => false,
+			kill: () => {},
+		}).undo(lease);
 		expect(undone.success).toBe(true);
 		expect(calls.some((c) => c.join(" ").endsWith("shell cmd connectivity airplane-mode disable"))).toBe(true);
-		expect(activeConditions(store, lease.id)).toEqual([]);
+		expect(leaseConditions.active(store, lease.id)).toEqual([]);
 	});
 
 	test("a normal teardown puts the baseline back and leaves nothing for release to redo", async () => {
@@ -184,7 +188,7 @@ describe("a spec that dies mid-test", () => {
 		await conditions.location.set({ lat: 1, lon: 2 });
 		await conditions.clock.set("2030-01-01T00:00:00Z");
 		await conditions.internals.teardown();
-		expect(activeConditions(store, lease.id)).toEqual([]);
+		expect(leaseConditions.active(store, lease.id)).toEqual([]);
 	});
 
 	test("a suite baseline stays recorded after teardown, as the lease's state", async () => {
@@ -202,7 +206,7 @@ describe("a spec that dies mid-test", () => {
 		await conditions.internals.applyBaseline();
 		await conditions.network.set("offline");
 		await conditions.internals.teardown();
-		expect(activeConditions(store, lease.id)).toMatchObject([
+		expect(leaseConditions.active(store, lease.id)).toMatchObject([
 			{ area: "network", value: { kind: "preset", preset: "3g" } },
 		]);
 	});

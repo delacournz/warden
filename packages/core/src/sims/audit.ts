@@ -3,7 +3,7 @@
  * plus totals — what warden can free (`prune`), what only the user can (`sims delete`), budget.
  * Pure: inputs injected.
  */
-import { judgeSims, type RulesInput, type SimEntry } from "./rules";
+import { type RulesInput, type SimEntry, simRules } from "./rules";
 
 export type SimAudit = {
 	entries: SimEntry[];
@@ -19,22 +19,30 @@ export type SimAudit = {
 	overBudget: boolean;
 };
 
-const sum = (entries: readonly SimEntry[]) => entries.reduce((s, e) => s + e.bytes, 0);
+export class SimAuditor {
+	/** Entries sorted by size (largest first), then name. */
+	report(input: RulesInput): SimAudit {
+		const entries = simRules.judge(input).sort((a, b) => b.bytes - a.bytes || a.name.localeCompare(b.name));
+		const totalBytes = this.sum(entries);
+		const reclaimableBytes = this.sum(entries.filter((e) => e.verdict.kind === "delete"));
+		const afterBytes = totalBytes - reclaimableBytes;
+		const report: SimAudit = {
+			entries,
+			totalBytes,
+			reclaimableBytes,
+			foreignReclaimableBytes: this.sum(
+				entries.filter((e) => e.verdict.kind === "foreign" && e.verdict.hint !== undefined)
+			),
+			afterBytes,
+			overBudget: input.maxBytes !== undefined && afterBytes > input.maxBytes,
+		};
+		if (input.maxBytes !== undefined) report.maxBytes = input.maxBytes;
+		return report;
+	}
 
-/** Entries sorted by size (largest first), then name. */
-export function auditSims(input: RulesInput): SimAudit {
-	const entries = judgeSims(input).sort((a, b) => b.bytes - a.bytes || a.name.localeCompare(b.name));
-	const totalBytes = sum(entries);
-	const reclaimableBytes = sum(entries.filter((e) => e.verdict.kind === "delete"));
-	const afterBytes = totalBytes - reclaimableBytes;
-	const report: SimAudit = {
-		entries,
-		totalBytes,
-		reclaimableBytes,
-		foreignReclaimableBytes: sum(entries.filter((e) => e.verdict.kind === "foreign" && e.verdict.hint !== undefined)),
-		afterBytes,
-		overBudget: input.maxBytes !== undefined && afterBytes > input.maxBytes,
-	};
-	if (input.maxBytes !== undefined) report.maxBytes = input.maxBytes;
-	return report;
+	private sum(entries: readonly SimEntry[]): number {
+		return entries.reduce((s, e) => s + e.bytes, 0);
+	}
 }
+
+export const simAuditor = new SimAuditor();

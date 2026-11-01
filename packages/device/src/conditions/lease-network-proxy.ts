@@ -1,6 +1,6 @@
-import { getProxyStatus, setProxyConditions } from "@delacour/warden-core/netproxy/control";
-import { handlePath, readHandleFile } from "@delacour/warden-core/netproxy/handle-file";
-import { ensureLeaseProxy, type LeaseProxyDeps, releaseLeaseProxy } from "@delacour/warden-core/netproxy/lease-proxy";
+import { proxyControl } from "@delacour/warden-core/netproxy/control";
+import { handleFiles } from "@delacour/warden-core/netproxy/handle-file";
+import { type LeaseProxyDeps, LeaseProxyService } from "@delacour/warden-core/netproxy/lease-proxy";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import type { Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
@@ -11,10 +11,10 @@ export function leaseNetworkProxy(
 	deps: LeaseProxyDeps,
 	lease: Pick<Lease, "id" | "owner" | "ttlMs">
 ): NetworkProxyPort {
-	const handle = () => readHandleFile(handlePath(lease.id, deps.env));
+	const handle = () => handleFiles.read(handleFiles.path(lease.id, deps.env));
 	const live = async () => {
 		const file = handle();
-		return file && (await getProxyStatus(file)).success ? file : undefined;
+		return file && (await proxyControl.status(file)).success ? file : undefined;
 	};
 	return {
 		async current() {
@@ -22,7 +22,7 @@ export function leaseNetworkProxy(
 			return file ? { host: file.host, port: file.port } : undefined;
 		},
 		async ensure(condition, conditions) {
-			const started = await ensureLeaseProxy(deps, lease, { condition, conditions });
+			const started = await new LeaseProxyService(deps).ensure(lease, { condition, conditions });
 			return started.success
 				? resultFactory.ok({ host: started.data.handle.host, port: started.data.handle.port })
 				: started;
@@ -30,11 +30,11 @@ export function leaseNetworkProxy(
 		async update(update) {
 			const file = await live();
 			if (!file) return resultFactory.err("no live network proxy for this lease");
-			const applied = await setProxyConditions(file, update);
+			const applied = await proxyControl.setConditions(file, update);
 			return applied.success ? resultFactory.ok(undefined) : applied;
 		},
 		async stop() {
-			await releaseLeaseProxy(deps, lease.id);
+			await new LeaseProxyService(deps).release(lease.id);
 		},
 	};
 }
@@ -47,7 +47,7 @@ export type LazyLeaseProxyOptions = {
 	openStore: () => Result<Store>;
 	/** argv that runs the proxy process (`WARDEN_NETPROXY_COMMAND`); default: `bun netproxy.main.ts` from source */
 	command?: readonly string[] | undefined;
-	/** test seams passed through to `ensureLeaseProxy` (spawn, pid liveness, port range…) */
+	/** test seams passed through to `LeaseProxyService` (spawn, pid liveness, port range…) */
 	proxyDeps?: Partial<Omit<LeaseProxyDeps, "store" | "env" | "now" | "command">>;
 };
 
@@ -76,22 +76,22 @@ export function lazyLeaseNetworkProxy(o: LazyLeaseProxyOptions): NetworkProxyPor
 		);
 		return resultFactory.ok(inner);
 	};
-	const hasHandle = () => readHandleFile(handlePath(o.leaseId, o.env)) !== undefined;
+	const hasHandle = () => handleFiles.read(handleFiles.path(o.leaseId, o.env)) !== undefined;
 	return {
 		async current() {
 			if (inner) return inner.current();
-			const file = readHandleFile(handlePath(o.leaseId, o.env));
-			return file && (await getProxyStatus(file)).success ? { host: file.host, port: file.port } : undefined;
+			const file = handleFiles.read(handleFiles.path(o.leaseId, o.env));
+			return file && (await proxyControl.status(file)).success ? { host: file.host, port: file.port } : undefined;
 		},
 		async ensure(condition, conditions) {
 			const ready = need();
 			return ready.success ? ready.data.ensure(condition, conditions) : ready;
 		},
 		async update(update) {
-			const file = readHandleFile(handlePath(o.leaseId, o.env));
-			if (!file || !(await getProxyStatus(file)).success)
+			const file = handleFiles.read(handleFiles.path(o.leaseId, o.env));
+			if (!file || !(await proxyControl.status(file)).success)
 				return resultFactory.err("no live network proxy for this lease");
-			const applied = await setProxyConditions(file, update);
+			const applied = await proxyControl.setConditions(file, update);
 			return applied.success ? resultFactory.ok(undefined) : applied;
 		},
 		async stop() {

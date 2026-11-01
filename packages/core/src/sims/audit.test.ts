@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
 import type { DeviceRecord } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
-import { auditSims } from "./audit";
+import { simAuditor } from "./audit";
 import type { RulesInput } from "./rules";
 
 const DAY = 86_400_000;
@@ -47,11 +47,11 @@ function input(overrides: Partial<RulesInput>): RulesInput {
 	};
 }
 
-const verdictOf = (udid: string, i: RulesInput) => auditSims(i).entries.find((e) => e.udid === udid)?.verdict;
+const verdictOf = (udid: string, i: RulesInput) => simAuditor.report(i).entries.find((e) => e.udid === udid)?.verdict;
 
 describe("auditSims", () => {
 	test("classifies owners: store record / warden- name = warden, golden, else foreign", () => {
-		const report = auditSims(
+		const report = simAuditor.report(
 			input({
 				sims: [
 					sim("A", "warden-iphone-17-1"),
@@ -101,7 +101,7 @@ describe("auditSims", () => {
 			records: [record("A", NOW - 30 * DAY)],
 		});
 		expect(verdictOf("A", i)).toEqual({ kind: "keep", reason: "recent" });
-		expect(auditSims(i).entries[0]?.lastUsedAt).toBe(NOW - DAY);
+		expect(simAuditor.report(i).entries[0]?.lastUsedAt).toBe(NOW - DAY);
 	});
 
 	test("goldens are kept; foreign sims are never deletable, only hinted (stale = not booted in staleMs)", () => {
@@ -117,13 +117,13 @@ describe("auditSims", () => {
 		expect(verdictOf("F1", i)).toEqual({ kind: "foreign", hint: "unavailable-runtime" });
 		expect(verdictOf("F2", i)).toEqual({ kind: "foreign", hint: "stale" });
 		expect(verdictOf("F3", i)).toEqual({ kind: "foreign" });
-		const report = auditSims(i);
+		const report = simAuditor.report(i);
 		expect(report.reclaimableBytes).toBe(0);
 		expect(report.foreignReclaimableBytes).toBe(2 * GB);
 	});
 
 	test("totals and sort by size desc", () => {
-		const report = auditSims(
+		const report = simAuditor.report(
 			input({
 				sims: [
 					sim("A", "warden-iphone-17-1", { dataPathSize: GB }),
@@ -148,7 +148,7 @@ describe("auditSims", () => {
 			sim("F", "foreign"),
 		];
 		const records = [record("A", NOW - 3 * DAY), record("B", NOW - 2 * DAY), record("C", NOW - DAY), record("L", 0)];
-		const report = auditSims(input({ sims, records, leases: [lease("L")], maxBytes: 3 * GB }));
+		const report = simAuditor.report(input({ sims, records, leases: [lease("L")], maxBytes: 3 * GB }));
 		const verdicts = Object.fromEntries(report.entries.map((e) => [e.udid, e.verdict]));
 		expect(verdicts.A).toEqual({ kind: "delete", reason: "budget" });
 		expect(verdicts.B).toEqual({ kind: "delete", reason: "budget" });
@@ -159,14 +159,14 @@ describe("auditSims", () => {
 	});
 
 	test("over budget even after pruning everything eligible is reported", () => {
-		const report = auditSims(input({ sims: [sim("F", "foreign", { dataPathSize: 5 * GB })], maxBytes: GB }));
+		const report = simAuditor.report(input({ sims: [sim("F", "foreign", { dataPathSize: 5 * GB })], maxBytes: GB }));
 		expect(report.overBudget).toBe(true);
 	});
 
 	test("missing size counts as 0", () => {
 		const unsized = sim("A", "x");
 		delete unsized.dataPathSize;
-		const report = auditSims(input({ sims: [unsized] }));
+		const report = simAuditor.report(input({ sims: [unsized] }));
 		expect(report.entries[0]?.bytes).toBe(0);
 	});
 });

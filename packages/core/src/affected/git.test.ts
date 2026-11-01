@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
-import { changedFiles } from "./git";
+import { gitChanges } from "./git";
 
 let dir: string;
 
@@ -41,7 +41,7 @@ describe("changedFiles", () => {
 		await git("rm", "-q", "gone.ts");
 		await git("mv", "old.ts", "new.ts");
 		write("src/fresh.ts", "new");
-		const res = await changedFiles(processExec.run, join(dir), "main");
+		const res = await gitChanges.list(processExec.run, join(dir), "main");
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.top).toBe(dir);
 		const byPath = Object.fromEntries(res.data.files.map((f) => [f.path, f]));
@@ -61,7 +61,7 @@ describe("changedFiles", () => {
 		await git("merge", "-q", "main");
 		write("apps/x/src/a.ts", "a2");
 		write("apps/x/src/new.ts", "new");
-		const res = await changedFiles(processExec.run, join(dir, "apps", "x"), "main");
+		const res = await gitChanges.list(processExec.run, join(dir, "apps", "x"), "main");
 		if (!res.success) throw new Error(res.error);
 		const byPath = Object.fromEntries(res.data.files.map((f) => [f.path, f]));
 		expect(byPath["apps/x/src/a.ts"]?.status).toBe("modified");
@@ -70,7 +70,7 @@ describe("changedFiles", () => {
 	});
 
 	test("unknown base → error naming the ref", async () => {
-		const res = await changedFiles(processExec.run, dir, "nope");
+		const res = await gitChanges.list(processExec.run, dir, "nope");
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("nope");
 	});
@@ -88,7 +88,7 @@ describe("changedFiles git spawns", () => {
 
 	test("a cold cache costs one rev-parse (the facts), then merge-base, diff and ls-files", async () => {
 		const { spawns, exec } = counting();
-		const res = await changedFiles(exec, dir, "main", new GitFactsCache());
+		const res = await gitChanges.list(exec, dir, "main", new GitFactsCache());
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.top).toBe(dir);
 		expect(spawns.map((s) => s.split(" ")[0])).toEqual(["rev-parse", "merge-base", "diff", "ls-files"]);
@@ -100,7 +100,7 @@ describe("changedFiles git spawns", () => {
 		const cache = new GitFactsCache();
 		await gitFactsReader.read(exec, dir, cache);
 		spawns.length = 0;
-		const res = await changedFiles(exec, dir, "main", cache);
+		const res = await gitChanges.list(exec, dir, "main", cache);
 		expect(res.success).toBe(true);
 		expect(spawns.map((s) => s.split(" ")[0])).toEqual(["merge-base", "diff", "ls-files"]);
 	});
@@ -109,18 +109,18 @@ describe("changedFiles git spawns", () => {
 		write("src/deep/x.ts", "x");
 		const { spawns, exec } = counting();
 		const cache = new GitFactsCache();
-		const res = await changedFiles(exec, join(dir, "src", "deep"), "main", cache);
+		const res = await gitChanges.list(exec, join(dir, "src", "deep"), "main", cache);
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.top).toBe(dir);
 		spawns.length = 0;
-		await changedFiles(exec, dir, "main", cache);
+		await gitChanges.list(exec, dir, "main", cache);
 		expect(spawns.some((s) => s.startsWith("rev-parse"))).toBe(false);
 	});
 
 	test("not a git checkout is an error that names the directory", async () => {
 		const plain = realpathSync(mkdtempSync(join(tmpdir(), "warden-git-plain-")));
 		try {
-			const res = await changedFiles(processExec.run, plain, "main", new GitFactsCache());
+			const res = await gitChanges.list(processExec.run, plain, "main", new GitFactsCache());
 			expect(res.success).toBe(false);
 			if (!res.success) expect(res.error).toContain(plain);
 		} finally {

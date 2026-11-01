@@ -1,11 +1,7 @@
 import { DEFAULT_PROFILE } from "@delacour/warden-config/config.defaults";
-import {
-	ensureAndroidSnapshot,
-	listAndroidSnapshots,
-	pruneAndroidSnapshots,
-} from "@delacour/warden-core/golden/android-golden";
-import { ensureGolden, listGoldens, pruneGoldens } from "@delacour/warden-core/golden/ios-golden";
-import { androidGoldenDeps, goldenDeps, type Sleep } from "@delacour/warden-core/host-deps";
+import { AndroidGolden } from "@delacour/warden-core/golden/android-golden";
+import { IosGolden } from "@delacour/warden-core/golden/ios-golden";
+import { hostDeps, type Sleep } from "@delacour/warden-core/host-deps";
 import { claimRequestRules } from "@delacour/warden-leasing/claim-request";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Adb } from "@delacour/warden-providers/android";
@@ -51,13 +47,11 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 	const avd = await avdFor(ctx, profile);
 	if (!avd.success) return fail(ctx, avd.error);
 	const snapshot = await withSpinner(ctx, `ensuring quick-boot snapshot of ${avd.data}…`, async (sctx, spinner) => {
-		const result = await ensureAndroidSnapshot(
-			androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep),
-			avd.data,
-			{
-				explicit: true,
-			}
-		);
+		const result = await new AndroidGolden(
+			hostDeps.androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+		).ensure(avd.data, {
+			explicit: true,
+		});
 		if (result.success && result.data)
 			spinner.succeed(`snapshot ${result.data.name} ${result.data.built ? "built" : "reused"}`);
 		else spinner.fail("snapshot failed");
@@ -79,9 +73,9 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 
 async function lsAndroid(ctx: CommandContext, sleep: Sleep | undefined, json: boolean): Promise<number> {
 	const { color } = ctx.ui;
-	const snapshots = await listAndroidSnapshots(
-		androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
-	);
+	const snapshots = await new AndroidGolden(
+		hostDeps.androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+	).list();
 	if (!snapshots.success) return fail(ctx, snapshots.error);
 	const text = table(
 		ctx,
@@ -104,11 +98,9 @@ async function ensure(ctx: CommandContext, sleep: Sleep | undefined, opts: Ensur
 	const profile = opts.profile ?? DEFAULT_PROFILE.ios;
 	if (!opts.json) heading(ctx, "golden ensure", profile);
 	const golden = await withSpinner(ctx, `ensuring golden ${profile} image…`, async (sctx, spinner) => {
-		const result = await ensureGolden(
-			goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep),
-			profile,
-			opts.runtime
-		);
+		const result = await new IosGolden(
+			hostDeps.goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+		).ensure(profile, opts.runtime);
 		if (result.success) spinner.succeed(`golden ${result.data.name} ${result.data.built ? "built" : "reused"}`);
 		else spinner.fail("golden image failed");
 		return result;
@@ -130,7 +122,9 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, opts: PlatformO
 	const json = opts.json === true;
 	if (platform === "android") return lsAndroid(ctx, sleep, json);
 	const { color } = ctx.ui;
-	const goldens = await listGoldens(goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep));
+	const goldens = await new IosGolden(
+		hostDeps.goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+	).list();
 	if (!goldens.success) return fail(ctx, goldens.error);
 	const text = table(
 		ctx,
@@ -167,8 +161,10 @@ async function confirmPruneAll(ctx: CommandContext, sleep: Sleep | undefined, op
 	}
 	const goldens: Result<unknown[]> =
 		opts.platform === "android"
-			? await listAndroidSnapshots(androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep))
-			: await listGoldens(goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep));
+			? await new AndroidGolden(
+					hostDeps.androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+				).list()
+			: await new IosGolden(hostDeps.goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)).list();
 	if (!goldens.success) return fail(ctx, goldens.error);
 	if (goldens.data.length === 0) return 0;
 	const answer = await ui.confirm(`Delete all ${goldens.data.length} golden image(s)?`, false);
@@ -191,8 +187,10 @@ async function prune(ctx: CommandContext, sleep: Sleep | undefined, opts: PruneO
 		all ? "deleting golden images…" : "pruning stale golden images…",
 		(sctx): AsyncResult<Array<{ name: string }>> =>
 			platform === "android"
-				? pruneAndroidSnapshots(androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep), { all })
-				: pruneGoldens(goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep), { all })
+				? new AndroidGolden(
+						hostDeps.androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+					).prune({ all })
+				: new IosGolden(hostDeps.goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)).prune({ all })
 	);
 	if (!pruned.success) return fail(ctx, pruned.error);
 	const text =

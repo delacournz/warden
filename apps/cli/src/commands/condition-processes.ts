@@ -10,8 +10,8 @@ export type ConditionProcessDeps = {
 };
 
 async function defaultNetproxy(raw: string): Promise<void> {
-	const { runNetproxy } = await import("@delacour/warden-core/netproxy/netproxy.main");
-	await runNetproxy(raw);
+	const { NetproxyMain } = await import("@delacour/warden-core/netproxy/netproxy.main");
+	await new NetproxyMain().run(raw);
 }
 
 async function defaultRouteTicker(raw: string): Promise<number> {

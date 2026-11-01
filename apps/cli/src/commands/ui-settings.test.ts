@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ConditionArea } from "@delacour/warden-config/conditions.types";
-import { activeConditions } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { updateState } from "../agent-ui/state";
@@ -24,7 +24,7 @@ function setup(platform: "ios" | "android" = "android", onCall?: Override) {
 }
 
 const row = (h: Harness, area: ConditionArea) =>
-	activeConditions(h.c.store(), h.c.store().listLeases()[0]?.id as string).find((r) => r.area === area);
+	leaseConditions.active(h.c.store(), h.c.store().listLeases()[0]?.id as string).find((r) => r.area === area);
 
 describe("permission", () => {
 	test("set applies the pairs to the app, records them and merges a later set", async () => {

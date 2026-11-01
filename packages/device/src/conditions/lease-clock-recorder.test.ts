@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { activeConditions } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { leaseClockRecorder } from "./lease-clock-recorder";
 
@@ -32,10 +32,10 @@ describe("leaseClockRecorder", () => {
 	test("a mocked clock is recorded on the lease as the clock area, and real forgets it", () => {
 		const record = leaseClockRecorder(store, leaseId, () => 42);
 		record({ kind: "offset", ms: 86_400_000 });
-		expect(activeConditions(store, leaseId)).toEqual([
+		expect(leaseConditions.active(store, leaseId)).toEqual([
 			{ area: "clock", value: { kind: "offset", ms: 86_400_000 }, owned: [], setAt: 42 },
 		]);
 		record({ kind: "real" });
-		expect(activeConditions(store, leaseId)).toEqual([]);
+		expect(leaseConditions.active(store, leaseId)).toEqual([]);
 	});
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
+import { fixtureRepos } from "@delacour/warden-core/testing/fixture.testing";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { type TestContext, testContext } from "../testing";
 import { affectedCommand } from "./affected";
@@ -10,7 +10,7 @@ let write: (path: string, text: string) => void;
 let ctx: TestContext | undefined;
 
 beforeEach(async () => {
-	({ dir, write } = await makeSuiteRepo());
+	({ dir, write } = await fixtureRepos.createSuite());
 });
 afterEach(() => {
 	ctx?.cleanup();

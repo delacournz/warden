@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { recordCondition } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
 import type { Exec } from "@delacour/warden-runtime/exec";
@@ -141,7 +141,7 @@ describe("resolveUiDevice --claim: leftover conditions", () => {
 			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: other, ttlMs: 1 },
 			0
 		);
-		recordCondition(ctx.db, stale.id, "battery", { level: 5, charging: false, cosmetic: true }, 1);
+		leaseConditions.record(ctx.db, stale.id, "battery", { level: 5, charging: false, cosmetic: true }, 1);
 		const device = await resolveUiDevice(ctx, { udid: UDID, claim: true }, { exclusive: false, pidAlive: () => false });
 		expect(device.success && device.data.action).toBe("reclaimed");
 		expect(calls).toContainEqual(["xcrun", "simctl", "status_bar", UDID, "clear"]);

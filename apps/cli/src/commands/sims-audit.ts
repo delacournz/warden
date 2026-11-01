@@ -1,19 +1,13 @@
 import { prune } from "@delacour/warden-builds/prune";
 import { durationParser } from "@delacour/warden-config/duration";
 import type { SimAudit } from "@delacour/warden-core/sims/audit";
-import { auditMachineSims, pruneSims, type SimsDeps, type SimsPruneResult } from "@delacour/warden-core/sims/prune";
+import { type SimsDeps, type SimsPruneResult, SimsPruner } from "@delacour/warden-core/sims/prune";
+import { type SimEntry, type SimOwner, type SimRuleOpts, simRules } from "@delacour/warden-core/sims/rules";
 import {
-	describeReasons,
-	formatAge,
-	type SimEntry,
-	type SimOwner,
-	type SimRuleOpts,
-} from "@delacour/warden-core/sims/rules";
-import {
-	auditRuntimes,
-	listDiskRuntimes,
+	DiskRuntimeLister,
 	type RuntimeAudit,
 	type RuntimeVerdict,
+	runtimeAuditor,
 } from "@delacour/warden-core/sims/runtimes";
 import { DEFAULT_SIM_IDLE_MS, DEFAULT_SIM_STALE_MS } from "@delacour/warden-core/sims/sims.defaults";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
@@ -55,8 +49,8 @@ export function parseRuleOpts(opts: { idle?: string; stale?: string; maxSize?: s
 		: resultFactory.err(`--max-size: ${max.error}`);
 }
 
-export const IDLE_HELP = `warden sims unused this long are deletable (default ${formatAge(DEFAULT_SIM_IDLE_MS)})`;
-export const STALE_HELP = `foreign sims not booted this long are suggested (default ${formatAge(DEFAULT_SIM_STALE_MS)})`;
+export const IDLE_HELP = `warden sims unused this long are deletable (default ${simRules.formatAge(DEFAULT_SIM_IDLE_MS)})`;
+export const STALE_HELP = `foreign sims not booted this long are suggested (default ${simRules.formatAge(DEFAULT_SIM_STALE_MS)})`;
 
 function parseOwner(raw: string | undefined): Result<OwnerFilter> {
 	const value = raw ?? "all";
@@ -83,9 +77,9 @@ function describeVerdict(entry: SimEntry, color: ChalkInstance): string {
 		case "keep":
 			return color.dim(`keep (${verdict.reason})`);
 		case "delete":
-			return color.yellow(`delete: ${describeReasons(entry.reasons)}`);
+			return color.yellow(`delete: ${simRules.describeReasons(entry.reasons)}`);
 		case "foreign":
-			return verdict.hint ? color.cyan(`foreign: ${describeReasons(entry.reasons)}`) : color.dim("foreign");
+			return verdict.hint ? color.cyan(`foreign: ${simRules.describeReasons(entry.reasons)}`) : color.dim("foreign");
 	}
 }
 
@@ -192,9 +186,9 @@ function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
 
 /** Runtime half of the audit; a host without `simctl runtime` (Xcode < 15) just gets a note. */
 async function runtimeSection(ctx: CommandContext, sims: SimAudit): Promise<RuntimeSection> {
-	const runtimes = await listDiskRuntimes(ctx.exec);
+	const runtimes = await new DiskRuntimeLister(ctx.exec).list();
 	return runtimes.success
-		? { kind: "ok", audit: auditRuntimes(runtimes.data, sims.entries) }
+		? { kind: "ok", audit: runtimeAuditor.audit(runtimes.data, sims.entries) }
 		: { kind: "error", error: runtimes.error };
 }
 
@@ -208,7 +202,9 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	const owner = parseOwner(opts.owner);
 	if (!owner.success) return fail(ctx, "audit", owner.error);
 	if (!opts.json) heading(ctx, "sims audit", opts.owner && opts.owner !== "all" ? `owner ${opts.owner}` : undefined);
-	const audit = await withSpinner(ctx, "auditing simulators…", (sctx) => auditMachineSims(simsDeps(sctx), parsed.data));
+	const audit = await withSpinner(ctx, "auditing simulators…", (sctx) =>
+		new SimsPruner(simsDeps(sctx)).audit(parsed.data)
+	);
 	if (!audit.success) return fail(ctx, "audit", audit.error);
 	const runtimes = await runtimeSection(ctx, audit.data);
 	const entries = audit.data.entries.filter((e) => owner.data === "all" || e.owner === owner.data);
@@ -223,7 +219,7 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 }
 
 const describeSim = (e: SimEntry) =>
-	`${e.name} ${e.udid} (${prune.formatSize(e.bytes)}, ${describeReasons(e.reasons)})`;
+	`${e.name} ${e.udid} (${prune.formatSize(e.bytes)}, ${simRules.describeReasons(e.reasons)})`;
 
 /** Terminal confirm of the preview's deletes; true = go ahead. */
 async function confirmDeletes(ctx: CommandContext, preview: SimsPruneResult): Promise<boolean> {
@@ -264,7 +260,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	if (!opts.json) heading(ctx, "sims prune", dryRun ? "dry run" : undefined);
 	const deps = simsDeps(ctx);
 	const preview = await withSpinner(ctx, "auditing simulators…", () =>
-		pruneSims(deps, { ...parsed.data, dryRun: true })
+		new SimsPruner(deps).prune({ ...parsed.data, dryRun: true })
 	);
 	if (!preview.success) return fail(ctx, "prune", preview.error);
 	const nothing = preview.data.removed.length === 0;
@@ -273,7 +269,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 		dryRun || nothing
 			? preview
 			: await withSpinner(ctx, `deleting ${preview.data.removed.length} simulator(s)…`, () =>
-					pruneSims(deps, { ...parsed.data, dryRun: false })
+					new SimsPruner(deps).prune({ ...parsed.data, dryRun: false })
 				);
 	if (!result.success) return fail(ctx, "prune", result.error);
 	const { removed, skipped, failed, freedBytes, audit } = result.data;

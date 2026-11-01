@@ -18,9 +18,9 @@ import {
 import { durationParser } from "@delacour/warden-config/duration";
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, slimProfiles } from "@delacour/warden-config/slim.profile";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
-import { compiledBinary } from "@delacour/warden-core/affected/graph-process";
+import { graphLoader } from "@delacour/warden-core/affected/graph-process";
 import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
-import { readySpec } from "@delacour/warden-core/batch/preset";
+import { batchPresets } from "@delacour/warden-core/batch/preset";
 import { headlessResolver } from "@delacour/warden-leasing/headless";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { E2eReportJson } from "@delacour/warden-sdk/contracts/e2e-report";
@@ -120,7 +120,7 @@ function suiteOpts(
 		...(suite.biometrics === true ? { biometrics: true as const } : {}),
 		...(suite.ports ? { port: suite.ports } : {}),
 		...(suite.serve !== undefined ? { serve: suite.serve } : {}),
-		...(suite.serveReady !== undefined ? { serveReady: readySpec(suite.serveReady, cwd) } : {}),
+		...(suite.serveReady !== undefined ? { serveReady: batchPresets.readySpec(suite.serveReady, cwd) } : {}),
 		...(suite.serveTimeout !== undefined ? { serveTimeout: suite.serveTimeout } : {}),
 		...(app.app ? { app: true as const, ...(projectRoot ? { project: projectRoot } : {}) } : {}),
 		...(app.installMode !== undefined ? { installMode: app.installMode } : {}),
@@ -715,7 +715,7 @@ const specDuration = (field: string, value: string | undefined, fallback: string
 
 /** A compiled `warden` has no `netproxy.main.ts` on disk: specs start the shaping proxy as `<self> __netproxy`. */
 function netproxyEnv(): { netproxyCommand?: string[] } {
-	const self = compiledBinary();
+	const self = graphLoader.compiledBinary();
 	return self === undefined ? {} : { netproxyCommand: [self, NETPROXY_SUBCOMMAND] };
 }
 

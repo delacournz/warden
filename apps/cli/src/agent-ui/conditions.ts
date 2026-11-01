@@ -8,7 +8,7 @@ import type {
 	OwnedProcess,
 } from "@delacour/warden-config/conditions.types";
 import { durationParser } from "@delacour/warden-config/duration";
-import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
 import type { ClockState, NetworkState } from "@delacour/warden-driver/driver.types";
 import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
@@ -88,9 +88,9 @@ export function recordOf<A extends ConditionRecord["area"]>(
 	leaseId: string,
 	area: A
 ): Extract<ConditionRecord, { area: A }> | undefined {
-	return activeConditions(ctx.store(), leaseId).find(
-		(record): record is Extract<ConditionRecord, { area: A }> => record.area === area
-	);
+	return leaseConditions
+		.active(ctx.store(), leaseId)
+		.find((record): record is Extract<ConditionRecord, { area: A }> => record.area === area);
 }
 
 /** SIGTERM the processes `record` owns (but `keep`) that still look like ours, and wait for them to exit. */
@@ -208,7 +208,7 @@ function record<A extends "network" | "location">(
 	value: A extends "network" ? NetworkCondition : LocationCondition,
 	owned: readonly OwnedProcess[]
 ): Result<undefined, UiError> {
-	const saved = recordCondition(ctx.store(), lease.id, area, value as never, ctx.now(), owned);
+	const saved = leaseConditions.record(ctx.store(), lease.id, area, value as never, ctx.now(), owned);
 	return saved.success
 		? resultFactory.ok(undefined)
 		: fail("failed", `could not record the ${area} condition: ${saved.error}`);
@@ -605,7 +605,7 @@ async function clearLocation(
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
 		const cleared = fromDriver(await port.location({ kind: "clear" }));
 		if (!cleared.success) return cleared;
-		clearCondition(ctx.store(), lease.id, "location");
+		leaseConditions.clear(ctx.store(), lease.id, "location");
 		return resultFactory.ok<UiSuccess>({
 			device: deviceInfo(device),
 			result: { action: "location-clear", cleared: true, keepsLastFix: device.platform === "android" },
@@ -763,9 +763,9 @@ async function applyClock(
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
 		const applied = fromDriver(await port.clock(condition, networkOptions(ctx, device, opts as NetOptionValues)));
 		if (!applied.success) return applied;
-		if (condition.kind === "real") clearCondition(ctx.store(), device.lease.id, "clock");
+		if (condition.kind === "real") leaseConditions.clear(ctx.store(), device.lease.id, "clock");
 		else {
-			const saved = recordCondition(ctx.store(), device.lease.id, "clock", condition, ctx.now());
+			const saved = leaseConditions.record(ctx.store(), device.lease.id, "clock", condition, ctx.now());
 			if (!saved.success) return fail("failed", `could not record the clock condition: ${saved.error}`);
 		}
 		const state = applied.data;

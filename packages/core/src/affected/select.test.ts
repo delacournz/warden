@@ -3,16 +3,16 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { type E2eSuiteConfig, e2eSuiteSchema } from "@delacour/warden-config/affected.schema";
 import type { Platform } from "@delacour/warden-store/types";
-import { graphOf, makeFixtureRepo } from "../testing/fixture.testing";
+import { fixtureRepos } from "../testing/fixture.testing";
 import type { ChangedFile } from "./git";
-import { type Reason, selectSpecs } from "./select";
-import { scanSpecs } from "./specs";
+import { type Reason, type SelectInput, specSelector } from "./select";
+import { specScanner } from "./specs";
 
 let dir: string;
 let write: (path: string, text: string) => void;
 
 beforeEach(() => {
-	({ dir, write } = makeFixtureRepo());
+	({ dir, write } = fixtureRepos.create());
 	write("specs/chats.e2e.ts", "export {};\n");
 	write("specs/settings.e2e.ts", 'import "./shared/sign-in";\n');
 	write("specs/shared/sign-in.ts", "export {};\n");
@@ -38,14 +38,14 @@ function suite(overrides: Partial<Record<keyof E2eSuiteConfig, unknown>> = {}): 
 }
 
 async function select(changed: string[], platform: Platform = "ios", s = suite()) {
-	const graph = await graphOf({ platform, repoRoot: dir });
+	const graph = await fixtureRepos.graphOf({ platform, repoRoot: dir });
 	const changes: ChangedFile[] = changed.map((path) => ({ path, status: "modified" }));
-	return selectSpecs({
+	return specSelector.select({
 		suite: s,
 		configDir: dir,
 		platform,
 		changes,
-		specs: scanSpecs(join(dir, "specs")).specs,
+		specs: specScanner.scan(join(dir, "specs")).specs,
 		imports: graph.imports,
 	});
 }
@@ -129,13 +129,13 @@ describe("include / exclude / only / scope / unmatched", () => {
 	});
 
 	test("only: all selects every candidate without a diff; specs selects ids / globs, in scan order", async () => {
-		const sel = (only: Parameters<typeof selectSpecs>[0]["only"], s = suite()) =>
-			selectSpecs({
+		const sel = (only: SelectInput["only"], s = suite()) =>
+			specSelector.select({
 				suite: s,
 				configDir: dir,
 				platform: "ios",
 				changes: [],
-				specs: scanSpecs(join(dir, "specs")).specs,
+				specs: specScanner.scan(join(dir, "specs")).specs,
 				only,
 			});
 		const all = sel({ mode: "all" });

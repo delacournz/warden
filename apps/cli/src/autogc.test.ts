@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { buildCache } from "@delacour/warden-builds/cache";
 import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
-import { markAndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
+import { AndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { Owner } from "@delacour/warden-store/types";
 import { AUTO_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
 import { type TestContext, testContext } from "./testing";
@@ -138,7 +138,7 @@ describe("maybeAutoGc", () => {
 		const clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", CI: "1" };
-		markAndroidSnapshotPending(ctx.db, "Pixel_10");
+		new AndroidSnapshotPending(ctx.db).markPending("Pixel_10");
 		const spawned: string[][] = [];
 		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([]);

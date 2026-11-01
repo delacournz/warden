@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
+import { fixtureRepos } from "@delacour/warden-core/testing/fixture.testing";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
@@ -35,7 +35,7 @@ let repoDir: string;
 
 beforeEach(async () => {
 	home = mkdtempSync(join(tmpdir(), "warden-sdk-record-"));
-	repoDir = (await makeSuiteRepo()).dir;
+	repoDir = (await fixtureRepos.createSuite()).dir;
 });
 
 afterEach(() => {

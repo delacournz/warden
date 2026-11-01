@@ -1,19 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fakeHost } from "@delacour/warden-core/testing/golden.testing";
+import { type FakeHost, goldenTesting } from "@delacour/warden-core/testing/golden.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { cloneCommand } from "./clone";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-function setup(argv: string[], host: ReturnType<typeof fakeHost>): TestContext {
+function setup(argv: string[], host: FakeHost): TestContext {
 	ctx = testContext(argv, { exec: host.exec });
 	return ctx;
 }
 
 describe("warden clone", () => {
 	test("duplicates a shut-down sim into the next free warden pool slot and records it", async () => {
-		const host = fakeHost({
+		const host = goldenTesting.fakeHost({
 			sims: [
 				{ udid: "SRC", name: "My setup", state: "Shutdown" },
 				{ udid: "P1", name: "warden-iphone-17-1", state: "Shutdown" },
@@ -34,7 +34,7 @@ describe("warden clone", () => {
 	});
 
 	test("--name picks the clone's name; source by udid", async () => {
-		const host = fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Shutdown" }] });
+		const host = goldenTesting.fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Shutdown" }] });
 		const c = setup(["SRC", "--name", "feature-x"], host);
 		const ui = scriptedUi();
 		c.ui = ui;
@@ -45,7 +45,7 @@ describe("warden clone", () => {
 	});
 
 	test("booted source → refuses (never shuts down someone else's device)", async () => {
-		const host = fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Booted" }] });
+		const host = goldenTesting.fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Booted" }] });
 		const c = setup(["SRC"], host);
 		expect(await cloneCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("booted");
@@ -53,7 +53,7 @@ describe("warden clone", () => {
 	});
 
 	test("missing / extra source argument → exit 1", async () => {
-		const host = fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Shutdown" }] });
+		const host = goldenTesting.fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Shutdown" }] });
 		const c = setup([], host);
 		expect(await cloneCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("missing required argument");
@@ -63,7 +63,7 @@ describe("warden clone", () => {
 	});
 
 	test("unknown / ambiguous source → exit 1", async () => {
-		const host = fakeHost({
+		const host = goldenTesting.fakeHost({
 			sims: [
 				{ udid: "A", name: "dup", state: "Shutdown" },
 				{ udid: "B", name: "dup", state: "Shutdown" },

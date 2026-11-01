@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { TYPESCRIPT_UNUSABLE_EXIT } from "@delacour/warden-core/affected/graph";
-import { type GraphRequest, parseGraphDoc } from "@delacour/warden-core/affected/graph-snapshot";
-import { buildGraphDoc } from "@delacour/warden-core/affected/graph-worker";
-import { makeFixtureRepo } from "@delacour/warden-core/testing/fixture.testing";
+import { type GraphRequest, graphSnapshots } from "@delacour/warden-core/affected/graph-snapshot";
+import { graphWorker } from "@delacour/warden-core/affected/graph-worker";
+import { fixtureRepos } from "@delacour/warden-core/testing/fixture.testing";
 import { resultFactory } from "@delacour/warden-types/result";
 import { main } from "../cli";
 import { type TestContext, testContext } from "../testing";
@@ -15,7 +15,7 @@ let dir: string;
 let ctx: TestContext | undefined;
 
 beforeEach(() => {
-	({ dir } = makeFixtureRepo());
+	({ dir } = fixtureRepos.create());
 });
 afterEach(() => {
 	ctx?.cleanup();
@@ -26,7 +26,7 @@ afterEach(() => {
 const request = (): GraphRequest => ({ platform: "ios", repoRoot: dir, entries: [`${dir}/src/app/(app)/chats.tsx`] });
 
 async function built() {
-	const doc = await buildGraphDoc(request());
+	const doc = await graphWorker.build(request());
 	if (!doc.success) throw new Error(doc.error);
 	return doc.data;
 }
@@ -42,7 +42,7 @@ describe("warden __affected-graph", () => {
 		expect(code).toBe(0);
 		expect(ctx.stderr).toEqual([]);
 		expect(ctx.stdout).toHaveLength(1);
-		const doc = parseGraphDoc(ctx.stdout[0] ?? "");
+		const doc = graphSnapshots.parse(ctx.stdout[0] ?? "");
 		expect(doc).toEqual(await built());
 		expect(doc?.files.some((f) => f.endsWith("packages/ui/src/button.tsx"))).toBe(true);
 	});
@@ -82,7 +82,7 @@ describe("warden __affected-graph", () => {
 		help?.cleanup();
 	});
 
-	test("end to end: the real CLI prints a table that parseGraphDoc accepts", async () => {
+	test("end to end: the real CLI prints a table that graphSnapshots.parse accepts", async () => {
 		const proc = Bun.spawn(
 			["bun", resolve(import.meta.dir, "..", "cli.ts"), "__affected-graph", JSON.stringify(request())],
 			{
@@ -93,6 +93,6 @@ describe("warden __affected-graph", () => {
 		);
 		const [stdout, exit] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 		expect(exit).toBe(0);
-		expect(parseGraphDoc(stdout)).toEqual(await built());
+		expect(graphSnapshots.parse(stdout)).toEqual(await built());
 	});
 });

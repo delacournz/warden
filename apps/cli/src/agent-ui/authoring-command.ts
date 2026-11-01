@@ -32,8 +32,8 @@ export type AuthoringDeps = {
 };
 
 async function defaultFindSuite(ctx: CommandContext, name: string | undefined): AsyncResult<Suite, SuiteError> {
-	const { findSuite } = await import("@delacour/warden-core/affected/affected");
-	return findSuite(ctx.exec, ctx.cwd, name, ctx.git, ctx.env);
+	const { affectedService } = await import("@delacour/warden-core/affected/affected");
+	return affectedService.findSuite(ctx.exec, ctx.cwd, name, ctx.git, ctx.env);
 }
 
 async function defaultVerify(ctx: CommandContext, input: VerifyInput): AsyncResult<VerifyReport> {

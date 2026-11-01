@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { androidSnapshotKey, readSnapshotInputs, snapshotName } from "@delacour/warden-core/golden/android-golden";
+import { AndroidGolden, androidSnapshotModel } from "@delacour/warden-core/golden/android-golden";
+import { AndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
+import { goldenImages } from "@delacour/warden-core/golden/golden";
+import { hostDeps } from "@delacour/warden-core/host-deps";
 import {
-	androidSnapshotsGivenUp,
-	recordAndroidSnapshotLoadFailure,
-} from "@delacour/warden-core/golden/android-snapshot-pending";
-import { goldenKey, goldenName } from "@delacour/warden-core/golden/golden";
-import { androidGoldenDeps } from "@delacour/warden-core/host-deps";
-import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "@delacour/warden-core/testing/golden.testing";
+	type FakeHost,
+	goldenTesting,
+	IPHONE_17,
+	RUNTIME_BUILD,
+	RUNTIME_ID,
+} from "@delacour/warden-core/testing/golden.testing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { appHostFromContext } from "../context";
 import { scriptedUi, type TestContext, testContext } from "../testing";
@@ -17,16 +20,16 @@ import { createGoldenCommand } from "./golden";
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-const KEY = goldenKey({
+const KEY = goldenImages.key({
 	xcodeBuild: "17F113",
 	runtimeId: RUNTIME_ID,
 	runtimeBuild: RUNTIME_BUILD,
 	deviceType: IPHONE_17,
 });
-const GOLDEN = goldenName("iphone-17", KEY);
+const GOLDEN = goldenImages.name("iphone-17", KEY);
 const instant = { sleep: async () => {} };
 
-function setup(argv: string[], host: ReturnType<typeof fakeHost>): TestContext {
+function setup(argv: string[], host: FakeHost): TestContext {
 	ctx = testContext(argv, { exec: host.exec });
 	ctx.env = { ...ctx.env, WARDEN_SESSION_ID: "me" };
 	return ctx;
@@ -34,7 +37,7 @@ function setup(argv: string[], host: ReturnType<typeof fakeHost>): TestContext {
 
 describe("warden golden", () => {
 	test("ensure builds once, then reuses", async () => {
-		const host = fakeHost({ migrationPolls: 0 });
+		const host = goldenTesting.fakeHost({ migrationPolls: 0 });
 		const cmd = createGoldenCommand(instant);
 		const c = setup(["ensure", "--json"], host);
 		expect(await cmd.run(c)).toBe(0);
@@ -45,7 +48,7 @@ describe("warden golden", () => {
 	});
 
 	test("ls lists goldens only", async () => {
-		const host = fakeHost({
+		const host = goldenTesting.fakeHost({
 			sims: [
 				{ udid: "G", name: GOLDEN, state: "Shutdown" },
 				{ udid: "P", name: "warden-iphone-17-1", state: "Shutdown" },
@@ -58,7 +61,7 @@ describe("warden golden", () => {
 	});
 
 	test("ensure runs under a spinner; build progress is logged above it", async () => {
-		const host = fakeHost({ migrationPolls: 0 });
+		const host = goldenTesting.fakeHost({ migrationPolls: 0 });
 		const c = setup(["ensure"], host);
 		const ui = scriptedUi();
 		c.ui = ui;
@@ -70,7 +73,7 @@ describe("warden golden", () => {
 	});
 
 	function goldenHost() {
-		return fakeHost({
+		return goldenTesting.fakeHost({
 			sims: [
 				{ udid: "G", name: GOLDEN, state: "Shutdown" },
 				{ udid: "P", name: "warden-iphone-17-1", state: "Shutdown" },
@@ -129,10 +132,10 @@ describe("warden golden", () => {
 	});
 
 	test("unknown / missing subcommand → exit 1", async () => {
-		expect(await createGoldenCommand(instant).run(setup(["nope"], fakeHost()))).toBe(1);
+		expect(await createGoldenCommand(instant).run(setup(["nope"], goldenTesting.fakeHost()))).toBe(1);
 		expect(ctx?.stderr.join("\n")).toContain("unknown command 'nope'");
 		ctx?.cleanup();
-		expect(await createGoldenCommand(instant).run(setup([], fakeHost()))).toBe(1);
+		expect(await createGoldenCommand(instant).run(setup([], goldenTesting.fakeHost()))).toBe(1);
 	});
 });
 
@@ -170,9 +173,11 @@ describe("warden golden --platform android (16-3)", () => {
 	}
 
 	async function current(c: TestContext): Promise<string> {
-		const read = await readSnapshotInputs(androidGoldenDeps(appHostFromContext(c), owner), "Pixel_10");
+		const read = await new AndroidGolden(hostDeps.androidGoldenDeps(appHostFromContext(c), owner)).readInputs(
+			"Pixel_10"
+		);
 		if (!read.success || read.data === undefined) throw new Error("no inputs");
-		return snapshotName(androidSnapshotKey(read.data.inputs));
+		return androidSnapshotModel.name(androidSnapshotModel.key(read.data.inputs));
 	}
 
 	test("ensure reuses the AVD's current snapshot", async () => {
@@ -185,11 +190,11 @@ describe("warden golden --platform android (16-3)", () => {
 
 	test("ensure forgets the AVD's load failures, so gc builds it again (S2)", async () => {
 		const c = androidSetup(["ensure", "--platform", "android", "--json"]);
-		for (let i = 0; i < 3; i++) recordAndroidSnapshotLoadFailure(c.db, "Pixel_10", c.now());
+		for (let i = 0; i < 3; i++) new AndroidSnapshotPending(c.db).recordLoadFailure("Pixel_10", c.now());
 		plant(c, await current(c));
 		expect(await createGoldenCommand(instant).run(c)).toBe(0);
-		expect(androidSnapshotsGivenUp(c.db)).toEqual([]);
-		expect(recordAndroidSnapshotLoadFailure(c.db, "Pixel_10", c.now()).loadFailures).toBe(1);
+		expect(new AndroidSnapshotPending(c.db).givenUp()).toEqual([]);
+		expect(new AndroidSnapshotPending(c.db).recordLoadFailure("Pixel_10", c.now()).loadFailures).toBe(1);
 	});
 
 	test("ls lists warden snapshots with whether they are current", async () => {

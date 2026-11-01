@@ -55,67 +55,6 @@ export type BatchPreset = {
 	cmd: string[];
 };
 
-const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
-
-function jobsSource(preset: BatchPresetConfig, cwd: string): BatchJobsSource | undefined {
-	if (preset.jobs) return { kind: "list", jobs: preset.jobs };
-	const from = preset.jobsFrom;
-	if (from === undefined) return undefined;
-	if (typeof from !== "string") return { kind: "command", command: from.command };
-	return from === "-" ? { kind: "stdin" } : { kind: "file", path: absolute(cwd, from) };
-}
-
-/** `file:` probes made absolute against `cwd`; other probes unchanged. */
-export function readySpec(value: string, cwd: string): string {
-	return value.startsWith("file:") ? `file:${absolute(cwd, value.slice("file:".length))}` : value;
-}
-
-function resolvePreset(
-	name: string,
-	preset: BatchPresetConfig,
-	cwd: string,
-	projectRoot?: string,
-	defaultHeadless?: boolean,
-	defaultSlim?: BatchPresetConfig["slim"],
-	defaultBiometrics?: boolean
-): BatchPreset {
-	const {
-		headless: ownHeadless,
-		project: _project,
-		jobs: _jobs,
-		jobsFrom: _jobsFrom,
-		app: appOption,
-		serveReady,
-		record,
-		logs,
-		label,
-		...rest
-	} = preset;
-	const { app, installMode, resetKeychain, variant } = appOptionReader.appSwitches(appOption);
-	const jobs = jobsSource(preset, cwd);
-	const headless = ownHeadless ?? defaultHeadless;
-	const slim = preset.slim ?? defaultSlim;
-	const biometrics = preset.biometrics ?? defaultBiometrics;
-	return {
-		...rest,
-		name,
-		cwd,
-		label: label ?? name,
-		...(appOption !== undefined ? { app } : {}),
-		...(installMode !== undefined ? { installMode } : {}),
-		...(resetKeychain ? { resetKeychain } : {}),
-		...(variant !== undefined ? { variant } : {}),
-		...(projectRoot !== undefined ? { projectRoot } : {}),
-		...(serveReady !== undefined ? { serveReady: readySpec(serveReady, cwd) } : {}),
-		...(record !== undefined ? { record: absolute(cwd, record) } : {}),
-		...(logs !== undefined ? { logs: absolute(cwd, logs) } : {}),
-		...(jobs ? { jobs } : {}),
-		...(headless !== undefined ? { headless } : {}),
-		...(slim !== undefined ? { slim } : {}),
-		...(biometrics !== undefined ? { biometrics } : {}),
-	};
-}
-
 export type FindBatchPresetInput = {
 	/** the invoking cwd */
 	start: string;
@@ -126,31 +65,106 @@ export type FindBatchPresetInput = {
 	name: string;
 };
 
-/**
- * Look `name` up in the nearest warden config (walking up from `start`). `preset` is
- * undefined when there is no config or no such preset; `names` lists the presets that exist.
- */
-export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: BatchPreset; names: string[] }> {
-	const found = projectConfig.find(input.start, input.stopAt, input.env);
-	if (!found.success) return found;
-	if (!found.data) return resultFactory.ok({ names: [] });
-	const { dir, config } = found.data;
-	const batches = config.batches ?? {};
-	const names = Object.keys(batches).sort();
-	const preset = batches[input.name];
-	if (!preset) return resultFactory.ok({ names });
-	const project = config.projects?.find((p) => p.name === preset.project);
-	const projectRoot = project ? resolve(dir, project.root) : undefined;
-	return resultFactory.ok({
-		names,
-		preset: resolvePreset(
-			input.name,
-			preset,
-			projectRoot ?? dir,
-			projectRoot,
-			config.headless,
-			config.slim,
-			config.biometrics
-		),
-	});
+export class BatchPresets {
+	/** `file:` probes made absolute against `cwd`; other probes unchanged. */
+	readySpec(value: string, cwd: string): string {
+		return value.startsWith("file:") ? `file:${this.absolute(cwd, value.slice("file:".length))}` : value;
+	}
+
+	/**
+	 * Look `name` up in the nearest warden config (walking up from `start`). `preset` is
+	 * undefined when there is no config or no such preset; `names` lists the presets that exist.
+	 */
+	find(input: FindBatchPresetInput): Result<{ preset?: BatchPreset; names: string[] }> {
+		const found = projectConfig.find(input.start, input.stopAt, input.env);
+		if (!found.success) return found;
+		if (!found.data) return resultFactory.ok({ names: [] });
+		const { dir, config } = found.data;
+		const batches = config.batches ?? {};
+		const names = Object.keys(batches).sort();
+		const preset = batches[input.name];
+		if (!preset) return resultFactory.ok({ names });
+		const project = config.projects?.find((p) => p.name === preset.project);
+		const projectRoot = project ? resolve(dir, project.root) : undefined;
+		return resultFactory.ok({
+			names,
+			preset: this.resolvePreset(
+				input.name,
+				preset,
+				projectRoot ?? dir,
+				projectRoot,
+				config.headless,
+				config.slim,
+				config.biometrics
+			),
+		});
+	}
+
+	private absolute(cwd: string, path: string): string {
+		return isAbsolute(path) ? path : resolve(cwd, path);
+	}
+
+	private jobsSource(preset: BatchPresetConfig, cwd: string): BatchJobsSource | undefined {
+		if (preset.jobs) return { kind: "list", jobs: preset.jobs };
+		const from = preset.jobsFrom;
+		if (from === undefined) return undefined;
+		if (typeof from !== "string") return { kind: "command", command: from.command };
+		return from === "-" ? { kind: "stdin" } : { kind: "file", path: this.absolute(cwd, from) };
+	}
+
+	/** only the settings that are set (preset first, then the top-level default) */
+	private inherited(v: Pick<BatchPreset, "headless" | "slim" | "biometrics">): Partial<BatchPreset> {
+		return {
+			...(v.headless !== undefined ? { headless: v.headless } : {}),
+			...(v.slim !== undefined ? { slim: v.slim } : {}),
+			...(v.biometrics !== undefined ? { biometrics: v.biometrics } : {}),
+		};
+	}
+
+	private resolvePreset(
+		name: string,
+		preset: BatchPresetConfig,
+		cwd: string,
+		projectRoot?: string,
+		defaultHeadless?: boolean,
+		defaultSlim?: BatchPresetConfig["slim"],
+		defaultBiometrics?: boolean
+	): BatchPreset {
+		const {
+			headless: ownHeadless,
+			project: _project,
+			jobs: _jobs,
+			jobsFrom: _jobsFrom,
+			app: appOption,
+			serveReady,
+			record,
+			logs,
+			label,
+			...rest
+		} = preset;
+		const { app, installMode, resetKeychain, variant } = appOptionReader.appSwitches(appOption);
+		const jobs = this.jobsSource(preset, cwd);
+		return {
+			...rest,
+			name,
+			cwd,
+			label: label ?? name,
+			...(appOption !== undefined ? { app } : {}),
+			...(installMode !== undefined ? { installMode } : {}),
+			...(resetKeychain ? { resetKeychain } : {}),
+			...(variant !== undefined ? { variant } : {}),
+			...(projectRoot !== undefined ? { projectRoot } : {}),
+			...(serveReady !== undefined ? { serveReady: this.readySpec(serveReady, cwd) } : {}),
+			...(record !== undefined ? { record: this.absolute(cwd, record) } : {}),
+			...(logs !== undefined ? { logs: this.absolute(cwd, logs) } : {}),
+			...(jobs ? { jobs } : {}),
+			...this.inherited({
+				headless: ownHeadless ?? defaultHeadless,
+				slim: preset.slim ?? defaultSlim,
+				biometrics: preset.biometrics ?? defaultBiometrics,
+			}),
+		};
+	}
 }
+
+export const batchPresets = new BatchPresets();

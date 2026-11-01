@@ -26,154 +26,166 @@ type Entry = {
 };
 type Pending = Record<string, Entry>;
 
-function read(store: Store): Pending {
-	try {
-		const parsed: unknown = JSON.parse(store.getMeta(ANDROID_SNAPSHOT_PENDING_META_KEY) ?? "{}");
-		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Pending) : {};
-	} catch {
-		return {};
+/** Whether the environment is an ephemeral CI runner. Pure, so callers need no store. */
+export class CiEnvironment {
+	/** `CI` set (and not 0/false): an ephemeral runner, where a background snapshot build never pays off. */
+	active(env: Record<string, string | undefined>): boolean {
+		const ci = env.CI?.trim().toLowerCase();
+		return ci !== undefined && ci !== "" && ci !== "0" && ci !== "false";
 	}
 }
 
-function update(store: Store, change: (pending: Pending) => void): void {
-	store.transaction(() => {
-		const pending = read(store);
-		change(pending);
-		if (Object.keys(pending).length === 0) store.deleteMeta(ANDROID_SNAPSHOT_PENDING_META_KEY);
-		else store.setMeta(ANDROID_SNAPSHOT_PENDING_META_KEY, JSON.stringify(pending));
-	});
-}
+export const ciEnvironment = new CiEnvironment();
 
-const isPending = (entry: Entry | undefined): entry is Entry => entry !== undefined && entry.built !== true;
-const loadRecord = (entry: Entry | undefined): Entry =>
-	entry?.loadFailures !== undefined
-		? { loadFailures: entry.loadFailures, lastLoadFailureAt: entry.lastLoadFailureAt }
-		: {};
+/** The pending-snapshot book of one store. */
+export class AndroidSnapshotPending {
+	constructor(private readonly store: Store) {}
 
-/** A claim cold-booted `avd` for want of a snapshot (a recorded failure keeps its retry time). */
-export function markAndroidSnapshotPending(store: Store, avd: string): void {
-	if (isPending(read(store)[avd])) return;
-	update(store, (pending) => {
-		if (!isPending(pending[avd])) pending[avd] = loadRecord(pending[avd]);
-	});
-}
+	/** A claim cold-booted `avd` for want of a snapshot (a recorded failure keeps its retry time). */
+	markPending(avd: string): void {
+		if (this.isPending(this.read()[avd])) return;
+		this.update((pending) => {
+			if (!this.isPending(pending[avd])) pending[avd] = this.loadRecord(pending[avd]);
+		});
+	}
 
-/**
- * `avd` has its current snapshot now (or snapshots are off, with no `avd`: everything is dropped).
- * A load-failure record stays, so a snapshot that keeps failing to load is not rebuilt forever.
- */
-export function clearAndroidSnapshotPending(store: Store, avd?: string): void {
-	update(store, (pending) => {
-		for (const name of avd === undefined ? Object.keys(pending) : [avd]) {
-			const record = avd === undefined ? {} : loadRecord(pending[name]);
-			if (record.loadFailures !== undefined) pending[name] = { ...record, built: true };
-			else delete pending[name];
+	/**
+	 * `avd` has its current snapshot now (or snapshots are off, with no `avd`: everything is dropped).
+	 * A load-failure record stays, so a snapshot that keeps failing to load is not rebuilt forever.
+	 */
+	clear(avd?: string): void {
+		this.update((pending) => {
+			for (const name of avd === undefined ? Object.keys(pending) : [avd]) {
+				const record = avd === undefined ? {} : this.loadRecord(pending[name]);
+				if (record.loadFailures !== undefined) pending[name] = { ...record, built: true };
+				else delete pending[name];
+			}
+		});
+	}
+
+	/** A build of `avd` failed at `now`: try again after `ANDROID_SNAPSHOT_RETRY_MS`. */
+	markFailed(avd: string, now: number): void {
+		this.update((pending) => {
+			pending[avd] = { ...this.loadRecord(pending[avd]), failedAt: now };
+		});
+	}
+
+	/** A gc pass found `avd` running at `now`: auto-gc leaves it out of its due check for a while. */
+	markBusy(avd: string, now: number): void {
+		this.update((pending) => {
+			const entry = pending[avd];
+			if (this.isPending(entry)) entry.busyAt = now;
+		});
+	}
+
+	/**
+	 * A claim saw `avd`'s snapshot fail to load at `now` (it has been deleted): pending again. A failure
+	 * within `ANDROID_SNAPSHOT_RETRY_MS` of the previous one waits out the retry time (`deferred`); from
+	 * `ANDROID_SNAPSHOT_MAX_LOAD_FAILURES` on, gc no longer builds it.
+	 */
+	recordLoadFailure(avd: string, now: number): { loadFailures: number; deferred: boolean } {
+		let result = { loadFailures: 0, deferred: false };
+		this.update((pending) => {
+			const previous = pending[avd];
+			const loadFailures = (previous?.loadFailures ?? 0) + 1;
+			const last = previous?.lastLoadFailureAt;
+			const deferred = last !== undefined && now - last < ANDROID_SNAPSHOT_RETRY_MS;
+			pending[avd] = { loadFailures, lastLoadFailureAt: now, ...(deferred ? { failedAt: now } : {}) };
+			result = { loadFailures, deferred };
+		});
+		return result;
+	}
+
+	/** Forget `avd`'s load failures (it is pending again, with no retry wait, if it was pending). */
+	resetLoadFailures(avd: string): void {
+		const entry = this.read()[avd];
+		if (entry?.loadFailures === undefined && entry?.failedAt === undefined) return;
+		this.update((pending) => {
+			const current = pending[avd];
+			if (current === undefined) return;
+			if (!this.isPending(current)) delete pending[avd];
+			else pending[avd] = {};
+		});
+	}
+
+	/** A claim launched from `avd`'s snapshot and it loaded: its load-failure count starts over. Cheap when there is none. */
+	loaded(avd: string): void {
+		if (this.read()[avd]?.loadFailures === undefined) return;
+		this.update((pending) => {
+			const entry = pending[avd];
+			if (entry === undefined) return;
+			if (!this.isPending(entry)) delete pending[avd];
+			else {
+				delete entry.loadFailures;
+				delete entry.lastLoadFailureAt;
+			}
+		});
+	}
+
+	/** Pending AVDs whose snapshot failed to load too often for gc to rebuild it (`warden golden ensure` does). */
+	givenUp(): string[] {
+		return Object.entries(this.read())
+			.filter(([, entry]) => this.isPending(entry) && this.exhausted(entry))
+			.map(([avd]) => avd);
+	}
+
+	/**
+	 * AVDs a gc pass should build a snapshot of, oldest first; a recent failure waits out its retry time,
+	 * and an AVD whose snapshot failed to load `ANDROID_SNAPSHOT_MAX_LOAD_FAILURES` times is left out.
+	 */
+	pending(now: number): string[] {
+		return this.pendingEntries(now).map(([avd]) => avd);
+	}
+
+	/**
+	 * Auto-gc has a snapshot to build: an AVD a claim cold-booted for want of one, unless a gc pass found it
+	 * running within `ANDROID_SNAPSHOT_BUSY_MS` (gc's own pass still tries it). Never under `CI`.
+	 */
+	due(env: Record<string, string | undefined>, now: number): boolean {
+		return (
+			!ciEnvironment.active(env) &&
+			this.pendingEntries(now).some(([, e]) => e.busyAt === undefined || now - e.busyAt >= ANDROID_SNAPSHOT_BUSY_MS)
+		);
+	}
+
+	private read(): Pending {
+		try {
+			const parsed: unknown = JSON.parse(this.store.getMeta(ANDROID_SNAPSHOT_PENDING_META_KEY) ?? "{}");
+			return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Pending) : {};
+		} catch {
+			return {};
 		}
-	});
-}
+	}
 
-/** A build of `avd` failed at `now`: try again after `ANDROID_SNAPSHOT_RETRY_MS`. */
-export function markAndroidSnapshotFailed(store: Store, avd: string, now: number): void {
-	update(store, (pending) => {
-		pending[avd] = { ...loadRecord(pending[avd]), failedAt: now };
-	});
-}
+	private update(change: (pending: Pending) => void): void {
+		this.store.transaction(() => {
+			const pending = this.read();
+			change(pending);
+			if (Object.keys(pending).length === 0) this.store.deleteMeta(ANDROID_SNAPSHOT_PENDING_META_KEY);
+			else this.store.setMeta(ANDROID_SNAPSHOT_PENDING_META_KEY, JSON.stringify(pending));
+		});
+	}
 
-/** A gc pass found `avd` running at `now`: auto-gc leaves it out of its due check for a while. */
-export function markAndroidSnapshotBusy(store: Store, avd: string, now: number): void {
-	update(store, (pending) => {
-		const entry = pending[avd];
-		if (isPending(entry)) entry.busyAt = now;
-	});
-}
+	private isPending(entry: Entry | undefined): entry is Entry {
+		return entry !== undefined && entry.built !== true;
+	}
 
-/**
- * A claim saw `avd`'s snapshot fail to load at `now` (it has been deleted): pending again. A failure
- * within `ANDROID_SNAPSHOT_RETRY_MS` of the previous one waits out the retry time (`deferred`); from
- * `ANDROID_SNAPSHOT_MAX_LOAD_FAILURES` on, gc no longer builds it.
- */
-export function recordAndroidSnapshotLoadFailure(
-	store: Store,
-	avd: string,
-	now: number
-): { loadFailures: number; deferred: boolean } {
-	let result = { loadFailures: 0, deferred: false };
-	update(store, (pending) => {
-		const previous = pending[avd];
-		const loadFailures = (previous?.loadFailures ?? 0) + 1;
-		const last = previous?.lastLoadFailureAt;
-		const deferred = last !== undefined && now - last < ANDROID_SNAPSHOT_RETRY_MS;
-		pending[avd] = { loadFailures, lastLoadFailureAt: now, ...(deferred ? { failedAt: now } : {}) };
-		result = { loadFailures, deferred };
-	});
-	return result;
-}
+	private loadRecord(entry: Entry | undefined): Entry {
+		return entry?.loadFailures !== undefined
+			? { loadFailures: entry.loadFailures, lastLoadFailureAt: entry.lastLoadFailureAt }
+			: {};
+	}
 
-/** Forget `avd`'s load failures (it is pending again, with no retry wait, if it was pending). */
-export function resetAndroidSnapshotLoadFailures(store: Store, avd: string): void {
-	const entry = read(store)[avd];
-	if (entry?.loadFailures === undefined && entry?.failedAt === undefined) return;
-	update(store, (pending) => {
-		const current = pending[avd];
-		if (current === undefined) return;
-		if (!isPending(current)) delete pending[avd];
-		else pending[avd] = {};
-	});
-}
+	private exhausted(entry: Entry): boolean {
+		return (entry.loadFailures ?? 0) >= ANDROID_SNAPSHOT_MAX_LOAD_FAILURES;
+	}
 
-/** A claim launched from `avd`'s snapshot and it loaded: its load-failure count starts over. Cheap when there is none. */
-export function androidSnapshotLoaded(store: Store, avd: string): void {
-	if (read(store)[avd]?.loadFailures === undefined) return;
-	update(store, (pending) => {
-		const entry = pending[avd];
-		if (entry === undefined) return;
-		if (!isPending(entry)) delete pending[avd];
-		else {
-			delete entry.loadFailures;
-			delete entry.lastLoadFailureAt;
-		}
-	});
-}
-
-const givenUp = (entry: Entry) => (entry.loadFailures ?? 0) >= ANDROID_SNAPSHOT_MAX_LOAD_FAILURES;
-
-/** Pending AVDs whose snapshot failed to load too often for gc to rebuild it (`warden golden ensure` does). */
-export function androidSnapshotsGivenUp(store: Store): string[] {
-	return Object.entries(read(store))
-		.filter(([, entry]) => isPending(entry) && givenUp(entry))
-		.map(([avd]) => avd);
-}
-
-/**
- * AVDs a gc pass should build a snapshot of, oldest first; a recent failure waits out its retry time,
- * and an AVD whose snapshot failed to load `ANDROID_SNAPSHOT_MAX_LOAD_FAILURES` times is left out.
- */
-export function pendingAndroidSnapshots(store: Store, now: number): string[] {
-	return pendingEntries(store, now).map(([avd]) => avd);
-}
-
-function pendingEntries(store: Store, now: number): Array<[string, Entry]> {
-	return Object.entries(read(store)).filter(
-		([, entry]) =>
-			isPending(entry) &&
-			!givenUp(entry) &&
-			(entry.failedAt === undefined || now - entry.failedAt >= ANDROID_SNAPSHOT_RETRY_MS)
-	);
-}
-
-/** `CI` set (and not 0/false): an ephemeral runner, where a background snapshot build never pays off. */
-export function onCi(env: Record<string, string | undefined>): boolean {
-	const ci = env.CI?.trim().toLowerCase();
-	return ci !== undefined && ci !== "" && ci !== "0" && ci !== "false";
-}
-
-/**
- * Auto-gc has a snapshot to build: an AVD a claim cold-booted for want of one, unless a gc pass found it
- * running within `ANDROID_SNAPSHOT_BUSY_MS` (gc's own pass still tries it). Never under `CI`.
- */
-export function androidSnapshotsDue(store: Store, env: Record<string, string | undefined>, now: number): boolean {
-	return (
-		!onCi(env) &&
-		pendingEntries(store, now).some(([, e]) => e.busyAt === undefined || now - e.busyAt >= ANDROID_SNAPSHOT_BUSY_MS)
-	);
+	private pendingEntries(now: number): Array<[string, Entry]> {
+		return Object.entries(this.read()).filter(
+			([, entry]) =>
+				this.isPending(entry) &&
+				!this.exhausted(entry) &&
+				(entry.failedAt === undefined || now - entry.failedAt >= ANDROID_SNAPSHOT_RETRY_MS)
+		);
+	}
 }

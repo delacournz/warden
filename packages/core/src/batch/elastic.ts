@@ -12,16 +12,17 @@ export type ElasticPlan = { first: number; extra: number };
  * front and the rest in the background. Undefined when everything fits (or capacity is off, or the room
  * cannot be read): the run claims all workers at once, as without capacity.
  */
-export async function planElastic(
-	capacity: CapacityDeps | undefined,
-	platform: Platform,
-	wanted: number
-): Promise<ElasticPlan | undefined> {
-	if (!capacity || wanted < 2) return undefined;
-	const room = await new RoomCalculator(capacity).roomNow(platform);
-	if (!room.success || room.data >= wanted) return undefined;
-	const first = Math.max(1, room.data);
-	return { first, extra: wanted - first };
+export class ElasticPlanner {
+	constructor(private readonly capacity: CapacityDeps | undefined) {}
+
+	async plan(platform: Platform, wanted: number): Promise<ElasticPlan | undefined> {
+		const { capacity } = this;
+		if (!capacity || wanted < 2) return undefined;
+		const room = await new RoomCalculator(capacity).roomNow(platform);
+		if (!room.success || room.data >= wanted) return undefined;
+		const first = Math.max(1, room.data);
+		return { first, extra: wanted - first };
+	}
 }
 
 /** A worker claimed and prepared (installed, set up, warmed) after the run started. */
@@ -54,29 +55,33 @@ export type LateClaimOutcome = { joined: number; dropped: number };
  * queue is empty, the run is aborted, a claim fails (reported once), or a worker arrives after the
  * queue drained (its lease is dropped). Never throws; every claimed device is either joined or dropped.
  */
-export async function claimLateWorkers(o: LateClaimOptions): Promise<LateClaimOutcome> {
-	const outcome: LateClaimOutcome = { joined: 0, dropped: 0 };
-	const abort = () => o.signal.aborted || o.handle.pending() === 0;
-	for (let i = 0; i < o.count && !abort(); i++) {
-		const worker = o.firstWorker + outcome.joined;
-		let claimed: Awaited<ReturnType<LateClaimOptions["claim"]>>;
-		try {
-			claimed = await o.claim({ worker, leg: outcome.joined + 1, abort });
-		} catch (error) {
-			o.log(`worker ${worker + 1}: ${error instanceof Error ? error.message : String(error)}`);
-			break;
+export class LateWorkerClaimer {
+	async claim(o: LateClaimOptions): Promise<LateClaimOutcome> {
+		const outcome: LateClaimOutcome = { joined: 0, dropped: 0 };
+		const abort = () => o.signal.aborted || o.handle.pending() === 0;
+		for (let i = 0; i < o.count && !abort(); i++) {
+			const worker = o.firstWorker + outcome.joined;
+			let claimed: Awaited<ReturnType<LateClaimOptions["claim"]>>;
+			try {
+				claimed = await o.claim({ worker, leg: outcome.joined + 1, abort });
+			} catch (error) {
+				o.log(`worker ${worker + 1}: ${error instanceof Error ? error.message : String(error)}`);
+				break;
+			}
+			if (!claimed.success) {
+				if (!abort()) o.log(`worker ${worker + 1} not added: ${claimed.error}`);
+				break;
+			}
+			if (abort() || !o.handle.addWorker(claimed.data.worker)) {
+				await claimed.data.drop().catch(() => {});
+				outcome.dropped++;
+				o.log(`worker ${worker + 1} released: the queue drained before it was ready`);
+				break;
+			}
+			outcome.joined++;
 		}
-		if (!claimed.success) {
-			if (!abort()) o.log(`worker ${worker + 1} not added: ${claimed.error}`);
-			break;
-		}
-		if (abort() || !o.handle.addWorker(claimed.data.worker)) {
-			await claimed.data.drop().catch(() => {});
-			outcome.dropped++;
-			o.log(`worker ${worker + 1} released: the queue drained before it was ready`);
-			break;
-		}
-		outcome.joined++;
+		return outcome;
 	}
-	return outcome;
 }
+
+export const lateWorkerClaimer = new LateWorkerClaimer();

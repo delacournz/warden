@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { PROFILE_MARGIN_MS, type RunnerMeta, runnerCache } from "@delacour/warden-builds/ios-runner/cache";
 import { signing } from "@delacour/warden-builds/ios-runner/signing";
 import { runnerStage } from "@delacour/warden-builds/ios-runner/stage";
-import { providerFor } from "@delacour/warden-core/host-deps";
+import { hostDeps } from "@delacour/warden-core/host-deps";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Devicectl } from "@delacour/warden-providers/devicectl";
 import { timers } from "@delacour/warden-providers/health";
@@ -164,7 +164,7 @@ async function adbServerCount(ctx: CommandContext): Promise<number> {
 
 async function androidRows(ctx: CommandContext): Promise<DoctorCheck[]> {
 	const [inventory, servers] = await Promise.all([
-		providerFor("android", appHostFromContext(ctx), ownerResolver.resolve(ctx)).inventory(),
+		hostDeps.providerFor("android", appHostFromContext(ctx), ownerResolver.resolve(ctx)).inventory(),
 		adbServerCount(ctx),
 	]);
 	const phones = (inventory.success ? inventory.data : []).filter((d) => d.physical?.platform === "android");

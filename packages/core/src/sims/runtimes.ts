@@ -46,73 +46,81 @@ export type RuntimeAudit = {
 	unusedAfterPruneBytes: number;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toRuntime(entry: unknown): DiskRuntime | undefined {
-	if (!isRecord(entry)) return undefined;
-	const { identifier, runtimeIdentifier, sizeBytes } = entry;
-	if (typeof identifier !== "string" || typeof runtimeIdentifier !== "string" || typeof sizeBytes !== "number")
-		return undefined;
-	const runtime: DiskRuntime = {
-		identifier,
-		runtimeIdentifier,
-		runtime: simctlParser.shortRuntime(runtimeIdentifier),
-		version: typeof entry.version === "string" ? entry.version : "",
-		build: typeof entry.build === "string" ? entry.build : "",
-		sizeBytes,
-		state: typeof entry.state === "string" ? entry.state : "Unknown",
-		deletable: entry.deletable === true,
-	};
-	const used = typeof entry.lastUsedAt === "string" ? Date.parse(entry.lastUsedAt) : Number.NaN;
-	if (!Number.isNaN(used)) runtime.lastUsedAt = used;
-	return runtime;
-}
-
-/** `simctl runtime list -j`: an object keyed by disk image UUID. */
-export function parseRuntimeList(stdout: string): Result<DiskRuntime[], WardenError> {
-	let data: unknown;
-	try {
-		data = JSON.parse(stdout);
-	} catch {
-		return wardenErrors.err("failed", "simctl runtime list: invalid JSON");
+export class RuntimeAuditor {
+	/** `simctl runtime list -j`: an object keyed by disk image UUID. */
+	parse(stdout: string): Result<DiskRuntime[], WardenError> {
+		let data: unknown;
+		try {
+			data = JSON.parse(stdout);
+		} catch {
+			return wardenErrors.err("failed", "simctl runtime list: invalid JSON");
+		}
+		if (!this.isRecord(data)) return wardenErrors.err("failed", "simctl runtime list: expected an object");
+		return resultFactory.ok(Object.values(data).flatMap((entry) => this.toRuntime(entry) ?? []));
 	}
-	if (!isRecord(data)) return wardenErrors.err("failed", "simctl runtime list: expected an object");
-	return resultFactory.ok(Object.values(data).flatMap((entry) => toRuntime(entry) ?? []));
-}
 
-export async function listDiskRuntimes(exec: Exec): AsyncResult<DiskRuntime[]> {
-	const cmd = ["xcrun", "simctl", "runtime", "list", "-j"];
-	const result = await exec(cmd);
-	if (result.exitCode !== 0) return resultFactory.err(execErrors.format(cmd, result));
-	const runtimes = parseRuntimeList(result.stdout);
-	return runtimes.success ? runtimes : resultFactory.err(runtimes.error.message);
-}
-
-function verdictFor(runtime: DiskRuntime, users: readonly SimEntry[]): RuntimeVerdict {
-	if (users.length === 0) return runtime.deletable ? { kind: "unused" } : { kind: "protected" };
-	const allGoing = users.every((s) => s.verdict.kind === "delete");
-	return allGoing && runtime.deletable ? { kind: "unused-after-prune" } : { kind: "in-use" };
-}
-
-export function auditRuntimes(runtimes: readonly DiskRuntime[], sims: readonly SimEntry[]): RuntimeAudit {
-	const entries = runtimes.map((runtime): RuntimeAuditEntry => {
-		const users = sims.filter((s) => s.runtimeId === runtime.runtimeIdentifier);
+	audit(runtimes: readonly DiskRuntime[], sims: readonly SimEntry[]): RuntimeAudit {
+		const entries = runtimes.map((runtime): RuntimeAuditEntry => {
+			const users = sims.filter((s) => s.runtimeId === runtime.runtimeIdentifier);
+			return {
+				...runtime,
+				sims: users.length,
+				wardenSims: users.filter((s) => s.owner === "warden").length,
+				verdict: this.verdictFor(runtime, users),
+			};
+		});
+		entries.sort((a, b) => b.sizeBytes - a.sizeBytes || a.runtime.localeCompare(b.runtime));
+		const bytesOf = (kind: RuntimeVerdict["kind"]) =>
+			entries.filter((e) => e.verdict.kind === kind).reduce((s, e) => s + e.sizeBytes, 0);
 		return {
-			...runtime,
-			sims: users.length,
-			wardenSims: users.filter((s) => s.owner === "warden").length,
-			verdict: verdictFor(runtime, users),
+			entries,
+			totalBytes: entries.reduce((s, e) => s + e.sizeBytes, 0),
+			unusedBytes: bytesOf("unused"),
+			unusedAfterPruneBytes: bytesOf("unused") + bytesOf("unused-after-prune"),
 		};
-	});
-	entries.sort((a, b) => b.sizeBytes - a.sizeBytes || a.runtime.localeCompare(b.runtime));
-	const bytesOf = (kind: RuntimeVerdict["kind"]) =>
-		entries.filter((e) => e.verdict.kind === kind).reduce((s, e) => s + e.sizeBytes, 0);
-	return {
-		entries,
-		totalBytes: entries.reduce((s, e) => s + e.sizeBytes, 0),
-		unusedBytes: bytesOf("unused"),
-		unusedAfterPruneBytes: bytesOf("unused") + bytesOf("unused-after-prune"),
-	};
+	}
+
+	private isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === "object" && value !== null && !Array.isArray(value);
+	}
+
+	private toRuntime(entry: unknown): DiskRuntime | undefined {
+		if (!this.isRecord(entry)) return undefined;
+		const { identifier, runtimeIdentifier, sizeBytes } = entry;
+		if (typeof identifier !== "string" || typeof runtimeIdentifier !== "string" || typeof sizeBytes !== "number")
+			return undefined;
+		const runtime: DiskRuntime = {
+			identifier,
+			runtimeIdentifier,
+			runtime: simctlParser.shortRuntime(runtimeIdentifier),
+			version: typeof entry.version === "string" ? entry.version : "",
+			build: typeof entry.build === "string" ? entry.build : "",
+			sizeBytes,
+			state: typeof entry.state === "string" ? entry.state : "Unknown",
+			deletable: entry.deletable === true,
+		};
+		const used = typeof entry.lastUsedAt === "string" ? Date.parse(entry.lastUsedAt) : Number.NaN;
+		if (!Number.isNaN(used)) runtime.lastUsedAt = used;
+		return runtime;
+	}
+
+	private verdictFor(runtime: DiskRuntime, users: readonly SimEntry[]): RuntimeVerdict {
+		if (users.length === 0) return runtime.deletable ? { kind: "unused" } : { kind: "protected" };
+		const allGoing = users.every((s) => s.verdict.kind === "delete");
+		return allGoing && runtime.deletable ? { kind: "unused-after-prune" } : { kind: "in-use" };
+	}
+}
+
+export const runtimeAuditor = new RuntimeAuditor();
+
+export class DiskRuntimeLister {
+	constructor(private readonly exec: Exec) {}
+
+	async list(): AsyncResult<DiskRuntime[]> {
+		const cmd = ["xcrun", "simctl", "runtime", "list", "-j"];
+		const result = await this.exec(cmd);
+		if (result.exitCode !== 0) return resultFactory.err(execErrors.format(cmd, result));
+		const runtimes = runtimeAuditor.parse(result.stdout);
+		return runtimes.success ? runtimes : resultFactory.err(runtimes.error.message);
+	}
 }

@@ -1,4 +1,4 @@
-import { providerFor } from "@delacour/warden-core/host-deps";
+import { hostDeps } from "@delacour/warden-core/host-deps";
 import { Devicectl } from "@delacour/warden-providers/devicectl";
 import { timers } from "@delacour/warden-providers/health";
 import {
@@ -23,10 +23,12 @@ type Phone = { id: string; name: string };
  */
 async function phonesToClaim(ctx: CommandContext, owner: Owner, request: DeviceRequest): Promise<Phone[]> {
 	const ids = request.physical?.ids;
-	const inventory = await providerFor("ios", appHostFromContext(ctx), owner, {
-		physical: true,
-		...(ids ? { namedPhysical: ids } : {}),
-	}).inventory();
+	const inventory = await hostDeps
+		.providerFor("ios", appHostFromContext(ctx), owner, {
+			physical: true,
+			...(ids ? { namedPhysical: ids } : {}),
+		})
+		.inventory();
 	if (!inventory.success) return [];
 	const ready = inventory.data.filter((d) => d.platform === "ios" && leaseModel.isPhysicalReady(d));
 	if (ids) return ready.filter((d) => ids.includes(d.id)).map(({ id, name }) => ({ id, name }));

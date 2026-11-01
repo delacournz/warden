@@ -26,127 +26,134 @@ export type FakeHost = {
 	exec: Exec;
 };
 
-const ok = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
-const fail = (stderr: string): ExecResult => ({ exitCode: 1, stdout: "", stderr });
-
 type Handler = (args: string[]) => ExecResult;
 
-function simctlDevicesJson(host: FakeHost): string {
-	return JSON.stringify({
-		devices: {
-			[RUNTIME_ID]: host.sims.map((s) => ({
-				udid: s.udid,
-				name: s.name,
-				state: s.state,
-				isAvailable: s.isAvailable ?? true,
-				deviceTypeIdentifier: IPHONE_17,
-			})),
-		},
-	});
-}
-
-/** `xcrun simctl <verb>` handlers over the host's sim list. */
-function simctlVerbs(host: FakeHost, nextId: () => number): Record<string, Handler> {
-	const find = (udid: string | undefined) => host.sims.find((s) => s.udid === udid);
-	const setState = (state: FakeSim["state"]) => (args: string[]) => {
-		const sim = find(args[0]);
-		if (sim) sim.state = state;
-		return ok();
-	};
-	return {
-		list: (args) => {
-			if (args[0] === "devicetypes") return ok(SIMCTL_DEVICETYPES_JSON);
-			if (args[0] === "runtimes") return ok(SIMCTL_RUNTIMES_JSON);
-			return ok(simctlDevicesJson(host));
-		},
-		create: (args) => {
-			const udid = `NEW-${nextId()}`;
-			host.sims.push({ udid, name: args[0] ?? "", state: "Shutdown" });
-			return ok(`${udid}\n`);
-		},
-		clone: (args) => {
-			const src = find(args[0]);
-			if (!src) return fail("Invalid device");
-			if (src.state === "Booted") return fail("Unable to clone device in current state: Booted");
-			const udid = `CLONE-${nextId()}`;
-			host.sims.push({ udid, name: args[1] ?? "", state: "Shutdown" });
-			return ok(`${udid}\n`);
-		},
-		boot: setState("Booted"),
-		shutdown: setState("Shutdown"),
-		bootstatus: () => ok(),
-		spawn: () => ok(),
-		rename: (args) => {
-			const sim = find(args[0]);
-			if (sim) sim.name = args[1] ?? sim.name;
-			return ok();
-		},
-		delete: (args) => {
-			host.sims = host.sims.filter((s) => s.udid !== args[0]);
-			return ok();
-		},
-	};
-}
-
-/** `xcodebuild`, `xcode-select`, `plutil` (Xcode build, migration record), `launchctl` + `ps` (CPU) handlers. */
-/** `plutil -extract <key> raw -o - …/version.plist`: the Xcode build/version, or a failure when the plist is unreadable. */
-function xcodeVersionPlist(host: FakeHost, args: string[]): ReturnType<typeof ok> | undefined {
-	const answers: Record<string, string> = { ProductBuildVersion: "17F113\n", CFBundleShortVersionString: "26.6\n" };
-	const key = Object.keys(answers).find((k) => args.includes(k));
-	if (!key) return undefined;
-	const onPlist = args.at(-1) === "/Applications/Xcode.app/Contents/version.plist";
-	return host.xcodePlist && onPlist ? ok(answers[key] ?? "") : fail("Could not extract value");
-}
-
-function hostTools(host: FakeHost): Record<string, Handler> {
-	const polls = new Map<string, number>();
-	let cpuIndex = 0;
-	return {
-		xcodebuild: () => ok("Xcode 26.6\nBuild version 17F113\n"),
-		"xcode-select": () => ok("/Applications/Xcode.app/Contents/Developer\n"),
-		plutil: (args) => {
-			const versionPlist = xcodeVersionPlist(host, args);
-			if (versionPlist) return versionPlist;
-			const udid = /Devices\/([^/]+)\/data/.exec(args[args.length - 1] ?? "")?.[1] ?? "";
-			const seen = (polls.get(udid) ?? 0) + 1;
-			polls.set(udid, seen);
-			return seen > host.migrationPolls
-				? ok(JSON.stringify({ DMLastMigrationResults: { buildVersion: RUNTIME_BUILD, success: true } }))
-				: ok(JSON.stringify({ DMUserDataDisposition: 1 }));
-		},
-		launchctl: () =>
-			ok(
-				host.sims
-					.filter((s) => s.state === "Booted")
-					.map((s, i) => `${900 + i}\t0\tcom.apple.CoreSimulator.SimDevice.${s.udid}`)
-					.join("\n")
-			),
-		ps: () => ok(`  900 ${host.cpu[Math.min(cpuIndex++, host.cpu.length - 1)] ?? 0}\n    1 99\n`),
-	};
-}
-
 /** Stateful fake of `xcrun simctl`, `xcodebuild`, `plutil`, `launchctl`, `ps` for golden tests. */
-export function fakeHost(
-	init: Partial<Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist">> = {}
-): FakeHost {
-	let next = 1;
-	const host: FakeHost = {
-		sims: init.sims ?? [],
-		calls: [],
-		migrationPolls: init.migrationPolls ?? 1,
-		cpu: init.cpu ?? [10],
-		xcodePlist: init.xcodePlist ?? true,
-		exec: async (cmd) => {
-			host.calls.push([...cmd]);
-			const [bin = "", ...rest] = cmd;
-			if (bin === "xcrun" && rest[0] === "simctl") {
-				const [, verb = "", ...args] = rest;
-				return verbs[verb]?.(args) ?? fail(`unexpected simctl ${verb}`);
-			}
-			return tools[bin]?.(rest) ?? fail(`unexpected ${cmd.join(" ")}`);
-		},
-	};
-	const verbs = simctlVerbs(host, () => next++);
-	const tools = hostTools(host);
-	return host;
+export class GoldenTesting {
+	fakeHost(init: Partial<Pick<FakeHost, "sims" | "migrationPolls" | "cpu" | "xcodePlist">> = {}): FakeHost {
+		let next = 1;
+		const host: FakeHost = {
+			sims: init.sims ?? [],
+			calls: [],
+			migrationPolls: init.migrationPolls ?? 1,
+			cpu: init.cpu ?? [10],
+			xcodePlist: init.xcodePlist ?? true,
+			exec: async (cmd) => {
+				host.calls.push([...cmd]);
+				const [bin = "", ...rest] = cmd;
+				if (bin === "xcrun" && rest[0] === "simctl") {
+					const [, verb = "", ...args] = rest;
+					return verbs[verb]?.(args) ?? this.fail(`unexpected simctl ${verb}`);
+				}
+				return tools[bin]?.(rest) ?? this.fail(`unexpected ${cmd.join(" ")}`);
+			},
+		};
+		const verbs = this.simctlVerbs(host, () => next++);
+		const tools = this.hostTools(host);
+		return host;
+	}
+
+	private ok(stdout = ""): ExecResult {
+		return { exitCode: 0, stdout, stderr: "" };
+	}
+
+	private fail(stderr: string): ExecResult {
+		return { exitCode: 1, stdout: "", stderr };
+	}
+
+	private simctlDevicesJson(host: FakeHost): string {
+		return JSON.stringify({
+			devices: {
+				[RUNTIME_ID]: host.sims.map((s) => ({
+					udid: s.udid,
+					name: s.name,
+					state: s.state,
+					isAvailable: s.isAvailable ?? true,
+					deviceTypeIdentifier: IPHONE_17,
+				})),
+			},
+		});
+	}
+
+	/** `xcrun simctl <verb>` handlers over the host's sim list. */
+	private simctlVerbs(host: FakeHost, nextId: () => number): Record<string, Handler> {
+		const find = (udid: string | undefined) => host.sims.find((s) => s.udid === udid);
+		const setState = (state: FakeSim["state"]) => (args: string[]) => {
+			const sim = find(args[0]);
+			if (sim) sim.state = state;
+			return this.ok();
+		};
+		return {
+			list: (args) => {
+				if (args[0] === "devicetypes") return this.ok(SIMCTL_DEVICETYPES_JSON);
+				if (args[0] === "runtimes") return this.ok(SIMCTL_RUNTIMES_JSON);
+				return this.ok(this.simctlDevicesJson(host));
+			},
+			create: (args) => {
+				const udid = `NEW-${nextId()}`;
+				host.sims.push({ udid, name: args[0] ?? "", state: "Shutdown" });
+				return this.ok(`${udid}\n`);
+			},
+			clone: (args) => {
+				const src = find(args[0]);
+				if (!src) return this.fail("Invalid device");
+				if (src.state === "Booted") return this.fail("Unable to clone device in current state: Booted");
+				const udid = `CLONE-${nextId()}`;
+				host.sims.push({ udid, name: args[1] ?? "", state: "Shutdown" });
+				return this.ok(`${udid}\n`);
+			},
+			boot: setState("Booted"),
+			shutdown: setState("Shutdown"),
+			bootstatus: () => this.ok(),
+			spawn: () => this.ok(),
+			rename: (args) => {
+				const sim = find(args[0]);
+				if (sim) sim.name = args[1] ?? sim.name;
+				return this.ok();
+			},
+			delete: (args) => {
+				host.sims = host.sims.filter((s) => s.udid !== args[0]);
+				return this.ok();
+			},
+		};
+	}
+
+	/** `plutil -extract <key> raw -o - …/version.plist`: the Xcode build/version, or a failure when the plist is unreadable. */
+	private xcodeVersionPlist(host: FakeHost, args: string[]): ExecResult | undefined {
+		const answers: Record<string, string> = { ProductBuildVersion: "17F113\n", CFBundleShortVersionString: "26.6\n" };
+		const key = Object.keys(answers).find((k) => args.includes(k));
+		if (!key) return undefined;
+		const onPlist = args.at(-1) === "/Applications/Xcode.app/Contents/version.plist";
+		return host.xcodePlist && onPlist ? this.ok(answers[key] ?? "") : this.fail("Could not extract value");
+	}
+
+	/** `xcodebuild`, `xcode-select`, `plutil` (Xcode build, migration record), `launchctl` + `ps` (CPU) handlers. */
+	private hostTools(host: FakeHost): Record<string, Handler> {
+		const polls = new Map<string, number>();
+		let cpuIndex = 0;
+		return {
+			xcodebuild: () => this.ok("Xcode 26.6\nBuild version 17F113\n"),
+			"xcode-select": () => this.ok("/Applications/Xcode.app/Contents/Developer\n"),
+			plutil: (args) => {
+				const versionPlist = this.xcodeVersionPlist(host, args);
+				if (versionPlist) return versionPlist;
+				const udid = /Devices\/([^/]+)\/data/.exec(args[args.length - 1] ?? "")?.[1] ?? "";
+				const seen = (polls.get(udid) ?? 0) + 1;
+				polls.set(udid, seen);
+				return seen > host.migrationPolls
+					? this.ok(JSON.stringify({ DMLastMigrationResults: { buildVersion: RUNTIME_BUILD, success: true } }))
+					: this.ok(JSON.stringify({ DMUserDataDisposition: 1 }));
+			},
+			launchctl: () =>
+				this.ok(
+					host.sims
+						.filter((s) => s.state === "Booted")
+						.map((s, i) => `${900 + i}\t0\tcom.apple.CoreSimulator.SimDevice.${s.udid}`)
+						.join("\n")
+				),
+			ps: () => this.ok(`  900 ${host.cpu[Math.min(cpuIndex++, host.cpu.length - 1)] ?? 0}\n    1 99\n`),
+		};
+	}
 }
+
+export const goldenTesting = new GoldenTesting();

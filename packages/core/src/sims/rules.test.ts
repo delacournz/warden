@@ -2,16 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
 import type { DeviceRecord } from "@delacour/warden-store/store";
 import type { Lease, Owner } from "@delacour/warden-store/types";
-import {
-	canDelete,
-	canPrune,
-	compareRuntimes,
-	describeReasons,
-	isSuggested,
-	judgeSims,
-	type RulesInput,
-	type SimEntry,
-} from "./rules";
+import { type RulesInput, type SimEntry, simRules } from "./rules";
 
 const DAY = 86_400_000;
 const NOW = 100 * DAY;
@@ -65,7 +56,7 @@ function input(over: Partial<RulesInput>): RulesInput {
 	};
 }
 
-const judge = (over: Partial<RulesInput>) => Object.fromEntries(judgeSims(input(over)).map((e) => [e.udid, e]));
+const judge = (over: Partial<RulesInput>) => Object.fromEntries(simRules.judge(input(over)).map((e) => [e.udid, e]));
 const entry = (byId: Record<string, SimEntry>, id: string): SimEntry => {
 	const e = byId[id];
 	if (!e) throw new Error(`no ${id}`);
@@ -253,7 +244,7 @@ describe("eligibility", () => {
 	test("prune: warden only, no blockers, a reason", () => {
 		expect(
 			Object.values(j)
-				.filter(canPrune)
+				.filter(simRules.canPrune)
 				.map((e) => e.udid)
 		).toEqual(["W"]);
 	});
@@ -261,7 +252,7 @@ describe("eligibility", () => {
 	test("delete: any owner the user picks, except leased and goldens", () => {
 		expect(
 			Object.values(j)
-				.filter(canDelete)
+				.filter(simRules.canDelete)
 				.map((e) => e.udid)
 		).toEqual(["W", "WB", "F", "FB"]);
 	});
@@ -269,7 +260,7 @@ describe("eligibility", () => {
 	test("suggested (pre-ticked): deletable, a reason, not booted", () => {
 		expect(
 			Object.values(j)
-				.filter(isSuggested)
+				.filter(simRules.isSuggested)
 				.map((e) => e.udid)
 		).toEqual(["W", "F"]);
 	});
@@ -289,7 +280,7 @@ describe("eligibility", () => {
 describe("describeReasons", () => {
 	test("reads like a hint", () => {
 		expect(
-			describeReasons([
+			simRules.describeReasons([
 				{ kind: "unavailable-runtime" },
 				{ kind: "orphan" },
 				{ kind: "idle", sinceMs: 9 * DAY },
@@ -304,13 +295,13 @@ describe("describeReasons", () => {
 	});
 
 	test("sub-day ages use the short duration", () => {
-		expect(describeReasons([{ kind: "idle", sinceMs: 90 * 60_000 }])).toBe("warden sim unused 1h30m");
+		expect(simRules.describeReasons([{ kind: "idle", sinceMs: 90 * 60_000 }])).toBe("warden sim unused 1h30m");
 	});
 });
 
 describe("compareRuntimes", () => {
 	test("orders by numeric version, not string", () => {
-		expect(["iOS-9-0", "iOS-26-5", "iOS-18-6", "iOS-26-10"].sort(compareRuntimes)).toEqual([
+		expect(["iOS-9-0", "iOS-26-5", "iOS-18-6", "iOS-26-10"].sort(simRules.compareRuntimes)).toEqual([
 			"iOS-9-0",
 			"iOS-18-6",
 			"iOS-26-5",

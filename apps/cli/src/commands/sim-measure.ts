@@ -1,4 +1,4 @@
-import { measureSims, type SimMeasurement } from "@delacour/warden-core/sims/slim.measure";
+import { SimMeasure, type SimMeasurement } from "@delacour/warden-core/sims/slim.measure";
 import { simctlParser } from "@delacour/warden-providers/ios";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -42,7 +42,7 @@ async function measure(ctx: CommandContext, udid: string | undefined, opts: Meas
 	const targets = udid === undefined ? await bootedUdids(ctx) : resultFactory.ok([udid]);
 	if (!targets.success) return fail(targets.error);
 	if (targets.data.length === 0) return fail("no booted simulator");
-	const results = await measureSims(ctx.exec, targets.data);
+	const results = await new SimMeasure(ctx.exec).sims(targets.data);
 	const reports: MeasureReport[] = targets.data.map((id) => {
 		const res = results.get(id);
 		if (res?.success) return { ...res.data, footprintMb: toMb(res.data.footprintBytes) };

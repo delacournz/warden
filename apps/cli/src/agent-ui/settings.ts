@@ -9,7 +9,7 @@ import type {
 	PermissionState,
 } from "@delacour/warden-config/conditions.types";
 import { textSizes } from "@delacour/warden-config/text-size";
-import { clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
+import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { deviceInfo, fail, recordOf, resolveDeps, withPort } from "./conditions";
@@ -47,14 +47,14 @@ function save<A extends keyof ConditionValues>(
 	area: A,
 	value: ConditionValues[A]
 ): Result<undefined, UiError> {
-	const saved = recordCondition(ctx.store(), device.lease.id, area, value, ctx.now());
+	const saved = leaseConditions.record(ctx.store(), device.lease.id, area, value, ctx.now());
 	return saved.success
 		? resultFactory.ok(undefined)
 		: fail("failed", `could not record the ${area} condition: ${saved.error}`);
 }
 
 function forget(ctx: CommandContext, device: UiDevice, area: ConditionRecord["area"]): void {
-	clearCondition(ctx.store(), device.lease.id, area);
+	leaseConditions.clear(ctx.store(), device.lease.id, area);
 }
 
 const success = (

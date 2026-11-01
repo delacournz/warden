@@ -3,17 +3,11 @@ import { mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { type Exec, type ExecResult, processExec } from "@delacour/warden-runtime/exec";
-import { graphOf, makeSuiteRepo } from "../testing/fixture.testing";
-import { findSuite } from "./affected";
-import { reachable, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
-import {
-	compiledBinary,
-	GRAPH_WORKER_SUBCOMMAND,
-	graphEntries,
-	type LoadGraphOptions,
-	loadImportGraph,
-} from "./graph-process";
-import { buildGraphDoc } from "./graph-worker";
+import { fixtureRepos } from "../testing/fixture.testing";
+import { affectedService } from "./affected";
+import { importGraphs, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
+import { GRAPH_WORKER_SUBCOMMAND, graphLoader, type LoadGraphOptions } from "./graph-process";
+import { graphWorker } from "./graph-worker";
 
 let dir: string;
 let cacheDir: string;
@@ -27,7 +21,7 @@ const counting: Exec = (cmd, opts) => {
 };
 
 beforeEach(async () => {
-	({ dir, write } = await makeSuiteRepo());
+	({ dir, write } = await fixtureRepos.createSuite());
 	cacheDir = mkdtempSync(join(tmpdir(), "warden-graph-cache-"));
 	spawns = [];
 });
@@ -40,7 +34,7 @@ const chats = () => join(dir, "src/app/(app)/chats.tsx");
 const rel = (files: Iterable<string>) => [...files].map((f) => relative(dir, f)).sort();
 
 const loadResult = (extra: Partial<LoadGraphOptions> = {}) =>
-	loadImportGraph({
+	graphLoader.load({
 		exec: counting,
 		platform: "ios",
 		repoRoot: dir,
@@ -51,7 +45,7 @@ const loadResult = (extra: Partial<LoadGraphOptions> = {}) =>
 
 /** `loadImportGraph`, failing the test when it is an error. */
 async function loaded(options: LoadGraphOptions) {
-	const res = await loadImportGraph(options);
+	const res = await graphLoader.load(options);
 	if (!res.success) throw new Error(res.error);
 	return res.data;
 }
@@ -71,9 +65,9 @@ describe("loadImportGraph", () => {
 		expect(loaded.warning).toBeUndefined();
 		expect(spawns).toHaveLength(1);
 		expect(spawns[0]?.[1]).toEndWith("graph-worker.ts");
-		const direct = await graphOf({ platform: "ios", repoRoot: dir });
-		const want = reachable([chats()], direct.imports);
-		const got = reachable([chats()], loaded.graph.imports);
+		const direct = await fixtureRepos.graphOf({ platform: "ios", repoRoot: dir });
+		const want = importGraphs.reachable([chats()], direct.imports);
+		const got = importGraphs.reachable([chats()], loaded.graph.imports);
 		expect(rel(got.keys())).toEqual(rel(want.keys()));
 		expect([...got]).toEqual([...want]);
 	});
@@ -84,7 +78,7 @@ describe("loadImportGraph", () => {
 		const again = await load();
 		expect(again.via).toBe("snapshot");
 		expect(spawns).toHaveLength(1);
-		expect(rel(reachable([chats()], again.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
+		expect(rel(importGraphs.reachable([chats()], again.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
 		expect(readdirSync(cacheDir).filter((f) => /^[0-9a-f]{40}-[0-9a-f]{16}\.json$/.test(f))).toHaveLength(1);
 	});
 
@@ -94,12 +88,14 @@ describe("loadImportGraph", () => {
 		const edited = await load();
 		expect(edited.via).toBe("process");
 		expect(spawns).toHaveLength(2);
-		expect(rel(reachable([chats()], edited.graph.imports).keys())).not.toContain("packages/ui/src/button.tsx");
+		expect(rel(importGraphs.reachable([chats()], edited.graph.imports).keys())).not.toContain(
+			"packages/ui/src/button.tsx"
+		);
 		expect((await load()).via).toBe("snapshot");
 		write("src/chat/lazy.tsx", 'import "@x/ui";\n');
 		const again = await load();
 		expect(again.via).toBe("process");
-		expect(rel(reachable([chats()], again.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
+		expect(rel(importGraphs.reachable([chats()], again.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
 		expect(spawns).toHaveLength(3);
 	});
 
@@ -107,8 +103,8 @@ describe("loadImportGraph", () => {
 		const ios = await load();
 		const android = await load({ platform: "android" });
 		expect(android.via).toBe("process");
-		expect(rel(reachable([chats()], ios.graph.imports).keys())).toContain("src/chat/row.ios.tsx");
-		expect(rel(reachable([chats()], android.graph.imports).keys())).toContain("src/chat/android-only.tsx");
+		expect(rel(importGraphs.reachable([chats()], ios.graph.imports).keys())).toContain("src/chat/row.ios.tsx");
+		expect(rel(importGraphs.reachable([chats()], android.graph.imports).keys())).toContain("src/chat/android-only.tsx");
 		expect((await load({ platform: "android" })).via).toBe("snapshot");
 		expect(spawns).toHaveLength(2);
 	});
@@ -134,7 +130,7 @@ describe("loadImportGraph", () => {
 		expect(noScript.via).toBe("in-process");
 		expect(noScript.warning).toBeUndefined();
 		expect(spawns).toHaveLength(0);
-		expect(rel(reachable([chats()], noBun.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
+		expect(rel(importGraphs.reachable([chats()], noBun.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
 	});
 
 	test("a worker with no usable typescript is that error, not an in-process walk (cli-size-R5)", async () => {
@@ -186,7 +182,7 @@ describe("loadImportGraph", () => {
 		expect(junk.via).toBe("in-process");
 		expect(junk.warning).toContain("printed no import graph");
 		expect(readdirSync(cacheDir)).toEqual([]);
-		expect(rel(reachable([chats()], junk.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
+		expect(rel(importGraphs.reachable([chats()], junk.graph.imports).keys())).toContain("packages/ui/src/button.tsx");
 	});
 
 	test("outside a git repo the walker still runs, just without a snapshot", async () => {
@@ -215,13 +211,13 @@ describe("loadImportGraph", () => {
 
 describe("compiledBinary", () => {
 	test("a Bun-compiled entry is embedded under /$bunfs/ (B:/~BUN/ on Windows): the binary is the exec path", () => {
-		expect(compiledBinary("/$bunfs/root/warden", "/usr/local/bin/warden")).toBe("/usr/local/bin/warden");
-		expect(compiledBinary("B:/~BUN/root/warden.exe", "C:\\warden.exe")).toBe("C:\\warden.exe");
+		expect(graphLoader.compiledBinary("/$bunfs/root/warden", "/usr/local/bin/warden")).toBe("/usr/local/bin/warden");
+		expect(graphLoader.compiledBinary("B:/~BUN/root/warden.exe", "C:\\warden.exe")).toBe("C:\\warden.exe");
 	});
 
 	test("a run from source is not compiled, and neither is this test process", () => {
-		expect(compiledBinary("/repo/apps/cli/src/cli.ts", "/usr/local/bin/bun")).toBeUndefined();
-		expect(compiledBinary()).toBeUndefined();
+		expect(graphLoader.compiledBinary("/repo/apps/cli/src/cli.ts", "/usr/local/bin/bun")).toBeUndefined();
+		expect(graphLoader.compiledBinary()).toBeUndefined();
 	});
 });
 
@@ -233,7 +229,7 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 	const asBinary: Exec = async (cmd, opts) => {
 		if (cmd[0] !== SELF) return counting(cmd, opts);
 		selfCalls.push([...cmd]);
-		const built = await buildGraphDoc(JSON.parse(cmd[2] ?? ""));
+		const built = await graphWorker.build(JSON.parse(cmd[2] ?? ""));
 		return built.success ? done(JSON.stringify(built.data)) : done("", TYPESCRIPT_UNUSABLE_EXIT, built.error);
 	};
 	beforeEach(() => {
@@ -250,8 +246,10 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 		expect(selfCalls[0]?.slice(0, 2)).toEqual([SELF, GRAPH_WORKER_SUBCOMMAND]);
 		expect(JSON.parse(selfCalls[0]?.[2] ?? "")).toMatchObject({ platform: "ios", repoRoot: dir, entries: [chats()] });
 		expect(spawns).toHaveLength(0);
-		const direct = await graphOf({ platform: "ios", repoRoot: dir });
-		expect([...reachable([chats()], loaded.graph.imports)]).toEqual([...reachable([chats()], direct.imports)]);
+		const direct = await fixtureRepos.graphOf({ platform: "ios", repoRoot: dir });
+		expect([...importGraphs.reachable([chats()], loaded.graph.imports)]).toEqual([
+			...importGraphs.reachable([chats()], direct.imports),
+		]);
 	});
 
 	test("the subcommand is `__affected-graph`", () => {
@@ -314,29 +312,29 @@ describe("loadImportGraph in a compiled binary (no worker script on disk)", () =
 
 describe("graphEntries", () => {
 	test("every spec's entries that exist, then the router layouts above them", async () => {
-		const suite = await findSuite(processExec.run, dir, undefined, undefined, {});
+		const suite = await affectedService.findSuite(processExec.run, dir, undefined, undefined, {});
 		if (!suite.success) throw new Error(suite.error.message);
 		const config = { ...suite.data.config, routerRoot: "src/app" };
-		expect(rel(graphEntries(config, dir, "ios"))).toEqual([
+		expect(rel(graphLoader.entries(config, dir, "ios"))).toEqual([
 			"src/app/(app)/_layout.tsx",
 			"src/app/(app)/chats.tsx",
 			"src/app/(app)/settings.tsx",
 			"src/app/_layout.tsx",
 		]);
-		expect(rel(graphEntries(suite.data.config, dir, "ios"))).toEqual([
+		expect(rel(graphLoader.entries(suite.data.config, dir, "ios"))).toEqual([
 			"src/app/(app)/chats.tsx",
 			"src/app/(app)/settings.tsx",
 		]);
 	});
 
 	test("an entry that does not exist is left out", async () => {
-		const suite = await findSuite(processExec.run, dir, undefined, undefined, {});
+		const suite = await affectedService.findSuite(processExec.run, dir, undefined, undefined, {});
 		if (!suite.success) throw new Error(suite.error.message);
 		const specs = {
 			...suite.data.config.specs,
 			ghost: { ...suite.data.config.specs.chats, entries: ["src/ghost.tsx"] },
 		};
-		expect(rel(graphEntries({ ...suite.data.config, specs } as typeof suite.data.config, dir, "ios"))).toEqual([
+		expect(rel(graphLoader.entries({ ...suite.data.config, specs } as typeof suite.data.config, dir, "ios"))).toEqual([
 			"src/app/(app)/chats.tsx",
 			"src/app/(app)/settings.tsx",
 		]);

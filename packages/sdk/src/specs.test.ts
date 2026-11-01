@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
+import { fixtureRepos } from "@delacour/warden-core/affected/fixture.testing";
 import { createWardenClient } from "./client";
 import { isWardenError } from "./errors";
 import { e2eArgs, resolveCliCommand } from "./specs";
@@ -10,7 +10,7 @@ import type { CliOutput, SpecsDeps } from "./specs.types";
 let dir: string;
 
 beforeEach(async () => {
-	({ dir } = await makeSuiteRepo());
+	({ dir } = await fixtureRepos.createSuite());
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 

@@ -245,8 +245,8 @@ async function leaseCandidate(
 	const notReady = phone.kind === "phone" ? phoneStateError(candidate.id, phone.adbState) : undefined;
 	if (notReady) return fail(notReady);
 	if (claim && (action === "reclaimed" || action === "leased")) {
-		const { undoOrphansWith } = await import("@delacour/warden-core/host-deps");
-		const report = await undoOrphansWith(
+		const { hostDeps } = await import("@delacour/warden-core/host-deps");
+		const report = await hostDeps.undoOrphansWith(
 			ctx.store(),
 			{ exec: ctx.exec, env: ctx.env, now: ctx.now },
 			{ platform: platform.data, id: candidate.id }

@@ -21,7 +21,7 @@ import {
 	DEFAULT_READY_TIMEOUT_MS,
 } from "@delacour/warden-config/config.defaults";
 import { durationParser } from "@delacour/warden-config/duration";
-import { providerFor } from "@delacour/warden-core/host-deps";
+import { hostDeps } from "@delacour/warden-core/host-deps";
 import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
 import { ReleasedDeviceShutdown } from "@delacour/warden-leasing/device-shutdown";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
@@ -221,7 +221,7 @@ async function bootHeldDevice(
 	platform: Platform,
 	deviceId: string
 ): AsyncResult<void> {
-	const provider = providerFor(platform, appHostFromContext(ctx), owner);
+	const provider = hostDeps.providerFor(platform, appHostFromContext(ctx), owner);
 	const inventory = await provider.inventory();
 	// only a device known to be off is booted; anything else goes on as before (the install reports it)
 	const device = inventory.success ? inventory.data.find((d) => d.id === deviceId) : undefined;
@@ -589,7 +589,7 @@ async function restartDevice(
 	log: (line: string) => void
 ): AsyncResult<void> {
 	const { deviceId } = r.session;
-	const provider = providerFor(r.platform, appHostFromContext(ctx), r.owner);
+	const provider = hostDeps.providerFor(r.platform, appHostFromContext(ctx), r.owner);
 	log(`shutting down ${deviceId}`);
 	const down = await provider.shutdown(deviceId);
 	if (!down.success) return wardenErrors.toText(down);

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
+import { fixtureRepos } from "@delacour/warden-core/testing/fixture.testing";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import { processExec } from "@delacour/warden-runtime/exec";
@@ -73,7 +73,7 @@ type Rig = {
 
 /** A session over a FakeDriver in a repo with an `e2e.mobile` suite, the real journal and codegen, and a faked spec run. */
 async function rig(options: { withVerify?: boolean } = {}): Promise<Rig> {
-	const repo = await makeSuiteRepo();
+	const repo = await fixtureRepos.createSuite();
 	const home = join(repo.dir, ".home");
 	cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
 	const driver = new FakeDriver({ screens: [SCREEN] });

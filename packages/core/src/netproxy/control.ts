@@ -59,55 +59,60 @@ export type ControlApi = {
 	shutdown(): void;
 };
 
-/** Loopback HTTP control channel: `GET /status`, `PUT /conditions`, `POST /shutdown`; token-guarded. */
-export function serveControl(api: ControlApi, token: string, host: string) {
-	return Bun.serve({
-		hostname: host,
-		port: 0,
-		async fetch(req) {
-			if (req.headers.get("x-warden-token") !== token) return new Response("forbidden", { status: 403 });
-			const { pathname } = new URL(req.url);
-			if (req.method === "GET" && pathname === "/status") return Response.json(api.status());
-			if (req.method === "PUT" && pathname === "/conditions") {
-				const body = conditionsUpdateSchema.safeParse(await req.json().catch(() => undefined));
-				if (!body.success) return Response.json({ error: body.error.message }, { status: 400 });
-				api.update(body.data as ConditionsUpdate);
-				return Response.json(api.status());
-			}
-			if (req.method === "POST" && pathname === "/shutdown") {
-				setTimeout(() => api.shutdown(), 0);
-				return Response.json({ ok: true });
-			}
-			return new Response("not found", { status: 404 });
-		},
-	});
-}
-
-async function call<T>(handle: ProxyHandle, method: string, path: string, body?: unknown): AsyncResult<T> {
-	try {
-		const res = await fetch(`http://${handle.host}:${handle.controlPort}${path}`, {
-			method,
-			headers: { "x-warden-token": handle.token, "content-type": "application/json" },
-			...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-			signal: AbortSignal.timeout(5000),
+/** Loopback HTTP control channel and its client. */
+export class ProxyControl {
+	/** Loopback HTTP control channel: `GET /status`, `PUT /conditions`, `POST /shutdown`; token-guarded. */
+	serve(api: ControlApi, token: string, host: string) {
+		return Bun.serve({
+			hostname: host,
+			port: 0,
+			async fetch(req) {
+				if (req.headers.get("x-warden-token") !== token) return new Response("forbidden", { status: 403 });
+				const { pathname } = new URL(req.url);
+				if (req.method === "GET" && pathname === "/status") return Response.json(api.status());
+				if (req.method === "PUT" && pathname === "/conditions") {
+					const body = conditionsUpdateSchema.safeParse(await req.json().catch(() => undefined));
+					if (!body.success) return Response.json({ error: body.error.message }, { status: 400 });
+					api.update(body.data as ConditionsUpdate);
+					return Response.json(api.status());
+				}
+				if (req.method === "POST" && pathname === "/shutdown") {
+					setTimeout(() => api.shutdown(), 0);
+					return Response.json({ ok: true });
+				}
+				return new Response("not found", { status: 404 });
+			},
 		});
-		if (!res.ok) return resultFactory.err(`netproxy ${method} ${path}: ${res.status} ${await res.text()}`);
-		return resultFactory.ok((await res.json()) as T);
-	} catch (error) {
-		return resultFactory.err(`netproxy ${method} ${path}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+
+	/** Live-reconfigure a running proxy without dropping its listener or open connections. */
+	setConditions(handle: ProxyHandle, update: ConditionsUpdate): AsyncResult<ProxyStatus> {
+		return this.call<ProxyStatus>(handle, "PUT", "/conditions", update);
+	}
+
+	status(handle: ProxyHandle): AsyncResult<ProxyStatus> {
+		return this.call<ProxyStatus>(handle, "GET", "/status");
+	}
+
+	/** Ask the proxy to close its listeners and exit. */
+	stop(handle: ProxyHandle): AsyncResult<{ ok: true }> {
+		return this.call<{ ok: true }>(handle, "POST", "/shutdown");
+	}
+
+	private async call<T>(handle: ProxyHandle, method: string, path: string, body?: unknown): AsyncResult<T> {
+		try {
+			const res = await fetch(`http://${handle.host}:${handle.controlPort}${path}`, {
+				method,
+				headers: { "x-warden-token": handle.token, "content-type": "application/json" },
+				...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+				signal: AbortSignal.timeout(5000),
+			});
+			if (!res.ok) return resultFactory.err(`netproxy ${method} ${path}: ${res.status} ${await res.text()}`);
+			return resultFactory.ok((await res.json()) as T);
+		} catch (error) {
+			return resultFactory.err(`netproxy ${method} ${path}: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 }
 
-/** Live-reconfigure a running proxy without dropping its listener or open connections. */
-export function setProxyConditions(handle: ProxyHandle, update: ConditionsUpdate): AsyncResult<ProxyStatus> {
-	return call<ProxyStatus>(handle, "PUT", "/conditions", update);
-}
-
-export function getProxyStatus(handle: ProxyHandle): AsyncResult<ProxyStatus> {
-	return call<ProxyStatus>(handle, "GET", "/status");
-}
-
-/** Ask the proxy to close its listeners and exit. */
-export function stopProxy(handle: ProxyHandle): AsyncResult<{ ok: true }> {
-	return call<{ ok: true }>(handle, "POST", "/shutdown");
-}
+export const proxyControl = new ProxyControl();
