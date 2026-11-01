@@ -15,9 +15,9 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canProbeFrontmost, canReadAlertOn } from "@delacour/warden-driver/alerts";
+import { alertCapabilities } from "@delacour/warden-driver/alerts";
 import type { AlertInfo, Driver, DriverResult, Element, Point, Snapshot } from "@delacour/warden-driver/driver.types";
-import { canSelectAll } from "@delacour/warden-driver/typing";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import { openIosDriver } from "@delacour/warden-driver-ios/ios-driver";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { focusPoint } from "@delacour/warden-screen/actions";
@@ -215,7 +215,7 @@ async function prepareFocusRun(driver: Driver, mode: FocusMode, identifier: stri
 	const field = await findField(driver, identifier);
 	if (field) {
 		await tapToFocus(driver, Bun.sleep, centre(field.element), field);
-		if (canSelectAll(driver)) await driver.selectAll();
+		if (deviceTyping.canSelectAll(driver)) await driver.selectAll();
 		await driver.key("Backspace");
 	}
 	const away = mode === "switch" ? await findField(driver, other) : undefined;
@@ -403,7 +403,7 @@ async function lifecycleLeg(driver: Driver): Promise<void> {
 	await step("terminate (not running)", () => driver.app.terminate(bundle));
 	await step("openUrl (app scheme)", () => driver.app.openUrl(`${scheme}://smoke`));
 	const sheet = await answerOpenSheet(driver);
-	const front = canProbeFrontmost(driver)
+	const front = alertCapabilities.canProbeFrontmost(driver)
 		? await pollFor(8000, async () => {
 				const probe = await driver.isFrontmost(bundle);
 				return probe.success && probe.data ? true : undefined;
@@ -463,11 +463,11 @@ async function gestureSteps(driver: Driver, middle: { x: number; y: number }): P
 async function systemAlertChecks(driver: Driver): Promise<void> {
 	const describe = (alert: AlertInfo | null) => (alert === null ? "none" : `${alert.buttons.length} buttons`);
 	await step("alert (both)", () => driver.alert(), describe);
-	if (canReadAlertOn(driver)) {
+	if (alertCapabilities.canReadAlertOn(driver)) {
 		await step("alert (bridge only)", () => driver.alertOn("axbridge"), describe);
 		await step("alert (host only)", () => driver.alertOn("ax"), describe);
 	}
-	if (canProbeFrontmost(driver)) {
+	if (alertCapabilities.canProbeFrontmost(driver)) {
 		await step(
 			"frontmost (app)",
 			() => driver.isFrontmost(bundle),

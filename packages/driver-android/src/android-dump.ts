@@ -1,6 +1,6 @@
 import type { DriverError, DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
-import { addSpanDetail, noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { AdbSession } from "./adb-session";
 import { dumpFileCommand, dumpStdoutArgv, dumpTtyHostArgv, shellCommand } from "./android-argv";
@@ -79,8 +79,8 @@ export function createDumper(deps: DumpDeps): Dumper {
 		for (const route of order) {
 			const fetchStarted = Date.now();
 			const result = await fetchRoute(route);
-			addSpanDetail("dumpMs", Date.now() - fetchStarted);
-			addSpanDetail("dumpRoutesTried", 1);
+			spanDetails.add("dumpMs", Date.now() - fetchStarted);
+			spanDetails.add("dumpRoutesTried", 1);
 			if ("error" in result) {
 				failure.error = result.error;
 				deps.log?.(`uiautomator dump via ${route} failed: ${result.error.code}`);
@@ -99,7 +99,7 @@ export function createDumper(deps: DumpDeps): Dumper {
 		async dump() {
 			const found = await tryRoutes(routeOrder(deps.sdk, known));
 			if ("xml" in found) {
-				noteSpanDetail("dumpRoute", found.route);
+				spanDetails.note("dumpRoute", found.route);
 				if (known !== found.route) deps.log?.(`uiautomator dump route: ${found.route}`);
 				if (known !== found.route) deps.onRoute?.(found.route);
 				known = found.route;
@@ -107,7 +107,7 @@ export function createDumper(deps: DumpDeps): Dumper {
 			}
 			if (found.output === undefined && found.error) return { success: false, error: found.error };
 			const output = found.output ?? "";
-			return driverErr("E_AX_UNAVAILABLE", `uiautomator produced no hierarchy: ${output.trim().slice(0, 160)}`, {
+			return driverErrors.err("E_AX_UNAVAILABLE", `uiautomator produced no hierarchy: ${output.trim().slice(0, 160)}`, {
 				detail: { output: output.slice(0, 400) },
 			});
 		},

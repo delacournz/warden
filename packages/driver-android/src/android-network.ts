@@ -7,8 +7,8 @@ import type {
 	NetworkProxyFeature,
 	NetworkState,
 } from "@delacour/warden-driver/driver.types";
-import { driverErr, driverError } from "@delacour/warden-driver/errors";
-import { faultNotes, type NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { type NetworkProxyPort, networkProxyShaping } from "@delacour/warden-driver/network-proxy";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
@@ -98,9 +98,13 @@ function notReached(online: boolean): Switch {
 	const want = online ? "online" : "offline";
 	return {
 		ok: false,
-		error: driverError("E_TIMEOUT", `device did not go ${want}: dumpsys connectivity still reports the opposite`, {
-			detail: { want },
-		}),
+		error: driverErrors.make(
+			"E_TIMEOUT",
+			`device did not go ${want}: dumpsys connectivity still reports the opposite`,
+			{
+				detail: { want },
+			}
+		),
 	};
 }
 
@@ -128,7 +132,7 @@ async function setEmu(deps: AndroidNetworkDeps, emu: EmuNetwork): Promise<Switch
 		if (res.exitCode !== 0) {
 			return {
 				ok: false,
-				error: driverError(
+				error: driverErrors.make(
 					"E_IO",
 					`\`${argv.join(" ")}\` exited ${res.exitCode}: ${(res.stderr || res.stdout).trim()}`
 				),
@@ -138,7 +142,7 @@ async function setEmu(deps: AndroidNetworkDeps, emu: EmuNetwork): Promise<Switch
 		if (ko)
 			return {
 				ok: false,
-				error: driverError("E_BAD_REQUEST", `emulator console refused network ${what} ${value}: ${ko}`),
+				error: driverErrors.make("E_BAD_REQUEST", `emulator console refused network ${what} ${value}: ${ko}`),
 			};
 	}
 	return { ok: true };
@@ -154,13 +158,13 @@ export async function applyAndroidNetwork(
 	condition: NetworkCondition
 ): DriverResult<NetworkState> {
 	if (!deps.serial.startsWith("emulator-")) {
-		return driverErr(
+		return driverErrors.err(
 			"E_UNSUPPORTED",
 			`network conditions need the emulator console; ${deps.serial} is not an emulator`
 		);
 	}
 	if (condition.kind === "flap") {
-		return driverErr(
+		return driverErrors.err(
 			"E_UNSUPPORTED",
 			"flap is started through the driver's network op (conditions/scheduler.ts), not applied directly"
 		);
@@ -207,11 +211,11 @@ export function createAndroidNetwork(deps: AndroidNetworkDeps & { proxy?: Networ
 
 	const setProxy = async (value: string): DriverResult<void> => {
 		const put = await shell(deps, httpProxyPutArgv(value));
-		if (!put.ok) return driverErr("E_IO", `settings put global http_proxy ${value} failed`);
+		if (!put.ok) return driverErrors.err("E_IO", `settings put global http_proxy ${value} failed`);
 		const got = await shell(deps, HTTP_PROXY_GET_ARGV);
 		return got.stdout.trim() === value
 			? { success: true, data: undefined }
-			: driverErr("E_IO", `http_proxy reads back ${JSON.stringify(got.stdout.trim())}, not ${value}`);
+			: driverErrors.err("E_IO", `http_proxy reads back ${JSON.stringify(got.stdout.trim())}, not ${value}`);
 	};
 
 	const unroute = async (): DriverResult<void> => {
@@ -224,14 +228,14 @@ export function createAndroidNetwork(deps: AndroidNetworkDeps & { proxy?: Networ
 	/** Point the device at the proxy with the loss and faults of the current state. */
 	const route = async (): DriverResult<void> => {
 		if (!proxy)
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				"per-host faults need a device lease for the shaping proxy: run the spec with `warden e2e` (it sets WARDEN_LEASE_ID); a bare `bun test` has no lease"
 			);
 		const plan = networkPresets.resolveNetwork(condition);
 		const lossPct = plan.online ? plan.shaping.lossPct : 0;
 		const started = await proxy.ensure(condition, { params: lossPct > 0 ? { lossPct } : {}, faults });
-		if (!started.success) return driverErr("E_IO", started.error);
+		if (!started.success) return driverErrors.err("E_IO", started.error);
 		const set = await setProxy(`${EMULATOR_HOST_ALIAS}:${started.data.port}`);
 		if (set.success) routed = true;
 		return set;
@@ -262,7 +266,7 @@ export function createAndroidNetwork(deps: AndroidNetworkDeps & { proxy?: Networ
 				faults = previous;
 				return result;
 			}
-			return { success: true, data: { notes: faultNotes(next) } };
+			return { success: true, data: { notes: networkProxyShaping.faultNotes(next) } };
 		},
 	};
 }

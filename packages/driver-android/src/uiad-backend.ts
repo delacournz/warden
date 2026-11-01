@@ -1,6 +1,6 @@
 import type { DriverError, Logger } from "@delacour/warden-driver/driver.types";
 import type { SimdSpawn } from "@delacour/warden-driver/helper/simd-transport";
-import { addSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { AdbSession } from "./adb-session";
 import type { Clock } from "./android-device";
 import { isBusy, type UiadClient } from "./uiad-client";
@@ -124,7 +124,7 @@ export function createUiadBackend(deps: UiadBackendDeps): UiadBackend {
 			...(deps.options.requestTimeoutMs !== undefined ? { requestTimeoutMs: deps.options.requestTimeoutMs } : {}),
 			sleep: clock.sleep,
 		});
-		addSpanDetail("uiadStartMs", Date.now() - startedAt);
+		spanDetails.add("uiadStartMs", Date.now() - startedAt);
 		if (launched.success) {
 			started++;
 			startFailures = 0;

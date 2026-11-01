@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readConditionEvents } from "@delacour/warden-driver/conditions/condition-events";
+import { conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 import { readResults, type TestResult } from "./results";
 import { readTrace } from "./trace";
 
@@ -408,7 +408,7 @@ describe("conditions", () => {
 			"second inject=true nets=3g,offline,3g,3g,3g flapping=false",
 			"locations=point,clear",
 		]);
-		const events = readConditionEvents(readFileSync(join(run.out, "results.jsonl"), "utf8"));
+		const events = conditionEvents.read(readFileSync(join(run.out, "results.jsonl"), "utf8"));
 		expect(events.map((e) => e.area)).toContain("location");
 		expect(events.some((e) => e.area === "network" && e.value.kind === "offline")).toBe(true);
 	});

@@ -1,8 +1,8 @@
 import type { Driver, Element, LaunchOptions, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { canObserve } from "@delacour/warden-driver/observation-cache";
+import { observations } from "@delacour/warden-driver/observation-cache";
 import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-driver/settle";
-import { settled, toE2eError, unwrap } from "@delacour/warden-driver/unwrap";
+import { driverCalls } from "@delacour/warden-driver/unwrap";
 import { isLocator, type Locator } from "@delacour/warden-screen/locator";
 import { isInteractiveRole, resolveRole } from "@delacour/warden-screen/roles";
 import { type Clock, systemClock } from "./fixture-session";
@@ -175,8 +175,8 @@ export function createApp({
 	};
 	/** One fresh look at the whole screen (never a kept snapshot); undefined when the read failed (the app is starting). */
 	const look = async (): Promise<Snapshot | undefined> => {
-		const read = await settled(
-			() => (canObserve(driver) ? driver.observe({ reuse: false }) : driver.snapshot()),
+		const read = await driverCalls.settled(
+			() => (observations.canObserve(driver) ? driver.observe({ reuse: false }) : driver.snapshot()),
 			`read ${bundleId}`,
 			signalOf?.()
 		);
@@ -201,12 +201,13 @@ export function createApp({
 	 * would poll instead. iOS: after a launch that rebound the helper the app is in front already.
 	 */
 	const waitUntilQuiet = async (): Promise<void> => {
-		const quiet = await settled(
+		const quiet = await driverCalls.settled(
 			() => driver.settle({ quietMs: DEFAULT_SETTLE_QUIET_MS, timeoutMs: DEFAULT_SETTLE_TIMEOUT_MS }),
 			`wait for ${bundleId}`,
 			signalOf?.()
 		);
-		if (!quiet.success && quiet.error.code !== "E_UNSUPPORTED") throw toE2eError(quiet.error, `wait for ${bundleId}`);
+		if (!quiet.success && quiet.error.code !== "E_UNSUPPORTED")
+			throw driverCalls.toE2eError(quiet.error, `wait for ${bundleId}`);
 	};
 
 	const launch = async (options: OpenOptions = {}): Promise<void> => {
@@ -217,11 +218,11 @@ export function createApp({
 		};
 		if (options.env !== undefined) opts.env = options.env;
 		if (driver.platform === "ios" && injectWanted?.() === true) opts.inject = true;
-		await unwrap(() => driver.app.launch(bundleId, opts), `launch ${bundleId}`, signalOf?.());
+		await driverCalls.unwrap(() => driver.app.launch(bundleId, opts), `launch ${bundleId}`, signalOf?.());
 		onLaunched?.();
 		if (options.url !== undefined) {
 			const url = options.url;
-			await unwrap(() => driver.app.openUrl(url), `open ${url}`, signalOf?.());
+			await driverCalls.unwrap(() => driver.app.openUrl(url), `open ${url}`, signalOf?.());
 		}
 		if (wait.kind === "quiet") {
 			await waitForContent();
@@ -234,7 +235,7 @@ export function createApp({
 	};
 
 	const terminate = (): Promise<void> =>
-		unwrap(() => driver.app.terminate(bundleId), `terminate ${bundleId}`, signalOf?.());
+		driverCalls.unwrap(() => driver.app.terminate(bundleId), `terminate ${bundleId}`, signalOf?.());
 
 	return {
 		open: launch,
@@ -250,15 +251,24 @@ export function createApp({
 					"app.reinstall() needs WARDEN_APP_PATH (the build to install) to be set"
 				);
 			}
-			const installed = await unwrap(() => driver.app.isInstalled(bundleId), `check ${bundleId}`, signalOf?.());
-			if (installed) await unwrap(() => driver.app.uninstall(bundleId), `uninstall ${bundleId}`, signalOf?.());
-			await unwrap(() => driver.app.install(path), `install ${path}`, signalOf?.());
+			const installed = await driverCalls.unwrap(
+				() => driver.app.isInstalled(bundleId),
+				`check ${bundleId}`,
+				signalOf?.()
+			);
+			if (installed)
+				await driverCalls.unwrap(() => driver.app.uninstall(bundleId), `uninstall ${bundleId}`, signalOf?.());
+			await driverCalls.unwrap(() => driver.app.install(path), `install ${path}`, signalOf?.());
 		},
 		async clearData() {
-			await unwrap(() => driver.app.clearData(bundleId, { keychain: true }), `clear data ${bundleId}`, signalOf?.());
+			await driverCalls.unwrap(
+				() => driver.app.clearData(bundleId, { keychain: true }),
+				`clear data ${bundleId}`,
+				signalOf?.()
+			);
 		},
 		isRunning() {
-			return unwrap(() => driver.app.isRunning(bundleId), `check ${bundleId} running`, signalOf?.());
+			return driverCalls.unwrap(() => driver.app.isRunning(bundleId), `check ${bundleId} running`, signalOf?.());
 		},
 	};
 }

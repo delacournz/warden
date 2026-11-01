@@ -1,13 +1,6 @@
 import type { Driver, Platform } from "@delacour/warden-driver/driver.types";
-import { cacheObservations } from "@delacour/warden-driver/observation-cache";
-import {
-	type ElementSpec,
-	el,
-	type FakeDriver,
-	failWith,
-	fakeDriver,
-	snapshotOf,
-} from "@delacour/warden-driver/testing/driver";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { ScreenHost } from "./context";
 import { type FakeClock, fakeClock } from "./poll.testing";
 
@@ -30,7 +23,7 @@ export function testHost(
 ): TestHost {
 	const steps: string[] = [];
 	const clock = fakeClock();
-	const seen: Driver = options.cache === true ? cacheObservations(driver, { now: clock.now }) : driver;
+	const seen: Driver = options.cache === true ? observations.cache(driver, { now: clock.now }) : driver;
 	const host: TestHost = {
 		driver: async () => seen,
 		env: {
@@ -52,7 +45,7 @@ export function testHost(
 
 /** A driver showing one screen of `specs` that never changes. */
 export function staticDriver(specs: ElementSpec[], platform: Platform = "ios"): FakeDriver {
-	return fakeDriver({ screens: [snapshotOf(specs, { platform })], platform });
+	return new FakeDriver({ screens: [driverFixtures.snapshotOf(specs, { platform })], platform });
 }
 
 export const FIELD_FRAME = { x: 24, y: 200, width: 300, height: 44 };
@@ -154,7 +147,7 @@ export function fieldFixture(
 		state.lag = lagReads;
 	};
 
-	const driver = fakeDriver({
+	const driver = new FakeDriver({
 		screens: () => {
 			state.reads += 1;
 			if (state.focusIn > 0) state.focusIn -= 1;
@@ -166,8 +159,8 @@ export function fieldFixture(
 			else state.shown = state.value;
 			const empty = state.shown === "";
 			const masked = options.secure ? "•".repeat(state.shown.length) : state.shown;
-			return snapshotOf([
-				el(options.secure ? "securefield" : "textfield", {
+			return driverFixtures.snapshotOf([
+				driverFixtures.el(options.secure ? "securefield" : "textfield", {
 					id: "field",
 					label: "Email",
 					value: empty && options.placeholder !== undefined ? options.placeholder : masked,
@@ -185,11 +178,12 @@ export function fieldFixture(
 					tap();
 					return undefined;
 				case "setText":
-					if (options.setText === "refused") return failWith("E_UNSUPPORTED", "setText needs the warden-uiad server");
+					if (options.setText === "refused")
+						return driverFixtures.failWith("E_UNSUPPORTED", "setText needs the warden-uiad server");
 					setText(call.text);
 					return undefined;
 				case "pasteText":
-					if (options.pasteText === "refused") return failWith("E_IO", "pasteboard write not confirmed");
+					if (options.pasteText === "refused") return driverFixtures.failWith("E_IO", "pasteboard write not confirmed");
 					pasteText(call.text);
 					return undefined;
 				case "selectAll":

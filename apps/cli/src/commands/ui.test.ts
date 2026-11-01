@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { deviceLeaseMessages } from "@delacour/warden-leasing/device-lease";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
@@ -271,7 +271,7 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 		expect(c.stderr.join("\n")).toContain(deviceLeaseMessages.block(UDID, "ios", other));
 	});
 
-	const snap = () => snapshotOf(LOGIN);
+	const snap = () => driverFixtures.snapshotOf(LOGIN);
 });
 
 describe("warden ui on the caller's own `warden dev` device (shared lease: attach, don't steal)", () => {
@@ -326,7 +326,7 @@ describe("warden ui on the caller's own `warden dev` device (shared lease: attac
 		expect(h.c.db.getLease(id)).toBeUndefined();
 	});
 
-	const snap = () => snapshotOf(LOGIN);
+	const snap = () => driverFixtures.snapshotOf(LOGIN);
 });
 
 describe("warden ui picks the live `warden dev` device among several held", () => {

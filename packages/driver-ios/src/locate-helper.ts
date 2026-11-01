@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { DriverError } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { Result } from "@delacour/warden-types/result";
 import type { OpenIosDriverOptions } from "./ios-driver";
 
@@ -76,7 +76,7 @@ export function locateHelper(input: LocateHelperInput): Result<HelperLocation, D
 	const tried: string[] = [];
 	const missing = (message: string): Result<HelperLocation, DriverError> => ({
 		success: false,
-		error: driverError("E_HELPER_MISSING", `${message}; ${DOCTOR_HINT}`, { detail: { tried } }),
+		error: driverErrors.make("E_HELPER_MISSING", `${message}; ${DOCTOR_HINT}`, { detail: { tried } }),
 	});
 
 	const explicitFile = input.env[SIMD_ENV];

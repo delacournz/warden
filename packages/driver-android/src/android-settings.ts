@@ -1,6 +1,6 @@
 import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-config/conditions.types";
 import { textSizes } from "@delacour/warden-config/text-size";
-import { badRequest, batteryProblem, localeProblem, timezoneProblem } from "@delacour/warden-driver/device-settings";
+import { deviceSettings } from "@delacour/warden-driver/device-settings";
 import type {
 	A11yOp,
 	A11yState,
@@ -9,7 +9,7 @@ import type {
 	Driver,
 	DriverResult,
 } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
 
@@ -118,12 +118,12 @@ type Ctx = {
 	must(argv: readonly string[]): DriverResult<string>;
 	/** `settings put`, then read back: a font change makes the system write its own value a moment later, so a put is repeated until it holds */
 	putSetting(table: "system" | "secure", key: string, value: string): DriverResult<string>;
-	packageOf(explicit: string | undefined, what: string): { bundleId: string } | ReturnType<typeof driverErr>;
+	packageOf(explicit: string | undefined, what: string): { bundleId: string } | ReturnType<typeof driverErrors.err>;
 	sdk(): Promise<number>;
 };
 
 const unsupported = (parts: readonly { name: string; reason: string }[]) =>
-	driverErr("E_UNSUPPORTED", parts.map((s) => `${s.name}: ${s.reason}`).join("; "));
+	driverErrors.err("E_UNSUPPORTED", parts.map((s) => `${s.name}: ${s.reason}`).join("; "));
 
 /** Run one name's manifest permissions; `changed` counts those the app declares. */
 async function changePermission(
@@ -137,7 +137,7 @@ async function changePermission(
 		const done = await c.shell(permissionArgv(state === "unset" ? "denied" : state, bundleId, permission));
 		if (!done.ok) {
 			if (NOT_DECLARED.test(done.stdout)) continue;
-			return driverErr("E_IO", done.failure ?? permission, { detail: { serial: c.serial } });
+			return driverErrors.err("E_IO", done.failure ?? permission, { detail: { serial: c.serial } });
 		}
 		if (state === "unset") await c.shell(clearPermissionFlagsArgv(bundleId, permission));
 		changed++;
@@ -185,9 +185,9 @@ function permissionsOp(c: Ctx): Driver["permissions"] {
 function timezoneOp(c: Ctx): Driver["timezone"] {
 	return async (tz, opts) => {
 		if (!c.serial.startsWith("emulator-")) {
-			return driverErr("E_UNSUPPORTED", `timezone changes need an emulator; ${c.serial} is not one`);
+			return driverErrors.err("E_UNSUPPORTED", `timezone changes need an emulator; ${c.serial} is not one`);
 		}
-		const bad = tz === null ? undefined : badRequest(timezoneProblem(tz));
+		const bad = tz === null ? undefined : deviceSettings.badRequest(deviceSettings.timezoneProblem(tz));
 		if (bad) return bad;
 		const before = (await c.shell(TIMEZONE_PROP_ARGV)).stdout.trim();
 		const target = tz ?? opts?.previous ?? c.deps.hostTimezone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -195,7 +195,7 @@ function timezoneOp(c: Ctx): Driver["timezone"] {
 		if (!set.success) return set;
 		const after = (await c.shell(TIMEZONE_PROP_ARGV)).stdout.trim();
 		if (after !== target) {
-			return driverErr("E_IO", `the device timezone is "${after}" after setting "${target}"`, {
+			return driverErrors.err("E_IO", `the device timezone is "${after}" after setting "${target}"`, {
 				detail: { serial: c.serial },
 			});
 		}
@@ -211,11 +211,11 @@ function localeOp(c: Ctx): Driver["locale"] {
 		const app = c.packageOf(opts?.bundleId, "locale");
 		if ("success" in app) return app;
 		const { bundleId } = app;
-		const bad = tag === null ? undefined : badRequest(localeProblem(tag));
+		const bad = tag === null ? undefined : deviceSettings.badRequest(deviceSettings.localeProblem(tag));
 		if (bad) return bad;
 		const level = await c.sdk();
 		if (level < APP_LOCALES_MIN_SDK) {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				`per-app locales need Android 13 (API ${APP_LOCALES_MIN_SDK}); this device is API ${level}`
 			);
@@ -224,7 +224,7 @@ function localeOp(c: Ctx): Driver["locale"] {
 		if (!set.success) return set;
 		const read = await c.shell(getAppLocaleArgv(bundleId));
 		if (tag !== null && !read.stdout.includes(`[${tag}`)) {
-			return driverErr("E_IO", `${bundleId} reports ${read.stdout.trim()} after setting ${tag}`, {
+			return driverErrors.err("E_IO", `${bundleId} reports ${read.stdout.trim()} after setting ${tag}`, {
 				detail: { serial: c.serial },
 			});
 		}
@@ -233,10 +233,12 @@ function localeOp(c: Ctx): Driver["locale"] {
 }
 
 /** The font scale an a11y text size means on Android, with a note when it was clamped. */
-function fontScaleOf(size: TextSize | undefined): { scale: number; notes: string[] } | ReturnType<typeof driverErr> {
+function fontScaleOf(
+	size: TextSize | undefined
+): { scale: number; notes: string[] } | ReturnType<typeof driverErrors.err> {
 	if (size === undefined) return { scale: 1, notes: [] };
 	const resolved = textSizes.resolveTextSize(size);
-	if (!resolved.success) return driverErr("E_BAD_REQUEST", resolved.error);
+	if (!resolved.success) return driverErrors.err("E_BAD_REQUEST", resolved.error);
 	const scale = textSizes.androidFontScale(resolved.data.scale);
 	return {
 		scale,
@@ -291,17 +293,17 @@ function a11yOp(c: Ctx): Driver["a11y"] {
 }
 
 function batteryRequestProblem(op: BatteryOp) {
-	const bad = badRequest(batteryProblem(op.level));
+	const bad = deviceSettings.badRequest(deviceSettings.batteryProblem(op.level));
 	if (bad) return bad;
 	return batteryArgvs(op).length === 0
-		? driverErr("E_BAD_REQUEST", "battery needs a level, charging, or both")
+		? driverErrors.err("E_BAD_REQUEST", "battery needs a level, charging, or both")
 		: undefined;
 }
 
 function batteryOp(c: Ctx): Driver["battery"] {
 	return async (op) => {
 		if (!c.serial.startsWith("emulator-")) {
-			return driverErr("E_UNSUPPORTED", `battery changes need an emulator; ${c.serial} is not one`);
+			return driverErrors.err("E_UNSUPPORTED", `battery changes need an emulator; ${c.serial} is not one`);
 		}
 		if (op === null) {
 			const done = await c.must(BATTERY_RESET_ARGV);
@@ -331,12 +333,12 @@ function memoryWarningOp(c: Ctx): Driver["memoryWarning"] {
 		const sent = await c.shell(trimMemoryArgv(app.bundleId));
 		if (sent.ok && !/Exception/.test(sent.stdout)) return { success: true, data: undefined };
 		if (/Unknown process/.test(sent.stdout)) {
-			return driverErr(
+			return driverErrors.err(
 				"E_APP_UNAVAILABLE",
 				`${app.bundleId} is not running, so there is no process to send the trim to`
 			);
 		}
-		return driverErr("E_IO", sent.failure ?? sent.stdout.trim(), { detail: { serial: c.serial } });
+		return driverErrors.err("E_IO", sent.failure ?? sent.stdout.trim(), { detail: { serial: c.serial } });
 	};
 }
 
@@ -358,7 +360,7 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 		const done = await shell(argv);
 		return done.ok
 			? { success: true, data: done.stdout }
-			: driverErr("E_IO", done.failure ?? argv.join(" "), { detail: { serial } });
+			: driverErrors.err("E_IO", done.failure ?? argv.join(" "), { detail: { serial } });
 	}
 
 	const ctx: Ctx = {
@@ -377,12 +379,12 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 				// an empty read (a shell that does not answer `get`) cannot contradict the write
 				if (last === "" || Number(last) === Number(value)) return put;
 			}
-			return driverErr("E_IO", `${table} ${key} reads ${last} after setting ${value}`, { detail: { serial } });
+			return driverErrors.err("E_IO", `${table} ${key} reads ${last} after setting ${value}`, { detail: { serial } });
 		},
 		packageOf(explicit, what) {
 			const bundleId = explicit ?? deps.appPackage;
 			return bundleId === undefined
-				? driverErr("E_BAD_REQUEST", `${what} needs an app: pass a package name`)
+				? driverErrors.err("E_BAD_REQUEST", `${what} needs an app: pass a package name`)
 				: { bundleId };
 		},
 		async sdk() {
@@ -399,7 +401,7 @@ export function createAndroidSettings(deps: AndroidSettingsDeps): AndroidSetting
 		battery: batteryOp(ctx),
 		memoryWarning: memoryWarningOp(ctx),
 		async push() {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				"push notifications through the shell are iOS only (`simctl push`); Android needs FCM"
 			);

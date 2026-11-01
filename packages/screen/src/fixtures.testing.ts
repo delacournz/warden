@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
 import { snapshotDataSchema } from "@delacour/warden-driver/helper/simd-protocol";
-import { type ElementSpec, el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, type ElementSpec } from "@delacour/warden-driver/testing/driver";
 import {
 	REAL_DEV_LAUNCHER_DUMP,
 	REAL_DEV_LAUNCHER_SCREEN,
@@ -67,15 +67,15 @@ function label(prefix: string, ...parts: number[]): string {
 
 /** One list row: `depth` wrapper views around a card holding a title, a price and a button. */
 function row(rowNumber: number, depth: number): ElementSpec {
-	let inner: ElementSpec = el("other", {
+	let inner: ElementSpec = driverFixtures.el("other", {
 		id: `row-${rowNumber}`,
 		children: [
-			el("text", { label: label("Item", rowNumber) }),
-			el("text", { label: label("$", rowNumber, 5) }),
-			el("button", { id: `buy-${rowNumber}`, label: "Buy", hittable: true }),
+			driverFixtures.el("text", { label: label("Item", rowNumber) }),
+			driverFixtures.el("text", { label: label("$", rowNumber, 5) }),
+			driverFixtures.el("button", { id: `buy-${rowNumber}`, label: "Buy", hittable: true }),
 		],
 	});
-	for (let level = 0; level < depth; level += 1) inner = el("other", { children: [inner] });
+	for (let level = 0; level < depth; level += 1) inner = driverFixtures.el("other", { children: [inner] });
 	return inner;
 }
 
@@ -88,9 +88,9 @@ export function deepSnapshot(options: { levels?: number; rows?: number; rowDepth
 	const { levels = 18, rows = 40, rowDepth = 3 } = options;
 	let spine: ElementSpec[] = Array.from({ length: rows }, (_, index) => row(index, rowDepth));
 	for (let level = 0; level < levels; level += 1) {
-		spine = [el("other", { ...(level === levels - 1 ? { id: "list" } : {}), children: spine })];
+		spine = [driverFixtures.el("other", { ...(level === levels - 1 ? { id: "list" } : {}), children: spine })];
 	}
-	return snapshotOf(spine);
+	return driverFixtures.snapshotOf(spine);
 }
 
 /** Every fixture the screen layer's cost and equivalence tests run over. */

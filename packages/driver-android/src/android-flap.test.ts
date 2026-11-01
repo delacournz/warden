@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type ConditionEvent, eventKind } from "@delacour/warden-driver/conditions/condition-events";
+import { type ConditionEvent, conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { openAndroidDriver } from "./android-driver";
@@ -73,7 +73,7 @@ describe("android network flap", () => {
 		expect(res).toEqual({ success: true, data: { online: true, condition: FLAP, needsProxy: [] } });
 		for (let i = 0; i < 200 && events.length < 3; i++) await Bun.sleep(5);
 		expect(events.length).toBeGreaterThanOrEqual(3);
-		expect(events.slice(0, 3).map((e) => eventKind(e))).toEqual(["offline", "online", "offline"]);
+		expect(events.slice(0, 3).map((e) => conditionEvents.kind(e))).toEqual(["offline", "online", "offline"]);
 		expect(airplaneCalls().slice(0, 3)).toEqual(["disable", "enable", "disable"]);
 	});
 

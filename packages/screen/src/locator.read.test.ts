@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { el } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { createScreen } from "./screen";
 import { staticDriver, testHost } from "./screen.testing";
 
 function setup(options: Parameters<typeof testHost>[1] = {}) {
 	const driver = staticDriver([
-		el("text", { id: "title", label: "Plan" }),
-		el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
-		el("switch", { id: "remember", label: "Remember me", value: "1" }),
-		el("switch", { id: "newsletter", label: "Newsletter", value: "0" }),
-		el("text", { id: "ghost", label: "Ghost", hidden: true }),
-		el("button", { id: "dup", label: "Same" }),
-		el("button", { id: "dup", label: "Same" }),
+		driverFixtures.el("text", { id: "title", label: "Plan" }),
+		driverFixtures.el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
+		driverFixtures.el("switch", { id: "remember", label: "Remember me", value: "1" }),
+		driverFixtures.el("switch", { id: "newsletter", label: "Newsletter", value: "0" }),
+		driverFixtures.el("text", { id: "ghost", label: "Ghost", hidden: true }),
+		driverFixtures.el("button", { id: "dup", label: "Same" }),
+		driverFixtures.el("button", { id: "dup", label: "Same" }),
 	]);
 	const host = testHost(driver, options);
 	return { driver, host, screen: createScreen(host) };

@@ -1,5 +1,5 @@
 import type { DriverResult, Logger, Orientation, ScreenInfo } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { AdbSession } from "./adb-session";
 import { getpropArgv, type RotationValue, shellCommand, WM_DENSITY_ARGV, WM_SIZE_ARGV } from "./android-argv";
 import { PHONE_PROBE_TAIL, type PhoneFacts, parsePhoneFacts } from "./android-phone";
@@ -92,7 +92,7 @@ export async function waitForBoot(
 		}
 		if (!res.success && isFatal(res.error)) return res;
 		if (clock.now() >= deadline) {
-			return driverErr("E_NOT_BOOTED", `${serial} did not report sys.boot_completed=1 within ${timeoutMs}ms`, {
+			return driverErrors.err("E_NOT_BOOTED", `${serial} did not report sys.boot_completed=1 within ${timeoutMs}ms`, {
 				detail: res.success ? { stdout: res.data.stdout } : { error: res.error },
 			});
 		}
@@ -107,7 +107,10 @@ export async function readScreen(session: AdbSession, serial: string): DriverRes
 	if (!size.success) return size;
 	const parsed = parseWmSize(size.data.stdout);
 	if (!parsed) {
-		return driverErr("E_INTERNAL", `cannot parse \`wm size\` for ${serial}: ${size.data.stdout.trim().slice(0, 120)}`);
+		return driverErrors.err(
+			"E_INTERNAL",
+			`cannot parse \`wm size\` for ${serial}: ${size.data.stdout.trim().slice(0, 120)}`
+		);
 	}
 	const density = await session.run(shellCommand(WM_DENSITY_ARGV));
 	const scale = (density.success ? parseWmDensity(density.data.stdout) : undefined) ?? 1;
@@ -170,7 +173,7 @@ export async function runChecked(
 	const res = await session.run(cmd, timeoutMs === undefined ? undefined : { timeoutMs });
 	if (!res.success) return res;
 	if (res.data.exitCode !== 0) {
-		return driverErr(failure, `\`${cmd}\` exited ${res.data.exitCode}: ${res.data.stdout.trim().slice(0, 200)}`);
+		return driverErrors.err(failure, `\`${cmd}\` exited ${res.data.exitCode}: ${res.data.stdout.trim().slice(0, 200)}`);
 	}
 	return { success: true, data: res.data.stdout };
 }

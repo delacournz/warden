@@ -1,5 +1,5 @@
 import type { Driver, Element, Point, Snapshot } from "@delacour/warden-driver/driver.types";
-import { assignRefs, isRef } from "@delacour/warden-driver/refs";
+import { refResolver } from "@delacour/warden-driver/refs";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-screen/nodes";
 import { describeEntry } from "@delacour/warden-screen/render";
 import {
@@ -39,7 +39,7 @@ const POINT = /^(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)$/;
 /** Parse the words after a subcommand (`@e3`, `id=sign-in`, `120 340`) as one target. */
 export function parseTarget(text: string): Result<Target, WardenError> {
 	const trimmed = text.trim();
-	if (isRef(trimmed)) return resultFactory.ok({ kind: "ref", ref: trimmed });
+	if (refResolver.isRef(trimmed)) return resultFactory.ok({ kind: "ref", ref: trimmed });
 	const point = POINT.exec(trimmed);
 	if (point) return resultFactory.ok({ kind: "point", point: { x: Number(point[1]), y: Number(point[2]) } });
 	const selector = parseSelector(trimmed);
@@ -100,7 +100,7 @@ export type ResolveContext = {
 async function resolveRef(ref: string, rc: ResolveContext): Promise<Result<ResolvedTarget, WardenError>> {
 	const { lastSnapshot } = rc;
 	if (!lastSnapshot) return { success: false, error: staleRef(ref, "has no snapshot to point into") };
-	const element = assignRefs(lastSnapshot.snapshot, lastSnapshot.generation).byRef.get(ref);
+	const element = refResolver.assign(lastSnapshot.snapshot, lastSnapshot.generation).byRef.get(ref);
 	if (!element)
 		return { success: false, error: staleRef(ref, `is not in snapshot generation ${lastSnapshot.generation}`) };
 	const old = rc.now - lastSnapshot.takenAt > REF_MAX_AGE_MS;

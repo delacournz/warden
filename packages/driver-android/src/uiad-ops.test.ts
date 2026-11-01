@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DriverError } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
-import { collectSpanDetail, type SpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { AdbSession } from "./adb-session";
 import { type FakeUiadOptions, fakeUiad, recordedSession } from "./uiad.testing";
 import { createUiadBackend } from "./uiad-backend";
@@ -18,7 +18,7 @@ const SESSION: AdbSession = {
 	async close() {},
 };
 
-const BUSY = driverError("E_AX_UNAVAILABLE", "another UiAutomation client holds emulator-5554", {
+const BUSY = driverErrors.make("E_AX_UNAVAILABLE", "another UiAutomation client holds emulator-5554", {
 	retryable: false,
 	detail: { reason: "uiautomation_busy" },
 });
@@ -95,7 +95,7 @@ describe("snapshot", () => {
 	test("notes which backend answered, and how long the server took, on the span being timed", async () => {
 		const { ops } = setup();
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => value(ops.snapshot()));
+		await spanDetails.collect(notes, () => value(ops.snapshot()));
 		expect(notes.backend).toBe("uiad");
 		expect(typeof notes.uiadMs).toBe("number");
 	});
@@ -161,7 +161,7 @@ describe("snapshot", () => {
 	});
 
 	test("a server that could not start for any other reason leaves the dump to do it", async () => {
-		const { ops } = setup({}, driverError("E_HELPER_CRASHED", "exit 1"));
+		const { ops } = setup({}, driverErrors.make("E_HELPER_CRASHED", "exit 1"));
 		expect(await ops.snapshot()).toBeUndefined();
 	});
 });
@@ -170,7 +170,7 @@ describe("settle", () => {
 	test("is the server's quiet wait, reported as the stream", async () => {
 		const { ops, fake } = setup();
 		const notes: SpanDetail = {};
-		const outcome = await collectSpanDetail(notes, () => value(ops.settle({ quietMs: 250, timeoutMs: 3000 })));
+		const outcome = await spanDetails.collect(notes, () => value(ops.settle({ quietMs: 250, timeoutMs: 3000 })));
 		expect(outcome).toEqual({ quiet: true, waitedMs: 251, via: "stream" });
 		expect(fake.of("settle")[0]).toMatchObject({ quietMs: 250, timeoutMs: 3000 });
 		expect(notes).toMatchObject({ backend: "uiad", via: "stream" });
@@ -404,7 +404,7 @@ describe("typeText", () => {
 
 describe("enabled", () => {
 	test("is true until the server is given up on", async () => {
-		const { ops, backend } = setup({}, driverError("E_UNSUPPORTED", "protocol"));
+		const { ops, backend } = setup({}, driverErrors.make("E_UNSUPPORTED", "protocol"));
 		expect(ops.enabled()).toBe(true);
 		await ops.snapshot();
 		expect(backend.wanted()).toBe(false);

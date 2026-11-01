@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { durationParser } from "@delacour/warden-config/duration";
 import type { Driver, DriverError } from "@delacour/warden-driver/driver.types";
-import { wardenErrorFromDriver } from "@delacour/warden-driver/warden-error";
+import { driverWardenErrors } from "@delacour/warden-driver/warden-error";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type ProcessCommand, processCommand, processIdentity } from "@delacour/warden-store/process-identity";
@@ -459,7 +459,7 @@ function spawnHelper(
 	const idle = idleSeconds(opts.idleTimeout ?? host.env[IDLE_TIMEOUT_ENV] ?? DEFAULT_IDLE_TIMEOUT);
 	if (!idle.success) return idle;
 	const located = locateHelperBinary(host, udid, opts, deps);
-	if (!located.success) return { success: false, error: wardenErrorFromDriver(located.error) };
+	if (!located.success) return { success: false, error: driverWardenErrors.fromDriver(located.error) };
 	const resources = join(located.data, "..", "Resources");
 	const cmd = [
 		located.data,
@@ -730,7 +730,7 @@ export async function connectHelper(
 	});
 	if (driver.success) return driver;
 	await client?.close();
-	return { success: false, error: wardenErrorFromDriver(driver.error) };
+	return { success: false, error: driverWardenErrors.fromDriver(driver.error) };
 }
 
 /** `warning`: the helper may still be running but could not be stopped (its command line could not be read). */

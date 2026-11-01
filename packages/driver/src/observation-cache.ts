@@ -1,5 +1,5 @@
 import type { AlertInfo, Driver, DriverResult, Platform, Snapshot } from "./driver.types";
-import { noteSpanDetail } from "./trace/span-detail";
+import { spanDetails } from "./trace/span-detail";
 
 /**
  * A short-lived memory of the last whole-screen snapshot, so a read that follows another with no input in between
@@ -47,19 +47,11 @@ export type PreviousLook = {
 	sinceInputMs: number | undefined;
 };
 
-export function canObserve(driver: Driver): driver is Driver & Observes {
-	return typeof (driver as Partial<Observes>).observe === "function";
-}
-
 /**
  * Optional capability: the system alert, worked out from a snapshot already taken (Android: alerts are windows in the
  * dump). With it the cache answers `alert()` from the kept snapshot instead of dumping the screen again.
  */
 export type DetectsAlerts = { alertIn(snapshot: Snapshot): AlertInfo | null };
-
-export function canDetectAlerts(driver: Driver): driver is Driver & DetectsAlerts {
-	return typeof (driver as Partial<DetectsAlerts>).alertIn === "function";
-}
 
 export type ObservationCacheOptions = {
 	/** time source (ms); default `Date.now` */
@@ -102,107 +94,130 @@ type Kept = {
 
 type Call = (...args: unknown[]) => unknown;
 
-function isCall(value: unknown): value is Call {
-	return typeof value === "function";
-}
+/** The cache of one driver: the kept snapshot, the input generation, and the wrapper that feeds both. */
+class ObservationSession<D extends Driver> {
+	private generation = 0;
+	private kept: Kept | undefined;
+	private lastInputAt: number | undefined;
+	private readonly now: () => number;
+	private readonly maxAgeMs: number;
 
-/** A settle result that says the screen went quiet (`{ success: true, data: { quiet: true } }`). */
-function reportsQuiet(result: unknown): boolean {
-	if (typeof result !== "object" || result === null || !("success" in result) || result.success !== true) return false;
-	const data: unknown = "data" in result ? result.data : undefined;
-	return typeof data === "object" && data !== null && "quiet" in data && data.quiet === true;
-}
+	constructor(
+		private readonly driver: D,
+		options: ObservationCacheOptions,
+		private readonly caps: Observations
+	) {
+		this.now = options.now ?? Date.now;
+		this.maxAgeMs = options.maxAgeMs ?? OBSERVATION_MAX_AGE_MS[driver.platform];
+	}
 
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-	return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
-}
+	wrapped(): D & Observes {
+		const own: Record<string, unknown> = {
+			observe: this.observe,
+			invalidateObservations: this.moveOn,
+			previous: this.previous,
+			peek: this.peek,
+			snapshot: this.snapshot,
+		};
+		if (this.caps.canDetectAlerts(this.driver)) own.alert = this.alertFromSnapshot(this.driver);
+		return this.wrap(this.driver, own) as D & Observes;
+	}
 
-/** A snapshot of the whole screen, as opposed to one the caller filtered. */
-function isWholeScreen(options: Parameters<Driver["snapshot"]>[0]): boolean {
-	return options === undefined || (options.interactiveOnly !== true && options.backend === undefined);
-}
-
-/**
- * Wraps `driver` (a `Proxy`: every member, optional capabilities included, reads through unchanged) with the
- * observation cache and the {@link Observes} capability. Put it outside the tracing wrapper, so a snapshot that was
- * served from memory leaves no `driver.snapshot` span.
- */
-export function cacheObservations<D extends Driver>(driver: D, options: ObservationCacheOptions = {}): D & Observes {
-	const now = options.now ?? Date.now;
-	const maxAgeMs = options.maxAgeMs ?? OBSERVATION_MAX_AGE_MS[driver.platform];
-	let generation = 0;
-	let kept: Kept | undefined;
-	let lastInputAt: number | undefined;
-
-	const moveOn = (): void => {
-		generation += 1;
-		kept = undefined;
+	private readonly moveOn = (): void => {
+		this.generation += 1;
+		this.kept = undefined;
 	};
 
 	/** an input starts or ends: the generation moves on and the time is noted */
-	const inputEdge = (): void => {
-		moveOn();
-		lastInputAt = now();
+	private readonly inputEdge = (): void => {
+		this.moveOn();
+		this.lastInputAt = this.now();
 	};
 
-	const previous = (): PreviousLook => ({
-		snapshot: kept !== undefined && kept.generation === generation ? kept.snapshot : undefined,
-		generation,
-		sinceInputMs: lastInputAt === undefined ? undefined : now() - lastInputAt,
+	private readonly previous = (): PreviousLook => ({
+		snapshot: this.kept !== undefined && this.kept.generation === this.generation ? this.kept.snapshot : undefined,
+		generation: this.generation,
+		sinceInputMs: this.lastInputAt === undefined ? undefined : this.now() - this.lastInputAt,
 	});
 
-	const peek = (): KeptLook | undefined =>
-		kept !== undefined && kept.generation === generation
-			? { snapshot: kept.snapshot, ageMs: now() - kept.at }
+	private readonly peek = (): KeptLook | undefined =>
+		this.kept !== undefined && this.kept.generation === this.generation
+			? { snapshot: this.kept.snapshot, ageMs: this.now() - this.kept.at }
 			: undefined;
 
-	const usable = (): Kept | undefined =>
-		kept !== undefined && kept.generation === generation && now() - kept.at < maxAgeMs ? kept : undefined;
+	private usable(): Kept | undefined {
+		const { kept } = this;
+		return kept !== undefined && kept.generation === this.generation && this.now() - kept.at < this.maxAgeMs
+			? kept
+			: undefined;
+	}
 
 	/** Keeps `snapshot` unless an input landed while it was being taken (it may predate that input). */
-	const keep = (snapshot: Snapshot, startedIn: number): Kept | undefined => {
-		if (startedIn !== generation) return undefined;
-		kept = { snapshot, generation, at: now(), alertRead: false };
-		return kept;
-	};
+	private keep(snapshot: Snapshot, startedIn: number): Kept | undefined {
+		if (startedIn !== this.generation) return undefined;
+		this.kept = { snapshot, generation: this.generation, at: this.now(), alertRead: false };
+		return this.kept;
+	}
 
-	const observe: Observes["observe"] = async ({ reuse }) => {
-		const hit = reuse ? usable() : undefined;
+	private readonly observe: Observes["observe"] = async ({ reuse }) => {
+		const hit = reuse ? this.usable() : undefined;
 		if (hit !== undefined) {
-			noteSpanDetail("observation", "cached");
+			spanDetails.note("observation", "cached");
 			return { success: true, data: hit.snapshot };
 		}
-		const startedIn = generation;
-		const taken = await driver.snapshot();
-		if (taken.success) keep(taken.data, startedIn);
+		const startedIn = this.generation;
+		const taken = await this.driver.snapshot();
+		if (taken.success) this.keep(taken.data, startedIn);
 		return taken;
 	};
 
-	const snapshot: Driver["snapshot"] = async (opts) => {
-		const startedIn = generation;
-		const taken = await driver.snapshot(opts);
-		if (taken.success && isWholeScreen(opts)) keep(taken.data, startedIn);
+	private readonly snapshot: Driver["snapshot"] = async (opts) => {
+		const startedIn = this.generation;
+		const taken = await this.driver.snapshot(opts);
+		if (taken.success && this.isWholeScreen(opts)) this.keep(taken.data, startedIn);
 		return taken;
 	};
 
-	const alertFromSnapshot = (reader: Driver & DetectsAlerts): Driver["alert"] => {
+	/** A snapshot of the whole screen, as opposed to one the caller filtered. */
+	private isWholeScreen(options: Parameters<Driver["snapshot"]>[0]): boolean {
+		return options === undefined || (options.interactiveOnly !== true && options.backend === undefined);
+	}
+
+	private alertFromSnapshot(reader: Driver & DetectsAlerts): Driver["alert"] {
 		return async () => {
-			const hit = usable();
+			const hit = this.usable();
 			if (hit !== undefined && !hit.alertRead) {
 				hit.alertRead = true;
 				return { success: true, data: reader.alertIn(hit.snapshot) };
 			}
-			const startedIn = generation;
-			const taken = await driver.snapshot();
+			const startedIn = this.generation;
+			const taken = await this.driver.snapshot();
 			if (!taken.success) return taken;
-			const fresh = keep(taken.data, startedIn);
+			const fresh = this.keep(taken.data, startedIn);
 			if (fresh !== undefined) fresh.alertRead = true;
 			return { success: true, data: reader.alertIn(taken.data) };
 		};
-	};
+	}
+
+	/** A settle result that says the screen went quiet (`{ success: true, data: { quiet: true } }`). */
+	private reportsQuiet(result: unknown): boolean {
+		if (typeof result !== "object" || result === null || !("success" in result) || result.success !== true) {
+			return false;
+		}
+		const data: unknown = "data" in result ? result.data : undefined;
+		return typeof data === "object" && data !== null && "quiet" in data && data.quiet === true;
+	}
+
+	private isThenable(value: unknown): value is PromiseLike<unknown> {
+		return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
+	}
+
+	private isCall(value: unknown): value is Call {
+		return typeof value === "function";
+	}
 
 	/** `fn`, with `edge` run before it starts and after it ends, however it ends. */
-	const edged = (fn: Call, target: object, edge: () => void): Call => {
+	private edged(fn: Call, target: object, edge: () => void): Call {
 		return (...args) => {
 			edge();
 			let result: unknown;
@@ -212,55 +227,75 @@ export function cacheObservations<D extends Driver>(driver: D, options: Observat
 				edge();
 				throw error;
 			}
-			if (!isThenable(result)) {
+			if (!this.isThenable(result)) {
 				edge();
 				return result;
 			}
 			return Promise.resolve(result).finally(edge);
 		};
-	};
+	}
 
 	/** `fn`, with the kept snapshot dropped before it starts and after it ends, and the input time noted. */
-	const asInput = (fn: Call, target: object): Call => edged(fn, target, inputEdge);
+	private asInput(fn: Call, target: object): Call {
+		return this.edged(fn, target, this.inputEdge);
+	}
 
 	/** `fn`, with the kept snapshot dropped before it starts and after it ends; no input happened, and a quiet answer ends the last one. */
-	const asWait = (fn: Call, target: object): Call => {
-		const waited = edged(fn, target, moveOn);
+	private asWait(fn: Call, target: object): Call {
+		const waited = this.edged(fn, target, this.moveOn);
 		return async (...args) => {
 			const result: unknown = await waited(...args);
-			if (reportsQuiet(result)) lastInputAt = undefined;
+			if (this.reportsQuiet(result)) this.lastInputAt = undefined;
 			return result;
 		};
-	};
+	}
 
 	/** What a member becomes: reads stay as they are, anything else is input, `orientation()` is a read only without an argument. */
-	const wrapMember = (name: string, value: unknown, target: object): unknown => {
-		if (name === "app" && typeof value === "object" && value !== null) return wrap(value, {});
-		if (!isCall(value) || READS.has(name)) return value;
-		if (WAITS.has(name)) return asWait(value, target);
-		const input = asInput(value, target);
+	private wrapMember(name: string, value: unknown, target: object): unknown {
+		if (name === "app" && typeof value === "object" && value !== null) return this.wrap(value, {});
+		if (!this.isCall(value) || READS.has(name)) return value;
+		if (WAITS.has(name)) return this.asWait(value, target);
+		const input = this.asInput(value, target);
 		if (!READS_WITHOUT_ARGUMENT.has(name)) return input;
 		return (...args: unknown[]): unknown =>
 			args[0] === undefined ? Reflect.apply(value, target, args) : input(...args);
-	};
+	}
 
-	const wrap = <O extends object>(target: O, own: Readonly<Record<string, unknown>>): O => {
+	private wrap<O extends object>(target: O, own: Readonly<Record<string, unknown>>): O {
 		const wrapped = new Map<string, { source: unknown; wrapper: unknown }>();
 		return new Proxy(target, {
-			get(object, property) {
+			get: (object, property) => {
 				const value: unknown = Reflect.get(object, property, object);
 				if (typeof property !== "string") return value;
 				if (property in own) return own[property];
 				const cached = wrapped.get(property);
 				if (cached !== undefined && cached.source === value) return cached.wrapper;
-				const wrapper = wrapMember(property, value, object);
+				const wrapper = this.wrapMember(property, value, object);
 				wrapped.set(property, { source: value, wrapper });
 				return wrapper;
 			},
 		});
-	};
-
-	const own: Record<string, unknown> = { observe, invalidateObservations: moveOn, previous, peek, snapshot };
-	if (canDetectAlerts(driver)) own.alert = alertFromSnapshot(driver);
-	return wrap(driver, own) as D & Observes;
+	}
 }
+
+/** Observation-cache capability checks and the driver wrapper. Use the shared {@link observations} singleton. */
+export class Observations {
+	canObserve(driver: Driver): driver is Driver & Observes {
+		return typeof (driver as Partial<Observes>).observe === "function";
+	}
+
+	canDetectAlerts(driver: Driver): driver is Driver & DetectsAlerts {
+		return typeof (driver as Partial<DetectsAlerts>).alertIn === "function";
+	}
+
+	/**
+	 * Wraps `driver` (a `Proxy`: every member, optional capabilities included, reads through unchanged) with the
+	 * observation cache and the {@link Observes} capability. Put it outside the tracing wrapper, so a snapshot that was
+	 * served from memory leaves no `driver.snapshot` span.
+	 */
+	cache<D extends Driver>(driver: D, options: ObservationCacheOptions = {}): D & Observes {
+		return new ObservationSession(driver, options, this).wrapped();
+	}
+}
+
+export const observations = new Observations();

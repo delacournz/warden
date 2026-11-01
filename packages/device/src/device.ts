@@ -6,14 +6,10 @@ import {
 	ANDROID_PERMISSION_ALLOW_IDS,
 	ANDROID_PERMISSION_DENY_IDS,
 	ANDROID_POSITIVE_ID,
-	centre,
+	alertButtons,
 	DISMISS_BUTTONS,
-	findButton,
-	firstOf,
-	isAutofillSaveSheet,
-	nameOf,
 } from "@delacour/warden-driver/alert-buttons";
-import { canProbeFrontmost } from "@delacour/warden-driver/alerts";
+import { alertCapabilities } from "@delacour/warden-driver/alerts";
 import type { ConditionSink } from "@delacour/warden-driver/conditions/condition-events";
 import type {
 	AlertInfo,
@@ -30,12 +26,10 @@ import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
 	type SettleDetail,
-	settleByHash,
-	settleDetailOf,
-	snapshotHash,
+	settler,
 } from "@delacour/warden-driver/settle";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
-import { settled, toE2eError, unwrap } from "@delacour/warden-driver/unwrap";
+import { driverCalls } from "@delacour/warden-driver/unwrap";
 import type { Locator } from "@delacour/warden-screen/locator";
 import { renderHeader, renderSnapshot } from "@delacour/warden-screen/render";
 import { createAlertReader } from "./alert-reader";
@@ -268,34 +262,34 @@ const ALERT_PRESS_ATTEMPTS = 3;
 const ALERT_PRESS_SETTLE_MS = 250;
 
 function buttonNames(info: AlertInfo): string {
-	return info.buttons.map((b) => nameOf(b) ?? "?").join(", ");
+	return info.buttons.map((b) => alertButtons.nameOf(b) ?? "?").join(", ");
 }
 
 function alertTarget(info: AlertInfo, action: AlertAction, platform: Platform): Element | undefined {
 	const { buttons } = info;
 	if (action === "accept") {
-		if (platform !== "android") return firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
+		if (platform !== "android") return alertButtons.firstOf(buttons, ACCEPT_BUTTONS) ?? buttons[buttons.length - 1];
 		return (
 			androidButton(buttons, ANDROID_PERMISSION_ALLOW_IDS) ??
-			firstOf(buttons, ACCEPT_BUTTONS) ??
+			alertButtons.firstOf(buttons, ACCEPT_BUTTONS) ??
 			androidButton(buttons, [ANDROID_POSITIVE_ID]) ??
 			buttons[buttons.length - 1]
 		);
 	}
 	// Cancel on "Open in …?" only throws away a link the test opened: open it
-	if (action === "dismiss" && isOpenInSheet(info)) return findButton(buttons, "Open");
+	if (action === "dismiss" && isOpenInSheet(info)) return alertButtons.findButton(buttons, "Open");
 	if (action === "dismiss") {
-		if (platform !== "android") return firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
+		if (platform !== "android") return alertButtons.firstOf(buttons, DISMISS_BUTTONS) ?? buttons[0];
 		return (
 			androidButton(buttons, ANDROID_PERMISSION_DENY_IDS) ??
-			firstOf(buttons, DISMISS_BUTTONS) ??
+			alertButtons.firstOf(buttons, DISMISS_BUTTONS) ??
 			androidButton(buttons, [ANDROID_NEGATIVE_ID]) ??
 			buttons[0]
 		);
 	}
-	const target = findButton(buttons, action.button);
+	const target = alertButtons.findButton(buttons, action.button);
 	if (target === undefined) {
-		const names = buttons.map((b) => nameOf(b) ?? "?").join(", ");
+		const names = buttons.map((b) => alertButtons.nameOf(b) ?? "?").join(", ");
 		throw new E2eError("ACTION_FAILED", `alert has no "${action.button}" button (buttons: ${names})`);
 	}
 	return target;
@@ -326,10 +320,10 @@ export function createDevice({
 	// the signal is read per call: the runner swaps it for every attempt
 	const signal = (): AbortSignal | undefined => signalOf?.();
 	const biometric = (op: BiometricOp): Promise<BiometricState> =>
-		unwrap(() => driver.biometrics(op), `biometrics ${op}`, signal());
+		driverCalls.unwrap(() => driver.biometrics(op), `biometrics ${op}`, signal());
 
 	const pressAlertButton = async (button: Element, action: string): Promise<void> => {
-		await unwrap(() => driver.tap(centre(button)), action, signal());
+		await driverCalls.unwrap(() => driver.tap(alertButtons.centre(button)), action, signal());
 	};
 
 	const readAlert = createAlertReader({ driver, clock, signal });
@@ -342,7 +336,7 @@ export function createDevice({
 				`the autofill "Save password?" sheet is closed with Back only, never "${action.button}": use accept or dismiss`
 			);
 		}
-		await unwrap(() => driver.pressButton("back"), "dismiss autofill save sheet", signal());
+		await driverCalls.unwrap(() => driver.pressButton("back"), "dismiss autofill save sheet", signal());
 		return true;
 	};
 
@@ -360,18 +354,18 @@ export function createDevice({
 			if (attempt >= ALERT_PRESS_ATTEMPTS) {
 				throw new E2eError(
 					"ACTION_FAILED",
-					`alert still showing after pressing "${nameOf(pressed) ?? "?"}" ${ALERT_PRESS_ATTEMPTS} times (buttons: ${buttonNames(now)})`
+					`alert still showing after pressing "${alertButtons.nameOf(pressed) ?? "?"}" ${ALERT_PRESS_ATTEMPTS} times (buttons: ${buttonNames(now)})`
 				);
 			}
-			target = now.buttons.find((b) => nameOf(b) === nameOf(pressed)) ?? target;
+			target = now.buttons.find((b) => alertButtons.nameOf(b) === alertButtons.nameOf(pressed)) ?? target;
 			await pressAlertButton(target, "press alert button again");
 		}
 	};
 
 	/** Whether the app under test is in front; `undefined` when the driver (or the bundle id) cannot say. */
 	const appInFront = async (): Promise<boolean | undefined> => {
-		if (appId === "" || !canProbeFrontmost(driver)) return undefined;
-		const result = await settled(() => driver.isFrontmost(appId), "probe frontmost app", signal());
+		if (appId === "" || !alertCapabilities.canProbeFrontmost(driver)) return undefined;
+		const result = await driverCalls.settled(() => driver.isFrontmost(appId), "probe frontmost app", signal());
 		return result.success ? result.data : undefined;
 	};
 
@@ -386,7 +380,7 @@ export function createDevice({
 	};
 
 	const readSnapshot = (opts?: { interactiveOnly?: boolean }): Promise<Snapshot> =>
-		unwrap(() => driver.snapshot(opts), "snapshot", signal());
+		driverCalls.unwrap(() => driver.snapshot(opts), "snapshot", signal());
 
 	let devtools: DeviceDevtools | undefined;
 	const lazyDevtools = (): DeviceDevtools | undefined => {
@@ -432,7 +426,8 @@ export function createDevice({
 			if (info === null || info.buttons.length === 0) return false;
 			// openLink is answering this sheet itself and must see it to know the link has one
 			if (isOpenInSheet(info) && typeof action === "string" && linkInFlight(linkScope)) return false;
-			if (driver.platform === "android" && isAutofillSaveSheet(info.buttons)) return closeAutofillSheet(action);
+			if (driver.platform === "android" && alertButtons.isAutofillSaveSheet(info.buttons))
+				return closeAutofillSheet(action);
 			const target = alertTarget(info, action, driver.platform);
 			if (target === undefined) return false;
 			await pressAlertButton(target, "press alert button");
@@ -445,7 +440,7 @@ export function createDevice({
 			if (!Number.isFinite(waitMs) || waitMs < 0) {
 				throw new E2eError("INVALID_ARGUMENT", `openLink waitMs must be a non-negative number, got ${String(waitMs)}`);
 			}
-			await unwrap(() => driver.app.openUrl(url), `open ${url}`, signal());
+			await driverCalls.unwrap(() => driver.app.openUrl(url), `open ${url}`, signal());
 			const answersSheet = options.accept !== false && driver.platform === "ios" && driver.capabilities.alerts;
 			if (!answersSheet && options.until === undefined) return;
 			await whileLinkInFlight(linkScope, () =>
@@ -464,22 +459,22 @@ export function createDevice({
 		},
 
 		async home() {
-			await unwrap(() => driver.pressButton("home"), "press home", signal());
+			await driverCalls.unwrap(() => driver.pressButton("home"), "press home", signal());
 		},
 
 		async back() {
 			if (driver.platform === "ios") {
 				throw new E2eError("INVALID_ARGUMENT", "device.back() is Android only: iOS has no back key");
 			}
-			await unwrap(() => driver.pressButton("back"), "press back", signal());
+			await driverCalls.unwrap(() => driver.pressButton("back"), "press back", signal());
 		},
 
 		orientation(set) {
-			return unwrap(() => driver.orientation(set), "orientation", signal());
+			return driverCalls.unwrap(() => driver.orientation(set), "orientation", signal());
 		},
 
 		appearance(set) {
-			return unwrap(() => driver.appearance(set), "appearance", signal());
+			return driverCalls.unwrap(() => driver.appearance(set), "appearance", signal());
 		},
 
 		biometrics: {
@@ -491,18 +486,18 @@ export function createDevice({
 		},
 
 		clipboard() {
-			return unwrap(() => driver.clipboard(), "read clipboard", signal());
+			return driverCalls.unwrap(() => driver.clipboard(), "read clipboard", signal());
 		},
 
 		async setClipboard(text) {
-			await unwrap(() => driver.clipboard(text), "set clipboard", signal());
+			await driverCalls.unwrap(() => driver.clipboard(text), "set clipboard", signal());
 		},
 
 		async hideKeyboard() {
 			const snapshot = await readSnapshot();
 			if (!snapshot.flat.some((element) => element.role === "keyboard")) return;
-			if (driver.platform === "ios") await unwrap(() => driver.key("Enter"), "hide keyboard", signal());
-			else await unwrap(() => driver.pressButton("back"), "hide keyboard", signal());
+			if (driver.platform === "ios") await driverCalls.unwrap(() => driver.key("Enter"), "hide keyboard", signal());
+			else await driverCalls.unwrap(() => driver.pressButton("back"), "hide keyboard", signal());
 		},
 
 		async screenshot(name) {
@@ -511,7 +506,7 @@ export function createDevice({
 			issued.set(dir, n);
 			const path = screenshotPath(dir, n, name);
 			mkdirSync(dirname(path), { recursive: true });
-			const shot = await unwrap(() => driver.screenshot({ path }), "screenshot", signal());
+			const shot = await driverCalls.unwrap(() => driver.screenshot({ path }), "screenshot", signal());
 			if (shot.path === undefined && shot.png !== undefined) writeFileSync(path, shot.png);
 			trace?.()?.write({ type: "screenshot", ts: clock.now(), kind: "device", label: name, path });
 			return path;
@@ -527,10 +522,10 @@ export function createDevice({
 		async settle(options = {}) {
 			const quietMs = options.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
 			const timeoutMs = options.timeout ?? DEFAULT_SETTLE_TIMEOUT_MS;
-			const native = await settled(() => driver.settle({ quietMs, timeoutMs }), "settle", signal());
-			if (native.success) return settleDetailOf(native.data);
-			if (native.error.code !== "E_UNSUPPORTED") throw toE2eError(native.error, "settle");
-			const polled = await settleByHash(async () => snapshotHash(await readSnapshot()), {
+			const native = await driverCalls.settled(() => driver.settle({ quietMs, timeoutMs }), "settle", signal());
+			if (native.success) return settler.detailOf(native.data);
+			if (native.error.code !== "E_UNSUPPORTED") throw driverCalls.toE2eError(native.error, "settle");
+			const polled = await settler.byHash(async () => settler.snapshotHash(await readSnapshot()), {
 				quietMs,
 				timeoutMs,
 				now: clock.now,

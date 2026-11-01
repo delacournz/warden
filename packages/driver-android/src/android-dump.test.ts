@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { collectSpanDetail, type SpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import { openAdbSession } from "./adb-session";
 import { createDumper, type DumpRoute, routeOrder } from "./android-dump";
 import { fakeAndroidHost } from "./android-host.testing";
@@ -40,11 +40,11 @@ describe("dump span detail", () => {
 			host: [{ match: TTY, reply: XML }],
 		});
 		const first: SpanDetail = {};
-		await collectSpanDetail(first, () => dumper.dump());
+		await spanDetails.collect(first, () => dumper.dump());
 		expect(first).toMatchObject({ dumpRoute: "tty", dumpRoutesTried: 2 });
 		expect(typeof first.dumpMs).toBe("number");
 		const second: SpanDetail = {};
-		await collectSpanDetail(second, () => dumper.dump());
+		await spanDetails.collect(second, () => dumper.dump());
 		expect(second).toMatchObject({ dumpRoute: "tty", dumpRoutesTried: 1 });
 		await session.close();
 	});

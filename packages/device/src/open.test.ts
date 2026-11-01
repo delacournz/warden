@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeProxy } from "@delacour/warden-driver/testing/network-proxy";
+import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
 import { memoryAndroidState } from "@delacour/warden-driver-android/android-state";
 import { fakeAndroidHost } from "@delacour/warden-driver-android/testing/android-host";
 import { fakeExec } from "@delacour/warden-driver-ios/testing/exec";
@@ -215,8 +215,8 @@ describe("the lease's shaping proxy and clock recorder", () => {
 	});
 
 	test("android gets the given proxy and recorder; a proxy in android wins", () => {
-		const given = fakeProxy();
-		const own = fakeProxy();
+		const given = new FakeProxy();
+		const own = new FakeProxy();
 		const clockRecorder = () => {};
 		const options = androidOptions({ ...base("android"), networkProxy: given, clockRecorder }, false);
 		expect(options.networkProxy).toBe(given);

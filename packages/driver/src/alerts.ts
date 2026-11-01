@@ -20,16 +20,21 @@ export type AlertBackend = "ax" | "axbridge";
  */
 export type ReadsAlertOn = { alertOn(backend: AlertBackend): DriverResult<AlertInfo | null> };
 
-export function canReadAlertOn(driver: Driver): driver is Driver & ReadsAlertOn {
-	return typeof (driver as Partial<ReadsAlertOn>).alertOn === "function";
-}
-
 /**
  * Whether the app with `bundleId` owns the foreground right now: a read of the helper's own state, no tree read and no
  * waiting. `false` while SpringBoard (a system sheet), Safari or another app is in front.
  */
 export type ProbesFrontmost = { isFrontmost(bundleId: string): DriverResult<boolean> };
 
-export function canProbeFrontmost(driver: Driver): driver is Driver & ProbesFrontmost {
-	return typeof (driver as Partial<ProbesFrontmost>).isFrontmost === "function";
+/** Capability checks for the optional alert readers. Use the shared {@link alertCapabilities} singleton. */
+export class AlertCapabilities {
+	canReadAlertOn(driver: Driver): driver is Driver & ReadsAlertOn {
+		return typeof (driver as Partial<ReadsAlertOn>).alertOn === "function";
+	}
+
+	canProbeFrontmost(driver: Driver): driver is Driver & ProbesFrontmost {
+		return typeof (driver as Partial<ProbesFrontmost>).isFrontmost === "function";
+	}
 }
+
+export const alertCapabilities = new AlertCapabilities();

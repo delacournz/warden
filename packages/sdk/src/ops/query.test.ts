@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { get, is, wait } from "./query";
 import { createMemoryRefStore } from "./ref-store";
@@ -7,23 +7,23 @@ import type { OpSession } from "./session";
 import { snapshot } from "./snapshot";
 import { createMemoryStateStore } from "./state-store";
 
-const SCREEN = snapshotOf([
-	el("window", {
+const SCREEN = driverFixtures.snapshotOf([
+	driverFixtures.el("window", {
 		children: [
-			el("textfield", {
+			driverFixtures.el("textfield", {
 				label: "Email",
 				id: "email",
 				value: "a@b.co",
 				frame: { x: 0, y: 100, width: 390, height: 44 },
 			}),
-			el("button", { label: "Cancel", id: "cancel", enabled: false }),
+			driverFixtures.el("button", { label: "Cancel", id: "cancel", enabled: false }),
 		],
 	}),
 ]);
 
 function session(): OpSession & { clock: { t: number } } {
 	const clock = { t: 1_000 };
-	const driver = fakeDriver({ screens: [SCREEN] });
+	const driver = new FakeDriver({ screens: [SCREEN] });
 	return {
 		clock,
 		device: { id: "UDID", platform: "ios" },

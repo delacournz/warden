@@ -3,9 +3,9 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
-import { canDetectAlerts } from "@delacour/warden-driver/observation-cache";
-import { settleDetailOf } from "@delacour/warden-driver/settle";
-import { canRepeatKeys, canSelectAll } from "@delacour/warden-driver/typing";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { settler } from "@delacour/warden-driver/settle";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import { elementAt, openAndroidDriver } from "./android-driver";
 import {
 	type FakeAndroidHost,
@@ -419,8 +419,8 @@ describe("input", () => {
 
 	test("pressKeyRepeat batches presses into one command (the typing layer finds it)", async () => {
 		const { driver, host } = await setup();
-		expect(canRepeatKeys(driver)).toBe(true);
-		if (!canRepeatKeys(driver)) return;
+		expect(deviceTyping.canRepeatKeys(driver)).toBe(true);
+		if (!deviceTyping.canRepeatKeys(driver)) return;
 		await value(driver.pressKeyRepeat("Backspace", 13));
 		await value(driver.pressKeyRepeat("Backspace", 0));
 		expect(host.shell.filter((c) => c.startsWith("input"))).toEqual([
@@ -430,27 +430,27 @@ describe("input", () => {
 
 	test("selectAll is Ctrl+A through keycombination on Android 13+ (the typing layer finds it)", async () => {
 		const { driver, host } = await setup();
-		expect(canSelectAll(driver)).toBe(true);
-		if (!canSelectAll(driver)) return;
+		expect(deviceTyping.canSelectAll(driver)).toBe(true);
+		if (!deviceTyping.canSelectAll(driver)) return;
 		await value(driver.selectAll());
 		expect(host.shell.filter((c) => c.startsWith("input"))).toEqual(["input keycombination 113 29"]);
 	});
 
 	test("Android 12 and an unreadable sdk level have no selectAll, so the typing layer keeps its Backspaces", async () => {
 		const old = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(32) }] });
-		expect(canSelectAll(old.driver)).toBe(false);
-		expect(canRepeatKeys(old.driver)).toBe(true);
+		expect(deviceTyping.canSelectAll(old.driver)).toBe(false);
+		expect(deviceTyping.canRepeatKeys(old.driver)).toBe(true);
 		const unknown = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(undefined) }] });
-		expect(canSelectAll(unknown.driver)).toBe(false);
+		expect(deviceTyping.canSelectAll(unknown.driver)).toBe(false);
 		const edge = await setup({ shell: [{ match: "getprop sys.boot_completed", reply: probe(33) }] });
-		expect(canSelectAll(edge.driver)).toBe(true);
+		expect(deviceTyping.canSelectAll(edge.driver)).toBe(true);
 	});
 
 	test("a failing select-all is returned for the caller to fall back", async () => {
 		const { driver } = await setup({
 			shell: [{ match: "input keycombination", reply: { stdout: "Error: Unknown command\n", exitCode: 255 } }],
 		});
-		if (!canSelectAll(driver)) throw new Error("expected selectAll");
+		if (!deviceTyping.canSelectAll(driver)) throw new Error("expected selectAll");
 		expect((await driver.selectAll()).success).toBe(false);
 	});
 
@@ -706,7 +706,7 @@ describe("settle and alert", () => {
 		const before = dumps(host);
 		const out = await value(driver.settle());
 		expect(dumps(host) - before).toBe(1);
-		expect(settleDetailOf(out)).toEqual({ quiet: true, waitedMs: 1_900, via: "snapshot" });
+		expect(settler.detailOf(out)).toEqual({ quiet: true, waitedMs: 1_900, via: "snapshot" });
 	});
 
 	test("a dump that waited out uiautomator's 10 s idle limit saw a screen that never went quiet", async () => {
@@ -722,7 +722,7 @@ describe("settle and alert", () => {
 				},
 			],
 		});
-		expect(settleDetailOf(await value(driver.settle()))).toEqual({ quiet: false, waitedMs: 10_400, via: "snapshot" });
+		expect(settler.detailOf(await value(driver.settle()))).toEqual({ quiet: false, waitedMs: 10_400, via: "snapshot" });
 	});
 
 	test("a settle whose dump fails is not quiet", async () => {
@@ -742,7 +742,7 @@ describe("settle and alert", () => {
 		expect(dumps(host) - before).toBeGreaterThan(2);
 		expect(out.quiet).toBe(true);
 		expect(out.waitedMs).toBeGreaterThanOrEqual(1_500);
-		expect(settleDetailOf(out).via).toBe("hash");
+		expect(settler.detailOf(out).via).toBe("hash");
 	});
 
 	test("that comparison gives up when the UI keeps changing", async () => {
@@ -777,8 +777,8 @@ describe("settle and alert", () => {
 			'<node class="android.widget.Button" resource-id="android:id/button1" text="OK" bounds="[0,0][100,100]" enabled="true" clickable="true" />' +
 			"</node></hierarchy>";
 		const { driver, host } = await setup({ shell: [{ match: "uiautomator dump /dev/stdout", reply: dialog }] });
-		expect(canDetectAlerts(driver)).toBe(true);
-		if (!canDetectAlerts(driver)) return;
+		expect(observations.canDetectAlerts(driver)).toBe(true);
+		if (!observations.canDetectAlerts(driver)) return;
 		const snapshot = await value(driver.snapshot());
 		const dumps = host.shell.filter((c) => c.includes("uiautomator dump")).length;
 		expect(driver.alertIn(snapshot)?.buttons.map((b) => b.text)).toEqual(["OK"]);
@@ -787,7 +787,7 @@ describe("settle and alert", () => {
 
 	test("alertIn is null on a screen without an alert", async () => {
 		const { driver } = await setup();
-		if (!canDetectAlerts(driver)) throw new Error("no alertIn");
+		if (!observations.canDetectAlerts(driver)) throw new Error("no alertIn");
 		expect(driver.alertIn(await value(driver.snapshot()))).toBeNull();
 	});
 });

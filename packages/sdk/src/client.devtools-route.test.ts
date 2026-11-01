@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -37,7 +37,10 @@ function rig(extraEnv: Record<string, string> = {}): { seams: ClientSeams; optio
 		seams: {
 			providerFor: () => provider,
 			stopHelper: async () => undefined,
-			openDriver: async () => resultFactory.ok(fakeDriver({ screens: [snapshotOf([el("button", { id: "go" })])] })),
+			openDriver: async () =>
+				resultFactory.ok(
+					new FakeDriver({ screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go" })])] })
+				),
 			devtools: {
 				open: async () =>
 					resultFactory.ok({

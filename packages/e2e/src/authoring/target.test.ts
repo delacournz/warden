@@ -1,16 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { coordsTarget, targetFromElement } from "./target";
 
 describe("targetFromElement", () => {
-	const snapshot = snapshotOf([
-		el("button", { id: "sign-in-submit", label: "Sign in", frame: { x: 24, y: 300, width: 342, height: 48 } }),
-		el("button", { label: "Sign in with Apple", frame: { x: 24, y: 360, width: 342, height: 48 } }),
-		el("button", { id: "row", label: "Row" }),
-		el("button", { id: "row", label: "Row" }),
-		el("button", { text: "Save" }),
-		el("other"),
-		el("other"),
+	const snapshot = driverFixtures.snapshotOf([
+		driverFixtures.el("button", {
+			id: "sign-in-submit",
+			label: "Sign in",
+			frame: { x: 24, y: 300, width: 342, height: 48 },
+		}),
+		driverFixtures.el("button", { label: "Sign in with Apple", frame: { x: 24, y: 360, width: 342, height: 48 } }),
+		driverFixtures.el("button", { id: "row", label: "Row" }),
+		driverFixtures.el("button", { id: "row", label: "Row" }),
+		driverFixtures.el("button", { text: "Save" }),
+		driverFixtures.el("other"),
+		driverFixtures.el("other"),
 	]);
 	const at = (id: string) => {
 		const element = snapshot.flat.find((candidate) => candidate.id === id);
@@ -62,7 +66,7 @@ describe("targetFromElement", () => {
 	});
 
 	test("lists role+text after role+label only when text differs from the label", () => {
-		const both = snapshotOf([el("button", { id: "go", label: "Go", text: "GO NOW" })]);
+		const both = driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go", text: "GO NOW" })]);
 		const target = targetFromElement(both.flat[0] ?? at("0"), both);
 		if (target.kind !== "selector") throw new Error("expected a selector target");
 		expect(target.chain.map((entry) => entry.by)).toEqual(["id", "role-label", "role-text", "path"]);

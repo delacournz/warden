@@ -4,7 +4,7 @@ import type { FixtureSession } from "@delacour/warden-device/fixture-session";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import type { E2eError } from "@delacour/warden-driver/e2e-error";
-import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
 import { deviceFor as createDevice } from "./fixtures";
@@ -99,7 +99,7 @@ describe("device.devtools", () => {
 		logTimestamps: false,
 		...(metroUrl === undefined ? {} : { metroUrl }),
 	});
-	const driver = () => fakeDriver({ screens: [snapshotOf([])] });
+	const driver = () => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 
 	test("undefined without a Metro URL (a release build)", () => {
 		const { src } = source(() => resultFactory.ok(facetStubs.create().facet));

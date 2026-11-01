@@ -1,6 +1,6 @@
 import type { Driver, DriverError, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { canObserve } from "@delacour/warden-driver/observation-cache";
+import { observations } from "@delacour/warden-driver/observation-cache";
 import { fieldValue } from "./actions";
 import { type Locator, pickOne, textOf } from "./locator";
 import type { NodeEntry } from "./nodes";
@@ -385,7 +385,7 @@ function conditionHold(
 
 /** Whether the observation cache in front of `driver` says no input came within the last `NEGATION_GRACE_MS`. */
 function noRecentInput(driver: Driver): boolean {
-	const previous = canObserve(driver) ? driver.previous?.() : undefined;
+	const previous = observations.canObserve(driver) ? driver.previous?.() : undefined;
 	if (previous === undefined) return false;
 	return previous.sinceInputMs === undefined || previous.sinceInputMs >= NEGATION_GRACE_MS;
 }

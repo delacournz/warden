@@ -1,12 +1,5 @@
 import type { Driver, DriverError, DriverResult, Element, Point } from "@delacour/warden-driver/driver.types";
-import {
-	canPasteText,
-	canSelectAll,
-	canSetText,
-	pressKeys,
-	type Sleep,
-	typeText,
-} from "@delacour/warden-driver/typing";
+import { deviceTyping, type Sleep } from "@delacour/warden-driver/typing";
 import { resultFactory } from "@delacour/warden-types/result";
 import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
@@ -213,11 +206,11 @@ async function prepareFocused(
 	if (entry === undefined) return resultFactory.ok({ pending: "none" });
 	const content = fieldContent(entry);
 	if (content.kind === "empty") return resultFactory.ok({ pending: "none" });
-	if (content.kind === "text" && method !== "counted" && canSelectAll(driver)) {
+	if (content.kind === "text" && method !== "counted" && deviceTyping.canSelectAll(driver)) {
 		const selected = await driver.selectAll();
 		if (selected.success) return resultFactory.ok({ pending: "selection" });
 	}
-	const pressed = await pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
+	const pressed = await deviceTyping.pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
 	return pressed.success ? resultFactory.ok({ pending: "none" }) : pressed;
 }
 
@@ -234,7 +227,9 @@ export async function focusAndClear(
 ): DriverResult<void> {
 	const prepared = await focusAndSelect(driver, sleep, point, entry, method);
 	if (!prepared.success) return prepared;
-	return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : resultFactory.ok(undefined);
+	return prepared.data.pending === "selection"
+		? deviceTyping.pressKeys(driver, sleep, "Backspace", 1)
+		: resultFactory.ok(undefined);
 }
 
 /**
@@ -266,7 +261,7 @@ export async function focusClearType(
 	via: FillVia = "type"
 ): DriverResult<void> {
 	const wantsSetText = method === "setText" || (method === "auto" && setTextOptIn);
-	if (wantsSetText && entry !== undefined && fieldContent(entry).kind === "text" && canSetText(driver)) {
+	if (wantsSetText && entry !== undefined && fieldContent(entry).kind === "text" && deviceTyping.canSetText(driver)) {
 		const focused = await driver.tap(point);
 		if (!focused.success) return focused;
 		const replaced = await driver.setText(text);
@@ -290,11 +285,11 @@ async function typeOver(
 	if (!prepared.success) return prepared;
 	if (text === "")
 		return prepared.data.pending === "selection"
-			? pressKeys(driver, sleep, "Backspace", 1)
+			? deviceTyping.pressKeys(driver, sleep, "Backspace", 1)
 			: resultFactory.ok(undefined);
-	if (via === "paste" && canPasteText(driver)) {
+	if (via === "paste" && deviceTyping.canPasteText(driver)) {
 		const pasted = await driver.pasteText(text);
 		if (pasted.success) return pasted;
 	}
-	return typeText(driver, sleep, text);
+	return deviceTyping.typeText(driver, sleep, text);
 }

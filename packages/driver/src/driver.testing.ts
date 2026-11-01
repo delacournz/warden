@@ -29,6 +29,7 @@ import type {
 	LaunchOptions,
 	LocaleState,
 	Modifier,
+	NetworkOptions,
 	NetworkState,
 	Orientation,
 	PermissionGrants,
@@ -46,9 +47,9 @@ import type {
 	TouchPath,
 	TwoFingerOptions,
 } from "./driver.types";
-import { driverError } from "./errors";
-import { planGesture } from "./gesture-geometry";
-import { faultNotes } from "./network-proxy";
+import { driverErrors } from "./errors";
+import { gestureGeometry } from "./gesture-geometry";
+import { networkProxyShaping } from "./network-proxy";
 import type { PastesText, SelectsAll, SetsText } from "./typing";
 
 /**
@@ -81,10 +82,6 @@ export type ElementSpec = {
 
 export type ElementOptions = Omit<ElementSpec, "role">;
 
-export function el(role: Role, options: ElementOptions = {}): ElementSpec {
-	return { role, ...options };
-}
-
 export type SnapshotOptions = {
 	platform?: Platform;
 	backend?: SnapshotBackend;
@@ -96,84 +93,6 @@ export type SnapshotOptions = {
 
 const ROW_HEIGHT = 44;
 const ROW_PITCH = 50;
-
-function titleCase(value: string): string {
-	return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function normalise(frame: Rect, screen: ScreenInfo): Rect {
-	return {
-		x: frame.x / screen.width,
-		y: frame.y / screen.height,
-		width: frame.width / screen.width,
-		height: frame.height / screen.height,
-	};
-}
-
-const OPTIONAL_KEYS = [
-	"label",
-	"value",
-	"text",
-	"placeholder",
-	"focused",
-	"hidden",
-	"selected",
-	"checked",
-	"hittable",
-	"tapPoint",
-] as const;
-
-/** Only the optional `Element` fields the spec actually sets (`id` becomes `identifier`). */
-function optionalFields(spec: ElementSpec): Partial<Element> {
-	const fields: Partial<Element> = {};
-	for (const key of OPTIONAL_KEYS) {
-		const value = spec[key];
-		if (value !== undefined) Object.assign(fields, { [key]: value });
-	}
-	if (spec.id !== undefined) fields.identifier = spec.id;
-	return fields;
-}
-
-/**
- * Build a full `Snapshot` from specs: preorder `flat`, path ids (`0.3.1`), depth and `normFrame`.
- * Specs without a `frame` are laid out as full-width rows, one per preorder index (50 pt pitch).
- */
-export function snapshotOf(specs: readonly ElementSpec[], options: SnapshotOptions = {}): Snapshot {
-	const screen = options.screen ?? FAKE_SCREEN;
-	const platform = options.platform ?? "ios";
-	const flat: Element[] = [];
-	const build = (spec: ElementSpec, path: string, depth: number): Element => {
-		const row = flat.length;
-		const frame = spec.frame ?? { x: 0, y: row * ROW_PITCH, width: screen.width, height: ROW_HEIGHT };
-		const element: Element = {
-			id: path,
-			role: spec.role,
-			rawType: spec.rawType ?? titleCase(spec.role),
-			frame,
-			normFrame: normalise(frame, screen),
-			traits: spec.traits ?? [],
-			enabled: spec.enabled ?? true,
-			depth,
-			children: [],
-		};
-		Object.assign(element, optionalFields(spec));
-		flat.push(element);
-		element.children = (spec.children ?? []).map((child, index) => build(child, `${path}.${index}`, depth + 1));
-		return element;
-	};
-	const elements = specs.map((spec, index) => build(spec, `${index}`, 0));
-	const snapshot: Snapshot = {
-		platform,
-		backend: options.backend ?? (platform === "ios" ? "axbridge" : "uiautomator"),
-		takenAt: options.takenAt ?? 0,
-		screen,
-		elements,
-		flat,
-		truncated: options.truncated ?? false,
-	};
-	if (options.modal) snapshot.modal = options.modal;
-	return snapshot;
-}
 
 /** One entry per `Driver` method call (app commands are `app.*`). */
 export type DriverCall =
@@ -264,24 +183,6 @@ export type FakeDriverOptions = {
 	frontmost?: () => string | undefined;
 };
 
-export type FakeDriver = Driver &
-	Partial<SelectsAll> &
-	Partial<SetsText> &
-	Partial<PastesText> &
-	Partial<ReadsAlertOn & ProbesFrontmost> & {
-		/** every call so far, in order */
-		readonly calls: DriverCall[];
-		/** the screen `snapshot()` currently returns */
-		readonly screen: Snapshot;
-		/** move to the next scripted screen (clamped to the last) */
-		advance(): void;
-		/** replace the current screen; with a function source this pins a fixed screen */
-		set(screen: Snapshot): void;
-		/** calls of one method, typed */
-		callsOf<M extends DriverMethod>(method: M): Extract<DriverCall, { method: M }>[];
-		closed: boolean;
-	};
-
 const DEFAULT_CAPABILITIES: DriverCapabilities = {
 	pinch: true,
 	maxPointers: 2,
@@ -291,71 +192,463 @@ const DEFAULT_CAPABILITIES: DriverCapabilities = {
 	reachability: true,
 };
 
-function area(rect: Rect): number {
-	return rect.width * rect.height;
-}
+const OPTIONAL_KEYS = [
+	"label",
+	"value",
+	"text",
+	"placeholder",
+	"focused",
+	"hidden",
+	"selected",
+	"checked",
+	"hittable",
+	"tapPoint",
+] as const;
 
-function contains(rect: Rect, point: Point): boolean {
-	return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
-}
-
-/** Smallest element under the point; later (deeper / later in preorder) wins ties. */
-function hitTest(snapshot: Snapshot, point: Point): Element | null {
-	let best: Element | null = null;
-	for (const element of snapshot.flat) {
-		if (element.hidden || !contains(element.frame, point)) continue;
-		if (!best || area(element.frame) <= area(best.frame)) best = element;
+/** Builders for fixtures: element specs, snapshots and `onCall` overrides. Use the shared {@link driverFixtures} singleton. */
+export class DriverFixtures {
+	el(role: Role, options: ElementOptions = {}): ElementSpec {
+		return { role, ...options };
 	}
-	return best;
+
+	/**
+	 * Build a full `Snapshot` from specs: preorder `flat`, path ids (`0.3.1`), depth and `normFrame`.
+	 * Specs without a `frame` are laid out as full-width rows, one per preorder index (50 pt pitch).
+	 */
+	snapshotOf(specs: readonly ElementSpec[], options: SnapshotOptions = {}): Snapshot {
+		const screen = options.screen ?? FAKE_SCREEN;
+		const platform = options.platform ?? "ios";
+		const flat: Element[] = [];
+		const elements = specs.map((spec, index) => this.build(flat, screen, spec, `${index}`, 0));
+		const snapshot: Snapshot = {
+			platform,
+			backend: options.backend ?? (platform === "ios" ? "axbridge" : "uiautomator"),
+			takenAt: options.takenAt ?? 0,
+			screen,
+			elements,
+			flat,
+			truncated: options.truncated ?? false,
+		};
+		if (options.modal) snapshot.modal = options.modal;
+		return snapshot;
+	}
+
+	/** Convenience: a failed `DriverResult` payload for `onCall` overrides. */
+	failWith(code: DriverError["code"], message: string = code): { error: DriverError } {
+		return { error: driverErrors.make(code, message) };
+	}
+
+	/** Narrow a `Result` in tests without optional chaining noise. */
+	unwrap<T>(result: Result<T, DriverError>): T {
+		if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
+		return result.data;
+	}
+
+	private build(flat: Element[], screen: ScreenInfo, spec: ElementSpec, path: string, depth: number): Element {
+		const row = flat.length;
+		const frame = spec.frame ?? { x: 0, y: row * ROW_PITCH, width: screen.width, height: ROW_HEIGHT };
+		const element: Element = {
+			id: path,
+			role: spec.role,
+			rawType: spec.rawType ?? this.titleCase(spec.role),
+			frame,
+			normFrame: this.normalise(frame, screen),
+			traits: spec.traits ?? [],
+			enabled: spec.enabled ?? true,
+			depth,
+			children: [],
+		};
+		Object.assign(element, this.optionalFields(spec));
+		flat.push(element);
+		element.children = (spec.children ?? []).map((child, index) =>
+			this.build(flat, screen, child, `${path}.${index}`, depth + 1)
+		);
+		return element;
+	}
+
+	private titleCase(value: string): string {
+		return value.charAt(0).toUpperCase() + value.slice(1);
+	}
+
+	private normalise(frame: Rect, screen: ScreenInfo): Rect {
+		return {
+			x: frame.x / screen.width,
+			y: frame.y / screen.height,
+			width: frame.width / screen.width,
+			height: frame.height / screen.height,
+		};
+	}
+
+	/** Only the optional `Element` fields the spec actually sets (`id` becomes `identifier`). */
+	private optionalFields(spec: ElementSpec): Partial<Element> {
+		const fields: Partial<Element> = {};
+		for (const key of OPTIONAL_KEYS) {
+			const value = spec[key];
+			if (value !== undefined) Object.assign(fields, { [key]: value });
+		}
+		if (spec.id !== undefined) fields.identifier = spec.id;
+		return fields;
+	}
 }
 
-function findAlert(snapshot: Snapshot): AlertInfo | null {
-	const alert = snapshot.flat.find((element) => element.role === "alert" || element.role === "sheet");
-	if (!alert) return null;
-	const collect = (element: Element): Element[] =>
-		element.children.flatMap((child) => (child.role === "button" ? [child] : collect(child)));
-	const texts = alert.children.filter((child) => child.role === "text");
-	const info: AlertInfo = { buttons: collect(alert) };
-	const title = alert.label ?? texts[0]?.label;
-	const message = texts[1]?.label;
-	if (title !== undefined) info.title = title;
-	if (message !== undefined) info.message = message;
-	return info;
-}
+export const driverFixtures = new DriverFixtures();
 
-export function fakeDriver(options: FakeDriverOptions): FakeDriver {
-	const platform = options.platform ?? "ios";
-	const calls: DriverCall[] = [];
-	let cursor = 0;
-	let alertAnswered = false;
-	let swallowed = options.swallowAlertTaps ?? 0;
-	const { screens } = options;
-	const provider = typeof screens === "function" ? screens : undefined;
-	const scripted: Snapshot[] | undefined = typeof screens === "function" ? undefined : [...screens];
-	let fixed: Snapshot | undefined;
-	let current: Orientation = "portrait";
-	let theme: "light" | "dark" = "light";
-	let clip = "";
-	const wallNow = options.wallNow ?? Date.now;
-	let net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
-	let enrolled = false;
-	const running = new Set<string>();
-	const installed = new Set<string>();
+/**
+ * A scripted `Driver` that records every call and never touches a device. Optional capabilities (`selectAll`,
+ * `setText`, `pasteText`, `alertOn`, `isFrontmost`) exist only when the options ask for them.
+ */
+export class FakeDriver
+	implements
+		Driver,
+		Partial<SelectsAll>,
+		Partial<SetsText>,
+		Partial<PastesText>,
+		Partial<ReadsAlertOn>,
+		Partial<ProbesFrontmost>
+{
+	readonly platform: Platform;
+	readonly id: string;
+	readonly capabilities: DriverCapabilities;
+	/** every call so far, in order */
+	readonly calls: DriverCall[] = [];
+	closed = false;
+	readonly app: AppCommands;
+	selectAll?(): DriverResult<void>;
+	setText?(text: string): DriverResult<void>;
+	pasteText?(text: string): DriverResult<void>;
+	alertOn?(backend: AlertBackend): DriverResult<AlertInfo | null>;
+	isFrontmost?(bundleId: string): DriverResult<boolean>;
 
-	const visibleAlert = (): AlertInfo | null => (alertAnswered ? null : findAlert(currentScreen()));
+	private cursor = 0;
+	private alertAnswered = false;
+	private swallowed: number;
+	private readonly provider: (() => Snapshot) | undefined;
+	private readonly scripted: Snapshot[] | undefined;
+	private fixed: Snapshot | undefined;
+	private current: Orientation = "portrait";
+	private theme: "light" | "dark" = "light";
+	private clip = "";
+	private readonly wallNow: () => number;
+	private net: NetworkState = { online: true, condition: { kind: "online" }, needsProxy: [] };
+	private enrolled = false;
+	private readonly running = new Set<string>();
+	private readonly installed = new Set<string>();
 
-	const currentScreen = (): Snapshot => {
-		if (fixed) return fixed;
-		if (provider) return provider();
-		if (!scripted) throw new Error("fakeDriver: no screens");
-		const screen = scripted[Math.min(cursor, scripted.length - 1)];
-		if (!screen) throw new Error("fakeDriver: `screens` is empty");
-		return screen;
+	constructor(private readonly options: FakeDriverOptions) {
+		this.platform = options.platform ?? "ios";
+		this.id = options.id ?? "FAKE-DEVICE";
+		this.capabilities = { ...DEFAULT_CAPABILITIES, ...options.capabilities };
+		this.swallowed = options.swallowAlertTaps ?? 0;
+		const { screens } = options;
+		this.provider = typeof screens === "function" ? screens : undefined;
+		this.scripted = typeof screens === "function" ? undefined : [...screens];
+		this.wallNow = options.wallNow ?? Date.now;
+		this.app = this.buildApp();
+		this.offerCapabilities();
+	}
+
+	/** the screen `snapshot()` currently returns */
+	get screen(): Snapshot {
+		return this.currentScreen();
+	}
+
+	/** move to the next scripted screen (clamped to the last) */
+	advance = (): void => {
+		this.cursor += 1;
+		this.alertAnswered = false;
 	};
 
-	function run<T>(call: DriverCall, fallback: () => T): Awaited<DriverResult<T>> {
-		calls.push(call);
-		const override = options.onCall?.(call);
+	/** replace the current screen; with a function source this pins a fixed screen */
+	set = (screen: Snapshot): void => {
+		this.alertAnswered = false;
+		if (this.scripted) this.scripted[Math.min(this.cursor, Math.max(this.scripted.length - 1, 0))] = screen;
+		else this.fixed = screen;
+	};
+
+	/** calls of one method, typed */
+	callsOf = <M extends DriverMethod>(method: M): Extract<DriverCall, { method: M }>[] => {
+		return this.calls.filter((call): call is Extract<DriverCall, { method: M }> => call.method === method);
+	};
+
+	health = async () => {
+		return this.run<HealthInfo>({ method: "health" }, () => ({
+			platform: this.platform,
+			id: this.id,
+			version: "fake",
+			transport: this.platform === "ios" ? "fake-hid" : "adb",
+			screen: this.currentScreen().screen,
+		}));
+	};
+
+	snapshot = async (opts?: { interactiveOnly?: boolean; backend?: SnapshotBackend }) => {
+		return this.run({ method: "snapshot", ...(opts && { opts }) }, () => this.currentScreen());
+	};
+
+	elementAtPoint = async (point: Point, opts?: { reachability?: boolean }) => {
+		return this.run({ method: "elementAtPoint", point, ...(opts && { opts }) }, () =>
+			this.hitTest(this.currentScreen(), point)
+		);
+	};
+
+	tap = async (point: Point, opts?: { count?: number; durationMs?: number }) => {
+		return this.run({ method: "tap", point, ...(opts && { opts }) }, () => {
+			if (!this.options.answerAlertOnTap) return undefined;
+			const screen = this.currentScreen();
+			const hit = this.hitTest(screen, point);
+			const onButton = hit !== null && (this.findAlert(screen)?.buttons ?? []).some((b) => b === hit);
+			if (!onButton || this.alertAnswered) return undefined;
+			if (this.swallowed > 0) this.swallowed -= 1;
+			else this.alertAnswered = true;
+			return undefined;
+		});
+	};
+
+	longPress = async (point: Point, opts?: { durationMs?: number }) => {
+		return this.run({ method: "longPress", point, ...(opts && { opts }) }, () => undefined);
+	};
+
+	swipe = async (from: Point, to: Point, opts?: { durationMs?: number; momentum?: boolean }) => {
+		return this.run({ method: "swipe", from, to, ...(opts && { opts }) }, () => undefined);
+	};
+
+	drag = async (from: Point, to: Point, opts?: { pressMs?: number; durationMs?: number; releaseMs?: number }) => {
+		return this.run({ method: "drag", from, to, ...(opts && { opts }) }, () => undefined);
+	};
+
+	pinch = async (center: Point, scale: number, opts?: TwoFingerOptions) => {
+		return this.run({ method: "pinch", center, scale, ...(opts && { opts }) }, () => undefined);
+	};
+
+	rotate = async (center: Point, degrees: number, opts?: TwoFingerOptions) => {
+		return this.run({ method: "rotate", center, degrees, ...(opts && { opts }) }, () => undefined);
+	};
+
+	gesture = async (paths: readonly TouchPath[], opts?: GestureOptions) => {
+		const call: DriverCall = { method: "gesture", paths, ...(opts && { opts }) };
+		const plan = gestureGeometry.planGesture(paths, opts, this.capabilities.maxPointers);
+		if (!plan.success) {
+			this.calls.push(call);
+			return plan;
+		}
+		return this.run(call, () => undefined);
+	};
+
+	typeText = async (text: string) => {
+		return this.run({ method: "typeText", text }, () => undefined);
+	};
+
+	key = async (key: KeyName, modifiers?: readonly Modifier[]) => {
+		return this.run({ method: "key", key, ...(modifiers && { modifiers }) }, () => undefined);
+	};
+
+	pressButton = async (button: HardwareButton) => {
+		return this.run({ method: "pressButton", button }, () => undefined);
+	};
+
+	screenshot = async (opts?: { path?: string; scale?: number }) => {
+		return this.run<{ path?: string; png?: Uint8Array }>({ method: "screenshot", ...(opts && { opts }) }, () =>
+			opts?.path ? { path: opts.path } : { png: new Uint8Array() }
+		);
+	};
+
+	orientation = async (set?: Orientation) => {
+		return this.run({ method: "orientation", ...(set && { set }) }, () => {
+			if (set) this.current = set;
+			return this.current;
+		});
+	};
+
+	settle = async (opts?: { quietMs?: number; timeoutMs?: number }) => {
+		return this.run({ method: "settle", ...(opts && { opts }) }, () => ({ quiet: true, waitedMs: 0 }));
+	};
+
+	alert = async () => {
+		return this.run({ method: "alert" }, () => this.visibleAlert());
+	};
+
+	appearance = async (set?: "light" | "dark") => {
+		return this.run({ method: "appearance", ...(set && { set }) }, () => {
+			if (set) this.theme = set;
+			return this.theme;
+		});
+	};
+
+	clipboard = async (set?: string) => {
+		return this.run({ method: "clipboard", ...(set !== undefined && { set }) }, () => {
+			if (set !== undefined) this.clip = set;
+			return this.clip;
+		});
+	};
+
+	network = async (op: NetworkCondition, _opts?: NetworkOptions) => {
+		return this.run({ method: "network", op }, () => {
+			this.net = { online: op.kind !== "offline", condition: op, needsProxy: [] };
+			return this.net;
+		});
+	};
+
+	networkFaults = async (faults: readonly HostFault[]) => {
+		return this.run({ method: "networkFaults", faults }, () => ({ notes: networkProxyShaping.faultNotes(faults) }));
+	};
+
+	location = async (op: LocationCondition) => {
+		return this.run({ method: "location", op }, () => undefined);
+	};
+
+	clock = async (op: ClockCondition, _opts?: NetworkOptions) => {
+		const at = op.kind === "fixed" || op.kind === "frozen" ? Date.parse(op.at) : 0;
+		if (Number.isNaN(at)) {
+			this.calls.push({ method: "clock", op });
+			return driverErrors.err("E_BAD_REQUEST", `clock ${op.kind}: not an ISO 8601 date-time`);
+		}
+		return this.run({ method: "clock", op }, (): ClockState => {
+			const now = this.wallNow();
+			const offsetMs = op.kind === "offset" ? op.ms : op.kind === "fixed" ? at - now : 0;
+			return {
+				condition: op,
+				offsetMs,
+				frozen: op.kind === "frozen",
+				nowMs: op.kind === "frozen" ? at : now + offsetMs,
+			};
+		});
+	};
+
+	permissions = async (grants: PermissionGrants, opts?: SettingOptions) => {
+		return this.run(
+			{ method: "permissions", grants, ...(opts ? { opts } : {}) },
+			(): PermissionsState => ({
+				bundleId: opts?.bundleId ?? "fake.app",
+				applied: Object.entries(grants).map(([permission, state]) => ({
+					permission: permission as PermissionName,
+					state: state as PermissionState,
+				})),
+				skipped: [],
+			})
+		);
+	};
+
+	timezone = async (tz: string | null, opts?: { previous?: string }) => {
+		return this.run(
+			{ method: "timezone", tz, ...(opts ? { opts } : {}) },
+			(): TimezoneState => ({
+				...(tz === null ? {} : { timezone: tz }),
+			})
+		);
+	};
+
+	locale = async (tag: string | null, opts?: SettingOptions) => {
+		return this.run(
+			{ method: "locale", tag, ...(opts ? { opts } : {}) },
+			(): LocaleState => ({
+				...(tag === null ? {} : { locale: tag }),
+			})
+		);
+	};
+
+	a11y = async (op: A11yOp | null) => {
+		return this.run(
+			{ method: "a11y", op },
+			(): A11yState => ({
+				applied: op === null ? ["textSize"] : Object.keys(op),
+				skipped: [],
+				notes: [],
+			})
+		);
+	};
+
+	battery = async (op: BatteryOp | null) => {
+		return this.run(
+			{ method: "battery", op },
+			(): BatteryState => ({
+				...(op?.level === undefined ? {} : { level: op.level }),
+				...(op?.charging === undefined ? {} : { charging: op.charging }),
+				cosmetic: false,
+			})
+		);
+	};
+
+	memoryWarning = async (opts?: SettingOptions) => {
+		return this.run({ method: "memoryWarning", ...(opts ? { opts } : {}) }, () => undefined);
+	};
+
+	push = async (payload: PushPayload, opts?: SettingOptions) => {
+		return this.run({ method: "push", payload, ...(opts ? { opts } : {}) }, () => undefined);
+	};
+
+	biometrics = async (op: BiometricOp) => {
+		return this.run({ method: "biometrics", op }, () => {
+			if (op === "enroll") this.enrolled = true;
+			if (op === "unenroll") this.enrolled = false;
+			return { enrolled: this.enrolled, modality: "face" as const };
+		});
+	};
+
+	close = async (): Promise<void> => {
+		this.calls.push({ method: "close" });
+		this.closed = true;
+	};
+
+	private buildApp(): AppCommands {
+		return {
+			launch: async (bundleId, opts) =>
+				this.run({ method: "app.launch", bundleId, ...(opts && { opts }) }, () => {
+					this.installed.add(bundleId);
+					this.running.add(bundleId);
+				}),
+			terminate: async (bundleId) =>
+				this.run({ method: "app.terminate", bundleId }, () => {
+					this.running.delete(bundleId);
+				}),
+			openUrl: async (url) => this.run({ method: "app.openUrl", url }, () => undefined),
+			install: async (path) => this.run({ method: "app.install", path }, () => undefined),
+			uninstall: async (bundleId) =>
+				this.run({ method: "app.uninstall", bundleId }, () => {
+					this.installed.delete(bundleId);
+					this.running.delete(bundleId);
+				}),
+			isInstalled: async (bundleId) =>
+				this.run({ method: "app.isInstalled", bundleId }, () => this.installed.has(bundleId)),
+			isRunning: async (bundleId) => this.run({ method: "app.isRunning", bundleId }, () => this.running.has(bundleId)),
+			clearData: async (bundleId, opts) =>
+				this.run({ method: "app.clearData", bundleId, ...(opts && { opts }) }, () => undefined),
+		};
+	}
+
+	/** Adds the optional capabilities the options ask for. */
+	private offerCapabilities(): void {
+		const { options } = this;
+		if (options.selectAll) this.selectAll = async () => this.run({ method: "selectAll" }, () => undefined);
+		if (options.pasteText) this.pasteText = async (text) => this.run({ method: "pasteText", text }, () => undefined);
+		if (options.setText) this.setText = async (text) => this.run({ method: "setText", text }, () => undefined);
+		const { alertBackends, frontmost } = options;
+		if (alertBackends !== undefined) {
+			this.alertOn = async (backend) =>
+				this.run<AlertInfo | null>({ method: "alertOn", backend }, () =>
+					alertBackends.includes(backend) ? this.visibleAlert() : null
+				);
+		}
+		if (frontmost !== undefined) {
+			this.isFrontmost = async (bundleId) =>
+				this.run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
+		}
+	}
+
+	private visibleAlert(): AlertInfo | null {
+		return this.alertAnswered ? null : this.findAlert(this.currentScreen());
+	}
+
+	private currentScreen(): Snapshot {
+		if (this.fixed) return this.fixed;
+		if (this.provider) return this.provider();
+		if (!this.scripted) throw new Error("fakeDriver: no screens");
+		const screen = this.scripted[Math.min(this.cursor, this.scripted.length - 1)];
+		if (!screen) throw new Error("fakeDriver: `screens` is empty");
+		return screen;
+	}
+
+	private run<T>(call: DriverCall, fallback: () => T): Awaited<DriverResult<T>> {
+		this.calls.push(call);
+		const override = this.options.onCall?.(call);
 		if (override) {
 			if ("error" in override) return { success: false, error: override.error };
 			return { success: true, data: override.data as T };
@@ -363,274 +656,35 @@ export function fakeDriver(options: FakeDriverOptions): FakeDriver {
 		return { success: true, data: fallback() };
 	}
 
-	const app: AppCommands = {
-		async launch(bundleId, opts) {
-			return run({ method: "app.launch", bundleId, ...(opts && { opts }) }, () => {
-				installed.add(bundleId);
-				running.add(bundleId);
-			});
-		},
-		async terminate(bundleId) {
-			return run({ method: "app.terminate", bundleId }, () => {
-				running.delete(bundleId);
-			});
-		},
-		async openUrl(url) {
-			return run({ method: "app.openUrl", url }, () => undefined);
-		},
-		async install(path) {
-			return run({ method: "app.install", path }, () => undefined);
-		},
-		async uninstall(bundleId) {
-			return run({ method: "app.uninstall", bundleId }, () => {
-				installed.delete(bundleId);
-				running.delete(bundleId);
-			});
-		},
-		async isInstalled(bundleId) {
-			return run({ method: "app.isInstalled", bundleId }, () => installed.has(bundleId));
-		},
-		async isRunning(bundleId) {
-			return run({ method: "app.isRunning", bundleId }, () => running.has(bundleId));
-		},
-		async clearData(bundleId, opts) {
-			return run({ method: "app.clearData", bundleId, ...(opts && { opts }) }, () => undefined);
-		},
-	};
-
-	const driver: FakeDriver = {
-		platform,
-		id: options.id ?? "FAKE-DEVICE",
-		capabilities: { ...DEFAULT_CAPABILITIES, ...options.capabilities },
-		calls,
-		closed: false,
-		get screen() {
-			return currentScreen();
-		},
-		advance() {
-			cursor += 1;
-			alertAnswered = false;
-		},
-		set(screen) {
-			alertAnswered = false;
-			if (scripted) scripted[Math.min(cursor, Math.max(scripted.length - 1, 0))] = screen;
-			else fixed = screen;
-		},
-		callsOf<M extends DriverMethod>(method: M) {
-			return calls.filter((call): call is Extract<DriverCall, { method: M }> => call.method === method);
-		},
-		async health() {
-			return run<HealthInfo>({ method: "health" }, () => ({
-				platform,
-				id: driver.id,
-				version: "fake",
-				transport: platform === "ios" ? "fake-hid" : "adb",
-				screen: currentScreen().screen,
-			}));
-		},
-		async snapshot(opts) {
-			return run({ method: "snapshot", ...(opts && { opts }) }, currentScreen);
-		},
-		async elementAtPoint(point, opts) {
-			return run({ method: "elementAtPoint", point, ...(opts && { opts }) }, () => hitTest(currentScreen(), point));
-		},
-		async tap(point, opts) {
-			return run({ method: "tap", point, ...(opts && { opts }) }, () => {
-				if (!options.answerAlertOnTap) return undefined;
-				const screen = currentScreen();
-				const hit = hitTest(screen, point);
-				const onButton = hit !== null && (findAlert(screen)?.buttons ?? []).some((b) => b === hit);
-				if (!onButton || alertAnswered) return undefined;
-				if (swallowed > 0) swallowed -= 1;
-				else alertAnswered = true;
-				return undefined;
-			});
-		},
-		async longPress(point, opts) {
-			return run({ method: "longPress", point, ...(opts && { opts }) }, () => undefined);
-		},
-		async swipe(from, to, opts) {
-			return run({ method: "swipe", from, to, ...(opts && { opts }) }, () => undefined);
-		},
-		async drag(from, to, opts) {
-			return run({ method: "drag", from, to, ...(opts && { opts }) }, () => undefined);
-		},
-		async pinch(center, scale, opts) {
-			return run({ method: "pinch", center, scale, ...(opts && { opts }) }, () => undefined);
-		},
-		async rotate(center, degrees, opts) {
-			return run({ method: "rotate", center, degrees, ...(opts && { opts }) }, () => undefined);
-		},
-		async gesture(paths, opts) {
-			const call: DriverCall = { method: "gesture", paths, ...(opts && { opts }) };
-			const plan = planGesture(paths, opts, driver.capabilities.maxPointers);
-			if (!plan.success) {
-				calls.push(call);
-				return plan;
-			}
-			return run(call, () => undefined);
-		},
-		async typeText(text) {
-			return run({ method: "typeText", text }, () => undefined);
-		},
-		async key(key, modifiers) {
-			return run({ method: "key", key, ...(modifiers && { modifiers }) }, () => undefined);
-		},
-		async pressButton(button) {
-			return run({ method: "pressButton", button }, () => undefined);
-		},
-		async screenshot(opts) {
-			return run<{ path?: string; png?: Uint8Array }>({ method: "screenshot", ...(opts && { opts }) }, () =>
-				opts?.path ? { path: opts.path } : { png: new Uint8Array() }
-			);
-		},
-		async orientation(set) {
-			return run({ method: "orientation", ...(set && { set }) }, () => {
-				if (set) current = set;
-				return current;
-			});
-		},
-		async settle(opts) {
-			return run({ method: "settle", ...(opts && { opts }) }, () => ({ quiet: true, waitedMs: 0 }));
-		},
-		async alert() {
-			return run({ method: "alert" }, () => visibleAlert());
-		},
-		async appearance(set) {
-			return run({ method: "appearance", ...(set && { set }) }, () => {
-				if (set) theme = set;
-				return theme;
-			});
-		},
-		async clipboard(set) {
-			return run({ method: "clipboard", ...(set !== undefined && { set }) }, () => {
-				if (set !== undefined) clip = set;
-				return clip;
-			});
-		},
-		async network(op) {
-			return run({ method: "network", op }, () => {
-				net = { online: op.kind !== "offline", condition: op, needsProxy: [] };
-				return net;
-			});
-		},
-		async networkFaults(faults) {
-			return run({ method: "networkFaults", faults }, () => ({ notes: faultNotes(faults) }));
-		},
-		async location(op) {
-			return run({ method: "location", op }, () => undefined);
-		},
-		async clock(op) {
-			const at = op.kind === "fixed" || op.kind === "frozen" ? Date.parse(op.at) : 0;
-			if (Number.isNaN(at)) {
-				calls.push({ method: "clock", op });
-				return {
-					success: false,
-					error: driverError("E_BAD_REQUEST", `clock ${op.kind}: not an ISO 8601 date-time`),
-				};
-			}
-			return run({ method: "clock", op }, (): ClockState => {
-				const now = wallNow();
-				const offsetMs = op.kind === "offset" ? op.ms : op.kind === "fixed" ? at - now : 0;
-				return {
-					condition: op,
-					offsetMs,
-					frozen: op.kind === "frozen",
-					nowMs: op.kind === "frozen" ? at : now + offsetMs,
-				};
-			});
-		},
-		async permissions(grants, opts) {
-			return run(
-				{ method: "permissions", grants, ...(opts ? { opts } : {}) },
-				(): PermissionsState => ({
-					bundleId: opts?.bundleId ?? "fake.app",
-					applied: Object.entries(grants).map(([permission, state]) => ({
-						permission: permission as PermissionName,
-						state: state as PermissionState,
-					})),
-					skipped: [],
-				})
-			);
-		},
-		async timezone(tz, opts) {
-			return run(
-				{ method: "timezone", tz, ...(opts ? { opts } : {}) },
-				(): TimezoneState => ({
-					...(tz === null ? {} : { timezone: tz }),
-				})
-			);
-		},
-		async locale(tag, opts) {
-			return run(
-				{ method: "locale", tag, ...(opts ? { opts } : {}) },
-				(): LocaleState => ({
-					...(tag === null ? {} : { locale: tag }),
-				})
-			);
-		},
-		async a11y(op) {
-			return run(
-				{ method: "a11y", op },
-				(): A11yState => ({
-					applied: op === null ? ["textSize"] : Object.keys(op),
-					skipped: [],
-					notes: [],
-				})
-			);
-		},
-		async battery(op) {
-			return run(
-				{ method: "battery", op },
-				(): BatteryState => ({
-					...(op?.level === undefined ? {} : { level: op.level }),
-					...(op?.charging === undefined ? {} : { charging: op.charging }),
-					cosmetic: false,
-				})
-			);
-		},
-		async memoryWarning(opts) {
-			return run({ method: "memoryWarning", ...(opts ? { opts } : {}) }, () => undefined);
-		},
-		async push(payload, opts) {
-			return run({ method: "push", payload, ...(opts ? { opts } : {}) }, () => undefined);
-		},
-		async biometrics(op) {
-			return run({ method: "biometrics", op }, () => {
-				if (op === "enroll") enrolled = true;
-				if (op === "unenroll") enrolled = false;
-				return { enrolled, modality: "face" as const };
-			});
-		},
-		app,
-		async close() {
-			calls.push({ method: "close" });
-			driver.closed = true;
-		},
-	};
-	if (options.selectAll) driver.selectAll = async () => run({ method: "selectAll" }, () => undefined);
-	if (options.pasteText) driver.pasteText = async (text) => run({ method: "pasteText", text }, () => undefined);
-	if (options.setText) driver.setText = async (text) => run({ method: "setText", text }, () => undefined);
-	const { alertBackends, frontmost } = options;
-	if (alertBackends !== undefined) {
-		driver.alertOn = async (backend) =>
-			run<AlertInfo | null>({ method: "alertOn", backend }, () =>
-				alertBackends.includes(backend) ? visibleAlert() : null
-			);
+	private area(rect: Rect): number {
+		return rect.width * rect.height;
 	}
-	if (frontmost !== undefined) {
-		driver.isFrontmost = async (bundleId) => run({ method: "isFrontmost", bundleId }, () => frontmost() === bundleId);
+
+	private contains(rect: Rect, point: Point): boolean {
+		return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 	}
-	return driver;
-}
 
-/** Convenience: a failed `DriverResult` payload for `onCall` overrides. */
-export function failWith(code: DriverError["code"], message: string = code): { error: DriverError } {
-	return { error: driverError(code, message) };
-}
+	/** Smallest element under the point; later (deeper / later in preorder) wins ties. */
+	private hitTest(snapshot: Snapshot, point: Point): Element | null {
+		let best: Element | null = null;
+		for (const element of snapshot.flat) {
+			if (element.hidden || !this.contains(element.frame, point)) continue;
+			if (!best || this.area(element.frame) <= this.area(best.frame)) best = element;
+		}
+		return best;
+	}
 
-/** Narrow a `Result` in tests without optional chaining noise. */
-export function unwrap<T>(result: Result<T, DriverError>): T {
-	if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
-	return result.data;
+	private findAlert(snapshot: Snapshot): AlertInfo | null {
+		const alert = snapshot.flat.find((element) => element.role === "alert" || element.role === "sheet");
+		if (!alert) return null;
+		const collect = (element: Element): Element[] =>
+			element.children.flatMap((child) => (child.role === "button" ? [child] : collect(child)));
+		const texts = alert.children.filter((child) => child.role === "text");
+		const info: AlertInfo = { buttons: collect(alert) };
+		const title = alert.label ?? texts[0]?.label;
+		const message = texts[1]?.label;
+		if (title !== undefined) info.title = title;
+		if (message !== undefined) info.message = message;
+		return info;
+	}
 }

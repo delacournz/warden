@@ -6,9 +6,9 @@
  * `detachedSchedulerArgv`). A compiled `warden` runs the same loop as its hidden `__scheduler` subcommand
  * (`runScheduler`). Exit: 0 finished or stopped, 1 failed, 2 bad config or unsupported platform.
  */
-import { openConditionSink } from "@delacour/warden-driver/conditions/condition-events";
+import { conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 import { realTickerClock } from "@delacour/warden-driver/conditions/route-ticker";
-import { startFlap, startTimeline } from "@delacour/warden-driver/conditions/scheduler";
+import { schedulers } from "@delacour/warden-driver/conditions/scheduler";
 import { parseSchedulerConfig } from "./scheduler.config";
 import { schedulerTargets } from "./scheduler.targets";
 
@@ -27,9 +27,11 @@ export async function runScheduler(raw: string): Promise<number> {
 	}
 
 	const { target, close } = open(config);
-	const deps = { ...realTickerClock, ...(config.events ? { sink: openConditionSink(config.events) } : {}) };
+	const deps = { ...realTickerClock, ...(config.events ? { sink: conditionEvents.openSink(config.events) } : {}) };
 	const scheduler =
-		config.mode === "flap" ? startFlap(target, config.flap, deps) : startTimeline(target, config.steps, deps);
+		config.mode === "flap"
+			? schedulers.startFlap(target, config.flap, deps)
+			: schedulers.startTimeline(target, config.steps, deps);
 	for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => scheduler.stop());
 
 	const outcome = await scheduler.done;

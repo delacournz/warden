@@ -1,28 +1,34 @@
 import { expect, test } from "bun:test";
-import { el, failWith, fakeDriver, snapshotOf } from "../driver.testing";
-import { expectResultShape, expectSnapshotInvariants, runDriverConformance } from "./conformance";
+import { driverFixtures, FakeDriver } from "../driver.testing";
+import { driverConformance } from "./conformance";
 
-const home = snapshotOf([
-	el("window", {
-		children: [el("button", { id: "go", label: "Go" }), el("list", { children: [el("cell"), el("cell")] })],
+const home = driverFixtures.snapshotOf([
+	driverFixtures.el("window", {
+		children: [
+			driverFixtures.el("button", { id: "go", label: "Go" }),
+			driverFixtures.el("list", { children: [driverFixtures.el("cell"), driverFixtures.el("cell")] }),
+		],
 	}),
 ]);
 
-runDriverConformance("FakeDriver", async () => fakeDriver({ screens: [home] }));
+driverConformance.run("FakeDriver", async () => new FakeDriver({ screens: [home] }));
 
-test("expectSnapshotInvariants rejects a flat list that is not the tree's preorder", () => {
+test("driverConformance.expectSnapshotInvariants rejects a flat list that is not the tree's preorder", () => {
 	const broken = { ...home, flat: [...home.flat].reverse() };
-	expect(() => expectSnapshotInvariants(broken, "ios")).toThrow();
+	expect(() => driverConformance.expectSnapshotInvariants(broken, "ios")).toThrow();
 });
 
-test("expectResultShape rejects an error without a retryable flag", () => {
+test("driverConformance.expectResultShape rejects an error without a retryable flag", () => {
 	const bad = { success: false, error: { code: "E_IO", message: "x" } } as unknown as Parameters<
-		typeof expectResultShape
+		typeof driverConformance.expectResultShape
 	>[0];
-	expect(() => expectResultShape(bad)).toThrow();
+	expect(() => driverConformance.expectResultShape(bad)).toThrow();
 });
 
-test("expectResultShape accepts a typed driver error", async () => {
-	const d = fakeDriver({ screens: [home], onCall: (c) => (c.method === "tap" ? failWith("E_IO") : undefined) });
-	expectResultShape(await d.tap({ x: 1, y: 1 }));
+test("driverConformance.expectResultShape accepts a typed driver error", async () => {
+	const d = new FakeDriver({
+		screens: [home],
+		onCall: (c) => (c.method === "tap" ? driverFixtures.failWith("E_IO") : undefined),
+	});
+	driverConformance.expectResultShape(await d.tap({ x: 1, y: 1 }));
 });

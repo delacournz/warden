@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { createScreen, type ScreenSwipeOptions } from "./screen";
 import { staticDriver, testHost } from "./screen.testing";
 
@@ -14,7 +14,9 @@ async function failure(promise: Promise<unknown>): Promise<E2eError> {
 	throw new Error("did not reject");
 }
 
-function make(driver = staticDriver([el("button", { id: "ok", label: "OK", placeholder: "p", value: "v" })])) {
+function make(
+	driver = staticDriver([driverFixtures.el("button", { id: "ok", label: "OK", placeholder: "p", value: "v" })])
+) {
 	const host = testHost(driver);
 	return { driver, host, screen: createScreen(host) };
 }
@@ -111,8 +113,8 @@ describe("swipe", () => {
 	});
 
 	test("a driver failure is ACTION_FAILED", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) =>
 				call.method === "swipe" ? { error: { code: "E_HID", message: "x", retryable: false } } : undefined,
 		});
@@ -125,10 +127,13 @@ describe("scrollUntilVisible", () => {
 	/** A list whose target is `distance` swipes away: it comes on screen after that many swipes. */
 	function feed(distance: number) {
 		let swipes = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () =>
-				snapshotOf([
-					el("button", { id: "target", frame: { x: 0, y: swipes >= distance ? 400 : 5000, width: 390, height: 44 } }),
+				driverFixtures.snapshotOf([
+					driverFixtures.el("button", {
+						id: "target",
+						frame: { x: 0, y: swipes >= distance ? 400 : 5000, width: 390, height: 44 },
+					}),
 				]),
 			onCall: (call) => {
 				if (call.method === "swipe") swipes += 1;
@@ -197,7 +202,9 @@ describe("scrollUntilVisible", () => {
 	});
 
 	test("several matches are ambiguous", async () => {
-		const { screen } = make(staticDriver([el("button", { label: "A" }), el("button", { label: "A" })]));
+		const { screen } = make(
+			staticDriver([driverFixtures.el("button", { label: "A" }), driverFixtures.el("button", { label: "A" })])
+		);
 		expect((await failure(screen.scrollUntilVisible(screen.getByText("A")))).code).toBe("LOCATOR_AMBIGUOUS");
 	});
 
@@ -220,7 +227,7 @@ describe("scrollUntilVisible", () => {
 
 describe("host without optional members", () => {
 	test("a bare session-like host works", async () => {
-		const driver = staticDriver([el("button", { id: "ok" })]);
+		const driver = staticDriver([driverFixtures.el("button", { id: "ok" })]);
 		const screen = createScreen({ driver: async () => driver, env: { actionTimeoutMs: 50, assertionTimeoutMs: 50 } });
 		await screen.getByTestId("ok").tap();
 		expect(driver.callsOf("tap")).toHaveLength(1);
@@ -286,7 +293,7 @@ describe("gesture", () => {
 	});
 
 	test("two paths on a one-finger driver is INVALID_ARGUMENT, one path is fine", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([])], capabilities: { maxPointers: 1 } });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])], capabilities: { maxPointers: 1 } });
 		const { screen } = make(driver);
 		expect((await failure(screen.gesture.path({ paths: [p, p] }))).code).toBe("INVALID_ARGUMENT");
 		await screen.gesture.path({ paths: [p] });

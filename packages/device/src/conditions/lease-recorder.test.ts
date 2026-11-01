@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activeConditions, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import { undoConditions } from "@delacour/warden-core/conditions/undo";
-import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
@@ -138,7 +138,10 @@ describe("a spec that dies mid-test", () => {
 	};
 
 	test("the offline it set is on the lease, and release undoes it with the Android resets", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([], { platform: "android" })], platform: "android" });
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
+			platform: "android",
+		});
 		const conditions = createDeviceConditions({
 			driver,
 			env,
@@ -166,7 +169,10 @@ describe("a spec that dies mid-test", () => {
 	});
 
 	test("a normal teardown puts the baseline back and leaves nothing for release to redo", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([], { platform: "android" })], platform: "android" });
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
+			platform: "android",
+		});
 		const conditions = createDeviceConditions({
 			driver,
 			env,
@@ -182,7 +188,10 @@ describe("a spec that dies mid-test", () => {
 	});
 
 	test("a suite baseline stays recorded after teardown, as the lease's state", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([], { platform: "android" })], platform: "android" });
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
+			platform: "android",
+		});
 		const conditions = createDeviceConditions({
 			driver,
 			env: { ...env, conditions: { network: "3g" } },
@@ -199,7 +208,10 @@ describe("a spec that dies mid-test", () => {
 	});
 
 	test("a failing driver call records nothing and a failing store never fails the call", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([], { platform: "android" })], platform: "android" });
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
+			platform: "android",
+		});
 		const log: string[] = [];
 		const broken = createLeaseRecorder({
 			leaseId: lease.id,

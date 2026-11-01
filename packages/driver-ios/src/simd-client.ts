@@ -1,24 +1,20 @@
 import type { DriverError, DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import {
-	encodeRequest,
 	type FatalEvent,
-	hasOpSchema,
 	type LogEvent,
-	mapWireError,
 	type OpData,
 	opSchemas,
-	parseLine,
 	protocolVersion,
 	type ReadyEvent,
 	type SimdEvent,
 	type SimdMessage,
 	type SimdResponse,
+	simdProtocol,
 } from "@delacour/warden-driver/helper/simd-protocol";
 import {
 	type SimdSpawn,
-	socketTransport,
-	stdioTransport,
+	simdTransports,
 	type Transport,
 	type TransportClose,
 	type TransportFactory,
@@ -92,7 +88,7 @@ type Listener = (payload: SimdEventMap[keyof SimdEventMap]) => void;
 function crashed(info: TransportClose | undefined, what: string): DriverError {
 	const exit = info?.exitCode === null || info?.exitCode === undefined ? "" : ` (exit ${info.exitCode})`;
 	const tail = info?.stderrTail.length ? `: ${info.stderrTail.slice(-3).join(" | ")}` : "";
-	return driverError("E_HELPER_CRASHED", `warden-simd ${what}${exit}${tail}`, {
+	return driverErrors.make("E_HELPER_CRASHED", `warden-simd ${what}${exit}${tail}`, {
 		detail: info ? { exitCode: info.exitCode, stderrTail: info.stderrTail } : undefined,
 	});
 }
@@ -154,12 +150,12 @@ export async function createSimdClient(
 		entry.resolve(
 			response.ok
 				? { success: true, data: response.data ?? null }
-				: { success: false, error: mapWireError(response.error) }
+				: { success: false, error: simdProtocol.mapWireError(response.error) }
 		);
 	}
 
 	function handleFatal(session: Session, event: FatalEvent): void {
-		const error = mapWireError(event.error);
+		const error = simdProtocol.mapWireError(event.error);
 		fatalError = error;
 		log?.(`[simd] fatal: ${error.code}: ${error.message}`);
 		emit("fatal", error);
@@ -190,7 +186,7 @@ export async function createSimdClient(
 	}
 
 	function handleLine(session: Session, line: string): void {
-		const parsed = parseLine(line);
+		const parsed = simdProtocol.parseLine(line);
 		if (!parsed.success) {
 			log?.(`[simd] ignoring line (${parsed.reason}): ${line.slice(0, 200)}`);
 			return;
@@ -211,7 +207,7 @@ export async function createSimdClient(
 		if (fatalError) return;
 		const error = crashed(info, expected ? "stopped" : "exited unexpectedly");
 		if (!expected) lastCrash = error;
-		failAll(expected ? driverError("E_INTERNAL", "client closed", { retryable: false }) : error);
+		failAll(expected ? driverErrors.make("E_INTERNAL", "client closed", { retryable: false }) : error);
 	}
 
 	async function openSession(): Promise<Result<Session, DriverError>> {
@@ -239,7 +235,7 @@ export async function createSimdClient(
 				() =>
 					resolve({
 						success: false,
-						error: driverError("E_TIMEOUT", `warden-simd sent no ready event within ${readyTimeoutMs} ms`),
+						error: driverErrors.make("E_TIMEOUT", `warden-simd sent no ready event within ${readyTimeoutMs} ms`),
 					}),
 				readyTimeoutMs
 			);
@@ -257,7 +253,7 @@ export async function createSimdClient(
 			await session.transport.close().catch(() => undefined);
 			return {
 				success: false,
-				error: driverError(
+				error: driverErrors.make(
 					"E_INTERNAL",
 					`warden-simd speaks protocol ${ready.data.protocol}, this client expects ${protocolVersion}; rebuild or reinstall the helper`,
 					{ retryable: false }
@@ -274,7 +270,7 @@ export async function createSimdClient(
 		if (respawns >= maxRespawns) {
 			return {
 				success: false,
-				error: lastCrash ?? driverError("E_HELPER_CRASHED", "warden-simd connection is closed"),
+				error: lastCrash ?? driverErrors.make("E_HELPER_CRASHED", "warden-simd connection is closed"),
 			};
 		}
 		respawns += 1;
@@ -286,12 +282,12 @@ export async function createSimdClient(
 	}
 
 	function validate(op: string, data: unknown): Result<unknown, DriverError> {
-		if (!hasOpSchema(op)) return { success: true, data };
+		if (!simdProtocol.hasOpSchema(op)) return { success: true, data };
 		const parsed = opSchemas[op].safeParse(data);
 		if (parsed.success) return { success: true, data: parsed.data };
 		return {
 			success: false,
-			error: driverError(
+			error: driverErrors.make(
 				"E_INTERNAL",
 				`warden-simd returned an unexpected \`${op}\` payload: ${parsed.error.message}`,
 				{
@@ -307,12 +303,15 @@ export async function createSimdClient(
 		opts: RequestOptions
 	): Promise<Result<unknown, DriverError>> {
 		if (closed)
-			return { success: false, error: driverError("E_INTERNAL", "warden-simd client is closed", { retryable: false }) };
+			return {
+				success: false,
+				error: driverErrors.make("E_INTERNAL", "warden-simd client is closed", { retryable: false }),
+			};
 		if (fatalError) return { success: false, error: fatalError };
 		const session = await ensureSession();
 		if (!session.success) return session;
 		const transport = session.data.transport;
-		if (!transport) return { success: false, error: driverError("E_INTERNAL", "warden-simd transport missing") };
+		if (!transport) return { success: false, error: driverErrors.make("E_INTERNAL", "warden-simd transport missing") };
 		const timeoutMs = opts.timeoutMs ?? defaultTimeoutMs;
 		const id = String(++seq);
 		const result = await new Promise<Result<unknown, DriverError>>((resolve) => {
@@ -320,14 +319,14 @@ export async function createSimdClient(
 				pending.delete(id);
 				resolve({
 					success: false,
-					error: driverError("E_TIMEOUT", `warden-simd \`${op}\` timed out after ${timeoutMs} ms`, {
+					error: driverErrors.make("E_TIMEOUT", `warden-simd \`${op}\` timed out after ${timeoutMs} ms`, {
 						detail: { op, timeoutMs },
 					}),
 				});
 			}, timeoutMs);
 			pending.set(id, { op, resolve, timer });
 			try {
-				transport.send(encodeRequest({ timeoutMs, ...params, id, op }));
+				transport.send(simdProtocol.encodeRequest({ timeoutMs, ...params, id, op }));
 			} catch (error) {
 				clearTimeout(timer);
 				pending.delete(id);
@@ -376,7 +375,7 @@ export async function createSimdClient(
 				await request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
 			}
 			closed = true;
-			failAll(driverError("E_INTERNAL", "warden-simd client closed", { retryable: false }));
+			failAll(driverErrors.make("E_INTERNAL", "warden-simd client closed", { retryable: false }));
 			await session?.transport?.close().catch(() => undefined);
 		},
 	};
@@ -405,7 +404,7 @@ export function spawnSimd(options: SpawnSimdOptions): Promise<Result<SimdClient,
 		...(options.resources ? ["--resources", options.resources] : []),
 		...(options.args ?? []),
 	];
-	return createSimdClient(stdioTransport({ cmd, spawn: options.spawn, graceMs: options.graceMs }), {
+	return createSimdClient(simdTransports.stdio({ cmd, spawn: options.spawn, graceMs: options.graceMs }), {
 		...options,
 		maxRespawns: options.maxRespawns ?? 1,
 		shutdownOnClose: options.shutdownOnClose ?? true,
@@ -416,7 +415,7 @@ export type ConnectSimdOptions = ClientOptions & { socketPath: string };
 
 /** Socket mode: attach to a running (pre-warmed) helper daemon. `close()` only disconnects; the daemon idles out. */
 export function connectSimd(options: ConnectSimdOptions): Promise<Result<SimdClient, DriverError>> {
-	return createSimdClient(socketTransport({ socketPath: options.socketPath }), {
+	return createSimdClient(simdTransports.socket({ socketPath: options.socketPath }), {
 		...options,
 		maxRespawns: options.maxRespawns ?? 0,
 		shutdownOnClose: options.shutdownOnClose ?? false,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
+import { networkProxyShaping } from "@delacour/warden-driver/network-proxy";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -66,21 +66,24 @@ describe("lazyLeaseNetworkProxy", () => {
 				readyTimeoutMs: 30,
 			},
 		});
-		const first = await port.ensure({ kind: "offline" }, proxyConditionsFor({ kind: "offline" }, []));
+		const first = await port.ensure({ kind: "offline" }, networkProxyShaping.conditionsFor({ kind: "offline" }, []));
 		expect(first.success).toBe(false);
 		expect(spawned[0]?.slice(0, 2)).toEqual(["/bin/warden", "__netproxy"]);
-		await port.ensure({ kind: "offline" }, proxyConditionsFor({ kind: "offline" }, []));
+		await port.ensure({ kind: "offline" }, networkProxyShaping.conditionsFor({ kind: "offline" }, []));
 		expect(opened).toBe(1);
 	});
 
 	test("a lease that is not in the store answers with an error naming it", async () => {
-		const result = await proxy("gone").ensure({ kind: "offline" }, proxyConditionsFor({ kind: "offline" }, []));
+		const result = await proxy("gone").ensure(
+			{ kind: "offline" },
+			networkProxyShaping.conditionsFor({ kind: "offline" }, [])
+		);
 		expect(result).toEqual({ success: false, error: expect.stringContaining("gone") });
 	});
 
 	test("a store that cannot open is the ensure error", async () => {
 		const port = proxy(lease.id, { openStore: () => resultFactory.err("locked") });
-		expect(await port.ensure({ kind: "offline" }, proxyConditionsFor({ kind: "offline" }, []))).toEqual({
+		expect(await port.ensure({ kind: "offline" }, networkProxyShaping.conditionsFor({ kind: "offline" }, []))).toEqual({
 			success: false,
 			error: "locked",
 		});

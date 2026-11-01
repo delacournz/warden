@@ -8,7 +8,7 @@ import type {
 } from "@delacour/warden-driver/driver.types";
 import type { GesturePlan } from "@delacour/warden-driver/gesture-geometry";
 import type { SettleDetail } from "@delacour/warden-driver/settle";
-import { noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import { DEFAULT_LONG_PRESS_MS, DEFAULT_SWIPE_MS, DRAG_STEPS } from "./android-argv";
 import { type Clock, rotatedScreen } from "./android-device";
 import type { UiadBackend } from "./uiad-backend";
@@ -155,8 +155,8 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 			if (server === undefined) return blocked();
 			const res = await server.snapshot();
 			if (res.success) {
-				noteSpanDetail("backend", "uiad");
-				noteSpanDetail("uiadMs", res.data.ms);
+				spanDetails.note("backend", "uiad");
+				spanDetails.note("uiadMs", res.data.ms);
 				return { success: true, data: snapshotFromUiad(res.data, deps.baseScreen, clock.now()) };
 			}
 			if (!isNoWindowYet(res.error)) {
@@ -177,8 +177,8 @@ export function createUiadOps(deps: UiadOpsDeps): UiadOps {
 			await backend.failed(res.error);
 			return undefined;
 		}
-		noteSpanDetail("backend", "uiad");
-		noteSpanDetail("via", "stream");
+		spanDetails.note("backend", "uiad");
+		spanDetails.note("via", "stream");
 		const { quiet, waitedMs, reason } = res.data;
 		return {
 			success: true,

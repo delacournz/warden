@@ -1,6 +1,6 @@
 import type { DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
-import { addSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 
 /**
  * One long-lived `adb -s <serial> shell` per driver. Spawning `adb shell <cmd>` per call costs ~50-150 ms
@@ -160,9 +160,9 @@ export function openAdbSession(options: AdbSessionOptions): AdbSession {
 	}
 
 	async function execute(cmd: string, timeoutMs: number): DriverResult<AdbRunResult> {
-		if (closed) return driverErr("E_INTERNAL", `adb session for ${serial} is closed`);
+		if (closed) return driverErrors.err("E_INTERNAL", `adb session for ${serial} is closed`);
 		const started = live && !live.dead ? live : start();
-		if ("code" in started) return driverErr(started.code, started.message);
+		if ("code" in started) return driverErrors.err(started.code, started.message);
 		const l = started;
 		seq++;
 		const prefix = `__WDN_${nonce}x${seq}_`;
@@ -187,8 +187,8 @@ export function openAdbSession(options: AdbSessionOptions): AdbSession {
 				onDeath(l);
 			}
 		});
-		addSpanDetail("adbMs", Date.now() - t0);
-		addSpanDetail("adbCalls", 1);
+		spanDetails.add("adbMs", Date.now() - t0);
+		spanDetails.add("adbCalls", 1);
 		if (outcome.kind === "done") {
 			crashes = 0;
 			log?.(`adb[${serial}] ${cmd} -> ${outcome.result.exitCode} in ${Date.now() - t0}ms`);
@@ -199,9 +199,9 @@ export function openAdbSession(options: AdbSessionOptions): AdbSession {
 			l.dead = true;
 			if (live === l) live = undefined;
 			l.proc.kill();
-			return driverErr("E_TIMEOUT", `\`${cmd}\` did not finish within ${timeoutMs}ms on ${serial}`);
+			return driverErrors.err("E_TIMEOUT", `\`${cmd}\` did not finish within ${timeoutMs}ms on ${serial}`);
 		}
-		return driverErr("E_HELPER_CRASHED", `adb shell for ${serial} died while running \`${cmd}\``, {
+		return driverErrors.err("E_HELPER_CRASHED", `adb shell for ${serial} died while running \`${cmd}\``, {
 			detail: { tail: outcome.tail },
 		});
 	}

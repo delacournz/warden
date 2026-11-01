@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -21,16 +21,16 @@ import { recordStop } from "./stop";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
-const SCREEN = snapshotOf([
-	el("window", {
+const SCREEN = driverFixtures.snapshotOf([
+	driverFixtures.el("window", {
 		children: [
-			el("textfield", {
+			driverFixtures.el("textfield", {
 				label: "Email",
 				id: "email",
 				value: "a@b.co",
 				frame: { x: 0, y: 100, width: 390, height: 44 },
 			}),
-			el("button", {
+			driverFixtures.el("button", {
 				label: "Sign in",
 				id: "sign-in-submit",
 				hittable: true,
@@ -76,7 +76,7 @@ async function rig(options: { withVerify?: boolean } = {}): Promise<Rig> {
 	const repo = await makeSuiteRepo();
 	const home = join(repo.dir, ".home");
 	cleanups.push(() => rmSync(repo.dir, { recursive: true, force: true }));
-	const driver = fakeDriver({ screens: [SCREEN] });
+	const driver = new FakeDriver({ screens: [SCREEN] });
 	const verified: VerifyInput[] = [];
 	const verdict = { passed: true };
 	const stderr: string[] = [];

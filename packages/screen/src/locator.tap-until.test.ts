@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { Locator } from "./locator";
 import { createScreen } from "./screen";
 import { testHost } from "./screen.testing";
@@ -8,9 +8,9 @@ import { testHost } from "./screen.testing";
 const WINDOW = { windowMs: 40, pollMs: 5 };
 
 function welcome(title: string) {
-	return snapshotOf([
-		el("text", { id: "title", label: title, frame: { x: 24, y: 100, width: 300, height: 40 } }),
-		el("button", { id: "next", label: "Next", frame: { x: 24, y: 600, width: 300, height: 44 } }),
+	return driverFixtures.snapshotOf([
+		driverFixtures.el("text", { id: "title", label: title, frame: { x: 24, y: 100, width: 300, height: 40 } }),
+		driverFixtures.el("button", { id: "next", label: "Next", frame: { x: 24, y: 600, width: 300, height: 44 } }),
 	]);
 }
 
@@ -18,7 +18,7 @@ function welcome(title: string) {
 function setup(landingTap: number, options: { cache?: boolean } = {}) {
 	let title = "Welcome";
 	let taps = 0;
-	const driver = fakeDriver({
+	const driver = new FakeDriver({
 		screens: () => welcome(title),
 		onCall: (call) => {
 			if (call.method === "tap") {
@@ -106,7 +106,7 @@ describe("tap({ until })", () => {
 	test("every check is one fresh snapshot, even with two reads in it and checks closer than the cache's age limit", async () => {
 		let polled = 0;
 		let taps = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () => {
 				polled += 1;
 				return welcome(polled > 3 ? "Plan" : "Welcome");
@@ -203,15 +203,19 @@ function reacting(options: { untilAt: number; hides?: boolean }) {
 	let pressedAt: number | undefined;
 	const pressTimes: number[] = [];
 	const holder: { now?: () => number } = {};
-	const driver = fakeDriver({
+	const driver = new FakeDriver({
 		screens: () => {
 			const now = holder.now?.() ?? 0;
 			if (pressedAt === undefined) return welcome("Welcome");
-			const specs = [el("text", { id: "title", label: now - pressedAt >= options.untilAt ? "Plan" : "Loading" })];
+			const specs = [
+				driverFixtures.el("text", { id: "title", label: now - pressedAt >= options.untilAt ? "Plan" : "Loading" }),
+			];
 			if (options.hides !== true) {
-				specs.push(el("button", { id: "next", label: "Next", frame: { x: 24, y: 600, width: 300, height: 44 } }));
+				specs.push(
+					driverFixtures.el("button", { id: "next", label: "Next", frame: { x: 24, y: 600, width: 300, height: 44 } })
+				);
 			}
-			return snapshotOf(specs);
+			return driverFixtures.snapshotOf(specs);
 		},
 		onCall: (call) => {
 			if (call.method === "tap") {
@@ -269,7 +273,7 @@ function setupTimed(landingTap: number) {
 	const pressTimes: number[] = [];
 	const holder: { now?: () => number } = {};
 	let title = "Welcome";
-	const driver = fakeDriver({
+	const driver = new FakeDriver({
 		screens: () => welcome(title),
 		onCall: (call) => {
 			if (call.method === "tap") {

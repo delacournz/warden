@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { processExec } from "@delacour/warden-runtime/exec";
@@ -17,10 +17,10 @@ import { recordingFile } from "./ops/paths";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
-const SCREEN = snapshotOf([
-	el("window", {
+const SCREEN = driverFixtures.snapshotOf([
+	driverFixtures.el("window", {
 		children: [
-			el("button", {
+			driverFixtures.el("button", {
 				label: "Sign in",
 				id: "sign-in-submit",
 				hittable: true,
@@ -67,7 +67,7 @@ test("session.record journals interactions and stop writes a verified spec", asy
 	const seams: ClientSeams = {
 		providerFor: () => provider,
 		stopHelper: async () => undefined,
-		openDriver: async () => resultFactory.ok(fakeDriver({ screens: [SCREEN] })),
+		openDriver: async () => resultFactory.ok(new FakeDriver({ screens: [SCREEN] })),
 		authoring: {
 			verify: async (input) => {
 				verified.push(input);
@@ -133,7 +133,7 @@ test("session.record throws a typed WardenError", async () => {
 		{
 			providerFor: () => provider,
 			stopHelper: async () => undefined,
-			openDriver: async () => resultFactory.ok(fakeDriver({ screens: [SCREEN] })),
+			openDriver: async () => resultFactory.ok(new FakeDriver({ screens: [SCREEN] })),
 		}
 	);
 	const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -179,7 +179,7 @@ test("stop verifies through the specs runner by default: `warden e2e --specs <id
 		{
 			providerFor: () => provider,
 			stopHelper: async () => undefined,
-			openDriver: async () => resultFactory.ok(fakeDriver({ screens: [SCREEN] })),
+			openDriver: async () => resultFactory.ok(new FakeDriver({ screens: [SCREEN] })),
 			specs: {
 				spawn: async (argv) => {
 					argvs.push([...argv]);

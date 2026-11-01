@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
-import { type ElementSpec, el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { readLastSnapshot, readState } from "../agent-ui/state";
@@ -14,12 +14,12 @@ afterEach(() => ctx?.cleanup());
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
 const LOGIN: ElementSpec[] = [
-	el("window", {
+	driverFixtures.el("window", {
 		children: [
-			el("text", { label: "Welcome" }),
-			el("textfield", { label: "Email", id: "email", value: "a@b.co" }),
-			el("button", { label: "Sign in", id: "sign-in-submit", hittable: true }),
-			el("image", { label: "logo" }),
+			driverFixtures.el("text", { label: "Welcome" }),
+			driverFixtures.el("textfield", { label: "Email", id: "email", value: "a@b.co" }),
+			driverFixtures.el("button", { label: "Sign in", id: "sign-in-submit", hittable: true }),
+			driverFixtures.el("image", { label: "logo" }),
 		],
 	}),
 ];
@@ -34,7 +34,7 @@ type Harness = {
 /** A context with a leased device, a fake clock that `sleep` advances, and a fake driver over `screens`. */
 function harness(screens: Snapshot[] | (() => Snapshot)): Harness {
 	const clock = { t: 1_000_000 };
-	const driver = fakeDriver({ screens });
+	const driver = new FakeDriver({ screens });
 	const deps: UiDeps = {
 		driver: async () => resultFactory.ok(driver),
 		sleep: async (ms) => {
@@ -73,7 +73,7 @@ const doc = (c: TestContext) => {
 
 describe("warden ui snapshot", () => {
 	test("golden: full tree, indented, refs over the whole tree", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("snapshot")).toBe(0);
 		expect(h.c.stdout.join("\n")).toBe(
 			[
@@ -88,7 +88,7 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("golden: -i keeps interactive elements and testIDs, same refs", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("snapshot", "-i")).toBe(0);
 		expect(h.c.stdout.join("\n")).toBe(
 			[
@@ -100,7 +100,7 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("--depth limits levels without renumbering refs", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("snapshot", "--depth", "1")).toBe(0);
 		expect(h.c.stdout.join("\n")).toBe(
 			["generation 1 · axbridge · 390×844@3x · 1 elements", "@e1 [other] enabled (0,0 390×44)"].join("\n")
@@ -108,13 +108,13 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("backend-truncated trees say so in the header", async () => {
-		const h = harness([snapshotOf(LOGIN, { truncated: true })]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN, { truncated: true })]);
 		await h.run("snapshot");
 		expect(h.c.stdout[0]?.split("\n")[0]).toBe("generation 1 · axbridge · 390×844@3x · 5 elements, truncated");
 	});
 
 	test("--json: one document with generation and result.elements (same set as the lines)", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("snapshot", "-i", "--json")).toBe(0);
 		const out = doc(h.c);
 		expect(out).toMatchObject({ ok: true, command: "snapshot", generation: 1, device: { udid: UDID } });
@@ -145,8 +145,8 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("the default cap prints `… N more (use --all)`; --all lifts it", async () => {
-		const rows = Array.from({ length: 205 }, (_, i) => el("button", { label: `b${i}` }));
-		const h = harness([snapshotOf(rows)]);
+		const rows = Array.from({ length: 205 }, (_, i) => driverFixtures.el("button", { label: `b${i}` }));
+		const h = harness([driverFixtures.snapshotOf(rows)]);
 		await h.run("snapshot");
 		const capped = h.c.stdout.join("\n").split("\n");
 		expect(capped).toHaveLength(1 + 200 + 1);
@@ -156,7 +156,7 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("stores last-snapshot.json + state.json under $WARDEN_HOME/ui/<udid>", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		const stored = readLastSnapshot(h.c, UDID);
 		expect(stored).toMatchObject({ generation: 1, takenAt: h.clock.t });
@@ -165,8 +165,14 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("--settle: waits for two equal hashes >= 250 ms apart, then prints a +/-/= diff vs the stored snapshot", async () => {
-		const before = snapshotOf([el("text", { label: "Loading" }), el("button", { label: "Keep", id: "keep" })]);
-		const loaded = snapshotOf([el("text", { label: "Loaded" }), el("button", { label: "Keep", id: "keep" })]);
+		const before = driverFixtures.snapshotOf([
+			driverFixtures.el("text", { label: "Loading" }),
+			driverFixtures.el("button", { label: "Keep", id: "keep" }),
+		]);
+		const loaded = driverFixtures.snapshotOf([
+			driverFixtures.el("text", { label: "Loaded" }),
+			driverFixtures.el("button", { label: "Keep", id: "keep" }),
+		]);
 		const h = harness([before]);
 		await h.run("snapshot");
 		h.driver.set(loaded);
@@ -184,7 +190,7 @@ describe("warden ui snapshot", () => {
 
 	test("--settle on a screen that keeps changing gives up at the budget with a warning", async () => {
 		let n = 0;
-		const h = harness(() => snapshotOf([el("text", { label: `tick ${n++}` })]));
+		const h = harness(() => driverFixtures.snapshotOf([driverFixtures.el("text", { label: `tick ${n++}` })]));
 		expect(await h.run("snapshot", "--settle", "600", "--json")).toBe(0);
 		const out = doc(h.c);
 		expect(out.result.settle.quiet).toBe(false);
@@ -193,14 +199,14 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("--settle/--depth must be positive integers", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("snapshot", "--depth", "0", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 		expect(await h.run("snapshot", "--settle", "abc", "--json")).toBe(1);
 	});
 
 	test("generation bumps only on snapshot, snapshot --settle and find", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("status");
 		expect(readState(h.c, UDID).generation).toBe(0);
 		await h.run("snapshot");
@@ -217,7 +223,7 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("no driver in this build: engine_unavailable, exit 3, one JSON document", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		h.c.argv = ["snapshot", "--udid", UDID, "--json"];
 		expect(await uiCommand.run(h.c)).toBe(3);
 		expect(doc(h.c)).toMatchObject({ ok: false, error: { code: "engine_unavailable" }, device: { udid: UDID } });
@@ -225,15 +231,15 @@ describe("warden ui snapshot", () => {
 	});
 
 	test("the driver is closed when the command ends", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		expect(h.driver.closed).toBe(true);
 	});
 
 	test("a driver failure maps to a ui error (E_AX_UNAVAILABLE → exit 3)", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
-		const failing = fakeDriver({
-			screens: [snapshotOf(LOGIN)],
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const failing = new FakeDriver({
+			screens: [driverFixtures.snapshotOf(LOGIN)],
 			onCall: (call) =>
 				call.method === "snapshot"
 					? { error: { code: "E_AX_UNAVAILABLE", message: "no ax", retryable: false } }
@@ -247,10 +253,10 @@ describe("warden ui snapshot", () => {
 });
 
 describe("warden ui find", () => {
-	const SCREEN = snapshotOf([
-		el("button", { label: "Save", id: "save" }),
-		el("button", { label: "Save as…", id: "save-as" }),
-		el("text", { label: "Saved 2 min ago" }),
+	const SCREEN = driverFixtures.snapshotOf([
+		driverFixtures.el("button", { label: "Save", id: "save" }),
+		driverFixtures.el("button", { label: "Save as…", id: "save-as" }),
+		driverFixtures.el("text", { label: "Saved 2 min ago" }),
 	]);
 
 	test("prints matching lines with refs; honours nth=", async () => {

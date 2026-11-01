@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { OBSERVATION_MAX_AGE_MS } from "@delacour/warden-driver/observation-cache";
-import { el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { FIELD_POLL_MS, STALE_RISK_READS } from "./field";
 import type { Locator } from "./locator";
 import { LocatorAssertions } from "./matchers";
@@ -13,9 +13,9 @@ const expectLocator = (locator: Locator): LocatorAssertions => new LocatorAssert
 function setup(platform: "ios" | "android" = "ios") {
 	const driver = staticDriver(
 		[
-			el("text", { id: "title", label: "Plan" }),
-			el("button", { id: "next", label: "Next", hittable: true }),
-			el("button", { id: "skip", label: "Skip", hittable: true }),
+			driverFixtures.el("text", { id: "title", label: "Plan" }),
+			driverFixtures.el("button", { id: "next", label: "Next", hittable: true }),
+			driverFixtures.el("button", { id: "skip", label: "Skip", hittable: true }),
 		],
 		platform
 	);
@@ -101,7 +101,7 @@ describe("reads that follow each other", () => {
 	});
 
 	test("without the cache every read is its own snapshot, as before", async () => {
-		const driver = staticDriver([el("text", { id: "title", label: "Plan" })]);
+		const driver = staticDriver([driverFixtures.el("text", { id: "title", label: "Plan" })]);
 		const screen = createScreen(testHost(driver));
 		const title = screen.getByTestId("title");
 		await title.isVisible();
@@ -129,12 +129,17 @@ describe("assertions and actions", () => {
 	/** A screen still sliding in when the first snapshot is taken: the button is at y 300 then, and at y 600 once it settles. */
 	function slidingIn() {
 		let looks = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () => {
 				looks += 1;
 				const y = looks === 1 ? 300 : 600;
-				return snapshotOf([
-					el("button", { id: "next", label: "Next", hittable: true, frame: { x: 24, y, width: 300, height: 44 } }),
+				return driverFixtures.snapshotOf([
+					driverFixtures.el("button", {
+						id: "next",
+						label: "Next",
+						hittable: true,
+						frame: { x: 24, y, width: 300, height: 44 },
+					}),
 				]);
 			},
 		});
@@ -186,8 +191,9 @@ describe("a settle is a wait, not an input", () => {
 	});
 
 	test("a settle that did not report quiet leaves the input recent: the look is checked by one more", async () => {
-		const driver = fakeDriver({
-			screens: () => snapshotOf([el("button", { id: "next", label: "Next", hittable: true })]),
+		const driver = new FakeDriver({
+			screens: () =>
+				driverFixtures.snapshotOf([driverFixtures.el("button", { id: "next", label: "Next", hittable: true })]),
 			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
 		});
 		const host = testHost(driver, { cache: true });
@@ -211,14 +217,24 @@ describe("a frame that held still across two looks", () => {
 	/** a button whose y is `ys[n]` on the n-th snapshot (the last one sticks), plus an unrelated "menu" button */
 	function moving(ys: readonly number[], capabilities: { cheapHitTest?: boolean } = {}) {
 		let looks = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			capabilities,
 			screens: () => {
 				const y = ys[Math.min(looks, ys.length - 1)] ?? 0;
 				looks += 1;
-				return snapshotOf([
-					el("button", { id: "menu", label: "Menu", hittable: true, frame: { x: 0, y: 40, width: 80, height: 40 } }),
-					el("button", { id: "next", label: "Next", hittable: true, frame: { x: 24, y, width: 300, height: 44 } }),
+				return driverFixtures.snapshotOf([
+					driverFixtures.el("button", {
+						id: "menu",
+						label: "Menu",
+						hittable: true,
+						frame: { x: 0, y: 40, width: 80, height: 40 },
+					}),
+					driverFixtures.el("button", {
+						id: "next",
+						label: "Next",
+						hittable: true,
+						frame: { x: 24, y, width: 300, height: 44 },
+					}),
 				]);
 			},
 		});
@@ -313,8 +329,8 @@ describe("a frame that held still across two looks", () => {
 describe("only the first poll of a wait may reuse", () => {
 	function lateScreen() {
 		let shown = false;
-		const driver = fakeDriver({
-			screens: () => snapshotOf(shown ? [el("text", { id: "late", label: "Late" })] : []),
+		const driver = new FakeDriver({
+			screens: () => driverFixtures.snapshotOf(shown ? [driverFixtures.el("text", { id: "late", label: "Late" })] : []),
 		});
 		const host = testHost(driver, { cache: true });
 		const show = () => {
@@ -343,8 +359,11 @@ describe("only the first poll of a wait may reuse", () => {
 
 describe("field confirm reads", () => {
 	test("never come from the kept snapshot: each one is a read of the device", async () => {
-		const driver = fakeDriver({
-			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co", focused: true })]),
+		const driver = new FakeDriver({
+			screens: () =>
+				driverFixtures.snapshotOf([
+					driverFixtures.el("textfield", { id: "field", label: "Email", value: "a@b.co", focused: true }),
+				]),
 			onCall: (call) => (call.method === "elementAtPoint" ? { data: null } : undefined),
 		});
 		const host = testHost(driver, { cache: true });
@@ -356,8 +375,9 @@ describe("field confirm reads", () => {
 	});
 
 	test("a hit-test is a driver call of its own, never answered from a snapshot", async () => {
-		const driver = fakeDriver({
-			screens: () => snapshotOf([el("textfield", { id: "field", label: "Email", value: "" })]),
+		const driver = new FakeDriver({
+			screens: () =>
+				driverFixtures.snapshotOf([driverFixtures.el("textfield", { id: "field", label: "Email", value: "" })]),
 		});
 		const host = testHost(driver, { cache: true });
 		await createScreen(host).getByTestId("field").isVisible();
@@ -371,9 +391,9 @@ describe("field confirm reads", () => {
 describe("a failed read", () => {
 	test("is not kept: the next read tries the device again", async () => {
 		let fail = true;
-		const driver = fakeDriver({
-			screens: () => snapshotOf([el("text", { id: "title", label: "Plan" })]),
-			onCall: (call) => (call.method === "snapshot" && fail ? failWith("E_AX_UNAVAILABLE") : undefined),
+		const driver = new FakeDriver({
+			screens: () => driverFixtures.snapshotOf([driverFixtures.el("text", { id: "title", label: "Plan" })]),
+			onCall: (call) => (call.method === "snapshot" && fail ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 		});
 		const host = testHost(driver, { cache: true });
 		const screen = createScreen(host);

@@ -21,37 +21,6 @@ export const ACCEPT_BUTTONS = [
 ];
 export const DISMISS_BUTTONS = ["Cancel", "Don't Allow", "Not Now", "Dismiss", "No", "Close"];
 
-function normalise(text: string): string {
-	return text.replace(/[‘’]/g, "'").trim().toLowerCase();
-}
-
-export function nameOf(button: Element): string | undefined {
-	return button.label ?? button.text ?? button.value;
-}
-
-/** The button called `wanted`, ignoring case and curly apostrophes. */
-export function findButton(buttons: readonly Element[], wanted: string): Element | undefined {
-	const target = normalise(wanted);
-	return buttons.find((button) => {
-		const name = nameOf(button);
-		return name !== undefined && normalise(name) === target;
-	});
-}
-
-export function firstOf(buttons: readonly Element[], names: readonly string[]): Element | undefined {
-	for (const name of names) {
-		const found = findButton(buttons, name);
-		if (found !== undefined) return found;
-	}
-	return undefined;
-}
-
-/** Where to tap an element: its own tap point, else the middle of its frame. */
-export function centre(element: Element): Point {
-	const { x, y, width, height } = element.frame;
-	return element.tapPoint ?? { x: x + width / 2, y: y + height / 2 };
-}
-
 /**
  * The permission prompt's allow buttons, in the order `device.alert("accept")` tries them, the most lasting grant
  * first (API 30+ camera, mic and location prompts show "While using the app", "Only this time" and "Don't allow",
@@ -97,7 +66,43 @@ export const ANDROID_DENY_IDS: readonly string[] = [...ANDROID_PERMISSION_DENY_I
  */
 export const ANDROID_AUTOFILL_SAVE_IDS: readonly string[] = ["autofill_save_no", "autofill_save_yes"];
 
-/** Whether `buttons` belong to the Android autofill save sheet. */
-export function isAutofillSaveSheet(buttons: readonly Element[]): boolean {
-	return buttons.some((b) => b.identifier !== undefined && ANDROID_AUTOFILL_SAVE_IDS.includes(b.identifier));
+/** Finds and describes alert buttons. Use the shared {@link alertButtons} singleton. */
+export class AlertButtons {
+	nameOf(button: Element): string | undefined {
+		return button.label ?? button.text ?? button.value;
+	}
+
+	/** The button called `wanted`, ignoring case and curly apostrophes. */
+	findButton(buttons: readonly Element[], wanted: string): Element | undefined {
+		const target = this.normalise(wanted);
+		return buttons.find((button) => {
+			const name = this.nameOf(button);
+			return name !== undefined && this.normalise(name) === target;
+		});
+	}
+
+	firstOf(buttons: readonly Element[], names: readonly string[]): Element | undefined {
+		for (const name of names) {
+			const found = this.findButton(buttons, name);
+			if (found !== undefined) return found;
+		}
+		return undefined;
+	}
+
+	/** Where to tap an element: its own tap point, else the middle of its frame. */
+	centre(element: Element): Point {
+		const { x, y, width, height } = element.frame;
+		return element.tapPoint ?? { x: x + width / 2, y: y + height / 2 };
+	}
+
+	/** Whether `buttons` belong to the Android autofill save sheet. */
+	isAutofillSaveSheet(buttons: readonly Element[]): boolean {
+		return buttons.some((b) => b.identifier !== undefined && ANDROID_AUTOFILL_SAVE_IDS.includes(b.identifier));
+	}
+
+	private normalise(text: string): string {
+		return text.replace(/[‘’]/g, "'").trim().toLowerCase();
+	}
 }
+
+export const alertButtons = new AlertButtons();

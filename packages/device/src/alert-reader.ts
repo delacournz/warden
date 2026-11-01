@@ -1,6 +1,6 @@
-import { type AlertBackend, canReadAlertOn } from "@delacour/warden-driver/alerts";
+import { type AlertBackend, alertCapabilities } from "@delacour/warden-driver/alerts";
 import type { AlertInfo, Driver, DriverError } from "@delacour/warden-driver/driver.types";
-import { settled, toE2eError } from "@delacour/warden-driver/unwrap";
+import { driverCalls } from "@delacour/warden-driver/unwrap";
 import type { Result } from "@delacour/warden-types/result";
 import type { Clock } from "./fixture-session";
 
@@ -38,8 +38,9 @@ export type AlertReader = (backend?: AlertBackend, modalLooks?: number) => Promi
  */
 export function createAlertReader({ driver, clock, signal }: AlertReaderDeps): AlertReader {
 	const read = (backend?: AlertBackend) =>
-		settled(
-			() => (backend !== undefined && canReadAlertOn(driver) ? driver.alertOn(backend) : driver.alert()),
+		driverCalls.settled(
+			() =>
+				backend !== undefined && alertCapabilities.canReadAlertOn(driver) ? driver.alertOn(backend) : driver.alert(),
 			"read alert",
 			signal()
 		);
@@ -58,13 +59,14 @@ export function createAlertReader({ driver, clock, signal }: AlertReaderDeps): A
 		for (let failures = 1; ; failures += 1) {
 			const result = await read();
 			if (result.success) return result.data;
-			if (!result.error.retryable || failures >= ALERT_READ_ATTEMPTS) throw toE2eError(result.error, "read alert");
+			if (!result.error.retryable || failures >= ALERT_READ_ATTEMPTS)
+				throw driverCalls.toE2eError(result.error, "read alert");
 			await clock.sleep(ALERT_READ_RETRY_MS);
 		}
 	};
 
 	return async (backend, modalLooks = ALERT_MODAL_LOOKS) => {
-		if (backend !== undefined && canReadAlertOn(driver)) {
+		if (backend !== undefined && alertCapabilities.canReadAlertOn(driver)) {
 			const one = await readOne(backend, modalLooks);
 			if (one.success) return one.data;
 			// the bridge answers nothing for ~0.2 s after a launch: ask the host reader once rather than the bridge again

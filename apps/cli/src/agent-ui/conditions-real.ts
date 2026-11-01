@@ -5,8 +5,8 @@ import { leaseClockRecorder } from "@delacour/warden-device/conditions/lease-clo
 import { lazyLeaseNetworkProxy, leaseNetworkProxy } from "@delacour/warden-device/conditions/lease-network-proxy";
 import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-device/conditions/route-ticker.spawn";
 import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-device/conditions/scheduler.spawn";
-import { driverErr } from "@delacour/warden-driver/errors";
-import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { networkProxyShaping } from "@delacour/warden-driver/network-proxy";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
@@ -85,15 +85,18 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		networkFaults: net.networkFaults,
 		location: async (op) => {
 			if (!serial.startsWith("emulator-")) {
-				return driverErr("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
+				return driverErrors.err("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
 			}
 			if (op.kind === "clear") return { success: true, data: undefined };
 			if (op.kind !== "point") {
-				return driverErr("E_BAD_REQUEST", `a ${op.kind} location is played by the route ticker, not set directly`);
+				return driverErrors.err(
+					"E_BAD_REQUEST",
+					`a ${op.kind} location is played by the route ticker, not set directly`
+				);
 			}
 			const res = await ctx.exec(geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS });
 			const failure = geoFixFailure(res);
-			return failure === undefined ? { success: true, data: undefined } : driverErr("E_IO", failure);
+			return failure === undefined ? { success: true, data: undefined } : driverErrors.err("E_IO", failure);
 		},
 		clock: (op) => applyAndroidClock({ session, exec: ctx.exec, adb, serial }, op),
 		close: () => session.close(),
@@ -147,7 +150,7 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 	ensureProxy: async (ctx, lease) => {
 		const started = await ensureLeaseProxy(proxyDeps(ctx), lease, {
 			condition: { kind: "online" },
-			conditions: proxyConditionsFor({ kind: "online" }, []),
+			conditions: networkProxyShaping.conditionsFor({ kind: "online" }, []),
 		});
 		return started.success ? resultFactory.ok(undefined) : { success: false, error: started.error };
 	},

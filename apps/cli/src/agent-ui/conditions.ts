@@ -11,7 +11,7 @@ import { durationParser } from "@delacour/warden-config/duration";
 import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
 import type { ClockState, NetworkState } from "@delacour/warden-driver/driver.types";
-import { physicalConditionOps } from "@delacour/warden-driver/physical-conditions";
+import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
 import { liveness } from "@delacour/warden-store/liveness";
 import { processIdentity } from "@delacour/warden-store/process-identity";
 import type { Lease } from "@delacour/warden-store/types";
@@ -133,7 +133,7 @@ export async function withPort<T>(
 ): Promise<Result<T, UiError>> {
 	if (physicalDevice(device)) {
 		const what = device.platform === "ios" ? "physical iPhone" : "physical Android device";
-		return work({ ...physicalConditionOps(`${what} ${device.udid}`), close: async () => undefined });
+		return work({ ...physicalConditions.ops(`${what} ${device.udid}`), close: async () => undefined });
 	}
 	const port = await deps.open(ctx, device);
 	if (!port.success) return port;
@@ -529,9 +529,9 @@ async function moveLocation(
 			return saved.success ? locationSuccess(device, action, value) : saved;
 		});
 	}
-	const { planRoute } = await import("@delacour/warden-driver/conditions/location-plan");
+	const { locationPlanner } = await import("@delacour/warden-driver/conditions/location-plan");
 	const { readFile } = await import("node:fs/promises");
-	const planned = await planRoute(value, (path) => readFile(path, "utf8"));
+	const planned = await locationPlanner.planRoute(value, (path) => readFile(path, "utf8"));
 	if (!planned.success) return fail("usage", planned.error);
 	const plan = planned.data;
 	const placed = await withPort<void>(ctx, deps, device, async (port) => {

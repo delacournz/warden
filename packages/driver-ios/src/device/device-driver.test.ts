@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { canProbeFrontmost, canReadAlertOn } from "@delacour/warden-driver/alerts";
+import { alertCapabilities } from "@delacour/warden-driver/alerts";
 import type { Driver, DriverResult, Snapshot } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { collectSpanDetail, type SpanDetail } from "@delacour/warden-driver/trace/span-detail";
-import { canPasteText, canSelectAll } from "@delacour/warden-driver/typing";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
+import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import { fakeExec } from "../exec.testing";
 import type { FakeSimd, FakeSimdReply, FakeSimdRequest } from "../simd.testing";
 import { spawnSimd } from "../simd-client";
@@ -107,10 +107,10 @@ describe("openIosDeviceDriver", () => {
 
 	test("offers no select-all and no paste, so a field fill clears with counted Backspace", async () => {
 		const { driver } = await open(ok);
-		expect(canSelectAll(driver)).toBe(false);
-		expect(canPasteText(driver)).toBe(false);
-		expect(canReadAlertOn(driver)).toBe(true);
-		expect(canProbeFrontmost(driver)).toBe(true);
+		expect(deviceTyping.canSelectAll(driver)).toBe(false);
+		expect(deviceTyping.canPasteText(driver)).toBe(false);
+		expect(alertCapabilities.canReadAlertOn(driver)).toBe(true);
+		expect(alertCapabilities.canProbeFrontmost(driver)).toBe(true);
 	});
 
 	test("without a socket or a client it is E_HELPER_MISSING and names the env var", async () => {
@@ -237,11 +237,17 @@ describe("input", () => {
 });
 
 describe("reads", () => {
-	const tree: Snapshot = snapshotOf(
+	const tree: Snapshot = driverFixtures.snapshotOf(
 		[
-			el("window", {
+			driverFixtures.el("window", {
 				frame: { x: 0, y: 0, width: 440, height: 956 },
-				children: [el("button", { id: "login", label: "Log in", frame: { x: 20, y: 100, width: 200, height: 44 } })],
+				children: [
+					driverFixtures.el("button", {
+						id: "login",
+						label: "Log in",
+						frame: { x: 20, y: 100, width: 200, height: 44 },
+					}),
+				],
 			}),
 		],
 		{ screen: SCREEN }
@@ -270,7 +276,7 @@ describe("reads", () => {
 			},
 		});
 		const notes: SpanDetail = {};
-		const outcome = await collectSpanDetail(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
+		const outcome = await spanDetails.collect(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
 		expect(outcome.quiet).toBe(true);
 		expect(notes).toEqual({ via: "hash" });
 		expect(runner.of("settle")).toHaveLength(0);
@@ -284,7 +290,8 @@ describe("reads", () => {
 			return { data: {} };
 		});
 		expect(await unwrapped(driver.alert())).toBeNull();
-		if (!canReadAlertOn(driver) || !canProbeFrontmost(driver)) throw new Error("capabilities missing");
+		if (!alertCapabilities.canReadAlertOn(driver) || !alertCapabilities.canProbeFrontmost(driver))
+			throw new Error("capabilities missing");
 		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
 		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(true);
 		expect(runner.of("frontmost")[0]).toMatchObject({ bundleId: BUNDLE });
@@ -416,7 +423,7 @@ describe("apps", () => {
 	test("clearData is uninstall then reinstall from the app path, and says the keychain is kept", async () => {
 		const { driver, dc } = await open(ok, { appPath: "/b/App.app" });
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => unwrapped(driver.app.clearData(BUNDLE, { keychain: true })));
+		await spanDetails.collect(notes, () => unwrapped(driver.app.clearData(BUNDLE, { keychain: true })));
 		expect(dc.calls).toEqual([`uninstall ${BUNDLE}`, "install /b/App.app"]);
 		expect(notes).toEqual({ keychainKept: true });
 	});
@@ -428,7 +435,7 @@ describe("apps", () => {
 	});
 
 	test("a failed uninstall during clearData stops before the reinstall", async () => {
-		const dc = fakeDevicectl({ uninstall: driverErr("E_IO", "nope") });
+		const dc = fakeDevicectl({ uninstall: driverErrors.err("E_IO", "nope") });
 		const { driver } = await open(ok, { appPath: "/b/App.app", devicectl: dc.devicectl });
 		expect((await failure(driver.app.clearData(BUNDLE))).code).toBe("E_IO");
 		expect(dc.calls).toEqual([`uninstall ${BUNDLE}`]);

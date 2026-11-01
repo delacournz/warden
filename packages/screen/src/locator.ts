@@ -1,8 +1,8 @@
 import type { Driver, Element, KeyName, Modifier, Point, Rect, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { canDetectAlerts, canObserve, OBSERVATION_MAX_AGE_MS } from "@delacour/warden-driver/observation-cache";
-import { snapshotHash } from "@delacour/warden-driver/settle";
-import { typeText } from "@delacour/warden-driver/typing";
+import { OBSERVATION_MAX_AGE_MS, observations } from "@delacour/warden-driver/observation-cache";
+import { settler } from "@delacour/warden-driver/settle";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import {
 	assertDegrees,
 	assertScale,
@@ -511,7 +511,7 @@ export class Locator {
 	 */
 	private async aimFromKept(spec: ActionSpec, position: Point | undefined): Promise<Actionable | undefined> {
 		const driver = await this.rt.host.driver();
-		if (driver.capabilities.cheapHitTest !== true || !canObserve(driver)) return undefined;
+		if (driver.capabilities.cheapHitTest !== true || !observations.canObserve(driver)) return undefined;
 		if (this.rt.host.answerSystemAlert !== undefined) return undefined;
 		const kept = driver.peek?.();
 		if (
@@ -546,7 +546,7 @@ export class Locator {
 				let before = await this.tapOnce(options);
 				if (retry === undefined) return;
 				for (let resent = 0; resent < retry.retries; resent += 1) {
-					const outcome = await this.arrivedWithin(retry, snapshotHash(before));
+					const outcome = await this.arrivedWithin(retry, settler.snapshotHash(before));
 					// a screen that reacted got the press: pressing again would be a second submit or toggle
 					if (outcome !== "press-again") return;
 					before = await this.tapOnce(options);
@@ -615,7 +615,7 @@ export class Locator {
 			return { done: false, state: undefined };
 		}
 		if (until.visibleIn(observation.observed)) return { done: true, value: "arrived" };
-		if (snapshotHash(observation.observed.snapshot) === watch.pressedOn) watch.unchanged += 1;
+		if (settler.snapshotHash(observation.observed.snapshot) === watch.pressedOn) watch.unchanged += 1;
 		else {
 			watch.changed = true;
 			watch.unchanged = 0;
@@ -720,7 +720,7 @@ export class Locator {
 				options.timeout ?? this.rt.actionTimeout()
 			);
 			await this.focus(target);
-			this.rt.drive("type", await typeText(target.observed.driver, this.pause, text));
+			this.rt.drive("type", await deviceTyping.typeText(target.observed.driver, this.pause, text));
 		});
 	}
 
@@ -934,7 +934,7 @@ function sameElement(hit: Element, seen: Element): boolean {
 }
 
 function showsAlert(driver: Driver, snapshot: Snapshot): boolean {
-	return snapshot.modal !== undefined || (canDetectAlerts(driver) && driver.alertIn(snapshot) !== null);
+	return snapshot.modal !== undefined || (observations.canDetectAlerts(driver) && driver.alertIn(snapshot) !== null);
 }
 
 function sameFrame(a: Rect, b: Rect): boolean {

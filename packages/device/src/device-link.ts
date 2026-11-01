@@ -1,4 +1,4 @@
-import { findButton } from "@delacour/warden-driver/alert-buttons";
+import { alertButtons } from "@delacour/warden-driver/alert-buttons";
 import type { AlertBackend } from "@delacour/warden-driver/alerts";
 import type { AlertInfo, Element } from "@delacour/warden-driver/driver.types";
 import type { Locator } from "@delacour/warden-screen/locator";
@@ -126,7 +126,7 @@ async function lookForSheet(
 	if (remembered && clock.now() - started < QUIET_MS) return { sheetUp: false, confirmed: true, finished: false };
 	const cheap = clock.now() - watch.lastSheetAt < QUIET_MS;
 	const info = await deps.readAlert(cheap ? "ax" : undefined, 0);
-	const open = info === null ? undefined : findButton(info.buttons, "Open");
+	const open = info === null ? undefined : alertButtons.findButton(info.buttons, "Open");
 	if (open === undefined) {
 		// answered: nothing left to press once the sheet is gone
 		if (watch.presses > 0) watch.looking = false;

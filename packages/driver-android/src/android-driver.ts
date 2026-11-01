@@ -4,14 +4,14 @@ import type { LatLon } from "@delacour/warden-config/conditions.types";
 import { parseFingerprintEnrolled } from "@delacour/warden-core/golden/android-biometrics";
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { ConditionSink } from "@delacour/warden-driver/conditions/condition-events";
-import { planRoute } from "@delacour/warden-driver/conditions/location-plan";
+import { locationPlanner } from "@delacour/warden-driver/conditions/location-plan";
 import {
 	type RouteTicker,
 	realTickerClock,
-	startRouteTicker,
+	routeTickers,
 	type TickerClock,
 } from "@delacour/warden-driver/conditions/route-ticker";
-import { type Scheduler, startFlap } from "@delacour/warden-driver/conditions/scheduler";
+import { type Scheduler, schedulers } from "@delacour/warden-driver/conditions/scheduler";
 import type {
 	AlertInfo,
 	BiometricState,
@@ -30,25 +30,18 @@ import type {
 	ScreenInfo,
 	Snapshot,
 } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
-import {
-	DEFAULT_RADIUS,
-	type GesturePlan,
-	pinchPlan,
-	planGesture,
-	rotatePlan,
-} from "@delacour/warden-driver/gesture-geometry";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { DEFAULT_RADIUS, type GesturePlan, gestureGeometry } from "@delacour/warden-driver/gesture-geometry";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import type { DetectsAlerts } from "@delacour/warden-driver/observation-cache";
-import { physicalConditionOps } from "@delacour/warden-driver/physical-conditions";
+import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
 import {
 	DEFAULT_SETTLE_QUIET_MS,
 	DEFAULT_SETTLE_TIMEOUT_MS,
 	type SettleDetail,
-	settleByHash,
-	snapshotHash,
+	settler,
 } from "@delacour/warden-driver/settle";
-import { noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { RepeatingKeys, SelectsAll, SetsText } from "@delacour/warden-driver/typing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
@@ -375,7 +368,7 @@ function buildDriver(
 	}
 
 	async function dumpSnapshot(): DriverResult<Snapshot> {
-		noteSpanDetail("backend", "dump");
+		spanDetails.note("backend", "dump");
 		const dumped = await dumpWithRetry();
 		if (!dumped.success) return dumped;
 		let parsed: ReturnType<typeof parseUiautomatorXml>;
@@ -384,7 +377,7 @@ function buildDriver(
 		try {
 			parsed = parseUiautomatorXml(dumped.data.xml, screen);
 		} catch (error) {
-			if (error instanceof UiautomatorParseError) return driverErr("E_AX_UNAVAILABLE", error.message);
+			if (error instanceof UiautomatorParseError) return driverErrors.err("E_AX_UNAVAILABLE", error.message);
 			throw error;
 		}
 		const taken: Snapshot = {
@@ -410,7 +403,7 @@ function buildDriver(
 
 	const snapshot: Driver["snapshot"] = async (opts) => {
 		if (opts?.backend !== undefined && opts.backend !== "uiautomator") {
-			return driverErr("E_UNSUPPORTED", `Android only has the uiautomator backend, not ${opts.backend}`);
+			return driverErrors.err("E_UNSUPPORTED", `Android only has the uiautomator backend, not ${opts.backend}`);
 		}
 		const taken = await takeSnapshot();
 		if (!taken.success || !opts?.interactiveOnly) return taken;
@@ -458,7 +451,7 @@ function buildDriver(
 		if (!res.success) return res;
 		return res.data.exitCode === 0
 			? unit
-			: driverErr("E_UNSUPPORTED", "key modifiers need Android 13+ (`input keycombination`)");
+			: driverErrors.err("E_UNSUPPORTED", "key modifiers need Android 13+ (`input keycombination`)");
 	};
 
 	/** See `RepeatingKeys`: N presses in one round trip (`input keyevent 67 67 67 …`). */
@@ -481,7 +474,7 @@ function buildDriver(
 		const fast = await uiad?.selectAll();
 		if (fast !== undefined) return fast;
 		if (sdk === undefined || sdk < SELECT_ALL_MIN_SDK) {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				"select-all needs the warden-uiad server or Android 13+ (`input keycombination`)"
 			);
@@ -494,7 +487,7 @@ function buildDriver(
 	 * with). There is no shell fallback: a refusal or a server that is off is `E_UNSUPPORTED`, and the caller types.
 	 */
 	const setText: SetsText["setText"] = async (text) =>
-		(await uiad?.setText(text)) ?? driverErr("E_UNSUPPORTED", "setText needs the warden-uiad server");
+		(await uiad?.setText(text)) ?? driverErrors.err("E_UNSUPPORTED", "setText needs the warden-uiad server");
 
 	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
@@ -526,13 +519,16 @@ function buildDriver(
 		const fast = await uiad?.gesture(plan);
 		if (fast !== undefined) return fast;
 		if (plan.paths.length > 1) {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				"two-finger gestures need the warden-uiad server (API 26+, WARDEN_ANDROID_UIAD not 0)"
 			);
 		}
 		if (sdk === undefined || sdk < MOTIONEVENT_MIN_SDK) {
-			return driverErr("E_UNSUPPORTED", "gestures need Android 8+ (`input motionevent`) or the warden-uiad server");
+			return driverErrors.err(
+				"E_UNSUPPORTED",
+				"gestures need Android 8+ (`input motionevent`) or the warden-uiad server"
+			);
 		}
 		return input(
 			gestureMotionCommand(plan),
@@ -547,35 +543,41 @@ function buildDriver(
 	};
 	const radius = DEFAULT_RADIUS * baseScreen.scale;
 	const pinch: Driver["pinch"] = async (center, scale, opts) => {
-		const plan = pinchPlan(center, scale, opts, radius);
+		const plan = gestureGeometry.pinchPlan(center, scale, opts, radius);
 		return plan.success ? runGesture(plan.data) : plan;
 	};
 	const rotate: Driver["rotate"] = async (center, degrees, opts) => {
-		const plan = rotatePlan(center, degrees, opts, radius);
+		const plan = gestureGeometry.rotatePlan(center, degrees, opts, radius);
 		return plan.success ? runGesture(plan.data) : plan;
 	};
 	const gesture: Driver["gesture"] = async (paths, opts) => {
-		const plan = planGesture(paths, opts, maxPointers());
+		const plan = gestureGeometry.planGesture(paths, opts, maxPointers());
 		return plan.success ? runGesture(plan.data) : plan;
 	};
 
 	const pressButton: Driver["pressButton"] = async (button: HardwareButton) => {
 		const code = buttonKeycode(button);
-		if (code === undefined) return driverErr("E_UNSUPPORTED", `Android has no ${button} button`);
+		if (code === undefined) return driverErrors.err("E_UNSUPPORTED", `Android has no ${button} button`);
 		return (await uiad?.key(code)) ?? input(shellCommand(keyeventArgv(code)));
 	};
 
 	const screenshot: Driver["screenshot"] = async (opts) => {
 		const res = await execBinary(screencapArgv(adb, serial), { timeoutMs: SCREENSHOT_TIMEOUT_MS });
 		if (res.exitCode !== 0 || !PNG_MAGIC.every((b, i) => res.stdout[i] === b)) {
-			return driverErr("E_IO", `screencap on ${serial} gave no PNG (exit ${res.exitCode}, ${res.stdout.length} bytes)`);
+			return driverErrors.err(
+				"E_IO",
+				`screencap on ${serial} gave no PNG (exit ${res.exitCode}, ${res.stdout.length} bytes)`
+			);
 		}
 		if (!opts?.path) return { success: true, data: { png: res.stdout } };
 		try {
 			await mkdir(dirname(opts.path), { recursive: true });
 			await writeFile(opts.path, res.stdout);
 		} catch (error) {
-			return driverErr("E_IO", `cannot write ${opts.path}: ${error instanceof Error ? error.message : String(error)}`);
+			return driverErrors.err(
+				"E_IO",
+				`cannot write ${opts.path}: ${error instanceof Error ? error.message : String(error)}`
+			);
 		}
 		return { success: true, data: { path: opts.path } };
 	};
@@ -614,7 +616,7 @@ function buildDriver(
 			const start = clock.now();
 			const taken = await dumpSnapshot();
 			const waitedMs = clock.now() - start;
-			noteSpanDetail("via", "snapshot");
+			spanDetails.note("via", "snapshot");
 			return {
 				success: true,
 				data: { quiet: taken.success && waitedMs < DUMP_IDLE_TIMEOUT_MS, waitedMs, via: "snapshot" },
@@ -624,15 +626,15 @@ function buildDriver(
 			const taken = await takeSnapshot();
 			if (!taken.success) return "unavailable";
 			// snapshotHash ignores `text`; on Android static text lives there, so fold it into `value`
-			return snapshotHash({ flat: taken.data.flat.map((e) => ({ ...e, value: e.value ?? e.text })) });
+			return settler.snapshotHash({ flat: taken.data.flat.map((e) => ({ ...e, value: e.value ?? e.text })) });
 		};
-		const outcome = await settleByHash(poll, {
+		const outcome = await settler.byHash(poll, {
 			quietMs,
 			timeoutMs,
 			now: clock.now,
 			sleep: clock.sleep,
 		});
-		noteSpanDetail("via", "hash");
+		spanDetails.note("via", "hash");
 		return { success: true, data: { ...outcome, via: "hash" } };
 	};
 
@@ -676,11 +678,11 @@ function buildDriver(
 		await stopFlap();
 		if (op.kind !== "flap") return applyNetwork(op, opts);
 		const base = op.base ?? { kind: "online" };
-		if (base.kind === "flap") return driverErr("E_BAD_REQUEST", "flap base cannot itself be a flap");
-		if (!(op.upMs > 0 && op.downMs > 0)) return driverErr("E_BAD_REQUEST", "flap needs upMs and downMs above 0");
+		if (base.kind === "flap") return driverErrors.err("E_BAD_REQUEST", "flap base cannot itself be a flap");
+		if (!(op.upMs > 0 && op.downMs > 0)) return driverErrors.err("E_BAD_REQUEST", "flap needs upMs and downMs above 0");
 		const applied = await applyNetwork(base, opts);
 		if (!applied.success) return applied;
-		const running = startFlap(
+		const running = schedulers.startFlap(
 			{ network: (condition) => applyNetwork(condition, opts) },
 			{ ...op, base, applyInitial: false },
 			{
@@ -714,7 +716,7 @@ function buildDriver(
 	const geoFix = async (point: LatLon, altM?: number): DriverResult<void> => {
 		const res = await exec(geoFixArgv(adb, serial, point, altM), { timeoutMs: GEO_FIX_MS });
 		const failure = geoFixFailure(res);
-		return failure === undefined ? unit : driverErr("E_IO", failure);
+		return failure === undefined ? unit : driverErrors.err("E_IO", failure);
 	};
 
 	/**
@@ -725,18 +727,18 @@ function buildDriver(
 	 */
 	const location: Driver["location"] = async (op) => {
 		if (!serial.startsWith("emulator-")) {
-			return driverErr("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
+			return driverErrors.err("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
 		}
 		await stopTicker();
 		if (op.kind === "clear") return unit;
 		if (op.kind === "point") return geoFix(op, op.altM);
-		const planned = await planRoute(op, (path) => readFile(path, "utf8"));
-		if (!planned.success) return driverErr("E_BAD_REQUEST", planned.error);
+		const planned = await locationPlanner.planRoute(op, (path) => readFile(path, "utf8"));
+		if (!planned.success) return driverErrors.err("E_BAD_REQUEST", planned.error);
 		const plan = planned.data;
 		const first = plan.points[0] as LatLon;
 		const placed = await geoFix(first);
 		if (!placed.success || plan.points.length < 2) return placed;
-		ticker = startRouteTicker(plan, {
+		ticker = routeTickers.start(plan, {
 			...(options.tickerClock ?? realTickerClock),
 			fix: async (point) => {
 				const res = await geoFix(point);
@@ -754,7 +756,7 @@ function buildDriver(
 		const touched = await options.exec(emuFingerTouchArgv(adb, serial, fingerId), { timeoutMs: 10_000 });
 		// the console answers `KO: …` (and some builds still exit 0) when the sensor is missing
 		if (touched.exitCode === 0 && !/^KO\b/m.test(touched.stdout)) return { success: true, data: undefined };
-		return driverErr(
+		return driverErrors.err(
 			"E_IO",
 			`adb emu finger touch failed: ${`${touched.stdout}${touched.stderr}`.trim().slice(0, 200)}`
 		);
@@ -766,10 +768,10 @@ function buildDriver(
 	 */
 	const biometrics: Driver["biometrics"] = async (op) => {
 		if (!isEmulatorSerial(serial)) {
-			return driverErr("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${serial}`);
+			return driverErrors.err("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${serial}`);
 		}
 		if (op === "enroll" || op === "unenroll") {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				`Android fingerprint enrollment comes from the golden snapshot (profile \`biometrics: true\`); \`${op}\` is not available at run time`
 			);
@@ -785,7 +787,7 @@ function buildDriver(
 	};
 
 	const clipboard: Driver["clipboard"] = async () =>
-		driverErr("E_UNSUPPORTED", "Android has no public shell clipboard access; type ASCII with typeText");
+		driverErrors.err("E_UNSUPPORTED", "Android has no public shell clipboard access; type ASCII with typeText");
 
 	const health: Driver["health"] = async () => {
 		const [release, sdk, model] = await Promise.all(
@@ -843,7 +845,7 @@ function buildDriver(
 		location,
 		clock: clockOp,
 		...settings,
-		...(facts.physical ? physicalConditionOps(`physical Android device ${serial}`) : {}),
+		...(facts.physical ? physicalConditions.ops(`physical Android device ${serial}`) : {}),
 		biometrics,
 		app: createAppCommands({
 			session,

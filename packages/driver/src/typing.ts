@@ -24,20 +24,12 @@ export type Sleep = (ms: number) => Promise<void>;
  */
 export type RepeatingKeys = { pressKeyRepeat(key: KeyName, times: number): DriverResult<void> };
 
-export function canRepeatKeys(driver: Driver): driver is Driver & RepeatingKeys {
-	return typeof (driver as Partial<RepeatingKeys>).pressKeyRepeat === "function";
-}
-
 /**
  * Optional fast path next to the frozen `Driver`: select everything in the focused text field (iOS Cmd+A through
  * `warden-simd`, Android Ctrl+A through `input keycombination` on API 33+), so one Backspace empties a field of any
  * length instead of one per character. A field that refuses the shortcut is caught by the read-back after the fill.
  */
 export type SelectsAll = { selectAll(): DriverResult<void> };
-
-export function canSelectAll(driver: Driver): driver is Driver & SelectsAll {
-	return typeof (driver as Partial<SelectsAll>).selectAll === "function";
-}
 
 /**
  * Optional fast path next to the frozen `Driver`: replace the whole text of the focused field in one call (Android
@@ -49,10 +41,6 @@ export function canSelectAll(driver: Driver): driver is Driver & SelectsAll {
  */
 export type SetsText = { setText(text: string): DriverResult<void> };
 
-export function canSetText(driver: Driver): driver is Driver & SetsText {
-	return typeof (driver as Partial<SetsText>).setText === "function";
-}
-
 /**
  * Optional fast path next to the frozen `Driver`: put `text` on the device pasteboard and paste it into the focused
  * field with one Cmd+V (iOS `simctl.pbcopy` then `warden-simd` `paste`), replacing the selection. Cost is flat (~400 ms)
@@ -61,42 +49,59 @@ export function canSetText(driver: Driver): driver is Driver & SetsText {
  */
 export type PastesText = { pasteText(text: string): DriverResult<void> };
 
-export function canPasteText(driver: Driver): driver is Driver & PastesText {
-	return typeof (driver as Partial<PastesText>).pasteText === "function";
-}
-
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-function graphemesOf(text: string): string[] {
-	return Array.from(segmenter.segment(text), (part) => part.segment);
+/** Capability checks and paced text / key entry. Use the shared {@link deviceTyping} singleton. */
+export class DeviceTyping {
+	canRepeatKeys(driver: Driver): driver is Driver & RepeatingKeys {
+		return typeof (driver as Partial<RepeatingKeys>).pressKeyRepeat === "function";
+	}
+
+	canSelectAll(driver: Driver): driver is Driver & SelectsAll {
+		return typeof (driver as Partial<SelectsAll>).selectAll === "function";
+	}
+
+	canSetText(driver: Driver): driver is Driver & SetsText {
+		return typeof (driver as Partial<SetsText>).setText === "function";
+	}
+
+	canPasteText(driver: Driver): driver is Driver & PastesText {
+		return typeof (driver as Partial<PastesText>).pasteText === "function";
+	}
+
+	/** Types `text` at the caret. Android types the whole string in one call. */
+	async typeText(driver: Driver, sleep: Sleep, text: string): DriverResult<void> {
+		if (driver.platform !== "ios" || !SPLIT_TEXT) {
+			const typed = await driver.typeText(text);
+			if (typed.success) await this.pace(driver, sleep);
+			return typed;
+		}
+		for (const character of this.graphemesOf(text)) {
+			const typed = await driver.typeText(character);
+			if (!typed.success) return typed;
+			await this.pace(driver, sleep);
+		}
+		return resultFactory.ok(undefined);
+	}
+
+	/** Presses `key` `times` times, paced like typed characters. */
+	async pressKeys(driver: Driver, sleep: Sleep, key: KeyName, times: number): DriverResult<void> {
+		if (times > 1 && this.canRepeatKeys(driver)) return driver.pressKeyRepeat(key, times);
+		for (let press = 0; press < times; press += 1) {
+			const pressed = await driver.key(key);
+			if (!pressed.success) return pressed;
+			await this.pace(driver, sleep);
+		}
+		return resultFactory.ok(undefined);
+	}
+
+	private graphemesOf(text: string): string[] {
+		return Array.from(segmenter.segment(text), (part) => part.segment);
+	}
+
+	private async pace(driver: Driver, sleep: Sleep): Promise<void> {
+		if (driver.platform === "ios" && KEY_PACE_MS > 0) await sleep(KEY_PACE_MS);
+	}
 }
 
-async function pace(driver: Driver, sleep: Sleep): Promise<void> {
-	if (driver.platform === "ios" && KEY_PACE_MS > 0) await sleep(KEY_PACE_MS);
-}
-
-/** Types `text` at the caret. Android types the whole string in one call. */
-export async function typeText(driver: Driver, sleep: Sleep, text: string): DriverResult<void> {
-	if (driver.platform !== "ios" || !SPLIT_TEXT) {
-		const typed = await driver.typeText(text);
-		if (typed.success) await pace(driver, sleep);
-		return typed;
-	}
-	for (const character of graphemesOf(text)) {
-		const typed = await driver.typeText(character);
-		if (!typed.success) return typed;
-		await pace(driver, sleep);
-	}
-	return resultFactory.ok(undefined);
-}
-
-/** Presses `key` `times` times, paced like typed characters. */
-export async function pressKeys(driver: Driver, sleep: Sleep, key: KeyName, times: number): DriverResult<void> {
-	if (times > 1 && canRepeatKeys(driver)) return driver.pressKeyRepeat(key, times);
-	for (let press = 0; press < times; press += 1) {
-		const pressed = await driver.key(key);
-		if (!pressed.success) return pressed;
-		await pace(driver, sleep);
-	}
-	return resultFactory.ok(undefined);
-}
+export const deviceTyping = new DeviceTyping();

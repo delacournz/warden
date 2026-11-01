@@ -4,7 +4,7 @@ import type { ConditionEvent } from "@delacour/warden-driver/conditions/conditio
 import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type { Driver, Platform } from "@delacour/warden-driver/driver.types";
 import type { E2eError } from "@delacour/warden-driver/e2e-error";
-import { type DriverCall, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { type DriverCall, driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type ConditionsEnv, createDeviceConditions, type DeviceConditions } from "./device-conditions";
 
@@ -30,13 +30,13 @@ function setup(
 	opts: { platform?: Platform; conditions?: ConditionsEnv["conditions"]; clockOp?: boolean; log?: string[] } = {}
 ): {
 	c: DeviceConditions;
-	driver: ReturnType<typeof fakeDriver>;
+	driver: FakeDriver;
 	events: ConditionEvent[];
 	clock: ReturnType<typeof stuckClock>;
 	ops: ClockCondition[];
 } {
 	const platform = opts.platform ?? "ios";
-	const driver = fakeDriver({ screens: [snapshotOf([], { platform })], platform });
+	const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([], { platform })], platform });
 	const ops: ClockCondition[] = [];
 	if (opts.clockOp === false) {
 		(driver as { clock?: Driver["clock"] }).clock = undefined;
@@ -88,8 +88,8 @@ describe("device.network", () => {
 	});
 
 	test("a driver failure is thrown as an E2eError that names what to do", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) =>
 				call.method === "network"
 					? { error: { code: "E_NETWORK_RELAUNCH", message: "running without dylib", retryable: false } }
@@ -183,8 +183,8 @@ describe("device.network.during", () => {
 	test("a failing restore does not hide fn's own error", async () => {
 		const log: string[] = [];
 		let calls = 0;
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) => {
 				if (call.method !== "network") return undefined;
 				calls += 1;

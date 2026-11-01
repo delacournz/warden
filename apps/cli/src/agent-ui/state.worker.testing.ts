@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { storeLocator } from "@delacour/warden-store/store";
 import { commitGeneration, type UiState, updateState, writeLastSnapshot } from "./state";
 
@@ -33,7 +33,7 @@ if (field !== undefined) {
 	store.close();
 	console.log(count);
 } else {
-	const snapshot = snapshotOf([el("button", { label: "Go", id: "go" })]);
+	const snapshot = driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Go", id: "go" })]);
 	const taken: number[] = [];
 	for (let n = 0; n < Number(count); n += 1) {
 		taken.push(

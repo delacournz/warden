@@ -1,25 +1,32 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
-import { el, failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { readLastSnapshot, readState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
 
-const SPINNER = [el("text", { label: "Loading" })];
-const DONE = [el("text", { label: "Welcome back" }), el("button", { label: "Continue", id: "continue" })];
+const SPINNER = [driverFixtures.el("text", { label: "Loading" })];
+const DONE = [
+	driverFixtures.el("text", { label: "Welcome back" }),
+	driverFixtures.el("button", { label: "Continue", id: "continue" }),
+];
 
 /** A screen source that shows `before` for the first `n` snapshots and `after` from then on. */
-function after(n: number, before: Parameters<typeof snapshotOf>[0], then: Parameters<typeof snapshotOf>[0]) {
+function after(
+	n: number,
+	before: Parameters<typeof driverFixtures.snapshotOf>[0],
+	then: Parameters<typeof driverFixtures.snapshotOf>[0]
+) {
 	let looks = 0;
-	return () => snapshotOf(looks++ < n ? before : then);
+	return () => driverFixtures.snapshotOf(looks++ < n ? before : then);
 }
 
 const snapshotCalls = (h: Harness) => h.driver.callsOf("snapshot").length;
 
 describe("wait <selector>", () => {
 	test("already there: matches at once, stores the screen and prints the fresh @ref", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("wait", "id=sign-in-submit", "--json")).toBe(0);
 		const out = doc(h.c);
 		expect(out).toMatchObject({
@@ -56,7 +63,7 @@ describe("wait <selector>", () => {
 	});
 
 	test("never appears: wait_target_absent after --timeout, deadline within one tick", async () => {
-		const h = harness([snapshotOf(SPINNER)]);
+		const h = harness([driverFixtures.snapshotOf(SPINNER)]);
 		expect(await h.run("wait", "id=continue", "--timeout", "1000", "--json")).toBe(1);
 		const error = doc(h.c).error;
 		expect(error.code).toBe("wait_target_absent");
@@ -68,7 +75,7 @@ describe("wait <selector>", () => {
 	});
 
 	test("backs off to 250 ms after the first second", async () => {
-		const h = harness([snapshotOf(SPINNER)]);
+		const h = harness([driverFixtures.snapshotOf(SPINNER)]);
 		expect(await h.run("wait", "id=continue", "--timeout", "3000", "--json")).toBe(1);
 		expect(doc(h.c).error.details.waitedMs).toBe(3000);
 		expect(snapshotCalls(h)).toBe(19);
@@ -91,14 +98,14 @@ describe("wait <selector>", () => {
 	});
 
 	test("a deadline inside the slow phase still ends exactly on it", async () => {
-		const h = harness([snapshotOf(SPINNER)]);
+		const h = harness([driverFixtures.snapshotOf(SPINNER)]);
 		await h.run("wait", "id=continue", "--timeout", "1100", "--json");
 		expect(doc(h.c).error.details.waitedMs).toBe(1100);
 		expect(snapshotCalls(h)).toBe(12);
 	});
 
 	test("the default timeout is 5000 ms", async () => {
-		const h = harness([snapshotOf(SPINNER)]);
+		const h = harness([driverFixtures.snapshotOf(SPINNER)]);
 		expect(await h.run("wait", "id=continue", "--json")).toBe(1);
 		const waited = doc(h.c).error.details.waitedMs;
 		expect(waited).toBeGreaterThanOrEqual(5000);
@@ -106,34 +113,40 @@ describe("wait <selector>", () => {
 	});
 
 	test("a timeout that is not a multiple of 100 ends exactly at the deadline", async () => {
-		const h = harness([snapshotOf(SPINNER)]);
+		const h = harness([driverFixtures.snapshotOf(SPINNER)]);
 		await h.run("wait", "id=continue", "--timeout", "250", "--json");
 		expect(doc(h.c).error.details.waitedMs).toBe(250);
 	});
 
 	test("on the tree but hidden: wait_target_hidden", async () => {
-		const h = harness([snapshotOf([el("button", { label: "Continue", id: "continue", hidden: true })])]);
+		const h = harness([
+			driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Continue", id: "continue", hidden: true })]),
+		]);
 		expect(await h.run("wait", "id=continue", "--timeout", "200", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("wait_target_hidden");
 	});
 
 	test("off the screen counts as not visible", async () => {
-		const far = el("button", { label: "Far", id: "far", frame: { x: 0, y: 2000, width: 390, height: 44 } });
-		const h = harness([snapshotOf([far])]);
+		const far = driverFixtures.el("button", {
+			label: "Far",
+			id: "far",
+			frame: { x: 0, y: 2000, width: 390, height: 44 },
+		});
+		const h = harness([driverFixtures.snapshotOf([far])]);
 		expect(await h.run("wait", "id=far", "--timeout", "100", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("wait_target_hidden");
 	});
 
 	test("a bad selector is a usage error before any snapshot", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("wait", "colour=red", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 		expect(snapshotCalls(h)).toBe(0);
 	});
 
 	test("an engine failure exits 3, not 1", async () => {
-		const h = harness([snapshotOf(LOGIN)], {
-			onCall: (call) => (call.method === "snapshot" ? failWith("E_AX_UNAVAILABLE") : undefined),
+		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
+			onCall: (call) => (call.method === "snapshot" ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 		});
 		expect(await h.run("wait", "id=email", "--json")).toBe(3);
 		expect(doc(h.c).error.code).toBe("engine_unavailable");
@@ -151,13 +164,13 @@ describe("wait absent", () => {
 	});
 
 	test("text output", async () => {
-		const h = harness([snapshotOf(DONE)]);
+		const h = harness([driverFixtures.snapshotOf(DONE)]);
 		expect(await h.run("wait", "absent", "text=Loading")).toBe(0);
 		expect(h.c.stdout.join("\n")).toBe("gone after 0 ms");
 	});
 
 	test("still visible at the deadline: wait_target_present", async () => {
-		const h = harness([snapshotOf(SPINNER)]);
+		const h = harness([driverFixtures.snapshotOf(SPINNER)]);
 		expect(await h.run("wait", "absent", "text=Loading", "--timeout", "300", "--json")).toBe(1);
 		const error = doc(h.c).error;
 		expect(error.code).toBe("wait_target_present");
@@ -165,12 +178,12 @@ describe("wait absent", () => {
 	});
 
 	test("a hidden element counts as absent", async () => {
-		const h = harness([snapshotOf([el("text", { label: "Loading", hidden: true })])]);
+		const h = harness([driverFixtures.snapshotOf([driverFixtures.el("text", { label: "Loading", hidden: true })])]);
 		expect(await h.run("wait", "absent", "text=Loading")).toBe(0);
 	});
 
 	test("needs a selector", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("wait", "absent", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 	});
@@ -184,13 +197,15 @@ describe("wait text", () => {
 	});
 
 	test("also matches a value", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("wait", "text", "a@b.co", "--json")).toBe(0);
 		expect(doc(h.c).result.element.id).toBe("email");
 	});
 
 	test("hidden text does not count; a miss is wait_text_absent", async () => {
-		const h = harness([snapshotOf([el("text", { label: "Welcome back", hidden: true })])]);
+		const h = harness([
+			driverFixtures.snapshotOf([driverFixtures.el("text", { label: "Welcome back", hidden: true })]),
+		]);
 		expect(await h.run("wait", "text", "Welcome back", "--timeout", "200", "--json")).toBe(1);
 		const error = doc(h.c).error;
 		expect(error.code).toBe("wait_text_absent");
@@ -198,7 +213,7 @@ describe("wait text", () => {
 	});
 
 	test("needs text", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("wait", "text", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 	});
@@ -207,7 +222,9 @@ describe("wait text", () => {
 describe("wait stable", () => {
 	test("returns once the screen has held still for the quiet period (default 250 ms)", async () => {
 		let n = 0;
-		const h = harness(() => snapshotOf([el("text", { label: n++ < 3 ? `tick ${n}` : "still" })]));
+		const h = harness(() =>
+			driverFixtures.snapshotOf([driverFixtures.el("text", { label: n++ < 3 ? `tick ${n}` : "still" })])
+		);
 		expect(await h.run("wait", "stable", "--json")).toBe(0);
 		const out = doc(h.c);
 		expect(out.result.matched).toBe(true);
@@ -216,7 +233,7 @@ describe("wait stable", () => {
 	});
 
 	test("an explicit quiet period", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("wait", "stable", "500", "--json")).toBe(0);
 		expect(doc(h.c).result.waitedMs).toBeGreaterThanOrEqual(500);
 		expect(doc(h.c).result.waitedMs).toBeLessThanOrEqual(600);
@@ -224,7 +241,7 @@ describe("wait stable", () => {
 
 	test("a screen that never holds still: wait_not_stable at the deadline", async () => {
 		let n = 0;
-		const h = harness(() => snapshotOf([el("text", { label: `tick ${n++}` })]));
+		const h = harness(() => driverFixtures.snapshotOf([driverFixtures.el("text", { label: `tick ${n++}` })]));
 		expect(await h.run("wait", "stable", "--timeout", "600", "--json")).toBe(1);
 		const error = doc(h.c).error;
 		expect(error.code).toBe("wait_not_stable");
@@ -233,21 +250,21 @@ describe("wait stable", () => {
 	});
 
 	test("the number must be a positive integer", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("wait", "stable", "soon", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 	});
 });
 
-const FORM: Parameters<typeof snapshotOf>[0] = [
-	el("window", {
+const FORM: Parameters<typeof driverFixtures.snapshotOf>[0] = [
+	driverFixtures.el("window", {
 		children: [
-			el("button", { label: "Sign in", id: "sign-in-submit", hittable: true }),
-			el("button", { label: "Cancel", id: "cancel", enabled: false }),
-			el("switch", { label: "Remember me", id: "remember", checked: true }),
-			el("cell", { label: "Row", id: "row", selected: true }),
-			el("textfield", { label: "Email", id: "email", value: "a@b.co", focused: true }),
-			el("text", { label: "Hidden note", id: "note", hidden: true }),
+			driverFixtures.el("button", { label: "Sign in", id: "sign-in-submit", hittable: true }),
+			driverFixtures.el("button", { label: "Cancel", id: "cancel", enabled: false }),
+			driverFixtures.el("switch", { label: "Remember me", id: "remember", checked: true }),
+			driverFixtures.el("cell", { label: "Row", id: "row", selected: true }),
+			driverFixtures.el("textfield", { label: "Email", id: "email", value: "a@b.co", focused: true }),
+			driverFixtures.el("text", { label: "Hidden note", id: "note", hidden: true }),
 		],
 	}),
 ];
@@ -269,14 +286,14 @@ describe("is", () => {
 	];
 	for (const [selector, state, expected] of cases) {
 		test(`${selector} ${state}: ${expected} exits ${expected ? 0 : 1}`, async () => {
-			const h = harness([snapshotOf(FORM)]);
+			const h = harness([driverFixtures.snapshotOf(FORM)]);
 			expect(await h.run("is", selector, state)).toBe(expected ? 0 : 1);
 			expect(h.c.stdout.join("\n")).toBe(String(expected));
 		});
 	}
 
 	test("--json: a false answer is still ok:true with one document, exit 1", async () => {
-		const h = harness([snapshotOf(FORM)]);
+		const h = harness([driverFixtures.snapshotOf(FORM)]);
 		expect(await h.run("is", "id=cancel", "enabled", "--json")).toBe(1);
 		expect(doc(h.c)).toMatchObject({
 			ok: true,
@@ -286,7 +303,7 @@ describe("is", () => {
 	});
 
 	test("--json true", async () => {
-		const h = harness([snapshotOf(FORM)]);
+		const h = harness([driverFixtures.snapshotOf(FORM)]);
 		expect(await h.run("is", "id=sign-in-submit", "visible", "--json")).toBe(0);
 		const result = doc(h.c).result;
 		expect(result).toMatchObject({ matched: true, state: "visible" });
@@ -294,7 +311,7 @@ describe("is", () => {
 	});
 
 	test("nothing matches: false with reason target_absent, exit 1", async () => {
-		const h = harness([snapshotOf(FORM)]);
+		const h = harness([driverFixtures.snapshotOf(FORM)]);
 		expect(await h.run("is", "id=nope", "visible", "--json")).toBe(1);
 		const out = doc(h.c);
 		expect(out.ok).toBe(true);
@@ -303,19 +320,19 @@ describe("is", () => {
 	});
 
 	test("takes one look and never waits", async () => {
-		const h = harness([snapshotOf(FORM)]);
+		const h = harness([driverFixtures.snapshotOf(FORM)]);
 		await h.run("is", "id=nope", "visible");
 		expect(snapshotCalls(h)).toBe(1);
 		expect(h.clock.t).toBe(1_000_000);
 	});
 
 	test("a selector made of several words", async () => {
-		const h = harness([snapshotOf(FORM)]);
+		const h = harness([driverFixtures.snapshotOf(FORM)]);
 		expect(await h.run("is", "role=button", "label=Cancel", "enabled")).toBe(1);
 	});
 
 	test("unknown state / missing selector: usage, exit 1", async () => {
-		const h = harness([snapshotOf(FORM)]);
+		const h = harness([driverFixtures.snapshotOf(FORM)]);
 		expect(await h.run("is", "id=email", "shiny", "--json")).toBe(1);
 		expect(doc(h.c).error.code).toBe("usage");
 		expect(await h.run("is", "visible", "--json")).toBe(1);
@@ -323,8 +340,8 @@ describe("is", () => {
 	});
 
 	test("an engine failure is the only way past exit 1", async () => {
-		const h = harness([snapshotOf(FORM)], {
-			onCall: (call) => (call.method === "snapshot" ? failWith("E_HELPER_CRASHED") : undefined),
+		const h = harness([driverFixtures.snapshotOf(FORM)], {
+			onCall: (call) => (call.method === "snapshot" ? driverFixtures.failWith("E_HELPER_CRASHED") : undefined),
 		});
 		expect(await h.run("is", "id=email", "visible", "--json")).toBe(3);
 		expect(doc(h.c).error.code).toBe("engine_unavailable");
@@ -332,7 +349,7 @@ describe("is", () => {
 });
 
 describe("get", () => {
-	const screen = (): Snapshot => snapshotOf(LOGIN);
+	const screen = (): Snapshot => driverFixtures.snapshotOf(LOGIN);
 
 	test("text, value, label, id, role", async () => {
 		const h = harness([screen()]);
@@ -361,8 +378,11 @@ describe("get", () => {
 
 	test("text of a container falls back to what is inside", async () => {
 		const h = harness([
-			snapshotOf([
-				el("cell", { id: "row", children: [el("text", { label: "Ada" }), el("text", { label: "Lovelace" })] }),
+			driverFixtures.snapshotOf([
+				driverFixtures.el("cell", {
+					id: "row",
+					children: [driverFixtures.el("text", { label: "Ada" }), driverFixtures.el("text", { label: "Lovelace" })],
+				}),
 			]),
 		]);
 		await h.run("get", "id=row", "text");
@@ -370,7 +390,7 @@ describe("get", () => {
 	});
 
 	test("count: how many match, 0 is not an error", async () => {
-		const h = harness([snapshotOf(FORM)]);
+		const h = harness([driverFixtures.snapshotOf(FORM)]);
 		expect(await h.run("get", "role=button", "count")).toBe(0);
 		expect(h.c.stdout.join("\n")).toBe("2");
 		expect(await h.run("get", "id=nope", "count", "--json")).toBe(0);

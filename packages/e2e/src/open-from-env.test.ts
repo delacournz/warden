@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeProxy } from "@delacour/warden-driver/testing/network-proxy";
+import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
 import { fakeAndroidHost } from "@delacour/warden-driver-android/testing/android-host";
 import { fakeExec } from "@delacour/warden-driver-ios/testing/exec";
 import { fakeSimd } from "@delacour/warden-driver-ios/testing/simd";
@@ -126,7 +126,7 @@ describe("the lease's shaping proxy", () => {
 	});
 
 	test("a caller's own proxy is kept", async () => {
-		const own = fakeProxy();
+		const own = new FakeProxy();
 		const result = await openDriverFromEnv(env("ios", { simd: "/x/warden-simd", leaseId: "L1" }), {
 			networkProxy: own,
 			host: { exec: fakeExec([["xcrun", {}]]) },

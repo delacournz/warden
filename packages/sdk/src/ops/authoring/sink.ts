@@ -1,5 +1,5 @@
-import { assignRefs } from "@delacour/warden-driver/refs";
-import { snapshotHash } from "@delacour/warden-driver/settle";
+import { refResolver } from "@delacour/warden-driver/refs";
+import { settler } from "@delacour/warden-driver/settle";
 import { createJournalRecorder } from "@delacour/warden-e2e/authoring/journal";
 import type { NewStep, Target, Text } from "@delacour/warden-e2e/authoring/recording.schema";
 import { type Env, redactSecrets } from "@delacour/warden-e2e/authoring/secrets";
@@ -31,7 +31,10 @@ function num(args: RecordStep["args"], key: string): number | undefined {
 }
 
 function fromEvidence(evidence: RecordEvidence): Grounded {
-	return { target: targetFromElement(evidence.element, evidence.snapshot), hash: snapshotHash(evidence.snapshot) };
+	return {
+		target: targetFromElement(evidence.element, evidence.snapshot),
+		hash: settler.snapshotHash(evidence.snapshot),
+	};
 }
 
 /** The durable target (and the hash of the screen it was found on) for what the action pointed at. */
@@ -42,7 +45,9 @@ function ground(refs: RefStore, step: RecordStep): Grounded {
 	if (evidence) return fromEvidence(evidence);
 	const last = target.ref === undefined ? undefined : refs.last();
 	const element =
-		last && target.ref !== undefined ? assignRefs(last.snapshot, last.generation).byRef.get(target.ref) : undefined;
+		last && target.ref !== undefined
+			? refResolver.assign(last.snapshot, last.generation).byRef.get(target.ref)
+			: undefined;
 	if (last && element) return { target: targetFromElement(element, last.snapshot), hash: last.hash };
 	return { target: coordsTarget(target.point) };
 }

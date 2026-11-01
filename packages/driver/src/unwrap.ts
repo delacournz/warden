@@ -15,50 +15,51 @@ const INFRASTRUCTURE: ReadonlySet<DriverErrorCode> = new Set<DriverErrorCode>([
 	"E_DEVICE_LOCKED",
 ]);
 
-function codeFor(code: DriverErrorCode): E2eErrorCode {
-	if (TIMEOUTS.has(code)) return "TIMEOUT";
-	if (INFRASTRUCTURE.has(code)) return "DRIVER";
-	return "ACTION_FAILED";
-}
+/** Runs driver calls for specs, turning failures into {@link E2eError}. Use the shared {@link driverCalls} singleton. */
+export class DriverCalls {
+	/** `TIMEOUT` for time limits, `DRIVER` when the helper / device is broken, else `ACTION_FAILED`. */
+	toE2eError(error: DriverError, action: string): E2eError {
+		return new E2eError(this.codeFor(error.code), `${action} failed: ${error.code}: ${error.message}`);
+	}
 
-/** `TIMEOUT` for time limits, `DRIVER` when the helper / device is broken, else `ACTION_FAILED`. */
-export function toE2eError(error: DriverError, action: string): E2eError {
-	return new E2eError(codeFor(error.code), `${action} failed: ${error.code}: ${error.message}`);
-}
+	/**
+	 * Runs one driver call, racing it against `signal`: an already-aborted signal never starts the call,
+	 * an abort while it runs rejects with `E2eError{TIMEOUT}`. Returns the raw `Result` (use {@link DriverCalls.unwrap}
+	 * when a failure should throw).
+	 */
+	async settled<T>(call: () => DriverResult<T>, action: string, signal?: AbortSignal): Promise<Result<T, DriverError>> {
+		if (signal === undefined) return call();
+		if (signal.aborted) throw this.aborted(action, signal);
+		let onAbort: (() => void) | undefined;
+		const abort = new Promise<never>((_, reject) => {
+			onAbort = () => reject(this.aborted(action, signal));
+			signal.addEventListener("abort", onAbort, { once: true });
+		});
+		try {
+			return await Promise.race([call(), abort]);
+		} finally {
+			if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+		}
+	}
 
-function aborted(action: string, signal: AbortSignal): E2eError {
-	const reason: unknown = signal.reason;
-	const detail = reason instanceof Error ? `: ${reason.message}` : "";
-	return new E2eError("TIMEOUT", `${action} aborted (test deadline reached or cancelled)${detail}`);
-}
+	/** {@link DriverCalls.settled}, throwing the mapped `E2eError` (see {@link DriverCalls.toE2eError}) on a driver failure. */
+	async unwrap<T>(call: () => DriverResult<T>, action: string, signal?: AbortSignal): Promise<T> {
+		const result = await this.settled(call, action, signal);
+		if (!result.success) throw this.toE2eError(result.error, action);
+		return result.data;
+	}
 
-/**
- * Runs one driver call, racing it against `signal`: an already-aborted signal never starts the call,
- * an abort while it runs rejects with `E2eError{TIMEOUT}`. Returns the raw `Result` (use {@link unwrap}
- * when a failure should throw).
- */
-export async function settled<T>(
-	call: () => DriverResult<T>,
-	action: string,
-	signal?: AbortSignal
-): Promise<Result<T, DriverError>> {
-	if (signal === undefined) return call();
-	if (signal.aborted) throw aborted(action, signal);
-	let onAbort: (() => void) | undefined;
-	const abort = new Promise<never>((_, reject) => {
-		onAbort = () => reject(aborted(action, signal));
-		signal.addEventListener("abort", onAbort, { once: true });
-	});
-	try {
-		return await Promise.race([call(), abort]);
-	} finally {
-		if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+	private codeFor(code: DriverErrorCode): E2eErrorCode {
+		if (TIMEOUTS.has(code)) return "TIMEOUT";
+		if (INFRASTRUCTURE.has(code)) return "DRIVER";
+		return "ACTION_FAILED";
+	}
+
+	private aborted(action: string, signal: AbortSignal): E2eError {
+		const reason: unknown = signal.reason;
+		const detail = reason instanceof Error ? `: ${reason.message}` : "";
+		return new E2eError("TIMEOUT", `${action} aborted (test deadline reached or cancelled)${detail}`);
 	}
 }
 
-/** {@link settled}, throwing the mapped `E2eError` (see {@link toE2eError}) on a driver failure. */
-export async function unwrap<T>(call: () => DriverResult<T>, action: string, signal?: AbortSignal): Promise<T> {
-	const result = await settled(call, action, signal);
-	if (!result.success) throw toE2eError(result.error, action);
-	return result.data;
-}
+export const driverCalls = new DriverCalls();

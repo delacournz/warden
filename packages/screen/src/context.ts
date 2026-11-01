@@ -1,7 +1,7 @@
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import type { Driver, DriverError, DriverResult, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { canDetectAlerts, canObserve, type PreviousLook } from "@delacour/warden-driver/observation-cache";
+import { observations, type PreviousLook } from "@delacour/warden-driver/observation-cache";
 import type { SpanOptions, SpanRunner } from "@delacour/warden-driver/trace/span";
 import { indexSnapshot, type NodeIndex } from "./nodes";
 import { type Clock, type PollResult, type PollStep, poll, systemClock } from "./poll";
@@ -132,8 +132,8 @@ export class Runtime {
 		const driver = await this.host.driver();
 		let reuse = options.reuse === true;
 		for (let answered = 0; ; answered += 1) {
-			const before = options.withPrevious === true && canObserve(driver) ? driver.previous?.() : undefined;
-			const result = canObserve(driver) ? await driver.observe({ reuse }) : await driver.snapshot();
+			const before = options.withPrevious === true && observations.canObserve(driver) ? driver.previous?.() : undefined;
+			const result = observations.canObserve(driver) ? await driver.observe({ reuse }) : await driver.snapshot();
 			if (!result.success) return { ok: false, error: result.error };
 			const observation: Observation = {
 				ok: true,
@@ -148,7 +148,7 @@ export class Runtime {
 
 	/** What came before `look`, given the cache's answer from just before it was taken. */
 	private earlierThan(driver: Driver, before: PreviousLook, look: Snapshot): Earlier {
-		const after = canObserve(driver) ? driver.previous?.() : undefined;
+		const after = observations.canObserve(driver) ? driver.previous?.() : undefined;
 		// `look` was kept in the generation the earlier one belongs to: no input came between the two
 		const same = after !== undefined && after.generation === before.generation && after.snapshot === look;
 		const earlier = same && before.snapshot !== look ? before.snapshot : undefined;
@@ -162,14 +162,15 @@ export class Runtime {
 	private async answeredAlert(driver: Driver, snapshot: Snapshot): Promise<boolean> {
 		const answer = this.host.answerSystemAlert;
 		if (answer === undefined) return false;
-		const shown = snapshot.modal !== undefined || (canDetectAlerts(driver) && driver.alertIn(snapshot) !== null);
+		const shown =
+			snapshot.modal !== undefined || (observations.canDetectAlerts(driver) && driver.alertIn(snapshot) !== null);
 		return shown && (await answer());
 	}
 
 	/** Forgets the snapshot the last read kept: the next look reads the device. For a wait that makes its own reads between polls. */
 	async forgetObservation(): Promise<void> {
 		const driver = await this.host.driver();
-		if (canObserve(driver)) driver.invalidateObservations();
+		if (observations.canObserve(driver)) driver.invalidateObservations();
 	}
 
 	/**

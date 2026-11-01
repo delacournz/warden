@@ -1,5 +1,5 @@
 import type { Driver, KeyName, Point, Rect, ScreenInfo } from "@delacour/warden-driver/driver.types";
-import { typeText } from "@delacour/warden-driver/typing";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import {
 	contentPath,
 	fieldValue,
@@ -356,7 +356,7 @@ export async function type(session: OpSession, params: TypeParams): OpOutcome<Ty
 	const { text } = params;
 	const driver = await session.driver();
 	if (!driver.success) return driver;
-	const typed = fromDriver(await typeText(driver.data, session.host.sleep, text));
+	const typed = fromDriver(await deviceTyping.typeText(driver.data, session.host.sleep, text));
 	if (!typed.success) return typed;
 	if (params.submit === true) {
 		const submitted = fromDriver(await driver.data.key("Enter"));

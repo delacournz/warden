@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { KEY_PACE_MS } from "@delacour/warden-driver/typing";
 import { CONFIRM_READS, FIELD_POLL_MS, STALE_RISK_READS } from "./field";
 import { createScreen } from "./screen";
@@ -26,13 +26,16 @@ function typed(driver: FakeDriver): string {
 
 function login() {
 	return staticDriver([
-		el("text", { id: "title", label: "Welcome" }),
-		el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
-		el("button", { id: "submit", label: "Sign in", hittable: true }),
-		el("button", { id: "later", label: "Later", enabled: false }),
-		el("switch", { id: "remember", label: "Remember me", value: "1" }),
-		el("other", { id: "card", children: [el("text", { label: "Invoice 42" }), el("text", { label: "$10" })] }),
-		el("other", { id: "card2", children: [el("text", { label: "Invoice 43" })] }),
+		driverFixtures.el("text", { id: "title", label: "Welcome" }),
+		driverFixtures.el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
+		driverFixtures.el("button", { id: "submit", label: "Sign in", hittable: true }),
+		driverFixtures.el("button", { id: "later", label: "Later", enabled: false }),
+		driverFixtures.el("switch", { id: "remember", label: "Remember me", value: "1" }),
+		driverFixtures.el("other", {
+			id: "card",
+			children: [driverFixtures.el("text", { label: "Invoice 42" }), driverFixtures.el("text", { label: "$10" })],
+		}),
+		driverFixtures.el("other", { id: "card2", children: [driverFixtures.el("text", { label: "Invoice 43" })] }),
 	]);
 }
 
@@ -52,7 +55,7 @@ describe("tap", () => {
 	});
 
 	test("the driver's tap point wins and position is an offset from the corner", async () => {
-		const withPoint = setup(staticDriver([el("button", { id: "b", tapPoint: { x: 7, y: 8 } })]));
+		const withPoint = setup(staticDriver([driverFixtures.el("button", { id: "b", tapPoint: { x: 7, y: 8 } })]));
 		await withPoint.screen.getByTestId("b").tap();
 		expect(withPoint.driver.callsOf("tap")[0]?.point).toEqual({ x: 7, y: 8 });
 		const { driver, screen } = setup();
@@ -74,8 +77,11 @@ describe("tap", () => {
 
 	test("waits for the element to appear, polling every 100 ms", async () => {
 		let snapshots = 0;
-		const driver = fakeDriver({
-			screens: () => (snapshots++ < 2 ? snapshotOf([]) : snapshotOf([el("button", { id: "submit" })])),
+		const driver = new FakeDriver({
+			screens: () =>
+				snapshots++ < 2
+					? driverFixtures.snapshotOf([])
+					: driverFixtures.snapshotOf([driverFixtures.el("button", { id: "submit" })]),
 		});
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("submit").tap();
@@ -117,14 +123,18 @@ describe("tap", () => {
 	});
 
 	test("a hidden element or one with no box on screen is NOT_ACTIONABLE (not visible)", async () => {
-		const hidden = setup(staticDriver([el("button", { id: "x", hidden: true })]));
+		const hidden = setup(staticDriver([driverFixtures.el("button", { id: "x", hidden: true })]));
 		expect((await failure(hidden.screen.getByTestId("x").tap())).message).toContain("not visible");
-		const away = setup(staticDriver([el("button", { id: "x", frame: { x: 0, y: 900, width: 100, height: 40 } })]));
+		const away = setup(
+			staticDriver([driverFixtures.el("button", { id: "x", frame: { x: 0, y: 900, width: 100, height: 40 } })])
+		);
 		expect((await failure(away.screen.getByTestId("x").tap())).code).toBe("NOT_ACTIONABLE");
 	});
 
 	test("a tap point outside the screen asks to scroll", async () => {
-		const edge = setup(staticDriver([el("button", { id: "x", frame: { x: 0, y: 800, width: 100, height: 100 } })]));
+		const edge = setup(
+			staticDriver([driverFixtures.el("button", { id: "x", frame: { x: 0, y: 800, width: 100, height: 100 } })])
+		);
 		const error = await failure(edge.screen.getByTestId("x").tap());
 		expect(error.code).toBe("NOT_ACTIONABLE");
 		expect(error.message).toContain("scrollTo");
@@ -132,7 +142,11 @@ describe("tap", () => {
 
 	test("several matches fail at once with LOCATOR_AMBIGUOUS and the count", async () => {
 		const { host, driver, screen } = setup(
-			staticDriver([el("button", { label: "Void" }), el("button", { label: "Void" }), el("button", { label: "Keep" })])
+			staticDriver([
+				driverFixtures.el("button", { label: "Void" }),
+				driverFixtures.el("button", { label: "Void" }),
+				driverFixtures.el("button", { label: "Keep" }),
+			])
 		);
 		const error = await failure(screen.getByRole("button", "Void").tap());
 		expect(error.code).toBe("LOCATOR_AMBIGUOUS");
@@ -144,8 +158,8 @@ describe("tap", () => {
 
 	test("a retryable driver failure is retried, a fatal one is thrown", async () => {
 		let calls = 0;
-		const flaky = fakeDriver({
-			screens: [snapshotOf([el("button", { id: "b" })])],
+		const flaky = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "b" })])],
 			onCall: (call) =>
 				call.method === "snapshot" && calls++ < 2
 					? { error: { code: "E_AX_UNAVAILABLE", message: "busy", retryable: true } }
@@ -155,8 +169,8 @@ describe("tap", () => {
 		await first.screen.getByTestId("b").tap();
 		expect(first.host.clock.sleeps).toEqual([100, 100]);
 
-		const broken = fakeDriver({
-			screens: [snapshotOf([])],
+		const broken = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) =>
 				call.method === "snapshot"
 					? { error: { code: "E_HELPER_CRASHED", message: "gone", retryable: false } }
@@ -168,8 +182,8 @@ describe("tap", () => {
 	});
 
 	test("a failing driver tap is ACTION_FAILED", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("button", { id: "b" })])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "b" })])],
 			onCall: (call) =>
 				call.method === "tap" ? { error: { code: "E_HID", message: "no hid", retryable: false } } : undefined,
 		});
@@ -454,10 +468,15 @@ describe("fill", () => {
 
 	test("a select-all that selected only part of the text is caught by the confirm and retried with counted Backspaces", async () => {
 		let value = "old";
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () =>
-				snapshotOf([
-					el("textfield", { id: "field", label: "Email", value, frame: { x: 24, y: 200, width: 300, height: 44 } }),
+				driverFixtures.snapshotOf([
+					driverFixtures.el("textfield", {
+						id: "field",
+						label: "Email",
+						value,
+						frame: { x: 24, y: 200, width: 300, height: 44 },
+					}),
 				]),
 			selectAll: true,
 			onCall: (call) => {
@@ -501,10 +520,12 @@ describe("fill", () => {
 	test("a value still changing keeps the wait going past the usual window", async () => {
 		let value = "";
 		let shown = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () => {
 				shown = Math.min(value.length, shown + 1);
-				return snapshotOf([el("textfield", { id: "field", value: value.slice(0, shown), frame: FIELD_FRAME })]);
+				return driverFixtures.snapshotOf([
+					driverFixtures.el("textfield", { id: "field", value: value.slice(0, shown), frame: FIELD_FRAME }),
+				]);
 			},
 			onCall: (call) => {
 				if (call.method === "typeText") value += call.text;
@@ -561,13 +582,13 @@ describe("fill", () => {
 	});
 
 	test("a field that is disabled is NOT_ACTIONABLE", async () => {
-		const { screen } = setup(staticDriver([el("textfield", { id: "field", enabled: false })]));
+		const { screen } = setup(staticDriver([driverFixtures.el("textfield", { id: "field", enabled: false })]));
 		expect((await failure(screen.getByTestId("field").fill("x"))).code).toBe("NOT_ACTIONABLE");
 	});
 
 	test("the driver refusing the text is ACTION_FAILED", async () => {
 		const { driver } = fieldFixture();
-		const refusing = fakeDriver({
+		const refusing = new FakeDriver({
 			screens: () => driver.screen,
 			onCall: (call) =>
 				call.method === "typeText"
@@ -660,7 +681,7 @@ describe("type, clear and press", () => {
 describe("swipe and scrollTo", () => {
 	test("swipes within the element in the direction the content scrolls", async () => {
 		const { driver, screen } = setup(
-			staticDriver([el("list", { id: "feed", frame: { x: 0, y: 100, width: 390, height: 400 } })])
+			staticDriver([driverFixtures.el("list", { id: "feed", frame: { x: 0, y: 100, width: 390, height: 400 } })])
 		);
 		await screen.getByTestId("feed").swipe({ direction: "down" });
 		expect(driver.callsOf("swipe")).toEqual([
@@ -677,9 +698,14 @@ describe("swipe and scrollTo", () => {
 
 	test("scrollTo scrolls the screen until the locator is on screen", async () => {
 		let swipes = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () =>
-				snapshotOf([el("button", { id: "far", frame: { x: 0, y: swipes >= 2 ? 300 : 1500, width: 390, height: 44 } })]),
+				driverFixtures.snapshotOf([
+					driverFixtures.el("button", {
+						id: "far",
+						frame: { x: 0, y: swipes >= 2 ? 300 : 1500, width: 390, height: 44 },
+					}),
+				]),
 			onCall: (call) => {
 				if (call.method === "swipe") swipes += 1;
 				return undefined;
@@ -720,10 +746,10 @@ describe("reads", () => {
 	test("isVisible / isHidden: absent is hidden, hidden flag is not visible, several is ambiguous", async () => {
 		const { screen } = setup(
 			staticDriver([
-				el("button", { id: "a" }),
-				el("button", { id: "h", hidden: true }),
-				el("text", { label: "x" }),
-				el("text", { label: "x" }),
+				driverFixtures.el("button", { id: "a" }),
+				driverFixtures.el("button", { id: "h", hidden: true }),
+				driverFixtures.el("text", { label: "x" }),
+				driverFixtures.el("text", { label: "x" }),
 			])
 		);
 		expect(await screen.getByTestId("a").isVisible()).toBe(true);
@@ -761,8 +787,11 @@ describe("reads", () => {
 describe("waitFor", () => {
 	function appearing(after: number) {
 		let snapshots = 0;
-		return fakeDriver({
-			screens: () => (snapshots++ < after ? snapshotOf([]) : snapshotOf([el("button", { id: "b" })])),
+		return new FakeDriver({
+			screens: () =>
+				snapshots++ < after
+					? driverFixtures.snapshotOf([])
+					: driverFixtures.snapshotOf([driverFixtures.el("button", { id: "b" })]),
 		});
 	}
 
@@ -779,7 +808,7 @@ describe("waitFor", () => {
 	});
 
 	test("hidden accepts absent or hidden", async () => {
-		const { screen } = setup(staticDriver([el("button", { id: "h", hidden: true })]));
+		const { screen } = setup(staticDriver([driverFixtures.el("button", { id: "h", hidden: true })]));
 		await screen.getByTestId("h").waitFor({ state: "hidden" });
 		await screen.getByTestId("nope").waitFor({ state: "hidden" });
 	});
@@ -859,7 +888,8 @@ describe("refinement and scoping", () => {
 });
 
 describe("pinch and rotate", () => {
-	const feed = () => staticDriver([el("other", { id: "canvas", frame: { x: 0, y: 100, width: 390, height: 400 } })]);
+	const feed = () =>
+		staticDriver([driverFixtures.el("other", { id: "canvas", frame: { x: 0, y: 100, width: 390, height: 400 } })]);
 
 	test("pinch is centred on the frame with the computed radius and default duration", async () => {
 		const { driver, host, screen } = setup(feed());
@@ -888,7 +918,7 @@ describe("pinch and rotate", () => {
 
 	test("the off-screen part of the frame is clipped", async () => {
 		const { driver, screen } = setup(
-			staticDriver([el("other", { id: "canvas", frame: { x: 0, y: 644, width: 390, height: 400 } })])
+			staticDriver([driverFixtures.el("other", { id: "canvas", frame: { x: 0, y: 644, width: 390, height: 400 } })])
 		);
 		await screen.getByTestId("canvas").pinch(2);
 		expect(driver.callsOf("pinch")[0]?.center).toEqual({ x: 195, y: 744 });
@@ -917,8 +947,8 @@ describe("pinch and rotate", () => {
 	});
 
 	test("a driver without pinch is INVALID_ARGUMENT", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("other", { id: "canvas" })])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("other", { id: "canvas" })])],
 			capabilities: { pinch: false },
 		});
 		const { screen } = setup(driver);

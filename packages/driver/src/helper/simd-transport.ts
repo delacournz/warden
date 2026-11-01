@@ -1,7 +1,7 @@
 import type { Result } from "@delacour/warden-types/result";
 import type { DriverError } from "../driver.types";
-import { driverError } from "../errors";
-import { createLineSplitter } from "./simd-protocol";
+import { driverErrors } from "../errors";
+import { LineSplitter } from "./simd-protocol";
 
 /**
  * The byte pipe under `simd-client`: a spawned helper's stdio or a unix socket. A transport only
@@ -27,7 +27,7 @@ export type TransportFactory = (handlers: TransportHandlers) => Promise<Result<T
 
 // ---------- stdio ----------
 
-/** The slice of a child process the stdio transport needs; tests and `bunSpawn` provide it. */
+/** The slice of a child process the stdio transport needs; tests and `simdTransports.spawn` provide it. */
 export type SimdProcess = {
 	write(data: string): void;
 	/** close stdin */
@@ -40,103 +40,15 @@ export type SimdProcess = {
 
 export type SimdSpawn = (cmd: readonly string[]) => SimdProcess;
 
-export const bunSpawn: SimdSpawn = (cmd) => {
-	const proc = Bun.spawn([...cmd], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-	return {
-		write(data) {
-			proc.stdin.write(data);
-			proc.stdin.flush();
-		},
-		end() {
-			proc.stdin.end();
-		},
-		kill() {
-			proc.kill();
-		},
-		stdout: proc.stdout,
-		stderr: proc.stderr,
-		exited: proc.exited,
-	};
-};
-
-async function pump(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<void> {
-	const splitter = createLineSplitter();
-	const reader = stream.getReader();
-	try {
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			for (const line of splitter.push(value)) onLine(line);
-		}
-	} catch {
-		// a killed child closes its pipes mid-read
-	}
-	const rest = splitter.rest().trim();
-	if (rest) onLine(rest);
-}
-
 const STDERR_TAIL = 20;
 const DEFAULT_GRACE_MS = 1500;
 
-export function stdioTransport(opts: {
+type StdioOptions = {
 	cmd: readonly string[];
 	spawn?: SimdSpawn;
 	/** how long `close()` waits for the helper to exit after closing stdin before killing it */
 	graceMs?: number;
-}): TransportFactory {
-	const spawn = opts.spawn ?? bunSpawn;
-	const graceMs = opts.graceMs ?? DEFAULT_GRACE_MS;
-	return async (handlers) => {
-		let proc: SimdProcess;
-		try {
-			proc = spawn(opts.cmd);
-		} catch (error) {
-			const reason = error instanceof Error ? error.message : String(error);
-			return {
-				success: false,
-				error: driverError("E_HELPER_MISSING", `cannot start ${opts.cmd[0]}: ${reason}`, {
-					detail: { cmd: opts.cmd },
-				}),
-			};
-		}
-		const stderrTail: string[] = [];
-		const stdout = pump(proc.stdout, handlers.onLine);
-		const stderr = proc.stderr
-			? pump(proc.stderr, (line) => {
-					stderrTail.push(line);
-					if (stderrTail.length > STDERR_TAIL) stderrTail.shift();
-					handlers.onDiagnostic(line);
-				})
-			: Promise.resolve();
-		const exited = proc.exited.catch(() => -1);
-		Promise.all([stdout, stderr, exited]).then(([, , exitCode]) => {
-			handlers.onClose({ exitCode, stderrTail: [...stderrTail] });
-		});
-		return {
-			success: true,
-			data: {
-				send: (data) => proc.write(data),
-				async close() {
-					try {
-						proc.end();
-					} catch {
-						// stdin already closed
-					}
-					let timer: ReturnType<typeof setTimeout> | undefined;
-					const timedOut = new Promise<"timeout">((resolve) => {
-						timer = setTimeout(() => resolve("timeout"), graceMs);
-					});
-					const outcome = await Promise.race([exited.then(() => "exited" as const), timedOut]);
-					clearTimeout(timer);
-					if (outcome === "timeout") {
-						proc.kill();
-						await exited;
-					}
-				},
-			},
-		};
-	};
-}
+};
 
 // ---------- unix socket ----------
 
@@ -145,77 +57,194 @@ type SocketLike = {
 	end(): void;
 };
 
-export function socketTransport(opts: { socketPath: string }): TransportFactory {
-	return async (handlers) => {
-		const splitter = createLineSplitter();
-		const encoder = new TextEncoder();
-		let socket: SocketLike | undefined;
-		let queued: Uint8Array = new Uint8Array(0);
-		let closedNotified = false;
-		const notifyClosed = () => {
-			if (closedNotified) return;
-			closedNotified = true;
-			handlers.onClose({ exitCode: null, stderrTail: [] });
-		};
-		const flush = () => {
-			if (!socket || queued.length === 0) return;
-			const written = socket.write(queued);
-			queued = written >= queued.length ? new Uint8Array(0) : queued.slice(Math.max(written, 0));
-		};
+/** One spawned helper behind the stdio transport. */
+class StdioTransport implements Transport {
+	constructor(
+		private readonly proc: SimdProcess,
+		private readonly exited: Promise<number>,
+		private readonly graceMs: number
+	) {}
+
+	send(data: string): void {
+		this.proc.write(data);
+	}
+
+	async close(): Promise<void> {
+		try {
+			this.proc.end();
+		} catch {
+			// stdin already closed
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timedOut = new Promise<"timeout">((resolve) => {
+			timer = setTimeout(() => resolve("timeout"), this.graceMs);
+		});
+		const outcome = await Promise.race([this.exited.then(() => "exited" as const), timedOut]);
+		clearTimeout(timer);
+		if (outcome === "timeout") {
+			this.proc.kill();
+			await this.exited;
+		}
+	}
+}
+
+/** One unix-socket connection behind the socket transport. */
+class SocketTransport implements Transport {
+	private socket: SocketLike | undefined;
+	private queued: Uint8Array = new Uint8Array(0);
+	private closedNotified = false;
+	private readonly splitter = new LineSplitter();
+	private readonly encoder = new TextEncoder();
+
+	constructor(
+		private readonly socketPath: string,
+		private readonly handlers: TransportHandlers
+	) {}
+
+	async connect(): Promise<Result<Transport, DriverError>> {
 		try {
 			const connected = await Bun.connect({
-				unix: opts.socketPath,
+				unix: this.socketPath,
 				socket: {
-					open(s) {
-						socket = s;
+					open: (s) => {
+						this.socket = s;
 					},
-					data(_s, chunk) {
-						for (const line of splitter.push(chunk)) handlers.onLine(line);
+					data: (_s, chunk) => {
+						for (const line of this.splitter.push(chunk)) this.handlers.onLine(line);
 					},
-					drain() {
-						flush();
+					drain: () => {
+						this.flush();
 					},
-					close() {
-						notifyClosed();
+					close: () => {
+						this.notifyClosed();
 					},
-					error() {
-						notifyClosed();
+					error: () => {
+						this.notifyClosed();
 					},
-					end() {
-						notifyClosed();
+					end: () => {
+						this.notifyClosed();
 					},
 				},
 			});
-			socket = connected;
+			this.socket = connected;
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			return {
 				success: false,
-				error: driverError("E_HELPER_CRASHED", `cannot connect to warden-simd socket ${opts.socketPath}: ${reason}`, {
-					detail: { socketPath: opts.socketPath },
-				}),
+				error: driverErrors.make(
+					"E_HELPER_CRASHED",
+					`cannot connect to warden-simd socket ${this.socketPath}: ${reason}`,
+					{ detail: { socketPath: this.socketPath } }
+				),
 			};
 		}
+		return { success: true, data: this };
+	}
+
+	send(data: string): void {
+		const bytes = this.encoder.encode(data);
+		const merged = new Uint8Array(this.queued.length + bytes.length);
+		merged.set(this.queued, 0);
+		merged.set(bytes, this.queued.length);
+		this.queued = merged;
+		this.flush();
+	}
+
+	async close(): Promise<void> {
+		try {
+			this.socket?.end();
+		} catch {
+			// already closed
+		}
+		this.notifyClosed();
+	}
+
+	private notifyClosed(): void {
+		if (this.closedNotified) return;
+		this.closedNotified = true;
+		this.handlers.onClose({ exitCode: null, stderrTail: [] });
+	}
+
+	private flush(): void {
+		if (!this.socket || this.queued.length === 0) return;
+		const written = this.socket.write(this.queued);
+		this.queued = written >= this.queued.length ? new Uint8Array(0) : this.queued.slice(Math.max(written, 0));
+	}
+}
+
+/** Builds the transports under `simd-client`. Use the shared {@link simdTransports} singleton. */
+export class SimdTransports {
+	readonly spawn: SimdSpawn = (cmd) => {
+		const proc = Bun.spawn([...cmd], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
 		return {
-			success: true,
-			data: {
-				send(data) {
-					const bytes = encoder.encode(data);
-					const merged = new Uint8Array(queued.length + bytes.length);
-					merged.set(queued, 0);
-					merged.set(bytes, queued.length);
-					queued = merged;
-					flush();
-				},
-				async close() {
-					try {
-						socket?.end();
-					} catch {
-						// already closed
-					}
-					notifyClosed();
-				},
+			write(data) {
+				proc.stdin.write(data);
+				proc.stdin.flush();
 			},
+			end() {
+				proc.stdin.end();
+			},
+			kill() {
+				proc.kill();
+			},
+			stdout: proc.stdout,
+			stderr: proc.stderr,
+			exited: proc.exited,
 		};
 	};
+
+	stdio(opts: StdioOptions): TransportFactory {
+		const spawn = opts.spawn ?? this.spawn;
+		const graceMs = opts.graceMs ?? DEFAULT_GRACE_MS;
+		return async (handlers) => {
+			let proc: SimdProcess;
+			try {
+				proc = spawn(opts.cmd);
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				return {
+					success: false,
+					error: driverErrors.make("E_HELPER_MISSING", `cannot start ${opts.cmd[0]}: ${reason}`, {
+						detail: { cmd: opts.cmd },
+					}),
+				};
+			}
+			const stderrTail: string[] = [];
+			const stdout = this.pump(proc.stdout, handlers.onLine);
+			const stderr = proc.stderr
+				? this.pump(proc.stderr, (line) => {
+						stderrTail.push(line);
+						if (stderrTail.length > STDERR_TAIL) stderrTail.shift();
+						handlers.onDiagnostic(line);
+					})
+				: Promise.resolve();
+			const exited = proc.exited.catch(() => -1);
+			Promise.all([stdout, stderr, exited]).then(([, , exitCode]) => {
+				handlers.onClose({ exitCode, stderrTail: [...stderrTail] });
+			});
+			return { success: true, data: new StdioTransport(proc, exited, graceMs) };
+		};
+	}
+
+	socket(opts: { socketPath: string }): TransportFactory {
+		return (handlers) => new SocketTransport(opts.socketPath, handlers).connect();
+	}
+
+	private async pump(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<void> {
+		const splitter = new LineSplitter();
+		const reader = stream.getReader();
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				for (const line of splitter.push(value)) onLine(line);
+			}
+		} catch {
+			// a killed child closes its pipes mid-read
+		}
+		const rest = splitter.rest().trim();
+		if (rest) onLine(rest);
+	}
 }
+
+export const simdTransports = new SimdTransports();

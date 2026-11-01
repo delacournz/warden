@@ -9,29 +9,28 @@ const RETRYABLE: ReadonlySet<DriverErrorCode> = new Set<DriverErrorCode>([
 	"E_STALE_REF",
 ]);
 
-export function driverError(
-	code: DriverErrorCode,
-	message: string,
-	extra: { retryable?: boolean; detail?: unknown } = {}
-): DriverError {
-	return {
-		code,
-		message,
-		retryable: extra.retryable ?? RETRYABLE.has(code),
-		...(extra.detail !== undefined ? { detail: extra.detail } : {}),
-	};
+type DriverErrorExtra = { retryable?: boolean; detail?: unknown };
+
+/** Builds {@link DriverError} values. Use the shared {@link driverErrors} singleton. */
+export class DriverErrors {
+	make(code: DriverErrorCode, message: string, extra: DriverErrorExtra = {}): DriverError {
+		return {
+			code,
+			message,
+			retryable: extra.retryable ?? RETRYABLE.has(code),
+			...(extra.detail !== undefined ? { detail: extra.detail } : {}),
+		};
+	}
+
+	/** `err()` for `DriverResult`. */
+	err(code: DriverErrorCode, message: string, extra?: DriverErrorExtra): ErrorResult<DriverError> {
+		return { success: false, error: this.make(code, message, extra) };
+	}
+
+	/** One line for logs and CLI output. */
+	describe(error: DriverError): string {
+		return `${error.code}: ${error.message}`;
+	}
 }
 
-/** `err()` for `DriverResult`. */
-export function driverErr(
-	code: DriverErrorCode,
-	message: string,
-	extra?: { retryable?: boolean; detail?: unknown }
-): ErrorResult<DriverError> {
-	return { success: false, error: driverError(code, message, extra) };
-}
-
-/** One line for logs and CLI output. */
-export function describeDriverError(error: DriverError): string {
-	return `${error.code}: ${error.message}`;
-}
+export const driverErrors = new DriverErrors();

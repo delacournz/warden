@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { DriverError, DriverErrorCode, Rect, Role, ScreenInfo } from "../driver.types";
-import { driverError } from "../errors";
+import { driverErrors } from "../errors";
 
 /**
  * Wire format of `warden-simd` (plan WDN-E2E, "warden-simd protocol (v1)"): newline-delimited JSON,
@@ -109,63 +109,6 @@ export const wireElementSchema: z.ZodType<WireElement> = z.lazy(() =>
 
 const ROLE_SET: ReadonlySet<string> = new Set(ROLES);
 
-type Bag = Record<string, unknown>;
-
-const isBag = (value: unknown): value is Bag => typeof value === "object" && value !== null && !Array.isArray(value);
-const isNum = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
-const isNullish = (value: unknown): value is null | undefined => value === null || value === undefined;
-
-function isRect(value: unknown): value is Rect {
-	return isBag(value) && isNum(value.x) && isNum(value.y) && isNum(value.width) && isNum(value.height);
-}
-
-const OPTIONAL_STRINGS = ["id", "label", "identifier", "value", "text", "placeholder"] as const;
-const OPTIONAL_FLAGS = ["enabled", "focused", "hidden", "selected", "checked", "hittable"] as const;
-
-const isString = (value: unknown): value is string => typeof value === "string";
-const isBool = (value: unknown): value is boolean => typeof value === "boolean";
-const isPoint = (value: unknown): boolean => isBag(value) && isNum(value.x) && isNum(value.y);
-const isStringArray = (value: unknown): boolean => Array.isArray(value) && value.every(isString);
-
-/** Absent / null, or satisfying `check`. */
-const orNullish = (value: unknown, check: (value: unknown) => boolean): boolean => isNullish(value) || check(value);
-
-/** The optional, nullable fields of a node: right type or absent / null. */
-function hasValidOptionals(node: Bag): boolean {
-	return (
-		OPTIONAL_STRINGS.every((key) => orNullish(node[key], isString)) &&
-		OPTIONAL_FLAGS.every((key) => orNullish(node[key], isBool)) &&
-		orNullish(node.normFrame, isRect) &&
-		orNullish(node.traits, isStringArray) &&
-		orNullish(node.tapPoint, isPoint) &&
-		orNullish(node.pid, isNum) &&
-		orNullish(node.depth, isNum)
-	);
-}
-
-/**
- * Structural check of one wire node and its subtree, equivalent to {@link wireElementSchema} (a test compares
- * them) but cheaper: about 0.05 ms warm for a 35-node tree against 0.25 ms, and about 0.7 ms on the first call of
- * a process against 2 ms (measured after the ready event had warmed zod). Unknown keys are accepted (a newer
- * helper may add fields); `normalize.ts` reads only the known ones.
- */
-export function isWireElement(value: unknown): value is WireElement {
-	if (!isBag(value)) return false;
-	if (!isString(value.role) || !ROLE_SET.has(value.role)) return false;
-	if (!isString(value.rawType) || !isRect(value.frame) || !hasValidOptionals(value)) return false;
-	const { children } = value;
-	if (isNullish(children)) return true;
-	return Array.isArray(children) && children.every(isWireElement);
-}
-
-/** Why `value` is not a wire element, from the zod schema (only computed once a check has already failed). */
-function wireElementProblem(value: unknown): string {
-	const parsed = wireElementSchema.safeParse(value);
-	if (parsed.success) return "invalid element";
-	const issue = parsed.error.issues[0];
-	return issue ? `${issue.path.join(".") || "(element)"}: ${issue.message}` : "invalid element";
-}
-
 // ---------- events ----------
 
 export const wireErrorSchema = z.object({
@@ -215,25 +158,6 @@ export type SimdMessage = { kind: "event"; event: SimdEvent } | { kind: "respons
 
 export type ParsedLine = { success: true; message: SimdMessage } | { success: false; reason: string };
 
-export function parseLine(line: string): ParsedLine {
-	let json: unknown;
-	try {
-		json = JSON.parse(line);
-	} catch {
-		return { success: false, reason: "not JSON" };
-	}
-	if (typeof json === "object" && json !== null && "event" in json) {
-		const event = eventSchema.safeParse(json);
-		return event.success
-			? { success: true, message: { kind: "event", event: event.data } }
-			: { success: false, reason: `bad event: ${event.error.message}` };
-	}
-	const response = responseSchema.safeParse(json);
-	return response.success
-		? { success: true, message: { kind: "response", response: response.data } }
-		: { success: false, reason: `bad response: ${response.error.message}` };
-}
-
 // ---------- per-op data ----------
 
 export const healthDataSchema = z.looseObject({
@@ -262,7 +186,11 @@ export const snapshotDataSchema = z.looseObject({
 	screen: screenInfoSchema,
 	modal: z.object({ pid: z.number().optional(), description: z.string().optional() }).nullish(),
 	truncated: z.boolean(),
-	elements: z.array(z.custom<WireElement>(isWireElement, { error: (issue) => wireElementProblem(issue.input) })),
+	elements: z.array(
+		z.custom<WireElement>((value) => simdProtocol.isWireElement(value), {
+			error: (issue) => simdProtocol.wireElementProblem(issue.input),
+		})
+	),
 	ms: z.number(),
 	/** set when the helper answered from another backend than asked for (axbridge → ax) */
 	fallback: z.object({ from: z.string(), to: z.string(), reason: z.string() }).optional(),
@@ -403,11 +331,12 @@ export type OpDataMap = {
 
 export type OpData<Op extends string> = Op extends keyof OpDataMap ? OpDataMap[Op] : unknown;
 
-export function hasOpSchema(op: string): op is keyof typeof opSchemas {
-	return Object.hasOwn(opSchemas, op);
-}
+export type SimdRequest = { id: string; op: string; timeoutMs?: number } & Record<string, unknown>;
 
-// ---------- error mapping ----------
+type Bag = Record<string, unknown>;
+
+const OPTIONAL_STRINGS = ["id", "label", "identifier", "value", "text", "placeholder"] as const;
+const OPTIONAL_FLAGS = ["enabled", "focused", "hidden", "selected", "checked", "hittable"] as const;
 
 const DRIVER_CODES: ReadonlySet<string> = new Set<DriverErrorCode>([
 	"E_HELPER_MISSING",
@@ -430,49 +359,151 @@ const DRIVER_CODES: ReadonlySet<string> = new Set<DriverErrorCode>([
 	"E_REFUSED",
 ]);
 
-function isDriverCode(code: string): code is DriverErrorCode {
-	return DRIVER_CODES.has(code);
-}
-
-/** Wire code → `DriverErrorCode`: `E_UNKNOWN_UDID` is `E_UNKNOWN_DEVICE`, unknown codes are `E_INTERNAL` (code kept in `detail`). */
-export function mapWireError(wire: WireError): DriverError {
-	const retryable = wire.retryable === undefined ? {} : { retryable: wire.retryable };
-	if (wire.code === "E_UNKNOWN_UDID") {
-		return driverError("E_UNKNOWN_DEVICE", wire.message, { ...retryable, detail: wire.detail });
-	}
-	if (isDriverCode(wire.code)) return driverError(wire.code, wire.message, { ...retryable, detail: wire.detail });
-	return driverError("E_INTERNAL", wire.message, {
-		...retryable,
-		detail: { wireCode: wire.code, ...(wire.detail !== undefined ? { wireDetail: wire.detail } : {}) },
-	});
-}
-
-// ---------- framing ----------
-
-export type LineSplitter = {
-	/** feed raw bytes; returns the complete lines (without `\n` / `\r\n`, blanks dropped) */
-	push(chunk: Uint8Array): string[];
-	/** the unterminated tail (a crashed helper may leave one) */
-	rest(): string;
-};
-
 /** Newline framing that is safe against chunk boundaries inside a line or a UTF-8 sequence. */
-export function createLineSplitter(): LineSplitter {
-	const decoder = new TextDecoder("utf-8");
-	let buffer = "";
-	return {
-		push(chunk) {
-			buffer += decoder.decode(chunk, { stream: true });
-			const lines = buffer.split("\n");
-			buffer = lines.pop() ?? "";
-			return lines.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line)).filter((line) => line.length > 0);
-		},
-		rest: () => buffer,
-	};
+export class LineSplitter {
+	private readonly decoder = new TextDecoder("utf-8");
+	private buffer = "";
+
+	/** feed raw bytes; returns the complete lines (without `\n` / `\r\n`, blanks dropped) */
+	push(chunk: Uint8Array): string[] {
+		this.buffer += this.decoder.decode(chunk, { stream: true });
+		const lines = this.buffer.split("\n");
+		this.buffer = lines.pop() ?? "";
+		return lines.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line)).filter((line) => line.length > 0);
+	}
+
+	/** the unterminated tail (a crashed helper may leave one) */
+	rest(): string {
+		return this.buffer;
+	}
 }
 
-export type SimdRequest = { id: string; op: string; timeoutMs?: number } & Record<string, unknown>;
+/** Parses, validates and maps the `warden-simd` wire format. Use the shared {@link simdProtocol} singleton. */
+export class SimdProtocol {
+	parseLine(line: string): ParsedLine {
+		let json: unknown;
+		try {
+			json = JSON.parse(line);
+		} catch {
+			return { success: false, reason: "not JSON" };
+		}
+		if (typeof json === "object" && json !== null && "event" in json) {
+			const event = eventSchema.safeParse(json);
+			return event.success
+				? { success: true, message: { kind: "event", event: event.data } }
+				: { success: false, reason: `bad event: ${event.error.message}` };
+		}
+		const response = responseSchema.safeParse(json);
+		return response.success
+			? { success: true, message: { kind: "response", response: response.data } }
+			: { success: false, reason: `bad response: ${response.error.message}` };
+	}
 
-export function encodeRequest(request: SimdRequest): string {
-	return `${JSON.stringify(request)}\n`;
+	/**
+	 * Structural check of one wire node and its subtree, equivalent to {@link wireElementSchema} (a test compares
+	 * them) but cheaper: about 0.05 ms warm for a 35-node tree against 0.25 ms, and about 0.7 ms on the first call of
+	 * a process against 2 ms (measured after the ready event had warmed zod). Unknown keys are accepted (a newer
+	 * helper may add fields); `normalize.ts` reads only the known ones.
+	 */
+	isWireElement(value: unknown): value is WireElement {
+		if (!this.isBag(value)) return false;
+		if (!this.isString(value.role) || !ROLE_SET.has(value.role)) return false;
+		if (!this.isString(value.rawType) || !this.isRect(value.frame) || !this.hasValidOptionals(value)) return false;
+		const { children } = value;
+		if (this.isNullish(children)) return true;
+		return Array.isArray(children) && children.every((child) => this.isWireElement(child));
+	}
+
+	/** Why `value` is not a wire element, from the zod schema (only computed once a check has already failed). */
+	wireElementProblem(value: unknown): string {
+		const parsed = wireElementSchema.safeParse(value);
+		if (parsed.success) return "invalid element";
+		const issue = parsed.error.issues[0];
+		return issue ? `${issue.path.join(".") || "(element)"}: ${issue.message}` : "invalid element";
+	}
+
+	hasOpSchema(op: string): op is keyof typeof opSchemas {
+		return Object.hasOwn(opSchemas, op);
+	}
+
+	/** Wire code → `DriverErrorCode`: `E_UNKNOWN_UDID` is `E_UNKNOWN_DEVICE`, unknown codes are `E_INTERNAL` (code kept in `detail`). */
+	mapWireError(wire: WireError): DriverError {
+		const retryable = wire.retryable === undefined ? {} : { retryable: wire.retryable };
+		if (wire.code === "E_UNKNOWN_UDID") {
+			return driverErrors.make("E_UNKNOWN_DEVICE", wire.message, { ...retryable, detail: wire.detail });
+		}
+		if (this.isDriverCode(wire.code)) {
+			return driverErrors.make(wire.code, wire.message, { ...retryable, detail: wire.detail });
+		}
+		return driverErrors.make("E_INTERNAL", wire.message, {
+			...retryable,
+			detail: { wireCode: wire.code, ...(wire.detail !== undefined ? { wireDetail: wire.detail } : {}) },
+		});
+	}
+
+	encodeRequest(request: SimdRequest): string {
+		return `${JSON.stringify(request)}\n`;
+	}
+
+	private isDriverCode(code: string): code is DriverErrorCode {
+		return DRIVER_CODES.has(code);
+	}
+
+	private isBag(value: unknown): value is Bag {
+		return typeof value === "object" && value !== null && !Array.isArray(value);
+	}
+
+	private isNum(value: unknown): value is number {
+		return typeof value === "number" && Number.isFinite(value);
+	}
+
+	private isNullish(value: unknown): value is null | undefined {
+		return value === null || value === undefined;
+	}
+
+	private isString(value: unknown): value is string {
+		return typeof value === "string";
+	}
+
+	private isBool(value: unknown): value is boolean {
+		return typeof value === "boolean";
+	}
+
+	private isRect(value: unknown): value is Rect {
+		return (
+			this.isBag(value) &&
+			this.isNum(value.x) &&
+			this.isNum(value.y) &&
+			this.isNum(value.width) &&
+			this.isNum(value.height)
+		);
+	}
+
+	private isPoint(value: unknown): boolean {
+		return this.isBag(value) && this.isNum(value.x) && this.isNum(value.y);
+	}
+
+	private isStringArray(value: unknown): boolean {
+		return Array.isArray(value) && value.every((item) => this.isString(item));
+	}
+
+	/** Absent / null, or satisfying `check`. */
+	private orNullish(value: unknown, check: (value: unknown) => boolean): boolean {
+		return this.isNullish(value) || check(value);
+	}
+
+	/** The optional, nullable fields of a node: right type or absent / null. */
+	private hasValidOptionals(node: Bag): boolean {
+		return (
+			OPTIONAL_STRINGS.every((key) => this.orNullish(node[key], (v) => this.isString(v))) &&
+			OPTIONAL_FLAGS.every((key) => this.orNullish(node[key], (v) => this.isBool(v))) &&
+			this.orNullish(node.normFrame, (v) => this.isRect(v)) &&
+			this.orNullish(node.traits, (v) => this.isStringArray(v)) &&
+			this.orNullish(node.tapPoint, (v) => this.isPoint(v)) &&
+			this.orNullish(node.pid, (v) => this.isNum(v)) &&
+			this.orNullish(node.depth, (v) => this.isNum(v))
+		);
+	}
 }
+
+export const simdProtocol = new SimdProtocol();

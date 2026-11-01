@@ -2,11 +2,10 @@ import { expect } from "bun:test";
 import type { DriverCapabilities, Snapshot } from "@delacour/warden-driver/driver.types";
 import {
 	type DriverCall,
+	driverFixtures,
 	type ElementSpec,
-	el,
-	type FakeDriver,
+	FakeDriver,
 	type FakeOverride,
-	fakeDriver,
 } from "@delacour/warden-driver/testing/driver";
 import type { RecordStep } from "@delacour/warden-sdk/ops/record";
 import type { PidAlive } from "@delacour/warden-store/liveness";
@@ -21,12 +20,12 @@ import { createUiCommand } from "./ui";
 export const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
 export const LOGIN: ElementSpec[] = [
-	el("window", {
+	driverFixtures.el("window", {
 		children: [
-			el("text", { label: "Welcome" }),
-			el("textfield", { label: "Email", id: "email", value: "a@b.co" }),
-			el("button", { label: "Sign in", id: "sign-in-submit", hittable: true }),
-			el("image", { label: "logo" }),
+			driverFixtures.el("text", { label: "Welcome" }),
+			driverFixtures.el("textfield", { label: "Email", id: "email", value: "a@b.co" }),
+			driverFixtures.el("button", { label: "Sign in", id: "sign-in-submit", hittable: true }),
+			driverFixtures.el("image", { label: "logo" }),
 		],
 	}),
 ];
@@ -82,7 +81,7 @@ export function cleanupHarnesses(): void {
 export function harness(screens: Snapshot[] | (() => Snapshot), options: HarnessOptions = {}): Harness {
 	const clock = { t: 1_000_000 };
 	const steps: RecordStep[] = [];
-	const driver: FakeDriver = fakeDriver({
+	const driver: FakeDriver = new FakeDriver({
 		screens,
 		...(options.selectAll ? { selectAll: true } : {}),
 		...(options.setText ? { setText: true } : {}),

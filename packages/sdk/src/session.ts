@@ -2,10 +2,10 @@ import { statSync } from "node:fs";
 import { openDriver } from "@delacour/warden-device/open";
 import type { Driver, DriverResult, Element, Role } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { driverErr } from "@delacour/warden-driver/errors";
-import { cacheObservations } from "@delacour/warden-driver/observation-cache";
-import { assignRefs } from "@delacour/warden-driver/refs";
-import { traceDriver } from "@delacour/warden-driver/traced-driver";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { refResolver } from "@delacour/warden-driver/refs";
+import { driverTracer } from "@delacour/warden-driver/traced-driver";
 
 import { connectHelper } from "@delacour/warden-driver-ios/helper";
 import { type CallerLease, CallerLeaseGate } from "@delacour/warden-leasing/device-lease";
@@ -411,7 +411,7 @@ export class WardenSession implements Session {
 	private async openDriver(): Promise<Result<Driver, EngineError>> {
 		const raw = await this.openRaw();
 		if (!raw.success) return raw;
-		const traced = traceDriver(raw.data, {
+		const traced = driverTracer.trace(raw.data, {
 			now: this.core.host.now,
 			trace: () => ({
 				write: (event) => {
@@ -421,7 +421,7 @@ export class WardenSession implements Session {
 				},
 			}),
 		});
-		return resultFactory.ok(cacheObservations(traced, { now: this.core.host.now }));
+		return resultFactory.ok(observations.cache(traced, { now: this.core.host.now }));
 	}
 
 	private async openRaw(): Promise<Result<Driver, EngineError>> {
@@ -617,7 +617,7 @@ export class WardenSession implements Session {
 		if ("selector" in target) return target.selector;
 		const last = this.refs.last();
 		const element: Element | undefined = last
-			? assignRefs(last.snapshot, last.generation).byRef.get(target.ref)
+			? refResolver.assign(last.snapshot, last.generation).byRef.get(target.ref)
 			: undefined;
 		if (!element) {
 			throw new WardenError({
@@ -949,7 +949,7 @@ export class WardenSession implements Session {
 							? { x: button.frame.x + button.frame.width / 2, y: button.frame.y + button.frame.height / 2 }
 							: undefined);
 					if (!point) {
-						return driverErr("E_NO_ELEMENT", `no alert button "${action.button}"`);
+						return driverErrors.err("E_NO_ELEMENT", `no alert button "${action.button}"`);
 					}
 					return d.tap(point);
 				});

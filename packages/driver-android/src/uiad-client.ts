@@ -1,10 +1,9 @@
 import type { DriverError, DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
-import { encodeRequest, mapWireError } from "@delacour/warden-driver/helper/simd-protocol";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { simdProtocol } from "@delacour/warden-driver/helper/simd-protocol";
 import {
-	bunSpawn,
 	type SimdSpawn,
-	stdioTransport,
+	simdTransports,
 	type Transport,
 	type TransportClose,
 } from "@delacour/warden-driver/helper/simd-transport";
@@ -110,7 +109,7 @@ function through<T>(result: Result<unknown, DriverError>, read: Read<T>, op: str
 		? { success: true, data: checked.value }
 		: {
 				success: false,
-				error: driverError("E_INTERNAL", `warden-uiad \`${op}\` reply is malformed: ${checked.reason}`),
+				error: driverErrors.make("E_INTERNAL", `warden-uiad \`${op}\` reply is malformed: ${checked.reason}`),
 			};
 }
 
@@ -151,14 +150,14 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 					? { success: true, data: event.data }
 					: {
 							success: false,
-							error: driverError(
+							error: driverErrors.make(
 								"E_UNSUPPORTED",
 								`warden-uiad speaks protocol ${event.protocol}, this client speaks ${UIAD_PROTOCOL}`
 							),
 						}
 			);
 		} else {
-			const error = mapWireError(event.error);
+			const error = simdProtocol.mapWireError(event.error);
 			settleHandshake({ success: false, error });
 			failAll(error);
 		}
@@ -173,7 +172,9 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 		clearTimeout(entry.timer);
 		pending.delete(response.id);
 		entry.resolve(
-			response.ok ? { success: true, data: response.data } : { success: false, error: mapWireError(response.error) }
+			response.ok
+				? { success: true, data: response.data }
+				: { success: false, error: simdProtocol.mapWireError(response.error) }
 		);
 	};
 
@@ -191,7 +192,7 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 	const onClose = (info: TransportClose): void => {
 		const wasAlive = alive;
 		alive = false;
-		const crash = driverError("E_HELPER_CRASHED", exitMessage(info), {
+		const crash = driverErrors.make("E_HELPER_CRASHED", exitMessage(info), {
 			detail: { exitCode: info.exitCode, stderrTail: info.stderrTail },
 		});
 		settleHandshake({ success: false, error: crash });
@@ -199,9 +200,9 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 		if (wasAlive && !closing) for (const handler of deathHandlers) handler(info);
 	};
 
-	const factory = stdioTransport({
+	const factory = simdTransports.stdio({
 		cmd: options.cmd,
-		...(options.spawn ? { spawn: options.spawn } : { spawn: bunSpawn }),
+		...(options.spawn ? { spawn: options.spawn } : { spawn: simdTransports.spawn }),
 		graceMs: options.graceMs ?? DEFAULT_GRACE_MS,
 	});
 	const waiting = new Promise<Handshake>((resolve) => {
@@ -222,7 +223,7 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 		() =>
 			settleHandshake({
 				success: false,
-				error: driverError("E_TIMEOUT", `warden-uiad sent no ready event within ${readyTimeoutMs}ms`),
+				error: driverErrors.make("E_TIMEOUT", `warden-uiad sent no ready event within ${readyTimeoutMs}ms`),
 			}),
 		readyTimeoutMs
 	);
@@ -240,7 +241,7 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 			if (!alive || transport === undefined) {
 				resolve({
 					success: false,
-					error: driverError("E_HELPER_CRASHED", "warden-uiad is not running", { detail: NOT_SENT }),
+					error: driverErrors.make("E_HELPER_CRASHED", "warden-uiad is not running", { detail: NOT_SENT }),
 				});
 				return;
 			}
@@ -251,7 +252,7 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 				resolve,
 				timer: setTimeout(() => {
 					pending.delete(id);
-					const error = driverError("E_TIMEOUT", `warden-uiad did not answer \`${op}\` within ${timeoutMs}ms`);
+					const error = driverErrors.make("E_TIMEOUT", `warden-uiad did not answer \`${op}\` within ${timeoutMs}ms`);
 					resolve({ success: false, error });
 					// what it was doing is unknowable: end it, the next call starts a fresh one
 					alive = false;
@@ -261,13 +262,13 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 			};
 			pending.set(id, entry);
 			try {
-				transport.send(encodeRequest({ ...params, id, op }));
+				transport.send(simdProtocol.encodeRequest({ ...params, id, op }));
 			} catch (error) {
 				clearTimeout(entry.timer);
 				pending.delete(id);
 				resolve({
 					success: false,
-					error: driverError(
+					error: driverErrors.make(
 						"E_HELPER_CRASHED",
 						`cannot write to warden-uiad: ${error instanceof Error ? error.message : String(error)}`,
 						{ detail: NOT_SENT }
@@ -312,13 +313,13 @@ export async function startUiad(options: UiadStartOptions): DriverResult<UiadCli
 						});
 					});
 					try {
-						transport.send(encodeRequest({ id: "shutdown", op: "shutdown" }));
+						transport.send(simdProtocol.encodeRequest({ id: "shutdown", op: "shutdown" }));
 						await bye;
 					} catch {
 						// stdin already closed
 					}
 				}
-				failAll(driverError("E_HELPER_CRASHED", "warden-uiad was closed"));
+				failAll(driverErrors.make("E_HELPER_CRASHED", "warden-uiad was closed"));
 				await transport?.close().catch(() => undefined);
 			},
 		},

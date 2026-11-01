@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Device } from "@delacour/warden-device/device";
 import type { AlertInfo, Snapshot } from "@delacour/warden-driver/driver.types";
-import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { detectAlert } from "@delacour/warden-driver-android/android-alert";
 import { LocatorAssertions } from "@delacour/warden-screen/matchers";
 import { createScreen } from "@delacour/warden-screen/screen";
@@ -21,10 +21,16 @@ const env: E2eEnv = {
 	logTimestamps: false,
 };
 
-const app = [el("text", { id: "title", label: "Todos" }), el("button", { id: "add", label: "Add", hittable: true })];
+const app = [
+	driverFixtures.el("text", { id: "title", label: "Todos" }),
+	driverFixtures.el("button", { id: "add", label: "Add", hittable: true }),
+];
 
 const sheet = (...labels: string[]) =>
-	el("alert", { label: "Save Password?", children: labels.map((label) => el("button", { label })) });
+	driverFixtures.el("alert", {
+		label: "Save Password?",
+		children: labels.map((label) => driverFixtures.el("button", { label })),
+	});
 
 /**
  * An iOS screen that shows a "Save Password?" sheet over the app until a button is pressed. `snapshot.modal` is set
@@ -32,8 +38,11 @@ const sheet = (...labels: string[]) =>
  */
 function sheetOverApp(labels: string[] = ["Save Password", "Not Now"]) {
 	let up = true;
-	const driver = fakeDriver({
-		screens: () => (up ? snapshotOf([...app, sheet(...labels)], { modal: { pid: 7 } }) : snapshotOf(app)),
+	const driver = new FakeDriver({
+		screens: () =>
+			up
+				? driverFixtures.snapshotOf([...app, sheet(...labels)], { modal: { pid: 7 } })
+				: driverFixtures.snapshotOf(app),
 		onCall: (call) => {
 			if (call.method === "tap") up = false;
 			return undefined;
@@ -108,7 +117,7 @@ describe("systemAlerts on an iOS-style screen (snapshot.modal)", () => {
 	});
 
 	test("a screen without a sheet costs nothing: one snapshot, no alert read", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf(app)] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf(app)] });
 		const { screen } = wire(driver, "dismiss");
 		await screen.getByTestId("title").isVisible();
 		await screen.getByTestId("title").text();
@@ -116,8 +125,8 @@ describe("systemAlerts on an iOS-style screen (snapshot.modal)", () => {
 	});
 
 	test("a sheet that stays up is pressed three times in one answer, then the look is returned as it is", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([...app, sheet("Save Password", "Not Now")], { modal: { pid: 7 } })],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([...app, sheet("Save Password", "Not Now")], { modal: { pid: 7 } })],
 		});
 		const { screen } = wire(driver, "dismiss");
 		expect(await screen.getByTestId("title").isVisible()).toBe(true);
@@ -126,7 +135,7 @@ describe("systemAlerts on an iOS-style screen (snapshot.modal)", () => {
 	});
 
 	test("a modal with no buttons to press leaves the read as it is", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf(app, { modal: { pid: 7 } })] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf(app, { modal: { pid: 7 } })] });
 		const { screen } = wire(driver, "dismiss");
 		expect(await screen.getByTestId("title").isVisible()).toBe(true);
 		expect(driver.callsOf("tap")).toHaveLength(0);
@@ -134,9 +143,11 @@ describe("systemAlerts on an iOS-style screen (snapshot.modal)", () => {
 	});
 
 	test("field read-backs never answer a sheet", async () => {
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () =>
-				snapshotOf([el("textfield", { id: "field", label: "Email", value: "a@b.co" })], { modal: { pid: 7 } }),
+				driverFixtures.snapshotOf([driverFixtures.el("textfield", { id: "field", label: "Email", value: "a@b.co" })], {
+					modal: { pid: 7 },
+				}),
 			onCall: (call) => (call.method === "elementAtPoint" ? { data: null } : undefined),
 		});
 		const { host, screen } = wire(driver, "dismiss");
@@ -152,11 +163,11 @@ describe("systemAlerts on an iOS-style screen (snapshot.modal)", () => {
 });
 
 const ANDROID_DIALOG = [
-	el("other", {
+	driverFixtures.el("other", {
 		children: [
-			el("text", { id: "alertTitle", text: "Allow camera?" }),
-			el("button", { id: "button1", text: "Allow" }),
-			el("button", { id: "button2", text: "Deny" }),
+			driverFixtures.el("text", { id: "alertTitle", text: "Allow camera?" }),
+			driverFixtures.el("button", { id: "button1", text: "Allow" }),
+			driverFixtures.el("button", { id: "button2", text: "Deny" }),
 		],
 	}),
 ];
@@ -165,10 +176,10 @@ describe("systemAlerts on an Android-style screen (alert read from the dump)", (
 	function androidDialog() {
 		let up = true;
 		return Object.assign(
-			fakeDriver({
+			new FakeDriver({
 				platform: "android",
 				screens: () =>
-					snapshotOf(up ? [...ANDROID_DIALOG, ...app] : app, {
+					driverFixtures.snapshotOf(up ? [...ANDROID_DIALOG, ...app] : app, {
 						platform: "android",
 					}),
 				onCall: (call) => {
@@ -191,7 +202,7 @@ describe("systemAlerts on an Android-style screen (alert read from the dump)", (
 
 	test("without a dialog on screen the read is one dump", async () => {
 		const raw = Object.assign(
-			fakeDriver({ platform: "android", screens: [snapshotOf(app, { platform: "android" })] }),
+			new FakeDriver({ platform: "android", screens: [driverFixtures.snapshotOf(app, { platform: "android" })] }),
 			{
 				alertIn: (snapshot: Snapshot): AlertInfo | null => detectAlert(snapshot.flat),
 			}

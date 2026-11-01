@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LocationCondition, NetworkCondition } from "@delacour/warden-config/conditions.types";
-import { type ConditionEvent, eventKind } from "./condition-events";
-import { type SchedulerTarget, type StepResult, seededRng, startFlap, startTimeline } from "./scheduler";
+import { type ConditionEvent, conditionEvents } from "./condition-events";
+import { type SchedulerTarget, type StepResult, schedulers } from "./scheduler";
 
 /** Virtual time: a sleep moves the clock forward at once (after a macrotask turn), or ends early on abort. */
 function fakeClock() {
@@ -45,22 +45,22 @@ function recorder(failWhen: (n: number, kind: string) => boolean = () => false) 
 
 const kinds = (calls: { value: { kind: string } }[]): string[] => calls.map((c) => c.value.kind);
 
-describe("seededRng", () => {
+describe("schedulers.seededRng", () => {
 	test("same seed, same sequence; different seed differs; stays in [0, 1)", () => {
-		const a = seededRng(7);
-		const b = seededRng(7);
+		const a = schedulers.seededRng(7);
+		const b = schedulers.seededRng(7);
 		const seq = Array.from({ length: 5 }, () => a());
 		expect(seq).toEqual(Array.from({ length: 5 }, () => b()));
 		expect(seq.every((x) => x >= 0 && x < 1)).toBe(true);
-		expect(seededRng(8)()).not.toBe(seq[0]);
+		expect(schedulers.seededRng(8)()).not.toBe(seq[0]);
 	});
 });
 
-describe("startFlap", () => {
+describe("schedulers.startFlap", () => {
 	test("alternates base and offline on the up/down schedule, and stop restores base", async () => {
 		const { target, calls, clock } = recorder();
 		const events: ConditionEvent[] = [];
-		const flap = startFlap(target, { upMs: 100, downMs: 40 }, { ...clock, sink: (e) => events.push(e) });
+		const flap = schedulers.startFlap(target, { upMs: 100, downMs: 40 }, { ...clock, sink: (e) => events.push(e) });
 		while (calls.length < 4) await Bun.sleep(1);
 		flap.stop();
 		const outcome = await flap.done;
@@ -75,7 +75,7 @@ describe("startFlap", () => {
 
 	test("stopped during the up phase leaves nothing to restore", async () => {
 		const { target, calls, clock } = recorder();
-		const flap = startFlap(target, { upMs: 50, downMs: 50 }, clock);
+		const flap = schedulers.startFlap(target, { upMs: 50, downMs: 50 }, clock);
 		while (calls.length < 1) await Bun.sleep(1);
 		flap.stop();
 		await flap.done;
@@ -85,7 +85,7 @@ describe("startFlap", () => {
 	test("custom base is the up phase and what stop restores", async () => {
 		const { target, calls, clock } = recorder();
 		const base: NetworkCondition = { kind: "preset", preset: "3g" };
-		const flap = startFlap(target, { upMs: 10, downMs: 10, base }, clock);
+		const flap = schedulers.startFlap(target, { upMs: 10, downMs: 10, base }, clock);
 		while (calls.length < 2) await Bun.sleep(1);
 		flap.stop();
 		await flap.done;
@@ -97,7 +97,7 @@ describe("startFlap", () => {
 	test("jitter is deterministic for a seed and bounded by jitterPct", async () => {
 		const run = async (seed: number) => {
 			const { target, calls, clock } = recorder();
-			const flap = startFlap(target, { upMs: 1000, downMs: 1000, jitterPct: 20, seed }, clock);
+			const flap = schedulers.startFlap(target, { upMs: 1000, downMs: 1000, jitterPct: 20, seed }, clock);
 			while (calls.length < 6) await Bun.sleep(1);
 			flap.stop();
 			await flap.done;
@@ -116,7 +116,7 @@ describe("startFlap", () => {
 
 	test("an injected rng wins over the seed", async () => {
 		const { target, calls, clock } = recorder();
-		const flap = startFlap(target, { upMs: 100, downMs: 100, jitterPct: 50 }, { ...clock, rng: () => 1 });
+		const flap = schedulers.startFlap(target, { upMs: 100, downMs: 100, jitterPct: 50 }, { ...clock, rng: () => 1 });
 		while (calls.length < 3) await Bun.sleep(1);
 		flap.stop();
 		await flap.done;
@@ -125,7 +125,7 @@ describe("startFlap", () => {
 
 	test("applyInitial false waits out the first up phase without touching the device", async () => {
 		const { target, calls, clock } = recorder();
-		const flap = startFlap(target, { upMs: 100, downMs: 100, applyInitial: false }, clock);
+		const flap = schedulers.startFlap(target, { upMs: 100, downMs: 100, applyInitial: false }, clock);
 		while (calls.length < 1) await Bun.sleep(1);
 		flap.stop();
 		await flap.done;
@@ -135,13 +135,13 @@ describe("startFlap", () => {
 
 	test("3 failed transitions in a row end it as failed; a success resets the count", async () => {
 		const failing = recorder((n) => n >= 3);
-		const flap = startFlap(failing.target, { upMs: 10, downMs: 10 }, failing.clock);
+		const flap = schedulers.startFlap(failing.target, { upMs: 10, downMs: 10 }, failing.clock);
 		const outcome = await flap.done;
 		expect(outcome).toEqual({ transitions: 2, stopped: "failed", error: "boom 5" });
 		expect(flap.current()).toEqual({ state: "failed", transitions: 2, error: "boom 5" });
 
 		const flaky = recorder((n) => n === 2 || n === 3 || n === 5 || n === 6);
-		const survivor = startFlap(flaky.target, { upMs: 10, downMs: 10 }, flaky.clock);
+		const survivor = schedulers.startFlap(flaky.target, { upMs: 10, downMs: 10 }, flaky.clock);
 		while (flaky.calls.length < 3) await Bun.sleep(1);
 		survivor.stop();
 		expect((await survivor.done).stopped).toBe("aborted");
@@ -149,7 +149,7 @@ describe("startFlap", () => {
 
 	test("a target that throws counts as a failure", async () => {
 		const clock = fakeClock();
-		const flap = startFlap(
+		const flap = schedulers.startFlap(
 			{
 				network: async () => {
 					throw new Error("adb gone");
@@ -163,27 +163,31 @@ describe("startFlap", () => {
 
 	test("bad options fail at once without touching the device", async () => {
 		const { target, calls, clock } = recorder();
-		expect((await startFlap(target, { upMs: 0, downMs: 10 }, clock).done).stopped).toBe("failed");
-		const nested = startFlap(target, { upMs: 1, downMs: 1, base: { kind: "flap", upMs: 1, downMs: 1 } }, clock);
+		expect((await schedulers.startFlap(target, { upMs: 0, downMs: 10 }, clock).done).stopped).toBe("failed");
+		const nested = schedulers.startFlap(
+			target,
+			{ upMs: 1, downMs: 1, base: { kind: "flap", upMs: 1, downMs: 1 } },
+			clock
+		);
 		expect((await nested.done).stopped).toBe("failed");
 		expect(calls).toEqual([]);
 	});
 
 	test("stop is idempotent", async () => {
 		const { target, clock } = recorder();
-		const flap = startFlap(target, { upMs: 10, downMs: 10 }, clock);
+		const flap = schedulers.startFlap(target, { upMs: 10, downMs: 10 }, clock);
 		flap.stop();
 		flap.stop();
 		expect((await flap.done).stopped).toBe("aborted");
 	});
 });
 
-describe("startTimeline", () => {
+describe("schedulers.startTimeline", () => {
 	test("runs steps in atMs order relative to the start, network before location in one step", async () => {
 		const { target, calls, clock } = recorder();
 		const events: ConditionEvent[] = [];
 		const point: LocationCondition = { kind: "point", lat: 1, lon: 2 };
-		const tl = startTimeline(
+		const tl = schedulers.startTimeline(
 			target,
 			[
 				{ atMs: 500, network: { kind: "online" } },
@@ -199,7 +203,7 @@ describe("startTimeline", () => {
 			[1200, "location", "clear"],
 			[1500, "network", "online"],
 		]);
-		expect(events.map((e) => `${e.area}:${eventKind(e)}`)).toEqual([
+		expect(events.map((e) => `${e.area}:${conditionEvents.kind(e)}`)).toEqual([
 			"network:offline",
 			"location:point",
 			"location:clear",
@@ -210,7 +214,7 @@ describe("startTimeline", () => {
 
 	test("equal atMs keep the given order", async () => {
 		const { target, calls, clock } = recorder();
-		const tl = startTimeline(
+		const tl = schedulers.startTimeline(
 			target,
 			[
 				{ atMs: 10, network: { kind: "offline" } },
@@ -224,7 +228,7 @@ describe("startTimeline", () => {
 
 	test("stop cancels the remaining steps", async () => {
 		const { target, calls, clock } = recorder();
-		const tl = startTimeline(
+		const tl = schedulers.startTimeline(
 			target,
 			[
 				{ atMs: 0, network: { kind: "offline" } },
@@ -244,7 +248,7 @@ describe("startTimeline", () => {
 
 	test("3 failed steps in a row end it as failed; one failing part fails its step but the other part still runs", async () => {
 		const failing = recorder((_n, kind) => kind === "offline");
-		const tl = startTimeline(
+		const tl = schedulers.startTimeline(
 			failing.target,
 			[
 				{ atMs: 0, network: { kind: "offline" }, location: { kind: "clear" } },
@@ -262,13 +266,13 @@ describe("startTimeline", () => {
 
 	test("a target without the area fails the step", async () => {
 		const clock = fakeClock();
-		const tl = startTimeline({}, [{ atMs: 0, network: { kind: "offline" } }], clock);
+		const tl = schedulers.startTimeline({}, [{ atMs: 0, network: { kind: "offline" } }], clock);
 		expect((await tl.done).transitions).toBe(0);
 	});
 
 	test("negative atMs is rejected up front", async () => {
 		const { target, calls, clock } = recorder();
-		const outcome = await startTimeline(target, [{ atMs: -1, network: { kind: "offline" } }], clock).done;
+		const outcome = await schedulers.startTimeline(target, [{ atMs: -1, network: { kind: "offline" } }], clock).done;
 		expect(outcome.stopped).toBe("failed");
 		expect(calls).toEqual([]);
 	});

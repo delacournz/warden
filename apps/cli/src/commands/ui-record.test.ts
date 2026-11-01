@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
-import { type ElementSpec, el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import { processExec } from "@delacour/warden-runtime/exec";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
@@ -26,16 +26,20 @@ const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
 function login(extra: ElementSpec[] = []): ElementSpec[] {
 	return [
-		el("window", {
+		driverFixtures.el("window", {
 			children: [
-				el("text", { label: "Welcome", id: "welcome-title", frame: { x: 0, y: 50, width: 390, height: 44 } }),
-				el("textfield", {
+				driverFixtures.el("text", {
+					label: "Welcome",
+					id: "welcome-title",
+					frame: { x: 0, y: 50, width: 390, height: 44 },
+				}),
+				driverFixtures.el("textfield", {
 					label: "Email",
 					id: "email",
 					value: "a@b.co",
 					frame: { x: 0, y: 100, width: 390, height: 44 },
 				}),
-				el("button", {
+				driverFixtures.el("button", {
 					label: "Sign in",
 					id: "sign-in-submit",
 					hittable: true,
@@ -104,7 +108,7 @@ function harness(
 	options: { cwd?: string; exec?: boolean; screen?: ElementSpec[]; route?: { current: string[] | "release" } } = {}
 ): Harness {
 	const clock = { t: 1_000_000 };
-	const driver = fakeDriver({ screens: [snapshotOf(options.screen ?? login())] });
+	const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf(options.screen ?? login())] });
 	const verified: VerifyInput[] = [];
 	const verifier: { current: Verifier } = { current: passing };
 	const deps: UiDeps = {
@@ -356,7 +360,7 @@ describe("recording", () => {
 
 	test("ui status shows the recording; snapshot -i marks interactive elements without a testID only while recording", async () => {
 		const h = harness({
-			screen: login([el("button", { label: "Skip", frame: { x: 0, y: 200, width: 100, height: 44 } })]),
+			screen: login([driverFixtures.el("button", { label: "Skip", frame: { x: 0, y: 200, width: 100, height: 44 } })]),
 		});
 		expect(await h.run("status", "--json")).toBe(0);
 		expect(h.doc().result.recording).toBeNull();
@@ -545,7 +549,7 @@ describe("record start --help", () => {
 		const h = harness();
 		h.c.argv = ["record", "--help"];
 		await createUiCommand({
-			driver: async () => resultFactory.ok(fakeDriver({ screens: [snapshotOf(login())] })),
+			driver: async () => resultFactory.ok(new FakeDriver({ screens: [driverFixtures.snapshotOf(login())] })),
 			sleep: async () => {},
 		}).run(h.c);
 		expect(h.c.stdout.join("\n").replaceAll(/\s+/g, " ")).toContain("kept until a successful stop or cancel");

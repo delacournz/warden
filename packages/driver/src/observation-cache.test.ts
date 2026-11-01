@@ -1,14 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { el, failWith, fakeDriver, snapshotOf, unwrap } from "./driver.testing";
+import { driverFixtures, FakeDriver } from "./driver.testing";
 import type { AlertInfo, Driver, Element, Platform, Snapshot } from "./driver.types";
-import {
-	cacheObservations,
-	canDetectAlerts,
-	canObserve,
-	type DetectsAlerts,
-	OBSERVATION_MAX_AGE_MS,
-	type Observes,
-} from "./observation-cache";
+import { type DetectsAlerts, OBSERVATION_MAX_AGE_MS, type Observes, observations } from "./observation-cache";
 
 function clockAt(start = 1000) {
 	let time = start;
@@ -22,8 +15,11 @@ function clockAt(start = 1000) {
 
 function setup(platform: Platform = "ios") {
 	const clock = clockAt();
-	const raw = fakeDriver({ screens: [snapshotOf([el("text", { id: "a", label: "A" })], { platform })], platform });
-	const driver = cacheObservations(raw, { now: clock.now });
+	const raw = new FakeDriver({
+		screens: [driverFixtures.snapshotOf([driverFixtures.el("text", { id: "a", label: "A" })], { platform })],
+		platform,
+	});
+	const driver = observations.cache(raw, { now: clock.now });
 	return { raw, driver, clock };
 }
 
@@ -33,8 +29,8 @@ const FRESH = { reuse: false };
 describe("observe", () => {
 	test("a second observation inside the age window reuses the first snapshot", async () => {
 		const { raw, driver } = setup();
-		const first = unwrap(await driver.observe(REUSE));
-		const second = unwrap(await driver.observe(REUSE));
+		const first = driverFixtures.unwrap(await driver.observe(REUSE));
+		const second = driverFixtures.unwrap(await driver.observe(REUSE));
 		expect(second).toBe(first);
 		expect(raw.callsOf("snapshot")).toHaveLength(1);
 	});
@@ -42,9 +38,9 @@ describe("observe", () => {
 	test("reuse: false always takes a new snapshot, and that one is what the next reuse sees", async () => {
 		const { raw, driver } = setup();
 		await driver.observe(REUSE);
-		const fresh = unwrap(await driver.observe(FRESH));
+		const fresh = driverFixtures.unwrap(await driver.observe(FRESH));
 		expect(raw.callsOf("snapshot")).toHaveLength(2);
-		expect(unwrap(await driver.observe(REUSE))).toBe(fresh);
+		expect(driverFixtures.unwrap(await driver.observe(REUSE))).toBe(fresh);
 		expect(raw.callsOf("snapshot")).toHaveLength(2);
 	});
 
@@ -65,15 +61,15 @@ describe("observe", () => {
 
 	test("age counts from when the snapshot arrived, not from when it was asked for", async () => {
 		const clock = clockAt();
-		const raw = fakeDriver({
-			screens: [snapshotOf([], { platform: "android" })],
+		const raw = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([], { platform: "android" })],
 			platform: "android",
 			onCall: (call) => {
 				if (call.method === "snapshot") clock.advance(1900);
 				return undefined;
 			},
 		});
-		const driver = cacheObservations(raw, { now: clock.now });
+		const driver = observations.cache(raw, { now: clock.now });
 		await driver.observe(REUSE);
 		await driver.observe(REUSE);
 		expect(raw.callsOf("snapshot")).toHaveLength(1);
@@ -81,11 +77,11 @@ describe("observe", () => {
 
 	test("a failed snapshot is returned and not kept", async () => {
 		let fail = true;
-		const raw = fakeDriver({
-			screens: [snapshotOf([])],
-			onCall: (call) => (call.method === "snapshot" && fail ? failWith("E_AX_UNAVAILABLE") : undefined),
+		const raw = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
+			onCall: (call) => (call.method === "snapshot" && fail ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 		});
-		const driver = cacheObservations(raw, { now: clockAt().now });
+		const driver = observations.cache(raw, { now: clockAt().now });
 		const failed = await driver.observe(REUSE);
 		expect(failed.success).toBe(false);
 		fail = false;
@@ -95,10 +91,10 @@ describe("observe", () => {
 
 	test("the plain snapshot() always reads the device, and a full one is kept for the next observe", async () => {
 		const { raw, driver } = setup();
-		const taken = unwrap(await driver.snapshot());
-		const last = unwrap(await driver.snapshot());
+		const taken = driverFixtures.unwrap(await driver.snapshot());
+		const last = driverFixtures.unwrap(await driver.snapshot());
 		expect(raw.callsOf("snapshot")).toHaveLength(2);
-		expect(unwrap(await driver.observe(REUSE))).toBe(last);
+		expect(driverFixtures.unwrap(await driver.observe(REUSE))).toBe(last);
 		expect(raw.callsOf("snapshot")).toHaveLength(2);
 		expect(taken).toBeDefined();
 	});
@@ -123,7 +119,7 @@ describe("observe", () => {
 describe("previous", () => {
 	test("is the kept snapshot of this generation, whatever its age, and never answers a read", async () => {
 		const { raw, driver, clock } = setup();
-		const first = unwrap(await driver.observe(FRESH));
+		const first = driverFixtures.unwrap(await driver.observe(FRESH));
 		clock.advance(OBSERVATION_MAX_AGE_MS.ios * 10);
 		expect(driver.previous?.().snapshot).toBe(first);
 		await driver.observe(REUSE);
@@ -157,12 +153,12 @@ describe("previous", () => {
 	});
 
 	test("settle forgets the snapshot too, but it is a wait, not an input: nothing was pressed", async () => {
-		const raw = fakeDriver({
-			screens: [snapshotOf([])],
+		const raw = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
 		});
 		const clock = clockAt();
-		const driver = cacheObservations(raw, { now: clock.now });
+		const driver = observations.cache(raw, { now: clock.now });
 		await driver.tap({ x: 1, y: 1 });
 		clock.advance(40);
 		await driver.observe(FRESH);
@@ -184,7 +180,7 @@ describe("peek", () => {
 	test("is the kept snapshot with its age, and reads nothing", async () => {
 		const { raw, driver, clock } = setup();
 		expect(driver.peek?.()).toBeUndefined();
-		const first = unwrap(await driver.observe(FRESH));
+		const first = driverFixtures.unwrap(await driver.observe(FRESH));
 		clock.advance(40);
 		expect(driver.peek?.()).toEqual({ snapshot: first, ageMs: 40 });
 		expect(raw.callsOf("snapshot")).toHaveLength(1);
@@ -229,8 +225,8 @@ describe("input generation", () => {
 	});
 
 	test("an optional capability (selectAll) counts as input too", async () => {
-		const raw = fakeDriver({ screens: [snapshotOf([])], selectAll: true });
-		const driver = cacheObservations(raw, { now: clockAt().now });
+		const raw = new FakeDriver({ screens: [driverFixtures.snapshotOf([])], selectAll: true });
+		const driver = observations.cache(raw, { now: clockAt().now });
 		await driver.observe(REUSE);
 		await driver.selectAll?.();
 		await driver.observe(REUSE);
@@ -238,11 +234,11 @@ describe("input generation", () => {
 	});
 
 	test("an input that fails still drops the kept snapshot", async () => {
-		const raw = fakeDriver({
-			screens: [snapshotOf([])],
-			onCall: (call) => (call.method === "tap" ? failWith("E_HID") : undefined),
+		const raw = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
+			onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_HID") : undefined),
 		});
-		const driver = cacheObservations(raw, { now: clockAt().now });
+		const driver = observations.cache(raw, { now: clockAt().now });
 		await driver.observe(REUSE);
 		await driver.tap({ x: 1, y: 1 });
 		await driver.observe(REUSE);
@@ -254,7 +250,7 @@ describe("input generation", () => {
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
-		const raw = fakeDriver({ screens: [snapshotOf([])] });
+		const raw = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const slow: Driver = {
 			...raw,
 			snapshot: async (opts) => {
@@ -262,7 +258,7 @@ describe("input generation", () => {
 				return raw.snapshot(opts);
 			},
 		};
-		const driver = cacheObservations(slow, { now: clockAt().now });
+		const driver = observations.cache(slow, { now: clockAt().now });
 		const pending = driver.observe(REUSE);
 		await driver.tap({ x: 1, y: 1 });
 		release();
@@ -290,12 +286,12 @@ describe("input generation", () => {
 	});
 
 	test("the optional alertOn and isFrontmost reads leave the kept snapshot alone too", async () => {
-		const raw = fakeDriver({
-			screens: [snapshotOf([])],
+		const raw = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			alertBackends: ["ax", "axbridge"],
 			frontmost: () => "com.x",
 		});
-		const driver = cacheObservations(raw, { now: clockAt().now });
+		const driver = observations.cache(raw, { now: clockAt().now });
 		await driver.observe(REUSE);
 		await driver.alertOn?.("axbridge");
 		await driver.isFrontmost?.("com.x");
@@ -310,8 +306,8 @@ describe("pass-through", () => {
 		expect(driver.platform).toBe("android");
 		expect(driver.id).toBe(raw.id);
 		expect(driver.capabilities).toBe(raw.capabilities);
-		expect(canObserve(driver)).toBe(true);
-		expect(canObserve(raw)).toBe(false);
+		expect(observations.canObserve(driver)).toBe(true);
+		expect(observations.canObserve(raw)).toBe(false);
 	});
 
 	test("every call reaches the driver with its arguments", async () => {
@@ -323,21 +319,23 @@ describe("pass-through", () => {
 	});
 
 	test("an optional capability is still found on the wrapper, and absent ones stay absent", () => {
-		const raw = fakeDriver({ screens: [snapshotOf([])], selectAll: true });
-		const driver = cacheObservations(raw, { now: clockAt().now });
+		const raw = new FakeDriver({ screens: [driverFixtures.snapshotOf([])], selectAll: true });
+		const driver = observations.cache(raw, { now: clockAt().now });
 		expect(typeof driver.selectAll).toBe("function");
-		const plain = cacheObservations(fakeDriver({ screens: [snapshotOf([])] }), { now: clockAt().now });
+		const plain = observations.cache(new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }), {
+			now: clockAt().now,
+		});
 		expect(plain.selectAll).toBeUndefined();
 	});
 });
 
-const ANDROID_ALERT = snapshotOf(
+const ANDROID_ALERT = driverFixtures.snapshotOf(
 	[
-		el("other", {
+		driverFixtures.el("other", {
 			children: [
-				el("text", { id: "alertTitle", text: "Allow camera?" }),
-				el("button", { id: "button1", text: "Allow" }),
-				el("button", { id: "button2", text: "Deny" }),
+				driverFixtures.el("text", { id: "alertTitle", text: "Allow camera?" }),
+				driverFixtures.el("button", { id: "button1", text: "Allow" }),
+				driverFixtures.el("button", { id: "button2", text: "Deny" }),
 			],
 		}),
 	],
@@ -354,10 +352,10 @@ function detectAlert(flat: readonly Element[]): AlertInfo | null {
 
 function androidWithAlerts(screen: Snapshot) {
 	const clock = clockAt();
-	const raw = Object.assign(fakeDriver({ screens: [screen], platform: "android" }), {
+	const raw = Object.assign(new FakeDriver({ screens: [screen], platform: "android" }), {
 		alertIn: (snapshot: Snapshot): AlertInfo | null => detectAlert(snapshot.flat),
 	} satisfies DetectsAlerts);
-	const driver = cacheObservations(raw, { now: clock.now });
+	const driver = observations.cache(raw, { now: clock.now });
 	return { raw, driver, clock };
 }
 
@@ -365,15 +363,17 @@ describe("alert on a driver that can read alerts out of a snapshot", () => {
 	test("answers from the kept snapshot instead of reading the device again", async () => {
 		const { raw, driver } = androidWithAlerts(ANDROID_ALERT);
 		await driver.observe(REUSE);
-		const info = unwrap(await driver.alert());
+		const info = driverFixtures.unwrap(await driver.alert());
 		expect(info?.buttons.map((b) => b.identifier)).toEqual(["button1", "button2"]);
 		expect(raw.callsOf("snapshot")).toHaveLength(1);
 		expect(raw.callsOf("alert")).toHaveLength(0);
 	});
 
 	test("with nothing kept it takes one snapshot, which later reads may reuse", async () => {
-		const { raw, driver } = androidWithAlerts(snapshotOf([el("text", { label: "Hi" })], { platform: "android" }));
-		expect(unwrap(await driver.alert())).toBeNull();
+		const { raw, driver } = androidWithAlerts(
+			driverFixtures.snapshotOf([driverFixtures.el("text", { label: "Hi" })], { platform: "android" })
+		);
+		expect(driverFixtures.unwrap(await driver.alert())).toBeNull();
 		await driver.observe(REUSE);
 		expect(raw.callsOf("snapshot")).toHaveLength(1);
 	});
@@ -404,21 +404,21 @@ describe("alert on a driver that can read alerts out of a snapshot", () => {
 
 	test("a failed snapshot is the alert read's failure", async () => {
 		const raw = Object.assign(
-			fakeDriver({
+			new FakeDriver({
 				screens: [ANDROID_ALERT],
 				platform: "android",
-				onCall: (call) => (call.method === "snapshot" ? failWith("E_AX_UNAVAILABLE") : undefined),
+				onCall: (call) => (call.method === "snapshot" ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 			}),
 			{ alertIn: (snapshot: Snapshot) => detectAlert(snapshot.flat) }
 		);
-		const driver = cacheObservations(raw, { now: clockAt().now });
+		const driver = observations.cache(raw, { now: clockAt().now });
 		const result = await driver.alert();
 		expect(!result.success && result.error.code).toBe("E_AX_UNAVAILABLE");
 	});
 
 	test("a driver without the capability keeps answering alert() itself", async () => {
 		const { raw, driver } = setup();
-		expect(canDetectAlerts(raw)).toBe(false);
+		expect(observations.canDetectAlerts(raw)).toBe(false);
 		await driver.observe(REUSE);
 		await driver.alert();
 		expect(raw.callsOf("alert")).toHaveLength(1);

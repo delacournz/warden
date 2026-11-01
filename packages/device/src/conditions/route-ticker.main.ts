@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { parseTickerConfig, realTickerClock, startRouteTicker } from "@delacour/warden-driver/conditions/route-ticker";
+import { realTickerClock, routeTickers } from "@delacour/warden-driver/conditions/route-ticker";
 import { geoFixArgv, geoFixFailure } from "@delacour/warden-driver-android/android-argv";
 /**
  * Detached route ticker: `bun route-ticker.main.ts '<TickerConfig JSON>'` plays the route against one
@@ -11,14 +11,14 @@ import { processExec } from "@delacour/warden-runtime/exec";
 
 /** Play the route in `raw` (a `TickerConfig` JSON). Exit code: 0 finished or stopped, 1 a fix kept failing, 2 bad config. */
 export async function runRouteTicker(raw: string): Promise<number> {
-	const parsed = parseTickerConfig(raw);
+	const parsed = routeTickers.parseConfig(raw);
 	if (!parsed.success) {
 		process.stderr.write(`route-ticker: ${parsed.error}\n`);
 		return 2;
 	}
 	const { adb, serial, ...route } = parsed.data;
 
-	const ticker = startRouteTicker(route, {
+	const ticker = routeTickers.start(route, {
 		...realTickerClock,
 		fix: async (point) => {
 			const res = await processExec.run(geoFixArgv(adb, serial, point), { timeoutMs: 10_000 });

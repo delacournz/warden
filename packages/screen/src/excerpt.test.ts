@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { Runtime } from "./context";
 import { LocatorAssertions } from "./matchers";
 import { createScreen } from "./screen";
@@ -45,22 +45,27 @@ async function failedWith(run: () => Promise<unknown>): Promise<{ built: number;
 
 function login(): FakeDriver {
 	return staticDriver([
-		el("text", { id: "title", label: "Welcome" }),
-		el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
-		el("button", { id: "submit", label: "Sign in", hittable: true }),
-		el("switch", { id: "remember", label: "Remember me", value: "1" }),
-		el("other", { id: "card", children: [el("text", { label: "Invoice 42" }), el("text", { label: "$10" })] }),
+		driverFixtures.el("text", { id: "title", label: "Welcome" }),
+		driverFixtures.el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
+		driverFixtures.el("button", { id: "submit", label: "Sign in", hittable: true }),
+		driverFixtures.el("switch", { id: "remember", label: "Remember me", value: "1" }),
+		driverFixtures.el("other", {
+			id: "card",
+			children: [driverFixtures.el("text", { label: "Invoice 42" }), driverFixtures.el("text", { label: "$10" })],
+		}),
 	]);
 }
 
 /** A screen whose element `x` shows up after `after` reads; every read labels the screen with its number. */
 function appearing(after: number): FakeDriver {
 	let reads = 0;
-	return fakeDriver({
+	return new FakeDriver({
 		screens: () => {
 			reads += 1;
-			const marker = el("text", { id: "marker", label: `read ${reads}` });
-			return snapshotOf(reads > after ? [marker, el("button", { id: "x", label: "b" })] : [marker]);
+			const marker = driverFixtures.el("text", { id: "marker", label: `read ${reads}` });
+			return driverFixtures.snapshotOf(
+				reads > after ? [marker, driverFixtures.el("button", { id: "x", label: "b" })] : [marker]
+			);
 		},
 	});
 }
@@ -139,7 +144,7 @@ describe("a success never renders the screen", () => {
 
 	test("fill confirmed by the snapshot fallback", async () => {
 		const { driver } = fieldFixture();
-		const noHitTest: FakeDriver = { ...driver, elementAtPoint: async () => ({ success: true, data: null }) };
+		const noHitTest = Object.assign(driver, { elementAtPoint: async () => ({ success: true as const, data: null }) });
 		const { screen } = setup(noHitTest);
 		expect(await excerptsBuiltBy(() => screen.getByTestId("field").fill("hi"))).toBe(0);
 	});
@@ -147,7 +152,10 @@ describe("a success never renders the screen", () => {
 
 describe("a failure renders the screen from the last read", () => {
 	test("an ambiguous match", async () => {
-		const driver = staticDriver([el("button", { id: "a", label: "A" }), el("button", { id: "b", label: "B" })]);
+		const driver = staticDriver([
+			driverFixtures.el("button", { id: "a", label: "A" }),
+			driverFixtures.el("button", { id: "b", label: "B" }),
+		]);
 		const { host, screen } = setup(driver);
 		const { built, error } = await failedWith(() => screen.getByRole("button").tap());
 		expect(built).toBe(1);
@@ -183,8 +191,8 @@ describe("a failure renders the screen from the last read", () => {
 	});
 
 	test("a matcher that cannot read the screen has no excerpt to show", async () => {
-		const flaky = fakeDriver({
-			screens: [snapshotOf([])],
+		const flaky = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) =>
 				call.method === "snapshot"
 					? { error: { code: "E_AX_UNAVAILABLE", message: "busy", retryable: true } }
@@ -203,7 +211,7 @@ describe("a failure renders the screen from the last read", () => {
 
 	test("a fill that did not take shows what the confirm read, not one render per read", async () => {
 		const { driver } = fieldFixture({ dropTypes: 2 });
-		const noHitTest: FakeDriver = { ...driver, elementAtPoint: async () => ({ success: true, data: null }) };
+		const noHitTest = Object.assign(driver, { elementAtPoint: async () => ({ success: true as const, data: null }) });
 		const { screen } = setup(noHitTest, { actionTimeoutMs: 5000 });
 		const { built, error } = await failedWith(() => screen.getByTestId("field").fill("hi"));
 		expect(error.code).toBe("ACTION_FAILED");

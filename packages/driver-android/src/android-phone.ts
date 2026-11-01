@@ -1,5 +1,5 @@
 import type { DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
 import type { Clock } from "./android-device";
@@ -85,7 +85,7 @@ export async function preparePhone(
 	}
 	if (keyguardShowing !== true) return { success: true, data: undefined };
 	if (keyguardSecure === true) {
-		return driverErr(
+		return driverErrors.err(
 			"E_DEVICE_LOCKED",
 			"the phone is locked behind a PIN, pattern or password: unlock it, then retry",
 			{
@@ -140,7 +140,10 @@ export async function createSettingsGuard(deps: SettingsGuardDeps): Promise<Sett
 			if (!remembering.rotation) return { success: true, data: undefined };
 			const [accelerometer, user] = [await readSetting("accelerometer_rotation"), await readSetting("user_rotation")];
 			if (accelerometer === undefined || user === undefined) {
-				return driverErr("E_REFUSED", `cannot read the rotation settings of ${serial}, so they could not be put back`);
+				return driverErrors.err(
+					"E_REFUSED",
+					`cannot read the rotation settings of ${serial}, so they could not be put back`
+				);
 			}
 			remembering.rotation = false;
 			rotation = { accelerometer_rotation: accelerometer, user_rotation: user };
@@ -152,7 +155,7 @@ export async function createSettingsGuard(deps: SettingsGuardDeps): Promise<Sett
 			if (!remembering.uimode) return { success: true, data: undefined };
 			const mode = /Night mode:\s*(yes|no|auto)/i.exec(await quiet(session, ["cmd", "uimode", "night"], log))?.[1];
 			if (mode === undefined) {
-				return driverErr("E_REFUSED", `cannot read the night mode of ${serial}, so it could not be put back`);
+				return driverErrors.err("E_REFUSED", `cannot read the night mode of ${serial}, so it could not be put back`);
 			}
 			remembering.uimode = false;
 			uimode = mode.toLowerCase() as UimodeValue;

@@ -10,7 +10,7 @@
  *   read     `locator.isVisible()` end to end on a fake driver: snapshot, index, resolve, strict one-match
  *   polls    attempts a 10 s wait makes on a fake clock that never finds its target (the device-read count)
  */
-import { fakeDriver } from "@delacour/warden-driver/testing/driver";
+import { FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { Runtime } from "@delacour/warden-screen/context";
 import { indexSnapshot } from "@delacour/warden-screen/nodes";
 import { poll } from "@delacour/warden-screen/poll";
@@ -67,7 +67,7 @@ console.log(
 );
 for (const fixture of fixtures) {
 	const { snapshot } = fixture;
-	const driver = fakeDriver({ screens: [snapshot] });
+	const driver = new FakeDriver({ screens: [snapshot] });
 	const host = testHost(driver);
 	const runtime = new Runtime(host);
 	const testId = uniqueTestId(fixture);

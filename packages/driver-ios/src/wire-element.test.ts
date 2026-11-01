@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-	isWireElement,
+	simdProtocol,
 	snapshotDataSchema,
 	type WireElement,
 	wireElementSchema,
@@ -35,7 +35,7 @@ const base = (): Record<string, unknown> => ({
 	frame: { x: 1, y: 2, width: 3, height: 4 },
 });
 
-describe("isWireElement agrees with wireElementSchema", () => {
+describe("simdProtocol.isWireElement agrees with wireElementSchema", () => {
 	for (const name of goldens) {
 		test(`every node of ${name}`, () => {
 			const roots = load(name).elements as WireElement[];
@@ -43,9 +43,9 @@ describe("isWireElement agrees with wireElementSchema", () => {
 			expect(nodes.length).toBeGreaterThan(0);
 			for (const node of nodes) {
 				expect(wireElementSchema.safeParse(node).success).toBe(true);
-				expect(isWireElement(node)).toBe(true);
+				expect(simdProtocol.isWireElement(node)).toBe(true);
 			}
-			for (const root of roots) expect(isWireElement(root)).toBe(true);
+			for (const root of roots) expect(simdProtocol.isWireElement(root)).toBe(true);
 		});
 	}
 
@@ -111,12 +111,12 @@ describe("isWireElement agrees with wireElementSchema", () => {
 		test(name, () => {
 			const element = base();
 			mutate(element);
-			expect(isWireElement(element)).toBe(wireElementSchema.safeParse(element).success);
+			expect(simdProtocol.isWireElement(element)).toBe(wireElementSchema.safeParse(element).success);
 		});
 	}
 
 	test.each([[null], [undefined], [3], ["x"], [[]], [true]])("non-object %p", (value) => {
-		expect(isWireElement(value)).toBe(false);
+		expect(simdProtocol.isWireElement(value)).toBe(false);
 		expect(wireElementSchema.safeParse(value).success).toBe(false);
 	});
 });

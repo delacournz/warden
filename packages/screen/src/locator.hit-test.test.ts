@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
-import { type ElementSpec, el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { LocatorAssertions } from "./matchers";
 import { createScreen } from "./screen";
 import { testHost } from "./screen.testing";
@@ -13,13 +13,17 @@ import { testHost } from "./screen.testing";
 
 const NEXT = { x: 24, y: 600, width: 300, height: 44 };
 const nextButton = (frame = NEXT, extra: Partial<ElementSpec> = {}): ElementSpec =>
-	el("button", { id: "next", label: "Next", hittable: true, frame, ...extra });
+	driverFixtures.el("button", { id: "next", label: "Next", hittable: true, frame, ...extra });
 
 function setup(
-	options: { screens?: Snapshot[]; cheap?: boolean; onCall?: Parameters<typeof fakeDriver>[0]["onCall"] } = {}
+	options: {
+		screens?: Snapshot[];
+		cheap?: boolean;
+		onCall?: ConstructorParameters<typeof FakeDriver>[0]["onCall"];
+	} = {}
 ) {
-	const driver = fakeDriver({
-		screens: options.screens ?? [snapshotOf([nextButton()])],
+	const driver = new FakeDriver({
+		screens: options.screens ?? [driverFixtures.snapshotOf([nextButton()])],
 		capabilities: { cheapHitTest: options.cheap ?? true },
 		...(options.onCall === undefined ? {} : { onCall: options.onCall }),
 	});
@@ -53,7 +57,9 @@ describe("assert-then-tap with a cheap hit-test", () => {
 
 	test("an element that moved since the assertion is looked for again and tapped where it settled", async () => {
 		const moved = { ...NEXT, y: 300 };
-		const { driver, screen } = setup({ screens: [snapshotOf([nextButton()]), snapshotOf([nextButton(moved)])] });
+		const { driver, screen } = setup({
+			screens: [driverFixtures.snapshotOf([nextButton()]), driverFixtures.snapshotOf([nextButton(moved)])],
+		});
 		await visible(screen);
 		driver.advance();
 		await screen.getByTestId("next").tap();
@@ -63,8 +69,10 @@ describe("assert-then-tap with a cheap hit-test", () => {
 	});
 
 	test("a hit on something else (a child label, a neighbour) falls back to a fresh snapshot", async () => {
-		const label = el("text", { label: "Next", frame: { x: 150, y: 610, width: 50, height: 20 } });
-		const { driver, screen } = setup({ screens: [snapshotOf([nextButton(NEXT, { children: [label] })])] });
+		const label = driverFixtures.el("text", { label: "Next", frame: { x: 150, y: 610, width: 50, height: 20 } });
+		const { driver, screen } = setup({
+			screens: [driverFixtures.snapshotOf([nextButton(NEXT, { children: [label] })])],
+		});
 		await visible(screen);
 		await screen.getByTestId("next").tap();
 		expect(count(driver, "elementAtPoint")).toBe(1);
@@ -75,9 +83,9 @@ describe("assert-then-tap with a cheap hit-test", () => {
 	test("the same frame with another name, or now disabled, is not the same element", async () => {
 		for (const changed of [nextButton(NEXT, { label: "Done" }), nextButton(NEXT, { enabled: false })]) {
 			const { driver, screen } = setup({
-				screens: [snapshotOf([nextButton()])],
+				screens: [driverFixtures.snapshotOf([nextButton()])],
 				onCall: (call) =>
-					call.method === "elementAtPoint" ? { data: snapshotOf([changed]).flat[0] ?? null } : undefined,
+					call.method === "elementAtPoint" ? { data: driverFixtures.snapshotOf([changed]).flat[0] ?? null } : undefined,
 			});
 			await visible(screen);
 			await screen.getByTestId("next").tap();
@@ -87,7 +95,7 @@ describe("assert-then-tap with a cheap hit-test", () => {
 
 	test("a hit-test that fails falls back to a fresh snapshot", async () => {
 		const { driver, screen } = setup({
-			onCall: (call) => (call.method === "elementAtPoint" ? failWith("E_AX_UNAVAILABLE") : undefined),
+			onCall: (call) => (call.method === "elementAtPoint" ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 		});
 		await visible(screen);
 		await screen.getByTestId("next").tap();
@@ -121,7 +129,9 @@ describe("assert-then-tap with a cheap hit-test", () => {
 	});
 
 	test("a kept snapshot with an alert on it is not aimed from", async () => {
-		const { driver, screen } = setup({ screens: [snapshotOf([nextButton()], { modal: { description: "sheet" } })] });
+		const { driver, screen } = setup({
+			screens: [driverFixtures.snapshotOf([nextButton()], { modal: { description: "sheet" } })],
+		});
 		await visible(screen);
 		await screen.getByTestId("next").tap();
 		expect(count(driver, "elementAtPoint")).toBe(0);
@@ -129,7 +139,10 @@ describe("assert-then-tap with a cheap hit-test", () => {
 
 	test("a disabled match on the kept snapshot is not hit-tested: the tap waits as before", async () => {
 		const { driver, screen } = setup({
-			screens: [snapshotOf([nextButton(NEXT, { enabled: false })]), snapshotOf([nextButton()])],
+			screens: [
+				driverFixtures.snapshotOf([nextButton(NEXT, { enabled: false })]),
+				driverFixtures.snapshotOf([nextButton()]),
+			],
 		});
 		await new LocatorAssertions(screen.getByTestId("next"), { negate: false }).toBeVisible();
 		driver.advance();
@@ -139,7 +152,7 @@ describe("assert-then-tap with a cheap hit-test", () => {
 	});
 
 	test("several matches on the kept snapshot still fail as before", async () => {
-		const { screen } = setup({ screens: [snapshotOf([nextButton(), nextButton({ ...NEXT, y: 100 })])] });
+		const { screen } = setup({ screens: [driverFixtures.snapshotOf([nextButton(), nextButton({ ...NEXT, y: 100 })])] });
 		await screen.getByTestId("next").count();
 		await expect(screen.getByTestId("next").tap()).rejects.toThrow();
 	});
@@ -154,8 +167,11 @@ describe("assert-then-tap with a cheap hit-test", () => {
 
 	test("a tap with until takes a fresh look (its first press is compared with that screen) and sees the press land", async () => {
 		let pressed = false;
-		const driver = fakeDriver({
-			screens: () => snapshotOf(pressed ? [el("text", { id: "done", label: "Done" })] : [nextButton()]),
+		const driver = new FakeDriver({
+			screens: () =>
+				driverFixtures.snapshotOf(
+					pressed ? [driverFixtures.el("text", { id: "done", label: "Done" })] : [nextButton()]
+				),
 			capabilities: { cheapHitTest: true },
 			onCall: (call) => {
 				if (call.method === "tap") pressed = true;
@@ -179,8 +195,8 @@ describe("assert-then-tap with a cheap hit-test", () => {
 	});
 
 	test("the hit-test age follows the observation cache's age for the platform", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([nextButton()], { platform: "android" })],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([nextButton()], { platform: "android" })],
 			platform: "android",
 			capabilities: { cheapHitTest: true },
 		});

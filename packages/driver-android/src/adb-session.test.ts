@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { collectSpanDetail, type SpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import { type AdbSession, openAdbSession, type SpawnAdb, spawnAdb } from "./adb-session";
 
 const FAKE_ADB = join(import.meta.dir, "../native/scripts/fake-adb.ts");
@@ -29,7 +29,7 @@ describe("adb session span detail", () => {
 	test("commands run inside a span add their count and time to its detail", async () => {
 		const s = open();
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, async () => {
+		await spanDetails.collect(notes, async () => {
 			await s.run("echo one");
 			await s.run("echo two");
 		});

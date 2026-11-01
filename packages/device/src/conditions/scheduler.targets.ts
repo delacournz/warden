@@ -1,5 +1,5 @@
 import type { SchedulerTarget } from "@delacour/warden-driver/conditions/scheduler";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import { openAdbSession } from "@delacour/warden-driver-android/adb-session";
 import { geoFixArgv, geoFixFailure } from "@delacour/warden-driver-android/android-argv";
 import { realClock } from "@delacour/warden-driver-android/android-device";
@@ -74,10 +74,10 @@ const openIosTarget: TargetOpener = (config) => {
 			now: () => Date.now(),
 			sleep: (ms) => Bun.sleep(ms),
 		}),
-		dylib: () => driverErr("E_INTERNAL", "the scheduler never launches an app"),
+		dylib: () => driverErrors.err("E_INTERNAL", "the scheduler never launches an app"),
 		isRunning: async () => ({ success: true, data: false }),
 		lastBundle: () => config.bundleId,
-		relaunch: async () => driverErr("E_UNSUPPORTED", "the scheduler never relaunches an app"),
+		relaunch: async () => driverErrors.err("E_UNSUPPORTED", "the scheduler never relaunches an app"),
 	});
 	const target: SchedulerTarget = {
 		network: async (condition) => {

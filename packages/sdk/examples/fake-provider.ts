@@ -8,18 +8,18 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { defineProvider, type PluginProvider, type ProviderPlugin } from "../src/plugins/entry";
 import type { Driver, InventoryDevice } from "../src/plugins/entry";
 
-export const FAKE_FARM_HOME = snapshotOf(
-	[el("window", { children: [el("button", { id: "start", label: "Start" }), el("text", { label: "Welcome" })] })],
+export const FAKE_FARM_HOME = driverFixtures.snapshotOf(
+	[driverFixtures.el("window", { children: [driverFixtures.el("button", { id: "start", label: "Start" }), driverFixtures.el("text", { label: "Welcome" })] })],
 	{ platform: "android" }
 );
 
 /** A driver over the farm's fixed home screen. */
 export function fakeFarmDriver(id: string): Driver {
-	return fakeDriver({ screens: [FAKE_FARM_HOME], platform: "android", id });
+	return new FakeDriver({ screens: [FAKE_FARM_HOME], platform: "android", id });
 }
 
 /** The plugin: `size` pre-booted devices, `create` adds more, every device opens a {@link fakeFarmDriver}. */

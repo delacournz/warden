@@ -1,6 +1,6 @@
 import type { Driver, Element, Rect, ScreenInfo, Snapshot } from "@delacour/warden-driver/driver.types";
-import { assignRefs, type RefTable } from "@delacour/warden-driver/refs";
-import { DEFAULT_SETTLE_QUIET_MS, settleByHash, snapshotHash } from "@delacour/warden-driver/settle";
+import { type RefTable, refResolver } from "@delacour/warden-driver/refs";
+import { DEFAULT_SETTLE_QUIET_MS, settler } from "@delacour/warden-driver/settle";
 import { indexSnapshot, type NodeEntry } from "@delacour/warden-screen/nodes";
 import { resolve } from "@delacour/warden-screen/query";
 import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-screen/render";
@@ -112,10 +112,10 @@ async function fetchSnapshot(
 			throw new Error(taken.error.message);
 		}
 		latest = taken.data;
-		return snapshotHash(taken.data);
+		return settler.snapshotHash(taken.data);
 	};
 	try {
-		const outcome = await settleByHash(poll, {
+		const outcome = await settler.byHash(poll, {
 			quietMs: DEFAULT_SETTLE_QUIET_MS,
 			timeoutMs: settle.budgetMs,
 			now: session.host.now,
@@ -143,7 +143,7 @@ export async function takeSnapshot(
 	if (!fetched.success) return fetched;
 	const { snapshot } = fetched.data;
 	const { generation, refs } = storeSnapshot(session, snapshot);
-	const hash = snapshotHash(snapshot);
+	const hash = settler.snapshotHash(snapshot);
 
 	const view = request.depth === undefined ? snapshot : pruneDepth(snapshot, request.depth);
 	const rendered = renderSnapshot(view, {
@@ -256,8 +256,8 @@ export async function findElements(
  * cannot leave an older generation behind.
  */
 export function storeSnapshot(session: OpSession, snapshot: Snapshot): { generation: number; refs: RefTable } {
-	const stored = session.refs.commit({ takenAt: session.host.now(), hash: snapshotHash(snapshot), snapshot });
-	return { generation: stored.generation, refs: assignRefs(snapshot, stored.generation) };
+	const stored = session.refs.commit({ takenAt: session.host.now(), hash: settler.snapshotHash(snapshot), snapshot });
+	return { generation: stored.generation, refs: refResolver.assign(snapshot, stored.generation) };
 }
 
 // ---- ops ---------------------------------------------------------------------------------------------------------

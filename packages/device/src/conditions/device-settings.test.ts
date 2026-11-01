@@ -3,7 +3,7 @@ import type { ConditionArea, ConditionValues } from "@delacour/warden-config/con
 import type { ConditionEvent } from "@delacour/warden-driver/conditions/condition-events";
 import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type { Driver } from "@delacour/warden-driver/driver.types";
-import { type DriverCall, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { type DriverCall, driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { type ConditionsEnv, createDeviceConditions } from "./device-conditions";
 import type { ConditionRecorder } from "./lease-recorder";
 
@@ -15,9 +15,12 @@ const clock: TickerClock = { now: () => 1000, sleep: async () => undefined };
 
 type Recorded = { kind: "record" | "settle"; area: ConditionArea; value: unknown };
 
-function setup(conditions?: ConditionsEnv["conditions"], onCall?: Parameters<typeof fakeDriver>[0]["onCall"]) {
-	const driver = fakeDriver({
-		screens: [snapshotOf([], { platform: "android" })],
+function setup(
+	conditions?: ConditionsEnv["conditions"],
+	onCall?: ConstructorParameters<typeof FakeDriver>[0]["onCall"]
+) {
+	const driver = new FakeDriver({
+		screens: [driverFixtures.snapshotOf([], { platform: "android" })],
 		platform: "android",
 		...(onCall ? { onCall } : {}),
 	});
@@ -43,7 +46,7 @@ function setup(conditions?: ConditionsEnv["conditions"], onCall?: Parameters<typ
 
 const methods = (calls: readonly DriverCall[]) => calls.map((call) => call.method);
 
-const previousLondon: Parameters<typeof fakeDriver>[0]["onCall"] = (call) =>
+const previousLondon: ConstructorParameters<typeof FakeDriver>[0]["onCall"] = (call) =>
 	call.method === "timezone"
 		? { data: { ...(call.tz ? { timezone: call.tz } : {}), previous: "Europe/London" } }
 		: undefined;
@@ -172,8 +175,8 @@ describe("memory warning and push", () => {
 	});
 
 	test("a driver failure is thrown as an E2eError", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) =>
 				call.method === "memoryWarning"
 					? { error: { code: "E_UNSUPPORTED", message: "no way", retryable: false } }

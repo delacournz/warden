@@ -20,20 +20,25 @@ export type NetworkProxyPort = {
 	stop(): Promise<void>;
 };
 
-/** The proxy parameters for `condition` plus the faults to keep. Offline is `refuse`: connections close at accept. */
-export function proxyConditionsFor(condition: NetworkCondition, faults: readonly HostFault[]): ProxyConditions {
-	return { params: proxyShaping.fromCondition(condition), faults };
+/** Shaping-proxy parameters for a driver's network ops. Use the shared {@link networkProxyShaping} singleton. */
+export class NetworkProxyShaping {
+	/** The proxy parameters for `condition` plus the faults to keep. Offline is `refuse`: connections close at accept. */
+	conditionsFor(condition: NetworkCondition, faults: readonly HostFault[]): ProxyConditions {
+		return { params: proxyShaping.fromCondition(condition), faults };
+	}
+
+	/**
+	 * Faults the proxy cannot honour as written. An HTTPS request is a CONNECT tunnel the proxy never reads inside
+	 * (no MITM), so a `status` fault on a host reaches an https:// request as a reset, not a status code.
+	 */
+	faultNotes(faults: readonly HostFault[]): string[] {
+		return faults
+			.filter((f) => f.action.kind === "status")
+			.map(
+				(f) =>
+					`status ${f.action.kind === "status" ? f.action.code : ""} for ${f.match} answers plain http:// only; https:// requests to it are reset (the proxy does not decrypt TLS)`
+			);
+	}
 }
 
-/**
- * Faults the proxy cannot honour as written. An HTTPS request is a CONNECT tunnel the proxy never reads inside
- * (no MITM), so a `status` fault on a host reaches an https:// request as a reset, not a status code.
- */
-export function faultNotes(faults: readonly HostFault[]): string[] {
-	return faults
-		.filter((f) => f.action.kind === "status")
-		.map(
-			(f) =>
-				`status ${f.action.kind === "status" ? f.action.code : ""} for ${f.match} answers plain http:// only; https:// requests to it are reset (the proxy does not decrypt TLS)`
-		);
-}
+export const networkProxyShaping = new NetworkProxyShaping();

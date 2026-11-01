@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { assignRefs } from "@delacour/warden-driver/refs";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { refResolver } from "@delacour/warden-driver/refs";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { type TestContext, testContext } from "../testing";
 import { readState, writeState } from "./state";
 import { createFileRefStore, createFileStateStore } from "./state-stores";
@@ -9,7 +9,10 @@ let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 const UDID = "U1";
-const screen = () => snapshotOf([el("window", { children: [el("button", { label: "Go", id: "go" })] })]);
+const screen = () =>
+	driverFixtures.snapshotOf([
+		driverFixtures.el("window", { children: [driverFixtures.el("button", { label: "Go", id: "go" })] }),
+	]);
 
 describe("createFileRefStore", () => {
 	test("a second store over the same home (another process) sees the snapshot and the next generation", () => {
@@ -20,7 +23,7 @@ describe("createFileRefStore", () => {
 		const a = first.commit({ takenAt: 5, hash: "h1", snapshot: screen() });
 		expect(a.generation).toBe(1);
 		expect(second.last()?.generation).toBe(1);
-		expect(assignRefs(second.last()?.snapshot ?? screen(), 1).byRef.size).toBeGreaterThan(0);
+		expect(refResolver.assign(second.last()?.snapshot ?? screen(), 1).byRef.size).toBeGreaterThan(0);
 		const b = second.commit({ takenAt: 9, hash: "h2", snapshot: screen() });
 		expect(b.generation).toBe(2);
 		expect(first.last()?.generation).toBe(2);

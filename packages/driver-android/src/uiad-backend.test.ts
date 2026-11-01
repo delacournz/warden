@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DriverError, DriverResult } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { AdbSession } from "./adb-session";
 import { fakeUiad } from "./uiad.testing";
 import { createUiadBackend, isPersistentStartFailure, type UiadBackendDeps, uiadFromEnv } from "./uiad-backend";
@@ -14,12 +14,12 @@ const SESSION: AdbSession = {
 	async close() {},
 };
 
-const BUSY = driverError("E_AX_UNAVAILABLE", "another UiAutomation client holds emulator-5554", {
+const BUSY = driverErrors.make("E_AX_UNAVAILABLE", "another UiAutomation client holds emulator-5554", {
 	retryable: false,
 	detail: { reason: "uiautomation_busy" },
 });
 
-const CONNECT_FAILED = driverError("E_AX_UNAVAILABLE", "cannot connect UiAutomation", {
+const CONNECT_FAILED = driverErrors.make("E_AX_UNAVAILABLE", "cannot connect UiAutomation", {
 	detail: { reason: "connect_failed" },
 });
 
@@ -132,7 +132,7 @@ describe("starting", () => {
 		const { backend, lines } = backendWith(server.launch);
 		await backend.server();
 		expect(fake.running()).toBe(1);
-		await backend.failed(driverError("E_TIMEOUT", "warden-uiad did not answer `tap` within 10000ms"));
+		await backend.failed(driverErrors.make("E_TIMEOUT", "warden-uiad did not answer `tap` within 10000ms"));
 		expect(fake.running()).toBe(0);
 		expect(lines.some((l) => l.includes("E_TIMEOUT"))).toBe(true);
 		expect(await backend.server()).toBeDefined();
@@ -144,7 +144,7 @@ describe("starting", () => {
 		const { backend, lines } = backendWith(server.launch);
 		for (let i = 0; i < 4; i++) {
 			expect(await backend.server()).toBeDefined();
-			await backend.failed(driverError("E_HELPER_CRASHED", "gone"));
+			await backend.failed(driverErrors.make("E_HELPER_CRASHED", "gone"));
 		}
 		expect(await backend.server()).toBeUndefined();
 		expect(backend.wanted()).toBe(false);
@@ -156,7 +156,7 @@ describe("starting", () => {
 
 describe("start failures", () => {
 	test("one failed start falls back for that call and the next call tries again", async () => {
-		const scripts = scripted(driverError("E_HELPER_CRASHED", "warden-uiad exited (exit 1)"), "ok");
+		const scripts = scripted(driverErrors.make("E_HELPER_CRASHED", "warden-uiad exited (exit 1)"), "ok");
 		const { backend, unsupported } = backendWith(scripts.launch);
 		expect(await backend.server()).toBeUndefined();
 		expect(backend.wanted()).toBe(true);
@@ -165,7 +165,7 @@ describe("start failures", () => {
 	});
 
 	test("two failed starts in a row end it for this driver, without writing anything down", async () => {
-		const scripts = scripted(driverError("E_HELPER_CRASHED", "warden-uiad exited (exit 1)"));
+		const scripts = scripted(driverErrors.make("E_HELPER_CRASHED", "warden-uiad exited (exit 1)"));
 		const { backend, unsupported } = backendWith(scripts.launch);
 		expect(await backend.server()).toBeUndefined();
 		expect(await backend.server()).toBeUndefined();
@@ -176,7 +176,7 @@ describe("start failures", () => {
 	});
 
 	test("a start that can never work here is remembered for this build, so no later process pays for it", async () => {
-		const scripts = scripted(driverError("E_UNSUPPORTED", "warden-uiad speaks protocol 2, this client speaks 1"));
+		const scripts = scripted(driverErrors.make("E_UNSUPPORTED", "warden-uiad speaks protocol 2, this client speaks 1"));
 		const { backend, unsupported } = backendWith(scripts.launch);
 		expect(await backend.server()).toBeUndefined();
 		expect(backend.wanted()).toBe(false);
@@ -213,7 +213,7 @@ describe("start failures", () => {
 		const { backend, unsupported } = backendWith(scripts.launch);
 		expect(await backend.server()).toBeUndefined();
 		expect(await backend.server()).toBeDefined();
-		await backend.failed(driverError("E_HELPER_CRASHED", "gone"));
+		await backend.failed(driverErrors.make("E_HELPER_CRASHED", "gone"));
 		expect(await backend.server()).toBeUndefined();
 		expect(await backend.server()).toBeDefined();
 		expect(unsupported).toEqual([]);
@@ -267,7 +267,7 @@ describe("a busy UiAutomation slot", () => {
 	});
 
 	test("another failure after a busy one clears the busy report: the dump may be tried", async () => {
-		const scripts = scripted(BUSY, driverError("E_HELPER_CRASHED", "gone"));
+		const scripts = scripted(BUSY, driverErrors.make("E_HELPER_CRASHED", "gone"));
 		const { backend, clock } = backendWith(scripts.launch);
 		await backend.server();
 		clock.advance(2_500);
@@ -304,13 +304,13 @@ describe("stop", () => {
 
 describe("isPersistentStartFailure", () => {
 	test("is true for an unsupported device and for UiAutomation that cannot connect, false for a crash or a timeout", () => {
-		expect(isPersistentStartFailure(driverError("E_UNSUPPORTED", "x"))).toBe(true);
+		expect(isPersistentStartFailure(driverErrors.make("E_UNSUPPORTED", "x"))).toBe(true);
 		expect(
-			isPersistentStartFailure(driverError("E_AX_UNAVAILABLE", "x", { detail: { reason: "connect_failed" } }))
+			isPersistentStartFailure(driverErrors.make("E_AX_UNAVAILABLE", "x", { detail: { reason: "connect_failed" } }))
 		).toBe(true);
-		expect(isPersistentStartFailure(driverError("E_HELPER_CRASHED", "x"))).toBe(false);
-		expect(isPersistentStartFailure(driverError("E_TIMEOUT", "x"))).toBe(false);
-		expect(isPersistentStartFailure(driverError("E_AX_UNAVAILABLE", "x"))).toBe(false);
+		expect(isPersistentStartFailure(driverErrors.make("E_HELPER_CRASHED", "x"))).toBe(false);
+		expect(isPersistentStartFailure(driverErrors.make("E_TIMEOUT", "x"))).toBe(false);
+		expect(isPersistentStartFailure(driverErrors.make("E_AX_UNAVAILABLE", "x"))).toBe(false);
 	});
 });
 

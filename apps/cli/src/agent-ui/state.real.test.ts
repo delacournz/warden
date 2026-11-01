@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Element, Snapshot } from "@delacour/warden-driver/driver.types";
 import { snapshotDataSchema } from "@delacour/warden-driver/helper/simd-protocol";
-import { snapshotHash } from "@delacour/warden-driver/settle";
+import { settler } from "@delacour/warden-driver/settle";
 import {
 	REAL_DEV_LAUNCHER_DUMP,
 	REAL_DEV_LAUNCHER_SCREEN,
@@ -24,7 +24,7 @@ import { createFileRefStore } from "./state-stores";
 
 /** Store `snapshot` as the device's next generation through the CLI's file-backed ref store. */
 function storeSnapshot(ctx: ReturnType<typeof context>, udid: string, snapshot: Snapshot): { generation: number } {
-	return createFileRefStore(ctx, udid).commit({ takenAt: ctx.now(), hash: snapshotHash(snapshot), snapshot });
+	return createFileRefStore(ctx, udid).commit({ takenAt: ctx.now(), hash: settler.snapshotHash(snapshot), snapshot });
 }
 
 const goldens = join(

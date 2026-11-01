@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
@@ -99,11 +99,11 @@ function rig(
 	};
 }
 
-const screen = () => snapshotOf([el("button", { id: "go", label: "Go" })]);
+const screen = () => driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })]);
 
 describe("shared claims", () => {
 	test("claim({ shared }) marks the lease shared, in the returned row and the store", async () => {
-		const r = rig(() => fakeDriver({ screens: [screen()] }));
+		const r = rig(() => new FakeDriver({ screens: [screen()] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios", shared: true });
 		expect(lease?.shared).toBe(true);
@@ -113,7 +113,7 @@ describe("shared claims", () => {
 	});
 
 	test("a plain claim is not shared", async () => {
-		const r = rig(() => fakeDriver({ screens: [screen()] }));
+		const r = rig(() => new FakeDriver({ screens: [screen()] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
 		expect(lease?.shared).toBeFalsy();
@@ -126,9 +126,9 @@ describe("HID recovery in an iOS session", () => {
 		const r = rig(() => {
 			opens += 1;
 			const first = opens === 1;
-			return fakeDriver({
+			return new FakeDriver({
 				screens: [screen()],
-				onCall: (call) => (first && call.method === "tap" ? failWith("E_HID", HID_LOST) : undefined),
+				onCall: (call) => (first && call.method === "tap" ? driverFixtures.failWith("E_HID", HID_LOST) : undefined),
 			});
 		});
 		await using warden = createWardenClient(r.options, r.seams);
@@ -142,11 +142,12 @@ describe("HID recovery in an iOS session", () => {
 	});
 
 	test("a second loss in the same session fails as before", async () => {
-		const r = rig(() =>
-			fakeDriver({
-				screens: [screen()],
-				onCall: (call) => (call.method === "tap" ? failWith("E_HID", HID_LOST) : undefined),
-			})
+		const r = rig(
+			() =>
+				new FakeDriver({
+					screens: [screen()],
+					onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_HID", HID_LOST) : undefined),
+				})
 		);
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -160,11 +161,12 @@ describe("HID recovery in an iOS session", () => {
 	});
 
 	test("other failures never reboot the sim", async () => {
-		const r = rig(() =>
-			fakeDriver({
-				screens: [screen()],
-				onCall: (call) => (call.method === "tap" ? failWith("E_IO", "disk") : undefined),
-			})
+		const r = rig(
+			() =>
+				new FakeDriver({
+					screens: [screen()],
+					onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_IO", "disk") : undefined),
+				})
 		);
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -176,9 +178,9 @@ describe("HID recovery in an iOS session", () => {
 	test("a reboot that fails surfaces the original error", async () => {
 		const r = rig(
 			() =>
-				fakeDriver({
+				new FakeDriver({
 					screens: [screen()],
-					onCall: (call) => (call.method === "tap" ? failWith("E_HID", HID_LOST) : undefined),
+					onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_HID", HID_LOST) : undefined),
 				}),
 			(cmd) =>
 				cmd.includes("shutdown")
@@ -200,7 +202,7 @@ describe("devices.viewer / devices.arrange", () => {
 	test("viewer reports the running app (pgrep), none when neither runs", async () => {
 		const running = new Set<string>(["DeviceHub"]);
 		const r = rig(
-			() => fakeDriver({ screens: [screen()] }),
+			() => new FakeDriver({ screens: [screen()] }),
 			(cmd) => {
 				const name = cmd.split(" ").pop() ?? "";
 				return { exitCode: running.has(name) ? 0 : 1, stdout: "", stderr: "" };
@@ -214,7 +216,7 @@ describe("devices.viewer / devices.arrange", () => {
 
 	test("arrange with no viewer running does nothing", async () => {
 		const r = rig(
-			() => fakeDriver({ screens: [screen()] }),
+			() => new FakeDriver({ screens: [screen()] }),
 			() => ({ exitCode: 1, stdout: "", stderr: "" })
 		);
 		await using warden = createWardenClient(r.options, r.seams);

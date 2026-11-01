@@ -26,10 +26,10 @@ import {
 	healthDataSchema,
 	launchDataSchema,
 	orientationDataSchema,
-	parseLine,
 	type ReadyEvent,
 	readyEventSchema,
 	screenshotDataSchema,
+	simdProtocol,
 	snapshotDataSchema,
 	terminateDataSchema,
 	type WireElement,
@@ -140,7 +140,7 @@ class RunnerClient {
 			for (let at = this.buffer.indexOf("\n"); at >= 0; at = this.buffer.indexOf("\n")) {
 				const line = this.buffer.slice(0, at);
 				this.buffer = this.buffer.slice(at + 1);
-				const parsed = parseLine(line);
+				const parsed = simdProtocol.parseLine(line);
 				if (!parsed.success) continue;
 				if (parsed.message.kind === "event") {
 					if (parsed.message.event.event === "ready") resolveReady(JSON.parse(line) as Record<string, unknown>);

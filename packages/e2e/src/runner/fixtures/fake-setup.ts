@@ -1,5 +1,5 @@
 import { appendFileSync, writeFileSync } from "node:fs";
-import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { defaultFixtureFactory } from "../../fixtures";
 import {
 	setDefaultDriverFactory,
@@ -26,10 +26,15 @@ setDefaultHidRecovery({
 	},
 });
 setDefaultDriverFactory(async (env) => {
-	fake.driver = fakeDriver({
+	fake.driver = new FakeDriver({
 		platform: env.platform,
 		id: env.udid,
-		screens: [snapshotOf([el("button", { label: "Sign in", id: "sign-in" }), el("text", { label: "Welcome" })])],
+		screens: [
+			driverFixtures.snapshotOf([
+				driverFixtures.el("button", { label: "Sign in", id: "sign-in" }),
+				driverFixtures.el("text", { label: "Welcome" }),
+			]),
+		],
 		onCall(call) {
 			if (call.method === "screenshot" && call.opts?.path !== undefined) writeFileSync(call.opts.path, "PNG");
 			return undefined;

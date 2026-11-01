@@ -8,8 +8,8 @@ import type {
 	NetworkOptions,
 	NetworkState,
 } from "@delacour/warden-driver/driver.types";
-import { driverErr, driverError } from "@delacour/warden-driver/errors";
-import { faultNotes, type NetworkProxyPort, proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { type NetworkProxyPort, networkProxyShaping } from "@delacour/warden-driver/network-proxy";
 import type { Result } from "@delacour/warden-types/result";
 import { type InjectChannel, injectLaunchEnv, shouldInject } from "./inject";
 
@@ -81,16 +81,16 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 
 	/** Push the current condition + faults to the proxy and the state file. */
 	async function push(): DriverResult<{ staged: boolean; injected: boolean }> {
-		const conditions = proxyConditionsFor(condition, faults);
+		const conditions = networkProxyShaping.conditionsFor(condition, faults);
 		const live = await proxy.current();
 		const pushed =
 			routing() || live ? await (live ? proxy.update(conditions) : proxy.ensure(condition, conditions)) : undefined;
-		if (pushed && !pushed.success) return driverErr("E_IO", pushed.error);
+		if (pushed && !pushed.success) return driverErrors.err("E_IO", pushed.error);
 		const state = writeState();
 		const attached = channel.attached();
 		if (!attached) return { success: true, data: { staged: true, injected: false } };
 		if (!(await channel.acked(state.seq, INJECT_ACK_MS))) {
-			return driverErr(
+			return driverErrors.err(
 				"E_TIMEOUT",
 				`the injected app did not acknowledge the network state within ${INJECT_ACK_MS} ms`,
 				{
@@ -113,7 +113,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			const again = await deps.relaunch(bundle);
 			return again.success ? { success: true, data: true } : again;
 		}
-		return driverErr(
+		return driverErrors.err(
 			"E_NETWORK_RELAUNCH",
 			`${bundle} is running without the warden network dylib, so this condition cannot reach it. It is staged and applies from the next launch: relaunch with \`relaunch: true\` (warden ui: \`network ... --relaunch\`), or launch with inject set`,
 			{ detail: { bundleId: bundle } }
@@ -138,7 +138,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 		if (!channel.attached()) return okVoid;
 		return (await channel.acked(state.seq, INJECT_ACK_MS))
 			? okVoid
-			: driverErr("E_TIMEOUT", `the injected app did not acknowledge the clock within ${INJECT_ACK_MS} ms`);
+			: driverErrors.err("E_TIMEOUT", `the injected app did not acknowledge the clock within ${INJECT_ACK_MS} ms`);
 	}
 
 	/** `relaunch: true`: a running app without the dylib is launched again with it (true = relaunched). */
@@ -156,7 +156,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 	return {
 		async network(op, opts) {
 			if (op.kind === "flap") {
-				return driverErr(
+				return driverErrors.err(
 					"E_UNSUPPORTED",
 					"flap is run by the condition scheduler (COND-6) as online/offline transitions"
 				);
@@ -187,7 +187,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 				if (applied.error.code !== "E_NETWORK_RELAUNCH") faults = previous;
 				return applied;
 			}
-			return { success: true, data: { notes: faultNotes(next) } };
+			return { success: true, data: { notes: networkProxyShaping.faultNotes(next) } };
 		},
 		async launchEnv(opts) {
 			const live = await proxy.current();
@@ -206,8 +206,8 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			if (!dylib.success) return dylib;
 			let address = live;
 			if (!address && (routing() || opts.inject === true)) {
-				const started = await proxy.ensure(condition, proxyConditionsFor(condition, faults));
-				if (!started.success) return driverErr("E_IO", started.error);
+				const started = await proxy.ensure(condition, networkProxyShaping.conditionsFor(condition, faults));
+				if (!started.success) return driverErrors.err("E_IO", started.error);
 				address = started.data;
 			}
 			channel.reset();
@@ -231,7 +231,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 			if (await channel.acked(state.seq, INJECT_LOAD_MS)) return okVoid;
 			return {
 				success: false,
-				error: driverError(
+				error: driverErrors.make(
 					"E_INTERNAL",
 					`the app did not load libwarden-inject.dylib within ${INJECT_LOAD_MS} ms: network conditions would not reach it. Check the app is a simulator build, and run with WARDEN_E2E_DEBUG=1`,
 					{ detail: { statePath: channel.statePath } }
@@ -285,7 +285,7 @@ function clockTarget(op: ClockCondition, nowMs: number): Result<{ offsetMs: numb
 	if (Number.isNaN(at)) {
 		return {
 			success: false,
-			error: driverError("E_BAD_REQUEST", `clock ${op.kind}: "${op.at}" is not an ISO 8601 date-time`),
+			error: driverErrors.make("E_BAD_REQUEST", `clock ${op.kind}: "${op.at}" is not an ISO 8601 date-time`),
 		};
 	}
 	return op.kind === "fixed"

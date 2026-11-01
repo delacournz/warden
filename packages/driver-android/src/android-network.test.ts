@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fakeProxy } from "@delacour/warden-driver/testing/network-proxy";
+import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
 import { openAdbSession } from "./adb-session";
 import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
 import {
@@ -280,7 +280,7 @@ describe("createAndroidNetwork: loss and faults through the lease proxy", () => 
 			},
 			{ match: "settings get global http_proxy", reply: () => `${httpProxy}\n` }
 		);
-		const proxy = fakeProxy(19_555, opts.live);
+		const proxy = new FakeProxy(19_555, opts.live);
 		const session = openAdbSession({ adb: "adb", serial: "emulator-5554", spawn: d.host.spawn });
 		const net = createAndroidNetwork({
 			session,

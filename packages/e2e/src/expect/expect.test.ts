@@ -1,7 +1,7 @@
 import type { Matchers } from "bun:test";
 import { expect as bun, describe, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { el } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import type { Locator } from "@delacour/warden-screen/locator";
 import { LocatorAssertions } from "@delacour/warden-screen/matchers";
 import { createScreen } from "@delacour/warden-screen/screen";
@@ -9,7 +9,9 @@ import { staticDriver, testHost } from "@delacour/warden-screen/testing/screen";
 import { createExpect, expect, softSinkFor } from "./expect";
 
 function screenWithButton() {
-	const host = testHost(staticDriver([el("button", { id: "x", label: "b" })]), { assertionTimeoutMs: 200 });
+	const host = testHost(staticDriver([driverFixtures.el("button", { id: "x", label: "b" })]), {
+		assertionTimeoutMs: 200,
+	});
 	return { host, screen: createScreen(host) };
 }
 

@@ -1,6 +1,6 @@
 import type { ClockCondition } from "@delacour/warden-config/conditions.types";
 import type { ClockState, DriverResult } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { AdbSession } from "./adb-session";
 import { shellCommand } from "./android-argv";
@@ -78,22 +78,22 @@ async function settleAt(deps: AndroidClockDeps, target: number): Promise<number 
 /** Put the emulator's wall clock at `condition`; reads it back and fails with `E_IO` when it did not move. */
 export async function applyAndroidClock(deps: AndroidClockDeps, condition: ClockCondition): DriverResult<ClockState> {
 	if (!deps.serial.startsWith("emulator-")) {
-		return driverErr("E_UNSUPPORTED", `clock conditions need an emulator; ${deps.serial} is not one`);
+		return driverErrors.err("E_UNSUPPORTED", `clock conditions need an emulator; ${deps.serial} is not one`);
 	}
 	if (condition.kind === "frozen") {
-		return driverErr(
+		return driverErrors.err(
 			"E_UNSUPPORTED",
 			"Android cannot freeze its clock: use `fixed` (the clock starts at that instant and runs); `frozen` is iOS only"
 		);
 	}
 	const hostNow = (deps.wallNow ?? Date.now)();
 	const resolved = targetMs(condition, hostNow);
-	if ("error" in resolved) return driverErr("E_BAD_REQUEST", resolved.error);
+	if ("error" in resolved) return driverErrors.err("E_BAD_REQUEST", resolved.error);
 	const { target } = resolved;
 	await shell(deps, condition.kind === "real" ? AUTO_TIME_ON_ARGV : AUTO_TIME_OFF_ARGV);
 	await shell(deps, setTimeArgv(target));
 	if ((await settleAt(deps, target)) === undefined) {
-		return driverErr(
+		return driverErrors.err(
 			"E_IO",
 			`the device clock did not move to ${new Date(target).toISOString()} (\`cmd alarm set-time\` and \`adb root\` + \`date\` both failed)`,
 			{ detail: { serial: deps.serial } }

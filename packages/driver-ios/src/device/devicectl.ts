@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DriverError, DriverResult, Orientation } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { devicectlPbcopyArgv } from "../simctl";
 
@@ -105,9 +105,9 @@ export function devicectlError(what: string, result: ExecResult): DriverError {
 	const text = `${result.stderr}\n${result.stdout}`.trim();
 	const line = text.split("\n").find((l) => l.trim() !== "") ?? `exit ${result.exitCode}`;
 	if (LOCKED.test(text)) {
-		return driverError("E_DEVICE_LOCKED", `devicectl ${what}: ${line.trim()}`, { retryable: false });
+		return driverErrors.make("E_DEVICE_LOCKED", `devicectl ${what}: ${line.trim()}`, { retryable: false });
 	}
-	return driverError("E_IO", `devicectl ${what} failed: ${line.trim()}`);
+	return driverErrors.make("E_IO", `devicectl ${what} failed: ${line.trim()}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -156,7 +156,10 @@ export function createDevicectl(o: DevicectlOptions): Devicectl {
 				return { success: true as const, data: resultOf(JSON.parse(await read(out))) };
 			} catch (error) {
 				const why = error instanceof Error ? error.message : String(error);
-				return { success: false as const, error: driverError("E_IO", `devicectl ${what}: unreadable output (${why})`) };
+				return {
+					success: false as const,
+					error: driverErrors.make("E_IO", `devicectl ${what}: unreadable output (${why})`),
+				};
 			}
 		});
 	}
@@ -188,7 +191,7 @@ export function createDevicectl(o: DevicectlOptions): Devicectl {
 			if (style === "light" || style === "dark") return { success: true, data: style };
 			return {
 				success: false,
-				error: driverError("E_IO", `devicectl info appearance: no light/dark style (${String(style)})`),
+				error: driverErrors.make("E_IO", `devicectl info appearance: no light/dark style (${String(style)})`),
 			};
 		},
 		async setOrientation(orientation) {

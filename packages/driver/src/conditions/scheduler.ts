@@ -52,176 +52,223 @@ export type Scheduler = {
 	current(): SchedulerStatus;
 };
 
-/** mulberry32: small, fast, and the same sequence for the same seed. */
-export function seededRng(seed: number): () => number {
-	let a = seed >>> 0;
-	return () => {
-		a = (a + 0x6d2b79f5) >>> 0;
-		let t = a;
-		t = Math.imul(t ^ (t >>> 15), t | 1);
-		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-}
+/** Shared state of one scheduler run: abort control, status, and the applier that counts landed transitions. */
+class SchedulerCore {
+	readonly controller = new AbortController();
+	status: SchedulerStatus = { state: "running", transitions: 0 };
+	transitions = 0;
+	readonly tally = { failures: 0, lastError: "" };
+	private readonly net: SchedulerTarget["network"];
+	private readonly loc: SchedulerTarget["location"];
 
-const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/** Run one apply; a rejection is a failure like any other. */
-async function attempt(run: (() => Promise<StepResult>) | undefined, what: string): Promise<string | undefined> {
-	if (!run) return `target cannot apply ${what}`;
-	try {
-		const res = await run();
-		return res.success ? undefined : res.error.message;
-	} catch (e) {
-		return messageOf(e);
+	constructor(
+		target: SchedulerTarget,
+		private readonly deps: SchedulerDeps
+	) {
+		this.net = target.network?.bind(target);
+		this.loc = target.location?.bind(target);
 	}
-}
 
-type Core = {
-	signal: AbortSignal;
-	controller: AbortController;
-	status: SchedulerStatus;
-	transitions: number;
-};
-
-function core(): Core {
-	const controller = new AbortController();
-	return { controller, signal: controller.signal, status: { state: "running", transitions: 0 }, transitions: 0 };
-}
-
-function invalid(message: string): Scheduler {
-	return {
-		stop: () => undefined,
-		done: Promise.resolve({ transitions: 0, stopped: "failed", error: message }),
-		current: () => ({ state: "failed", transitions: 0, error: message }),
-	};
-}
-
-/** Settle the status and build the outcome; `error` makes it a failure. */
-function conclude(state: Core, end: "finished" | "aborted", error?: string): SchedulerOutcome {
-	const { transitions } = state;
-	if (error !== undefined) {
-		state.status = { state: "failed", transitions, error };
-		return { transitions, stopped: "failed", error };
+	get signal(): AbortSignal {
+		return this.controller.signal;
 	}
-	state.status = { state: end === "finished" ? "finished" : "stopped", transitions };
-	return { transitions, stopped: end };
-}
 
-/** Applies conditions to the target, counting the ones that landed and the failures in a row. */
-function applier(target: SchedulerTarget, deps: SchedulerDeps, state: Core) {
-	const net = target.network?.bind(target);
-	const loc = target.location?.bind(target);
-	const tally = { failures: 0, lastError: "" };
-	const record = async (run: (() => Promise<StepResult>) | undefined, what: string): Promise<boolean> => {
-		const failure = await attempt(run, what);
+	handle(done: Promise<SchedulerOutcome>): Scheduler {
+		return { stop: () => this.controller.abort(), done, current: () => this.status };
+	}
+
+	async network(condition: NetworkCondition): Promise<boolean> {
+		const { net } = this;
+		const landed = await this.record(net && (() => net(condition)), "network");
+		if (landed) this.deps.sink?.({ type: "condition", area: "network", value: condition, at: this.deps.now() });
+		return landed;
+	}
+
+	async location(op: LocationCondition): Promise<boolean> {
+		const { loc } = this;
+		const landed = await this.record(loc && (() => loc(op)), "location");
+		if (landed) this.deps.sink?.({ type: "condition", area: "location", value: op, at: this.deps.now() });
+		return landed;
+	}
+
+	/** Settle the status and build the outcome; `error` makes it a failure. */
+	conclude(end: "finished" | "aborted", error?: string): SchedulerOutcome {
+		const { transitions } = this;
+		if (error !== undefined) {
+			this.status = { state: "failed", transitions, error };
+			return { transitions, stopped: "failed", error };
+		}
+		this.status = { state: end === "finished" ? "finished" : "stopped", transitions };
+		return { transitions, stopped: end };
+	}
+
+	private async record(run: (() => Promise<StepResult>) | undefined, what: string): Promise<boolean> {
+		const failure = await this.attempt(run, what);
 		if (failure) {
-			tally.failures++;
-			tally.lastError = failure;
+			this.tally.failures++;
+			this.tally.lastError = failure;
 			return false;
 		}
-		tally.failures = 0;
-		state.transitions++;
+		this.tally.failures = 0;
+		this.transitions++;
 		return true;
-	};
-	return {
-		tally,
-		async network(condition: NetworkCondition): Promise<boolean> {
-			const landed = await record(net && (() => net(condition)), "network");
-			if (landed) deps.sink?.({ type: "condition", area: "network", value: condition, at: deps.now() });
-			return landed;
-		},
-		async location(op: LocationCondition): Promise<boolean> {
-			const landed = await record(loc && (() => loc(op)), "location");
-			if (landed) deps.sink?.({ type: "condition", area: "location", value: op, at: deps.now() });
-			return landed;
-		},
-	};
+	}
+
+	/** Run one apply; a rejection is a failure like any other. */
+	private async attempt(run: (() => Promise<StepResult>) | undefined, what: string): Promise<string | undefined> {
+		if (!run) return `target cannot apply ${what}`;
+		try {
+			const res = await run();
+			return res.success ? undefined : res.error.message;
+		} catch (e) {
+			return e instanceof Error ? e.message : String(e);
+		}
+	}
 }
 
-/**
- * Alternates the network between `base` (up, `upMs`) and offline (down, `downMs`), each phase stretched or
- * shrunk by up to `jitterPct` using a seeded rng, paced against the clock. Starts in the up phase. In this
- * process: the driver holds the handle and stops it on the next network op or `close()`; a detached child runs
- * the same loop (`scheduler.main.ts`). 3 failed transitions in a row end it as `failed`. However it ends, `base`
- * is put back before `done` resolves (best effort when it ended on a failure).
- */
-export function startFlap(target: SchedulerTarget, options: FlapOptions, deps: SchedulerDeps): Scheduler {
-	if (!(options.upMs > 0 && options.downMs > 0 && Number.isFinite(options.upMs + options.downMs))) {
-		return invalid("flap needs upMs and downMs above 0");
+/** One flap run: alternates the network between base and offline. */
+class FlapRun {
+	private readonly base: NetworkCondition;
+	private readonly rng: () => number;
+	private readonly jitter: number;
+
+	constructor(
+		private readonly state: SchedulerCore,
+		private readonly options: FlapOptions,
+		private readonly deps: SchedulerDeps,
+		rng: () => number
+	) {
+		this.base = options.base ?? ONLINE;
+		this.rng = rng;
+		this.jitter = (options.jitterPct ?? 0) / 100;
 	}
-	if (options.base?.kind === "flap") return invalid("flap base cannot itself be a flap");
-	const base = options.base ?? ONLINE;
-	const rng = deps.rng ?? seededRng(options.seed ?? 1);
-	const jitter = (options.jitterPct ?? 0) / 100;
-	const state = core();
-	const { signal } = state;
-	const apply = applier(target, deps, state);
-	const stretch = (ms: number): number => Math.max(1, ms * (1 + (rng() * 2 - 1) * jitter));
+
+	start(): Scheduler {
+		return this.state.handle(this.run());
+	}
+
+	private stretch(ms: number): number {
+		return Math.max(1, ms * (1 + (this.rng() * 2 - 1) * this.jitter));
+	}
 
 	/** One phase: put the device in it (unless the caller already did), then wait it out. Returns whether base is active. */
-	const runPhase = async (phase: "up" | "down", skipApply: boolean, deadline: number): Promise<[boolean, number]> => {
-		const landed = skipApply || (await apply.network(phase === "up" ? base : OFFLINE));
-		state.status = { state: "running", transitions: state.transitions, phase };
-		const next = deadline + stretch(phase === "up" ? options.upMs : options.downMs);
-		await deps.sleep(Math.max(0, next - deps.now()), signal);
+	private async runPhase(phase: "up" | "down", skipApply: boolean, deadline: number): Promise<[boolean, number]> {
+		const landed = skipApply || (await this.state.network(phase === "up" ? this.base : OFFLINE));
+		this.state.status = { state: "running", transitions: this.state.transitions, phase };
+		const next = deadline + this.stretch(phase === "up" ? this.options.upMs : this.options.downMs);
+		await this.deps.sleep(Math.max(0, next - this.deps.now()), this.state.signal);
 		return [landed && phase === "up", next];
-	};
+	}
 
-	const run = async (): Promise<SchedulerOutcome> => {
+	private async run(): Promise<SchedulerOutcome> {
 		let phase: "up" | "down" = "up";
 		let atBase = false;
-		let deadline = deps.now();
-		let skipApply = options.applyInitial === false;
-		while (!signal.aborted && apply.tally.failures < MAX_CONSECUTIVE_FAILURES) {
-			[atBase, deadline] = await runPhase(phase, skipApply, deadline);
+		let deadline = this.deps.now();
+		let skipApply = this.options.applyInitial === false;
+		while (!this.state.signal.aborted && this.state.tally.failures < MAX_CONSECUTIVE_FAILURES) {
+			[atBase, deadline] = await this.runPhase(phase, skipApply, deadline);
 			skipApply = false;
 			phase = phase === "up" ? "down" : "up";
 		}
-		const { failures, lastError } = apply.tally;
-		if (!atBase) await apply.network(base);
-		return conclude(state, "aborted", failures >= MAX_CONSECUTIVE_FAILURES ? lastError : undefined);
-	};
-
-	return { stop: () => state.controller.abort(), done: run(), current: () => state.status };
+		const { failures, lastError } = this.state.tally;
+		if (!atBase) await this.state.network(this.base);
+		return this.state.conclude("aborted", failures >= MAX_CONSECUTIVE_FAILURES ? lastError : undefined);
+	}
 }
 
-/**
- * Runs `steps` in `atMs` order (ties keep the given order), each at `atMs` after the start, paced against the
- * clock. A step with both `network` and `location` applies the network first, then the location. A step counts
- * as failed when either part fails; 3 failed steps in a row end it as `failed`. Stopping leaves the device as
- * the last step left it (restoring is the spec API's job: it knows the previous conditions).
- */
-export function startTimeline(target: SchedulerTarget, steps: readonly TimelineStep[], deps: SchedulerDeps): Scheduler {
-	if (steps.some((s) => !(s.atMs >= 0) || !Number.isFinite(s.atMs))) return invalid("timeline atMs must be 0 or more");
-	const ordered = [...steps].sort((a, b) => a.atMs - b.atMs);
-	const startedAt = deps.now();
-	const state = core();
-	const { signal } = state;
-	const apply = applier(target, deps, state);
+/** One timeline run: applies steps at their offsets. */
+class TimelineRun {
+	private readonly ordered: TimelineStep[];
+	private readonly startedAt: number;
+
+	constructor(
+		private readonly state: SchedulerCore,
+		steps: readonly TimelineStep[],
+		private readonly deps: SchedulerDeps
+	) {
+		this.ordered = [...steps].sort((a, b) => a.atMs - b.atMs);
+		this.startedAt = deps.now();
+	}
+
+	start(): Scheduler {
+		return this.state.handle(this.run());
+	}
 
 	/** Both parts always run; the problem is every part's failure, or nothing when all landed. */
-	const runStep = async (step: TimelineStep): Promise<string | undefined> => {
+	private async runStep(step: TimelineStep): Promise<string | undefined> {
 		const errors: string[] = [];
-		if (step.network && !(await apply.network(step.network))) errors.push(apply.tally.lastError);
-		if (step.location && !(await apply.location(step.location))) errors.push(apply.tally.lastError);
+		if (step.network && !(await this.state.network(step.network))) errors.push(this.state.tally.lastError);
+		if (step.location && !(await this.state.location(step.location))) errors.push(this.state.tally.lastError);
 		return errors.length > 0 ? errors.join("; ") : undefined;
-	};
+	}
 
-	const run = async (): Promise<SchedulerOutcome> => {
+	private async run(): Promise<SchedulerOutcome> {
+		const { signal } = this.state;
 		let stepFailures = 0;
 		let lastError = "";
-		for (const [index, step] of ordered.entries()) {
-			await deps.sleep(Math.max(0, startedAt + step.atMs - deps.now()), signal);
+		for (const [index, step] of this.ordered.entries()) {
+			await this.deps.sleep(Math.max(0, this.startedAt + step.atMs - this.deps.now()), signal);
 			if (signal.aborted) break;
-			state.status = { state: "running", transitions: state.transitions, step: index };
-			const problem = await runStep(step);
+			this.state.status = { state: "running", transitions: this.state.transitions, step: index };
+			const problem = await this.runStep(step);
 			stepFailures = problem === undefined ? 0 : stepFailures + 1;
 			lastError = problem ?? lastError;
-			if (stepFailures >= MAX_CONSECUTIVE_FAILURES) return conclude(state, "aborted", lastError);
+			if (stepFailures >= MAX_CONSECUTIVE_FAILURES) return this.state.conclude("aborted", lastError);
 		}
-		return conclude(state, signal.aborted ? "aborted" : "finished");
-	};
-
-	return { stop: () => state.controller.abort(), done: run(), current: () => state.status };
+		return this.state.conclude(signal.aborted ? "aborted" : "finished");
+	}
 }
+
+/** Flap and timeline schedulers for network / location conditions. Use the shared {@link schedulers} singleton. */
+export class Schedulers {
+	/** mulberry32: small, fast, and the same sequence for the same seed. */
+	seededRng(seed: number): () => number {
+		let a = seed >>> 0;
+		return () => {
+			a = (a + 0x6d2b79f5) >>> 0;
+			let t = a;
+			t = Math.imul(t ^ (t >>> 15), t | 1);
+			t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+			return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+		};
+	}
+
+	/**
+	 * Alternates the network between `base` (up, `upMs`) and offline (down, `downMs`), each phase stretched or
+	 * shrunk by up to `jitterPct` using a seeded rng, paced against the clock. Starts in the up phase. In this
+	 * process: the driver holds the handle and stops it on the next network op or `close()`; a detached child runs
+	 * the same loop (`scheduler.main.ts`). 3 failed transitions in a row end it as `failed`. However it ends, `base`
+	 * is put back before `done` resolves (best effort when it ended on a failure).
+	 */
+	startFlap(target: SchedulerTarget, options: FlapOptions, deps: SchedulerDeps): Scheduler {
+		if (!(options.upMs > 0 && options.downMs > 0 && Number.isFinite(options.upMs + options.downMs))) {
+			return this.invalid("flap needs upMs and downMs above 0");
+		}
+		if (options.base?.kind === "flap") return this.invalid("flap base cannot itself be a flap");
+		const rng = deps.rng ?? this.seededRng(options.seed ?? 1);
+		return new FlapRun(new SchedulerCore(target, deps), options, deps, rng).start();
+	}
+
+	/**
+	 * Runs `steps` in `atMs` order (ties keep the given order), each at `atMs` after the start, paced against the
+	 * clock. A step with both `network` and `location` applies the network first, then the location. A step counts
+	 * as failed when either part fails; 3 failed steps in a row end it as `failed`. Stopping leaves the device as
+	 * the last step left it (restoring is the spec API's job: it knows the previous conditions).
+	 */
+	startTimeline(target: SchedulerTarget, steps: readonly TimelineStep[], deps: SchedulerDeps): Scheduler {
+		if (steps.some((s) => !(s.atMs >= 0) || !Number.isFinite(s.atMs))) {
+			return this.invalid("timeline atMs must be 0 or more");
+		}
+		return new TimelineRun(new SchedulerCore(target, deps), steps, deps).start();
+	}
+
+	private invalid(message: string): Scheduler {
+		return {
+			stop: () => undefined,
+			done: Promise.resolve({ transitions: 0, stopped: "failed", error: message }),
+			current: () => ({ state: "failed", transitions: 0, error: message }),
+		};
+	}
+}
+
+export const schedulers = new Schedulers();

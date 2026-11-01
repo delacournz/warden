@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { uiDir } from "./paths";
 import {
@@ -148,7 +148,9 @@ describe("ui state", () => {
 
 	test("last-snapshot round-trips with `flat` rebuilt from the tree; writes leave no temp files", () => {
 		const ctx = setup();
-		const snapshot = snapshotOf([el("window", { children: [el("button", { label: "Go", id: "go" })] })]);
+		const snapshot = driverFixtures.snapshotOf([
+			driverFixtures.el("window", { children: [driverFixtures.el("button", { label: "Go", id: "go" })] }),
+		]);
 		writeLastSnapshot(ctx, "U1", { generation: 2, takenAt: 7, hash: "h", snapshot });
 		const back = readLastSnapshot(ctx, "U1");
 		expect(back?.generation).toBe(2);
@@ -168,7 +170,7 @@ describe("ui state", () => {
 		writeFileSync(state, JSON.stringify({ generation: 5, helper: { pid: 7, socket: "/s" }, extra: true }));
 		expect(readState(ctx, "U1")).toEqual({ generation: 5, helper: { pid: 7, socket: "/s" }, updatedAt: 0 });
 
-		const snapshot = snapshotOf([el("button", { label: "Go", id: "go" })]);
+		const snapshot = driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Go", id: "go" })]);
 		writeLastSnapshot(ctx, "U1", { generation: 2, takenAt: 7, hash: "h", snapshot });
 		const file = join(uiDir(ctx, "U1"), "last-snapshot.json");
 		const stored = JSON.parse(readFileSync(file, "utf8"));

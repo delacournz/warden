@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LatLon } from "@delacour/warden-config/conditions.types";
-import { routeSteps } from "@delacour/warden-driver/conditions/geo";
+import { geoMath } from "@delacour/warden-driver/conditions/geo";
 import { ANDROID_SCENARIOS } from "@delacour/warden-driver/conditions/location-scenarios.data";
 import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type { Driver } from "@delacour/warden-driver/driver.types";
@@ -93,7 +93,7 @@ describe("android location", () => {
 		const { driver, fixes } = await setup("emulator-5554", [], instant);
 		const res = await driver.location({ kind: "route", points: [A, B], speedMps: 20, intervalS: 1 });
 		expect(res.success).toBe(true);
-		const expected = routeSteps([A, B], 20, 1).length + 1;
+		const expected = geoMath.routeSteps([A, B], 20, 1).length + 1;
 		for (let i = 0; i < 100 && fixes().length < expected; i++) await Bun.sleep(5);
 		expect(fixes()).toHaveLength(expected);
 		const last = fixes().at(-1);

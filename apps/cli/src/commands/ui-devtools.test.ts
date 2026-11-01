@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
 import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
 import { type FakeReply, fakeMetros, fakePages } from "@delacour/warden-devtools/testing/devtools";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
@@ -122,8 +122,8 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 			pidAlive: (pid) => alive.has(pid),
 		},
 	};
-	const driver = fakeDriver({
-		screens: [snapshotOf([el("window")], { platform: options.platform ?? "ios" })],
+	const driver = new FakeDriver({
+		screens: [driverFixtures.snapshotOf([driverFixtures.el("window")], { platform: options.platform ?? "ios" })],
 		platform: options.platform ?? "ios",
 	});
 	const deps: UiDeps = { driver: async () => resultFactory.ok(driver), sleep: async () => undefined, devtools };

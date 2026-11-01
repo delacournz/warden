@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { uiJsonSchema } from "@delacour/warden-sdk/contracts/ui";
 import { uiResultSchemaFor } from "@delacour/warden-sdk/contracts/ui-result";
 import { cleanupHarnesses, type Harness, harness, LOGIN, UDID } from "./ui.testing";
@@ -16,24 +16,29 @@ afterEach(() => {
  * logic moves; only `durationMs` (the fake clock) and the temp home are normalised.
  */
 
-const FORM = snapshotOf([
-	el("window", {
+const FORM = driverFixtures.snapshotOf([
+	driverFixtures.el("window", {
 		children: [
-			el("text", { label: "Welcome", id: "welcome" }),
-			el("textfield", {
+			driverFixtures.el("text", { label: "Welcome", id: "welcome" }),
+			driverFixtures.el("textfield", {
 				label: "Email",
 				id: "email",
 				value: "a@b.co",
 				frame: { x: 0, y: 100, width: 390, height: 44 },
 			}),
-			el("button", {
+			driverFixtures.el("button", {
 				label: "Sign in",
 				id: "sign-in-submit",
 				hittable: true,
 				frame: { x: 0, y: 150, width: 390, height: 44 },
 			}),
-			el("button", { label: "Cancel", id: "cancel", enabled: false, frame: { x: 0, y: 200, width: 390, height: 44 } }),
-			el("list", { id: "list", frame: { x: 20, y: 300, width: 350, height: 400 } }),
+			driverFixtures.el("button", {
+				label: "Cancel",
+				id: "cancel",
+				enabled: false,
+				frame: { x: 0, y: 200, width: 390, height: 44 },
+			}),
+			driverFixtures.el("list", { id: "list", frame: { x: 20, y: 300, width: 350, height: 400 } }),
 		],
 	}),
 ]);
@@ -209,7 +214,7 @@ describe("warden ui golden --json", () => {
 	}
 
 	test("a login-only tree still works for the legacy fixture", async () => {
-		const h = harness([snapshotOf(LOGIN)]);
+		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("find", "id=email", "--json")).toBe(0);
 		expect(UDID.length).toBeGreaterThan(0);
 	});

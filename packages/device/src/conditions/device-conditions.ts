@@ -24,7 +24,7 @@ import { textSizes } from "@delacour/warden-config/text-size";
 import {
 	type ConditionEvent,
 	type ConditionSink,
-	openConditionSink,
+	conditionEvents,
 } from "@delacour/warden-driver/conditions/condition-events";
 import { realTickerClock, type TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import {
@@ -32,8 +32,7 @@ import {
 	type SchedulerOutcome,
 	type SchedulerStatus,
 	type SchedulerTarget,
-	startFlap,
-	startTimeline,
+	schedulers,
 	type TimelineStep,
 } from "@delacour/warden-driver/conditions/scheduler";
 import type {
@@ -52,7 +51,7 @@ import type {
 	TimezoneState,
 } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { settled, toE2eError } from "@delacour/warden-driver/unwrap";
+import { driverCalls } from "@delacour/warden-driver/unwrap";
 import type { ConditionRecorder } from "./lease-recorder";
 
 /** A duration in ms, or text like `"10s"`, `"2m"`, `"2d"`. */
@@ -286,7 +285,7 @@ export function conditionsOf(device: object): ConditionsInternals | undefined {
 
 /** The condition sink for a session: events append to its `results.jsonl`; none without one. */
 export function conditionSinkFor(session: { results?: { path: string } }): ConditionSink | undefined {
-	return session.results === undefined ? undefined : openConditionSink(session.results.path);
+	return session.results === undefined ? undefined : conditionEvents.openSink(session.results.path);
 }
 
 export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceConditions {
@@ -325,9 +324,9 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 
 	/** One driver call: raced against the attempt's signal, a failure thrown as an `E2eError`. */
 	async function call<T>(what: string, run: () => DriverResult<T>): Promise<T> {
-		const result = await settled(run, what, deps.signal());
+		const result = await driverCalls.settled(run, what, deps.signal());
 		if (result.success) return result.data;
-		const error = toE2eError(result.error, what);
+		const error = driverCalls.toE2eError(result.error, what);
 		if (result.error.code === "E_NETWORK_RELAUNCH") {
 			throw new E2eError(
 				error.code,
@@ -394,7 +393,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		const base = options.base === undefined ? ONLINE : network(options.base);
 		if (base.kind === "flap") throw invalid("flap base cannot itself be a flap");
 		await applyNetwork(base, netOptions);
-		const scheduler = startFlap(
+		const scheduler = schedulers.startFlap(
 			target(netOptions),
 			{
 				upMs,
@@ -538,7 +537,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		const op: Driver["clock"] | undefined = driver.clock;
 		clockDirty = true;
 		if (typeof op !== "function") {
-			throw toE2eError(
+			throw driverCalls.toE2eError(
 				{ code: "E_UNSUPPORTED", message: "this driver has no clock condition", retryable: false },
 				"clock"
 			);
@@ -606,7 +605,10 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	): Driver[K] {
 		const op: Driver[K] | undefined = driver[name];
 		if (typeof op !== "function") {
-			throw toE2eError({ code: "E_UNSUPPORTED", message: `this driver has no ${name} op`, retryable: false }, name);
+			throw driverCalls.toE2eError(
+				{ code: "E_UNSUPPORTED", message: `this driver has no ${name} op`, retryable: false },
+				name
+			);
 		}
 		return op.bind(driver) as Driver[K];
 	}
@@ -734,7 +736,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		});
 		networkDirty = true;
 		locationDirty = true;
-		const scheduler = startTimeline(target(), converted, {
+		const scheduler = schedulers.startTimeline(target(), converted, {
 			...ticker,
 			...(deps.sink === undefined ? {} : { sink: deps.sink }),
 		});

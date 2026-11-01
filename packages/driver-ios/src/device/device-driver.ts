@@ -13,11 +13,11 @@ import type {
 	Point,
 	Snapshot,
 } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { AlertButtonsData, OpData } from "@delacour/warden-driver/helper/simd-protocol";
-import { physicalConditionOps } from "@delacour/warden-driver/physical-conditions";
-import { type SettleDetail, settleByHash, snapshotHash } from "@delacour/warden-driver/settle";
-import { noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
+import { type SettleDetail, settler } from "@delacour/warden-driver/settle";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Result } from "@delacour/warden-types/result";
 import { KEY_USAGE } from "../ios-driver";
@@ -88,7 +88,7 @@ function fail(error: DriverError) {
 }
 
 const unsupported = (what: string, why: string) =>
-	fail(driverError("E_UNSUPPORTED", `${what} is not available on a physical iPhone: ${why}`));
+	fail(driverErrors.make("E_UNSUPPORTED", `${what} is not available on a physical iPhone: ${why}`));
 
 class DriverFailure extends Error {
 	constructor(readonly error: DriverError) {
@@ -141,15 +141,15 @@ export function createIosDeviceDriver(
 
 	async function settle(o: { quietMs?: number; timeoutMs?: number } = {}): DriverResult<SettleDetail> {
 		try {
-			const outcome = await settleByHash(
+			const outcome = await settler.byHash(
 				async () => {
 					const snap = await snapshot();
 					if (!snap.success) throw new DriverFailure(snap.error);
-					return snapshotHash(snap.data);
+					return settler.snapshotHash(snap.data);
 				},
 				{ quietMs: o.quietMs ?? DEFAULT_QUIET_MS, timeoutMs: o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS, now, sleep }
 			);
-			noteSpanDetail("via", "hash");
+			spanDetails.note("via", "hash");
 			return { success: true, data: { ...outcome, via: "hash" } };
 		} catch (error) {
 			if (error instanceof DriverFailure) return fail(error.error);
@@ -161,7 +161,7 @@ export function createIosDeviceDriver(
 		const viaRunner = await request("screenshot", params({ scale: o?.scale }));
 		if (viaRunner.success) {
 			const { png } = viaRunner.data;
-			if (png === undefined) return fail(driverError("E_INTERNAL", "warden-runner screenshot returned no png"));
+			if (png === undefined) return fail(driverErrors.make("E_INTERNAL", "warden-runner screenshot returned no png"));
 			const bytes = new Uint8Array(Buffer.from(png, "base64"));
 			if (o?.path === undefined) return { success: true, data: { png: bytes } };
 			await opts.write(o.path, bytes);
@@ -226,7 +226,7 @@ export function createIosDeviceDriver(
 	}
 
 	async function pressButton(button: HardwareButton): DriverResult<void> {
-		if (button === "back") return fail(driverError("E_UNSUPPORTED", "iOS has no hardware back button"));
+		if (button === "back") return fail(driverErrors.make("E_UNSUPPORTED", "iOS has no hardware back button"));
 		if (button === "shake") return unsupported("shake", "the XCUITest runner cannot shake the phone");
 		return sendVoid("pressButton", { button });
 	}
@@ -238,7 +238,9 @@ export function createIosDeviceDriver(
 		const back = await devicectl.pasteboardPaste();
 		if (!back.success) return back;
 		if (back.data !== set) {
-			return fail(driverError("E_IO", "devicectl pasteboard copy exited 0 but the pasteboard does not hold the text"));
+			return fail(
+				driverErrors.make("E_IO", "devicectl pasteboard copy exited 0 but the pasteboard does not hold the text")
+			);
 		}
 		return { success: true, data: set };
 	}
@@ -246,7 +248,7 @@ export function createIosDeviceDriver(
 	/** The refusal for a bundle warden did not install; a phone is somebody's, only warden's own installs are touched. */
 	function guard(bundleId: string, action: "uninstall" | "clear the data of"): DriverError | undefined {
 		if (owned.has(bundleId)) return undefined;
-		return driverError(
+		return driverErrors.make(
 			"E_REFUSED",
 			`physical_protected: ${bundleId} was not installed by warden; refusing to ${action} it on physical device ${udid}`,
 			{ retryable: false, detail: { reason: "physical_protected", bundleId } }
@@ -271,12 +273,15 @@ export function createIosDeviceDriver(
 		if (refused) return fail(refused);
 		if (opts.appPath === undefined) {
 			return fail(
-				driverError("E_BAD_REQUEST", "clearData reinstalls the app and needs WARDEN_APP_PATH (the build to put back)")
+				driverErrors.make(
+					"E_BAD_REQUEST",
+					"clearData reinstalls the app and needs WARDEN_APP_PATH (the build to put back)"
+				)
 			);
 		}
 		const removed = await devicectl.uninstall(bundleId);
 		if (!removed.success) return removed;
-		noteSpanDetail("keychainKept", true);
+		spanDetails.note("keychainKept", true);
 		opts.log?.(`[ios-device] clearData(${bundleId}): reinstalled; the keychain items of the app were kept`);
 		return install(opts.appPath);
 	}
@@ -311,7 +316,7 @@ export function createIosDeviceDriver(
 		gesture: async () => unsupported("gesture", "the XCUITest runner takes taps, swipes and drags only"),
 		biometrics: async () =>
 			unsupported("biometrics", "Face ID / Touch ID cannot be simulated on a real sensor; use a simulator"),
-		...physicalConditionOps(`physical iPhone ${udid}`),
+		...physicalConditions.ops(`physical iPhone ${udid}`),
 		typeText: (text) => sendVoid("typeText", { text }, deviceTypeTextBudgetMs(text)),
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		pressButton,
@@ -324,7 +329,7 @@ export function createIosDeviceDriver(
 		async appearance(set) {
 			if (set !== undefined) {
 				return fail(
-					driverError(
+					driverErrors.make(
 						"E_REFUSED",
 						`physical_protected: changing the appearance is a persistent settings write on physical device ${udid}`,
 						{ retryable: false, detail: { reason: "physical_protected" } }
@@ -350,7 +355,8 @@ export function createIosDeviceDriver(
 				const result = await request("appState", { bundleId });
 				if (!result.success) return result;
 				const state = parseAppState(result.data);
-				if (state === undefined) return fail(driverError("E_INTERNAL", "warden-runner appState returned no state"));
+				if (state === undefined)
+					return fail(driverErrors.make("E_INTERNAL", "warden-runner appState returned no state"));
 				return { success: true, data: isRunning(state) };
 			},
 			clearData: (bundleId) => clearData(bundleId),
@@ -365,7 +371,7 @@ async function runnerClient(o: OpenIosDeviceDriverOptions, log: Logger): Promise
 	const socketPath = o.socketPath ?? o.env?.iosRunnerSocket;
 	if (!socketPath) {
 		return fail(
-			driverError(
+			driverErrors.make(
 				"E_HELPER_MISSING",
 				`no iOS runner for ${o.udid}: WARDEN_IOS_RUNNER_SOCKET is not set (warden starts the runner host with \`warden ui\` / \`warden e2e\`)`
 			)

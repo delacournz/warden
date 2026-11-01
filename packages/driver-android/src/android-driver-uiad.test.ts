@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
-import { canDetectAlerts } from "@delacour/warden-driver/observation-cache";
-import { settleDetailOf } from "@delacour/warden-driver/settle";
-import { canRepeatKeys, canSelectAll, canSetText } from "@delacour/warden-driver/typing";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { settler } from "@delacour/warden-driver/settle";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import { openAndroidDriver } from "./android-driver";
 import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
 import { type AndroidStateStore, memoryAndroidState } from "./android-state";
@@ -74,7 +74,7 @@ describe("off by default", () => {
 		await value(driver.tap({ x: 10, y: 20 }));
 		expect(dumps(host)).toBe(1);
 		expect(inputs(host)).toEqual(["input tap 10 20"]);
-		expect(canSelectAll(driver)).toBe(true);
+		expect(deviceTyping.canSelectAll(driver)).toBe(true);
 	});
 
 	test("an Android that predates the server's API level keeps the dump, whatever was asked", async () => {
@@ -84,13 +84,13 @@ describe("off by default", () => {
 		expect(uiad.started()).toBe(0);
 		expect(dumps(host)).toBe(1);
 		expect(driver.capabilities.nativeSettle).toBe(false);
-		expect(canSelectAll(driver)).toBe(false);
-		expect(canSetText(driver)).toBe(false);
+		expect(deviceTyping.canSelectAll(driver)).toBe(false);
+		expect(deviceTyping.canSetText(driver)).toBe(false);
 	});
 
 	test("without the server option there is no setText: a fill types as before", async () => {
 		const { driver } = await setup({ uiad: false });
-		expect(canSetText(driver)).toBe(false);
+		expect(deviceTyping.canSetText(driver)).toBe(false);
 	});
 });
 
@@ -98,7 +98,7 @@ describe("with the server", () => {
 	test("reports what it can do: native settle, unicode text, and select-all on any level it runs on", async () => {
 		const { driver } = await setup({ sdk: 30 });
 		expect(driver.capabilities).toMatchObject({ unicodeText: true, nativeSettle: true });
-		expect(canSelectAll(driver)).toBe(true);
+		expect(deviceTyping.canSelectAll(driver)).toBe(true);
 	});
 
 	test("reports pinch and two pointers", async () => {
@@ -175,14 +175,14 @@ describe("with the server", () => {
 
 	test("an alert is read out of a server snapshot as out of a dump", async () => {
 		const { driver } = await setup();
-		if (!canDetectAlerts(driver)) throw new Error("no alertIn");
+		if (!observations.canDetectAlerts(driver)) throw new Error("no alertIn");
 		const snapshot = await value(driver.snapshot());
 		expect(driver.alertIn(snapshot)).toBeNull();
 	});
 
 	test("settle is the server's stream, one request, and no dump", async () => {
 		const { driver, host, uiad } = await setup();
-		const outcome = settleDetailOf(await value(driver.settle({ quietMs: 250 })));
+		const outcome = settler.detailOf(await value(driver.settle({ quietMs: 250 })));
 		expect(outcome).toMatchObject({ quiet: true, via: "stream" });
 		expect(uiad.of("settle")[0]).toMatchObject({ quietMs: 250, timeoutMs: 3000 });
 		expect(dumps(host)).toBe(0);
@@ -218,7 +218,7 @@ describe("with the server", () => {
 
 	test("repeated keys are one request", async () => {
 		const { driver, host, uiad } = await setup();
-		if (!canRepeatKeys(driver)) throw new Error("no repeat");
+		if (!deviceTyping.canRepeatKeys(driver)) throw new Error("no repeat");
 		await value(driver.pressKeyRepeat("Backspace", 12));
 		expect(uiad.of("key")[0]).toMatchObject({ keyCode: 67, times: 12 });
 		expect(inputs(host)).toEqual([]);
@@ -237,7 +237,7 @@ describe("with the server", () => {
 		const { driver, host, uiad } = await setup({
 			uiad: { handle: (r) => (r.op === "setText" ? { data: { text: r.text } } : undefined) },
 		});
-		if (!canSetText(driver)) throw new Error("no setText");
+		if (!deviceTyping.canSetText(driver)) throw new Error("no setText");
 		await value(driver.setText("grace@example.com"));
 		expect(uiad.of("setText")).toEqual([expect.objectContaining({ op: "setText", text: "grace@example.com" })]);
 		expect(uiad.of("setText")[0]).not.toHaveProperty("resourceId");
@@ -247,7 +247,7 @@ describe("with the server", () => {
 
 	test("setText of empty text is the recorded reply", async () => {
 		const { driver, uiad } = await setup();
-		if (!canSetText(driver)) throw new Error("no setText");
+		if (!deviceTyping.canSetText(driver)) throw new Error("no setText");
 		await value(driver.setText(""));
 		expect(uiad.of("setText")[0]).toMatchObject({ text: "" });
 	});
@@ -261,7 +261,7 @@ describe("with the server", () => {
 						: undefined,
 			},
 		});
-		if (!canSetText(driver)) throw new Error("no setText");
+		if (!deviceTyping.canSetText(driver)) throw new Error("no setText");
 		const set = await driver.setText("abc");
 		expect(set.success).toBe(false);
 		if (!set.success) expect(set.error.code).toBe("E_UNSUPPORTED");
@@ -276,14 +276,14 @@ describe("with the server", () => {
 
 	test("select-all with nothing focused falls back to Ctrl+A where the device has it", async () => {
 		const { driver, host } = await setup({ sdk: 34 });
-		if (!canSelectAll(driver)) throw new Error("no selectAll");
+		if (!deviceTyping.canSelectAll(driver)) throw new Error("no selectAll");
 		await value(driver.selectAll());
 		expect(inputs(host)).toEqual(["input keycombination 113 29"]);
 	});
 
 	test("select-all with nothing focused on an older device is refused, and the caller backspaces instead", async () => {
 		const { driver, host } = await setup({ sdk: 30 });
-		if (!canSelectAll(driver)) throw new Error("no selectAll");
+		if (!deviceTyping.canSelectAll(driver)) throw new Error("no selectAll");
 		const selected = await driver.selectAll();
 		expect(selected.success).toBe(false);
 		expect(inputs(host)).toEqual([]);
@@ -354,7 +354,7 @@ describe("fallbacks", () => {
 
 	test("a settle on a server that died falls back to the dump-based settle", async () => {
 		const { driver, host } = await setup({ uiad: { handle: (r) => (r.op === "settle" ? "die" : undefined) } });
-		const outcome = settleDetailOf(await value(driver.settle({ quietMs: 250 })));
+		const outcome = settler.detailOf(await value(driver.settle({ quietMs: 250 })));
 		expect(outcome.via).toBe("snapshot");
 		expect(dumps(host)).toBe(1);
 	});

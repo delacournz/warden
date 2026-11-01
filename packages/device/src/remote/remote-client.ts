@@ -9,8 +9,8 @@ import type {
 	KeyName,
 	Snapshot,
 } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
-import { socketTransport, type Transport } from "@delacour/warden-driver/helper/simd-transport";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { simdTransports, type Transport } from "@delacour/warden-driver/helper/simd-transport";
 import type { DetectsAlerts } from "@delacour/warden-driver/observation-cache";
 import type { RepeatingKeys, SelectsAll, SetsText } from "@delacour/warden-driver/typing";
 import { detectAlert } from "@delacour/warden-driver-android/android-alert";
@@ -107,17 +107,17 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		);
 	};
 
-	const opened = await socketTransport({ socketPath: options.socketPath })({
+	const opened = await simdTransports.socket({ socketPath: options.socketPath })({
 		onLine,
 		onDiagnostic: () => undefined,
 		onClose: () =>
-			failAll(driverError("E_HELPER_CRASHED", `the driver host on ${options.socketPath} closed the connection`)),
+			failAll(driverErrors.make("E_HELPER_CRASHED", `the driver host on ${options.socketPath} closed the connection`)),
 	});
 	if (!opened.success) return opened;
 	const transport: Transport = opened.data;
 
 	const timeout = setTimeout(
-		() => onReady({ success: false, error: driverError("E_TIMEOUT", `no ready event on ${options.socketPath}`) }),
+		() => onReady({ success: false, error: driverErrors.make("E_TIMEOUT", `no ready event on ${options.socketPath}`) }),
 		options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
 	);
 	const ready = await readyPromise;
@@ -130,7 +130,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 		await transport.close();
 		return {
 			success: false,
-			error: driverError(
+			error: driverErrors.make(
 				"E_HELPER_CRASHED",
 				`the driver host speaks protocol ${ready.data.protocol}, this warden expects ${REMOTE_PROTOCOL}`,
 				{ retryable: false }
@@ -146,7 +146,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			const ms = opts.timeoutMs ?? requestTimeoutMs;
 			const timer = setTimeout(() => {
 				pending.delete(id);
-				resolve({ success: false, error: driverError("E_TIMEOUT", `\`${op}\` got no answer within ${ms} ms`) });
+				resolve({ success: false, error: driverErrors.make("E_TIMEOUT", `\`${op}\` got no answer within ${ms} ms`) });
 			}, ms);
 			pending.set(id, { resolve, timer });
 			transport.send(`${JSON.stringify({ id, op, args })}\n`);
@@ -158,7 +158,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 
 	const close = async () => {
 		await transport.close();
-		failAll(driverError("E_HELPER_CRASHED", "the remote driver connection is closed"));
+		failAll(driverErrors.make("E_HELPER_CRASHED", "the remote driver connection is closed"));
 	};
 
 	const app: AppCommands = {

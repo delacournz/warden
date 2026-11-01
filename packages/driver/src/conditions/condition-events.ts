@@ -28,17 +28,7 @@ export type ConditionEvent =
 
 export type ConditionSink = (event: ConditionEvent) => void;
 
-/** A sink that appends each event as one JSON line (`appendFileSync`: a crash never loses an earlier line). */
-export function openConditionSink(path: string): ConditionSink {
-	let ready = false;
-	return (event) => {
-		if (!ready) {
-			mkdirSync(dirname(path), { recursive: true });
-			ready = true;
-		}
-		appendFileSync(path, `${JSON.stringify(event)}\n`);
-	};
-}
+type ActiveConditions = { network?: NetworkCondition; location?: LocationCondition; clock?: ClockCondition };
 
 const KNOWN_AREAS: ReadonlySet<string> = new Set([
 	"network",
@@ -51,54 +41,69 @@ const KNOWN_AREAS: ReadonlySet<string> = new Set([
 	"battery",
 ]);
 
-function parseEvent(line: string): ConditionEvent | undefined {
-	let json: unknown;
-	try {
-		json = JSON.parse(line);
-	} catch {
-		return undefined;
+/** Writes and reads condition evidence. Use the shared {@link conditionEvents} singleton. */
+export class ConditionEvents {
+	/** A sink that appends each event as one JSON line (`appendFileSync`: a crash never loses an earlier line). */
+	openSink(path: string): ConditionSink {
+		let ready = false;
+		return (event) => {
+			if (!ready) {
+				mkdirSync(dirname(path), { recursive: true });
+				ready = true;
+			}
+			appendFileSync(path, `${JSON.stringify(event)}\n`);
+		};
 	}
-	if (typeof json !== "object" || json === null) return undefined;
-	const e = json as Record<string, unknown>;
-	const known = KNOWN_AREAS.has(String(e.area));
-	const shaped = e.type === "condition" && typeof e.at === "number" && typeof e.value === "object" && e.value !== null;
-	return known && shaped ? (json as ConditionEvent) : undefined;
-}
 
-/** Condition events in file order; every other line (test results, blank, truncated) is skipped. */
-export function readConditionEvents(text: string): ConditionEvent[] {
-	return text
-		.split("\n")
-		.map(parseEvent)
-		.filter((e): e is ConditionEvent => e !== undefined);
-}
+	/** Condition events in file order; every other line (test results, blank, truncated) is skipped. */
+	read(text: string): ConditionEvent[] {
+		return text
+			.split("\n")
+			.map((line) => this.parseEvent(line))
+			.filter((e): e is ConditionEvent => e !== undefined);
+	}
 
-/** What was active per area at epoch ms `at`: the latest event at or before it. */
-export function activeConditionsAt(
-	events: readonly ConditionEvent[],
-	at: number
-): { network?: NetworkCondition; location?: LocationCondition; clock?: ClockCondition } {
-	const active: { network?: NetworkCondition; location?: LocationCondition; clock?: ClockCondition } = {};
-	let networkAt = Number.NEGATIVE_INFINITY;
-	let locationAt = Number.NEGATIVE_INFINITY;
-	let clockAt = Number.NEGATIVE_INFINITY;
-	for (const e of events) {
-		if (e.at > at) continue;
-		if (e.area === "network" && e.at >= networkAt) {
-			active.network = e.value;
-			networkAt = e.at;
-		} else if (e.area === "location" && e.at >= locationAt) {
-			active.location = e.value;
-			locationAt = e.at;
-		} else if (e.area === "clock" && e.at >= clockAt) {
-			active.clock = e.value;
-			clockAt = e.at;
+	/** What was active per area at epoch ms `at`: the latest event at or before it. */
+	activeAt(events: readonly ConditionEvent[], at: number): ActiveConditions {
+		const active: ActiveConditions = {};
+		let networkAt = Number.NEGATIVE_INFINITY;
+		let locationAt = Number.NEGATIVE_INFINITY;
+		let clockAt = Number.NEGATIVE_INFINITY;
+		for (const e of events) {
+			if (e.at > at) continue;
+			if (e.area === "network" && e.at >= networkAt) {
+				active.network = e.value;
+				networkAt = e.at;
+			} else if (e.area === "location" && e.at >= locationAt) {
+				active.location = e.value;
+				locationAt = e.at;
+			} else if (e.area === "clock" && e.at >= clockAt) {
+				active.clock = e.value;
+				clockAt = e.at;
+			}
 		}
+		return active;
 	}
-	return active;
+
+	/** The `kind` of an event's value (`offline`, `point`, ...); the area name for a setting that has none (`permission`, `a11y`). */
+	kind(event: ConditionEvent): string {
+		return "kind" in event.value ? event.value.kind : event.area;
+	}
+
+	private parseEvent(line: string): ConditionEvent | undefined {
+		let json: unknown;
+		try {
+			json = JSON.parse(line);
+		} catch {
+			return undefined;
+		}
+		if (typeof json !== "object" || json === null) return undefined;
+		const e = json as Record<string, unknown>;
+		const known = KNOWN_AREAS.has(String(e.area));
+		const shaped =
+			e.type === "condition" && typeof e.at === "number" && typeof e.value === "object" && e.value !== null;
+		return known && shaped ? (json as ConditionEvent) : undefined;
+	}
 }
 
-/** The `kind` of an event's value (`offline`, `point`, ...); the area name for a setting that has none (`permission`, `a11y`). */
-export function eventKind(event: ConditionEvent): string {
-	return "kind" in event.value ? event.value.kind : event.area;
-}
+export const conditionEvents = new ConditionEvents();

@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
-import { snapshotHash } from "@delacour/warden-driver/settle";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { settler } from "@delacour/warden-driver/settle";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { StoredSnapshot } from "./ref-store";
 import { parseTarget, REF_MAX_AGE_MS, resolveTarget, type Target } from "./target";
 
 const T0 = 1_000_000;
 
 function stored(snapshot: Snapshot, takenAt = T0, generation = 4): StoredSnapshot {
-	return { generation, takenAt, hash: snapshotHash(snapshot), snapshot };
+	return { generation, takenAt, hash: settler.snapshotHash(snapshot), snapshot };
 }
 
 function unwrapTarget(text: string): Target {
@@ -40,7 +40,7 @@ describe("parseTarget", () => {
 
 describe("resolveTarget: coordinates", () => {
 	test("a point needs no snapshot and no driver call", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const res = await resolveTarget(unwrapTarget("10 20"), { lastSnapshot: undefined, now: T0, verify: false, driver });
 		expect(res).toEqual({ success: true, data: { kind: "point", point: { x: 10, y: 20 } } });
 		expect(driver.calls).toEqual([]);
@@ -49,13 +49,13 @@ describe("resolveTarget: coordinates", () => {
 
 describe("resolveTarget: @eN", () => {
 	const screen = () =>
-		snapshotOf([
-			el("text", { label: "Title" }),
-			el("button", { label: "Sign in", id: "go", frame: { x: 20, y: 300, width: 200, height: 40 } }),
+		driverFixtures.snapshotOf([
+			driverFixtures.el("text", { label: "Title" }),
+			driverFixtures.el("button", { label: "Sign in", id: "go", frame: { x: 20, y: 300, width: 200, height: 40 } }),
 		]);
 
 	test("recent ref: taken from the stored snapshot, no device call; tap point = frame centre", async () => {
-		const driver = fakeDriver({ screens: [screen()] });
+		const driver = new FakeDriver({ screens: [screen()] });
 		const res = await resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0 + REF_MAX_AGE_MS,
@@ -67,12 +67,12 @@ describe("resolveTarget: @eN", () => {
 	});
 
 	test("older than 30 s: re-verified by id against a fresh snapshot, using the fresh frame", async () => {
-		const moved = snapshotOf([
-			el("text", { label: "Title" }),
-			el("text", { label: "Banner" }),
-			el("button", { label: "Sign in", id: "go", frame: { x: 20, y: 400, width: 200, height: 40 } }),
+		const moved = driverFixtures.snapshotOf([
+			driverFixtures.el("text", { label: "Title" }),
+			driverFixtures.el("text", { label: "Banner" }),
+			driverFixtures.el("button", { label: "Sign in", id: "go", frame: { x: 20, y: 400, width: 200, height: 40 } }),
 		]);
-		const driver = fakeDriver({ screens: [moved] });
+		const driver = new FakeDriver({ screens: [moved] });
 		const res = await resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0 + REF_MAX_AGE_MS + 1,
@@ -84,7 +84,7 @@ describe("resolveTarget: @eN", () => {
 	});
 
 	test("--verify re-checks a recent ref too", async () => {
-		const driver = fakeDriver({ screens: [screen()] });
+		const driver = new FakeDriver({ screens: [screen()] });
 		const res = await resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0,
@@ -95,36 +95,45 @@ describe("resolveTarget: @eN", () => {
 	});
 
 	test("falls back to role+label, then path, when there is no id", async () => {
-		const plain = snapshotOf([el("text", { label: "Title" }), el("button", { label: "Done" })]);
-		const reordered = snapshotOf([
-			el("button", { label: "Done", frame: { x: 0, y: 500, width: 100, height: 40 } }),
-			el("text", { label: "Title" }),
+		const plain = driverFixtures.snapshotOf([
+			driverFixtures.el("text", { label: "Title" }),
+			driverFixtures.el("button", { label: "Done" }),
+		]);
+		const reordered = driverFixtures.snapshotOf([
+			driverFixtures.el("button", { label: "Done", frame: { x: 0, y: 500, width: 100, height: 40 } }),
+			driverFixtures.el("text", { label: "Title" }),
 		]);
 		const byLabel = await resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(plain),
 			now: T0,
 			verify: true,
-			driver: fakeDriver({ screens: [reordered] }),
+			driver: new FakeDriver({ screens: [reordered] }),
 		});
 		expect(byLabel).toMatchObject({ success: true, data: { point: { x: 50, y: 520 } } });
 
-		const relabelled = snapshotOf([el("text", { label: "Title" }), el("button", { label: "Finished" })]);
+		const relabelled = driverFixtures.snapshotOf([
+			driverFixtures.el("text", { label: "Title" }),
+			driverFixtures.el("button", { label: "Finished" }),
+		]);
 		const byPath = await resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(plain),
 			now: T0,
 			verify: true,
-			driver: fakeDriver({ screens: [relabelled] }),
+			driver: new FakeDriver({ screens: [relabelled] }),
 		});
 		expect(byPath.success).toBe(true);
 	});
 
 	test("after 30 s on a different screen: stale_ref (exit 4) with the snapshot-again hint", async () => {
-		const other = snapshotOf([el("text", { label: "Settings" }), el("switch", { label: "Dark mode", id: "dark" })]);
+		const other = driverFixtures.snapshotOf([
+			driverFixtures.el("text", { label: "Settings" }),
+			driverFixtures.el("switch", { label: "Dark mode", id: "dark" }),
+		]);
 		const res = await resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0 + 31_000,
 			verify: false,
-			driver: fakeDriver({ screens: [other] }),
+			driver: new FakeDriver({ screens: [other] }),
 		});
 		expect(res.success).toBe(false);
 		if (!res.success) {
@@ -136,7 +145,7 @@ describe("resolveTarget: @eN", () => {
 	});
 
 	test("a ref beyond the stored snapshot, or with no snapshot at all, is stale_ref", async () => {
-		const driver = fakeDriver({ screens: [screen()] });
+		const driver = new FakeDriver({ screens: [screen()] });
 		const missing = await resolveTarget(unwrapTarget("@e9"), {
 			lastSnapshot: stored(screen()),
 			now: T0,
@@ -149,7 +158,7 @@ describe("resolveTarget: @eN", () => {
 	});
 
 	test("a driver failure while verifying surfaces as a ui error", async () => {
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [screen()],
 			onCall: () => ({ error: { code: "E_HELPER_CRASHED", message: "boom", retryable: true } }),
 		});
@@ -164,22 +173,22 @@ describe("resolveTarget: @eN", () => {
 });
 
 describe("resolveTarget: selectors", () => {
-	const SCREEN = snapshotOf([
-		el("button", { label: "Save as…", id: "save-as", frame: { x: 0, y: 0, width: 300, height: 60 } }),
-		el("button", { label: "Save", id: "save", frame: { x: 0, y: 100, width: 100, height: 40 } }),
-		el("button", { label: "Save all", frame: { x: 0, y: 200, width: 100, height: 40 }, hidden: true }),
-		el("button", { label: "Save", frame: { x: 0, y: 300, width: 100, height: 40 } }),
+	const SCREEN = driverFixtures.snapshotOf([
+		driverFixtures.el("button", { label: "Save as…", id: "save-as", frame: { x: 0, y: 0, width: 300, height: 60 } }),
+		driverFixtures.el("button", { label: "Save", id: "save", frame: { x: 0, y: 100, width: 100, height: 40 } }),
+		driverFixtures.el("button", { label: "Save all", frame: { x: 0, y: 200, width: 100, height: 40 }, hidden: true }),
+		driverFixtures.el("button", { label: "Save", frame: { x: 0, y: 300, width: 100, height: 40 } }),
 	]);
 	const resolveIn = (text: string) =>
 		resolveTarget(unwrapTarget(text), {
 			lastSnapshot: undefined,
 			now: T0,
 			verify: false,
-			driver: fakeDriver({ screens: [SCREEN] }),
+			driver: new FakeDriver({ screens: [SCREEN] }),
 		});
 
 	test("always matched against a fresh snapshot", async () => {
-		const driver = fakeDriver({ screens: [SCREEN] });
+		const driver = new FakeDriver({ screens: [SCREEN] });
 		await resolveTarget(unwrapTarget("id=save"), { lastSnapshot: undefined, now: T0, verify: false, driver });
 		expect(driver.callsOf("snapshot")).toHaveLength(1);
 	});

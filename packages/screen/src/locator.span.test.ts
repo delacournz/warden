@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { el } from "@delacour/warden-driver/testing/driver";
-import { runSpan } from "@delacour/warden-driver/trace/span";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
+import { spans as spanWriter } from "@delacour/warden-driver/trace/span";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import { createScreen } from "./screen";
 import { staticDriver, testHost } from "./screen.testing";
@@ -10,13 +10,13 @@ function setup(options: { withSpans?: boolean } = {}) {
 	const sink = { write: (event: TraceEvent) => void events.push(event) };
 	const host = testHost(
 		staticDriver([
-			el("text", { id: "title", label: "Welcome" }),
-			el("switch", { id: "remember", label: "Remember me", value: "1", checked: true }),
-			el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
-			el("button", { id: "submit", label: "Sign in", hittable: true }),
+			driverFixtures.el("text", { id: "title", label: "Welcome" }),
+			driverFixtures.el("switch", { id: "remember", label: "Remember me", value: "1", checked: true }),
+			driverFixtures.el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
+			driverFixtures.el("button", { id: "submit", label: "Sign in", hittable: true }),
 		])
 	);
-	if (options.withSpans !== false) host.span = (op, fn, spanOptions) => runSpan(sink, op, fn, spanOptions);
+	if (options.withSpans !== false) host.span = (op, fn, spanOptions) => spanWriter.run(sink, op, fn, spanOptions);
 	const spans = () => events.flatMap((e) => (e.type === "span" ? [e] : []));
 	return { screen: createScreen(host), spans };
 }

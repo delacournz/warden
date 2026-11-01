@@ -5,17 +5,10 @@ import { join } from "node:path";
 import { conditionsOf } from "@delacour/warden-device/conditions/device-conditions";
 import { sheetlessFor } from "@delacour/warden-device/device-link";
 import type { Clock, FixtureSession } from "@delacour/warden-device/fixture-session";
-import { eventKind, readConditionEvents } from "@delacour/warden-driver/conditions/condition-events";
+import { conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
 import type { E2eError } from "@delacour/warden-driver/e2e-error";
-import {
-	type ElementSpec,
-	el,
-	type FakeDriver,
-	failWith,
-	fakeDriver,
-	snapshotOf,
-} from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { testHost } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
@@ -44,15 +37,16 @@ function fakeClock(): Clock & { time: () => number } {
 	};
 }
 
-const button = (label: string): ElementSpec => el("button", { label });
-const alertOf = (...labels: string[]): ElementSpec => el("alert", { label: "Title", children: labels.map(button) });
+const button = (label: string): ElementSpec => driverFixtures.el("button", { label });
+const alertOf = (...labels: string[]): ElementSpec =>
+	driverFixtures.el("alert", { label: "Title", children: labels.map(button) });
 
 function setup(
 	opts: { screens?: Snapshot[] | (() => Snapshot); platform?: Platform; session?: Partial<FixtureSession> } = {}
 ) {
 	const platform = opts.platform ?? "ios";
-	const driver = fakeDriver({
-		screens: opts.screens ?? [snapshotOf([], { platform })],
+	const driver = new FakeDriver({
+		screens: opts.screens ?? [driverFixtures.snapshotOf([], { platform })],
 		platform,
 		answerAlertOnTap: true,
 	});
@@ -62,7 +56,7 @@ function setup(
 	return { driver, device, clock };
 }
 
-const withAlert = (...labels: string[]): Snapshot => snapshotOf([alertOf(...labels)]);
+const withAlert = (...labels: string[]): Snapshot => driverFixtures.snapshotOf([alertOf(...labels)]);
 
 /** the y of the button's row centre in a snapshot with an alert at row 0 */
 const rowCentre = (index: number): { x: number; y: number } => ({ x: 195, y: index * 50 + 22 });
@@ -119,10 +113,10 @@ describe("device.alert", () => {
 
 	test("a transient AX failure is retried, not thrown", async () => {
 		let failures = 2;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [withAlert("Cancel", "OK")],
 			answerAlertOnTap: true,
-			onCall: (c) => (c.method === "alert" && failures-- > 0 ? failWith("E_AX_UNAVAILABLE") : undefined),
+			onCall: (c) => (c.method === "alert" && failures-- > 0 ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock: fakeClock() });
 		expect(await device.alert("accept")).toBe(true);
@@ -130,9 +124,9 @@ describe("device.alert", () => {
 	});
 
 	test("driver failures become E2eError", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
-			onCall: (c) => (c.method === "alert" ? failWith("E_HELPER_CRASHED") : undefined),
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
+			onCall: (c) => (c.method === "alert" ? driverFixtures.failWith("E_HELPER_CRASHED") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock: fakeClock() });
 		const error = await device.alert("accept").catch((e: unknown) => e);
@@ -148,9 +142,9 @@ describe("device.alert", () => {
 });
 
 describe("device.alert on iOS: a press that does not land", () => {
-	function sheet(swallowAlertTaps: number, extra: Partial<Parameters<typeof fakeDriver>[0]> = {}) {
+	function sheet(swallowAlertTaps: number, extra: Partial<ConstructorParameters<typeof FakeDriver>[0]> = {}) {
 		const clock = fakeClock();
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [withAlert("Try Face ID Again", "Cancel")],
 			alertBackends: ["ax", "axbridge"],
 			answerAlertOnTap: true,
@@ -191,12 +185,15 @@ describe("device.alert on iOS: a press that does not land", () => {
 });
 
 describe("device.alert on Android permission prompts", () => {
-	const pc = (id: string, label: string): ElementSpec => el("button", { id, text: label });
+	const pc = (id: string, label: string): ElementSpec => driverFixtures.el("button", { id, text: label });
 	/** the permissioncontroller dialog as the fake reads it: an alert holding the buttons in layout order */
 	const permissionPrompt = (...buttons: ElementSpec[]): Snapshot =>
-		snapshotOf([el("alert", { label: "Allow Demo to access this device's location?", children: buttons })], {
-			platform: "android",
-		});
+		driverFixtures.snapshotOf(
+			[driverFixtures.el("alert", { label: "Allow Demo to access this device's location?", children: buttons })],
+			{
+				platform: "android",
+			}
+		);
 	const locationPrompt = (labels: [string, string, string]): Snapshot =>
 		permissionPrompt(
 			pc("permission_allow_foreground_only_button", labels[0]),
@@ -324,8 +321,11 @@ describe("device.alert on Android permission prompts", () => {
 	test("on iOS a button1 identifier means nothing: names decide", async () => {
 		const { device, driver } = setup({
 			screens: [
-				snapshotOf([
-					el("alert", { label: "T", children: [el("button", { id: "button1", label: "Cancel" }), button("Keep")] }),
+				driverFixtures.snapshotOf([
+					driverFixtures.el("alert", {
+						label: "T",
+						children: [driverFixtures.el("button", { id: "button1", label: "Cancel" }), button("Keep")],
+					}),
 				]),
 			],
 		});
@@ -335,15 +335,18 @@ describe("device.alert on Android permission prompts", () => {
 });
 
 describe("device.alert on a driver that reads one backend", () => {
-	function backends(screens: Snapshot[] | (() => Snapshot), extra: Partial<Parameters<typeof fakeDriver>[0]> = {}) {
+	function backends(
+		screens: Snapshot[] | (() => Snapshot),
+		extra: Partial<ConstructorParameters<typeof FakeDriver>[0]> = {}
+	) {
 		const clock = fakeClock();
-		const driver = fakeDriver({ screens, alertBackends: ["ax", "axbridge"], answerAlertOnTap: true, ...extra });
+		const driver = new FakeDriver({ screens, alertBackends: ["ax", "axbridge"], answerAlertOnTap: true, ...extra });
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		return { driver, device, clock };
 	}
 
 	test("no modal: exactly one driver read, on the bridge, and no sleeps", async () => {
-		const { device, driver, clock } = backends([snapshotOf([])]);
+		const { device, driver, clock } = backends([driverFixtures.snapshotOf([])]);
 		expect(await device.alert("dismiss")).toBe(false);
 		expect(driver.calls).toEqual([{ method: "alertOn", backend: "axbridge" }]);
 		expect(clock.time()).toBe(0);
@@ -370,7 +373,7 @@ describe("device.alert on a driver that reads one backend", () => {
 	});
 
 	test("a modal that never shows buttons gives up after a few looks", async () => {
-		const { device, driver, clock } = backends([snapshotOf([])], {
+		const { device, driver, clock } = backends([driverFixtures.snapshotOf([])], {
 			onCall: (c) => (c.method === "alertOn" ? { data: { buttons: [] } } : undefined),
 		});
 		expect(await device.alert("accept")).toBe(false);
@@ -380,9 +383,11 @@ describe("device.alert on a driver that reads one backend", () => {
 	});
 
 	test("a bridge that does not answer (right after a launch) is followed by one host read, not the two-reader read", async () => {
-		const { device, driver, clock } = backends([snapshotOf([])], {
+		const { device, driver, clock } = backends([driverFixtures.snapshotOf([])], {
 			onCall: (c) =>
-				c.method === "alertOn" && c.backend === "axbridge" ? failWith("E_APP_NOT_RESPONDING") : undefined,
+				c.method === "alertOn" && c.backend === "axbridge"
+					? driverFixtures.failWith("E_APP_NOT_RESPONDING")
+					: undefined,
 		});
 		expect(await device.alert("dismiss")).toBe(false);
 		expect(driver.calls).toEqual([
@@ -395,7 +400,9 @@ describe("device.alert on a driver that reads one backend", () => {
 	test("a sheet the host reader sees is answered even when the bridge does not answer", async () => {
 		const { device, driver, clock } = backends([withAlert("Cancel", "Open")], {
 			onCall: (c) =>
-				c.method === "alertOn" && c.backend === "axbridge" ? failWith("E_APP_NOT_RESPONDING") : undefined,
+				c.method === "alertOn" && c.backend === "axbridge"
+					? driverFixtures.failWith("E_APP_NOT_RESPONDING")
+					: undefined,
 		});
 		expect(await device.alert("accept")).toBe(true);
 		expect(driver.callsOf("alert")).toHaveLength(0);
@@ -405,7 +412,7 @@ describe("device.alert on a driver that reads one backend", () => {
 
 	test("when both single reads fail the two-reader read answers", async () => {
 		const { device, driver, clock } = backends([withAlert("Cancel", "OK")], {
-			onCall: (c) => (c.method === "alertOn" ? failWith("E_AX_UNAVAILABLE") : undefined),
+			onCall: (c) => (c.method === "alertOn" ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 		});
 		expect(await device.alert("accept")).toBe(true);
 		expect(driver.calls.map((c) => c.method).slice(0, 3)).toEqual(["alertOn", "alertOn", "alert"]);
@@ -417,8 +424,8 @@ describe("device.openLink", () => {
 	/** an "Open in …?" sheet shows once the fake clock passes `showAt` */
 	function delayedSheet(showAt: number) {
 		const clock = fakeClock();
-		const driver = fakeDriver({
-			screens: () => (clock.time() >= showAt ? withAlert("Cancel", "Open") : snapshotOf([])),
+		const driver = new FakeDriver({
+			screens: () => (clock.time() >= showAt ? withAlert("Cancel", "Open") : driverFixtures.snapshotOf([])),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		return { driver, device, clock };
@@ -433,8 +440,8 @@ describe("device.openLink", () => {
 
 	test("presses Open again when the first press was lost", async () => {
 		const clock = fakeClock();
-		const driver: ReturnType<typeof fakeDriver> = fakeDriver({
-			screens: () => (driver.callsOf("tap").length >= 2 ? snapshotOf([]) : withAlert("Cancel", "Open")),
+		const driver: FakeDriver = new FakeDriver({
+			screens: () => (driver.callsOf("tap").length >= 2 ? driverFixtures.snapshotOf([]) : withAlert("Cancel", "Open")),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		await device.openLink("myapp://x");
@@ -443,7 +450,7 @@ describe("device.openLink", () => {
 
 	test("stops pressing after 3 attempts", async () => {
 		const clock = fakeClock();
-		const driver = fakeDriver({ screens: [withAlert("Cancel", "Open")] });
+		const driver = new FakeDriver({ screens: [withAlert("Cancel", "Open")] });
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("tap")).toHaveLength(3);
@@ -454,9 +461,11 @@ describe("device.openLink", () => {
 		const clock = fakeClock();
 		const { sheetAt = 0, tapsToDismiss = Number.POSITIVE_INFINITY } = opts;
 		const tapTimes: number[] = [];
-		const driver: ReturnType<typeof fakeDriver> = fakeDriver({
+		const driver: FakeDriver = new FakeDriver({
 			screens: () =>
-				clock.time() >= sheetAt && tapTimes.length < tapsToDismiss ? withAlert("Cancel", "Open") : snapshotOf([]),
+				clock.time() >= sheetAt && tapTimes.length < tapsToDismiss
+					? withAlert("Cancel", "Open")
+					: driverFixtures.snapshotOf([]),
 			onCall: (c) => {
 				if (c.method === "tap") tapTimes.push(clock.time());
 				return undefined;
@@ -506,7 +515,7 @@ describe("device.openLink", () => {
 
 	test("leaves an unrelated alert alone", async () => {
 		const clock = fakeClock();
-		const driver = fakeDriver({ screens: [withAlert("Cancel", "Delete")] });
+		const driver = new FakeDriver({ screens: [withAlert("Cancel", "Delete")] });
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		await device.openLink("myapp://x");
 		expect(driver.callsOf("tap")).toHaveLength(0);
@@ -523,9 +532,11 @@ describe("device.openLink without a sheet", () => {
 	) {
 		const clock = opts.clock ?? fakeClock();
 		const { frontAt = 0, sheetAt = Number.POSITIVE_INFINITY } = opts;
-		const driver: FakeDriver = fakeDriver({
+		const driver: FakeDriver = new FakeDriver({
 			screens: () =>
-				clock.time() >= sheetAt && driver.callsOf("tap").length === 0 ? withAlert("Cancel", "Open") : snapshotOf([]),
+				clock.time() >= sheetAt && driver.callsOf("tap").length === 0
+					? withAlert("Cancel", "Open")
+					: driverFixtures.snapshotOf([]),
 			alertBackends: ["ax", "axbridge"],
 			frontmost: () => (clock.time() >= frontAt ? APP : SPRINGBOARD),
 		});
@@ -596,7 +607,7 @@ describe("device.openLink without a sheet", () => {
 
 	test("a driver that cannot say what is in front keeps the old full wait", async () => {
 		const clock = fakeClock();
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		await device.openLink("myapp://x");
 		expect(clock.time()).toBeGreaterThanOrEqual(8000);
@@ -604,7 +615,7 @@ describe("device.openLink without a sheet", () => {
 
 	test("an unknown bundle id keeps the old full wait", async () => {
 		const clock = fakeClock();
-		const driver = fakeDriver({ screens: [snapshotOf([])], frontmost: () => APP });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])], frontmost: () => APP });
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env: { ...env, bundleId: "" }, clock });
 		await device.openLink("myapp://x");
 		expect(clock.time()).toBeGreaterThanOrEqual(8000);
@@ -612,10 +623,10 @@ describe("device.openLink without a sheet", () => {
 
 	test("a failing frontmost probe is 'unknown', not an error", async () => {
 		const clock = fakeClock();
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			frontmost: () => APP,
-			onCall: (c) => (c.method === "isFrontmost" ? failWith("E_UNSUPPORTED") : undefined),
+			onCall: (c) => (c.method === "isFrontmost" ? driverFixtures.failWith("E_UNSUPPORTED") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		await device.openLink("myapp://x");
@@ -697,13 +708,13 @@ describe("device.openLink until", () => {
 		const clock = fakeClock();
 		const platform = opts.platform ?? "ios";
 		const { sheetAt = Number.POSITIVE_INFINITY } = opts;
-		const driver: FakeDriver = fakeDriver({
+		const driver: FakeDriver = new FakeDriver({
 			platform,
 			screens: () => {
 				const specs: ElementSpec[] = [];
-				if (clock.time() >= opts.at) specs.push(el("text", { id: "target", label: "Target" }));
+				if (clock.time() >= opts.at) specs.push(driverFixtures.el("text", { id: "target", label: "Target" }));
 				if (clock.time() >= sheetAt && driver.callsOf("tap").length === 0) specs.push(alertOf("Cancel", "Open"));
-				return snapshotOf(specs, { platform });
+				return driverFixtures.snapshotOf(specs, { platform });
 			},
 			alertBackends: ["ax", "axbridge"],
 			frontmost: () => env.bundleId,
@@ -761,8 +772,13 @@ describe("device.openLink until", () => {
 
 	test("a locator that throws (several matches) counts as not visible yet", async () => {
 		const clock = fakeClock();
-		const driver: FakeDriver = fakeDriver({
-			screens: [snapshotOf([el("text", { id: "dup", label: "A" }), el("text", { id: "dup", label: "B" })])],
+		const driver: FakeDriver = new FakeDriver({
+			screens: [
+				driverFixtures.snapshotOf([
+					driverFixtures.el("text", { id: "dup", label: "A" }),
+					driverFixtures.el("text", { id: "dup", label: "B" }),
+				]),
+			],
 			alertBackends: ["ax", "axbridge"],
 			frontmost: () => env.bundleId,
 		});
@@ -776,7 +792,8 @@ describe("device.openLink until", () => {
 
 describe('the "Open in …?" sheet under systemAlerts', () => {
 	const OPEN_IN = "Open in “Example”?";
-	const openInSheet = () => el("alert", { label: OPEN_IN, children: [button("Cancel"), button("Open")] });
+	const openInSheet = () =>
+		driverFixtures.el("alert", { label: OPEN_IN, children: [button("Cancel"), button("Open")] });
 
 	/**
 	 * An iOS app in front whose "Open in …?" sheet comes up right after the first alert read of `openLink` (that read
@@ -797,10 +814,12 @@ describe('the "Open in …?" sheet under systemAlerts', () => {
 			sheet = "up";
 			return { data: null };
 		};
-		const driver: FakeDriver = fakeDriver({
+		const driver: FakeDriver = new FakeDriver({
 			screens: () => {
-				if (sheet === "up") return snapshotOf([openInSheet()], { modal: { pid: 7 } });
-				return snapshotOf(sheet === "opened" ? [el("text", { id: "target", label: "Target" })] : []);
+				if (sheet === "up") return driverFixtures.snapshotOf([openInSheet()], { modal: { pid: 7 } });
+				return driverFixtures.snapshotOf(
+					sheet === "opened" ? [driverFixtures.el("text", { id: "target", label: "Target" })] : []
+				);
 			},
 			onCall: (call) => {
 				if (call.method === "tap") pressed(call.point);
@@ -826,13 +845,13 @@ describe('the "Open in …?" sheet under systemAlerts', () => {
 	});
 
 	test('dismiss never presses Cancel on an "Open in …?" sheet: it opens the link the test asked for', async () => {
-		const { driver, device } = setup({ screens: [snapshotOf([openInSheet()])] });
+		const { driver, device } = setup({ screens: [driverFixtures.snapshotOf([openInSheet()])] });
 		expect(await device.alert("dismiss")).toBe(true);
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(2));
 	});
 
 	test("an explicit Cancel is still pressed", async () => {
-		const { driver, device } = setup({ screens: [snapshotOf([openInSheet()])] });
+		const { driver, device } = setup({ screens: [driverFixtures.snapshotOf([openInSheet()])] });
 		expect(await device.alert({ button: "Cancel" })).toBe(true);
 		expect(driver.callsOf("tap")[0]?.point).toEqual(rowCentre(1));
 	});
@@ -893,9 +912,9 @@ describe("device.biometrics", () => {
 	});
 
 	test("E_UNSUPPORTED surfaces as an E2eError", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
-			onCall: (c) => (c.method === "biometrics" ? failWith("E_UNSUPPORTED") : undefined),
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
+			onCall: (c) => (c.method === "biometrics" ? driverFixtures.failWith("E_UNSUPPORTED") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock: fakeClock() });
 		const error = await device.biometrics.enroll().catch((e: unknown) => e);
@@ -904,7 +923,10 @@ describe("device.biometrics", () => {
 });
 
 describe("device.hideKeyboard", () => {
-	const withKeyboard = snapshotOf([el("textfield", { id: "email" }), el("keyboard")]);
+	const withKeyboard = driverFixtures.snapshotOf([
+		driverFixtures.el("textfield", { id: "email" }),
+		driverFixtures.el("keyboard"),
+	]);
 
 	test("iOS presses Enter when a keyboard is in the snapshot", async () => {
 		const { driver, device } = setup({ screens: [withKeyboard] });
@@ -915,14 +937,14 @@ describe("device.hideKeyboard", () => {
 	test("Android presses back when a keyboard is in the snapshot", async () => {
 		const { driver, device } = setup({
 			platform: "android",
-			screens: [snapshotOf([el("keyboard")], { platform: "android" })],
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("keyboard")], { platform: "android" })],
 		});
 		await device.hideKeyboard();
 		expect(driver.callsOf("pressButton")[0]?.button).toBe("back");
 	});
 
 	test("is a no-op without a keyboard", async () => {
-		const { driver, device } = setup({ screens: [snapshotOf([el("textfield")])] });
+		const { driver, device } = setup({ screens: [driverFixtures.snapshotOf([driverFixtures.el("textfield")])] });
 		await device.hideKeyboard();
 		expect(driver.callsOf("key")).toHaveLength(0);
 		expect(driver.callsOf("pressButton")).toHaveLength(0);
@@ -937,8 +959,8 @@ describe("device.settle", () => {
 	});
 
 	test("returns the detail the driver reported: via, reason, frontmostPid", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (c) =>
 				c.method === "settle"
 					? { data: { quiet: false, waitedMs: 8000, via: "stream", reason: "frontmost_mismatch", frontmostPid: 99 } }
@@ -956,9 +978,9 @@ describe("device.settle", () => {
 
 	test("the hash-polling fallback says via hash", async () => {
 		const clock = fakeClock();
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("text", { label: "a" })])],
-			onCall: (c) => (c.method === "settle" ? failWith("E_UNSUPPORTED") : undefined),
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("text", { label: "a" })])],
+			onCall: (c) => (c.method === "settle" ? driverFixtures.failWith("E_UNSUPPORTED") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		expect(await device.settle({ quietMs: 200, timeout: 2000 })).toMatchObject({ quiet: true, via: "hash" });
@@ -966,9 +988,9 @@ describe("device.settle", () => {
 
 	test("falls back to snapshot-hash polling on E_UNSUPPORTED", async () => {
 		const clock = fakeClock();
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("text", { label: "a" })])],
-			onCall: (c) => (c.method === "settle" ? failWith("E_UNSUPPORTED") : undefined),
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("text", { label: "a" })])],
+			onCall: (c) => (c.method === "settle" ? driverFixtures.failWith("E_UNSUPPORTED") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		const outcome = await device.settle({ quietMs: 200, timeout: 2000 });
@@ -979,9 +1001,9 @@ describe("device.settle", () => {
 	test("fallback reports not quiet while the screen keeps changing", async () => {
 		const clock = fakeClock();
 		let n = 0;
-		const driver = fakeDriver({
-			screens: () => snapshotOf([el("text", { label: `tick ${n++}` })]),
-			onCall: (c) => (c.method === "settle" ? failWith("E_UNSUPPORTED") : undefined),
+		const driver = new FakeDriver({
+			screens: () => driverFixtures.snapshotOf([driverFixtures.el("text", { label: `tick ${n++}` })]),
+			onCall: (c) => (c.method === "settle" ? driverFixtures.failWith("E_UNSUPPORTED") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
 		const outcome = await device.settle({ quietMs: 200, timeout: 1000 });
@@ -989,9 +1011,9 @@ describe("device.settle", () => {
 	});
 
 	test("other driver failures throw", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
-			onCall: (c) => (c.method === "settle" ? failWith("E_TIMEOUT") : undefined),
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
+			onCall: (c) => (c.method === "settle" ? driverFixtures.failWith("E_TIMEOUT") : undefined),
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env });
 		const error = await device.settle().catch((e: unknown) => e);
@@ -1001,7 +1023,9 @@ describe("device.settle", () => {
 
 describe("device.snapshot", () => {
 	test("renders a header and one line per element", async () => {
-		const { device } = setup({ screens: [snapshotOf([el("button", { label: "Sign in", id: "sign-in" })])] });
+		const { device } = setup({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Sign in", id: "sign-in" })])],
+		});
 		const text = await device.snapshot();
 		expect(text.split("\n")[0]).toContain("ios axbridge");
 		expect(text).toContain('[button] "Sign in" id=sign-in');
@@ -1009,7 +1033,12 @@ describe("device.snapshot", () => {
 
 	test("interactiveOnly is passed to the driver and filters", async () => {
 		const { device, driver } = setup({
-			screens: [snapshotOf([el("text", { label: "plain" }), el("button", { label: "Go" })])],
+			screens: [
+				driverFixtures.snapshotOf([
+					driverFixtures.el("text", { label: "plain" }),
+					driverFixtures.el("button", { label: "Go" }),
+				]),
+			],
 		});
 		const text = await device.snapshot({ interactiveOnly: true });
 		expect(driver.callsOf("snapshot")[0]?.opts).toEqual({ interactiveOnly: true });
@@ -1021,7 +1050,7 @@ describe("device.snapshot", () => {
 describe("device.screenshot", () => {
 	function withDir(): { dir: string; driver: FakeDriver; device: ReturnType<typeof createDevice> } {
 		const dir = mkdtempSync(join(tmpdir(), "e2e-shot-"));
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const device = createDevice({ session: { out: dir, attemptDir: dir }, driver, env });
 		return { dir, driver, device };
 	}
@@ -1045,8 +1074,8 @@ describe("device.screenshot", () => {
 
 	test("writes the bytes itself when the driver returns a png", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "e2e-shot-"));
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (c) => (c.method === "screenshot" ? { data: { png: new Uint8Array([1, 2, 3]) } } : undefined),
 		});
 		const device = createDevice({ session: { out: dir, attemptDir: dir }, driver, env });
@@ -1057,7 +1086,7 @@ describe("device.screenshot", () => {
 	test("records a trace screenshot event", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "e2e-shot-"));
 		const events: unknown[] = [];
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const device = createDevice({
 			session: { out: dir, attemptDir: dir, trace: { write: (e) => events.push(e) } },
 			driver,
@@ -1085,13 +1114,13 @@ describe("device misc", () => {
 
 describe("device.alert on the Android autofill save sheet", () => {
 	const sheet = (): Snapshot =>
-		snapshotOf(
+		driverFixtures.snapshotOf(
 			[
-				el("alert", {
+				driverFixtures.el("alert", {
 					label: "Save password to Google Password Manager?",
 					children: [
-						el("button", { id: "autofill_save_no", text: "Nie" }),
-						el("button", { id: "autofill_save_yes", text: "Weiter" }),
+						driverFixtures.el("button", { id: "autofill_save_no", text: "Nie" }),
+						driverFixtures.el("button", { id: "autofill_save_yes", text: "Weiter" }),
 					],
 				}),
 			],
@@ -1145,12 +1174,12 @@ describe("device conditions", () => {
 
 	test("changes made through the API are appended to the session's results.jsonl", async () => {
 		const path = resultsPath();
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const device = createDevice({ session: { out: "/tmp/out", results: { path } }, driver, env });
 		await device.network.set("offline");
 		await device.location.set({ lat: 1, lon: 2 });
-		const events = readConditionEvents(readFileSync(path, "utf8"));
-		expect(events.map((e) => [e.area, eventKind(e)])).toEqual([
+		const events = conditionEvents.read(readFileSync(path, "utf8"));
+		expect(events.map((e) => [e.area, conditionEvents.kind(e)])).toEqual([
 			["network", "offline"],
 			["location", "point"],
 		]);

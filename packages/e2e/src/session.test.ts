@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { canObserve } from "@delacour/warden-driver/observation-cache";
-import { el, fakeDriver as scriptedDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { E2eEnv } from "./env";
 import type { AttemptContext } from "./runner/fixtures.types";
@@ -69,7 +69,7 @@ function factory() {
 
 describe("Session biometrics", () => {
 	const scripted = (platform: "ios" | "android", biometrics: boolean, physical = false) => {
-		const fake = scriptedDriver({ platform, screens: [] });
+		const fake = new FakeDriver({ platform, screens: [] });
 		const session = createSession({
 			env: {
 				...envIn(tmp()),
@@ -255,7 +255,7 @@ describe("Session spans", () => {
 			exitHook: false,
 			driverFactory: async () => ({
 				success: true,
-				data: scriptedDriver({ screens: [snapshotOf([el("button", { id: "go" })])] }),
+				data: new FakeDriver({ screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go" })])] }),
 			}),
 		});
 
@@ -278,8 +278,8 @@ describe("Session spans", () => {
 		const session = open();
 		const { attempt, events } = recordingAttempt();
 		const driver = await session.driver();
-		expect(canObserve(driver)).toBe(true);
-		if (!canObserve(driver)) return;
+		expect(observations.canObserve(driver)).toBe(true);
+		if (!observations.canObserve(driver)) return;
 		session.enterAttempt(attempt);
 		await driver.observe({ reuse: true });
 		await driver.observe({ reuse: true });

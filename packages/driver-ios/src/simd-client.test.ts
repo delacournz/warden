@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunSpawn, type SimdSpawn } from "@delacour/warden-driver/helper/simd-transport";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { type SimdSpawn, simdTransports } from "@delacour/warden-driver/helper/simd-transport";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
 
 const FAKE = join(import.meta.dir, "../native/scripts/fake-simd.ts");
@@ -25,7 +25,7 @@ afterEach(async () => {
 function fakeSpawn(script: object): SimdSpawn {
 	const path = join(dir, "script.json");
 	writeFileSync(path, JSON.stringify(script));
-	return (cmd) => bunSpawn([process.execPath, FAKE, "--script", path, ...cmd.slice(1)]);
+	return (cmd) => simdTransports.spawn([process.execPath, FAKE, "--script", path, ...cmd.slice(1)]);
 }
 
 async function start(script: object, extra: Partial<Parameters<typeof spawnSimd>[0]> = {}) {
@@ -165,7 +165,9 @@ describe("requests", () => {
 	});
 
 	test("known ops are validated and typed", async () => {
-		const snap = snapshotOf([el("window", { children: [el("button", { id: "go" })] })]);
+		const snap = driverFixtures.snapshotOf([
+			driverFixtures.el("window", { children: [driverFixtures.el("button", { id: "go" })] }),
+		]);
 		const { client } = await started({
 			ops: {
 				snapshot: {

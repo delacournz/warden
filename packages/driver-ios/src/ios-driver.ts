@@ -21,8 +21,8 @@ import type {
 	Orientation,
 	Snapshot,
 } from "@delacour/warden-driver/driver.types";
-import { driverErr, driverError } from "@delacour/warden-driver/errors";
-import { DEFAULT_RADIUS, type GesturePlan, planGesture, rotatePlan } from "@delacour/warden-driver/gesture-geometry";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { DEFAULT_RADIUS, type GesturePlan, gestureGeometry } from "@delacour/warden-driver/gesture-geometry";
 import type {
 	AlertButtonsData,
 	HealthData,
@@ -32,8 +32,8 @@ import type {
 } from "@delacour/warden-driver/helper/simd-protocol";
 import type { SimdSpawn } from "@delacour/warden-driver/helper/simd-transport";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
-import { type SettleDetail, settleByHash, snapshotHash } from "@delacour/warden-driver/settle";
-import { noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { type SettleDetail, settler } from "@delacour/warden-driver/settle";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { PastesText, SelectsAll } from "@delacour/warden-driver/typing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { storeLocator } from "@delacour/warden-store/store";
@@ -189,18 +189,18 @@ function nativeDetail(data: SettleData): SettleDetail {
 		...(reason === undefined ? {} : { reason }),
 		...(frontmostPid === undefined ? {} : { frontmostPid }),
 	};
-	if (via !== undefined) noteSpanDetail("via", via);
-	if (reason !== undefined) noteSpanDetail("reason", reason);
-	if (frontmostPid !== undefined) noteSpanDetail("frontmostPid", frontmostPid);
+	if (via !== undefined) spanDetails.note("via", via);
+	if (reason !== undefined) spanDetails.note("reason", reason);
+	if (frontmostPid !== undefined) spanDetails.note("frontmostPid", frontmostPid);
 	return detail;
 }
 
 /** Leaves the helper's rebind verdict on the current span. */
 function noteRebind(data: RebindData): void {
-	noteSpanDetail("rebind", data.bound ? "bound" : (data.reason ?? "unbound"));
-	noteSpanDetail("rebindMs", data.waitedMs);
-	if (data.restarts !== undefined && data.restarts > 0) noteSpanDetail("rebindRestarts", data.restarts);
-	if (data.recycled === true) noteSpanDetail("rebindRecycled", true);
+	spanDetails.note("rebind", data.bound ? "bound" : (data.reason ?? "unbound"));
+	spanDetails.note("rebindMs", data.waitedMs);
+	if (data.restarts !== undefined && data.restarts > 0) spanDetails.note("rebindRestarts", data.restarts);
+	if (data.recycled === true) spanDetails.note("rebindRecycled", true);
 }
 
 /** The `detail` of a `health` reply: only the helper fields that are present. */
@@ -277,13 +277,13 @@ export function createIosDriver(
 	const { udid, now, sleep } = opts;
 	let lastLaunched: string | undefined;
 	const noLeaseProxy = async () =>
-		driverErr(
+		driverErrors.err(
 			"E_UNSUPPORTED",
 			"network and clock conditions on iOS need a device lease for the shaping proxy: run the spec with `warden e2e` (it sets WARDEN_LEASE_ID), or `warden ui`; a bare `bun test` has no lease"
 		);
 	const settings = opts.settings?.({ lastBundle: () => lastLaunched });
 	const noSettings = async () =>
-		driverErr("E_UNSUPPORTED", "this iOS driver was opened without device settings support");
+		driverErrors.err("E_UNSUPPORTED", "this iOS driver was opened without device settings support");
 	// late-bound: the network helper relaunches through the driver's own `app.launch`
 	let driverRef: IosDriver | undefined;
 	const net = opts.network?.({
@@ -339,7 +339,9 @@ export function createIosDriver(
 		if (restarted.success) return undefined;
 		const why = `${restarted.error.code}: ${restarted.error.message}`;
 		opts.log?.(`[ios] could not replace warden-simd (${why})`);
-		lost ??= driverError("E_HELPER_CRASHED", `${crash.message}; could not replace it (${why})`, { retryable: false });
+		lost ??= driverErrors.make("E_HELPER_CRASHED", `${crash.message}; could not replace it (${why})`, {
+			retryable: false,
+		});
 		return lost;
 	}
 
@@ -378,7 +380,7 @@ export function createIosDriver(
 
 	const helperOutdated = () =>
 		fail(
-			driverError(
+			driverErrors.make(
 				"E_UNSUPPORTED",
 				`this warden-simd predates the gesture op: restart the helper (warden ui close --udid ${udid}) or rebuild it (bun run --cwd packages/driver-ios native:build)`,
 				{ detail: { reason: "helper_outdated" } }
@@ -414,20 +416,20 @@ export function createIosDriver(
 		timeoutMs: number
 	): Promise<Result<OpData<Op>, DriverError> | undefined> {
 		if (appOpsOutdated) {
-			noteSpanDetail("via", "simctl");
+			spanDetails.note("via", "simctl");
 			return undefined;
 		}
 		const result = await request(op, p, { timeoutMs });
 		if (!result.success && predatesOp(result.error)) {
 			appOpsOutdated = true;
-			noteSpanDetail("via", "simctl");
-			noteSpanDetail("reason", "helper_outdated");
+			spanDetails.note("via", "simctl");
+			spanDetails.note("reason", "helper_outdated");
 			opts.log?.(
 				`[ios] this warden-simd predates the \`${op}\` op (${result.error.code}: ${result.error.message}); app lifecycle goes through simctl until the helper is restarted (warden ui close --udid ${udid}) or rebuilt (bun run --cwd packages/driver-ios native:build)`
 			);
 			return undefined;
 		}
-		noteSpanDetail("via", "simd");
+		spanDetails.note("via", "simd");
 		return result;
 	}
 
@@ -499,15 +501,15 @@ export function createIosDriver(
 
 	async function hashSettle(o: { quietMs: number; timeoutMs: number }): DriverResult<SettleDetail> {
 		try {
-			const outcome = await settleByHash(
+			const outcome = await settler.byHash(
 				async () => {
 					const snap = await snapshot();
 					if (!snap.success) throw new DriverFailure(snap.error);
-					return snapshotHash(snap.data);
+					return settler.snapshotHash(snap.data);
 				},
 				{ quietMs: o.quietMs, timeoutMs: o.timeoutMs, now, sleep }
 			);
-			noteSpanDetail("via", "hash");
+			spanDetails.note("via", "hash");
 			return { success: true, data: { ...outcome, via: "hash" } };
 		} catch (error) {
 			if (error instanceof DriverFailure) return fail(error.error);
@@ -530,7 +532,7 @@ export function createIosDriver(
 		);
 		if (!reply.success) {
 			if (reply.error.code === "E_UNSUPPORTED" || reply.error.code === "E_BAD_REQUEST") rebindUnsupported = true;
-			noteSpanDetail("rebind", reply.error.code);
+			spanDetails.note("rebind", reply.error.code);
 			opts.log?.(`[ios] rebind after launch failed (${reply.error.code}): ${reply.error.message}`);
 			return false;
 		}
@@ -556,7 +558,7 @@ export function createIosDriver(
 		}
 		// settle is best effort: a loaded machine answering after the padded timer means "not quiet", not a failure
 		if (native.error.code === "E_TIMEOUT") {
-			noteSpanDetail("reason", "helper_timeout");
+			spanDetails.note("reason", "helper_timeout");
 			return {
 				success: true,
 				data: { quiet: false, waitedMs: timeoutMs + SETTLE_MARGIN_MS, reason: "helper_timeout" },
@@ -585,7 +587,7 @@ export function createIosDriver(
 			if (o?.path) return { success: true, data: { path: path ?? o.path } };
 			if (png !== undefined) return { success: true, data: { png: decodeBase64(png) } };
 			if (path !== undefined) return { success: true, data: { path } };
-			return fail(driverError("E_INTERNAL", "warden-simd screenshot returned neither path nor png"));
+			return fail(driverErrors.make("E_INTERNAL", "warden-simd screenshot returned neither path nor png"));
 		}
 		if (!SCREENSHOT_FALLBACK.has(viaHelper.error.code)) return viaHelper;
 		opts.log?.(`[ios] helper screenshot failed (${viaHelper.error.code}), using simctl io`);
@@ -614,7 +616,7 @@ export function createIosDriver(
 		readAlert(backend === "axbridge" && !bridgeUp ? "ax" : backend);
 
 	async function isFrontmost(bundleId: string): DriverResult<boolean> {
-		if (!bridgeUp) return fail(driverError("E_UNSUPPORTED", "frontmost needs the axbridge backend"));
+		if (!bridgeUp) return fail(driverErrors.make("E_UNSUPPORTED", "frontmost needs the axbridge backend"));
 		const result = await request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
 		return result.success ? { success: true, data: result.data.frontmost } : result;
 	}
@@ -652,7 +654,7 @@ export function createIosDriver(
 	}
 
 	async function pressButton(button: HardwareButton): DriverResult<void> {
-		if (button === "back") return fail(driverError("E_UNSUPPORTED", "iOS has no hardware back button"));
+		if (button === "back") return fail(driverErrors.make("E_UNSUPPORTED", "iOS has no hardware back button"));
 		return sendVoid("pressButton", { button: BUTTONS[button] });
 	}
 
@@ -695,8 +697,8 @@ export function createIosDriver(
 				params({ center, scale, durationMs: o?.durationMs, radius: o?.radius, angle: o?.angle }),
 				gestureTimeout(o?.durationMs, 300)
 			),
-		rotate: (center, degrees, o) => sendGesture(rotatePlan(center, degrees, o, DEFAULT_RADIUS)),
-		gesture: (paths, o) => sendGesture(planGesture(paths, o, 2)),
+		rotate: (center, degrees, o) => sendGesture(gestureGeometry.rotatePlan(center, degrees, o, DEFAULT_RADIUS)),
+		gesture: (paths, o) => sendGesture(gestureGeometry.planGesture(paths, o, 2)),
 		typeText,
 		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
 		selectAll: () => sendVoid("selectAll"),
@@ -745,7 +747,7 @@ export function createIosDriver(
 				const launched = await appOutcome(
 					viaHelper,
 					() => simctl.launch(bundleId, o),
-					(data) => noteSpanDetail("pid", data.pid)
+					(data) => spanDetails.note("pid", data.pid)
 				);
 				if (launched.success) {
 					lastLaunched = bundleId;
@@ -761,7 +763,7 @@ export function createIosDriver(
 				const terminated = await appOutcome(
 					viaHelper,
 					() => simctl.terminate(bundleId),
-					(data) => noteSpanDetail("terminated", data.terminated)
+					(data) => spanDetails.note("terminated", data.terminated)
 				);
 				if (terminated.success && launchedBundle === bundleId) launchedBundle = undefined;
 				return terminated;

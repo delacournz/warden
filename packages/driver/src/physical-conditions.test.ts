@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Driver } from "./driver.types";
-import { PHYSICAL_CONDITION_OPS, physicalConditionOps } from "./physical-conditions";
+import { PHYSICAL_CONDITION_OPS, physicalConditions } from "./physical-conditions";
 
-describe("physicalConditionOps", () => {
+describe("physicalConditions.ops", () => {
 	test("every condition and setting op is E_UNSUPPORTED, naming the device and pointing at a simulator", async () => {
-		const ops = physicalConditionOps("physical iPhone R1");
+		const ops = physicalConditions.ops("physical iPhone R1");
 		expect(Object.keys(ops).sort()).toEqual([...PHYSICAL_CONDITION_OPS].sort());
 		const calls: Array<ReturnType<Driver[(typeof PHYSICAL_CONDITION_OPS)[number]]>> = [
 			ops.network({ kind: "offline" }),

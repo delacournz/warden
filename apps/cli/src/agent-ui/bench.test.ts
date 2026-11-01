@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import type { Platform } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -118,9 +118,13 @@ function harness(options: { platform?: Platform; withMetro?: boolean } = {}): Ha
 	const platform = options.platform ?? "ios";
 	const udid = platform === "ios" ? UDID : SERIAL;
 	const clock = { t: 1_000_000 };
-	const driver = fakeDriver({
+	const driver = new FakeDriver({
 		platform,
-		screens: [snapshotOf([el("window", { children: [el("button", { label: "Go", id: "go" })] })])],
+		screens: [
+			driverFixtures.snapshotOf([
+				driverFixtures.el("window", { children: [driverFixtures.el("button", { label: "Go", id: "go" })] }),
+			]),
+		],
 		onCall: (call) => {
 			if (call.method === "snapshot") clock.t += COST.snapshot;
 			if (call.method === "tap") clock.t += COST.tap;
@@ -259,8 +263,8 @@ describe("warden ui bench (ios)", () => {
 
 	test("over target x1.5: ok false, passed false, exit still 0, warning names the metric", async () => {
 		const h = harness();
-		const slow = fakeDriver({
-			screens: [snapshotOf([el("window")])],
+		const slow = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("window")])],
 			onCall: (call) => {
 				if (call.method === "snapshot") h.clock.t += 200;
 				return undefined;

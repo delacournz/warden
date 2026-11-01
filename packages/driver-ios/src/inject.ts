@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join, resolve } from "node:path";
 import { injectStatePath as coreInjectStatePath } from "@delacour/warden-core/conditions/inject-state";
 import type { DriverError } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { ProxyAddress } from "@delacour/warden-driver/network-proxy";
 import type { Result } from "@delacour/warden-types/result";
 
@@ -133,7 +133,7 @@ export function locateInjectDylib(input: LocateInjectInput): Result<string, Driv
 	const tried: string[] = [];
 	const missing = (message: string): Result<string, DriverError> => ({
 		success: false,
-		error: driverError(
+		error: driverErrors.make(
 			"E_HELPER_MISSING",
 			`${message}; build it with \`bun run --cwd packages/driver-ios native:inject\``,
 			{

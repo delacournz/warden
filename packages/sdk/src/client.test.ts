@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { fieldFixture } from "@delacour/warden-screen/testing/screen";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
@@ -154,7 +154,9 @@ describe("claim → open → drive → dispose", () => {
 	});
 
 	test("a session closes its driver; the lease stays with the client", async () => {
-		const d = fakeDriver({ screens: [snapshotOf([el("button", { id: "go", label: "Go" })])] });
+		const d = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })])],
+		});
 		const r = rig(() => d);
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -165,7 +167,7 @@ describe("claim → open → drive → dispose", () => {
 	});
 
 	test("lease listing, check and heartbeat", async () => {
-		const d = fakeDriver({ screens: [snapshotOf([])] });
+		const d = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const r = rig(() => d);
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -195,7 +197,7 @@ describe("lock policy", () => {
 
 	test("reject fails fast with device_busy", async () => {
 		holdByOther();
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }), { lockPolicy: "reject" }, POOL);
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }), { lockPolicy: "reject" }, POOL);
 		await using warden = createWardenClient(r.options, r.seams);
 		const failure = await warden.leases.claim({ platform: "ios" }).catch((e: unknown) => e);
 		expect(isWardenError(failure)).toBe(true);
@@ -204,7 +206,7 @@ describe("lock policy", () => {
 
 	test("a per-claim lockPolicy overrides the client's", async () => {
 		holdByOther();
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }), { lockPolicy: "wait" }, POOL);
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }), { lockPolicy: "wait" }, POOL);
 		await using warden = createWardenClient(r.options, r.seams);
 		const failure = await warden.leases.claim({ platform: "ios", lockPolicy: "reject" }).catch((e: unknown) => e);
 		expect(failure).toMatchObject({ code: "device_busy" });
@@ -212,7 +214,7 @@ describe("lock policy", () => {
 
 	test("wait queues until aborted, then claim_aborted", async () => {
 		holdByOther();
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }), { lockPolicy: "wait" }, POOL);
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }), { lockPolicy: "wait" }, POOL);
 		await using warden = createWardenClient(r.options, r.seams);
 		const controller = new AbortController();
 		const pending = warden.leases.claim({ platform: "ios" }, { signal: controller.signal }).catch((e: unknown) => e);
@@ -226,7 +228,7 @@ describe("lock policy", () => {
 
 describe("abort", () => {
 	test("an already aborted signal throws interrupted before any work", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const controller = new AbortController();
 		controller.abort();
@@ -238,7 +240,9 @@ describe("abort", () => {
 	});
 
 	test("the client's own signal cancels session calls", async () => {
-		const d = fakeDriver({ screens: [snapshotOf([el("button", { id: "go", label: "Go" })])] });
+		const d = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })])],
+		});
 		const controller = new AbortController();
 		const r = rig(() => d, { signal: controller.signal });
 		await using warden = createWardenClient(r.options, r.seams);
@@ -250,7 +254,9 @@ describe("abort", () => {
 	});
 
 	test("aborting during a wait interrupts it", async () => {
-		const d = fakeDriver({ screens: [snapshotOf([el("button", { id: "go", label: "Go" })])] });
+		const d = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })])],
+		});
 		const r = rig(() => d);
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -276,7 +282,7 @@ describe("error mapping", () => {
 			},
 			Date.now()
 		);
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const failure = await warden.sessions.open({ udid: UDID }).catch((e: unknown) => e);
 		expect(failure).toMatchObject({ code: "device_foreign", dispatched: "no" });
@@ -284,7 +290,7 @@ describe("error mapping", () => {
 	});
 
 	test("a device nobody leased is not opened either", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const failure = await warden.sessions.open({ udid: UDID }).catch((e: unknown) => e);
 		expect(failure).toMatchObject({ code: "device_not_leased" });
@@ -293,7 +299,9 @@ describe("error mapping", () => {
 	});
 
 	test("an unknown ref is stale_ref with dispatched no", async () => {
-		const d = fakeDriver({ screens: [snapshotOf([el("button", { id: "go", label: "Go" })])] });
+		const d = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })])],
+		});
 		const r = rig(() => d);
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -305,9 +313,9 @@ describe("error mapping", () => {
 	});
 
 	test("a driver failure surfaces as a coded WardenError that serialises", async () => {
-		const d = fakeDriver({
-			screens: [snapshotOf([el("button", { id: "go", label: "Go" })])],
-			onCall: (call) => (call.method === "tap" ? failWith("E_HELPER_CRASHED", "gone") : undefined),
+		const d = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })])],
+			onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_HELPER_CRASHED", "gone") : undefined),
 		});
 		const r = rig(() => d);
 		await using warden = createWardenClient(r.options, r.seams);
@@ -320,7 +328,7 @@ describe("error mapping", () => {
 	});
 
 	test("a missing engine fails sessions.open, not the first call", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		r.seams.openDriver = async () => ({
 			success: false,
 			error: { code: "engine_unavailable", message: "warden-simd missing" },
@@ -334,7 +342,7 @@ describe("error mapping", () => {
 
 describe("lifecycle", () => {
 	test("close is idempotent and releases once", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		const warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
 		await warden.close();
@@ -344,7 +352,7 @@ describe("lifecycle", () => {
 	});
 
 	test("a device the client booted is shut down on close; a pooled one is left running", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		const warden = createWardenClient(r.options, r.seams);
 		await warden.leases.claim({ platform: "ios" });
 		await warden.close();
@@ -352,7 +360,7 @@ describe("lifecycle", () => {
 	});
 
 	test("release with shutdown follows the shutdown policy", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const [lease] = await warden.leases.claim({ platform: "ios" });
 		peek.recordDevice({ platform: "ios", id: UDID, name: "warden-iphone-17-1", profile: "iphone-17" }, Date.now());
@@ -371,14 +379,14 @@ describe("lifecycle", () => {
 			},
 			Date.now()
 		);
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const failure = await warden.leases.release({ leaseIds: [other.id] }).catch((e: unknown) => e);
 		expect(failure).toMatchObject({ code: "lease_foreign" });
 	});
 
 	test("the client heartbeats the leases it holds", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		let clock = Date.now();
 		r.options.host = { ...r.options.host, now: () => clock };
 		await using warden = createWardenClient(r.options, r.seams);
@@ -390,7 +398,7 @@ describe("lifecycle", () => {
 	});
 
 	test("ports claim and release", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		const port = await warden.ports.claim({ spec: "47100:20" });
 		expect(port.resource.kind).toBe("port");
@@ -399,7 +407,7 @@ describe("lifecycle", () => {
 	});
 
 	test("devices list reads the provider and marks leases", async () => {
-		const r = rig(() => fakeDriver({ screens: [snapshotOf([])] }));
+		const r = rig(() => new FakeDriver({ screens: [driverFixtures.snapshotOf([])] }));
 		await using warden = createWardenClient(r.options, r.seams);
 		await warden.leases.claim({ platform: "ios" });
 		const devices = await warden.devices.list({ platform: "ios" });

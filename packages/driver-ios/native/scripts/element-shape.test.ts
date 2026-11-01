@@ -5,11 +5,10 @@ import {
 	alertButtonsDataSchema,
 	elementAtPointDataSchema,
 	healthDataSchema,
-	isWireElement,
 	launchDataSchema,
-	parseLine,
 	readyEventSchema,
 	type SnapshotData,
+	simdProtocol,
 	snapshotDataSchema,
 	terminateDataSchema,
 	type WireElement,
@@ -59,11 +58,11 @@ describe("snapshot goldens", () => {
 		 * `snapshotDataSchema` validates elements with the hand-written `isWireElement` (no zod stripping), so the
 		 * drift guard for fields the schema lacks runs on `wireElementSchema` itself.
 		 */
-		test(`${name} elements carry nothing wireElementSchema drops, and isWireElement agrees`, () => {
+		test(`${name} elements carry nothing wireElementSchema drops, and simdProtocol.isWireElement agrees`, () => {
 			const raw = load(name) as { elements: unknown[] };
 			for (const element of raw.elements) {
 				expectNoStrippedKeys(element, wireElementSchema.parse(element));
-				expect(isWireElement(element)).toBe(true);
+				expect(simdProtocol.isWireElement(element)).toBe(true);
 			}
 		});
 
@@ -115,7 +114,7 @@ describe("snapshot goldens", () => {
 
 	test("a response line carrying a golden snapshot passes the client's line parser", () => {
 		const line = JSON.stringify({ id: "1", ok: true, data: load("sign-in.interactive.golden.json") });
-		const parsed = parseLine(line);
+		const parsed = simdProtocol.parseLine(line);
 		expect(parsed.success).toBe(true);
 	});
 });
@@ -207,11 +206,11 @@ describe("warden-runner snapshot goldens", () => {
 			expect(parsed.data.elements.length).toBeGreaterThan(0);
 		});
 
-		test(`${name} elements carry nothing wireElementSchema drops, and isWireElement agrees`, () => {
+		test(`${name} elements carry nothing wireElementSchema drops, and simdProtocol.isWireElement agrees`, () => {
 			const raw = load(name, runnerFixtures) as { elements: unknown[] };
 			for (const element of raw.elements) {
 				expectNoStrippedKeys(element, wireElementSchema.parse(element));
-				expect(isWireElement(element)).toBe(true);
+				expect(simdProtocol.isWireElement(element)).toBe(true);
 			}
 		});
 
@@ -256,7 +255,7 @@ describe("warden-runner snapshot goldens", () => {
 
 	test("a response line carrying a runner snapshot passes the client's line parser", () => {
 		const line = JSON.stringify({ id: "1", ok: true, data: loadRunner("sign-in.interactive.golden.json") });
-		expect(parseLine(line).success).toBe(true);
+		expect(simdProtocol.parseLine(line).success).toBe(true);
 	});
 });
 
@@ -288,7 +287,7 @@ describe("warden-runner handshake goldens", () => {
 		expect(parsed.success).toBe(true);
 		expect(raw.backend).toBe("ax");
 		expect(raw.engine).toBe("xcuitest");
-		expect(parseLine(JSON.stringify(raw)).success).toBe(true);
+		expect(simdProtocol.parseLine(JSON.stringify(raw)).success).toBe(true);
 	});
 
 	test("health parses with healthDataSchema", () => {

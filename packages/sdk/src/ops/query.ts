@@ -1,5 +1,5 @@
 import type { Driver, Rect, Snapshot } from "@delacour/warden-driver/driver.types";
-import { settleByHash, snapshotHash } from "@delacour/warden-driver/settle";
+import { settler } from "@delacour/warden-driver/settle";
 import { fieldValue } from "@delacour/warden-screen/actions";
 import { textOf } from "@delacour/warden-screen/locator";
 import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-screen/nodes";
@@ -182,10 +182,10 @@ async function waitStable(
 			throw new Error(taken.error.message);
 		}
 		latest = taken.data;
-		return snapshotHash(taken.data);
+		return settler.snapshotHash(taken.data);
 	};
 	try {
-		const outcome = await settleByHash(look, {
+		const outcome = await settler.byHash(look, {
 			quietMs,
 			timeoutMs,
 			now: session.host.now,

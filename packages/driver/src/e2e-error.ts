@@ -45,12 +45,17 @@ export class E2eError extends Error implements E2eErrorShape {
 	}
 }
 
-/** `err()` for results carrying an `E2eError`. */
-export function e2eErr(error: E2eErrorShape): ErrorResult<E2eError> {
-	return { success: false, error: E2eError.from(error) };
+/** Builds results and lines for {@link E2eError}. Use the shared {@link e2eErrors} singleton. */
+export class E2eErrors {
+	/** `err()` for results carrying an `E2eError`. */
+	err(error: E2eErrorShape): ErrorResult<E2eError> {
+		return { success: false, error: E2eError.from(error) };
+	}
+
+	/** One line for logs and thrown messages: `CODE: message`. */
+	describe(error: E2eErrorShape): string {
+		return `${error.code}: ${error.message}`;
+	}
 }
 
-/** One line for logs and thrown messages: `CODE: message`. */
-export function describeE2eError(error: E2eErrorShape): string {
-	return `${error.code}: ${error.message}`;
-}
+export const e2eErrors = new E2eErrors();

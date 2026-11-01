@@ -1,7 +1,7 @@
 import type { LatLon } from "@delacour/warden-config/conditions.types";
-import { formatCoord } from "@delacour/warden-driver/conditions/geo";
+import { geoMath } from "@delacour/warden-driver/conditions/geo";
 import type { DriverError, HardwareButton, KeyName, Point } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { GesturePlan } from "@delacour/warden-driver/gesture-geometry";
 import type { Result } from "@delacour/warden-types/result";
 
@@ -215,7 +215,7 @@ export function textArgvs(text: string): Result<string[][], DriverError> {
 	for (const ch of text) {
 		const code = ch.codePointAt(0) ?? 0;
 		if (code < 0x20 || code > 0x7e) {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED_TEXT",
 				`Android \`input text\` only types printable ASCII; got U+${code.toString(16).toUpperCase().padStart(4, "0")}`
 			);
@@ -350,9 +350,9 @@ export function geoFixArgv(adb: string, serial: string, point: LatLon, altM?: nu
 		"emu",
 		"geo",
 		"fix",
-		formatCoord(point.lon),
-		formatCoord(point.lat),
-		...(altM !== undefined ? [formatCoord(altM)] : []),
+		geoMath.formatCoord(point.lon),
+		geoMath.formatCoord(point.lat),
+		...(altM !== undefined ? [geoMath.formatCoord(altM)] : []),
 	];
 }
 

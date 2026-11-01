@@ -1,13 +1,7 @@
 import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-config/conditions.types";
 import { textSizes } from "@delacour/warden-config/text-size";
 import type { LaunchSettings } from "@delacour/warden-core/conditions/launch-settings";
-import {
-	badRequest,
-	batteryProblem,
-	localeProblem,
-	pushProblem,
-	timezoneProblem,
-} from "@delacour/warden-driver/device-settings";
+import { deviceSettings } from "@delacour/warden-driver/device-settings";
 import type {
 	A11yState,
 	BatteryState,
@@ -15,7 +9,7 @@ import type {
 	DriverResult,
 	LaunchOptions,
 } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 
 /**
@@ -157,7 +151,7 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 	const resolveBundle = (explicit: string | undefined, what: string) => {
 		const bundleId = explicit ?? deps.lastBundle() ?? deps.defaultBundle;
 		return bundleId === undefined
-			? driverErr("E_BAD_REQUEST", `${what} needs an app: pass a bundle id (nothing was launched yet)`)
+			? driverErrors.err("E_BAD_REQUEST", `${what} needs an app: pass a bundle id (nothing was launched yet)`)
 			: { bundleId };
 	};
 
@@ -167,7 +161,7 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 		if (retryHung && res.exitCode === KILLED_BY_TIMEOUT) res = await exec(argv, { timeoutMs: SIMCTL_MS });
 		return res.exitCode === 0
 			? { success: true, data: undefined }
-			: driverErr("E_IO", execErrors.format(argv, res), { detail: { udid } });
+			: driverErrors.err("E_IO", execErrors.format(argv, res), { detail: { udid } });
 	}
 
 	return {
@@ -189,28 +183,28 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 				applied.push({ permission: name, state });
 			}
 			if (applied.length === 0 && skipped.length > 0) {
-				return driverErr("E_UNSUPPORTED", skipped.map((s) => `${s.permission}: ${s.reason}`).join("; "));
+				return driverErrors.err("E_UNSUPPORTED", skipped.map((s) => `${s.permission}: ${s.reason}`).join("; "));
 			}
 			return { success: true, data: { bundleId, applied, skipped } };
 		},
 		async timezone(tz) {
 			if (tz !== null) {
-				const bad = badRequest(timezoneProblem(tz));
+				const bad = deviceSettings.badRequest(deviceSettings.timezoneProblem(tz));
 				if (bad) return bad;
 			}
 			const { timezone: _drop, ...rest } = stagedNow();
 			const failed = stage(tz === null ? rest : { ...rest, timezone: tz });
-			if (failed) return driverErr("E_IO", failed);
+			if (failed) return driverErrors.err("E_IO", failed);
 			return { success: true, data: tz === null ? {} : { timezone: tz, appliesOnLaunch: true } };
 		},
 		async locale(tag, opts) {
 			if (tag !== null) {
-				const bad = badRequest(localeProblem(tag));
+				const bad = deviceSettings.badRequest(deviceSettings.localeProblem(tag));
 				if (bad) return bad;
 			}
 			const { locale: _drop, ...rest } = stagedNow();
 			const failed = stage(tag === null ? rest : { ...rest, locale: tag });
-			if (failed) return driverErr("E_IO", failed);
+			if (failed) return driverErrors.err("E_IO", failed);
 			const bundleId = opts?.bundleId ?? deps.lastBundle() ?? deps.defaultBundle;
 			return {
 				success: true,
@@ -226,7 +220,7 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 			const size = op === null ? undefined : op.textSize;
 			if (op === null || size !== undefined) {
 				const resolved = op === null ? undefined : textSizes.resolveTextSize(size as TextSize);
-				if (resolved && !resolved.success) return driverErr("E_BAD_REQUEST", resolved.error);
+				if (resolved && !resolved.success) return driverErrors.err("E_BAD_REQUEST", resolved.error);
 				const done = await simctl(contentSizeArgv(udid, resolved ? resolved.data.category : DEFAULT_CONTENT_SIZE));
 				if (!done.success) return done;
 				applied.push("textSize");
@@ -243,7 +237,7 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 				skipped.push({ setting: "reduceMotion", reason: "iOS has no simctl switch for reduce motion" });
 			}
 			if (applied.length === 0 && skipped.length > 0) {
-				return driverErr("E_UNSUPPORTED", skipped.map((s) => `${s.setting}: ${s.reason}`).join("; "));
+				return driverErrors.err("E_UNSUPPORTED", skipped.map((s) => `${s.setting}: ${s.reason}`).join("; "));
 			}
 			return { success: true, data: { applied, skipped, notes: [] } satisfies A11yState };
 		},
@@ -252,10 +246,10 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 				const done = await simctl(statusBarClearArgv(udid));
 				return done.success ? { success: true, data: { cosmetic: true } satisfies BatteryState } : done;
 			}
-			const bad = badRequest(batteryProblem(op.level));
+			const bad = deviceSettings.badRequest(deviceSettings.batteryProblem(op.level));
 			if (bad) return bad;
 			if (op.level === undefined && op.charging === undefined) {
-				return driverErr("E_BAD_REQUEST", "battery needs a level, charging, or both");
+				return driverErrors.err("E_BAD_REQUEST", "battery needs a level, charging, or both");
 			}
 			const done = await simctl(statusBarBatteryArgv(udid, op));
 			if (!done.success) return done;
@@ -269,13 +263,13 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 			};
 		},
 		async memoryWarning() {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				"no way to deliver a memory warning to an iOS app was found: `notifyutil -p com.apple.system.lowmemory` is accepted but a UIKit app never receives UIApplicationDidReceiveMemoryWarning (verified); use Simulator > Debug > Simulate Memory Warning by hand"
 			);
 		},
 		async push(payload, opts) {
-			const bad = badRequest(pushProblem(payload));
+			const bad = deviceSettings.badRequest(deviceSettings.pushProblem(payload));
 			if (bad) return bad;
 			const app = resolveBundle(opts?.bundleId, "push");
 			if ("success" in app) return app;

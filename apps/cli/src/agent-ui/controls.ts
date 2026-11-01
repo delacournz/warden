@@ -1,5 +1,5 @@
 import type { BiometricOp } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import { finishAction } from "@delacour/warden-sdk/ops/act";
 import { alert, hardware, screenAppearance, screenRotate, screenshot } from "@delacour/warden-sdk/ops/controls";
 import type { CommandContext } from "../context";
@@ -107,7 +107,7 @@ export function uiBiometrics(
 		if (physicalDevice(device)) {
 			const what = device.platform === "ios" ? "a physical iPhone" : "a physical Android device";
 			return fromDriver(
-				driverErr(
+				driverErrors.err(
 					"E_UNSUPPORTED",
 					`biometrics is not available on ${what}: a real Face ID / fingerprint sensor is never enrolled or matched; use a simulator or emulator`
 				)

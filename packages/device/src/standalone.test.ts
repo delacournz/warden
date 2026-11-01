@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { fakeClock } from "@delacour/warden-screen/testing/poll";
 import { fieldFixture } from "@delacour/warden-screen/testing/screen";
@@ -22,8 +22,13 @@ describe("driver, screen, device and app without the runner", () => {
 	});
 
 	test("screen taps and reads over a bare driver and clock", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("button", { id: "go", label: "Go" }), el("text", { id: "title", label: "Hello" })])],
+		const driver = new FakeDriver({
+			screens: [
+				driverFixtures.snapshotOf([
+					driverFixtures.el("button", { id: "go", label: "Go" }),
+					driverFixtures.el("text", { id: "title", label: "Hello" }),
+				]),
+			],
 		});
 		const screen = createScreen({
 			driver: async () => driver,
@@ -48,7 +53,9 @@ describe("driver, screen, device and app without the runner", () => {
 
 	test("device snapshot and screenshot with an artifacts dir and no session", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "e2e-standalone-"));
-		const driver = fakeDriver({ screens: [snapshotOf([el("button", { id: "go", label: "Go" })])] });
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go" })])],
+		});
 		const events: unknown[] = [];
 		const device = createDevice({
 			driver,
@@ -65,7 +72,9 @@ describe("driver, screen, device and app without the runner", () => {
 	});
 
 	test("app opens the app by id, with launch args, and waits for content", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([el("button", { label: "Next" })])] });
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Next" })])],
+		});
 		const app = createApp({
 			driver,
 			appId,
@@ -85,13 +94,15 @@ describe("driver, screen, device and app without the runner", () => {
 	});
 
 	test("app.reinstall without an appPath says what is missing", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const app = createApp({ driver, appId });
 		await expect(app.reinstall()).rejects.toThrow("WARDEN_APP_PATH");
 	});
 
 	test("the driver's deadline is honoured through the signal option", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([el("button", { label: "Next" })])] });
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Next" })])],
+		});
 		const controller = new AbortController();
 		const app = createApp({ driver, appId, signal: () => controller.signal, clock: fakeClock() });
 		await app.open();

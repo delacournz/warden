@@ -1,6 +1,6 @@
 import type { AppCommands, DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverErr } from "@delacour/warden-driver/errors";
-import { noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { AdbSession } from "./adb-session";
 import {
@@ -77,10 +77,10 @@ export function parseStartWait(stdout: string): StartWait {
 
 /** The span detail of a launch that `am start -W` made. */
 function noteStarted(started: StartWait): void {
-	noteSpanDetail("launch", "am-start");
-	if (started.status !== undefined) noteSpanDetail("startStatus", started.status);
-	if (started.launchState !== undefined) noteSpanDetail("launchState", started.launchState);
-	if (started.totalTimeMs !== undefined) noteSpanDetail("totalTimeMs", started.totalTimeMs);
+	spanDetails.note("launch", "am-start");
+	if (started.status !== undefined) spanDetails.note("startStatus", started.status);
+	if (started.launchState !== undefined) spanDetails.note("launchState", started.launchState);
+	if (started.totalTimeMs !== undefined) spanDetails.note("totalTimeMs", started.totalTimeMs);
 }
 
 /**
@@ -167,18 +167,21 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 			const stopped = await terminate(bundleId);
 			if (!stopped.success) return stopped;
 		}
-		noteSpanDetail("launch", "monkey");
+		spanDetails.note("launch", "monkey");
 		const res = await session.run(shellCommand(monkeyLaunchArgv(bundleId)));
 		if (!res.success) return res;
 		if (res.data.exitCode !== 0 || NO_ACTIVITY.test(res.data.stdout)) {
-			return driverErr("E_APP_UNAVAILABLE", `cannot launch ${bundleId}: ${res.data.stdout.trim().slice(0, 200)}`);
+			return driverErrors.err(
+				"E_APP_UNAVAILABLE",
+				`cannot launch ${bundleId}: ${res.data.stdout.trim().slice(0, 200)}`
+			);
 		}
 		return ok;
 	};
 
 	const launch: AppCommands["launch"] = async (bundleId, opts) => {
 		if ((opts?.args?.length ?? 0) > 0 || Object.keys(opts?.env ?? {}).length > 0) {
-			return driverErr(
+			return driverErrors.err(
 				"E_UNSUPPORTED",
 				"Android launch does not support args/env in v1 (use openUrl with a deep link for dev-client Metro urls)"
 			);
@@ -193,7 +196,10 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 		const res = await session.run(shellCommand(startUrlArgv(url, deps.appPackage)));
 		if (!res.success) return res;
 		if (res.data.exitCode !== 0 || /^Error:|Exception/m.test(res.data.stdout)) {
-			return driverErr("E_APP_UNAVAILABLE", `no activity handles ${url}: ${res.data.stdout.trim().slice(0, 200)}`);
+			return driverErrors.err(
+				"E_APP_UNAVAILABLE",
+				`no activity handles ${url}: ${res.data.stdout.trim().slice(0, 200)}`
+			);
 		}
 		return ok;
 	};
@@ -203,13 +209,13 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 		const res = await hostAdb(installArgv(adb, serial, path));
 		return res.ok && res.text.includes("Success")
 			? ok
-			: driverErr("E_IO", `adb install failed: ${res.text.slice(-200)}`);
+			: driverErrors.err("E_IO", `adb install failed: ${res.text.slice(-200)}`);
 	};
 
 	/** On a phone, a package warden did not install is not ours to remove or wipe (invariant: allowlist). */
-	const protectedPackage = (bundleId: string, action: string): ReturnType<typeof driverErr> | undefined => {
+	const protectedPackage = (bundleId: string, action: string): ReturnType<typeof driverErrors.err> | undefined => {
 		if (!deps.physical || bundleId === deps.appPackage || deps.ownedPackages?.includes(bundleId)) return undefined;
-		return driverErr(
+		return driverErrors.err(
 			"E_REFUSED",
 			`physical_protected: ${bundleId} was not installed by warden; refusing to ${action} it on physical device ${serial}`,
 			{ detail: { reason: "physical_protected", bundleId } }
@@ -226,7 +232,7 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 		const res = await hostAdb(uninstallArgv(adb, serial, bundleId));
 		return res.ok && res.text.includes("Success")
 			? ok
-			: driverErr("E_IO", `adb uninstall failed: ${res.text.slice(-200)}`);
+			: driverErrors.err("E_IO", `adb uninstall failed: ${res.text.slice(-200)}`);
 	};
 
 	const clearData: AppCommands["clearData"] = async (bundleId) => {
@@ -236,7 +242,7 @@ export function createAppCommands(deps: AppDeps): AppCommands {
 		if (!res.success) return res;
 		return res.data.includes("Success")
 			? ok
-			: driverErr("E_APP_UNAVAILABLE", `pm clear ${bundleId}: ${res.data.trim()}`);
+			: driverErrors.err("E_APP_UNAVAILABLE", `pm clear ${bundleId}: ${res.data.trim()}`);
 	};
 
 	return { launch, terminate, openUrl, install, uninstall, isInstalled, isRunning, clearData };

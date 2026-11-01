@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LatLon } from "@delacour/warden-config/conditions.types";
-import { routeSteps } from "./geo";
-import { detachedTickerArgv, parseTickerConfig, startRouteTicker, type TickerClock } from "./route-ticker";
+import { geoMath } from "./geo";
+import { routeTickers, type TickerClock } from "./route-ticker";
 
 const A: LatLon = { lat: 0, lon: 0 };
 const B: LatLon = { lat: 0, lon: 0.001 };
@@ -21,23 +21,23 @@ function fakeClock(): TickerClock & { t: number; sleeps: number[] } {
 	return clock;
 }
 
-describe("startRouteTicker", () => {
+describe("routeTickers.start", () => {
 	test("plays every step once and finishes", async () => {
 		const clock = fakeClock();
 		const fixes: LatLon[] = [];
-		const ticker = startRouteTicker(
+		const ticker = routeTickers.start(
 			{ points: [A, B], speedMps: 20, intervalS: 1 },
 			{ fix: async (p) => void fixes.push(p), ...clock }
 		);
 		const outcome = await ticker.done;
-		expect(fixes).toEqual(routeSteps([A, B], 20, 1));
+		expect(fixes).toEqual(geoMath.routeSteps([A, B], 20, 1));
 		expect(outcome).toEqual({ ticks: fixes.length, stopped: "finished" });
 	});
 
 	test("paces by intervalS against the clock, not by accumulated sleeps", async () => {
 		const clock = fakeClock();
 		let n = 0;
-		const ticker = startRouteTicker(
+		const ticker = routeTickers.start(
 			{ points: [A, B], speedMps: 20, intervalS: 2 },
 			{
 				fix: async () => {
@@ -56,8 +56,8 @@ describe("startRouteTicker", () => {
 	test("loop repeats until stopped", async () => {
 		const clock = fakeClock();
 		const fixes: LatLon[] = [];
-		const per = routeSteps([A, B], 20, 1).length;
-		const ticker = startRouteTicker(
+		const per = geoMath.routeSteps([A, B], 20, 1).length;
+		const ticker = routeTickers.start(
 			{ points: [A, B], speedMps: 20, intervalS: 1, loop: true },
 			{
 				fix: async (p) => {
@@ -76,7 +76,7 @@ describe("startRouteTicker", () => {
 	test("stop is idempotent and halts before the next fix", async () => {
 		const clock = fakeClock();
 		const fixes: LatLon[] = [];
-		const ticker = startRouteTicker({ points: [A, B] }, { fix: async (p) => void fixes.push(p), ...clock });
+		const ticker = routeTickers.start({ points: [A, B] }, { fix: async (p) => void fixes.push(p), ...clock });
 		ticker.stop();
 		ticker.stop();
 		const outcome = await ticker.done;
@@ -87,7 +87,7 @@ describe("startRouteTicker", () => {
 	test("three failed fixes in a row end it with the error", async () => {
 		const clock = fakeClock();
 		let calls = 0;
-		const ticker = startRouteTicker(
+		const ticker = routeTickers.start(
 			{ points: [A, B], speedMps: 1, intervalS: 1 },
 			{
 				fix: async () => {
@@ -105,7 +105,7 @@ describe("startRouteTicker", () => {
 	test("a good fix resets the failure count", async () => {
 		const clock = fakeClock();
 		let calls = 0;
-		const ticker = startRouteTicker(
+		const ticker = routeTickers.start(
 			{ points: [A, B], speedMps: 5, intervalS: 1 },
 			{
 				fix: async () => {
@@ -123,25 +123,27 @@ describe("startRouteTicker", () => {
 	test("defaults to 20 m/s every second", async () => {
 		const clock = fakeClock();
 		const fixes: LatLon[] = [];
-		await startRouteTicker({ points: [A, B] }, { fix: async (p) => void fixes.push(p), ...clock }).done;
-		expect(fixes).toEqual(routeSteps([A, B], 20, 1));
+		await routeTickers.start({ points: [A, B] }, { fix: async (p) => void fixes.push(p), ...clock }).done;
+		expect(fixes).toEqual(geoMath.routeSteps([A, B], 20, 1));
 	});
 });
 
-describe("parseTickerConfig / detachedTickerArgv", () => {
+describe("routeTickers.parseConfig / routeTickers.detachedArgv", () => {
 	const config = { adb: "/sdk/adb", serial: "emulator-5554", points: [A, B], speedMps: 3, intervalS: 2, loop: true };
 
 	test("argv carries the config as one JSON argument that round-trips", () => {
-		const argv = detachedTickerArgv("/usr/bin/bun", "/x/route-ticker.main.ts", config);
+		const argv = routeTickers.detachedArgv("/usr/bin/bun", "/x/route-ticker.main.ts", config);
 		expect(argv.slice(0, 2)).toEqual(["/usr/bin/bun", "/x/route-ticker.main.ts"]);
 		expect(argv).toHaveLength(3);
-		expect(parseTickerConfig(argv[2] as string)).toEqual({ success: true, data: config });
+		expect(routeTickers.parseConfig(argv[2] as string)).toEqual({ success: true, data: config });
 	});
 
 	test("rejects junk", () => {
-		expect(parseTickerConfig("nope").success).toBe(false);
-		expect(parseTickerConfig(JSON.stringify({ adb: "a", serial: "s", points: [] })).success).toBe(false);
-		expect(parseTickerConfig(JSON.stringify({ adb: "a", points: [A] })).success).toBe(false);
-		expect(parseTickerConfig(JSON.stringify({ adb: "a", serial: "s", points: [{ lat: "x" }] })).success).toBe(false);
+		expect(routeTickers.parseConfig("nope").success).toBe(false);
+		expect(routeTickers.parseConfig(JSON.stringify({ adb: "a", serial: "s", points: [] })).success).toBe(false);
+		expect(routeTickers.parseConfig(JSON.stringify({ adb: "a", points: [A] })).success).toBe(false);
+		expect(routeTickers.parseConfig(JSON.stringify({ adb: "a", serial: "s", points: [{ lat: "x" }] })).success).toBe(
+			false
+		);
 	});
 });

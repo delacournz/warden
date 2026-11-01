@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DriverResult } from "@delacour/warden-driver/driver.types";
-import { fakeProxy } from "@delacour/warden-driver/testing/network-proxy";
+import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
 import { createInjectChannel, type InjectFs } from "./inject";
 import { createIosNetwork, INJECT_ACK_MS } from "./ios-network";
 
@@ -38,7 +38,7 @@ function rig(
 			t += ms;
 		},
 	});
-	const proxy = fakeProxy(19_090, init.proxyLive);
+	const proxy = new FakeProxy(19_090, init.proxyLive);
 	const relaunches: string[] = [];
 	const net = createIosNetwork({
 		proxy,

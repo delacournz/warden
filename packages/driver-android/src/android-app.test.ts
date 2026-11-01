@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { driverErr } from "@delacour/warden-driver/errors";
-import { collectSpanDetail, type SpanDetail } from "@delacour/warden-driver/trace/span-detail";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import { type AdbSession, openAdbSession } from "./adb-session";
 import { createAppCommands, parseLauncherComponent, parseStartWait } from "./android-app";
 import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
@@ -83,7 +83,7 @@ describe("app commands", () => {
 			],
 		});
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => app.launch("com.x"));
+		await spanDetails.collect(notes, () => app.launch("com.x"));
 		expect(notes).toMatchObject({ launch: "am-start", startStatus: "ok", launchState: "COLD", totalTimeMs: 812 });
 		await session.close();
 	});
@@ -109,11 +109,11 @@ describe("app commands", () => {
 		});
 		const run: AdbSession["run"] = (cmd, opts) =>
 			cmd.startsWith(START)
-				? Promise.resolve(driverErr("E_TIMEOUT", `\`${cmd}\` did not finish within ${opts?.timeoutMs}ms on s1`))
+				? Promise.resolve(driverErrors.err("E_TIMEOUT", `\`${cmd}\` did not finish within ${opts?.timeoutMs}ms on s1`))
 				: session.run(cmd, opts);
 		const timing = createAppCommands({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
 		const notes: SpanDetail = {};
-		expect((await collectSpanDetail(notes, () => timing.launch("com.x"))).success).toBe(true);
+		expect((await spanDetails.collect(notes, () => timing.launch("com.x"))).success).toBe(true);
 		expect(notes).toMatchObject({ launch: "am-start", launchState: "timeout" });
 		expect(host.shell.some((c) => c.startsWith("monkey") || c.startsWith("am force-stop"))).toBe(false);
 		// the component stays known: the next launch does not resolve it again
@@ -150,7 +150,7 @@ describe("app commands", () => {
 		]);
 		expect(host.spawns()).toBe(0);
 		const notes: SpanDetail = {};
-		expect((await collectSpanDetail(notes, () => app.launch("com.x"))).success).toBe(true);
+		expect((await spanDetails.collect(notes, () => app.launch("com.x"))).success).toBe(true);
 		expect(notes).toMatchObject({ launch: "am-start", launchState: "timeout" });
 		// the shell that held the wait was killed; the probe ran on a second one
 		expect(host.spawns()).toBe(2);
@@ -179,7 +179,7 @@ describe("app commands", () => {
 	test("a session failure other than the timeout is returned as it is (a start that answered with an error falls back, above)", async () => {
 		const { host, session } = setup({ shell: [{ match: "cmd package resolve-activity", reply: RESOLVED }] });
 		const run: AdbSession["run"] = (cmd, opts) =>
-			cmd.startsWith(START) ? Promise.resolve(driverErr("E_IO", "adb shell exited")) : session.run(cmd, opts);
+			cmd.startsWith(START) ? Promise.resolve(driverErrors.err("E_IO", "adb shell exited")) : session.run(cmd, opts);
 		const failing = createAppCommands({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
 		const res = await failing.launch("com.x");
 		expect(!res.success && res.error.code).toBe("E_IO");
@@ -198,7 +198,7 @@ describe("app commands", () => {
 			],
 		});
 		const notes: SpanDetail = {};
-		expect((await collectSpanDetail(notes, () => app.launch("com.x"))).success).toBe(true);
+		expect((await spanDetails.collect(notes, () => app.launch("com.x"))).success).toBe(true);
 		expect(notes).toMatchObject({ launch: "am-start", startStatus: "timeout" });
 		expect(host.shell.some((c) => c.startsWith("monkey"))).toBe(false);
 		await session.close();
@@ -212,7 +212,7 @@ describe("app commands", () => {
 			],
 		});
 		const notes: SpanDetail = {};
-		expect((await collectSpanDetail(notes, () => app.launch("com.x"))).success).toBe(true);
+		expect((await spanDetails.collect(notes, () => app.launch("com.x"))).success).toBe(true);
 		expect(notes.launch).toBe("monkey");
 		expect(host.shell).toEqual([
 			"cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.x",

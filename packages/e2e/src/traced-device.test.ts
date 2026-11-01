@@ -3,8 +3,8 @@ import { conditionsOf } from "@delacour/warden-device/conditions/device-conditio
 import type { Device } from "@delacour/warden-device/device";
 import type { FixtureSession } from "@delacour/warden-device/fixture-session";
 import { traceDevice } from "@delacour/warden-device/traced-device";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { runSpan, type SpanRunner } from "@delacour/warden-driver/trace/span";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
+import { type SpanRunner, spans as spanWriter } from "@delacour/warden-driver/trace/span";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { E2eEnv } from "./env";
 import { deviceFor as createDevice } from "./fixtures";
@@ -24,11 +24,16 @@ const env: E2eEnv = {
 function setup(platform: "ios" | "android" = "ios") {
 	const events: TraceEvent[] = [];
 	const sink = { write: (event: TraceEvent) => void events.push(event) };
-	const span: SpanRunner = (op, fn, options) => runSpan(sink, op, fn, options);
-	const driver = fakeDriver({
+	const span: SpanRunner = (op, fn, options) => spanWriter.run(sink, op, fn, options);
+	const driver = new FakeDriver({
 		platform,
 		answerAlertOnTap: true,
-		screens: [snapshotOf([el("alert", { label: "Title", children: [el("button", { label: "OK" })] })], { platform })],
+		screens: [
+			driverFixtures.snapshotOf(
+				[driverFixtures.el("alert", { label: "Title", children: [driverFixtures.el("button", { label: "OK" })] })],
+				{ platform }
+			),
+		],
 	});
 	const session: FixtureSession = { out: "/tmp/out", span };
 	const device = traceDevice(createDevice({ session, driver, env: { ...env, platform } }), span);
@@ -121,9 +126,9 @@ describe("traceDevice", () => {
 	test("settle's span carries via, reason and frontmostPid when the driver reports them", async () => {
 		const events: TraceEvent[] = [];
 		const sink = { write: (event: TraceEvent) => void events.push(event) };
-		const span: SpanRunner = (op, fn, options) => runSpan(sink, op, fn, options);
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
+		const span: SpanRunner = (op, fn, options) => spanWriter.run(sink, op, fn, options);
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (c) =>
 				c.method === "settle"
 					? { data: { quiet: false, waitedMs: 8000, via: "stream", reason: "frontmost_mismatch", frontmostPid: 7 } }

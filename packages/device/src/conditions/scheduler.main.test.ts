@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eventKind, readConditionEvents } from "@delacour/warden-driver/conditions/condition-events";
+import { conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 
 /** The detached entry end to end: a real child process calling fake-adb, which logs each argv. */
 
@@ -40,8 +40,8 @@ describe("scheduler.main.ts", () => {
 		expect(await proc.exited).toBe(0);
 		const geo = d.calls().filter((l) => l.includes("geo fix"));
 		expect(geo).toEqual(["-s emulator-5554 emu geo fix 2 1", "-s emulator-5554 emu geo fix 4 3"]);
-		const logged = readConditionEvents(readFileSync(events, "utf8"));
-		expect(logged.map((e) => [e.area, eventKind(e)])).toEqual([
+		const logged = conditionEvents.read(readFileSync(events, "utf8"));
+		expect(logged.map((e) => [e.area, conditionEvents.kind(e)])).toEqual([
 			["location", "point"],
 			["location", "point"],
 		]);
@@ -60,7 +60,7 @@ describe("scheduler.main.ts", () => {
 		expect(await proc.exited).toBe(0);
 		const calls = d.calls();
 		expect(calls.some((l) => l.includes("emu network speed full"))).toBe(true);
-		expect(readConditionEvents(readFileSync(events, "utf8")).map((e) => e.value)).toEqual([{ kind: "online" }]);
+		expect(conditionEvents.read(readFileSync(events, "utf8")).map((e) => e.value)).toEqual([{ kind: "online" }]);
 	});
 
 	test("a failing step sequence exits 1; bad config and ios (not wired) exit 2", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { el, snapshotOf } from "./driver.testing";
-import { type SettleDetail, settleByHash, settleDetailOf, snapshotHash } from "./settle";
+import { driverFixtures } from "./driver.testing";
+import { type SettleDetail, settler } from "./settle";
 
 /** Fake clock: `sleep` advances time, `now` reads it. */
 function clock() {
@@ -16,10 +16,10 @@ function clock() {
 	};
 }
 
-describe("settleByHash", () => {
+describe("settler.byHash", () => {
 	test("quiet once the hash is stable for quietMs", async () => {
 		const c = clock();
-		const result = await settleByHash(async () => "a", { quietMs: 200, timeoutMs: 2000, pollMs: 50, ...c });
+		const result = await settler.byHash(async () => "a", { quietMs: 200, timeoutMs: 2000, pollMs: 50, ...c });
 		expect(result).toEqual({ quiet: true, waitedMs: 200 });
 	});
 
@@ -27,7 +27,7 @@ describe("settleByHash", () => {
 		const c = clock();
 		const hashes = ["a", "b", "b", "b", "b", "b", "b", "b"];
 		let i = 0;
-		const result = await settleByHash(async () => hashes[Math.min(i++, hashes.length - 1)] ?? "", {
+		const result = await settler.byHash(async () => hashes[Math.min(i++, hashes.length - 1)] ?? "", {
 			quietMs: 150,
 			timeoutMs: 2000,
 			pollMs: 50,
@@ -40,7 +40,7 @@ describe("settleByHash", () => {
 	test("times out with quiet:false while the hash keeps changing", async () => {
 		const c = clock();
 		let n = 0;
-		const result = await settleByHash(async () => `h${n++}`, { quietMs: 100, timeoutMs: 500, pollMs: 50, ...c });
+		const result = await settler.byHash(async () => `h${n++}`, { quietMs: 100, timeoutMs: 500, pollMs: 50, ...c });
 		expect(result).toEqual({ quiet: false, waitedMs: 500 });
 	});
 
@@ -48,7 +48,7 @@ describe("settleByHash", () => {
 		const c = clock();
 		const slept: number[] = [];
 		let n = 0;
-		await settleByHash(async () => `h${n++}`, {
+		await settler.byHash(async () => `h${n++}`, {
 			quietMs: 100,
 			timeoutMs: 120,
 			pollMs: 50,
@@ -63,7 +63,7 @@ describe("settleByHash", () => {
 
 	test("slow polls count toward waitedMs", async () => {
 		const c = clock();
-		const result = await settleByHash(
+		const result = await settler.byHash(
 			async () => {
 				c.tick(300);
 				return "same";
@@ -76,41 +76,59 @@ describe("settleByHash", () => {
 
 	test("quietMs 0 settles after the second equal hash", async () => {
 		const c = clock();
-		const result = await settleByHash(async () => "a", { quietMs: 0, timeoutMs: 1000, pollMs: 10, ...c });
+		const result = await settler.byHash(async () => "a", { quietMs: 0, timeoutMs: 1000, pollMs: 10, ...c });
 		expect(result).toEqual({ quiet: true, waitedMs: 10 });
 	});
 });
 
-describe("snapshotHash", () => {
+describe("settler.snapshotHash", () => {
 	const base = () =>
-		snapshotOf([el("button", { id: "go", label: "Go", frame: { x: 0, y: 0, width: 100, height: 40 } })]);
+		driverFixtures.snapshotOf([
+			driverFixtures.el("button", { id: "go", label: "Go", frame: { x: 0, y: 0, width: 100, height: 40 } }),
+		]);
 
 	test("identical trees hash equal", () => {
-		expect(snapshotHash(base())).toBe(snapshotHash(base()));
+		expect(settler.snapshotHash(base())).toBe(settler.snapshotHash(base()));
 	});
 
 	test("label, value, identifier, role and frame all matter", () => {
-		const hash = snapshotHash(base());
+		const hash = settler.snapshotHash(base());
 		const frame = { x: 0, y: 0, width: 100, height: 40 };
-		expect(snapshotHash(snapshotOf([el("button", { id: "go", label: "Stop", frame })]))).not.toBe(hash);
-		expect(snapshotHash(snapshotOf([el("button", { id: "go", label: "Go", value: "1", frame })]))).not.toBe(hash);
-		expect(snapshotHash(snapshotOf([el("button", { id: "go2", label: "Go", frame })]))).not.toBe(hash);
-		expect(snapshotHash(snapshotOf([el("link", { id: "go", label: "Go", frame })]))).not.toBe(hash);
-		expect(snapshotHash(snapshotOf([el("button", { id: "go", label: "Go", frame: { ...frame, x: 8 } })]))).not.toBe(
-			hash
-		);
+		expect(
+			settler.snapshotHash(driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Stop", frame })]))
+		).not.toBe(hash);
+		expect(
+			settler.snapshotHash(
+				driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go", value: "1", frame })])
+			)
+		).not.toBe(hash);
+		expect(
+			settler.snapshotHash(driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go2", label: "Go", frame })]))
+		).not.toBe(hash);
+		expect(
+			settler.snapshotHash(driverFixtures.snapshotOf([driverFixtures.el("link", { id: "go", label: "Go", frame })]))
+		).not.toBe(hash);
+		expect(
+			settler.snapshotHash(
+				driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go", frame: { ...frame, x: 8 } })])
+			)
+		).not.toBe(hash);
 	});
 
 	test("sub-point jitter and unrelated fields are ignored", () => {
-		const hash = snapshotHash(base());
+		const hash = settler.snapshotHash(base());
 		const frame = { x: 0.2, y: 0, width: 100.1, height: 40 };
 		expect(
-			snapshotHash(snapshotOf([el("button", { id: "go", label: "Go", frame, enabled: false, hittable: true })]))
+			settler.snapshotHash(
+				driverFixtures.snapshotOf([
+					driverFixtures.el("button", { id: "go", label: "Go", frame, enabled: false, hittable: true }),
+				])
+			)
 		).toBe(hash);
 	});
 });
 
-describe("settleDetailOf", () => {
+describe("settler.detailOf", () => {
 	test("keeps the extra fields a driver reports next to quiet and waitedMs", () => {
 		const reply: SettleDetail = {
 			quiet: false,
@@ -119,22 +137,22 @@ describe("settleDetailOf", () => {
 			reason: "frontmost_mismatch",
 			frontmostPid: 4242,
 		};
-		expect(settleDetailOf(reply)).toEqual(reply);
+		expect(settler.detailOf(reply)).toEqual(reply);
 	});
 
 	test("a plain outcome stays plain", () => {
-		expect(settleDetailOf({ quiet: true, waitedMs: 250 })).toEqual({ quiet: true, waitedMs: 250 });
+		expect(settler.detailOf({ quiet: true, waitedMs: 250 })).toEqual({ quiet: true, waitedMs: 250 });
 	});
 
 	test("fields of the wrong type or an unknown via are dropped, never passed on", () => {
 		const reply = { quiet: true, waitedMs: 1, via: "telepathy", reason: 7, frontmostPid: "12" };
-		expect(settleDetailOf(reply)).toEqual({ quiet: true, waitedMs: 1 });
+		expect(settler.detailOf(reply)).toEqual({ quiet: true, waitedMs: 1 });
 	});
 
 	test("via takes stream, snapshot and hash", () => {
 		for (const via of ["stream", "snapshot", "hash"]) {
 			const reply = { quiet: true, waitedMs: 1, via };
-			expect(settleDetailOf(reply)).toMatchObject({ via });
+			expect(settler.detailOf(reply)).toMatchObject({ via });
 		}
 	});
 });

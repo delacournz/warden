@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ConditionArea } from "@delacour/warden-config/conditions.types";
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
-import { failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { updateState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
@@ -11,7 +11,7 @@ afterEach(cleanupHarnesses);
 type Override = NonNullable<Parameters<typeof harness>[1]>["onCall"];
 
 function setup(platform: "ios" | "android" = "android", onCall?: Override) {
-	const h: Harness = harness([snapshotOf(LOGIN)], {
+	const h: Harness = harness([driverFixtures.snapshotOf(LOGIN)], {
 		platform,
 		...(onCall ? { onCall } : {}),
 		conditions: {
@@ -195,7 +195,7 @@ describe("a11y", () => {
 
 	test("a driver that skips everything fails with its E_UNSUPPORTED", async () => {
 		const h = setup("ios", (call) =>
-			call.method === "a11y" ? failWith("E_UNSUPPORTED", "boldText: no switch") : undefined
+			call.method === "a11y" ? driverFixtures.failWith("E_UNSUPPORTED", "boldText: no switch") : undefined
 		);
 		expect(await h.run("a11y", "set", "--bold", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
@@ -237,7 +237,7 @@ describe("memory-warning and push", () => {
 
 	test("memory-warning surfaces the driver's E_UNSUPPORTED", async () => {
 		const h = setup("ios", (call) =>
-			call.method === "memoryWarning" ? failWith("E_UNSUPPORTED", "no mechanism") : undefined
+			call.method === "memoryWarning" ? driverFixtures.failWith("E_UNSUPPORTED", "no mechanism") : undefined
 		);
 		expect(await h.run("memory-warning", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("no mechanism");

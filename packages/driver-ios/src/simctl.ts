@@ -3,8 +3,8 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-builds/install";
 import type { LatLon, LocationCondition } from "@delacour/warden-config/conditions.types";
-import { formatCoord } from "@delacour/warden-driver/conditions/geo";
-import { loadGpxPoints } from "@delacour/warden-driver/conditions/location-plan";
+import { geoMath } from "@delacour/warden-driver/conditions/geo";
+import { locationPlanner } from "@delacour/warden-driver/conditions/location-plan";
 import { IOS_SCENARIO_NAMES } from "@delacour/warden-driver/conditions/location-scenarios.data";
 import type {
 	BiometricOp,
@@ -13,7 +13,7 @@ import type {
 	DriverResult,
 	LaunchOptions,
 } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import { type Exec, type ExecResult, execErrors } from "@delacour/warden-runtime/exec";
 
 /**
@@ -194,7 +194,7 @@ export function statusBarOverrideArgv(udid: string, o: StatusBarOverrides = {}):
 
 export const statusBarClearArgv = (udid: string): string[] => [...XCRUN, "status_bar", udid, "clear"];
 
-const latLon = (p: LatLon): string => `${formatCoord(p.lat)},${formatCoord(p.lon)}`;
+const latLon = (p: LatLon): string => `${geoMath.formatCoord(p.lat)},${geoMath.formatCoord(p.lon)}`;
 
 export const locationSetArgv = (udid: string, point: LatLon): string[] => [
 	...XCRUN,
@@ -227,8 +227,8 @@ function startOptions(op: Extract<LocationCondition, { kind: "route" | "gpx" }>)
  */
 export function locationStartArgv(udid: string, points: readonly LatLon[], o: LocationStartOptions = {}): string[] {
 	const flags = [
-		...(o.speedMps !== undefined ? [`--speed=${formatCoord(o.speedMps)}`] : []),
-		...(o.intervalS !== undefined ? [`--interval=${formatCoord(o.intervalS)}`] : []),
+		...(o.speedMps !== undefined ? [`--speed=${geoMath.formatCoord(o.speedMps)}`] : []),
+		...(o.intervalS !== undefined ? [`--interval=${geoMath.formatCoord(o.intervalS)}`] : []),
 	];
 	if (points.length <= LOCATION_ARGV_MAX_POINTS)
 		return [...XCRUN, "location", udid, "start", ...flags, ...points.map(latLon)];
@@ -293,18 +293,18 @@ export function simctlFailure(argv: readonly string[], res: ExecResult, appComma
 	const message = execErrors.format(argv, res);
 	const detail = { argv, exitCode: res.exitCode };
 	if (/current state:\s*(Shutdown|Creating|Shutting Down)/i.test(text) || /Unable to .* not booted/i.test(text)) {
-		return driverError("E_NOT_BOOTED", message, { detail });
+		return driverErrors.make("E_NOT_BOOTED", message, { detail });
 	}
 	if (/Invalid device|No devices are booted|device .* not found/i.test(text)) {
-		return driverError("E_UNKNOWN_DEVICE", message, { detail });
+		return driverErrors.make("E_UNKNOWN_DEVICE", message, { detail });
 	}
 	if (
 		appCommand &&
 		/not installed|found nothing|FBSOpenApplicationServiceErrorDomain|No such (file|app)|unknown app/i.test(text)
 	) {
-		return driverError("E_APP_UNAVAILABLE", message, { detail });
+		return driverErrors.make("E_APP_UNAVAILABLE", message, { detail });
 	}
-	return driverError("E_IO", message, { detail });
+	return driverErrors.make("E_IO", message, { detail });
 }
 
 // ---------- runner ----------
@@ -377,12 +377,12 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 
 	async function playRoute(op: Extract<LocationCondition, { kind: "route" | "gpx" }>): DriverResult<void> {
 		if (op.kind === "route" && op.loop) {
-			return fail(driverError("E_UNSUPPORTED", "simctl location has no loop; iOS routes play once"));
+			return fail(driverErrors.make("E_UNSUPPORTED", "simctl location has no loop; iOS routes play once"));
 		}
-		const loaded = op.kind === "gpx" ? await loadGpxPoints(op.path, readText) : ok(op.points);
-		if (!loaded.success) return fail(driverError("E_BAD_REQUEST", loaded.error));
+		const loaded = op.kind === "gpx" ? await locationPlanner.loadGpxPoints(op.path, readText) : ok(op.points);
+		if (!loaded.success) return fail(driverErrors.make("E_BAD_REQUEST", loaded.error));
 		const [only, second] = loaded.data;
-		if (!only) return fail(driverError("E_BAD_REQUEST", "a route needs at least one point"));
+		if (!only) return fail(driverErrors.make("E_BAD_REQUEST", "a route needs at least one point"));
 		if (!second) return runVoid(locationSetArgv(udid, only));
 		return runVoid(locationStartArgv(udid, loaded.data, startOptions(op)));
 	}
@@ -403,7 +403,7 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			return ok({ png: new Uint8Array(bytes) });
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
-			return { success: false, error: driverError("E_IO", `reading screenshot: ${reason}`) };
+			return { success: false, error: driverErrors.make("E_IO", `reading screenshot: ${reason}`) };
 		} finally {
 			await (deps.rmDir ?? ((p: string) => rm(p, { recursive: true, force: true })))(dir).catch(() => undefined);
 		}
@@ -451,7 +451,7 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			);
 			if (reset.success) return ok(undefined);
 			const code = /is not installed/.test(reset.error) ? "E_APP_UNAVAILABLE" : "E_IO";
-			return { success: false, error: driverError(code, reset.error) };
+			return { success: false, error: driverErrors.make(code, reset.error) };
 		},
 		async pbcopy(text) {
 			const outcomes: string[] = [];
@@ -470,7 +470,7 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			}
 			return {
 				success: false,
-				error: driverError("E_IO", `simulator pasteboard did not take the text (${outcomes.join("; ")})`),
+				error: driverErrors.make("E_IO", `simulator pasteboard did not take the text (${outcomes.join("; ")})`),
 			};
 		},
 		async pbpaste() {
@@ -486,7 +486,10 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			if (!result.ok) return { success: false, error: result.error };
 			const value = result.res.stdout.trim();
 			if (value === "light" || value === "dark") return ok(value);
-			return { success: false, error: driverError("E_UNSUPPORTED", `simctl ui appearance reported \`${value}\``) };
+			return {
+				success: false,
+				error: driverErrors.make("E_UNSUPPORTED", `simctl ui appearance reported \`${value}\``),
+			};
 		},
 		async biometrics(op) {
 			const kind = await modalityOf();

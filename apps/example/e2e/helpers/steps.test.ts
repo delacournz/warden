@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { Device } from "@delacour/warden-e2e";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { staticDriver, testHost } from "@delacour/warden-screen/testing/screen";
@@ -9,9 +9,17 @@ import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, SPEC_OPTIONS } 
 const OPTIONS = { windowMs: 40, pollMs: 5 };
 
 function welcome(title: string) {
-	return snapshotOf([
-		el("text", { id: ids.welcome.title, label: title, frame: { x: 24, y: 100, width: 300, height: 40 } }),
-		el("button", { id: ids.welcome.next, label: "Next", frame: { x: 24, y: 600, width: 300, height: 44 } }),
+	return driverFixtures.snapshotOf([
+		driverFixtures.el("text", {
+			id: ids.welcome.title,
+			label: title,
+			frame: { x: 24, y: 100, width: 300, height: 40 },
+		}),
+		driverFixtures.el("button", {
+			id: ids.welcome.next,
+			label: "Next",
+			frame: { x: 24, y: 600, width: 300, height: 44 },
+		}),
 	]);
 }
 
@@ -19,7 +27,7 @@ function welcome(title: string) {
 function setup(landingTap: number): { driver: FakeDriver; screen: ReturnType<typeof createScreen> } {
 	let title = "Welcome";
 	let taps = 0;
-	const driver = fakeDriver({
+	const driver = new FakeDriver({
 		screens: () => welcome(title),
 		onCall: (call) => {
 			if (call.method === "tap") {
@@ -41,7 +49,7 @@ describe("SPEC_OPTIONS", () => {
 describe("launch", () => {
 	test("opens the app and waits for it to be in front and still, then for the welcome screen", async () => {
 		const opened: unknown[] = [];
-		const driver = staticDriver([el("other", { id: ids.welcome.screen })]);
+		const driver = staticDriver([driverFixtures.el("other", { id: ids.welcome.screen })]);
 		const screen = createScreen(testHost(driver));
 		await launch({ open: async (options) => void opened.push(options) }, screen);
 		expect(opened).toEqual([{ wait: "quiet" }]);
@@ -74,7 +82,7 @@ describe("nextStep", () => {
 
 	test("a title that merely contains the step name does not count", async () => {
 		let taps = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () => welcome("Plan B"),
 			onCall: (call) => {
 				if (call.method === "tap") taps += 1;
@@ -90,9 +98,11 @@ describe("nextStep", () => {
 describe("expectTodosAfterSignIn", () => {
 	function behindSheet() {
 		let sheetUp = true;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () =>
-				sheetUp ? snapshotOf([], { modal: { pid: 7 } }) : snapshotOf([el("other", { id: ids.todos.screen })]),
+				sheetUp
+					? driverFixtures.snapshotOf([], { modal: { pid: 7 } })
+					: driverFixtures.snapshotOf([driverFixtures.el("other", { id: ids.todos.screen })]),
 		});
 		const host = testHost(driver, { cache: true });
 		const answered: number[] = [];
@@ -105,7 +115,7 @@ describe("expectTodosAfterSignIn", () => {
 	}
 
 	test("returns once the todos screen shows", async () => {
-		const screen = createScreen(testHost(staticDriver([el("other", { id: ids.todos.screen })])));
+		const screen = createScreen(testHost(staticDriver([driverFixtures.el("other", { id: ids.todos.screen })])));
 		await expectTodosAfterSignIn(screen);
 	});
 
@@ -125,8 +135,8 @@ describe("openDeepLink", () => {
 	/** A device whose `openLink` shows the detail screen from its `landingOpen`-th call on (earlier links are dropped). */
 	function linking(landingOpen: number) {
 		let shown = false;
-		const driver = fakeDriver({
-			screens: () => snapshotOf(shown ? [el("other", { id: ids.detail.title })] : []),
+		const driver = new FakeDriver({
+			screens: () => driverFixtures.snapshotOf(shown ? [driverFixtures.el("other", { id: ids.detail.title })] : []),
 		});
 		const opens: { url: string; waitMs: number | undefined }[] = [];
 		const device: Pick<Device, "openLink"> = {

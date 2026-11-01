@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverCapabilities } from "@delacour/warden-driver/driver.types";
-import { canDetectAlerts } from "@delacour/warden-driver/observation-cache";
-import { el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { canSelectAll, canSetText } from "@delacour/warden-driver/typing";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import { connectRemoteDriver, type RemoteClient } from "./remote-client";
 import { type RemoteServer, serveDriver } from "./remote-server";
 
@@ -38,13 +38,16 @@ async function connect(server: RemoteServer, opts: { requestTimeoutMs?: number }
 	return connected.data;
 }
 
-const screen = snapshotOf([el("button", { id: "go", label: "Go" }), el("text", { label: "Hello" })], {
-	platform: "android",
-});
+const screen = driverFixtures.snapshotOf(
+	[driverFixtures.el("button", { id: "go", label: "Go" }), driverFixtures.el("text", { label: "Hello" })],
+	{
+		platform: "android",
+	}
+);
 
 describe("remote driver", () => {
 	test("the ready event names the driver, its capabilities and optional ops", async () => {
-		const driver = fakeDriver({ screens: [screen], platform: "android", id: "emulator-5554", selectAll: true });
+		const driver = new FakeDriver({ screens: [screen], platform: "android", id: "emulator-5554", selectAll: true });
 		const client = await connect(await serve(driver));
 		expect(client.ready.platform).toBe("android");
 		expect(client.ready.id).toBe("emulator-5554");
@@ -53,12 +56,12 @@ describe("remote driver", () => {
 		expect(remote.platform).toBe("android");
 		expect(remote.id).toBe("emulator-5554");
 		expect(remote.capabilities).toEqual(driver.capabilities);
-		expect(canSelectAll(remote)).toBe(true);
-		expect(canSetText(remote)).toBe(false);
+		expect(deviceTyping.canSelectAll(remote)).toBe(true);
+		expect(deviceTyping.canSetText(remote)).toBe(false);
 	});
 
 	test("calls reach the served driver with their arguments; omitted options stay undefined", async () => {
-		const driver = fakeDriver({ screens: [screen], platform: "android" });
+		const driver = new FakeDriver({ screens: [screen], platform: "android" });
 		const remote = (await connect(await serve(driver))).driver();
 		expect(await remote.tap({ x: 10, y: 20 })).toEqual({ success: true, data: undefined });
 		expect(await remote.tap({ x: 1, y: 2 }, { count: 2 })).toEqual({ success: true, data: undefined });
@@ -73,7 +76,7 @@ describe("remote driver", () => {
 	});
 
 	test("clock goes over the wire with its options and returns the state", async () => {
-		const driver = fakeDriver({ screens: [screen], platform: "android", wallNow: () => 5_000 });
+		const driver = new FakeDriver({ screens: [screen], platform: "android", wallNow: () => 5_000 });
 		const remote = (await connect(await serve(driver))).driver();
 		const result = await remote.clock({ kind: "offset", ms: 1_000 }, { relaunch: true });
 		expect(result).toMatchObject({ success: true, data: { offsetMs: 1_000, nowMs: 6_000 } });
@@ -81,7 +84,7 @@ describe("remote driver", () => {
 	});
 
 	test("a snapshot comes back with flat holding the tree's own nodes in preorder", async () => {
-		const remote = (await connect(await serve(fakeDriver({ screens: [screen], platform: "android" })))).driver();
+		const remote = (await connect(await serve(new FakeDriver({ screens: [screen], platform: "android" })))).driver();
 		const taken = await remote.snapshot({ interactiveOnly: true });
 		if (!taken.success) throw new Error(taken.error.message);
 		expect(taken.data.flat.map((e) => e.id)).toEqual(screen.flat.map((e) => e.id));
@@ -90,19 +93,19 @@ describe("remote driver", () => {
 
 	test("a reply far larger than one socket write arrives whole", async () => {
 		const many = Array.from({ length: 3000 }, (_, i) =>
-			el("text", { id: `row-${i}`, label: `Row number ${i} ${"x".repeat(40)}` })
+			driverFixtures.el("text", { id: `row-${i}`, label: `Row number ${i} ${"x".repeat(40)}` })
 		);
-		const big = snapshotOf(many, { platform: "android" });
-		const remote = (await connect(await serve(fakeDriver({ screens: [big], platform: "android" })))).driver();
+		const big = driverFixtures.snapshotOf(many, { platform: "android" });
+		const remote = (await connect(await serve(new FakeDriver({ screens: [big], platform: "android" })))).driver();
 		const taken = await remote.snapshot();
 		if (!taken.success) throw new Error(taken.error.message);
 		expect(taken.data.flat).toHaveLength(big.flat.length);
 	});
 
 	test("a driver failure is returned, not thrown", async () => {
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [screen],
-			onCall: (call) => (call.method === "tap" ? failWith("E_NO_ELEMENT", "nothing there") : undefined),
+			onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_NO_ELEMENT", "nothing there") : undefined),
 		});
 		const remote = (await connect(await serve(driver))).driver();
 		const tapped = await remote.tap({ x: 0, y: 0 });
@@ -111,7 +114,7 @@ describe("remote driver", () => {
 	});
 
 	test("capabilities follow the served driver after each op", async () => {
-		const base = fakeDriver({ screens: [screen], platform: "android" });
+		const base = new FakeDriver({ screens: [screen], platform: "android" });
 		let caps: DriverCapabilities = { ...base.capabilities, nativeSettle: false };
 		const driver: Driver = {
 			...base,
@@ -131,7 +134,7 @@ describe("remote driver", () => {
 
 	test("a screenshot's bytes survive the trip", async () => {
 		const png = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [screen],
 			onCall: (call) => (call.method === "screenshot" ? { data: { png } } : undefined),
 		});
@@ -147,7 +150,7 @@ describe("remote driver", () => {
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
-		const base = fakeDriver({ screens: [screen] });
+		const base = new FakeDriver({ screens: [screen] });
 		const driver: Driver = {
 			...base,
 			tap: async (point) => {
@@ -171,7 +174,7 @@ describe("remote driver", () => {
 	});
 
 	test("closing the client only disconnects; stopping the server closes the driver", async () => {
-		const driver = fakeDriver({ screens: [screen] });
+		const driver = new FakeDriver({ screens: [screen] });
 		const server = await serve(driver);
 		const client = await connect(server);
 		await client.driver().close();
@@ -182,7 +185,7 @@ describe("remote driver", () => {
 	});
 
 	test("a request in flight when the server goes away fails E_HELPER_CRASHED", async () => {
-		const base = fakeDriver({ screens: [screen] });
+		const base = new FakeDriver({ screens: [screen] });
 		const driver: Driver = { ...base, tap: () => new Promise(() => undefined) };
 		const server = await serve(driver, { closeDriver: false, stopWaitMs: 10 });
 		const remote = (await connect(server)).driver();
@@ -195,7 +198,7 @@ describe("remote driver", () => {
 	});
 
 	test("a request that takes longer than the client's timeout fails E_TIMEOUT", async () => {
-		const base = fakeDriver({ screens: [screen] });
+		const base = new FakeDriver({ screens: [screen] });
 		const driver: Driver = { ...base, health: () => new Promise(() => undefined) };
 		const remote = (
 			await connect(await serve(driver, { closeDriver: false, stopWaitMs: 10 }), { requestTimeoutMs: 50 })
@@ -207,14 +210,14 @@ describe("remote driver", () => {
 
 	test("shutdown is acknowledged and handed to the host", async () => {
 		const asked: string[] = [];
-		const server = await serve(fakeDriver({ screens: [screen] }), { onShutdown: () => asked.push("shutdown") });
+		const server = await serve(new FakeDriver({ screens: [screen] }), { onShutdown: () => asked.push("shutdown") });
 		const client = await connect(server);
 		expect((await client.request("shutdown")).success).toBe(true);
 		expect(asked).toEqual(["shutdown"]);
 	});
 
 	test("an unknown op is E_BAD_REQUEST", async () => {
-		const client = await connect(await serve(fakeDriver({ screens: [screen] })));
+		const client = await connect(await serve(new FakeDriver({ screens: [screen] })));
 		const answer = await client.request("explode");
 		expect(answer.success).toBe(false);
 		if (!answer.success) expect(answer.error.code).toBe("E_BAD_REQUEST");
@@ -222,7 +225,7 @@ describe("remote driver", () => {
 
 	test("the server reports idle once no client has been connected for idleMs", async () => {
 		const idle: number[] = [];
-		const server = await serve(fakeDriver({ screens: [screen] }), { idleMs: 60, onIdle: () => idle.push(1) });
+		const server = await serve(new FakeDriver({ screens: [screen] }), { idleMs: 60, onIdle: () => idle.push(1) });
 		const client = await connect(server);
 		await Bun.sleep(100);
 		expect(idle).toEqual([]);
@@ -233,10 +236,10 @@ describe("remote driver", () => {
 	});
 
 	test("an android driver's alertIn is answered locally from the snapshot", async () => {
-		const driver = fakeDriver({ screens: [screen], platform: "android" });
+		const driver = new FakeDriver({ screens: [screen], platform: "android" });
 		const served: Driver = Object.assign(driver, { alertIn: () => null });
 		const remote = (await connect(await serve(served, { alertIn: "android" }))).driver();
-		expect(canDetectAlerts(remote)).toBe(true);
-		if (canDetectAlerts(remote)) expect(remote.alertIn(screen)).toBeNull();
+		expect(observations.canDetectAlerts(remote)).toBe(true);
+		if (observations.canDetectAlerts(remote)) expect(remote.alertIn(screen)).toBeNull();
 	});
 });

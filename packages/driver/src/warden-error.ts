@@ -9,12 +9,17 @@ const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code
 	"E_UNKNOWN_DEVICE",
 ]);
 
-/** A driver failure as a {@link WardenError}: engine problems are `engine_unavailable`, a stale ref `stale_ref`, the rest `failed`. */
-export function wardenErrorFromDriver(error: DriverError): WardenError {
-	const message = `${error.code}: ${error.message}`;
-	if (error.code === "E_STALE_REF") {
-		return wardenErrors.err("stale_ref", error.message, { hint: "run `warden ui snapshot` again" }).error;
+/** Maps driver failures onto {@link WardenError}. Use the shared {@link driverWardenErrors} singleton. */
+export class DriverWardenErrors {
+	/** A driver failure as a {@link WardenError}: engine problems are `engine_unavailable`, a stale ref `stale_ref`, the rest `failed`. */
+	fromDriver(error: DriverError): WardenError {
+		const message = `${error.code}: ${error.message}`;
+		if (error.code === "E_STALE_REF") {
+			return wardenErrors.err("stale_ref", error.message, { hint: "run `warden ui snapshot` again" }).error;
+		}
+		if (ENGINE_CODES.has(error.code)) return wardenErrors.err("engine_unavailable", message).error;
+		return wardenErrors.err("failed", message, { details: { driver: error.code } }).error;
 	}
-	if (ENGINE_CODES.has(error.code)) return wardenErrors.err("engine_unavailable", message).error;
-	return wardenErrors.err("failed", message, { details: { driver: error.code } }).error;
 }
+
+export const driverWardenErrors = new DriverWardenErrors();

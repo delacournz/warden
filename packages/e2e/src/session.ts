@@ -12,9 +12,9 @@ import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
 import type { NativeLogDeps } from "@delacour/warden-devtools/native-log";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { cacheObservations } from "@delacour/warden-driver/observation-cache";
-import { runSpan, type SpanRunner } from "@delacour/warden-driver/trace/span";
-import { traceDriver } from "@delacour/warden-driver/traced-driver";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { type SpanRunner, spans } from "@delacour/warden-driver/trace/span";
+import { driverTracer } from "@delacour/warden-driver/traced-driver";
 import {
 	type HidRecoveryDeps,
 	rebootSim,
@@ -354,7 +354,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 						const { code, message } = result.error;
 						throw new E2eError("DRIVER", `${code}: ${message}`);
 					}
-					current = cacheObservations(traceDriver(result.data, { trace: () => attempt?.trace }));
+					current = observations.cache(driverTracer.trace(result.data, { trace: () => attempt?.trace }));
 					return reenroll(current);
 				},
 				(cause: unknown) => {
@@ -409,7 +409,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 			return runStep(attempt, kind, label, fn);
 		},
 		span(op, fn, options) {
-			return runSpan(attempt?.trace, op, fn, options);
+			return spans.run(attempt?.trace, op, fn, options);
 		},
 		enterAttempt(next, replacing) {
 			if (replacing !== undefined && attempt !== replacing) return;
@@ -512,7 +512,7 @@ export function attemptSession(session: Session, binding: () => AttemptBinding):
 			return runStep(context(), kind, label, fn);
 		},
 		span(op, fn, options) {
-			return runSpan(trace(), op, fn, options);
+			return spans.run(trace(), op, fn, options);
 		},
 		enterAttempt: (next, replacing) => session.enterAttempt(next, replacing),
 		leaveAttempt: (leaving) => session.leaveAttempt(leaving),

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runDriverConformance } from "@delacour/warden-driver/testing/conformance";
+import { driverConformance } from "@delacour/warden-driver/testing/conformance";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { fakeFarm, fakeFarmDriver } from "../../examples/fake-provider";
 import { createWardenClient } from "../client";
@@ -92,7 +92,7 @@ describe("registration", () => {
 	});
 });
 
-runDriverConformance("example fake-provider driver", async () => fakeFarmDriver("farm-1"), { appId: "com.farm.app" });
+driverConformance.run("example fake-provider driver", async () => fakeFarmDriver("farm-1"), { appId: "com.farm.app" });
 
 describe("claim → open → snapshot through a plugin", () => {
 	test("routes the claim through the plugin's provider and opens its driver", async () => {

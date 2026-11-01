@@ -1,5 +1,5 @@
 import type { DriverError, DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverErr, driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { SimdSpawn } from "@delacour/warden-driver/helper/simd-transport";
 import type { AdbSession } from "./adb-session";
 import { shellQuote } from "./android-argv";
@@ -92,7 +92,10 @@ export async function ensureUiadDex(deps: EnsureDexDeps): DriverResult<string> {
 	const push = deps.push ?? bunPushDex;
 	const wrote = await push(uiadInstallArgv(deps.adb, deps.serial, path), Buffer.from(dex.base64, "base64"));
 	if (wrote.exitCode !== 0) {
-		return driverErr("E_IO", `cannot write warden-uiad to ${deps.serial}:${path}: ${wrote.output.slice(0, 200)}`);
+		return driverErrors.err(
+			"E_IO",
+			`cannot write warden-uiad to ${deps.serial}:${path}: ${wrote.output.slice(0, 200)}`
+		);
 	}
 	deps.log?.(`uiad: wrote ${dex.bytes} B to ${path}`);
 	return { success: true, data: path };
@@ -131,7 +134,7 @@ export function parseHolders(ps: string): Holder[] {
 /** What the failure says when the slot is taken by something that is not ours. */
 export function busyError(serial: string, holders: readonly Holder[], cause: DriverError): DriverError {
 	const named = holders.length > 0 ? holders.map((h) => `pid ${h.pid}: ${h.args}`).join("; ") : "an unknown process";
-	return driverError(
+	return driverErrors.make(
 		"E_AX_UNAVAILABLE",
 		`another UiAutomation client holds ${serial} (${named}); warden will not touch it. Stop it, or release the device.`,
 		{

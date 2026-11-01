@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canProbeFrontmost, canReadAlertOn } from "@delacour/warden-driver/alerts";
+import { alertCapabilities } from "@delacour/warden-driver/alerts";
 import type { Driver, Snapshot } from "@delacour/warden-driver/driver.types";
-import { bunSpawn } from "@delacour/warden-driver/helper/simd-transport";
-import { settleDetailOf } from "@delacour/warden-driver/settle";
-import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { fakeProxy } from "@delacour/warden-driver/testing/network-proxy";
-import { collectSpanDetail, type SpanDetail } from "@delacour/warden-driver/trace/span-detail";
-import { canPasteText, canSelectAll } from "@delacour/warden-driver/typing";
+import { simdTransports } from "@delacour/warden-driver/helper/simd-transport";
+import { settler } from "@delacour/warden-driver/settle";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
+import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
+import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
+import { deviceTyping } from "@delacour/warden-driver/typing";
 import { type ExecCall, fakeExec, joined } from "./exec.testing";
 import type { InjectFs } from "./inject";
 import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
@@ -22,11 +22,11 @@ const SCREEN = { width: 390, height: 844, scale: 3 };
 
 const toWire = (snap: Snapshot) => JSON.parse(JSON.stringify(snap.elements)) as unknown;
 
-const home = snapshotOf([
-	el("window", {
+const home = driverFixtures.snapshotOf([
+	driverFixtures.el("window", {
 		children: [
-			el("button", { id: "login", label: "Log in", frame: { x: 20, y: 100, width: 200, height: 44 } }),
-			el("textfield", { id: "email", value: "", frame: { x: 20, y: 160, width: 200, height: 44 } }),
+			driverFixtures.el("button", { id: "login", label: "Log in", frame: { x: 20, y: 100, width: 200, height: 44 } }),
+			driverFixtures.el("textfield", { id: "email", value: "", frame: { x: 20, y: 160, width: 200, height: 44 } }),
 		],
 	}),
 ]);
@@ -608,7 +608,7 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		const { driver, helper } = await open((request) =>
 			request.op === "alertButtons" ? { data: { title: "Allow?", buttons: allowButtons } } : undefined
 		);
-		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		if (!alertCapabilities.canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
 		const alert = await unwrapped(driver.alertOn("ax"));
 		expect(alert?.title).toBe("Allow?");
 		expect(alert?.buttons.map((button) => button.label)).toEqual(["Allow", "Don't Allow"]);
@@ -625,7 +625,7 @@ describe("system alerts through one reader and the frontmost probe", () => {
 	test("alertOn: no alert is null; a modal without readable buttons is an alert with no buttons", async () => {
 		let reply: unknown = null;
 		const { driver } = await open((request) => (request.op === "alertButtons" ? { data: reply } : undefined));
-		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		if (!alertCapabilities.canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
 		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
 		reply = { title: "Open this page in “app”?", buttons: [] };
 		expect(await unwrapped(driver.alertOn("axbridge"))).toEqual({ title: "Open this page in “app”?", buttons: [] });
@@ -637,7 +637,7 @@ describe("system alerts through one reader and the frontmost probe", () => {
 				? { error: { code: "E_AX_UNAVAILABLE", message: "bridge unavailable", retryable: true } }
 				: undefined
 		);
-		if (!canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
+		if (!alertCapabilities.canReadAlertOn(driver)) throw new Error("the iOS driver reads alerts through one backend");
 		const result = await driver.alertOn("axbridge");
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.code).toBe("E_AX_UNAVAILABLE");
@@ -648,7 +648,7 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		const { driver, helper } = await open((request) =>
 			request.op === "frontmost" ? { data: { frontmost, pid: 12, frontmostPid: frontmost ? 12 : 3 } } : undefined
 		);
-		if (!canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
+		if (!alertCapabilities.canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
 		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(false);
 		frontmost = true;
 		expect(await unwrapped(driver.isFrontmost(BUNDLE))).toBe(true);
@@ -669,7 +669,8 @@ describe("system alerts through one reader and the frontmost probe", () => {
 		if (!result.success) throw new Error(result.error.message);
 		opened.push(result.data);
 		const driver = result.data;
-		if (!canReadAlertOn(driver) || !canProbeFrontmost(driver)) throw new Error("iOS driver capabilities expected");
+		if (!alertCapabilities.canReadAlertOn(driver) || !alertCapabilities.canProbeFrontmost(driver))
+			throw new Error("iOS driver capabilities expected");
 		expect(await unwrapped(driver.alertOn("axbridge"))).toBeNull();
 		expect(helper.of("alertButtons")[0]).toMatchObject({ backend: "ax" });
 		const front = await driver.isFrontmost(BUNDLE);
@@ -679,7 +680,7 @@ describe("system alerts through one reader and the frontmost probe", () => {
 
 	test("isFrontmost against a helper without the op is a failure the caller can ignore", async () => {
 		const { driver } = await open(() => undefined);
-		if (!canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
+		if (!alertCapabilities.canProbeFrontmost(driver)) throw new Error("the iOS driver probes the frontmost app");
 		const result = await driver.isFrontmost(BUNDLE);
 		expect(result.success).toBe(false);
 	});
@@ -751,8 +752,8 @@ describe("typeText", () => {
 describe("selectAll", () => {
 	test("is one selectAll request, and the typing layer can find it", async () => {
 		const { driver, helper } = await open(() => ({ data: {} }));
-		expect(canSelectAll(driver)).toBe(true);
-		if (!canSelectAll(driver)) return;
+		expect(deviceTyping.canSelectAll(driver)).toBe(true);
+		if (!deviceTyping.canSelectAll(driver)) return;
 		await unwrapped(driver.selectAll());
 		expect(helper.requests.map((request) => request.op)).toEqual(["selectAll"]);
 	});
@@ -761,7 +762,7 @@ describe("selectAll", () => {
 		const { driver } = await open(() => ({
 			error: { code: "E_BAD_REQUEST", message: 'unknown input op "selectAll"' },
 		}));
-		if (!canSelectAll(driver)) throw new Error("expected selectAll");
+		if (!deviceTyping.canSelectAll(driver)) throw new Error("expected selectAll");
 		const result = await driver.selectAll();
 		expect(!result.success && result.error.code).toBe("E_BAD_REQUEST");
 	});
@@ -773,8 +774,8 @@ describe("pasteText", () => {
 			["sh -c", {}],
 			["xcrun simctl pbpaste", { stdout: "ada@example.com" }],
 		]);
-		expect(canPasteText(driver)).toBe(true);
-		if (!canPasteText(driver)) return;
+		expect(deviceTyping.canPasteText(driver)).toBe(true);
+		if (!deviceTyping.canPasteText(driver)) return;
 		await unwrapped(driver.pasteText("ada@example.com"));
 		expect(calls.find((call) => call.cmd[0] === "sh")?.cmd.slice(3)).toEqual(["sh", "ada@example.com", UDID]);
 		expect(helper.requests.map((request) => request.op)).toEqual(["paste"]);
@@ -785,7 +786,7 @@ describe("pasteText", () => {
 			["sh -c", {}],
 			["xcrun simctl pbpaste", { stdout: "whatever the Mac had" }],
 		]);
-		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		if (!deviceTyping.canPasteText(driver)) throw new Error("expected pasteText");
 		const result = await driver.pasteText("ada@example.com");
 		expect(!result.success && result.error.code).toBe("E_IO");
 		expect(helper.of("paste")).toHaveLength(0);
@@ -796,7 +797,7 @@ describe("pasteText", () => {
 			["sh -c", {}],
 			["xcrun simctl pbpaste", { stdout: "whatever the Mac had" }],
 		]);
-		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		if (!deviceTyping.canPasteText(driver)) throw new Error("expected pasteText");
 		await driver.pasteText("ada@example.com");
 		const line = logs.find((entry) => entry.includes("pasteText"));
 		expect(line).toContain("E_IO");
@@ -806,7 +807,7 @@ describe("pasteText", () => {
 
 	test("empty text does nothing", async () => {
 		const { driver, helper, calls } = await open(() => ({ data: null }));
-		if (!canPasteText(driver)) throw new Error("expected pasteText");
+		if (!deviceTyping.canPasteText(driver)) throw new Error("expected pasteText");
 		await unwrapped(driver.pasteText(""));
 		expect(helper.requests).toEqual([]);
 		expect(calls.some((call) => call.cmd[0] === "sh")).toBe(false);
@@ -827,7 +828,7 @@ describe("settle", () => {
 		const { driver } = await open((request) =>
 			request.op === "settle" ? { error: { code: "E_TIMEOUT", message: "slow" } } : undefined
 		);
-		expect(settleDetailOf(await unwrapped(driver.settle({ timeoutMs: 1000 })))).toEqual({
+		expect(settler.detailOf(await unwrapped(driver.settle({ timeoutMs: 1000 })))).toEqual({
 			quiet: false,
 			waitedMs: 3000,
 			reason: "helper_timeout",
@@ -840,7 +841,7 @@ describe("settle", () => {
 				? { data: { quiet: false, waitedMs: 8010, via: "stream", reason: "frontmost_mismatch", frontmostPid: 4242 } }
 				: undefined
 		);
-		expect(settleDetailOf(await unwrapped(driver.settle({ timeoutMs: 8000 })))).toEqual({
+		expect(settler.detailOf(await unwrapped(driver.settle({ timeoutMs: 8000 })))).toEqual({
 			quiet: false,
 			waitedMs: 8010,
 			via: "stream",
@@ -853,7 +854,11 @@ describe("settle", () => {
 		const { driver } = await open((request) =>
 			request.op === "settle" ? { data: { quiet: true, waitedMs: 2330, via: "snapshot" } } : undefined
 		);
-		expect(settleDetailOf(await unwrapped(driver.settle()))).toEqual({ quiet: true, waitedMs: 2330, via: "snapshot" });
+		expect(settler.detailOf(await unwrapped(driver.settle()))).toEqual({
+			quiet: true,
+			waitedMs: 2330,
+			via: "snapshot",
+		});
 	});
 
 	test("the call's span gets the same verdict as detail", async () => {
@@ -861,7 +866,7 @@ describe("settle", () => {
 			request.op === "settle" ? { data: { quiet: true, waitedMs: 260, via: "stream", frontmostPid: 77 } } : undefined
 		);
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => driver.settle());
+		await spanDetails.collect(notes, () => driver.settle());
 		expect(notes).toEqual({ via: "stream", frontmostPid: 77 });
 	});
 
@@ -902,7 +907,7 @@ describe("settle", () => {
 			return request.op === "settle" ? { data: { quiet: true, waitedMs: 5, via: "stream" } } : lifecycle(request);
 		});
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		await spanDetails.collect(notes, () => unwrapped(driver.app.launch(BUNDLE)));
 		expect(helper.of("rebind")).toHaveLength(1);
 		expect(helper.of("rebind")[0]).toMatchObject({ bundleId: BUNDLE, rebindTimeoutMs: 3000, timeoutMs: 5000 });
 		expect(notes).toEqual({ via: "simd", pid: 4242, rebind: "bound", rebindMs: 700 });
@@ -917,7 +922,7 @@ describe("settle", () => {
 				: lifecycle(request)
 		);
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		await spanDetails.collect(notes, () => unwrapped(driver.app.launch(BUNDLE)));
 		expect(notes).toEqual({
 			via: "simd",
 			pid: 4242,
@@ -934,7 +939,7 @@ describe("settle", () => {
 			return request.op === "settle" ? { data: { quiet: true, waitedMs: 5 } } : lifecycle(request);
 		});
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE)));
+		await spanDetails.collect(notes, () => unwrapped(driver.app.launch(BUNDLE)));
 		expect(notes).toEqual({ via: "simd", pid: 4242, rebind: "timeout", rebindMs: 3000, rebindRestarts: 1 });
 		await unwrapped(driver.settle());
 		expect(helper.of("settle")[0]).toMatchObject({ bundleId: BUNDLE });
@@ -987,7 +992,7 @@ describe("settle", () => {
 			}
 		);
 		const notes: SpanDetail = {};
-		const first = await collectSpanDetail(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
+		const first = await spanDetails.collect(notes, () => unwrapped(driver.settle({ quietMs: 100, timeoutMs: 2000 })));
 		expect(first.quiet).toBe(true);
 		expect(first).toMatchObject({ via: "hash" });
 		expect(notes.via).toBe("hash");
@@ -1006,7 +1011,12 @@ describe("settle", () => {
 				if (request.op === "settle") return { error: { code: "E_UNSUPPORTED", message: "x" } };
 				if (request.op === "snapshot") {
 					n += 1;
-					return { data: { ...snapshotData, elements: toWire(snapshotOf([el("text", { label: `tick ${n}` })])) } };
+					return {
+						data: {
+							...snapshotData,
+							elements: toWire(driverFixtures.snapshotOf([driverFixtures.el("text", { label: `tick ${n}` })])),
+						},
+					};
 				}
 				return undefined;
 			},
@@ -1121,7 +1131,7 @@ describe("network conditions", () => {
 	test("a network condition set before launch makes the launch load the dylib and carry the proxy address", async () => {
 		const dir = stateDir();
 		dir.app.running = false;
-		const proxy = fakeProxy(19_123);
+		const proxy = new FakeProxy(19_123);
 		const { driver, helper } = await open(lifecycle, {
 			networkProxy: proxy,
 			injectFs: dir.fs,
@@ -1145,7 +1155,7 @@ describe("network conditions", () => {
 
 	test("a plain run launches exactly as before: no injected env at all", async () => {
 		const { driver, helper } = await open(lifecycle, {
-			networkProxy: fakeProxy(),
+			networkProxy: new FakeProxy(),
 			injectFs: stateDir().fs,
 			wardenHome: "/w",
 		});
@@ -1159,7 +1169,7 @@ describe("network conditions", () => {
 		const { driver, calls } = await open(
 			(request) => (["launch", "terminate", "openUrl"].includes(request.op) ? unknownOp(request.op) : { data: null }),
 			{
-				networkProxy: fakeProxy(19_123, true),
+				networkProxy: new FakeProxy(19_123, true),
 				injectFs: dir.fs,
 				exists,
 				env: { helperDir: "/opt" } as OpenIosDriverOptions["env"],
@@ -1177,7 +1187,7 @@ describe("network conditions", () => {
 
 	test("networkFaults goes through the proxy and carries the https note", async () => {
 		const dir = stateDir();
-		const proxy = fakeProxy(19_123, true);
+		const proxy = new FakeProxy(19_123, true);
 		const { driver } = await open(lifecycle, { networkProxy: proxy, injectFs: dir.fs, wardenHome: "/w" });
 		const result = await driver.networkFaults([{ match: "api.example.com", action: { kind: "status", code: 503 } }]);
 		expect(result.success && result.data.notes).toHaveLength(1);
@@ -1189,7 +1199,7 @@ describe("app lifecycle through the helper", () => {
 	test("launch sends bundle, args, env and terminateRunning to the helper; no simctl process is started", async () => {
 		const { driver, helper, calls } = await open(lifecycle);
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => unwrapped(driver.app.launch(BUNDLE, { args: ["--x"], env: { A: "1" } })));
+		await spanDetails.collect(notes, () => unwrapped(driver.app.launch(BUNDLE, { args: ["--x"], env: { A: "1" } })));
 		expect(helper.of("launch")[0]).toMatchObject({
 			bundleId: BUNDLE,
 			args: ["--x"],
@@ -1215,7 +1225,7 @@ describe("app lifecycle through the helper", () => {
 	test("terminate and openUrl go to the helper", async () => {
 		const { driver, helper, calls } = await open(lifecycle);
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => unwrapped(driver.app.terminate(BUNDLE)));
+		await spanDetails.collect(notes, () => unwrapped(driver.app.terminate(BUNDLE)));
 		await unwrapped(driver.app.openUrl("myapp://home"));
 		expect(helper.of("terminate")[0]).toMatchObject({ bundleId: BUNDLE });
 		expect(helper.of("openUrl")[0]).toMatchObject({ url: "myapp://home" });
@@ -1228,7 +1238,7 @@ describe("app lifecycle through the helper", () => {
 			request.op === "terminate" ? { data: { terminated: false } } : lifecycle(request)
 		);
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () => unwrapped(driver.app.terminate(BUNDLE)));
+		await spanDetails.collect(notes, () => unwrapped(driver.app.terminate(BUNDLE)));
 		expect(notes).toEqual({ via: "simd", terminated: false });
 	});
 
@@ -1243,7 +1253,7 @@ describe("app lifecycle through the helper", () => {
 			]
 		);
 		const notes: SpanDetail = {};
-		await collectSpanDetail(notes, () =>
+		await spanDetails.collect(notes, () =>
 			unwrapped(driver.app.launch(BUNDLE, { args: ["--x"], env: { A: "1" }, relaunch: false }))
 		);
 		expect(notes).toMatchObject({ via: "simctl", reason: "helper_outdated" });
@@ -1499,7 +1509,7 @@ describe("helper crash (real fake-simd process)", () => {
 			const { driver } = await open(() => undefined, {
 				spawn: (cmd) => {
 					spawned += 1;
-					return bunSpawn([process.execPath, FAKE, "--script", script, ...cmd.slice(1)]);
+					return simdTransports.spawn([process.execPath, FAKE, "--script", script, ...cmd.slice(1)]);
 				},
 			});
 			expect((await driver.tap({ x: 1, y: 1 })).success).toBe(true);

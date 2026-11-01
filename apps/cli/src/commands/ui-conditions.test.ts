@@ -3,7 +3,7 @@ import { activeConditions, recordCondition } from "@delacour/warden-core/conditi
 import type { ProxyStatus } from "@delacour/warden-core/netproxy/control";
 import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
 import type { TickerConfig } from "@delacour/warden-driver/conditions/route-ticker";
-import { failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { updateState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
@@ -35,7 +35,7 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 	let nextPid = 900;
 	const networkOptions: unknown[] = [];
 	const s = { killed, schedulers, tickers, alive, proxy, ensured, networkOptions } as Setup;
-	s.h = harness([snapshotOf(LOGIN)], {
+	s.h = harness([driverFixtures.snapshotOf(LOGIN)], {
 		platform,
 		pidAlive: (pid) => alive.has(pid),
 		...(physical ? { lease: { physical: { transport: "usb" } } } : {}),
@@ -156,9 +156,11 @@ describe("net <condition>", () => {
 	});
 
 	test("E_NETWORK_RELAUNCH is reported verbatim and nothing is recorded", async () => {
-		const failing = harness([snapshotOf(LOGIN)], {
+		const failing = harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) =>
-				call.method === "network" ? failWith("E_NETWORK_RELAUNCH", "app runs without the dylib") : undefined,
+				call.method === "network"
+					? driverFixtures.failWith("E_NETWORK_RELAUNCH", "app runs without the dylib")
+					: undefined,
 			conditions: {
 				open: async () => resultFactory.ok(failing.driver),
 				proxyStatus: async () => undefined,
@@ -173,9 +175,9 @@ describe("net <condition>", () => {
 	});
 
 	test("E_UNSUPPORTED (a physical device) is reported verbatim", async () => {
-		const failing = harness([snapshotOf(LOGIN)], {
+		const failing = harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) =>
-				call.method === "network" ? failWith("E_UNSUPPORTED", "network needs an emulator") : undefined,
+				call.method === "network" ? driverFixtures.failWith("E_UNSUPPORTED", "network needs an emulator") : undefined,
 			conditions: {
 				open: async () => resultFactory.ok(failing.driver),
 				proxyStatus: async () => undefined,
@@ -437,9 +439,11 @@ describe("location", () => {
 	});
 
 	test("iOS --loop is the driver's E_UNSUPPORTED, verbatim", async () => {
-		const h = harness([snapshotOf(LOGIN)], {
+		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) =>
-				call.method === "location" ? failWith("E_UNSUPPORTED", "simctl location has no loop") : undefined,
+				call.method === "location"
+					? driverFixtures.failWith("E_UNSUPPORTED", "simctl location has no loop")
+					: undefined,
 			conditions: {
 				open: async () => resultFactory.ok(h.driver),
 				proxyStatus: async () => undefined,
@@ -581,9 +585,10 @@ describe("clock", () => {
 	});
 
 	test("a frozen Android clock is the driver's E_UNSUPPORTED, verbatim, and nothing is recorded", async () => {
-		const h = harness([snapshotOf(LOGIN)], {
+		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
 			platform: "android",
-			onCall: (call) => (call.method === "clock" ? failWith("E_UNSUPPORTED", "no frozen clock on Android") : undefined),
+			onCall: (call) =>
+				call.method === "clock" ? driverFixtures.failWith("E_UNSUPPORTED", "no frozen clock on Android") : undefined,
 			conditions: {
 				open: async () => resultFactory.ok(h.driver),
 				proxyStatus: async () => undefined,

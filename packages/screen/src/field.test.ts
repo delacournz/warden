@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import {
 	CONFIRM_READS,
 	confirmFieldValue,
@@ -123,9 +123,9 @@ describe("focusClearType", () => {
 	});
 
 	test("a failed tap stops before any key", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
-			onCall: (call) => (call.method === "tap" ? failWith("E_TIMEOUT") : undefined),
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
+			onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_TIMEOUT") : undefined),
 		});
 		const clock = fakeClock();
 		const result = await focusClearType(driver, clock.sleep, { x: 1, y: 2 }, undefined, "z");
@@ -164,26 +164,32 @@ describe("tapToFocus", () => {
 	});
 
 	test("a hit-test that cannot tell (fails, or finds another element there) ends the wait at once", async () => {
-		const field = el("textfield", { id: "field", frame: FIELD_FRAME, focused: false });
+		const field = driverFixtures.el("textfield", { id: "field", frame: FIELD_FRAME, focused: false });
 		const fieldEntry = (driver: FakeDriver) => {
 			const found = indexSnapshot(driver.screen).entries.find((candidate) => candidate.element.identifier === "field");
 			if (found === undefined) throw new Error("no field");
 			return found;
 		};
 		const clock = fakeClock();
-		const broken = fakeDriver({
-			screens: [snapshotOf([field])],
-			onCall: (call) => (call.method === "elementAtPoint" ? failWith("E_TIMEOUT") : undefined),
+		const broken = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([field])],
+			onCall: (call) => (call.method === "elementAtPoint" ? driverFixtures.failWith("E_TIMEOUT") : undefined),
 		});
 		await tapToFocus(broken, clock.sleep, IN_FIELD, fieldEntry(broken));
 		expect(methods(broken)).toEqual(["tap", "elementAtPoint"]);
-		const before = fakeDriver({ screens: [snapshotOf([field])] });
+		const before = new FakeDriver({ screens: [driverFixtures.snapshotOf([field])] });
 		const entry = fieldEntry(before);
-		const covered = fakeDriver({ screens: [snapshotOf([el("button", { id: "cover", frame: FIELD_FRAME })])] });
+		const covered = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "cover", frame: FIELD_FRAME })])],
+		});
 		await tapToFocus(covered, clock.sleep, IN_FIELD, entry);
 		expect(methods(covered)).toEqual(["tap", "elementAtPoint"]);
-		const shifted = fakeDriver({
-			screens: [snapshotOf([el("textfield", { id: "next-field", frame: FIELD_FRAME, focused: false })])],
+		const shifted = new FakeDriver({
+			screens: [
+				driverFixtures.snapshotOf([
+					driverFixtures.el("textfield", { id: "next-field", frame: FIELD_FRAME, focused: false }),
+				]),
+			],
 		});
 		await tapToFocus(shifted, clock.sleep, IN_FIELD, entry);
 		expect(methods(shifted)).toEqual(["tap", "elementAtPoint"]);
@@ -191,7 +197,7 @@ describe("tapToFocus", () => {
 	});
 
 	test("Android and a bare coordinate are not waited on", async () => {
-		const android = fakeDriver({ platform: "android", screens: [snapshotOf([])] });
+		const android = new FakeDriver({ platform: "android", screens: [driverFixtures.snapshotOf([])] });
 		await tapToFocus(android, fakeClock().sleep, IN_FIELD, undefined);
 		expect(methods(android)).toEqual(["tap"]);
 		const { driver } = fieldFixture({ focused: false });
@@ -200,9 +206,9 @@ describe("tapToFocus", () => {
 	});
 
 	test("a failed tap is returned as is", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([])],
-			onCall: (call) => (call.method === "tap" ? failWith("E_TIMEOUT") : undefined),
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
+			onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_TIMEOUT") : undefined),
 		});
 		expect((await tapToFocus(driver, fakeClock().sleep, IN_FIELD, undefined)).success).toBe(false);
 		expect(methods(driver)).toEqual(["tap"]);
@@ -281,10 +287,12 @@ describe("focusAndClear with select-all", () => {
 	});
 
 	test("a select-all the driver rejects falls back to the counted presses", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("textfield", { id: "field", value: "ab", focused: true })])],
+		const driver = new FakeDriver({
+			screens: [
+				driverFixtures.snapshotOf([driverFixtures.el("textfield", { id: "field", value: "ab", focused: true })]),
+			],
 			selectAll: true,
-			onCall: (call) => (call.method === "selectAll" ? failWith("E_BAD_REQUEST") : undefined),
+			onCall: (call) => (call.method === "selectAll" ? driverFixtures.failWith("E_BAD_REQUEST") : undefined),
 		});
 		const result = await focusAndClear(driver, fakeClock().sleep, POINT, entryOfField(driver));
 		expect(result.success).toBe(true);
@@ -340,10 +348,12 @@ describe("focusClearType with select-all types over the selection", () => {
 	});
 
 	test("a select-all the driver rejects falls back to the counted presses, then types", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("textfield", { id: "field", value: "ab", focused: true })])],
+		const driver = new FakeDriver({
+			screens: [
+				driverFixtures.snapshotOf([driverFixtures.el("textfield", { id: "field", value: "ab", focused: true })]),
+			],
 			selectAll: true,
-			onCall: (call) => (call.method === "selectAll" ? failWith("E_BAD_REQUEST") : undefined),
+			onCall: (call) => (call.method === "selectAll" ? driverFixtures.failWith("E_BAD_REQUEST") : undefined),
 		});
 		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
 		expect(result.success).toBe(true);
@@ -351,10 +361,12 @@ describe("focusClearType with select-all types over the selection", () => {
 	});
 
 	test("a failed typeText surfaces its error", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("textfield", { id: "field", value: "ab", focused: true })])],
+		const driver = new FakeDriver({
+			screens: [
+				driverFixtures.snapshotOf([driverFixtures.el("textfield", { id: "field", value: "ab", focused: true })]),
+			],
 			selectAll: true,
-			onCall: (call) => (call.method === "typeText" ? failWith("E_TIMEOUT") : undefined),
+			onCall: (call) => (call.method === "typeText" ? driverFixtures.failWith("E_TIMEOUT") : undefined),
 		});
 		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new");
 		expect(result.success).toBe(false);
@@ -492,10 +504,10 @@ describe("focusClearType with setText (Android warden-uiad, opt-in)", () => {
 	});
 
 	test("a failed focus tap stops before setText", async () => {
-		const driver = fakeDriver({
-			screens: [snapshotOf([el("textfield", { id: "field", value: "ab" })])],
+		const driver = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("textfield", { id: "field", value: "ab" })])],
 			setText: true,
-			onCall: (call) => (call.method === "tap" ? failWith("E_HID") : undefined),
+			onCall: (call) => (call.method === "tap" ? driverFixtures.failWith("E_HID") : undefined),
 		});
 		const result = await focusClearType(driver, fakeClock().sleep, POINT, entryOfField(driver), "new", "setText");
 		expect(result.success).toBe(false);

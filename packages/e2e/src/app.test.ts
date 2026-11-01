@@ -2,15 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
 import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { cacheObservations } from "@delacour/warden-driver/observation-cache";
-import {
-	type ElementSpec,
-	el,
-	type FakeDriver,
-	failWith,
-	fakeDriver,
-	snapshotOf,
-} from "@delacour/warden-driver/testing/driver";
+import { observations } from "@delacour/warden-driver/observation-cache";
+import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { testHost } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
@@ -29,10 +22,10 @@ const baseEnv: E2eEnv = {
 };
 
 /** a first screen: one control, so `wait: "quiet"` sees content on its first look */
-const CONTENT = snapshotOf([el("button", { label: "Next" })]);
+const CONTENT = driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Next" })]);
 
 function setup(env: Partial<E2eEnv> = {}) {
-	const driver = fakeDriver({ screens: [CONTENT] });
+	const driver = new FakeDriver({ screens: [CONTENT] });
 	const app = createApp({ session: { out: "/tmp/out" }, driver, env: { ...baseEnv, ...env } });
 	return { driver, app };
 }
@@ -53,16 +46,19 @@ function launchingDriver(
 	options: { contentAt: number; launch?: ElementSpec[]; content?: ElementSpec[]; platform?: Platform }
 ): FakeDriver {
 	const platform = options.platform ?? "ios";
-	const launch: Snapshot = snapshotOf(options.launch ?? [el("image")], { platform });
-	const content: Snapshot = snapshotOf(options.content ?? [el("text", { id: "welcome.screen", label: "Welcome" })], {
-		platform,
-	});
-	return fakeDriver({ platform, screens: () => (clock.now() >= options.contentAt ? content : launch) });
+	const launch: Snapshot = driverFixtures.snapshotOf(options.launch ?? [driverFixtures.el("image")], { platform });
+	const content: Snapshot = driverFixtures.snapshotOf(
+		options.content ?? [driverFixtures.el("text", { id: "welcome.screen", label: "Welcome" })],
+		{
+			platform,
+		}
+	);
+	return new FakeDriver({ platform, screens: () => (clock.now() >= options.contentAt ? content : launch) });
 }
 
 describe("app.open", () => {
 	test("with Metro, attaches devtools after the launch so LogBox is turned off", async () => {
-		const driver = fakeDriver({ screens: [CONTENT] });
+		const driver = new FakeDriver({ screens: [CONTENT] });
 		let attaches = 0;
 		const session = {
 			out: "/tmp/out",
@@ -78,7 +74,7 @@ describe("app.open", () => {
 	});
 
 	test("without Metro (a release build) devtools are not attached", async () => {
-		const driver = fakeDriver({ screens: [CONTENT] });
+		const driver = new FakeDriver({ screens: [CONTENT] });
 		let attaches = 0;
 		const session = {
 			out: "/tmp/out",
@@ -105,15 +101,15 @@ describe("app.open", () => {
 	});
 
 	test("iOS launches with the network dylib when conditions want it; Android and a plain run do not", async () => {
-		const wanted = fakeDriver({ screens: [CONTENT] });
+		const wanted = new FakeDriver({ screens: [CONTENT] });
 		await createApp({ session: { out: "/tmp/out" }, driver: wanted, env: baseEnv, injectWanted: () => true }).open();
 		expect(wanted.callsOf("app.launch")[0]?.opts?.inject).toBe(true);
 
-		const plain = fakeDriver({ screens: [CONTENT] });
+		const plain = new FakeDriver({ screens: [CONTENT] });
 		await createApp({ session: { out: "/tmp/out" }, driver: plain, env: baseEnv, injectWanted: () => false }).open();
 		expect(plain.callsOf("app.launch")[0]?.opts).not.toHaveProperty("inject");
 
-		const android = fakeDriver({ screens: [CONTENT], platform: "android" });
+		const android = new FakeDriver({ screens: [CONTENT], platform: "android" });
 		await createApp({
 			session: { out: "/tmp/out" },
 			driver: android,
@@ -164,7 +160,7 @@ describe("app.open wait", () => {
 	});
 
 	test("an app that is not quiet in time is not an error: the next assertion says what is missing", async () => {
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [CONTENT],
 			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
 		});
@@ -174,18 +170,18 @@ describe("app.open wait", () => {
 	});
 
 	test("a driver that cannot settle is not an error either", async () => {
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [CONTENT],
-			onCall: (call) => (call.method === "settle" ? failWith("E_UNSUPPORTED") : undefined),
+			onCall: (call) => (call.method === "settle" ? driverFixtures.failWith("E_UNSUPPORTED") : undefined),
 		});
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		await app.open({ wait: "quiet" });
 	});
 
 	test("a failing settle is", async () => {
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [CONTENT],
-			onCall: (call) => (call.method === "settle" ? failWith("E_HELPER_CRASHED") : undefined),
+			onCall: (call) => (call.method === "settle" ? driverFixtures.failWith("E_HELPER_CRASHED") : undefined),
 		});
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		const error = await app.open({ wait: "quiet" }).catch((e: unknown) => e);
@@ -249,7 +245,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 	test("polls through the observation cache without reusing a kept snapshot", async () => {
 		const clock = fakeClock();
 		const inner = launchingDriver(clock, { contentAt: 300 });
-		const driver = cacheObservations(inner, { now: clock.now });
+		const driver = observations.cache(inner, { now: clock.now });
 		await driver.snapshot();
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
@@ -272,10 +268,18 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 			platform: "android",
 			contentAt: 500,
 			launch: [
-				el("other", { id: "action_bar_root", children: [el("other", { id: "content", children: [el("image")] })] }),
-				el("button", { label: "Next", hidden: true }),
+				driverFixtures.el("other", {
+					id: "action_bar_root",
+					children: [driverFixtures.el("other", { id: "content", children: [driverFixtures.el("image")] })],
+				}),
+				driverFixtures.el("button", { label: "Next", hidden: true }),
 			],
-			content: [el("other", { id: "action_bar_root", children: [el("other", { id: "content" }), el("button")] })],
+			content: [
+				driverFixtures.el("other", {
+					id: "action_bar_root",
+					children: [driverFixtures.el("other", { id: "content" }), driverFixtures.el("button")],
+				}),
+			],
 		});
 		const app = createApp({
 			session: { out: "/tmp/out" },
@@ -293,9 +297,12 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 			platform: "android",
 			contentAt: 500,
 			launch: [
-				el("other", {
+				driverFixtures.el("other", {
 					id: "splashscreen_view",
-					children: [el("image", { id: "splashscreen_icon_view" }), el("image", { id: "splashscreen_branding_view" })],
+					children: [
+						driverFixtures.el("image", { id: "splashscreen_icon_view" }),
+						driverFixtures.el("image", { id: "splashscreen_branding_view" }),
+					],
 				}),
 			],
 		});
@@ -312,9 +319,10 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 	test("a snapshot that fails while the app starts is a look with no content, not an error", async () => {
 		const clock = fakeClock();
 		let failures = 2;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: [CONTENT],
-			onCall: (call) => (call.method === "snapshot" && failures-- > 0 ? failWith("E_AX_UNAVAILABLE") : undefined),
+			onCall: (call) =>
+				call.method === "snapshot" && failures-- > 0 ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined,
 		});
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
@@ -341,7 +349,7 @@ describe("app.open wait: { until }", () => {
 	});
 
 	test("a locator that never shows is a TIMEOUT after `timeout`, with no settle", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([el("image")])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([driverFixtures.el("image")])] });
 		const host = testHost(driver);
 		const screen = createScreen(host);
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
@@ -354,7 +362,7 @@ describe("app.open wait: { until }", () => {
 	});
 
 	test("with a url it waits after the link is opened", async () => {
-		const driver = fakeDriver({ screens: [CONTENT] });
+		const driver = new FakeDriver({ screens: [CONTENT] });
 		const screen = createScreen(testHost(driver));
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		await app.open({ url: "myapp://home", wait: { until: screen.getByRole("button", { name: "Next" }) } });
@@ -366,11 +374,13 @@ describe("app.open on Android", () => {
 	const androidEnv: Partial<E2eEnv> = { platform: "android", launchArgs: ["--initialUrl", "x"] };
 	/** the Android driver refuses any launch args or env, as `android-app.ts` does */
 	const androidDriver = () =>
-		fakeDriver({
+		new FakeDriver({
 			platform: "android",
-			screens: [snapshotOf([])],
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) =>
-				call.method === "app.launch" && (call.opts?.args?.length ?? 0) > 0 ? failWith("E_UNSUPPORTED") : undefined,
+				call.method === "app.launch" && (call.opts?.args?.length ?? 0) > 0
+					? driverFixtures.failWith("E_UNSUPPORTED")
+					: undefined,
 		});
 
 	test("drops WARDEN_LAUNCH_ARGS (Metro's --initialUrl) and launches with no args, logging it once", async () => {
@@ -477,7 +487,7 @@ describe("app.reinstall", () => {
 
 describe("signal", () => {
 	test("an aborted session signal fails calls with TIMEOUT before touching the driver", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const controller = new AbortController();
 		controller.abort();
 		const app = createApp({ session: { out: "/tmp/out", signal: controller.signal }, driver, env: baseEnv });

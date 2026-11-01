@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { fakeDriver } from "@delacour/warden-driver/testing/driver";
+import { FakeDriver } from "@delacour/warden-driver/testing/driver";
 import {
 	centreOf,
 	clearKeyPresses,
@@ -236,7 +236,7 @@ describe("gesture geometry", () => {
 	});
 
 	test("requireGesture names the capability and the way out", () => {
-		const driver = fakeDriver({ screens: [], platform: "android", capabilities: { pinch: false, maxPointers: 1 } });
+		const driver = new FakeDriver({ screens: [], platform: "android", capabilities: { pinch: false, maxPointers: 1 } });
 		expect(() => requireGesture(driver, "pinch", "locator.pinch")).toThrow(
 			/locator\.pinch is not supported on android/
 		);

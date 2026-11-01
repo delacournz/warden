@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
@@ -144,7 +144,7 @@ async function open(rules: Rule[], extra: Partial<ClientSeams> = {}) {
 		providerFor: () => provider,
 		stopHelper: async () => undefined,
 		store,
-		openDriver: async () => resultFactory.ok(fakeDriver({ screens: [snapshotOf([])] })),
+		openDriver: async () => resultFactory.ok(new FakeDriver({ screens: [driverFixtures.snapshotOf([])] })),
 		...extra,
 		perf: { deps: procs.deps, kit: procs.kit, ...extra.perf },
 	};

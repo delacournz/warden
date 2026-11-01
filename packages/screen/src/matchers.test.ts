@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DriverError, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { LocatorAssertions } from "./matchers";
 import { createScreen } from "./screen";
 import { fieldFixture, staticDriver, testHost } from "./screen.testing";
@@ -17,7 +17,7 @@ async function failure(promise: Promise<unknown>): Promise<E2eError> {
 }
 
 function setup(
-	driver = staticDriver([el("button", { id: "x", label: "b" })]),
+	driver = staticDriver([driverFixtures.el("button", { id: "x", label: "b" })]),
 	options: Parameters<typeof testHost>[1] = {}
 ) {
 	const host = testHost(driver, options);
@@ -28,16 +28,21 @@ function setup(
 }
 
 /** A screen whose single element `x` appears after `after` snapshots. */
-function appearing(after: number, spec = el("button", { id: "x", label: "b" })) {
+function appearing(after: number, spec = driverFixtures.el("button", { id: "x", label: "b" })) {
 	let snapshots = 0;
-	return fakeDriver({ screens: () => (snapshots++ < after ? snapshotOf([]) : snapshotOf([spec])) });
+	return new FakeDriver({
+		screens: () => (snapshots++ < after ? driverFixtures.snapshotOf([]) : driverFixtures.snapshotOf([spec])),
+	});
 }
 
 /** A screen whose single element `x` is gone after `after` snapshots. */
 function vanishing(after: number) {
 	let snapshots = 0;
-	return fakeDriver({
-		screens: () => (snapshots++ < after ? snapshotOf([el("button", { id: "x" })]) : snapshotOf([])),
+	return new FakeDriver({
+		screens: () =>
+			snapshots++ < after
+				? driverFixtures.snapshotOf([driverFixtures.el("button", { id: "x" })])
+				: driverFixtures.snapshotOf([]),
 	});
 }
 
@@ -81,8 +86,8 @@ describe("polling", () => {
 
 	test("a retryable driver failure is polled through, a fatal one thrown", async () => {
 		let reads = 0;
-		const flaky = fakeDriver({
-			screens: [snapshotOf([el("button", { id: "x" })])],
+		const flaky = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { id: "x" })])],
 			onCall: (call) =>
 				call.method === "snapshot" && reads++ < 2
 					? { error: { code: "E_AX_UNAVAILABLE", message: "busy", retryable: true } }
@@ -92,8 +97,8 @@ describe("polling", () => {
 		await one.that(one.screen.getByTestId("x")).toBeVisible();
 		expect(one.host.clock.sleeps).toEqual([100, 100]);
 
-		const broken = fakeDriver({
-			screens: [snapshotOf([])],
+		const broken = new FakeDriver({
+			screens: [driverFixtures.snapshotOf([])],
 			onCall: (call) =>
 				call.method === "snapshot"
 					? { error: { code: "E_HELPER_CRASHED", message: "gone", retryable: false } }
@@ -113,7 +118,9 @@ describe("polling", () => {
 	});
 
 	test("several matches fail at once with LOCATOR_AMBIGUOUS", async () => {
-		const { host, screen, that } = setup(staticDriver([el("button", { label: "a" }), el("button", { label: "a" })]));
+		const { host, screen, that } = setup(
+			staticDriver([driverFixtures.el("button", { label: "a" }), driverFixtures.el("button", { label: "a" })])
+		);
 		const error = await failure(that(screen.getByRole("button")).toBeVisible());
 		expect(error.code).toBe("LOCATOR_AMBIGUOUS");
 		expect(host.clock.sleeps).toEqual([]);
@@ -176,7 +183,7 @@ describe("failure messages", () => {
 
 describe("toBeVisible / toBeHidden", () => {
 	test("visible: hidden elements and missing ones do not pass", async () => {
-		const hidden = setup(staticDriver([el("button", { id: "x", hidden: true })]));
+		const hidden = setup(staticDriver([driverFixtures.el("button", { id: "x", hidden: true })]));
 		expect(
 			(await failure(hidden.that(hidden.screen.getByTestId("x")).toBeVisible({ timeout: 200 }))).message
 		).toContain("Received: hidden");
@@ -189,7 +196,7 @@ describe("toBeVisible / toBeHidden", () => {
 	test("hidden: absent or hidden pass, visible does not", async () => {
 		const absent = setup(staticDriver([]));
 		await absent.that(absent.screen.getByTestId("x")).toBeHidden();
-		const hidden = setup(staticDriver([el("button", { id: "x", hidden: true })]));
+		const hidden = setup(staticDriver([driverFixtures.el("button", { id: "x", hidden: true })]));
 		await hidden.that(hidden.screen.getByTestId("x")).toBeHidden();
 		const shown = setup();
 		const error = await failure(shown.that(shown.screen.getByTestId("x")).toBeHidden({ timeout: 200 }));
@@ -214,8 +221,11 @@ describe("negation", () => {
 
 	test("a flicker restarts the window", async () => {
 		let reads = 0;
-		const driver = fakeDriver({
-			screens: () => (reads++ === 3 ? snapshotOf([el("button", { id: "x" })]) : snapshotOf([])),
+		const driver = new FakeDriver({
+			screens: () =>
+				reads++ === 3
+					? driverFixtures.snapshotOf([driverFixtures.el("button", { id: "x" })])
+					: driverFixtures.snapshotOf([]),
 		});
 		const { host, screen } = setup(driver);
 		await new LocatorAssertions(screen.getByTestId("x"), { negate: true }).toBeVisible();
@@ -225,8 +235,11 @@ describe("negation", () => {
 	test("a hold that starts after the first second ends exactly one grace window after its last break", async () => {
 		let reads = 0;
 		const shown = (read: number): boolean => read < 12 || read === 14;
-		const driver = fakeDriver({
-			screens: () => (shown(reads++) ? snapshotOf([el("button", { id: "x" })]) : snapshotOf([])),
+		const driver = new FakeDriver({
+			screens: () =>
+				shown(reads++)
+					? driverFixtures.snapshotOf([driverFixtures.el("button", { id: "x" })])
+					: driverFixtures.snapshotOf([]),
 		});
 		const { host, screen } = setup(driver);
 		await new LocatorAssertions(screen.getByTestId("x"), { negate: true }).toBeVisible();
@@ -241,7 +254,7 @@ describe("negation", () => {
 	});
 
 	test("fails when the condition never goes away", async () => {
-		const { screen } = setup(staticDriver([el("button", { id: "x" })]), { assertionTimeoutMs: 2000 });
+		const { screen } = setup(staticDriver([driverFixtures.el("button", { id: "x" })]), { assertionTimeoutMs: 2000 });
 		const error = await failure(new LocatorAssertions(screen.getByTestId("x"), { negate: true }).toBeVisible());
 		expect(error.message).toContain("Expected: not visible");
 		expect(error.message).toContain("Received: visible");
@@ -269,8 +282,8 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 		screens?: () => Snapshot
 	) {
 		let settles = 0;
-		return fakeDriver({
-			screens: screens ?? (() => snapshotOf([])),
+		return new FakeDriver({
+			screens: screens ?? (() => driverFixtures.snapshotOf([])),
 			capabilities: { nativeSettle: true },
 			onCall: (call) => (call.method === "settle" && settle !== undefined ? settle(settles++) : undefined),
 		});
@@ -297,7 +310,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 	});
 
 	test("a settle that fails leaves the full hold", async () => {
-		const driver = quietDriver(() => failWith("E_TIMEOUT"));
+		const driver = quietDriver(() => driverFixtures.failWith("E_TIMEOUT"));
 		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
 		expect(host.clock.elapsed()).toBe(1000);
@@ -306,7 +319,9 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 	test("the poll after a quiet settle still has to hold: a break restarts the full window", async () => {
 		let reads = 0;
 		const driver = quietDriver(undefined, () =>
-			reads++ === 1 ? snapshotOf([el("button", { id: "x" })]) : snapshotOf([])
+			reads++ === 1
+				? driverFixtures.snapshotOf([driverFixtures.el("button", { id: "x" })])
+				: driverFixtures.snapshotOf([])
 		);
 		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
@@ -322,7 +337,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 	});
 
 	test("a driver without native settle is never asked: it would be polled snapshots or a dump", async () => {
-		const driver = fakeDriver({ screens: [snapshotOf([])] });
+		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const { host, screen } = setup(driver, { cache: true });
 		await negated(screen).toBeVisible();
 		expect(driver.callsOf("settle")).toHaveLength(0);
@@ -330,7 +345,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 	});
 
 	test("a positive matcher never settles", async () => {
-		const driver = quietDriver(undefined, () => snapshotOf([el("button", { id: "x" })]));
+		const driver = quietDriver(undefined, () => driverFixtures.snapshotOf([driverFixtures.el("button", { id: "x" })]));
 		const { screen, that } = setup(driver, { cache: true });
 		await that(screen.getByTestId("x")).toBeVisible();
 		expect(driver.callsOf("settle")).toHaveLength(0);
@@ -366,7 +381,7 @@ describe("negation on a driver that can tell the screen is quiet", () => {
 
 describe("text matchers", () => {
 	test("toHaveText is whole-text after normalisation; exact:false is a case-insensitive substring", async () => {
-		const { screen, that } = setup(staticDriver([el("text", { id: "t", label: "  Hello   World " })]));
+		const { screen, that } = setup(staticDriver([driverFixtures.el("text", { id: "t", label: "  Hello   World " })]));
 		await that(screen.getByTestId("t")).toHaveText("Hello World");
 		await that(screen.getByTestId("t")).toHaveText(/^hello/i);
 		await that(screen.getByTestId("t")).toHaveText("world", { exact: false });
@@ -376,14 +391,17 @@ describe("text matchers", () => {
 	test("toHaveText falls back to descendant text", async () => {
 		const { screen, that } = setup(
 			staticDriver([
-				el("other", { id: "card", children: [el("text", { label: "Invoice 42" }), el("text", { label: "$10" })] }),
+				driverFixtures.el("other", {
+					id: "card",
+					children: [driverFixtures.el("text", { label: "Invoice 42" }), driverFixtures.el("text", { label: "$10" })],
+				}),
 			])
 		);
 		await that(screen.getByTestId("card")).toHaveText("Invoice 42 $10");
 	});
 
 	test("toContainText is a case-sensitive substring, ignoreCase relaxes it", async () => {
-		const { screen, that } = setup(staticDriver([el("text", { id: "t", label: "Saved at 10:42" })]));
+		const { screen, that } = setup(staticDriver([driverFixtures.el("text", { id: "t", label: "Saved at 10:42" })]));
 		await that(screen.getByTestId("t")).toContainText("Saved");
 		await that(screen.getByTestId("t")).toContainText(/\d+:\d+/);
 		expect((await failure(that(screen.getByTestId("t")).toContainText("saved", { timeout: 100 }))).code).toBe(
@@ -394,8 +412,9 @@ describe("text matchers", () => {
 
 	test("waits for the text to change", async () => {
 		let reads = 0;
-		const driver = fakeDriver({
-			screens: () => snapshotOf([el("text", { id: "t", label: reads++ < 2 ? "Saving…" : "Saved" })]),
+		const driver = new FakeDriver({
+			screens: () =>
+				driverFixtures.snapshotOf([driverFixtures.el("text", { id: "t", label: reads++ < 2 ? "Saving…" : "Saved" })]),
 		});
 		const { host, screen, that } = setup(driver);
 		await that(screen.getByTestId("t")).toHaveText("Saved");
@@ -433,10 +452,10 @@ describe("state matchers", () => {
 	const screenOf = () =>
 		setup(
 			staticDriver([
-				el("switch", { id: "on", value: "1" }),
-				el("switch", { id: "off", value: "0" }),
-				el("button", { id: "plain" }),
-				el("button", { id: "dead", enabled: false }),
+				driverFixtures.el("switch", { id: "on", value: "1" }),
+				driverFixtures.el("switch", { id: "off", value: "0" }),
+				driverFixtures.el("button", { id: "plain" }),
+				driverFixtures.el("button", { id: "dead", enabled: false }),
 			])
 		);
 
@@ -468,7 +487,9 @@ describe("state matchers", () => {
 
 describe("toHaveCount", () => {
 	test("counts current matches, zero included", async () => {
-		const { screen, that } = setup(staticDriver([el("button", { label: "a" }), el("button", { label: "b" })]));
+		const { screen, that } = setup(
+			staticDriver([driverFixtures.el("button", { label: "a" }), driverFixtures.el("button", { label: "b" })])
+		);
 		await that(screen.getByRole("button")).toHaveCount(2);
 		await that(screen.getByRole("tab")).toHaveCount(0);
 		const error = await failure(that(screen.getByRole("button")).toHaveCount(3, { timeout: 100 }));
@@ -478,9 +499,11 @@ describe("toHaveCount", () => {
 
 	test("waits for the count", async () => {
 		let reads = 0;
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens: () =>
-				snapshotOf(Array.from({ length: Math.min(reads++, 3) }, (_, i) => el("button", { label: `b${i}` }))),
+				driverFixtures.snapshotOf(
+					Array.from({ length: Math.min(reads++, 3) }, (_, i) => driverFixtures.el("button", { label: `b${i}` }))
+				),
 		});
 		const { host, screen, that } = setup(driver);
 		await that(screen.getByRole("button")).toHaveCount(3);
@@ -488,7 +511,7 @@ describe("toHaveCount", () => {
 	});
 
 	test("not.toHaveCount", async () => {
-		const { screen } = setup(staticDriver([el("button", { label: "a" })]));
+		const { screen } = setup(staticDriver([driverFixtures.el("button", { label: "a" })]));
 		await new LocatorAssertions(screen.getByRole("button"), { negate: true }).toHaveCount(2);
 	});
 
@@ -512,7 +535,9 @@ describe("soft", () => {
 	test("an ambiguous locator is collected too, but an aborted attempt is not", async () => {
 		const collected: E2eError[] = [];
 		const soft = (error: E2eError) => collected.push(error);
-		const many = setup(staticDriver([el("button", { label: "a" }), el("button", { label: "a" })]));
+		const many = setup(
+			staticDriver([driverFixtures.el("button", { label: "a" }), driverFixtures.el("button", { label: "a" })])
+		);
 		await many.that(many.screen.getByRole("button"), soft).toBeVisible();
 		expect(collected.map((error) => error.code)).toEqual(["LOCATOR_AMBIGUOUS"]);
 

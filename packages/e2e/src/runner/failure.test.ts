@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { driverError } from "@delacour/warden-driver/errors";
-import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { captureFailure } from "./failure";
 
 const dirs: string[] = [];
@@ -16,12 +16,12 @@ afterEach(() => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-const screens = [snapshotOf([el("button", { label: "Sign in", id: "sign-in" })])];
+const screens = [driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Sign in", id: "sign-in" })])];
 
 describe("captureFailure", () => {
 	test("writes failure.png and a rendered screen-at-failure.txt", async () => {
 		const dir = join(tmp(), "attempt");
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens,
 			onCall(call) {
 				if (call.method === "screenshot" && call.opts?.path) writeFileSync(call.opts.path, "PNG");
@@ -38,7 +38,7 @@ describe("captureFailure", () => {
 
 	test("raw png bytes are written when the driver returns no path", async () => {
 		const dir = tmp();
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens,
 			onCall: (call) => (call.method === "screenshot" ? { data: { png: new Uint8Array([1, 2, 3]) } } : undefined),
 		});
@@ -48,9 +48,10 @@ describe("captureFailure", () => {
 
 	test("a failing driver call is a problem, not an exception; the other file is still written", async () => {
 		const dir = tmp();
-		const driver = fakeDriver({
+		const driver = new FakeDriver({
 			screens,
-			onCall: (call) => (call.method === "screenshot" ? { error: driverError("E_HELPER_CRASHED", "gone") } : undefined),
+			onCall: (call) =>
+				call.method === "screenshot" ? { error: driverErrors.make("E_HELPER_CRASHED", "gone") } : undefined,
 		});
 		const capture = await captureFailure(driver, dir);
 		expect(capture.files).toEqual(["screen-at-failure.txt"]);
@@ -60,7 +61,7 @@ describe("captureFailure", () => {
 
 	test("a hung driver is cut off by the capture timeout, and a timed-out screenshot skips the snapshot", async () => {
 		const dir = tmp();
-		const driver = fakeDriver({ screens });
+		const driver = new FakeDriver({ screens });
 		let snapshots = 0;
 		driver.screenshot = () => new Promise(() => undefined);
 		driver.snapshot = () => {
@@ -78,7 +79,7 @@ describe("captureFailure", () => {
 
 	test("a hung snapshot after a good screenshot is cut off too", async () => {
 		const dir = tmp();
-		const driver = fakeDriver({ screens });
+		const driver = new FakeDriver({ screens });
 		driver.snapshot = () => new Promise(() => undefined);
 		const capture = await captureFailure(driver, dir, 30);
 		expect(capture.problems).toEqual(["snapshot: timed out after 30ms"]);
@@ -86,7 +87,7 @@ describe("captureFailure", () => {
 
 	test("each call takes no more than what is left of the budget", async () => {
 		const dir = tmp();
-		const driver = fakeDriver({ screens });
+		const driver = new FakeDriver({ screens });
 		driver.screenshot = () => new Promise(() => undefined);
 		const started = Date.now();
 		const capture = await captureFailure(driver, dir, 10_000, () => 40);
@@ -96,7 +97,7 @@ describe("captureFailure", () => {
 
 	test("a spent budget captures nothing and says so", async () => {
 		const dir = tmp();
-		const driver = fakeDriver({ screens });
+		const driver = new FakeDriver({ screens });
 		const capture = await captureFailure(driver, dir, 10_000, () => 0);
 		expect(capture.files).toEqual([]);
 		expect(capture.problems).toEqual([

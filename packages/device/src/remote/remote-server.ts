@@ -1,7 +1,7 @@
 import { unlinkSync } from "node:fs";
 import type { Driver, DriverError, DriverResult, Logger } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
-import { createLineSplitter } from "@delacour/warden-driver/helper/simd-protocol";
+import { driverErrors } from "@delacour/warden-driver/errors";
+import { LineSplitter } from "@delacour/warden-driver/helper/simd-protocol";
 import {
 	APP_OPS,
 	type AppOp,
@@ -73,7 +73,7 @@ function isAppOp(op: string): op is AppOp {
 }
 
 function badRequest(message: string): { success: false; error: DriverError } {
-	return { success: false, error: driverError("E_BAD_REQUEST", message) };
+	return { success: false, error: driverErrors.make("E_BAD_REQUEST", message) };
 }
 
 /** The served driver's method for `op`, or undefined when it has none. */
@@ -169,7 +169,7 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			log?.(`remote: ${op} threw: ${message}`);
-			return { success: false, error: driverError("E_INTERNAL", `${op} threw: ${message}`) };
+			return { success: false, error: driverErrors.make("E_INTERNAL", `${op} threw: ${message}`) };
 		}
 	};
 
@@ -209,14 +209,14 @@ export async function serveDriver(options: ServeDriverOptions): Promise<RemoteSe
 	} catch {
 		// not there
 	}
-	const splitters = new WeakMap<object, ReturnType<typeof createLineSplitter>>();
+	const splitters = new WeakMap<object, LineSplitter>();
 	const listener = Bun.listen({
 		unix: socketPath,
 		socket: {
 			open(socket) {
 				conns.add(socket);
 				outboxes.set(socket, { queued: new Uint8Array(0) });
-				splitters.set(socket, createLineSplitter());
+				splitters.set(socket, new LineSplitter());
 				armIdle();
 				send(socket, ready());
 			},

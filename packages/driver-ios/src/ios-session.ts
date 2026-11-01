@@ -1,5 +1,5 @@
 import type { DriverError, Logger } from "@delacour/warden-driver/driver.types";
-import { driverError } from "@delacour/warden-driver/errors";
+import { driverErrors } from "@delacour/warden-driver/errors";
 import type { Result } from "@delacour/warden-types/result";
 import type { SimdClient } from "./simd-client";
 
@@ -55,7 +55,7 @@ export function swappableClient(
 
 	async function doRestart(crashed: boolean): Promise<Result<void, DriverError>> {
 		const { reopen } = o;
-		if (!reopen) return { success: false, error: driverError("E_INTERNAL", "no way to reopen warden-simd") };
+		if (!reopen) return { success: false, error: driverErrors.make("E_INTERNAL", "no way to reopen warden-simd") };
 		const stale = current;
 		// A shared socket daemon only stops if asked; a stdio helper would be asked by close() anyway.
 		if (!crashed) await stale.request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
