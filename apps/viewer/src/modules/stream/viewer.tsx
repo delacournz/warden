@@ -6,7 +6,7 @@ import type { Size } from "../interaction/geometry.ts";
 import { InteractionLayer } from "../interaction/interaction-layer.tsx";
 import { actionAvailability } from "../toolbar/availability.ts";
 import { DeviceControls } from "../toolbar/device-controls.tsx";
-import { CHROME_HEIGHT, CHROME_WIDTH, SCREEN_INSET } from "../toolbar/layout.ts";
+import { CHROME_HEIGHT, CHROME_WIDTH, screenPadding } from "../toolbar/layout.ts";
 import { Titlebar } from "../toolbar/titlebar.tsx";
 import { overlayFor } from "./billing-state.ts";
 import { asksOnClose } from "./close-intent.ts";
@@ -161,7 +161,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 					/>
 				}
 			/>
-			<div className="min-h-0 flex-1" style={{ padding: `0 ${SCREEN_INSET}px ${SCREEN_INSET}px` }}>
+			<div className="min-h-0 flex-1" style={{ padding: screenPadding() }}>
 				<InteractionLayer
 					enabled={canDrive}
 					deviceSize={deviceSize}
