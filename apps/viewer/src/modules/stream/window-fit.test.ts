@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { needsRefit } from "./window-fit.ts";
+import { effectiveAspect, needsRefit } from "./window-fit.ts";
 
 describe("needsRefit", () => {
 	test("fits the first frame", () => {
@@ -18,5 +18,15 @@ describe("needsRefit", () => {
 		expect(needsRefit(null, 0)).toBe(false);
 		expect(needsRefit(null, Number.NaN)).toBe(false);
 		expect(needsRefit(null, Number.POSITIVE_INFINITY)).toBe(false);
+	});
+});
+
+describe("effectiveAspect", () => {
+	test("portrait keeps the stream aspect", () => {
+		expect(effectiveAspect({ width: 1320, height: 2868 }, "portrait")).toBeCloseTo(1320 / 2868);
+	});
+
+	test("landscape inverts it, because the picture is shown rotated", () => {
+		expect(effectiveAspect({ width: 1320, height: 2868 }, "landscape")).toBeCloseTo(2868 / 1320);
 	});
 });

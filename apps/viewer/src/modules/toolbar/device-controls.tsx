@@ -9,18 +9,25 @@ type DeviceControlsProps = {
 	disabledReason: string | null;
 	/** Whether a live input path can rotate the device; false keeps the button visible but disabled. */
 	canRotate?: boolean;
+	orientation: Orientation;
+	onOrientationChange: (orientation: Orientation) => void;
 };
 
 export const ROTATE_UNAVAILABLE_REASON = "Needs live input (coming soon)";
 
 /**
  * Home, shake, rotate and set-location buttons for the toolbar. Rotate toggles between portrait
- * and landscape and sends the new orientation, but stays disabled unless `canRotate`; Set location
+ * and landscape (the viewer owns the state) and sends the new orientation, but stays disabled unless `canRotate`; Set location
  * opens a dialog. Each is disabled with a reason while the stream is not live, like the other
  * device actions.
  */
-export function DeviceControls({ actions, disabledReason, canRotate = false }: DeviceControlsProps) {
-	const [orientation, setOrientation] = useState<Orientation>("portrait");
+export function DeviceControls({
+	actions,
+	disabledReason,
+	canRotate = false,
+	orientation,
+	onOrientationChange,
+}: DeviceControlsProps) {
 	const [locationOpen, setLocationOpen] = useState(false);
 	const next: Orientation = orientation === "portrait" ? "landscape" : "portrait";
 
@@ -35,7 +42,7 @@ export function DeviceControls({ actions, disabledReason, canRotate = false }: D
 			<IconButton
 				label={`Rotate to ${next}`}
 				onClick={() => {
-					setOrientation(next);
+					onOrientationChange(next);
 					actions.setOrientation({ orientation: next });
 				}}
 				disabledReason={disabledReason ?? (canRotate ? null : ROTATE_UNAVAILABLE_REASON)}

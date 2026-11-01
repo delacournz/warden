@@ -10,3 +10,15 @@ export function needsRefit(fitted: number | null, aspect: number): boolean {
 	if (fitted === null) return true;
 	return Math.abs(aspect - fitted) / fitted > REFIT_TOLERANCE;
 }
+
+/**
+ * The aspect (w / h) the window should hold. Revyl keeps the frame portrait when the device
+ * rotates and the viewer shows it turned a quarter, so landscape swaps width and height.
+ */
+export function effectiveAspect(
+	size: { width: number; height: number },
+	orientation: "portrait" | "landscape"
+): number {
+	const aspect = size.width / size.height;
+	return orientation === "landscape" ? 1 / aspect : aspect;
+}

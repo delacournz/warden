@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as device from "../../core/api/device.api.ts";
-import { createDeviceActions } from "../interaction/device-actions.ts";
+import { createDeviceActions, type Orientation } from "../interaction/device-actions.ts";
 import type { Size } from "../interaction/geometry.ts";
 import { InteractionLayer } from "../interaction/interaction-layer.tsx";
 import { actionAvailability } from "../toolbar/availability.ts";
@@ -12,13 +12,14 @@ import { overlayFor } from "./billing-state.ts";
 import { asksOnClose } from "./close-intent.ts";
 import { ClosePrompt } from "./close-prompt.tsx";
 import { DemoOrbHint } from "./demo-orb-hint.tsx";
+import { PICTURE_CONTAINER_STYLE, pictureStyle } from "./picture-style.ts";
 import { StoppedState } from "./stopped-state.tsx";
 import { StreamState } from "./stream-state.tsx";
 import { useBilling } from "./use-billing.ts";
 import { useDeviceStream } from "./use-device-stream.ts";
 import { useInputSocket } from "./use-input-socket.ts";
 import type { StreamStatus } from "./whep-session.ts";
-import { needsRefit } from "./window-fit.ts";
+import { effectiveAspect, needsRefit } from "./window-fit.ts";
 
 const NOTICE_VISIBLE_MS = 4000;
 
@@ -64,6 +65,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 	const [notice, setNotice] = useState<string | null>(null);
 	const announced = useRef(false);
 	const fitted = useRef<number | null>(null);
+	const [orientation, setOrientation] = useState<Orientation>("portrait");
 	const [deviceSize, setDeviceSize] = useState<Size | undefined>(undefined);
 	const canDrive = info.scope === "drive" && driving && status === "streaming";
 
@@ -91,7 +93,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 
 	useEffect(() => {
 		if (!size) return;
-		const aspect = size.width / size.height;
+		const aspect = effectiveAspect(size, orientation);
 		if (needsRefit(fitted.current, aspect)) {
 			fitted.current = aspect;
 			device.fitWindow(aspect, CHROME_HEIGHT, CHROME_WIDTH).catch(() => undefined);
@@ -99,7 +101,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 		if (announced.current) return;
 		announced.current = true;
 		device.viewerStreaming().catch(() => undefined);
-	}, [size]);
+	}, [size, orientation]);
 
 	const [closing, setClosing] = useState<"asking" | "busy" | null>(null);
 	const asks = asksOnClose(info.detached, overlay);
@@ -149,22 +151,36 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 				onScreenshot={() => void run(device.screenshot())}
 				onMinimize={minimize}
 				onClose={close}
-				deviceControls={<DeviceControls actions={actions} disabledReason={availability.reason} canRotate={liveReady} />}
+				deviceControls={
+					<DeviceControls
+						actions={actions}
+						disabledReason={availability.reason}
+						canRotate={liveReady}
+						orientation={orientation}
+						onOrientationChange={setOrientation}
+					/>
+				}
 			/>
 			<div className="min-h-0 flex-1" style={{ padding: `0 ${SCREEN_INSET}px ${SCREEN_INSET}px` }}>
 				<InteractionLayer
 					enabled={canDrive}
 					deviceSize={deviceSize}
+					orientation={orientation}
 					actions={actions}
 					className={`relative h-full overflow-hidden bg-black ${SCREEN_RADIUS[info.platform]} ${ring}`}
-					style={{ cursor: canDrive ? "pointer" : "default" }}
+					style={{ ...PICTURE_CONTAINER_STYLE, cursor: canDrive ? "pointer" : "default" }}
 				>
 					{native ? (
-						<canvas ref={canvasRef} className="h-full w-full touch-none select-none object-contain" />
+						<canvas
+							ref={canvasRef}
+							className="h-full w-full touch-none select-none object-contain"
+							style={pictureStyle(orientation)}
+						/>
 					) : (
 						<video
 							ref={videoRef}
 							className="h-full w-full touch-none select-none object-contain"
+							style={pictureStyle(orientation)}
 							autoPlay
 							muted
 							playsInline

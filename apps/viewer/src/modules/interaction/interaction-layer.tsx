@@ -3,7 +3,15 @@ import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 
 import { type DeviceActions, logActions } from "./device-actions.ts";
 import { DeviceMenu, type MenuAnchor, type MenuChoice } from "./device-menu.tsx";
 import { TextDialog } from "./dialogs.tsx";
-import { mirrorThroughCentre, type Point, pictureFit, type Size, toInteractionPoint } from "./geometry.ts";
+import {
+	type DisplayOrientation,
+	displayPicture,
+	mirrorThroughCentre,
+	type Point,
+	pictureFit,
+	type Size,
+	toInteractionPoint,
+} from "./geometry.ts";
 import { createTextBatcher } from "./text-batcher.ts";
 import { type Fingers, MultiTouchFeedback, TouchFeedback } from "./touch-overlay.tsx";
 import { createMultiTouchSession, createTouchSession } from "./touch-session.ts";
@@ -24,6 +32,8 @@ type InteractionLayerProps = {
 	enabled: boolean;
 	/** The device size in points; until known, an iPhone 16 Pro Max (440x956). */
 	deviceSize?: Size;
+	/** How the picture is shown; landscape means the portrait frame is turned a quarter. */
+	orientation?: DisplayOrientation;
 	actions?: DeviceActions;
 	className?: string;
 	style?: CSSProperties;
@@ -59,6 +69,7 @@ function isTextField(target: EventTarget | null): boolean {
 export function InteractionLayer({
 	enabled,
 	deviceSize = DEFAULT_DEVICE_SIZE,
+	orientation = "portrait",
 	actions = logActions,
 	className,
 	style,
@@ -75,6 +86,8 @@ export function InteractionLayer({
 	suspendedRef.current = suspended;
 	const sizeRef = useRef(deviceSize);
 	sizeRef.current = deviceSize;
+	const orientationRef = useRef(orientation);
+	orientationRef.current = orientation;
 	const actionsRef = useRef(actions);
 	actionsRef.current = actions;
 
@@ -99,7 +112,7 @@ export function InteractionLayer({
 			if (!screen) return null;
 			const box = screen.getBoundingClientRect();
 			const picture = pictureOf(screen);
-			const fit = pictureFit(box, picture);
+			const fit = pictureFit(box, displayPicture(picture, orientationRef.current));
 			return fit ? { box, picture, fit } : null;
 		};
 		const fingerPair = (client: Point, fit: ReturnType<typeof pictureFit>) => {
@@ -107,7 +120,11 @@ export function InteractionLayer({
 			return { first: client, second: mirrored };
 		};
 		const toTouches = (pair: { first: Point; second: Point }, g: NonNullable<ReturnType<typeof geometry>>) => {
-			const map = (p: Point) => toInteractionPoint(p.x, p.y, g.box, g.picture, sizeRef.current, { clamp: true });
+			const map = (p: Point) =>
+				toInteractionPoint(p.x, p.y, g.box, g.picture, sizeRef.current, {
+					clamp: true,
+					orientation: orientationRef.current,
+				});
 			const a = map(pair.first);
 			const b = map(pair.second);
 			return a && b
@@ -154,7 +171,10 @@ export function InteractionLayer({
 			showFingers(client, true);
 		};
 		const moveSingle = (client: Point, g: Geometry, t: number) => {
-			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, { clamp: true });
+			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, {
+				clamp: true,
+				orientation: orientationRef.current,
+			});
 			if (device) single.move(device, client, t);
 			const local = rel(client);
 			setTouch((current) => moveTouch(current, local.x, local.y));
@@ -166,7 +186,10 @@ export function InteractionLayer({
 			if (altDown) showFingers(client, false);
 		};
 		const endSingle = (client: Point, g: Geometry, t: number) => {
-			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, { clamp: true });
+			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, {
+				clamp: true,
+				orientation: orientationRef.current,
+			});
 			const gesture = device ? single.up(device, client, t) : null;
 			setTouch((current) => releaseTouch(current));
 			removeTimer = setTimeout(() => {
@@ -181,7 +204,9 @@ export function InteractionLayer({
 			const g = primary && screen && event.target === screen ? geometry() : null;
 			if (!g) return null;
 			const client = { x: event.clientX, y: event.clientY };
-			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current);
+			const device = toInteractionPoint(client.x, client.y, g.box, g.picture, sizeRef.current, {
+				orientation: orientationRef.current,
+			});
 			return device ? { g, client, device } : null;
 		};
 
@@ -224,7 +249,9 @@ export function InteractionLayer({
 			event.preventDefault();
 			const g = geometry();
 			if (!g) return;
-			const point = toInteractionPoint(event.clientX, event.clientY, g.box, g.picture, sizeRef.current);
+			const point = toInteractionPoint(event.clientX, event.clientY, g.box, g.picture, sizeRef.current, {
+				orientation: orientationRef.current,
+			});
 			if (!point) return;
 			setMenu({ anchor: { clientX: event.clientX, clientY: event.clientY }, point });
 		};
