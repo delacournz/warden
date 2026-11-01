@@ -1,6 +1,8 @@
-//! macOS: constrain live resizes in `windowWillResize:toSize:`.
+//! macOS: constrain live resizes in `windowWillResize:toSize:`, with `windowWillStartLiveResize:`
+//! / `windowDidEndLiveResize:` bracketing each drag so edge and corner drags are told apart
+//! against the start size (`aspect::Session`).
 //!
-//! tao's `TaoWindowDelegate` does not implement that method, so it is added to the class once at
+//! tao's `TaoWindowDelegate` implements none of these, so they are added to the class once at
 //! runtime. AppKit caches which delegate methods exist when the delegate is set, so each window's
 //! delegate is set again after the method is added. Without a lock the proposed size is returned
 //! unchanged.
@@ -35,12 +37,61 @@ extern "C-unwind" fn will_resize(
         );
         (current.size, content.size, extra)
     };
-    let drive = aspect::drive_from(
-        (current.width, current.height),
-        (content.width, content.height),
-    );
+    let native = sender as *const AnyObject as usize;
+    let proposed_content = (content.width, content.height);
+    let drive = aspect::drive_in_session(native, proposed_content)
+        .unwrap_or_else(|| aspect::drive_from((current.width, current.height), proposed_content));
     let (w, h) = aspect::constrain(&lock, (content.width, content.height), drive);
     NSSize::new(w + frame_extra.0, h + frame_extra.1)
+}
+
+/// The NSWindow a window notification is about.
+///
+/// SAFETY: `notification` is an NSNotification posted by an NSWindow.
+unsafe fn notified_window(notification: &AnyObject) -> *mut AnyObject {
+    msg_send![notification, object]
+}
+
+extern "C-unwind" fn will_start_live_resize(
+    _this: &AnyObject,
+    _cmd: Sel,
+    notification: &AnyObject,
+) {
+    // SAFETY: AppKit posts this with the window as the object; plain NSWindow getters.
+    unsafe {
+        let window = notified_window(notification);
+        if window.is_null() || aspect::get(window as usize).is_none() {
+            return;
+        }
+        let frame: NSRect = msg_send![window, frame];
+        let content: NSRect = msg_send![window, contentRectForFrameRect: frame];
+        aspect::begin(window as usize, (content.size.width, content.size.height));
+    }
+}
+
+extern "C-unwind" fn did_end_live_resize(_this: &AnyObject, _cmd: Sel, notification: &AnyObject) {
+    // SAFETY: AppKit posts this with the window as the object.
+    let window = unsafe { notified_window(notification) };
+    aspect::end(window as usize);
+}
+
+/// Add one method to tao's delegate class; an existing one is left as is.
+///
+/// SAFETY: `imp` must match `sel` and `types`.
+unsafe fn add(class: &AnyClass, sel: Sel, imp: Imp, types: &std::ffi::CStr) {
+    if !class_addMethod(
+        class as *const AnyClass as *mut AnyClass,
+        sel,
+        imp,
+        types.as_ptr(),
+    )
+    .as_bool()
+    {
+        log::warn!(
+            "aspect: {} already defined on the window delegate, left as is",
+            sel.name().to_string_lossy()
+        );
+    }
 }
 
 fn add_method() {
@@ -50,22 +101,29 @@ fn add_method() {
             log::warn!("aspect: TaoWindowDelegate not found, resizes are unconstrained");
             return;
         };
-        // SAFETY: the signature matches `-(NSSize)windowWillResize:(NSWindow *)toSize:(NSSize)`
-        // and the type encoding below; the class is tao's, registered before any window exists.
+        type Resize = extern "C-unwind" fn(&AnyObject, Sel, &AnyObject, NSSize) -> NSSize;
+        type Notify = extern "C-unwind" fn(&AnyObject, Sel, &AnyObject);
+        // SAFETY: each function's signature matches its selector and type encoding; the class is
+        // tao's, registered before any window exists.
         unsafe {
-            let imp: Imp = std::mem::transmute::<
-                extern "C-unwind" fn(&AnyObject, Sel, &AnyObject, NSSize) -> NSSize,
-                Imp,
-            >(will_resize);
-            let added = class_addMethod(
-                class as *const AnyClass as *mut AnyClass,
+            add(
+                class,
                 sel!(windowWillResize:toSize:),
-                imp,
-                c"{CGSize=dd}@:@{CGSize=dd}".as_ptr(),
+                std::mem::transmute::<Resize, Imp>(will_resize),
+                c"{CGSize=dd}@:@{CGSize=dd}",
             );
-            if !added.as_bool() {
-                log::warn!("aspect: windowWillResize:toSize: already defined, left as is");
-            }
+            add(
+                class,
+                sel!(windowWillStartLiveResize:),
+                std::mem::transmute::<Notify, Imp>(will_start_live_resize),
+                c"v@:@",
+            );
+            add(
+                class,
+                sel!(windowDidEndLiveResize:),
+                std::mem::transmute::<Notify, Imp>(did_end_live_resize),
+                c"v@:@",
+            );
         }
     });
 }

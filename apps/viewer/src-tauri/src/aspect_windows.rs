@@ -43,12 +43,11 @@ unsafe fn constrain_rect(hwnd: HWND, lock: &aspect::Lock, edge: u32, rect: &mut 
     let extra_w = ((outer.right - outer.left) - (client.right - client.left)) as f64;
     let extra_h = ((outer.bottom - outer.top) - (client.bottom - client.top)) as f64;
     let to_logical = |w: i32, h: i32| ((w as f64 - extra_w) / scale, (h as f64 - extra_h) / scale);
-    let current = to_logical(outer.right - outer.left, outer.bottom - outer.top);
     let proposed = to_logical(rect.right - rect.left, rect.bottom - rect.top);
     let drive = match edge {
         WMSZ_LEFT | WMSZ_RIGHT => Drive::Width,
         WMSZ_TOP | WMSZ_BOTTOM => Drive::Height,
-        _ => aspect::drive_from(current, proposed),
+        _ => Drive::Free,
     };
     let (w, h) = aspect::constrain(lock, proposed, drive);
     let w = (w * scale + extra_w).round() as i32;

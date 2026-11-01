@@ -425,8 +425,8 @@ pub fn viewer_streaming(
 
 /// Resize the window so the video area has the device's aspect ratio. `chrome_height` is the
 /// logical height of everything around the video (bar and insets) and `pad_x` the horizontal
-/// insets; the window keeps its height and changes its width, shrinking both when
-/// the result would not fit the monitor.
+/// insets. The video area keeps its long edge, so a rotation swaps the screen around the window's
+/// centre, shrunk to 90% of the monitor when larger. Later user resizes hold this ratio.
 #[tauri::command]
 pub fn fit_window(
     aspect: f64,
@@ -437,33 +437,43 @@ pub fn fit_window(
     if !(aspect.is_finite() && aspect > 0.0) {
         return Err(ApiError::new("BAD_ASPECT", "aspect must be positive"));
     }
-    let scale = window
-        .scale_factor()
-        .map_err(|e| ApiError::new("WINDOW", e.to_string()))?;
-    let inner = window
-        .inner_size()
-        .map_err(|e| ApiError::new("WINDOW", e.to_string()))?;
-    let (mut width, mut height) =
-        fit_size(aspect, chrome_height, pad_x, inner.height as f64 / scale);
-    if let Ok(Some(monitor)) = window.current_monitor() {
-        let m = monitor.size();
-        let (max_w, max_h) = (m.width as f64 / scale * 0.9, m.height as f64 / scale * 0.9);
-        if width > max_w || height > max_h {
-            let shrink = (max_w / width).min(max_h / height);
-            (width, height) = fit_size(aspect, chrome_height, pad_x, height * shrink);
-        }
-    }
-    lock_aspect(
-        &window,
-        crate::aspect::Lock {
-            aspect,
-            chrome_height,
-            pad_x,
-        },
-    );
+    let werr = |e: tauri::Error| ApiError::new("WINDOW", e.to_string());
+    let scale = window.scale_factor().map_err(werr)?;
+    let inner = window.inner_size().map_err(werr)?.to_logical::<f64>(scale);
+    let lock = crate::aspect::Lock {
+        aspect,
+        chrome_height,
+        pad_x,
+    };
+    let monitor = window.current_monitor().ok().flatten();
+    let bound = monitor.as_ref().map(|m| {
+        let size = m.size().to_logical::<f64>(scale);
+        (size.width * 0.9, size.height * 0.9)
+    });
+    let (width, height) = crate::aspect::fit(&lock, (inner.width, inner.height), bound);
+    let (min_w, min_h) = crate::aspect::min_size(aspect);
+    lock_aspect(&window, lock);
+    window
+        .set_min_size(Some(tauri::LogicalSize::new(min_w, min_h)))
+        .map_err(werr)?;
+    let position = window
+        .outer_position()
+        .map_err(werr)?
+        .to_logical::<f64>(scale);
     window
         .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|e| ApiError::new("WINDOW", e.to_string()))?;
+        .map_err(werr)?;
+    let mut x = position.x + (inner.width - width) / 2.0;
+    let mut y = position.y + (inner.height - height) / 2.0;
+    if let Some(m) = monitor {
+        let origin = m.position().to_logical::<f64>(scale);
+        let size = m.size().to_logical::<f64>(scale);
+        x = x.clamp(origin.x, (origin.x + size.width - width).max(origin.x));
+        y = y.clamp(origin.y, (origin.y + size.height - height).max(origin.y));
+    }
+    window
+        .set_position(tauri::LogicalPosition::new(x, y))
+        .map_err(werr)?;
     Ok(())
 }
 
@@ -493,13 +503,6 @@ fn lock_aspect(window: &tauri::WebviewWindow, lock: crate::aspect::Lock) {
     if let Err(e) = window.run_on_main_thread(install) {
         log::warn!("aspect: could not install the resize hook: {e}");
     }
-}
-
-/// Window size (logical) that keeps `height` and gives the video area, inside `chrome_height` of
-/// bar and insets and `pad_x` of side insets, the requested aspect ratio.
-pub fn fit_size(aspect: f64, chrome_height: f64, pad_x: f64, height: f64) -> (f64, f64) {
-    let video_height = (height - chrome_height).max(1.0);
-    ((video_height * aspect + pad_x).round(), height.round())
 }
 
 #[cfg(test)]
@@ -593,11 +596,6 @@ mod tests {
             device_url(&c, "/tap"),
             "https://api.warden.co.nz/v1/devices/d1/tap"
         );
-    }
-
-    #[test]
-    fn fit_size_keeps_height_and_derives_width() {
-        assert_eq!(fit_size(0.5, 48.0, 12.0, 888.0), (432.0, 888.0));
     }
 
     #[test]
