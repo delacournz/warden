@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_GUEST, HELPER_MANIFEST, HELPER_SUMS_ASSET } from "./helper";
 
 export type PackedHelper = { tgz: string; sums: string; sha256: string };
@@ -15,16 +15,17 @@ export type PackedHelper = { tgz: string; sums: string; sha256: string };
 export async function packHelper(input: { distDir: string; outDir: string; exec: Exec }): AsyncResult<PackedHelper> {
 	const { distDir, outDir, exec } = input;
 	for (const name of [HELPER_BINARY, HELPER_GUEST, HELPER_MANIFEST]) {
-		if (!existsSync(join(distDir, name))) return err(`${distDir} has no ${name} — run native:build first`);
+		if (!existsSync(join(distDir, name)))
+			return resultFactory.err(`${distDir} has no ${name} — run native:build first`);
 	}
 	mkdirSync(outDir, { recursive: true });
 	const tgz = join(outDir, HELPER_ASSET);
 	// COPYFILE_DISABLE: no `._*` AppleDouble entries for extended attributes.
 	const cmd = ["tar", "-czf", tgz, "-C", distDir, "."];
 	const result = await exec(cmd, { env: { COPYFILE_DISABLE: "1" } });
-	if (result.exitCode !== 0) return err(execError(cmd, result));
+	if (result.exitCode !== 0) return resultFactory.err(execError(cmd, result));
 	const sha256 = createHash("sha256").update(readFileSync(tgz)).digest("hex");
 	const sums = join(outDir, HELPER_SUMS_ASSET);
 	writeFileSync(sums, `${sha256}  ${HELPER_ASSET}\n`);
-	return ok({ tgz, sums, sha256 });
+	return resultFactory.ok({ tgz, sums, sha256 });
 }

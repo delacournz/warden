@@ -7,7 +7,7 @@ import { devtoolsError, withFacet } from "@delacour/warden-sdk/ops/devtools";
 import { takeSnapshot } from "@delacour/warden-sdk/ops/snapshot";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { positiveInt } from "./args";
 import type { UiDevice } from "./device";
@@ -200,7 +200,7 @@ async function sample(
 		if (!done.success) return done;
 		out.push(took);
 	}
-	return ok(out);
+	return resultFactory.ok(out);
 }
 
 async function defaultOpenSecond(
@@ -224,7 +224,7 @@ const capped = (name: BenchMetricName, runs: number): number => Math.min(runs, S
 
 /** A driver call's result as the `Result<unknown, UiError>` `sample` wants. */
 function viaUi<T>(result: Result<T, Parameters<typeof driverUiError>[0]>): Result<T, UiError> {
-	return result.success ? ok(result.data) : { success: false, error: driverUiError(result.error) };
+	return result.success ? resultFactory.ok(result.data) : { success: false, error: driverUiError(result.error) };
 }
 
 /** What one bench run shares between its metric steps. */
@@ -262,7 +262,7 @@ async function benchColdStart(session: BenchSession): Promise<Result<undefined, 
 		if (!taken.success) return { success: false, error: driverUiError(taken.error) };
 	}
 	recordMetric(session, "helperColdToSnapshot", cold);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** The SDK op session the iOS bench steps (settled snapshot, component tree) run through. */
@@ -281,7 +281,7 @@ async function benchWarm(session: BenchSession, driver: Driver, point: Point): P
 	const press = await sample(clock, runs, async () => viaUi(await driver.tap(point)));
 	if (!press.success) return press;
 	recordMetric(session, "pressHid", press.data);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** iOS: tap, then wait for a quiet screen. */
@@ -303,7 +303,7 @@ async function benchPressSettle(
 	});
 	if (!settle.success) return settle;
 	recordMetric(session, "pressSettle", settle.data);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** iOS: the dev client's component tree; skipped (not failed) when devtools is unreachable. */
@@ -312,7 +312,9 @@ async function benchTree(session: BenchSession): Promise<void> {
 	const tree = await withFacet(benchOpSession(session), opts, async (facet) => {
 		const fetchTree = async () => {
 			const fetched = await facet.tree({ pixelRatio: 1 });
-			return fetched.success ? ok(undefined) : { success: false as const, error: devtoolsError(fetched.error) };
+			return fetched.success
+				? resultFactory.ok(undefined)
+				: { success: false as const, error: devtoolsError(fetched.error) };
 		};
 		const probe = await fetchTree();
 		return probe.success ? sample(clock, runs, fetchTree) : probe;
@@ -334,7 +336,7 @@ async function benchOpenSecond(session: BenchSession): Promise<Result<undefined,
 	});
 	if (!second.success) return second;
 	recordMetric(session, "openDriver", second.data);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** The iOS-only metrics that follow the warm ones. */
@@ -379,7 +381,7 @@ async function benchAll(session: BenchSession): Promise<Result<UiSuccess, UiErro
 		const rest = await benchIosRest(session, driver, point);
 		if (!rest.success) return rest;
 	}
-	return ok(benchReport(session));
+	return resultFactory.ok(benchReport(session));
 }
 
 /**
@@ -389,7 +391,8 @@ async function benchAll(session: BenchSession): Promise<Result<UiSuccess, UiErro
  */
 export function uiBench(ctx: CommandContext, deps: UiDeps, opts: BenchOptionValues): Promise<number> {
 	return runUi(ctx, deps, "bench", opts, async (device, env) => {
-		const runsParsed = opts.runs === undefined ? ok(DEFAULT_BENCH_RUNS) : positiveInt("--runs", opts.runs);
+		const runsParsed =
+			opts.runs === undefined ? resultFactory.ok(DEFAULT_BENCH_RUNS) : positiveInt("--runs", opts.runs);
 		if (!runsParsed.success) return runsParsed;
 		const hooks = deps.bench ?? {};
 		return benchAll({

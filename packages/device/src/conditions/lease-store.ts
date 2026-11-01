@@ -1,5 +1,5 @@
 import { defaultDbPath, openStore, type Store } from "@delacour/warden-store/store";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** Opens the lease store; a failure is a `Result`, never a throw. */
 export type StoreOpener = () => Result<Store>;
@@ -14,13 +14,15 @@ export function sharedStoreOpener(env: Readonly<Record<string, string | undefine
 	return () => {
 		const path = defaultDbPath({ ...env });
 		const open = shared.get(path);
-		if (open) return ok(open);
+		if (open) return resultFactory.ok(open);
 		try {
 			const store = openStore(path);
 			shared.set(path, store);
-			return ok(store);
+			return resultFactory.ok(store);
 		} catch (error) {
-			return err(`cannot open the warden store at ${path}: ${error instanceof Error ? error.message : String(error)}`);
+			return resultFactory.err(
+				`cannot open the warden store at ${path}: ${error instanceof Error ? error.message : String(error)}`
+			);
 		}
 	};
 }

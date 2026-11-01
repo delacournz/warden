@@ -10,7 +10,7 @@ import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
 import { type PerfPlan, readPlan } from "@delacour/warden-sdk/ops/perf/plan";
 import { reactOwner, startReactCapture, stopReactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
 import { readSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
@@ -240,7 +240,7 @@ export async function runSessionCollector(
 ): Promise<Result<CollectOutcome, UiError>> {
 	const session = readSession(ctx, id);
 	const plan = readPlan(ctx, id);
-	if (session === undefined || plan === undefined) return ok("missing");
+	if (session === undefined || plan === undefined) return resultFactory.ok("missing");
 	const inner = new AbortController();
 	const forward = () => inner.abort();
 	external.addEventListener("abort", forward, { once: true });
@@ -276,5 +276,5 @@ export async function runSessionCollector(
 	await Promise.allSettled(tasks);
 	external.removeEventListener("abort", forward);
 	if (outcome === "capped" && deps.finalize !== undefined) await deps.finalize(id);
-	return ok(outcome);
+	return resultFactory.ok(outcome);
 }

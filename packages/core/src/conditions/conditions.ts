@@ -6,7 +6,7 @@ import {
 	type OwnedProcess,
 } from "@delacour/warden-config/conditions.types";
 import type { Store } from "@delacour/warden-store/store";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export type ConditionRow = { area: ConditionArea; json: string; owned: string; set_at: number };
 
@@ -33,7 +33,7 @@ export function recordCondition<A extends ConditionArea>(
 	owned?: readonly OwnedProcess[]
 ): Result<ConditionRecord> {
 	return store.transaction((): Result<ConditionRecord> => {
-		if (!store.getLease(leaseId)) return err(`no lease ${leaseId}`);
+		if (!store.getLease(leaseId)) return resultFactory.err(`no lease ${leaseId}`);
 		const prior = store.db
 			.query<{ owned: string }, [string, string]>("SELECT owned FROM lease_conditions WHERE lease_id = ? AND area = ?")
 			.get(leaseId, area);
@@ -44,7 +44,7 @@ export function recordCondition<A extends ConditionArea>(
 				 ON CONFLICT (lease_id, area) DO UPDATE SET json = excluded.json, owned = excluded.owned, set_at = excluded.set_at`
 			)
 			.run(leaseId, area, JSON.stringify(value), JSON.stringify(handles), now);
-		return ok({ area, value, owned: handles, setAt: now } as ConditionRecord);
+		return resultFactory.ok({ area, value, owned: handles, setAt: now } as ConditionRecord);
 	});
 }
 

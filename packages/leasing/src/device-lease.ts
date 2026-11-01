@@ -10,7 +10,7 @@ import {
 	type Platform,
 	sameOwner,
 } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { LeaseConditions } from "./lease-host";
 
 /**
@@ -100,7 +100,10 @@ export function ensureCallerLease(
 			};
 		}
 		if (existing) store.deleteLeases([existing.id]);
-		return ok({ lease: insertCallerLease(store, owner, probe, opts), action: existing ? "reclaimed" : "leased" });
+		return resultFactory.ok({
+			lease: insertCallerLease(store, owner, probe, opts),
+			action: existing ? "reclaimed" : "leased",
+		});
 	});
 }
 
@@ -110,12 +113,12 @@ export function ensureCallerLease(
  */
 function ownLease(store: Store, existing: Lease, opts: EnsureLeaseOptions): Result<CallerLease, DeviceLeaseError> {
 	const held = heldByOtherProcess(existing, opts);
-	if (held && existing.shared) return ok({ lease: existing, action: "attached" });
+	if (held && existing.shared) return resultFactory.ok({ lease: existing, action: "attached" });
 	if (opts.exclusive && held) {
 		return { success: false, error: { code: "device_busy", message: busyMessage(existing) } };
 	}
 	store.heartbeat([existing.id], opts.now);
-	return ok({ lease: { ...existing, heartbeatAt: opts.now }, action: "own" });
+	return resultFactory.ok({ lease: { ...existing, heartbeatAt: opts.now }, action: "own" });
 }
 
 function insertCallerLease(store: Store, owner: Owner, probe: DeviceResource, opts: EnsureLeaseOptions): Lease {

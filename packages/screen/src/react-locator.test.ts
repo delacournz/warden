@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ReactTree, TreeComponent, TreeOptions } from "@delacour/warden-devtools/devtools.types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { locateByTestIdViaReact } from "./react-locator";
 
 const IOS = { platform: "ios" as const, screen: { width: 390, height: 844, scale: 3 } };
@@ -11,7 +11,7 @@ function facetOf(components: TreeComponent[], calls: (TreeOptions | undefined)[]
 		tree: async (options?: TreeOptions) => {
 			calls.push(options);
 			const tree: ReactTree = { components, truncated: false };
-			return ok(tree);
+			return resultFactory.ok(tree);
 		},
 	};
 }

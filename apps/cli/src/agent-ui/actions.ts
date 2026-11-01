@@ -9,7 +9,7 @@ import {
 	swipe,
 	type,
 } from "@delacour/warden-sdk/ops/actions";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type ActionOptionValues, parseSettle } from "./args";
 import type { UiDeps } from "./driver";
@@ -159,13 +159,13 @@ function swipeParams(
 ): Result<SwipeParams, UiError> {
 	const [first] = words;
 	if (words.length === 1 && isWay(first)) {
-		return ok({ direction: first, ...(within !== undefined ? { within } : {}), ...settleMs });
+		return resultFactory.ok({ direction: first, ...(within !== undefined ? { within } : {}), ...settleMs });
 	}
 	if (words.length === 4 && words.every((word) => NUMBER.test(word))) {
 		const [x1, y1, x2, y2] = words.map(Number);
 		const from: Point = { x: x1 ?? 0, y: y1 ?? 0 };
 		const to: Point = { x: x2 ?? 0, y: y2 ?? 0 };
-		return ok({ from, to, ...settleMs });
+		return resultFactory.ok({ from, to, ...settleMs });
 	}
 	return {
 		success: false,

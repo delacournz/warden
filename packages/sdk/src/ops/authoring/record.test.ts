@@ -5,7 +5,7 @@ import { makeSuiteRepo } from "@delacour/warden-core/testing/fixture.testing";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import { bunExec } from "@delacour/warden-runtime/exec";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { recordResultSchema } from "../../contracts/record.schema";
 import { press } from "../actions";
 import { recordingFile } from "../paths";
@@ -90,7 +90,7 @@ async function rig(options: { withVerify?: boolean } = {}): Promise<Rig> {
 			: {
 					verify: async (input) => {
 						verified.push(input);
-						return ok(report(input, verdict.passed));
+						return resultFactory.ok(report(input, verdict.passed));
 					},
 				}),
 	};
@@ -106,7 +106,7 @@ async function rig(options: { withVerify?: boolean } = {}): Promise<Rig> {
 				clock.t += ms;
 			},
 		},
-		driver: async () => ok(driver),
+		driver: async () => resultFactory.ok(driver),
 		refs,
 		state,
 		timeoutMs: 5000,

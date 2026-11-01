@@ -5,7 +5,7 @@ import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shar
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfEnv } from "./env";
 import {
@@ -42,7 +42,7 @@ export function planJs(opts: JsParams): Result<JsPlan, WardenError> {
 			error: opError("usage", `--sampling-interval is microseconds, at least 10, got "${opts.samplingInterval}"`),
 		};
 	}
-	return ok({ durationMs: Math.min(duration, HARD_MAX_DURATION_MS), samplingIntervalUs: interval });
+	return resultFactory.ok({ durationMs: Math.min(duration, HARD_MAX_DURATION_MS), samplingIntervalUs: interval });
 }
 
 /** `--metro`, else the Metro serving this device. */
@@ -53,7 +53,7 @@ export async function metroFor(
 	flag: string | undefined
 ): Promise<Result<string, WardenError>> {
 	const url = flag !== undefined && flag !== "" ? flag.replace(/\/+$/, "") : await deps.host.metro(ctx, target.udid);
-	if (url !== undefined) return ok(url);
+	if (url !== undefined) return resultFactory.ok(url);
 	return {
 		success: false,
 		error: opError(
@@ -139,7 +139,7 @@ export async function connectJsApp(
 		timeoutMs,
 	});
 	if (!session.success) return { success: false, error: devtoolsPerfError(session.error) };
-	return ok({ session: session.data, metro: metro.data, app });
+	return resultFactory.ok({ session: session.data, metro: metro.data, app });
 }
 
 /**
@@ -180,7 +180,7 @@ export async function jsWork(
 			now: ctx.now,
 		});
 		if (!captured.success) return { success: false, error: jsUiError(captured.error) };
-		return ok(jsSuccess(ctx, target, app, out, captured.data, planned.durationMs));
+		return resultFactory.ok(jsSuccess(ctx, target, app, out, captured.data, planned.durationMs));
 	} finally {
 		session.close();
 	}

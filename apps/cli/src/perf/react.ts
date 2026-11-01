@@ -14,7 +14,7 @@ import {
 	stopReactCapture,
 } from "@delacour/warden-sdk/ops/perf/react-capture";
 import { type ReactOut, reactOutFor } from "@delacour/warden-sdk/ops/perf/react-out";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "./device";
@@ -27,7 +27,7 @@ export type PerfReactOptions = PerfOptionValues & { duration?: string; metro?: s
 const DEFAULT_DURATION_MS = 10_000;
 
 function planDuration(opts: PerfReactOptions): Result<number, UiError> {
-	if (opts.duration === undefined) return ok(DEFAULT_DURATION_MS);
+	if (opts.duration === undefined) return resultFactory.ok(DEFAULT_DURATION_MS);
 	const duration = parseDuration(opts.duration);
 	if (duration === undefined) {
 		return {
@@ -35,7 +35,7 @@ function planDuration(opts: PerfReactOptions): Result<number, UiError> {
 			error: uiError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
 		};
 	}
-	return ok(Math.min(duration, HARD_MAX_DURATION_MS));
+	return resultFactory.ok(Math.min(duration, HARD_MAX_DURATION_MS));
 }
 
 function stoppedSuccess(
@@ -118,7 +118,7 @@ export function perfReact(
 				now: ctx.now,
 			});
 			if (!captured.success) return { success: false, error: reactUiError(captured.error) };
-			return ok(stoppedSuccess(ctx, target, app, out, captured.data));
+			return resultFactory.ok(stoppedSuccess(ctx, target, app, out, captured.data));
 		} finally {
 			session.close();
 		}
@@ -141,7 +141,7 @@ export function perfReactStart(
 			if (!started.success) return { success: false, error: reactUiError(started.error) };
 			const next = ["warden perf react stop   (after the interaction; max 5m before the marker goes stale)"];
 			const s = started.data;
-			return ok({
+			return resultFactory.ok({
 				device: { udid: target.udid, platform: target.platform, name: target.name },
 				result: { app, startedWallMs: s.startedWallMs, rn: s.rn, dev: s.dev, bootstrapped: s.bootstrapped, next },
 				text: [
@@ -178,7 +178,7 @@ export function perfReactStop(
 				force: opts.takeOver === true,
 			});
 			if (!stopped.success) return { success: false, error: reactUiError(stopped.error) };
-			return ok(stoppedSuccess(ctx, target, app, out, stopped.data));
+			return resultFactory.ok(stoppedSuccess(ctx, target, app, out, stopped.data));
 		} finally {
 			session.close();
 		}

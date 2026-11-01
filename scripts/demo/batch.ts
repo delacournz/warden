@@ -1,4 +1,4 @@
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** One leased device in a `warden batch --record` dir (see plan WBD, record-dir contract). */
 export type BatchDevice = {
@@ -107,7 +107,7 @@ export function parseBatch(raw: unknown): Result<Batch> {
 			if (!workers.has(j.worker)) throw new Invalid(`jobs[${i}].worker ${j.worker} has no device`);
 		});
 		if (typeof raw.ok !== "boolean") throw new Invalid("ok must be a boolean");
-		return ok({
+		return resultFactory.ok({
 			batchId: str(raw, "batchId", "batch"),
 			startedAt: num(raw, "startedAt", "batch"),
 			endedAt: num(raw, "endedAt", "batch"),

@@ -8,7 +8,7 @@ import { ADB_DEVICES_EMPTY, EMULATOR_LIST_AVDS } from "@delacour/warden-provider
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { claimDevices } from "./claim";
 
 const SDK = "/sdk";
@@ -46,7 +46,7 @@ describe("claimDevices with the android provider", () => {
 			return handler ? handler() : { exitCode: 1, stdout: "", stderr: `unexpected command: ${cmd.join(" ")}` };
 		};
 		const deps: ProviderDeps = { exec, store, env: { ANDROID_HOME: SDK, WARDEN_HOME: dir }, now: () => 1_000, owner };
-		const spawnDetached: SpawnDetached = async () => ok({ pid: 4242 });
+		const spawnDetached: SpawnDetached = async () => resultFactory.ok({ pid: 4242 });
 		const provider = createAndroidProvider(deps, { spawnDetached, sleep: async () => {}, pidAlive: () => true });
 		const result = await claimDevices({
 			store,

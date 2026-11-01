@@ -4,7 +4,7 @@ import { shortRuntime } from "@delacour/warden-providers/ios";
 import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
 import { execError } from "@delacour/warden-runtime/exec";
 import { profileSlug } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, heading, reportError } from "../output";
@@ -14,10 +14,13 @@ const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
 
 function findSource(sims: SimctlSim[], ref: string): Result<SimctlSim> {
 	const byUdid = sims.find((s) => s.udid === ref);
-	if (byUdid) return ok(byUdid);
+	if (byUdid) return resultFactory.ok(byUdid);
 	const byName = sims.filter((s) => s.name === ref && s.isAvailable);
-	if (byName.length > 1) return err(`"${ref}" is ambiguous (${byName.map((s) => s.udid).join(", ")}) — use the udid`);
-	return byName[0] ? ok(byName[0]) : err(`no simulator "${ref}" (see \`warden devices ios\`)`);
+	if (byName.length > 1)
+		return resultFactory.err(`"${ref}" is ambiguous (${byName.map((s) => s.udid).join(", ")}) — use the udid`);
+	return byName[0]
+		? resultFactory.ok(byName[0])
+		: resultFactory.err(`no simulator "${ref}" (see \`warden devices ios\`)`);
 }
 
 function profileOf(sim: SimctlSim): string | undefined {

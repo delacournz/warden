@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import ts from "typescript";
 import { CONFIG_ENTRY_DTS, CONFIG_ENTRY_JS } from "./manifests";
 
@@ -25,9 +25,13 @@ function emitDeclarations(): AsyncResult<string> {
 	});
 	const problems = [...ts.getPreEmitDiagnostics(program), ...result.diagnostics];
 	if (problems.length > 0) {
-		return Promise.resolve(err(problems.map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")).join("\n")));
+		return Promise.resolve(
+			resultFactory.err(problems.map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")).join("\n"))
+		);
 	}
-	return Promise.resolve(dts === undefined ? err(`no declarations emitted for ${SOURCE}`) : ok(dts));
+	return Promise.resolve(
+		dts === undefined ? resultFactory.err(`no declarations emitted for ${SOURCE}`) : resultFactory.ok(dts)
+	);
 }
 
 /**
@@ -37,7 +41,7 @@ function emitDeclarations(): AsyncResult<string> {
 export async function buildConfigEntry(pkgDir: string): AsyncResult<void> {
 	const built = await Bun.build({ entrypoints: [SOURCE], target: "node", format: "esm" });
 	const [bundle] = built.outputs;
-	if (!built.success || !bundle) return err(`config entry bundle failed:\n${built.logs.join("\n")}`);
+	if (!built.success || !bundle) return resultFactory.err(`config entry bundle failed:\n${built.logs.join("\n")}`);
 	const dts = await emitDeclarations();
 	if (!dts.success) return dts;
 	for (const [path, text] of [
@@ -48,5 +52,5 @@ export async function buildConfigEntry(pkgDir: string): AsyncResult<void> {
 		mkdirSync(dirname(out), { recursive: true });
 		writeFileSync(out, text);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }

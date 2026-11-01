@@ -10,7 +10,7 @@ import type {
 } from "@delacour/warden-config/conditions.types";
 import { appliedA11y, resolveTextSize } from "@delacour/warden-config/text-size";
 import { clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { deviceInfo, fail, recordOf, resolveDeps, withPort } from "./conditions";
 import type { ConditionsDeps } from "./conditions-types";
@@ -48,7 +48,9 @@ function save<A extends keyof ConditionValues>(
 	value: ConditionValues[A]
 ): Result<undefined, UiError> {
 	const saved = recordCondition(ctx.store(), device.lease.id, area, value, ctx.now());
-	return saved.success ? ok(undefined) : fail("failed", `could not record the ${area} condition: ${saved.error}`);
+	return saved.success
+		? resultFactory.ok(undefined)
+		: fail("failed", `could not record the ${area} condition: ${saved.error}`);
 }
 
 function forget(ctx: CommandContext, device: UiDevice, area: ConditionRecord["area"]): void {
@@ -62,7 +64,7 @@ const success = (
 	result: Record<string, unknown>,
 	warnings: readonly string[] = []
 ): Result<UiSuccess, UiError> =>
-	ok({
+	resultFactory.ok({
 		device: deviceInfo(device),
 		result: { action, ...result },
 		text,
@@ -199,7 +201,7 @@ const localeText = (c: LocaleCondition | undefined): string => {
 function saveLocale(ctx: CommandContext, device: UiDevice, value: LocaleCondition): Result<undefined, UiError> {
 	if (value.timezone === undefined && value.locale === undefined) {
 		forget(ctx, device, "locale");
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	}
 	return save(ctx, device, "locale", value);
 }
@@ -316,7 +318,7 @@ function a11yOpOf(opts: A11yOptionValues): Result<NonNullable<A11yCondition>, Ui
 	}
 	return Object.keys(op).length === 0
 		? fail("usage", "a11y set needs one of --text-size, --bold, --contrast, --reduce-motion")
-		: ok(op);
+		: resultFactory.ok(op);
 }
 
 async function a11ySet(

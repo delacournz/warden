@@ -13,8 +13,8 @@ import { createScreen } from "@delacour/warden-screen/screen";
 import { formatSelector } from "@delacour/warden-screen/selector";
 import { getInstall, listBuilds } from "@delacour/warden-store/builds-table";
 import type { Lease, Platform } from "@delacour/warden-store/types";
-import { type WardenError as EngineError, wardenErr } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError as EngineError, wardenErrors } from "@delacour/warden-types/error";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { abortableSleep, type Core, guard, guarded } from "./core";
 import { defaultDevtoolsDeps } from "./devtools-deps";
 import { fromThrown, interrupted, toWardenError, WardenError } from "./errors";
@@ -421,7 +421,7 @@ export class WardenSession implements Session {
 				},
 			}),
 		});
-		return ok(cacheObservations(traced, { now: this.core.host.now }));
+		return resultFactory.ok(cacheObservations(traced, { now: this.core.host.now }));
 	}
 
 	private async openRaw(): Promise<Result<Driver, EngineError>> {
@@ -449,13 +449,16 @@ export class WardenSession implements Session {
 		try {
 			const provider = await this.core.pluginProvider(name);
 			if (!provider.driver) {
-				return wardenErr("engine_unavailable", `provider plugin "${name}" has no driver()`, {
+				return wardenErrors.err("engine_unavailable", `provider plugin "${name}" has no driver()`, {
 					hint: "give the plugin a driver(id) or open sessions through a bundled provider",
 				});
 			}
-			return ok(await provider.driver(this.dev.id));
+			return resultFactory.ok(await provider.driver(this.dev.id));
 		} catch (error) {
-			return wardenErr("engine_unavailable", `provider plugin "${name}" could not open a driver: ${String(error)}`);
+			return wardenErrors.err(
+				"engine_unavailable",
+				`provider plugin "${name}" could not open a driver: ${String(error)}`
+			);
 		}
 	}
 
@@ -603,7 +606,7 @@ export class WardenSession implements Session {
 			if (!driver.success) return driver;
 			const result = await work(driver.data);
 			return result.success
-				? ok({ result: result.data, text: name })
+				? resultFactory.ok({ result: result.data, text: name })
 				: { success: false as const, error: driverError(result.error) };
 		});
 		return done.result;

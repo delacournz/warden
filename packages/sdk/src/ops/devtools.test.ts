@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConsoleLine } from "@delacour/warden-devtools/devtools.types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { BrokerPort } from "./broker-port";
 import { devtoolsResume, devtoolsStatus, evaluate, exceptions, logs, network, parseSince } from "./devtools";
 import { uiDir } from "./paths";
@@ -121,8 +121,8 @@ describe("log filters", () => {
 	});
 
 	test("parseSince takes durations and ISO times, rejects the rest", () => {
-		expect(parseSince("5s", 10_000)).toEqual(ok(5_000));
-		expect(parseSince("1970-01-01T00:00:02.000Z", 0)).toEqual(ok(2_000));
+		expect(parseSince("5s", 10_000)).toEqual(resultFactory.ok(5_000));
+		expect(parseSince("1970-01-01T00:00:02.000Z", 0)).toEqual(resultFactory.ok(2_000));
 		const bad = parseSince("soon", 0);
 		expect(!bad.success && bad.error.code).toBe("usage");
 	});
@@ -135,7 +135,7 @@ describe("broker-first devtools", () => {
 			stubBroker({
 				eval: async ({ expression }) => {
 					calls.push(expression);
-					return ok({ value: 42 });
+					return resultFactory.ok({ value: 42 });
 				},
 			})
 		);
@@ -148,7 +148,7 @@ describe("broker-first devtools", () => {
 		const s = session(
 			stubBroker({
 				console: async (q) =>
-					ok({
+					resultFactory.ok({
 						file: "/logs/console.jsonl",
 						total: 3,
 						lines: [{ ts: 1, level: "log", kind: "console", text: `limit ${q.limit}` }],

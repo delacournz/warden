@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
 import {
 	type ActionEffects,
@@ -85,7 +85,7 @@ function setup(info: DevReady | null = IOS, overrides: Partial<ActionEffects> = 
 	};
 	const done = <T>(name: string, value: T): FxResult<T> => {
 		calls.push(name);
-		return Promise.resolve(ok(value));
+		return Promise.resolve(resultFactory.ok(value));
 	};
 	const fx: ActionEffects = {
 		metroWrite: (data) => {
@@ -248,7 +248,7 @@ describe("reinstall, restart sim, metro --clear", () => {
 		const t = setup(IOS, {
 			reinstall: async () => {
 				await gate;
-				return ok({ source: "cache", hash: "abc" });
+				return resultFactory.ok({ source: "cache", hash: "abc" });
 			},
 		});
 		const first = t.actions.run("reinstall");

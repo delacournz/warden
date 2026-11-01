@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** `simctl launch` prints `<bundle>: <pid>`. */
 export function parseSimctlLaunch(stdout: string): number | undefined {
@@ -93,12 +93,14 @@ function periodOf(cells: readonly Cell[]): LaunchPeriod | undefined {
  * `duration` (ns) and a string cell naming it.
  */
 export function parseLaunchPeriods(xml: string): Result<LaunchPeriod[], string> {
-	if (!xml.includes("<row")) return err("no rows in the xctrace export");
+	if (!xml.includes("<row")) return resultFactory.err("no rows in the xctrace export");
 	const byId = new Map<string, Cell>();
 	const periods = [...xml.matchAll(/<row>([\s\S]*?)<\/row>/g)].flatMap(
 		(row) => periodOf(rowCells(row[1] ?? "", byId)) ?? []
 	);
-	return periods.length === 0 ? err("no launch periods in the xctrace export") : ok(periods);
+	return periods.length === 0
+		? resultFactory.err("no launch periods in the xctrace export")
+		: resultFactory.ok(periods);
 }
 
 /** Time to first frame: the "Total App Launch" period, else the longest period naming a launch. */

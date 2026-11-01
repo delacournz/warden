@@ -7,7 +7,7 @@ import {
 	type Sleep,
 	typeText,
 } from "@delacour/warden-driver/typing";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { clearKeyPresses, fieldContent, fieldValue } from "./actions";
 import { entryOfElement, type NodeEntry } from "./nodes";
 
@@ -149,7 +149,7 @@ export async function tapToFocus(
 		if (!hit.success || !hit.data || !isSameField(hit.data, entry) || hit.data.focused === true) break;
 		if (poll < FOCUS_POLLS) await sleep(FOCUS_POLL_MS);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /**
@@ -210,15 +210,15 @@ async function prepareFocused(
 	entry: NodeEntry | undefined,
 	method: ClearMethod
 ): DriverResult<Prepared> {
-	if (entry === undefined) return ok({ pending: "none" });
+	if (entry === undefined) return resultFactory.ok({ pending: "none" });
 	const content = fieldContent(entry);
-	if (content.kind === "empty") return ok({ pending: "none" });
+	if (content.kind === "empty") return resultFactory.ok({ pending: "none" });
 	if (content.kind === "text" && method !== "counted" && canSelectAll(driver)) {
 		const selected = await driver.selectAll();
-		if (selected.success) return ok({ pending: "selection" });
+		if (selected.success) return resultFactory.ok({ pending: "selection" });
 	}
 	const pressed = await pressKeys(driver, sleep, "Backspace", clearKeyPresses(entry));
-	return pressed.success ? ok({ pending: "none" }) : pressed;
+	return pressed.success ? resultFactory.ok({ pending: "none" }) : pressed;
 }
 
 /**
@@ -234,7 +234,7 @@ export async function focusAndClear(
 ): DriverResult<void> {
 	const prepared = await focusAndSelect(driver, sleep, point, entry, method);
 	if (!prepared.success) return prepared;
-	return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);
+	return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : resultFactory.ok(undefined);
 }
 
 /**
@@ -289,7 +289,9 @@ async function typeOver(
 ): DriverResult<void> {
 	if (!prepared.success) return prepared;
 	if (text === "")
-		return prepared.data.pending === "selection" ? pressKeys(driver, sleep, "Backspace", 1) : ok(undefined);
+		return prepared.data.pending === "selection"
+			? pressKeys(driver, sleep, "Backspace", 1)
+			: resultFactory.ok(undefined);
 	if (via === "paste" && canPasteText(driver)) {
 		const pasted = await driver.pasteText(text);
 		if (pasted.success) return pasted;

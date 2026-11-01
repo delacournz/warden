@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import type { E2eSuiteConfig } from "@delacour/warden-config/affected.schema";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { openImportCache } from "./cache";
 import { createImportGraph, type ImportGraph, routerLayouts, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
 import {
@@ -87,7 +87,7 @@ async function walkHere(opts: LoadGraphOptions, warning?: string): AsyncResult<L
 		...(opts.importCachePath !== undefined ? { cache: openImportCache(opts.importCachePath) } : {}),
 	});
 	if (!graph.success) return graph;
-	return ok({ graph: graph.data, via: "in-process", ...(warning !== undefined ? { warning } : {}) });
+	return resultFactory.ok({ graph: graph.data, via: "in-process", ...(warning !== undefined ? { warning } : {}) });
 }
 
 /** The argv prefix that runs the walker: the compiled binary itself, else `bun` + the script, else none. */
@@ -127,12 +127,12 @@ async function runWorker(
 	cmd: string[]
 ): AsyncResult<{ doc: GraphDoc; warning?: undefined } | { doc?: undefined; warning?: string }> {
 	const res = await opts.exec(cmd, { cwd: opts.repoRoot, timeoutMs: WORKER_TIMEOUT_MS });
-	if (res.exitCode === TYPESCRIPT_UNUSABLE_EXIT) return err(workerError(res.stderr));
+	if (res.exitCode === TYPESCRIPT_UNUSABLE_EXIT) return resultFactory.err(workerError(res.stderr));
 	const doc = res.exitCode === 0 ? parseGraphDoc(res.stdout) : undefined;
-	if (doc) return ok({ doc });
-	if (res.exitCode === CANNOT_RUN) return ok({});
+	if (doc) return resultFactory.ok({ doc });
+	if (res.exitCode === CANNOT_RUN) return resultFactory.ok({});
 	const why = res.exitCode === 0 ? "printed no import graph" : execError(cmd.slice(0, 2), res);
-	return ok({ warning: `import graph worker failed (${why}); built the graph in-process` });
+	return resultFactory.ok({ warning: `import graph worker failed (${why}); built the graph in-process` });
 }
 
 /**
@@ -159,12 +159,12 @@ export async function loadImportGraph(opts: LoadGraphOptions): AsyncResult<Loade
 	const key =
 		cacheDir === undefined ? undefined : await snapshotKey(opts.exec, request, cacheDir).catch(() => undefined);
 	const known = key === undefined || cacheDir === undefined ? undefined : readSnapshot(cacheDir, key);
-	if (known) return ok(fromTable(known, "snapshot"));
+	if (known) return resultFactory.ok(fromTable(known, "snapshot"));
 
 	const run = await runWorker(opts, [...worker, JSON.stringify(request)]);
 	if (!run.success) return run;
 	const built = run.data;
 	if (!built.doc) return walkHere(opts, built.warning);
 	if (key !== undefined && cacheDir !== undefined) writeSnapshot(cacheDir, key, built.doc);
-	return ok(fromTable(built.doc, "process"));
+	return resultFactory.ok(fromTable(built.doc, "process"));
 }

@@ -1,6 +1,6 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import {
 	HELPER_BINARY,
 	HELPER_GUEST,
@@ -35,22 +35,23 @@ export function stageHelper(input: {
 	const { distDir, binDir, required } = input;
 	if (!existsSync(join(distDir, HELPER_BINARY))) {
 		return required
-			? err(
+			? resultFactory.err(
 					`--require-helper: no ${HELPER_BINARY} in ${distDir} — run \`bun run --cwd packages/driver-ios native:deps && native:build\``
 				)
-			: ok(undefined);
+			: resultFactory.ok(undefined);
 	}
-	if (!existsSync(join(distDir, HELPER_GUEST))) return err(`${distDir} has ${HELPER_BINARY} but no ${HELPER_GUEST}`);
+	if (!existsSync(join(distDir, HELPER_GUEST)))
+		return resultFactory.err(`${distDir} has ${HELPER_BINARY} but no ${HELPER_GUEST}`);
 	const manifestPath = join(distDir, HELPER_MANIFEST);
-	if (!existsSync(manifestPath)) return err(`${distDir} has ${HELPER_BINARY} but no ${HELPER_MANIFEST}`);
+	if (!existsSync(manifestPath)) return resultFactory.err(`${distDir} has ${HELPER_BINARY} but no ${HELPER_MANIFEST}`);
 	const info = parseHelperManifest(readFileSync(manifestPath, "utf8"));
 	if (!info.success) return info;
 	const frameworks = frameworkNames(distDir);
-	if (frameworks.length === 0) return err(`${distDir} has ${HELPER_BINARY} but no stub *.framework`);
+	if (frameworks.length === 0) return resultFactory.err(`${distDir} has ${HELPER_BINARY} but no stub *.framework`);
 
 	const inject = existsSync(join(distDir, HELPER_INJECT));
 	if (required && !inject) {
-		return err(
+		return resultFactory.err(
 			`--require-helper: no ${HELPER_INJECT} in ${distDir} — run \`bun run --cwd packages/e2e native:build\` (it builds the injected dylib after the helper)`
 		);
 	}
@@ -64,5 +65,5 @@ export function stageHelper(input: {
 	for (const framework of frameworks) copy(framework);
 	if (inject) copy(HELPER_INJECT);
 	chmodSync(join(binDir, HELPER_BINARY), 0o755);
-	return ok({ ...info.data, frameworks, inject });
+	return resultFactory.ok({ ...info.data, frameworks, inject });
 }

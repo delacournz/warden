@@ -1,6 +1,6 @@
 import { releaseDevices } from "@delacour/warden-leasing/device-lease";
 import { isPhysicalIosId, type Lease } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseAfter } from "../perf/release-after";
 import type { UiDevice } from "./device";
@@ -48,7 +48,7 @@ async function terminateApp(
 	device: UiDevice,
 	app: CloseOptionValues["app"]
 ): Promise<Result<string | null, UiError>> {
-	if (app === undefined) return ok(null);
+	if (app === undefined) return resultFactory.ok(null);
 	const bundleId = typeof app === "string" ? app : readState(ctx, device.udid).app;
 	if (bundleId === undefined) {
 		return {
@@ -60,7 +60,7 @@ async function terminateApp(
 	if (!driver.success) return driver;
 	const done = fromDriver(await driver.data.app.terminate(bundleId));
 	await driver.data.close();
-	return done.success ? ok(bundleId) : done;
+	return done.success ? resultFactory.ok(bundleId) : done;
 }
 
 /** What helper line `close` reports, if any. */
@@ -91,7 +91,7 @@ export function uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValu
 		]
 			.filter((line): line is string => line !== undefined)
 			.join("\n");
-		return ok({
+		return resultFactory.ok({
 			device: { udid: device.udid, platform: device.platform, name: device.name },
 			result: { app: terminated, helper, released },
 			text,

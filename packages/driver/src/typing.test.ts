@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { failWith, fakeDriver, snapshotOf } from "./driver.testing";
 import { canSelectAll, pressKeys, type RepeatingKeys, type SelectsAll, typeText } from "./typing";
 
@@ -61,7 +61,7 @@ describe("pressKeys with a repeating driver", () => {
 		const driver = Object.assign(base, {
 			pressKeyRepeat: async (key: string, times: number) => {
 				calls.push([key, times]);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 		} satisfies Record<keyof RepeatingKeys, unknown>);
 		const { sleeps, sleep } = recorder();
@@ -90,7 +90,7 @@ describe("canSelectAll", () => {
 	test("an extra method matching the capability type is enough", () => {
 		const base = fakeDriver({ screens: [snapshotOf([])] });
 		const driver = Object.assign(base, {
-			selectAll: async () => ok(undefined),
+			selectAll: async () => resultFactory.ok(undefined),
 		} satisfies Record<keyof SelectsAll, unknown>);
 		expect(canSelectAll(driver)).toBe(true);
 	});

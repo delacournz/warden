@@ -1,7 +1,7 @@
 import { copyFileSync, cpSync, existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { ApplyRepack } from "./repack.types";
 
 const BUNDLE = "main.jsbundle";
@@ -15,19 +15,21 @@ function failure(what: string, run: { stdout: string; stderr: string }): string 
 async function bundleIdentifier(exec: Exec, app: string): AsyncResult<string> {
 	const run = await exec(["plutil", "-extract", "CFBundleIdentifier", "raw", "-o", "-", join(app, "Info.plist")]);
 	const id = run.stdout.trim();
-	return run.exitCode === 0 && id !== "" ? ok(id) : err(failure(`reading CFBundleIdentifier of ${basename(app)}`, run));
+	return run.exitCode === 0 && id !== ""
+		? resultFactory.ok(id)
+		: resultFactory.err(failure(`reading CFBundleIdentifier of ${basename(app)}`, run));
 }
 
 /** Copy the base with APFS clonefiles (`cp -c`, near-free); a plain copy where the volume cannot clone. */
 async function cloneApp(exec: Exec, base: string, target: string): AsyncResult<void> {
 	const clone = await exec(["cp", "-c", "-R", base, target]);
-	if (clone.exitCode === 0) return ok(undefined);
+	if (clone.exitCode === 0) return resultFactory.ok(undefined);
 	rmSync(target, { recursive: true, force: true });
 	try {
 		cpSync(base, target, { recursive: true, verbatimSymlinks: true });
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	} catch (error) {
-		return err(
+		return resultFactory.err(
 			`copying ${basename(base)}: ${error instanceof Error ? error.message : String(error)} (clone: ${clone.stderr.trim()})`
 		);
 	}
@@ -38,14 +40,17 @@ async function cloneApp(exec: Exec, base: string, target: string): AsyncResult<v
  * and can refuse the new one: the repacked app turns it off in `Expo.plist`, where `EXUpdatesEnabled` is read.
  */
 async function disableExpoUpdates(exec: Exec, app: string): AsyncResult<boolean> {
-	if (!existsSync(join(app, "EXUpdates.bundle")) && !existsSync(join(app, "app.manifest"))) return ok(false);
+	if (!existsSync(join(app, "EXUpdates.bundle")) && !existsSync(join(app, "app.manifest")))
+		return resultFactory.ok(false);
 	const plist = join(app, EXPO_PLIST);
 	if (!existsSync(plist)) {
 		const created = await exec(["plutil", "-create", "xml1", plist]);
-		if (created.exitCode !== 0) return err(failure("creating Expo.plist", created));
+		if (created.exitCode !== 0) return resultFactory.err(failure("creating Expo.plist", created));
 	}
 	const set = await exec(["plutil", "-replace", "EXUpdatesEnabled", "-bool", "false", plist]);
-	return set.exitCode === 0 ? ok(true) : err(failure("setting EXUpdatesEnabled=false", set));
+	return set.exitCode === 0
+		? resultFactory.ok(true)
+		: resultFactory.err(failure("setting EXUpdatesEnabled=false", set));
 }
 
 /** The base's entitlements as plist XML, or undefined when it has none (an ad-hoc simulator build usually has an empty dict). */
@@ -78,7 +83,9 @@ export const applyIosRepack: ApplyRepack = async ({ exec, baseArtifact, outDir, 
 		}
 		copyFileSync(bundle.sourcemap, join(outDir, `${BUNDLE}.map`));
 	} catch (error) {
-		return err(`writing the bundle into ${basename(app)}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(
+			`writing the bundle into ${basename(app)}: ${error instanceof Error ? error.message : String(error)}`
+		);
 	}
 
 	const updates = await disableExpoUpdates(exec, app);
@@ -93,14 +100,14 @@ export const applyIosRepack: ApplyRepack = async ({ exec, baseArtifact, outDir, 
 	}
 	const signed = await exec([...sign, app]);
 	rmSync(entitlementsFile, { force: true });
-	if (signed.exitCode !== 0) return err(failure("codesign", signed));
+	if (signed.exitCode !== 0) return resultFactory.err(failure("codesign", signed));
 
 	const verified = await exec(["codesign", "--verify", "--strict", app]);
-	if (verified.exitCode !== 0) return err(failure("the repacked app does not verify", verified));
+	if (verified.exitCode !== 0) return resultFactory.err(failure("the repacked app does not verify", verified));
 	const id = await bundleIdentifier(exec, app);
 	if (!id.success) return id;
-	if (id.data !== baseId.data) return err(`the bundle id changed (${baseId.data} → ${id.data})`);
+	if (id.data !== baseId.data) return resultFactory.err(`the bundle id changed (${baseId.data} → ${id.data})`);
 	const size = existsSync(join(app, BUNDLE)) ? statSync(join(app, BUNDLE)).size : 0;
-	if (size === 0) return err(`${BUNDLE} is missing or empty in the repacked app`);
-	return ok({ artifact: app });
+	if (size === 0) return resultFactory.err(`${BUNDLE} is missing or empty in the repacked app`);
+	return resultFactory.ok({ artifact: app });
 };

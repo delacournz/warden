@@ -1,7 +1,7 @@
 import { defaultNativeProfilers } from "@delacour/warden-sdk/ops/perf/native";
 import { defaultNativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
 import type { SessionIo, SessionKit, StartHooks } from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "../agent-ui/output";
 import { selfCommand } from "../autogc";
 import type { CommandContext } from "../context";
@@ -37,7 +37,7 @@ export function startHooks(ctx: CommandContext, deps: PerfDeps, opts: PerfOption
 			);
 			if (!resolved.success) return { success: false, error: relaunchDeviceError(resolved.error) };
 			const working = resolved.data;
-			return ok({
+			return resultFactory.ok({
 				working,
 				tookLease: working.lease !== undefined && !target.ownedByCaller && target.holder === undefined,
 			});

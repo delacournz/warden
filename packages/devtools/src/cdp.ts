@@ -1,4 +1,4 @@
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type DevtoolsResult, devtoolsErr, type ExceptionDetails } from "./devtools.types";
 
@@ -172,7 +172,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 		}, defaultTimeout);
 		ws.addEventListener("open", () => {
 			clearTimeout(timer);
-			resolve(ok(true));
+			resolve(resultFactory.ok(true));
 		});
 		const failed = () => {
 			clearTimeout(timer);
@@ -211,7 +211,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 	const dispatch = (method: string, params: unknown) => {
 		if (method === "Runtime.bindingCalled") {
 			const tagged = taggedBindingPayload(params);
-			if (tagged) bindings.get(tagged.requestId)?.settle(ok(tagged.payload));
+			if (tagged) bindings.get(tagged.requestId)?.settle(resultFactory.ok(tagged.payload));
 		}
 		for (const handler of [...anyHandlers]) handler(method, params);
 		for (const handler of [...(listeners.get(method) ?? [])]) handler(params);
@@ -226,7 +226,9 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 			if (!request) return;
 			pending.delete(id);
 			clearTimeout(request.timer);
-			request.resolve(error ? devtoolsErr("cdp_protocol", error.message ?? JSON.stringify(error)) : ok(result ?? {}));
+			request.resolve(
+				error ? devtoolsErr("cdp_protocol", error.message ?? JSON.stringify(error)) : resultFactory.ok(result ?? {})
+			);
 			return;
 		}
 		if (method) dispatch(method, params);
@@ -269,7 +271,7 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 			const probe = await send("Runtime.evaluate", { expression: `typeof ${name}`, returnByValue: true });
 			const value = probe.success ? readEvaluateReply(probe.data).value : undefined;
 			bindingAvailable = value !== "undefined";
-			return ok({ available: bindingAvailable });
+			return resultFactory.ok({ available: bindingAvailable });
 		},
 		evaluateWithBinding(script, requestId, timeoutMs = defaultTimeout) {
 			if (bindingAvailable === false) {
@@ -309,5 +311,5 @@ export async function openCdp(wsUrl: string, options: CdpOptions = {}): Promise<
 			if (!closed) ws.close();
 		},
 	};
-	return ok(client);
+	return resultFactory.ok(client);
 }

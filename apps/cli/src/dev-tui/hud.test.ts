@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { MetricsSampler, MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "../agent-ui/output";
 import { testContext } from "../testing";
 import { HUD_MIN_INTERVAL_MS, startHud } from "./hud";
@@ -42,10 +42,10 @@ function rig(opts: {
 					if (opts.hang) return new Promise<never>(() => undefined);
 					const next = opts.readings[Math.min(reads++, opts.readings.length - 1)];
 					if (!next) return { success: false, error: uiError("failed", "no reading") };
-					return next.success ? ok({ wallMs: 0, atMs: 0, pid: 1, ...next.data }) : next;
+					return next.success ? resultFactory.ok({ wallMs: 0, atMs: 0, pid: 1, ...next.data }) : next;
 				},
 			};
-			return ok(sampler);
+			return resultFactory.ok(sampler);
 		},
 		schedule: (fn, ms) => {
 			delays.push(ms);

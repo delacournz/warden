@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { OwnedProcess } from "@delacour/warden-config/conditions.types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { SpawnTicker } from "./route-ticker.spawn";
 import { detachedSchedulerArgv, type SchedulerConfig } from "./scheduler.config";
 
@@ -22,7 +22,9 @@ export function spawnDetachedScheduler(
 	mainPath: string = join(import.meta.dir, "scheduler.main.ts")
 ): Result<OwnedProcess> {
 	const started = spawn(detachedSchedulerArgv(runtime, mainPath, config));
-	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the condition scheduler");
+	return started
+		? resultFactory.ok({ kind: "pid", pid: started.pid })
+		: resultFactory.err("could not start the condition scheduler");
 }
 
 /**
@@ -35,5 +37,7 @@ export function spawnDetachedSchedulerVia(
 	spawn: SpawnTicker = bunSpawnDetached
 ): Result<OwnedProcess> {
 	const started = spawn([...command, JSON.stringify(config)]);
-	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the condition scheduler");
+	return started
+		? resultFactory.ok({ kind: "pid", pid: started.pid })
+		: resultFactory.err("could not start the condition scheduler");
 }

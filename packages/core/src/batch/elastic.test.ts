@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CapacityDeps } from "@delacour/warden-leasing/claim";
 import type { InventoryDevice } from "@delacour/warden-store/types";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { claimLateWorkers, type LateWorker, planElastic } from "./elastic";
 import { type BatchHandle, type BatchWorker, runBatch } from "./schedule";
 
@@ -9,7 +9,7 @@ const capacity = (cpu: number, booted: number): CapacityDeps => ({
 	budget: { memMb: 1_000_000, cpu, maxUnits: Number.POSITIVE_INFINITY },
 	config: {},
 	hostInventory: async () =>
-		ok(
+		resultFactory.ok(
 			Array.from(
 				{ length: booted },
 				(_, i) => ({ id: `b${i}`, name: `b${i}`, platform: "ios", state: "booted", profile: "p" }) as InventoryDevice
@@ -68,8 +68,8 @@ describe("claimLateWorkers", () => {
 			handle: h.handle(),
 			signal: new AbortController().signal,
 			log: (l) => logs.push(l),
-			claim: async ({ worker }): Promise<ReturnType<typeof ok<LateWorker>>> =>
-				ok({ worker: { worker, udid: `U${worker}` }, drop: async () => void dropped.push(worker) }),
+			claim: async ({ worker }): Promise<ReturnType<typeof resultFactory.ok<LateWorker>>> =>
+				resultFactory.ok({ worker: { worker, udid: `U${worker}` }, drop: async () => void dropped.push(worker) }),
 		});
 		expect(await late).toEqual({ joined: 1, dropped: 0 });
 		await flush();
@@ -98,7 +98,7 @@ describe("claimLateWorkers", () => {
 			log: (l) => logs.push(l),
 			claim: ({ worker }) =>
 				new Promise((resolve) => {
-					land = (w) => resolve(ok(w));
+					land = (w) => resolve(resultFactory.ok(w));
 					void worker;
 				}),
 		});
@@ -130,7 +130,7 @@ describe("claimLateWorkers", () => {
 					seen.push(abort());
 					fail = () => {
 						seen.push(abort());
-						resolve(err("timed out in the boot queue"));
+						resolve(resultFactory.err("timed out in the boot queue"));
 					};
 				}),
 		});
@@ -161,7 +161,7 @@ describe("claimLateWorkers", () => {
 					const timer = setInterval(() => {
 						if (abort()) {
 							clearInterval(timer);
-							resolve(err("claim aborted"));
+							resolve(resultFactory.err("claim aborted"));
 						}
 					}, 1);
 				}),
@@ -187,7 +187,10 @@ describe("claimLateWorkers", () => {
 			log: () => {},
 			claim: async ({ worker }) => {
 				ac.abort();
-				return ok({ worker: { worker, udid: "U1" }, drop: async () => void dropped.push({ worker, udid: "U1" }) });
+				return resultFactory.ok({
+					worker: { worker, udid: "U1" },
+					drop: async () => void dropped.push({ worker, udid: "U1" }),
+				});
 			},
 		});
 		expect(await late).toEqual({ joined: 0, dropped: 1 });

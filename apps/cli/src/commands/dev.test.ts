@@ -5,7 +5,7 @@ import { DEV_CLIENT_ARGS, devClientLaunchArgv, type MetroProc } from "@delacour/
 import type { EnsureOptions } from "@delacour/warden-builds/prepare";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { devJsonSchema } from "@delacour/warden-sdk/contracts/dev";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { main } from "../cli";
 import type { CommandContext } from "../context";
@@ -1238,12 +1238,12 @@ describe("warden dev: opt-in extras", () => {
 				socketPath: join(options.logDir, "broker.sock"),
 				state: () => ({ phase: "connecting", attempt: 0 }),
 				resume: () => {},
-				registerMethod: () => ok(() => {}),
+				registerMethod: () => resultFactory.ok(() => {}),
 				addLineProcessor: () => () => {},
 				onAttach: () => () => {},
 				close: async () => void brokers.push("closed"),
 			};
-			return ok(broker);
+			return resultFactory.ok(broker);
 		};
 		const running = createDevCommand(h.deps).run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
@@ -1274,9 +1274,9 @@ describe("warden dev: opt-in extras", () => {
 		const { code, brokers } = await runWith(["ios"], async (socket) => {
 			expect(socket).toBeDefined();
 			const on = await callDevControl(socket ?? "", { op: "set", feature: "devtools", on: true });
-			expect(on).toEqual(ok({ ok: true, features: { hud: false, devtools: true } }));
+			expect(on).toEqual(resultFactory.ok({ ok: true, features: { hud: false, devtools: true } }));
 			const off = await callDevControl(socket ?? "", { op: "set", feature: "devtools", on: false });
-			expect(off).toEqual(ok({ ok: true, features: { hud: false, devtools: false } }));
+			expect(off).toEqual(resultFactory.ok({ ok: true, features: { hud: false, devtools: false } }));
 			const hud = await callDevControl(socket ?? "", { op: "set", feature: "hud", on: true });
 			expect(hud.success && hud.data.ok).toBe(false);
 		});
@@ -1297,7 +1297,7 @@ describe("selectDevUi", () => {
 			metro: { kind: "inherit" },
 			ready: () => {},
 			onQuit: () => {},
-			setHud: () => ok(undefined),
+			setHud: () => resultFactory.ok(undefined),
 			hudOn: () => false,
 			close: async () => {},
 		};

@@ -11,7 +11,7 @@ import { type BuildRecord, listBuilds } from "@delacour/warden-store/builds-tabl
 import { processAlive } from "@delacour/warden-store/liveness";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -201,9 +201,9 @@ async function rmCmd(ctx: CommandContext, prefixes: string[], opts: RmOpts): Pro
 export function inferPlatform(path: string, flag: string | undefined): Result<Platform> {
 	if (flag !== undefined) return parsePlatform(flag);
 	const clean = path.replace(/\/+$/, "");
-	if (clean.endsWith(".app")) return ok("ios");
-	if (clean.endsWith(".apk")) return ok("android");
-	return err(`can't tell the platform of ${path} — pass --platform ios|android`);
+	if (clean.endsWith(".app")) return resultFactory.ok("ios");
+	if (clean.endsWith(".apk")) return resultFactory.ok("android");
+	return resultFactory.err(`can't tell the platform of ${path} — pass --platform ios|android`);
 }
 
 type ImportOpts = {

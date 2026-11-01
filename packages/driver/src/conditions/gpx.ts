@@ -1,5 +1,5 @@
 import type { LatLon } from "@delacour/warden-config/conditions.types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** Opening tags of the three GPX point kinds, with or without an XML namespace prefix. */
 const POINT_TAG = /<(?:[\w-]+:)?(?:trkpt|rtept|wpt)\b([^>]*?)\/?>/gi;
@@ -31,5 +31,7 @@ export function parseGpx(xml: string): Result<LatLon[]> {
 		const lon = coordinate(attrs.get("lon"), 180);
 		if (lat !== undefined && lon !== undefined) points.push({ lat, lon });
 	}
-	return points.length > 0 ? ok(points) : err("GPX has no <trkpt>, <rtept> or <wpt> with a valid lat/lon");
+	return points.length > 0
+		? resultFactory.ok(points)
+		: resultFactory.err("GPX has no <trkpt>, <rtept> or <wpt> with a valid lat/lon");
 }

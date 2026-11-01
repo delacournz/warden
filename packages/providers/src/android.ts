@@ -7,8 +7,8 @@ import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { InventoryDevice, Lease } from "@delacour/warden-store/types";
 import { profileSlug } from "@delacour/warden-store/types";
-import { codedError, type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { ensureUnlocked, systemReady } from "./android-keyguard";
 import { type AndroidTools, androidTools } from "./android-tools";
 import { biometricProfile, splitBiometricProfile } from "./biometrics";
@@ -108,9 +108,9 @@ export const LIST_AVDS_TIMEOUT_MS = 15_000;
 async function run(deps: ExecDeps, cmd: readonly string[], opts?: ExecOptions): AsyncResult<string, WardenError> {
 	try {
 		const result = await deps.exec(cmd, opts);
-		return result.exitCode === 0 ? ok(result.stdout) : wardenErr("failed", execError(cmd, result));
+		return result.exitCode === 0 ? resultFactory.ok(result.stdout) : wardenErrors.err("failed", execError(cmd, result));
 	} catch (error) {
-		return wardenErr(
+		return wardenErrors.err(
 			"failed",
 			`\`${cmd.join(" ")}\` failed: ${error instanceof Error ? error.message : String(error)}`
 		);
@@ -135,7 +135,7 @@ export async function listAvds(deps: ExecDeps, opts: { fresh?: boolean } = {}): 
 	const cached = opts.fresh === true ? undefined : lists.get(emulator);
 	if (cached !== undefined) return cached;
 	const pending = run(deps, [emulator, "-list-avds"], { timeoutMs: LIST_AVDS_TIMEOUT_MS }).then(
-		(result): Result<string[], WardenError> => (result.success ? ok(parseAvdList(result.data)) : result)
+		(result): Result<string[], WardenError> => (result.success ? resultFactory.ok(parseAvdList(result.data)) : result)
 	);
 	lists.set(emulator, pending);
 	const result = await pending;
@@ -147,14 +147,14 @@ export async function listAvds(deps: ExecDeps, opts: { fresh?: boolean } = {}): 
 export async function listAdbDevices(deps: ExecDeps): AsyncResult<AdbListEntry[], WardenError> {
 	const { adb } = androidTools(deps.env);
 	const result = await run(deps, [adb, "devices", "-l"]);
-	return result.success ? ok(parseAdbDeviceList(result.data)) : result;
+	return result.success ? resultFactory.ok(parseAdbDeviceList(result.data)) : result;
 }
 
 /** Running emulators from `adb devices -l`. */
 export async function listEmulators(deps: ExecDeps): AsyncResult<AdbEmulator[], WardenError> {
 	const { adb } = androidTools(deps.env);
 	const result = await run(deps, [adb, "devices", "-l"]);
-	return result.success ? ok(parseAdbDevices(result.data)) : result;
+	return result.success ? resultFactory.ok(parseAdbDevices(result.data)) : result;
 }
 
 export type OtherClass = { emulator: boolean; hwSerial?: string; model?: string; sdk?: string };
@@ -173,7 +173,7 @@ export async function classifyOther(deps: ExecDeps, serial: string): AsyncResult
 	if (hw) info.hwSerial = hw;
 	if (model) info.model = model;
 	if (sdk && /^\d+$/.test(sdk)) info.sdk = sdk;
-	return ok(info);
+	return resultFactory.ok(info);
 }
 
 /** Is `id` a console emulator serial; anything else is a phone (or a network emulator), which warden never boots, kills or writes settings to. */
@@ -195,7 +195,7 @@ export type AndroidProviderOptions = {
 	pidAlive?: PidAlive;
 	/**
 	 * Name of a warden quick-boot snapshot of `avd` to launch from (see `golden/android-golden.ts`), when
-	 * one exists: a claim never builds one. `ok(undefined)` = none (off, not built yet, no SDK). A failure
+	 * one exists: a claim never builds one. `resultFactory.ok(undefined)` = none (off, not built yet, no SDK). A failure
 	 * only logs: the emulator then cold-boots as before.
 	 */
 	snapshot?: (avd: string) => AsyncResult<string | undefined>;
@@ -252,7 +252,7 @@ export function logTail(logPath: string): string {
 export function createSpawnDetached(earlyExitMs = 1_500): SpawnDetached {
 	return async (cmd, logPath) => {
 		const [file, ...args] = cmd;
-		if (file === undefined) return err("empty command");
+		if (file === undefined) return resultFactory.err("empty command");
 		let fd: number | undefined;
 		try {
 			fd = openSync(logPath, "a");
@@ -264,13 +264,13 @@ export function createSpawnDetached(earlyExitMs = 1_500): SpawnDetached {
 			const outcome = await Promise.race([exited, defaultSleep(earlyExitMs).then(() => undefined)]);
 			if (outcome !== undefined) {
 				const tail = logTail(logPath);
-				return err(`\`${cmd.join(" ")}\` ${outcome}${tail ? `: ${tail}` : ""} (log: ${logPath})`);
+				return resultFactory.err(`\`${cmd.join(" ")}\` ${outcome}${tail ? `: ${tail}` : ""} (log: ${logPath})`);
 			}
 			child.unref();
-			if (child.pid === undefined) return err(`\`${cmd.join(" ")}\` did not start`);
-			return ok({ pid: child.pid });
+			if (child.pid === undefined) return resultFactory.err(`\`${cmd.join(" ")}\` did not start`);
+			return resultFactory.ok({ pid: child.pid });
 		} catch (error) {
-			return err(error);
+			return resultFactory.err(error);
 		} finally {
 			if (fd !== undefined) closeSync(fd);
 		}
@@ -339,11 +339,11 @@ async function pollBootCompleted(
 			timeoutMs: Math.min(PROP_READ_TIMEOUT_MS, remaining()),
 			signal,
 		});
-		if (prop.success && prop.data.trim() === "1") return ok(undefined);
+		if (prop.success && prop.data.trim() === "1") return resultFactory.ok(undefined);
 		if (deps.now() >= deadline) break;
 		await deps.sleep(deps.pollIntervalMs);
 	}
-	return wardenErr("interrupted", "boot wait stopped");
+	return wardenErrors.err("interrupted", "boot wait stopped");
 }
 
 /** Every 0.5 s until `signal` aborts: fail once the launched emulator is gone or the deadline passed. */
@@ -359,10 +359,10 @@ async function watchBoot(
 		await deps.sleep(LIVENESS_POLL_MS);
 		if (signal.aborted) break;
 		if (watch.pid !== undefined && !deps.pidAlive(watch.pid))
-			return wardenErr("failed", emulatorExited(serial, watch.pid, watch.logPath));
+			return wardenErrors.err("failed", emulatorExited(serial, watch.pid, watch.logPath));
 		if (deps.now() >= deadline) return timedOut();
 	}
-	return wardenErr("interrupted", "boot wait stopped");
+	return wardenErrors.err("interrupted", "boot wait stopped");
 }
 
 function emulatorExited(serial: string, pid: number, logPath: string | undefined): string {
@@ -387,13 +387,15 @@ export async function waitBootCompleted(
 	const deadline = deps.now() + timeoutMs;
 	const abort = new AbortController();
 	const timedOut = (): Result<void, WardenError> =>
-		wardenErr("timeout", `timed out after ${timeoutMs}ms waiting for ${serial} to finish booting`, { retryable: true });
+		wardenErrors.err("timeout", `timed out after ${timeoutMs}ms waiting for ${serial} to finish booting`, {
+			retryable: true,
+		});
 	const wait = (async (): AsyncResult<void, WardenError> => {
 		const once = await run(deps, [adb, "-s", serial, "wait-for-device", "shell", BOOT_WAIT_SCRIPT], {
 			timeoutMs,
 			signal: abort.signal,
 		});
-		if (once.success) return ok(undefined);
+		if (once.success) return resultFactory.ok(undefined);
 		if (abort.signal.aborted) return once;
 		if (deps.now() >= deadline) return timedOut();
 		const polled = await pollBootCompleted(deps, serial, deadline, abort.signal);
@@ -427,7 +429,7 @@ export function leaseConsolePort(
 		}
 		const port = pickConsolePort(taken);
 		if (port === undefined) {
-			return wardenErr(
+			return wardenErrors.err(
 				"capacity_exhausted",
 				`no free emulator console port in ${CONSOLE_PORT_MIN}-${CONSOLE_PORT_MAX}`
 			);
@@ -436,7 +438,7 @@ export function leaseConsolePort(
 			{ resource: { kind: "port", port }, owner: deps.owner, ttlMs: DEFAULT_TTL_MS, label: `emulator ${name}` },
 			deps.now()
 		);
-		return ok({ lease, port });
+		return resultFactory.ok({ lease, port });
 	});
 }
 
@@ -510,14 +512,14 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	async function settleBiometricsDevice(id: string, avd: string | undefined): AsyncResult<void, WardenError> {
 		const recorded = deps.store.listDevices("android").find((d) => d.id === id);
 		if (recorded === undefined || !splitBiometricProfile(avd ?? recorded.profile ?? "").biometrics)
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		const keyguard = { exec: deps.exec, sleep, adb: tools.adb, now: deps.now };
-		const up = codedError(await systemReady(keyguard, id, SYSTEM_READY_MS), "failed");
+		const up = wardenErrors.coded(await systemReady(keyguard, id, SYSTEM_READY_MS), "failed");
 		if (!up.success) return up;
-		const unlocked = codedError(await ensureUnlocked(keyguard, id), "failed");
+		const unlocked = wardenErrors.coded(await ensureUnlocked(keyguard, id), "failed");
 		if (!unlocked.success) return unlocked;
 		// the unlock and the snapshot restore can leave adb flapping offline; an install right after would fail
-		return codedError(await systemReady(keyguard, id, SETTLED_READY_MS), "failed");
+		return wardenErrors.coded(await systemReady(keyguard, id, SETTLED_READY_MS), "failed");
 	}
 
 	const adb = (serial: string, ...args: string[]): readonly string[] => [tools.adb, "-s", serial, ...args];
@@ -570,7 +572,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			avdNameOf(emu.serial),
 			online
 				? run(deps, adb(emu.serial, "shell", "getprop", "ro.build.version.sdk"))
-				: Promise.resolve(wardenErr("failed", "offline")),
+				: Promise.resolve(wardenErrors.err("failed", "offline")),
 		]);
 		const avdName = avd.name;
 		// a console that does not answer is not a usable emulator yet: booting, no profile, the round goes on
@@ -596,9 +598,9 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			avds = await listAvds(deps, { fresh: true });
 		if (!avds.success) return avds;
 		const avd = avds.data.find((a) => profileSlug(a) === profile);
-		if (avd !== undefined) return ok(avd);
+		if (avd !== undefined) return resultFactory.ok(avd);
 		const available = avds.data.map((a) => `${profileSlug(a)} (${a})`).join(", ") || "none";
-		return wardenErr("not_found", `no AVD matches profile "${profile}"; available: ${available}`);
+		return wardenErrors.err("not_found", `no AVD matches profile "${profile}"; available: ${available}`);
 	}
 
 	/** Warden's snapshot of `avd`, if any; a failure to make one is logged, not fatal. */
@@ -612,10 +614,10 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 
 	async function shutdownDevice(id: string): AsyncResult<void, WardenError> {
 		if (!isEmulatorSerial(id)) {
-			return wardenErr("device_foreign", `refusing to shut down ${id}: a physical device is never shut down`);
+			return wardenErrors.err("device_foreign", `refusing to shut down ${id}: a physical device is never shut down`);
 		}
 		if (!deps.store.listDevices("android").some((d) => d.id === id)) {
-			return wardenErr("device_foreign", `refusing to shut down foreign emulator ${id}`);
+			return wardenErrors.err("device_foreign", `refusing to shut down foreign emulator ${id}`);
 		}
 		const killed = await run(deps, adb(id, "emu", "kill"), { timeoutMs: EMU_CONSOLE_TIMEOUT_MS });
 		if (!killed.success) {
@@ -630,7 +632,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			}
 			deps.store.forgetDevice("android", id);
 		});
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	}
 
 	/** A device that never got ready (locked, adb offline) must not be left up for the next claim to reuse; foreign ones are left alone. */
@@ -661,8 +663,8 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		// a biometrics profile is a separate golden of the AVD; its devices must start enrolled, so no cold-boot fallback
 		const target = biometricProfile(resolved.data, split.biometrics);
 		const snapshot = await snapshotFor(target);
-		if (split.biometrics && snapshot === undefined) return wardenErr("failed", missingEnrolledSnapshot(profile));
-		return ok({ avdName: resolved.data, target, snapshot });
+		if (split.biometrics && snapshot === undefined) return wardenErrors.err("failed", missingEnrolledSnapshot(profile));
+		return resultFactory.ok({ avdName: resolved.data, target, snapshot });
 	}
 
 	/** Launch a headless, read-only emulator of `avd` on `port`, logging to `$WARDEN_HOME/logs/<serial>.log`. */
@@ -677,18 +679,21 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		try {
 			mkdirSync(logDir, { recursive: true });
 		} catch (error) {
-			return wardenErr("failed", error instanceof Error ? error.message : String(error));
+			return wardenErrors.err("failed", error instanceof Error ? error.message : String(error));
 		}
 		const logPath = join(logDir, `${serial}.log`);
 		const logOffset = logSize(logPath);
 		const argv = claimEmulatorArgv(tools, deps.env, avd, port, snapshot, headless);
 		const spawned = await spawnDetached(argv, logPath);
-		return spawned.success ? ok({ pid: spawned.data.pid, logPath, logOffset }) : wardenErr("failed", spawned.error);
+		return spawned.success
+			? resultFactory.ok({ pid: spawned.data.pid, logPath, logOffset })
+			: wardenErrors.err("failed", spawned.error);
 	}
 
 	/** `adb devices` for a create: the last inventory's when it is recent (the claim's own), else a fresh one. */
 	async function runningEmulators(): AsyncResult<AdbEmulator[], WardenError> {
-		if (lastListing !== undefined && deps.now() - lastListing.at <= LISTING_REUSE_MS) return ok(lastListing.emulators);
+		if (lastListing !== undefined && deps.now() - lastListing.at <= LISTING_REUSE_MS)
+			return resultFactory.ok(lastListing.emulators);
 		return listEmulators(deps);
 	}
 
@@ -713,7 +718,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			return launch(avd, port, serial, from, false);
 		};
 		const launched = await attempt(snapshot);
-		if (launched.success) return snapshot !== undefined ? ok({ ...launched.data, snapshot }) : launched;
+		if (launched.success) return snapshot !== undefined ? resultFactory.ok({ ...launched.data, snapshot }) : launched;
 		if (snapshot === undefined) return launched;
 		deps.log?.(
 			`${serial}: launch from snapshot ${snapshot} failed (${launched.error.message}) — retrying with a cold boot`
@@ -745,7 +750,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 				Promise.all(known.map((e) => describeEmulator(e, recorded.get(e.serial), goldenPorts.has(e.port)))),
 				Promise.all(others.map(describeOther)),
 			]);
-			return ok([...described, ...phones]);
+			return resultFactory.ok([...described, ...phones]);
 		},
 
 		async create(name, profile, runtime) {
@@ -777,7 +782,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 				profile,
 			};
 			if (recordedRuntime !== undefined) device.runtime = recordedRuntime;
-			return ok(device);
+			return resultFactory.ok(device);
 		},
 
 		async boot(id) {
@@ -785,11 +790,11 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 				const listed = await listAdbDevices(deps);
 				const state = listed.success ? listed.data.find((e) => e.serial === id)?.state : undefined;
 				if (state === "unauthorized")
-					return wardenErr(
+					return wardenErrors.err(
 						"device_foreign",
 						`${id} is unauthorized: accept the USB debugging prompt on the phone, then retry`
 					);
-				return wardenErr(
+				return wardenErrors.err(
 					"device_foreign",
 					`${id} is a physical device: warden never boots one (state: ${state ?? "not connected"})`
 				);
@@ -800,13 +805,16 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			for (let i = 0; ; i++) {
 				const emulators = await listEmulators(deps);
 				if (!emulators.success) return emulators;
-				if (emulators.data.some((e) => e.serial === id)) return ok(undefined);
+				if (emulators.data.some((e) => e.serial === id)) return resultFactory.ok(undefined);
 				if (i >= polls) break;
 				await sleep(REGISTER_POLL_MS);
 			}
 			return launched
-				? wardenErr("timeout", `${id} did not register with adb within ${REGISTER_TIMEOUT_MS / 1000}s of its launch`)
-				: wardenErr("device_unknown", `${id} is not running — android devices are created, not booted`);
+				? wardenErrors.err(
+						"timeout",
+						`${id} did not register with adb within ${REGISTER_TIMEOUT_MS / 1000}s of its launch`
+					)
+				: wardenErrors.err("device_unknown", `${id} is not running — android devices are created, not booted`);
 		},
 
 		async waitReady(id, timeoutMs) {
@@ -824,12 +832,14 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		},
 
 		async verifyWarm(id) {
-			if (isEmulatorSerial(id)) return wardenErr("unsupported", "no warm check for emulators");
+			if (isEmulatorSerial(id)) return wardenErrors.err("unsupported", "no warm check for emulators");
 			const prop = await run(deps, adb(id, "shell", "getprop", "sys.boot_completed"), {
 				timeoutMs: PROP_READ_TIMEOUT_MS,
 			});
 			if (!prop.success) return prop;
-			return prop.data.trim() === "1" ? ok(undefined) : wardenErr("failed", `${id} has not finished booting`);
+			return prop.data.trim() === "1"
+				? resultFactory.ok(undefined)
+				: wardenErrors.err("failed", `${id} has not finished booting`);
 		},
 
 		shutdown: shutdownDevice,

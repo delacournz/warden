@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AppDeps } from "@delacour/warden-builds/prepare";
 import type { RepackInput, repackApp } from "@delacour/warden-builds/repack";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { createRepackCommand } from "./repack";
@@ -26,7 +26,7 @@ function setup(argv: string[]): TestContext {
 }
 
 type Run = typeof repackApp;
-const repacked: Awaited<ReturnType<Run>> = ok({
+const repacked: Awaited<ReturnType<Run>> = resultFactory.ok({
 	kind: "repacked",
 	artifact: "/cache/App.app",
 	hash: "fp:js1",
@@ -72,7 +72,7 @@ describe("warden repack", () => {
 	test("a reused repack is reported as reused, exit 0", async () => {
 		const c = setup(["ios", "--json"]);
 		const code = await createRepackCommand(deps, async () =>
-			ok({ kind: "reused", artifact: "/a", hash: "h", baseHash: "b", jsKey: "j" })
+			resultFactory.ok({ kind: "reused", artifact: "/a", hash: "h", baseHash: "b", jsKey: "j" })
 		).run(c);
 		expect(code).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).result).toBe("reused");
@@ -80,7 +80,9 @@ describe("warden repack", () => {
 
 	test("a fallback names the reason and exits 1", async () => {
 		const c = setup(["android", "--json"]);
-		const code = await createRepackCommand(deps, async () => ok({ kind: "fallback", reason: "images changed" })).run(c);
+		const code = await createRepackCommand(deps, async () =>
+			resultFactory.ok({ kind: "fallback", reason: "images changed" })
+		).run(c);
 		expect(code).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
 			result: "fallback",
@@ -91,7 +93,7 @@ describe("warden repack", () => {
 
 	test("an error is reported on stderr, exit 1, and as the --json failure envelope", async () => {
 		const c = setup(["ios", "--json"]);
-		const code = await createRepackCommand(deps, async () => err("repack: metro exploded")).run(c);
+		const code = await createRepackCommand(deps, async () => resultFactory.err("repack: metro exploded")).run(c);
 		expect(code).toBe(1);
 		expect(c.stderr.join("\n")).toContain("warden repack: repack: metro exploded");
 		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({

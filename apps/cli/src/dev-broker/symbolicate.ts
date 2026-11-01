@@ -1,6 +1,6 @@
 import type { ConsoleLine, StackFrame } from "@delacour/warden-devtools/devtools.types";
 import { isBundleUrl } from "@delacour/warden-perf/js/bundle-url";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { LineProcessor } from "./broker.types";
 import type { BrokerExtension } from "./extensions";
@@ -47,7 +47,7 @@ export async function symbolicateFrames(
 	frames: readonly StackFrame[],
 	deps: SymbolicateDeps
 ): AsyncResult<Symbolicated> {
-	if (frames.length === 0) return ok({ frames: [] });
+	if (frames.length === 0) return resultFactory.ok({ frames: [] });
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 	try {
@@ -64,9 +64,10 @@ export async function symbolicateFrames(
 			}),
 			signal: controller.signal,
 		});
-		if (!reply.ok) return err(`metro /symbolicate answered ${reply.status}`);
+		if (!reply.ok) return resultFactory.err(`metro /symbolicate answered ${reply.status}`);
 		const parsed = replySchema.safeParse(JSON.parse(await reply.text()));
-		if (!parsed.success || parsed.data.stack.length !== frames.length) return err("unexpected /symbolicate reply");
+		if (!parsed.success || parsed.data.stack.length !== frames.length)
+			return resultFactory.err("unexpected /symbolicate reply");
 		const mapped = parsed.data.stack.map((frame, i): StackFrame => {
 			const input = frames[i] as StackFrame;
 			if (frame.file == null || frame.lineNumber == null) return input;
@@ -80,9 +81,9 @@ export async function symbolicateFrames(
 			};
 		});
 		const codeFrame = parsed.data.codeFrame?.content;
-		return ok(codeFrame ? { frames: mapped, codeFrame } : { frames: mapped });
+		return resultFactory.ok(codeFrame ? { frames: mapped, codeFrame } : { frames: mapped });
 	} catch (error) {
-		return err(controller.signal.aborted ? "metro /symbolicate timed out" : error);
+		return resultFactory.err(controller.signal.aborted ? "metro /symbolicate timed out" : error);
 	} finally {
 		clearTimeout(timer);
 	}

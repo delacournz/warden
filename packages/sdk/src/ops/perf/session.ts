@@ -19,7 +19,7 @@ import {
 	safeToSignal,
 } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { readPerfPointer, setPerfPointer, writeFileAtomic } from "./device-state";
 import type { PerfEnv } from "./env";
@@ -254,6 +254,6 @@ export function createSession(
 		};
 		writeSession(ctx, session);
 		setPerfPointer(ctx, udid, session.id);
-		return ok(session);
+		return resultFactory.ok(session);
 	});
 }

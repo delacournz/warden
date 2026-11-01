@@ -13,7 +13,7 @@ import { STAY_AWAKE_COMMAND } from "@delacour/warden-providers/android-keyguard"
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import {
 	ANDROID_BIOMETRICS_RECIPE,
 	type AndroidGoldenDeps,
@@ -195,13 +195,14 @@ function fakeAndroidHost(opts: HostOptions = {}) {
 
 	const spawnDetached: SpawnDetached = async (cmd) => {
 		spawned.push(cmd);
-		if (opts.snapshotLaunchFails && cmd.includes("-snapshot")) return err("emulator exited 1: snapshot load failed");
+		if (opts.snapshotLaunchFails && cmd.includes("-snapshot"))
+			return resultFactory.err("emulator exited 1: snapshot load failed");
 		const avd = cmd[cmd.indexOf("-avd") + 1] ?? "";
 		const port = cmd[cmd.indexOf("-port") + 1] ?? "";
 		const pid = nextPid++;
 		const writable = !cmd.includes("-read-only");
 		if (!(writable && opts.buildDies)) running.set(`emulator-${port}`, { avd, pid, writable, command: cmd.join(" ") });
-		return ok({ pid });
+		return resultFactory.ok({ pid });
 	};
 
 	const pidAlive = (pid: number) => processes.has(pid) || [...running.values()].some((i) => i.pid === pid);
@@ -297,7 +298,7 @@ describe("snapshot key", () => {
 	test("read from the SDK and AVD files: image revision, fingerprint, emulator version, hw.* lines", async () => {
 		const read = await readSnapshotInputs(goldenDeps(fakeAndroidHost()), "Pixel_10");
 		expect(read).toEqual(
-			ok({
+			resultFactory.ok({
 				dir: join(avdHomeDir, "Pixel_10.avd"),
 				inputs: {
 					imageRevision: "5",
@@ -319,9 +320,9 @@ describe("snapshot key", () => {
 	test("no SDK root → no snapshot (not an error), said once per process (R8)", async () => {
 		const logs: string[] = [];
 		const deps = { ...goldenDeps(fakeAndroidHost(), logs), env: { ANDROID_AVD_HOME: avdHomeDir, WARDEN_HOME: dir } };
-		expect(await readSnapshotInputs(deps, "Pixel_10")).toEqual(ok(undefined));
-		expect(await ensureAndroidSnapshot(deps, "Pixel_10")).toEqual(ok(undefined));
-		expect(await snapshotForClaim(deps, "Pixel_10")).toEqual(ok(undefined));
+		expect(await readSnapshotInputs(deps, "Pixel_10")).toEqual(resultFactory.ok(undefined));
+		expect(await ensureAndroidSnapshot(deps, "Pixel_10")).toEqual(resultFactory.ok(undefined));
+		expect(await snapshotForClaim(deps, "Pixel_10")).toEqual(resultFactory.ok(undefined));
 		expect(logs.filter((l) => l.includes("ANDROID_HOME"))).toHaveLength(1);
 	});
 
@@ -409,7 +410,7 @@ describe("claims launch from warden's snapshot; the build runs outside any claim
 		const host = fakeAndroidHost();
 		expect((await claim(host)).success).toBe(true);
 		// the claim's emulator still runs: gc leaves the AVD alone
-		expect(await gcBuild(host)).toEqual(ok({ busy: ["Pixel_10"] }));
+		expect(await gcBuild(host)).toEqual(resultFactory.ok({ busy: ["Pixel_10"] }));
 		expect(host.spawned).toHaveLength(1);
 		host.running.clear();
 		const pass = await gcBuild(host);
@@ -466,7 +467,7 @@ describe("claims launch from warden's snapshot; the build runs outside any claim
 	test("the hook erroring: the claim cold-boots with today's argv (R9)", async () => {
 		const host = fakeAndroidHost();
 		const logs: string[] = [];
-		const result = await claim(host, logs, async () => err("config.ini unreadable"));
+		const result = await claim(host, logs, async () => resultFactory.err("config.ini unreadable"));
 		expect(result.success).toBe(true);
 		expect(host.spawned).toHaveLength(1);
 		expect(host.spawned[0]).toContain("-read-only");
@@ -491,7 +492,7 @@ describe("claims launch from warden's snapshot; the build runs outside any claim
 		host.running.set("emulator-5580", { avd: "Pixel_10", pid: 99, writable: false });
 		const logs: string[] = [];
 		const ensured = await ensureAndroidSnapshot(goldenDeps(host, logs), "Pixel_10");
-		expect(ensured).toEqual(ok(undefined));
+		expect(ensured).toEqual(resultFactory.ok(undefined));
 		expect(host.spawned).toHaveLength(0);
 		expect(logs.join("\n")).toContain("is running");
 	});
@@ -539,7 +540,7 @@ describe("build failure paths and concurrency (R3, R9)", () => {
 			}),
 			"Pixel_10"
 		);
-		expect(ensured).toEqual(ok({ avd: "Pixel_10", name: snapshotName(key), key, built: false }));
+		expect(ensured).toEqual(resultFactory.ok({ avd: "Pixel_10", name: snapshotName(key), key, built: false }));
 		expect(polls).toBe(1);
 		expect(host.spawned).toHaveLength(0);
 		expect(logs.join("\n")).toContain("waiting");
@@ -633,7 +634,7 @@ describe("build failure paths and concurrency (R3, R9)", () => {
 		markAndroidSnapshotPending(store, "Pixel_10");
 		const logs: string[] = [];
 		const pass = await gcBuild(host, logs);
-		expect(pass).toEqual(ok({ busy: ["Pixel_10"] }));
+		expect(pass).toEqual(resultFactory.ok({ busy: ["Pixel_10"] }));
 		expect(host.calls.filter((c) => c.endsWith("emu kill"))).toEqual([]);
 		expect(host.kills).toEqual([]);
 		expect(host.running.has("emulator-5554")).toBe(true);
@@ -646,7 +647,7 @@ describe("build failure paths and concurrency (R3, R9)", () => {
 		const host = fakeAndroidHost();
 		goldenLease(5554);
 		host.running.set("emulator-5554", studio);
-		expect(await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10")).toEqual(ok(undefined));
+		expect(await ensureAndroidSnapshot(goldenDeps(host), "Pixel_10")).toEqual(resultFactory.ok(undefined));
 		expect(host.calls.filter((c) => c.endsWith("emu kill"))).toEqual([]);
 		expect(store.listLeases()).toHaveLength(0);
 	});
@@ -657,7 +658,7 @@ describe("build failure paths and concurrency (R3, R9)", () => {
 		host.processes.set(77, "/usr/bin/python3 -m http.server");
 		host.running.set("emulator-5554", studio);
 		const clock = fakeClock();
-		expect(await ensureAndroidSnapshot(goldenDeps(host, [], clock), "Pixel_10")).toEqual(ok(undefined));
+		expect(await ensureAndroidSnapshot(goldenDeps(host, [], clock), "Pixel_10")).toEqual(resultFactory.ok(undefined));
 		expect(host.calls.filter((c) => c.endsWith("emu kill"))).toEqual([]);
 		expect(host.kills).toEqual([]);
 		expect(host.processes.has(77)).toBe(true);
@@ -672,7 +673,7 @@ describe("build failure paths and concurrency (R3, R9)", () => {
 		markAndroidSnapshotPending(store, "Pixel_10");
 		const logs: string[] = [];
 		const pass = await gcBuild(host, logs);
-		expect(pass).toEqual(ok({ busy: ["Pixel_10"] }));
+		expect(pass).toEqual(resultFactory.ok({ busy: ["Pixel_10"] }));
 		expect(host.spawned).toHaveLength(0);
 		expect(host.kills).toEqual([]);
 		expect(store.listLeases().map((l) => l.pid)).toEqual([77]);
@@ -758,7 +759,7 @@ describe("a snapshot that does not load (R5)", () => {
 		expect(androidSnapshotsDue(store, {}, later)).toBe(false);
 		expect(androidSnapshotsGivenUp(store)).toEqual(["Pixel_10"]);
 		const spawned = host.spawned.length;
-		expect(await gcBuild(host, [], { now: () => later })).toEqual(ok({ busy: [] }));
+		expect(await gcBuild(host, [], { now: () => later })).toEqual(resultFactory.ok({ busy: [] }));
 		expect(host.spawned).toHaveLength(spawned);
 		// `warden golden ensure` builds it and starts the count over
 		const ensured = await ensureAndroidSnapshot(goldenDeps(host, [], { now: () => later }), "Pixel_10", {
@@ -787,7 +788,7 @@ describe("a snapshot that does not load (R5)", () => {
 		markAndroidSnapshotPending(store, "Pixel_10");
 		host.running.set("emulator-5580", { avd: "Pixel_10", pid: 99, writable: false });
 		expect(androidSnapshotsDue(store, {}, 1_000)).toBe(true);
-		expect(await gcBuild(host)).toEqual(ok({ busy: ["Pixel_10"] }));
+		expect(await gcBuild(host)).toEqual(resultFactory.ok({ busy: ["Pixel_10"] }));
 		expect(androidSnapshotsDue(store, {}, 1_000 + 30 * 60_000)).toBe(false);
 		expect(pendingAndroidSnapshots(store, 1_000 + 30 * 60_000)).toEqual(["Pixel_10"]);
 		expect(androidSnapshotsDue(store, {}, 1_000 + 60 * 60_000)).toBe(true);
@@ -855,7 +856,7 @@ describe("stale snapshots", () => {
 		const current = plant(snapshotName(await currentKey(host)));
 		host.running.set("emulator-5580", { avd: "Pixel_10", pid: 99, writable: false });
 		const kept = await pruneAndroidSnapshots(goldenDeps(host), { all: true });
-		expect(kept).toEqual(ok([]));
+		expect(kept).toEqual(resultFactory.ok([]));
 		expect(existsSync(current)).toBe(true);
 		host.running.clear();
 		const pruned = await pruneAndroidSnapshots(goldenDeps(host), { all: true });
@@ -965,8 +966,8 @@ describe("biometrics snapshots", () => {
 		const plain = await ensureAndroidSnapshot(golden, "Pixel_10");
 		if (!bio.success || !plain.success || !bio.data || !plain.data) throw new Error("build failed");
 		const forClaim = await snapshotForClaim(golden, BIO);
-		expect(forClaim).toEqual(ok(bio.data.name));
-		expect(await snapshotForClaim(golden, "Pixel_10")).toEqual(ok(plain.data.name));
+		expect(forClaim).toEqual(resultFactory.ok(bio.data.name));
+		expect(await snapshotForClaim(golden, "Pixel_10")).toEqual(resultFactory.ok(plain.data.name));
 	});
 
 	test("provider: a +bio profile launches from the enrolled snapshot, records the +bio profile", async () => {
@@ -981,7 +982,7 @@ describe("biometrics snapshots", () => {
 
 	test("provider: a +bio profile never cold-boots unenrolled when the snapshot is unavailable", async () => {
 		const host = fakeAndroidHost();
-		const created = await provider(host, [], async () => ok(undefined)).create("w", "pixel-10+bio");
+		const created = await provider(host, [], async () => resultFactory.ok(undefined)).create("w", "pixel-10+bio");
 		expect(created.success).toBe(false);
 		if (!created.success)
 			expect(created.error.message).toContain("warden golden ensure --platform android --profile pixel-10+bio");

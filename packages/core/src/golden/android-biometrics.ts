@@ -6,7 +6,7 @@
  */
 import { BIOMETRIC_FINGER_ID, BIOMETRIC_PIN } from "@delacour/warden-providers/biometrics";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 const SHELL_TIMEOUT_MS = 15_000;
 const DUMP_PATH = "/sdcard/warden-ui.xml";
@@ -60,20 +60,24 @@ export type EnrollDeps = {
 };
 
 export async function enrollFingerprint(deps: EnrollDeps, serial: string): AsyncResult<{ alreadyEnrolled: boolean }> {
-	if (!/^emulator-\d+$/.test(serial)) return err(`refusing to enroll a fingerprint on ${serial}: emulators only`);
+	if (!/^emulator-\d+$/.test(serial))
+		return resultFactory.err(`refusing to enroll a fingerprint on ${serial}: emulators only`);
 	const { adb } = deps;
 	const shell = (...args: string[]) =>
 		deps.exec([adb, "-s", serial, "shell", ...args], { timeoutMs: SHELL_TIMEOUT_MS });
 	const enrolled = async () => parseFingerprintEnrolled((await shell("dumpsys", "fingerprint")).stdout);
 
-	if (await enrolled()) return ok({ alreadyEnrolled: true });
+	if (await enrolled()) return resultFactory.ok({ alreadyEnrolled: true });
 
 	const pin = await shell("locksettings", "set-pin", BIOMETRIC_PIN);
 	if (pin.exitCode !== 0 && !/already/i.test(`${pin.stdout}${pin.stderr}`)) {
-		return err(`${serial}: locksettings set-pin failed: ${`${pin.stdout}${pin.stderr}`.trim().slice(0, 200)}`);
+		return resultFactory.err(
+			`${serial}: locksettings set-pin failed: ${`${pin.stdout}${pin.stderr}`.trim().slice(0, 200)}`
+		);
 	}
 	const started = await shell("am", "start", "-a", "android.settings.FINGERPRINT_ENROLL");
-	if (started.exitCode !== 0) return err(`${serial}: cannot open the fingerprint wizard: ${started.stderr.trim()}`);
+	if (started.exitCode !== 0)
+		return resultFactory.err(`${serial}: cannot open the fingerprint wizard: ${started.stderr.trim()}`);
 
 	const steps = deps.maxSteps ?? 60;
 	for (let i = 0; i < steps; i++) {
@@ -93,8 +97,8 @@ export async function enrollFingerprint(deps: EnrollDeps, serial: string): Async
 		if (await enrolled()) {
 			await shell("am", "force-stop", SETTINGS_PACKAGE);
 			await shell("input", "keyevent", KEYCODE_HOME);
-			return ok({ alreadyEnrolled: false });
+			return resultFactory.ok({ alreadyEnrolled: false });
 		}
 	}
-	return err(`${serial}: fingerprint enrollment did not finish in ${steps} wizard rounds`);
+	return resultFactory.err(`${serial}: fingerprint enrollment did not finish in ${steps} wizard rounds`);
 }

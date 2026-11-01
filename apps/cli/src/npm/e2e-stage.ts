@@ -1,6 +1,6 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { emitDeclarations, entryDeclaration } from "./declarations";
 import { bundleE2e, E2E_EXTERNALS } from "./e2e-bundle";
 import { E2E_ENTRIES, E2E_TYPES_DIR, e2eManifest, LICENSE_FILE, type PackageMeta } from "./manifests";
@@ -18,10 +18,10 @@ export function e2eDependencies(packageJson: string): Result<Record<string, stri
 		if (name.startsWith("bun:")) continue;
 		const range = declared[name];
 		if (typeof range !== "string")
-			return err(`packages/e2e/package.json has no dependency ${name} (the bundle imports it)`);
+			return resultFactory.err(`packages/e2e/package.json has no dependency ${name} (the bundle imports it)`);
 		dependencies[name] = range;
 	}
-	return ok(dependencies);
+	return resultFactory.ok(dependencies);
 }
 
 /**
@@ -61,5 +61,5 @@ export async function stageE2e(input: { repoRoot: string; outDir: string; meta: 
 
 	writeFileSync(join(outDir, "package.json"), `${JSON.stringify(e2eManifest(meta, dependencies.data), null, 2)}\n`);
 	copyFileSync(join(repoRoot, LICENSE_FILE), join(outDir, LICENSE_FILE));
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }

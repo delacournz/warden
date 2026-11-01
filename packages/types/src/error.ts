@@ -66,47 +66,44 @@ export type WardenError = {
 
 export type WardenErrorExtra = Pick<WardenError, "hint" | "details" | "retryable">;
 
-/** A failed `Result` carrying a coded {@link WardenError}. Optional fields are omitted unless given. */
-export function wardenErr(
-	code: WardenErrorCode,
-	message: string,
-	extra: WardenErrorExtra = {}
-): ErrorResult<WardenError> {
-	return {
-		success: false,
-		error: {
-			code,
-			message,
-			...(extra.hint !== undefined ? { hint: extra.hint } : {}),
-			...(extra.details !== undefined ? { details: extra.details } : {}),
-			...(extra.retryable !== undefined ? { retryable: extra.retryable } : {}),
-		},
-	};
-}
-
-/** A plain-text failure (or an already coded one) as a {@link WardenError}; text gets `code`. */
-export function asWardenError(error: string | WardenError, code: WardenErrorCode = "failed"): WardenError {
-	return typeof error === "string" ? { code, message: error } : error;
-}
-
 const CODES: ReadonlySet<string> = new Set(WARDEN_ERROR_CODES);
 
-export function isWardenError(value: unknown): value is WardenError {
-	if (typeof value !== "object" || value === null) return false;
-	const { code, message } = value as { code?: unknown; message?: unknown };
-	return typeof code === "string" && CODES.has(code) && typeof message === "string";
+/** Builds, narrows and converts {@link WardenError} values. Use the shared {@link wardenErrors} singleton. */
+export class WardenErrors {
+	/** A failed `Result` carrying a coded {@link WardenError}. Optional fields are omitted unless given. */
+	err(code: WardenErrorCode, message: string, extra: WardenErrorExtra = {}): ErrorResult<WardenError> {
+		return {
+			success: false,
+			error: {
+				code,
+				message,
+				...(extra.hint !== undefined ? { hint: extra.hint } : {}),
+				...(extra.details !== undefined ? { details: extra.details } : {}),
+				...(extra.retryable !== undefined ? { retryable: extra.retryable } : {}),
+			},
+		};
+	}
+
+	/** A plain-text failure (or an already coded one) as a {@link WardenError}; text gets `code`. */
+	coerce(error: string | WardenError, code: WardenErrorCode = "failed"): WardenError {
+		return typeof error === "string" ? { code, message: error } : error;
+	}
+
+	is(value: unknown): value is WardenError {
+		if (typeof value !== "object" || value === null) return false;
+		const { code, message } = value as { code?: unknown; message?: unknown };
+		return typeof code === "string" && CODES.has(code) && typeof message === "string";
+	}
+
+	/** The same `Result` with a failure's message as plain text, for callers whose error channel is a string. */
+	toText<T>(result: Result<T, WardenError>): Result<T> {
+		return result.success ? result : { success: false, error: result.error.message };
+	}
+
+	/** The same `Result` with a plain-text failure as a {@link WardenError} of `code`. */
+	coded<T>(result: Result<T>, code: WardenErrorCode, extra: WardenErrorExtra = {}): Result<T, WardenError> {
+		return result.success ? result : this.err(code, result.error, extra);
+	}
 }
 
-/** The same `Result` with a failure's message as plain text, for callers whose error channel is a string. */
-export function textError<T>(result: Result<T, WardenError>): Result<T> {
-	return result.success ? result : { success: false, error: result.error.message };
-}
-
-/** The same `Result` with a plain-text failure as a {@link WardenError} of `code`. */
-export function codedError<T>(
-	result: Result<T>,
-	code: WardenErrorCode,
-	extra: WardenErrorExtra = {}
-): Result<T, WardenError> {
-	return result.success ? result : wardenErr(code, result.error, extra);
-}
+export const wardenErrors = new WardenErrors();

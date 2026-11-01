@@ -1,7 +1,7 @@
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfUiEnv } from "./env";
 import {
@@ -101,7 +101,7 @@ export async function startNative(
 			],
 		}));
 	}
-	return ok({
+	return resultFactory.ok({
 		dir,
 		...(session === undefined ? {} : { sessionId: session.id }),
 		handle: started.data,
@@ -166,7 +166,7 @@ export async function stopNative(
 		}));
 	}
 	if (!stopped.success) return stopped;
-	return ok({
+	return resultFactory.ok({
 		...stopped.data,
 		dir,
 		...(file.sessionId === undefined ? {} : { sessionId: file.sessionId }),

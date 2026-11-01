@@ -17,7 +17,7 @@ import { defaultNativeIo, type NativeAnalysis, type NativeIo } from "@delacour/w
 import { displayPath } from "@delacour/warden-sdk/ops/perf/paths";
 import { activeSessionFor } from "@delacour/warden-sdk/ops/perf/session";
 import type { Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { reportError, reportOk, type UiError, type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
@@ -110,7 +110,7 @@ function nativeSuccess(
 }
 
 function planDuration(opts: PerfNativeOptions): Result<number, UiError> {
-	if (opts.duration === undefined) return ok(DEFAULT_DURATION_MS);
+	if (opts.duration === undefined) return resultFactory.ok(DEFAULT_DURATION_MS);
 	const ms = parseDuration(opts.duration);
 	if (ms === undefined) {
 		return {
@@ -118,7 +118,7 @@ function planDuration(opts: PerfNativeOptions): Result<number, UiError> {
 			error: uiError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
 		};
 	}
-	return ok(Math.min(ms, HARD_MAX_DURATION_MS));
+	return resultFactory.ok(Math.min(ms, HARD_MAX_DURATION_MS));
 }
 
 /** `--analyze <trace>`: re-analyze a recorded trace; no device needed. */
@@ -169,7 +169,7 @@ async function stopAndReport(
 ): Promise<Result<UiSuccess, UiError>> {
 	const stopped = await stopNative(ctx, deps, io, profilers, target, { analyze, yes });
 	if (!stopped.success) return stopped;
-	return ok(nativeSuccess(ctx, target, stopped.data));
+	return resultFactory.ok(nativeSuccess(ctx, target, stopped.data));
 }
 
 /** `start`: the detached recording's report, with the follow-up `stop` hint. */
@@ -242,7 +242,7 @@ export function perfNative(
 			session
 		);
 		if (!started.success) return started;
-		if (action === "start") return ok(startedReport(ctx, target, app.data.id, started.data));
+		if (action === "start") return resultFactory.ok(startedReport(ctx, target, app.data.id, started.data));
 		await io.sleep(duration.data);
 		return stopAndReport(ctx, deps, io, profilers, target, analyze, opts.yes);
 	});

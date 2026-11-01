@@ -13,7 +13,7 @@ import { parseXcodeVersion, xctraceDeviceDeadlock } from "@delacour/warden-perf/
 import { parseSimctlLaunch } from "@delacour/warden-perf/startup/ios-app-launch";
 import { type PidIdentity, safeToSignal } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { appPid, iosAppBundle } from "./app-process";
 import type { PerfUiEnv } from "./env";
@@ -92,7 +92,7 @@ async function chooseInstruments(ctx: PerfUiEnv, leaks: boolean): Promise<Result
 			})
 		);
 	}
-	if (check.ok) return ok({ instruments: wanted, warnings: [] });
+	if (check.ok) return resultFactory.ok({ instruments: wanted, warnings: [] });
 	const required = check.missing.filter((m) => m !== "Allocations");
 	if (required.length > 0) {
 		const lines = required.map((m) => {
@@ -105,7 +105,7 @@ async function chooseInstruments(ctx: PerfUiEnv, leaks: boolean): Promise<Result
 			})
 		);
 	}
-	return ok({
+	return resultFactory.ok({
 		instruments: wanted.filter((w) => !check.missing.includes(w)),
 		warnings: [`instrument ${check.missing.join(", ")} is not available: recording without it`],
 	});
@@ -127,7 +127,7 @@ async function startRecorder(
 		const log = fs.readText(logPath).trim().split("\n").slice(-4).join(" | ");
 		return failed(`xctrace exited right after starting${log === "" ? "" : `: ${log}`}`, `see ${logPath}`);
 	}
-	return ok(pid);
+	return resultFactory.ok(pid);
 }
 
 type Prepared = { recordTarget: RecordTarget; launchAfterArm: boolean; appPid?: number };
@@ -144,8 +144,8 @@ async function prepareLeaks(
 	if (!bundle.success) return bundle;
 	const stopped = await terminateApp(ctx, device, app);
 	if (!stopped.success) return stopped;
-	if (deadlock) return ok({ recordTarget: { kind: "all-processes" }, launchAfterArm: true });
-	return ok({
+	if (deadlock) return resultFactory.ok({ recordTarget: { kind: "all-processes" }, launchAfterArm: true });
+	return resultFactory.ok({
 		recordTarget: { kind: "launch", udid, appPath: bundle.data.appPath, env: { MallocStackLogging: "1" } },
 		launchAfterArm: false,
 	});
@@ -167,7 +167,7 @@ async function prepareAttach(
 		);
 	}
 	const recordTarget: RecordTarget = deadlock ? { kind: "all-processes" } : { kind: "attach", udid, pid };
-	return ok({ recordTarget, launchAfterArm: false, appPid: pid });
+	return resultFactory.ok({ recordTarget, launchAfterArm: false, appPid: pid });
 }
 
 /** All-processes leaks mode: launch the app once the recorder is armed; returns its pid, killing the recorder on failure. */
@@ -188,7 +188,7 @@ async function launchAfterArming(
 		io.kill(recorderPid, "SIGKILL");
 		return failed(`simctl launch ${app} failed: ${(launched.stderr || launched.stdout).trim()}`);
 	}
-	return ok(appPidNow);
+	return resultFactory.ok(appPidNow);
 }
 
 async function start(
@@ -225,7 +225,7 @@ async function start(
 		if (!launched.success) return launched;
 		state.appPid = launched.data;
 	}
-	return ok({ pid: pid.data, out, startedAtIso, startWallMs, state });
+	return resultFactory.ok({ pid: pid.data, out, startedAtIso, startWallMs, state });
 }
 
 /** SIGINT the recorder (only while it is provably the xctrace warden started), wait for the trace to be finalised, SIGKILL on timeout. */
@@ -280,7 +280,7 @@ export async function analyzeTraceFile(
 		if (!res.success) {
 			return fail(opError("failed", res.error.message, res.error.hint === undefined ? {} : { hint: res.error.hint }));
 		}
-		return ok(toAnalysis(res.data, input, fs));
+		return resultFactory.ok(toAnalysis(res.data, input, fs));
 	} finally {
 		fs.remove(workDir);
 	}
@@ -318,7 +318,7 @@ async function stop(
 			`see ${join(input.dir, LOG_FILE)}`
 		);
 	}
-	if (!input.analyze) return ok({ out, warnings });
+	if (!input.analyze) return resultFactory.ok({ out, warnings });
 	const pid =
 		typeof input.handle.state?.appPid === "number" && input.handle.state.allProcesses === true
 			? input.handle.state.appPid
@@ -330,9 +330,9 @@ async function stop(
 		traceStartWallMs: input.handle.startWallMs,
 	});
 	if (!analysis.success) {
-		return ok({ out, warnings: [...warnings, `analysis failed: ${analysis.error.message}`] });
+		return resultFactory.ok({ out, warnings: [...warnings, `analysis failed: ${analysis.error.message}`] });
 	}
-	return ok({ out, analysis: analysis.data, warnings: [...warnings, ...analysis.data.warnings] });
+	return resultFactory.ok({ out, analysis: analysis.data, warnings: [...warnings, ...analysis.data.warnings] });
 }
 
 async function analyze(

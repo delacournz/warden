@@ -10,7 +10,7 @@ import {
 	safeToSignal,
 } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { fail, opError } from "./errors";
 import { uiDir } from "./paths";
 import type { OpDone, OpOutcome, OpSession } from "./session";
@@ -112,7 +112,7 @@ function startVideo(run: VideoRun, pathArg: string | undefined): Result<OpDone<V
 		...current,
 		video: { pid, path, ...(remote !== undefined ? { remote } : {}), startedAt: host.now() },
 	}));
-	return ok({
+	return resultFactory.ok({
 		result: { action: "video", state: "recording", path, pid },
 		text: `recording to ${path}`,
 		warnings: remote ? ["android screenrecord stops by itself after 3 minutes"] : [],
@@ -171,7 +171,7 @@ async function stopVideo(run: VideoRun): Promise<Result<OpDone<VideoResult>, War
 	const identity = recordedIdentity(deps, running.pid, marks);
 	if (running.remote === undefined && identity === "unknown") {
 		// alive but its command line unreadable: it may still be the recorder, so it is neither signalled nor forgotten
-		return ok({
+		return resultFactory.ok({
 			result: { action: "video", state: "recording", path: running.path, pid: running.pid },
 			text: `recorder (pid ${running.pid}) left running`,
 			warnings: [`could not stop the recorder (pid ${running.pid}): its command line could not be read`],
@@ -187,7 +187,7 @@ async function stopVideo(run: VideoRun): Promise<Result<OpDone<VideoResult>, War
 		const { video: _stopped, ...rest } = current;
 		return rest;
 	});
-	return ok({
+	return resultFactory.ok({
 		result: { action: "video", state: "stopped", path: running.path },
 		text: running.path,
 		warnings,

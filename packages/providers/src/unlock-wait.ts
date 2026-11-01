@@ -1,5 +1,5 @@
 import { formatDuration } from "@delacour/warden-config/duration";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 /**
  * Before a physical iPhone is claimed: if it is locked, say so once and wait for the person to unlock it. Nothing
@@ -63,18 +63,18 @@ function definedTiming(input: UnlockWaitInput): Partial<typeof UNLOCK_TIMING> {
 export async function waitUnlocked(input: UnlockWaitInput): AsyncResult<void> {
 	const { waitMs, pollMs, progressMs } = { ...UNLOCK_TIMING, ...definedTiming(input) };
 	const first = await input.read();
-	if (!first.success || !first.data.locked) return ok(undefined);
-	if (input.noWait) return err(deviceLockedMessage(input.name));
+	if (!first.success || !first.data.locked) return resultFactory.ok(undefined);
+	if (input.noWait) return resultFactory.err(deviceLockedMessage(input.name));
 	input.log(`${input.name} is locked: unlock it to continue (waiting up to ${formatDuration(waitMs)})`);
 	const startedAt = input.now();
 	let nextProgress = startedAt + progressMs;
 	for (;;) {
 		const remaining = startedAt + waitMs - input.now();
-		if (remaining <= 0) return err(`${deviceLockedMessage(input.name)} after ${formatDuration(waitMs)}`);
+		if (remaining <= 0) return resultFactory.err(`${deviceLockedMessage(input.name)} after ${formatDuration(waitMs)}`);
 		await input.sleep(Math.min(pollMs, remaining));
-		if (input.abort?.()) return err(UNLOCK_WAIT_ABORTED);
+		if (input.abort?.()) return resultFactory.err(UNLOCK_WAIT_ABORTED);
 		const state = await input.read();
-		if (!state.success || !state.data.locked) return ok(undefined);
+		if (!state.success || !state.data.locked) return resultFactory.ok(undefined);
 		if (input.now() >= nextProgress && input.now() < startedAt + waitMs) {
 			input.log(
 				`${input.name} still locked: waiting for unlock (${formatDuration(input.now() - startedAt)} of ${formatDuration(waitMs)})`

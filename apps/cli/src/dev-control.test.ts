@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import {
 	callDevControl,
 	controlSocketPath,
@@ -24,10 +24,10 @@ const tempDir = (): string => {
 
 describe("parseDevFeatures", () => {
 	test("names, `perf` as the HUD and `all`", () => {
-		expect(parseDevFeatures(["hud"])).toEqual(ok(["hud"]));
-		expect(parseDevFeatures(["perf", "devtools"])).toEqual(ok(["hud", "devtools"]));
-		expect(parseDevFeatures(["all"])).toEqual(ok(["hud", "devtools"]));
-		expect(parseDevFeatures(["hud,devtools", "hud"])).toEqual(ok(["hud", "devtools"]));
+		expect(parseDevFeatures(["hud"])).toEqual(resultFactory.ok(["hud"]));
+		expect(parseDevFeatures(["perf", "devtools"])).toEqual(resultFactory.ok(["hud", "devtools"]));
+		expect(parseDevFeatures(["all"])).toEqual(resultFactory.ok(["hud", "devtools"]));
+		expect(parseDevFeatures(["hud,devtools", "hud"])).toEqual(resultFactory.ok(["hud", "devtools"]));
 	});
 
 	test("an unknown name is an error naming the valid ones", () => {
@@ -74,9 +74,9 @@ describe("serveDevControl + callDevControl", () => {
 		if (!served.success) return;
 		try {
 			const set = await callDevControl(path, { op: "set", feature: "devtools", on: true });
-			expect(set).toEqual(ok({ ok: true, features: { hud: false, devtools: true } }));
+			expect(set).toEqual(resultFactory.ok({ ok: true, features: { hud: false, devtools: true } }));
 			const status = await callDevControl(path, { op: "status" });
-			expect(status).toEqual(ok({ ok: true, features: { hud: false, devtools: true } }));
+			expect(status).toEqual(resultFactory.ok({ ok: true, features: { hud: false, devtools: true } }));
 		} finally {
 			await served.data.close();
 		}
@@ -92,7 +92,9 @@ describe("serveDevControl + callDevControl", () => {
 		if (!served.success) throw new Error(served.error);
 		try {
 			const set = await callDevControl(path, { op: "set", feature: "hud", on: true });
-			expect(set).toEqual(ok({ ok: false, error: "no dashboard", features: { hud: false, devtools: false } }));
+			expect(set).toEqual(
+				resultFactory.ok({ ok: false, error: "no dashboard", features: { hud: false, devtools: false } })
+			);
 		} finally {
 			await served.data.close();
 		}

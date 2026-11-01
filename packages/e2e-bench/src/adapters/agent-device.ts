@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { runOk } from "../harness/exec";
 import { joinNative, loadManifest } from "../results/manifest";
 import type { RepResult, StepResult } from "../results/schema";
@@ -135,7 +135,7 @@ async function doctor(ctx: RunContext, deps: AgentDeviceDeps): Promise<Doctor> {
  * daemon otherwise keeps the prepared runner lease while `test` starts its own daemon. The runner stays installed.
  */
 async function prepare(ctx: RunContext, deps: AgentDeviceDeps): Promise<Result<void>> {
-	if (ctx.platform !== "ios") return ok(undefined);
+	if (ctx.platform !== "ios") return resultFactory.ok(undefined);
 	const stateDir = stateDirOf(ctx.env, deps.home());
 	const env = agentDeviceEnv(ctx.env, stateDir);
 	deps.mkdir(stateDir);
@@ -144,9 +144,9 @@ async function prepare(ctx: RunContext, deps: AgentDeviceDeps): Promise<Result<v
 		timeoutMs: AGENT_DEVICE_PREPARE_TIMEOUT_MS,
 		onLine: (_s, line) => ctx.log(line),
 	});
-	if (!prepared.success) return err(prepared.error);
+	if (!prepared.success) return resultFactory.err(prepared.error);
 	await ctx.exec.run("agent-device", ["daemon", "stop", "--state-dir", stateDir], { env });
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** Daemon and runner processes agent-device leaves behind; matched on the `ps` command column. */
@@ -181,7 +181,7 @@ async function teardown(ctx: RunContext, deps: AgentDeviceDeps): Promise<Result<
 	const ps = await ctx.exec.run("ps", ["-axo", "pid=,command="]);
 	for (const pid of agentDevicePids(ps.stdout, process.pid, [stateDir, ctx.udid]))
 		await ctx.exec.run("kill", [String(pid)]);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** `onboarding-steps-to-sign-in.ad` (what the junit reporter prints) → the manifest's `onboarding-steps-to-sign-in`. */
@@ -246,7 +246,7 @@ function toRep(
 	const tests: TestResult[] = joined.mapped.map(
 		(m) => byId.get(m.id) ?? { id: m.id, nativeName: m.nativeName, status: "missing" }
 	);
-	return ok({
+	return resultFactory.ok({
 		index: 1,
 		cold: ctx.cold,
 		wallMs,

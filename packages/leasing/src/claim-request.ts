@@ -4,8 +4,8 @@ import { listAvds } from "@delacour/warden-providers/android";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
 import type { DeviceRequest, Owner } from "@delacour/warden-store/types";
 import { profileSlug } from "@delacour/warden-store/types";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { maxConcurrent } from "./capacity";
 import { buildCapacityDeps } from "./capacity-deps";
 import { type ClaimedDevice, type ClaimOutcome, type ClaimResult, claimDevices } from "./claim";
@@ -50,7 +50,7 @@ export type ClaimRequest = {
 /** `interactive|high|normal|low` or a non-negative integer. */
 export function parsePriorityFlag(raw: string): Result<number, WardenError> {
 	const parsed = parsePriority(raw);
-	return parsed.success ? parsed : wardenErr("usage", `--priority: ${parsed.error.message}`);
+	return parsed.success ? parsed : wardenErrors.err("usage", `--priority: ${parsed.error.message}`);
 }
 
 /** Priority of a claim: `--priority`, else `WARDEN_PRIORITY`, else the command's default, else normal. */
@@ -58,21 +58,21 @@ export function resolvePriority(
 	flags: Pick<ClaimRequest, "priority" | "defaultPriority">,
 	env: Record<string, string | undefined>
 ): Result<number, WardenError> {
-	if (flags.priority !== undefined) return ok(flags.priority);
+	if (flags.priority !== undefined) return resultFactory.ok(flags.priority);
 	const fromEnv = env.WARDEN_PRIORITY?.trim();
 	if (fromEnv) {
 		const parsed = parsePriorityFlag(fromEnv);
-		return parsed.success ? parsed : wardenErr("usage", `WARDEN_PRIORITY=${fromEnv}: ${parsed.error.message}`);
+		return parsed.success ? parsed : wardenErrors.err("usage", `WARDEN_PRIORITY=${fromEnv}: ${parsed.error.message}`);
 	}
-	return ok(flags.defaultPriority ?? PRIORITY.normal);
+	return resultFactory.ok(flags.defaultPriority ?? PRIORITY.normal);
 }
 
 /** Android `auto` profile → slug of the first AVD. */
 export function resolveAutoProfile(avds: readonly string[]): Result<string, WardenError> {
 	const first = avds[0];
 	return first
-		? ok(profileSlug(first))
-		: wardenErr("not_found", "no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
+		? resultFactory.ok(profileSlug(first))
+		: wardenErrors.err("not_found", "no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
 }
 
 /** Simulator's close setting, shared with every other warden process through the host's store. */
@@ -124,11 +124,11 @@ async function withAutoProfile(
 	request: ClaimRequest["request"]
 ): AsyncResult<ClaimRequest["request"], WardenError> {
 	const { profile: base, biometrics } = splitBiometricProfile(request.profile);
-	if (request.physical || request.platform !== "android" || base !== "auto") return ok(request);
+	if (request.physical || request.platform !== "android" || base !== "auto") return resultFactory.ok(request);
 	const avds = await listAvds({ exec: host.exec, env: host.env });
 	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
 	if (!profile.success) return profile;
-	return ok({ ...request, profile: biometricProfile(profile.data, biometrics) });
+	return resultFactory.ok({ ...request, profile: biometricProfile(profile.data, biometrics) });
 }
 
 /** The iOS provider options for a claim: its slim profile and whether (and which) physical phones are listed; none for Android. */
@@ -160,7 +160,7 @@ export async function claimWithRequest(
 		request = { ...request, max: Math.max(request.max, room) };
 	}
 	const slim = resolveSlim({ ...flags.slim, env: host.env });
-	if (!slim.success) return wardenErr("usage", slim.error);
+	if (!slim.success) return wardenErrors.err("usage", slim.error);
 	const providerOptions = providerOptionsFor(request, slim.data);
 	const outcome = await claimDevices({
 		store: host.store(),

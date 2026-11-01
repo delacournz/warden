@@ -1,4 +1,4 @@
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { Driver, DriverResult, KeyName } from "./driver.types";
 
 /**
@@ -87,7 +87,7 @@ export async function typeText(driver: Driver, sleep: Sleep, text: string): Driv
 		if (!typed.success) return typed;
 		await pace(driver, sleep);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** Presses `key` `times` times, paced like typed characters. */
@@ -98,5 +98,5 @@ export async function pressKeys(driver: Driver, sleep: Sleep, key: KeyName, time
 		if (!pressed.success) return pressed;
 		await pace(driver, sleep);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }

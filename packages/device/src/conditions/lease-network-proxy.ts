@@ -4,7 +4,7 @@ import { ensureLeaseProxy, type LeaseProxyDeps, releaseLeaseProxy } from "@delac
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import type { Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** `NetworkProxyPort` for one lease over the real store and the detached `netproxy` process. */
 export function leaseNetworkProxy(
@@ -23,13 +23,15 @@ export function leaseNetworkProxy(
 		},
 		async ensure(condition, conditions) {
 			const started = await ensureLeaseProxy(deps, lease, { condition, conditions });
-			return started.success ? ok({ host: started.data.handle.host, port: started.data.handle.port }) : started;
+			return started.success
+				? resultFactory.ok({ host: started.data.handle.host, port: started.data.handle.port })
+				: started;
 		},
 		async update(update) {
 			const file = await live();
-			if (!file) return err("no live network proxy for this lease");
+			if (!file) return resultFactory.err("no live network proxy for this lease");
 			const applied = await setProxyConditions(file, update);
-			return applied.success ? ok(undefined) : applied;
+			return applied.success ? resultFactory.ok(undefined) : applied;
 		},
 		async stop() {
 			await releaseLeaseProxy(deps, lease.id);
@@ -57,11 +59,11 @@ export type LazyLeaseProxyOptions = {
 export function lazyLeaseNetworkProxy(o: LazyLeaseProxyOptions): NetworkProxyPort {
 	let inner: NetworkProxyPort | undefined;
 	const need = (): Result<NetworkProxyPort> => {
-		if (inner) return ok(inner);
+		if (inner) return resultFactory.ok(inner);
 		const store = o.openStore();
 		if (!store.success) return store;
 		const lease = store.data.getLease(o.leaseId);
-		if (!lease) return err(`lease ${o.leaseId} is not in the warden store; its network cannot be shaped`);
+		if (!lease) return resultFactory.err(`lease ${o.leaseId} is not in the warden store; its network cannot be shaped`);
 		inner = leaseNetworkProxy(
 			{
 				...o.proxyDeps,
@@ -72,7 +74,7 @@ export function lazyLeaseNetworkProxy(o: LazyLeaseProxyOptions): NetworkProxyPor
 			},
 			lease
 		);
-		return ok(inner);
+		return resultFactory.ok(inner);
 	};
 	const hasHandle = () => readHandleFile(handlePath(o.leaseId, o.env)) !== undefined;
 	return {
@@ -87,9 +89,10 @@ export function lazyLeaseNetworkProxy(o: LazyLeaseProxyOptions): NetworkProxyPor
 		},
 		async update(update) {
 			const file = readHandleFile(handlePath(o.leaseId, o.env));
-			if (!file || !(await getProxyStatus(file)).success) return err("no live network proxy for this lease");
+			if (!file || !(await getProxyStatus(file)).success)
+				return resultFactory.err("no live network proxy for this lease");
 			const applied = await setProxyConditions(file, update);
-			return applied.success ? ok(undefined) : applied;
+			return applied.success ? resultFactory.ok(undefined) : applied;
 		},
 		async stop() {
 			if (!inner && !hasHandle()) return;

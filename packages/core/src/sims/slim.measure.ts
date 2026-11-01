@@ -1,5 +1,5 @@
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** One process row from `ps -axo pid,ppid,comm`. */
 export type PsRow = { pid: number; ppid: number; command: string };
@@ -85,9 +85,9 @@ async function snapshots(exec: Exec): AsyncResult<{ snap: PsSnapshot; mem: Map<n
 		exec(["ps", "-axo", "pid,ppid,comm"]),
 		exec(["top", "-l", "1", "-stats", "pid,mem"]),
 	]);
-	if (ps.exitCode !== 0) return err(`ps exited ${ps.exitCode}: ${ps.stderr.trim()}`);
-	if (top.exitCode !== 0) return err(`top exited ${top.exitCode}: ${top.stderr.trim()}`);
-	return ok({ snap: parsePs(ps.stdout), mem: parseTopMem(top.stdout) });
+	if (ps.exitCode !== 0) return resultFactory.err(`ps exited ${ps.exitCode}: ${ps.stderr.trim()}`);
+	if (top.exitCode !== 0) return resultFactory.err(`top exited ${top.exitCode}: ${top.stderr.trim()}`);
+	return resultFactory.ok({ snap: parsePs(ps.stdout), mem: parseTopMem(top.stdout) });
 }
 
 /** Real memory cost of the simulators: summed phys_footprint (what Activity Monitor shows) under each `launchd_sim`. */
@@ -97,19 +97,22 @@ export async function measureSims(exec: Exec, udids: readonly string[]): Promise
 	await Promise.all(
 		udids.map(async (udid) => {
 			const pid = await rootPid(exec, udid);
-			if (pid === undefined) out.set(udid, err(`${udid}: not booted`));
+			if (pid === undefined) out.set(udid, resultFactory.err(`${udid}: not booted`));
 			else roots.set(udid, pid);
 		})
 	);
 	if (roots.size > 0) {
 		const snaps = await snapshots(exec);
 		for (const [udid, pid] of roots) {
-			out.set(udid, snaps.success ? ok({ udid, ...measureTree(pid, snaps.data.snap, snaps.data.mem) }) : snaps);
+			out.set(
+				udid,
+				snaps.success ? resultFactory.ok({ udid, ...measureTree(pid, snaps.data.snap, snaps.data.mem) }) : snaps
+			);
 		}
 	}
 	return new Map(udids.flatMap((u) => (out.has(u) ? [[u, out.get(u) as Result<SimMeasurement>] as const] : [])));
 }
 
 export async function measureSim(exec: Exec, udid: string): AsyncResult<SimMeasurement> {
-	return (await measureSims(exec, [udid])).get(udid) ?? err(`${udid}: not booted`);
+	return (await measureSims(exec, [udid])).get(udid) ?? resultFactory.err(`${udid}: not booted`);
 }

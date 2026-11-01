@@ -11,8 +11,8 @@ import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { listAvds } from "@delacour/warden-providers/android";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
 import { profileSlug } from "@delacour/warden-store/types";
-import { textError } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import { appHostFromContext, type CommandContext } from "../context";
 import { emit, heading, plural, reportError, table } from "../output";
@@ -33,12 +33,14 @@ function platformOf(ctx: CommandContext, opts: PlatformOpt): "ios" | "android" |
 /** The snapshot target a profile names: its AVD (`auto` = the first AVD), plus `+bio` for a biometrics profile. */
 async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string> {
 	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
-	if (!avds.success) return textError(avds);
+	if (!avds.success) return wardenErrors.toText(avds);
 	const { profile: base, biometrics } = splitBiometricProfile(profile);
-	const slug = base === "auto" ? textError(resolveAutoProfile(avds.data)) : ok(base);
+	const slug = base === "auto" ? wardenErrors.toText(resolveAutoProfile(avds.data)) : resultFactory.ok(base);
 	if (!slug.success) return slug;
 	const avd = avds.data.find((a) => profileSlug(a) === slug.data);
-	return avd !== undefined ? ok(biometricProfile(avd, biometrics)) : err(`no AVD matches profile "${slug.data}"`);
+	return avd !== undefined
+		? resultFactory.ok(biometricProfile(avd, biometrics))
+		: resultFactory.err(`no AVD matches profile "${slug.data}"`);
 }
 
 async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts: EnsureOpts): Promise<number> {

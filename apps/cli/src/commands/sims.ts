@@ -9,7 +9,7 @@ import {
 	type SimRuleOpts,
 } from "@delacour/warden-core/sims/rules";
 import { describeOwner } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, heading, note, plural, reportError } from "../output";
@@ -40,7 +40,7 @@ async function listSims(ctx: CommandContext, rules: SimRuleOpts): Promise<Result
 	const sims = await judgeMachineSims(simsDeps(ctx), rules);
 	if (!sims.success) return sims;
 	const rank = (s: SimEntry) => (isSuggested(s) ? 0 : s.state !== "Shutdown" ? 1 : 2);
-	return ok(sims.data.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name)));
+	return resultFactory.ok(sims.data.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name)));
 }
 
 function choice(ctx: CommandContext, sim: SimEntry): Choice<string> {
@@ -68,12 +68,12 @@ function pickByUdid(sims: SimEntry[], udids: string[]): Result<SimEntry[]> {
 	const picked: SimEntry[] = [];
 	for (const udid of udids) {
 		const sim = byId.get(udid);
-		if (!sim) return err(`no simulator ${udid}`);
+		if (!sim) return resultFactory.err(`no simulator ${udid}`);
 		const why = blocker(sim);
-		if (why) return err(`${sim.name} (${udid}) is ${why}`);
+		if (why) return resultFactory.err(`${sim.name} (${udid}) is ${why}`);
 		picked.push(sim);
 	}
-	return ok(picked);
+	return resultFactory.ok(picked);
 }
 
 /** The shared core delete path; a sim leased since the menu is reported as failed. */

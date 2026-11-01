@@ -10,7 +10,7 @@ import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import { processAlive } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
 import { compiledSubcommand } from "../self-command";
@@ -79,7 +79,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		proxy: leaseNetworkProxy(proxyDeps(ctx), device.lease),
 	});
 	const settings = createAndroidSettings({ session, serial });
-	return ok({
+	return resultFactory.ok({
 		...settings,
 		network: net.network,
 		networkFaults: net.networkFaults,
@@ -149,6 +149,6 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 			condition: { kind: "online" },
 			conditions: proxyConditionsFor({ kind: "online" }, []),
 		});
-		return started.success ? ok(undefined) : { success: false, error: started.error };
+		return started.success ? resultFactory.ok(undefined) : { success: false, error: started.error };
 	},
 };

@@ -5,7 +5,7 @@ import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import { type Store, wardenHome } from "@delacour/warden-store/store";
 import type { Lease, Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { activeConditions, clearCondition } from "./conditions";
 import { injectStatePath, neutralizeInjectState } from "./inject-state";
 import { launchSettingsPath, writeLaunchSettings } from "./launch-settings";
@@ -198,5 +198,5 @@ export async function undoConditions(deps: UndoDeps, lease: Lease): Promise<Resu
 		clearCondition(deps.store, lease.id, record.area);
 		report.reset.push(record.area);
 	}
-	return errors.length > 0 ? { success: false, error: { errors, report } } : ok(report);
+	return errors.length > 0 ? { success: false, error: { errors, report } } : resultFactory.ok(report);
 }

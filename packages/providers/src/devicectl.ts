@@ -1,6 +1,6 @@
 import { execError } from "@delacour/warden-runtime/exec";
 import type { InventoryDevice, PhysicalInfo } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { execWithin, type TimedExec } from "./health";
 
 /**
@@ -64,9 +64,9 @@ function str(parent: JsonObject | undefined, key: string): string | undefined {
 function parseJson(stdout: string, what: string): Result<JsonObject> {
 	try {
 		const value: unknown = JSON.parse(stdout);
-		return isObject(value) ? ok(value) : err(`${what}: expected a JSON object`);
+		return isObject(value) ? resultFactory.ok(value) : resultFactory.err(`${what}: expected a JSON object`);
 	} catch (error) {
-		return err(`${what}: invalid JSON (${error instanceof Error ? error.message : String(error)})`);
+		return resultFactory.err(`${what}: invalid JSON (${error instanceof Error ? error.message : String(error)})`);
 	}
 }
 
@@ -128,15 +128,16 @@ export function parseDevicectlDevices(stdout: string): Result<InventoryDevice[]>
 	if (!parsed.success) return parsed;
 	const result = obj(parsed.data, "result");
 	const devices = result?.devices;
-	if (!Array.isArray(devices)) return err("devicectl list devices: missing `result.devices`");
-	return ok(devices.flatMap((entry) => toDevice(entry) ?? []));
+	if (!Array.isArray(devices)) return resultFactory.err("devicectl list devices: missing `result.devices`");
+	return resultFactory.ok(devices.flatMap((entry) => toDevice(entry) ?? []));
 }
 
 /** Run `cmd` for stdout, bounded by `timeoutMs`; a hang, a non-zero exit or a missing binary is an error. */
 async function runDevicectl(runner: TimedExec, cmd: string[], timeoutMs: number): AsyncResult<string> {
 	const result = await execWithin(runner, cmd, timeoutMs);
-	if (result === undefined) return err(`\`${cmd.join(" ")}\` did not finish within ${Math.round(timeoutMs / 1000)}s`);
-	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
+	if (result === undefined)
+		return resultFactory.err(`\`${cmd.join(" ")}\` did not finish within ${Math.round(timeoutMs / 1000)}s`);
+	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execError(cmd, result));
 }
 
 /** Connected right now without asking: a wired transport or an up tunnel. */
@@ -174,7 +175,7 @@ export async function listPhysicalIos(
 	if (!out.success) return out;
 	const parsed = parseDevicectlDevices(out.data);
 	return parsed.success
-		? ok(
+		? resultFactory.ok(
 				await Promise.all(
 					parsed.data.map((d) =>
 						markReachability(runner, d, opts.named?.includes(d.id) ? NAMED_PROBE_MS : REACHABLE_PROBE_MS)
@@ -191,8 +192,9 @@ export async function readLockState(runner: TimedExec, udid: string): AsyncResul
 	const parsed = parseJson(out.data, "devicectl lockState");
 	if (!parsed.success) return parsed;
 	const passcodeRequired = obj(parsed.data, "result")?.passcodeRequired;
-	if (typeof passcodeRequired !== "boolean") return err("devicectl lockState: missing `passcodeRequired`");
-	return ok({ locked: passcodeRequired });
+	if (typeof passcodeRequired !== "boolean")
+		return resultFactory.err("devicectl lockState: missing `passcodeRequired`");
+	return resultFactory.ok({ locked: passcodeRequired });
 }
 
 /**
@@ -201,5 +203,5 @@ export async function readLockState(runner: TimedExec, udid: string): AsyncResul
  */
 export async function probePhysicalIos(runner: TimedExec, udid: string): AsyncResult<void> {
 	const state = await readLockState(runner, udid);
-	return state.success ? ok(undefined) : state;
+	return state.success ? resultFactory.ok(undefined) : state;
 }

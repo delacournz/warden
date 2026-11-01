@@ -5,8 +5,8 @@ import { DEFAULT_EAS_PROFILE } from "@delacour/warden-config/config.defaults";
 import type { projectConfigSchema, wardenConfigSchema } from "@delacour/warden-config/config.schema";
 import type { WardenConfigContext } from "@delacour/warden-config/define-config";
 import type { Platform } from "@delacour/warden-store/types";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { z } from "zod";
 import { type BuildConfiguration, defaultBuildCommand, LEGACY_CACHE_DIRS } from "./builds.defaults";
 import type { BuildTarget, ProjectKinds } from "./kinds";
@@ -96,7 +96,7 @@ export type FoundConfig = {
 /** Validate a config value; `file` names it in the error. */
 export function parseWardenConfig(raw: unknown, file: string = CONFIG_FILE): Result<ParsedWardenConfig> {
 	const parsed = configSchemas().wardenConfigSchema.safeParse(raw);
-	if (parsed.success) return ok(parsed.data);
+	if (parsed.success) return resultFactory.ok(parsed.data);
 	const issues = parsed.error.issues
 		.map((i) => {
 			const where = i.path.join(".") || "(root)";
@@ -104,7 +104,7 @@ export function parseWardenConfig(raw: unknown, file: string = CONFIG_FILE): Res
 			return i.message.startsWith(where) ? i.message : `${where}: ${i.message}`;
 		})
 		.join("; ");
-	return err(`invalid ${file}: ${issues}`);
+	return resultFactory.err(`invalid ${file}: ${issues}`);
 }
 
 function expandHome(path: string, home: string | undefined): string {
@@ -113,9 +113,9 @@ function expandHome(path: string, home: string | undefined): string {
 
 function readJson(path: string): Result<unknown> {
 	try {
-		return ok(JSON.parse(readFileSync(path, "utf8")));
+		return resultFactory.ok(JSON.parse(readFileSync(path, "utf8")));
 	} catch (error) {
-		return err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -171,15 +171,15 @@ export function selectProject(projects: readonly Project[], start: string, name?
 	if (name !== undefined) {
 		const named = projects.find((p) => p.name === name);
 		return named
-			? ok(named)
-			: err(`no project "${name}" in ${CONFIG_FILE} (${projects.map((p) => p.name).join(", ")})`);
+			? resultFactory.ok(named)
+			: resultFactory.err(`no project "${name}" in ${CONFIG_FILE} (${projects.map((p) => p.name).join(", ")})`);
 	}
 	const containing = projects.filter((p) => within(p.root, start)).sort((a, b) => b.root.length - a.root.length);
 	const [best] = containing;
-	if (best) return ok(best);
+	if (best) return resultFactory.ok(best);
 	const [only, ...rest] = projects;
-	if (only && rest.length === 0) return ok(only);
-	return err(
+	if (only && rest.length === 0) return resultFactory.ok(only);
+	return resultFactory.err(
 		`several projects in ${CONFIG_FILE} and none contains ${start} — pass --project <dir> (${projects.map((p) => p.name).join(", ")})`
 	);
 }
@@ -196,7 +196,7 @@ function readAppJson(path: string): Result<AppJsonInfo> {
 	const name = expo?.slug ?? expo?.name;
 	const ios = expo?.ios?.bundleIdentifier;
 	const android = expo?.android?.package;
-	return ok({
+	return resultFactory.ok({
 		...(name ? { name } : {}),
 		bundleId: { ...(ios ? { ios } : {}), ...(android ? { android } : {}) },
 	});
@@ -214,11 +214,11 @@ function autoDetect(
 	if (dynamic === undefined && appFramework(dir) === "react-native") return bareReactNative(dir, env, bundleOverride);
 	if (!hasAppJson && dynamic === undefined) return undefined;
 
-	const info = hasAppJson ? readAppJson(appJsonPath) : ok<AppJsonInfo>({ bundleId: {} });
+	const info = hasAppJson ? readAppJson(appJsonPath) : resultFactory.ok<AppJsonInfo>({ bundleId: {} });
 	if (!info.success) return info;
 	const bundleId = { ...info.data.bundleId, ...bundleOverride };
 	if (dynamic !== undefined && bundleId.ios === undefined && bundleId.android === undefined) {
-		return err(
+		return resultFactory.err(
 			`${join(dir, dynamic)} is dynamic — warden can't read its bundle id. Add ${CONFIG_FILE} (projects[].bundleId) or pass --bundle-id`
 		);
 	}
@@ -226,7 +226,7 @@ function autoDetect(
 	const project = fromConfig({ name, root: ".", bundleId }, dir, env);
 	project.origin = hasAppJson ? "app.json" : "app.config";
 	project.source = "auto";
-	return ok(project);
+	return resultFactory.ok(project);
 }
 
 /** The app's own name: bare `app.json` `name` (what the template names the native targets), else package.json `name`. */
@@ -250,7 +250,7 @@ function bareReactNative(
 	const project = fromConfig({ name, root: ".", bundleId, framework: "react-native" }, dir, env);
 	project.origin = "react-native";
 	project.source = "auto";
-	return ok(project);
+	return resultFactory.ok(project);
 }
 
 export type LoadProjectInput = {
@@ -278,16 +278,16 @@ function applyVariant(
 	name: string | undefined,
 	optional: boolean
 ): Result<{ entry: ParsedProjectConfig; variant?: string }> {
-	if (name === undefined) return ok({ entry });
+	if (name === undefined) return resultFactory.ok({ entry });
 	const variant = entry.variants?.[name];
 	if (variant === undefined) {
-		if (optional) return ok({ entry });
+		if (optional) return resultFactory.ok({ entry });
 		const known = Object.keys(entry.variants ?? {});
-		return err(
+		return resultFactory.err(
 			`project "${entry.name}" has no variant "${name}"${known.length > 0 ? ` (${known.join(", ")})` : ""} — add projects[].variants.${name} to ${CONFIG_FILE}`
 		);
 	}
-	return ok({ entry: { ...entry, ...variant }, variant: name });
+	return resultFactory.ok({ entry: { ...entry, ...variant }, variant: name });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -305,23 +305,24 @@ function readModule(path: string, context: WardenConfigContext): Result<unknown>
 		delete require.cache[path];
 		mod = require(path);
 	} catch (error) {
-		return err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	const esm = extname(path) !== ".js";
-	if (esm && !(isRecord(mod) && "default" in mod)) return err(`${path}: must \`export default\` a config`);
+	if (esm && !(isRecord(mod) && "default" in mod))
+		return resultFactory.err(`${path}: must \`export default\` a config`);
 	let value = isRecord(mod) && "default" in mod ? mod.default : mod;
 	if (typeof value === "function") {
 		try {
 			value = value(context);
 		} catch (error) {
-			return err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+			return resultFactory.err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 	if (value instanceof Promise) {
 		value.catch(() => undefined);
-		return err(`${path}: the config must be sync (no async function / Promise)`);
+		return resultFactory.err(`${path}: the config must be sync (no async function / Promise)`);
 	}
-	return ok(value);
+	return resultFactory.ok(value);
 }
 
 /** Is there a warden config file in `start` or a parent (to `stopAt`)? File names only: nothing is evaluated. */
@@ -338,13 +339,13 @@ function readConfigIn(
 ): Result<{ config: ParsedWardenConfig } | undefined> {
 	const files = CONFIG_FILES.filter((f) => existsSync(join(dir, f)));
 	const [file, ...extra] = files;
-	if (file === undefined) return ok(undefined);
-	if (extra.length > 0) return err(`several warden configs in ${dir} (${files.join(", ")}) — keep one`);
+	if (file === undefined) return resultFactory.ok(undefined);
+	if (extra.length > 0) return resultFactory.err(`several warden configs in ${dir} (${files.join(", ")}) — keep one`);
 	const path = join(dir, file);
 	const raw = file === JSON_CONFIG_FILE ? readJson(path) : readModule(path, { configDir: dir, env });
 	if (!raw.success) return raw;
 	const config = parseWardenConfig(raw.data, basename(path));
-	return config.success ? ok({ config: config.data }) : config;
+	return config.success ? resultFactory.ok({ config: config.data }) : config;
 }
 
 /**
@@ -361,14 +362,14 @@ export function findWardenConfig(
 	for (const dir of ancestors(resolve(start), stopAt ? resolve(stopAt) : undefined)) {
 		const read = readConfigIn(dir, env);
 		if (!read.success) return read;
-		if (read.data) return ok({ dir, config: read.data.config, source: "repo", rootDir: dir });
+		if (read.data) return resultFactory.ok({ dir, config: read.data.config, source: "repo", rootDir: dir });
 	}
-	if (overlayDir === undefined) return ok(undefined);
+	if (overlayDir === undefined) return resultFactory.ok(undefined);
 	const dir = resolve(overlayDir);
 	const read = readConfigIn(dir, env);
 	if (!read.success) return read;
-	if (!read.data) return ok(undefined);
-	return ok({ dir, config: read.data.config, source: "overlay", rootDir: resolve(stopAt ?? start) });
+	if (!read.data) return resultFactory.ok(undefined);
+	return resultFactory.ok({ dir, config: read.data.config, source: "overlay", rootDir: resolve(stopAt ?? start) });
 }
 
 /** The configured project containing `start` (or `input.name`), resolved with `input.variant`. */
@@ -386,13 +387,13 @@ function configuredProject(
 	);
 	if (!selected.success) return selected;
 	const entry = projects.find((p) => p.name === selected.data.name);
-	if (!entry) return err(`no project "${selected.data.name}" in ${CONFIG_FILE}`);
+	if (!entry) return resultFactory.err(`no project "${selected.data.name}" in ${CONFIG_FILE}`);
 	const resolved = applyVariant(entry, input.variant, input.variantOptional === true);
 	if (!resolved.success) return resolved;
 	const project = fromConfig(resolved.data.entry, configDir, input.env);
 	if (resolved.data.variant !== undefined) project.variant = resolved.data.variant;
 	project.source = source;
-	return ok(project);
+	return resultFactory.ok(project);
 }
 
 /**
@@ -408,13 +409,15 @@ export function loadProject(input: LoadProjectInput): Result<Project> {
 	const projects = found.data?.config.projects;
 	if (found.data && projects) {
 		const project = configuredProject(projects, found.data.rootDir, start, input, found.data.source);
-		return project.success ? ok({ ...project.data, bundleId: { ...project.data.bundleId, ...override } }) : project;
+		return project.success
+			? resultFactory.ok({ ...project.data, bundleId: { ...project.data.bundleId, ...override } })
+			: project;
 	}
 	for (const dir of dirs) {
 		const detected = autoDetect(dir, input.env, override, input.appName);
 		if (!detected) continue;
 		if (input.variant !== undefined && input.variantOptional !== true && detected.success) {
-			return err(`variant "${input.variant}" needs projects[].variants in a ${CONFIG_FILE}`);
+			return resultFactory.err(`variant "${input.variant}" needs projects[].variants in a ${CONFIG_FILE}`);
 		}
 		return detected;
 	}
@@ -428,9 +431,11 @@ function projectBelow(input: LoadProjectInput, start: string): Result<Project> {
 	if (only !== undefined && more.length === 0) return loadProject({ ...input, start: only });
 	if (only !== undefined) {
 		const names = below.map((d) => relative(start, d)).join(", ");
-		return err(`several apps under ${start} (${names}) — run warden in one of them or pass --project <dir>`);
+		return resultFactory.err(
+			`several apps under ${start} (${names}) — run warden in one of them or pass --project <dir>`
+		);
 	}
-	return err(
+	return resultFactory.err(
 		`no ${CONFIG_FILE} (or ${JSON_CONFIG_FILE}), app.json or app.config.* found from ${start} or its workspaces`
 	);
 }
@@ -568,14 +573,14 @@ const NATIVE_BUNDLE_KEY: Record<Platform, string> = {
 
 export function bundleIdFor(project: Project, platform: Platform): Result<string, WardenError> {
 	const id = project.bundleId[platform];
-	if (id) return ok(id);
+	if (id) return resultFactory.ok(id);
 	const fix =
 		project.origin === "config"
 			? `set bundleId.${platform} in ${CONFIG_FILE}`
 			: project.origin === "react-native"
 				? `set ${NATIVE_BUNDLE_KEY[platform]}, add ${CONFIG_FILE} (projects[].bundleId)`
 				: `set ${APP_CONFIG_BUNDLE_KEY[platform]} in the app config (\`warden init --bundle-id <id>\` writes it)`;
-	return wardenErr(
+	return wardenErrors.err(
 		"config_invalid",
 		`project "${project.name}" has no ${platform} bundle id — ${fix} or pass --bundle-id`
 	);

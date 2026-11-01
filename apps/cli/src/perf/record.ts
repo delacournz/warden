@@ -2,7 +2,7 @@ import type { Command as Commander } from "@commander-js/extra-typings";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS } from "@delacour/warden-perf/shared/caps";
 import { finalizeSession, type SessionKit, startPerf } from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { UI_EXIT, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { type PerfDeps, runPerf } from "./run";
@@ -78,7 +78,7 @@ export function perfRecord(
 			...stopped.data,
 			warnings: [...started.data.warnings, ...stopped.data.warnings],
 		});
-		return ok({ ...success, ...(interrupted ? { exit: UI_EXIT.interrupted } : {}) });
+		return resultFactory.ok({ ...success, ...(interrupted ? { exit: UI_EXIT.interrupted } : {}) });
 	});
 }
 

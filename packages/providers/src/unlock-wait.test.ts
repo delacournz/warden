@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import {
 	DEVICE_LOCKED_HINT,
 	deviceLockedMessage,
@@ -21,8 +21,8 @@ function rig(states: boolean[], opts: { noWait?: boolean; failRead?: boolean; ab
 			noWait: opts.noWait ?? false,
 			read: async () => {
 				reads++;
-				if (opts.failRead) return err("no answer");
-				return ok({ locked: states[Math.min(reads - 1, states.length - 1)] ?? false });
+				if (opts.failRead) return resultFactory.err("no answer");
+				return resultFactory.ok({ locked: states[Math.min(reads - 1, states.length - 1)] ?? false });
 			},
 			now: () => at,
 			sleep: async (ms) => {

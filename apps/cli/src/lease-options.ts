@@ -4,7 +4,7 @@ import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import type { ClaimOutcome } from "@delacour/warden-leasing/claim";
 import { type LeaseArgs, leasedText } from "@delacour/warden-leasing/session";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { phaseTracker } from "./app-phase";
 import type { CommandContext } from "./context";
 import {
@@ -34,11 +34,11 @@ export function splitOperands(
 	name = "run"
 ): Result<{ platformArg?: string; cmd: string[] }> {
 	const { cmd } = splitCommand(argv);
-	if (cmd.length === 0) return err(`missing command after -- (warden ${name} ios -- <cmd…>)`);
+	if (cmd.length === 0) return resultFactory.err(`missing command after -- (warden ${name} ios -- <cmd…>)`);
 	const before = operands.slice(0, Math.max(0, operands.length - cmd.length));
-	if (before.length > 1) return err(`unexpected arguments before --: ${before.slice(1).join(" ")}`);
+	if (before.length > 1) return resultFactory.err(`unexpected arguments before --: ${before.slice(1).join(" ")}`);
 	const [platformArg] = before;
-	return ok(platformArg === undefined ? { cmd } : { platformArg, cmd });
+	return resultFactory.ok(platformArg === undefined ? { cmd } : { platformArg, cmd });
 }
 
 /** `--app` family option values shared by `run` and `batch`. */
@@ -108,16 +108,16 @@ export function parseAppFlags(opts: AppFlagValues): Result<EnsureOptions | undef
 	const install = parseInstallFlags(opts);
 	if (!install.success) return install;
 	if (opts.app) {
-		if (kindWithVariant(opts)) return err("--kind and --variant can't be combined");
-		return ok({ eas: opts.eas, build: opts.build, ...install.data, ...appTarget(opts) });
+		if (kindWithVariant(opts)) return resultFactory.err("--kind and --variant can't be combined");
+		return resultFactory.ok({ eas: opts.eas, build: opts.build, ...install.data, ...appTarget(opts) });
 	}
 	const sub = opts.project ?? opts.bundleId ?? opts.variant ?? opts.kind;
 	if (sub !== undefined || !opts.eas || !opts.build || install.data.installMode !== undefined) {
-		return err(
+		return resultFactory.err(
 			"--project / --no-eas / --no-build / --bundle-id / --variant / --kind / --install-mode / --reset-keychain / --clean need --app"
 		);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /**

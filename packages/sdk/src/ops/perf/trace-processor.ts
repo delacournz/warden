@@ -9,7 +9,7 @@ import {
 } from "@delacour/warden-perf/android/trace-processor.data";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfEnv, PerfUiEnv } from "./env";
 
@@ -148,7 +148,7 @@ export async function downloadTraceProcessor(
 		}
 		chmodSync(tmp, 0o755);
 		renameSync(tmp, dest);
-		return ok({ path: dest, bytes: done });
+		return resultFactory.ok({ path: dest, bytes: done });
 	} catch (error) {
 		if (fd !== undefined) closeSync(fd);
 		rmSync(tmp, { force: true });
@@ -175,7 +175,7 @@ export async function resolveTraceProcessor(
 	opts: { yes: boolean }
 ): Promise<Result<string, WardenError>> {
 	const path = traceProcessorPath(ctx);
-	if (existsSync(path)) return ok(path);
+	if (existsSync(path)) return resultFactory.ok(path);
 	if (ctx.env.WARDEN_TRACE_PROCESSOR !== undefined && ctx.env.WARDEN_TRACE_PROCESSOR !== "") {
 		return fail(opError("tool_missing", `WARDEN_TRACE_PROCESSOR points at ${path}, which does not exist`));
 	}
@@ -190,5 +190,5 @@ export async function resolveTraceProcessor(
 		if (answer !== true) return fail(missing);
 	}
 	const got = await downloadTraceProcessor(ctx, deps);
-	return got.success ? ok(got.data.path) : got;
+	return got.success ? resultFactory.ok(got.data.path) : got;
 }

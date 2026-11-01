@@ -1,4 +1,4 @@
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
 import type { ActionId, HudPerf } from "./model";
 
@@ -145,7 +145,7 @@ export function createActions(deps: ActionDeps) {
 	/** an effect's outcome without its value, as a row's detail */
 	const plain = async (pending: FxResult<unknown>): FxResult<undefined> => {
 		const result = await pending;
-		return result.success ? ok(undefined) : result;
+		return result.success ? resultFactory.ok(undefined) : result;
 	};
 
 	const reopen = (log: (line: string) => void): FxResult<undefined> => {
@@ -338,7 +338,7 @@ export function createActions(deps: ActionDeps) {
 			if (!marked.success) return marked;
 			current.marks++;
 			sink.hudPerf({ startedAt: current.startedAt, marks: current.marks });
-			return ok(`marked "${text}"`);
+			return resultFactory.ok(`marked "${text}"`);
 		});
 	}
 
@@ -390,7 +390,7 @@ export function createActions(deps: ActionDeps) {
 			task("show", "show simulator", (info) =>
 				info.platform === "ios"
 					? plain(fx.reveal(info))
-					: Promise.resolve(ok("n/a: Android emulators have no Simulator window"))
+					: Promise.resolve(resultFactory.ok("n/a: Android emulators have no Simulator window"))
 			).then(() => undefined),
 		open: () => task("open", "open dev client", (_info, log) => plain(fx.openClient(log))).then(() => undefined),
 		screenshot: () => task("screenshot", "screenshot", (info) => fx.screenshot(info)).then(() => undefined),
@@ -407,7 +407,9 @@ export function createActions(deps: ActionDeps) {
 		frames: () =>
 			task("frames", "frames", (info, log) =>
 				info.platform === "ios"
-					? Promise.resolve(ok("the iOS simulator has no frame API; P records native hitches and hangs instead"))
+					? Promise.resolve(
+							resultFactory.ok("the iOS simulator has no frame API; P records native hitches and hangs instead")
+						)
 					: plain(fx.frames(info, log))
 			).then(() => undefined),
 		report: showReport,

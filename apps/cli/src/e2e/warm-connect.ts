@@ -1,5 +1,5 @@
 import { isPhysicalIosId } from "@delacour/warden-store/types";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
 import type { WarmConnect } from "../batch/warm-drivers";
 import type { CommandContext } from "../context";
@@ -24,7 +24,8 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 		const { ensureHelper } = await import("../agent-ui/helper");
 		const { openIosDriver } = await import("@delacour/warden-driver-ios/ios-driver");
 		const helper = await ensureHelper(ctx, udid, { keepClient: true });
-		if (!helper.success) return err(`${helper.error.message}${helper.error.hint ? ` (${helper.error.hint})` : ""}`);
+		if (!helper.success)
+			return resultFactory.err(`${helper.error.message}${helper.error.hint ? ` (${helper.error.hint})` : ""}`);
 		const { client, socketPath } = helper.data;
 		const driver = await openIosDriver({
 			udid,
@@ -35,13 +36,15 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 		});
 		if (!driver.success) {
 			await client?.close();
-			return err(`${driver.error.code}: ${driver.error.message}`);
+			return resultFactory.err(`${driver.error.code}: ${driver.error.message}`);
 		}
-		return ok({
+		return resultFactory.ok({
 			socketPath: helper.data.socketPath,
 			snapshot: async () => {
 				const shot = await driver.data.snapshot({ interactiveOnly: true });
-				return shot.success ? ok(shot.data) : err(`${shot.error.code}: ${shot.error.message}`);
+				return shot.success
+					? resultFactory.ok(shot.data)
+					: resultFactory.err(`${shot.error.code}: ${shot.error.message}`);
 			},
 			close: () => driver.data.close(),
 			stop: async () => {
@@ -64,7 +67,7 @@ async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmCon
 	const { ensureIosRunner, stopIosRunner } = await import("../agent-ui/helper");
 	const { openIosDeviceDriver } = await import("@delacour/warden-driver-ios/device/device-driver");
 	const host = await ensureIosRunner(ctx, udid, { keepClient: true });
-	if (!host.success) return err(runnerWarmError(host.error));
+	if (!host.success) return resultFactory.err(runnerWarmError(host.error));
 	const { client, socketPath } = host.data;
 	const driver = await openIosDeviceDriver({
 		udid,
@@ -76,13 +79,15 @@ async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmCon
 	if (!driver.success) {
 		await client?.close();
 		const { driverUiError } = await import("../agent-ui/driver");
-		return err(runnerWarmError(driverUiError(driver.error)));
+		return resultFactory.err(runnerWarmError(driverUiError(driver.error)));
 	}
-	return ok({
+	return resultFactory.ok({
 		socketPath,
 		snapshot: async () => {
 			const shot = await driver.data.snapshot({ interactiveOnly: true });
-			return shot.success ? ok(shot.data) : err(`${shot.error.code}: ${shot.error.message}`);
+			return shot.success
+				? resultFactory.ok(shot.data)
+				: resultFactory.err(`${shot.error.code}: ${shot.error.message}`);
 		},
 		close: () => driver.data.close(),
 		stop: async () => {

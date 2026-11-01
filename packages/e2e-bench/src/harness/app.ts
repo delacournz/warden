@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { Platform } from "../results/schema";
 import { type Exec, runOk } from "./exec";
 
@@ -40,7 +40,7 @@ export function appFingerprint(appPath: string): Result<{ sha256: string; bytes:
 		if (!statSync(appPath).isDirectory()) {
 			const data = readFileSync(appPath);
 			hash.update(data);
-			return ok({ sha256: hash.digest("hex"), bytes: data.length });
+			return resultFactory.ok({ sha256: hash.digest("hex"), bytes: data.length });
 		}
 		let bytes = 0;
 		for (const file of listFiles(appPath)) {
@@ -49,9 +49,9 @@ export function appFingerprint(appPath: string): Result<{ sha256: string; bytes:
 			hash.update(data);
 			bytes += data.length;
 		}
-		return ok({ sha256: hash.digest("hex"), bytes });
+		return resultFactory.ok({ sha256: hash.digest("hex"), bytes });
 	} catch (e) {
-		return err(e);
+		return resultFactory.err(e);
 	}
 }
 
@@ -62,7 +62,7 @@ export async function installApp(exec: Exec, platform: Platform, udid: string, a
 			? (["xcrun", ["simctl", "install", udid, appPath]] as const)
 			: (["adb", ["-s", udid, "install", "-r", appPath]] as const);
 	const ran = await runOk(exec, cmd, args);
-	return ran.success ? ok(undefined) : ran;
+	return ran.success ? resultFactory.ok(undefined) : ran;
 }
 
 const NOT_RUNNING = /not running|found nothing to terminate/i;
@@ -71,10 +71,10 @@ const NOT_RUNNING = /not running|found nothing to terminate/i;
 export async function terminateApp(exec: Exec, platform: Platform, udid: string, bundleId: string): AsyncResult<void> {
 	if (platform === "android") {
 		const ran = await runOk(exec, "adb", ["-s", udid, "shell", "am", "force-stop", bundleId]);
-		return ran.success ? ok(undefined) : ran;
+		return ran.success ? resultFactory.ok(undefined) : ran;
 	}
 	const r = await exec.run("xcrun", ["simctl", "terminate", udid, bundleId]);
-	if (r.spawnError !== undefined) return err(`xcrun: ${r.spawnError}`);
-	if (r.code === 0 || NOT_RUNNING.test(r.stderr + r.stdout)) return ok(undefined);
-	return err(`xcrun simctl terminate exited ${r.code}: ${r.stderr.trim()}`);
+	if (r.spawnError !== undefined) return resultFactory.err(`xcrun: ${r.spawnError}`);
+	if (r.code === 0 || NOT_RUNNING.test(r.stderr + r.stdout)) return resultFactory.ok(undefined);
+	return resultFactory.err(`xcrun simctl terminate exited ${r.code}: ${r.stderr.trim()}`);
 }

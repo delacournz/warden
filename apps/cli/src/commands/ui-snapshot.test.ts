@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
 import { type ElementSpec, el, type FakeDriver, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { readLastSnapshot, readState } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
@@ -36,7 +36,7 @@ function harness(screens: Snapshot[] | (() => Snapshot)): Harness {
 	const clock = { t: 1_000_000 };
 	const driver = fakeDriver({ screens });
 	const deps: UiDeps = {
-		driver: async () => ok(driver),
+		driver: async () => resultFactory.ok(driver),
 		sleep: async (ms) => {
 			clock.t += ms;
 		},
@@ -239,7 +239,7 @@ describe("warden ui snapshot", () => {
 					? { error: { code: "E_AX_UNAVAILABLE", message: "no ax", retryable: false } }
 					: undefined,
 		});
-		const command = createUiCommand({ driver: async () => ok(failing), sleep: async () => undefined });
+		const command = createUiCommand({ driver: async () => resultFactory.ok(failing), sleep: async () => undefined });
 		h.c.argv = ["snapshot", "--udid", UDID, "--json"];
 		expect(await command.run(h.c)).toBe(3);
 		expect(doc(h.c).error.code).toBe("engine_unavailable");

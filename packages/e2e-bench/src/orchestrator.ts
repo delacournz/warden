@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BenchAdapter, FrameworkId, RunContext } from "./adapters/adapter.types";
 import { dismissAnr, hideErrorDialogs } from "./harness/anr";
 import { installApp, terminateApp } from "./harness/app";
@@ -551,8 +551,8 @@ async function appFromPath(
 		const read = readBenchApp(dir);
 		if (!read.success) return read;
 		return read.data.manifest.platform === opts.platform
-			? ok({ ...read.data, reused: true })
-			: err(`bench app at ${dir} is for ${read.data.manifest.platform}, not ${opts.platform}`);
+			? resultFactory.ok({ ...read.data, reused: true })
+			: resultFactory.err(`bench app at ${dir} is for ${read.data.manifest.platform}, not ${opts.platform}`);
 	}
 	const imported = await importBenchApp({
 		path: dir,
@@ -560,7 +560,7 @@ async function appFromPath(
 		dir: benchAppDir(deps.repoRoot, opts.platform),
 		now: deps.now,
 	});
-	return imported.success ? ok({ ...imported.data, reused: false }) : imported;
+	return imported.success ? resultFactory.ok({ ...imported.data, reused: false }) : imported;
 }
 
 /** The pinned bench app, verified; built or pinned first when missing or passed with `--app`. */
@@ -584,7 +584,7 @@ async function resolveApp(opts: BenchOptions, deps: BenchDeps): AsyncResult<Benc
 	deps.log(
 		`app: pinned ${appPath} (hash ${manifest.hash}, source ${manifest.source}, built ${manifest.builtAt}, ${reused ? "reused" : "built now"})`
 	);
-	return ok({ manifest, appPath });
+	return resultFactory.ok({ manifest, appPath });
 }
 
 /** Host, device, app: everything before the first framework. Errors abort the run. */
@@ -596,7 +596,7 @@ async function prepareRun(
 	const host = await hostInfo(deps.exec, { cliPath: deps.cliPath });
 	if (!host.success) return host;
 	if (loadTooHigh(host.data) && !opts.force)
-		return err(
+		return resultFactory.err(
 			`host load ${host.data.loadAvgAtStart.toFixed(2)} exceeds ${host.data.cores} cores; wait for idle or pass --force`
 		);
 	const app = await resolveApp(opts, deps);
@@ -619,8 +619,8 @@ async function prepareRun(
 	}
 	const info = await deviceInfo(deps.exec, opts.platform, device.data.udid);
 	const installed = await installApp(deps.exec, opts.platform, device.data.udid, app.data.appPath);
-	if (!installed.success) return err(`install app: ${installed.error}`);
-	return ok({ host: host.data, device: device.data, info: info.success ? info.data : {}, app: app.data });
+	if (!installed.success) return resultFactory.err(`install app: ${installed.error}`);
+	return resultFactory.ok({ host: host.data, device: device.data, info: info.success ? info.data : {}, app: app.data });
 }
 
 function skeleton(opts: BenchOptions, deps: BenchDeps, runId: string, p: Prepared, caffeinated: boolean): BenchRun {
@@ -728,7 +728,7 @@ export async function runBench(opts: BenchOptions, deps: BenchDeps): AsyncResult
 		writeReports(runDir, finished, deps);
 		for (const line of summaryLines(finished)) deps.log(line);
 		deps.log(`results: ${runDir}`);
-		return ok({ runDir, run: finished, interrupted });
+		return resultFactory.ok({ runDir, run: finished, interrupted });
 	} finally {
 		claimed.stopHeartbeat?.();
 		caffeinate?.kill();

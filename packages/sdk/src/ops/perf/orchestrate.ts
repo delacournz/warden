@@ -9,7 +9,7 @@ import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { slowStartupFinding } from "@delacour/warden-perf/startup/findings";
 import { summarize } from "@delacour/warden-perf/startup/stats";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { type PerfAppRef, resolveAppWith } from "./app";
 import { readClockOffsetMs } from "./clock";
@@ -87,9 +87,10 @@ export function chooseCapturers(flags: StartFlags): Result<CapturerChoice, Warde
 	const named = [flags.js, flags.react, flags.native, flags.metrics, flags.frames, flags.logs].some(
 		(f) => f !== undefined && f !== false
 	);
-	if (flags.all !== true && !named) return ok({ metrics: true, frames: true, logs: true, js: false, react: false });
+	if (flags.all !== true && !named)
+		return resultFactory.ok({ metrics: true, frames: true, logs: true, js: false, react: false });
 	const all = flags.all === true;
-	return ok({
+	return resultFactory.ok({
 		metrics: all || flags.metrics === true,
 		frames: all || flags.frames === true,
 		logs: all || flags.logs === true,
@@ -202,7 +203,7 @@ type StartRun = {
 
 /** Parse `--max-duration`; `undefined` data when the flag is absent. */
 function requestedMaxDuration(raw: string | undefined): Result<number | undefined, WardenError> {
-	if (raw === undefined) return ok(undefined);
+	if (raw === undefined) return resultFactory.ok(undefined);
 	const ms = parseDuration(raw);
 	if (ms === undefined) {
 		return {
@@ -210,7 +211,7 @@ function requestedMaxDuration(raw: string | undefined): Result<number | undefine
 			error: opError("usage", `--max-duration must be a duration like 30s or 2m, got "${raw}"`),
 		};
 	}
-	return ok(ms);
+	return resultFactory.ok(ms);
 }
 
 /** Drop or warn about capturers the platform cannot run (simpleperf and frames on iOS). */
@@ -239,7 +240,8 @@ async function leaseForRelaunch(
 	target: PerfTarget,
 	hooks: StartHooks
 ): Promise<Result<{ working: PerfTarget; tookLease: boolean }, WardenError>> {
-	if (opts.relaunch !== true || hooks.relaunchTarget === undefined) return ok({ working: target, tookLease: false });
+	if (opts.relaunch !== true || hooks.relaunchTarget === undefined)
+		return resultFactory.ok({ working: target, tookLease: false });
 	return hooks.relaunchTarget(target);
 }
 
@@ -411,7 +413,7 @@ async function armSession(
 	if (pending.length > 0)
 		warnings.push(`${pending.join(", ")}: still arming (see warden perf ls; the collector keeps trying)`);
 	const fresh = readSession(ctx, id) ?? session;
-	return ok({
+	return resultFactory.ok({
 		session: fresh,
 		plan,
 		warnings,
@@ -640,7 +642,7 @@ export async function finalizeSession(
 		first.status === "running" ? stopSession(ctx, deps.session, id, opts.reason, { signalCollector: false }) : first;
 	await giveBackLease(ctx, id);
 	const session = stopped ?? readSession(ctx, id) ?? first;
-	if (opts.analyze === false) return ok({ session, warnings });
+	if (opts.analyze === false) return resultFactory.ok({ session, warnings });
 	const report = writeSessionReport(ctx, session);
-	return ok({ session, report, reportPath: join(sessionDir(ctx, id), "report.md"), warnings });
+	return resultFactory.ok({ session, report, reportPath: join(sessionDir(ctx, id), "report.md"), warnings });
 }

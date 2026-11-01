@@ -10,7 +10,7 @@ import {
 	pickMostSpecific,
 } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction } from "./act";
 import { DEFAULT_SCROLL_AMOUNT, DEFAULT_SCROLL_MAX, regionOf, SCROLL_PAUSE_MS, SWIPE_MS, type Way } from "./actions";
 import { driverError, fail, fromDriver, opError } from "./errors";
@@ -47,7 +47,7 @@ async function scrollLoop(
 		fromDriver(await driver.swipe(path.from, path.to, { durationMs: SWIPE_MS, momentum: false }));
 	if (plan.until === undefined) {
 		const swiped = await swipe();
-		return swiped.success ? ok({ swipes: 1 }) : swiped;
+		return swiped.success ? resultFactory.ok({ swipes: 1 }) : swiped;
 	}
 	for (let swipes = 0; ; swipes += 1) {
 		const looked = await driver.snapshot();
@@ -55,9 +55,9 @@ async function scrollLoop(
 		const entry = visibleMatch(indexSnapshot(looked.data), plan.until, area.screen);
 		if (entry) {
 			const stored = storeSnapshot(session, looked.data);
-			return ok({ swipes, found: { ref: stored.refs.byId.get(entry.element.id), entry } });
+			return resultFactory.ok({ swipes, found: { ref: stored.refs.byId.get(entry.element.id), entry } });
 		}
-		if (swipes >= plan.max) return ok({ swipes });
+		if (swipes >= plan.max) return resultFactory.ok({ swipes });
 		const swiped = await swipe();
 		if (!swiped.success) return swiped;
 		await session.host.sleep(SCROLL_PAUSE_MS);
@@ -102,9 +102,11 @@ function scrollText(direction: Way, found: Found | undefined, swipes: number): s
 
 /** The parsed `until` selector, `undefined` without one, or a usage error for a bad one. */
 function parseUntil(raw: string | undefined): Result<ParsedSelector | undefined, WardenError> {
-	if (raw === undefined) return ok(undefined);
+	if (raw === undefined) return resultFactory.ok(undefined);
 	const parsed = parseSelector(raw);
-	return parsed.success ? ok(parsed.data) : fail(opError("usage", `bad --until selector: ${parsed.error}`));
+	return parsed.success
+		? resultFactory.ok(parsed.data)
+		: fail(opError("usage", `bad --until selector: ${parsed.error}`));
 }
 
 /**

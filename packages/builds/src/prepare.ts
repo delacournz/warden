@@ -6,9 +6,9 @@ import type { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { processAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Owner, Platform } from "@delacour/warden-store/types";
-import { codedError, type WardenError, wardenErr } from "@delacour/warden-types/error";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import type { WardenHost } from "@delacour/warden-types/host";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { findWardenConfig } from "./config";
 import { type EnsureInput, ensureApp, type ProjectContext, type ProjectContextInput, projectContext } from "./ensure";
 import {
@@ -43,7 +43,9 @@ export const defaultAppDeps: AppDeps = { pid: process.pid, sleep: (ms) => Bun.sl
 /** `--kind <dev|simulator|release>` values. */
 export function parseKind(value: string): Result<BuildKind, WardenError> {
 	const kind = BUILD_KINDS.find((k) => k === value);
-	return kind ? ok(kind) : wardenErr("usage", `--kind ${value}: expected ${BUILD_KINDS.join(" | ")}`);
+	return kind
+		? resultFactory.ok(kind)
+		: wardenErrors.err("usage", `--kind ${value}: expected ${BUILD_KINDS.join(" | ")}`);
 }
 
 /** Project + cache options shared by `app ensure` and `run --app`. */
@@ -83,11 +85,11 @@ function log(host: AppHost, line: string): void {
 
 /** Where project discovery starts: `project` (relative to cwd, must be a directory) or cwd. */
 export function projectStart(host: Pick<AppHost, "cwd">, project: string | undefined): Result<string> {
-	if (!project) return ok(host.cwd);
+	if (!project) return resultFactory.ok(host.cwd);
 	const start = resolve(host.cwd, project);
 	return statSync(start, { throwIfNoEntry: false })?.isDirectory()
-		? ok(start)
-		: err(`--project ${project}: no such directory ${start} (cwd ${host.cwd})`);
+		? resultFactory.ok(start)
+		: resultFactory.err(`--project ${project}: no such directory ${start} (cwd ${host.cwd})`);
 }
 
 /** `projectContext` with the host's exec, env and git cache, so the project lookup shares the git facts of the whole command. */
@@ -238,22 +240,22 @@ export async function prepareApp(
 	deps: AppDeps = defaultAppDeps
 ): AsyncResult<PreparedApp, WardenError> {
 	if (opts.kind !== undefined && opts.variant !== undefined) {
-		return wardenErr("usage", "--kind and --variant can't be combined");
+		return wardenErrors.err("usage", "--kind and --variant can't be combined");
 	}
 	const phone = opts.physical === true && platform === "ios";
 	if (phone && opts.kind === undefined && opts.variant !== undefined) {
-		return wardenErr(
+		return wardenErrors.err(
 			"usage",
 			"--variant builds are simulator builds: on a physical iPhone use --kind release (or dev)"
 		);
 	}
-	const project = codedError(await loadProject(host, opts, platform), "config_invalid");
+	const project = wardenErrors.coded(await loadProject(host, opts, platform), "config_invalid");
 	if (!project.success) return project;
 	// a phone runs a build made for it: without a kind, the release build (the project's kind-less build targets simulators)
 	const kind = opts.kind ?? (phone ? PHYSICAL_APP_KIND : undefined);
 	if (kind !== undefined) return prepareKind(host, deps, platform, project.data, kind, opts);
-	const hash = codedError(await fingerprint(host, project.data, platform), "build_failed");
-	return hash.success ? ok({ project: project.data, hash: hash.data }) : hash;
+	const hash = wardenErrors.coded(await fingerprint(host, project.data, platform), "build_failed");
+	return hash.success ? resultFactory.ok({ project: project.data, hash: hash.data }) : hash;
 }
 
 /** `--kind`: build, find or repack the kind's app into the cache (once per platform for a run), no device yet. */
@@ -267,10 +269,10 @@ async function prepareKind(
 ): AsyncResult<PreparedApp, WardenError> {
 	warnKind(host, project, kind);
 	const input = kindAppInput(host, deps, resolveOwnerOf(host), platform, project, kind, opts);
-	const app = codedError(await prepareKindApp(input), "build_failed");
+	const app = wardenErrors.coded(await prepareKindApp(input), "build_failed");
 	if (!app.success) return app;
 	log(host, `${platform}: ${describeKindApp(app.data)} [${app.data.hash}]`);
-	return ok({ project, kindApp: app.data });
+	return resultFactory.ok({ project, kindApp: app.data });
 }
 
 /** A kind build as the `EnsureResult` every caller of `ensureApp` reads (a repack counts as built). */
@@ -296,12 +298,16 @@ export async function ensurePreparedApp(
 ): AsyncResult<EnsureResult & { kindApp?: KindApp }, WardenError> {
 	const { project, hash } = prepared;
 	if (prepared.kindApp !== undefined) {
-		if (deviceId === undefined) return ok(kindResult(prepared.kindApp));
+		if (deviceId === undefined) return resultFactory.ok(kindResult(prepared.kindApp));
 		const kindInput = kindAppInput(host, deps, owner, platform, project, prepared.kindApp.requested, opts);
-		const installed = codedError(await installKindApp({ ...kindInput, deviceId }, prepared.kindApp), "build_failed");
-		return installed.success ? ok(kindResult(installed.data)) : installed;
+		const installed = wardenErrors.coded(
+			await installKindApp({ ...kindInput, deviceId }, prepared.kindApp),
+			"build_failed"
+		);
+		return installed.success ? resultFactory.ok(kindResult(installed.data)) : installed;
 	}
-	if (hash === undefined) return wardenErr("build_failed", "prepared app has neither a cache key nor a kind build");
+	if (hash === undefined)
+		return wardenErrors.err("build_failed", "prepared app has neither a cache key nor a kind build");
 	const input: EnsureInput = {
 		...project,
 		store: host.store(),
@@ -328,7 +334,7 @@ export async function ensurePreparedApp(
 		...(deps.lockPollMs !== undefined ? { lockPollMs: deps.lockPollMs } : {}),
 		git: host.git,
 	};
-	return codedError(await ensureApp(input), "build_failed");
+	return wardenErrors.coded(await ensureApp(input), "build_failed");
 }
 
 /** The `--json` facts of a kind build: the kind it became, the repack's key and, after a fallback, why. */
@@ -375,26 +381,26 @@ export function pickDevice(
 	platform: Platform,
 	flags: DeviceFlags
 ): Result<string | undefined, WardenError> {
-	if (flags.noInstall) return ok(undefined);
-	if (flags.udid !== undefined) return ok(flags.udid);
+	if (flags.noInstall) return resultFactory.ok(undefined);
+	if (flags.udid !== undefined) return resultFactory.ok(flags.udid);
 	const store = host.store();
 	if (flags.lease !== undefined) {
 		const r = store.getLease(flags.lease)?.resource;
 		if (r?.kind !== "device" || r.platform !== platform)
-			return wardenErr("lease_not_found", `no ${platform} device lease ${flags.lease}`);
-		return ok(r.id);
+			return wardenErrors.err("lease_not_found", `no ${platform} device lease ${flags.lease}`);
+		return resultFactory.ok(r.id);
 	}
 	const mine = store
 		.listLeasesByOwner(owner)
 		.flatMap((l) => (l.resource.kind === "device" && l.resource.platform === platform ? [l.resource.id] : []));
 	const [only, ...rest] = mine;
-	if (only !== undefined && rest.length === 0) return ok(only);
+	if (only !== undefined && rest.length === 0) return resultFactory.ok(only);
 	return mine.length === 0
-		? wardenErr(
+		? wardenErrors.err(
 				"no_device_leased",
 				`you hold no ${platform} device lease — pass --udid/--lease, \`warden claim ${platform}\` first, or --no-install`
 			)
-		: wardenErr(
+		: wardenErrors.err(
 				"ambiguous_device",
 				`you hold several ${platform} devices (${mine.join(", ")}) — pick one with --udid or --lease`
 			);

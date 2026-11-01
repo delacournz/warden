@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { uiDir } from "../agent-ui/paths";
 import { brokerErr } from "../dev-broker/broker.types";
@@ -128,7 +128,7 @@ async function harness(options: { broker: boolean }): Promise<Harness> {
 			brokerSocket: server.socketPath,
 		});
 	}
-	const deps: UiDeps = { driver: async () => ok(null as never), sleep: async () => undefined };
+	const deps: UiDeps = { driver: async () => resultFactory.ok(null as never), sleep: async () => undefined };
 	const command = createUiCommand(deps);
 	return {
 		c,

@@ -1,6 +1,6 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { type DevSessionDeps, type DevSessionError, findDevSession } from "./dev-session";
 import { METRO_LOG_KINDS, type MetroLogEntry, type MetroLogKind, parseMetroLog } from "./dev-tui/metro-log";
 
@@ -76,7 +76,7 @@ export function filterMetroLogs(
 			(pattern === undefined || pattern.test(e.text)) &&
 			(sinceMs === undefined || e.ts === undefined || e.ts >= sinceMs)
 	);
-	return ok(tail === undefined ? kept : tail <= 0 ? [] : kept.slice(-tail));
+	return resultFactory.ok(tail === undefined ? kept : tail <= 0 ? [] : kept.slice(-tail));
 }
 
 /** `kinds` from a comma list (`error,bundle_failed`); an unknown name is an `invalid_query` error. */
@@ -99,7 +99,7 @@ export function parseMetroLogKinds(list: string): Result<MetroLogKind[], MetroLo
 		}
 		kinds.push(kind);
 	}
-	return ok(kinds);
+	return resultFactory.ok(kinds);
 }
 
 /**
@@ -123,7 +123,7 @@ export function readMetroLogs(
 	if (!session.success) return session;
 	const log = readMetroLogText(join(session.data.logDir, "metro.log"));
 	if (log === undefined) return { success: false, error: metroLogUnavailable(session.data.logDir) };
-	if (query.sinceMs !== undefined && log.mtimeMs < query.sinceMs) return ok([]);
+	if (query.sinceMs !== undefined && log.mtimeMs < query.sinceMs) return resultFactory.ok([]);
 	return filterMetroLogs(parseMetroLog(log.text), query);
 }
 
@@ -161,7 +161,7 @@ export async function followMetroLog(
 		if (!filtered.success) return filtered;
 		if (filtered.data.length > 0) onEntries(filtered.data);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** One poll: the entries past `cursor.seen` (stamped `now`), advancing the cursor. */

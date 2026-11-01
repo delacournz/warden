@@ -8,7 +8,7 @@ import {
 } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { activeSessionFor } from "@delacour/warden-sdk/ops/perf/session";
 import { startResult } from "@delacour/warden-sdk/ops/perf/session-ops";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "./device";
@@ -74,7 +74,7 @@ export function perfStart(
 				};
 			}
 			const marks = live.marks.map((m) => `'${m.label}' ${offset(m.atMs)}`);
-			return ok({
+			return resultFactory.ok({
 				device: infoOf(target),
 				result: {
 					sessionId: live.id,
@@ -97,7 +97,7 @@ export function perfStart(
 		}
 		const started = await startPerf(ctx, deps, kit, target, opts, startHooks(ctx, deps, opts));
 		if (!started.success) return started;
-		return ok(startedSuccess(ctx, target, started.data, "warden perf stop"));
+		return resultFactory.ok(startedSuccess(ctx, target, started.data, "warden perf stop"));
 	});
 }
 

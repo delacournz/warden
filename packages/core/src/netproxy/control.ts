@@ -1,5 +1,5 @@
 import type { ConditionsUpdate, ProxyConditions } from "@delacour/warden-config/shaping";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 
 /** Where a running proxy listens and how to steer it. Persisted as JSON so another process can find it. */
@@ -91,10 +91,10 @@ async function call<T>(handle: ProxyHandle, method: string, path: string, body?:
 			...(body !== undefined ? { body: JSON.stringify(body) } : {}),
 			signal: AbortSignal.timeout(5000),
 		});
-		if (!res.ok) return err(`netproxy ${method} ${path}: ${res.status} ${await res.text()}`);
-		return ok((await res.json()) as T);
+		if (!res.ok) return resultFactory.err(`netproxy ${method} ${path}: ${res.status} ${await res.text()}`);
+		return resultFactory.ok((await res.json()) as T);
 	} catch (error) {
-		return err(`netproxy ${method} ${path}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`netproxy ${method} ${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 

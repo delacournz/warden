@@ -2,7 +2,7 @@ import { type BuildRecord, deleteBuildRecord, forgetInstallsAt, listBuilds } fro
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { removeBuild } from "./cache";
 import { buildLockKey, liveBuildLocks } from "./lock";
 import { isAlias } from "./prune";
@@ -32,22 +32,24 @@ export function planRemove(
 	const primaries: BuildRecord[] = [];
 	for (const prefix of prefixes) {
 		if (prefix.length < MIN_HASH_PREFIX)
-			return err(`hash prefix ${prefix} is too short (at least ${MIN_HASH_PREFIX} characters)`);
+			return resultFactory.err(`hash prefix ${prefix} is too short (at least ${MIN_HASH_PREFIX} characters)`);
 		const matched = builds.filter(
 			(b) => b.hash.startsWith(prefix) && (platform === undefined || b.platform === platform)
 		);
 		const found = [...new Set(matched.map((b) => primaryOf(builds, b)))];
 		const [only, ...rest] = found;
-		if (only === undefined) return err(`no cached build matches ${prefix} (see \`warden builds\`)`);
+		if (only === undefined) return resultFactory.err(`no cached build matches ${prefix} (see \`warden builds\`)`);
 		if (rest.length > 0)
-			return err(
+			return resultFactory.err(
 				`${prefix} matches ${found.length} builds (${found.map(describe).join(", ")}): pass a longer hash or --platform`
 			);
 		if (locked.has(buildLockKey(only.projectKey, only.platform, only.hash)))
-			return err(`${describe(only)} is being built or fetched right now`);
+			return resultFactory.err(`${describe(only)} is being built or fetched right now`);
 		if (!primaries.includes(only)) primaries.push(only);
 	}
-	return ok(primaries.flatMap((p) => [p, ...builds.filter((a) => a !== p && a.path === p.path && isAlias(a))]));
+	return resultFactory.ok(
+		primaries.flatMap((p) => [p, ...builds.filter((a) => a !== p && a.path === p.path && isAlias(a))])
+	);
 }
 
 export type RemoveInput = {
@@ -90,6 +92,6 @@ export function removeBuilds(input: RemoveInput): Result<RemoveOutcome> {
 				else removeBuild(store, input.env, b);
 			}
 		}
-		return ok({ remove: plan.data, forgotInstalls });
+		return resultFactory.ok({ remove: plan.data, forgotInstalls });
 	});
 }

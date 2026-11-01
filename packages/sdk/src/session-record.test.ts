@@ -7,8 +7,8 @@ import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driv
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { bunExec } from "@delacour/warden-runtime/exec";
-import { wardenErr } from "@delacour/warden-types/error";
-import { ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
 import type { ClientSeams } from "./core";
 import { isWardenError } from "./errors";
@@ -46,7 +46,7 @@ afterEach(() => {
 const provider: DeviceProvider = {
 	platform: "ios",
 	inventory: async () =>
-		ok([
+		resultFactory.ok([
 			{
 				platform: "ios",
 				id: UDID,
@@ -56,10 +56,10 @@ const provider: DeviceProvider = {
 				runtime: "iOS-26-5",
 			},
 		]),
-	create: async () => wardenErr("failed", "no create"),
-	boot: async () => ok(undefined),
-	waitReady: async () => ok(undefined),
-	shutdown: async () => ok(undefined),
+	create: async () => wardenErrors.err("failed", "no create"),
+	boot: async () => resultFactory.ok(undefined),
+	waitReady: async () => resultFactory.ok(undefined),
+	shutdown: async () => resultFactory.ok(undefined),
 };
 
 test("session.record journals interactions and stop writes a verified spec", async () => {
@@ -67,11 +67,11 @@ test("session.record journals interactions and stop writes a verified spec", asy
 	const seams: ClientSeams = {
 		providerFor: () => provider,
 		stopHelper: async () => undefined,
-		openDriver: async () => ok(fakeDriver({ screens: [SCREEN] })),
+		openDriver: async () => resultFactory.ok(fakeDriver({ screens: [SCREEN] })),
 		authoring: {
 			verify: async (input) => {
 				verified.push(input);
-				return ok({
+				return resultFactory.ok({
 					passed: true,
 					exitCode: 0,
 					outDir: input.outDir,
@@ -133,7 +133,7 @@ test("session.record throws a typed WardenError", async () => {
 		{
 			providerFor: () => provider,
 			stopHelper: async () => undefined,
-			openDriver: async () => ok(fakeDriver({ screens: [SCREEN] })),
+			openDriver: async () => resultFactory.ok(fakeDriver({ screens: [SCREEN] })),
 		}
 	);
 	const [lease] = await warden.leases.claim({ platform: "ios" });
@@ -179,7 +179,7 @@ test("stop verifies through the specs runner by default: `warden e2e --specs <id
 		{
 			providerFor: () => provider,
 			stopHelper: async () => undefined,
-			openDriver: async () => ok(fakeDriver({ screens: [SCREEN] })),
+			openDriver: async () => resultFactory.ok(fakeDriver({ screens: [SCREEN] })),
 			specs: {
 				spawn: async (argv) => {
 					argvs.push([...argv]);

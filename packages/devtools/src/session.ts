@@ -1,4 +1,4 @@
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type CdpClient, type CloseInfo, describeException, openCdp, readEvaluateReply } from "./cdp";
 import {
 	type CdpTap,
@@ -165,7 +165,7 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 		await cdp.send("Runtime.runIfWaitingForDebugger", {}, optional);
 		const binding = await cdp.addBinding(WARDEN_BINDING);
 		if (!binding.success) return binding;
-		return ok({ cdp, target });
+		return resultFactory.ok({ cdp, target });
 	}
 
 	/** list -> select -> socket -> handshake; the socket is closed again if any step fails */
@@ -230,7 +230,7 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 			return closedError();
 		}
 		adopt(attached);
-		return ok(attached);
+		return resultFactory.ok(attached);
 	}
 
 	/** Moves to `lost` with `error` and tells the `lost` listeners, unless the session is closed. */
@@ -303,7 +303,7 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 
 	/** the live socket, waiting out a reconnect; a `lost` session tries to attach again */
 	async function current(): Promise<DevtoolsResult<Attached>> {
-		if (state.kind === "up") return ok(state.attached);
+		if (state.kind === "up") return resultFactory.ok(state.attached);
 		if (state.kind === "reconnecting") return state.done;
 		if (state.kind === "lost") return revive();
 		return devtoolsErr("cdp_closed", "devtools session is closed");
@@ -380,7 +380,7 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 					error: { message: describeException(exceptionDetails), code: "eval_failed", exceptionDetails },
 				};
 			}
-			return ok(value);
+			return resultFactory.ok(value);
 		},
 		async reloadJs() {
 			const live = await current();
@@ -397,7 +397,7 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 			}
 			const method: ReloadMethod = readReloadMethod(probe.data) ?? "http";
 			const failure = (await requestReload(method, metroUrl)) ?? (await awaitReload(method, startedAt, waitMs));
-			return failure ?? ok({ method });
+			return failure ?? resultFactory.ok({ method });
 		},
 		get target() {
 			if (state.kind === "up") return state.attached.target;
@@ -450,7 +450,7 @@ export async function connectDevtools(o: ConnectDevtoolsOptions): Promise<Devtoo
 			for (const wake of [...epochWaiters]) wake();
 		},
 	};
-	return ok(session);
+	return resultFactory.ok(session);
 }
 
 /** The method the reload expression scheduled, or `undefined` when the app has neither JS reload API. */

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ExecResult } from "../harness/exec";
 import { joinNative, loadManifest } from "../results/manifest";
 import type { RepResult } from "../results/schema";
@@ -221,7 +221,7 @@ export function toRep(
 	if (joined.unmapped.length > 0) return bad(failed(`parity breach: unmapped tests: ${joined.unmapped.join(", ")}`));
 	const tests = joined.mapped.map((m) => toTest(m, byName.get(m.nativeName)));
 	const withArtifacts = tests.map((t, i) => (i === 0 && artifacts.length > 0 ? { ...t, artifacts } : t));
-	return ok({
+	return resultFactory.ok({
 		index: 1,
 		cold: ctx.cold,
 		wallMs,
@@ -270,10 +270,12 @@ async function run(ctx: RunContext, deps: TesterArmyDeps): Promise<Result<RepRes
 async function collectOutput(ctx: RunContext, suiteDir: string, reportDir: string): Promise<Result<void>> {
 	const from = join(suiteDir, SUITE_OUTPUT);
 	const made = await ctx.exec.run("mkdir", ["-p", reportDir]);
-	if (made.code !== 0) return err(`mkdir ${reportDir}: ${made.stderr.trim()}`);
+	if (made.code !== 0) return resultFactory.err(`mkdir ${reportDir}: ${made.stderr.trim()}`);
 	const copy = await ctx.exec.run("cp", ["-R", `${from}/.`, reportDir]);
 	await ctx.exec.run("rm", ["-rf", from]);
-	return copy.code === 0 ? ok(undefined) : err(`copying ${from}: ${copy.stderr.trim() || `exit ${copy.code}`}`);
+	return copy.code === 0
+		? resultFactory.ok(undefined)
+		: resultFactory.err(`copying ${from}: ${copy.stderr.trim() || `exit ${copy.code}`}`);
 }
 
 /**
@@ -281,7 +283,7 @@ async function collectOutput(ctx: RunContext, suiteDir: string, reportDir: strin
  * on first use, so that cost lands in rep 1 where a user would pay it.
  */
 async function prepare(): Promise<Result<void>> {
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /**
@@ -299,8 +301,8 @@ async function teardown(ctx: RunContext, deps: TesterArmyDeps): Promise<Result<v
 		onLine: (_s, line) => ctx.log(line),
 	});
 	await ctx.exec.run("pkill", ["-f", join(ctx.repoRoot, "node_modules/agent-device")]);
-	if (stop.spawnError !== undefined) return err(`agent-device daemon stop: ${stop.spawnError}`);
-	return ok(undefined);
+	if (stop.spawnError !== undefined) return resultFactory.err(`agent-device daemon stop: ${stop.spawnError}`);
+	return resultFactory.ok(undefined);
 }
 
 /** The adapter over injectable deps; `testerArmyAdapter` is the real one. */

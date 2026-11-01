@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { BuildLockDeps } from "../lock";
 import { buildRunnerArgv, ensureRunnerBuild, expectedRunnerDerivedData } from "./build";
 import { readRunnerMeta } from "./cache";
@@ -93,7 +93,7 @@ function input(
 		home: dir,
 		exec: tools.exec,
 		version: "0.7.0",
-		loadSources: async () => ok(SOURCES),
+		loadSources: async () => resultFactory.ok(SOURCES),
 		lock,
 		now: () => clock,
 		lockGraceMs: 10,
@@ -204,7 +204,7 @@ describe("ensureRunnerBuild", () => {
 		const tools = fakeTools();
 		const a = await ensureRunnerBuild(input(tools));
 		const b = await ensureRunnerBuild(
-			input(tools, { loadSources: async () => ok({ ...SOURCES, "ios-runner/Host/App.swift": "v2" }) })
+			input(tools, { loadSources: async () => resultFactory.ok({ ...SOURCES, "ios-runner/Host/App.swift": "v2" }) })
 		);
 		expect(a.success && b.success && a.data.derivedData !== b.data.derivedData).toBe(true);
 	});
@@ -287,8 +287,9 @@ describe("ensureRunnerBuild", () => {
 	});
 
 	test("unreadable sources are build_failed", async () => {
-		const { err } = await import("@delacour/warden-types/result");
-		const error = await failure(ensureRunnerBuild(input(fakeTools(), { loadSources: async () => err("no blob") })));
+		const error = await failure(
+			ensureRunnerBuild(input(fakeTools(), { loadSources: async () => resultFactory.err("no blob") }))
+		);
 		expect(error).toMatchObject({ code: "build_failed", message: "no blob" });
 	});
 
@@ -322,7 +323,7 @@ describe("expectedRunnerDerivedData", () => {
 		const tools = fakeTools();
 		const base = await expectedRunnerDerivedData(input(tools));
 		const edited = await expectedRunnerDerivedData(
-			input(tools, { loadSources: async () => ok({ ...SOURCES, "ios-runner/Host/App.swift": "app2" }) })
+			input(tools, { loadSources: async () => resultFactory.ok({ ...SOURCES, "ios-runner/Host/App.swift": "app2" }) })
 		);
 		const otherTeam = await expectedRunnerDerivedData(
 			input(tools, { env: { DEVELOPER_DIR: "/x", WARDEN_IOS_TEAM_ID: "ABCDE12345" } })
@@ -333,7 +334,9 @@ describe("expectedRunnerDerivedData", () => {
 	});
 
 	test("a source set without the project fails like the build", async () => {
-		const res = await expectedRunnerDerivedData(input(fakeTools(), { loadSources: async () => ok({ a: "b" }) }));
+		const res = await expectedRunnerDerivedData(
+			input(fakeTools(), { loadSources: async () => resultFactory.ok({ a: "b" }) })
+		);
 		expect(res.success).toBe(false);
 	});
 });

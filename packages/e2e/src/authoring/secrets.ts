@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { Text } from "./recording.schema";
 
 /** Keep secrets out of the journal: a typed value equal to a `WARDEN_UI_SECRET_<NAME>` is stored as its name. */
@@ -25,8 +25,9 @@ export function redactSecrets(value: string, env: Env): Text {
 
 /** The plain text a stored `Text` stands for; a secret is read from `WARDEN_UI_SECRET_<NAME>` in `env`. */
 export function resolveText(value: Text, env: Env): Result<string> {
-	if (typeof value === "string") return ok(value);
+	if (typeof value === "string") return resultFactory.ok(value);
 	const found = env[`${SECRET_PREFIX}${value.secret}`];
-	if (found === undefined || found === "") return err(`set ${SECRET_PREFIX}${value.secret} to run this step`);
-	return ok(found);
+	if (found === undefined || found === "")
+		return resultFactory.err(`set ${SECRET_PREFIX}${value.secret} to run this step`);
+	return resultFactory.ok(found);
 }

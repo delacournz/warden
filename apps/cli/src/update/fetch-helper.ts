@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { HELPER_ASSET, HELPER_BINARY, HELPER_SUMS_ASSET, HELPER_TARGET } from "../npm/helper";
 import type { Fetch } from "./npm-registry";
 import { parseChecksums, releaseRepo } from "./release";
@@ -41,11 +41,12 @@ export function helperBaseUrl(env: Readonly<Record<string, string | undefined>>,
 async function get(fetch: Fetch, url: string): AsyncResult<Uint8Array> {
 	try {
 		const response = await fetch(url);
-		if (response.status === 404) return err(`${url} not found (does the release include ${HELPER_ASSET}?)`);
-		if (!response.ok) return err(`GET ${url} → HTTP ${response.status}`);
-		return ok(new Uint8Array(await response.arrayBuffer()));
+		if (response.status === 404)
+			return resultFactory.err(`${url} not found (does the release include ${HELPER_ASSET}?)`);
+		if (!response.ok) return resultFactory.err(`GET ${url} → HTTP ${response.status}`);
+		return resultFactory.ok(new Uint8Array(await response.arrayBuffer()));
 	} catch (error) {
-		return err(`GET ${url} failed: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`GET ${url} failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -55,24 +56,26 @@ async function get(fetch: Fetch, url: string): AsyncResult<Uint8Array> {
  */
 export async function fetchHelper(input: FetchHelperInput): AsyncResult<FetchedHelper> {
 	const { env, platform, arch, version } = input;
-	if (`${platform}-${arch}` !== HELPER_TARGET) return err(`no helper for ${platform}-${arch} in this version`);
+	if (`${platform}-${arch}` !== HELPER_TARGET)
+		return resultFactory.err(`no helper for ${platform}-${arch} in this version`);
 	const base = helperBaseUrl(env, version);
 
 	const sumsBody = await get(input.fetch, `${base}/${HELPER_SUMS_ASSET}`);
 	if (!sumsBody.success) return sumsBody;
 	const expected = parseChecksums(new TextDecoder().decode(sumsBody.data)).get(HELPER_ASSET);
-	if (!expected) return err(`${base}/${HELPER_SUMS_ASSET} has no entry for ${HELPER_ASSET}`);
+	if (!expected) return resultFactory.err(`${base}/${HELPER_SUMS_ASSET} has no entry for ${HELPER_ASSET}`);
 
 	const url = `${base}/${HELPER_ASSET}`;
 	const tgz = await get(input.fetch, url);
 	if (!tgz.success) return tgz;
 	const actual = createHash("sha256").update(tgz.data).digest("hex");
-	if (actual !== expected) return err(`checksum mismatch for ${url}: expected ${expected}, got ${actual}`);
+	if (actual !== expected)
+		return resultFactory.err(`checksum mismatch for ${url}: expected ${expected}, got ${actual}`);
 
 	const dir = helperHomeDir(input.wardenHome, version);
 	const extracted = await input.extract(tgz.data, dir);
 	if (!extracted.success) return extracted;
-	return ok({ dir, url, sha256: actual });
+	return resultFactory.ok({ dir, url, sha256: actual });
 }
 
 /**
@@ -90,11 +93,11 @@ export function tarExtractHelper(exec: Exec): ExtractHelper {
 			writeFileSync(archive, tgz);
 			const cmd = ["tar", "-xzf", archive, "-C", files];
 			const result = await exec(cmd);
-			if (result.exitCode !== 0) return err(execError(cmd, result));
-			if (!existsSync(join(files, HELPER_BINARY))) return err(`${HELPER_ASSET} has no ${HELPER_BINARY}`);
+			if (result.exitCode !== 0) return resultFactory.err(execError(cmd, result));
+			if (!existsSync(join(files, HELPER_BINARY))) return resultFactory.err(`${HELPER_ASSET} has no ${HELPER_BINARY}`);
 			rmSync(destDir, { recursive: true, force: true });
 			renameSync(files, destDir);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		} finally {
 			rmSync(staging, { recursive: true, force: true });
 		}

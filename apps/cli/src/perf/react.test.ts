@@ -5,7 +5,7 @@ import { startReactProfile } from "@delacour/warden-perf/react/profiler";
 import { fakeGlobal, fakeHook, fakeRenderer, runtimeCdp } from "@delacour/warden-perf/react/react.testing";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { createSession } from "@delacour/warden-sdk/ops/perf/session";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfReact, perfReactStart, perfReactStop } from "./react";
 import { asMe, fakePerfDeps } from "./testing";
@@ -30,7 +30,7 @@ function setup(globalOver: Record<string, unknown> = {}) {
 	const js: JsDeps = {
 		open: async (o) => {
 			opened.push(o);
-			return ok({ ...runtimeCdp(g), close: () => undefined });
+			return resultFactory.ok({ ...runtimeCdp(g), close: () => undefined });
 		},
 		fetchMap: async () => jsOk("{}"),
 		sleep: async (ms) => {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { connectRemoteDriver } from "@delacour/warden-device/remote/remote-client";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { el, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { createAndroidHostCommand } from "./android-host";
 
@@ -35,7 +35,7 @@ function run(open: () => Promise<Result<Driver, string>>, extra: string[] = []) 
 describe("warden __android-host", () => {
 	test("prints one ready line naming its socket, serves the driver, and exits 0 on shutdown", async () => {
 		const driver = fakeDriver({ screens: [screen], platform: "android", id: SERIAL });
-		const { c, socket, done } = run(async () => ok(driver));
+		const { c, socket, done } = run(async () => resultFactory.ok(driver));
 		const line = await waitFor(() => c.stdout[0]);
 		expect(JSON.parse(line)).toEqual({ event: "ready", socket, pid: process.pid });
 		const client = await connectRemoteDriver({ socketPath: socket });
@@ -50,7 +50,7 @@ describe("warden __android-host", () => {
 
 	test("the driver it serves answers alertIn locally (Android alerts are in the snapshot)", async () => {
 		const driver = fakeDriver({ screens: [screen], platform: "android", id: SERIAL });
-		const { socket, done } = run(async () => ok(driver));
+		const { socket, done } = run(async () => resultFactory.ok(driver));
 		await waitFor(() => (ctx?.stdout[0] !== undefined ? true : undefined));
 		const client = await connectRemoteDriver({ socketPath: socket });
 		if (!client.success) throw new Error(client.error.message);
@@ -62,7 +62,7 @@ describe("warden __android-host", () => {
 
 	test("exits on its own after --idle-timeout with no client", async () => {
 		const driver = fakeDriver({ screens: [screen], platform: "android", id: SERIAL });
-		const { done } = run(async () => ok(driver), ["--idle-timeout", "0.05"]);
+		const { done } = run(async () => resultFactory.ok(driver), ["--idle-timeout", "0.05"]);
 		expect(await done).toBe(0);
 		expect(driver.closed).toBe(true);
 	});
@@ -76,7 +76,7 @@ describe("warden __android-host", () => {
 
 	test("rejects a missing serial or socket, and a bad idle timeout", async () => {
 		const driver = fakeDriver({ screens: [screen], onCall: () => failWith("E_INTERNAL") });
-		const { done } = run(async () => ok(driver), ["--idle-timeout", "soon"]);
+		const { done } = run(async () => resultFactory.ok(driver), ["--idle-timeout", "soon"]);
 		expect(await done).toBe(1);
 	});
 });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DevtoolsFacet, DevtoolsResult } from "@delacour/warden-devtools/devtools.types";
 import { stubFacet } from "@delacour/warden-devtools/testing/facet";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { DevtoolsDeps } from "./devtools";
 import { createMemoryRefStore } from "./ref-store";
 import { route } from "./route";
@@ -42,9 +42,9 @@ function facetReplying(reply: unknown): { open: DevtoolsDeps["open"]; closes: ()
 	const stub = stubFacet();
 	const facet: DevtoolsFacet = {
 		...stub.facet,
-		evaluate: async () => ok(reply),
+		evaluate: async () => resultFactory.ok(reply),
 	};
-	return { open: async (): Promise<DevtoolsResult<DevtoolsFacet>> => ok(facet), closes: stub.closes };
+	return { open: async (): Promise<DevtoolsResult<DevtoolsFacet>> => resultFactory.ok(facet), closes: stub.closes };
 }
 
 describe("route op", () => {

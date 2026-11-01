@@ -4,7 +4,7 @@ import type { Suite, SuiteError } from "@delacour/warden-core/affected/affected"
 import { type JournalError, writeFileAtomic } from "@delacour/warden-e2e/authoring/journal";
 import type { LintFinding } from "@delacour/warden-e2e/authoring/lint";
 import type { WardenError, WardenErrorCode } from "@delacour/warden-types/error";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { recordingFile } from "../paths";
 import type { OpSession } from "../session";
@@ -44,7 +44,7 @@ export function activeRecording(
 ): Result<{ pointer: RecordingPointer; journal: string }, WardenError> {
 	const pointer = session.state.read().recording;
 	if (!pointer) return failed("no_recording", "not recording", { hint: 'warden ui record start "<name>"' });
-	return ok({ pointer, journal: journalOf(session) });
+	return resultFactory.ok({ pointer, journal: journalOf(session) });
 }
 
 /** Rewrite the recording pointer; a call with no recording changes nothing. */

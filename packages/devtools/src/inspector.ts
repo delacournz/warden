@@ -1,4 +1,4 @@
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type DevtoolsResult, devtoolsErr, type Fetch } from "./devtools.types";
 
@@ -86,7 +86,7 @@ export async function listTargets(metroUrl: string, fetch: Fetch): Promise<Devto
 		const res = await get(fetch, `${base}${path}`);
 		if (!res?.ok) continue;
 		const targets = parseTargets(res.body);
-		if (targets) return ok(targets.filter((t) => t.vm !== DECOY_VM));
+		if (targets) return resultFactory.ok(targets.filter((t) => t.vm !== DECOY_VM));
 	}
 	return unavailable(`Metro at ${base} listed no inspector targets (/json/list and /json failed)`);
 }
@@ -194,7 +194,7 @@ export function selectTarget(
 	const bridge = candidates.find((t) => t.title?.startsWith("React Native Bridge"));
 	const chosen = fuseboxTarget ?? bridge ?? candidates[0];
 	if (!chosen) return unavailable("Metro has no inspector targets: is the app running a dev client?");
-	return ok({
+	return resultFactory.ok({
 		wsUrl: normalizeWsUrl(chosen.webSocketDebuggerUrl, metroUrl),
 		deviceName: chosen.deviceName ?? chosen.title ?? "unknown",
 		appId: chosen.appId,

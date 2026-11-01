@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type BenchRun, type FrameworkResult, frameworkIdSchema, type OkFrameworkResult } from "../results/schema";
 import { median } from "../results/stats";
@@ -68,11 +68,11 @@ export function parseBaseline(text: string): Result<GuardSide> {
 	try {
 		json = JSON.parse(text);
 	} catch (e) {
-		return err(`not JSON: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`not JSON: ${e instanceof Error ? e.message : String(e)}`);
 	}
 	const parsed = baselineSchema.safeParse(json);
 	if (!parsed.success) {
-		return err(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+		return resultFactory.err(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
 	}
 	const metrics: GuardSide["metrics"] = {};
 	for (const f of parsed.data.frameworks) {
@@ -81,7 +81,7 @@ export function parseBaseline(text: string): Result<GuardSide> {
 			...(f.rssPeakBytes !== undefined ? { rssPeakBytes: f.rssPeakBytes } : {}),
 		};
 	}
-	return ok({ id: parsed.data.id, startedAt: parsed.data.startedAt, metrics });
+	return resultFactory.ok({ id: parsed.data.id, startedAt: parsed.data.startedAt, metrics });
 }
 
 /** `run` is set only for a run dir: a baseline file has nothing to render a full diff from. */
@@ -93,14 +93,14 @@ export function loadGuardSide(path: string): Result<LoadedSide> {
 	try {
 		isFile = statSync(path).isFile();
 	} catch (e) {
-		return err(`cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
 	}
 	if (!isFile) {
 		const run = readBenchResults(path);
-		return run.success ? ok({ side: sideOfRun(run.data), run: run.data }) : err(run.error);
+		return run.success ? resultFactory.ok({ side: sideOfRun(run.data), run: run.data }) : resultFactory.err(run.error);
 	}
 	const parsed = parseBaseline(readFileSync(path, "utf8"));
-	return parsed.success ? ok({ side: parsed.data }) : err(`${path}: ${parsed.error}`);
+	return parsed.success ? resultFactory.ok({ side: parsed.data }) : resultFactory.err(`${path}: ${parsed.error}`);
 }
 
 export type GuardOutcome =

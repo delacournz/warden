@@ -6,8 +6,8 @@ import type { FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { fieldFixture } from "@delacour/warden-screen/testing/screen";
 import type { InventoryDevice } from "@delacour/warden-store/types";
-import { wardenErr } from "@delacour/warden-types/error";
-import { ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { resultFactory } from "@delacour/warden-types/result";
 import { generateText, isStepCount } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { ClientSeams } from "../core";
@@ -37,11 +37,11 @@ function fakeProvider(): DeviceProvider {
 	};
 	return {
 		platform: "ios",
-		inventory: async () => ok([{ ...device }]),
-		create: async () => wardenErr("failed", "no create in this fake"),
-		boot: async () => ok(undefined),
-		waitReady: async () => ok(undefined),
-		shutdown: async () => ok(undefined),
+		inventory: async () => resultFactory.ok([{ ...device }]),
+		create: async () => wardenErrors.err("failed", "no create in this fake"),
+		boot: async () => resultFactory.ok(undefined),
+		waitReady: async () => resultFactory.ok(undefined),
+		shutdown: async () => resultFactory.ok(undefined),
 	};
 }
 
@@ -63,7 +63,7 @@ async function rig(
 	const seams: ClientSeams = {
 		providerFor: () => provider,
 		stopHelper: async () => undefined,
-		openDriver: async () => ok(driver as FakeDriver),
+		openDriver: async () => resultFactory.ok(driver as FakeDriver),
 	};
 	const handle = await createWardenTools({
 		platform: "ios",

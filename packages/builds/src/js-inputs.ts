@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** Matched files' bytes, or undefined when unreadable (a tracked file deleted from disk). */
 export type ReadFile = (path: string) => Promise<Uint8Array | undefined>;
@@ -115,12 +115,12 @@ function parseListing(index: string, modified: string): Result<Listing> {
 			continue;
 		}
 		const entry = parseIndexEntry(raw);
-		if (!entry) return err(`could not read \`git ls-files\` output: ${raw.slice(0, 80)}`);
+		if (!entry) return resultFactory.err(`could not read \`git ls-files\` output: ${raw.slice(0, 80)}`);
 		hex = entry.id.length === 64 ? 64 : 40;
 		files.set(entry.path, vouches(entry) && !files.has(entry.path) ? entry.id : undefined);
 	}
 	for (const path of modified.split("\0")) if (files.has(path)) files.set(path, undefined);
-	return ok({ files, hex });
+	return resultFactory.ok({ files, hex });
 }
 
 /** Tracked + untracked-not-ignored files under `dir`: the index and the modified files are listed side by side. */
@@ -128,8 +128,9 @@ async function listFiles(exec: Exec, dir: string): AsyncResult<Listing> {
 	const indexArgv = ["git", "ls-files", "-z", "-v", "-s", "--cached", "--others", "--exclude-standard", "--", "."];
 	const modifiedArgv = ["git", "ls-files", "-z", "-m", "--", "."];
 	const [indexed, modified] = await Promise.all([exec(indexArgv, { cwd: dir }), exec(modifiedArgv, { cwd: dir })]);
-	if (indexed.exitCode !== 0) return err(`could not list JS inputs: ${execError(indexArgv, indexed)}`);
-	if (modified.exitCode !== 0) return err(`could not list JS inputs: ${execError(modifiedArgv, modified)}`);
+	if (indexed.exitCode !== 0) return resultFactory.err(`could not list JS inputs: ${execError(indexArgv, indexed)}`);
+	if (modified.exitCode !== 0)
+		return resultFactory.err(`could not list JS inputs: ${execError(modifiedArgv, modified)}`);
 	return parseListing(indexed.stdout, modified.stdout);
 }
 
@@ -165,7 +166,7 @@ async function matchedInputs(deps: JsInputsDeps): AsyncResult<Matched[]> {
 			found.set(rootRelative, { path: rootRelative, id: result.data.files.get(path), hex: result.data.hex });
 		}
 	}
-	return ok([...found.values()].sort((a, b) => (a.path < b.path ? -1 : 1)));
+	return resultFactory.ok([...found.values()].sort((a, b) => (a.path < b.path ? -1 : 1)));
 }
 
 /**
@@ -190,9 +191,9 @@ export async function jsInputsHash(deps: JsInputsDeps): AsyncResult<string> {
 	});
 	const lines = hashed.filter((line): line is string => line !== undefined);
 	if (lines.length === 0) {
-		return err(`fingerprint.jsInputs (${deps.jsInputs.join(", ")}) matched no files under ${deps.root}`);
+		return resultFactory.err(`fingerprint.jsInputs (${deps.jsInputs.join(", ")}) matched no files under ${deps.root}`);
 	}
-	return ok(sha256(`${KEY_FORMAT}\n${lines.join("\n")}`));
+	return resultFactory.ok(sha256(`${KEY_FORMAT}\n${lines.join("\n")}`));
 }
 
 /** The cache / install key of a JS-aware project: 40 hex chars like an `@expo/fingerprint` hash. */

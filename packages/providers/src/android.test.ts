@@ -6,8 +6,8 @@ import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { InventoryDevice, Owner } from "@delacour/warden-store/types";
-import { wardenErr } from "@delacour/warden-types/error";
-import { err, ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { resultFactory } from "@delacour/warden-types/result";
 import {
 	BOOT_WAIT_SCRIPT,
 	bootSettingsCommand,
@@ -106,7 +106,7 @@ describe("parseAvdList / listAvds", () => {
 
 	test("listAvds runs emulator -list-avds with a 15 s timeout (16-11)", async () => {
 		const { exec, options } = fakeExec({ [`${EMULATOR} -list-avds`]: out(EMULATOR_LIST_AVDS) });
-		expect(await listAvds(deps(exec))).toEqual(ok(["Pixel_10", "Pixel_9_Pro_Store"]));
+		expect(await listAvds(deps(exec))).toEqual(resultFactory.ok(["Pixel_10", "Pixel_9_Pro_Store"]));
 		expect(options.get(`${EMULATOR} -list-avds`)?.timeoutMs).toBe(15_000);
 	});
 
@@ -143,7 +143,7 @@ describe("inventory", () => {
 		});
 		const result = await createAndroidProvider(deps(exec)).inventory();
 		expect(result).toEqual(
-			ok([
+			resultFactory.ok([
 				{
 					platform: "android",
 					id: "emulator-5554",
@@ -210,7 +210,7 @@ describe("inventory", () => {
 		const result = await createAndroidProvider(deps(exec, () => t)).inventory();
 		expect(options.get(`${ADB} -s emulator-5554 emu avd name`)?.timeoutMs).toBe(10_000);
 		expect(result).toEqual(
-			ok([
+			resultFactory.ok([
 				{
 					platform: "android",
 					id: "emulator-5554",
@@ -254,7 +254,7 @@ describe("create", () => {
 		const spawned: Spawned[] = [];
 		const spawn: SpawnDetached = async (cmd, logPath) => {
 			spawned.push({ cmd, logPath });
-			return result === "ok" ? ok({ pid: 4242 }) : err("emulator exited 1");
+			return result === "ok" ? resultFactory.ok({ pid: 4242 }) : resultFactory.err("emulator exited 1");
 		};
 		return { spawn, spawned };
 	}
@@ -270,7 +270,7 @@ describe("create", () => {
 		const provider = createAndroidProvider(deps(exec), { spawnDetached: spawn });
 		const result = await provider.create("warden-pixel-10-1", "pixel-10");
 		expect(result).toEqual(
-			ok({
+			resultFactory.ok({
 				platform: "android",
 				id: "emulator-5554",
 				name: "warden-pixel-10-1",
@@ -354,7 +354,7 @@ describe("create", () => {
 			spawnDetached: spawn,
 			snapshot: async (avd) => {
 				asked.push(avd);
-				return ok("warden-0123456789");
+				return resultFactory.ok("warden-0123456789");
 			},
 		});
 		expect((await provider.create("w", "pixel-10")).success).toBe(true);
@@ -381,12 +381,14 @@ describe("create", () => {
 		const spawned: Array<readonly string[]> = [];
 		const spawn: SpawnDetached = async (cmd) => {
 			spawned.push(cmd);
-			return cmd.includes("-snapshot") ? err("emulator exited 1: snapshot load failed") : ok({ pid: 4242 });
+			return cmd.includes("-snapshot")
+				? resultFactory.err("emulator exited 1: snapshot load failed")
+				: resultFactory.ok({ pid: 4242 });
 		};
 		const logs: string[] = [];
 		const provider = createAndroidProvider(
 			{ ...deps(exec), log: (line) => logs.push(line) },
-			{ spawnDetached: spawn, snapshot: async () => ok("warden-0123456789") }
+			{ spawnDetached: spawn, snapshot: async () => resultFactory.ok("warden-0123456789") }
 		);
 		const result = await provider.create("w", "pixel-10");
 		expect(result.success).toBe(true);
@@ -397,7 +399,7 @@ describe("create", () => {
 	});
 
 	test("no snapshot (hook says none, or fails) → today's cold-boot argv (16-3)", async () => {
-		for (const answer of [ok(undefined), err("no SDK")] as const) {
+		for (const answer of [resultFactory.ok(undefined), resultFactory.err("no SDK")] as const) {
 			const { exec } = fakeExec(baseHandlers(ADB_DEVICES_EMPTY));
 			const { spawn, spawned } = spawnRecorder();
 			const provider = createAndroidProvider(deps(exec), { spawnDetached: spawn, snapshot: async () => answer });
@@ -413,15 +415,15 @@ describe("create", () => {
 		const spawn: SpawnDetached = async (cmd) => {
 			spawned.push(cmd);
 			return cmd.includes("-no-metrics")
-				? err(
+				? resultFactory.err(
 						"`emulator -avd Pixel_10 …` exited 1: emulator: ERROR: Invalid command-line parameter: -no-metrics. | Hint: use '@foo' to launch a virtual device named 'foo'. (log: x)"
 					)
-				: ok({ pid: 4242 });
+				: resultFactory.ok({ pid: 4242 });
 		};
 		const logs: string[] = [];
 		const provider = createAndroidProvider(
 			{ ...deps(exec), log: (line) => logs.push(line) },
-			{ spawnDetached: spawn, snapshot: async () => ok("warden-0123456789") }
+			{ spawnDetached: spawn, snapshot: async () => resultFactory.ok("warden-0123456789") }
 		);
 		expect((await provider.create("w", "pixel-10")).success).toBe(true);
 		expect(spawned).toHaveLength(2);
@@ -436,7 +438,7 @@ describe("create", () => {
 		const spawned: Array<readonly string[]> = [];
 		const spawn: SpawnDetached = async (cmd) => {
 			spawned.push(cmd);
-			return err("emulator exited 1: FATAL | another emulator instance is running");
+			return resultFactory.err("emulator exited 1: FATAL | another emulator instance is running");
 		};
 		const result = await createAndroidProvider(deps(exec), { spawnDetached: spawn }).create("w", "pixel-10");
 		expect(result.success).toBe(false);
@@ -522,7 +524,7 @@ describe("boot", () => {
 	test("ok when already running, err otherwise", async () => {
 		const { exec } = fakeExec({ [`${ADB} devices -l`]: out(ADB_DEVICES_MIXED) });
 		const provider = createAndroidProvider(deps(exec));
-		expect(await provider.boot("emulator-5554")).toEqual(ok(undefined));
+		expect(await provider.boot("emulator-5554")).toEqual(resultFactory.ok(undefined));
 		const missing = await provider.boot("emulator-5570");
 		expect(missing.success).toBe(false);
 		if (!missing.success) expect(missing.error.message).toContain("created, not booted");
@@ -540,7 +542,7 @@ describe("boot right after create (16-4)", () => {
 		});
 		const slept: number[] = [];
 		const provider = createAndroidProvider(deps(exec), { sleep: async (ms) => void slept.push(ms) });
-		expect(await provider.boot("emulator-5554")).toEqual(ok(undefined));
+		expect(await provider.boot("emulator-5554")).toEqual(resultFactory.ok(undefined));
 		expect(listed).toBe(3);
 		expect(slept).toEqual([250, 250]);
 	});
@@ -576,7 +578,7 @@ describe("waitReady", () => {
 		const { exec, calls, options } = fakeExec({ [WAIT]: out("") });
 		const clock = fakeClock();
 		const provider = createAndroidProvider(deps(exec, clock.now), { sleep: clock.sleep });
-		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(resultFactory.ok(undefined));
 		expect(calls[0]).toBe(WAIT);
 		expect(options.get(WAIT)?.timeoutMs).toBe(60_000);
 	});
@@ -593,7 +595,7 @@ describe("waitReady", () => {
 		});
 		const clock = fakeClock();
 		const provider = createAndroidProvider(deps(exec, clock.now), { sleep: clock.sleep, pollIntervalMs: 1_000 });
-		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(resultFactory.ok(undefined));
 		expect(polls).toBe(3);
 		expect(calls[1]).toBe(`${ADB} -s emulator-5554 wait-for-device`);
 		expect(options.get(`${ADB} -s emulator-5554 shell getprop sys.boot_completed`)?.timeoutMs).toBe(5_000);
@@ -608,7 +610,7 @@ describe("waitReady", () => {
 		});
 		const slept: number[] = [];
 		const provider = createAndroidProvider(deps(exec), { sleep: async (ms) => void slept.push(ms) });
-		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(resultFactory.ok(undefined));
 		expect(slept).toContain(250);
 		expect(slept).not.toContain(2_000);
 	});
@@ -630,7 +632,7 @@ describe("waitReady", () => {
 		const settings = `${ADB} -s emulator-5554 shell ${bootSettingsCommand()}`;
 		const { exec, calls } = fakeExec({ [WAIT]: out(""), [settings]: out("") });
 		const provider = createAndroidProvider(deps(exec), { sleep: async () => {} });
-		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(resultFactory.ok(undefined));
 		expect(calls).toEqual([WAIT, settings]);
 	});
 
@@ -653,8 +655,8 @@ describe("waitReady", () => {
 			[BIO_PM]: out("package:/system/framework/framework-res.apk\n"),
 			...handlers,
 		});
-		const spawn: SpawnDetached = async () => ok({ pid: 4242 });
-		const snapshot = async () => ok("warden-0123456789");
+		const spawn: SpawnDetached = async () => resultFactory.ok({ pid: 4242 });
+		const snapshot = async () => resultFactory.ok("warden-0123456789");
 		const provider = createAndroidProvider(deps(fake.exec), {
 			sleep: async () => {},
 			pidAlive: () => true,
@@ -672,7 +674,7 @@ describe("waitReady", () => {
 			[BIO_UNLOCK]: out(""),
 			[BIO_AWAKE]: out(""),
 		});
-		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(ok(undefined));
+		expect(await provider.waitReady("emulator-5554", 60_000)).toEqual(resultFactory.ok(undefined));
 		const order = [BIO_STATE, BIO_PM, BIO_DUMP, BIO_UNLOCK, BIO_DUMP, BIO_AWAKE, BIO_STATE, BIO_PM];
 		expect(calls.filter((c) => order.includes(c))).toEqual(order);
 		expect(calls).not.toContain(BIO_KILL);
@@ -683,7 +685,7 @@ describe("waitReady", () => {
 		const plainSettings = `${ADB} -s emulator-5560 shell ${bootSettingsCommand()}`;
 		const plain = fakeExec({ [wait]: out(""), [plainSettings]: out("") });
 		const other = createAndroidProvider(deps(plain.exec), { sleep: async () => {} });
-		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(ok(undefined));
+		expect(await other.waitReady("emulator-5560", 60_000)).toEqual(resultFactory.ok(undefined));
 		expect(plain.calls).toEqual([wait, plainSettings]);
 	});
 
@@ -719,7 +721,7 @@ describe("waitReady", () => {
 		const settings = `${ADB} -s emulator-5554 shell ${bootSettingsCommand()}`;
 		const { exec, calls } = fakeExec({ [WAIT]: out(""), [settings]: fail("boom") });
 		const provider = createAndroidProvider(deps(exec), { sleep: async () => {} });
-		expect(await provider.waitReady("emulator-5554", 1_000)).toEqual(ok(undefined));
+		expect(await provider.waitReady("emulator-5554", 1_000)).toEqual(resultFactory.ok(undefined));
 		expect(calls).toContain(settings);
 	});
 
@@ -770,7 +772,7 @@ describe("waitReady", () => {
 				await clock.sleep(ms);
 				if (clock.now() >= 1_000) alive = false;
 			},
-			spawnDetached: async () => ok({ pid: 4242 }),
+			spawnDetached: async () => resultFactory.ok({ pid: 4242 }),
 			pidAlive: (pid) => pid === 4242 && alive,
 		});
 		expect((await provider.create("warden-pixel-10-1", "pixel-10")).success).toBe(true);
@@ -805,7 +807,7 @@ describe("shutdown", () => {
 	test("refuses to kill a foreign emulator", async () => {
 		const { exec, calls } = fakeExec({});
 		const result = await createAndroidProvider(deps(exec)).shutdown("emulator-5554");
-		expect(result).toEqual(wardenErr("device_foreign", "refusing to shut down foreign emulator emulator-5554"));
+		expect(result).toEqual(wardenErrors.err("device_foreign", "refusing to shut down foreign emulator emulator-5554"));
 		expect(calls).toHaveLength(0);
 	});
 
@@ -819,7 +821,7 @@ describe("shutdown", () => {
 		const { exec, calls, options } = fakeExec({
 			[`${ADB} -s emulator-5556 emu kill`]: out("OK: killing emulator, bye bye\n"),
 		});
-		expect(await createAndroidProvider(deps(exec)).shutdown("emulator-5556")).toEqual(ok(undefined));
+		expect(await createAndroidProvider(deps(exec)).shutdown("emulator-5556")).toEqual(resultFactory.ok(undefined));
 		expect(calls).toEqual([`${ADB} -s emulator-5556 emu kill`]);
 		expect(options.get(`${ADB} -s emulator-5556 emu kill`)?.timeoutMs).toBe(10_000);
 		expect(store.listLeases().map((l) => l.id)).toEqual([other.id]);
@@ -846,7 +848,7 @@ describe("shutdown", () => {
 			[`${ADB} -s emulator-5570 emu kill`]: fail("error: device 'emulator-5570' not found"),
 			[`${ADB} devices -l`]: out(ADB_DEVICES_MIXED),
 		});
-		expect(await createAndroidProvider(deps(exec)).shutdown("emulator-5570")).toEqual(ok(undefined));
+		expect(await createAndroidProvider(deps(exec)).shutdown("emulator-5570")).toEqual(resultFactory.ok(undefined));
 		expect(store.listLeases()).toHaveLength(0);
 		expect(store.listDevices("android")).toHaveLength(0);
 	});
@@ -913,7 +915,9 @@ describe("classifyOther", () => {
 			[`${ADB} -s R5CT1234ABC shell ${PHONE_PROBE_SCRIPT}`]: out(PHONE_PROPS),
 		});
 		const result = await classifyOther(deps(exec), "R5CT1234ABC");
-		expect(result).toEqual(ok({ emulator: false, hwSerial: "R5CT1234ABC", model: "SM-A546E", sdk: "34" }));
+		expect(result).toEqual(
+			resultFactory.ok({ emulator: false, hwSerial: "R5CT1234ABC", model: "SM-A546E", sdk: "34" })
+		);
 		expect(calls).toHaveLength(1);
 		expect(options.get(calls[0] ?? "")?.timeoutMs).toBe(5_000);
 	});
@@ -1008,7 +1012,7 @@ describe("physical phones", () => {
 		);
 		const provider = createAndroidProvider(deps(exec));
 		expect((await provider.waitReady(PHONE, 5_000)).success).toBe(true);
-		expect(await provider.verifyWarm?.(PHONE)).toEqual(ok(undefined));
+		expect(await provider.verifyWarm?.(PHONE)).toEqual(resultFactory.ok(undefined));
 		expect(calls.some((c) => c.includes("settings put"))).toBe(false);
 	});
 

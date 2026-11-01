@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export type LaunchState = "COLD" | "WARM" | "HOT";
 
@@ -19,19 +19,19 @@ const intField = (text: string, name: string): number | undefined => {
 /** Parse `am start -W` output: needs `Status: ok` and a `TotalTime` (falls back to `WaitTime`). The error text is the failure message. */
 export function parseAmStart(stdout: string): Result<AmStart, string> {
 	const status = /^Status:\s*(\S+)/m.exec(stdout)?.[1];
-	if (status !== undefined && status !== "ok") return err(`am start reported Status: ${status}`);
+	if (status !== undefined && status !== "ok") return resultFactory.err(`am start reported Status: ${status}`);
 	const error = /^Error(?: type \d+|:.*)$/m.exec(stdout);
 	if (error) {
 		const detail = /^Error:\s*(.+)$/m.exec(stdout)?.[1];
-		return err(detail ?? `am start failed: ${error[0]}`);
+		return resultFactory.err(detail ?? `am start failed: ${error[0]}`);
 	}
 	const total = intField(stdout, "TotalTime") ?? intField(stdout, "WaitTime");
-	if (total === undefined) return err("am start printed no TotalTime (was -W given?)");
+	if (total === undefined) return resultFactory.err("am start printed no TotalTime (was -W given?)");
 	const state = /^LaunchState:\s*(COLD|WARM|HOT)\s*$/m.exec(stdout)?.[1] as LaunchState | undefined;
 	const activity = /^Activity:\s*(\S+)/m.exec(stdout)?.[1];
 	const wait = intField(stdout, "WaitTime");
 	const thisTime = intField(stdout, "ThisTime");
-	return ok({
+	return resultFactory.ok({
 		totalMs: total,
 		...(state !== undefined ? { launchState: state } : {}),
 		...(activity !== undefined ? { activity } : {}),

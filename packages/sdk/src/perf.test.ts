@@ -6,8 +6,8 @@ import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
-import { wardenErr } from "@delacour/warden-types/error";
-import { ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
 import {
 	perfCrashesResultSchema,
@@ -41,7 +41,7 @@ beforeEach(() => {
 const provider: DeviceProvider = {
 	platform: "android",
 	inventory: async () =>
-		ok([
+		resultFactory.ok([
 			{
 				platform: "android",
 				id: SERIAL,
@@ -51,10 +51,10 @@ const provider: DeviceProvider = {
 				runtime: "android-35",
 			},
 		]),
-	create: async () => wardenErr("failed", "no create"),
-	boot: async () => ok(undefined),
-	waitReady: async () => ok(undefined),
-	shutdown: async () => ok(undefined),
+	create: async () => wardenErrors.err("failed", "no create"),
+	boot: async () => resultFactory.ok(undefined),
+	waitReady: async () => resultFactory.ok(undefined),
+	shutdown: async () => resultFactory.ok(undefined),
 };
 
 type Rule = [needle: string, result: Partial<ExecResult>];
@@ -144,7 +144,7 @@ async function open(rules: Rule[], extra: Partial<ClientSeams> = {}) {
 		providerFor: () => provider,
 		stopHelper: async () => undefined,
 		store,
-		openDriver: async () => ok(fakeDriver({ screens: [snapshotOf([])] })),
+		openDriver: async () => resultFactory.ok(fakeDriver({ screens: [snapshotOf([])] })),
 		...extra,
 		perf: { deps: procs.deps, kit: procs.kit, ...extra.perf },
 	};

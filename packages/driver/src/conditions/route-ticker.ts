@@ -1,5 +1,5 @@
 import type { LatLon } from "@delacour/warden-config/conditions.types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { routeSteps } from "./geo";
 
 /** simctl's own default pace, so a route moves the same on both platforms. */
@@ -108,18 +108,19 @@ export function parseTickerConfig(raw: string): Result<TickerConfig> {
 	try {
 		value = JSON.parse(raw);
 	} catch {
-		return err("route ticker config is not JSON");
+		return resultFactory.err("route ticker config is not JSON");
 	}
-	if (typeof value !== "object" || value === null) return err("route ticker config must be an object");
+	if (typeof value !== "object" || value === null) return resultFactory.err("route ticker config must be an object");
 	const c = value as Record<string, unknown>;
-	if (typeof c.adb !== "string" || typeof c.serial !== "string") return err("route ticker config needs adb and serial");
+	if (typeof c.adb !== "string" || typeof c.serial !== "string")
+		return resultFactory.err("route ticker config needs adb and serial");
 	const points = c.points;
 	const valid =
 		Array.isArray(points) &&
 		points.length > 0 &&
 		points.every((p) => typeof p?.lat === "number" && typeof p?.lon === "number");
-	if (!valid) return err("route ticker config needs a non-empty points list of { lat, lon }");
-	return ok(c as unknown as TickerConfig);
+	if (!valid) return resultFactory.err("route ticker config needs a non-empty points list of { lat, lon }");
+	return resultFactory.ok(c as unknown as TickerConfig);
 }
 
 /**

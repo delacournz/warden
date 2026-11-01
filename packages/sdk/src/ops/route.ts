@@ -1,5 +1,5 @@
 import { readRoute } from "@delacour/warden-devtools/route";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { devtoolsError, type MetroParams, withFacet } from "./devtools";
 import { fail } from "./errors";
 import type { OpOutcome, OpSession } from "./session";
@@ -17,11 +17,11 @@ export async function route(session: OpSession, params: MetroParams = {}): OpOut
 	if (brokered !== undefined) {
 		if (!brokered.success) return brokered;
 		const found = brokered.data.route ?? undefined;
-		return ok({ result: { route: found }, text: found ?? "unknown" });
+		return resultFactory.ok({ result: { route: found }, text: found ?? "unknown" });
 	}
 	return withFacet(session, params, async (facet) => {
 		const found = await readRoute(facet, { timeoutMs: session.timeoutMs });
 		if (!found.success) return fail(devtoolsError(found.error));
-		return ok({ result: { route: found.data }, text: found.data ?? "unknown" });
+		return resultFactory.ok({ result: { route: found.data }, text: found.data ?? "unknown" });
 	});
 }

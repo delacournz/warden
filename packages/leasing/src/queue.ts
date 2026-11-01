@@ -1,6 +1,6 @@
 import type { QueueEntry } from "@delacour/warden-store/types";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export const PRIORITY = { interactive: 30, high: 20, normal: 10, low: 0 } as const;
 
@@ -21,9 +21,9 @@ export const AGING_MS = 10 * 60_000;
 
 export function parsePriority(input: string): Result<number, WardenError> {
 	const name = input.trim().toLowerCase();
-	if (/^\d+$/.test(name)) return ok(Number(name));
-	if (name in PRIORITY) return ok(PRIORITY[name as PriorityName]);
-	return wardenErr(
+	if (/^\d+$/.test(name)) return resultFactory.ok(Number(name));
+	if (name in PRIORITY) return resultFactory.ok(PRIORITY[name as PriorityName]);
+	return wardenErrors.err(
 		"usage",
 		`unknown priority "${input}" (use ${Object.keys(PRIORITY).join("|")} or a non-negative integer)`
 	);

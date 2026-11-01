@@ -1,7 +1,7 @@
 import { MAX_ROTATE_DEGREES, SCALE_RANGE } from "@delacour/warden-screen/actions";
 import { path, pinch, rotate } from "@delacour/warden-sdk/ops/gestures";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type ActionOptionValues, parseSettle, positiveInt } from "./args";
 import type { UiDeps } from "./driver";
@@ -54,19 +54,19 @@ export function splitAmount(
 	if (target.length > 0 && target.every((word) => NUMBER.test(word)) && target.length !== 2) {
 		return amountUsage(`a point target needs both coordinates (x y), got "${target.join(" ")}"`, kind);
 	}
-	return ok({ target, amount });
+	return resultFactory.ok({ target, amount });
 }
 
 function parseTwoFinger(opts: PinchOptionValues): Result<{ durationMs?: number; radius?: number }, WardenError> {
-	const duration = opts.duration === undefined ? ok(undefined) : positiveInt("--duration", opts.duration);
+	const duration = opts.duration === undefined ? resultFactory.ok(undefined) : positiveInt("--duration", opts.duration);
 	if (!duration.success) return duration;
 	const durationPart = duration.data === undefined ? {} : { durationMs: duration.data };
-	if (opts.radius === undefined) return ok(durationPart);
+	if (opts.radius === undefined) return resultFactory.ok(durationPart);
 	const radius = Number(opts.radius);
 	if (!NUMBER.test(opts.radius) || !(radius > 0)) {
 		return { success: false, error: uiError("usage", `--radius must be a positive number, got "${opts.radius}"`) };
 	}
-	return ok({ ...durationPart, radius });
+	return resultFactory.ok({ ...durationPart, radius });
 }
 
 /** Shared body of `gesture pinch` and `gesture rotate`: parse, then hand the op its typed params. */
@@ -121,7 +121,8 @@ export function uiGesturePath(ctx: CommandContext, deps: UiDeps, opts: GesturePa
 	return runUi(ctx, deps, "gesture path", opts, async (device, env) => {
 		const settle = parseSettle(opts.settle);
 		if (!settle.success) return settle;
-		const duration = opts.duration === undefined ? ok(undefined) : positiveInt("--duration", opts.duration);
+		const duration =
+			opts.duration === undefined ? resultFactory.ok(undefined) : positiveInt("--duration", opts.duration);
 		if (!duration.success) return duration;
 		return reply(
 			device,

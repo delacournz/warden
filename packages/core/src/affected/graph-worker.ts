@@ -1,4 +1,4 @@
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { openImportCache } from "./cache";
 import { createImportGraph, reachable, TYPESCRIPT_UNUSABLE_EXIT } from "./graph";
 import { type GraphDoc, type GraphRequest, graphDoc, graphRequestSchema } from "./graph-snapshot";
@@ -24,7 +24,7 @@ export async function buildGraphDoc(
 	const graph = built.data;
 	const reached = reachable(request.entries, graph.imports);
 	graph.save();
-	return ok(graphDoc(reached.keys(), graph.imports));
+	return resultFactory.ok(graphDoc(reached.keys(), graph.imports));
 }
 
 /**

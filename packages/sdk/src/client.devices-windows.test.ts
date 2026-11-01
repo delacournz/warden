@@ -6,8 +6,8 @@ import { el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "@delacour
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
-import { wardenErr } from "@delacour/warden-types/error";
-import { ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
 import type { ClientSeams } from "./core";
 import type { WardenClientOptions, WardenEvent } from "./sdk.types";
@@ -32,7 +32,7 @@ afterEach(() => {
 const provider: DeviceProvider = {
 	platform: "ios",
 	inventory: async () =>
-		ok([
+		resultFactory.ok([
 			{
 				platform: "ios",
 				id: UDID,
@@ -42,10 +42,10 @@ const provider: DeviceProvider = {
 				runtime: "iOS-26-5",
 			},
 		]),
-	create: async () => wardenErr("failed", "no create in this fake"),
-	boot: async () => ok(undefined),
-	waitReady: async () => ok(undefined),
-	shutdown: async () => ok(undefined),
+	create: async () => wardenErrors.err("failed", "no create in this fake"),
+	boot: async () => resultFactory.ok(undefined),
+	waitReady: async () => resultFactory.ok(undefined),
+	shutdown: async () => resultFactory.ok(undefined),
 };
 
 type Rig = {
@@ -73,7 +73,7 @@ function rig(
 			openDriver: async () => {
 				const driver = drivers();
 				opened.push(driver);
-				return ok(driver);
+				return resultFactory.ok(driver);
 			},
 		},
 		options: {

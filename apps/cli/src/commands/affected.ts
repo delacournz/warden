@@ -4,7 +4,7 @@ import type { Reason, Selection } from "@delacour/warden-core/affected/select";
 import { parseJobList } from "@delacour/warden-core/batch/expand";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
@@ -31,16 +31,16 @@ export function affectedInput(
 	suite: string | undefined,
 	opts: AffectedOpts
 ): Result<AffectedInput> {
-	if (opts.all && opts.specs !== undefined) return err("--all and --specs are exclusive");
+	if (opts.all && opts.specs !== undefined) return resultFactory.err("--all and --specs are exclusive");
 	if ((opts.all || opts.specs !== undefined) && opts.files !== undefined)
-		return err("--all / --specs select without a diff — drop --files");
+		return resultFactory.err("--all / --specs select without a diff — drop --files");
 	let platform: Platform | undefined;
 	if (opts.platform !== undefined) {
 		const parsed = parsePlatform(opts.platform);
 		if (!parsed.success) return parsed;
 		platform = parsed.data;
 	}
-	return ok({
+	return resultFactory.ok({
 		exec: ctx.exec,
 		cwd: ctx.cwd,
 		git: ctx.git,

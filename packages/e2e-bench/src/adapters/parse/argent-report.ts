@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { StepResult, TestResult } from "../../results/schema";
 
@@ -86,10 +86,12 @@ export function parseArgentAggregate(text: string): Result<ArgentFlow[], string>
 	try {
 		json = JSON.parse(text);
 	} catch (e) {
-		return err(`argent output is not JSON: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`argent output is not JSON: ${e instanceof Error ? e.message : String(e)}`);
 	}
 	const parsed = aggregateSchema.safeParse(json);
 	if (!parsed.success)
-		return err(`argent aggregate has an unexpected shape: ${parsed.error.issues.map((i) => i.message).join("; ")}`);
-	return ok(parsed.data.flows.map(toFlow));
+		return resultFactory.err(
+			`argent aggregate has an unexpected shape: ${parsed.error.issues.map((i) => i.message).join("; ")}`
+		);
+	return resultFactory.ok(parsed.data.flows.map(toFlow));
 }

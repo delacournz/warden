@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Platform, platformSchema } from "../results/schema";
 import { appFingerprint, parseEnsure } from "./app";
@@ -58,23 +58,25 @@ export function readBenchApp(dir: string): Result<BenchApp> {
 	const manifestPath = join(dir, MANIFEST);
 	const platform = basename(dir);
 	if (!existsSync(manifestPath))
-		return err(`no bench app at ${dir} — run \`bun run bench app build --platform ${platform}\``);
+		return resultFactory.err(`no bench app at ${dir} — run \`bun run bench app build --platform ${platform}\``);
 	try {
 		const manifest = benchAppManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
 		const appPath = join(dir, manifest.artifact);
-		if (!existsSync(appPath)) return err(`bench app at ${dir}: artifact ${manifest.artifact} is missing — rebuild`);
-		return ok({ manifest, appPath });
+		if (!existsSync(appPath))
+			return resultFactory.err(`bench app at ${dir}: artifact ${manifest.artifact} is missing — rebuild`);
+		return resultFactory.ok({ manifest, appPath });
 	} catch (e) {
-		return err(`bench app manifest ${manifestPath}: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`bench app manifest ${manifestPath}: ${e instanceof Error ? e.message : String(e)}`);
 	}
 }
 
 /** The artifact on disk must still be the bytes that were pinned. */
 export function verifyBenchApp(app: BenchApp): Result<void> {
 	const print = appFingerprint(app.appPath);
-	if (!print.success) return err(`bench app fingerprint: ${print.error}`);
-	if (print.data.sha256 === app.manifest.sha256 && print.data.bytes === app.manifest.bytes) return ok(undefined);
-	return err(
+	if (!print.success) return resultFactory.err(`bench app fingerprint: ${print.error}`);
+	if (print.data.sha256 === app.manifest.sha256 && print.data.bytes === app.manifest.bytes)
+		return resultFactory.ok(undefined);
+	return resultFactory.err(
 		`bench app at ${dirname(app.appPath)} changed since it was built (sha ${app.manifest.sha256.slice(0, 12)}≠${print.data.sha256.slice(0, 12)}) — rebuild`
 	);
 }
@@ -116,10 +118,10 @@ export async function exportBenchApp(input: ExportInput, fs: BenchAppFs = realFs
 		fs.writeFileSync(join(tmp, MANIFEST), `${JSON.stringify(manifest, null, "\t")}\n`);
 		fs.rmSync(input.dir, { recursive: true, force: true });
 		fs.renameSync(tmp, input.dir);
-		return ok({ manifest, appPath: join(input.dir, artifact) });
+		return resultFactory.ok({ manifest, appPath: join(input.dir, artifact) });
 	} catch (e) {
 		fs.rmSync(tmp, { recursive: true, force: true });
-		return err(`bench app export: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`bench app export: ${e instanceof Error ? e.message : String(e)}`);
 	}
 }
 
@@ -129,7 +131,7 @@ export async function importBenchApp(
 	fs: BenchAppFs = realFs
 ): AsyncResult<BenchApp> {
 	const print = appFingerprint(input.path);
-	if (!print.success) return err(`app fingerprint: ${print.error}`);
+	if (!print.success) return resultFactory.err(`app fingerprint: ${print.error}`);
 	return exportBenchApp(
 		{
 			from: input.path,
@@ -174,7 +176,7 @@ export async function ensureBenchApp(
 	const dir = benchAppDir(input.repoRoot, input.platform);
 	if (!input.force) {
 		const existing = readBenchApp(dir);
-		if (existing.success) return ok({ ...existing.data, reused: true });
+		if (existing.success) return resultFactory.ok({ ...existing.data, reused: true });
 	}
 	const args = [
 		input.cliPath,
@@ -192,8 +194,9 @@ export async function ensureBenchApp(
 	const ran = await runOk(exec, process.execPath, args, { onLine: (_s, line) => input.log(line) });
 	if (!ran.success) return ran;
 	const ensured = parseEnsure(ran.data.stdout);
-	if (ensured === undefined) return err(`warden app ensure: unparseable output: ${ran.data.stdout.slice(0, 200)}`);
-	if (ensured.appPath === "") return err("warden app ensure returned no artifact path: nothing to pin");
+	if (ensured === undefined)
+		return resultFactory.err(`warden app ensure: unparseable output: ${ran.data.stdout.slice(0, 200)}`);
+	if (ensured.appPath === "") return resultFactory.err("warden app ensure returned no artifact path: nothing to pin");
 	const commit = await headCommit(exec, input.repoRoot);
 	const exported = await exportBenchApp({
 		from: ensured.appPath,
@@ -205,7 +208,7 @@ export async function ensureBenchApp(
 		now: input.now,
 		...(commit !== undefined ? { commit } : {}),
 	});
-	return exported.success ? ok({ ...exported.data, reused: false }) : exported;
+	return exported.success ? resultFactory.ok({ ...exported.data, reused: false }) : exported;
 }
 
 export type BenchAppStatus =
@@ -231,9 +234,9 @@ export async function benchAppStatus(
 	input: { platform: Platform; repoRoot: string; cliPath: string }
 ): AsyncResult<BenchAppStatus> {
 	const app = readBenchApp(benchAppDir(input.repoRoot, input.platform));
-	if (!app.success) return ok({ state: "missing" });
+	if (!app.success) return resultFactory.ok({ state: "missing" });
 	const base = { manifest: app.data.manifest, appPath: app.data.appPath };
-	if (app.data.manifest.hash.startsWith("import:")) return ok({ state: "unknown", ...base });
+	if (app.data.manifest.hash.startsWith("import:")) return resultFactory.ok({ state: "unknown", ...base });
 	const ran = await runOk(exec, process.execPath, [
 		input.cliPath,
 		"app",
@@ -246,8 +249,12 @@ export async function benchAppStatus(
 		"--json",
 	]);
 	const current = ran.success ? currentFingerprint(ran.data.stdout, input.platform) : undefined;
-	if (current === undefined) return ok({ state: "unknown", ...base });
-	return ok({ state: current === app.data.manifest.hash ? "fresh" : "stale", ...base, currentHash: current });
+	if (current === undefined) return resultFactory.ok({ state: "unknown", ...base });
+	return resultFactory.ok({
+		state: current === app.data.manifest.hash ? "fresh" : "stale",
+		...base,
+		currentHash: current,
+	});
 }
 
 export function cleanBenchApp(dir: string): void {

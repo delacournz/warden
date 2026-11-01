@@ -1,6 +1,6 @@
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** Where `ensure` found the app. */
 export type ResolveSource = "installed" | "cache" | "eas" | "build";
@@ -91,12 +91,12 @@ type Found = { path: string; source: Exclude<ResolveSource, "installed"> };
 /** Steps 4–5 under the build lock: re-check the cache (another process may have filled it), EAS, local. */
 async function fetchOrBuild(steps: ResolveSteps): AsyncResult<Found> {
 	const again = steps.cached();
-	if (again) return ok({ path: again, source: "cache" });
+	if (again) return resultFactory.ok({ path: again, source: "cache" });
 	const misses: string[] = [];
 	if (steps.eas) {
 		const eas = await steps.eas();
 		if (!eas.success) return eas;
-		if (eas.data.kind === "hit") return ok({ path: eas.data.path, source: "eas" });
+		if (eas.data.kind === "hit") return resultFactory.ok({ path: eas.data.path, source: "eas" });
 		steps.log(`EAS: ${eas.data.reason}`);
 		misses.push(`EAS: ${eas.data.reason}`);
 	} else {
@@ -105,20 +105,20 @@ async function fetchOrBuild(steps: ResolveSteps): AsyncResult<Found> {
 	if (steps.build) {
 		const built = await steps.build();
 		if (!built.success) return built;
-		return ok({ path: built.data.path, source: built.data.kind === "built" ? "build" : "cache" });
+		return resultFactory.ok({ path: built.data.path, source: built.data.kind === "built" ? "build" : "cache" });
 	}
 	misses.push("local build skipped (--no-build)");
-	return err(`no build for fingerprint ${steps.hash}: ${misses.join("; ")}`);
+	return resultFactory.err(`no build for fingerprint ${steps.hash}: ${misses.join("; ")}`);
 }
 
 async function locate(steps: ResolveSteps): AsyncResult<Found> {
 	const cached = steps.cached();
-	if (cached) return ok({ path: cached, source: "cache" });
+	if (cached) return resultFactory.ok({ path: cached, source: "cache" });
 	const legacy = await steps.legacy();
 	if (!legacy.success) return legacy;
 	if (legacy.data) {
 		steps.log(`imported legacy build ${legacy.data}`);
-		return ok({ path: legacy.data, source: "cache" });
+		return resultFactory.ok({ path: legacy.data, source: "cache" });
 	}
 	return fetchOrBuildOnce(steps);
 }
@@ -145,21 +145,21 @@ function fetchOrBuildOnce(steps: ResolveSteps): AsyncResult<Found> {
 }
 
 async function alreadyInstalled(steps: ResolveSteps, device: DeviceSteps): Promise<Result<boolean>> {
-	if (device.installedHash() !== steps.hash) return ok(false);
+	if (device.installedHash() !== steps.hash) return resultFactory.ok(false);
 	const confirmed = await device.confirm();
 	if (!confirmed.success) return confirmed;
 	if (!confirmed.data.present) {
 		steps.log("install record is stale (app missing on device) — reinstalling");
-		return ok(false);
+		return resultFactory.ok(false);
 	}
 	const cached = device.matches ? steps.cached() : undefined;
 	if (device.matches && cached) {
 		const same = await device.matches(cached, confirmed.data);
 		if (!same.success) return same;
 		if (!same.data) steps.log("app on device differs from the cached build — reinstalling");
-		return ok(same.data);
+		return resultFactory.ok(same.data);
 	}
-	return ok(true);
+	return resultFactory.ok(true);
 }
 
 /** `reinstall`: uninstall first; `clean`: install over, then reset (falling back to uninstall + install); else install over. */
@@ -186,9 +186,9 @@ async function resetOrReinstall(steps: ResolveSteps, device: DeviceSteps, path: 
 /** Already at `hash`: keep the install; `clean` resets its data, falling back to uninstall + install. */
 async function keepInstalled(steps: ResolveSteps, device: DeviceSteps): AsyncResult<EnsureResult> {
 	const kept: EnsureResult = { appPath: steps.cached() ?? "", hash: steps.hash, source: "installed", installed: true };
-	if (steps.installMode !== "clean") return ok(kept);
+	if (steps.installMode !== "clean") return resultFactory.ok(kept);
 	const reset = await device.reset();
-	if (reset.success) return ok(kept);
+	if (reset.success) return resultFactory.ok(kept);
 	steps.log(`resetting app data failed (${reset.error}) — reinstalling`);
 	return reinstallFound(steps, device);
 }
@@ -199,7 +199,7 @@ async function reinstallFound(steps: ResolveSteps, device: DeviceSteps): AsyncRe
 	if (!found.success) return found;
 	const done = await reinstall(device, found.data.path);
 	if (!done.success) return done;
-	return ok({ appPath: found.data.path, hash: steps.hash, source: found.data.source, installed: true });
+	return resultFactory.ok({ appPath: found.data.path, hash: steps.hash, source: found.data.source, installed: true });
 }
 
 /**
@@ -229,5 +229,10 @@ async function resolveInner(steps: ResolveSteps): AsyncResult<EnsureResult> {
 		const done = await installOnDevice(steps, device, found.data.path);
 		if (!done.success) return done;
 	}
-	return ok({ appPath: found.data.path, hash, source: found.data.source, installed: device !== undefined });
+	return resultFactory.ok({
+		appPath: found.data.path,
+		hash,
+		source: found.data.source,
+		installed: device !== undefined,
+	});
 }

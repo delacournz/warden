@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { findSuite } from "@delacour/warden-core/affected/affected";
 import { makeSuiteRepo } from "@delacour/warden-core/affected/fixture.testing";
 import { bunExec } from "@delacour/warden-runtime/exec";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { ProcHandle, SpawnOptions } from "../commands/batch";
 import { type TestContext, testContext } from "../testing";
 import { runVerify, type VerifyDeps } from "./authoring-verify";
@@ -42,7 +42,7 @@ async function setup(code: number, results: string | undefined) {
 		execPath: () => "/bin/bun",
 		resolveModule: () => "/repo/node_modules/@delacour/warden-e2e/preload.ts",
 		e2eVersion: () => undefined,
-		bundledE2e: async () => ok("/bundled/preload.mjs"),
+		bundledE2e: async () => resultFactory.ok("/bundled/preload.mjs"),
 		helperDir: () => "/helper",
 		mkdir: async () => undefined,
 		readFile: async () => {

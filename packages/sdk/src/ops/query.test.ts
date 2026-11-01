@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { get, is, wait } from "./query";
 import { createMemoryRefStore } from "./ref-store";
 import type { OpSession } from "./session";
@@ -37,7 +37,7 @@ function session(): OpSession & { clock: { t: number } } {
 				clock.t += ms;
 			},
 		},
-		driver: async () => ok(driver),
+		driver: async () => resultFactory.ok(driver),
 		refs: createMemoryRefStore(),
 		state: createMemoryStateStore(),
 		timeoutMs: 300,

@@ -1,5 +1,5 @@
 import type { Suite } from "@delacour/warden-core/affected/affected";
-import { err, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordVerify } from "../../contracts/record.schema";
 import type { OpSession } from "../session";
 import { colorOf, depsOf } from "./common";
@@ -49,10 +49,10 @@ const NO_RUNNER = "no spec runner is configured (pass `authoring.verify` to the 
 /** Run the spec through the injected runner; a throw is a run that could not start. */
 export async function runSpec(session: OpSession, input: VerifyInput): Promise<Result<VerifyReport, string>> {
 	const verify = depsOf(session).verify;
-	if (!verify) return err(NO_RUNNER);
+	if (!verify) return resultFactory.err(NO_RUNNER);
 	try {
 		return await verify(input);
 	} catch (error) {
-		return err(error instanceof Error ? error.message : String(error));
+		return resultFactory.err(error instanceof Error ? error.message : String(error));
 	}
 }

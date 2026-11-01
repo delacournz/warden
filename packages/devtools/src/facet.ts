@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createConsoleCapture } from "./console";
 import {
 	type ConsoleLine,
@@ -75,7 +75,7 @@ export async function openDevtoolsFacet(o: OpenDevtoolsFacetOptions): Promise<De
 	const network = attached.data;
 	const logbox = o.muteLogBox ? muteLogBox(session, { log: o.log }) : undefined;
 
-	return ok({
+	return resultFactory.ok({
 		evaluate: (expression, options) => session.evaluate(expression, options),
 		reloadJs: () => session.reloadJs(),
 		console: {
@@ -97,7 +97,7 @@ export async function openDevtoolsFacet(o: OpenDevtoolsFacetOptions): Promise<De
 			} catch (error) {
 				return devtoolsErr("io_failed", `could not write devtools artifacts to ${dir}: ${String(error)}`);
 			}
-			return ok(paths);
+			return resultFactory.ok(paths);
 		},
 		close() {
 			logbox?.stop();

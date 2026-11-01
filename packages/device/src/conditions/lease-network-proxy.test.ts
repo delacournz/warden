@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type LazyLeaseProxyOptions, lazyLeaseNetworkProxy } from "./lease-network-proxy";
 
 describe("lazyLeaseNetworkProxy", () => {
@@ -40,7 +40,7 @@ describe("lazyLeaseNetworkProxy", () => {
 			now: () => 1,
 			openStore: () => {
 				opened++;
-				return ok(store);
+				return resultFactory.ok(store);
 			},
 			...extra,
 		});
@@ -79,7 +79,7 @@ describe("lazyLeaseNetworkProxy", () => {
 	});
 
 	test("a store that cannot open is the ensure error", async () => {
-		const port = proxy(lease.id, { openStore: () => err("locked") });
+		const port = proxy(lease.id, { openStore: () => resultFactory.err("locked") });
 		expect(await port.ensure({ kind: "offline" }, proxyConditionsFor({ kind: "offline" }, []))).toEqual({
 			success: false,
 			error: "locked",

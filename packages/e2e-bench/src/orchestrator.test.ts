@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type BenchAdapter, type FrameworkId, failed, type RunContext, unsupported } from "./adapters/adapter.types";
 import { benchAppDir, exportBenchApp } from "./harness/bench-app";
 import { type Exec, type FakeRule, fakeExec } from "./harness/exec";
@@ -101,16 +101,16 @@ function adapter(id: FrameworkId, calls: Calls, overrides: Partial<BenchAdapter>
 		},
 		async prepare(ctx) {
 			phase("prepare", ctx);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 		async run(ctx) {
 			phase("run", ctx);
 			await Bun.sleep(2);
-			return ok(rep(1));
+			return resultFactory.ok(rep(1));
 		},
 		async teardown(ctx) {
 			phase("teardown", ctx);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 		...overrides,
 	};
@@ -292,7 +292,7 @@ describe("runBench", () => {
 		const flaky = adapter("warden", calls, {
 			async run() {
 				n++;
-				return n === 1 ? ok(rep(1)) : { success: false, error: failed("boom") };
+				return n === 1 ? resultFactory.ok(rep(1)) : { success: false, error: failed("boom") };
 			},
 		});
 		const nope = adapter("argent", calls, {
@@ -330,7 +330,7 @@ describe("runBench", () => {
 		const calls: Calls = [];
 		const bad = adapter("argent", calls, {
 			async prepare() {
-				return err("no java");
+				return resultFactory.err("no java");
 			},
 		});
 		const t = setup([bad]);
@@ -392,7 +392,7 @@ describe("runBench", () => {
 			adapter("warden", calls, {
 				async run() {
 					for (const key of KEYS) settings.set(key, "0");
-					return ok(rep(1));
+					return resultFactory.ok(rep(1));
 				},
 			});
 
@@ -402,7 +402,7 @@ describe("runBench", () => {
 			const observer = adapter("argent", [], {
 				async run() {
 					seen.push(settings.get("window_animation_scale"));
-					return ok(rep(1));
+					return resultFactory.ok(rep(1));
 				},
 			});
 			const t = android(settings, [zeroing([], settings), observer]);
@@ -439,7 +439,7 @@ describe("runBench", () => {
 			async run(ctx) {
 				calls.push(`warden.run:${ctx.cold ? "cold" : "warm"}`);
 				beat();
-				return ok(rep(1));
+				return resultFactory.ok(rep(1));
 			},
 		});
 		const t = setup([long]);
@@ -497,7 +497,7 @@ describe("runBench", () => {
 			async run(ctx) {
 				calls.push("warden.run");
 				if (ctx.cold) controller.abort();
-				return ok(rep(1));
+				return resultFactory.ok(rep(1));
 			},
 		});
 		const t = setup([first, adapter("argent", calls)], {}, controller.signal);
@@ -576,11 +576,11 @@ describe("per-rep resources (19-6)", () => {
 		const busy = adapter("warden", calls, {
 			async prepare() {
 				sampler.advance(1000);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 			async run() {
 				sampler.advance(1000);
-				return ok(rep(1));
+				return resultFactory.ok(rep(1));
 			},
 		});
 		const t = setup([busy]);
@@ -616,12 +616,12 @@ describe("per-rep resources (19-6)", () => {
 		const runner = adapter("warden", calls, {
 			async prepare() {
 				sampler.advance(1000);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 			async run(ctx) {
 				sampler.advance(1000);
 				await ctx.exec.run("fake-runner", ["test"]);
-				return ok(rep(1));
+				return resultFactory.ok(rep(1));
 			},
 		});
 		const t = setup([runner]);

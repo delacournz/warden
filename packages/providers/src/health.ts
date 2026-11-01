@@ -1,6 +1,6 @@
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 export const PROBE_TIMEOUT_MS = 5_000;
 /** A probe that timed out is asked once more, with this much longer: a busy host is not a hung sim. */
@@ -83,15 +83,18 @@ export async function probeIosHealth(deps: HealthDeps, udid: string): ProbeResul
 		withTimeout(deps, spawn(udid, "launchctl", "list")),
 	]);
 	if (print === undefined)
-		return wardenErr("probe_timeout", `${udid}: launchctl print system ${PROBE_NO_ANSWER} ${seconds}s`, {
+		return wardenErrors.err("probe_timeout", `${udid}: launchctl print system ${PROBE_NO_ANSWER} ${seconds}s`, {
 			retryable: true,
 		});
-	if (print.exitCode !== 0) return wardenErr("failed", `${udid}: launchctl print system exited ${print.exitCode}`);
+	if (print.exitCode !== 0)
+		return wardenErrors.err("failed", `${udid}: launchctl print system exited ${print.exitCode}`);
 	if (list === undefined)
-		return wardenErr("probe_timeout", `${udid}: launchctl list ${PROBE_NO_ANSWER} ${seconds}s`, { retryable: true });
+		return wardenErrors.err("probe_timeout", `${udid}: launchctl list ${PROBE_NO_ANSWER} ${seconds}s`, {
+			retryable: true,
+		});
 	if (list.exitCode !== 0 || !springboardRunning(list.stdout))
-		return wardenErr("failed", `${udid}: SpringBoard is not running`);
-	return ok(undefined);
+		return wardenErrors.err("failed", `${udid}: SpringBoard is not running`);
+	return resultFactory.ok(undefined);
 }
 
 /**
@@ -104,8 +107,10 @@ export async function probeIosWarm(deps: HealthDeps, udid: string): ProbeResult 
 	const seconds = ((deps.timeoutMs ?? PROBE_TIMEOUT_MS) * PROBE_RETRY_FACTOR) / 1000;
 	const list = await withTimeout(deps, spawn(udid, "launchctl", "list"));
 	if (list === undefined)
-		return wardenErr("probe_timeout", `${udid}: launchctl list ${PROBE_NO_ANSWER} ${seconds}s`, { retryable: true });
+		return wardenErrors.err("probe_timeout", `${udid}: launchctl list ${PROBE_NO_ANSWER} ${seconds}s`, {
+			retryable: true,
+		});
 	if (list.exitCode !== 0 || !springboardRunning(list.stdout))
-		return wardenErr("failed", `${udid}: SpringBoard is not running`);
-	return ok(undefined);
+		return wardenErrors.err("failed", `${udid}: SpringBoard is not running`);
+	return resultFactory.ok(undefined);
 }

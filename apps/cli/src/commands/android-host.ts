@@ -1,5 +1,5 @@
 import type { Driver } from "@delacour/warden-driver/driver.types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { reportError } from "../output";
@@ -20,16 +20,16 @@ const EXIT_ENGINE = 3;
 async function defaultOpenDriver(ctx: CommandContext, serial: string): Promise<Result<Driver, string>> {
 	const { openAndroidInProcess } = await import("../agent-ui/ui-driver");
 	const opened = await openAndroidInProcess(ctx, serial, (line) => ctx.err(line));
-	return opened.success ? ok(opened.data) : { success: false, error: opened.error.message };
+	return opened.success ? resultFactory.ok(opened.data) : { success: false, error: opened.error.message };
 }
 
 /** `--idle-timeout` in seconds (fractions allowed; 0 = never). */
 function idleMs(raw: string | undefined): Result<number, string> {
-	if (raw === undefined) return ok(DEFAULT_IDLE_SECONDS * 1000);
+	if (raw === undefined) return resultFactory.ok(DEFAULT_IDLE_SECONDS * 1000);
 	const seconds = Number(raw);
 	if (!Number.isFinite(seconds) || seconds < 0)
 		return { success: false, error: `--idle-timeout: not a number of seconds: ${raw}` };
-	return ok(Math.round(seconds * 1000));
+	return resultFactory.ok(Math.round(seconds * 1000));
 }
 
 async function host(ctx: CommandContext, deps: AndroidHostDeps, opts: HostOptionValues): Promise<number> {

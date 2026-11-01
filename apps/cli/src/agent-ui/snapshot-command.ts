@@ -1,5 +1,5 @@
 import { find, type SnapshotParams, snapshot } from "@delacour/warden-sdk/ops/snapshot";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { parseSettle, positiveInt } from "./args";
 import type { UiDeps } from "./driver";
@@ -30,7 +30,7 @@ function parseParams(opts: SnapshotOptionValues, recording: boolean): Result<Sna
 	const settle = parseSettle(opts.settle);
 	if (!settle.success) return settle;
 	if (settle.data !== undefined) params.settleMs = settle.data;
-	return ok(params);
+	return resultFactory.ok(params);
 }
 
 /** `warden ui snapshot [-i] [--all] [--settle [ms]] [--depth n]`: the screen as `@eN` lines; bumps the generation. */

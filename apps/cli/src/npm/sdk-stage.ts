@@ -1,6 +1,6 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { emitDeclarations, entryDeclaration } from "./declarations";
 import { LICENSE_FILE, type PackageMeta, SDK_ENTRIES, SDK_TYPES_DIR, sdkManifest } from "./manifests";
 import { bundleSdk, SDK_EXTERNALS } from "./sdk-bundle";
@@ -29,11 +29,12 @@ export function sdkDependencies(
 		}
 		const range = declared[name];
 		if (typeof range !== "string")
-			return err(`packages/sdk/package.json has no dependency ${name} (the bundle imports it)`);
+			return resultFactory.err(`packages/sdk/package.json has no dependency ${name} (the bundle imports it)`);
 		dependencies[name] = range;
 	}
-	if (aiRange === undefined) return err("packages/sdk/package.json has no peerDependencies.ai (./ai-sdk imports it)");
-	return ok({ dependencies, aiRange });
+	if (aiRange === undefined)
+		return resultFactory.err("packages/sdk/package.json has no peerDependencies.ai (./ai-sdk imports it)");
+	return resultFactory.ok({ dependencies, aiRange });
 }
 
 /** `export * from "../types/sdk/src/ai-sdk/tools"` for the entry declaration at `types`, relative to the package root. */
@@ -83,5 +84,5 @@ export async function stageSdk(input: { repoRoot: string; outDir: string; meta: 
 		`${JSON.stringify(sdkManifest(meta, declared.data.dependencies, declared.data.aiRange), null, 2)}\n`
 	);
 	copyFileSync(join(repoRoot, LICENSE_FILE), join(outDir, LICENSE_FILE));
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }

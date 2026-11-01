@@ -6,7 +6,7 @@ import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { writeFileAtomic } from "./device-state";
 import type { PerfEnv, PerfUiEnv } from "./env";
@@ -80,7 +80,7 @@ export async function captureSessionFrames(
 	const dir = sessionDir(ctx, session.id);
 	mkdirSync(dir, { recursive: true });
 	writeFileAtomic(join(dir, FRAMES_FILE), `${JSON.stringify(result, null, 2)}\n`);
-	return ok(result);
+	return resultFactory.ok(result);
 }
 
 /** Clear the OS frame counters so the next read covers a fresh window (a mutation: the caller holds the lease). */
@@ -124,7 +124,7 @@ function iosUnsupported(ctx: PerfUiEnv, target: PerfTarget, app: string): Frames
 		reason: "the iOS simulator exposes no frame timing API",
 		hint: IOS_UNSUPPORTED_HINT,
 	};
-	return ok({
+	return resultFactory.ok({
 		device: { udid: target.udid, platform: target.platform, name: target.name },
 		result,
 		text: `${ctx.ui.color.yellow("unsupported")} frames on the iOS simulator\n${ctx.ui.color.dim(IOS_UNSUPPORTED_HINT)}`,
@@ -162,7 +162,7 @@ async function androidFrames(
 		const cleared = await ctx.exec(adb(ctx, target.udid, "dumpsys", "gfxinfo", app, "reset"), { timeoutMs: 10_000 });
 		if (cleared.exitCode !== 0) warnings.push(`gfxinfo reset failed: ${cleared.stderr.trim() || cleared.exitCode}`);
 	}
-	return ok({
+	return resultFactory.ok({
 		device: { udid: target.udid, platform: target.platform, name: target.name },
 		result,
 		text: render(ctx, result) + (finding ? `\n  ${ctx.ui.color.yellow(finding.severity)} ${finding.evidence}` : ""),

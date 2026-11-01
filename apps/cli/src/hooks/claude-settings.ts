@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { isJsonObject, isRecord, type Json, type JsonObject } from "./json";
 
 export type HookName = "pretool" | "session-end";
@@ -78,15 +78,15 @@ export function mergeWardenHooks(
 	file: string
 ): Result<MergedSettings> {
 	const base = existing === undefined ? {} : existing;
-	if (!isJsonObject(base)) return err(`${file} is not a JSON object`);
+	if (!isJsonObject(base)) return resultFactory.err(`${file} is not a JSON object`);
 	const settings: JsonObject = structuredClone(base);
 	const rawHooks = settings.hooks ?? {};
-	if (!isJsonObject(rawHooks)) return err(`${file} \`hooks\` is not an object`);
+	if (!isJsonObject(rawHooks)) return resultFactory.err(`${file} \`hooks\` is not an object`);
 	const hooks: JsonObject = rawHooks;
 	let changed = removeRetired(hooks);
 	for (const spec of specs) {
 		const groups = hooks[spec.event] ?? [];
-		if (!Array.isArray(groups)) return err(`${file} \`hooks.${spec.event}\` is not an array`);
+		if (!Array.isArray(groups)) return resultFactory.err(`${file} \`hooks.${spec.event}\` is not an array`);
 		if (groups.some((g) => groupHasHook(g, spec.name))) continue;
 		const hook: JsonObject = { type: "command", command: `${binary} hook ${spec.name}`, timeout: spec.timeout };
 		groups.push(spec.matcher !== undefined ? { matcher: spec.matcher, hooks: [hook] } : { hooks: [hook] });
@@ -94,7 +94,7 @@ export function mergeWardenHooks(
 		changed = true;
 	}
 	settings.hooks = hooks;
-	return ok({ settings, changed });
+	return resultFactory.ok({ settings, changed });
 }
 
 /** Add warden's hooks to `~/.claude/settings.json` (see `mergeWardenHooks`). */

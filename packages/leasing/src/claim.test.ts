@@ -8,15 +8,15 @@ import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixtur
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import { type DeviceRequest, type InventoryDevice, type Owner, resourceKey } from "@delacour/warden-store/types";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type ClaimInput, claimAborted, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
 import type { MemoryPressure } from "./host";
 import { PRIORITY } from "./queue";
 
 /** A fake probe failure: the launchctl timeout fixture reads as `probe_timeout`, anything else as a wrong answer. */
 const probeFail = (message: string) =>
-	wardenErr(message.endsWith("did not answer within 15s") ? "probe_timeout" : "failed", message);
+	wardenErrors.err(message.endsWith("did not answer within 15s") ? "probe_timeout" : "failed", message);
 
 let dir: string;
 let store: Store;
@@ -55,10 +55,10 @@ function fakeProvider(devices: InventoryDevice[], failures: { boot?: string; cre
 		platform: "ios",
 		devices,
 		calls,
-		inventory: async () => ok(p.devices.map((d) => ({ ...d }))),
+		inventory: async () => resultFactory.ok(p.devices.map((d) => ({ ...d }))),
 		async create(name, profile, runtime): AsyncResult<InventoryDevice, WardenError> {
 			calls.push(`create ${name} ${profile} ${runtime ?? "-"}`);
-			if (failures.create) return wardenErr("failed", failures.create);
+			if (failures.create) return wardenErrors.err("failed", failures.create);
 			created++;
 			const device: InventoryDevice = {
 				platform: "ios",
@@ -71,22 +71,22 @@ function fakeProvider(devices: InventoryDevice[], failures: { boot?: string; cre
 			};
 			p.devices.push(device);
 			store.recordDevice({ platform: "ios", id: device.id, name, profile }, NOW);
-			return ok(device);
+			return resultFactory.ok(device);
 		},
 		async boot(id) {
 			calls.push(`boot ${id}`);
-			if (failures.boot === id) return wardenErr("failed", `boot ${id} failed`);
+			if (failures.boot === id) return wardenErrors.err("failed", `boot ${id} failed`);
 			const d = p.devices.find((x) => x.id === id);
 			if (d) d.state = "booted";
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 		async waitReady(id) {
 			calls.push(`ready ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 		async shutdown(id) {
 			calls.push(`shutdown ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 	};
 	return p;
@@ -175,7 +175,7 @@ describe("claimDevices", () => {
 
 	test("a warm booted device is claimed without a progress line", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
-		provider.verifyWarm = async () => ok(undefined);
+		provider.verifyWarm = async () => resultFactory.ok(undefined);
 		const logs: string[] = [];
 		await claimDevices(input(provider, { log: (l) => logs.push(l) }));
 		expect(logs).toEqual([]);
@@ -353,9 +353,9 @@ describe("claimDevices", () => {
 
 	test("inventory failure → err", async () => {
 		const provider = fakeProvider([]);
-		provider.inventory = async () => wardenErr("failed", "simctl missing");
+		provider.inventory = async () => wardenErrors.err("failed", "simctl missing");
 		const result = await claimDevices(input(provider));
-		expect(result).toEqual(wardenErr("failed", "simctl missing"));
+		expect(result).toEqual(wardenErrors.err("failed", "simctl missing"));
 	});
 });
 
@@ -363,7 +363,7 @@ describe("claim health probe", () => {
 	function withProbe(provider: FakeProvider, bad: Set<string>): FakeProvider {
 		provider.probe = async (id) => {
 			provider.calls.push(`probe ${id}`);
-			return bad.has(id) ? probeFail(`${id}: hung`) : ok(undefined);
+			return bad.has(id) ? probeFail(`${id}: hung`) : resultFactory.ok(undefined);
 		};
 		return provider;
 	}
@@ -424,8 +424,8 @@ describe("claim readiness timeout (16-2)", () => {
 		provider.waitReady = async (id, timeoutMs) => {
 			provider.calls.push(`ready ${id}`);
 			return bad.has(id)
-				? wardenErr("failed", `${id} not ready within ${timeoutMs / 1000}s: bootstatus timed out`)
-				: ok(undefined);
+				? wardenErrors.err("failed", `${id} not ready within ${timeoutMs / 1000}s: bootstatus timed out`)
+				: resultFactory.ok(undefined);
 		};
 		return provider;
 	}
@@ -470,11 +470,11 @@ describe("claim warm path", () => {
 	function withWarm(provider: FakeProvider, ok_: boolean): FakeProvider {
 		provider.probe = async (id) => {
 			provider.calls.push(`probe ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		};
 		provider.verifyWarm = async (id) => {
 			provider.calls.push(`warm ${id}`);
-			return ok_ ? ok(undefined) : probeFail(`${id}: SpringBoard is not running`);
+			return ok_ ? resultFactory.ok(undefined) : probeFail(`${id}: SpringBoard is not running`);
 		};
 		return provider;
 	}
@@ -588,11 +588,11 @@ describe("claim bootReady path (16-15)", () => {
 		};
 		provider.probe = async (id) => {
 			provider.calls.push(`probe ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		};
 		provider.probeBooted = async (id) => {
 			provider.calls.push(`probeBooted ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		};
 		return provider;
 	}
@@ -618,7 +618,7 @@ describe("claim bootReady path (16-15)", () => {
 			error: { code: "failed", message: `${id}: Invalid device` },
 		}));
 		const result = await claimDevices(input(provider));
-		expect(result).toEqual(wardenErr("failed", "1: Invalid device"));
+		expect(result).toEqual(wardenErrors.err("failed", "1: Invalid device"));
 		expect(store.listLeases()).toEqual([]);
 		expect(store.listDevices()).toEqual([]);
 	});
@@ -642,7 +642,7 @@ describe("claim probe under host load (16-10)", () => {
 		provider.probe = async (id) => {
 			provider.calls.push(`probe ${id}`);
 			const next = answers[id]?.shift();
-			return next === undefined || next === "ok" ? ok(undefined) : probeFail(next);
+			return next === undefined || next === "ok" ? resultFactory.ok(undefined) : probeFail(next);
 		};
 		return provider;
 	}
@@ -738,7 +738,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		provider.probeBooted = async (id) => {
 			provider.calls.push(`probe ${id}`);
 			const next = answers.shift();
-			return next === undefined || next === "ok" ? ok(undefined) : probeFail(next);
+			return next === undefined || next === "ok" ? resultFactory.ok(undefined) : probeFail(next);
 		};
 		return provider;
 	}
@@ -767,7 +767,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		provider.shutdown = async (id) => {
 			provider.calls.push(`shutdown ${id}`);
 			leasedAtShutdown.push(store.listLeases().map((l) => resourceKey(l.resource)));
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		};
 		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
 		expect(leasedAtShutdown).toEqual([["device:ios:1"]]);
@@ -831,7 +831,7 @@ describe("claim under host load with --wait (ios-claim-path-S2)", () => {
 		provider.probe = async (id) => {
 			provider.calls.push(`probe ${id}`);
 			const next = answers.shift();
-			return next === undefined || next === "ok" ? ok(undefined) : probeFail(next);
+			return next === undefined || next === "ok" ? resultFactory.ok(undefined) : probeFail(next);
 		};
 		return provider;
 	}
@@ -925,13 +925,13 @@ describe("claim capacity queue", () => {
 			capacity: {
 				budget: { memMb: 1_000_000, cpu, maxUnits: Number.POSITIVE_INFINITY },
 				config: {},
-				hostInventory: async () => ok(provider.devices.map((d) => ({ ...d }))),
-				...(pressure !== undefined ? { pressure: async () => ok(pressure) } : {}),
+				hostInventory: async () => resultFactory.ok(provider.devices.map((d) => ({ ...d }))),
+				...(pressure !== undefined ? { pressure: async () => resultFactory.ok(pressure) } : {}),
 				shutdownIdle: async (device) => {
 					shutdownIdle.push(device.id);
 					const d = provider.devices.find((x) => x.id === device.id);
 					if (d) d.state = "shutdown";
-					return ok(undefined);
+					return resultFactory.ok(undefined);
 				},
 			},
 			...rest,
@@ -1088,7 +1088,7 @@ describe("claim capacity queue", () => {
 
 	test("a health-probe retry keeps the claim's original queue age", async () => {
 		const provider = fakeProvider([sim("1"), sim("2")]);
-		provider.probe = async (id) => (id === "1" ? probeFail("1: hung") : ok(undefined));
+		provider.probe = async (id) => (id === "1" ? probeFail("1: hung") : resultFactory.ok(undefined));
 		queueRow("rival", PRIORITY.high, NOW);
 		const stamps: number[] = [];
 		const enqueue = store.enqueue.bind(store);
@@ -1152,7 +1152,7 @@ describe("claimDevices slim hooks (SLIM-2)", () => {
 		p.afterReady = async (id) => void p.calls.push(`afterReady ${id}`);
 		p.probe = async (id) => {
 			p.calls.push(`probe ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		};
 		if (opts.bootReady) {
 			p.bootReady = async (id): Promise<BootReady> => {
@@ -1163,7 +1163,7 @@ describe("claimDevices slim hooks (SLIM-2)", () => {
 			};
 			p.probeBooted = async (id) => {
 				p.calls.push(`probe ${id}`);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			};
 		}
 		return p;

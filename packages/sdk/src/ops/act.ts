@@ -2,7 +2,7 @@ import type { Driver } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { formatSelector } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { SnapshotDiff } from "./diff";
 import { fail, opError } from "./errors";
 import { attachEvidence, evidenceOf, type RecordSink, type RecordStep, type RecordTarget } from "./record";
@@ -50,13 +50,13 @@ async function settleAfter(
 	driver: Driver,
 	settleMs: number | undefined
 ): Promise<Result<TakenSnapshot | undefined, WardenError>> {
-	if (settleMs === undefined) return ok(undefined);
+	if (settleMs === undefined) return resultFactory.ok(undefined);
 	const snap = await takeSnapshot(session, driver, {
 		interactiveOnly: true,
 		all: false,
 		settle: { budgetMs: settleMs },
 	});
-	return snap.success ? ok(snap.data) : snap;
+	return snap.success ? resultFactory.ok(snap.data) : snap;
 }
 
 /** Append the finished action to the session's recorder (with the route it navigated to, when the session reads one). */
@@ -101,7 +101,7 @@ export async function finishAction<Extra extends object = Record<never, never>>(
 		...(done.verified !== undefined ? { verified: done.verified } : {}),
 	};
 	const warnings = taken?.settle && !taken.settle.quiet ? ["screen did not settle within the budget"] : [];
-	return ok({
+	return resultFactory.ok({
 		...(taken ? { generation: taken.generation } : {}),
 		result: { ...result, ...done.extra } as ActionResult & Extra,
 		text: [done.text, ...(taken ? settleLines(taken) : [])].join("\n"),

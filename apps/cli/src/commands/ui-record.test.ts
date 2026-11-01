@@ -7,7 +7,7 @@ import { type ElementSpec, el, fakeDriver, snapshotOf } from "@delacour/warden-d
 import { recordingSchema } from "@delacour/warden-e2e/authoring/recording.schema";
 import { bunExec } from "@delacour/warden-runtime/exec";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { VerifyInput, VerifyReport } from "../agent-ui/authoring-verify";
 import type { UiDeps } from "../agent-ui/driver";
 import { recordingFile } from "../agent-ui/paths";
@@ -108,7 +108,7 @@ function harness(
 	const verified: VerifyInput[] = [];
 	const verifier: { current: Verifier } = { current: passing };
 	const deps: UiDeps = {
-		driver: async () => ok(driver),
+		driver: async () => resultFactory.ok(driver),
 		sleep: async (ms) => {
 			clock.t += ms;
 		},
@@ -116,7 +116,7 @@ function harness(
 		authoring: {
 			verify: async (_ctx, input) => {
 				verified.push(input);
-				return ok(verifier.current(input));
+				return resultFactory.ok(verifier.current(input));
 			},
 		},
 	};
@@ -153,11 +153,11 @@ function harness(
 function routeDevtools(route: { current: string[] | "release" }): DevtoolsDeps {
 	const facet = {
 		evaluate: async () =>
-			ok(JSON.stringify(route.current === "release" ? { error: "no-hook" } : { route: route.current })),
+			resultFactory.ok(JSON.stringify(route.current === "release" ? { error: "no-hook" } : { route: route.current })),
 		close: () => undefined,
 	} as unknown as DevtoolsFacet;
 	return {
-		open: async () => ok(facet),
+		open: async () => resultFactory.ok(facet),
 		probe: async () => "ours",
 		collector: {
 			self: () => ["warden"],
@@ -545,7 +545,7 @@ describe("record start --help", () => {
 		const h = harness();
 		h.c.argv = ["record", "--help"];
 		await createUiCommand({
-			driver: async () => ok(fakeDriver({ screens: [snapshotOf(login())] })),
+			driver: async () => resultFactory.ok(fakeDriver({ screens: [snapshotOf(login())] })),
 			sleep: async () => {},
 		}).run(h.c);
 		expect(h.c.stdout.join("\n").replaceAll(/\s+/g, " ")).toContain("kept until a successful stop or cancel");

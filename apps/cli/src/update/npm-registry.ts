@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { NPM_PACKAGE, platformPackageName, type ReleaseTarget } from "../npm/platforms";
 import { extractFile } from "./tar";
 
@@ -26,12 +26,12 @@ function message(error: unknown): string {
 async function getJson(fetch: Fetch, url: string, missing: string): AsyncResult<Record<string, unknown>> {
 	try {
 		const response = await fetch(url);
-		if (response.status === 404) return err(missing);
-		if (!response.ok) return err(`GET ${url} → HTTP ${response.status}`);
+		if (response.status === 404) return resultFactory.err(missing);
+		if (!response.ok) return resultFactory.err(`GET ${url} → HTTP ${response.status}`);
 		const body: unknown = await response.json();
-		return isRecord(body) ? ok(body) : err(`unexpected response from ${url}`);
+		return isRecord(body) ? resultFactory.ok(body) : resultFactory.err(`unexpected response from ${url}`);
 	} catch (error) {
-		return err(`GET ${url} failed: ${message(error)}`);
+		return resultFactory.err(`GET ${url} failed: ${message(error)}`);
 	}
 }
 
@@ -40,7 +40,9 @@ export async function latestNpmVersion(fetch: Fetch, registry: string): AsyncRes
 	const url = `${registry}/${NPM_PACKAGE}/latest`;
 	const body = await getJson(fetch, url, `${NPM_PACKAGE} is not published on ${registry}`);
 	if (!body.success) return body;
-	return typeof body.data.version === "string" ? ok(body.data.version) : err(`no version in ${url}`);
+	return typeof body.data.version === "string"
+		? resultFactory.ok(body.data.version)
+		: resultFactory.err(`no version in ${url}`);
 }
 
 /** Tarball URL + integrity of `@delacour/warden-<target>@<version>`. */
@@ -56,9 +58,9 @@ export async function platformDist(
 	if (!body.success) return body;
 	const dist = body.data.dist;
 	if (!isRecord(dist) || typeof dist.tarball !== "string" || typeof dist.integrity !== "string") {
-		return err(`no dist.tarball / dist.integrity in ${url}`);
+		return resultFactory.err(`no dist.tarball / dist.integrity in ${url}`);
 	}
-	return ok({ name, tarball: dist.tarball, integrity: dist.integrity });
+	return resultFactory.ok({ name, tarball: dist.tarball, integrity: dist.integrity });
 }
 
 /** Does `bytes` match an SRI string? Only `sha512-<base64>` (what npm publishes) is accepted. */
@@ -73,7 +75,8 @@ export function verifyIntegrity(bytes: Uint8Array, integrity: string): boolean {
 }
 
 function extracted(tgz: Uint8Array, dist: NpmDist): Result<Uint8Array> {
-	if (!verifyIntegrity(tgz, dist.integrity)) return err(`integrity mismatch for ${dist.name} (${dist.tarball})`);
+	if (!verifyIntegrity(tgz, dist.integrity))
+		return resultFactory.err(`integrity mismatch for ${dist.name} (${dist.tarball})`);
 	return extractFile(tgz, "package/bin/warden");
 }
 
@@ -81,9 +84,9 @@ function extracted(tgz: Uint8Array, dist: NpmDist): Result<Uint8Array> {
 export async function downloadNpmBinary(fetch: Fetch, dist: NpmDist): AsyncResult<Uint8Array> {
 	try {
 		const response = await fetch(dist.tarball);
-		if (!response.ok) return err(`GET ${dist.tarball} → HTTP ${response.status}`);
+		if (!response.ok) return resultFactory.err(`GET ${dist.tarball} → HTTP ${response.status}`);
 		return extracted(new Uint8Array(await response.arrayBuffer()), dist);
 	} catch (error) {
-		return err(`GET ${dist.tarball} failed: ${message(error)}`);
+		return resultFactory.err(`GET ${dist.tarball} failed: ${message(error)}`);
 	}
 }

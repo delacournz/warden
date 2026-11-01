@@ -15,7 +15,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type Batch, parseBatch } from "./batch";
 import { computeLayout, type Layout, palette, renderTopLayer, renderUnderlay } from "./layout";
 
@@ -395,7 +395,7 @@ export function parseCli(argv: string[]): Result<ComposeOptions> {
 		numbers[key] = v;
 	}
 	if (numbers.hold >= numbers.duration) return { success: false, error: "--hold must be shorter than --duration" };
-	return ok({ recordDir, outDir, ...numbers, maxBytes: 6_000_000 });
+	return resultFactory.ok({ recordDir, outDir, ...numbers, maxBytes: 6_000_000 });
 }
 
 const fontCandidates = ["/System/Library/Fonts/Menlo.ttc", "/Library/Fonts/Arial Unicode.ttf"];

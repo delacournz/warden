@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BenchAdapter } from "../adapters/adapter.types";
 import type { Platform } from "../results/schema";
 import { type Exec, runOk } from "./exec";
@@ -144,8 +144,8 @@ async function readScale(exec: Exec, serial: string, key: AnimationSetting): Asy
 	const r = await runOk(exec, "adb", ["-s", serial, "shell", "settings", "get", "global", key], { timeoutMs: 10_000 });
 	if (!r.success) return r;
 	const text = r.data.stdout.trim();
-	if (text === "null") return ok(undefined);
-	return SCALE_VALUE.test(text) ? ok(text) : err(`${key}: unexpected value '${text}'`);
+	if (text === "null") return resultFactory.ok(undefined);
+	return SCALE_VALUE.test(text) ? resultFactory.ok(text) : resultFactory.err(`${key}: unexpected value '${text}'`);
 }
 
 /** The device's current animation scales (`adb shell settings get global …`). */
@@ -156,7 +156,7 @@ export async function readAnimationScales(exec: Exec, serial: string): AsyncResu
 	if (!transition.success) return transition;
 	const animator = await readScale(exec, serial, "animator_duration_scale");
 	if (!animator.success) return animator;
-	return ok({
+	return resultFactory.ok({
 		window_animation_scale: windowScale.data,
 		transition_animation_scale: transition.data,
 		animator_duration_scale: animator.data,
@@ -170,7 +170,7 @@ export async function recordAnimationScales(
 	baselines: AnimationBaselines = processBaselines
 ): AsyncResult<AnimationScales> {
 	const known = baselines.get(serial);
-	if (known !== undefined) return ok(known);
+	if (known !== undefined) return resultFactory.ok(known);
 	const read = await readAnimationScales(exec, serial);
 	if (read.success) baselines.set(serial, read.data);
 	return read;
@@ -187,7 +187,7 @@ export async function restoreAnimationScales(
 	baselines: AnimationBaselines = processBaselines
 ): AsyncResult<string[]> {
 	const original = baselines.get(serial);
-	if (original === undefined) return ok([]);
+	if (original === undefined) return resultFactory.ok([]);
 	const current = await readAnimationScales(exec, serial);
 	if (!current.success) return current;
 	const changed: string[] = [];
@@ -201,7 +201,7 @@ export async function restoreAnimationScales(
 		if (r.success) changed.push(`${key} ${was ?? "unset"} -> ${want ?? "unset"}`);
 		else failures.push(r.error);
 	}
-	return failures.length === 0 ? ok(changed) : err(failures.join("; "));
+	return failures.length === 0 ? resultFactory.ok(changed) : resultFactory.err(failures.join("; "));
 }
 
 const showScales = (scales: AnimationScales): string =>

@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 export const DEFAULT_DISABLED_STORE_ROOT = "/private/var/tmp";
 
@@ -85,13 +85,13 @@ export async function readDisabledStore(
 	try {
 		text = await readFile(path, "utf8");
 	} catch (e) {
-		if (isNotFound(e)) return ok(new Map());
-		return err(`cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
+		if (isNotFound(e)) return resultFactory.ok(new Map());
+		return resultFactory.err(`cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
 	}
 	if (!text.includes("<plist") || !text.includes("<dict>")) {
-		return err(`corrupt disabled store ${path}: not a plist dict`);
+		return resultFactory.err(`corrupt disabled store ${path}: not a plist dict`);
 	}
-	return ok(parseDisabledStore(text));
+	return resultFactory.ok(parseDisabledStore(text));
 }
 
 /** Merge into the host-side store: disable → true, enable → false, everything else untouched. */
@@ -113,9 +113,9 @@ export async function writeDisabledStore(
 		await writeFile(tmp, encodeDisabledStore(merged), { mode: 0o644 });
 		await chmod(tmp, 0o644);
 		await rename(tmp, path);
-		return ok({ path, entries: merged.size });
+		return resultFactory.ok({ path, entries: merged.size });
 	} catch (e) {
 		await rm(tmp, { force: true }).catch(() => undefined);
-		return err(`cannot write ${path}: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`cannot write ${path}: ${e instanceof Error ? e.message : String(e)}`);
 	}
 }

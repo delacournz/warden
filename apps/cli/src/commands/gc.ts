@@ -15,7 +15,7 @@ import type { GcJson } from "@delacour/warden-sdk/contracts/gc";
 import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
 import { type DeviceRecord, wardenHome } from "@delacour/warden-store/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { defineCommand } from "../command";
@@ -139,7 +139,7 @@ async function gcPlatform(
 }
 
 function parseIdle(raw: string | undefined): Result<number> {
-	return raw === undefined ? ok(DEFAULT_IDLE_MS) : parseDuration(raw);
+	return raw === undefined ? resultFactory.ok(DEFAULT_IDLE_MS) : parseDuration(raw);
 }
 
 /**

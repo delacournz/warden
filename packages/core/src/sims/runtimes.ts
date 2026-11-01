@@ -6,8 +6,8 @@
 
 import { shortRuntime } from "@delacour/warden-providers/ios";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { SimEntry } from "./rules";
 
 export type DiskRuntime = {
@@ -76,18 +76,18 @@ export function parseRuntimeList(stdout: string): Result<DiskRuntime[], WardenEr
 	try {
 		data = JSON.parse(stdout);
 	} catch {
-		return wardenErr("failed", "simctl runtime list: invalid JSON");
+		return wardenErrors.err("failed", "simctl runtime list: invalid JSON");
 	}
-	if (!isRecord(data)) return wardenErr("failed", "simctl runtime list: expected an object");
-	return ok(Object.values(data).flatMap((entry) => toRuntime(entry) ?? []));
+	if (!isRecord(data)) return wardenErrors.err("failed", "simctl runtime list: expected an object");
+	return resultFactory.ok(Object.values(data).flatMap((entry) => toRuntime(entry) ?? []));
 }
 
 export async function listDiskRuntimes(exec: Exec): AsyncResult<DiskRuntime[]> {
 	const cmd = ["xcrun", "simctl", "runtime", "list", "-j"];
 	const result = await exec(cmd);
-	if (result.exitCode !== 0) return err(execError(cmd, result));
+	if (result.exitCode !== 0) return resultFactory.err(execError(cmd, result));
 	const runtimes = parseRuntimeList(result.stdout);
-	return runtimes.success ? runtimes : err(runtimes.error.message);
+	return runtimes.success ? runtimes : resultFactory.err(runtimes.error.message);
 }
 
 function verdictFor(runtime: DiskRuntime, users: readonly SimEntry[]): RuntimeVerdict {

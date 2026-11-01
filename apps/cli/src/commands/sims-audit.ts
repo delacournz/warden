@@ -18,7 +18,7 @@ import {
 import { DEFAULT_SIM_IDLE_MS, DEFAULT_SIM_STALE_MS } from "@delacour/warden-core/sims/sims.defaults";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { processAlive } from "@delacour/warden-store/liveness";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
@@ -36,9 +36,9 @@ function fail(ctx: CommandContext, sub: string, message: string): number {
 }
 
 function parseFlag(flag: string, raw: string | undefined, fallback: number): Result<number> {
-	if (raw === undefined) return ok(fallback);
+	if (raw === undefined) return resultFactory.ok(fallback);
 	const parsed = parseDuration(raw);
-	return parsed.success ? parsed : err(`${flag}: ${parsed.error}`);
+	return parsed.success ? parsed : resultFactory.err(`${flag}: ${parsed.error}`);
 }
 
 /** `--idle` / `--stale` / `--max-size` → the rule thresholds every `warden sims` subcommand shares. */
@@ -48,9 +48,11 @@ export function parseRuleOpts(opts: { idle?: string; stale?: string; maxSize?: s
 	const stale = parseFlag("--stale", opts.stale, DEFAULT_SIM_STALE_MS);
 	if (!stale.success) return stale;
 	const thresholds = { idleMs: idle.data, staleMs: stale.data };
-	if (opts.maxSize === undefined) return ok(thresholds);
+	if (opts.maxSize === undefined) return resultFactory.ok(thresholds);
 	const max = parseSize(opts.maxSize);
-	return max.success ? ok({ ...thresholds, maxBytes: max.data }) : err(`--max-size: ${max.error}`);
+	return max.success
+		? resultFactory.ok({ ...thresholds, maxBytes: max.data })
+		: resultFactory.err(`--max-size: ${max.error}`);
 }
 
 export const IDLE_HELP = `warden sims unused this long are deletable (default ${formatAge(DEFAULT_SIM_IDLE_MS)})`;
@@ -59,8 +61,8 @@ export const STALE_HELP = `foreign sims not booted this long are suggested (defa
 function parseOwner(raw: string | undefined): Result<OwnerFilter> {
 	const value = raw ?? "all";
 	return value === "all" || value === "warden" || value === "golden" || value === "foreign"
-		? ok(value)
-		: err(`invalid --owner "${value}" (warden | golden | foreign | all)`);
+		? resultFactory.ok(value)
+		: resultFactory.err(`invalid --owner "${value}" (warden | golden | foreign | all)`);
 }
 
 export function simsDeps(ctx: CommandContext): SimsDeps {

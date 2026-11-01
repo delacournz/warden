@@ -10,7 +10,7 @@ import {
 	type WaitParams,
 	wait,
 } from "@delacour/warden-sdk/ops/query";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
 import { type UiError, uiError } from "./output";
@@ -31,21 +31,21 @@ function parseWait(words: readonly string[]): Result<WaitParams, UiError> {
 	});
 	if (first === "stable") {
 		const raw = rest[0];
-		if (raw === undefined) return ok({ mode: "stable", quietMs: DEFAULT_STABLE_MS });
+		if (raw === undefined) return resultFactory.ok({ mode: "stable", quietMs: DEFAULT_STABLE_MS });
 		if (!/^\d+$/.test(raw) || Number(raw) < 1 || rest.length > 1)
 			return usage(`stable takes a number of ms, got "${rest.join(" ")}"`);
-		return ok({ mode: "stable", quietMs: Number(raw) });
+		return resultFactory.ok({ mode: "stable", quietMs: Number(raw) });
 	}
 	if (first === "text") {
 		const text = rest.join(" ");
-		return text === "" ? usage("wait text needs the text to wait for") : ok({ mode: "text", text });
+		return text === "" ? usage("wait text needs the text to wait for") : resultFactory.ok({ mode: "text", text });
 	}
 	const mode = first === "absent" ? "absent" : "visible";
 	const source = (first === "absent" ? rest : words).join(" ");
 	if (source.trim() === "") return usage("wait needs a selector");
 	const selector = parseSelector(source);
 	if (!selector.success) return usage(`bad selector: ${selector.error}`);
-	return ok({ mode, selector: source });
+	return resultFactory.ok({ mode, selector: source });
 }
 
 /**
@@ -69,7 +69,7 @@ function parseQuerySelector(source: string, usage: string): Result<string, UiErr
 	if (source.trim() === "") return { success: false, error: uiError("usage", usage) };
 	const parsed = parseSelector(source);
 	if (!parsed.success) return { success: false, error: uiError("usage", `bad selector: ${parsed.error}`) };
-	return ok(source);
+	return resultFactory.ok(source);
 }
 
 /**

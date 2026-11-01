@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { processAlive } from "@delacour/warden-store/liveness";
 import { wardenHome } from "@delacour/warden-store/store";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /**
  * What `warden dev` records about a running session so other processes (`dev logs`, the MCP server, `warden ui`) can
@@ -102,7 +102,7 @@ export function writeDevSession(env: Env, record: DevSessionRecord): Result<stri
 		const tmp = `${path}.${process.pid}.tmp`;
 		writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
 		renameSync(tmp, path);
-		return ok(path);
+		return resultFactory.ok(path);
 	} catch (error) {
 		return { success: false, error: sessionError("dev_session_io", `can't write ${path}: ${String(error)}`) };
 	}
@@ -126,7 +126,7 @@ export function listDevSessions(
 	try {
 		names = readdirSync(devSessionsDir(env));
 	} catch {
-		return ok([]);
+		return resultFactory.ok([]);
 	}
 	const sessions: DevSessionRecord[] = [];
 	for (const name of names) {
@@ -134,7 +134,7 @@ export function listDevSessions(
 		if (record !== undefined && deps.isAlive(record.pid)) sessions.push(record);
 	}
 	sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-	return ok(sessions);
+	return resultFactory.ok(sessions);
 }
 
 /** Merges `patch` into the stored record (e.g. the broker adds `brokerSocket`). */
@@ -148,7 +148,7 @@ export function updateDevSession(
 		return { success: false, error: sessionError("no_dev_session", `no dev session ${leaseId}`) };
 	const next: DevSessionRecord = { ...current, ...patch };
 	const written = writeDevSession(env, next);
-	return written.success ? ok(next) : written;
+	return written.success ? resultFactory.ok(next) : written;
 }
 
 function describeSession(session: DevSessionRecord): string {
@@ -188,5 +188,5 @@ export function findDevSession(
 			),
 		};
 	}
-	return ok(first);
+	return resultFactory.ok(first);
 }

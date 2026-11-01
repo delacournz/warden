@@ -52,7 +52,7 @@ import { bunExec, execError } from "@delacour/warden-runtime/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
 import { wardenHome } from "@delacour/warden-store/store";
 import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
 import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
@@ -268,36 +268,40 @@ const absolute = (cwd: string, path: string) => (isAbsolute(path) ? path : resol
 
 /** `--jobs` / `--jobs-from` (exactly one, else the preset's source) → where the jobs come from. */
 function parseJobsSource(opts: BatchOpts, cwd: string, fallback?: BatchJobsSource): Result<BatchJobsSource> {
-	if (opts.jobs === undefined && opts.jobsFrom === undefined && fallback) return ok(fallback);
+	if (opts.jobs === undefined && opts.jobsFrom === undefined && fallback) return resultFactory.ok(fallback);
 	if ((opts.jobs === undefined) === (opts.jobsFrom === undefined))
-		return err("pass exactly one of --jobs / --jobs-from");
+		return resultFactory.err("pass exactly one of --jobs / --jobs-from");
 	if (opts.jobsFrom !== undefined)
-		return ok(opts.jobsFrom === "-" ? { kind: "stdin" } : { kind: "file", path: absolute(cwd, opts.jobsFrom) });
+		return resultFactory.ok(
+			opts.jobsFrom === "-" ? { kind: "stdin" } : { kind: "file", path: absolute(cwd, opts.jobsFrom) }
+		);
 	const jobs = parseJobList(opts.jobs ?? "");
-	return jobs.length > 0 ? ok({ kind: "list", jobs }) : err("--jobs is empty");
+	return jobs.length > 0 ? resultFactory.ok({ kind: "list", jobs }) : resultFactory.err("--jobs is empty");
 }
 
 /** `--serve` / `--serve-ready` / `--serve-timeout` → serve config (undefined without `--serve`). */
 function parseServe(opts: BatchOpts, cwd: string): Result<Serve | undefined> {
 	if (opts.serve === undefined)
-		return opts.serveReady === undefined ? ok(undefined) : err("--serve-ready needs --serve");
+		return opts.serveReady === undefined
+			? resultFactory.ok(undefined)
+			: resultFactory.err("--serve-ready needs --serve");
 	const timeoutMs = parseDuration(opts.serveTimeout);
-	if (!timeoutMs.success) return err(`--serve-timeout: ${timeoutMs.error}`);
-	if (opts.serveReady === undefined) return ok({ cmd: opts.serve, timeoutMs: timeoutMs.data });
+	if (!timeoutMs.success) return resultFactory.err(`--serve-timeout: ${timeoutMs.error}`);
+	if (opts.serveReady === undefined) return resultFactory.ok({ cmd: opts.serve, timeoutMs: timeoutMs.data });
 	// validated now with stand-in values; parsed for real once the port is leased
 	const ready = parseReadySpec(expandText(opts.serveReady, { port: 1, metroUrl: "http://127.0.0.1:1" }), cwd);
 	if (!ready.success) return ready;
-	return ok({ cmd: opts.serve, timeoutMs: timeoutMs.data, ready: { spec: opts.serveReady, cwd } });
+	return resultFactory.ok({ cmd: opts.serve, timeoutMs: timeoutMs.data, ready: { spec: opts.serveReady, cwd } });
 }
 
 /** `--retry` / `--passes` / `--job-timeout` → validated numbers. */
 function parseLimits(opts: BatchOpts): Result<Pick<BatchArgs, "retry" | "passes" | "jobTimeoutMs">> {
-	if (!/^\d+$/.test(opts.retry)) return err(`--retry must be an integer >= 0, got "${opts.retry}"`);
+	if (!/^\d+$/.test(opts.retry)) return resultFactory.err(`--retry must be an integer >= 0, got "${opts.retry}"`);
 	if (!/^\d+$/.test(opts.passes) || Number(opts.passes) < 1)
-		return err(`--passes must be an integer >= 1, got "${opts.passes}"`);
-	const jobTimeout = opts.jobTimeout === undefined ? ok(undefined) : parseDuration(opts.jobTimeout);
-	if (!jobTimeout.success) return err(`--job-timeout: ${jobTimeout.error}`);
-	return ok({
+		return resultFactory.err(`--passes must be an integer >= 1, got "${opts.passes}"`);
+	const jobTimeout = opts.jobTimeout === undefined ? resultFactory.ok(undefined) : parseDuration(opts.jobTimeout);
+	if (!jobTimeout.success) return resultFactory.err(`--job-timeout: ${jobTimeout.error}`);
+	return resultFactory.ok({
 		retry: Number(opts.retry),
 		passes: Number(opts.passes),
 		...(jobTimeout.data !== undefined ? { jobTimeoutMs: jobTimeout.data } : {}),
@@ -327,8 +331,8 @@ export function parseBatchArgs(
 	if (!limits.success) return limits;
 	const serve = parseServe(opts, cwd);
 	if (!serve.success) return serve;
-	if (opts.record !== undefined && platform !== "ios") return err("--record is iOS-only");
-	return ok({
+	if (opts.record !== undefined && platform !== "ios") return resultFactory.err("--record is iOS-only");
+	return resultFactory.ok({
 		flags: flags.data,
 		ports: opts.port,
 		json: opts.json === true,
@@ -348,20 +352,20 @@ export function parseBatchArgs(
 async function commandJobs(ctx: CommandContext, args: BatchArgs, command: string): AsyncResult<string[]> {
 	const cmd = ["sh", "-c", command];
 	const res = await ctx.exec(cmd, { cwd: args.cwd, env: { ...ctx.env, ...args.env } });
-	if (res.exitCode !== 0) return err(`jobsFrom.command: ${execError(cmd, res)}`);
+	if (res.exitCode !== 0) return resultFactory.err(`jobsFrom.command: ${execError(cmd, res)}`);
 	const jobs = parseJobLines(res.stdout);
-	return jobs.length > 0 ? ok(jobs) : err(`jobsFrom.command: no jobs from \`${command}\``);
+	return jobs.length > 0 ? resultFactory.ok(jobs) : resultFactory.err(`jobsFrom.command: no jobs from \`${command}\``);
 }
 
 async function loadJobs(ctx: CommandContext, deps: BatchDeps, args: BatchArgs): AsyncResult<string[]> {
 	const source = args.jobs;
-	if (source.kind === "list") return ok(source.jobs);
+	if (source.kind === "list") return resultFactory.ok(source.jobs);
 	if (source.kind === "command") return commandJobs(ctx, args, source.command);
 	try {
 		const jobs = parseJobLines(source.kind === "stdin" ? await ctx.readStdin() : await deps.readFile(source.path));
-		return jobs.length > 0 ? ok(jobs) : err("--jobs-from: no jobs");
+		return jobs.length > 0 ? resultFactory.ok(jobs) : resultFactory.err("--jobs-from: no jobs");
 	} catch (error) {
-		return err(`--jobs-from: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`--jobs-from: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -388,14 +392,14 @@ async function waitReady(
 	void proc.exited.then((code) => {
 		exitCode = code;
 	});
-	if (!ready) return ok(undefined);
+	if (!ready) return resultFactory.ok(undefined);
 	const deadline = ctx.now() + serve.timeoutMs;
 	for (;;) {
-		if (aborted()) return err("interrupted while waiting for serve");
-		if (await deps.probe(ready)) return ok(undefined);
+		if (aborted()) return resultFactory.err("interrupted while waiting for serve");
+		if (await deps.probe(ready)) return resultFactory.ok(undefined);
 		await Promise.resolve();
-		if (exitCode !== undefined) return err(`serve exited (${exitCode}) before ready`);
-		if (ctx.now() >= deadline) return err(`serve not ready after ${Math.round(serve.timeoutMs / 1000)}s`);
+		if (exitCode !== undefined) return resultFactory.err(`serve exited (${exitCode}) before ready`);
+		if (ctx.now() >= deadline) return resultFactory.err(`serve not ready after ${Math.round(serve.timeoutMs / 1000)}s`);
 		await deps.sleep(READY_POLL_MS);
 	}
 }
@@ -702,13 +706,15 @@ export async function startRecordings(
 	const failed = started.find((s) => s.status === "rejected");
 	if (failed) {
 		await Promise.all(recordings.map((r) => r.stop()));
-		return err(`--record: ${failed.reason instanceof Error ? failed.reason.message : String(failed.reason)}`);
+		return resultFactory.err(
+			`--record: ${failed.reason instanceof Error ? failed.reason.message : String(failed.reason)}`
+		);
 	}
 	devices.forEach((d, i) => {
 		d.video = videoName(d.worker);
 		d.videoStartedAt = recordings[i]?.startedAt;
 	});
-	return ok(recordings);
+	return resultFactory.ok(recordings);
 }
 
 /**
@@ -1073,7 +1079,7 @@ const recordedSlim =
 	(ctx: CommandContext, deps: BatchDeps, fixed?: SlimProfile) =>
 	async (udid: string, profile?: SlimProfile): AsyncResult<string[]> => {
 		// a physical iPhone has no simulator daemons to switch off
-		if (isPhysicalIosId(udid)) return ok([]);
+		if (isPhysicalIosId(udid)) return resultFactory.ok([]);
 		const res = await deps.slim(udid, profile ?? fixed);
 		if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
 		return res;
@@ -1178,7 +1184,7 @@ function launchRunMetro(
 		log: o.log,
 		state: "starting",
 		started: undefined,
-		pending: Promise.resolve(err("Metro not started")),
+		pending: Promise.resolve(resultFactory.err("Metro not started")),
 		stop: async () => {
 			cancelled = true;
 			// the prewarm ends at once (12-5); a server already up is killed without waiting for it
@@ -1223,7 +1229,7 @@ function launchRunMetro(
 		return started;
 	};
 	launch.pending = run()
-		.catch((error: unknown) => err(error instanceof Error ? error.message : String(error)))
+		.catch((error: unknown) => resultFactory.err(error instanceof Error ? error.message : String(error)))
 		.then((result) => {
 			launch.state = result.success ? "up" : "failed";
 			return result;
@@ -1246,7 +1252,7 @@ async function awaitRunMetro(ctx: CommandContext, launch: MetroLaunch): AsyncRes
 				if (!result.success) spinner.fail("Metro not ready");
 				return result;
 			});
-	if (!metro.success) return err(`${metro.error} (log: ${launch.log})`);
+	if (!metro.success) return resultFactory.err(`${metro.error} (log: ${launch.log})`);
 	launch.announce(ctx.err);
 	return metro;
 }
@@ -1419,7 +1425,7 @@ async function startServices(
 	metro: MetroLaunch | undefined
 ): AsyncResult<{ env: Record<string, string | undefined>; vars: RunVars }> {
 	if (args.metro) {
-		if (!metro) return err("metro: no port leased for it");
+		if (!metro) return resultFactory.err("metro: no port leased for it");
 		const up = await awaitRunMetro(ctx, metro);
 		// before the early return: a Metro whose bundle failed is still running, and teardown must kill it
 		services.metro = metro.started;
@@ -1440,7 +1446,7 @@ async function startServices(
 		if (!started.success) return started;
 		services.recordings = started.data;
 	}
-	return ok({ env, vars });
+	return resultFactory.ok({ env, vars });
 }
 
 /** Start serve (`{port}` / `{metroUrl}` substituted) and wait until it is ready. */
@@ -1451,12 +1457,14 @@ async function startServe(
 	o: { r: RunContext; env: Record<string, string | undefined>; vars: RunVars; cwd: string; services: Services }
 ): AsyncResult<void> {
 	const log = join(o.r.logDir, "serve.log");
-	const ready = serve.ready ? parseReadySpec(expandText(serve.ready.spec, o.vars), serve.ready.cwd) : ok(undefined);
+	const ready = serve.ready
+		? parseReadySpec(expandText(serve.ready.spec, o.vars), serve.ready.cwd)
+		: resultFactory.ok(undefined);
 	if (!ready.success) return ready;
 	const proc = deps.spawn(["sh", "-c", expandText(serve.cmd, o.vars)], { env: o.env, log, group: true, cwd: o.cwd });
 	o.services.serve = proc;
 	const up = await waitReady(ctx, deps, serve, ready.data, proc, o.r.interrupted);
-	return up.success ? up : err(`${up.error} (log: ${log})`);
+	return up.success ? up : resultFactory.err(`${up.error} (log: ${log})`);
 }
 
 type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
@@ -1741,13 +1749,13 @@ async function claimLateWorker(
 			run.slim?.leased(outcome);
 		},
 	});
-	if (!more.success) return err(more.error.message);
+	if (!more.success) return resultFactory.err(more.error.message);
 	const { drop, lost, outcome } = more.data;
 	const c = outcome.claimed[0];
 	const pool = r.pools[0];
 	if (!c || !pool || lost.length > 0) {
 		await drop();
-		return err(`${c?.device.id ?? "device"} did not come back after the headless hide`);
+		return resultFactory.err(`${c?.device.id ?? "device"} did not come back after the headless hide`);
 	}
 	const device: Device = { worker: o.worker, udid: c.device.id, name: c.device.name, leaseId: c.lease.id };
 	const prepared = await preparePool(
@@ -1762,10 +1770,10 @@ async function claimLateWorker(
 	o.prepared.push(prepared);
 	if (prepared.live.length === 0) {
 		await drop();
-		return err(`setup failed on ${device.udid}`);
+		return resultFactory.err(`setup failed on ${device.udid}`);
 	}
 	o.devices.set(o.worker, device);
-	return ok({ worker: { worker: o.worker, udid: device.udid }, drop });
+	return resultFactory.ok({ worker: { worker: o.worker, udid: device.udid }, drop });
 }
 
 /** The elastic workers of a run: start the background claims, admit each into the grid as it joins. */
@@ -2015,9 +2023,9 @@ function batchOperands(
 ): Result<{ target?: string; cmd: string[] }> {
 	const { cmd } = splitCommand(argv);
 	const before = operands.slice(0, Math.max(0, operands.length - cmd.length));
-	if (before.length > 1) return err(`unexpected arguments before --: ${before.slice(1).join(" ")}`);
+	if (before.length > 1) return resultFactory.err(`unexpected arguments before --: ${before.slice(1).join(" ")}`);
 	const [target] = before;
-	return ok(target === undefined ? { cmd } : { target, cmd });
+	return resultFactory.ok(target === undefined ? { cmd } : { target, cmd });
 }
 
 /** `ios` / `android` / nothing (picker) → a platform; anything else is a `batches.<name>` preset. */
@@ -2027,7 +2035,7 @@ async function resolveTarget(
 ): AsyncResult<{ platform: Platform; preset?: BatchPreset }> {
 	if (target === undefined || target === "ios" || target === "android") {
 		const platform = await resolvePlatform(ctx, target);
-		return platform.success ? ok({ platform: platform.data }) : platform;
+		return platform.success ? resultFactory.ok({ platform: platform.data }) : platform;
 	}
 	const stopAt = (await readGitFacts(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
 	const found = findBatchPreset({ start: ctx.cwd, env: ctx.env, name: target, ...(stopAt ? { stopAt } : {}) });
@@ -2035,9 +2043,9 @@ async function resolveTarget(
 	const { preset, names } = found.data;
 	if (!preset) {
 		const known = names.length > 0 ? `, presets: ${names.join(", ")}` : "";
-		return err(`unknown platform or preset "${target}" (ios|android${known})`);
+		return resultFactory.err(`unknown platform or preset "${target}" (ios|android${known})`);
 	}
-	return ok({ platform: preset.platform, preset });
+	return resultFactory.ok({ platform: preset.platform, preset });
 }
 
 /** A preset as option values (paths already absolute, so the invoking cwd doesn't touch them). */

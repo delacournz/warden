@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { easBuildSchema } from "@delacour/warden-config/eas.schema";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { z } from "zod";
 import { EAS_POLL_MS, EAS_TIMEOUT_MS, EAS_TRIGGER_GRACE_MS } from "./builds.defaults";
 import type { EasSettings } from "./config";
@@ -23,10 +23,10 @@ export type EasBuild = z.infer<typeof easBuildSchema>;
 function parseJson<T>(stdout: string, schema: z.ZodType<T>, what: string): Result<T> {
 	try {
 		const parsed = schema.safeParse(JSON.parse(stdout));
-		if (parsed.success) return ok(parsed.data);
-		return err(`unexpected ${what}: ${parsed.error.issues[0]?.message ?? "invalid"}`);
+		if (parsed.success) return resultFactory.ok(parsed.data);
+		return resultFactory.err(`unexpected ${what}: ${parsed.error.issues[0]?.message ?? "invalid"}`);
 	} catch {
-		return err(`unexpected ${what}: not JSON: ${stdout.trim().slice(0, 200)}`);
+		return resultFactory.err(`unexpected ${what}: not JSON: ${stdout.trim().slice(0, 200)}`);
 	}
 }
 
@@ -37,7 +37,7 @@ export function parseBuildList(stdout: string): Result<EasBuild[]> {
 /** `eas build:download --json` prints `{ path }` — the extracted `.app` in eas-cli's cache. */
 export function parseDownloadPath(stdout: string): Result<string> {
 	const parsed = parseJson(stdout, easSchemas().easDownloadSchema, "`eas build:download` output");
-	return parsed.success ? ok(parsed.data.path) : parsed;
+	return parsed.success ? resultFactory.ok(parsed.data.path) : parsed;
 }
 
 export type BuildDecision =
@@ -135,11 +135,11 @@ export type Download = (url: string, dest: string) => AsyncResult<void>;
 export const fetchDownload: Download = async (url, dest) => {
 	try {
 		const res = await fetch(url);
-		if (!res.ok) return err(`GET ${url}: ${res.status}`);
+		if (!res.ok) return resultFactory.err(`GET ${url}: ${res.status}`);
 		writeFileSync(dest, new Uint8Array(await res.arrayBuffer()));
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	} catch (error) {
-		return err(error);
+		return resultFactory.err(error);
 	}
 };
 
@@ -168,7 +168,7 @@ export type EasOutcome = { kind: "downloaded"; path: string; buildId: string } |
 
 async function run(deps: EasDeps, argv: string[]): AsyncResult<string> {
 	const res = await deps.exec(argv, { cwd: deps.cwd, env: { EXPO_NO_TELEMETRY: "1" } });
-	return res.exitCode === 0 ? ok(res.stdout) : err(execError(argv, res));
+	return res.exitCode === 0 ? resultFactory.ok(res.stdout) : resultFactory.err(execError(argv, res));
 }
 
 async function downloadBuild(deps: EasDeps, build: EasBuild): AsyncResult<string> {
@@ -177,12 +177,12 @@ async function downloadBuild(deps: EasDeps, build: EasBuild): AsyncResult<string
 		return out.success ? parseDownloadPath(out.data) : out;
 	}
 	const url = build.artifacts?.applicationArchiveUrl;
-	if (!url) return err(`EAS build ${build.id} has no artifact url`);
+	if (!url) return resultFactory.err(`EAS build ${build.id} has no artifact url`);
 	const dir = deps.tmpDir ? deps.tmpDir() : mkdtempSync(join(tmpdir(), "warden-eas-"));
 	mkdirSync(dir, { recursive: true });
 	const dest = join(dir, `${build.id}.apk`);
 	const got = await (deps.download ?? fetchDownload)(url, dest);
-	return got.success ? ok(dest) : got;
+	return got.success ? resultFactory.ok(dest) : got;
 }
 
 type StepOutcome = EasOutcome | { kind: "continue"; triggered: boolean };

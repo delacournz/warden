@@ -4,9 +4,9 @@ import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import { ownerKey } from "@delacour/warden-store/store";
 import type { Lease, Owner, PortResource } from "@delacour/warden-store/types";
-import { codedError, type WardenError, wardenErr } from "@delacour/warden-types/error";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import type { AsyncResult, Result } from "@delacour/warden-types/result";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 
 /** Extra free candidates probed beyond `count`, so a lost race still leaves spares. */
 const PROBE_SLACK = 4;
@@ -89,13 +89,13 @@ type TxnOutcome = { kind: "leased"; leases: Lease[] } | { kind: "short" };
 type ClaimPlan = { all: number[]; count: number; exhausted: string };
 
 function planClaim(req: ClaimPortsRequest): Result<ClaimPlan, WardenError> {
-	const range = codedError(checkRange(req.from, req.span), "usage");
+	const range = wardenErrors.coded(checkRange(req.from, req.span), "usage");
 	if (!range.success) return range;
 	const count = req.count ?? 1;
 	const step = req.step ?? 1;
-	if (!Number.isInteger(count) || count < 1) return wardenErr("usage", `invalid count ${count} (must be ≥ 1)`);
-	if (!Number.isInteger(step) || step < 1) return wardenErr("usage", `invalid step ${step} (must be ≥ 1)`);
-	return ok({
+	if (!Number.isInteger(count) || count < 1) return wardenErrors.err("usage", `invalid count ${count} (must be ≥ 1)`);
+	if (!Number.isInteger(step) || step < 1) return wardenErrors.err("usage", `invalid step ${step} (must be ≥ 1)`);
+	return resultFactory.ok({
 		all: candidates(req.from, req.span, step),
 		count,
 		exhausted: `no free port in ${req.from}–${req.from + req.span - 1}`,
@@ -163,12 +163,13 @@ export async function claimPorts(
 		if (probed.length < plan.data.count) break;
 		try {
 			const outcome = leaseProbed(store, req, probed, plan.data.count, deps);
-			if (outcome.kind === "leased") return ok(outcome.leases);
+			if (outcome.kind === "leased") return resultFactory.ok(outcome.leases);
 		} catch (error) {
-			if (!isUniqueViolation(error)) return wardenErr("failed", error instanceof Error ? error.message : String(error));
+			if (!isUniqueViolation(error))
+				return wardenErrors.err("failed", error instanceof Error ? error.message : String(error));
 		}
 	}
-	return wardenErr("capacity_exhausted", plan.data.exhausted, { retryable: true });
+	return wardenErrors.err("capacity_exhausted", plan.data.exhausted, { retryable: true });
 }
 
 /** Which port leases to release. */

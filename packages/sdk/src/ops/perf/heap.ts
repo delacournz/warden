@@ -18,7 +18,7 @@ import { readDevFlag } from "@delacour/warden-perf/js/js.types";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfEnv } from "./env";
 import { connectJsApp } from "./js";
@@ -154,7 +154,7 @@ export async function heapSnapshotWork(
 		const { summary, warning } = summarizeFile(file, taken.data.bytes);
 		const summaryPath = join(out.dir, `${name}.summary.json`);
 		if (summary !== undefined) writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
-		return ok(
+		return resultFactory.ok(
 			successOf({
 				target,
 				app,
@@ -195,5 +195,5 @@ export function heapDiffWork(
 		sections: [heapDiffSection(diff)],
 		next: [],
 	});
-	return ok({ result: { a, b, ...diff }, text });
+	return resultFactory.ok({ result: { a, b, ...diff }, text });
 }

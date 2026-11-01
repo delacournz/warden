@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { bunExec, type Exec, type ExecResult } from "@delacour/warden-runtime/exec";
 import { getBuild } from "@delacour/warden-store/builds-table";
 import { openStore, type Store } from "@delacour/warden-store/store";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { findRepack, kindDir, kindHash, storeArtifact } from "./cache";
 import { computeKindKey } from "./kind-key";
 import {
@@ -109,13 +109,13 @@ function applier(applied: Applied, over: { fail?: boolean; fallback?: string } =
 		mkdirSync(outDir, { recursive: true });
 		if (over.fail) {
 			writeFileSync(join(outDir, "partial"), "x");
-			return err("codesign exploded");
+			return resultFactory.err("codesign exploded");
 		}
-		if (over.fallback) return ok({ fallback: true, reason: over.fallback });
+		if (over.fallback) return resultFactory.ok({ fallback: true, reason: over.fallback });
 		const target = join(outDir, "App.app");
 		cpSync(baseArtifact, target, { recursive: true });
 		writeFileSync(join(target, "main.jsbundle"), "REPACKED");
-		return ok({ artifact: target });
+		return resultFactory.ok({ artifact: target });
 	};
 }
 

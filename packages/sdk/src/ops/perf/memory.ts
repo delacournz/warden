@@ -5,7 +5,7 @@ import { type Meminfo, parseMeminfo } from "@delacour/warden-perf/metrics/meminf
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { appPid } from "./app-process";
 import type { PerfEnv } from "./env";
@@ -47,7 +47,7 @@ async function androidMeminfo({ ctx, target, app }: Ctx): Promise<Result<Meminfo
 		timeoutMs: 15_000,
 	});
 	const info = res.exitCode === 0 ? parseMeminfo(res.stdout) : undefined;
-	return info === undefined ? fail(notRunning(target, app)) : ok(info);
+	return info === undefined ? fail(notRunning(target, app)) : resultFactory.ok(info);
 }
 
 /** `am dumpheap` refuses apps that are neither debuggable nor profileable. */
@@ -89,7 +89,7 @@ async function dumpHeap(
 		const pulled = await ctx.exec([adb, "-s", target.udid, "pull", remote, local], { timeoutMs: SNAPSHOT_TIMEOUT_MS });
 		if (pulled.exitCode !== 0)
 			return fail(opError("failed", `adb pull failed: ${pulled.stderr.trim() || `exit ${pulled.exitCode}`}`));
-		return ok({ path: local, bytes });
+		return resultFactory.ok({ path: local, bytes });
 	} finally {
 		await shell("rm", "-f", remote);
 	}
@@ -123,7 +123,7 @@ async function androidMemory(c: Ctx, snapshot: boolean, outDir: string, io: Memo
 	const result: MemoryResult = { app: c.app, meminfo: info.data };
 	if (!snapshot) {
 		lines.push("next: warden perf memory --snapshot · warden perf metrics --watch");
-		return ok({ device: infoFor(c.target), result, text: lines.join("\n") });
+		return resultFactory.ok({ device: infoFor(c.target), result, text: lines.join("\n") });
 	}
 	const heap = await dumpHeap(c, outDir, io);
 	if (!heap.success) return heap;
@@ -133,7 +133,7 @@ async function androidMemory(c: Ctx, snapshot: boolean, outDir: string, io: Memo
 		"raw .hprof only: open it in Android Studio (Profiler > Load) or convert with hprof-conv for other tools",
 		"next: warden perf heap snapshot (Hermes JS heap)"
 	);
-	return ok({ device: infoFor(c.target), result, text: lines.join("\n") });
+	return resultFactory.ok({ device: infoFor(c.target), result, text: lines.join("\n") });
 }
 
 // ---------------------------------------------------------------------------------------------- iOS
@@ -180,7 +180,7 @@ async function iosMemory(c: Ctx, snapshot: boolean, outDir: string): PerfOutcome
 	const result: MemoryResult = { app: c.app, pid, vmmap };
 	if (!snapshot) {
 		lines.push("next: warden perf memory --snapshot · warden perf metrics --watch");
-		return ok({ device: infoFor(c.target), result, text: lines.join("\n") });
+		return resultFactory.ok({ device: infoFor(c.target), result, text: lines.join("\n") });
 	}
 	const graph = join(outDir, "native", `${c.app}-${c.ctx.now()}.memgraph`);
 	mkdirSync(join(outDir, "native"), { recursive: true });
@@ -204,7 +204,7 @@ async function iosMemory(c: Ctx, snapshot: boolean, outDir: string): PerfOutcome
 		`memgraph: ${graph}`,
 		`next: open ${graph} (Xcode: Debug Memory Graph)`
 	);
-	return ok({ device: infoFor(c.target), result, text: lines.join("\n") });
+	return resultFactory.ok({ device: infoFor(c.target), result, text: lines.join("\n") });
 }
 
 /** The `result` of `perf memory --json`: the platform's breakdown, and with a snapshot where it was written. */

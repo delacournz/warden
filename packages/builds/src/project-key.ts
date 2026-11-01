@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 /**
  * Canonical `host/owner/repo` for a git remote, so every spelling of the same repo agrees:
@@ -93,12 +93,12 @@ export async function readProjectKey(exec: Exec, dir: string, cache?: GitFactsCa
 	// git reports real paths; `/var` vs `/private/var` (macOS tmp) must not look like a different dir
 	const root = realpath(dir);
 	const facts = await readGitFacts(exec, root, cache ?? createGitFactsCache());
-	if (!facts) return ok(projectKey({ root }));
+	if (!facts) return resultFactory.ok(projectKey({ root }));
 	const toplevel = realpath(facts.toplevel);
 	let remote = await git(exec, root, ["config", "--get", "remote.origin.url"]);
 	if (!remote) {
 		const first = (await git(exec, root, ["remote"]))?.split("\n")[0];
 		if (first) remote = await git(exec, root, ["config", "--get", `remote.${first}.url`]);
 	}
-	return ok(projectKey({ root, toplevel, commonDir: facts.commonDir, ...(remote ? { remote } : {}) }));
+	return resultFactory.ok(projectKey({ root, toplevel, commonDir: facts.commonDir, ...(remote ? { remote } : {}) }));
 }

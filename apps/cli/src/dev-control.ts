@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { Socket } from "bun";
 
 /**
@@ -37,11 +37,11 @@ export function parseDevFeatures(names: readonly string[]): Result<DevFeature[]>
 	for (const name of names.flatMap((n) => n.split(",")).map((n) => n.trim())) {
 		if (name.length === 0) continue;
 		const features = FEATURE_ALIASES[name];
-		if (features === undefined) return err(`unknown feature "${name}" (hud | perf | devtools | all)`);
+		if (features === undefined) return resultFactory.err(`unknown feature "${name}" (hud | perf | devtools | all)`);
 		for (const feature of features) wanted.add(feature);
 	}
-	if (wanted.size === 0) return err("name a feature: hud | perf | devtools | all");
-	return ok(DEV_FEATURES.filter((f) => wanted.has(f)));
+	if (wanted.size === 0) return resultFactory.err("name a feature: hud | perf | devtools | all");
+	return resultFactory.ok(DEV_FEATURES.filter((f) => wanted.has(f)));
 }
 
 const isFeature = (v: unknown): v is DevFeature => DEV_FEATURES.some((f) => f === v);
@@ -104,7 +104,7 @@ export async function serveDevControl(socketPath: string, handle: DevControlHand
 		try {
 			unlinkSync(socketPath);
 		} catch (error) {
-			return err(`cannot remove stale socket ${socketPath}: ${String(error)}`);
+			return resultFactory.err(`cannot remove stale socket ${socketPath}: ${String(error)}`);
 		}
 	}
 	let queue: Promise<void> = Promise.resolve();
@@ -138,7 +138,7 @@ export async function serveDevControl(socketPath: string, handle: DevControlHand
 				},
 			},
 		});
-		return ok({
+		return resultFactory.ok({
 			socketPath,
 			close: async () => {
 				listener.stop(true);
@@ -151,7 +151,7 @@ export async function serveDevControl(socketPath: string, handle: DevControlHand
 			},
 		});
 	} catch (error) {
-		return err(`cannot listen on ${socketPath}: ${String(error)}`);
+		return resultFactory.err(`cannot listen on ${socketPath}: ${String(error)}`);
 	}
 }
 
@@ -173,9 +173,12 @@ export function callDevControl(
 		const finish = (): void => {
 			const line = buffer.split("\n")[0] ?? "";
 			const response = parseDevControlResponse(parseJson(line));
-			settle(response === undefined ? err(`bad reply from ${socketPath}`) : ok(response));
+			settle(response === undefined ? resultFactory.err(`bad reply from ${socketPath}`) : resultFactory.ok(response));
 		};
-		const timer = setTimeout(() => settle(err(`no reply from ${socketPath} within ${timeoutMs} ms`)), timeoutMs);
+		const timer = setTimeout(
+			() => settle(resultFactory.err(`no reply from ${socketPath} within ${timeoutMs} ms`)),
+			timeoutMs
+		);
 		Bun.connect({
 			unix: socketPath,
 			socket: {
@@ -190,12 +193,12 @@ export function callDevControl(
 					if (!settled) finish();
 				},
 				error(_socket, error) {
-					settle(err(`control socket error: ${String(error)}`));
+					settle(resultFactory.err(`control socket error: ${String(error)}`));
 				},
 				connectError(_socket, error) {
-					settle(err(`can't reach ${socketPath}: ${String(error)}`));
+					settle(resultFactory.err(`can't reach ${socketPath}: ${String(error)}`));
 				},
 			},
-		}).catch((error: unknown) => settle(err(`can't reach ${socketPath}: ${String(error)}`)));
+		}).catch((error: unknown) => settle(resultFactory.err(`can't reach ${socketPath}: ${String(error)}`)));
 	});
 }

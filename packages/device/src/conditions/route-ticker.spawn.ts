@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { OwnedProcess } from "@delacour/warden-config/conditions.types";
 import { detachedTickerArgv, type TickerConfig } from "@delacour/warden-driver/conditions/route-ticker";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export type SpawnTicker = (argv: readonly string[]) => { pid: number } | undefined;
 
@@ -23,7 +23,9 @@ export function spawnDetachedTicker(
 	mainPath: string = join(import.meta.dir, "route-ticker.main.ts")
 ): Result<OwnedProcess> {
 	const started = spawn(detachedTickerArgv(runtime, mainPath, config));
-	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the route ticker");
+	return started
+		? resultFactory.ok({ kind: "pid", pid: started.pid })
+		: resultFactory.err("could not start the route ticker");
 }
 
 /**
@@ -36,5 +38,7 @@ export function spawnDetachedTickerVia(
 	spawn: SpawnTicker = bunSpawnDetached
 ): Result<OwnedProcess> {
 	const started = spawn([...command, JSON.stringify(config)]);
-	return started ? ok({ kind: "pid", pid: started.pid }) : err("could not start the route ticker");
+	return started
+		? resultFactory.ok({ kind: "pid", pid: started.pid })
+		: resultFactory.err("could not start the route ticker");
 }

@@ -1,4 +1,4 @@
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { createRunnerBuild } from "../ios-runner/build-port";
@@ -30,11 +30,11 @@ const EXIT_ENGINE = 3;
 
 /** `--idle-timeout` in seconds (fractions allowed; 0 = never). */
 function idleMs(raw: string | undefined): Result<number, string> {
-	if (raw === undefined) return ok(DEFAULT_IDLE_SECONDS * 1000);
+	if (raw === undefined) return resultFactory.ok(DEFAULT_IDLE_SECONDS * 1000);
 	const seconds = Number(raw);
 	if (!Number.isFinite(seconds) || seconds < 0)
 		return { success: false, error: `--idle-timeout: not a number of seconds: ${raw}` };
-	return ok(Math.round(seconds * 1000));
+	return resultFactory.ok(Math.round(seconds * 1000));
 }
 
 const defaultSpawn: SpawnRunner = (cmd, env) => {

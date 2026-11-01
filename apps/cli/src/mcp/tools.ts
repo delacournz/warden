@@ -1,4 +1,4 @@
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import {
 	devtoolsResume,
@@ -58,9 +58,9 @@ function defined<T extends Record<string, unknown>>(value: T): { [K in keyof T]?
 
 /** `since` as epoch ms, or the `invalid_query` error the tool returns. */
 function since(value: string | undefined, now: number): Result<number | undefined, ToolError> {
-	if (value === undefined) return ok(undefined);
+	if (value === undefined) return resultFactory.ok(undefined);
 	const parsed = parseSince(value, now);
-	if (parsed.ok) return ok(parsed.ms);
+	if (parsed.ok) return resultFactory.ok(parsed.ms);
 	return { success: false, error: { code: "invalid_query", message: parsed.message.replace("--since", "since") } };
 }
 

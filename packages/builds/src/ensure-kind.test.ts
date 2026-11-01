@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import {
 	ensureKindApp,
 	type KindAppDeps,
@@ -54,8 +54,8 @@ function input(kind: KindAppInput["kind"], over: Partial<KindAppInput> = {}): { 
 			eas: false,
 			build: true,
 			repackers: {
-				ios: async () => err("unused"),
-				android: async () => err("unused"),
+				ios: async () => resultFactory.err("unused"),
+				android: async () => resultFactory.err("unused"),
 			},
 			...over,
 		},
@@ -87,9 +87,9 @@ function deps(repack: RepackResult, calls: Calls): KindAppDeps {
 	return {
 		repack: async () => {
 			calls.repack++;
-			return ok(repack);
+			return resultFactory.ok(repack);
 		},
-		computeKeys: async (d) => ok(keys(d.kind === "dev" ? "dev" : "release")),
+		computeKeys: async (d) => resultFactory.ok(keys(d.kind === "dev" ? "dev" : "release")),
 		ensureBuild: async (i) => {
 			calls.builds.push(i.key.kind);
 			const result: EnsureResult = {
@@ -98,11 +98,11 @@ function deps(repack: RepackResult, calls: Calls): KindAppDeps {
 				source: "build",
 				installed: false,
 			};
-			return ok(result);
+			return resultFactory.ok(result);
 		},
 		ensureApp: async (i) => {
 			calls.installs.push({ hash: i.hash, deviceId: i.deviceId, build: i.build });
-			return ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true });
+			return resultFactory.ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true });
 		},
 	};
 }
@@ -172,7 +172,7 @@ describe("prepareKindApp", () => {
 	});
 
 	test("a repack error is returned as is", async () => {
-		const failing: KindAppDeps = { ...deps(repacked, calls()), repack: async () => err("repack: boom") };
+		const failing: KindAppDeps = { ...deps(repacked, calls()), repack: async () => resultFactory.err("repack: boom") };
 		expect(await prepareKindApp(input("simulator").input, failing)).toEqual({ success: false, error: "repack: boom" });
 	});
 });
@@ -188,7 +188,7 @@ describe("a physical iPhone", () => {
 		const d = deps(repacked, c);
 		d.computeKeys = async (k) => {
 			seen.push(k.device);
-			return ok(keys("release"));
+			return resultFactory.ok(keys("release"));
 		};
 		const res = await prepareKindApp(phone("release").input, d);
 		expect(seen).toEqual([{ team: TEAM, salt: TEAM }]);
@@ -201,7 +201,7 @@ describe("a physical iPhone", () => {
 		const d = deps(repacked, calls());
 		d.computeKeys = async (k) => {
 			seen.push(k.device?.team);
-			return ok(keys("dev"));
+			return resultFactory.ok(keys("dev"));
 		};
 		await prepareKindApp(phone("dev", { env: {}, configTeamId: "ZZZZZ99999" }).input, d);
 		expect(seen).toEqual(["ZZZZZ99999"]);
@@ -234,7 +234,7 @@ describe("a physical iPhone", () => {
 		const d = deps(repacked, calls());
 		d.ensureApp = async (i) => {
 			seen.push({ ios: i.project.bundleId.ios, physical: i.physical });
-			return ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true });
+			return resultFactory.ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true });
 		};
 		const project = testProject({ iosDeviceBundleId: "com.me.app" });
 		const res = await ensureKindApp(phone("release", { project, deviceId: "UDID" }).input, d);
@@ -258,8 +258,8 @@ describe("a phone the provisioning profile does not list", () => {
 			c.installs.push({ hash: i.hash, deviceId: i.deviceId, build: i.build });
 			const failure = queue.shift();
 			return failure === undefined
-				? ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true })
-				: err(failure);
+				? resultFactory.ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true })
+				: resultFactory.err(failure);
 		};
 		const commands: string[] = [];
 		const run = input("release", {
@@ -335,7 +335,7 @@ describe("ensureKindApp", () => {
 	test("a device that already runs the build reports source installed", async () => {
 		const c = calls();
 		const d = deps(repacked, c);
-		d.ensureApp = async (i) => ok({ appPath: "", hash: i.hash, source: "installed", installed: true });
+		d.ensureApp = async (i) => resultFactory.ok({ appPath: "", hash: i.hash, source: "installed", installed: true });
 		const res = await ensureKindApp(input("simulator", { deviceId: "UDID" }).input, d);
 		expect(res.success && res.data.source).toBe("installed");
 	});

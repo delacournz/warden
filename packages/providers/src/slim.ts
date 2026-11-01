@@ -7,7 +7,7 @@ import {
 	slimmableSet,
 } from "@delacour/warden-config/slim.profile";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { execWithin, realTimer, type Timer } from "./health";
 import { chunk, launchdJobPlists, runtimeRootForDevice } from "./slim.launchd";
 
@@ -177,21 +177,21 @@ async function readLaunchctl(ctx: Ctx, ...args: string[]): AsyncResult<string> {
 			last = timedOut(args, ctx);
 			continue;
 		}
-		if (res.exitCode === 0) return ok(res.stdout);
+		if (res.exitCode === 0) return resultFactory.ok(res.stdout);
 		last = execError(launchctl(ctx.udid, ...args), res);
-		if (!isTransient(res)) return err(last);
+		if (!isTransient(res)) return resultFactory.err(last);
 	}
-	return err(last);
+	return resultFactory.err(last);
 }
 
 async function readDisabled(ctx: Ctx): AsyncResult<Map<string, boolean>> {
 	const res = await readLaunchctl(ctx, "print-disabled", "system");
-	return res.success ? ok(parsePrintDisabled(res.data)) : res;
+	return res.success ? resultFactory.ok(parsePrintDisabled(res.data)) : res;
 }
 
 async function readJobs(ctx: Ctx): AsyncResult<LaunchJob[]> {
 	const res = await readLaunchctl(ctx, "list");
-	return res.success ? ok(parseLaunchctlList(res.data)) : res;
+	return res.success ? resultFactory.ok(parseLaunchctlList(res.data)) : res;
 }
 
 /** Run `task` over `items`, at most `limit` at a time; resolves to the errors (label → message) of the tasks that failed. */
@@ -244,14 +244,14 @@ async function batchUnloadPending(ctx: Ctx, pending: string[], before: Set<strin
 	const root = pending.length > 0 ? await runtimeRootForDevice(ctx.exec, ctx.udid) : undefined;
 	const plists =
 		root === undefined ? new Map<string, string>() : await launchdJobPlists(ctx.exec, root, pending, ctx.fileExists);
-	if (plists.size === 0) return ok({ batched: 0, remaining: pending, loaded: before });
+	if (plists.size === 0) return resultFactory.ok({ batched: 0, remaining: pending, loaded: before });
 	await batchPlists(ctx, "unload", [...plists.values()]);
 	const after = await readDisabled(ctx);
 	if (!after.success) return after;
 	const jobs = await readJobs(ctx);
 	if (!jobs.success) return jobs;
 	const loaded = loadedLabels(jobs.data);
-	return ok({
+	return resultFactory.ok({
 		batched: plists.size,
 		remaining: pending.filter((label) => stillWanted(label, after.data, loaded)),
 		loaded,
@@ -268,7 +268,7 @@ async function slimLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimReport>
 	const desired = desiredLabels(options.profile ?? DEFAULT_SLIM_PROFILE);
 	const managed = new Set([...managedSet(), ...SLIM_RETIRED]);
 	const pending = [...desired].filter((label) => stillWanted(label, disabled, loaded));
-	if (options.dryRun) return ok({ labels: pending, batched: 0, perLabel: 0, verified: false });
+	if (options.dryRun) return resultFactory.ok({ labels: pending, batched: 0, perLabel: 0, verified: false });
 
 	await enableQuietly(ctx, delta(disabled, desired, managed).toEnable);
 
@@ -278,7 +278,7 @@ async function slimLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimReport>
 	const failures = await perLabelSlim(ctx, remaining, loadedNow);
 	if (failures.size > 0) {
 		const first = failures.values().next().value as string;
-		return err(`${failures.size} of ${pending.length} labels did not slim: ${first}`);
+		return resultFactory.err(`${failures.size} of ${pending.length} labels did not slim: ${first}`);
 	}
 	return verifyDisabled(ctx, desired, pending, { batched, perLabel: remaining.length });
 }
@@ -310,11 +310,11 @@ async function verifyDisabled(
 	if (!final.success) return final;
 	const missing = [...desired].filter((label) => final.data.get(label) !== true);
 	if (missing.length > 0) {
-		return err(
+		return resultFactory.err(
 			`${missing.length} of ${desired.size} disable overrides did not take: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", …" : ""}`
 		);
 	}
-	return ok({ labels: pending, ...counts, verified: true });
+	return resultFactory.ok({ labels: pending, ...counts, verified: true });
 }
 
 async function restoreLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimReport> {
@@ -322,7 +322,8 @@ async function restoreLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimRepo
 	if (!read.success) return read;
 	const managed = new Set([...slimmableSet(), ...managedSet(), ...SLIM_RETIRED]);
 	const labels = delta(read.data, new Set<string>(), managed).toEnable;
-	if (options.dryRun || labels.length === 0) return ok({ labels, batched: 0, perLabel: 0, verified: !options.dryRun });
+	if (options.dryRun || labels.length === 0)
+		return resultFactory.ok({ labels, batched: 0, perLabel: 0, verified: !options.dryRun });
 
 	const root = await runtimeRootForDevice(ctx.exec, ctx.udid);
 	const plists =
@@ -335,7 +336,7 @@ async function restoreLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimRepo
 	const failures = await mapBounded(stragglers, SLIM_CONCURRENCY, (label) =>
 		labelStep(ctx, ["enable", `system/${label}`])
 	);
-	if (failures.size > 0) return err(failures.values().next().value as string);
+	if (failures.size > 0) return resultFactory.err(failures.values().next().value as string);
 
 	const jobs = await readJobs(ctx);
 	if (!jobs.success) return jobs;
@@ -346,7 +347,7 @@ async function restoreLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimRepo
 		SLIM_CONCURRENCY,
 		(label) => labelStep(ctx, ["bootstrap", "system", plists.get(label) as string], [37])
 	);
-	return ok({ labels, batched: plists.size, perLabel: stragglers.length, verified: true });
+	return resultFactory.ok({ labels, batched: plists.size, perLabel: stragglers.length, verified: true });
 }
 
 /**
@@ -371,5 +372,5 @@ export async function slimSimulatorReport(
 /** `slimSimulatorReport`, keeping only the labels touched. */
 export async function slimSimulator(exec: Exec, udid: string, options: SlimOptions = {}): AsyncResult<string[]> {
 	const report = await slimSimulatorReport(exec, udid, options);
-	return report.success ? ok(report.data.labels) : report;
+	return report.success ? resultFactory.ok(report.data.labels) : report;
 }

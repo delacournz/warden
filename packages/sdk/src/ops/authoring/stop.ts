@@ -4,7 +4,7 @@ import { deleteJournal, readJournal } from "@delacour/warden-e2e/authoring/journ
 import { type LintFinding, lintRecording } from "@delacour/warden-e2e/authoring/lint";
 import type { Recording } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordSpecConfig, RecordStopped, RecordVerify } from "../../contracts/record.schema";
 import { uiDir } from "../paths";
 import type { OpDone, OpOutcome, OpSession } from "../session";
@@ -69,7 +69,7 @@ function configLines(config: RecordSpecConfig, suite: string | undefined): strin
 function checkTargetFree(pointer: RecordingPointer, overwrite: boolean): Result<undefined, WardenError> {
 	const { target } = pointer;
 	const taken = target.kind === "spec" && existsSync(target.path) && pointer.wrote !== true && !overwrite;
-	if (!taken) return ok(undefined);
+	if (!taken) return resultFactory.ok(undefined);
 	return failed("target_exists", `${target.path} already exists`, { hint: "pass --overwrite to replace it" });
 }
 
@@ -150,7 +150,7 @@ function readStoppable(journal: string): Result<{ recording: Recording; lints: L
 			hint: "drive the app with warden ui actions after `record start`, or `record cancel`",
 		});
 	}
-	return ok({ recording: read.data, lints });
+	return resultFactory.ok({ recording: read.data, lints });
 }
 
 /** Run the written spec once; success finishes the recording, anything else keeps it. */
@@ -188,7 +188,7 @@ async function verifyWritten(
 	const { verify, evidence } = describeRun(report);
 	if (report.passed) {
 		const count = report.tests.length;
-		return ok(
+		return resultFactory.ok(
 			finish(verify, [`verified: ${count} test${count === 1 ? "" : "s"} passed on ${session.device.id}`], "verified")
 		);
 	}
@@ -236,6 +236,6 @@ export async function recordStop(session: OpSession, params: RecordStopParams = 
 	const wrote = wroteLines(session, outcome);
 	const finish = makeFinish(session, journal, summary, wrote);
 	const skipped = skippedVerify(pointer.target.kind, params.verify !== false, finish);
-	if (skipped) return ok(skipped);
+	if (skipped) return resultFactory.ok(skipped);
 	return verifyWritten(session, pointer, suiteName, summary, wrote, finish);
 }

@@ -4,7 +4,7 @@ import { generateSpec } from "@delacour/warden-e2e/authoring/codegen";
 import { appendStep, readJournal } from "@delacour/warden-e2e/authoring/journal";
 import type { RecordedStep, Recording } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordUsed, RecordVerify } from "../../contracts/record.schema";
 import { uiDir } from "../paths";
 import type { OpOutcome, OpSession } from "../session";
@@ -81,7 +81,7 @@ function resolveUsedHelper(
 	if (pointer.target.path === module && pointer.target.kind === "helper" && pointer.target.fn === fn) {
 		return failed("usage", `${fn} is the helper being recorded`);
 	}
-	return ok({ module, fn });
+	return resultFactory.ok({ module, fn });
 }
 
 /** One run of the generated spec that calls a helper, as `describeRun` reads it. */
@@ -119,7 +119,7 @@ async function runUseSpec(
 			hint: "nothing was recorded; fix it and run `record use` again",
 		});
 	}
-	return ok({ report: ran.data, ...describeRun(ran.data) });
+	return resultFactory.ok({ report: ran.data, ...describeRun(ran.data) });
 }
 
 /** A helper that failed on the device records nothing. */
@@ -176,7 +176,7 @@ async function recordUseStep(
 		...(partial ? { partial: true as const } : {}),
 	});
 	if (!appended.success) return journalFailure(appended.error);
-	return ok({
+	return resultFactory.ok({
 		result: {
 			outcome: "used",
 			step: appended.data.i,

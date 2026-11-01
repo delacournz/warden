@@ -6,7 +6,7 @@ import { findRunningOneShot, readHandleFile } from "@delacour/warden-sdk/ops/per
 import type { NativeAnalysis, NativeIo, NativeProfiler } from "@delacour/warden-sdk/ops/perf/native-types";
 import { createSession } from "@delacour/warden-sdk/ops/perf/session";
 import { wardenHome } from "@delacour/warden-store/store";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfNative } from "./native";
 import { asMe, fakePerfDeps } from "./testing";
@@ -45,15 +45,15 @@ function fakeProfiler(log: string[]): NativeProfiler {
 			log.push(
 				`start ${input.app} leaks=${input.leaks} flavor=${input.flavor ?? "-"} dir=${input.dir.split("/").slice(-2).join("/")}`
 			);
-			return ok({ pid: 900, out: join(input.dir, "ios.trace"), startedAtIso: "iso", startWallMs: T0 });
+			return resultFactory.ok({ pid: 900, out: join(input.dir, "ios.trace"), startedAtIso: "iso", startWallMs: T0 });
 		},
 		stop: async (_c, _d, _io, input) => {
 			log.push(`stop analyze=${input.analyze}`);
-			return ok({ out: input.handle.out, ...(input.analyze ? { analysis } : {}), warnings: [] });
+			return resultFactory.ok({ out: input.handle.out, ...(input.analyze ? { analysis } : {}), warnings: [] });
 		},
 		analyze: async (_c, _d, input) => {
 			log.push(`analyze ${input.trace}`);
-			return ok(analysis);
+			return resultFactory.ok(analysis);
 		},
 	};
 }

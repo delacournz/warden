@@ -1,7 +1,7 @@
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { listSessions } from "@delacour/warden-sdk/ops/perf/session";
 import { notFound, sessionByRef } from "@delacour/warden-sdk/ops/perf/session-ref";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { type PerfDeviceFlags, resolvePerfDevice } from "./device";
@@ -22,5 +22,5 @@ export async function pickSession(
 	const device = await resolvePerfDevice(ctx, flags, "observe", deps.device);
 	const mine = device.success ? sessions.find((s) => s.device.udid === device.data.udid) : undefined;
 	const chosen = mine ?? sessions[0];
-	return chosen === undefined ? notFound("no perf sessions yet") : ok(chosen);
+	return chosen === undefined ? notFound("no perf sessions yet") : resultFactory.ok(chosen);
 }

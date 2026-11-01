@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ConsoleLine } from "@delacour/warden-devtools/devtools.types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { Broker } from "./broker";
 import type { LineProcessor } from "./broker.types";
 import { BROKER_EXTENSIONS } from "./extensions";
@@ -192,7 +192,7 @@ describe("symbolicateExtension", () => {
 				attach = handler;
 				return () => events.push("attach removed");
 			},
-			registerMethod: () => ok(() => undefined),
+			registerMethod: () => resultFactory.ok(() => undefined),
 		} as unknown as Broker;
 		const teardown = symbolicateExtension(broker, {
 			metroUrl: "http://localhost:8081",

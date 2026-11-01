@@ -7,7 +7,7 @@ import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delaco
 import { isInteractiveRole } from "@delacour/warden-screen/roles";
 import { type ParsedSelector, parseSelector, selectorToQuery } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { diffSnapshots, renderDiff, type SnapshotDiff } from "./diff";
 import { driverError, fail, opError } from "./errors";
 import { preorder } from "./ref-store";
@@ -101,7 +101,7 @@ async function fetchSnapshot(
 ): Promise<Result<Fetched, WardenError>> {
 	if (settle === undefined) {
 		const taken = await driver.snapshot();
-		return taken.success ? ok({ snapshot: taken.data }) : fail(driverError(taken.error));
+		return taken.success ? resultFactory.ok({ snapshot: taken.data }) : fail(driverError(taken.error));
 	}
 	let latest: Snapshot | undefined;
 	let failure: WardenError | undefined;
@@ -121,7 +121,7 @@ async function fetchSnapshot(
 			now: session.host.now,
 			sleep: session.host.sleep,
 		});
-		return latest ? ok({ snapshot: latest, settle: outcome }) : fail(opError("failed", "no snapshot"));
+		return latest ? resultFactory.ok({ snapshot: latest, settle: outcome }) : fail(opError("failed", "no snapshot"));
 	} catch (error) {
 		return fail(failure ?? opError("failed", error instanceof Error ? error.message : String(error)));
 	}
@@ -188,7 +188,7 @@ export async function takeSnapshot(
 	if (request.settle && previous) {
 		taken.diff = { ...diffSnapshots(previous.snapshot, snapshot, refs.byId), against: previous.generation };
 	}
-	return ok(taken);
+	return resultFactory.ok(taken);
 }
 
 /** The advice under a `-i` snapshot taken during a recording: how many elements lack a testID. */
@@ -238,7 +238,7 @@ export async function findElements(
 	const snapshot = taken.data;
 	const { generation, refs } = storeSnapshot(session, snapshot);
 	const matches = resolve(selectorToQuery(selector), indexSnapshot(snapshot));
-	return ok({
+	return resultFactory.ok({
 		generation,
 		header: `generation ${generation} · ${matches.length} ${matches.length === 1 ? "match" : "matches"}`,
 		lines: matches.map((entry) => {
@@ -300,7 +300,7 @@ export async function snapshot(session: OpSession, params: SnapshotParams = {}):
 	const taken = await takeSnapshot(session, driver.data, request);
 	if (!taken.success) return taken;
 	const data = taken.data;
-	return ok({
+	return resultFactory.ok({
 		generation: data.generation,
 		text: snapshotText(data),
 		warnings: data.settle && !data.settle.quiet ? ["screen did not settle within the budget"] : [],
@@ -335,7 +335,7 @@ export async function find(session: OpSession, params: FindParams): OpOutcome<Fi
 	if (!driver.success) return driver;
 	const found = await findElements(session, driver.data, selector.data);
 	if (!found.success) return found;
-	return ok({
+	return resultFactory.ok({
 		generation: found.data.generation,
 		text: [found.data.header, ...found.data.lines].join("\n"),
 		result: { count: found.data.count, elements: found.data.elements },

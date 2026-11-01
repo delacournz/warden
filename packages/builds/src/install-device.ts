@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { classifyRunnerOutput } from "./ios-runner/classify";
 import type { InstalledApp } from "./resolve";
 
@@ -102,12 +102,14 @@ async function devicectlJson(
 	try {
 		const out = join(dir, "out.json");
 		const res = await deps.exec(argv(out), { timeoutMs });
-		if (res.exitCode !== 0) return err(describePhoneFailure(what, res));
+		if (res.exitCode !== 0) return resultFactory.err(describePhoneFailure(what, res));
 		try {
 			const doc: unknown = JSON.parse(await io.read(out));
-			return ok(isRecord(doc) && isRecord(doc.result) ? doc.result : {});
+			return resultFactory.ok(isRecord(doc) && isRecord(doc.result) ? doc.result : {});
 		} catch (error) {
-			return err(`${what}: unreadable devicectl output (${error instanceof Error ? error.message : String(error)})`);
+			return resultFactory.err(
+				`${what}: unreadable devicectl output (${error instanceof Error ? error.message : String(error)})`
+			);
 		}
 	} finally {
 		await io.remove(dir).catch(() => undefined);
@@ -125,8 +127,11 @@ export async function probePhone(deps: PhoneDeps, udid: string, bundleId: string
 	if (!done.success) return done;
 	const apps = Array.isArray(done.data.apps) ? done.data.apps : [];
 	const app = apps.find((a) => isRecord(a) && a.bundleIdentifier === bundleId);
-	if (!isRecord(app)) return ok({ present: false });
-	return ok({ present: true, ...(typeof app.bundleVersion === "string" ? { version: app.bundleVersion } : {}) });
+	if (!isRecord(app)) return resultFactory.ok({ present: false });
+	return resultFactory.ok({
+		present: true,
+		...(typeof app.bundleVersion === "string" ? { version: app.bundleVersion } : {}),
+	});
 }
 
 /** Install `appPath`, then confirm `bundleId` is there. */
@@ -146,7 +151,9 @@ export async function installOnPhone(
 	const present = await probePhone(deps, udid, bundleId);
 	if (!present.success) return present;
 	if (!present.data.present) {
-		return err(`installed ${appPath} on ${udid} but ${bundleId} is not there — wrong bundle id in config?`);
+		return resultFactory.err(
+			`installed ${appPath} on ${udid} but ${bundleId} is not there — wrong bundle id in config?`
+		);
 	}
 	return present;
 }
@@ -159,7 +166,7 @@ export async function uninstallFromPhone(deps: PhoneDeps, udid: string, bundleId
 		(json) => phoneUninstallArgv(udid, bundleId, json),
 		SHORT_MS
 	);
-	return done.success ? ok(undefined) : done;
+	return done.success ? resultFactory.ok(undefined) : done;
 }
 
 /** `CFBundleVersion` of an `.app` (one `plutil` spawn); undefined when it cannot be read. */

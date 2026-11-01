@@ -8,7 +8,7 @@ import {
 } from "@delacour/warden-e2e/authoring/codegen";
 import type { Recording } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordSpecConfig } from "../../contracts/record.schema";
 import type { OpSession } from "../session";
 import { failed, findSuiteOf, readIfExists, write } from "./common";
@@ -91,7 +91,7 @@ function generateTarget(
 			...(shape.specOptions !== undefined ? { specOptions: shape.specOptions } : {}),
 			...(idsImport !== undefined ? { idsImport, idsMerged: true } : {}),
 		});
-		return ok({ source: generated.source, ids: generated.ids, replaced: false });
+		return resultFactory.ok({ source: generated.source, ids: generated.ids, replaced: false });
 	}
 	const generated = generateHelper(recording, {
 		name: target.fn,
@@ -109,7 +109,7 @@ function generateTarget(
 		});
 	}
 	const { source, ids, replaced } = generated.data;
-	return ok({ source, ids, replaced });
+	return resultFactory.ok({ source, ids, replaced });
 }
 
 /** The ids module text to write: the recording's ids merged into what exists; undefined when nothing changes. */
@@ -122,7 +122,7 @@ function mergedIdsText(
 	if (!merged.success) {
 		return failed("failed", `${idsPath}: ${merged.error.message}`, { details: { code: merged.error.code } });
 	}
-	return ok(merged.data !== existing ? merged.data : undefined);
+	return resultFactory.ok(merged.data !== existing ? merged.data : undefined);
 }
 
 /** Generate the spec or helper for `recording` and write it (and the merged ids module); nothing is written when generation fails. */
@@ -149,7 +149,7 @@ export function writeTarget(
 	write(target.path, source);
 	if (pointer.ids !== undefined && idsText !== undefined) write(pointer.ids, idsText);
 	const added = Object.fromEntries(Object.entries(ids).filter(([key]) => !(key in known)));
-	return ok({
+	return resultFactory.ok({
 		file: target.path,
 		...(target.kind === "helper" ? { fn: target.fn } : {}),
 		replaced,

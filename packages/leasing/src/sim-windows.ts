@@ -3,7 +3,7 @@ import { IOS_TIMEOUTS } from "@delacour/warden-providers/ios";
 import { parseAllSims } from "@delacour/warden-providers/simctl-list";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import type { Store } from "@delacour/warden-store/store";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** A Simulator.app device window: title `<device name> – <runtime>`, size in points. */
 export type SimWindow = { title: string; width: number; height: number };
@@ -165,20 +165,20 @@ function parseRead(stdout: string): Result<{ screen: ScreenArea; windows: SimWin
 	try {
 		data = JSON.parse(stdout);
 	} catch {
-		return err(`couldn't parse Simulator window list: ${stdout.trim().slice(0, 80)}`);
+		return resultFactory.err(`couldn't parse Simulator window list: ${stdout.trim().slice(0, 80)}`);
 	}
 	if (!isRecord(data) || !isRecord(data.screen) || !Array.isArray(data.windows)) {
-		return err("unexpected Simulator window list shape");
+		return resultFactory.err("unexpected Simulator window list shape");
 	}
 	const { x, y, width, height } = data.screen;
-	if (!isNum(x) || !isNum(y) || !isNum(width) || !isNum(height)) return err("unexpected screen frame");
+	if (!isNum(x) || !isNum(y) || !isNum(width) || !isNum(height)) return resultFactory.err("unexpected screen frame");
 	const windows: SimWindow[] = [];
 	for (const w of data.windows) {
 		if (isRecord(w) && typeof w.title === "string" && isNum(w.width) && isNum(w.height)) {
 			windows.push({ title: w.title, width: w.width, height: w.height });
 		}
 	}
-	return ok({ screen: { x, y, width, height }, windows });
+	return resultFactory.ok({ screen: { x, y, width, height }, windows });
 }
 
 const osascript = (exec: Exec, script: string, ...args: string[]) =>
@@ -225,16 +225,16 @@ export type Arranged = { arranged: string[]; viewer: SimViewer["kind"] };
  */
 export async function arrangeSimWindows(exec: Exec): AsyncResult<Arranged> {
 	const { kind: viewer } = await detectSimViewer(exec);
-	if (viewer === "none") return ok({ arranged: [], viewer });
+	if (viewer === "none") return resultFactory.ok({ arranged: [], viewer });
 	const read = await osascript(exec, readScript(viewer));
-	if (read.exitCode !== 0) return err(scriptError("(read windows)", read));
+	if (read.exitCode !== 0) return resultFactory.err(scriptError("(read windows)", read));
 	const parsed = parseRead(read.stdout);
 	if (!parsed.success) return parsed;
 	const moves = layoutWindows(parsed.data.windows, parsed.data.screen);
-	if (moves.length === 0) return ok({ arranged: [], viewer });
+	if (moves.length === 0) return resultFactory.ok({ arranged: [], viewer });
 	const moved = await osascript(exec, moveScript(viewer), JSON.stringify(moves));
-	if (moved.exitCode !== 0) return err(scriptError("(move windows)", moved));
-	return ok({ arranged: moves.map((m) => deviceName(m.title)), viewer });
+	if (moved.exitCode !== 0) return resultFactory.err(scriptError("(move windows)", moved));
+	return resultFactory.ok({ arranged: moves.map((m) => deviceName(m.title)), viewer });
 }
 
 export type AutoArrangeDeps = {
@@ -357,21 +357,25 @@ const OPEN_TIMEOUT_MS = 10_000;
  * the Mac handles `devices://` (no Xcode 27), Simulator.app is launched instead. macOS only.
  */
 export async function revealSimWindow(deps: Pick<AutoArrangeDeps, "exec" | "os">, udid: string): AsyncResult<Revealed> {
-	if ((deps.os ?? process.platform) !== "darwin") return err("showing a simulator window needs macOS");
+	if ((deps.os ?? process.platform) !== "darwin") return resultFactory.err("showing a simulator window needs macOS");
 	const opts = { timeoutMs: OPEN_TIMEOUT_MS };
 	const hub = () => deps.exec(["open", deviceHubUrl(udid)], opts);
 	const simulator = () => deps.exec(["open", "-a", "Simulator", "--args", "-CurrentDeviceUDID", udid], opts);
 	const { kind } = await detectSimViewer(deps.exec);
 	if (kind === "simulator") {
 		const out = await simulator();
-		return out.exitCode === 0 ? ok({ viewer: "simulator" }) : err(`Simulator: ${execError(["open"], out)}`);
+		return out.exitCode === 0
+			? resultFactory.ok({ viewer: "simulator" })
+			: resultFactory.err(`Simulator: ${execError(["open"], out)}`);
 	}
 	const viaHub = await hub();
-	if (viaHub.exitCode === 0) return ok({ viewer: "device-hub" });
-	if (kind === "device-hub") return err(`Device Hub: ${execError(["open"], viaHub)}`);
+	if (viaHub.exitCode === 0) return resultFactory.ok({ viewer: "device-hub" });
+	if (kind === "device-hub") return resultFactory.err(`Device Hub: ${execError(["open"], viaHub)}`);
 	const viaSimulator = await simulator();
-	if (viaSimulator.exitCode === 0) return ok({ viewer: "simulator" });
-	return err(`Device Hub: ${execError(["open"], viaHub)}; Simulator: ${execError(["open"], viaSimulator)}`);
+	if (viaSimulator.exitCode === 0) return resultFactory.ok({ viewer: "simulator" });
+	return resultFactory.err(
+		`Device Hub: ${execError(["open"], viaHub)}; Simulator: ${execError(["open"], viaSimulator)}`
+	);
 }
 
 /**
@@ -383,12 +387,14 @@ export async function closeSimWindows(
 	deps: Pick<AutoArrangeDeps, "exec" | "os">,
 	sims: readonly { udid: string; name: string }[]
 ): AsyncResult<void> {
-	if ((deps.os ?? process.platform) !== "darwin" || sims.length === 0) return ok(undefined);
+	if ((deps.os ?? process.platform) !== "darwin" || sims.length === 0) return resultFactory.ok(undefined);
 	const { kind } = await detectSimViewer(deps.exec);
-	if (kind === "none") return ok(undefined);
+	if (kind === "none") return resultFactory.ok(undefined);
 	const names = sims.map((s) => s.name);
 	const closed = await osascript(deps.exec, closeByNameScript(kind), JSON.stringify(names));
-	return closed.exitCode === 0 ? ok(undefined) : err(scriptError("(close windows)", closed));
+	return closed.exitCode === 0
+		? resultFactory.ok(undefined)
+		: resultFactory.err(scriptError("(close windows)", closed));
 }
 
 /** A device this run leased: closing windows is limited to these names. */

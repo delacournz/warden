@@ -17,8 +17,8 @@ import {
 	physicalNotReadyReason,
 	resourceKey,
 } from "@delacour/warden-store/types";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, type ErrorResult, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type ErrorResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { allocate } from "./allocate";
 import { addCost, type Budget, type CapacityConfig, type Cost, deviceCost, explain, fits, totalCost } from "./capacity";
 import type { MemoryPressure } from "./host";
@@ -78,7 +78,7 @@ export type ClaimInput = {
 };
 
 /** The failure of a claim ended by `ClaimInput.abort` (code `claim_aborted`). */
-export const claimAborted = () => wardenErr("claim_aborted", "claim aborted");
+export const claimAborted = () => wardenErrors.err("claim_aborted", "claim aborted");
 
 /** What a claim returns: the leased devices, or a coded failure. */
 export type ClaimResult = Result<ClaimOutcome, WardenError>;
@@ -535,7 +535,7 @@ async function createDevice(
 		return { device, lease };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return { failed: { ok: wardenErr("failed", message), leaseId: item.lease.id } };
+		return { failed: { ok: wardenErrors.err("failed", message), leaseId: item.lease.id } };
 	}
 }
 
@@ -577,8 +577,11 @@ async function probeBooted(
 	const { provider } = input;
 	const probe = provider.probeBooted ?? provider.probe;
 	const unhealthy = await probeHealth(input, device, probe?.bind(provider));
-	if (unhealthy) return { ok: wardenErr("failed", unhealthy.reason), leaseId: lease.id, unhealthy };
-	return { ok: ok({ lease, device: { ...device, state: "booted" }, action: item.action }), leaseId: lease.id };
+	if (unhealthy) return { ok: wardenErrors.err("failed", unhealthy.reason), leaseId: lease.id, unhealthy };
+	return {
+		ok: resultFactory.ok({ lease, device: { ...device, state: "booted" }, action: item.action }),
+		leaseId: lease.id,
+	};
 }
 
 /** The warm check, else wait until ready, then the full probe. */
@@ -591,7 +594,7 @@ async function checkReady(
 ): Promise<Realised> {
 	const { provider } = input;
 	if (await isWarm(provider, item, device)) {
-		return { ok: ok({ lease, device, action: item.action }), leaseId: lease.id };
+		return { ok: resultFactory.ok({ lease, device, action: item.action }), leaseId: lease.id };
 	}
 	const readyMs = input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
 	input.log?.(`${device.name} (${device.id}): waiting until it is ready`);
@@ -603,8 +606,11 @@ async function checkReady(
 	}
 	if (bootedNow) await provider.afterReady?.(device.id);
 	const unhealthy = await probeHealth(input, device, provider.probe?.bind(provider));
-	if (unhealthy) return { ok: wardenErr("failed", unhealthy.reason), leaseId: lease.id, unhealthy };
-	return { ok: ok({ lease, device: { ...device, state: "booted" }, action: item.action }), leaseId: lease.id };
+	if (unhealthy) return { ok: wardenErrors.err("failed", unhealthy.reason), leaseId: lease.id, unhealthy };
+	return {
+		ok: resultFactory.ok({ lease, device: { ...device, state: "booted" }, action: item.action }),
+		leaseId: lease.id,
+	};
 }
 
 /** `id (name): reason` for each physical device the request would consider that is not usable now. */
@@ -687,7 +693,9 @@ async function completeRound(
 	if (!("retry" in done)) return done;
 	const giveUp = noteUnhealthy(health, done.retry, deadline - input.now() > 0);
 	if (!giveUp) return undefined;
-	return health.overload ? wardenErr("probe_timeout", giveUp, { retryable: true }) : wardenErr("failed", giveUp);
+	return health.overload
+		? wardenErrors.err("probe_timeout", giveUp, { retryable: true })
+		: wardenErrors.err("failed", giveUp);
 }
 
 /**
@@ -719,7 +727,8 @@ async function claimRounds(input: ClaimInput, queueId: string): Promise<ClaimRes
 		if (!attempt.success) return attempt;
 		const reservation = attempt.data;
 		if (reservation.kind === "conflict" && conflicts++ < MAX_CONFLICT_RETRIES) continue;
-		if (reservation.kind === "conflict" || reservation.kind === "error") return wardenErr("failed", reservation.error);
+		if (reservation.kind === "conflict" || reservation.kind === "error")
+			return wardenErrors.err("failed", reservation.error);
 		const done = await settle(input, reservation, round);
 		if (done) return done;
 	}
@@ -738,7 +747,7 @@ async function reserveRound(
 	const cap = await readCapacity(input, queueId, startedAt, round.noEvict);
 	if (cap && !cap.success) return cap;
 	const skip = new Set([...round.health.skip, ...round.health.skipOnce]);
-	return ok(tryReserve(input, inventory.data, round.reclaimed, skip, cap?.data));
+	return resultFactory.ok(tryReserve(input, inventory.data, round.reclaimed, skip, cap?.data));
 }
 
 async function readCapacity(
@@ -752,7 +761,7 @@ async function readCapacity(
 	const hostInventory = await deps.hostInventory();
 	if (!hostInventory.success) return hostInventory;
 	const pressure = deps.pressure ? await deps.pressure() : undefined;
-	return ok({
+	return resultFactory.ok({
 		deps,
 		hostInventory: hostInventory.data,
 		pressure: pressure?.success ? pressure.data : "normal",
@@ -827,16 +836,16 @@ async function settle(input: ClaimInput, reservation: Reservation, round: Round)
 	const remaining = round.deadline - input.now();
 	if (remaining <= 0) {
 		if (skippedOnce && health.overload) {
-			return wardenErr("probe_timeout", overloadMessage(health.overload, health.reasons), { retryable: true });
+			return wardenErrors.err("probe_timeout", overloadMessage(health.overload, health.reasons), { retryable: true });
 		}
 		if (reservation.kind === "queued") {
-			return wardenErr(
+			return wardenErrors.err(
 				"capacity_exhausted",
 				`timed out in the boot queue at #${reservation.position} of ${reservation.total}: ${reservation.reason}`,
 				{ retryable: true }
 			);
 		}
-		return wardenErr("device_busy", waitMessage(input.request, reservation.poolSize, reservation.notReady), {
+		return wardenErrors.err("device_busy", waitMessage(input.request, reservation.poolSize, reservation.notReady), {
 			retryable: true,
 		});
 	}
@@ -850,7 +859,7 @@ async function evictIdle(input: ClaimInput, evict: Eviction[], noEvict: Set<stri
 	const shutdown = input.capacity?.shutdownIdle;
 	try {
 		for (const { device } of evict) {
-			const result = (await shutdown?.(device)) ?? wardenErr("unsupported", "no shutdown");
+			const result = (await shutdown?.(device)) ?? wardenErrors.err("unsupported", "no shutdown");
 			if (result.success) {
 				input.log?.(`${device.name} (${device.id}): idle, shut down to free capacity for the queue`);
 			} else {
@@ -934,7 +943,7 @@ async function undoClaimedOrphans(input: ClaimInput, claimed: ClaimedDevice[]): 
 function failureOf(failures: WardenError[]): ErrorResult<WardenError> {
 	const [only] = failures;
 	if (only !== undefined && failures.length === 1) return { success: false, error: only };
-	return wardenErr("failed", failures.map((f) => f.message).join("; "));
+	return wardenErrors.err("failed", failures.map((f) => f.message).join("; "));
 }
 
 /**
@@ -978,5 +987,5 @@ async function complete(
 		...c,
 		lease: (onLeased ? input.store.getLease(c.lease.id) : undefined) ?? { ...c.lease, heartbeatAt: now },
 	}));
-	return ok({ claimed: leases, reclaimed });
+	return resultFactory.ok({ claimed: leases, reclaimed });
 }

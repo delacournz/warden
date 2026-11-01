@@ -1,6 +1,6 @@
 import { delta, desiredLabels, managedSet, type SlimProfile } from "@delacour/warden-config/slim.profile";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { disabledLabels, readDisabledStore, writeDisabledStore } from "./disabled-store";
 import { parsePrintDisabled } from "./slim";
 
@@ -37,10 +37,10 @@ export async function prepareOfflineSlim(
 	const current = await readDisabledStore(udid, opts.root);
 	if (!current.success) return current;
 	const { toDisable, toEnable } = delta(disabledLabels(current.data), desiredLabels(profile), managedSet());
-	if (toDisable.length === 0 && toEnable.length === 0) return ok({ written: 0, skipped: "already-slim" });
+	if (toDisable.length === 0 && toEnable.length === 0) return resultFactory.ok({ written: 0, skipped: "already-slim" });
 	const written = await writeDisabledStore(udid, { disable: toDisable, enable: toEnable }, opts.root);
 	if (!written.success) return written;
-	return ok({ written: toDisable.length + toEnable.length, path: written.data.path });
+	return resultFactory.ok({ written: toDisable.length + toEnable.length, path: written.data.path });
 }
 
 /** Waits between reads of a launchd domain that is still tearing down / timing out. */
@@ -66,10 +66,10 @@ export async function verifyOfflineSlim(
 		if (res.exitCode === 0 && !isTransient(res)) {
 			const disabled = parsePrintDisabled(res.stdout);
 			const missing = [...desiredLabels(profile)].filter((l) => disabled.get(l) !== true).sort();
-			return ok({ missing });
+			return resultFactory.ok({ missing });
 		}
 		const wait = VERIFY_BACKOFF_MS[attempt];
-		if (!isTransient(res) || wait === undefined) return err(execError(cmd, res));
+		if (!isTransient(res) || wait === undefined) return resultFactory.err(execError(cmd, res));
 		await sleep(wait);
 	}
 }

@@ -1,4 +1,4 @@
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import {
 	type DevtoolsError,
@@ -76,7 +76,7 @@ function toTree(data: unknown, pixelRatio: number): DevtoolsResult<ReactTree> {
 				}
 			: {}),
 	}));
-	return ok({ ...(screen === undefined ? {} : { screen }), components: mapped, truncated });
+	return resultFactory.ok({ ...(screen === undefined ? {} : { screen }), components: mapped, truncated });
 }
 
 /** Reads and removes the answer the script left in the page (a string), or null while there is none. */
@@ -101,7 +101,7 @@ async function viaPolling(
 		if (!reply.success) return devtoolsErr(reply.error.code ?? "eval_failed", reply.error.message);
 		if (typeof reply.data === "string") {
 			try {
-				return ok(JSON.parse(reply.data));
+				return resultFactory.ok(JSON.parse(reply.data));
 			} catch {
 				return devtoolsErr("cdp_protocol", "React tree payload is not JSON");
 			}
@@ -123,7 +123,9 @@ async function viaBinding(
 	const reply = await session.evaluateWithBinding(expression, requestId, timeoutMs);
 	if (!reply.success) return reply.error.code === "binding_unavailable" ? undefined : reply;
 	const tagged = bindingPayloadSchema.safeParse(reply.data);
-	return tagged.success ? ok(tagged.data.result) : devtoolsErr("cdp_protocol", "unexpected React tree binding payload");
+	return tagged.success
+		? resultFactory.ok(tagged.data.result)
+		: devtoolsErr("cdp_protocol", "unexpected React tree binding payload");
 }
 
 /**

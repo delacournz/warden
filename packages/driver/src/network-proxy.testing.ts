@@ -1,6 +1,6 @@
 import type { NetworkCondition } from "@delacour/warden-config/conditions.types";
 import type { ConditionsUpdate, ProxyConditions } from "@delacour/warden-config/shaping";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { NetworkProxyPort, ProxyAddress } from "./network-proxy";
 
 /** A `NetworkProxyPort` that records every call and never spawns a process. */
@@ -24,13 +24,13 @@ export function fakeProxy(port = 19_080, live = false): FakeProxy {
 		},
 		async ensure(condition, conditions) {
 			proxy.calls.push({ op: "ensure", condition, conditions });
-			if (proxy.failEnsure) return err(proxy.failEnsure);
+			if (proxy.failEnsure) return resultFactory.err(proxy.failEnsure);
 			proxy.address = { host: "127.0.0.1", port };
-			return ok(proxy.address);
+			return resultFactory.ok(proxy.address);
 		},
 		async update(update) {
 			proxy.calls.push({ op: "update", update });
-			return proxy.address ? ok(undefined) : err("no live network proxy for this lease");
+			return proxy.address ? resultFactory.ok(undefined) : resultFactory.err("no live network proxy for this lease");
 		},
 		async stop() {
 			proxy.calls.push({ op: "stop" });

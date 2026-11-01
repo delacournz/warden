@@ -1,7 +1,7 @@
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfEnv } from "./env";
 
@@ -39,7 +39,7 @@ export async function iosAppBundle(
 			error: opError("app_not_found", `no CFBundleExecutable in ${appPath}/Info.plist`),
 		};
 	}
-	return ok({ appPath, executable, executablePath: `${appPath}/${executable}` });
+	return resultFactory.ok({ appPath, executable, executablePath: `${appPath}/${executable}` });
 }
 
 /** `launchctl list` row of a running app: `<pid>  <status>  UIKitApplication:<bundle>[0x…]…` (`-` = not running). */

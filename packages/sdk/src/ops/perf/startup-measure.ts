@@ -12,7 +12,7 @@ import {
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { appPid, iosAppBundle } from "./app-process";
 import type { PerfEnv } from "./env";
@@ -68,16 +68,16 @@ async function launchOrFail(
 	opts: { cold: boolean; component?: string }
 ): Promise<Result<Launched, WardenError>> {
 	const launched = await launchApp(c.ctx, c.device, c.appId, opts, c.io);
-	return launched.kind === "failed" ? fail(launchError(launched)) : ok(launched);
+	return launched.kind === "failed" ? fail(launchError(launched)) : resultFactory.ok(launched);
 }
 
 /** Warm runs need a live process: start the app (untimed) when it is not running. */
 async function ensureRunning(c: MeasureCtx, component?: string): Promise<Result<undefined, WardenError>> {
-	if ((await appPid(c.ctx, c.device, c.appId)) !== undefined) return ok(undefined);
+	if ((await appPid(c.ctx, c.device, c.appId)) !== undefined) return resultFactory.ok(undefined);
 	const up = await launchOrFail(c, { cold: false, ...(component !== undefined ? { component } : {}) });
 	if (!up.success) return up;
 	await c.io.sleep(WARM_UP_SETTLE_MS);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 type AndroidState = { adb: string; component: string; drawnSeen: number };
@@ -115,7 +115,7 @@ async function androidRun(
 	const { am, wallMs } = launched.data;
 	const fullyDrawnMs = await newFullyDrawn(c, s);
 	const note = androidNote(kind, index, am?.launchState);
-	return ok({
+	return resultFactory.ok({
 		run: {
 			index,
 			kind,
@@ -148,7 +148,7 @@ export async function measureAndroid(c: MeasureCtx): Promise<Result<Measured, Wa
 			if (one.data.note !== undefined) out.notes.push(one.data.note);
 		}
 	}
-	return ok(out);
+	return resultFactory.ok(out);
 }
 
 /** iOS `approx`: wall time of `simctl launch` (cold adds `--terminate-running-process`): time to process spawn, a lower bound. */
@@ -174,7 +174,7 @@ export async function measureIosApprox(c: MeasureCtx): Promise<Result<Measured, 
 			out.runs.push({ index, kind, totalMs: launched.data.wallMs });
 		}
 	}
-	return ok(out);
+	return resultFactory.ok(out);
 }
 
 const XCTRACE_HINT = "xctrace App Launch on a simulator is a spike; --method approx times simctl launch instead";
@@ -200,7 +200,7 @@ async function xctraceRun(c: MeasureCtx, appPath: string, trace: string): Promis
 	const total = launchDurationMs(periods.data);
 	return total === undefined
 		? fail(opError("failed", "no launch period in the trace", { hint: XCTRACE_HINT }))
-		: ok(total);
+		: resultFactory.ok(total);
 }
 
 /** SPIKE: iOS `xctrace record --template 'App Launch' --launch`, cold only; traces are kept under `native/`. */
@@ -218,7 +218,7 @@ export async function measureIosXctrace(c: MeasureCtx): Promise<Result<Measured,
 		if (!total.success) return total;
 		runs.push({ index, kind: "cold", totalMs: total.data });
 	}
-	return ok({
+	return resultFactory.ok({
 		runs,
 		notes: [
 			"method xctrace is a spike: the launch table is parsed per the export format, unconfirmed on simulator traces",

@@ -14,7 +14,7 @@ import { formatTree } from "@delacour/warden-devtools/tree";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import { mayBeRecorded, type ProcessCommand, recordedIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type {
 	BrokerEntries,
 	BrokerLines,
@@ -85,7 +85,7 @@ export function devtoolsError(error: DevtoolsError): WardenError {
 
 function depsOf(session: OpSession): Result<DevtoolsDeps, WardenError> {
 	return session.devtools
-		? ok(session.devtools)
+		? resultFactory.ok(session.devtools)
 		: fail(opError("engine_unavailable", "this session has no devtools deps (Metro access)"));
 }
 
@@ -108,12 +108,12 @@ const SINCE_UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_60
 /** `since`: a duration back from `now` (`30s`, `5m`, `2h`, `1d`, `250ms`) or an ISO time, as epoch ms. */
 export function parseSince(raw: string, now: number): Result<number, WardenError> {
 	const duration = /^(\d+)(ms|s|m|h|d)$/.exec(raw);
-	if (duration !== null) return ok(now - Number(duration[1]) * (SINCE_UNITS[duration[2] ?? "ms"] ?? 1));
+	if (duration !== null) return resultFactory.ok(now - Number(duration[1]) * (SINCE_UNITS[duration[2] ?? "ms"] ?? 1));
 	const at = Date.parse(raw);
 	if (Number.isNaN(at)) {
 		return fail(opError("usage", `--since must be a duration (30s, 5m, 2h) or an ISO time, got "${raw}"`));
 	}
-	return ok(at);
+	return resultFactory.ok(at);
 }
 
 export const LEVELS = ["log", "info", "warn", "error", "debug"] as const;
@@ -130,7 +130,7 @@ function parseLineFilter(
 	params: FilterParams,
 	fallbackLimit: number
 ): Result<LineFilter, WardenError> {
-	const since = params.since === undefined ? ok(undefined) : parseSince(params.since, session.host.now());
+	const since = params.since === undefined ? resultFactory.ok(undefined) : parseSince(params.since, session.host.now());
 	if (!since.success) return since;
 	const { level, limit = fallbackLimit } = params;
 	if (!Number.isInteger(limit) || limit < 1)
@@ -138,7 +138,7 @@ function parseLineFilter(
 	if (level !== undefined && !(LEVELS as readonly string[]).includes(level)) {
 		return fail(opError("usage", `unknown level ${level}`, { hint: LEVELS.join(" | ") }));
 	}
-	return ok({
+	return resultFactory.ok({
 		limit,
 		...(since.data === undefined ? {} : { since: since.data }),
 		...(level === undefined ? {} : { level: level as Level }),
@@ -181,7 +181,7 @@ async function metroFor(
 		portLeases: [...(session.ports?.() ?? [])],
 		probe: (port) => deps.probe(session.host, port),
 	});
-	if (found) return ok(found.url);
+	if (found) return resultFactory.ok(found.url);
 	return fail(
 		opError(
 			"devtools_unavailable",
@@ -238,7 +238,7 @@ export async function evaluate(session: OpSession, params: EvalParams): OpOutcom
 	if (brokered !== undefined) {
 		if (!brokered.success) return brokered;
 		const { value } = brokered.data;
-		return ok({ result: { value: value ?? null }, text: renderValue(value) });
+		return resultFactory.ok({ result: { value: value ?? null }, text: renderValue(value) });
 	}
 	return withFacet(session, params, async (facet) => {
 		const evaluated = await facet.evaluate(params.expression, {
@@ -252,7 +252,7 @@ export async function evaluate(session: OpSession, params: EvalParams): OpOutcom
 			}
 			return fail(opError("failed", message, exceptionDetails ? { details: { exception: exceptionDetails } } : {}));
 		}
-		return ok({ result: { value: evaluated.data ?? null }, text: renderValue(evaluated.data) });
+		return resultFactory.ok({ result: { value: evaluated.data ?? null }, text: renderValue(evaluated.data) });
 	});
 }
 
@@ -269,7 +269,7 @@ async function pixelRatioFor(session: OpSession): Promise<number> {
 
 function treeOutcome(result: ReactTree, all: boolean): Result<OpDone<ReactTree>, WardenError> {
 	const header = `# ${result.screen === undefined ? "screen unknown" : `screen ${result.screen}`} · ${result.components.length} components${result.truncated ? " (truncated)" : ""}`;
-	return ok({
+	return resultFactory.ok({
 		result,
 		text: [header, ...formatTree(result, { all })].join("\n"),
 		warnings: result.truncated ? ["more components exist; raise --max"] : [],
@@ -307,7 +307,7 @@ export async function reload(session: OpSession, params: MetroParams = {}): OpOu
 	const brokered = await viaBroker(session, params.metro, (broker) => broker.reload());
 	if (brokered !== undefined) {
 		if (!brokered.success) return brokered;
-		return ok({
+		return resultFactory.ok({
 			result: { action: "reload", method: brokered.data.method },
 			text: `reloaded (${brokered.data.method})`,
 		});
@@ -315,7 +315,7 @@ export async function reload(session: OpSession, params: MetroParams = {}): OpOu
 	return withFacet(session, params, async (facet) => {
 		const reloaded = await facet.reloadJs();
 		if (!reloaded.success) return fail(devtoolsError(reloaded.error));
-		return ok({
+		return resultFactory.ok({
 			result: { action: "reload", method: reloaded.data.method },
 			text: `reloaded (${reloaded.data.method})`,
 		});
@@ -377,7 +377,7 @@ async function startCollector(
 	const state = session.state.read();
 	const logDir = params.metro === undefined ? await d.broker?.logDir() : undefined;
 	if (logDir !== undefined) {
-		return ok({
+		return resultFactory.ok({
 			result: { action: "logs", state: "collecting", via: "broker", logDir },
 			text: `the dev session's broker is already capturing console + network (${logDir})`,
 		});
@@ -386,7 +386,7 @@ async function startCollector(
 		state.collector &&
 		mayBeRecorded(d.collector, state.collector.pid, collectorMarks(host, device.id, state.collector))
 	) {
-		return ok({
+		return resultFactory.ok({
 			result: { action: "logs", state: "collecting", pid: state.collector.pid, already: true },
 			text: `already collecting (pid ${state.collector.pid})`,
 		});
@@ -408,7 +408,7 @@ async function startCollector(
 	];
 	const { pid } = d.collector.spawnDetached({ cmd, logPath: join(out, COLLECTOR_LOG) });
 	session.state.update((current) => ({ ...current, collector: { pid, startedAt: host.now(), out } }));
-	return ok({
+	return resultFactory.ok({
 		result: { action: "logs", state: "collecting", pid, metroUrl: metro.data, out },
 		text: `collecting console + network to ${out} (pid ${pid}); stops after 60 s without activity`,
 	});
@@ -423,7 +423,7 @@ async function stopCollector(session: OpSession): OpOutcome<LogsResult> {
 	const identity = recordedIdentity(d.collector, running.pid, collectorMarks(session.host, session.device.id, running));
 	if (identity === "unknown") {
 		// alive but its command line unreadable: it may still be the collector, so it is neither signalled nor forgotten
-		return ok({
+		return resultFactory.ok({
 			result: { action: "logs", state: "collecting", pid: running.pid },
 			text: `collector (pid ${running.pid}) left running`,
 			warnings: [`could not stop the collector (pid ${running.pid}): its command line could not be read`],
@@ -435,7 +435,7 @@ async function stopCollector(session: OpSession): OpOutcome<LogsResult> {
 		const { collector: _stopped, ...rest } = current;
 		return rest;
 	});
-	return ok({
+	return resultFactory.ok({
 		result: { action: "logs", state: "stopped", pid: running.pid },
 		text: `stopped collector (pid ${running.pid})`,
 	});
@@ -448,7 +448,7 @@ function markLog(session: OpSession, raw: string): Result<OpDone<LogsResult>, Wa
 	const line: ConsoleLine = { ts: session.host.now(), level: "info", kind: "note", text: label };
 	mkdirSync(dir, { recursive: true });
 	appendFileSync(join(dir, CONSOLE_FILE), `${JSON.stringify(line)}\n`);
-	return ok({ result: { action: "logs", mark: label }, text: `marked "${label}"` });
+	return resultFactory.ok({ result: { action: "logs", mark: label }, text: `marked "${label}"` });
 }
 
 function clearLogs(session: OpSession): Result<OpDone<LogsResult>, WardenError> {
@@ -457,7 +457,7 @@ function clearLogs(session: OpSession): Result<OpDone<LogsResult>, WardenError> 
 		const path = join(dir, name);
 		if (existsSync(path)) writeFileSync(path, "");
 	}
-	return ok({ result: { action: "logs", cleared: true }, text: "cleared console and network logs" });
+	return resultFactory.ok({ result: { action: "logs", cleared: true }, text: "cleared console and network logs" });
 }
 
 /**
@@ -483,7 +483,7 @@ export async function logs(session: OpSession, params: LogsParams): OpOutcome<Lo
 }
 
 function linesOutcome(found: BrokerLines): Result<OpDone<BrokerLines>, WardenError> {
-	return ok({ result: found, text: found.lines.map(consoleLine).join("\n") });
+	return resultFactory.ok({ result: found, text: found.lines.map(consoleLine).join("\n") });
 }
 
 /** `exceptions`: the app's uncaught exceptions (the broker's, else the collector's file). */
@@ -559,7 +559,7 @@ function parseEntryQuery(session: OpSession, params: NetworkParams): Result<Entr
 	if (raw !== undefined && !/^(\d{3}|[1-5]xx)$/.test(raw)) {
 		return fail(opError("usage", `status must be a code (404) or a class (4xx), got "${raw}"`));
 	}
-	return ok({
+	return resultFactory.ok({
 		limit: base.data.limit,
 		...(base.data.since === undefined ? {} : { since: base.data.since }),
 		...(params.grep === undefined ? {} : { urlGrep: params.grep }),
@@ -591,7 +591,7 @@ async function networkById(session: OpSession, id: number, file: string): OpOutc
 		entry = readJsonl<NetworkEntry>(file).find((candidate) => candidate.id === id);
 	}
 	if (!entry) return fail(opError("target_not_found", `no network entry #${id}`, { hint: NO_ENTRY_HINT }));
-	return ok({ result: { entry }, text: networkDetail(entry, new Set(NETWORK_INCLUDES)) });
+	return resultFactory.ok({ result: { entry }, text: networkDetail(entry, new Set(NETWORK_INCLUDES)) });
 }
 
 /** `network`: what the app's `fetch` calls did (the broker's, else what the collector recorded). */
@@ -615,7 +615,7 @@ function entriesOutcome(
 	found: BrokerEntries,
 	include: ReadonlySet<string>
 ): Result<OpDone<NetworkResult>, WardenError> {
-	return ok({
+	return resultFactory.ok({
 		result: found,
 		text: found.entries.map((entry) => networkDetail(entry, include)).join("\n"),
 	});
@@ -628,7 +628,7 @@ export async function devtoolsStatus(session: OpSession): OpOutcome<BrokerStatus
 	const status = await broker.status();
 	if (!status.success) return status;
 	const { state, console: lines, network: net, session: dev } = status.data;
-	return ok({
+	return resultFactory.ok({
 		result: status.data,
 		text: [
 			`broker ${state.phase}`,
@@ -645,7 +645,7 @@ export async function devtoolsResume(session: OpSession): OpOutcome<{ state: Bro
 	if (broker === undefined) return fail(noBroker());
 	const resumed = await broker.resume();
 	if (!resumed.success) return resumed;
-	return ok({ result: resumed.data, text: `broker ${resumed.data.state.phase}` });
+	return resultFactory.ok({ result: resumed.data, text: `broker ${resumed.data.state.phase}` });
 }
 
 const noBroker = (): WardenError =>

@@ -1,7 +1,7 @@
 import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import { type BuildResource, describeOwner, type Lease, type Owner, type Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { BUILD_LOCK_POLL_MS, BUILD_LOCK_TTL_MS, BUILD_LOCK_WAIT_MS } from "./builds.defaults";
 
 /** Lease key serialising work on one (project, platform, fingerprint). */
@@ -94,7 +94,9 @@ export async function withBuildLock<T>(deps: BuildLockDeps, key: string, fn: () 
 			}
 		}
 		if (deps.now() - started >= waitMs) {
-			return err(`timed out waiting for build lock ${key}${got ? ` (held by ${describeOwner(got.lease.owner)})` : ""}`);
+			return resultFactory.err(
+				`timed out waiting for build lock ${key}${got ? ` (held by ${describeOwner(got.lease.owner)})` : ""}`
+			);
 		}
 		if (got) {
 			noticeHolder(deps, got.lease, !announced);

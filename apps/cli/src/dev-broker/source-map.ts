@@ -1,6 +1,6 @@
 import type { Fetch } from "@delacour/warden-devtools/devtools.types";
 import { toNormalBundleUrl } from "@delacour/warden-perf/js/bundle-url";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export type SourceMapErrorCode =
 	| "invalid_map"
@@ -91,7 +91,7 @@ export function parseSourceMap(text: string): Result<ParsedSourceMap, SourceMapE
 		return fail("invalid_map", "source map has no sources array");
 	}
 	if (typeof mappings !== "string") return fail("invalid_map", "source map has no mappings string");
-	return ok({ sources, mappings });
+	return resultFactory.ok({ sources, mappings });
 }
 
 /** `src/a.tsx` / `./src/a.tsx` / `/[metro-project]/src/a.tsx` as a comparable path without leading `./` or `/`. */
@@ -105,7 +105,7 @@ const normalize = (path: string): string => path.replace(/^\/?\[metro-project\]\
 export function findSource(map: ParsedSourceMap, file: string): Result<number, SourceMapError> {
 	const wanted = normalize(file);
 	const exact = map.sources.flatMap((source, index) => (normalize(source) === wanted ? [index] : []));
-	if (exact.length === 1 && exact[0] !== undefined) return ok(exact[0]);
+	if (exact.length === 1 && exact[0] !== undefined) return resultFactory.ok(exact[0]);
 	const matches = map.sources.flatMap((source, index) =>
 		source === file || source.endsWith(`/${wanted}`) ? [index] : []
 	);
@@ -115,7 +115,7 @@ export function findSource(map: ParsedSourceMap, file: string): Result<number, S
 		const listed = matches.map((index) => map.sources[index]).join(", ");
 		return fail("ambiguous_source", `${file} matches ${matches.length} sources: ${listed}`);
 	}
-	return ok(first);
+	return resultFactory.ok(first);
 }
 
 /** An original position (1-based, as in an editor) and the generated one it maps to (0-based, as CDP wants). */
@@ -168,7 +168,7 @@ export function originalToGenerated(
 	const source = map.sources[found.data] ?? file;
 	if (best === undefined)
 		return fail("no_mapping", `${file}:${line} has no generated code (is it type-only or dead code?)`);
-	return ok({
+	return resultFactory.ok({
 		source,
 		line: best.origLine + 1,
 		col: best.origCol + 1,

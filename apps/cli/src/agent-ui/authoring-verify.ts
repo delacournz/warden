@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import { readResults, type TestResult } from "@delacour/warden-e2e/runner/results";
 import type { VerifyInput, VerifyReport, VerifyTest } from "@delacour/warden-sdk/ops/authoring/deps";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BatchDeps } from "../commands/batch";
 import { type SpecPlanDeps, specPlan } from "../commands/e2e";
 import type { CommandContext } from "../context";
@@ -63,7 +63,7 @@ export async function runVerify(ctx: CommandContext, deps: VerifyDeps, input: Ve
 	try {
 		proc = deps.spawn(argv, { env, log, cwd: input.suite.cwd, job: true, group: true });
 	} catch (error) {
-		return err(`could not start ${argv[0]}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`could not start ${argv[0]}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	const cancel = deps.after(input.suite.config.jobTimeoutMs, () => proc.kill("SIGTERM"));
 	let exitCode: number;
@@ -78,5 +78,5 @@ export async function runVerify(ctx: CommandContext, deps: VerifyDeps, input: Ve
 	);
 	const tests = testsOf(read);
 	const passed = exitCode === 0 && tests.length > 0 && tests.every((test) => test.status === "passed");
-	return ok({ passed, exitCode, outDir: input.outDir, log, results: resultsFile, tests });
+	return resultFactory.ok({ passed, exitCode, outDir: input.outDir, log, results: resultsFile, tests });
 }

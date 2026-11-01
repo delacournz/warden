@@ -10,7 +10,7 @@ import {
 	startupWork,
 } from "@delacour/warden-sdk/ops/perf/startup";
 import type { Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
@@ -24,11 +24,11 @@ export type StartupOptions = PerfOptionValues & { cold?: true; warm?: true; runs
 const fail = (error: UiError): { success: false; error: UiError } => ({ success: false, error });
 
 function parseRuns(raw: string | undefined): Result<number, UiError> {
-	if (raw === undefined) return ok(DEFAULT_RUNS);
+	if (raw === undefined) return resultFactory.ok(DEFAULT_RUNS);
 	if (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > MAX_RUNS) {
 		return fail(uiError("usage", `--runs must be an integer 1-${MAX_RUNS}, got "${raw}"`));
 	}
-	return ok(Number(raw));
+	return resultFactory.ok(Number(raw));
 }
 
 type IosMethod = "approx" | "xctrace";
@@ -36,13 +36,13 @@ type IosMethod = "approx" | "xctrace";
 function parseMethod(raw: string | undefined, platform: Platform): Result<StartupMethod, UiError> {
 	if (platform === "android") {
 		return raw === undefined || raw === "am-start"
-			? ok("am-start")
+			? resultFactory.ok("am-start")
 			: fail(uiError("usage", `--method ${raw} is iOS only (Android always uses am start -W)`));
 	}
 	const method: IosMethod | undefined =
 		raw === undefined || raw === "approx" ? "approx" : raw === "xctrace" ? "xctrace" : undefined;
 	if (method === undefined) return fail(uiError("usage", `--method must be approx or xctrace, got "${raw}"`));
-	return ok(method === "approx" ? "simctl-approx" : "xctrace");
+	return resultFactory.ok(method === "approx" ? "simctl-approx" : "xctrace");
 }
 
 /** `--runs`, `--method` (per platform) and `--cold|--warm` (default cold) as a plan, or a usage error. */
@@ -54,7 +54,7 @@ function planOf(opts: StartupOptions, platform: Platform): Result<StartupPlan, U
 	const kinds: StartupKind[] = [];
 	if (opts.cold === true || opts.warm !== true) kinds.push("cold");
 	if (opts.warm === true) kinds.push("warm");
-	return ok({ count: count.data, method: method.data, kinds });
+	return resultFactory.ok({ count: count.data, method: method.data, kinds });
 }
 
 /** `warden perf startup`: cold/warm app start time, median and p90 over `--runs`. Mutates the app, so it needs the caller's lease (`--claim`). */

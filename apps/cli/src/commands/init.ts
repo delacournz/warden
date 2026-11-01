@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, join } from "node:path";
 import { projectStart } from "@delacour/warden-builds/prepare";
 import { DEFAULT_SPECS_DIR } from "@delacour/warden-core/affected/affected.defaults";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -41,14 +41,14 @@ function readAppJson(root: string): Result<AppJson | undefined> {
 	const path = join(root, "app.json");
 	if (!existsSync(path)) {
 		return APP_CONFIG_FILES.some((f) => existsSync(join(root, f)))
-			? ok(undefined)
-			: err(`no app.json / app.config.* in ${root} — run in the Expo app's root or pass --project <dir>`);
+			? resultFactory.ok(undefined)
+			: resultFactory.err(`no app.json / app.config.* in ${root} — run in the Expo app's root or pass --project <dir>`);
 	}
 	try {
 		const parsed = appJsonSchema.safeParse(JSON.parse(readFileSync(path, "utf8")));
-		return parsed.success ? ok(parsed.data) : err(`${path}: not an Expo app.json`);
+		return parsed.success ? resultFactory.ok(parsed.data) : resultFactory.err(`${path}: not an Expo app.json`);
 	} catch (error) {
-		return err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -87,7 +87,9 @@ function plan(root: string, opts: InitOpts): Result<Plan> {
 	const android = expo?.android?.package ?? opts.bundleId;
 	const bundleId = { ...(ios ? { ios } : {}), ...(android ? { android } : {}) };
 	if (ios === undefined && android === undefined)
-		return err("the app has no bundle id yet — pass --bundle-id <id> (e.g. com.example.app; written to app.json)");
+		return resultFactory.err(
+			"the app has no bundle id yet — pass --bundle-id <id> (e.g. com.example.app; written to app.json)"
+		);
 	const app: InitApp = { name: expo?.slug ?? expo?.name ?? basename(root), bundleId };
 	// a config in another format is the user's: never replaced by the .ts starter
 	const foreign = WARDEN_CONFIG_FILES.find((f) => f !== "warden.config.ts" && existsSync(join(root, f)));
@@ -96,7 +98,7 @@ function plan(root: string, opts: InitOpts): Result<Plan> {
 		...(foreign ? [] : [{ path: "warden.config.ts", content: wardenConfigSource(app) }]),
 		...(hasSpecs(join(root, DEFAULT_SPECS_DIR)) ? [] : [{ path: smoke, content: SMOKE_SPEC_SOURCE }]),
 	].map((file) => ({ ...file, exists: existsSync(join(root, file.path)) }));
-	return ok({ app, files, ...(updated ? { appJson: `${JSON.stringify(updated, null, 2)}\n` } : {}) });
+	return resultFactory.ok({ app, files, ...(updated ? { appJson: `${JSON.stringify(updated, null, 2)}\n` } : {}) });
 }
 
 /**

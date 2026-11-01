@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type ErrorResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { NPM_PACKAGE, platformPackageName, releaseTarget } from "../npm/platforms";
@@ -108,11 +108,11 @@ async function updateStandalone(
 	if (installOrigin(ctx.env, deps.execPath) === "npm") return updateFromNpm(ctx, deps, flags, target);
 	const github = await updateFromRelease(ctx, deps, flags, target);
 	if (github.success || github.error.kind !== "unreachable") {
-		return github.success ? github : err(github.error.message);
+		return github.success ? github : resultFactory.err(github.error.message);
 	}
 	note(ctx, `GitHub releases unavailable — trying npm (${NPM_PACKAGE})`);
 	const npm = await updateFromNpm(ctx, deps, flags, target);
-	return npm.success ? npm : err(`${github.error.message}\nnpm: ${npm.error}`);
+	return npm.success ? npm : resultFactory.err(`${github.error.message}\nnpm: ${npm.error}`);
 }
 
 /** Latest `@delacour/warden` on npm → platform tarball → sha512 integrity check → atomic install at `target`. */
@@ -134,7 +134,7 @@ async function updateFromNpm(
 	if (!latest.success) return latest;
 	const version = latest.data;
 	const skipped = skipInstall(deps, flags, version);
-	if (skipped) return ok(skipped);
+	if (skipped) return resultFactory.ok(skipped);
 	const name = `${platformPackageName(platform.data)}@${version}`;
 
 	const dir = mkdtempSync(join(tmpdir(), "warden-update-"));
@@ -149,7 +149,7 @@ async function updateFromNpm(
 				const bytes = await downloadNpmBinary(deps.fetch, dist.data);
 				if (!bytes.success) return bytes;
 				writeFileSync(binary, bytes.data);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 			() => `downloaded ${name} (sha512 ok)`
 		);
@@ -157,7 +157,7 @@ async function updateFromNpm(
 		const installed = await install(ctx, binary, target, version);
 		if (!installed.success) return installed;
 		recordInstallOrigin(ctx.env, target, "npm");
-		return ok({
+		return resultFactory.ok({
 			status: "updated",
 			current: deps.build.version,
 			latest: version,
@@ -197,7 +197,7 @@ async function updateFromRelease(
 	if (!latest.success) return releaseError("unreachable", latest.error);
 	const base = { current: deps.build.version, latest: latest.data.version, channel: deps.build.channel };
 	const skipped = skipInstall(deps, flags, latest.data.version);
-	if (skipped) return ok(skipped);
+	if (skipped) return resultFactory.ok(skipped);
 	const picked = pickAsset(latest.data, asset.data);
 	if (!picked.success) return failed(picked.error);
 	const name = picked.data;
@@ -214,15 +214,15 @@ async function updateFromRelease(
 				const expected = parseChecksums(readFileSync(join(dir, "checksums.txt"), "utf8")).get(name);
 				const actual = sha256File(binary);
 				return expected === actual
-					? ok(undefined)
-					: err(`checksum mismatch for ${name} (expected ${expected ?? "none"}, got ${actual})`);
+					? resultFactory.ok(undefined)
+					: resultFactory.err(`checksum mismatch for ${name} (expected ${expected ?? "none"}, got ${actual})`);
 			},
 			() => `downloaded ${name} ${latest.data.tag} (sha256 ok)`
 		);
 		if (!downloaded.success) return failed(downloaded.error);
 		const installed = await install(ctx, binary, target, latest.data.version);
 		if (!installed.success) return failed(installed.error);
-		return ok({
+		return resultFactory.ok({
 			status: "updated",
 			...base,
 			path: target,
@@ -243,7 +243,7 @@ async function updateFromSource(
 ): AsyncResult<UpdateReport> {
 	const version = (deps.readSourceVersion ?? sourceVersion)(sourceDir);
 	const base = { current: deps.build.version, latest: version, channel: deps.build.channel };
-	if (flags.check) return ok({ status: "available", ...base });
+	if (flags.check) return resultFactory.ok({ status: "available", ...base });
 	const dir = mkdtempSync(join(tmpdir(), "warden-build-"));
 	try {
 		const outfile = join(dir, "warden");
@@ -256,7 +256,7 @@ async function updateFromSource(
 		if (!built.success) return built;
 		const installed = await install(ctx, outfile, target, version);
 		if (!installed.success) return installed;
-		return ok({ status: "updated", ...base, path: target, build: describeBuild(built.data) });
+		return resultFactory.ok({ status: "updated", ...base, path: target, build: describeBuild(built.data) });
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -267,7 +267,7 @@ function plan(ctx: CommandContext, deps: UpdateDeps, flags: Flags, target: strin
 	const managed = flags.to === undefined ? detectPackageInstall(deps.execPath) : undefined;
 	if (managed) {
 		return Promise.resolve(
-			ok({
+			resultFactory.ok({
 				status: "managed",
 				current: build.version,
 				channel: build.channel,
@@ -279,7 +279,7 @@ function plan(ctx: CommandContext, deps: UpdateDeps, flags: Flags, target: strin
 	if (flags.release || build.channel === "release") return updateStandalone(ctx, deps, flags, target);
 	if (!build.sourceDir) {
 		return Promise.resolve(
-			err(
+			resultFactory.err(
 				"this warden was built locally but doesn't know its source dir — rebuild it, or run `warden update --release`"
 			)
 		);

@@ -1,7 +1,7 @@
 import type { Fetch } from "@delacour/warden-devtools/devtools.types";
 import type { DevtoolsSession } from "@delacour/warden-devtools/session";
 import { isBundleUrl } from "@delacour/warden-perf/js/bundle-url";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { Broker } from "./broker";
 import { type BrokerContext, type BrokerResult, brokerErr, type MethodHandler } from "./broker.types";
@@ -145,7 +145,7 @@ async function setBreakpoint(
 			error: { code: "fetch_failed", message: "Debugger.setBreakpointByUrl returned no breakpointId" },
 		};
 	}
-	return ok(breakpointId);
+	return resultFactory.ok(breakpointId);
 }
 
 /** A valid `logpoint.add` request as a fresh, unarmed logpoint. */
@@ -161,7 +161,7 @@ function newLogpoint(params: unknown, taken: (id: string) => boolean, nextId: ()
 	}
 	const id = parsed.data.id ?? nextId();
 	if (taken(id)) return brokerErr("bad_request", `logpoint ${id} exists`, "remove it first or pick another --id");
-	return ok({
+	return resultFactory.ok({
 		id,
 		location: parsed.data.location,
 		file: where.file,
@@ -318,14 +318,14 @@ export function createLogpointsExtension(options: LogpointsOptions = {}): Broker
 		}
 
 		async function enable(session: DevtoolsSession): Promise<BrokerResult<null>> {
-			if (listening) return ok(null);
+			if (listening) return resultFactory.ok(null);
 			listening = true;
 			const enabled = await session.send("Debugger.enable");
 			if (!enabled.success) {
 				listening = false;
 				return brokerErr(enabled.error.code, `Debugger.enable: ${enabled.error.message}`);
 			}
-			return ok(null);
+			return resultFactory.ok(null);
 		}
 
 		const unbind = () => {
@@ -384,7 +384,7 @@ export function createLogpointsExtension(options: LogpointsOptions = {}): Broker
 				}
 				lp.error = "the app's bundle is not loaded yet; the logpoint arms when it is";
 			}
-			return ok({ logpoint: info(lp) });
+			return resultFactory.ok({ logpoint: info(lp) });
 		}
 
 		async function addOne(params: unknown, ctx: BrokerContext): Promise<BrokerResult<{ logpoint: LogpointInfo }>> {
@@ -408,7 +408,7 @@ export function createLogpointsExtension(options: LogpointsOptions = {}): Broker
 		const list: MethodHandler = async (params) => {
 			const parsed = noParams.safeParse(params ?? {});
 			if (!parsed.success) return brokerErr("bad_request", `logpoint.list: ${parsed.error.message}`);
-			return ok({ logpoints: [...logpoints.values()].map(info) });
+			return resultFactory.ok({ logpoints: [...logpoints.values()].map(info) });
 		};
 
 		const remove: MethodHandler = (params) =>
@@ -423,7 +423,7 @@ export function createLogpointsExtension(options: LogpointsOptions = {}): Broker
 						`have: ${[...logpoints.keys()].join(", ") || "none"}`
 					);
 				}
-				return ok({ removed: parsed.data.id });
+				return resultFactory.ok({ removed: parsed.data.id });
 			});
 
 		const clear: MethodHandler = (params) =>
@@ -432,7 +432,7 @@ export function createLogpointsExtension(options: LogpointsOptions = {}): Broker
 				if (!parsed.success) return brokerErr("bad_request", `logpoint.clear: ${parsed.error.message}`);
 				const ids = [...logpoints.keys()];
 				for (const id of ids) await removeOne(id);
-				return ok({ removed: ids });
+				return resultFactory.ok({ removed: ids });
 			});
 
 		const removers: (() => void)[] = [];

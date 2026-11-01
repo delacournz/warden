@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { specIdOf } from "@delacour/warden-core/affected/specs";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { E2eReportJson } from "../../contracts/e2e-report.schema";
 import type { Core } from "../../core";
 import { bunSpecsDeps, e2eArgs, parseE2eReport, resolveCliCommand } from "../../specs";
@@ -57,9 +57,9 @@ export function specsVerify(core: Core): NonNullable<AuthoringDeps["verify"]> {
 		});
 		const report = parseE2eReport(out);
 		if (!report.success)
-			return err(`warden e2e exited ${out.exitCode} without a report: ${out.stderr.slice(-400).trim()}`);
+			return resultFactory.err(`warden e2e exited ${out.exitCode} without a report: ${out.stderr.slice(-400).trim()}`);
 		const verdict = report.data.specs.find((spec) => spec.id === id);
-		if (!verdict) return err(`warden e2e did not run ${id}`);
-		return ok(reportOf(verdict, input, report.data.batchDir, out.exitCode));
+		if (!verdict) return resultFactory.err(`warden e2e did not run ${id}`);
+		return resultFactory.ok(reportOf(verdict, input, report.data.batchDir, out.exitCode));
 	};
 }

@@ -11,8 +11,8 @@ import type { AppPhase, EnsureResult } from "@delacour/warden-builds/resolve";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-config/config.defaults";
 import { parsePortSpec } from "@delacour/warden-config/ports-spec";
 import { isPhysicalDevice, type Owner, type Platform } from "@delacour/warden-store/types";
-import { codedError, type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ClaimOutcome, ClaimResult } from "./claim";
 import { type ClaimRequest, claimWithRequest } from "./claim-request";
 import { releaseDevices } from "./device-lease";
@@ -65,7 +65,7 @@ export async function claimRunPorts(
 	const store = host.store();
 	const ports: RunPort[] = [];
 	for (const spec of specs) {
-		const range = codedError(parsePortSpec(spec), "usage");
+		const range = wardenErrors.coded(parsePortSpec(spec), "usage");
 		const claimed = range.success
 			? await claimPorts(
 					store,
@@ -85,7 +85,7 @@ export async function claimRunPorts(
 			if (lease.resource.kind === "port") ports.push({ leaseId: lease.id, port: lease.resource.port });
 		}
 	}
-	return ok(ports);
+	return resultFactory.ok(ports);
 }
 
 /** Env for the child: `WARDEN_UDIDS`, `WARDEN_UDID_<i>`, `WARDEN_LEASE_IDS`, `WARDEN_PORT(S)`. */
@@ -188,7 +188,7 @@ export const INTERRUPTED = "interrupted";
 
 /** The failed result of a claim the caller gave up on — nothing to add to it. */
 export function interrupted(): Result<never, WardenError> {
-	return wardenErr("interrupted", INTERRUPTED);
+	return wardenErrors.err("interrupted", INTERRUPTED);
 }
 
 /** One device's app, as `claimAll` reports it once every leg is in. */
@@ -223,10 +223,10 @@ export async function installLegApp(
 	for (const [i, c] of claim.claimed.entries()) {
 		const res = results[i];
 		if (!res) continue;
-		if (!res.success) return wardenErr(res.error.code, `app on ${c.device.id}: ${res.error.message}`);
+		if (!res.success) return wardenErrors.err(res.error.code, `app on ${c.device.id}: ${res.error.message}`);
 		apps.push({ deviceId: c.device.id, result: res.data });
 	}
-	return ok(apps);
+	return resultFactory.ok(apps);
 }
 
 /** One device claimed after the run started (`LeaseSession.claimMore`). */
@@ -359,7 +359,7 @@ type LegRun = {
 type LegInstall = { ensure: RunEnsureApp; opts: EnsureOptions };
 
 const failure = (error: unknown): Result<never, WardenError> =>
-	wardenErr("failed", error instanceof Error ? error.message : String(error));
+	wardenErrors.err("failed", error instanceof Error ? error.message : String(error));
 
 /**
  * A headless iOS claim's hide, overlapped with the leg's work (16-8): the devices the window close did
@@ -433,7 +433,7 @@ async function runLeg(
 	// a device the hide shut down and could not boot again is unhealthy: the run does not go on with it
 	if (failed.length > 0 && args.dropLost)
 		return result === undefined ? { claim, lost: failed } : { claim, install: result, lost: failed };
-	if (failed.length > 0) return { claim, install: wardenErr("failed", lostText(failed)) };
+	if (failed.length > 0) return { claim, install: wardenErrors.err("failed", lostText(failed)) };
 	return result === undefined ? { claim } : { claim, install: result };
 }
 
@@ -448,7 +448,7 @@ function legsFailure(
 	const installFailed = runs.find((r) => r.install && !r.install.success)?.install;
 	if (installFailed && !installFailed.success) return installFailed;
 	if (lost.length > 0 && outcome.claimed.every((c) => lost.includes(c.device.id)))
-		return wardenErr("failed", lostText(lost));
+		return wardenErrors.err("failed", lostText(lost));
 	return undefined;
 }
 
@@ -543,7 +543,7 @@ export async function claimAll(
 			return run.install;
 		}
 		leaseIds.push(...ids);
-		return ok({
+		return resultFactory.ok({
 			outcome: claimed,
 			lost: run.lost ?? [],
 			drop: async () => {
@@ -572,7 +572,7 @@ export async function claimAll(
 		if (app.result.appPath) env.WARDEN_APP_PATH = app.result.appPath;
 		env.WARDEN_APP_HASH = app.result.hash;
 	}
-	return ok({
+	return resultFactory.ok({
 		outcome,
 		claims,
 		ports: ports.data,

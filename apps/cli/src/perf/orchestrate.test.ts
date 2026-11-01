@@ -13,7 +13,7 @@ import {
 import { readPlan } from "@delacour/warden-sdk/ops/perf/plan";
 import { listSessions, readSession, sessionDir, updateSession } from "@delacour/warden-sdk/ops/perf/session";
 import type { Owner } from "@delacour/warden-store/types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import type { PerfTarget } from "./device";
 import { perfRecord } from "./record";
@@ -81,7 +81,7 @@ function setup(rules: Rule[] = []) {
 		start: async (_c, _d, _io, input) => {
 			nativeCalls.push("start");
 			mkdirSync(input.dir, { recursive: true });
-			return ok({
+			return resultFactory.ok({
 				pid: 777,
 				out: join(input.dir, "android.perfetto-trace"),
 				startedAtIso: "x",
@@ -90,7 +90,7 @@ function setup(rules: Rule[] = []) {
 		},
 		stop: async (_c, _d, _io, input) => {
 			nativeCalls.push("stop");
-			return ok({
+			return resultFactory.ok({
 				out: input.handle.out,
 				warnings: [],
 				analysis: {

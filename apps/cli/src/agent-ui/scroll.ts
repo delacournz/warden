@@ -1,6 +1,6 @@
 import { isWay, parseAmount } from "@delacour/warden-sdk/ops/actions";
 import { scroll } from "@delacour/warden-sdk/ops/scroll";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type ActionOptionValues, parseSettle, positiveInt } from "./args";
 import type { UiDeps } from "./driver";
@@ -55,7 +55,7 @@ function scrollRequest(
 	if (!amount.success) return amount;
 	const max = opts.max === undefined ? undefined : positiveInt("--max", opts.max);
 	if (max && !max.success) return max;
-	return ok({
+	return resultFactory.ok({
 		direction,
 		amount: amount.data,
 		...(max ? { max: max.data } : {}),

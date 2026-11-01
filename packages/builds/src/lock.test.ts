@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type BuildLockDeps, buildLockKey, buildTreeLockKey, liveBuildLocks, withBuildLock } from "./lock";
 import type { EnsureResult } from "./resolve";
 
@@ -50,11 +50,14 @@ describe("withBuildLock", () => {
 			const leases = store.listLeases();
 			expect(leases.map((l) => l.resource)).toEqual([{ kind: "build", key: "k|ios|h" }]);
 			expect(leases[0]?.pid).toBe(4242);
-			return ok(1);
+			return resultFactory.ok(1);
 		});
 		expect(res).toEqual({ success: true, data: 1 });
 		expect(store.listLeases()).toEqual([]);
-		expect(await withBuildLock(d, "k|ios|h", async () => err("boom"))).toEqual({ success: false, error: "boom" });
+		expect(await withBuildLock(d, "k|ios|h", async () => resultFactory.err("boom"))).toEqual({
+			success: false,
+			error: "boom",
+		});
 		expect(store.listLeases()).toEqual([]);
 	});
 
@@ -66,7 +69,7 @@ describe("withBuildLock", () => {
 			d.sleeps.push(ms);
 			if (d.sleeps.length === 3) store.deleteLeases([held.id]);
 		};
-		const res = await withBuildLock(d, "k", async () => ok("ran"));
+		const res = await withBuildLock(d, "k", async () => resultFactory.ok("ran"));
 		expect(res).toEqual({ success: true, data: "ran" });
 		expect(d.sleeps).toEqual([100, 100, 100]);
 		expect(logs).toHaveLength(1);
@@ -81,7 +84,7 @@ describe("withBuildLock", () => {
 			d.sleeps.push(ms);
 			if (d.sleeps.length === 2) store.deleteLeases([held.id]);
 		};
-		const res = await withBuildLock(d, "k", async () => ok("ran"));
+		const res = await withBuildLock(d, "k", async () => resultFactory.ok("ran"));
 		expect(res).toEqual({ success: true, data: "ran" });
 		expect(seen).toEqual([held.id, held.id]);
 	});
@@ -93,19 +96,19 @@ describe("withBuildLock", () => {
 		d.sleep = async () => {
 			store.deleteLeases([held.id]);
 		};
-		await withBuildLock(d, "k", async () => ok(1));
+		await withBuildLock(d, "k", async () => resultFactory.ok(1));
 		expect(logs).toEqual(["agent other is building in /app — waiting"]);
 	});
 
 	test("stale holder (pid dead, heartbeat expired) is reclaimed", async () => {
 		store.insertLease({ resource: { kind: "build", key: "k" }, owner: other, ttlMs: 10, pid: 1 }, 0);
-		const res = await withBuildLock(deps(), "k", async () => ok("ran"));
+		const res = await withBuildLock(deps(), "k", async () => resultFactory.ok("ran"));
 		expect(res).toEqual({ success: true, data: "ran" });
 	});
 
 	test("times out while held", async () => {
 		store.insertLease({ resource: { kind: "build", key: "k" }, owner: other, ttlMs: 10_000_000 }, 1_000);
-		const res = await withBuildLock(deps(), "k", async () => ok("never"));
+		const res = await withBuildLock(deps(), "k", async () => resultFactory.ok("never"));
 		expect(res.success).toBe(false);
 	});
 

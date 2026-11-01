@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** The published npm package; its `warden` bin is a JS shim that runs the matching platform package's binary. */
 export const NPM_PACKAGE = "@delacour/warden";
@@ -21,8 +21,8 @@ function isReleaseTarget(value: string): value is ReleaseTarget {
 export function releaseTarget(platform: string, arch: string): Result<ReleaseTarget> {
 	const target = `${platform}-${arch}`;
 	return isReleaseTarget(target)
-		? ok(target)
-		: err(`no warden build for ${target} (supported: ${RELEASE_TARGETS.join(", ")})`);
+		? resultFactory.ok(target)
+		: resultFactory.err(`no warden build for ${target} (supported: ${RELEASE_TARGETS.join(", ")})`);
 }
 
 /** `darwin-arm64` → `@delacour/warden-darwin-arm64`. */

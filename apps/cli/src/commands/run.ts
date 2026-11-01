@@ -15,7 +15,7 @@ import {
 } from "@delacour/warden-leasing/session";
 import type { RunJson } from "@delacour/warden-sdk/contracts/claim";
 import type { Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { maybeAutoGc, selfCommand } from "../autogc";
 import {
 	type ClaimFlagValues,
@@ -70,7 +70,7 @@ export function parseRunArgs(platform: Platform, opts: RunOpts): Result<RunArgs>
 	if (!app.success) return app;
 	const args: RunArgs = { flags: flags.data, ports: opts.port, json: opts.json === true };
 	if (app.data) args.app = app.data;
-	return ok(args);
+	return resultFactory.ok(args);
 }
 
 /** Spawn the child, heartbeat `leaseIds`, forward SIGINT/SIGTERM; always `release()` at the end. */

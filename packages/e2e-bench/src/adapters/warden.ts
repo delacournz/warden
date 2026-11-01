@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { runOk } from "../harness/exec";
 import { joinNative, loadManifest } from "../results/manifest";
 import type { RepResult } from "../results/schema";
@@ -162,27 +162,27 @@ const PREPARE_SNAPSHOT_TIMEOUT = "60s";
 
 /** Starts the resident helper the way `warden e2e` does (a snapshot makes the in-sim bridge resident). */
 async function prepare(ctx: RunContext): Promise<Result<void>> {
-	if (ctx.platform !== "ios") return ok(undefined);
-	let last: Result<void> = ok(undefined);
+	if (ctx.platform !== "ios") return resultFactory.ok(undefined);
+	let last: Result<void> = resultFactory.ok(undefined);
 	for (let attempt = 1; attempt <= PREPARE_SNAPSHOT_ATTEMPTS; attempt++) {
 		const ran = await runOk(ctx.exec, bunOf(ctx), [cliOf(ctx), "ui", "snapshot", "--udid", ctx.udid, "--json"], {
 			env: { ...ctx.env, WARDEN_HELPER_DIR: helperDirOf(ctx), WARDEN_SIMD_TIMEOUT: PREPARE_SNAPSHOT_TIMEOUT },
 			onLine: (_s, line) => ctx.log(line),
 		});
-		if (ran.success) return ok(undefined);
-		last = err(ran.error);
+		if (ran.success) return resultFactory.ok(undefined);
+		last = resultFactory.err(ran.error);
 		ctx.log(`prepare: snapshot attempt ${attempt}/${PREPARE_SNAPSHOT_ATTEMPTS} failed`);
 	}
 	return last;
 }
 
 async function teardown(ctx: RunContext): Promise<Result<void>> {
-	if (ctx.platform !== "ios") return ok(undefined);
+	if (ctx.platform !== "ios") return resultFactory.ok(undefined);
 	const ran = await runOk(ctx.exec, bunOf(ctx), [cliOf(ctx), "ui", "close", "--udid", ctx.udid, "--json"], {
 		env: ctx.env,
 		onLine: (_s, line) => ctx.log(line),
 	});
-	return ran.success ? ok(undefined) : err(ran.error);
+	return ran.success ? resultFactory.ok(undefined) : resultFactory.err(ran.error);
 }
 
 /** `err` is string-only; `run` fails with an `AdapterError`. */
@@ -216,7 +216,15 @@ function toRep(
 			...(t.artifacts.length > 0 ? { artifacts: t.artifacts } : {}),
 		};
 	});
-	return ok({ index: 1, cold: ctx.cold, wallMs, wallSource: "harness", startedAt, tests, rawArtifactDir: ctx.outDir });
+	return resultFactory.ok({
+		index: 1,
+		cold: ctx.cold,
+		wallMs,
+		wallSource: "harness",
+		startedAt,
+		tests,
+		rawArtifactDir: ctx.outDir,
+	});
 }
 
 async function run(ctx: RunContext, deps: WardenDeps): Promise<Result<RepResult, AdapterError>> {

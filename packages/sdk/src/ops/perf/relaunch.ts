@@ -12,7 +12,7 @@ import { parseSimctlLaunch, simctlLaunchArgv } from "@delacour/warden-perf/start
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { iosAppBundle } from "./app-process";
 import type { PerfEnv } from "./env";
@@ -75,7 +75,7 @@ export async function resolveLauncher(
 			}),
 		};
 	}
-	return ok(component);
+	return resultFactory.ok(component);
 }
 
 /** Stop the app (`am force-stop` / `simctl terminate`); an app that was not running is not an error. */
@@ -87,12 +87,12 @@ export async function terminateApp(
 	if (device.platform === "android") {
 		const res = await ctx.exec(adb(ctx, device, ["shell", "am", "force-stop", appId]), { timeoutMs: 15_000 });
 		return res.exitCode === 0
-			? ok(undefined)
+			? resultFactory.ok(undefined)
 			: { success: false, error: failed(`am force-stop ${appId} failed: ${res.stderr.trim() || res.stdout.trim()}`) };
 	}
 	const res = await ctx.exec(["xcrun", "simctl", "terminate", device.id, appId], { timeoutMs: 15_000 });
 	const text = `${res.stdout}${res.stderr}`;
-	if (res.exitCode === 0 || /found nothing to terminate/i.test(text)) return ok(undefined);
+	if (res.exitCode === 0 || /found nothing to terminate/i.test(text)) return resultFactory.ok(undefined);
 	return { success: false, error: failed(`simctl terminate ${appId} failed: ${text.trim()}`) };
 }
 
@@ -175,7 +175,7 @@ export async function resetAppData(
 	if (device.platform === "android") {
 		const res = await ctx.exec(adb(ctx, device, ["shell", "pm", "clear", appId]), { timeoutMs: 30_000 });
 		return res.exitCode === 0 && /success/i.test(res.stdout)
-			? ok(undefined)
+			? resultFactory.ok(undefined)
 			: { success: false, error: failed(`pm clear ${appId} failed: ${(res.stdout || res.stderr).trim()}`) };
 	}
 	const bundle = await iosAppBundle(ctx, device.id, appId);
@@ -193,7 +193,7 @@ export async function resetAppData(
 			return { success: false, error: failed(`simctl uninstall ${appId} failed: ${gone.stderr.trim()}`) };
 		}
 		const back = await ctx.exec(["xcrun", "simctl", "install", device.id, copied], { timeoutMs: 120_000 });
-		if (back.exitCode === 0) return ok(undefined);
+		if (back.exitCode === 0) return resultFactory.ok(undefined);
 		keep = true;
 		return {
 			success: false,

@@ -1,7 +1,7 @@
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { KindKey } from "./cache";
 import type { Project } from "./config";
 import type { KindBuildKey } from "./ensure";
@@ -50,7 +50,7 @@ export type KindKeys = {
  */
 export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
 	const { exec, platform, kind, device } = deps;
-	if (device && kind === "simulator") return err(SIMULATOR_ON_DEVICE);
+	if (device && kind === "simulator") return resultFactory.err(SIMULATOR_ON_DEVICE);
 	const settings = resolveKind(deps.project, kind, device);
 	const project = projectForKind(deps.project, kind, device);
 	const native = await computeCacheKey(exec, project, platform, deps.readFile, deps.memo, deps.env);
@@ -63,7 +63,7 @@ export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
 	const nativeFp = nativeOnly.data.key;
 	const base = { buildKey: native.data.key, native: native.data.native, project, settings };
 	const onDevice = device ? { device } : {};
-	if (kind === "dev") return ok({ ...base, key: { kind: "dev", nativeFp, ...onDevice } });
+	if (kind === "dev") return resultFactory.ok({ ...base, key: { kind: "dev", nativeFp, ...onDevice } });
 	const jsKey = await computeJsKey({
 		exec,
 		root: project.root,
@@ -77,8 +77,9 @@ export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
 		...(deps.bundlerFlags ? { bundlerFlags: deps.bundlerFlags } : {}),
 	});
 	if (!jsKey.success) return jsKey;
-	if (kind === "release") return ok({ ...base, key: { kind: "release", nativeFp, jsKey: jsKey.data, ...onDevice } });
-	return ok({
+	if (kind === "release")
+		return resultFactory.ok({ ...base, key: { kind: "release", nativeFp, jsKey: jsKey.data, ...onDevice } });
+	return resultFactory.ok({
 		...base,
 		key: { kind: "simulator-base", nativeFp },
 		repack: { kind: "simulator-repack", nativeFp, jsKey: jsKey.data },

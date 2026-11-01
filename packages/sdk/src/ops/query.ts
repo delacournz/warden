@@ -13,7 +13,7 @@ import {
 	pickMostSpecific,
 } from "@delacour/warden-screen/selector";
 import type { WardenError, WardenErrorCode } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { recordTarget } from "./act";
 import { driverError, fail, opError } from "./errors";
 import { evidenceOf, type RecordStep } from "./record";
@@ -75,10 +75,10 @@ async function pollScreen<T>(
 	if (result.status === "done") {
 		const look = result.value;
 		if ("failed" in look) return fail(look.failed);
-		return ok({ hit: true, value: look.value, snapshot: look.snapshot, waitedMs });
+		return resultFactory.ok({ hit: true, value: look.value, snapshot: look.snapshot, waitedMs });
 	}
 	const reason = result.status === "timeout" ? result.last : undefined;
-	return ok({ hit: false, reason: reason ?? "wait_target_absent", waitedMs });
+	return resultFactory.ok({ hit: false, reason: reason ?? "wait_target_absent", waitedMs });
 }
 
 function ownTexts(entry: NodeEntry): string[] {
@@ -114,13 +114,14 @@ type WaitPlan =
 const WAIT_HINT = 'wait <selector> | absent <selector> | text "…" | stable [ms]';
 
 function planOf(params: WaitParams): Result<WaitPlan, WardenError> {
-	if (params.mode === "stable") return ok({ mode: "stable", quietMs: params.quietMs ?? DEFAULT_STABLE_MS });
-	if (params.mode === "text") return ok({ mode: "text", text: params.text });
+	if (params.mode === "stable")
+		return resultFactory.ok({ mode: "stable", quietMs: params.quietMs ?? DEFAULT_STABLE_MS });
+	if (params.mode === "text") return resultFactory.ok({ mode: "text", text: params.text });
 	const selector = parseSelector(params.selector);
 	if (!selector.success) {
 		return fail(opError("usage", `bad selector: ${selector.error}`, { hint: WAIT_HINT }));
 	}
-	return ok({ mode: params.mode, selector: selector.data });
+	return resultFactory.ok({ mode: params.mode, selector: selector.data });
 }
 
 function visibleVerdict(selector: ParsedSelector) {
@@ -191,7 +192,7 @@ async function waitStable(
 			sleep: session.host.sleep,
 			pollMs: POLL_MS,
 		});
-		return latest ? ok({ snapshot: latest, ...outcome }) : fail(opError("failed", "no snapshot"));
+		return latest ? resultFactory.ok({ snapshot: latest, ...outcome }) : fail(opError("failed", "no snapshot"));
 	} catch (error) {
 		return fail(failure ?? opError("failed", error instanceof Error ? error.message : String(error)));
 	}
@@ -205,7 +206,7 @@ async function runWait(session: OpSession, driver: Driver, plan: WaitPlan): Prom
 		const stable = await waitStable(session, driver, plan.quietMs, timeoutMs);
 		if (!stable.success) return stable;
 		if (!stable.data.quiet) return fail(waitFailure(plan, "wait_not_stable", stable.data.waitedMs));
-		return ok({ snapshot: stable.data.snapshot, waitedMs: stable.data.waitedMs });
+		return resultFactory.ok({ snapshot: stable.data.snapshot, waitedMs: stable.data.waitedMs });
 	}
 	const check =
 		plan.mode === "visible"
@@ -217,7 +218,7 @@ async function runWait(session: OpSession, driver: Driver, plan: WaitPlan): Prom
 	if (!polled.success) return polled;
 	if (!polled.data.hit) return fail(waitFailure(plan, polled.data.reason, polled.data.waitedMs));
 	const { value, snapshot, waitedMs } = polled.data;
-	return ok({ ...(value ? { entry: value } : {}), snapshot, waitedMs });
+	return resultFactory.ok({ ...(value ? { entry: value } : {}), snapshot, waitedMs });
 }
 
 /**
@@ -254,7 +255,7 @@ export async function wait(session: OpSession, params: WaitParams): OpOutcome<Wa
 			: plan.data.mode === "stable"
 				? `stable after ${waitedMs} ms`
 				: `gone after ${waitedMs} ms`;
-	return ok({
+	return resultFactory.ok({
 		generation,
 		result: { matched: true, ...(ref !== undefined ? { ref } : {}), ...(element ? { element } : {}), waitedMs },
 		text,
@@ -319,7 +320,7 @@ function parseQuerySelector(source: string, usage: string): Result<ParsedSelecto
 	if (source.trim() === "") return fail(opError("usage", usage));
 	const parsed = parseSelector(source);
 	if (!parsed.success) return fail(opError("usage", `bad selector: ${parsed.error}`));
-	return ok(parsed.data);
+	return resultFactory.ok(parsed.data);
 }
 
 export type IsParams = { selector: string; state: IsState };
@@ -357,7 +358,7 @@ export async function is(session: OpSession, params: IsParams): OpOutcome<IsResu
 			args: { state, ...(matched ? {} : { not: true }) },
 		});
 	}
-	return ok({
+	return resultFactory.ok({
 		result: {
 			matched,
 			state,
@@ -421,7 +422,7 @@ export async function get(session: OpSession, params: GetParams): OpOutcome<GetR
 	const waitedMs = () => Math.max(0, session.host.now() - start);
 	if (prop === "count") {
 		const count = matchCount(index, selector.data);
-		return ok({
+		return resultFactory.ok({
 			result: { matched: count > 0, property: "count", value: count, waitedMs: waitedMs() },
 			text: String(count),
 		});
@@ -444,7 +445,7 @@ export async function get(session: OpSession, params: GetParams): OpOutcome<GetR
 			args: { property: prop, expected: value },
 		});
 	}
-	return ok({
+	return resultFactory.ok({
 		result: {
 			matched: true,
 			property: prop,

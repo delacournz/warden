@@ -37,7 +37,7 @@ import { noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
 import type { PastesText, SelectsAll } from "@delacour/warden-driver/typing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-store/store";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
 import { createIosNetwork, type IosNetwork } from "./ios-network";
 import { type SwappableClient, swappableClient } from "./ios-session";
@@ -490,7 +490,7 @@ export function createIosDriver(
 	 * types the text instead and the only other trace of it would be a fill that took per-character time.
 	 */
 	async function pasteText(text: string): DriverResult<void> {
-		if (text === "") return ok(undefined);
+		if (text === "") return resultFactory.ok(undefined);
 		const copied = await simctl.pbcopy(text);
 		const result = copied.success ? await sendVoid("paste") : copied;
 		if (!result.success) opts.log?.(`[ios] pasteText failed (${result.error.code}): ${result.error.message}`);

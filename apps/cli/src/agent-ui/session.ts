@@ -1,7 +1,7 @@
 import type { OpDone, OpSession } from "@delacour/warden-sdk/ops/session";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
@@ -54,7 +54,7 @@ export function opSessionFor(
 export function reply<R>(device: UiDevice, outcome: Result<OpDone<R>, WardenError>): Result<UiSuccess, WardenError> {
 	if (!outcome.success) return outcome;
 	const { result, text, generation, warnings, exit } = outcome.data;
-	return ok({
+	return resultFactory.ok({
 		device: { udid: device.udid, platform: device.platform, name: device.name },
 		result,
 		text,

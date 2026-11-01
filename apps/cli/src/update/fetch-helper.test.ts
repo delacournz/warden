@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bunExec } from "@delacour/warden-runtime/exec";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { fakeHelperDist } from "../npm/helper.testing";
 import { packHelper } from "../npm/helper-asset";
 import { type ExtractHelper, fetchHelper, helperBaseUrl, helperHomeDir, tarExtractHelper } from "./fetch-helper";
@@ -24,7 +24,7 @@ function serve(files: Record<string, Uint8Array | string>, asked: string[] = [])
 function extractor(calls: Array<{ bytes: Uint8Array; dir: string }>): ExtractHelper {
 	return async (bytes, dir) => {
 		calls.push({ bytes, dir });
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	};
 }
 
@@ -129,7 +129,7 @@ describe("fetchHelper", () => {
 					[`${BASE}/SHA256SUMS`]: `${sha(TGZ)}  warden-simd-darwin-arm64.tgz\n`,
 					[`${BASE}/warden-simd-darwin-arm64.tgz`]: TGZ,
 				}),
-				extract: async () => err("disk full"),
+				extract: async () => resultFactory.err("disk full"),
 			})
 		);
 		expect(result).toEqual({ success: false, error: "disk full" });

@@ -8,7 +8,7 @@ import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type ConditionsEnv, createDeviceConditions } from "./device-conditions";
 import { createLeaseRecorder, leaseRecorderFor } from "./lease-recorder";
 import { sharedStoreOpener } from "./lease-store";
@@ -36,7 +36,12 @@ afterEach(() => {
 });
 
 const recorder = (log: string[] = []) =>
-	createLeaseRecorder({ leaseId: lease.id, openStore: () => ok(store), now: () => 42, log: (l) => log.push(l) });
+	createLeaseRecorder({
+		leaseId: lease.id,
+		openStore: () => resultFactory.ok(store),
+		now: () => 42,
+		log: (l) => log.push(l),
+	});
 
 describe("createLeaseRecorder", () => {
 	test("record writes the area to the lease", () => {
@@ -66,7 +71,7 @@ describe("createLeaseRecorder", () => {
 		recordCondition(store, lease.id, "network", { kind: "offline" }, 1, [{ kind: "pid", pid: 4242 }]);
 		const alive = createLeaseRecorder({
 			leaseId: lease.id,
-			openStore: () => ok(store),
+			openStore: () => resultFactory.ok(store),
 			pidAlive: () => true,
 			log: () => {},
 		});
@@ -76,7 +81,7 @@ describe("createLeaseRecorder", () => {
 		]);
 		const dead = createLeaseRecorder({
 			leaseId: lease.id,
-			openStore: () => ok(store),
+			openStore: () => resultFactory.ok(store),
 			pidAlive: () => false,
 			log: () => {},
 		});
@@ -86,10 +91,11 @@ describe("createLeaseRecorder", () => {
 
 	test("a store that cannot open, or a lease that is gone, is logged and never thrown", () => {
 		const log: string[] = [];
-		createLeaseRecorder({ leaseId: lease.id, openStore: () => err("disk on fire"), log: (l) => log.push(l) }).record(
-			"clock",
-			{ kind: "real" }
-		);
+		createLeaseRecorder({
+			leaseId: lease.id,
+			openStore: () => resultFactory.err("disk on fire"),
+			log: (l) => log.push(l),
+		}).record("clock", { kind: "real" });
 		createLeaseRecorder({
 			leaseId: lease.id,
 			openStore: () => {
@@ -97,9 +103,12 @@ describe("createLeaseRecorder", () => {
 			},
 			log: (l) => log.push(l),
 		}).settle("clock", { kind: "real" }, true);
-		createLeaseRecorder({ leaseId: "nope", openStore: () => ok(store), log: (l) => log.push(l) }).record("clock", {
-			kind: "real",
-		});
+		createLeaseRecorder({ leaseId: "nope", openStore: () => resultFactory.ok(store), log: (l) => log.push(l) }).record(
+			"clock",
+			{
+				kind: "real",
+			}
+		);
 		expect(log).toHaveLength(3);
 		expect(log[0]).toContain("disk on fire");
 		expect(log[1]).toContain("boom");
@@ -192,7 +201,11 @@ describe("a spec that dies mid-test", () => {
 	test("a failing driver call records nothing and a failing store never fails the call", async () => {
 		const driver = fakeDriver({ screens: [snapshotOf([], { platform: "android" })], platform: "android" });
 		const log: string[] = [];
-		const broken = createLeaseRecorder({ leaseId: lease.id, openStore: () => err("locked"), log: (l) => log.push(l) });
+		const broken = createLeaseRecorder({
+			leaseId: lease.id,
+			openStore: () => resultFactory.err("locked"),
+			log: (l) => log.push(l),
+		});
 		const conditions = createDeviceConditions({
 			driver,
 			env,

@@ -1,5 +1,5 @@
 import { dirname, relative } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** `Sign in!` → `sign-in`: the file name a recording's name gives its spec. Empty when nothing usable is left. */
 export function slugOf(name: string): string {
@@ -20,9 +20,10 @@ export function parseHelperRef(raw: string, flag = "--helper"): Result<HelperRef
 	const module = at === -1 ? "" : raw.slice(0, at).trim();
 	const fn = at === -1 ? "" : raw.slice(at + 1).trim();
 	if (module === "" || fn === "")
-		return err(`${flag} takes <module>#${flag === "--options" ? "<name>" : "<function>"}, got "${raw}"`);
-	if (!FUNCTION_NAME.test(fn)) return err(`"${fn}" is not a valid ${flag === "--options" ? "name" : "function name"}`);
-	return ok({ module: /\.[cm]?[jt]sx?$/.test(module) ? module : `${module}.ts`, fn });
+		return resultFactory.err(`${flag} takes <module>#${flag === "--options" ? "<name>" : "<function>"}, got "${raw}"`);
+	if (!FUNCTION_NAME.test(fn))
+		return resultFactory.err(`"${fn}" is not a valid ${flag === "--options" ? "name" : "function name"}`);
+	return resultFactory.ok({ module: /\.[cm]?[jt]sx?$/.test(module) ? module : `${module}.ts`, fn });
 }
 
 /** Whether `source` already exports `fn` (a function, const, let, var or class declaration). */

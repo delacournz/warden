@@ -1,4 +1,4 @@
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type DevtoolsFacet, type DevtoolsResult, devtoolsErr } from "./devtools.types";
 import { ROUTE_EXPRESSION } from "./route.script";
@@ -40,5 +40,5 @@ export async function readRoute(
 			hook ? "no React DevTools hook or root (release build?)" : `route script failed: ${parsed.data.error}`
 		);
 	}
-	return ok(routeKey(parsed.data.route));
+	return resultFactory.ok(routeKey(parsed.data.route));
 }

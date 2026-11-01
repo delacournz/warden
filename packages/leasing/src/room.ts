@@ -1,6 +1,6 @@
 import type { InventoryDevice, Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type CapacityConfig, deviceCost, fits, totalCost } from "./capacity";
 import type { CapacityDeps } from "./claim";
 
@@ -48,5 +48,5 @@ export async function roomNow(
 ): AsyncResult<number, WardenError> {
 	const inventory = await deps.hostInventory();
 	if (!inventory.success) return inventory;
-	return ok(roomFor(inventory.data, platform, deps, new Set(), slimNew));
+	return resultFactory.ok(roomFor(inventory.data, platform, deps, new Set(), slimNew));
 }

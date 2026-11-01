@@ -3,7 +3,7 @@ import { findWardenConfig } from "@delacour/warden-builds/config";
 import { appSwitches, type InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BatchPresetConfig } from "@delacour/warden-config/preset.schema";
 import type { Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** Where a batch's jobs come from. */
 export type BatchJobsSource =
@@ -133,15 +133,15 @@ export type FindBatchPresetInput = {
 export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: BatchPreset; names: string[] }> {
 	const found = findWardenConfig(input.start, input.stopAt, input.env);
 	if (!found.success) return found;
-	if (!found.data) return ok({ names: [] });
+	if (!found.data) return resultFactory.ok({ names: [] });
 	const { dir, config } = found.data;
 	const batches = config.batches ?? {};
 	const names = Object.keys(batches).sort();
 	const preset = batches[input.name];
-	if (!preset) return ok({ names });
+	if (!preset) return resultFactory.ok({ names });
 	const project = config.projects?.find((p) => p.name === preset.project);
 	const projectRoot = project ? resolve(dir, project.root) : undefined;
-	return ok({
+	return resultFactory.ok({
 		names,
 		preset: resolvePreset(
 			input.name,

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { connectSimd } from "./simd-client";
 
 /**
@@ -43,14 +43,16 @@ export async function stopResidentHelper(deps: HidRecoveryDeps, socketPath: stri
 	const exists = deps.socketExists ?? existsSync;
 	const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 	const attached = await connect({ socketPath });
-	if (!attached.success) return ok("none");
+	if (!attached.success) return resultFactory.ok("none");
 	await attached.data.request("shutdown", {}, { timeoutMs: SHUTDOWN_REQUEST_MS });
 	await attached.data.close();
 	for (let waited = 0; waited < STOP_WAIT_MS; waited += STOP_POLL_MS) {
-		if (!exists(socketPath)) return ok("stopped");
+		if (!exists(socketPath)) return resultFactory.ok("stopped");
 		await sleep(STOP_POLL_MS);
 	}
-	return exists(socketPath) ? err(`warden-simd on ${socketPath} did not stop`) : ok("stopped");
+	return exists(socketPath)
+		? resultFactory.err(`warden-simd on ${socketPath} did not stop`)
+		: resultFactory.ok("stopped");
 }
 
 /**
@@ -97,10 +99,10 @@ export async function restartRunnerHost(
 	argv: readonly string[] | undefined,
 	udid: string
 ): AsyncResult<void> {
-	if (argv === undefined || argv.length === 0) return err("WARDEN_IOS_RUNNER_RESTART is not set");
+	if (argv === undefined || argv.length === 0) return resultFactory.err("WARDEN_IOS_RUNNER_RESTART is not set");
 	const cmd = argv.map((arg) => arg.replaceAll("{udid}", udid));
 	const res = await deps.exec(cmd, { timeoutMs: RUNNER_RESTART_MS });
-	return res.exitCode === 0 ? ok(undefined) : err(execError(cmd, res));
+	return res.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(cmd, res));
 }
 
 /**
@@ -112,10 +114,10 @@ export async function rebootSim(deps: HidRecoveryDeps, udid: string): AsyncResul
 	const down = ["xcrun", "simctl", "shutdown", udid];
 	const shutdown = await deps.exec(down, { timeoutMs: SHUTDOWN_MS });
 	const already = shutdown.exitCode === ALREADY_SHUTDOWN_EXIT || shutdown.stderr.includes(ALREADY_SHUTDOWN_TEXT);
-	if (shutdown.exitCode !== 0 && !already) return err(execError(down, shutdown));
+	if (shutdown.exitCode !== 0 && !already) return resultFactory.err(execError(down, shutdown));
 	const up = ["xcrun", "simctl", "bootstatus", udid, "-b"];
 	const boot = await deps.exec(up, { timeoutMs: BOOT_MS });
-	return boot.exitCode === 0 ? ok(undefined) : err(execError(up, boot));
+	return boot.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(up, boot));
 }
 
 /**

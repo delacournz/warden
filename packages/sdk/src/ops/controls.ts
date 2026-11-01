@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { createDevice, type Device } from "@delacour/warden-device/device";
 import type { BiometricOp, BiometricState, Driver, Orientation } from "@delacour/warden-driver/driver.types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction, fromE2eError } from "./act";
 import { fail, fromDriver, opError } from "./errors";
 import { uiDir } from "./paths";
@@ -24,7 +24,7 @@ export function deviceFacade(session: OpSession, driver: Driver): Device {
 /** Run `work`, turning an `E2eError` thrown by the `createDevice` facade into an op error. */
 export async function viaFacade<T>(work: () => Promise<T>): Promise<Result<T, WardenError>> {
 	try {
-		return ok(await work());
+		return resultFactory.ok(await work());
 	} catch (error) {
 		const mapped = fromE2eError(error);
 		if (mapped) return fail(mapped);
@@ -42,7 +42,7 @@ const ORIENTATIONS: Record<string, Orientation> = {
 /** `landscape-left`, `landscapeLeft`, `LANDSCAPE_LEFT` → `landscapeLeft`. */
 export function parseOrientation(raw: string): Result<Orientation, WardenError> {
 	const found = ORIENTATIONS[raw.toLowerCase().replace(/[-_\s]/g, "")];
-	if (found) return ok(found);
+	if (found) return resultFactory.ok(found);
 	return fail(
 		opError("usage", `unknown orientation "${raw}"`, {
 			hint: "portrait, portrait-upside-down, landscape-left or landscape-right",
@@ -92,7 +92,7 @@ async function readAlert(driver: Driver): OpOutcome<AlertReadResult> {
 	if (!info.success) return info;
 	const buttons = (info.data?.buttons ?? []).map(nameOf);
 	const found = info.data ? { title: info.data.title ?? null, message: info.data.message ?? null, buttons } : null;
-	return ok({
+	return resultFactory.ok({
 		result: { action: "alert", present: found !== null, alert: found, buttons },
 		text: alertText(found, buttons),
 	});

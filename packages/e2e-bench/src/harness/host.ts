@@ -1,6 +1,6 @@
 import { loadavg } from "node:os";
 import { readXcode } from "@delacour/warden-runtime/xcode";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { Host } from "../results/schema";
 import type { Exec } from "./exec";
 
@@ -59,11 +59,12 @@ export async function hostInfo(exec: Exec, opts: { cliPath?: string; wardenVersi
 	const missing = Object.entries({ model, cpu, cores, memBytes: mem, macos })
 		.filter(([, v]) => v === undefined)
 		.map(([k]) => k);
-	if (missing.length > 0) return err(`host info unavailable: ${missing.join(", ")}`);
+	if (missing.length > 0) return resultFactory.err(`host info unavailable: ${missing.join(", ")}`);
 	const coreCount = Number(cores);
 	const memBytes = Number(mem);
-	if (!Number.isInteger(coreCount) || !Number.isFinite(memBytes)) return err("host info: non-numeric cores/memsize");
-	return ok({
+	if (!Number.isInteger(coreCount) || !Number.isFinite(memBytes))
+		return resultFactory.err("host info: non-numeric cores/memsize");
+	return resultFactory.ok({
 		model: model as string,
 		cpu: cpu as string,
 		cores: coreCount,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import {
 	loadEmbeddedRuntime,
 	parseRuntime,
@@ -37,7 +37,12 @@ describe("parseRuntime", () => {
 
 describe("stageRuntime", () => {
 	test("writes the files, the fallback preload and the marker under <home>/e2e-runtime/<version>", async () => {
-		const staged = await stageRuntime({ home, version: "1.2.3", keyed: "release", load: async () => ok(FILES) });
+		const staged = await stageRuntime({
+			home,
+			version: "1.2.3",
+			keyed: "release",
+			load: async () => resultFactory.ok(FILES),
+		});
 		const dir = runtimeDir(home, "1.2.3");
 		expect(staged).toEqual({ success: true, data: join(dir, RUNTIME_FALLBACK_PRELOAD) });
 		expect(readFileSync(join(dir, "index.mjs"), "utf8")).toBe(FILES["index.mjs"]);
@@ -49,7 +54,7 @@ describe("stageRuntime", () => {
 		let loads = 0;
 		const load = async () => {
 			loads += 1;
-			return ok(FILES);
+			return resultFactory.ok(FILES);
 		};
 		await stageRuntime({ home, version: "1.2.3", keyed: "release", load });
 		await stageRuntime({ home, version: "1.2.3", keyed: "release", load });
@@ -57,10 +62,25 @@ describe("stageRuntime", () => {
 	});
 
 	test("content-keyed (local / dev builds): changed files land in a new dir, the old one stays intact", async () => {
-		const first = await stageRuntime({ home, version: "1.2.3", keyed: "content", load: async () => ok(FILES) });
+		const first = await stageRuntime({
+			home,
+			version: "1.2.3",
+			keyed: "content",
+			load: async () => resultFactory.ok(FILES),
+		});
 		const changed = { "index.mjs": "export const hello = 2;\n", "preload.mjs": "" };
-		const second = await stageRuntime({ home, version: "1.2.3", keyed: "content", load: async () => ok(changed) });
-		const again = await stageRuntime({ home, version: "1.2.3", keyed: "content", load: async () => ok(FILES) });
+		const second = await stageRuntime({
+			home,
+			version: "1.2.3",
+			keyed: "content",
+			load: async () => resultFactory.ok(changed),
+		});
+		const again = await stageRuntime({
+			home,
+			version: "1.2.3",
+			keyed: "content",
+			load: async () => resultFactory.ok(FILES),
+		});
 		expect(first.success && second.success && again.success).toBe(true);
 		if (!first.success || !second.success || !again.success) return;
 		expect(second.data).not.toBe(first.data);
@@ -73,13 +93,23 @@ describe("stageRuntime", () => {
 		const dir = runtimeDir(home, "1.2.3");
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(join(dir, "index.mjs"), "stale");
-		const staged = await stageRuntime({ home, version: "1.2.3", keyed: "release", load: async () => ok(FILES) });
+		const staged = await stageRuntime({
+			home,
+			version: "1.2.3",
+			keyed: "release",
+			load: async () => resultFactory.ok(FILES),
+		});
 		expect(staged.success).toBe(true);
 		expect(readFileSync(join(dir, "index.mjs"), "utf8")).toBe(FILES["index.mjs"]);
 	});
 
 	test("a load failure is the error and leaves no copy behind", async () => {
-		const staged = await stageRuntime({ home, version: "1.2.3", keyed: "release", load: async () => err("no bundle") });
+		const staged = await stageRuntime({
+			home,
+			version: "1.2.3",
+			keyed: "release",
+			load: async () => resultFactory.err("no bundle"),
+		});
 		expect(staged).toEqual({ success: false, error: "no bundle" });
 		expect(existsSync(runtimeDir(home, "1.2.3"))).toBe(false);
 	});
@@ -89,13 +119,13 @@ describe("stageRuntime", () => {
 			home,
 			version: "1.2.3",
 			keyed: "release",
-			load: async () => ok({ "x.mjs": "" }),
+			load: async () => resultFactory.ok({ "x.mjs": "" }),
 		});
 		expect(staged.success).toBe(false);
 	});
 
 	test("the fallback preload maps @delacour/warden-e2e to the copy's index.mjs, then loads its preload.mjs", async () => {
-		await stageRuntime({ home, version: "1.2.3", keyed: "release", load: async () => ok(FILES) });
+		await stageRuntime({ home, version: "1.2.3", keyed: "release", load: async () => resultFactory.ok(FILES) });
 		const text = readFileSync(join(runtimeDir(home, "1.2.3"), RUNTIME_FALLBACK_PRELOAD), "utf8");
 		expect(text).toContain('"@delacour/warden-e2e"');
 		expect(text).toContain("index.mjs");
@@ -120,7 +150,7 @@ describe("selectPreload", () => {
 	const base = {
 		cwd: "/repo/app",
 		version: "1.2.3",
-		stage: async () => ok("/home/e2e-runtime/1.2.3/fallback-preload.mjs"),
+		stage: async () => resultFactory.ok("/home/e2e-runtime/1.2.3/fallback-preload.mjs"),
 	};
 
 	test("no repo dep: the bundled copy", async () => {
@@ -143,7 +173,7 @@ describe("selectPreload", () => {
 			...base,
 			stage: async () => {
 				staged += 1;
-				return ok("/x");
+				return resultFactory.ok("/x");
 			},
 			resolve: () => "/repo/node_modules/@delacour/warden-e2e/preload.mjs",
 			readVersion: () => "1.2.3",
@@ -181,7 +211,7 @@ describe("selectPreload", () => {
 	test("a staging failure is the error", async () => {
 		const picked = await selectPreload({
 			...base,
-			stage: async () => err("disk full"),
+			stage: async () => resultFactory.err("disk full"),
 			resolve: () => {
 				throw new Error("nope");
 			},

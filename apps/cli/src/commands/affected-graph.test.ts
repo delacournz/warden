@@ -5,7 +5,7 @@ import { TYPESCRIPT_UNUSABLE_EXIT } from "@delacour/warden-core/affected/graph";
 import { type GraphRequest, parseGraphDoc } from "@delacour/warden-core/affected/graph-snapshot";
 import { buildGraphDoc } from "@delacour/warden-core/affected/graph-worker";
 import { makeFixtureRepo } from "@delacour/warden-core/testing/fixture.testing";
-import { err } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { main } from "../cli";
 import { type TestContext, testContext } from "../testing";
 import { affectedGraphCommand, walk } from "./affected-graph";
@@ -59,7 +59,7 @@ describe("warden __affected-graph", () => {
 	test("no usable typescript: the reason on stderr, its own exit code, no stdout, no throw (cli-size-R5)", async () => {
 		ctx = testContext([]);
 		const why = "needs typescript in the analysed project: add it as a devDependency";
-		const code = await walk(ctx, JSON.stringify(request()), async () => err(why));
+		const code = await walk(ctx, JSON.stringify(request()), async () => resultFactory.err(why));
 		expect(code).toBe(TYPESCRIPT_UNUSABLE_EXIT);
 		expect(ctx.stdout).toEqual([]);
 		expect(ctx.stderr.join("\n")).toContain(`__affected-graph: ${why}`);

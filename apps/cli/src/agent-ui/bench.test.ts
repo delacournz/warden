@@ -4,7 +4,7 @@ import { stubFacet } from "@delacour/warden-devtools/testing/facet";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import type { Platform } from "@delacour/warden-store/types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createUiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
@@ -136,7 +136,7 @@ function harness(options: { platform?: Platform; withMetro?: boolean } = {}): Ha
 		},
 	};
 	const devtools: DevtoolsDeps = {
-		open: async () => ok(facet),
+		open: async () => resultFactory.ok(facet),
 		probe: async () => "none",
 		collector: {
 			self: () => [],
@@ -150,7 +150,7 @@ function harness(options: { platform?: Platform; withMetro?: boolean } = {}): Ha
 	const deps: UiDeps = {
 		driver: async () => {
 			clock.t += COST.cold;
-			return ok(driver);
+			return resultFactory.ok(driver);
 		},
 		sleep: async (ms) => {
 			clock.t += ms;
@@ -164,7 +164,7 @@ function harness(options: { platform?: Platform; withMetro?: boolean } = {}): Ha
 			openSecond: async () => {
 				state.seconds += 1;
 				clock.t += COST.second;
-				return ok(driver);
+				return resultFactory.ok(driver);
 			},
 		},
 	};
@@ -267,11 +267,15 @@ describe("warden ui bench (ios)", () => {
 			},
 		});
 		const deps: UiDeps = {
-			driver: async () => ok(slow),
+			driver: async () => resultFactory.ok(slow),
 			sleep: async (ms) => {
 				h.clock.t += ms;
 			},
-			bench: { clock: () => h.clock.t, stopHelper: async () => undefined, openSecond: async () => ok(slow) },
+			bench: {
+				clock: () => h.clock.t,
+				stopHelper: async () => undefined,
+				openSecond: async () => resultFactory.ok(slow),
+			},
 			devtools: undefined,
 		};
 		const command = createUiCommand(deps);

@@ -2,7 +2,7 @@ import { ensureCallerLease } from "@delacour/warden-leasing/device-lease";
 import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
 import { isLeaseAlive, type PidAlive, processAlive } from "@delacour/warden-store/liveness";
 import { describeOwner, type Lease, type Owner, type Platform, sameOwner } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { UiDeviceFlags, UiDeviceSource } from "../agent-ui/device";
 import { type UiDeviceInfo, type UiError, uiError } from "../agent-ui/output";
 import { parsePlatform } from "../claim-flags";
@@ -82,15 +82,15 @@ function named(ctx: CommandContext, flags: PerfDeviceFlags): Result<Named | unde
 		const lease = ctx.store().getLease(flags.lease);
 		if (!lease) return fail(uiError("lease_not_found", `no lease ${flags.lease}`, { hint: "see warden ls" }));
 		if (lease.resource.kind !== "device") return fail(uiError("usage", `lease ${flags.lease} is not a device lease`));
-		return ok({ id: lease.resource.id, platform: lease.resource.platform, source: "flag" });
+		return resultFactory.ok({ id: lease.resource.id, platform: lease.resource.platform, source: "flag" });
 	}
-	if (flags.serial !== undefined) return ok({ id: flags.serial, platform: "android", source: "flag" });
-	if (flags.udid !== undefined) return ok({ id: flags.udid, source: "flag" });
+	if (flags.serial !== undefined) return resultFactory.ok({ id: flags.serial, platform: "android", source: "flag" });
+	if (flags.udid !== undefined) return resultFactory.ok({ id: flags.udid, source: "flag" });
 	const single = ctx.env.WARDEN_UDID?.trim();
-	if (single) return ok({ id: single, source: "WARDEN_UDID" });
+	if (single) return resultFactory.ok({ id: single, source: "WARDEN_UDID" });
 	const many = (ctx.env.WARDEN_UDIDS ?? "").split(/[\s,]+/).filter((s) => s.length > 0);
 	const only = many.length === 1 ? many[0] : undefined;
-	return ok(only === undefined ? undefined : { id: only, source: "WARDEN_UDIDS" });
+	return resultFactory.ok(only === undefined ? undefined : { id: only, source: "WARDEN_UDIDS" });
 }
 
 type Known = { platform: Platform; id: string; name: string };
@@ -189,12 +189,12 @@ async function pick(
 		return fail(ambiguous("several devices leased", await candidatesOf(ctx, deps, owner, mine)));
 	}
 	const first = mine[0];
-	if (first) return ok({ id: first.id, platform: first.platform, source: "lease" });
+	if (first) return resultFactory.ok({ id: first.id, platform: first.platform, source: "lease" });
 	const booted = await bootedKnown(ctx, deps, platform);
 	if (booted.length > 1)
 		return fail(ambiguous("several booted warden devices", await candidatesOf(ctx, deps, owner, booted)));
 	const only = booted[0];
-	if (only) return ok({ id: only.id, platform: only.platform, source: "booted" });
+	if (only) return resultFactory.ok({ id: only.id, platform: only.platform, source: "booted" });
 	return fail(
 		uiError("no_device_leased", "no booted warden device", {
 			hint: `run warden claim ${flags.platform ?? "ios"} --json, or add --claim to a mutating command`,
@@ -226,7 +226,7 @@ function leaseForMutation(
 		...(pid !== undefined ? { pid } : {}),
 		exclusive: flags.force !== true,
 	});
-	if (leased.success) return ok({ lease: leased.data.lease, ownedByCaller: true });
+	if (leased.success) return resultFactory.ok({ lease: leased.data.lease, ownedByCaller: true });
 	const { code, message } = leased.error;
 	if (code === "device_busy") return fail(uiError("device_busy", message));
 	if (flags.allowMutateForeign === true) {
@@ -236,7 +236,7 @@ function leaseForMutation(
 				uiError("device_busy", `${message} — a live warden process (pid ${held.pid}) holds it; not mutating it`)
 			);
 		}
-		return ok({ ownedByCaller: false });
+		return resultFactory.ok({ ownedByCaller: false });
 	}
 	return fail(
 		uiError(code, message, {
@@ -256,7 +256,7 @@ async function pickNamed(
 	if (!explicit.success) return explicit;
 	const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);
 	if (platformFlag && !platformFlag.success) return fail(uiError("usage", platformFlag.error));
-	if (explicit.data !== undefined) return ok(explicit.data);
+	if (explicit.data !== undefined) return resultFactory.ok(explicit.data);
 	return pick(ctx, deps, owner, flags, platformFlag?.data);
 }
 
@@ -305,11 +305,11 @@ export async function resolvePerfDevice(
 		mode,
 	} as const;
 	if (mode === "observe") {
-		return ok({ ...base, ownedByCaller: lease !== undefined && sameOwner(lease.owner, owner) });
+		return resultFactory.ok({ ...base, ownedByCaller: lease !== undefined && sameOwner(lease.owner, owner) });
 	}
 	const mutable = leaseForMutation(ctx, deps, owner, flags, device);
 	if (!mutable.success) return mutable;
-	return ok({
+	return resultFactory.ok({
 		...base,
 		ownedByCaller: mutable.data.ownedByCaller,
 		...(mutable.data.lease ? { lease: mutable.data.lease } : {}),

@@ -13,8 +13,8 @@ import {
 import type { EnsureOptions } from "@delacour/warden-builds/prepare";
 import { readGitFactsSync } from "@delacour/warden-runtime/git-facts";
 import type { Owner, Platform } from "@delacour/warden-store/types";
-import { textError, type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ClaimRequest } from "./claim-request";
 import { releaseDevices } from "./device-lease";
 import type { LeaseHost } from "./lease-host";
@@ -133,18 +133,18 @@ async function devScheme(
 	project: Project,
 	override: string | undefined
 ): AsyncResult<string> {
-	if (override !== undefined) return ok(override);
+	if (override !== undefined) return resultFactory.ok(override);
 	const appJson = join(project.root, "app.json");
 	if (existsSync(appJson)) {
 		const slug = slugOf(field(parseJson(readFileSync(appJson, "utf8")), "expo"));
-		if (slug !== undefined) return ok(`exp+${slug}`);
+		if (slug !== undefined) return resultFactory.ok(`exp+${slug}`);
 	}
 	const argv = ["bunx", "expo", "config", "--json", "--type", "public"];
 	const res = await host.exec(argv, { cwd: project.root, env: { EXPO_NO_TELEMETRY: "1" } });
 	const slug = slugOf(parseJson(res.stdout));
 	return res.exitCode === 0 && slug !== undefined
-		? ok(`exp+${slug}`)
-		: err("could not read the app slug from `expo config` — pass --scheme <scheme>");
+		? resultFactory.ok(`exp+${slug}`)
+		: resultFactory.err("could not read the app slug from `expo config` — pass --scheme <scheme>");
 }
 
 /** The dev-client scheme, resolved on first ask and then shared: `devScheme` can spend 1-3 s in `expo config`. */
@@ -154,7 +154,7 @@ function lazyScheme(host: Pick<LeaseHost, "exec">, project: Project, override: s
 	let pending: AsyncResult<string> | undefined;
 	return () => {
 		pending ??= devScheme(host, project, override).catch((error: unknown) =>
-			err(error instanceof Error ? error.message : String(error))
+			resultFactory.err(error instanceof Error ? error.message : String(error))
 		);
 		return pending;
 	};
@@ -167,16 +167,18 @@ export function heldDevice(
 	platform: Platform,
 	req: Pick<DevRequest, "udid" | "lease">
 ): Result<string | undefined> {
-	if (req.udid !== undefined) return ok(req.udid);
+	if (req.udid !== undefined) return resultFactory.ok(req.udid);
 	const store = host.store();
 	if (req.lease !== undefined) {
 		const r = store.getLease(req.lease)?.resource;
-		return r?.kind === "device" && r.platform === platform ? ok(r.id) : err(`no ${platform} device lease ${req.lease}`);
+		return r?.kind === "device" && r.platform === platform
+			? resultFactory.ok(r.id)
+			: resultFactory.err(`no ${platform} device lease ${req.lease}`);
 	}
 	const mine = store
 		.listLeasesByOwner(owner)
 		.flatMap((l) => (l.resource.kind === "device" && l.resource.platform === platform ? [l.resource.id] : []));
-	return ok(mine.length === 1 ? mine[0] : undefined);
+	return resultFactory.ok(mine.length === 1 ? mine[0] : undefined);
 }
 
 /** The leases of a dev session before Metro is up. */
@@ -202,11 +204,12 @@ async function leaseDev(
 	early: EarlyMetro
 ): AsyncResult<DevLease, WardenError> {
 	const held = heldDevice(host, req.owner, req.platform, req);
-	if (!held.success) return wardenErr("failed", held.error);
+	if (!held.success) return wardenErrors.err("failed", held.error);
 	if (held.data === undefined) {
 		const flags = req.claim();
-		if (!flags.success) return wardenErr("usage", flags.error);
-		if (flags.data.request.count !== 1) return wardenErr("usage", "warden dev runs on one device (drop --count)");
+		if (!flags.success) return wardenErrors.err("usage", flags.error);
+		if (flags.data.request.count !== 1)
+			return wardenErrors.err("usage", "warden dev runs on one device (drop --count)");
 		const session = await claimAll(
 			host,
 			deps,
@@ -231,9 +234,9 @@ async function leaseDev(
 		const port = ports[0]?.port;
 		if (deviceId === undefined || port === undefined) {
 			await release();
-			return wardenErr("failed", "claim returned no device / port");
+			return wardenErrors.err("failed", "claim returned no device / port");
 		}
-		return ok({ deviceId, port, leaseIds, release });
+		return resultFactory.ok({ deviceId, port, leaseIds, release });
 	}
 	const deviceId = held.data;
 	const ports = await claimRunPorts(host, req.owner, [req.portSpec], deps.pid, deps.isPortFree, "warden dev");
@@ -243,20 +246,20 @@ async function leaseDev(
 	const port = ports.data[0]?.port;
 	if (port === undefined) {
 		await release();
-		return wardenErr("failed", "no Metro port leased");
+		return wardenErrors.err("failed", "no Metro port leased");
 	}
 	early.start(port, deviceId);
 	const ensured = await deps.ensureApp(host, req.owner, req.platform, deviceId, req.app);
 	if (!ensured.success) {
 		await release();
-		return wardenErr(ensured.error.code, `app on ${deviceId}: ${ensured.error.message}`);
+		return wardenErrors.err(ensured.error.code, `app on ${deviceId}: ${ensured.error.message}`);
 	}
 	host.log?.({
 		kind: "progress",
 		phase: "raw",
 		message: `warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`,
 	});
-	return ok({ deviceId, port, leaseIds, release });
+	return resultFactory.ok({ deviceId, port, leaseIds, release });
 }
 
 /**
@@ -275,11 +278,11 @@ async function openDevClient(
 	const run = async (argv: string[]): AsyncResult<void> => {
 		const res = await host.exec(argv);
 		return res.exitCode === 0
-			? ok(undefined)
-			: err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
+			? resultFactory.ok(undefined)
+			: resultFactory.err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
 	};
 	const bundle = bundleIdFor(project, platform);
-	if (!bundle.success) return textError(bundle);
+	if (!bundle.success) return wardenErrors.toText(bundle);
 	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
 	const reverse = await run(adbReverseArgv(deviceId, port));
 	if (!reverse.success) return reverse;
@@ -377,7 +380,7 @@ async function serveLease(
 	const metro = await running.pending;
 	if (!metro.success) {
 		await close();
-		return wardenErr("failed", metro.error);
+		return wardenErrors.err("failed", metro.error);
 	}
 	if (req.open) {
 		const opened = await openDevClient(host, req.platform, lease.deviceId, req.project, scheme, lease.port);
@@ -389,7 +392,7 @@ async function serveLease(
 			...(link?.success ? { link: devClientUrl(link.data, lease.port) } : {}),
 		});
 	}
-	return ok({
+	return resultFactory.ok({
 		udid: lease.deviceId,
 		port: lease.port,
 		metroUrl: metro.data.url,
@@ -433,18 +436,18 @@ export async function devSession(
 		await run.launch()?.stop();
 		// a claim given up because Metro itself failed: Metro's error is the cause
 		const metro = leased.error.code === "interrupted" ? await run.launch()?.pending : undefined;
-		return metro !== undefined && !metro.success ? wardenErr("failed", metro.error) : leased;
+		return metro !== undefined && !metro.success ? wardenErrors.err("failed", metro.error) : leased;
 	}
 	const launch = run.launch();
 	if (launch === undefined) {
 		await leased.data.release();
-		return wardenErr("failed", "Metro was not started");
+		return wardenErrors.err("failed", "Metro was not started");
 	}
 	const resolved = schemeNeeded ? await scheme() : undefined;
 	if (resolved && !resolved.success) {
 		await launch.stop();
 		await leased.data.release();
-		return wardenErr("failed", resolved.error);
+		return wardenErrors.err("failed", resolved.error);
 	}
 	return serveLease(host, deps, req, hooks, leased.data, run, launch, scheme);
 }

@@ -1,6 +1,6 @@
 import { iosProcessName } from "@delacour/warden-devtools/native-log";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { fail, opError } from "./errors";
 import type { OpOutcome, OpSession } from "./session";
 
@@ -100,7 +100,7 @@ function targetOf(session: OpSession): Result<Target, WardenError> {
 	const { app } = session.state.read();
 	return app === undefined
 		? fail(opError("usage", "no app to read native logs of", { hint: "open one first: `session.apps.open({ app })`" }))
-		: ok({ app });
+		: resultFactory.ok({ app });
 }
 
 async function readIos(
@@ -134,7 +134,7 @@ async function readIos(
 			opError("failed", `log show: exit ${shown.exitCode} ${shown.stderr.trim().split("\n")[0] ?? ""}`.trim())
 		);
 	}
-	return ok(parseLines("ios", shown.stdout));
+	return resultFactory.ok(parseLines("ios", shown.stdout));
 }
 
 async function readAndroid(
@@ -161,7 +161,7 @@ async function readAndroid(
 	if (dump.exitCode !== 0) {
 		return fail(opError("failed", `logcat: exit ${dump.exitCode} ${dump.stderr.trim().split("\n")[0] ?? ""}`.trim()));
 	}
-	return ok(parseLines("android", dump.stdout));
+	return resultFactory.ok(parseLines("android", dump.stdout));
 }
 
 function readSince(session: OpSession, app: string, sinceMs: number): Promise<Result<NativeLogLine[], WardenError>> {
@@ -185,7 +185,7 @@ export async function nativeLogs(session: OpSession, params: NativeLogsParams = 
 	const read = await readSince(session, target.data.app, sinceMs);
 	if (!read.success) return read;
 	const lines = filtered(read.data, params, sinceMs);
-	return ok({ result: { lines }, text: lines.map((l) => `${l.level} ${l.text}`).join("\n") });
+	return resultFactory.ok({ result: { lines }, text: lines.map((l) => `${l.level} ${l.text}`).join("\n") });
 }
 
 const lineKey = (line: NativeLogLine): string => `${line.ts}\u0000${line.text}`;
@@ -218,7 +218,7 @@ export async function* followNativeLogs(
 		const fresh = filtered(read.data, batchParams, cursor.ts).filter((l) => !seenBefore.has(lineKey(l)));
 		batchParams = { ...params, limit: undefined };
 		cursor = advance(cursor, read.data);
-		if (fresh.length > 0) yield ok(fresh);
+		if (fresh.length > 0) yield resultFactory.ok(fresh);
 		if (!(await napped(session))) return;
 	}
 }

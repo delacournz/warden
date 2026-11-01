@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { wardenHome } from "@delacour/warden-store/store";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { bundleRuntime } from "../npm/e2e-runtime-pack";
 import type { BuildInfo } from "../update/build-info";
 
@@ -43,17 +43,18 @@ export function parseRuntime(text: string): Result<RuntimeFiles> {
 	try {
 		parsed = JSON.parse(text);
 	} catch {
-		return err("embedded @delacour/warden-e2e runtime is not valid JSON");
+		return resultFactory.err("embedded @delacour/warden-e2e runtime is not valid JSON");
 	}
-	if (!isRecord(parsed)) return err("embedded @delacour/warden-e2e runtime is not an object");
+	if (!isRecord(parsed)) return resultFactory.err("embedded @delacour/warden-e2e runtime is not an object");
 	const files: Record<string, string> = {};
 	for (const [name, content] of Object.entries(parsed)) {
-		if (typeof content !== "string") return err(`embedded @delacour/warden-e2e runtime: ${name} is not text`);
+		if (typeof content !== "string")
+			return resultFactory.err(`embedded @delacour/warden-e2e runtime: ${name} is not text`);
 		if (name === "" || name.includes("/") || name.includes("\\") || name.startsWith("."))
-			return err(`embedded @delacour/warden-e2e runtime: bad file name ${JSON.stringify(name)}`);
+			return resultFactory.err(`embedded @delacour/warden-e2e runtime: bad file name ${JSON.stringify(name)}`);
 		files[name] = content;
 	}
-	return ok(files);
+	return resultFactory.ok(files);
 }
 
 /** `<home>/e2e-runtime/<version>`. */
@@ -110,16 +111,16 @@ function contentKey(version: string, files: RuntimeFiles): string {
 export async function stageRuntime(o: StageRuntimeOptions): AsyncResult<string> {
 	if (o.keyed === "release") {
 		const ready = join(runtimeDir(o.home, o.version), RUNTIME_FALLBACK_PRELOAD);
-		if (existsSync(join(runtimeDir(o.home, o.version), READY_MARKER))) return ok(ready);
+		if (existsSync(join(runtimeDir(o.home, o.version), READY_MARKER))) return resultFactory.ok(ready);
 	}
 	const loaded = await o.load();
 	if (!loaded.success) return loaded;
 	const files = loaded.data;
 	if (!(RUNTIME_ENTRY in files) || !(RUNTIME_PRELOAD in files))
-		return err(`embedded @delacour/warden-e2e runtime lacks ${RUNTIME_ENTRY} / ${RUNTIME_PRELOAD}`);
+		return resultFactory.err(`embedded @delacour/warden-e2e runtime lacks ${RUNTIME_ENTRY} / ${RUNTIME_PRELOAD}`);
 	const dir = runtimeDir(o.home, o.keyed === "release" ? o.version : contentKey(o.version, files));
 	const preload = join(dir, RUNTIME_FALLBACK_PRELOAD);
-	if (existsSync(join(dir, READY_MARKER))) return ok(preload);
+	if (existsSync(join(dir, READY_MARKER))) return resultFactory.ok(preload);
 	const tmp = `${dir}.tmp-${process.pid}`;
 	try {
 		rmSync(tmp, { recursive: true, force: true });
@@ -139,9 +140,9 @@ export async function stageRuntime(o: StageRuntimeOptions): AsyncResult<string> 
 			// another warden renamed its copy in first: same key, same content, use it
 			if (!existsSync(join(dir, READY_MARKER))) throw cause;
 		}
-		return ok(preload);
+		return resultFactory.ok(preload);
 	} catch (cause) {
-		return err(`could not extract the bundled @delacour/warden-e2e to ${dir}: ${String(cause)}`);
+		return resultFactory.err(`could not extract the bundled @delacour/warden-e2e to ${dir}: ${String(cause)}`);
 	} finally {
 		rmSync(tmp, { recursive: true, force: true });
 	}
@@ -153,7 +154,7 @@ export async function loadEmbeddedRuntime(embedded: readonly Blob[] = Bun.embedd
 		(file) => "name" in file && typeof file.name === "string" && /^e2e-runtime(-[^.]*)?\.bin$/.test(file.name)
 	);
 	if (blob === undefined)
-		return err(
+		return resultFactory.err(
 			"this warden build has no embedded @delacour/warden-e2e runtime; rebuild it or run bun add -d @delacour/warden-e2e"
 		);
 	const parsed = parseRuntime(await blob.text());
@@ -206,14 +207,14 @@ export async function selectPreload(o: SelectPreloadOptions): AsyncResult<{ path
 	}
 	if (repoPreload === undefined) {
 		const staged = await o.stage();
-		return staged.success ? ok({ path: staged.data, source: "bundled" }) : staged;
+		return staged.success ? resultFactory.ok({ path: staged.data, source: "bundled" }) : staged;
 	}
 	const found = o.readVersion(repoPreload);
 	if (found !== undefined && found !== o.version)
-		return err(
+		return resultFactory.err(
 			`${E2E_PACKAGE} ${found} (${repoPreload}) does not match warden ${o.version}; install the matching version (bun add -d ${E2E_PACKAGE}@${o.version}) or remove it from the repo to use the copy bundled with warden`
 		);
-	return ok({ path: repoPreload, source: "repo" });
+	return resultFactory.ok({ path: repoPreload, source: "repo" });
 }
 
 /**

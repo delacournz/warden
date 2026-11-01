@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import {
 	type A11yCondition,
@@ -100,12 +100,12 @@ export function toNetworkCondition(
 	input: NetworkInput | z.infer<typeof customNetworkSchema>
 ): Result<NetworkCondition> {
 	if (typeof input === "string") {
-		if (!isWord(input)) return err(`unknown network "${input}" (use ${NETWORK_WORDS.join(", ")})`);
-		if (input === "online" || input === "offline") return ok({ kind: input });
-		return ok({ kind: "preset", preset: input });
+		if (!isWord(input)) return resultFactory.err(`unknown network "${input}" (use ${NETWORK_WORDS.join(", ")})`);
+		if (input === "online" || input === "offline") return resultFactory.ok({ kind: input });
+		return resultFactory.ok({ kind: "preset", preset: input });
 	}
-	if ("kind" in input) return ok(input);
-	return ok({ kind: "custom", ...input });
+	if ("kind" in input) return resultFactory.ok(input);
+	return resultFactory.ok({ kind: "custom", ...input });
 }
 
 function toLocation(input: NonNullable<ConditionsConfig["location"]>): LocationCondition {
@@ -155,7 +155,7 @@ export function normalizeConditions(config: ConditionsConfig): Result<{ conditio
 		}
 		conditions.a11y = a11y;
 	}
-	return ok({ conditions });
+	return resultFactory.ok({ conditions });
 }
 
 /** The suite's `conditions` over the top-level ones, per area; undefined when neither sets any. */
@@ -173,8 +173,10 @@ export function parseConditionsEnv(raw: string): Result<ConditionsConfig> {
 	try {
 		json = JSON.parse(raw);
 	} catch {
-		return err("must be JSON");
+		return resultFactory.err("must be JSON");
 	}
 	const parsed = conditionsConfigSchema.safeParse(json);
-	return parsed.success ? ok(parsed.data) : err(parsed.error.issues.map((i) => i.message).join("; "));
+	return parsed.success
+		? resultFactory.ok(parsed.data)
+		: resultFactory.err(parsed.error.issues.map((i) => i.message).join("; "));
 }

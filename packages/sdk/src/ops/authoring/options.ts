@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { SharedSpecOptions } from "@delacour/warden-e2e/authoring/codegen";
 import type { RecordedStep, Recording } from "@delacour/warden-e2e/authoring/recording.schema";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { helperOpensApp, parseHelperRef } from "./spec-target";
 
 /**
@@ -113,14 +113,18 @@ export function resolveOptionsRef(raw: string, cwd: string): Result<SharedSpecOp
 	const file = [resolve(cwd, ref.data.module), ...EXTENSIONS.map((extension) => `${base}${extension}`)].find(
 		(candidate) => SOURCE_FILE.test(candidate) && existsSync(candidate)
 	);
-	if (file === undefined) return err(`${resolve(cwd, ref.data.module)} does not exist`);
+	if (file === undefined) return resultFactory.err(`${resolve(cwd, ref.data.module)} does not exist`);
 	const found = useOptionObjects(readFileSync(file, "utf8")).find((object) => object.name === ref.data.fn);
 	if (found === undefined) {
-		return err(
+		return resultFactory.err(
 			`${relative(cwd, file)} does not export ${ref.data.fn} as an object of test.use options (${[...USE_OPTION_KEYS].join(", ")})`
 		);
 	}
-	return ok({ module: file, name: found.name, ...(found.launch !== undefined ? { launch: found.launch } : {}) });
+	return resultFactory.ok({
+		module: file,
+		name: found.name,
+		...(found.launch !== undefined ? { launch: found.launch } : {}),
+	});
 }
 
 /** The same object, re-read from disk (its launch may have changed since `record start`). */

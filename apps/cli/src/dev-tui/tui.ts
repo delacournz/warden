@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import { wardenHome } from "@delacour/warden-store/store";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { DevMetroMode, DevReady, DevTaskHandle, DevTaskId, DevUi, MetroTerminal } from "../commands/dev-ui";
 import type { CommandContext } from "../context";
 import type { Spinner } from "../ui";
@@ -396,7 +396,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 		},
 		setHud(on) {
 			if (state.hud.visible !== on) dispatch({ type: "hud:visible", on });
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 		hudOn: () => hudTicker !== undefined,
 		async close() {

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createJournal, deleteJournal } from "@delacour/warden-e2e/authoring/journal";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordStarted } from "../../contracts/record.schema";
 import { fromDriver } from "../errors";
 import type { OpOutcome, OpSession } from "../session";
@@ -43,13 +43,14 @@ async function defaultSpecPath(
 	suite: string | undefined
 ): Promise<Result<string, WardenError>> {
 	const found = await findSuiteOf(session, suite);
-	if (found.success) return ok(resolve(found.data.configDir, found.data.config.specsDir, `${slug}.e2e.ts`));
+	if (found.success)
+		return resultFactory.ok(resolve(found.data.configDir, found.data.config.specsDir, `${slug}.e2e.ts`));
 	if (suite !== undefined || found.error.code === "several_suites") {
 		return failed("usage", found.error.message, {
 			hint: "pick one with --suite <name>, or give the spec path with --to",
 		});
 	}
-	return ok(join(session.host.cwd, "e2e", `${slug}.e2e.ts`));
+	return resultFactory.ok(join(session.host.cwd, "e2e", `${slug}.e2e.ts`));
 }
 
 /** `helper`: where the helper goes; an export of that name is replaced only with `overwrite`. */
@@ -67,7 +68,7 @@ function resolveHelperTarget(
 			hint: "pick another function name, or pass --overwrite to replace it",
 		});
 	}
-	return ok({
+	return resultFactory.ok({
 		target: {
 			kind: "helper",
 			path,
@@ -80,14 +81,14 @@ function resolveHelperTarget(
 
 /** `to` without `suite` is refused when several suites exist: `record use` and the verify run need one. */
 async function checkSuiteChosen(session: OpSession, p: RecordStartParams): Promise<Result<undefined, WardenError>> {
-	if (p.to === undefined || p.suite !== undefined) return ok(undefined);
+	if (p.to === undefined || p.suite !== undefined) return resultFactory.ok(undefined);
 	const found = await findSuiteOf(session, undefined);
 	if (!found.success && found.error.code === "several_suites") {
 		return failed("usage", found.error.message, {
 			hint: "pass --suite <name> now: `record use` and the verify run on that suite",
 		});
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** The spec a recording writes: `to`, else the suite's default path; an existing file is replaced only with `overwrite`. */
@@ -99,14 +100,19 @@ async function resolveSpecTarget(
 	const chosen = await checkSuiteChosen(session, p);
 	if (!chosen.success) return chosen;
 	const path =
-		p.to !== undefined ? ok(resolve(session.host.cwd, p.to)) : await defaultSpecPath(session, slugOf(name), p.suite);
+		p.to !== undefined
+			? resultFactory.ok(resolve(session.host.cwd, p.to))
+			: await defaultSpecPath(session, slugOf(name), p.suite);
 	if (!path.success) return path;
 	if (existsSync(path.data) && p.overwrite !== true) {
 		return failed("target_exists", `${path.data} already exists`, {
 			hint: "pass --overwrite to replace it, or --to <other spec>",
 		});
 	}
-	return ok({ target: { kind: "spec", path: path.data }, ...(p.suite !== undefined ? { suite: p.suite } : {}) });
+	return resultFactory.ok({
+		target: { kind: "spec", path: path.data },
+		...(p.suite !== undefined ? { suite: p.suite } : {}),
+	});
 }
 
 async function resolveTarget(
@@ -128,15 +134,15 @@ async function resolveTarget(
 
 /** `options` (`module#name`) as the pointer keeps it (absolute module); `none` switches the shared options off. */
 function pinnedOptions(session: OpSession, raw: string | undefined): Result<RecordingPointer["options"], WardenError> {
-	if (raw === undefined) return ok(undefined);
-	if (raw.trim() === "none") return ok("none");
+	if (raw === undefined) return resultFactory.ok(undefined);
+	if (raw.trim() === "none") return resultFactory.ok("none");
 	const ref = resolveOptionsRef(raw, session.host.cwd);
 	if (!ref.success) {
 		return failed("usage", ref.error, {
 			hint: "--options <module>#<name> names an exported object of test.use options, or `none` to pass none",
 		});
 	}
-	return ok({ module: ref.data.module, name: ref.data.name });
+	return resultFactory.ok({ module: ref.data.module, name: ref.data.name });
 }
 
 /** `record start` needs a usable name and no recording already running on the device. */
@@ -149,7 +155,7 @@ function checkStartable(name: string, state: DeviceState): Result<undefined, War
 			hint: "`warden ui record stop` writes it, `record cancel` throws it away",
 		});
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** A fresh journal for the recording; one left here belongs to a recording that died before it could be stopped. */
@@ -175,7 +181,7 @@ function startJournal(
 			...(state.metroUrl !== undefined ? { metro: state.metroUrl } : {}),
 		},
 	});
-	return created.success ? ok(journal) : journalFailure(created.error);
+	return created.success ? resultFactory.ok(journal) : journalFailure(created.error);
 }
 
 /** The pointer the device state keeps while the recording runs. */
@@ -244,7 +250,7 @@ export async function recordStart(session: OpSession, p: RecordStartParams): OpO
 	session.state.update((current) => ({ ...current, recording: pointer }));
 	await startRoute(session);
 	const { target } = resolved.data;
-	return ok({
+	return resultFactory.ok({
 		result: startedResult(name, target, ids, journal.data),
 		text: [
 			`recording "${name}" → ${targetPath(target)}`,

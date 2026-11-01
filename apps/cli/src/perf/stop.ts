@@ -4,7 +4,7 @@ import { renderReportMarkdown } from "@delacour/warden-perf/shared/report";
 import { finalizeSession, type SessionKit, type StopOutcome } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { runningSessionFor } from "@delacour/warden-sdk/ops/perf/session";
 import { stopResult } from "@delacour/warden-sdk/ops/perf/session-ops";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "./device";
@@ -53,7 +53,7 @@ export function perfStop(
 			...(opts.yes === true ? { yes: true } : {}),
 		});
 		if (!stopped.success) return stopped;
-		return ok(stoppedSuccess(ctx, target, stopped.data));
+		return resultFactory.ok(stoppedSuccess(ctx, target, stopped.data));
 	});
 }
 

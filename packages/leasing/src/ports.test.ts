@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { Lease, Owner } from "@delacour/warden-store/types";
-import { wardenErr } from "@delacour/warden-types/error";
+import { wardenErrors } from "@delacour/warden-types/error";
 import { type ClaimPortsDeps, claimPorts, classifyBindError, isPortFree, listPortLeases, releasePorts } from "./ports";
 
 let dir: string;
@@ -87,7 +87,7 @@ describe("claimPorts", () => {
 			{ owner: me, from: 8091, span: 3, count: 2, ttlMs: 500 },
 			deps({ isPortFree: async (p) => p === 8092 })
 		);
-		expect(res).toEqual(wardenErr("capacity_exhausted", "no free port in 8091–8093", { retryable: true }));
+		expect(res).toEqual(wardenErrors.err("capacity_exhausted", "no free port in 8091–8093", { retryable: true }));
 		expect(store.listLeases()).toEqual([]);
 	});
 

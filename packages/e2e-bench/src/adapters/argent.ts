@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { joinNative, loadManifest } from "../results/manifest";
 import type { RepResult, TestResult } from "../results/schema";
 import {
@@ -48,7 +48,7 @@ export function toTestResults(flows: readonly ArgentFlow[], packageRoot: string)
 		nativeName: f.nativeName,
 		status: f.status,
 	}));
-	if (unmapped.length > 0) return err(`parity breach: unmapped tests: ${unmapped.join(", ")}`);
+	if (unmapped.length > 0) return resultFactory.err(`parity breach: unmapped tests: ${unmapped.join(", ")}`);
 	const byName = new Map(flows.map((f) => [f.nativeName, f]));
 	const tests = mapped.map((m): TestResult => {
 		const flow = byName.get(m.nativeName);
@@ -63,7 +63,7 @@ export function toTestResults(flows: readonly ArgentFlow[], packageRoot: string)
 			artifacts: [{ kind: "json", path: REPORT_FILE }],
 		};
 	});
-	return ok(tests);
+	return resultFactory.ok(tests);
 }
 
 async function doctor(ctx: RunContext): Promise<Doctor> {
@@ -82,8 +82,8 @@ async function doctor(ctx: RunContext): Promise<Doctor> {
 async function prepare(ctx: RunContext): Promise<Result<void, string>> {
 	const r = await ctx.exec.run("argent", ["server", "start", "--detach"], { env: ctx.env, timeoutMs: 60_000 });
 	const text = `${r.stdout}\n${r.stderr}`;
-	if (r.code === 0 || /already running/i.test(text)) return ok(undefined);
-	return err(`argent server start failed (${r.code}): ${text.trim().split("\n").slice(-3).join(" ")}`);
+	if (r.code === 0 || /already running/i.test(text)) return resultFactory.ok(undefined);
+	return resultFactory.err(`argent server start failed (${r.code}): ${text.trim().split("\n").slice(-3).join(" ")}`);
 }
 
 async function run(ctx: RunContext): Promise<Result<RepResult, AdapterError>> {
@@ -119,7 +119,7 @@ async function run(ctx: RunContext): Promise<Result<RepResult, AdapterError>> {
 	}
 	const tests = toTestResults(parsed.data, ctx.packageRoot);
 	if (!tests.success) return { success: false, error: failed(tests.error) };
-	return ok({
+	return resultFactory.ok({
 		index: 1,
 		cold: ctx.cold,
 		wallMs,
@@ -151,7 +151,7 @@ async function teardown(ctx: RunContext): Promise<Result<void, string>> {
 	if (mcp.code !== 0 || mcp.stdout.trim() === "") {
 		await ctx.exec.run("argent", ["server", "stop"], { env: ctx.env, timeoutMs: 30_000 });
 	} else ctx.log("argent mcp sessions alive: leaving the shared tool-server running");
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 export const residuePatterns: ResiduePatterns = {

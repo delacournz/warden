@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type WarmConnect, type WarmHelper, type WarmRun, warmDrivers } from "./warm-drivers";
 
 const devices = [
@@ -40,7 +40,7 @@ type Fake = { helper: WarmHelper; closed: () => boolean; stopped: () => boolean;
 
 function fake(
 	udid: string,
-	snapshot: () => ReturnType<WarmHelper["snapshot"]> = async () => ok(null),
+	snapshot: () => ReturnType<WarmHelper["snapshot"]> = async () => resultFactory.ok(null),
 	o: { stoppable?: boolean } = {}
 ): Fake {
 	let closed = false;
@@ -77,7 +77,7 @@ describe("warmDrivers", () => {
 		const connect: WarmConnect = async (udid) => {
 			const one = fake(udid);
 			made.set(udid, one);
-			return ok(one.helper);
+			return resultFactory.ok(one.helper);
 		};
 		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices.map((d) => [d.udid, d.ok, d.socketPath])).toEqual([
@@ -99,7 +99,7 @@ describe("warmDrivers", () => {
 			order.push(`start ${udid}`);
 			await Bun.sleep(1);
 			order.push(`end ${udid}`);
-			return ok(fake(udid).helper);
+			return resultFactory.ok(fake(udid).helper);
 		};
 		await warmDrivers(f.run, { connect });
 		expect(order.slice(0, 2)).toEqual(["start U0", "start U1"]);
@@ -107,7 +107,8 @@ describe("warmDrivers", () => {
 
 	test("a failed connect only warns and leaves that device cold", async () => {
 		const f = fixture();
-		const connect: WarmConnect = async (udid) => (udid === "U0" ? err("no helper binary") : ok(fake(udid).helper));
+		const connect: WarmConnect = async (udid) =>
+			udid === "U0" ? resultFactory.err("no helper binary") : resultFactory.ok(fake(udid).helper);
 		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices.map((d) => d.ok)).toEqual([false, true]);
 		expect(out.devices[0]?.error).toBe("no helper binary");
@@ -128,8 +129,8 @@ describe("warmDrivers", () => {
 
 	test("a helper that cannot snapshot is closed and the device stays cold", async () => {
 		const f = fixture();
-		const one = fake("U0", async () => err("AX denied"));
-		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
+		const one = fake("U0", async () => resultFactory.err("AX denied"));
+		const connect: WarmConnect = async (udid) => resultFactory.ok(udid === "U0" ? one.helper : fake(udid).helper);
 		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: AX denied" });
 		expect(out.devices[0]?.socketPath).toBeUndefined();
@@ -139,8 +140,8 @@ describe("warmDrivers", () => {
 
 	test("a helper that cannot snapshot is stopped, not left resident beside the jobs' own helpers (20-1)", async () => {
 		const f = fixture();
-		const one = fake("U0", async () => err("AX denied"), { stoppable: true });
-		const connect: WarmConnect = async (udid) => ok(udid === "U0" ? one.helper : fake(udid).helper);
+		const one = fake("U0", async () => resultFactory.err("AX denied"), { stoppable: true });
+		const connect: WarmConnect = async (udid) => resultFactory.ok(udid === "U0" ? one.helper : fake(udid).helper);
 		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: AX denied" });
 		expect(one.stopped()).toBe(true);
@@ -156,7 +157,7 @@ describe("warmDrivers", () => {
 			},
 			{ stoppable: true }
 		);
-		const out = await warmDrivers(f.run, { connect: async () => ok(one.helper) });
+		const out = await warmDrivers(f.run, { connect: async () => resultFactory.ok(one.helper) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: socket reset" });
 		expect(one.stopped()).toBe(true);
 	});
@@ -166,11 +167,11 @@ describe("warmDrivers", () => {
 		const one = fake("U0", undefined, { stoppable: true });
 		let arrive: () => void = () => {};
 		const connect: WarmConnect = async (udid) => {
-			if (udid !== "U0") return ok(fake(udid).helper);
+			if (udid !== "U0") return resultFactory.ok(fake(udid).helper);
 			await new Promise<void>((resolve) => {
 				arrive = resolve;
 			});
-			return ok(one.helper);
+			return resultFactory.ok(one.helper);
 		};
 		const running = warmDrivers(f.run, { connect, timeoutMs: 5_000 });
 		await Bun.sleep(1);
@@ -187,11 +188,11 @@ describe("warmDrivers", () => {
 		const one = fake("U0", undefined, { stoppable: true });
 		let arrive: () => void = () => {};
 		const connect: WarmConnect = async (udid) => {
-			if (udid !== "U0") return ok(fake(udid).helper);
+			if (udid !== "U0") return resultFactory.ok(fake(udid).helper);
 			await new Promise<void>((resolve) => {
 				arrive = resolve;
 			});
-			return ok(one.helper);
+			return resultFactory.ok(one.helper);
 		};
 		const running = warmDrivers(f.run, { connect });
 		await Bun.sleep(1);
@@ -208,11 +209,11 @@ describe("warmDrivers", () => {
 		const one = fake("U0");
 		let arrive: () => void = () => {};
 		const connect: WarmConnect = async (udid) => {
-			if (udid !== "U0") return ok(fake(udid).helper);
+			if (udid !== "U0") return resultFactory.ok(fake(udid).helper);
 			await new Promise<void>((resolve) => {
 				arrive = resolve;
 			});
-			return ok(one.helper);
+			return resultFactory.ok(one.helper);
 		};
 		const running = warmDrivers(f.run, { connect, timeoutMs: 5_000, warn: (l) => f.warnings.push(l) });
 		await Bun.sleep(1);

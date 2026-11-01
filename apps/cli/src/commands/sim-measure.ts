@@ -1,7 +1,7 @@
 import { measureSims, type SimMeasurement } from "@delacour/warden-core/sims/slim.measure";
 import { parseSimctlDevices } from "@delacour/warden-providers/ios";
-import { textError } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
 import { emit, reportError } from "../output";
@@ -16,10 +16,11 @@ export const toMb = (bytes: number): number => Math.round(bytes / BYTES_PER_MB);
 /** Booted iOS simulators (`xcrun simctl list devices booted -j`). */
 async function bootedUdids(ctx: CommandContext): AsyncResult<string[]> {
 	const res = await ctx.exec(["xcrun", "simctl", "list", "devices", "booted", "-j"]);
-	if (res.exitCode !== 0) return err(`simctl list devices: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
+	if (res.exitCode !== 0)
+		return resultFactory.err(`simctl list devices: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
 	const devices = parseSimctlDevices(res.stdout);
-	if (!devices.success) return textError(devices);
-	return ok(devices.data.filter((d) => d.state === "booted").map((d) => d.id));
+	if (!devices.success) return wardenErrors.toText(devices);
+	return resultFactory.ok(devices.data.filter((d) => d.state === "booted").map((d) => d.id));
 }
 
 type MeasureReport = { udid: string; error: string } | (SimMeasurement & { footprintMb: number });
@@ -38,7 +39,7 @@ async function measure(ctx: CommandContext, udid: string | undefined, opts: Meas
 		return 1;
 	};
 	if ((udid === undefined) === (opts.booted !== true)) return fail("pass <udid> or --booted");
-	const targets = udid === undefined ? await bootedUdids(ctx) : ok([udid]);
+	const targets = udid === undefined ? await bootedUdids(ctx) : resultFactory.ok([udid]);
 	if (!targets.success) return fail(targets.error);
 	if (targets.data.length === 0) return fail("no booted simulator");
 	const results = await measureSims(ctx.exec, targets.data);

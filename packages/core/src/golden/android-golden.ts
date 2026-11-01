@@ -43,8 +43,8 @@ import type { PidAlive } from "@delacour/warden-store/liveness";
 import { type Store, wardenHome } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { profileSlug } from "@delacour/warden-store/types";
-import { textError } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { enrollFingerprint } from "./android-biometrics";
 import {
 	ANDROID_SNAPSHOT_MAX_LOAD_FAILURES,
@@ -235,11 +235,13 @@ const snapshotComplete = (dir: string, name: string) => existsSync(join(snapshot
 async function emulatorVersion(deps: AndroidGoldenDeps, sdk: string): AsyncResult<string> {
 	const props = readText(join(sdk, "emulator", "source.properties"));
 	const revision = props !== undefined ? parseProperties(props).get("Pkg.Revision") : undefined;
-	if (revision) return ok(revision);
+	if (revision) return resultFactory.ok(revision);
 	const { emulator } = androidTools(deps.env);
 	const result = await deps.exec([emulator, "-version"], { timeoutMs: LIST_AVDS_TIMEOUT_MS });
 	const version = result.exitCode === 0 ? parseEmulatorVersion(result.stdout) : undefined;
-	return version !== undefined ? ok(version) : err(`cannot tell the emulator version (\`${emulator} -version\`)`);
+	return version !== undefined
+		? resultFactory.ok(version)
+		: resultFactory.err(`cannot tell the emulator version (\`${emulator} -version\`)`);
 }
 
 /** Processes (per `exec`, so once per CLI process) already told there is no SDK root. */
@@ -262,27 +264,29 @@ export async function readSnapshotInputs(
 			toldNoSdk.add(deps.exec);
 			log(deps, "ANDROID_HOME / ANDROID_SDK_ROOT unset: no quick-boot snapshots, emulators cold-boot");
 		}
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	}
 	const dir = avdDir(deps.env, avd);
 	const configText = readText(join(dir, "config.ini"));
-	if (configText === undefined) return err(`no config.ini in ${dir}`);
-	const patched = biometrics ? biometricConfig(deps, dir, configText, opts.writeConfig === true) : ok(configText);
+	if (configText === undefined) return resultFactory.err(`no config.ini in ${dir}`);
+	const patched = biometrics
+		? biometricConfig(deps, dir, configText, opts.writeConfig === true)
+		: resultFactory.ok(configText);
 	if (!patched.success) return patched;
 	const config = parseProperties(patched.data);
 	const sysdir = config.get("image.sysdir.1");
-	if (!sysdir) return err(`${join(dir, "config.ini")} names no image.sysdir.1`);
+	if (!sysdir) return resultFactory.err(`${join(dir, "config.ini")} names no image.sysdir.1`);
 	const imageDir = isAbsolute(sysdir) ? sysdir : join(sdk, sysdir);
 	const source = readText(join(imageDir, "source.properties"));
 	const imageRevision = source !== undefined ? parseProperties(source).get("Pkg.Revision") : undefined;
-	if (!imageRevision) return err(`no Pkg.Revision in ${join(imageDir, "source.properties")}`);
+	if (!imageRevision) return resultFactory.err(`no Pkg.Revision in ${join(imageDir, "source.properties")}`);
 	const buildProp = parseProperties(readText(join(imageDir, "build.prop")) ?? "");
 	const fingerprint = buildProp.get("ro.build.fingerprint") ?? buildProp.get("ro.system.build.fingerprint") ?? "";
 	const version = await emulatorVersion(deps, sdk);
 	if (!version.success) return version;
 	const hardware = [...config].filter(([k]) => KEYED_CONFIG.test(k)).map(([k, v]) => `${k}=${v}`);
 	const flags = headlessEmulatorFlags(deps.env);
-	return ok({
+	return resultFactory.ok({
 		inputs: {
 			imageRevision,
 			fingerprint,
@@ -297,19 +301,19 @@ export async function readSnapshotInputs(
 
 /** A biometrics target's `config.ini` text: `hw.fingerprint=yes` set, and written back when `write`. */
 function biometricConfig(deps: AndroidGoldenDeps, dir: string, configText: string, write: boolean): Result<string> {
-	if (parseProperties(configText).get("hw.fingerprint") === "yes") return ok(configText);
+	if (parseProperties(configText).get("hw.fingerprint") === "yes") return resultFactory.ok(configText);
 	const patched = withFingerprintHardware(configText);
-	if (!write) return ok(patched);
+	if (!write) return resultFactory.ok(patched);
 	const configPath = join(dir, "config.ini");
 	try {
 		writeFileSync(configPath, patched);
 	} catch (error) {
-		return err(
+		return resultFactory.err(
 			`cannot set hw.fingerprint=yes in ${configPath}: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
 	log(deps, `set hw.fingerprint=yes in ${configPath} (biometrics)`);
-	return ok(patched);
+	return resultFactory.ok(patched);
 }
 
 /** `config.ini` text with `hw.fingerprint=yes` (the emulator has no fingerprint sensor without it). */
@@ -346,16 +350,18 @@ function deleteSnapshot(deps: AndroidGoldenDeps, avd: string, dir: string, name:
 	try {
 		rmSync(snapshotDir(dir, name), { recursive: true, force: true });
 		log(deps, `deleted snapshot ${name} of ${avd}`);
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	} catch (error) {
-		return err(`cannot delete ${snapshotDir(dir, name)}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(
+			`cannot delete ${snapshotDir(dir, name)}: ${error instanceof Error ? error.message : String(error)}`
+		);
 	}
 }
 
 /** Running emulators of `avd` (by console `avd name`): a writable instance must not start beside them. */
 async function instancesOf(deps: AndroidGoldenDeps, avd: string): AsyncResult<AdbEmulator[]> {
 	const emulators = await listEmulators(deps);
-	if (!emulators.success) return textError(emulators);
+	if (!emulators.success) return wardenErrors.toText(emulators);
 	const { adb } = androidTools(deps.env);
 	const names = await Promise.all(
 		emulators.data.map(async (emu) => {
@@ -365,7 +371,7 @@ async function instancesOf(deps: AndroidGoldenDeps, avd: string): AsyncResult<Ad
 			return out.exitCode === 0 ? out.stdout.split("\n")[0]?.trim() : undefined;
 		})
 	);
-	return ok(emulators.data.filter((_, i) => names[i] === avd));
+	return resultFactory.ok(emulators.data.filter((_, i) => names[i] === avd));
 }
 
 async function emuConsole(
@@ -380,9 +386,9 @@ async function emuConsole(
 	// the console answers `KO: <reason>` on failure, and adb still exits 0
 	if (out.exitCode !== 0 || /^KO\b/m.test(out.stdout)) {
 		const detail = (out.stdout || out.stderr).trim().split("\n").slice(-2).join(" | ");
-		return err(`\`${cmd.join(" ")}\` failed${detail ? `: ${detail}` : ""}`);
+		return resultFactory.err(`\`${cmd.join(" ")}\` failed${detail ? `: ${detail}` : ""}`);
 	}
-	return ok(out.stdout);
+	return resultFactory.ok(out.stdout);
 }
 
 /** Poll until `pid` is gone, at most `ms`. */
@@ -410,11 +416,11 @@ function sigkill(deps: AndroidGoldenDeps, pid: number): void {
 async function stopEmulator(deps: AndroidGoldenDeps, serial: string, pid: number): AsyncResult<void> {
 	const t = timing(deps);
 	await emuConsole(deps, serial, ["kill"], EMU_CONSOLE_TIMEOUT_MS);
-	if (await exited(deps, pid, t.exitTimeoutMs)) return ok(undefined);
+	if (await exited(deps, pid, t.exitTimeoutMs)) return resultFactory.ok(undefined);
 	log(deps, `${serial} (pid ${pid}) still running ${t.exitTimeoutMs / 1000}s after emu kill: SIGKILL`);
 	sigkill(deps, pid);
-	if (await exited(deps, pid, t.killGraceMs)) return ok(undefined);
-	return err(`${serial} (pid ${pid}) still running after emu kill and SIGKILL`);
+	if (await exited(deps, pid, t.killGraceMs)) return resultFactory.ok(undefined);
+	return resultFactory.err(`${serial} (pid ${pid}) still running after emu kill and SIGKILL`);
 }
 
 /** The writable cold boot of `avd` that the snapshot is saved from; never touches its `default_boot`. */
@@ -443,7 +449,7 @@ async function saveFromInstance(
 ): AsyncResult<void> {
 	const t = timing(deps);
 	const booted = await waitBootCompleted({ ...deps, pollIntervalMs: 250 }, serial, t.bootTimeoutMs, launched);
-	let saved: Result<unknown> = textError(booted);
+	let saved: Result<unknown> = wardenErrors.toText(booted);
 	if (booted.success && biometrics) {
 		log(deps, `enrolling a fingerprint on ${serial} (PIN set for the lock screen)`);
 		saved = await enrollFingerprint({ exec: deps.exec, sleep: deps.sleep, adb: androidTools(deps.env).adb }, serial);
@@ -458,11 +464,13 @@ async function saveFromInstance(
 		saved = await emuConsole(deps, serial, ["avd", "snapshot", "save", target.name], t.saveTimeoutMs);
 	}
 	const stopped = await stopEmulator(deps, serial, launched.pid);
-	if (saved.success && stopped.success && snapshotComplete(target.dir, target.name)) return ok(undefined);
+	if (saved.success && stopped.success && snapshotComplete(target.dir, target.name)) return resultFactory.ok(undefined);
 	deleteSnapshot(deps, target.avd, target.dir, target.name);
 	if (!saved.success) return saved;
 	if (!stopped.success) return stopped;
-	return err(`snapshot ${target.name} of ${target.avd} was not written (${snapshotDir(target.dir, target.name)})`);
+	return resultFactory.err(
+		`snapshot ${target.name} of ${target.avd} was not written (${snapshotDir(target.dir, target.name)})`
+	);
 }
 
 /** Launch the build instance; an emulator that rejects the headless flags gets one more try without them. */
@@ -493,7 +501,7 @@ async function buildSnapshot(deps: AndroidGoldenDeps, target: string, dir: strin
 	log(deps, `building ${name} of ${avd} — one-time cold boot`);
 	const running = await listEmulators(deps);
 	const leased = leaseConsolePort(deps, `golden ${avd}`, running.success ? running.data : []);
-	if (!leased.success) return textError(leased);
+	if (!leased.success) return wardenErrors.toText(leased);
 	let pid: number | undefined;
 	try {
 		const serial = `emulator-${leased.data.port}`;
@@ -509,7 +517,7 @@ async function buildSnapshot(deps: AndroidGoldenDeps, target: string, dir: strin
 		if (saved.success) log(deps, `${name} of ${avd} ready in ${Math.round((deps.now() - started) / 1000)}s`);
 		return saved;
 	} catch (error) {
-		return err(error);
+		return resultFactory.err(error);
 	} finally {
 		// an instance that outlived emu kill and SIGKILL keeps its lease: the next build of the AVD reaps it
 		if (pid === undefined || !deps.pidAlive(pid)) deps.store.deleteLeases([leased.data.lease.id]);
@@ -561,7 +569,7 @@ async function reapLeftoverBuilds(
 		}
 		deps.store.deleteLeases([lease.id]);
 	}
-	return ok({ stopped, held });
+	return resultFactory.ok({ stopped, held });
 }
 
 /** Snapshot names the AVD's other target (plain ↔ biometrics) is current at: a build of one never deletes them. */
@@ -580,7 +588,7 @@ async function ensureLocked(
 ): AsyncResult<EnsuredSnapshot | undefined> {
 	const { profile: avd } = splitBiometricProfile(target);
 	const name = snapshotName(key);
-	if (snapshotComplete(dir, name)) return ok({ avd: target, name, key, built: false });
+	if (snapshotComplete(dir, name)) return resultFactory.ok({ avd: target, name, key, built: false });
 	const instances = await instancesOf(deps, avd);
 	if (!instances.success) return instances;
 	const reaped = await reapLeftoverBuilds(deps, avd, instances.data);
@@ -592,7 +600,7 @@ async function ensureLocked(
 	];
 	if (busy.length > 0) {
 		log(deps, `${avd} is running (${busy.join(", ")}): no snapshot built now`);
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	}
 	const keep = await siblingNames(deps, target);
 	for (const stale of wardenSnapshots(dir).filter((s) => s !== name && !keep.has(s))) {
@@ -600,7 +608,7 @@ async function ensureLocked(
 		if (!deleted.success) return deleted;
 	}
 	const built = await buildSnapshot(deps, target, dir, key);
-	return built.success ? ok({ avd: target, name, key, built: true }) : built;
+	return built.success ? resultFactory.ok({ avd: target, name, key, built: true }) : built;
 }
 
 function lockDeps(deps: AndroidGoldenDeps) {
@@ -616,11 +624,11 @@ export async function currentAndroidSnapshot(
 	avd: string
 ): AsyncResult<{ avd: string; name: string; key: string; dir: string; present: boolean } | undefined> {
 	const read = await readSnapshotInputs(deps, avd, { writeConfig: true });
-	if (!read.success || read.data === undefined) return read.success ? ok(undefined) : read;
+	if (!read.success || read.data === undefined) return read.success ? resultFactory.ok(undefined) : read;
 	const { dir, inputs } = read.data;
 	const key = androidSnapshotKey(inputs);
 	const name = snapshotName(key);
-	return ok({ avd, name, key, dir, present: snapshotComplete(dir, name) });
+	return resultFactory.ok({ avd, name, key, dir, present: snapshotComplete(dir, name) });
 }
 
 /**
@@ -629,14 +637,14 @@ export async function currentAndroidSnapshot(
  */
 export async function snapshotForClaim(deps: AndroidGoldenDeps, avd: string): AsyncResult<string | undefined> {
 	const current = await currentAndroidSnapshot(deps, avd);
-	if (!current.success || current.data === undefined) return current.success ? ok(undefined) : current;
-	if (current.data.present) return ok(current.data.name);
+	if (!current.success || current.data === undefined) return current.success ? resultFactory.ok(undefined) : current;
+	if (current.data.present) return resultFactory.ok(current.data.name);
 	markAndroidSnapshotPending(deps.store, avd);
 	log(
 		deps,
 		`no quick-boot snapshot of ${avd} yet: cold boot (warden gc builds it while ${avd} is idle; now: warden golden ensure --platform android --profile ${targetProfile(avd)})`
 	);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /**
@@ -652,10 +660,10 @@ export async function ensureAndroidSnapshot(
 ): AsyncResult<EnsuredSnapshot | undefined> {
 	if (opts.explicit) resetAndroidSnapshotLoadFailures(deps.store, avd);
 	const current = await currentAndroidSnapshot(deps, avd);
-	if (!current.success || current.data === undefined) return current.success ? ok(undefined) : current;
+	if (!current.success || current.data === undefined) return current.success ? resultFactory.ok(undefined) : current;
 	const { dir, key, name, present } = current.data;
 	const ensured: Result<EnsuredSnapshot | undefined> = present
-		? ok({ avd, name, key, built: false })
+		? resultFactory.ok({ avd, name, key, built: false })
 		: await withBuildLock(lockDeps(deps), androidGoldenLockKey(splitBiometricProfile(avd).profile), () =>
 				ensureLocked(deps, avd, dir, key)
 			);
@@ -676,13 +684,13 @@ export async function buildPendingAndroidSnapshot(deps: AndroidGoldenDeps): Asyn
 	const busy: string[] = [];
 	for (const avd of pendingAndroidSnapshots(deps.store, deps.now())) {
 		const ensured = await ensureAndroidSnapshot(deps, avd);
-		if (!ensured.success) return ok({ failed: { avd, error: ensured.error }, busy });
+		if (!ensured.success) return resultFactory.ok({ failed: { avd, error: ensured.error }, busy });
 		if (ensured.data === undefined) {
 			busy.push(avd);
 			markAndroidSnapshotBusy(deps.store, avd, deps.now());
-		} else if (ensured.data.built) return ok({ built: ensured.data, busy });
+		} else if (ensured.data.built) return resultFactory.ok({ built: ensured.data, busy });
 	}
-	return ok({ busy });
+	return resultFactory.ok({ busy });
 }
 
 /**
@@ -692,7 +700,7 @@ export async function buildPendingAndroidSnapshot(deps: AndroidGoldenDeps): Asyn
  * longer rebuilds it (`warden golden ensure --platform android` does).
  */
 export async function invalidateAndroidSnapshot(deps: AndroidGoldenDeps, avd: string, name: string): AsyncResult<void> {
-	if (!isWardenSnapshot(name)) return err(`${name} is not a warden snapshot`);
+	if (!isWardenSnapshot(name)) return resultFactory.err(`${name} is not a warden snapshot`);
 	const real = splitBiometricProfile(avd).profile;
 	return withBuildLock({ ...lockDeps(deps), waitMs: 0 }, androidGoldenLockKey(real), async () => {
 		const deleted = deleteSnapshot(deps, real, avdDir(deps.env, real), name);
@@ -715,7 +723,7 @@ export async function invalidateAndroidSnapshot(deps: AndroidGoldenDeps, avd: st
 /** Every warden snapshot of every AVD, `current` = named for the AVD's key today. */
 export async function listAndroidSnapshots(deps: AndroidGoldenDeps): AsyncResult<AndroidSnapshotEntry[]> {
 	const avds = await listAvds(deps);
-	if (!avds.success) return textError(avds);
+	if (!avds.success) return wardenErrors.toText(avds);
 	const entries: AndroidSnapshotEntry[] = [];
 	for (const avd of avds.data) {
 		const dir = avdDir(deps.env, avd);
@@ -728,7 +736,7 @@ export async function listAndroidSnapshots(deps: AndroidGoldenDeps): AsyncResult
 		}
 		for (const name of names) entries.push({ avd, name, path: snapshotDir(dir, name), current: current.has(name) });
 	}
-	return ok(entries);
+	return resultFactory.ok(entries);
 }
 
 /** Delete stale warden snapshots (or all with `all`), skipping AVDs that are running. */
@@ -747,17 +755,17 @@ export async function pruneAndroidSnapshots(
 			if (!busy.success) return busy;
 			if (busy.data.length > 0) {
 				log(deps, `${avd} is running: its snapshots are kept`);
-				return ok([]);
+				return resultFactory.ok([]);
 			}
 			const dir = avdDir(deps.env, avd);
 			for (const target of targets) {
 				const removed = deleteSnapshot(deps, avd, dir, target.name);
 				if (!removed.success) return removed;
 			}
-			return ok(targets);
+			return resultFactory.ok(targets);
 		});
 		if (!pruned.success) return pruned;
 		deleted.push(...pruned.data);
 	}
-	return ok(deleted);
+	return resultFactory.ok(deleted);
 }

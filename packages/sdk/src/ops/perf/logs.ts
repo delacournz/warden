@@ -9,7 +9,7 @@ import { followPid, type LogStream, type SpawnLines } from "@delacour/warden-per
 import { redact } from "@delacour/warden-perf/logs/redact";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { appPid, iosAppBundle } from "./app-process";
 import type { PerfEnv, PerfUiEnv } from "./env";
@@ -117,7 +117,7 @@ export function parseFlags(flags: LogFlags): Result<ParsedFlags, WardenError> {
 	if (flags.lines !== undefined && (!/^\d+$/.test(flags.lines) || Number(flags.lines) < 1)) {
 		return usage(`--lines must be a positive integer, got "${flags.lines}"`);
 	}
-	return ok({
+	return resultFactory.ok({
 		filter,
 		...(sinceDurationMs !== undefined ? { sinceDurationMs } : {}),
 		lines: flags.lines === undefined ? DEFAULT_LOG_LINES : Number(flags.lines),
@@ -146,7 +146,7 @@ export async function streamAppLogs(
 			onLine,
 			signal: run.signal,
 		});
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	}
 	const bundle = await iosAppBundle(ctx, device.udid, app.id);
 	if (!bundle.success) return bundle;
@@ -164,7 +164,7 @@ export async function streamAppLogs(
 	});
 	const first = await Promise.race([aborted, stream.exited]);
 	stream.kill();
-	if (first === "aborted") return ok(undefined);
+	if (first === "aborted") return resultFactory.ok(undefined);
 	return {
 		success: false,
 		error: opError("failed", `log stream ended (exit ${first})`, { hint: "is the simulator still booted?" }),
@@ -198,7 +198,7 @@ export async function runLogCapture(
 		},
 		deps
 	);
-	return done.success ? ok({ lines }) : done;
+	return done.success ? resultFactory.ok({ lines }) : done;
 }
 
 export type OneShot = { entries: LogEntry[]; truncated: boolean };
@@ -227,7 +227,7 @@ async function androidLogcat(
 	}
 	const res = await ctx.exec([...adb(ctx, device.udid), ...logcatArgv(pid, { tail })], { timeoutMs });
 	if (res.exitCode !== 0) return { success: false, error: execFailure("logcat", res) };
-	return ok(res.stdout);
+	return resultFactory.ok(res.stdout);
 }
 
 /** iOS: `log show` for the app over the `--since` window (default `DEFAULT_IOS_WINDOW_S`). */
@@ -250,7 +250,7 @@ async function iosLogShow(
 	];
 	const res = await ctx.exec(argv, { timeoutMs });
 	if (res.exitCode !== 0) return { success: false, error: execFailure("log show", res) };
-	return ok(res.stdout);
+	return resultFactory.ok(res.stdout);
 }
 
 export async function readOnce(
@@ -276,7 +276,7 @@ export async function readOnce(
 		.split("\n")
 		.flatMap((line) => parseLogLine(device.platform, line, year) ?? [])
 		.filter((entry) => matchesFilter(entry, filter));
-	return ok({ entries: all.slice(-flags.lines), truncated: all.length > flags.lines });
+	return resultFactory.ok({ entries: all.slice(-flags.lines), truncated: all.length > flags.lines });
 }
 
 /** The `result` of `perf logs --json` (one-shot). */
@@ -295,7 +295,7 @@ export async function logsWork(
 	const { entries, truncated } = read.data;
 	const text =
 		entries.length === 0 ? ctx.ui.color.dim(`no log lines from ${app.id}`) : entries.map(formatEntry).join("\n");
-	return ok({
+	return resultFactory.ok({
 		device: { udid: target.udid, platform: target.platform, name: target.name },
 		result: { app: app.id, count: entries.length, truncated, entries },
 		text,

@@ -59,8 +59,8 @@ import { bunExec } from "@delacour/warden-runtime/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-store/types";
-import { textError } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, withClaimOptions } from "../claim-flags";
@@ -194,20 +194,20 @@ async function devScheme(
 	context: ProjectContext,
 	override: string | undefined
 ): AsyncResult<string> {
-	if (override !== undefined) return ok(override);
-	if (context.appConfig?.slug !== undefined) return ok(`exp+${context.appConfig.slug}`);
+	if (override !== undefined) return resultFactory.ok(override);
+	if (context.appConfig?.slug !== undefined) return resultFactory.ok(`exp+${context.appConfig.slug}`);
 	const { project } = context;
 	const appJson = join(project.root, "app.json");
 	if (existsSync(appJson)) {
 		const slug = slugOf(field(parseJson(readFileSync(appJson, "utf8")), "expo"));
-		if (slug !== undefined) return ok(`exp+${slug}`);
+		if (slug !== undefined) return resultFactory.ok(`exp+${slug}`);
 	}
 	const argv = ["bunx", "expo", "config", "--json", "--type", "public"];
 	const res = await ctx.exec(argv, { cwd: project.root, env: { EXPO_NO_TELEMETRY: "1" } });
 	const slug = slugOf(parseJson(res.stdout));
 	return res.exitCode === 0 && slug !== undefined
-		? ok(`exp+${slug}`)
-		: err("could not read the app slug from `expo config` — pass --scheme <scheme>");
+		? resultFactory.ok(`exp+${slug}`)
+		: resultFactory.err("could not read the app slug from `expo config` — pass --scheme <scheme>");
 }
 
 /** The dev-client scheme, resolved on first ask and then shared: `devScheme` can spend 1-3 s in `expo config`. */
@@ -217,7 +217,7 @@ function lazyScheme(ctx: CommandContext, project: ProjectContext, override: stri
 	let pending: AsyncResult<string> | undefined;
 	return () => {
 		pending ??= devScheme(ctx, project, override).catch((error: unknown) =>
-			err(error instanceof Error ? error.message : String(error))
+			resultFactory.err(error instanceof Error ? error.message : String(error))
 		);
 		return pending;
 	};
@@ -240,52 +240,54 @@ async function bootHeldDevice(
 	const inventory = await provider.inventory();
 	// only a device known to be off is booted; anything else goes on as before (the install reports it)
 	const device = inventory.success ? inventory.data.find((d) => d.id === deviceId) : undefined;
-	if (device === undefined || device.state !== "shutdown") return ok(undefined);
+	if (device === undefined || device.state !== "shutdown") return resultFactory.ok(undefined);
 	const lease = ctx
 		.store()
 		.listLeasesByOwner(owner)
 		.find((l) => l.resource.kind === "device" && l.resource.id === deviceId);
 	if (lease === undefined)
-		return err(`${deviceId} is shut down and not leased by this session — boot it, or drop --udid to claim one`);
+		return resultFactory.err(
+			`${deviceId} is shut down and not leased by this session — boot it, or drop --udid to claim one`
+		);
 	// the held path has no claim of its own: the boot is this session's "claim device" row
 	const task = ui.task("claim", `boot ${device.name}`);
 	await provider.prepareBoot?.(deviceId);
 	const ready = await bootAndWait(provider, deviceId);
 	if (!ready.success) {
 		task.fail(ready.error);
-		return err(`booting ${deviceId}: ${ready.error}`);
+		return resultFactory.err(`booting ${deviceId}: ${ready.error}`);
 	}
 	// booted for this lease, so it is the owner's to shut down on release
 	ctx.store().markBootedByOwner(lease.id);
 	await provider.afterReady?.(deviceId);
 	task.ok("ready");
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** `bootReady` where the provider has it (iOS `bootstatus -b`), else `boot` + `waitReady`. */
 async function bootAndWait(provider: DeviceProvider, deviceId: string): AsyncResult<void> {
 	if (provider.bootReady) {
 		const r = await provider.bootReady(deviceId, DEFAULT_READY_TIMEOUT_MS);
-		return r.kind === "ready" ? ok(undefined) : err(r.error);
+		return r.kind === "ready" ? resultFactory.ok(undefined) : resultFactory.err(r.error);
 	}
 	const boot = await provider.boot(deviceId);
-	return textError(boot.success ? await provider.waitReady(deviceId, DEFAULT_READY_TIMEOUT_MS) : boot);
+	return wardenErrors.toText(boot.success ? await provider.waitReady(deviceId, DEFAULT_READY_TIMEOUT_MS) : boot);
 }
 
 /** `--udid` / `--lease` / the caller's single device lease of `platform`; undefined = claim one. */
 function heldDevice(ctx: CommandContext, owner: Owner, platform: Platform, opts: DevOpts): Result<string | undefined> {
-	if (opts.udid !== undefined) return ok(opts.udid);
+	if (opts.udid !== undefined) return resultFactory.ok(opts.udid);
 	const store = ctx.store();
 	if (opts.lease !== undefined) {
 		const r = store.getLease(opts.lease)?.resource;
 		return r?.kind === "device" && r.platform === platform
-			? ok(r.id)
-			: err(`no ${platform} device lease ${opts.lease}`);
+			? resultFactory.ok(r.id)
+			: resultFactory.err(`no ${platform} device lease ${opts.lease}`);
 	}
 	const mine = store
 		.listLeasesByOwner(owner)
 		.flatMap((l) => (l.resource.kind === "device" && l.resource.platform === platform ? [l.resource.id] : []));
-	return ok(mine.length === 1 ? mine[0] : undefined);
+	return resultFactory.ok(mine.length === 1 ? mine[0] : undefined);
 }
 
 type Session = {
@@ -386,7 +388,7 @@ async function openSession(
 			PRIORITY.high
 		);
 		if (!flags.success) return flags;
-		if (flags.data.request.count !== 1) return err("warden dev runs on one device (drop --count)");
+		if (flags.data.request.count !== 1) return resultFactory.err("warden dev runs on one device (drop --count)");
 		let showing: Promise<void> | undefined;
 		const session = await claimAll(
 			leaseHostFromContext(ctx),
@@ -412,7 +414,7 @@ async function openSession(
 			"dev"
 		);
 		await showing;
-		if (!session.success) return textError(session);
+		if (!session.success) return wardenErrors.toText(session);
 		const { outcome, ports, leaseIds } = session.data;
 		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
 		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
@@ -429,9 +431,16 @@ async function openSession(
 		const port = ports[0]?.port;
 		if (deviceId === undefined || port === undefined) {
 			await release();
-			return err("claim returned no device / port");
+			return resultFactory.err("claim returned no device / port");
 		}
-		return ok({ deviceId, deviceName: outcome.claimed[0]?.device.name, app: installed(), port, leaseIds, release });
+		return resultFactory.ok({
+			deviceId,
+			deviceName: outcome.claimed[0]?.device.name,
+			app: installed(),
+			port,
+			leaseIds,
+			release,
+		});
 	}
 	const deviceId = held.data;
 	const ports = await claimRunPorts(
@@ -442,13 +451,13 @@ async function openSession(
 		deps.isPortFree,
 		"warden dev"
 	);
-	if (!ports.success) return textError(ports);
+	if (!ports.success) return wardenErrors.toText(ports);
 	const leaseIds = ports.data.map((p) => p.leaseId);
 	const release = () => releaseDevices(leaseHostFromContext(ctx), leaseIds, { touch: false }).then(() => undefined);
 	const port = ports.data[0]?.port;
 	if (port === undefined) {
 		await release();
-		return err("no Metro port leased");
+		return resultFactory.err("no Metro port leased");
 	}
 	early.start(port, deviceId);
 	const booted = await bootHeldDevice(ctx, ui, owner, platform, deviceId);
@@ -461,14 +470,14 @@ async function openSession(
 	await showing;
 	if (!ensured.success) {
 		await release();
-		return err(`app on ${deviceId}: ${ensured.error}`);
+		return resultFactory.err(`app on ${deviceId}: ${ensured.error}`);
 	}
 	ctx.err(`warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`);
 	const deviceName = ctx
 		.store()
 		.listDevices(platform)
 		.find((d) => d.id === deviceId)?.name;
-	return ok({ deviceId, deviceName, app: installed(), port, leaseIds, release });
+	return resultFactory.ok({ deviceId, deviceName, app: installed(), port, leaseIds, release });
 }
 
 /**
@@ -487,17 +496,17 @@ async function openDevClient(
 	const run = async (argv: string[]): AsyncResult<void> => {
 		const res = await ctx.exec(argv);
 		return res.exitCode === 0
-			? ok(undefined)
-			: err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
+			? resultFactory.ok(undefined)
+			: resultFactory.err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
 	};
 	const bundle = bundleIdFor(project, platform);
-	if (!bundle.success) return textError(bundle);
+	if (!bundle.success) return wardenErrors.toText(bundle);
 	if (project.framework === "react-native") {
 		for (const argv of bareAppLaunchArgvs(platform, deviceId, bundle.data, port)) {
 			const step = await run(argv);
 			if (!step.success) return step;
 		}
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	}
 	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port), DEV_CLIENT_ARGS));
 	const reverse = await run(adbReverseArgv(deviceId, port));
@@ -526,17 +535,19 @@ async function openDevClient(
  */
 function preflight(project: Project, platform: Platform): Result<void> {
 	const bundle = bundleIdFor(project, platform);
-	if (!bundle.success) return textError(bundle);
+	if (!bundle.success) return wardenErrors.toText(bundle);
 	if (project.framework === "expo" && missingPackages(project.root, ["expo-dev-client"]).length > 0)
-		return err(`expo-dev-client isn't installed in ${project.root} — run: bunx expo install expo-dev-client`);
-	return ok(undefined);
+		return resultFactory.err(
+			`expo-dev-client isn't installed in ${project.root} — run: bunx expo install expo-dev-client`
+		);
+	return resultFactory.ok(undefined);
 }
 
 /** What `warden dev` asks `ensureApp` for: a missing `dev` variant falls back, an explicit `--variant` must exist. */
 function ensureOptions(start: string, variant: string, opts: DevOpts): Result<EnsureOptions> {
 	const install = parseInstallFlags(opts);
 	if (!install.success) return install;
-	return ok({
+	return resultFactory.ok({
 		project: start,
 		eas: opts.eas,
 		build: opts.build,
@@ -594,14 +605,14 @@ async function restartDevice(
 	const provider = providerFor(r.platform, appHostFromContext(ctx), r.owner);
 	log(`shutting down ${deviceId}`);
 	const down = await provider.shutdown(deviceId);
-	if (!down.success) return textError(down);
+	if (!down.success) return wardenErrors.toText(down);
 	await stopHelperAfter(ctx)(deviceId);
 	log("booting");
 	const ready = await bootAndWait(provider, deviceId);
 	if (!ready.success) return ready;
 	await provider.afterReady?.(deviceId);
 	await showDevice(ctx, ui, r.platform, deviceId, headless);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /**
@@ -609,7 +620,7 @@ async function restartDevice(
  * the replacement; a replacement that does not come up leaves no Metro, and the session ends as when Metro dies.
  */
 async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): AsyncResult<string> {
-	if (swap.pending) return err("Metro is already restarting");
+	if (swap.pending) return resultFactory.err("Metro is already restarting");
 	let settle: (metro: Metro | undefined) => void = () => undefined;
 	swap.pending = new Promise<Metro | undefined>((resolve) => {
 		settle = resolve;
@@ -625,13 +636,13 @@ async function restartMetro(ctx: CommandContext, r: Running, swap: MetroSwap): A
 		const started = await r.run.launch?.pending;
 		if (started?.success !== true) {
 			settle(undefined);
-			return err(started?.error ?? "Metro was not restarted");
+			return resultFactory.err(started?.error ?? "Metro was not restarted");
 		}
 		settle(started.data);
-		return ok(started.data.url);
+		return resultFactory.ok(started.data.url);
 	} catch (error) {
 		settle(undefined);
-		return err(error instanceof Error ? error.message : String(error));
+		return resultFactory.err(error instanceof Error ? error.message : String(error));
 	}
 }
 
@@ -648,8 +659,8 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 				buildOutput: log,
 			});
 			return ensured.success
-				? ok({ source: ensured.data.source, hash: ensured.data.hash })
-				: err(ensured.error.message);
+				? resultFactory.ok({ source: ensured.data.source, hash: ensured.data.hash })
+				: resultFactory.err(ensured.error.message);
 		},
 		restartSim: (log) => restartDevice(scopedCtx(ctx, log), ui, r, opts.headless === true, log),
 		restartMetro: (log) => restartMetro(scopedCtx(ctx, log), r, swap),
@@ -691,7 +702,8 @@ async function startDevBroker(
 	appId: string | undefined
 ): AsyncResult<() => Promise<void>> {
 	const leaseId = r.session.leaseIds[0];
-	if (deps.startBroker === undefined || leaseId === undefined) return err("no devtools broker for this session");
+	if (deps.startBroker === undefined || leaseId === undefined)
+		return resultFactory.err("no devtools broker for this session");
 	const task = ui.task("devtools", "devtools");
 	let attached = false;
 	const started = await deps.startBroker({
@@ -711,10 +723,10 @@ async function startDevBroker(
 	});
 	if (!started.success) {
 		task.fail(started.error.message);
-		return err(started.error.message);
+		return resultFactory.err(started.error.message);
 	}
 	updateDevSession(ui.ctx.env, leaseId, { brokerSocket: started.data.socketPath });
-	return ok(async () => {
+	return resultFactory.ok(async () => {
 		updateDevSession(ui.ctx.env, leaseId, { brokerSocket: undefined });
 		await started.data.close();
 	});
@@ -748,7 +760,7 @@ function devExtras(ui: DevUi, deps: DevDeps, r: Running, metroUrl: string, appId
 			await close();
 			ui.task("devtools", "devtools").ok("off");
 		}
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	};
 	return {
 		features,
@@ -972,16 +984,16 @@ async function pickApp(ctx: CommandContext, start: string, opts: DevOpts): Async
 	const stopAt = (await readGitFacts(ctx.exec, start, ctx.git))?.toplevel;
 	const overlay = await overlayDirUnlessRepoConfig(ctx.exec, start, stopAt, ctx.env, ctx.git);
 	const choices = appChoices(start, stopAt, overlay);
-	if (choices.length === 0 || !ctx.ui.interactive || opts.json === true) return ok(start);
+	if (choices.length === 0 || !ctx.ui.interactive || opts.json === true) return resultFactory.ok(start);
 	const answer = await ctx.ui.select(
 		`Which app? (several under ${start}; --project <dir> skips this)`,
 		choices.map((dir) => ({ value: dir, label: relative(start, dir) }))
 	);
 	if (answer === undefined) {
 		ctx.ui.cancelled("Aborted.");
-		return err("no app picked");
+		return resultFactory.err("no app picked");
 	}
-	return ok(answer);
+	return resultFactory.ok(answer);
 }
 
 /** The project the dev build is for: the `--bundle-id` override applies to this platform, an unset `--variant` is optional. */
@@ -1083,11 +1095,11 @@ async function prepareDev(ctx: CommandContext, platformArg: string | undefined, 
 	const platform = parsePlatform(platformArg ?? "ios");
 	if (!platform.success) return platform;
 	const timeout = parseDuration(opts.readyTimeout);
-	if (!timeout.success) return err(`--ready-timeout: ${timeout.error}`);
+	if (!timeout.success) return resultFactory.err(`--ready-timeout: ${timeout.error}`);
 	const owner = resolveOwner(ctx);
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return start;
-	const picked = opts.project === undefined ? await pickApp(ctx, start.data, opts) : ok(start.data);
+	const picked = opts.project === undefined ? await pickApp(ctx, start.data, opts) : resultFactory.ok(start.data);
 	if (!picked.success) return picked;
 	const variant = opts.variant ?? "dev";
 	let project = await devProjectContext(ctx, platform.data, opts, picked.data, variant);
@@ -1106,7 +1118,7 @@ async function prepareDev(ctx: CommandContext, platformArg: string | undefined, 
 	if (!ready.success) return ready;
 	const app = ensureOptions(start.data, variant, opts);
 	if (!app.success) return app;
-	return ok({
+	return resultFactory.ok({
 		platform: platform.data,
 		timeoutMs: timeout.data,
 		owner,
@@ -1277,7 +1289,7 @@ export const defaultDevDeps: DevDeps = {
 			import("../dev-broker/extensions"),
 		]);
 		const started = await startBroker(options);
-		return started.success ? ok(withExtensions(started.data, options)) : started;
+		return started.success ? resultFactory.ok(withExtensions(started.data, options)) : started;
 	},
 	isPortFree: (port) => isPortFree(port),
 	spawn(cmd, env, cwd, stdout) {

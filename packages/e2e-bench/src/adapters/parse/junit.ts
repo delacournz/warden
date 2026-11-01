@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** One `<testcase>` of a JUnit XML report, reporter-agnostic. */
 export type JunitCase = {
@@ -73,6 +73,6 @@ export function parseJunit(xml: string): Result<JunitCase[]> {
 		const c = caseOf(m[1] ?? "", m[2] ?? "");
 		if (c !== undefined) cases.push(c);
 	}
-	if (cases.length === 0) return err("junit: no <testcase> elements found");
-	return ok(cases);
+	if (cases.length === 0) return resultFactory.err("junit: no <testcase> elements found");
+	return resultFactory.ok(cases);
 }

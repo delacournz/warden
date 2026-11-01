@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ReleaseTarget } from "./platforms";
 
 /** The only target that ships `warden-simd` (idb's libraries are arm64-only). */
@@ -34,14 +34,14 @@ export function parseHelperManifest(text: string): Result<HelperInfo> {
 	try {
 		data = JSON.parse(text);
 	} catch {
-		return err("helper manifest.json is not valid JSON");
+		return resultFactory.err("helper manifest.json is not valid JSON");
 	}
-	if (!isRecord(data)) return err("helper manifest.json is not an object");
+	if (!isRecord(data)) return resultFactory.err("helper manifest.json is not an object");
 	const { version, idb, xcode } = data;
 	if (typeof version !== "string" || typeof idb !== "string" || typeof xcode !== "string") {
-		return err("helper manifest.json needs string version, idb and xcode");
+		return resultFactory.err("helper manifest.json needs string version, idb and xcode");
 	}
-	return ok({ version, idb, xcode });
+	return resultFactory.ok({ version, idb, xcode });
 }
 
 /** Paths (relative to the platform package root) the helper adds to its `files`. */

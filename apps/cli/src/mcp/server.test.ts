@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
@@ -41,7 +41,7 @@ const text = (result: Awaited<ReturnType<Client["callTool"]>>): unknown => {
 
 describe("toResponse", () => {
 	test("data is one JSON text block; an error is `{ error }` with isError", () => {
-		expect(toResponse(ok({ a: 1 }))).toEqual({ content: [{ type: "text", text: '{"a":1}' }] });
+		expect(toResponse(resultFactory.ok({ a: 1 }))).toEqual({ content: [{ type: "text", text: '{"a":1}' }] });
 		expect(toResponse({ success: false, error: { code: "x", message: "m" } })).toEqual({
 			content: [{ type: "text", text: '{"error":{"code":"x","message":"m"}}' }],
 			isError: true,
@@ -126,11 +126,12 @@ describe("warden mcp over the dev session's broker", () => {
 		homes.push(dir);
 		const served = await serveBroker(join(dir, "b.sock"), async (method, params) => {
 			calls.push({ method, params });
-			if (method === "status") return ok({ state: { phase: "attached", targetId: "t", deviceName: "sim" } });
+			if (method === "status")
+				return resultFactory.ok({ state: { phase: "attached", targetId: "t", deviceName: "sim" } });
 			if (method === "console.query")
-				return ok({ lines: [{ ts: NOW, level: "error", kind: "console", text: "boom" }], total: 1 });
-			if (method === "eval") return ok({ value: 42 });
-			if (method === "route") return ok({ route: "(tabs)/home" });
+				return resultFactory.ok({ lines: [{ ts: NOW, level: "error", kind: "console", text: "boom" }], total: 1 });
+			if (method === "eval") return resultFactory.ok({ value: 42 });
+			if (method === "route") return resultFactory.ok({ route: "(tabs)/home" });
 			return brokerErr("unknown_method", method);
 		});
 		if (!served.success) throw new Error(served.error.message);

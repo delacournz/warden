@@ -13,7 +13,7 @@ import { type ConditionsConfig, mergeConditionsConfig } from "@delacour/warden-c
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, type ErrorResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type ErrorResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { DEFAULT_E2E_COUNT, DEFAULT_SPECS_DIR, DEV_MENU_OFF_ARGS } from "./affected.defaults";
 import { type ChangedFile, changedFiles } from "./git";
 import { resolveTypescript, typescriptMissing, typescriptVersionProblem } from "./graph";
@@ -116,7 +116,7 @@ function defaultSuite(
 	if (!project.success) return project;
 	const { name, root, variant } = project.data;
 	if (!existsSync(join(root, DEFAULT_SPECS_DIR)))
-		return err(
+		return resultFactory.err(
 			`no e2e suites in ${CONFIG_FILE} and no ${DEFAULT_SPECS_DIR}/ specs in ${root} — run \`warden init\` to scaffold them`
 		);
 	const config = e2eSuiteSchema.parse({
@@ -127,7 +127,7 @@ function defaultSuite(
 		app: variant === undefined ? true : { variant },
 		metro: { launchArgs: DEV_MENU_OFF_ARGS },
 	});
-	return ok({
+	return resultFactory.ok({
 		name,
 		config,
 		configDir: root,
@@ -177,7 +177,7 @@ export async function findSuite(
 			names
 		);
 	}
-	return ok(toSuite(pick, config, found.data));
+	return resultFactory.ok(toSuite(pick, config, found.data));
 }
 
 /** The suite with its project root resolved and the top-level `headless` as its default. */
@@ -219,15 +219,15 @@ function rebase(files: readonly ChangedFile[], top: string, configDir: string): 
 }
 
 async function loadChanges(input: AffectedInput, suite: Suite, base: string): AsyncResult<ChangedFile[]> {
-	if (input.only) return ok([]);
+	if (input.only) return resultFactory.ok([]);
 	if (input.files) {
-		return ok(
+		return resultFactory.ok(
 			input.files.map((f) => ({ path: relative(suite.rootDir, join(input.cwd, f)), status: "modified" as const }))
 		);
 	}
 	const changed = await changedFiles(input.exec, suite.configDir, base, input.git);
 	if (!changed.success) return changed;
-	return ok(rebase(changed.data.files, changed.data.top, suite.configDir));
+	return resultFactory.ok(rebase(changed.data.files, changed.data.top, suite.configDir));
 }
 
 function platformsOf(input: AffectedInput, suite: Suite): Platform[] {
@@ -243,7 +243,7 @@ async function importGraphFor(
 	platform: Platform,
 	importCachePath: string | undefined
 ): AsyncResult<LoadedGraph | undefined> {
-	if (!needed) return ok(undefined);
+	if (!needed) return resultFactory.ok(undefined);
 	return loadImportGraph({
 		exec: input.exec,
 		platform,
@@ -264,11 +264,12 @@ function graphNeeded(
 	{ config, configDir }: Suite,
 	changes: readonly ChangedFile[]
 ): Result<boolean> {
-	if (!(Object.values(config.specs).some((f) => f.entries.length > 0) && changes.length > 0)) return ok(false);
+	if (!(Object.values(config.specs).some((f) => f.entries.length > 0) && changes.length > 0))
+		return resultFactory.ok(false);
 	const path = (input.typescript ?? resolveTypescript)(configDir);
-	if (path === undefined) return err(typescriptMissing(configDir));
+	if (path === undefined) return resultFactory.err(typescriptMissing(configDir));
 	const problem = typescriptVersionProblem(path);
-	return problem === undefined ? ok(true) : err(problem);
+	return problem === undefined ? resultFactory.ok(true) : resultFactory.err(problem);
 }
 
 /** false when `files` / `only` replace the git diff (so there is no base to report). */
@@ -298,13 +299,13 @@ async function selectForPlatform(o: {
 		...(input.only ? { only: input.only } : {}),
 	});
 	loaded?.graph.save();
-	return ok({ selection, warning: loaded?.warning });
+	return resultFactory.ok({ selection, warning: loaded?.warning });
 }
 
 /** Changed files → the specs each platform must run (with reasons), per `e2e.<suite>`. */
 export async function computeAffected(given: AffectedInput): AsyncResult<Affected> {
 	const suite = await findSuite(given.exec, given.cwd, given.suite, given.git, given.env);
-	if (!suite.success) return err(suite.error.message);
+	if (!suite.success) return resultFactory.err(suite.error.message);
 	// a suite nobody mapped has nothing to diff against: every spec runs
 	const everything = suite.data.implicit && !given.files && !given.only;
 	const input: AffectedInput = everything ? { ...given, only: { mode: "all" } } : given;
@@ -334,7 +335,7 @@ export async function computeAffected(given: AffectedInput): AsyncResult<Affecte
 		if (picked.data.warning !== undefined) warnings.push(picked.data.warning);
 		selections.push(picked.data.selection);
 	}
-	return ok({
+	return resultFactory.ok({
 		suite: suite.data,
 		...(usesGit(input) ? { base } : {}),
 		changes: changes.data,

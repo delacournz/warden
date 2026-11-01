@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { ProjectContext } from "@delacour/warden-builds/ensure";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { expoInstallCommand, missingPackages } from "../expo-app";
 import { note, success } from "../output";
@@ -130,11 +130,11 @@ export async function offerDevSetup(
 	options: { interactive: boolean },
 	deps: DevSetupDeps = {}
 ): AsyncResult<"changed" | "unchanged"> {
-	if (issues.length === 0) return ok("unchanged");
+	if (issues.length === 0) return resultFactory.ok("unchanged");
 	if (!options.interactive) {
 		for (const issue of issues.filter((i) => !blocking(i))) note(ctx, `warden dev: ${describeIssue(issue)}`);
 		const stop = issues.filter(blocking);
-		return stop.length > 0 ? err(stop.map(describeIssue).join("; ")) : ok("unchanged");
+		return stop.length > 0 ? resultFactory.err(stop.map(describeIssue).join("; ")) : resultFactory.ok("unchanged");
 	}
 	let changed = false;
 	for (const issue of issues) {
@@ -142,7 +142,7 @@ export async function offerDevSetup(
 		if (!applied.success) return applied;
 		changed ||= applied.data;
 	}
-	return ok(changed ? "changed" : "unchanged");
+	return resultFactory.ok(changed ? "changed" : "unchanged");
 }
 
 /** One prompt + fix; true when applied. A declined blocking fix is the error; a declined optional one is skipped. */
@@ -162,21 +162,21 @@ async function applyIssue(ctx: CommandContext, issue: DevIssue, deps: DevSetupDe
 			);
 			if (answer === undefined) {
 				ctx.ui.cancelled("Aborted.");
-				return err(describeIssue(issue));
+				return resultFactory.err(describeIssue(issue));
 			}
-			if (!answer) return err(describeIssue(issue));
+			if (!answer) return resultFactory.err(describeIssue(issue));
 			const res = await withSpinner(ctx, `installing ${what}`, (sctx) =>
 				sctx.exec(issue.command, { cwd: issue.root, timeoutMs: DEV_SETUP_INSTALL_TIMEOUT_MS })
 			);
 			if (res.exitCode !== 0) {
 				const tail = (res.stderr || res.stdout).trim().split("\n").filter(Boolean).slice(-5).join("\n");
-				return err(`${issue.command.join(" ")} failed (exit ${res.exitCode})${tail ? `:\n${tail}` : ""}`);
+				return resultFactory.err(`${issue.command.join(" ")} failed (exit ${res.exitCode})${tail ? `:\n${tail}` : ""}`);
 			}
 			success(ctx, `warden dev: installed ${what} (${issue.command.join(" ")})`);
-			return ok(true);
+			return resultFactory.ok(true);
 		}
 		case "config":
-			return ok(await applyConfig(ctx, issue, write));
+			return resultFactory.ok(await applyConfig(ctx, issue, write));
 	}
 }
 

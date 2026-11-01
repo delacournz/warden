@@ -12,7 +12,7 @@ import type { MetricSample } from "@delacour/warden-perf/metrics/series";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { appPid, type IosAppBundle, iosAppBundle } from "./app-process";
 import type { PerfEnv } from "./env";
@@ -86,7 +86,7 @@ function iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, s
 		if (got.kind === "error") return { success: false, error: got.error };
 		if (got.kind === "gone") return { success: false, error: notRunning(target) };
 		if (cached !== undefined) cached.startedAt ??= got.row.startedAt;
-		return ok(got.row);
+		return resultFactory.ok(got.row);
 	};
 	return {
 		sample: async () => {
@@ -98,7 +98,7 @@ function iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, s
 			const cpuSec = cpuDeltas([row], prev, baseline).get(row.pid);
 			const dtSec = baseline ? 0 : (wallMs - (lastWallMs ?? wallMs)) / 1000;
 			lastWallMs = wallMs;
-			return ok({
+			return resultFactory.ok({
 				wallMs,
 				atMs: wallMs - startMs,
 				pid: row.pid,
@@ -136,7 +136,7 @@ function androidSampler(ctx: PerfEnv, target: MetricsTarget, startMs: number): M
 			});
 			const info = mem.exitCode === 0 ? parseMeminfo(mem.stdout) : undefined;
 			const wallMs = ctx.now();
-			return ok({
+			return resultFactory.ok({
 				wallMs,
 				atMs: wallMs - startMs,
 				pid,
@@ -156,7 +156,7 @@ export async function createSampler(
 	target: MetricsTarget,
 	startMs: number
 ): Promise<Result<MetricsSampler, WardenError>> {
-	if (target.platform === "android") return ok(androidSampler(ctx, target, startMs));
+	if (target.platform === "android") return resultFactory.ok(androidSampler(ctx, target, startMs));
 	const bundle = await iosAppBundle(ctx, target.udid, target.app);
-	return bundle.success ? ok(iosSampler(ctx, target, bundle.data, startMs)) : bundle;
+	return bundle.success ? resultFactory.ok(iosSampler(ctx, target, bundle.data, startMs)) : bundle;
 }

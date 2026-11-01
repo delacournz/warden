@@ -8,8 +8,8 @@ import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { InventoryDevice, Owner, Platform } from "@delacour/warden-store/types";
 import { profileSlug } from "@delacour/warden-store/types";
-import { wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { activeConditions } from "./conditions/conditions";
 import { type OrphanUndoReport, undoOrphans } from "./conditions/orphans";
 import { undoConditions } from "./conditions/undo";
@@ -103,7 +103,7 @@ export function androidSnapshotHook(
 	sleep?: Sleep
 ): (avd: string) => AsyncResult<string | undefined> {
 	return async (avd) => {
-		if (!(await androidSnapshotOn(host))) return ok(undefined);
+		if (!(await androidSnapshotOn(host))) return resultFactory.ok(undefined);
 		return snapshotForClaim(androidGoldenDeps(host, owner, sleep), avd);
 	};
 }
@@ -189,7 +189,7 @@ export function providerFor(
 			const cloned = await cloneFromGolden(golden, profile, runtime, name);
 			return cloned.success
 				? { success: true, data: { udid: cloned.data.udid, runtime: shortRuntime(cloned.data.runtimeId) } }
-				: wardenErr("failed", cloned.error);
+				: wardenErrors.err("failed", cloned.error);
 		},
 	});
 }

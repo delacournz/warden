@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
 import { type TestContext, testContext } from "../testing";
 import { fakeProcess, fakeStdin, fakeStdout, replay } from "./fakes.testing";
@@ -41,8 +41,8 @@ function setup(hud: { enabled: boolean; intervalMs: number } | undefined) {
 		hudSeams: {
 			sampler: async (_ctx, target) => {
 				targets.push(`${target.platform}:${target.udid}:${target.app}`);
-				return ok({
-					sample: async () => ok({ wallMs: 0, atMs: 0, pid: 1, cpuPct: 21, rssKb: 204_800 }),
+				return resultFactory.ok({
+					sample: async () => resultFactory.ok({ wallMs: 0, atMs: 0, pid: 1, cpuPct: 21, rssKb: 204_800 }),
 				});
 			},
 			schedule: (fn) => {
@@ -110,7 +110,7 @@ describe("createDevTui: the HUD", () => {
 		const { ui, tick, screen, targets } = setup({ enabled: false, intervalMs: 1000 });
 		ui.ready(READY);
 		expect(ui.hudOn()).toBe(false);
-		expect(ui.setHud(true)).toEqual(ok(undefined));
+		expect(ui.setHud(true)).toEqual(resultFactory.ok(undefined));
 		expect(ui.hudOn()).toBe(true);
 		await tick();
 		expect(targets).toEqual(["ios:8F2A-1C3D:nz.example"]);

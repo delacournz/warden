@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "./slim.profile";
 
 /** A `slim` setting as written in config: on/off, or the categories / labels to leave running. */
@@ -22,10 +22,10 @@ export function envSlimOff(env: Record<string, string | undefined>): boolean {
 }
 
 function fromSetting(setting: SlimSetting): Result<SlimProfile | false> {
-	if (setting === false) return ok(false);
-	if (setting === true) return ok(DEFAULT_SLIM_PROFILE);
+	if (setting === false) return resultFactory.ok(false);
+	if (setting === true) return resultFactory.ok(DEFAULT_SLIM_PROFILE);
 	const checked = validateProfile({ except: setting.except ?? [], keep: setting.keep ?? [] });
-	return checked.success ? checked : err(`slim: ${checked.error}`);
+	return checked.success ? checked : resultFactory.err(`slim: ${checked.error}`);
 }
 
 /**
@@ -35,12 +35,12 @@ function fromSetting(setting: SlimSetting): Result<SlimProfile | false> {
  */
 export function resolveSlim(input: SlimInput): Result<SlimProfile | false> {
 	if (input.flag !== undefined) {
-		if (input.flag === false) return ok(false);
+		if (input.flag === false) return resultFactory.ok(false);
 		// `--slim` keeps a profile the config chose, else the default
 		const layered = input.config ?? input.topLevel;
-		return layered === undefined || layered === false ? ok(DEFAULT_SLIM_PROFILE) : fromSetting(layered);
+		return layered === undefined || layered === false ? resultFactory.ok(DEFAULT_SLIM_PROFILE) : fromSetting(layered);
 	}
 	const setting = input.config ?? input.topLevel;
 	if (setting !== undefined) return fromSetting(setting);
-	return ok(envSlimOff(input.env) ? false : DEFAULT_SLIM_PROFILE);
+	return resultFactory.ok(envSlimOff(input.env) ? false : DEFAULT_SLIM_PROFILE);
 }

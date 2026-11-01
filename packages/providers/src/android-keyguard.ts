@@ -6,7 +6,7 @@
  */
 
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { BIOMETRIC_PIN } from "./biometrics";
 
 const SHELL_TIMEOUT_MS = 15_000;
@@ -66,11 +66,11 @@ async function keyguardShowing(deps: KeyguardDeps, serial: string): Promise<bool
  * whose lock screen is black and ignores input.
  */
 export async function ensureUnlocked(deps: KeyguardDeps, serial: string): AsyncResult<void> {
-	if (!emulatorOnly(serial)) return err(`refusing to unlock ${serial}: emulators only`);
+	if (!emulatorOnly(serial)) return resultFactory.err(`refusing to unlock ${serial}: emulators only`);
 	for (let attempt = 1; attempt <= UNLOCK_ATTEMPTS; attempt++) {
 		if (!(await keyguardShowing(deps, serial))) {
 			await shell(deps, serial, STAY_AWAKE_COMMAND);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		}
 		if (attempt === UNLOCK_ATTEMPTS) {
 			await shell(deps, serial, SYSTEMUI_RESTART_COMMAND);
@@ -81,9 +81,9 @@ export async function ensureUnlocked(deps: KeyguardDeps, serial: string): AsyncR
 	}
 	if (!(await keyguardShowing(deps, serial))) {
 		await shell(deps, serial, STAY_AWAKE_COMMAND);
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	}
-	return err(`${serial}: the keyguard is still showing after ${UNLOCK_ATTEMPTS} unlock attempts`);
+	return resultFactory.err(`${serial}: the keyguard is still showing after ${UNLOCK_ATTEMPTS} unlock attempts`);
 }
 
 /**
@@ -101,10 +101,10 @@ export async function systemReady(deps: KeyguardDeps, serial: string, timeoutMs:
 		const adbState = state?.exitCode === 0 ? state.stdout.trim() : "unreachable";
 		if (adbState === "device") {
 			const pm = await shell(deps, serial, "pm path android");
-			if (pm.exitCode === 0 && pm.stdout.includes("package:")) return ok(undefined);
+			if (pm.exitCode === 0 && pm.stdout.includes("package:")) return resultFactory.ok(undefined);
 			last = "package manager not ready";
 		} else last = `adb state ${adbState}`;
-		if (now() >= deadline) return err(`${serial}: not ready after ${timeoutMs}ms (${last})`);
+		if (now() >= deadline) return resultFactory.err(`${serial}: not ready after ${timeoutMs}ms (${last})`);
 		await deps.sleep(READY_POLL_MS);
 	}
 }

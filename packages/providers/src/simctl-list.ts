@@ -5,8 +5,8 @@
  */
 
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** A sim from `simctl list devices -j` (all, including unavailable). */
 export type SimctlSim = {
@@ -51,9 +51,10 @@ export function parseAllSims(stdout: string, opts: { allPlatforms?: boolean } = 
 	try {
 		data = JSON.parse(stdout);
 	} catch {
-		return wardenErr("failed", "simctl list devices: invalid JSON");
+		return wardenErrors.err("failed", "simctl list devices: invalid JSON");
 	}
-	if (!isRecord(data) || !isRecord(data.devices)) return wardenErr("failed", "simctl list devices: missing `devices`");
+	if (!isRecord(data) || !isRecord(data.devices))
+		return wardenErrors.err("failed", "simctl list devices: missing `devices`");
 	const sims: SimctlSim[] = [];
 	for (const [runtimeId, list] of Object.entries(data.devices)) {
 		if ((!opts.allPlatforms && !runtimeId.includes(".iOS-")) || !Array.isArray(list)) continue;
@@ -62,12 +63,12 @@ export function parseAllSims(stdout: string, opts: { allPlatforms?: boolean } = 
 			if (sim) sims.push(sim);
 		}
 	}
-	return ok(sims);
+	return resultFactory.ok(sims);
 }
 
 async function run(exec: Exec, cmd: string[]): AsyncResult<string> {
 	const result = await exec(cmd);
-	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
+	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execError(cmd, result));
 }
 
 /** `du -sk` → bytes; undefined when du fails (e.g. the data dir is gone). */
@@ -82,7 +83,7 @@ export async function listAllSims(exec: Exec): AsyncResult<SimctlSim[]> {
 	const out = await run(exec, ["xcrun", "simctl", "list", "devices", "-j"]);
 	if (!out.success) return out;
 	const sims = parseAllSims(out.data, { allPlatforms: true });
-	if (!sims.success) return err(sims.error.message);
+	if (!sims.success) return resultFactory.err(sims.error.message);
 	for (const sim of sims.data) {
 		if (sim.dataPathSize !== undefined || sim.dataPath === undefined) continue;
 		const bytes = await duBytes(exec, sim.dataPath);

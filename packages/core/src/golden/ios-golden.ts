@@ -14,8 +14,8 @@ import { readXcode } from "@delacour/warden-runtime/xcode";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { textError } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import {
 	GOLDEN_RECIPE,
 	type GoldenInputs,
@@ -88,8 +88,8 @@ async function run(deps: GoldenDeps, cmd: string[], timeoutMs?: number): AsyncRe
 		timeoutMs === undefined
 			? await deps.exec(cmd)
 			: await execWithin({ exec: deps.exec, timer: deps.timer ?? realTimer }, cmd, timeoutMs);
-	if (result === undefined) return err(timedOutError(cmd, timeoutMs ?? 0));
-	return result.exitCode === 0 ? ok(result.stdout) : err(execError(cmd, result));
+	if (result === undefined) return resultFactory.err(timedOutError(cmd, timeoutMs ?? 0));
+	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execError(cmd, result));
 }
 
 const simctl = (deps: GoldenDeps, args: string[], timeoutMs?: number) =>
@@ -115,7 +115,7 @@ async function readXcodeBuild(deps: GoldenDeps): AsyncResult<string> {
 		return result ?? { exitCode: 124, stdout: "", stderr: `timed out after ${XCODE_READ_TIMEOUT_MS} ms` };
 	};
 	const xcode = await readXcode(timed, deps.env);
-	return xcode.success ? ok(xcode.data.build) : xcode;
+	return xcode.success ? resultFactory.ok(xcode.data.build) : xcode;
 }
 
 /** Per exec (so per process in the CLI, per fake host in tests): profile + runtime → the target read in flight or done. */
@@ -147,9 +147,9 @@ async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): 
 		lookupCreateTarget(deps.exec, profile, runtime, deps.timer),
 		readXcodeBuild(deps),
 	]);
-	if (!target.success) return textError(target);
+	if (!target.success) return wardenErrors.toText(target);
 	if (!xcodeBuild.success) return xcodeBuild;
-	return ok({
+	return resultFactory.ok({
 		profile,
 		xcodeBuild: xcodeBuild.data,
 		runtimeId: target.data.runtime.identifier,
@@ -162,7 +162,7 @@ async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const out = await simctl(deps, ["list", "devices", "-j"], IOS_TIMEOUTS.listMs);
 	if (!out.success) return out;
 	const sims = parseAllSims(out.data);
-	return sims.success ? sims : err(sims.error.message);
+	return sims.success ? sims : resultFactory.err(sims.error.message);
 }
 
 async function readMigration(deps: GoldenDeps, udid: string): Promise<string> {
@@ -182,10 +182,10 @@ async function waitMigrated(deps: GoldenDeps, udid: string, runtimeBuild: string
 	const deadline = deps.now() + t.migrationMaxMs;
 	while (!migrationDone(await readMigration(deps, udid), runtimeBuild)) {
 		if (deps.now() >= deadline)
-			return err(`${udid}: data migration did not finish in ${t.migrationMaxMs / 60_000} min`);
+			return resultFactory.err(`${udid}: data migration did not finish in ${t.migrationMaxMs / 60_000} min`);
 		await deps.sleep(t.migrationPollMs);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** Summed %CPU of `rootPids` and all their descendants. */
@@ -257,15 +257,15 @@ async function waitSettled(deps: GoldenDeps, udid: string): AsyncResult<void> {
 	while (deps.now() < deadline) {
 		await deps.sleep(t.settleIntervalMs);
 		const cpu = await simCpu(deps, udid);
-		if (cpu === undefined) return err(`${udid} stopped while settling`);
+		if (cpu === undefined) return resultFactory.err(`${udid} stopped while settling`);
 		samples.push(cpu);
-		if (isSettled(samples, t)) return ok(undefined);
+		if (isSettled(samples, t)) return resultFactory.ok(undefined);
 	}
 	log(
 		deps,
 		`not settled after ${t.settleMaxMs / 1000}s (last ${samples.slice(-t.window).join(", ")}% CPU) — using it anyway`
 	);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** Shutdown, delete and rename: quick CoreSimulator calls, bounded like a shutdown. */
@@ -297,9 +297,9 @@ async function buildSteps(deps: GoldenDeps, target: GoldenTarget, udid: string):
 		if (!result.success) return result;
 	}
 	if (!migrationDone(await readMigration(deps, udid), target.runtimeBuild)) {
-		return err(`${udid}: migration record missing after shutdown — not promoting it`);
+		return resultFactory.err(`${udid}: migration record missing after shutdown — not promoting it`);
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** create `-wip` → boot → migration done → settled → shutdown → verify → rename. The wip is deleted on failure. */
@@ -334,7 +334,7 @@ async function buildGolden(deps: GoldenDeps, target: GoldenTarget, key: string):
 		return renamed;
 	}
 	log(deps, `${name} ready in ${Math.round((deps.now() - started) / 1000)}s`);
-	return ok({ udid, name, built: true });
+	return resultFactory.ok({ udid, name, built: true });
 }
 
 async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<SimctlSim[]> {
@@ -344,7 +344,7 @@ async function deleteSims(deps: GoldenDeps, sims: SimctlSim[]): AsyncResult<Simc
 		const deleted = await simctl(deps, ["delete", sim.udid], MUTATE_TIMEOUT_MS);
 		if (!deleted.success) return deleted;
 	}
-	return ok(sims);
+	return resultFactory.ok(sims);
 }
 
 /** Caller holds the golden lock. */
@@ -363,7 +363,7 @@ async function ensureLocked(deps: GoldenDeps, target: GoldenTarget): AsyncResult
 		await discard(deps, plan.sim.udid);
 		return buildGolden(deps, target, key);
 	}
-	return ok({ udid: plan.sim.udid, name: plan.sim.name, built: false });
+	return resultFactory.ok({ udid: plan.sim.udid, name: plan.sim.name, built: false });
 }
 
 function lockDeps(deps: GoldenDeps) {
@@ -397,8 +397,8 @@ export async function cloneFromGolden(
 		const cloned = await simctl(deps, ["clone", golden.data.udid, name], IOS_TIMEOUTS.cloneMs);
 		if (!cloned.success) return cloned;
 		const udid = cloned.data.trim();
-		if (!udid) return err(`simctl clone ${golden.data.name} ${name}: no udid returned`);
-		return ok({ udid, name, golden: golden.data.name, runtimeId: target.data.runtimeId });
+		if (!udid) return resultFactory.err(`simctl clone ${golden.data.name} ${name}: no udid returned`);
+		return resultFactory.ok({ udid, name, golden: golden.data.name, runtimeId: target.data.runtimeId });
 	});
 }
 
@@ -415,7 +415,7 @@ function notNewer(sim: SimctlSim): boolean {
 /** Every golden on the machine (all runtimes, including unavailable). */
 export async function listGoldens(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const sims = await allSims(deps);
-	return sims.success ? ok(sims.data.filter((s) => goldenProfile(s.name) !== undefined)) : sims;
+	return sims.success ? resultFactory.ok(sims.data.filter((s) => goldenProfile(s.name) !== undefined)) : sims;
 }
 
 /**

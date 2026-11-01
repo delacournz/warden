@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import { getBuild } from "@delacour/warden-store/builds-table";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { buildsRoot, removeBuild } from "./cache";
 import type { Project } from "./config";
 import { type EnsureKindInput, ensureApp, ensureKindBuild } from "./ensure";
@@ -106,7 +106,7 @@ async function buildKind(
 		native: keys.data.native,
 	});
 	if (!built.success) return built;
-	return ok({
+	return resultFactory.ok({
 		kind,
 		requested,
 		artifact: built.data.appPath,
@@ -125,9 +125,9 @@ async function resolveDevice(input: KindAppInput): AsyncResult<DeviceTarget> {
 		const { code, message, hint } = team.error;
 		const teams =
 			team.error.code === "ios_team_ambiguous" ? ` (${team.error.teams.map((t) => t.teamId).join(", ")})` : "";
-		return err(`${code}: ${message}${teams}. ${hint}`);
+		return resultFactory.err(`${code}: ${message}${teams}. ${hint}`);
 	}
-	return ok(deviceTarget(input.project, team.data.team));
+	return resultFactory.ok(deviceTarget(input.project, team.data.team));
 }
 
 /**
@@ -138,7 +138,7 @@ async function resolveDevice(input: KindAppInput): AsyncResult<DeviceTarget> {
 export async function prepareKindApp(input: KindAppInput, deps: KindAppDeps = realDeps): AsyncResult<KindApp> {
 	if (input.physical === true && input.platform === "ios") {
 		// v1: a phone runs a build made for it (`dev` / `release`), never a simulator build or a repack of one
-		if (input.kind === "simulator") return err(SIMULATOR_ON_DEVICE);
+		if (input.kind === "simulator") return resultFactory.err(SIMULATOR_ON_DEVICE);
 		const device = await resolveDevice(input);
 		if (!device.success) return device;
 		return buildKind(input, input.kind, input.kind, deps, undefined, device.data);
@@ -151,7 +151,7 @@ export async function prepareKindApp(input: KindAppInput, deps: KindAppDeps = re
 		input.log(`repack not possible (${result.reason}): building the release kind instead`);
 		return buildKind(input, "release", "simulator", deps, result.reason);
 	}
-	return ok({
+	return resultFactory.ok({
 		kind: "simulator",
 		requested: "simulator",
 		artifact: result.artifact,
@@ -209,12 +209,12 @@ async function registerPhone(
 	deps: KindAppDeps,
 	failure: string
 ): AsyncResult<KindApp> {
-	if (app.kind === "simulator" || !app.device) return err(failure);
+	if (app.kind === "simulator" || !app.device) return resultFactory.err(failure);
 	const file = registeredFile(input, app.hash);
 	const known = readRegistered(file);
-	if (known.includes(input.deviceId)) return err(failure);
+	if (known.includes(input.deviceId)) return resultFactory.err(failure);
 	const build = projectForKind(input.project, app.kind, app.device).build.ios;
-	if (!build.includes(GENERIC_DESTINATION)) return err(failure);
+	if (!build.includes(GENERIC_DESTINATION)) return resultFactory.err(failure);
 	input.log(`${input.deviceId} is not in the app's provisioning profile: registering it with a build for this phone`);
 	const command = build.replaceAll(GENERIC_DESTINATION, `-destination id=${input.deviceId}`);
 	const res = await input.exec(["sh", "-c", command], {
@@ -224,7 +224,7 @@ async function registerPhone(
 	});
 	if (res.exitCode !== 0) {
 		const line = `${res.stderr}\n${res.stdout}`.split("\n").find((l) => /error:/i.test(l)) ?? `exit ${res.exitCode}`;
-		return err(`${failure}. Registering the phone with a build for it failed: ${line.trim()}`);
+		return resultFactory.err(`${failure}. Registering the phone with a build for it failed: ${line.trim()}`);
 	}
 	const stale = getBuild(input.store, input.projectKey, input.platform, app.hash);
 	if (stale) removeBuild(input.store, input.env, stale);
@@ -250,13 +250,13 @@ async function installOnce(
 	if (!installed.success) return installed;
 	// `installed`: the device already ran this build, nothing was copied
 	if (installed.data.installed) {
-		return ok({
+		return resultFactory.ok({
 			...app,
 			installed: true,
 			...(installed.data.source === "installed" ? { source: "installed" as const } : {}),
 		});
 	}
-	return err(`${app.kind} app ${app.hash} was not installed on ${input.deviceId}`);
+	return resultFactory.err(`${app.kind} app ${app.hash} was not installed on ${input.deviceId}`);
 }
 
 /** Install a prepared kind build on `deviceId` (no build: it is in the cache at `app.hash`); a phone missing from the profile is registered once. */

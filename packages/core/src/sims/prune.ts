@@ -6,7 +6,7 @@
 
 import { listAllSims } from "@delacour/warden-providers/simctl-list";
 import type { PidAlive } from "@delacour/warden-store/liveness";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { auditSims, type SimAudit } from "./audit";
 import { type DeleteDeps, deleteSims } from "./delete";
 import { canPrune, judgeSims, type RulesInput, type SimEntry, type SimRuleOpts } from "./rules";
@@ -28,7 +28,7 @@ export type SimsPruneResult = {
 async function rulesInput(deps: SimsDeps, opts: SimRuleOpts): AsyncResult<RulesInput> {
 	const sims = await listAllSims(deps.exec);
 	if (!sims.success) return sims;
-	return ok({
+	return resultFactory.ok({
 		...opts,
 		sims: sims.data,
 		records: deps.store.listDevices("ios"),
@@ -41,12 +41,12 @@ async function rulesInput(deps: SimsDeps, opts: SimRuleOpts): AsyncResult<RulesI
 /** Every sim on the machine, judged (input order) — what `warden sims delete` lists. */
 export async function judgeMachineSims(deps: SimsDeps, opts: SimRuleOpts): AsyncResult<SimEntry[]> {
 	const input = await rulesInput(deps, opts);
-	return input.success ? ok(judgeSims(input.data)) : input;
+	return input.success ? resultFactory.ok(judgeSims(input.data)) : input;
 }
 
 export async function auditMachineSims(deps: SimsDeps, opts: SimRuleOpts): AsyncResult<SimAudit> {
 	const input = await rulesInput(deps, opts);
-	return input.success ? ok(auditSims(input.data)) : input;
+	return input.success ? resultFactory.ok(auditSims(input.data)) : input;
 }
 
 const bytesOf = (entries: readonly SimEntry[]) => entries.reduce((s, e) => s + e.bytes, 0);
@@ -56,7 +56,7 @@ export async function pruneSims(deps: SimsDeps, opts: SimsPruneOpts): AsyncResul
 	if (!audit.success) return audit;
 	const candidates = audit.data.entries.filter(canPrune);
 	if (opts.dryRun)
-		return ok({
+		return resultFactory.ok({
 			audit: audit.data,
 			dryRun: true,
 			removed: candidates,
@@ -65,7 +65,7 @@ export async function pruneSims(deps: SimsDeps, opts: SimsPruneOpts): AsyncResul
 			freedBytes: bytesOf(candidates),
 		});
 	const result = await deleteSims(deps, candidates, { label: "sims prune" });
-	return ok({
+	return resultFactory.ok({
 		audit: audit.data,
 		dryRun: false,
 		removed: result.removed,

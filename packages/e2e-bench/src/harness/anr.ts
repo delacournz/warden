@@ -1,4 +1,4 @@
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type Exec, runOk } from "./exec";
 
 /** The focused window line `dumpsys window` prints while an ANR dialog is up. */
@@ -30,7 +30,7 @@ export async function dismissAnr(exec: Exec, serial: string): AsyncResult<AnrOut
 	const windows = await runOk(exec, "adb", ["-s", serial, "shell", "dumpsys", "window", "windows"]);
 	if (!windows.success) return windows;
 	const packageName = anrPackage(windows.data.stdout);
-	if (packageName === undefined) return ok({ dismissed: false });
+	if (packageName === undefined) return resultFactory.ok({ dismissed: false });
 	const dump = await exec.run("adb", ["-s", serial, "exec-out", "uiautomator", "dump", "/dev/tty"]);
 	const center = anrCloseCenter(dump.stdout);
 	const tap = center
@@ -38,7 +38,7 @@ export async function dismissAnr(exec: Exec, serial: string): AsyncResult<AnrOut
 		: ["-s", serial, "shell", "input", "keyevent", "BACK"];
 	const pressed = await runOk(exec, "adb", tap);
 	if (!pressed.success) return pressed;
-	return ok({ dismissed: true, packageName });
+	return resultFactory.ok({ dismissed: true, packageName });
 }
 
 /**
@@ -57,5 +57,5 @@ export async function hideErrorDialogs(exec: Exec, serial: string, on: boolean):
 		"hide_error_dialogs",
 		on ? "1" : "0",
 	]);
-	return ran.success ? ok(undefined) : ran;
+	return ran.success ? resultFactory.ok(undefined) : ran;
 }

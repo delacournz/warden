@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** `--serve-ready`: what "serve is up" means. */
 export type ReadySpec =
@@ -12,18 +12,18 @@ const USAGE = "(use http://…, tcp:PORT, tcp:HOST:PORT or file:PATH)";
 
 /** `http(s)://…` | `tcp:PORT` | `tcp:HOST:PORT` | `file:PATH` (relative to `cwd`). */
 export function parseReadySpec(value: string, cwd: string): Result<ReadySpec> {
-	if (/^https?:\/\/./.test(value)) return ok({ kind: "http", url: value });
+	if (/^https?:\/\/./.test(value)) return resultFactory.ok({ kind: "http", url: value });
 	const tcp = /^tcp:(?:(.+):)?(\d+)$/.exec(value);
 	if (tcp?.[2]) {
 		const port = Number(tcp[2]);
-		if (port < 1 || port > 65_535) return err(`--serve-ready: port out of range in "${value}"`);
-		return ok({ kind: "tcp", host: tcp[1] ?? "127.0.0.1", port });
+		if (port < 1 || port > 65_535) return resultFactory.err(`--serve-ready: port out of range in "${value}"`);
+		return resultFactory.ok({ kind: "tcp", host: tcp[1] ?? "127.0.0.1", port });
 	}
 	if (value.startsWith("file:") && value.length > "file:".length) {
 		const path = value.slice("file:".length);
-		return ok({ kind: "file", path: isAbsolute(path) ? path : resolve(cwd, path) });
+		return resultFactory.ok({ kind: "file", path: isAbsolute(path) ? path : resolve(cwd, path) });
 	}
-	return err(`--serve-ready: invalid "${value}" ${USAGE}`);
+	return resultFactory.err(`--serve-ready: invalid "${value}" ${USAGE}`);
 }
 
 const PROBE_TIMEOUT_MS = 2_000;

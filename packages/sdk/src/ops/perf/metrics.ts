@@ -9,7 +9,7 @@ import {
 import { HARD_MAX_DURATION_MS } from "@delacour/warden-perf/shared/caps";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfEnv, PerfUiEnv } from "./env";
 import { appendSample, type MetricsOut, metricsOutFor } from "./metrics-out";
@@ -51,7 +51,7 @@ export function planSeries(opts: MetricsParams): Result<SeriesPlan, WardenError>
 			error: opError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
 		};
 	}
-	return ok({ intervalMs: interval, durationMs: Math.min(duration, HARD_MAX_DURATION_MS) });
+	return resultFactory.ok({ intervalMs: interval, durationMs: Math.min(duration, HARD_MAX_DURATION_MS) });
 }
 
 /** What a series run reaches the clock and the user's interrupt through; tests inject fakes. */
@@ -159,7 +159,7 @@ function seriesSuccess(
 	}
 	const finding = memoryGrowthFinding(summary);
 	const device = describeTarget(target);
-	return ok({
+	return resultFactory.ok({
 		device: {
 			udid: target.udid,
 			platform: target.platform,

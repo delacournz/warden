@@ -19,7 +19,7 @@ import {
 } from "@delacour/warden-screen/field";
 import { entryOfElement, indexSnapshot, type NodeEntry } from "@delacour/warden-screen/nodes";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction, pointAt, recordTarget, targetLabel, targetOf } from "./act";
 import { driverError, fail, fromDriver, opError } from "./errors";
 import type { OpOutcome, OpSession } from "./session";
@@ -53,7 +53,7 @@ export const KEY_NAMES: readonly KeyName[] = [
 /** `Enter`, `enter`, `ENTER` → `Enter`. */
 export function parseKey(raw: string): Result<KeyName, WardenError> {
 	const found = KEY_NAMES.find((name) => name.toLowerCase() === raw.toLowerCase());
-	if (found) return ok(found);
+	if (found) return resultFactory.ok(found);
 	return fail(opError("usage", `unknown key "${raw}"`, { hint: `one of ${KEY_NAMES.join(", ")}` }));
 }
 
@@ -78,7 +78,7 @@ export function fingerPath(way: Way, rect: Rect, distance: number): { from: Poin
 
 export async function currentScreen(driver: Driver): Promise<Result<ScreenInfo, WardenError>> {
 	const taken = await driver.snapshot({ interactiveOnly: true });
-	return taken.success ? ok(taken.data.screen) : fail(driverError(taken.error));
+	return taken.success ? resultFactory.ok(taken.data.screen) : fail(driverError(taken.error));
 }
 
 /** The part of the screen a swipe or scroll works in: a target's visible frame, else the whole screen. */
@@ -89,7 +89,7 @@ export async function regionOf(
 ): Promise<Result<{ rect: Rect; screen: ScreenInfo }, WardenError>> {
 	const screen = await currentScreen(driver);
 	if (!screen.success) return screen;
-	if (from === undefined) return ok({ rect: screenRect(screen.data), screen: screen.data });
+	if (from === undefined) return resultFactory.ok({ rect: screenRect(screen.data), screen: screen.data });
 	const target = parseTarget(from);
 	if (!target.success) return target;
 	const resolved = await pointAt(session, driver, target.data, false);
@@ -97,7 +97,7 @@ export async function regionOf(
 	if (!resolved.data.element) {
 		return fail(opError("usage", "a region must be an element (@eN or a selector), not a point"));
 	}
-	return ok({ rect: visibleRect(resolved.data.element.frame, screen.data), screen: screen.data });
+	return resultFactory.ok({ rect: visibleRect(resolved.data.element.frame, screen.data), screen: screen.data });
 }
 
 // ---- press -------------------------------------------------------------------------------------------------------
@@ -201,7 +201,7 @@ async function readBack(
 		},
 	});
 	if (outcome.status === "failed") return fail(outcome.error);
-	return ok(outcome.status === "confirmed" ? { ok: true } : { ok: false, held: outcome.held });
+	return resultFactory.ok(outcome.status === "confirmed" ? { ok: true } : { ok: false, held: outcome.held });
 }
 
 /**
@@ -210,11 +210,11 @@ async function readBack(
  */
 async function readField(driver: Driver, wanted: NodeEntry): Promise<Result<string | undefined, WardenError>> {
 	const hit = await hitTestField(driver, wanted);
-	if (hit.ok && hit.entry) return ok(fieldValue(hit.entry));
+	if (hit.ok && hit.entry) return resultFactory.ok(fieldValue(hit.entry));
 	const fresh = await driver.snapshot();
 	if (!fresh.success) return fail(driverError(fresh.error));
 	const found = findInFresh(wanted, indexSnapshot(fresh.data));
-	return ok(found ? fieldValue(found) : undefined);
+	return resultFactory.ok(found ? fieldValue(found) : undefined);
 }
 
 type FillPlan = {
@@ -262,7 +262,7 @@ async function fillAttempt(
 		)
 	);
 	if (!typed.success) return typed;
-	if (!(plan.verify && !plan.secure && entry !== undefined)) return ok(undefined);
+	if (!(plan.verify && !plan.secure && entry !== undefined)) return resultFactory.ok(undefined);
 	return readBack(session, driver, entry, text, { budgetMs: plan.budgetMs, maxMs: plan.maxMs });
 }
 
@@ -282,10 +282,10 @@ async function typeAndConfirm(
 		const run = await fillAttempt(session, driver, resolved, plan, attempt);
 		if (!run.success) return run;
 		if (run.data === undefined) break;
-		if (run.data.ok) return ok(true);
+		if (run.data.ok) return resultFactory.ok(true);
 		if (attempt === attempts) return fail(fillMismatch(plan.text, run.data.held));
 	}
-	return ok(plan.verify ? "unconfirmed" : undefined);
+	return resultFactory.ok(plan.verify ? "unconfirmed" : undefined);
 }
 
 export type FillParams = {
@@ -433,10 +433,10 @@ export async function swipe(session: OpSession, params: SwipeParams): OpOutcome<
 }
 
 export function parseAmount(raw: string | undefined): Result<number, WardenError> {
-	if (raw === undefined) return ok(DEFAULT_SCROLL_AMOUNT);
+	if (raw === undefined) return resultFactory.ok(DEFAULT_SCROLL_AMOUNT);
 	const amount = Number(raw);
 	if (!Number.isFinite(amount) || amount <= 0 || amount > 1) {
 		return fail(opError("usage", `amount must be above 0 and at most 1 (a share of the region), got "${raw}"`));
 	}
-	return ok(amount);
+	return resultFactory.ok(amount);
 }

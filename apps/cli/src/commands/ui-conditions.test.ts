@@ -4,7 +4,7 @@ import type { ProxyStatus } from "@delacour/warden-core/netproxy/control";
 import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
 import type { TickerConfig } from "@delacour/warden-driver/conditions/route-ticker";
 import { failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { updateState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 
@@ -41,7 +41,7 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 		...(physical ? { lease: { physical: { transport: "usb" } } } : {}),
 		conditions: {
 			open: async () =>
-				ok({
+				resultFactory.ok({
 					network: (op, opts) => {
 						networkOptions.push(opts);
 						return s.h.driver.network(op, opts);
@@ -61,12 +61,12 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 			spawnScheduler: (config) => {
 				schedulers.push(config);
 				alive.add(nextPid);
-				return ok({ kind: "pid", pid: nextPid++ });
+				return resultFactory.ok({ kind: "pid", pid: nextPid++ });
 			},
 			spawnTicker: (config) => {
 				tickers.push(config);
 				alive.add(nextPid);
-				return ok({ kind: "pid", pid: nextPid++ });
+				return resultFactory.ok({ kind: "pid", pid: nextPid++ });
 			},
 			kill: (pid) => {
 				killed.push(pid);
@@ -78,7 +78,7 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 			adb: () => "/fake/adb",
 			ensureProxy: async () => {
 				ensured.push(1);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 		},
 	});
@@ -160,7 +160,7 @@ describe("net <condition>", () => {
 			onCall: (call) =>
 				call.method === "network" ? failWith("E_NETWORK_RELAUNCH", "app runs without the dylib") : undefined,
 			conditions: {
-				open: async () => ok(failing.driver),
+				open: async () => resultFactory.ok(failing.driver),
 				proxyStatus: async () => undefined,
 				proxyPid: () => undefined,
 			},
@@ -177,7 +177,7 @@ describe("net <condition>", () => {
 			onCall: (call) =>
 				call.method === "network" ? failWith("E_UNSUPPORTED", "network needs an emulator") : undefined,
 			conditions: {
-				open: async () => ok(failing.driver),
+				open: async () => resultFactory.ok(failing.driver),
 				proxyStatus: async () => undefined,
 				proxyPid: () => undefined,
 			},
@@ -440,7 +440,11 @@ describe("location", () => {
 		const h = harness([snapshotOf(LOGIN)], {
 			onCall: (call) =>
 				call.method === "location" ? failWith("E_UNSUPPORTED", "simctl location has no loop") : undefined,
-			conditions: { open: async () => ok(h.driver), proxyStatus: async () => undefined, proxyPid: () => undefined },
+			conditions: {
+				open: async () => resultFactory.ok(h.driver),
+				proxyStatus: async () => undefined,
+				proxyPid: () => undefined,
+			},
 		});
 		expect(await h.run("location", "route", "0,0", "1,1", "--loop", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
@@ -580,7 +584,11 @@ describe("clock", () => {
 		const h = harness([snapshotOf(LOGIN)], {
 			platform: "android",
 			onCall: (call) => (call.method === "clock" ? failWith("E_UNSUPPORTED", "no frozen clock on Android") : undefined),
-			conditions: { open: async () => ok(h.driver), proxyStatus: async () => undefined, proxyPid: () => undefined },
+			conditions: {
+				open: async () => resultFactory.ok(h.driver),
+				proxyStatus: async () => undefined,
+				proxyPid: () => undefined,
+			},
 		});
 		expect(await h.run("clock", "set", "2026-01-01T00:00:00Z", "--frozen", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");

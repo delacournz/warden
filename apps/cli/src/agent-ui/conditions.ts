@@ -15,7 +15,7 @@ import { physicalConditionOps } from "@delacour/warden-driver/physical-condition
 import { processAlive } from "@delacour/warden-store/liveness";
 import { recordedIdentity } from "@delacour/warden-store/process-identity";
 import type { Lease } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
 import { compiledSubcommand } from "../self-command";
@@ -208,7 +208,9 @@ function record<A extends "network" | "location">(
 	owned: readonly OwnedProcess[]
 ): Result<undefined, UiError> {
 	const saved = recordCondition(ctx.store(), lease.id, area, value as never, ctx.now(), owned);
-	return saved.success ? ok(undefined) : fail("failed", `could not record the ${area} condition: ${saved.error}`);
+	return saved.success
+		? resultFactory.ok(undefined)
+		: fail("failed", `could not record the ${area} condition: ${saved.error}`);
 }
 
 async function setNetwork(
@@ -233,7 +235,7 @@ async function setNetwork(
 			const saved = record(ctx, lease, "network", condition, ownedPids(deps, ctx, lease, []));
 			if (!saved.success) return saved;
 		}
-		return ok(networkSuccess(device, "net", condition, applied.data));
+		return resultFactory.ok(networkSuccess(device, "net", condition, applied.data));
 	});
 }
 
@@ -308,7 +310,7 @@ async function flapNetwork(
 		deps.kill(started.data.pid);
 		return saved;
 	}
-	return ok({
+	return resultFactory.ok({
 		...networkSuccess(device, "net-flap", condition, applied.data, {
 			result: { pid: started.data.pid, seed: flap.data.seed ?? null },
 		}),
@@ -352,7 +354,11 @@ async function faultNetwork(
 		);
 	}
 	if (rules.length === 0 && (live?.faults.length ?? 0) === 0) {
-		return ok({ device: deviceInfo(device), result: { action: "net-fault", faults: [] }, text: "no faults set" });
+		return resultFactory.ok({
+			device: deviceInfo(device),
+			result: { action: "net-fault", faults: [] },
+			text: "no faults set",
+		});
 	}
 	const condition: NetworkCondition = stored?.value ?? { kind: "online" };
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
@@ -364,7 +370,7 @@ async function faultNetwork(
 		if (!applied.success) return applied;
 		const saved = record(ctx, lease, "network", condition, ownedPids(deps, ctx, lease, []));
 		if (!saved.success) return saved;
-		return ok({
+		return resultFactory.ok({
 			device: deviceInfo(device),
 			result: { action: "net-fault", faults: rules, notes: applied.data.notes },
 			text: rules.length === 0 ? "faults cleared" : rules.map(faultText).join("\n"),
@@ -384,7 +390,7 @@ async function resetNetwork(
 	const stored = recordOf(ctx, lease.id, "network");
 	const live = await deps.proxyStatus(ctx, lease.id);
 	if (stored === undefined && live === undefined) {
-		return ok({
+		return resultFactory.ok({
 			device: deviceInfo(device),
 			result: { action: "net-reset", changed: false },
 			text: "network was not changed",
@@ -401,7 +407,9 @@ async function resetNetwork(
 		// the proxy stays up (an injected app still routes through it) until the lease is released
 		const saved = record(ctx, lease, "network", { kind: "online" }, ownedPids(deps, ctx, lease, []));
 		if (!saved.success) return saved;
-		return ok(networkSuccess(device, "net-reset", { kind: "online" }, applied.data, { result: { changed: true } }));
+		return resultFactory.ok(
+			networkSuccess(device, "net-reset", { kind: "online" }, applied.data, { result: { changed: true } })
+		);
 	});
 }
 
@@ -430,7 +438,7 @@ async function networkStatus(
 				]
 			: []),
 	];
-	return ok({
+	return resultFactory.ok({
 		device: deviceInfo(device),
 		result: {
 			action: "net-status",
@@ -494,7 +502,7 @@ function locationSuccess(
 	value: LocationCondition,
 	extra: Record<string, unknown> = {}
 ) {
-	return ok<UiSuccess>({
+	return resultFactory.ok<UiSuccess>({
 		device: deviceInfo(device),
 		result: { action, location: value, ...extra },
 		text: `location ${describeLocation(value)}`,
@@ -597,7 +605,7 @@ async function clearLocation(
 		const cleared = fromDriver(await port.location({ kind: "clear" }));
 		if (!cleared.success) return cleared;
 		clearCondition(ctx.store(), lease.id, "location");
-		return ok<UiSuccess>({
+		return resultFactory.ok<UiSuccess>({
 			device: deviceInfo(device),
 			result: { action: "location-clear", cleared: true, keepsLastFix: device.platform === "android" },
 			text: device.platform === "android" ? "location cleared (the emulator keeps its last fix)" : "location cleared",
@@ -614,7 +622,7 @@ function locationStatus(ctx: CommandContext, env: UiRunEnv, device: UiDevice): R
 	const pid = stored?.owned[0]?.pid;
 	const ticker = pid === undefined ? null : { pid, running: alive(pid) };
 	const line = stored === undefined ? "not set" : describeLocation(stored.value);
-	return ok({
+	return resultFactory.ok({
 		device: deviceInfo(device),
 		result: { action: "location-status", location: stored?.value ?? null, setAt: stored?.setAt ?? null, ticker },
 		text: `location  ${line}${ticker ? ` (ticker ${ticker.running ? "running" : "NOT running"}, pid ${ticker.pid})` : ""}`,
@@ -632,7 +640,7 @@ function routeValue(
 	const points = parseLatLons(rest);
 	if (!points.success) return points;
 	if (points.data.length === 0) return fail("usage", "location route needs at least one <lat,lon>");
-	return ok({
+	return resultFactory.ok({
 		kind: "route",
 		points: points.data,
 		...pace,
@@ -760,7 +768,7 @@ async function applyClock(
 			if (!saved.success) return fail("failed", `could not record the clock condition: ${saved.error}`);
 		}
 		const state = applied.data;
-		return ok({
+		return resultFactory.ok({
 			device: deviceInfo(device),
 			result: {
 				action,
@@ -813,7 +821,7 @@ function clockReset(
 	opts: ClockOptionValues
 ) {
 	if (record === undefined) {
-		return ok<UiSuccess>({
+		return resultFactory.ok<UiSuccess>({
 			device: deviceInfo(device),
 			result: { action: "clock-reset", changed: false },
 			text: "clock was not changed",
@@ -829,7 +837,7 @@ function clockStatus(
 ) {
 	const state = recordedClock(record, ctx.now());
 	const warnings = clockWarnings(state.offsetMs);
-	return ok<UiSuccess>({
+	return resultFactory.ok<UiSuccess>({
 		device: deviceInfo(device),
 		result: { action: "clock-status", ...state, setAt: record?.setAt ?? null },
 		text: describeClock(state),

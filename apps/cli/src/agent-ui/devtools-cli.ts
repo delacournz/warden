@@ -24,7 +24,7 @@ import { processAlive } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
 import { sameOwner } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { selfCommand } from "../autogc";
 import type { CommandContext } from "../context";
 import { positiveInt } from "./args";
@@ -148,7 +148,11 @@ export function uiEval(ctx: CommandContext, deps: UiDeps, expression: string, op
 		);
 		if (via !== undefined) {
 			return via.success
-				? ok({ device: infoOf(device), result: { value: via.data.value }, text: renderValue(via.data.value) })
+				? resultFactory.ok({
+						device: infoOf(device),
+						result: { value: via.data.value },
+						text: renderValue(via.data.value),
+					})
 				: via;
 		}
 		return reply(
@@ -197,7 +201,7 @@ async function treeViaBroker(
 	);
 	if (via === undefined || !via.success) return via;
 	const { lines, ...components } = via.data;
-	return ok({
+	return resultFactory.ok({
 		device: infoOf(device),
 		result: components,
 		text: [treeHeader(components), ...lines].join("\n"),
@@ -208,7 +212,7 @@ async function treeViaBroker(
 /** `warden ui tree [--all] [--max n] [--screen name]`: the app's React components with rects. */
 export function uiTree(ctx: CommandContext, deps: UiDeps, opts: TreeOptionValues): Promise<number> {
 	return runUi(ctx, deps, "tree", opts, async (device, env) => {
-		const max = opts.max === undefined ? ok(undefined) : positiveInt("--max", opts.max);
+		const max = opts.max === undefined ? resultFactory.ok(undefined) : positiveInt("--max", opts.max);
 		if (!max.success) return max;
 		const via = await treeViaBroker(ctx, deps, device, opts, max.data, await pixelRatioFor(device, env));
 		if (via !== undefined) return via;
@@ -232,7 +236,7 @@ export function uiReload(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOption
 		);
 		if (via !== undefined) {
 			return via.success
-				? ok({
+				? resultFactory.ok({
 						device: infoOf(device),
 						result: { action: "reload", method: via.data.method },
 						text: `reloaded (${via.data.method})`,
@@ -292,15 +296,15 @@ function parseLineFilter(
 	opts: FilterOptionValues,
 	fallbackLimit: number
 ): Result<LineFilter, WardenError> {
-	const since = opts.since === undefined ? ok(undefined) : parseSince(opts.since, ctx.now());
+	const since = opts.since === undefined ? resultFactory.ok(undefined) : parseSince(opts.since, ctx.now());
 	if (!since.success) return since;
-	const limit = opts.limit === undefined ? ok(fallbackLimit) : positiveInt("--limit", opts.limit);
+	const limit = opts.limit === undefined ? resultFactory.ok(fallbackLimit) : positiveInt("--limit", opts.limit);
 	if (!limit.success) return limit;
 	const level = opts.level;
 	if (level !== undefined && !(LEVELS as readonly string[]).includes(level)) {
 		return { success: false, error: uiError("usage", `unknown --level ${level}`, { hint: LEVELS.join(" | ") }) };
 	}
-	return ok({
+	return resultFactory.ok({
 		limit: limit.data,
 		...(since.data === undefined ? {} : { since: since.data }),
 		...(level === undefined ? {} : { level: level as Level }),
@@ -324,7 +328,7 @@ function filterLines(all: ConsoleLine[], f: LineFilter) {
 
 /** `warden ui logs start` when a dev session's broker already captures everything: nothing to spawn. */
 function brokerCaptures(device: UiDevice, logDir: string): Result<UiSuccess, UiError> {
-	return ok({
+	return resultFactory.ok({
 		device: infoOf(device),
 		result: { action: "logs", state: "collecting", via: "broker", logDir },
 		text: `the dev session's broker is already capturing console + network (${logDir})`,
@@ -335,11 +339,15 @@ function brokerCaptures(device: UiDevice, logDir: string): Result<UiSuccess, UiE
 function logsParams(words: readonly string[], opts: LogsOptionValues): Result<LogsParams, UiError> {
 	const [action, ...rest] = words;
 	if (action === "start") {
-		return ok({ action, bodies: opts.bodies === true, ...(opts.metro === undefined ? {} : { metro: opts.metro }) });
+		return resultFactory.ok({
+			action,
+			bodies: opts.bodies === true,
+			...(opts.metro === undefined ? {} : { metro: opts.metro }),
+		});
 	}
-	if (action === "stop" || action === "clear") return ok({ action });
-	if (action === "mark") return ok({ action, label: rest.join(" ") });
-	const count = action === undefined ? ok(DEFAULT_TAIL) : positiveInt("n", action);
+	if (action === "stop" || action === "clear") return resultFactory.ok({ action });
+	if (action === "mark") return resultFactory.ok({ action, label: rest.join(" ") });
+	const count = action === undefined ? resultFactory.ok(DEFAULT_TAIL) : positiveInt("n", action);
 	if (!count.success) {
 		return {
 			success: false,
@@ -348,13 +356,13 @@ function logsParams(words: readonly string[], opts: LogsOptionValues): Result<Lo
 			}),
 		};
 	}
-	return ok({ action: "tail", count: count.data });
+	return resultFactory.ok({ action: "tail", count: count.data });
 }
 
 type LinesData = { file: string; total: number; lines: ConsoleLine[] };
 
 const linesPayload = (device: UiDevice, data: LinesData): Result<UiSuccess, UiError> =>
-	ok({
+	resultFactory.ok({
 		device: infoOf(device),
 		result: { file: data.file, total: data.total, lines: data.lines },
 		text: data.lines.map(consoleLine).join("\n"),
@@ -386,7 +394,7 @@ async function logsTail(
 	action: string | undefined,
 	opts: LogsOptionValues
 ): Promise<Result<UiSuccess, UiError> | undefined> {
-	const count = action === undefined ? ok(DEFAULT_TAIL) : positiveInt("n", action);
+	const count = action === undefined ? resultFactory.ok(DEFAULT_TAIL) : positiveInt("n", action);
 	if (!count.success) return undefined;
 	const filter = parseLineFilter(ctx, opts, count.data);
 	if (!filter.success) return filter;
@@ -441,7 +449,7 @@ export function uiExceptions(ctx: CommandContext, deps: UiDeps, opts: Exceptions
 export function uiRoute(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOptionValues): Promise<number> {
 	return runUi(ctx, deps, "route", opts, async (device, env) => {
 		const routePayload = (route: string | null): Result<UiSuccess, UiError> =>
-			ok({ device: infoOf(device), result: { route }, text: route ?? "(none)" });
+			resultFactory.ok({ device: infoOf(device), result: { route }, text: route ?? "(none)" });
 		const via = await tryBroker(ctx, deps, device, opts, (target) =>
 			readRouteViaBroker(target, devtoolsDeps(deps).brokerClient)
 		);
@@ -449,7 +457,9 @@ export function uiRoute(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOptionV
 		const session = opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device));
 		const read = await withFacet(session, opts, async (facet) => {
 			const found = await readRoute(facet);
-			return found.success ? ok(found.data ?? null) : { success: false, error: devtoolsError(found.error) };
+			return found.success
+				? resultFactory.ok(found.data ?? null)
+				: { success: false, error: devtoolsError(found.error) };
 		});
 		return read.success ? routePayload(read.data) : read;
 	});
@@ -463,7 +473,7 @@ export function uiDevtoolsStatus(ctx: CommandContext, deps: UiDeps, opts: UiOpti
 		const { state, console: lines, network: net, session } = status.data;
 		const where = state.phase === "attached" ? ` (${state.deviceName})` : "";
 		const why = state.phase === "yielded" ? `: ${state.reason}` : state.phase === "lost" ? `: ${state.error}` : "";
-		return ok({
+		return resultFactory.ok({
 			device: infoOf(device),
 			result: status.data,
 			text: [
@@ -481,7 +491,7 @@ export function uiDevtoolsResume(ctx: CommandContext, deps: UiDeps, opts: UiOpti
 	return runUi(ctx, deps, "devtools resume", opts, async (device) => {
 		const resumed = await devtoolsResume({ env: ctx.env, udid: device.udid }, devtoolsDeps(deps).brokerClient);
 		if (!resumed.success) return resumed;
-		return ok({
+		return resultFactory.ok({
 			device: infoOf(device),
 			result: { action: "resume", state: resumed.data.state },
 			text: `broker ${resumed.data.state.phase}`,
@@ -505,7 +515,7 @@ function parseNetworkFilter(
 	if (raw !== undefined && !/^([1-5]xx|\d{3})$/.test(raw)) {
 		return { success: false, error: uiError("usage", `--status must be a code (404) or a class (4xx), got "${raw}"`) };
 	}
-	return ok({
+	return resultFactory.ok({
 		limit: base.data.limit,
 		...(base.data.since === undefined ? {} : { since: base.data.since }),
 		...(base.data.grep === undefined ? {} : { urlGrep: base.data.grep }),
@@ -554,7 +564,7 @@ function networkPayload(
 	data: { file: string; total: number; entries: NetworkEntry[] },
 	include: ReadonlySet<string>
 ): Result<UiSuccess, UiError> {
-	return ok({
+	return resultFactory.ok({
 		device: infoOf(device),
 		result: { file: data.file, total: data.total, entries: data.entries },
 		text: data.entries.map((entry) => networkDetail(entry, include)).join("\n"),
@@ -569,7 +579,11 @@ function networkEntry(device: UiDevice, entry: NetworkEntry | undefined, id: num
 			error: uiError("target_not_found", `no network entry #${id}`, { hint: "`warden ui network` lists ids" }),
 		};
 	}
-	return ok({ device: infoOf(device), result: { entry }, text: networkDetail(entry, new Set(NETWORK_INCLUDES)) });
+	return resultFactory.ok({
+		device: infoOf(device),
+		result: { entry },
+		text: networkDetail(entry, new Set(NETWORK_INCLUDES)),
+	});
 }
 
 /** `network` from the dev session's broker; undefined = read the collector's file. */
@@ -616,9 +630,9 @@ export function uiNetwork(
 				error: uiError("usage", `unknown --include ${unknown.join(",")}`, { hint: "headers,body" }),
 			};
 		}
-		const count = countArg === undefined ? ok(DEFAULT_TAIL) : positiveInt("n", countArg);
+		const count = countArg === undefined ? resultFactory.ok(DEFAULT_TAIL) : positiveInt("n", countArg);
 		if (!count.success) return count;
-		const id = opts.id === undefined ? ok(undefined) : positiveInt("--id", opts.id);
+		const id = opts.id === undefined ? resultFactory.ok(undefined) : positiveInt("--id", opts.id);
 		if (!id.success) return id;
 		const filter = parseNetworkFilter(ctx, opts, count.data);
 		if (!filter.success) return filter;

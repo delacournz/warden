@@ -5,7 +5,7 @@ import { isEmulatorSerial } from "@delacour/warden-providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-providers/unlock-wait";
 import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
 import { isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { claimWithFlags, parseClaimFlags, parsePlatform } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { deviceTarget } from "../hooks/claude-pretool";
@@ -53,11 +53,13 @@ type Candidate = { id: string; platform?: Platform; source: UiDeviceSource };
 function platformOf(ctx: CommandContext, id: string): Result<Platform> {
 	const store = ctx.store();
 	const leased = store.listLeases().find((l) => l.resource.kind === "device" && l.resource.id === id);
-	if (leased?.resource.kind === "device") return ok(leased.resource.platform);
+	if (leased?.resource.kind === "device") return resultFactory.ok(leased.resource.platform);
 	const known = store.listDevices().find((d) => d.id === id);
-	if (known) return ok(known.platform);
+	if (known) return resultFactory.ok(known.platform);
 	const target = deviceTarget(id);
-	return target.kind === "device" ? ok(target.platform) : err(`${id} is not a simulator, emulator or physical device`);
+	return target.kind === "device"
+		? resultFactory.ok(target.platform)
+		: resultFactory.err(`${id} is not a simulator, emulator or physical device`);
 }
 
 function fromFlags(ctx: CommandContext, flags: UiDeviceFlags): Result<Candidate | undefined, UiError> {
@@ -67,11 +69,11 @@ function fromFlags(ctx: CommandContext, flags: UiDeviceFlags): Result<Candidate 
 		if (lease.resource.kind !== "device") {
 			return fail(uiError("usage", `lease ${flags.lease} is not a device lease`));
 		}
-		return ok({ id: lease.resource.id, platform: lease.resource.platform, source: "flag" });
+		return resultFactory.ok({ id: lease.resource.id, platform: lease.resource.platform, source: "flag" });
 	}
-	if (flags.serial !== undefined) return ok({ id: flags.serial, platform: "android", source: "flag" });
-	if (flags.udid !== undefined) return ok({ id: flags.udid, source: "flag" });
-	return ok(undefined);
+	if (flags.serial !== undefined) return resultFactory.ok({ id: flags.serial, platform: "android", source: "flag" });
+	if (flags.udid !== undefined) return resultFactory.ok({ id: flags.udid, source: "flag" });
+	return resultFactory.ok(undefined);
 }
 
 function fromEnv(env: CommandContext["env"]): Candidate | undefined {
@@ -154,7 +156,7 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 	if (!outcome.success) return fail(claimError(outcome.error.message));
 	const claimed = outcome.data.claimed[0];
 	if (!claimed) return fail(uiError("failed", "claim returned no device"));
-	return ok({
+	return resultFactory.ok({
 		udid: claimed.device.id,
 		platform: claimed.device.platform,
 		name: claimed.device.name,
@@ -188,8 +190,8 @@ function pickHeld(
 		);
 	}
 	const first = mine[0]?.resource;
-	if (first?.kind === "device") return ok({ id: first.id, platform: first.platform, source: "lease" });
-	if (flags.claim === true) return ok("claim");
+	if (first?.kind === "device") return resultFactory.ok({ id: first.id, platform: first.platform, source: "lease" });
+	if (flags.claim === true) return resultFactory.ok("claim");
 	return fail(
 		uiError("no_device_leased", "no device leased", { hint: claimHint(platform ?? flags.platform ?? "ios") })
 	);
@@ -203,7 +205,8 @@ async function leaseCandidate(
 	claim: boolean,
 	check: UiLeaseCheck
 ): Promise<Result<UiDevice, UiError>> {
-	const platform = candidate.platform !== undefined ? ok(candidate.platform) : platformOf(ctx, candidate.id);
+	const platform =
+		candidate.platform !== undefined ? resultFactory.ok(candidate.platform) : platformOf(ctx, candidate.id);
 	if (!platform.success) return fail(uiError("usage", platform.error));
 	const phone: PhoneCheck =
 		platform.data === "android" && !isEmulatorSerial(candidate.id)
@@ -250,7 +253,7 @@ async function leaseCandidate(
 		);
 		for (const e of report.errors) ctx.err(`warden: leftover condition on ${candidate.id} not undone — ${e}`);
 	}
-	return ok({
+	return resultFactory.ok({
 		udid: candidate.id,
 		platform: platform.data,
 		...(lease.resource.kind === "device" ? { name: lease.resource.name } : {}),

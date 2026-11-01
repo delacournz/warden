@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { parseDuration } from "@delacour/warden-config/duration";
 import { processOnSignal } from "@delacour/warden-leasing/session";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type DevSessionDeps, findDevSession } from "../dev-session";
 import { type MetroLogEntry, type MetroLogKind, parseMetroLog } from "../dev-tui/metro-log";
@@ -113,7 +113,7 @@ function parseLogsOpts(opts: DevLogsOpts, now: number): Result<ParsedLogsOpts, M
 		if (!parsed.success) return parsed;
 		kinds = parsed.data;
 	}
-	return ok({
+	return resultFactory.ok({
 		filters: {
 			...(sinceMs === undefined ? {} : { sinceMs }),
 			...(opts.grep === undefined ? {} : { grep: opts.grep }),
@@ -129,7 +129,7 @@ function initialEntries(
 	parsed: ParsedLogsOpts
 ): Result<MetroLogEntry[], MetroLogsError> {
 	const { filters, tail } = parsed;
-	if (filters.sinceMs !== undefined && log.mtimeMs < filters.sinceMs) return ok([]);
+	if (filters.sinceMs !== undefined && log.mtimeMs < filters.sinceMs) return resultFactory.ok([]);
 	return filterMetroLogs(parseMetroLog(log.text), { ...filters, ...(tail === undefined ? {} : { tail }) });
 }
 

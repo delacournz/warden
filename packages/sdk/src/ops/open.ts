@@ -3,7 +3,7 @@ import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction } from "./act";
 import { deviceFacade, viaFacade } from "./controls";
 import { fail, fromDriver, opError } from "./errors";
@@ -60,7 +60,7 @@ export async function launchBundle(
 		})
 	);
 	if (!launched.success) return launched;
-	return ok({ attached: wasRunning });
+	return resultFactory.ok({ attached: wasRunning });
 }
 
 const launchVerb = (relaunch: boolean, attached: boolean): string =>

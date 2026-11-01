@@ -1,5 +1,5 @@
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { releaseTarget } from "../npm/platforms";
 
 export const DEFAULT_RELEASE_REPO = "delacournz/warden";
@@ -14,7 +14,7 @@ export function releaseRepo(env: Record<string, string | undefined>): string {
 /** Release asset for this machine: `warden-<darwin|linux>-<arm64|x64>`. */
 export function assetName(platform: string, arch: string): Result<string> {
 	const target = releaseTarget(platform, arch);
-	return target.success ? ok(`warden-${target.data}`) : target;
+	return target.success ? resultFactory.ok(`warden-${target.data}`) : target;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -27,19 +27,20 @@ export function parseReleaseView(stdout: string): Result<Release> {
 	try {
 		data = JSON.parse(stdout);
 	} catch {
-		return err("could not parse `gh release view` output");
+		return resultFactory.err("could not parse `gh release view` output");
 	}
 	if (!isRecord(data) || typeof data.tagName !== "string" || !Array.isArray(data.assets)) {
-		return err("unexpected `gh release view` output");
+		return resultFactory.err("unexpected `gh release view` output");
 	}
 	const assets = data.assets.flatMap((a) => (isRecord(a) && typeof a.name === "string" ? [a.name] : []));
-	return ok({ tag: data.tagName, version: data.tagName.replace(/^v/, ""), assets });
+	return resultFactory.ok({ tag: data.tagName, version: data.tagName.replace(/^v/, ""), assets });
 }
 
 export function pickAsset(release: Release, name: string): Result<string> {
-	if (!release.assets.includes(name)) return err(`release ${release.tag} has no ${name} asset`);
-	if (!release.assets.includes(CHECKSUMS_ASSET)) return err(`release ${release.tag} has no ${CHECKSUMS_ASSET}`);
-	return ok(name);
+	if (!release.assets.includes(name)) return resultFactory.err(`release ${release.tag} has no ${name} asset`);
+	if (!release.assets.includes(CHECKSUMS_ASSET))
+		return resultFactory.err(`release ${release.tag} has no ${CHECKSUMS_ASSET}`);
+	return resultFactory.ok(name);
 }
 
 /** `sha256sum` output (`<hex>  <name>` or `<hex> *<name>`) → name → hex. */
@@ -56,8 +57,8 @@ export async function latestRelease(exec: Exec, repo: string): AsyncResult<Relea
 	const cmd = ["gh", "release", "view", "--repo", repo, "--json", "tagName,assets"];
 	const result = await exec(cmd);
 	if (result.exitCode !== 0) {
-		if (/release not found/i.test(result.stderr)) return err(`no release published on ${repo} yet`);
-		return err(`${execError(cmd, result)} (is gh installed and authenticated for ${repo}?)`);
+		if (/release not found/i.test(result.stderr)) return resultFactory.err(`no release published on ${repo} yet`);
+		return resultFactory.err(`${execError(cmd, result)} (is gh installed and authenticated for ${repo}?)`);
 	}
 	return parseReleaseView(result.stdout);
 }
@@ -85,5 +86,5 @@ export async function downloadRelease(
 		"--clobber",
 	];
 	const result = await exec(cmd);
-	return result.exitCode === 0 ? ok(undefined) : err(execError(cmd, result));
+	return result.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(cmd, result));
 }

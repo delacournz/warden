@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RunnerSourceFiles } from "./runner-build.types";
 
 /**
@@ -45,9 +45,9 @@ export function collectRunnerSources(nativeDir: string): Result<RunnerSourceFile
 		const files: Record<string, string> = {};
 		for (const dir of [...RUNNER_DIRS, RUNNER_CORE]) walk(nativeDir, dir, files);
 		for (const file of SIMD_FILES) files[file] = readFileSync(join(nativeDir, file), "utf8");
-		return ok(files);
+		return resultFactory.ok(files);
 	} catch (cause) {
-		return err(`cannot read the iOS runner sources in ${nativeDir}: ${String(cause)}`);
+		return resultFactory.err(`cannot read the iOS runner sources in ${nativeDir}: ${String(cause)}`);
 	}
 }
 
@@ -55,7 +55,7 @@ export function writeRunnerBlob(nativeDir: string, outFile: string): Result<void
 	const files = collectRunnerSources(nativeDir);
 	if (!files.success) return files;
 	writeFileSync(outFile, JSON.stringify(files.data));
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 /** A path inside the staged root: relative, `/`-separated, no `..`. */
@@ -73,17 +73,18 @@ export function parseRunnerBlob(text: string): Result<RunnerSourceFiles> {
 	try {
 		parsed = JSON.parse(text);
 	} catch {
-		return err("embedded iOS runner sources are not valid JSON");
+		return resultFactory.err("embedded iOS runner sources are not valid JSON");
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-		return err("embedded iOS runner sources are not an object");
+		return resultFactory.err("embedded iOS runner sources are not an object");
 	const files: Record<string, string> = {};
 	for (const [path, content] of Object.entries(parsed)) {
-		if (typeof content !== "string") return err(`embedded iOS runner sources: ${path} is not text`);
-		if (!isSafeSourcePath(path)) return err(`embedded iOS runner sources: bad path ${JSON.stringify(path)}`);
+		if (typeof content !== "string") return resultFactory.err(`embedded iOS runner sources: ${path} is not text`);
+		if (!isSafeSourcePath(path))
+			return resultFactory.err(`embedded iOS runner sources: bad path ${JSON.stringify(path)}`);
 		files[path] = content;
 	}
-	return ok(files);
+	return resultFactory.ok(files);
 }
 
 /** The blob embedded in the compiled binary (`Bun.embeddedFiles`, name `ios-runner-<hash>.bin`). */
@@ -93,6 +94,6 @@ export async function loadEmbeddedRunnerSources(
 	const blob = embedded.find(
 		(file) => "name" in file && typeof file.name === "string" && /^ios-runner(-[^.]*)?\.bin$/.test(file.name)
 	);
-	if (blob === undefined) return err("this warden build has no embedded iOS runner sources; rebuild it");
+	if (blob === undefined) return resultFactory.err("this warden build has no embedded iOS runner sources; rebuild it");
 	return parseRunnerBlob(await blob.text());
 }

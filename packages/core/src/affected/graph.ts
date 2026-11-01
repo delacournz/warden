@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type ts from "typescript";
 import { type ImportCache, openImportCache } from "./cache";
 
@@ -131,7 +131,7 @@ const tsModules = new Map<string, Result<typeof ts>>();
 /** TypeScript is big: loaded on the first graph, not at CLI start. An error when none resolves or it is not usable. */
 async function loadTs(repoRoot: string, lookup: (repoRoot: string) => string | undefined): AsyncResult<typeof ts> {
 	const path = lookup(repoRoot);
-	if (path === undefined) return err(typescriptMissing(repoRoot));
+	if (path === undefined) return resultFactory.err(typescriptMissing(repoRoot));
 	const known = tsModules.get(path);
 	if (known) return known;
 	let loaded: Result<typeof ts>;
@@ -139,9 +139,11 @@ async function loadTs(repoRoot: string, lookup: (repoRoot: string) => string | u
 		const mod: { default?: unknown } = await import(path);
 		const api = (mod.default ?? mod) as Record<string, unknown>;
 		const problem = unusableTypescript(api, path);
-		loaded = problem === undefined ? ok(api as unknown as typeof ts) : err(problem);
+		loaded = problem === undefined ? resultFactory.ok(api as unknown as typeof ts) : resultFactory.err(problem);
 	} catch (error) {
-		loaded = err(`typescript at ${path} failed to load: ${error instanceof Error ? error.message : String(error)}`);
+		loaded = resultFactory.err(
+			`typescript at ${path} failed to load: ${error instanceof Error ? error.message : String(error)}`
+		);
 	}
 	tsModules.set(path, loaded);
 	return loaded;
@@ -330,7 +332,7 @@ export async function createImportGraph(opts: GraphOptions): AsyncResult<ImportG
 		return list;
 	};
 
-	return ok({ imports, save: () => cache.save() });
+	return resultFactory.ok({ imports, save: () => cache.save() });
 }
 
 /**

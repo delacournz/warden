@@ -36,7 +36,7 @@ import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { appPid } from "./app-process";
 import type { PerfUiEnv } from "./env";
@@ -201,7 +201,7 @@ async function startAndroid(
 				"is simpleperf on the device? (warden perf doctor)"
 			);
 		}
-		return ok({
+		return resultFactory.ok({
 			out: join(input.dir, SIMPLEPERF_DATA_FILE),
 			startedAtIso,
 			startWallMs: clock.wallMs,
@@ -222,7 +222,7 @@ async function startAndroid(
 			"perfetto needs Android 9+ (warden perf doctor)"
 		);
 	}
-	return ok({
+	return resultFactory.ok({
 		out: join(input.dir, PERFETTO_TRACE_FILE),
 		startedAtIso,
 		startWallMs: clock.wallMs,
@@ -264,7 +264,7 @@ async function stopAndroid(
 	}
 	await ctx.exec(removeArgv(a, state.remote), { timeoutMs: 10_000 });
 
-	if (!input.analyze) return ok({ out: input.handle.out, warnings });
+	if (!input.analyze) return resultFactory.ok({ out: input.handle.out, warnings });
 	const analysis = await analyzeAndroid(ctx, perf, deps, {
 		target: input.target,
 		app: input.app,
@@ -275,7 +275,7 @@ async function stopAndroid(
 	});
 	if (!analysis.success) {
 		// The artifact is already on disk; an analysis failure (e.g. no trace_processor) must not lose it.
-		return ok({
+		return resultFactory.ok({
 			out: input.handle.out,
 			warnings: [
 				...warnings,
@@ -283,7 +283,11 @@ async function stopAndroid(
 			],
 		});
 	}
-	return ok({ out: input.handle.out, analysis: analysis.data, warnings: [...warnings, ...analysis.data.warnings] });
+	return resultFactory.ok({
+		out: input.handle.out,
+		analysis: analysis.data,
+		warnings: [...warnings, ...analysis.data.warnings],
+	});
 }
 
 function perfettoLines(
@@ -350,7 +354,7 @@ async function analyzeSimpleperf(
 	const lines = top.map((r) => `${r.percent.toFixed(1)}%  ${r.command}  ${r.symbol}  (${r.dso.split("/").pop()})`);
 	const out = join(dir, "android-native.json");
 	writeFileSync(out, `${JSON.stringify({ mode: "simpleperf", samples: report.samples, top }, null, 2)}\n`);
-	return ok({
+	return resultFactory.ok({
 		findings,
 		section: { title: "Native CPU (Android simpleperf)", lines },
 		summary: [
@@ -377,7 +381,7 @@ async function runQuery(
 	writeFileSync(file, sql);
 	const res = await ctx.exec([tp, "--query-file", file, trace], { timeoutMs: 180_000 });
 	if (res.exitCode !== 0) return failed(`trace_processor ${name} failed: ${tail(res)}`);
-	return ok(parseTpOutput(res.stdout));
+	return resultFactory.ok(parseTpOutput(res.stdout));
 }
 
 /** Everything `analyze` reads from the trace, one query per PerfettoSQL file. */
@@ -432,7 +436,7 @@ async function analyzeAndroid(
 	const out = join(input.dir, "android-native.json");
 	writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
 	const hottest = cpu.functions[0];
-	return ok({
+	return resultFactory.ok({
 		findings,
 		section: { title: "Native CPU (Android Perfetto)", lines },
 		summary: [

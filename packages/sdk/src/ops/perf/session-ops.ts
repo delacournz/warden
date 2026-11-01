@@ -1,6 +1,6 @@
 import type { PerfReportJson } from "@delacour/warden-perf/shared/report";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfEnv, PerfUiEnv } from "./env";
 import type { StartOutcome, StopOutcome } from "./orchestrate";
@@ -93,7 +93,7 @@ export async function markWork(
 	const wallMs = ctx.now();
 	const atMs = wallMs - session.startedAt.wallMs;
 	updateSession(ctx, session.id, (s) => ({ ...s, marks: [...s.marks, { label, wallMs, atMs }] }));
-	return ok({
+	return resultFactory.ok({
 		device: { udid: target.udid, platform: target.platform, name: target.name },
 		result: { sessionId: session.id, label, atMs },
 		text: `${ctx.ui.color.green("marked")} "${label}" at ${offset(atMs)} ${ctx.ui.color.dim(session.id)}`,

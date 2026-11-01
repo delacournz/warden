@@ -7,7 +7,7 @@ import type {
 } from "@delacour/warden-config/conditions.types";
 import { parseDuration } from "@delacour/warden-config/duration";
 import { NETWORK_PRESET_NAMES, NETWORK_PRESETS } from "@delacour/warden-config/network.presets";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "./output";
 
 /** Words `warden ui net` takes besides the condition words. */
@@ -22,12 +22,12 @@ const usage = (message: string, hint?: string) =>
 export type ShapingFlags = { latency?: string; jitter?: string; down?: string; up?: string; loss?: string };
 
 function number(raw: string | undefined, flag: string, max?: number): Result<number | undefined, UiError> {
-	if (raw === undefined) return ok(undefined);
+	if (raw === undefined) return resultFactory.ok(undefined);
 	const value = Number(raw);
 	if (raw.trim() === "" || !Number.isFinite(value) || value < 0 || (max !== undefined && value > max)) {
 		return usage(`${flag} must be a number from 0${max === undefined ? "" : ` to ${max}`}, got "${raw}"`);
 	}
-	return ok(value);
+	return resultFactory.ok(value);
 }
 
 /**
@@ -50,13 +50,13 @@ export function parseNetworkCondition(word: string, flags: ShapingFlags): Result
 		field.success && field.data !== undefined ? ([[key, field.data]] as const) : []
 	);
 	if (word === "offline") {
-		return given.length > 0 ? usage("offline takes no shaping flags") : ok({ kind: "offline" });
+		return given.length > 0 ? usage("offline takes no shaping flags") : resultFactory.ok({ kind: "offline" });
 	}
 	if (given.length === 0) {
-		return ok(word === "online" ? { kind: "online" } : { kind: "preset", preset: word as NetworkPreset });
+		return resultFactory.ok(word === "online" ? { kind: "online" } : { kind: "preset", preset: word as NetworkPreset });
 	}
 	const base = word === "online" ? {} : NETWORK_PRESETS[word as NetworkPreset].shaping;
-	return ok({ kind: "custom", ...base, ...Object.fromEntries(given) });
+	return resultFactory.ok({ kind: "custom", ...base, ...Object.fromEntries(given) });
 }
 
 export type FlapFlags = { up?: string; down?: string; jitter?: string; seed?: string };
@@ -80,7 +80,7 @@ export function parseFlap(flags: FlapFlags): Result<FlapSpec, UiError> {
 		seed = Number(flags.seed);
 		if (!Number.isInteger(seed)) return usage(`--seed must be an integer, got "${flags.seed}"`);
 	}
-	return ok({
+	return resultFactory.ok({
 		upMs: upMs.data,
 		downMs: downMs.data,
 		...(jitterPct.data === undefined ? {} : { jitterPct: jitterPct.data }),
@@ -93,19 +93,21 @@ export function parseFault(match: string, rule: string): Result<HostFault, UiErr
 	if (match.trim() === "") return usage("fault needs a host glob");
 	const [kind, arg] = rule.split(/:(.*)/s, 2) as [string, string | undefined];
 	if (kind === "reset" || kind === "blackhole") {
-		return arg === undefined ? ok({ match, action: { kind } }) : usage(`${kind} takes no argument, got "${rule}"`);
+		return arg === undefined
+			? resultFactory.ok({ match, action: { kind } })
+			: usage(`${kind} takes no argument, got "${rule}"`);
 	}
 	if (kind === "status") {
 		const code = Number(arg);
 		if (arg === undefined || !Number.isInteger(code) || code < 100 || code > 599) {
 			return usage(`status needs a code from 100 to 599, got "${rule}"`, "status:503");
 		}
-		return ok({ match, action: { kind: "status", code } });
+		return resultFactory.ok({ match, action: { kind: "status", code } });
 	}
 	if (kind === "delay") {
 		const ms = arg === undefined ? undefined : parseDuration(arg);
 		if (ms === undefined || !ms.success) return usage(`delay needs a duration, got "${rule}"`, "delay:2s");
-		return ok({ match, action: { kind: "delay", ms: ms.data } });
+		return resultFactory.ok({ match, action: { kind: "delay", ms: ms.data } });
 	}
 	return usage(`unknown fault "${rule}"`, "status:503, reset, delay:2s or blackhole");
 }
@@ -118,7 +120,7 @@ export function parseLatLon(raw: string): Result<LatLon, UiError> {
 	if (!m || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
 		return usage(`invalid location "${raw}"`, "<lat>,<lon> with lat within 90 and lon within 180, e.g. 37.33,-122.03");
 	}
-	return ok({ lat, lon });
+	return resultFactory.ok({ lat, lon });
 }
 
 export function parseLatLons(raws: readonly string[]): Result<LatLon[], UiError> {
@@ -128,17 +130,19 @@ export function parseLatLons(raws: readonly string[]): Result<LatLon[], UiError>
 		if (!point.success) return point;
 		points.push(point.data);
 	}
-	return ok(points);
+	return resultFactory.ok(points);
 }
 
 /** A positive number flag (`--speed`, `--interval`). */
 export function parsePositive(raw: string | undefined, flag: string): Result<number | undefined, UiError> {
-	if (raw === undefined) return ok(undefined);
+	if (raw === undefined) return resultFactory.ok(undefined);
 	const value = Number(raw);
-	return Number.isFinite(value) && value > 0 ? ok(value) : usage(`${flag} must be a number above 0, got "${raw}"`);
+	return Number.isFinite(value) && value > 0
+		? resultFactory.ok(value)
+		: usage(`${flag} must be a number above 0, got "${raw}"`);
 }
 
 export function parseScenario(raw: string): Result<LocationScenario, UiError> {
 	const found = LOCATION_SCENARIOS.find((s) => s === raw);
-	return found ? ok(found) : usage(`unknown scenario "${raw}"`, LOCATION_SCENARIOS.join(", "));
+	return found ? resultFactory.ok(found) : usage(`unknown scenario "${raw}"`, LOCATION_SCENARIOS.join(", "));
 }

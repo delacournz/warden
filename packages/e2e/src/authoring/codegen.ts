@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, relative } from "node:path";
 import { isQueryRole } from "@delacour/warden-screen/roles";
 import { type ParsedSelector, parseSelector, type SelectorValue } from "@delacour/warden-screen/selector";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { LaunchMode } from "../runner/fixtures.types";
 import type {
 	GestureStep,
@@ -550,15 +550,16 @@ export function mergeIdsModule(
 	existing: string | undefined,
 	ids: Record<string, string>
 ): Result<string, CodegenError> {
-	if (existing === undefined) return ok(["export const ids = {", ...idsEntries(ids), "} as const;", ""].join("\n"));
+	if (existing === undefined)
+		return resultFactory.ok(["export const ids = {", ...idsEntries(ids), "} as const;", ""].join("\n"));
 	const match = IDS_DECLARATION.exec(existing);
 	if (!match)
 		return codegenError("ids_unreadable", "no `const ids = { … } as const;` declaration to add the test ids to");
 	const known = parseIdsModule(existing);
 	const fresh = Object.fromEntries(Object.entries(ids).filter(([key]) => !(key in known)));
-	if (Object.keys(fresh).length === 0) return ok(existing);
+	if (Object.keys(fresh).length === 0) return resultFactory.ok(existing);
 	const close = match.index + match[0].length - "} as const;".length;
-	return ok(`${existing.slice(0, close)}${idsEntries(fresh).join("\n")}\n${existing.slice(close)}`);
+	return resultFactory.ok(`${existing.slice(0, close)}${idsEntries(fresh).join("\n")}\n${existing.slice(close)}`);
 }
 
 // ---- the file ---------------------------------------------------------------------------------------------------
@@ -737,12 +738,12 @@ function withInlineIds(source: string, registry: IdRegistry): Result<string, Cod
 	const lastImport = [...source.matchAll(IMPORT_STATEMENT)].at(-1);
 	const at = lastImport ? lastImport.index + lastImport[0].length : 0;
 	const block = `\n${idsBlock(registry, false).join("\n")}`;
-	return ok(source.slice(0, at) + block + source.slice(at));
+	return resultFactory.ok(source.slice(0, at) + block + source.slice(at));
 }
 
 /** The helper's ids: imported from the ids module, or declared / extended inline. */
 function addIds(source: string, registry: IdRegistry, idsImport: string | undefined): Result<string, CodegenError> {
-	return idsImport ? ok(withImport(source, idsImport, ["ids"])) : withInlineIds(source, registry);
+	return idsImport ? resultFactory.ok(withImport(source, idsImport, ["ids"])) : withInlineIds(source, registry);
 }
 
 type ExportSite = { kind: "function"; start: number; end: number } | { kind: "other" } | { kind: "none" };
@@ -771,7 +772,7 @@ function locateExport(existing: string | undefined, options: HelperOptions): Res
 	if (site.kind === "function" && options.force !== true) {
 		return codegenError("helper_exists", `${options.name} is already exported`);
 	}
-	return ok(site);
+	return resultFactory.ok(site);
 }
 
 /** Adds the framework imports and every recorded helper's import, skipping helpers from the module being written. */
@@ -814,10 +815,10 @@ export function generateHelper(recording: Recording, options: HelperOptions): Re
 	const needsType = compiled.fixtures.length > 0 || compiled.wholeFixtures;
 	const names = needsType ? imports : imports.filter((name) => name !== "type TestFixtures");
 	source = withHelperImports(source, importFrom, names, compiled, options.file);
-	const withIds = compiled.gen.uses.ids ? addIds(source, compiled.gen.registry, idsImport) : ok(source);
+	const withIds = compiled.gen.uses.ids ? addIds(source, compiled.gen.registry, idsImport) : resultFactory.ok(source);
 	if (!withIds.success) return withIds;
 	source = withIds.data;
 	if (site.kind !== "function") source = `${source.trimEnd()}\n\n${fn}`;
 	if (existing === undefined) source = `${bannerFor(recording)}\n${source.trimStart()}`;
-	return ok({ source, ids: compiled.gen.registry.toObject(), replaced: site.kind === "function" });
+	return resultFactory.ok({ source, ids: compiled.gen.registry.toObject(), replaced: site.kind === "function" });
 }

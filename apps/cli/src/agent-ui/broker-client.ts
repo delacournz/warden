@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { BrokerPort } from "@delacour/warden-sdk/ops/broker-port";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type {
 	BrokerError,
 	BrokerMethodName,
@@ -120,7 +120,7 @@ export async function resolveBroker(
 	target: BrokerTarget,
 	deps: BrokerClientDeps = {}
 ): Promise<Result<BrokerHandle, UiError>> {
-	if (target.handle !== undefined) return ok(target.handle);
+	if (target.handle !== undefined) return resultFactory.ok(target.handle);
 	const found = findDevSession(target.env, target.udid === undefined ? {} : { udid: target.udid }, sessionDeps(deps));
 	if (!found.success) {
 		const { code, message, hint } = found.error;
@@ -146,7 +146,7 @@ export async function resolveBroker(
 			}),
 		};
 	}
-	return ok(handle);
+	return resultFactory.ok(handle);
 }
 
 async function viaBroker<T>(
@@ -178,7 +178,11 @@ export function queryConsole(
 	return viaBroker(target, deps, async (handle) => {
 		const reply = await handle.call("console.query", params);
 		return reply.success
-			? ok({ file: join(handle.session.logDir, CONSOLE_JSONL), total: reply.data.total, lines: reply.data.lines })
+			? resultFactory.ok({
+					file: join(handle.session.logDir, CONSOLE_JSONL),
+					total: reply.data.total,
+					lines: reply.data.lines,
+				})
 			: reply;
 	});
 }
@@ -192,7 +196,11 @@ export function queryExceptions(
 	return viaBroker(target, deps, async (handle) => {
 		const reply = await handle.call("exceptions.query", params);
 		return reply.success
-			? ok({ file: join(handle.session.logDir, CONSOLE_JSONL), total: reply.data.total, lines: reply.data.lines })
+			? resultFactory.ok({
+					file: join(handle.session.logDir, CONSOLE_JSONL),
+					total: reply.data.total,
+					lines: reply.data.lines,
+				})
 			: reply;
 	});
 }
@@ -206,7 +214,11 @@ export function queryNetwork(
 	return viaBroker(target, deps, async (handle) => {
 		const reply = await handle.call("network.query", params);
 		return reply.success
-			? ok({ file: join(handle.session.logDir, NETWORK_JSONL), total: reply.data.total, entries: reply.data.entries })
+			? resultFactory.ok({
+					file: join(handle.session.logDir, NETWORK_JSONL),
+					total: reply.data.total,
+					entries: reply.data.entries,
+				})
 			: reply;
 	});
 }
@@ -219,7 +231,7 @@ export function networkEntryById(
 ): Promise<Result<EntriesResult["entries"][number] | undefined, UiError>> {
 	return viaBroker(target, deps, async (handle) => {
 		const reply = await handle.call("network.query", { limit: NETWORK_RING });
-		return reply.success ? ok(reply.data.entries.find((entry) => entry.id === id)) : reply;
+		return reply.success ? resultFactory.ok(reply.data.entries.find((entry) => entry.id === id)) : reply;
 	});
 }
 
@@ -275,7 +287,7 @@ export function readTree(
 			components,
 			truncated: reply.data.truncated || cut,
 		};
-		return ok({ ...tree, lines: formatTree(tree) });
+		return resultFactory.ok({ ...tree, lines: formatTree(tree) });
 	});
 }
 
@@ -314,7 +326,7 @@ export function devtoolsStatus(
 		const reply = await handle.call("status", {});
 		if (!reply.success) return reply;
 		const { leaseId, pid, platform, deviceId, metroUrl, logDir, projectRoot } = handle.session;
-		return ok({
+		return resultFactory.ok({
 			...reply.data,
 			session: { leaseId, pid, platform, deviceId, metroUrl, logDir, projectRoot, brokerSocket: handle.socketPath },
 		});
@@ -342,7 +354,7 @@ const SINCE_UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_60
 /** `--since`: a duration back from now (`30s`, `5m`, `2h`, `1d`, `250ms`) or an ISO time, as epoch ms. */
 export function parseSince(raw: string, now: number): Result<number, UiError> {
 	const duration = /^(\d+)(ms|s|m|h|d)$/.exec(raw);
-	if (duration !== null) return ok(now - Number(duration[1]) * (SINCE_UNITS[duration[2] ?? "ms"] ?? 1));
+	if (duration !== null) return resultFactory.ok(now - Number(duration[1]) * (SINCE_UNITS[duration[2] ?? "ms"] ?? 1));
 	const at = Date.parse(raw);
 	if (Number.isNaN(at)) {
 		return {
@@ -350,7 +362,7 @@ export function parseSince(raw: string, now: number): Result<number, UiError> {
 			error: uiError("usage", `--since must be a duration (30s, 5m, 2h) or an ISO time, got "${raw}"`),
 		};
 	}
-	return ok(at);
+	return resultFactory.ok(at);
 }
 
 /** Undefined = no broker answers (or it vanished mid-call): the SDK op goes direct to Metro; other failures are the op's error. */

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import ts from "typescript";
 
 /**
@@ -101,7 +101,7 @@ export type EmitDeclarationsInput = {
  */
 export function emitDeclarations(input: EmitDeclarationsInput): Result<string[]> {
 	const config = ts.readConfigFile(input.tsconfigPath, ts.sys.readFile);
-	if (config.error) return err(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
+	if (config.error) return resultFactory.err(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
 	const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(input.tsconfigPath));
 	const options: ts.CompilerOptions = {
 		...parsed.options,
@@ -129,7 +129,7 @@ export function emitDeclarations(input: EmitDeclarationsInput): Result<string[]>
 	}
 	const errors = result.diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error);
 	if (errors.length > 0) {
-		return err(
+		return resultFactory.err(
 			ts.formatDiagnostics(errors, {
 				getCanonicalFileName: (f) => f,
 				getCurrentDirectory: () => process.cwd(),
@@ -137,5 +137,5 @@ export function emitDeclarations(input: EmitDeclarationsInput): Result<string[]>
 			})
 		);
 	}
-	return ok(written);
+	return resultFactory.ok(written);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { wardenErr } from "@delacour/warden-types/error";
+import { wardenErrors } from "@delacour/warden-types/error";
 import { execWithin, probeIosHealth, probeIosWarm, springboardRunning } from "./health";
 
 const LIST = "PID\tStatus\tLabel\n412\t0\tUIKitApplication:com.apple.springboard[abcd][rb-legacy]\n-\t0\tcom.apple.foo";
@@ -39,7 +39,7 @@ describe("probeIosHealth", () => {
 	test("hung launchctl times out without real waiting", async () => {
 		const res = await probeIosHealth({ exec: exec({ "print system": never }), timer: instant }, "U1");
 		expect(res).toEqual(
-			wardenErr("probe_timeout", "U1: launchctl print system did not answer within 15s", { retryable: true })
+			wardenErrors.err("probe_timeout", "U1: launchctl print system did not answer within 15s", { retryable: true })
 		);
 	});
 
@@ -67,7 +67,7 @@ describe("probeIosHealth", () => {
 			{ exec: exec({ "print system": done(), "launchctl list": done("PID\tStatus\tLabel") }), timer: forever },
 			"U1"
 		);
-		expect(res).toEqual(wardenErr("failed", "U1: SpringBoard is not running"));
+		expect(res).toEqual(wardenErrors.err("failed", "U1: SpringBoard is not running"));
 	});
 });
 
@@ -93,7 +93,7 @@ describe("probeIosHealth ordering", () => {
 			{ exec: exec({ "print system": done("", 1), "launchctl list": done("", 1) }), timer: forever },
 			"U1"
 		);
-		expect(res).toEqual(wardenErr("failed", "U1: launchctl print system exited 1"));
+		expect(res).toEqual(wardenErrors.err("failed", "U1: launchctl print system exited 1"));
 	});
 });
 
@@ -113,12 +113,12 @@ describe("probeIosWarm", () => {
 			{ exec: exec({ "launchctl list": done("PID\tStatus\tLabel") }), timer: forever },
 			"U1"
 		);
-		expect(down).toEqual(wardenErr("failed", "U1: SpringBoard is not running"));
+		expect(down).toEqual(wardenErrors.err("failed", "U1: SpringBoard is not running"));
 		const failing = await probeIosWarm({ exec: exec({ "launchctl list": done("", 1) }), timer: forever }, "U1");
 		expect(failing.success).toBe(false);
 		const hung = await probeIosWarm({ exec: exec({ "launchctl list": never }), timer: instant }, "U1");
 		expect(hung).toEqual(
-			wardenErr("probe_timeout", "U1: launchctl list did not answer within 15s", { retryable: true })
+			wardenErrors.err("probe_timeout", "U1: launchctl list did not answer within 15s", { retryable: true })
 		);
 	});
 });

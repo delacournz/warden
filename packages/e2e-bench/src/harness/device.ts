@@ -1,4 +1,4 @@
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { Platform } from "../results/schema";
 import { type Exec, runOk } from "./exec";
 
@@ -50,7 +50,7 @@ export function parseClaim(stdout: string): { leaseId: string; udid: string; nam
 export async function claimDevice(exec: Exec, input: ClaimInput): AsyncResult<ClaimedDevice> {
 	if (input.udid !== undefined) {
 		input.log(`using caller-leased device ${input.udid}`);
-		return ok({ udid: input.udid });
+		return resultFactory.ok({ udid: input.udid });
 	}
 	const argv = [
 		input.cliPath,
@@ -68,8 +68,13 @@ export async function claimDevice(exec: Exec, input: ClaimInput): AsyncResult<Cl
 	});
 	if (!ran.success) return ran;
 	const claim = parseClaim(ran.data.stdout);
-	if (claim === undefined) return err(`warden claim: unparseable output: ${ran.data.stdout.slice(0, 200)}`);
-	return ok({ udid: claim.udid, leaseId: claim.leaseId, ...(claim.name !== undefined ? { name: claim.name } : {}) });
+	if (claim === undefined)
+		return resultFactory.err(`warden claim: unparseable output: ${ran.data.stdout.slice(0, 200)}`);
+	return resultFactory.ok({
+		udid: claim.udid,
+		leaseId: claim.leaseId,
+		...(claim.name !== undefined ? { name: claim.name } : {}),
+	});
 }
 
 /** `warden heartbeat <leaseId>`: refreshes exactly the lease the bench claimed. */
@@ -80,7 +85,7 @@ export async function heartbeatDevice(
 	const ran = await runOk(exec, process.execPath, [input.cliPath, "heartbeat", input.leaseId], {
 		...(input.repoRoot !== undefined ? { cwd: input.repoRoot } : {}),
 	});
-	return ran.success ? ok(undefined) : ran;
+	return ran.success ? resultFactory.ok(undefined) : ran;
 }
 
 /** Releases exactly one lease id. Never `--mine`: agents of one session share the session id. */
@@ -91,7 +96,7 @@ export async function releaseDevice(
 	const ran = await runOk(exec, process.execPath, [input.cliPath, "release", input.leaseId], {
 		...(input.repoRoot !== undefined ? { cwd: input.repoRoot } : {}),
 	});
-	return ran.success ? ok(undefined) : ran;
+	return ran.success ? resultFactory.ok(undefined) : ran;
 }
 
 /** Name of the device with `udid` in one runtime's device list. */
@@ -145,13 +150,13 @@ export async function deviceInfo(
 	if (platform === "ios") {
 		const r = await runOk(exec, "xcrun", ["simctl", "list", "devices", "--json"]);
 		if (!r.success) return r;
-		return ok(parseSimctlDevices(r.data.stdout, udid) ?? {});
+		return resultFactory.ok(parseSimctlDevices(r.data.stdout, udid) ?? {});
 	}
 	const [model, release] = await Promise.all([
 		prop(exec, udid, "ro.product.model"),
 		prop(exec, udid, "ro.build.version.release"),
 	]);
-	return ok({
+	return resultFactory.ok({
 		...(model !== undefined ? { name: model } : {}),
 		...(release !== undefined ? { runtime: `Android ${release}` } : {}),
 	});

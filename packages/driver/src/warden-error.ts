@@ -1,4 +1,4 @@
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import type { DriverError } from "./driver.types";
 
 const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code"]>([
@@ -13,8 +13,8 @@ const ENGINE_CODES: ReadonlySet<DriverError["code"]> = new Set<DriverError["code
 export function wardenErrorFromDriver(error: DriverError): WardenError {
 	const message = `${error.code}: ${error.message}`;
 	if (error.code === "E_STALE_REF") {
-		return wardenErr("stale_ref", error.message, { hint: "run `warden ui snapshot` again" }).error;
+		return wardenErrors.err("stale_ref", error.message, { hint: "run `warden ui snapshot` again" }).error;
 	}
-	if (ENGINE_CODES.has(error.code)) return wardenErr("engine_unavailable", message).error;
-	return wardenErr("failed", message, { details: { driver: error.code } }).error;
+	if (ENGINE_CODES.has(error.code)) return wardenErrors.err("engine_unavailable", message).error;
+	return wardenErrors.err("failed", message, { details: { driver: error.code } }).error;
 }

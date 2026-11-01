@@ -9,7 +9,7 @@ import {
 	type JsSession,
 } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { type JsOut, jsOutFor } from "@delacour/warden-sdk/ops/perf/js-out";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
@@ -35,7 +35,10 @@ export async function connectJs(
 	if (!app.success) return app;
 	const connected = await connectJsApp(ctx, deps, js, target, app.data.id, opts.metro, timeoutMs);
 	if (!connected.success) return connected;
-	return ok({ ...connected.data, session: resumeBrokerOnClose(ctx, target.udid, connected.data.session) });
+	return resultFactory.ok({
+		...connected.data,
+		session: resumeBrokerOnClose(ctx, target.udid, connected.data.session),
+	});
 }
 
 /**
@@ -85,7 +88,7 @@ async function brokeredProfile(
 			section: hotspotsSection(hotspots),
 		};
 		const app = await resolveApp(ctx, { platform: target.platform, id: udid }, opts.app);
-		return ok(jsSuccess(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs));
+		return resultFactory.ok(jsSuccess(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs));
 	} catch (error) {
 		return { success: false, error: uiError("failed", `cannot read ${summary.hotspotsPath}: ${String(error)}`) };
 	}
@@ -122,7 +125,7 @@ export function perfJs(
 			...js,
 			open: async (options) => {
 				const opened = await js.open(options);
-				return opened.success ? ok(resumeBrokerOnClose(ctx, target.udid, opened.data)) : opened;
+				return opened.success ? resultFactory.ok(resumeBrokerOnClose(ctx, target.udid, opened.data)) : opened;
 			},
 		};
 		return jsWork(ctx, deps, resuming, target, app.data.id, planned.data, opts.metro, env.timeoutMs);

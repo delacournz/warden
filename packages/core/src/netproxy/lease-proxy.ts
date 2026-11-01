@@ -6,7 +6,7 @@ import { claimPorts, isPortFree, releasePorts } from "@delacour/warden-leasing/p
 import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { recordCondition } from "../conditions/conditions";
 import { getProxyStatus, type ProxyHandle, setProxyConditions, stopProxy } from "./control";
 import { handlePath, readHandleFile, removeHandleFile } from "./handle-file";
@@ -102,7 +102,7 @@ export async function ensureLeaseProxy(
 		if (!applied.success) return applied;
 		const recorded = record(existing);
 		if (!recorded.success) return recorded;
-		return ok({ handle: existing, portLeaseId: readHandleFile(path)?.portLeaseId ?? "", reused: true });
+		return resultFactory.ok({ handle: existing, portLeaseId: readHandleFile(path)?.portLeaseId ?? "", reused: true });
 	}
 	removeHandleFile(path);
 	const started = await startFresh(deps, lease, input, path, alive);
@@ -129,9 +129,9 @@ async function startFresh(
 		{ owner: lease.owner, from: range.from, span: range.span, ttlMs: lease.ttlMs, label: `netproxy:${lease.id}` },
 		{ now: deps.now, pidAlive: alive, isPortFree: deps.isPortFree ?? ((p) => isPortFree(p)) }
 	);
-	if (!claimed.success) return err(`netproxy: ${claimed.error}`);
+	if (!claimed.success) return resultFactory.err(`netproxy: ${claimed.error}`);
 	const portLease = claimed.data[0];
-	if (portLease?.resource.kind !== "port") return err("netproxy: no port leased");
+	if (portLease?.resource.kind !== "port") return resultFactory.err("netproxy: no port leased");
 
 	const args: NetproxyMainArgs = {
 		leaseId: lease.id,
@@ -147,14 +147,14 @@ async function startFresh(
 		if (pid !== undefined) killQuietly(deps.kill, pid);
 		removeHandleFile(path);
 		releasePorts(deps.store, { by: "lease", ids: [portLease.id] });
-		return err(`netproxy: ${message}`);
+		return resultFactory.err(`netproxy: ${message}`);
 	};
 	if (pid === undefined) return fail("could not start the proxy process");
 	deps.store.setLeasePid(portLease.id, pid);
 
 	const handle = await waitForHandle(path, pid, deps.readyTimeoutMs ?? READY_TIMEOUT_MS, alive);
 	if (!handle) return fail(`proxy did not become ready (pid ${pid}); start it by hand: ${argv.join(" ")}`);
-	return ok({ handle, portLeaseId: portLease.id, reused: false });
+	return resultFactory.ok({ handle, portLeaseId: portLease.id, reused: false });
 }
 
 function killQuietly(kill: ((pid: number) => void) | undefined, pid: number): void {

@@ -8,7 +8,7 @@ import { decodeSamples } from "@delacour/warden-perf/metrics/series";
 import type { JsSession } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { type PerfPlan, writePlan } from "@delacour/warden-sdk/ops/perf/plan";
 import { createSession, readSession, sessionDir, stopSession } from "@delacour/warden-sdk/ops/perf/session";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { type CollectorDeps, runSessionCollector } from "./collector";
 import { asMe, fakePerfDeps } from "./testing";
@@ -108,7 +108,7 @@ function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpaw
 		js: {
 			open: async () => {
 				opened++;
-				return ok(session);
+				return resultFactory.ok(session);
 			},
 			fetchMap: async () => jsOk(buildSourceMap(["/app/src/Feed.tsx"], [[[0, 0, 41, 2]]])),
 			sleep: async (ms, signal) => {

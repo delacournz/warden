@@ -1,7 +1,7 @@
 import type { LocationCondition, NetworkCondition } from "@delacour/warden-config/conditions.types";
 import type { FlapOptions, TimelineStep } from "@delacour/warden-driver/conditions/scheduler";
 import type { Lease } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export type SchedulerPlatform = "android" | "ios";
 
@@ -66,9 +66,9 @@ export function parseSchedulerConfig(raw: string): Result<SchedulerConfig> {
 	try {
 		value = JSON.parse(raw);
 	} catch {
-		return err("scheduler config is not JSON");
+		return resultFactory.err("scheduler config is not JSON");
 	}
-	if (!isObject(value)) return err("scheduler config must be an object");
+	if (!isObject(value)) return resultFactory.err("scheduler config must be an object");
 	const problem =
 		deviceProblem(value) ??
 		(value.mode === "flap"
@@ -76,7 +76,7 @@ export function parseSchedulerConfig(raw: string): Result<SchedulerConfig> {
 			: value.mode === "timeline"
 				? timelineProblem(value)
 				: "scheduler config needs mode flap|timeline");
-	return problem === undefined ? ok(value as unknown as SchedulerConfig) : err(problem);
+	return problem === undefined ? resultFactory.ok(value as unknown as SchedulerConfig) : resultFactory.err(problem);
 }
 
 /**

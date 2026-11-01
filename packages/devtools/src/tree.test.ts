@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type DevtoolsResult, devtoolsErr, type EvaluateError, type ReactTree } from "./devtools.types";
 import type { DevtoolsSession } from "./session";
 import { fetchTree, formatTree } from "./tree";
@@ -83,7 +83,7 @@ function stubSession(
 		async evaluate(expression): Promise<Result<unknown, EvaluateError>> {
 			expressions.push(expression);
 			try {
-				return ok(runIn(page, expression));
+				return resultFactory.ok(runIn(page, expression));
 			} catch (error) {
 				return { success: false, error: { message: String(error), code: "eval_failed" } };
 			}
@@ -92,7 +92,7 @@ function stubSession(
 			expressions.push(script);
 			if (options.bindingError) return Promise.resolve(options.bindingError);
 			return new Promise((resolve) => {
-				page.__warden_cb = (payload: string) => resolve(ok(JSON.parse(payload)));
+				page.__warden_cb = (payload: string) => resolve(resultFactory.ok(JSON.parse(payload)));
 				runIn(page, script);
 			});
 		},
@@ -136,7 +136,7 @@ describe("fetchTree", () => {
 			if (!expression.includes("__warden_tree_results") || !expression.includes("delete"))
 				return inner(expression, options);
 			polls += 1;
-			return polls < 3 ? ok(null) : inner(expression, options);
+			return polls < 3 ? resultFactory.ok(null) : inner(expression, options);
 		};
 		const tree = await treeOf(stub);
 		expect(polls).toBe(3);
@@ -204,8 +204,9 @@ describe("fetchTree", () => {
 	test("a payload of the wrong shape is cdp_protocol", async () => {
 		const session: TreeSession = {
 			bindingAvailable: true,
-			evaluate: async () => ok(undefined),
-			evaluateWithBinding: async (_script, requestId) => ok({ requestId, result: { components: "nope" } }),
+			evaluate: async () => resultFactory.ok(undefined),
+			evaluateWithBinding: async (_script, requestId) =>
+				resultFactory.ok({ requestId, result: { components: "nope" } }),
 		};
 		const result = await fetchTree(session, {}, { sleep: noWait });
 		expect(result.success).toBe(false);
@@ -231,7 +232,7 @@ describe("fetchTree", () => {
 		let clock = 0;
 		const session: TreeSession = {
 			bindingAvailable: false,
-			evaluate: async () => ok(null),
+			evaluate: async () => resultFactory.ok(null),
 			evaluateWithBinding: async () => devtoolsErr("cdp_closed", "unused"),
 		};
 		const result = await fetchTree(

@@ -1,7 +1,7 @@
 import { execError } from "@delacour/warden-runtime/exec";
 import { readXcode } from "@delacour/warden-runtime/xcode";
 import { wardenHome } from "@delacour/warden-store/store";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { buildLockKey, withBuildLock } from "../lock";
 import {
 	decideReuse,
@@ -118,7 +118,9 @@ export async function expectedRunnerDerivedData(
 	if (!loaded.success) return failed(buildFailed(loaded.error));
 	const project = "ios-runner/WardenRunner.xcodeproj/project.pbxproj";
 	if (!(project in loaded.data)) return failed(buildFailed(`the iOS runner sources lack ${project}`));
-	return ok(derivedDataDir(runnerCacheDir(home, team.data.team, xcode.data.build, runnerSourceHash(loaded.data))));
+	return resultFactory.ok(
+		derivedDataDir(runnerCacheDir(home, team.data.team, xcode.data.build, runnerSourceHash(loaded.data)))
+	);
 }
 
 /**
@@ -161,8 +163,8 @@ export async function ensureRunnerBuild(input: EnsureRunnerBuildInput): AsyncRes
 		};
 		const first = check();
 		const done = (xctestrun: string, cached: boolean, because?: RunnerBuild["rebuiltBecause"]) =>
-			ok<Result<RunnerBuild, RunnerBuildError>>(
-				ok({
+			resultFactory.ok<Result<RunnerBuild, RunnerBuildError>>(
+				resultFactory.ok({
 					xctestrun,
 					derivedData,
 					bundleId,
@@ -186,10 +188,10 @@ export async function ensureRunnerBuild(input: EnsureRunnerBuildInput): AsyncRes
 			bundleId,
 		});
 		const outcome = await runBuild(argv, input);
-		if (!outcome.built) return ok<Result<RunnerBuild, RunnerBuildError>>(failed(outcome.error));
+		if (!outcome.built) return resultFactory.ok<Result<RunnerBuild, RunnerBuildError>>(failed(outcome.error));
 		const xctestrun = findXctestrun(derivedData);
 		if (xctestrun === undefined) {
-			return ok<Result<RunnerBuild, RunnerBuildError>>(
+			return resultFactory.ok<Result<RunnerBuild, RunnerBuildError>>(
 				failed(buildFailed(`xcodebuild succeeded but wrote no .xctestrun under ${derivedData}/Build/Products`))
 			);
 		}

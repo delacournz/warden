@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ReactTree, TreeComponent, TreeOptions } from "@delacour/warden-devtools/devtools.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { el } from "@delacour/warden-driver/testing/driver";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createScreen } from "./screen";
 import { staticDriver, testHost } from "./screen.testing";
 
@@ -33,7 +33,7 @@ function fakeFacet(components: () => TreeComponent[] = () => [PAY]) {
 			tree: async (options?: TreeOptions) => {
 				calls.push(options);
 				const tree: ReactTree = { components: components(), truncated: false };
-				return ok(tree);
+				return resultFactory.ok(tree);
 			},
 		},
 	};

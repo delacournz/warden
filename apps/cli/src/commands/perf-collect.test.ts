@@ -5,7 +5,7 @@ import { jsOk } from "@delacour/warden-perf/js/js.types";
 import type { SessionKit } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { writePlan } from "@delacour/warden-sdk/ops/perf/plan";
 import { createSession, readSession, sessionDir, stopSession } from "@delacour/warden-sdk/ops/perf/session";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { fakePerfDeps } from "../perf/testing";
 import { type TestContext, testContext } from "../testing";
 import { createPerfCollectCommand } from "./perf-collect";
@@ -137,7 +137,11 @@ describe("warden perf-collect with a plan", () => {
 			sleep,
 			js: {
 				open: async () =>
-					ok({ send: async () => ({ success: true as const, data: {} }), onCdp: () => () => {}, close: () => {} }),
+					resultFactory.ok({
+						send: async () => ({ success: true as const, data: {} }),
+						onCdp: () => () => {},
+						close: () => {},
+					}),
 				fetchMap: async () => jsOk(""),
 				sleep,
 			},

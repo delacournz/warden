@@ -1,6 +1,6 @@
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { FRAMEWORK_IDS } from "../adapters/adapter.types";
 import { finalizeFrameworks } from "../orchestrator";
 import type { BenchRun, FrameworkResult } from "../results/schema";
@@ -30,20 +30,22 @@ function withoutRatios(f: FrameworkResult): FrameworkResult {
  */
 export function mergeRuns(runs: readonly BenchRun[], id: string): Result<BenchRun> {
 	const first = runs[0];
-	if (first === undefined) return err("nothing to merge");
+	if (first === undefined) return resultFactory.err("nothing to merge");
 	const seen = new Set<string>();
 	for (const run of runs) {
 		for (const f of run.frameworks) {
-			if (seen.has(f.framework)) return err(`framework ${f.framework} appears in more than one input`);
+			if (seen.has(f.framework)) return resultFactory.err(`framework ${f.framework} appears in more than one input`);
 			seen.add(f.framework);
 		}
 		if (run.device.platform !== first.device.platform) {
-			return err(
+			return resultFactory.err(
 				`inputs differ in platform: ${first.device.platform} (${first.id}) vs ${run.device.platform} (${run.id})`
 			);
 		}
 		if (run.app.sha256 !== first.app.sha256) {
-			return err(`inputs differ in app sha256: ${first.app.sha256} (${first.id}) vs ${run.app.sha256} (${run.id})`);
+			return resultFactory.err(
+				`inputs differ in app sha256: ${first.app.sha256} (${first.id}) vs ${run.app.sha256} (${run.id})`
+			);
 		}
 	}
 	const frameworks = runs.flatMap((r) => r.frameworks).sort((a, b) => frameworkRank(a) - frameworkRank(b));
@@ -51,7 +53,7 @@ export function mergeRuns(runs: readonly BenchRun[], id: string): Result<BenchRu
 	const starts = runs.map((r) => r.startedAt).sort();
 	const ends = runs.flatMap((r) => (r.endedAt !== undefined ? [r.endedAt] : [])).sort();
 	const endedAt = ends.at(-1);
-	return ok({
+	return resultFactory.ok({
 		schemaVersion: lead.schemaVersion,
 		id,
 		startedAt: starts[0] ?? lead.startedAt,
@@ -73,11 +75,11 @@ const defaultId = (run: BenchRun): string => `merged-${run.startedAt.slice(0, 10
  * Nothing is written unless every input reads and merges, and an out dir that already holds results is refused.
  */
 export function mergeRunDirs(outDir: string, runDirs: readonly string[], opts: { id?: string }): Result<BenchRun> {
-	if (existsSync(join(outDir, RESULTS_FILE))) return err(`${outDir} already has ${RESULTS_FILE}`);
+	if (existsSync(join(outDir, RESULTS_FILE))) return resultFactory.err(`${outDir} already has ${RESULTS_FILE}`);
 	const runs: BenchRun[] = [];
 	for (const dir of runDirs) {
 		const read = readBenchResults(dir);
-		if (!read.success) return err(read.error);
+		if (!read.success) return resultFactory.err(read.error);
 		runs.push(read.data);
 	}
 	const merged = mergeRuns(runs, opts.id ?? "");
@@ -88,5 +90,5 @@ export function mergeRunDirs(outDir: string, runDirs: readonly string[], opts: {
 		cpSync(dir, join(outDir, "workers", names), { recursive: true });
 	});
 	writeBenchResults(outDir, run);
-	return ok(run);
+	return resultFactory.ok(run);
 }

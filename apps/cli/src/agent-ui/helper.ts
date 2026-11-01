@@ -29,7 +29,7 @@ import {
 } from "@delacour/warden-store/process-identity";
 import { type Store, wardenHome } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { readServedIdentity } from "../ios-runner/served-identity";
 import { selfCommand } from "../self-command";
@@ -444,7 +444,7 @@ export const ANDROID_HOST_KIND: HelperKind = {
 					success: false,
 					error: { code: "E_HELPER_MISSING", message: "cannot tell how to re-run warden", retryable: false },
 				}
-			: ok(binary);
+			: resultFactory.ok(binary);
 	},
 	command: ({ id, socket, idleSeconds, self }) => [
 		...self,
@@ -499,7 +499,7 @@ export const IOS_RUNNER_KIND: HelperKind = {
 					success: false,
 					error: { code: "E_HELPER_MISSING", message: "cannot tell how to re-run warden", retryable: false },
 				}
-			: ok(binary);
+			: resultFactory.ok(binary);
 	},
 	command: ({ id, socket, idleSeconds, self }) => [
 		...self,
@@ -567,16 +567,16 @@ function releaseSpawnRow(
 
 /** `undefined` leaves the client's default; the value is a duration, and a bad one is a usage error up front. */
 function requestTimeoutMs(value: string | undefined): Result<number | undefined, UiError> {
-	if (value === undefined || value === "") return ok(undefined);
+	if (value === undefined || value === "") return resultFactory.ok(undefined);
 	const ms = parseDuration(value);
 	if (!ms.success) return { success: false, error: uiError("usage", `${REQUEST_TIMEOUT_ENV}: ${ms.error}`) };
-	return ok(Math.max(1, ms.data));
+	return resultFactory.ok(Math.max(1, ms.data));
 }
 
 function idleSeconds(idleTimeout: string): Result<number, UiError> {
 	const ms = parseDuration(idleTimeout);
 	if (!ms.success) return { success: false, error: uiError("usage", `idle timeout: ${ms.error}`) };
-	return ok(Math.max(1, Math.round(ms.data / 1000)));
+	return resultFactory.ok(Math.max(1, Math.round(ms.data / 1000)));
 }
 
 function logTail(logPath: string): string {
@@ -708,7 +708,7 @@ function spawnHelper(
 		...(lease !== undefined ? { lease: lease.id } : {}),
 	};
 	updateState(host, udid, (state) => withRecord(state, kind.field, record));
-	return ok(spawned);
+	return resultFactory.ok(spawned);
 }
 
 /** `state` with `field` set to `record`, or dropped when `record` is undefined. */
@@ -756,9 +756,9 @@ async function answered<C extends HelperClient>(a: Attempt<C>, client: C): Promi
 		spawned: a.spawned !== undefined,
 		...(a.spawned ? { pid: a.spawned.pid } : {}),
 	};
-	if (a.opts.keepClient === true) return { kind: "done", result: ok({ ...info, client }) };
+	if (a.opts.keepClient === true) return { kind: "done", result: resultFactory.ok({ ...info, client }) };
 	await client.close();
-	return { kind: "done", result: ok(info) };
+	return { kind: "done", result: resultFactory.ok(info) };
 }
 
 /** Something answers on the socket: use it, unless it is stale and this caller may replace it. */
@@ -926,7 +926,7 @@ function attemptFor<C extends HelperClient>(
 	mkdirSync(dirname(socketPath), { recursive: true });
 	mkdirSync(kind.dir(host), { recursive: true });
 	const logPath = join(kind.dir(host), `${udid}.log`);
-	return ok({
+	return resultFactory.ok({
 		host,
 		kind,
 		udid,
@@ -1241,7 +1241,7 @@ export async function connectAndroidHost(
 	if (!host.success) return host;
 	const { client } = host.data;
 	if (client === undefined) return unavailable(`${ANDROID_HOST_KIND.label} answered without a client`);
-	return ok(client.driver());
+	return resultFactory.ok(client.driver());
 }
 
 /** `stopHelper` for an Android serial's resident host. */

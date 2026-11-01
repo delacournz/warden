@@ -11,7 +11,7 @@ import {
 	writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import {
 	type NewStep,
 	RECORDING_VERSION,
@@ -67,7 +67,7 @@ export function parseRecording(raw: string): Result<Recording, JournalError> {
 		const where = issue?.path.length ? ` at ${issue.path.join(".")}` : "";
 		return journalError("journal_invalid", `${issue?.message ?? "invalid recording"}${where}`);
 	}
-	return ok(parsed.data);
+	return resultFactory.ok(parsed.data);
 }
 
 export function readJournal(file: string): Result<Recording, JournalError> {
@@ -96,7 +96,7 @@ export function createJournal(
 	} catch (error) {
 		return journalError("io", error instanceof Error ? error.message : String(error));
 	}
-	return ok(recording);
+	return resultFactory.ok(recording);
 }
 
 /** Throw the recording away: the journal (and a lock a dead process left) is removed. A missing file is `journal_missing`. */
@@ -107,7 +107,7 @@ export function deleteJournal(file: string): Result<true, JournalError> {
 	} catch (error) {
 		return journalError("io", error instanceof Error ? error.message : String(error));
 	}
-	return ok(true);
+	return resultFactory.ok(true);
 }
 
 export type AppendOptions = {
@@ -141,7 +141,7 @@ function tryCreate(path: string): Result<Lock, JournalError> | "busy" {
 		if (errnoCode(error) === "EEXIST") return "busy";
 		return journalError("io", error instanceof Error ? error.message : String(error));
 	}
-	return ok({
+	return resultFactory.ok({
 		release() {
 			try {
 				unlinkSync(path);
@@ -203,7 +203,7 @@ async function mutate<T>(
 		const check = recordingSchema.safeParse(changed.data.next);
 		if (!check.success) return journalError("journal_invalid", check.error.issues[0]?.message ?? "invalid step");
 		(options.write ?? writeFileAtomic)(file, serializeRecording(changed.data.next));
-		return ok(changed.data.value);
+		return resultFactory.ok(changed.data.value);
 	} catch (error) {
 		return journalError("io", error instanceof Error ? error.message : String(error));
 	} finally {
@@ -224,7 +224,7 @@ export function appendStep(
 		// spreading a `NewStep` union widens it past `RecordedStep`; `mutate` re-validates the whole recording before
 		// anything is written, so the assertion cannot let a malformed step through
 		const numbered = { ...step, i: current.steps.length } as RecordedStep;
-		return ok({ next: { ...current, steps: [...current.steps, numbered] }, value: numbered });
+		return resultFactory.ok({ next: { ...current, steps: [...current.steps, numbered] }, value: numbered });
 	});
 }
 
@@ -239,7 +239,7 @@ export function undoSteps(
 			return journalError("bad_count", "undo count must be a positive integer");
 		if (current.steps.length === 0) return journalError("nothing_to_undo", "the recording has no steps");
 		const keep = Math.max(0, current.steps.length - count);
-		return ok({
+		return resultFactory.ok({
 			next: { ...current, steps: current.steps.slice(0, keep) },
 			value: current.steps.slice(keep),
 		});

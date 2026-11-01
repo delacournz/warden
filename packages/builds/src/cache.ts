@@ -18,7 +18,7 @@ import {
 import type { Store } from "@delacour/warden-store/store";
 import { wardenHome } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { DeviceTarget } from "./kinds";
 import { safeKey } from "./project-key";
 
@@ -295,14 +295,14 @@ async function placeArtifact(input: StoreArtifactInput, dir: string, target: str
 export async function storeArtifact(input: StoreArtifactInput): AsyncResult<BuildRecord> {
 	const ext = artifactExt(input.platform);
 	if (!input.artifact.endsWith(ext) || !existsSync(input.artifact)) {
-		return err(`not a ${input.platform} build (${ext}): ${input.artifact}`);
+		return resultFactory.err(`not a ${input.platform} build (${ext}): ${input.artifact}`);
 	}
 	const dir = input.layout?.dir ?? buildDir(input.env, input.projectKey, input.platform, input.hash);
 	const target = join(dir, basename(input.artifact));
 	try {
 		await placeArtifact(input, dir, target);
 	} catch (error) {
-		return err(`caching ${input.artifact}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`caching ${input.artifact}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	const base: BuildBase = {
 		projectKey: input.projectKey,
@@ -323,7 +323,7 @@ export async function storeArtifact(input: StoreArtifactInput): AsyncResult<Buil
 				? { ...base, kind: layout }
 				: { ...base, kind: "release", jsKey: layout.jsKey };
 	upsertBuild(input.store, record);
-	return ok(record);
+	return resultFactory.ok(record);
 }
 
 /** Names under a `<nativeFp>` dir that belong to the kinds, not to the legacy build sitting beside them. */

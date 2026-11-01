@@ -11,7 +11,7 @@ import {
 import { fakeHost } from "@delacour/warden-core/testing/golden.testing";
 import { type TestLeaseHost, testLeaseHost } from "@delacour/warden-leasing/testing/lease-host.testing";
 import type { InventoryDevice } from "@delacour/warden-store/types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { recordCondition } from "./conditions/conditions";
 import {
 	androidGoldenDeps,
@@ -143,7 +143,7 @@ describe("gc's android snapshot step (R2)", () => {
 		let builds = 0;
 		const notes = await androidSnapshotPass(ctx, owner, async () => {
 			builds++;
-			return ok({ built, busy: [] });
+			return resultFactory.ok({ built, busy: [] });
 		});
 		expect(builds).toBe(1);
 		expect(notes).toEqual(["built android snapshot warden-0123456789 of Pixel_10"]);
@@ -168,7 +168,7 @@ describe("gc's android snapshot step (R2)", () => {
 		let builds = 0;
 		await androidSnapshotPass(ctx, owner, async () => {
 			builds++;
-			return ok({ busy: ["Pixel_10"] });
+			return resultFactory.ok({ busy: ["Pixel_10"] });
 		});
 		expect(builds).toBe(1);
 	});

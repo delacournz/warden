@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BuildRecord, listBuilds, upsertBuild } from "@delacour/warden-store/builds-table";
 import { openStore, type Store } from "@delacour/warden-store/store";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { aliasBuild, recordRepack, storeArtifact } from "./cache";
 import { buildLockKey, buildResource } from "./lock";
 import { cacheCap, formatSize, isAlias, parseSize, planPrune, pruneBuilds } from "./prune";
@@ -176,9 +176,15 @@ describe("pruneBuilds", () => {
 
 describe("cacheCap (fingerprint-memo-R6)", () => {
 	test("the flag, else WARDEN_MAX_CACHE_SIZE, else 20G, with the source of an invalid value", () => {
-		expect(cacheCap("1G", { WARDEN_MAX_CACHE_SIZE: "2G" })).toEqual({ source: "flag", bytes: ok(1024 ** 3) });
-		expect(cacheCap(undefined, { WARDEN_MAX_CACHE_SIZE: "2G" })).toEqual({ source: "env", bytes: ok(2 * 1024 ** 3) });
-		expect(cacheCap(undefined, {})).toEqual({ source: "default", bytes: ok(20 * 1024 ** 3) });
+		expect(cacheCap("1G", { WARDEN_MAX_CACHE_SIZE: "2G" })).toEqual({
+			source: "flag",
+			bytes: resultFactory.ok(1024 ** 3),
+		});
+		expect(cacheCap(undefined, { WARDEN_MAX_CACHE_SIZE: "2G" })).toEqual({
+			source: "env",
+			bytes: resultFactory.ok(2 * 1024 ** 3),
+		});
+		expect(cacheCap(undefined, {})).toEqual({ source: "default", bytes: resultFactory.ok(20 * 1024 ** 3) });
 		const bad = cacheCap(undefined, { WARDEN_MAX_CACHE_SIZE: "huge" });
 		expect(bad.source).toBe("env");
 		expect(bad.bytes.success).toBe(false);

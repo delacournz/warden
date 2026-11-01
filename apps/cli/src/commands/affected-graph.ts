@@ -1,7 +1,7 @@
 import { TYPESCRIPT_UNUSABLE_EXIT } from "@delacour/warden-core/affected/graph";
 import { GRAPH_WORKER_SUBCOMMAND } from "@delacour/warden-core/affected/graph-process";
 import type { GraphDoc, GraphRequest } from "@delacour/warden-core/affected/graph-snapshot";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { reportError } from "../output";
@@ -14,11 +14,13 @@ async function parseRequest(raw: string): AsyncResult<GraphRequest> {
 	try {
 		json = JSON.parse(raw);
 	} catch {
-		return err("the request is not JSON");
+		return resultFactory.err("the request is not JSON");
 	}
 	const { graphRequestSchema } = await import("@delacour/warden-core/affected/graph-snapshot");
 	const parsed = graphRequestSchema.safeParse(json);
-	return parsed.success ? ok(parsed.data) : err(`not a graph request: ${parsed.error.message}`);
+	return parsed.success
+		? resultFactory.ok(parsed.data)
+		: resultFactory.err(`not a graph request: ${parsed.error.message}`);
 }
 
 /**

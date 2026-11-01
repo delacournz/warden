@@ -1,7 +1,7 @@
 import { Option } from "@commander-js/extra-typings";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import { BUILD_KINDS } from "@delacour/warden-config/build-kinds";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export const INSTALL_MODES = ["clean", "reinstall"] as const satisfies readonly InstallMode[];
 
@@ -29,11 +29,12 @@ export function parseInstallFlags(
 	opts: InstallFlagValues
 ): Result<{ installMode?: InstallMode; resetKeychain?: true }> {
 	if (opts.clean && opts.installMode !== undefined) {
-		return err("--clean (deprecated) can't be combined with --install-mode");
+		return resultFactory.err("--clean (deprecated) can't be combined with --install-mode");
 	}
 	const installMode = opts.installMode ?? (opts.clean ? "reinstall" : undefined);
-	if (opts.resetKeychain && installMode === undefined) return err("--reset-keychain needs --install-mode");
-	return ok({
+	if (opts.resetKeychain && installMode === undefined)
+		return resultFactory.err("--reset-keychain needs --install-mode");
+	return resultFactory.ok({
 		...(installMode !== undefined ? { installMode } : {}),
 		...(opts.resetKeychain ? { resetKeychain: true as const } : {}),
 	});

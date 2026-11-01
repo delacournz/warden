@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 /**
  * Put `source` at `target` atomically: copy next to the target, chmod 755, drop the macOS
@@ -24,15 +24,15 @@ export async function installBinary(
 		const reported = parseReportedVersion(check.stdout);
 		if (check.exitCode !== 0 || reported !== expectedVersion) {
 			rmSync(staged, { force: true });
-			return err(
+			return resultFactory.err(
 				`new binary failed its self-check (expected ${expectedVersion}, got ${reported ?? `exit ${check.exitCode}`})`
 			);
 		}
 		renameSync(staged, target);
-		return ok(undefined);
+		return resultFactory.ok(undefined);
 	} catch (error) {
 		rmSync(staged, { force: true });
-		return err(error);
+		return resultFactory.err(error);
 	}
 }
 

@@ -2,7 +2,7 @@ import { parseIosRunningApps, parseResumedActivity, pickIosApp } from "@delacour
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import type { PerfEnv } from "./env";
 
@@ -47,12 +47,12 @@ export async function resolveAppWith(
 	flag: string | undefined,
 	configApp?: ConfigApp
 ): Promise<Result<PerfAppRef, WardenError>> {
-	if (flag !== undefined && flag !== "") return ok({ id: flag, source: "flag" });
+	if (flag !== undefined && flag !== "") return resultFactory.ok({ id: flag, source: "flag" });
 	const found = await detect(ctx, device);
-	if (found.kind === "app") return ok({ id: found.id, source: "foreground" });
+	if (found.kind === "app") return resultFactory.ok({ id: found.id, source: "foreground" });
 	if (found.kind === "none" && configApp !== undefined) {
 		const configured = await configApp(device.platform);
-		if (configured !== undefined) return ok({ id: configured, source: "config" });
+		if (configured !== undefined) return resultFactory.ok({ id: configured, source: "config" });
 	}
 	const message =
 		found.kind === "ambiguous"

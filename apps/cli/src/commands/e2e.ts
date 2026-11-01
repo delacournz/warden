@@ -25,7 +25,7 @@ import { resolveHeadless } from "@delacour/warden-leasing/headless";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import type { E2eReportJson } from "@delacour/warden-sdk/contracts/e2e-report";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { selfCommand } from "../autogc";
 import type { DeviceSetupSpec } from "../batch/setup";
 import { realPath, type TrackedSpec } from "../batch/spec-progress";
@@ -209,18 +209,18 @@ export function resolveRunKind(
 	physical = false
 ): Result<RunKind> {
 	const passedKind = passed.has("kind") ? opts.kind : undefined;
-	if (opts.dev && passedKind !== undefined) return err("--dev and --kind can't be combined");
+	if (opts.dev && passedKind !== undefined) return resultFactory.err("--dev and --kind can't be combined");
 	const cliKind = opts.dev ? "dev" : passedKind;
 	const app = appSwitches(suite.config.app);
 	if (cliKind !== undefined) {
-		if (passed.has("variant")) return err("--kind / --dev and --variant can't be combined");
-		return ok(kindRun(suite, cliKind));
+		if (passed.has("variant")) return resultFactory.err("--kind / --dev and --variant can't be combined");
+		return resultFactory.ok(kindRun(suite, cliKind));
 	}
-	if (!app.app && !opts.app) return ok({ metro: "suite" });
+	if (!app.app && !opts.app) return resultFactory.ok({ metro: "suite" });
 	const variant = passed.has("variant") ? opts.variant : app.variant;
-	if (variant !== undefined) return ok({ variant, metro: "suite" });
+	if (variant !== undefined) return resultFactory.ok({ variant, metro: "suite" });
 	// a repacked simulator build cannot run on a phone: a physical run installs the release build (a device build on an iPhone)
-	return ok(kindRun(suite, app.kind ?? (physical ? PHYSICAL_E2E_KIND : DEFAULT_E2E_KIND)));
+	return resultFactory.ok(kindRun(suite, app.kind ?? (physical ? PHYSICAL_E2E_KIND : DEFAULT_E2E_KIND)));
 }
 
 /** `suite` with its Metro as the run decides: dropped, defaulted or as written. */
@@ -234,10 +234,10 @@ function withRunMetro(suite: Suite, run: RunKind): Suite {
 function onePlatform(affected: Affected): Result<Selection> {
 	const [only, ...rest] = affected.selections;
 	if (!only || rest.length > 0)
-		return err(
+		return resultFactory.err(
 			`suite "${affected.suite.name}" runs on ios and android — pass --platform (or set e2e.<suite>.platform)`
 		);
-	return ok(only);
+	return resultFactory.ok(only);
 }
 
 /** `slim` applies to iOS simulators only: true when the suite asks for it and this run is on iOS. */
@@ -269,28 +269,31 @@ function selectLegs(
 	passed: ReadonlySet<string>
 ): Result<E2eDeviceLeg[] | undefined> {
 	const all = suite.devices;
-	if (!all) return opts.devices === undefined ? ok(undefined) : err("--devices needs e2e.<suite>.devices");
-	if (passed.has("profile") || passed.has("count")) return ok(undefined);
+	if (!all)
+		return opts.devices === undefined
+			? resultFactory.ok(undefined)
+			: resultFactory.err("--devices needs e2e.<suite>.devices");
+	if (passed.has("profile") || passed.has("count")) return resultFactory.ok(undefined);
 	const pick = opts.devices ?? "default";
-	if (pick === "all") return ok(all);
-	if (pick === "default") return ok(all.filter((leg) => leg.default));
+	if (pick === "all") return resultFactory.ok(all);
+	if (pick === "default") return resultFactory.ok(all.filter((leg) => leg.default));
 	const names = pick
 		.split(",")
 		.map((name) => name.trim())
 		.filter((name) => name.length > 0);
 	const unknown = names.find((name) => !all.some((leg) => leg.profile === name));
 	if (unknown !== undefined || names.length === 0)
-		return err(`--devices: no leg "${unknown ?? pick}" (${all.map((leg) => leg.profile).join(", ")})`);
-	return ok(all.filter((leg) => names.includes(leg.profile)));
+		return resultFactory.err(`--devices: no leg "${unknown ?? pick}" (${all.map((leg) => leg.profile).join(", ")})`);
+	return resultFactory.ok(all.filter((leg) => names.includes(leg.profile)));
 }
 
 /** The suite's Metro as a run plan: project root, timeouts, and the app to open on each device. */
 async function metroPlan(suite: Suite, bundleId: string): Promise<Result<MetroPlan | undefined>> {
 	const metro = suite.config.metro;
-	if (!metro?.enabled) return ok(undefined);
+	if (!metro?.enabled) return resultFactory.ok(undefined);
 	const readyTimeoutMs = parseDuration(metro.readyTimeout);
-	if (!readyTimeoutMs.success) return err(`metro.readyTimeout: ${readyTimeoutMs.error}`);
-	return ok({
+	if (!readyTimeoutMs.success) return resultFactory.err(`metro.readyTimeout: ${readyTimeoutMs.error}`);
+	return resultFactory.ok({
 		projectRoot: suite.projectRoot ?? suite.cwd,
 		env: metro.env ?? {},
 		prewarm: metro.prewarm,
@@ -391,8 +394,8 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	for (const w of [...affected.data.warnings, ...selection.data.warnings]) warn(ctx, `warden e2e: ${w}`);
 	if (opts.explain || opts.dryRun) ctx.err(explain(affected.data, opts.requiredOnly === true, color));
 	const specs = selectedSpecs(selection.data, opts.requiredOnly === true);
-	if (opts.specs !== undefined && specs.length === 0) return err("--specs matched no spec");
-	return ok({ affected: affected.data, selection: selection.data, specs });
+	if (opts.specs !== undefined && specs.length === 0) return resultFactory.err("--specs matched no spec");
+	return resultFactory.ok({ affected: affected.data, selection: selection.data, specs });
 }
 
 /**
@@ -512,12 +515,12 @@ async function preparedRun(
 	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
 	if (slimsDevices(suite.config, platform) && suite.config.slim !== undefined) {
 		const slim = validateProfile(slimProfile(suite.config.slim));
-		if (!slim.success) return err(`suite "${suite.name}": slim: ${slim.error}`);
+		if (!slim.success) return resultFactory.err(`suite "${suite.name}": slim: ${slim.error}`);
 	}
 	const spec = await specPlan(ctx, deps, suite, platform, opts, wantsPhysical(suite.config, opts, passed));
 	if (!spec.success) return spec;
 	const run = await runPlan(ctx, suite, platform, specs, spec.data, opts, passed, kind);
-	return run.success ? ok({ ...run.data, spec: spec.data }) : run;
+	return run.success ? resultFactory.ok({ ...run.data, spec: spec.data }) : run;
 }
 
 /**
@@ -603,7 +606,7 @@ async function runPlan(
 	// --json is the e2e report here, not batch.json
 	const { json: _json, ...merged } = suiteOpts(suite, opts, passed, kind);
 	const needsApp = appFlagsWithoutApp(suite, merged);
-	if (needsApp !== undefined) return err(needsApp);
+	if (needsApp !== undefined) return resultFactory.err(needsApp);
 	const batchOpts = { ...merged, ...(config.metro?.enabled ? { port: [config.metro.port, ...merged.port] } : {}) };
 	const slimFlag = passed.has("slim") ? opts.slim : undefined;
 	const phoneOpts = (leg?: E2eDeviceLeg) => legPhysicalOpts({ platform, config, opts, passed, base: batchOpts }, leg);
@@ -630,7 +633,7 @@ async function runPlan(
 		runnerArgv({ bun: spec.bun, preload: spec.preload, specPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
 	const isolation = runIsolation(config, opts, passed);
 	if (isolation === "device" && args.data.passes > 1)
-		return err(
+		return resultFactory.err(
 			`--passes ${args.data.passes} needs isolate "spec": suite "${suite.name}" sets isolate "device" (one process per device reruns its whole shard)`
 		);
 	const plan = jobPlan(specs, isolation === "device" ? shardCount(args.data, legs.data) : undefined, argvOf);
@@ -641,7 +644,7 @@ async function runPlan(
 		metro.data,
 		biggestShard(plan)
 	);
-	return ok({
+	return resultFactory.ok({
 		args: planned.args,
 		shape: { ...planned.shape, ...(plan.shardOf ? { shardOf: plan.shardOf } : {}) },
 		plan,
@@ -707,7 +710,7 @@ export type SpecPlan = {
 
 const specDuration = (field: string, value: string | undefined, fallback: string): Result<number> => {
 	const ms = parseDuration(value ?? fallback);
-	return ms.success ? ms : err(`e2e.spec.${field}: ${ms.error}`);
+	return ms.success ? ms : resultFactory.err(`e2e.spec.${field}: ${ms.error}`);
 };
 
 /** A compiled `warden` has no `netproxy.main.ts` on disk: specs start the shaping proxy as `<self> __netproxy`. */
@@ -750,7 +753,7 @@ export async function specPlan(
 	if (!actionTimeoutMs.success) return actionTimeoutMs;
 	const assertionTimeoutMs = specDuration("assertionTimeout", spec?.assertionTimeout, DEFAULT_SPEC_ASSERTION_TIMEOUT);
 	if (!assertionTimeoutMs.success) return assertionTimeoutMs;
-	return ok({
+	return resultFactory.ok({
 		bun,
 		preload: preload.data.path,
 		launch: {
@@ -793,7 +796,7 @@ function batchLegs(
 		if (!flags.success) return flags;
 		legs.push({ name: leg.profile, flags: flags.data, env: leg.env ?? {} });
 	}
-	return ok(legs);
+	return resultFactory.ok(legs);
 }
 
 /** `specsPerJob` specs share one spec process, and the job timeout (`jobTimeoutMs`, `--job-timeout`) is per spec. */

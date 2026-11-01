@@ -1,4 +1,4 @@
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { DevtoolsResult, NetworkEntry, NetworkQuery, Sleep } from "./devtools.types";
 import { writeJsonl } from "./jsonl";
@@ -95,7 +95,7 @@ export async function attachNetwork(
 
 	const install = async (): Promise<DevtoolsResult<true>> => {
 		const installed = await session.evaluate(installExpression);
-		if (installed.success) return ok(true);
+		if (installed.success) return resultFactory.ok(true);
 		return { success: false, error: { code: installed.error.code ?? "eval_failed", message: installed.error.message } };
 	};
 
@@ -139,7 +139,7 @@ export async function attachNetwork(
 	};
 	void poll();
 
-	return ok({
+	return resultFactory.ok({
 		async entries(query = {}) {
 			await serial(drain);
 			if (query.id !== undefined) return buffer.filter((entry) => entry.id === query.id);

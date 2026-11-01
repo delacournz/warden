@@ -14,7 +14,7 @@ import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour
 import { readXcode } from "@delacour/warden-runtime/xcode";
 import { wardenHome as resolveWardenHome } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BuildConfiguration } from "./builds.defaults";
 import { LOCAL_BUILD_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
 import { compilerCacheEnv } from "./compiler-cache";
@@ -440,27 +440,29 @@ export async function runLocalBuild(deps: LocalBuildDeps): AsyncResult<LocalBuil
 		timeoutMs: deps.timeoutMs ?? LOCAL_BUILD_TIMEOUT_MS,
 		...(deps.output ? { onLine: deps.output } : {}),
 	});
-	if (res.exitCode !== 0) return err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
+	if (res.exitCode !== 0) return resultFactory.err(`local build failed: ${describeBuildFailure(deps, argv, res)}`);
 	const after = await computeCacheKey(deps.exec, project, platform, undefined, undefined, deps.env);
 	if (!after.success) return after;
 	const moved = after.data.key !== deps.hash;
 	if (moved && !(await prebuildMovedKey(deps, before, after.data))) {
-		return err(`fingerprint changed during the build (${deps.hash} → ${after.data.key}); not caching`);
+		return resultFactory.err(`fingerprint changed during the build (${deps.hash} → ${after.data.key}); not caching`);
 	}
 	const located = await locateOwnApp(deps, derivedData, snapshot);
 	const kind = `${project.buildConfiguration} ${platform === "ios" ? ".app" : ".apk"}`;
 	if (located?.kind === "ambiguous") {
-		return err(
+		return resultFactory.err(
 			`local build was up to date but left ${located.paths.length} ${kind}s, any of which could be stale: ${located.paths.join(", ")}; delete the ones this build should not produce and retry`
 		);
 	}
 	if (!located || !existsSync(located.path)) {
-		return err(`local build succeeded but no ${kind} was found (DerivedData / android/app/build/outputs)`);
+		return resultFactory.err(
+			`local build succeeded but no ${kind} was found (DerivedData / android/app/build/outputs)`
+		);
 	}
 	const artifact = located.path;
 	deps.prebuildStamp?.write(after.data.native);
 	if (located.kind === "up-to-date") deps.log(`build was up to date; reusing ${artifact}`);
 	if (moved)
 		deps.log(`the build created ${platform}/ (prebuild): caching under ${deps.hash}, aliased as ${after.data.key}`);
-	return ok(moved ? { artifact, postKey: after.data.key } : { artifact });
+	return resultFactory.ok(moved ? { artifact, postKey: after.data.key } : { artifact });
 }

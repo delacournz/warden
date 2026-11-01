@@ -10,7 +10,7 @@ import {
 } from "@delacour/warden-driver/testing/driver";
 import type { RecordStep } from "@delacour/warden-sdk/ops/record";
 import type { PidAlive } from "@delacour/warden-store/liveness";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
@@ -95,7 +95,7 @@ export function harness(screens: Snapshot[] | (() => Snapshot), options: Harness
 	const deps: UiDeps = {
 		driver: async () => {
 			opens.count += 1;
-			return ok(driver);
+			return resultFactory.ok(driver);
 		},
 		sleep: async (ms) => {
 			clock.t += ms;

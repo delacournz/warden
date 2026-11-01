@@ -9,7 +9,7 @@ import {
 } from "@delacour/warden-providers/unlock-wait";
 import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
 import { type DeviceRequest, isPhysicalReady, type Owner } from "@delacour/warden-store/types";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { appHostFromContext, type CommandContext } from "./context";
 import { reportError } from "./output";
 
@@ -64,7 +64,7 @@ export async function awaitPhonesUnlocked(
 	request: DeviceRequest,
 	options: UnlockOptions
 ): AsyncResult<void> {
-	if (request.platform !== "ios" || request.physical === undefined) return ok(undefined);
+	if (request.platform !== "ios" || request.physical === undefined) return resultFactory.ok(undefined);
 	for (const phone of await phonesToClaim(ctx, owner, request)) {
 		const waited = await waitUnlocked({
 			name: phone.name,
@@ -77,7 +77,7 @@ export async function awaitPhonesUnlocked(
 		});
 		if (!waited.success) return waited;
 	}
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 const PREFIX = `${DEVICE_LOCKED_CODE}: `;

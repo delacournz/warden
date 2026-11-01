@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { stubFacet } from "@delacour/warden-devtools/testing/facet";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
-import { wardenErr } from "@delacour/warden-types/error";
-import { ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
 import type { ClientSeams } from "./core";
 import type { WardenClientOptions } from "./sdk.types";
@@ -22,11 +22,13 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const provider: DeviceProvider = {
 	platform: "ios",
 	inventory: async () =>
-		ok([{ platform: "ios", id: UDID, name: "warden-iphone-17-1", state: "booted", wardenCreated: false }]),
-	create: async () => wardenErr("failed", "no create in this fake"),
-	boot: async () => ok(undefined),
-	waitReady: async () => ok(undefined),
-	shutdown: async () => ok(undefined),
+		resultFactory.ok([
+			{ platform: "ios", id: UDID, name: "warden-iphone-17-1", state: "booted", wardenCreated: false },
+		]),
+	create: async () => wardenErrors.err("failed", "no create in this fake"),
+	boot: async () => resultFactory.ok(undefined),
+	waitReady: async () => resultFactory.ok(undefined),
+	shutdown: async () => resultFactory.ok(undefined),
 };
 
 function rig(extraEnv: Record<string, string> = {}): { seams: ClientSeams; options: WardenClientOptions } {
@@ -35,12 +37,12 @@ function rig(extraEnv: Record<string, string> = {}): { seams: ClientSeams; optio
 		seams: {
 			providerFor: () => provider,
 			stopHelper: async () => undefined,
-			openDriver: async () => ok(fakeDriver({ screens: [snapshotOf([el("button", { id: "go" })])] })),
+			openDriver: async () => resultFactory.ok(fakeDriver({ screens: [snapshotOf([el("button", { id: "go" })])] })),
 			devtools: {
 				open: async () =>
-					ok({
+					resultFactory.ok({
 						...stub.facet,
-						evaluate: async () => ok(JSON.stringify({ route: ["__root", "(tabs)", "todos"] })),
+						evaluate: async () => resultFactory.ok(JSON.stringify({ route: ["__root", "(tabs)", "todos"] })),
 					}),
 				probe: async () => "ours",
 				collector: {

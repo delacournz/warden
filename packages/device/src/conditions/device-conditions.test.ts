@@ -5,7 +5,7 @@ import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticke
 import type { Driver, Platform } from "@delacour/warden-driver/driver.types";
 import type { E2eError } from "@delacour/warden-driver/e2e-error";
 import { type DriverCall, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type ConditionsEnv, createDeviceConditions, type DeviceConditions } from "./device-conditions";
 
 const env: ConditionsEnv = {
@@ -43,7 +43,7 @@ function setup(
 	} else {
 		driver.clock = async (op) => {
 			ops.push(op);
-			return ok({ condition: op, offsetMs: 0, frozen: op.kind === "frozen", nowMs: 0 });
+			return resultFactory.ok({ condition: op, offsetMs: 0, frozen: op.kind === "frozen", nowMs: 0 });
 		};
 	}
 	const events: ConditionEvent[] = [];

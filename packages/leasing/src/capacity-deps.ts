@@ -1,6 +1,6 @@
 import type { InventoryDevice, Owner, Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type Budget, type CapacityConfig, hostBudget } from "./capacity";
 import type { CapacityDeps } from "./claim";
 import { closeSimWindowsAfter } from "./close-sim-windows-after";
@@ -63,7 +63,7 @@ export function hostInventoryOf(host: LeaseHost, owner: Owner): () => AsyncResul
 				return inventory.success ? markWardenDevices(inventory.data, host.store().listDevices(platform)) : [];
 			})
 		);
-		return ok(lists.flat());
+		return resultFactory.ok(lists.flat());
 	};
 }
 
@@ -85,7 +85,7 @@ export async function buildCapacityDeps(host: LeaseHost, owner: Owner): Promise<
 			await host.stopHelper(device.id);
 			// a window left open is cosmetic: the device is down, which is what the gate asked for
 			if (device.platform === "ios") await closeSimWindowsAfter(host, [{ udid: device.id, name: device.name }]);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 	};
 }

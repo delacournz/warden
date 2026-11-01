@@ -20,7 +20,7 @@ import { sessionNativeDir } from "@delacour/warden-sdk/ops/perf/native-state";
 import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
 import { loadCpuCorrelation } from "@delacour/warden-sdk/ops/perf/react-capture";
 import { readCommitsFile } from "@delacour/warden-sdk/ops/perf/report-read";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { reportError, reportOk, type UiError, uiError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
@@ -133,7 +133,7 @@ type CommitsQuery = {
 /** `commits --by component`: renders per component. */
 function commitsComponentAnswer({ commits, limit }: CommitsQuery): Result<Answer, UiError> {
 	const rows = commitsByComponent(commits, limit);
-	return ok({
+	return resultFactory.ok({
 		result: { by: "component", rows },
 		lines: rows.map(
 			(r) =>
@@ -148,7 +148,7 @@ function commitsWindowAnswer({ commits, opts, limit }: CommitsQuery): Result<Ans
 	if (size === undefined)
 		return { success: false, error: uiError("usage", `--size must be a duration, got "${opts.size}"`) };
 	const rows = commitsByWindow(commits, size, limit);
-	return ok({
+	return resultFactory.ok({
 		result: { by: "window", windowMs: size, rows },
 		lines: rows.map(
 			(r) =>
@@ -168,7 +168,7 @@ function commitsIndexAnswer({ commits, opts, rest, limit }: CommitsQuery): Resul
 		...(limit === undefined ? {} : { limit }),
 	});
 	if (rows.length === 0) return { success: false, error: uiError("failed", `no commit #${only} in this session`) };
-	return ok({
+	return resultFactory.ok({
 		result: { by: "index", rows },
 		lines: rows.flatMap((r) => [
 			`#${r.index} @${sec(r.startMs)}  ${r.durationMs}ms  ${r.fibers} fibers${r.updaters.length > 0 ? `  updated by ${r.updaters.join(", ")}` : ""}`,
@@ -180,7 +180,7 @@ function commitsIndexAnswer({ commits, opts, rest, limit }: CommitsQuery): Resul
 /** `commits --by cascade`: origins whose commits re-rendered fibers through a parent or context. */
 function commitsCascadeAnswer({ commits, limit }: CommitsQuery): Result<Answer, UiError> {
 	const rows = commitsCascade(commits, limit);
-	return ok({
+	return resultFactory.ok({
 		result: { by: "cascade", rows },
 		lines: rows.map(
 			(r) =>
@@ -212,7 +212,7 @@ type NativeReport = NonNullable<ReturnType<typeof nativeReportOf>>;
 /** `cpu --tree`: the JS call tree. */
 function cpuTreeAnswer(profile: CpuProfile, label: NamedFrame): Result<Answer, UiError> {
 	const rows = cpuTree(profile, label);
-	return ok({
+	return resultFactory.ok({
 		result: { mode: "tree", rows },
 		lines: rows.map((r) => `${"  ".repeat(r.depth - 1)}${r.name}  ${r.totalPct}% (${r.totalMs}ms, self ${r.selfMs}ms)`),
 	});
@@ -233,7 +233,7 @@ function cpuWindowAnswer(
 	const anchor = isRecord(hotspots) && isRecord(hotspots.anchor) ? num(hotspots.anchor.hostWallMs) : undefined;
 	if (anchor === undefined) return missing("clock anchor for the JS profile", "re-record with --js");
 	const rows = cpuWindow(profile, label, { ...window, profileStartMs: anchor - session.startedAt.wallMs }, limit);
-	return ok({
+	return resultFactory.ok({
 		result: { mode: "window", window, rows },
 		lines: [
 			`JS self time ${sec(window.fromMs)}-${sec(window.toMs)}`,
@@ -279,7 +279,7 @@ function cpuTopAnswer(hotspots: unknown, native: NativeReport | undefined, limit
 		result.native = top;
 		lines.push("native self time:", ...top.map((r) => `  ${r.name}  ${r.selfPct.toFixed(1)}%`));
 	}
-	return ok({ result, lines });
+	return resultFactory.ok({ result, lines });
 }
 
 function cpuAnswer(dir: string, session: PerfSession, opts: PerfQueryOptions): Result<Answer, UiError> {
@@ -326,7 +326,7 @@ async function rerunHangs(
 		...(opts.yes === true ? { yes: true } : {}),
 	});
 	if (!analysis.success) return analysis;
-	return ok(analysis.data.report);
+	return resultFactory.ok(analysis.data.report);
 }
 
 /** `stacks hang`: the native hangs, optionally re-run from the Android trace. */
@@ -348,7 +348,7 @@ async function hangStackAnswer(
 		report = rerun.data;
 	}
 	const lines = hangLines(native.platform, report);
-	return ok({
+	return resultFactory.ok({
 		result: { sub: "hang", platform: native.platform, report: isRecord(report) ? report.hangs : null },
 		lines: lines.length > 0 ? lines : ["no hangs"],
 	});
@@ -389,7 +389,7 @@ function callersStackAnswer(
 		if (chains.length > 0) lines.push(`native chains through ${fn}:`, ...chains.map((c) => `  ${c}`));
 	}
 	if (profile === undefined && native === undefined) return missing("CPU profile", "record with --js or --native");
-	return ok({ result, lines });
+	return resultFactory.ok({ result, lines });
 }
 
 /** One thread of a native analysis as a line: Perfetto percent, or the Android scheduler state split. */
@@ -407,7 +407,10 @@ function threadStackAnswer(native: NativeReport | undefined): Result<Answer, UiE
 	if (native === undefined || !isRecord(native.report)) return missing("native profile", "record with --native");
 	const rows = arr(native.report.threads);
 	const lines = rows.flatMap(threadLine);
-	return ok({ result: { sub: "thread", threads: rows }, lines: lines.length > 0 ? lines : ["no thread data"] });
+	return resultFactory.ok({
+		result: { sub: "thread", threads: rows },
+		lines: lines.length > 0 ? lines : ["no thread data"],
+	});
 }
 
 /** `stacks leaks`: the iOS leaks of the native profile. */
@@ -420,7 +423,7 @@ function leaksStackAnswer(native: NativeReport | undefined): Result<Answer, UiEr
 			? [`${str(l.type) ?? "?"}  ${num(l.count) ?? 0}x  ${num(l.bytes) ?? 0} bytes  at ${str(l.frame) ?? "?"}`]
 			: []
 	);
-	return ok({ result: { sub: "leaks", leaks }, lines: lines.length > 0 ? lines : ["no leaks recorded"] });
+	return resultFactory.ok({ result: { sub: "leaks", leaks }, lines: lines.length > 0 ? lines : ["no leaks recorded"] });
 }
 
 async function stacksAnswer(
@@ -467,7 +470,7 @@ function framesAnswer(dir: string, opts: PerfQueryOptions): Result<Answer, UiErr
 		result.hangs = hangs;
 		if (hangs.length > 0) lines.push("hangs:", ...hangs.slice(0, opts.worst === true ? 5 : 10).map((l) => `  ${l}`));
 	}
-	return ok({ result, lines: lines.length > 0 ? lines : ["no frame data"] });
+	return resultFactory.ok({ result, lines: lines.length > 0 ? lines : ["no frame data"] });
 }
 
 /**

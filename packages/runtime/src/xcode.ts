@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type Exec, execError } from "./exec";
 
 /** The Xcode warden would build with: `DEVELOPER_DIR` when set (Apple's per-agent setup), else `xcode-select`. */
@@ -41,7 +41,7 @@ export async function readXcode(exec: Exec, env: Record<string, string | undefin
 	if (!path) {
 		const selected = await exec(["xcode-select", "-p"]);
 		if (selected.exitCode !== 0 || !selected.stdout.trim()) {
-			return err(
+			return resultFactory.err(
 				selected.exitCode === 0
 					? "no Xcode selected (`xcode-select -p` is empty)"
 					: execError(["xcode-select", "-p"], selected)
@@ -56,13 +56,13 @@ export async function readXcode(exec: Exec, env: Record<string, string | undefin
 		plistValue(exec, plist, "CFBundleShortVersionString", probeEnv),
 	]);
 	const major = version === undefined ? Number.NaN : Number(version.split(".")[0]);
-	if (build && version && Number.isInteger(major)) return ok({ path, version, build, major, source });
+	if (build && version && Number.isInteger(major)) return resultFactory.ok({ path, version, build, major, source });
 
 	const cmd = ["xcodebuild", "-version"];
 	const res = await exec(cmd, { env: probeEnv });
-	if (res.exitCode !== 0) return err(execError(cmd, res));
+	if (res.exitCode !== 0) return resultFactory.err(execError(cmd, res));
 	const parsed = parseXcodeVersion(res.stdout);
 	return parsed
-		? ok({ path, ...parsed, source })
-		: err(`unexpected \`xcodebuild -version\` output: ${res.stdout.trim()}`);
+		? resultFactory.ok({ path, ...parsed, source })
+		: resultFactory.err(`unexpected \`xcodebuild -version\` output: ${res.stdout.trim()}`);
 }

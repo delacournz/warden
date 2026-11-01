@@ -10,7 +10,7 @@ import {
 	stopJsProfile,
 } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { startReactCapture, stopReactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { type BrokerContext, type BrokerResult, brokerErr } from "./broker.types";
 import type { BrokerExtension } from "./extensions";
@@ -127,12 +127,12 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 				now: deps.now,
 			});
 			if (!capture.success) return cdpErr(capture.error.message, capture.error.hint);
-			return ok({ kind: "cpu", startedAt, capture: capture.data });
+			return resultFactory.ok({ kind: "cpu", startedAt, capture: capture.data });
 		}
 
 		async function beginHeap(cdp: JsCdp, startedAt: number): Promise<BrokerResult<Active>> {
 			const started = await cdp.send("HeapProfiler.startSampling", {});
-			if (started.success) return ok({ kind: "heap", startedAt });
+			if (started.success) return resultFactory.ok({ kind: "heap", startedAt });
 			return cdpErr(
 				`HeapProfiler.startSampling: ${started.error.message}`,
 				"needs Hermes with the HeapProfiler domain"
@@ -142,7 +142,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 		async function beginReact(cdp: JsCdp, startedAt: number): Promise<BrokerResult<Active>> {
 			const started = await startReactCapture(cdp, { owner: BROKER_REACT_OWNER, force: true });
 			if (!started.success) return cdpErr(`${started.error.code}: ${started.error.message}`, started.error.hint);
-			return ok({ kind: "react", startedAt, hostWallMs: startedAt });
+			return resultFactory.ok({ kind: "react", startedAt, hostWallMs: startedAt });
 		}
 
 		function begin(
@@ -168,7 +168,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 			const recording = await begin(kind, session.data, samplingIntervalUs, startedAt);
 			if (!recording.success) return recording;
 			active.set(kind, recording.data);
-			return ok({ kind, startedAt });
+			return resultFactory.ok({ kind, startedAt });
 		}
 
 		async function stopCpu(
@@ -182,7 +182,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 			);
 			if (!stopped.success) return cdpErr(stopped.error.message, stopped.error.hint);
 			const h = stopped.data.hotspots;
-			return ok({
+			return resultFactory.ok({
 				kind: "cpu",
 				path: stopped.data.cpuPath,
 				summary: {
@@ -215,7 +215,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 			mkdirSync(dir, { recursive: true });
 			const path = join(dir, "heap.heapsampling");
 			writeFileSync(path, JSON.stringify(parsed.data.profile));
-			return ok({ kind: "heap", path, summary: summarizeHeapSampling(parsed.data.profile.head) });
+			return resultFactory.ok({ kind: "heap", path, summary: summarizeHeapSampling(parsed.data.profile.head) });
 		}
 
 		async function stopReact(
@@ -232,7 +232,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 			});
 			if (!stopped.success) return cdpErr(`${stopped.error.code}: ${stopped.error.message}`, stopped.error.hint);
 			const { analysis } = stopped.data;
-			return ok({
+			return resultFactory.ok({
 				kind: "react",
 				path: stopped.data.commitsPath,
 				summary: {
@@ -294,7 +294,7 @@ export function createProfilesExtension(overrides: Partial<ProfilesDeps> = {}): 
 					const data: ProfileStatusData = {
 						active: [...active.values()].map((a) => ({ kind: a.kind, startedAt: a.startedAt })),
 					};
-					return ok(data);
+					return resultFactory.ok(data);
 				},
 			],
 		];

@@ -1,5 +1,5 @@
 import type { LatLon, LocationCondition } from "@delacour/warden-config/conditions.types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { parseGpx } from "./gpx";
 import { ANDROID_SCENARIOS } from "./location-scenarios.data";
 import { DEFAULT_INTERVAL_S, DEFAULT_SPEED_MPS } from "./route-ticker";
@@ -13,10 +13,10 @@ export async function loadGpxPoints(path: string, readText: ReadText): Promise<R
 	try {
 		xml = await readText(path);
 	} catch (error) {
-		return err(`cannot read GPX ${path}: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`cannot read GPX ${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	const parsed = parseGpx(xml);
-	return parsed.success ? parsed : err(`${path}: ${parsed.error}`);
+	return parsed.success ? parsed : resultFactory.err(`${path}: ${parsed.error}`);
 }
 
 /**
@@ -29,7 +29,7 @@ export async function planRoute(
 ): Promise<Result<RoutePlan>> {
 	if (op.kind === "scenario") {
 		const s = ANDROID_SCENARIOS[op.name];
-		return ok({ points: s.points, speedMps: s.speedMps, intervalS: DEFAULT_INTERVAL_S, loop: s.loop });
+		return resultFactory.ok({ points: s.points, speedMps: s.speedMps, intervalS: DEFAULT_INTERVAL_S, loop: s.loop });
 	}
 	let points: readonly LatLon[];
 	if (op.kind === "gpx") {
@@ -39,8 +39,8 @@ export async function planRoute(
 	} else {
 		points = op.points;
 	}
-	if (points.length === 0) return err("a route needs at least one point");
-	return ok({
+	if (points.length === 0) return resultFactory.err("a route needs at least one point");
+	return resultFactory.ok({
 		points,
 		speedMps: op.speedMps ?? DEFAULT_SPEED_MPS,
 		intervalS: (op.kind === "route" ? op.intervalS : undefined) ?? DEFAULT_INTERVAL_S,

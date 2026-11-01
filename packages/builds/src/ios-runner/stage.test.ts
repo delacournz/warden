@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { collectRunnerSources, isSafeSourcePath, loadEmbeddedRunnerSources, parseRunnerBlob } from "./pack";
 import { runnerSourceHash, stageRunnerSources } from "./stage";
 
@@ -20,7 +20,11 @@ const FILES = {
 
 describe("stageRunnerSources", () => {
 	test("writes the tree under src/<version>-<hash> with a ready marker", async () => {
-		const staged = await stageRunnerSources({ home, version: "1.2.3", loadSources: async () => ok(FILES) });
+		const staged = await stageRunnerSources({
+			home,
+			version: "1.2.3",
+			loadSources: async () => resultFactory.ok(FILES),
+		});
 		if (!staged.success) throw new Error(staged.error);
 		expect(staged.data.dir).toBe(join(home, "ios-runner", "src", `1.2.3-${runnerSourceHash(FILES)}`));
 		expect(staged.data.project).toBe(join(staged.data.dir, "ios-runner", "WardenRunner.xcodeproj"));
@@ -29,12 +33,12 @@ describe("stageRunnerSources", () => {
 	});
 
 	test("the same sources reuse the copy; changed sources get their own", async () => {
-		const a = await stageRunnerSources({ home, version: "1", loadSources: async () => ok(FILES) });
-		const again = await stageRunnerSources({ home, version: "1", loadSources: async () => ok(FILES) });
+		const a = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
+		const again = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
 		const changed = await stageRunnerSources({
 			home,
 			version: "1",
-			loadSources: async () => ok({ ...FILES, "ios-runner/Host/App.swift": "app2" }),
+			loadSources: async () => resultFactory.ok({ ...FILES, "ios-runner/Host/App.swift": "app2" }),
 		});
 		expect(a.success && again.success && changed.success).toBe(true);
 		if (a.success && again.success && changed.success) {
@@ -45,11 +49,11 @@ describe("stageRunnerSources", () => {
 	});
 
 	test("a copy without the marker (crashed run) is rewritten", async () => {
-		const a = await stageRunnerSources({ home, version: "1", loadSources: async () => ok(FILES) });
+		const a = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
 		if (!a.success) throw new Error(a.error);
 		rmSync(join(a.data.dir, ".ready"));
 		rmSync(join(a.data.dir, "ios-runner/Host/App.swift"));
-		const b = await stageRunnerSources({ home, version: "1", loadSources: async () => ok(FILES) });
+		const b = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
 		expect(b.success).toBe(true);
 		expect(existsSync(join(a.data.dir, "ios-runner/Host/App.swift"))).toBe(true);
 	});
@@ -58,15 +62,19 @@ describe("stageRunnerSources", () => {
 		const outside = await stageRunnerSources({
 			home,
 			version: "1",
-			loadSources: async () => ok({ ...FILES, "../evil": "x" }),
+			loadSources: async () => resultFactory.ok({ ...FILES, "../evil": "x" }),
 		});
 		expect(outside.success).toBe(false);
-		const noProject = await stageRunnerSources({ home, version: "1", loadSources: async () => ok({ a: "b" }) });
+		const noProject = await stageRunnerSources({
+			home,
+			version: "1",
+			loadSources: async () => resultFactory.ok({ a: "b" }),
+		});
 		expect(!noProject.success && noProject.error).toContain("project.pbxproj");
 	});
 
 	test("a failing loader is passed through", async () => {
-		const got = await stageRunnerSources({ home, version: "1", loadSources: async () => err("no blob") });
+		const got = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.err("no blob") });
 		expect(got).toEqual({ success: false, error: "no blob" });
 	});
 });

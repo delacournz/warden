@@ -16,7 +16,7 @@ import { atosArgv, parseAtos, parseDwarfdumpUuid } from "@delacour/warden-perf/l
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
 import { iosAppBundle } from "./app-process";
 import type { PerfEnv, PerfUiEnv } from "./env";
@@ -117,7 +117,7 @@ async function symbolicate(
 			}),
 		};
 	}
-	return ok(out.slice(0, 10));
+	return resultFactory.ok(out.slice(0, 10));
 }
 
 function iosOut(r: Parsed): CrashOut {
@@ -381,7 +381,7 @@ export async function crashesWork(
 	const findings: Finding[] = crashFindings(crashes);
 	const text = crashes.length === 0 ? ctx.ui.color.dim(`no crashes for ${app.data.id}`) : renderCrashes(crashes);
 	const warnings = notes.filter((n) => n !== TOMBSTONE_NOTE);
-	return ok({
+	return resultFactory.ok({
 		device: { udid: target.udid, platform: target.platform, name: target.name },
 		result: { app: app.data.id, count: crashes.length, crashes, findings, notes },
 		text,

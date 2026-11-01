@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { DevtoolsResult, Fetch, Sleep } from "./devtools.types";
 import { openDevtoolsFacet } from "./facet";
 import { appendJsonl, writeJsonl } from "./jsonl";
@@ -105,7 +105,7 @@ export async function startCollector(o: CollectorOptions): Promise<DevtoolsResul
 		}
 	})();
 
-	return ok({ done, stop: abort });
+	return resultFactory.ok({ done, stop: abort });
 }
 
 export type CollectorArgs = {
@@ -135,7 +135,7 @@ function scanCollectorFlags(argv: readonly string[]): Result<{ values: Map<strin
 		values.set(flag, value);
 		i++;
 	}
-	return ok({ values, includeBodies });
+	return resultFactory.ok({ values, includeBodies });
 }
 
 /** The device filter named by `--device-name`, `--logical-device-id` and `--app-id`. */
@@ -163,7 +163,7 @@ export function parseCollectorArgv(argv: readonly string[]): Result<CollectorArg
 	const idleMs = idleText === undefined ? DEFAULT_IDLE_MS : Number(idleText);
 	if (!Number.isInteger(idleMs) || idleMs <= 0)
 		return { success: false, error: "--idle-ms must be a positive whole number" };
-	return ok({ metroUrl, out, idleMs, device: deviceOf(values), includeBodies });
+	return resultFactory.ok({ metroUrl, out, idleMs, device: deviceOf(values), includeBodies });
 }
 
 export type RunCollectorDeps = {

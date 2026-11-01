@@ -1,7 +1,7 @@
 import { availableParallelism, platform as osPlatform, totalmem } from "node:os";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, ok } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 export type HostOs = "darwin" | "linux" | "other";
 
@@ -68,11 +68,11 @@ async function macFreePressure(exec: Exec): Promise<MemoryPressure | undefined> 
 async function macPressure(exec: Exec): AsyncResult<MemoryPressure, WardenError> {
 	const level = await exec(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"]);
 	const mapped = level.exitCode === 0 ? MAC_LEVELS[level.stdout.trim()] : undefined;
-	if (mapped === "warn") return ok((await macFreePressure(exec)) ?? "warn");
-	if (mapped !== undefined) return ok(mapped);
+	if (mapped === "warn") return resultFactory.ok((await macFreePressure(exec)) ?? "warn");
+	if (mapped !== undefined) return resultFactory.ok(mapped);
 	const free = await macFreePressure(exec);
-	if (free !== undefined) return ok(free);
-	return wardenErr(
+	if (free !== undefined) return resultFactory.ok(free);
+	return wardenErrors.err(
 		"failed",
 		"cannot read macOS memory pressure (sysctl kern.memorystatus_vm_pressure_level, memory_pressure)"
 	);
@@ -83,13 +83,13 @@ async function linuxPressure(exec: Exec): AsyncResult<MemoryPressure, WardenErro
 	const total = Number(meminfo.stdout.match(/^MemTotal:\s*(\d+)/m)?.[1]);
 	const available = Number(meminfo.stdout.match(/^MemAvailable:\s*(\d+)/m)?.[1]);
 	if (meminfo.exitCode !== 0 || !(total > 0) || Number.isNaN(available))
-		return wardenErr("failed", "cannot read /proc/meminfo MemAvailable");
-	return ok(fromFreePercent((available / total) * 100));
+		return wardenErrors.err("failed", "cannot read /proc/meminfo MemAvailable");
+	return resultFactory.ok(fromFreePercent((available / total) * 100));
 }
 
 /** Live admission signal; `Result` error = unreadable (callers treat that as `normal`, not a hold). */
 export async function memoryPressure(exec: Exec, os: HostOs = currentOs()): AsyncResult<MemoryPressure, WardenError> {
 	if (os === "darwin") return macPressure(exec);
 	if (os === "linux") return linuxPressure(exec);
-	return wardenErr("failed", `memory pressure is not readable on ${os}`);
+	return wardenErrors.err("failed", `memory pressure is not readable on ${os}`);
 }

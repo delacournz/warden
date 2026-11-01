@@ -13,7 +13,7 @@ import {
 	type DevtoolsSession,
 } from "@delacour/warden-devtools/session";
 import { fetchTree, formatTree } from "@delacour/warden-devtools/tree";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import {
 	consoleQuerySchema,
 	evalParamsSchema,
@@ -317,7 +317,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 			);
 		});
 		pinnedLogicalId = session.target.logicalDeviceId ?? pinnedLogicalId;
-		return ok({ session, network: network.data, ended, finish, offs });
+		return resultFactory.ok({ session, network: network.data, ended, finish, offs });
 	}
 
 	let yieldBackoffMs = o.yieldRetry?.initialMs ?? 0;
@@ -387,7 +387,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 
 	const context: BrokerContext = {
 		state: () => state,
-		requireSession: () => (live && state.phase === "attached" ? ok(live.session) : unavailable(state)),
+		requireSession: () => (live && state.phase === "attached" ? resultFactory.ok(live.session) : unavailable(state)),
 		metroUrl: o.metroUrl,
 		now,
 	};
@@ -431,17 +431,17 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 		async status(params) {
 			const parsed = noParamsSchema.safeParse(params ?? {});
 			if (!parsed.success) return badParams("status", parsed.error.message);
-			return ok(status());
+			return resultFactory.ok(status());
 		},
 		async "console.query"(params) {
 			const parsed = consoleQuerySchema.safeParse(params ?? {});
 			if (!parsed.success) return badParams("console.query", parsed.error.message);
-			return ok(await queryLines(consoleCapture.lines(), parsed.data));
+			return resultFactory.ok(await queryLines(consoleCapture.lines(), parsed.data));
 		},
 		async "exceptions.query"(params) {
 			const parsed = exceptionsQuerySchema.safeParse(params ?? {});
 			if (!parsed.success) return badParams("exceptions.query", parsed.error.message);
-			return ok(await queryLines(consoleCapture.lines().filter(isAppException), parsed.data));
+			return resultFactory.ok(await queryLines(consoleCapture.lines().filter(isAppException), parsed.data));
 		},
 		async "network.query"(params) {
 			const parsed = networkQuerySchema.safeParse(params ?? {});
@@ -456,7 +456,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 					(grep === undefined || entry.url.toLowerCase().includes(grep)) &&
 					(wanted === undefined || statusMatches(wanted, entry.status))
 			);
-			return ok({ entries: newest(matched, limit), total: matched.length });
+			return resultFactory.ok({ entries: newest(matched, limit), total: matched.length });
 		},
 		async eval(params) {
 			const parsed = evalParamsSchema.safeParse(params);
@@ -468,7 +468,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 				timeoutMs: parsed.data.timeoutMs ?? DEFAULT_EVAL_TIMEOUT_MS,
 			});
 			if (!result.success) return brokerErr(result.error.code ?? "eval_failed", result.error.message);
-			return ok({ value: result.data ?? null });
+			return resultFactory.ok({ value: result.data ?? null });
 		},
 		async tree(params) {
 			const parsed = treeParamsSchema.safeParse(params ?? {});
@@ -478,7 +478,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 			const fetched = await fetchTree(session.data, {}, { sleep });
 			if (!fetched.success) return brokerErr(fetched.error.code, fetched.error.message);
 			const tree = filterTree(fetched.data, parsed.data);
-			return ok({
+			return resultFactory.ok({
 				...(tree.screen === undefined ? {} : { screen: tree.screen }),
 				lines: formatTree(tree),
 				components: tree.components,
@@ -492,7 +492,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 			if (!session.success) return session;
 			const route = await readRoute(session.data);
 			if (!route.success) return brokerErr(route.error.code, route.error.message);
-			return ok({ route: route.data ?? null });
+			return resultFactory.ok({ route: route.data ?? null });
 		},
 		async reload(params) {
 			const parsed = noParamsSchema.safeParse(params ?? {});
@@ -501,13 +501,13 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 			if (!session.success) return session;
 			const reloaded = await session.data.reloadJs();
 			if (!reloaded.success) return brokerErr(reloaded.error.code, reloaded.error.message);
-			return ok(reloaded.data);
+			return resultFactory.ok(reloaded.data);
 		},
 		async resume(params) {
 			const parsed = noParamsSchema.safeParse(params ?? {});
 			if (!parsed.success) return badParams("resume", parsed.error.message);
 			broker.resume();
-			return ok({ state });
+			return resultFactory.ok({ state });
 		},
 	};
 
@@ -534,7 +534,7 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 				return brokerErr("bad_request", `method ${name} is already registered`);
 			}
 			methods.set(name, handler);
-			return ok(() => {
+			return resultFactory.ok(() => {
 				methods.delete(name);
 			});
 		},
@@ -566,5 +566,5 @@ export async function startBroker(o: BrokerOptions): Promise<BrokerResult<Broker
 	};
 
 	void supervise();
-	return ok(broker);
+	return resultFactory.ok(broker);
 }

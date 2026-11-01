@@ -1,5 +1,5 @@
 import { type E2eError, e2eErr } from "@delacour/warden-driver/e2e-error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { descendantsOf, isWithin, type NodeEntry, type NodeIndex } from "./nodes";
 import { describeEntry } from "./render";
 import type { QueryRole } from "./roles";
@@ -138,7 +138,7 @@ export function exactlyOne(
 	if (first === undefined) {
 		return e2eErr({ code: "LOCATOR_NOT_FOUND", message: `${describeExpression(expr)} matched no elements`, ...screen });
 	}
-	if (matches.length === 1) return ok(first);
+	if (matches.length === 1) return resultFactory.ok(first);
 	const listed = matches.slice(0, MAX_LISTED).map((entry) => `  ${describeEntry(entry)}`);
 	if (matches.length > MAX_LISTED) listed.push(`  ... and ${matches.length - MAX_LISTED} more`);
 	return e2eErr({

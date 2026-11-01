@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { SDK_ENTRIES } from "./manifests";
 
 /** Imports the bundle leaves to the consumer: the declared `zod` dependency and the optional `ai` peer. */
@@ -21,6 +21,6 @@ export async function bundleSdk(input: { srcDir: string; outDir: string }): Prom
 		external: [...SDK_EXTERNALS],
 		naming: { entry: "[dir]/[name].mjs", chunk: "chunk-[hash].mjs" },
 	});
-	if (!result.success) return err(`@delacour/warden-sdk bundle failed:\n${result.logs.join("\n")}`);
-	return ok(result.outputs.map((output) => output.path));
+	if (!result.success) return resultFactory.err(`@delacour/warden-sdk bundle failed:\n${result.logs.join("\n")}`);
+	return resultFactory.ok(result.outputs.map((output) => output.path));
 }

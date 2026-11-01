@@ -14,8 +14,8 @@ import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import type { AppEnsureJson } from "@delacour/warden-sdk/contracts/dev";
 import { isPhysicalIosId, type Platform } from "@delacour/warden-store/types";
-import { textError } from "@delacour/warden-types/error";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { parsePlatform, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import { appHostFromContext, type CommandContext } from "../context";
@@ -74,11 +74,11 @@ function ensureFlags(
 	const install = parseInstallFlags(opts);
 	if (!install.success) return install;
 	const kind = opts.kind === undefined ? undefined : parseKind(opts.kind);
-	if (kind && !kind.success) return textError(kind);
+	if (kind && !kind.success) return wardenErrors.toText(kind);
 	if (install.data.installMode !== undefined && device === undefined) {
-		return err("--install-mode needs a device (drop --no-install)");
+		return resultFactory.err("--install-mode needs a device (drop --no-install)");
 	}
-	return ok({ install: install.data, ...(kind ? { kind: kind.data } : {}) });
+	return resultFactory.ok({ install: install.data, ...(kind ? { kind: kind.data } : {}) });
 }
 
 /** Fingerprint → installed / cache / EAS / local build, under a spinner (can take minutes). */

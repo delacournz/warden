@@ -10,7 +10,7 @@ import {
 	pickMostSpecific,
 } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { driverError, opError } from "./errors";
 import type { StoredSnapshot } from "./ref-store";
 
@@ -39,9 +39,9 @@ const POINT = /^(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)$/;
 /** Parse the words after a subcommand (`@e3`, `id=sign-in`, `120 340`) as one target. */
 export function parseTarget(text: string): Result<Target, WardenError> {
 	const trimmed = text.trim();
-	if (isRef(trimmed)) return ok({ kind: "ref", ref: trimmed });
+	if (isRef(trimmed)) return resultFactory.ok({ kind: "ref", ref: trimmed });
 	const point = POINT.exec(trimmed);
-	if (point) return ok({ kind: "point", point: { x: Number(point[1]), y: Number(point[2]) } });
+	if (point) return resultFactory.ok({ kind: "point", point: { x: Number(point[1]), y: Number(point[2]) } });
 	const selector = parseSelector(trimmed);
 	if (!selector.success) {
 		return {
@@ -51,7 +51,7 @@ export function parseTarget(text: string): Result<Target, WardenError> {
 			}),
 		};
 	}
-	return ok({ kind: "selector", selector: selector.data });
+	return resultFactory.ok({ kind: "selector", selector: selector.data });
 }
 
 function centre(element: Element): Point {
@@ -105,7 +105,7 @@ async function resolveRef(ref: string, rc: ResolveContext): Promise<Result<Resol
 		return { success: false, error: staleRef(ref, `is not in snapshot generation ${lastSnapshot.generation}`) };
 	const old = rc.now - lastSnapshot.takenAt > REF_MAX_AGE_MS;
 	if (!old && !rc.verify) {
-		return ok({ kind: "ref", ref, element, point: centre(element), snapshot: lastSnapshot.snapshot });
+		return resultFactory.ok({ kind: "ref", ref, element, point: centre(element), snapshot: lastSnapshot.snapshot });
 	}
 
 	const fresh = await rc.driver.snapshot();
@@ -116,7 +116,7 @@ async function resolveRef(ref: string, rc: ResolveContext): Promise<Result<Resol
 		const seen = wanted ? describeEntry(wanted) : element.id;
 		return { success: false, error: staleRef(ref, `(${seen}) is no longer on screen`) };
 	}
-	return ok({
+	return resultFactory.ok({
 		kind: "ref",
 		ref,
 		element: now.element,
@@ -131,7 +131,7 @@ export function pickBySelector(index: NodeIndex, selector: ParsedSelector): Resu
 	const { nth, ...rest } = selector;
 	const matches = index.entries.filter((entry) => matchesSelector(entry, rest));
 	const picked = nth === undefined ? pickMostSpecific(matches, rest) : matches[nth];
-	if (picked) return ok(picked);
+	if (picked) return resultFactory.ok(picked);
 	const wanted = formatSelector(selector);
 	return {
 		success: false,
@@ -153,7 +153,7 @@ async function resolveSelector(
 	if (!fresh.success) return { success: false, error: driverError(fresh.error) };
 	const picked = pickBySelector(indexSnapshot(fresh.data), selector);
 	if (!picked.success) return picked;
-	return ok({
+	return resultFactory.ok({
 		kind: "selector",
 		element: picked.data.element,
 		point: centre(picked.data.element),
@@ -165,7 +165,7 @@ async function resolveSelector(
 export async function resolveTarget(target: Target, rc: ResolveContext): Promise<Result<ResolvedTarget, WardenError>> {
 	switch (target.kind) {
 		case "point":
-			return ok({ kind: "point", point: target.point });
+			return resultFactory.ok({ kind: "point", point: target.point });
 		case "ref":
 			return resolveRef(target.ref, rc);
 		case "selector":

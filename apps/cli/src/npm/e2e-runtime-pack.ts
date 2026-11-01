@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { RuntimeFiles } from "../e2e/e2e-runtime";
 import { bundleE2e } from "./e2e-bundle";
 
@@ -16,9 +16,9 @@ export async function bundleRuntime(input: { srcDir: string; version: string }):
 		if (!built.success) return built;
 		const files: Record<string, string> = {};
 		for (const name of readdirSync(outDir)) files[name] = readFileSync(join(outDir, name), "utf8");
-		return ok(files);
+		return resultFactory.ok(files);
 	} catch (cause) {
-		return err(`@delacour/warden-e2e runtime bundle failed: ${String(cause)}`);
+		return resultFactory.err(`@delacour/warden-e2e runtime bundle failed: ${String(cause)}`);
 	} finally {
 		rmSync(outDir, { recursive: true, force: true });
 	}
@@ -29,5 +29,5 @@ export async function writeRuntimeBlob(input: { srcDir: string; version: string;
 	const bundled = await bundleRuntime(input);
 	if (!bundled.success) return bundled;
 	writeFileSync(input.outFile, JSON.stringify(bundled.data));
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }

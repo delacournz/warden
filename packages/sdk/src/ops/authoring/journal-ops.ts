@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { appendStep, deleteJournal, readJournal, undoSteps } from "@delacour/warden-e2e/authoring/journal";
 import { recordingStatus, summarizeStep } from "@delacour/warden-e2e/authoring/status";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type {
 	RecordCancelled,
 	RecordIdle,
@@ -29,7 +29,7 @@ export async function recordNote(session: OpSession, params: { text: string }): 
 	if (note === "") return failed("usage", "record note needs some text");
 	const appended = await appendStep(active.data.journal, { kind: "note", at: session.host.now(), text: note });
 	if (!appended.success) return journalFailure(appended.error);
-	return ok({
+	return resultFactory.ok({
 		result: { outcome: "noted", step: appended.data.i, text: note },
 		text: `noted as step ${appended.data.i}`,
 	});
@@ -51,7 +51,7 @@ export async function recordUndo(session: OpSession, params: { count?: number } 
 	const left = readJournal(active.data.journal);
 	const steps = left.success ? left.data.steps.length : null;
 	const summaries = removed.data.map((step) => ({ i: step.i, summary: summarizeStep(step) }));
-	return ok({
+	return resultFactory.ok({
 		result: { outcome: "undone", removed: summaries, steps },
 		text: [
 			`removed ${summaries.length} step${summaries.length === 1 ? "" : "s"}${steps === null ? "" : `, ${steps} left`}`,
@@ -63,11 +63,11 @@ export async function recordUndo(session: OpSession, params: { count?: number } 
 /** `record status`: the target, the step count, the last five steps and the lints so far. */
 export async function recordStatus(session: OpSession): OpOutcome<RecordStatus | RecordIdle> {
 	const pointer = session.state.read().recording;
-	if (!pointer) return ok({ result: { outcome: "idle", recording: null }, text: "not recording" });
+	if (!pointer) return resultFactory.ok({ result: { outcome: "idle", recording: null }, text: "not recording" });
 	const journal = readJournal(journalOf(session));
 	if (!journal.success) return journalFailure(journal.error, "`warden ui record cancel` clears it");
 	const status = recordingStatus(journal.data);
-	return ok({
+	return resultFactory.ok({
 		result: {
 			outcome: "recording",
 			recording: {
@@ -99,7 +99,7 @@ export async function recordCancel(session: OpSession): OpOutcome<RecordCancelle
 	if (existsSync(journal)) deleteJournal(journal);
 	clearPointer(session);
 	const kept = pointer.wrote === true ? pointer.target.path : undefined;
-	return ok({
+	return resultFactory.ok({
 		result: { outcome: "cancelled", name: pointer.name, steps, ...(kept !== undefined ? { kept } : {}) },
 		text: `cancelled "${pointer.name}"${steps === null ? "" : ` (${steps} steps dropped)`}${kept !== undefined ? `; ${kept} was already written and is left in place` : ""}`,
 	});

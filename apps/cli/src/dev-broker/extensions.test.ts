@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { Broker } from "./broker";
 import { type BrokerExtension, withExtensions } from "./extensions";
 
@@ -8,7 +8,7 @@ function fakeBroker(events: string[]): Broker {
 		socketPath: "/tmp/b.sock",
 		state: () => ({ phase: "closed" }),
 		resume: () => undefined,
-		registerMethod: () => ok(() => undefined),
+		registerMethod: () => resultFactory.ok(() => undefined),
 		addLineProcessor: () => () => undefined,
 		onAttach: () => () => undefined,
 		close: async () => {

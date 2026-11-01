@@ -2,7 +2,7 @@ import { type AppDeps, defaultAppDeps, kindAppInput, projectStart } from "@delac
 import { type RepackResult, repackApp } from "@delacour/warden-builds/repack";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
 import { appHostFromContext, type CommandContext } from "../context";
@@ -64,7 +64,7 @@ async function repack(
 		}
 	);
 	const result = await run(input);
-	return result.success ? ok(report(platform, result.data)) : err(result.error);
+	return result.success ? resultFactory.ok(report(platform, result.data)) : resultFactory.err(result.error);
 }
 
 function text(ctx: CommandContext, r: RepackReport): string {

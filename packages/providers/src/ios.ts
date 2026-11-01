@@ -1,8 +1,8 @@
 import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "@delacour/warden-config/slim.profile";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
 import { type DeviceState, type InventoryDevice, isPhysicalIosId, profileSlug } from "@delacour/warden-store/types";
-import { codedError, type WardenError, wardenErr } from "@delacour/warden-types/error";
-import { type AsyncResult, ok, type Result } from "@delacour/warden-types/result";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { splitBiometricProfile } from "./biometrics";
 import { listPhysicalIos, probePhysicalIos } from "./devicectl";
 import { disabledStoreRoot } from "./disabled-store";
@@ -24,9 +24,12 @@ function isObject(value: unknown): value is JsonObject {
 function parseJson(stdout: string, what: string): Result<JsonObject, WardenError> {
 	try {
 		const value: unknown = JSON.parse(stdout);
-		return isObject(value) ? ok(value) : wardenErr("failed", `${what}: expected a JSON object`);
+		return isObject(value) ? resultFactory.ok(value) : wardenErrors.err("failed", `${what}: expected a JSON object`);
 	} catch (error) {
-		return wardenErr("failed", `${what}: invalid JSON (${error instanceof Error ? error.message : String(error)})`);
+		return wardenErrors.err(
+			"failed",
+			`${what}: invalid JSON (${error instanceof Error ? error.message : String(error)})`
+		);
 	}
 }
 
@@ -74,7 +77,7 @@ export function shortRuntime(identifier: string): string {
 export function parseSimctlDevices(stdout: string): Result<InventoryDevice[], WardenError> {
 	const sims = parseIosSims(stdout);
 	if (!sims.success) return sims;
-	return ok(
+	return resultFactory.ok(
 		sims.data.filter(({ sim }) => sim.isAvailable !== false).map(({ sim, runtime }) => toInventoryDevice(sim, runtime))
 	);
 }
@@ -83,7 +86,7 @@ function parseIosSims(stdout: string): Result<Array<{ sim: RawSim; runtime: stri
 	const parsed = parseJson(stdout, "simctl list devices");
 	if (!parsed.success) return parsed;
 	const { devices } = parsed.data;
-	if (!isObject(devices)) return wardenErr("failed", "simctl list devices: missing `devices`");
+	if (!isObject(devices)) return wardenErrors.err("failed", "simctl list devices: missing `devices`");
 	const out: Array<{ sim: RawSim; runtime: string }> = [];
 	for (const [runtimeKey, list] of Object.entries(devices)) {
 		const runtime = shortRuntime(runtimeKey);
@@ -92,14 +95,14 @@ function parseIosSims(stdout: string): Result<Array<{ sim: RawSim; runtime: stri
 		if (!sims.success) return sims;
 		out.push(...sims.data.map((sim) => ({ sim, runtime })));
 	}
-	return ok(out);
+	return resultFactory.ok(out);
 }
 
 function parseRuntimeSims(runtimeKey: string, list: unknown): Result<RawSim[], WardenError> {
-	if (!Array.isArray(list)) return wardenErr("failed", `simctl list devices: \`${runtimeKey}\` is not a list`);
+	if (!Array.isArray(list)) return wardenErrors.err("failed", `simctl list devices: \`${runtimeKey}\` is not a list`);
 	if (!list.every(isRawSim))
-		return wardenErr("failed", `simctl list devices: unexpected device entry under \`${runtimeKey}\``);
-	return ok(list);
+		return wardenErrors.err("failed", `simctl list devices: unexpected device entry under \`${runtimeKey}\``);
+	return resultFactory.ok(list);
 }
 
 function toInventoryDevice(sim: RawSim, runtime: string): InventoryDevice {
@@ -170,9 +173,9 @@ export function parseSimctlRuntimes(stdout: string): Result<SimRuntime[], Warden
 	const parsed = parseJson(stdout, "simctl list runtimes");
 	if (!parsed.success) return parsed;
 	const { runtimes } = parsed.data;
-	if (!Array.isArray(runtimes)) return wardenErr("failed", "simctl list runtimes: missing `runtimes`");
+	if (!Array.isArray(runtimes)) return wardenErrors.err("failed", "simctl list runtimes: missing `runtimes`");
 	const out = runtimes.map(toSimRuntime).filter((r): r is SimRuntime => r !== undefined);
-	return ok(out.sort((a, b) => compareVersionDesc(a.version, b.version)));
+	return resultFactory.ok(out.sort((a, b) => compareVersionDesc(a.version, b.version)));
 }
 
 export type SimDeviceType = { identifier: string; name: string };
@@ -182,8 +185,8 @@ export function parseSimctlDeviceTypes(stdout: string): Result<SimDeviceType[], 
 	const parsed = parseJson(stdout, "simctl list devicetypes");
 	if (!parsed.success) return parsed;
 	const { devicetypes } = parsed.data;
-	if (!Array.isArray(devicetypes)) return wardenErr("failed", "simctl list devicetypes: missing `devicetypes`");
-	return ok(
+	if (!Array.isArray(devicetypes)) return wardenErrors.err("failed", "simctl list devicetypes: missing `devicetypes`");
+	return resultFactory.ok(
 		devicetypes.flatMap((t) =>
 			isObject(t) && typeof t.identifier === "string" && typeof t.name === "string"
 				? [{ identifier: t.identifier, name: t.name }]
@@ -215,20 +218,23 @@ export function resolveCreateTarget(
 	const type = types.find((t) => profileSlug(t.name) === profile);
 	if (!type) {
 		const known = types.map((t) => profileSlug(t.name)).join(", ");
-		return wardenErr("not_found", `no iOS device type for profile "${profile}" (known: ${known})`);
+		return wardenErrors.err("not_found", `no iOS device type for profile "${profile}" (known: ${known})`);
 	}
 	const candidates = runtimes.filter((r) => runtimeMatches(r, runtime));
 	if (candidates.length === 0) {
 		const known = runtimes.map((r) => shortRuntime(r.identifier)).join(", ");
-		return wardenErr("not_found", `no available iOS runtime matching "${runtime}" (available: ${known || "none"})`);
+		return wardenErrors.err(
+			"not_found",
+			`no available iOS runtime matching "${runtime}" (available: ${known || "none"})`
+		);
 	}
 	const supported = candidates.find(
 		(r) => r.supportedDeviceTypes === undefined || r.supportedDeviceTypes.includes(type.identifier)
 	);
 	if (!supported) {
-		return wardenErr("not_found", `no iOS runtime matching "${runtime ?? "latest"}" supports ${type.name}`);
+		return wardenErrors.err("not_found", `no iOS runtime matching "${runtime ?? "latest"}" supports ${type.name}`);
 	}
-	return ok({ type, runtime: supported });
+	return resultFactory.ok({ type, runtime: supported });
 }
 
 /**
@@ -261,8 +267,8 @@ async function runCmd(runner: TimedExec, cmd: string[], timeoutMs?: number): Pro
 async function simctl(runner: TimedExec, args: string[], timeoutMs?: number): AsyncResult<string, WardenError> {
 	const cmd = ["xcrun", "simctl", ...args];
 	const result = await runCmd(runner, cmd, timeoutMs);
-	if (typeof result === "string") return wardenErr("timeout", result, { retryable: true });
-	return result.exitCode === 0 ? ok(result.stdout) : wardenErr("failed", execError(cmd, result));
+	if (typeof result === "string") return wardenErrors.err("timeout", result, { retryable: true });
+	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : wardenErrors.err("failed", execError(cmd, result));
 }
 
 /** simctl reports "Unable to <verb> device in current state: <State>" when already there. */
@@ -274,10 +280,11 @@ async function idempotent(
 ): AsyncResult<void, WardenError> {
 	const cmd = ["xcrun", "simctl", ...args];
 	const result = await runCmd(runner, cmd, timeoutMs);
-	if (typeof result === "string") return wardenErr("timeout", result, { retryable: true });
-	if (result.exitCode === 0) return ok(undefined);
-	if (`${result.stderr}\n${result.stdout}`.includes(`current state: ${alreadyState}`)) return ok(undefined);
-	return wardenErr("failed", execError(cmd, result));
+	if (typeof result === "string") return wardenErrors.err("timeout", result, { retryable: true });
+	if (result.exitCode === 0) return resultFactory.ok(undefined);
+	if (`${result.stderr}\n${result.stdout}`.includes(`current state: ${alreadyState}`))
+		return resultFactory.ok(undefined);
+	return wardenErrors.err("failed", execError(cmd, result));
 }
 
 /**
@@ -295,7 +302,7 @@ export async function deleteSim(
 		if (!down.success) return down;
 	}
 	const deleted = await simctl(runner, ["delete", udid]);
-	return deleted.success ? ok(undefined) : deleted;
+	return deleted.success ? resultFactory.ok(undefined) : deleted;
 }
 
 /**
@@ -396,10 +403,14 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 	const sleep = options.sleep ?? Bun.sleep;
 	const waitReady = async (id: string, timeoutMs: number): AsyncResult<void, WardenError> => {
 		const out = await simctl(runner, ["bootstatus", id, "-b"], timeoutMs);
-		if (out.success) return ok(undefined);
-		return wardenErr(out.error.code, `${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${out.error.message}`, {
-			retryable: true,
-		});
+		if (out.success) return resultFactory.ok(undefined);
+		return wardenErrors.err(
+			out.error.code,
+			`${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${out.error.message}`,
+			{
+				retryable: true,
+			}
+		);
 	};
 	const record = (id: string, name: string, profile: string, runtime: string): InventoryDevice => {
 		deps.store.recordDevice({ platform: "ios", id, name, profile, runtime }, deps.now());
@@ -491,7 +502,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 	};
 	/** A phone answers `lockState` (locked or not), else its failure as a coded error. */
 	const probePhone = async (id: string): AsyncResult<void, WardenError> =>
-		codedError(await probePhysicalIos(runner, id), "failed");
+		wardenErrors.coded(await probePhysicalIos(runner, id), "failed");
 	return {
 		platform: "ios",
 
@@ -505,11 +516,11 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 				simctl(runner, ["list", "devices", "available", "-j"], IOS_TIMEOUTS.listMs),
 				options.physical === true
 					? listPhysicalIos(runner, { named: options.namedPhysical ?? [] })
-					: Promise.resolve(ok<InventoryDevice[]>([])),
+					: Promise.resolve(resultFactory.ok<InventoryDevice[]>([])),
 			]);
 			if (!out.success) return out;
 			const sims = parseSimctlDevices(out.data);
-			return sims.success && phones.success ? ok([...sims.data, ...phones.data]) : sims;
+			return sims.success && phones.success ? resultFactory.ok([...sims.data, ...phones.data]) : sims;
 		},
 
 		async create(name, profile, runtime) {
@@ -518,7 +529,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			if (options.clone) {
 				const cloned = await options.clone(name, typeProfile, runtime);
 				if (cloned.success) {
-					return ok(await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime)));
+					return resultFactory.ok(await recordCreated(record(cloned.data.udid, name, profile, cloned.data.runtime)));
 				}
 				deps.log?.(`clone failed (${cloned.error.message}) — creating ${name} fresh (slow first boot)`);
 			}
@@ -531,8 +542,8 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			);
 			if (!created.success) return created;
 			const id = created.data.trim();
-			if (!id) return wardenErr("failed", `simctl create ${name}: no udid returned`);
-			return ok(record(id, name, profile, shortRuntime(target.data.runtime.identifier)));
+			if (!id) return wardenErrors.err("failed", `simctl create ${name}: no udid returned`);
+			return resultFactory.ok(record(id, name, profile, shortRuntime(target.data.runtime.identifier)));
 		},
 
 		boot: async (id) =>
@@ -555,7 +566,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			if (typeof status === "string") {
 				return {
 					kind: "not-ready",
-					error: wardenErr("timeout", `${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${status}`, {
+					error: wardenErrors.err("timeout", `${id} not ready within ${Math.round(timeoutMs / 1000)}s: ${status}`, {
 						retryable: true,
 					}).error,
 				};
@@ -566,9 +577,13 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 			if (left <= 0) {
 				return {
 					kind: "not-ready",
-					error: wardenErr("timeout", `${id} not ready within ${Math.round(timeoutMs / 1000)}s: booted, no time left`, {
-						retryable: true,
-					}).error,
+					error: wardenErrors.err(
+						"timeout",
+						`${id} not ready within ${Math.round(timeoutMs / 1000)}s: booted, no time left`,
+						{
+							retryable: true,
+						}
+					).error,
 				};
 			}
 			const ready = await waitReady(id, left);

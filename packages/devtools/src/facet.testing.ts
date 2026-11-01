@@ -1,4 +1,4 @@
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { ConsoleLine, DevtoolsFacet, NetworkEntry, ReactTree, TreeOptions } from "./devtools.types";
 import type { SelectedTarget } from "./inspector";
 
@@ -40,10 +40,10 @@ export function stubFacet(): StubFacet {
 		facet: {
 			async evaluate(expression) {
 				stub.evaluated.push(expression);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 			async reloadJs() {
-				return ok({ method: "expo" as const });
+				return resultFactory.ok({ method: "expo" as const });
 			},
 			console: {
 				lines: () => stub.consoleLines,
@@ -62,13 +62,13 @@ export function stubFacet(): StubFacet {
 			},
 			async tree(options) {
 				stub.treeCalls.push(options);
-				return ok(stub.tree);
+				return resultFactory.ok(stub.tree);
 			},
 			target: TARGET,
 			on: () => () => undefined,
 			async attachArtifacts(dir) {
 				stub.artifactDirs.push(dir);
-				return ok({ console: `${dir}/console.jsonl`, network: `${dir}/network.jsonl` });
+				return resultFactory.ok({ console: `${dir}/console.jsonl`, network: `${dir}/network.jsonl` });
 			},
 			close() {
 				closes += 1;

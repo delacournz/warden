@@ -4,7 +4,7 @@ import { buildProfile, buildSourceMap, fakeCdp } from "@delacour/warden-perf/js/
 import { jsOk } from "@delacour/warden-perf/js/js.types";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { createSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfJs } from "./js";
 import { asMe, fakePerfDeps } from "./testing";
@@ -50,7 +50,7 @@ function setup(metro: string | null = METRO) {
 	const js: JsDeps = {
 		open: async (o) => {
 			opened.push(o);
-			return ok({ ...cdp, close: () => undefined });
+			return resultFactory.ok({ ...cdp, close: () => undefined });
 		},
 		fetchMap: async () => jsOk(buildSourceMap(["/work/src/Feed.tsx"], [[[0, 0, 11, 0]]])),
 		sleep: async (ms) => {
@@ -109,7 +109,7 @@ describe("warden perf js", () => {
 	test("Hermes without a Profiler: engine_unavailable naming the method, exit 3", async () => {
 		const s = setup();
 		const bare = fakeCdp({ "Profiler.start": { __error: "'Profiler.start' wasn't found" } });
-		s.js.open = async () => ok({ ...bare, close: () => undefined });
+		s.js.open = async () => resultFactory.ok({ ...bare, close: () => undefined });
 		expect(await run(s)).toBe(3);
 		const doc = JSON.parse(s.c.stdout.join("\n"));
 		expect(doc.error).toMatchObject({ code: "engine_unavailable" });

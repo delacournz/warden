@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type DeviceIo, installOnPhone, probePhone, uninstallFromPhone } from "./install-device";
 import type { InstalledApp } from "./resolve";
 
@@ -101,9 +101,9 @@ export async function probeApp(
 	const res = await deps.exec(probeArgv(target, bundleId, deps.env));
 	if (target.platform === "ios") {
 		const container = res.stdout.trim();
-		return ok(res.exitCode === 0 && container !== "" ? { present: true, container } : { present: false });
+		return resultFactory.ok(res.exitCode === 0 && container !== "" ? { present: true, container } : { present: false });
 	}
-	return ok({ present: res.exitCode === 0 && res.stdout.includes("package:") });
+	return resultFactory.ok({ present: res.exitCode === 0 && res.stdout.includes("package:") });
 }
 
 /** Is `bundleId` installed on the device? */
@@ -113,7 +113,7 @@ export async function isAppInstalled(
 	bundleId: string
 ): AsyncResult<boolean> {
 	const probed = await probeApp(deps, target, bundleId);
-	return probed.success ? ok(probed.data.present) : probed;
+	return probed.success ? resultFactory.ok(probed.data.present) : probed;
 }
 
 /** Run `cmd`, stdout trimmed; undefined when it fails. */
@@ -160,11 +160,11 @@ export async function appMatchesArtifact(
 	installedDir?: string
 ): AsyncResult<boolean> {
 	if (target.platform !== "ios") return androidMatchesArtifact(deps, target, bundleId, artifactPath);
-	if (isPhoneIos(target)) return ok(false);
+	if (isPhoneIos(target)) return resultFactory.ok(false);
 	const installedAt = installedDir ?? (await out(deps, probeArgv(target, bundleId, deps.env)));
-	if (!installedAt) return ok(false);
+	if (!installedAt) return resultFactory.ok(false);
 	const [installed, cached] = await Promise.all([appIdentity(deps, installedAt), appIdentity(deps, artifactPath)]);
-	return ok(installed !== undefined && installed === cached);
+	return resultFactory.ok(installed !== undefined && installed === cached);
 }
 
 /** The installed apk (`pm path` prints one `package:` line per split; the base is first) has the cached apk's digest. */
@@ -179,13 +179,13 @@ async function androidMatchesArtifact(
 		?.split("\n")
 		.map((line) => line.trim().replace(/^package:/, ""))
 		.find((line) => line.endsWith(".apk"));
-	if (!apk) return ok(false);
+	if (!apk) return resultFactory.ok(false);
 	const [onDevice, cached] = await Promise.all([
 		out(deps, [androidTools(deps.env).adb, "-s", target.deviceId, "shell", "sha256sum", apk]),
 		(deps.fileDigest ?? nodeFileDigest)(artifactPath),
 	]);
 	const installed = onDevice?.split(/\s+/)[0];
-	return ok(installed !== undefined && installed !== "" && installed === cached);
+	return resultFactory.ok(installed !== undefined && installed !== "" && installed === cached);
 }
 
 /** `xcrun simctl uninstall <udid> <bundleId>` / `adb -s <serial> uninstall <bundleId>`. */
@@ -202,20 +202,25 @@ export function uninstallArgv(target: InstallTarget, bundleId: string, env: Inst
 export async function uninstallApp(deps: InstallerDeps, target: InstallTarget, bundleId: string): AsyncResult<void> {
 	const present = await isAppInstalled(deps, target, bundleId);
 	if (!present.success) return present;
-	if (!present.data) return ok(undefined);
+	if (!present.data) return resultFactory.ok(undefined);
 	if (isPhoneIos(target)) {
 		const gone = await uninstallFromPhone(phoneDeps(deps), target.deviceId, bundleId);
 		if (!gone.success) return gone;
 		const left = await isAppInstalled(deps, target, bundleId);
 		if (!left.success) return left;
-		return left.data ? err(`uninstalled ${bundleId} from ${target.deviceId} but it is still there`) : ok(undefined);
+		return left.data
+			? resultFactory.err(`uninstalled ${bundleId} from ${target.deviceId} but it is still there`)
+			: resultFactory.ok(undefined);
 	}
 	const argv = uninstallArgv(target, bundleId, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
-	if (res.exitCode !== 0 || /Failure/.test(res.stdout)) return err(`uninstall failed: ${execError(argv, res)}`);
+	if (res.exitCode !== 0 || /Failure/.test(res.stdout))
+		return resultFactory.err(`uninstall failed: ${execError(argv, res)}`);
 	const after = await isAppInstalled(deps, target, bundleId);
 	if (!after.success) return after;
-	return after.data ? err(`uninstalled ${bundleId} from ${target.deviceId} but it is still there`) : ok(undefined);
+	return after.data
+		? resultFactory.err(`uninstalled ${bundleId} from ${target.deviceId} but it is still there`)
+		: resultFactory.ok(undefined);
 }
 
 /** Install `appPath`, then confirm `bundleId` is present. */
@@ -226,7 +231,7 @@ export async function installApp(
 	bundleId: string
 ): AsyncResult<void> {
 	const done = await installAndProbe(deps, target, appPath, bundleId);
-	return done.success ? ok(undefined) : done;
+	return done.success ? resultFactory.ok(undefined) : done;
 }
 
 /** ABI directories under `lib/` in `unzip -Z1` output; empty for a pure-Java APK. */
@@ -289,16 +294,19 @@ export async function installAndProbe(
 	if (isPhoneIos(target)) return installOnPhone(phoneDeps(deps), target.deviceId, appPath, bundleId);
 	if (target.platform === "android" && target.physical === true) {
 		const mismatch = await abiMismatch(deps, target, appPath);
-		if (mismatch !== undefined) return err(mismatch);
+		if (mismatch !== undefined) return resultFactory.err(mismatch);
 	}
 	const argv = installArgv(target, appPath, deps.env);
 	const res = await deps.exec(argv, { timeoutMs: INSTALL_TIMEOUT_MS });
 	// `adb install` can exit 0 while printing `Failure [INSTALL_…]`
-	if (res.exitCode !== 0 || /Failure \[/.test(res.stdout)) return err(installFailure(argv, res, target, bundleId));
+	if (res.exitCode !== 0 || /Failure \[/.test(res.stdout))
+		return resultFactory.err(installFailure(argv, res, target, bundleId));
 	const present = await probeApp(deps, target, bundleId);
 	if (!present.success) return present;
 	if (!present.data.present) {
-		return err(`installed ${appPath} on ${target.deviceId} but ${bundleId} is not there — wrong bundle id in config?`);
+		return resultFactory.err(
+			`installed ${appPath} on ${target.deviceId} but ${bundleId} is not there — wrong bundle id in config?`
+		);
 	}
 	return present;
 }
@@ -374,31 +382,36 @@ async function resetIos(
 	const dataArgv = ["xcrun", "simctl", "get_app_container", udid, bundleId, "data"];
 	const data = await deps.exec(dataArgv);
 	const dataDir = data.stdout.trim();
-	if (data.exitCode !== 0 || dataDir === "") return err(`data container not found: ${execError(dataArgv, data)}`);
+	if (data.exitCode !== 0 || dataDir === "")
+		return resultFactory.err(`data container not found: ${execError(dataArgv, data)}`);
 	try {
 		await wipeDir(deps.fs, dataDir);
 		for (const sub of DATA_SUBDIRS) await deps.fs.mkdir(`${dataDir}/${sub}`);
 		await wipeGroups(deps, udid, bundleId);
 	} catch (e) {
-		return err(`wiping app data failed: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`wiping app data failed: ${e instanceof Error ? e.message : String(e)}`);
 	}
 
 	const privacy = resetArgv(target, bundleId, deps.env);
 	const priv = await deps.exec(privacy);
-	if (priv.exitCode !== 0) return err(`privacy reset failed: ${execError(privacy, priv)}`);
+	if (priv.exitCode !== 0) return resultFactory.err(`privacy reset failed: ${execError(privacy, priv)}`);
 
-	return opts.keychain ? resetSimKeychain(deps, target) : ok(undefined);
+	return opts.keychain ? resetSimKeychain(deps, target) : resultFactory.ok(undefined);
 }
 
 /** iOS: `simctl keychain <udid> reset` (the whole simulator's keychain; an uninstall leaves it). Android: nothing. */
 export async function resetSimKeychain(deps: InstallerDeps, target: InstallTarget): AsyncResult<void> {
-	if (target.platform !== "ios") return ok(undefined);
+	if (target.platform !== "ios") return resultFactory.ok(undefined);
 	if (isPhoneIos(target)) {
-		return err("--reset-keychain is for simulators: a phone's keychain is not reset (uninstalling keeps it)");
+		return resultFactory.err(
+			"--reset-keychain is for simulators: a phone's keychain is not reset (uninstalling keeps it)"
+		);
 	}
 	const argv = ["xcrun", "simctl", "keychain", target.deviceId, "reset"];
 	const res = await deps.exec(argv);
-	return res.exitCode === 0 ? ok(undefined) : err(`keychain reset failed: ${execError(argv, res)}`);
+	return res.exitCode === 0
+		? resultFactory.ok(undefined)
+		: resultFactory.err(`keychain reset failed: ${execError(argv, res)}`);
 }
 
 /**
@@ -415,17 +428,18 @@ export async function resetAppData(
 	opts: ResetOptions = {}
 ): AsyncResult<void> {
 	if (isPhoneIos(target)) {
-		return err(
+		return resultFactory.err(
 			`app data of ${bundleId} cannot be reset in place on a phone: warden reinstalls it (--install-mode reinstall)`
 		);
 	}
 	const present = await isAppInstalled(deps, target, bundleId);
 	if (!present.success) return present;
-	if (!present.data) return err(`${bundleId} is not installed on ${target.deviceId}`);
+	if (!present.data) return resultFactory.err(`${bundleId} is not installed on ${target.deviceId}`);
 	if (target.platform === "ios") return resetIos(deps, target, bundleId, opts);
 
 	const argv = resetArgv(target, bundleId, deps.env);
 	const res = await deps.exec(argv);
-	if (res.exitCode !== 0 || !res.stdout.includes("Success")) return err(`pm clear failed: ${execError(argv, res)}`);
-	return ok(undefined);
+	if (res.exitCode !== 0 || !res.stdout.includes("Success"))
+		return resultFactory.err(`pm clear failed: ${execError(argv, res)}`);
+	return resultFactory.ok(undefined);
 }

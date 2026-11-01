@@ -1,5 +1,5 @@
 import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-driver/settle";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "./output";
 import type { UiOptionValues } from "./run";
 
@@ -14,12 +14,12 @@ export function positiveInt(name: string, raw: string): Result<number, UiError> 
 	if (!/^\d+$/.test(raw) || Number(raw) < 1) {
 		return { success: false, error: uiError("usage", `${name} must be a positive integer, got "${raw}"`) };
 	}
-	return ok(Number(raw));
+	return resultFactory.ok(Number(raw));
 }
 
 /** `--settle [ms]` → the budget, or undefined when not asked for. */
 export function parseSettle(raw: true | string | undefined): Result<number | undefined, UiError> {
-	if (raw === undefined) return ok(undefined);
-	if (raw === true) return ok(DEFAULT_SETTLE_TIMEOUT_MS);
+	if (raw === undefined) return resultFactory.ok(undefined);
+	if (raw === true) return resultFactory.ok(DEFAULT_SETTLE_TIMEOUT_MS);
 	return positiveInt("--settle", raw);
 }

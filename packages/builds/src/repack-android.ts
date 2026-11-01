@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSy
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { ApplyRepack, ApplyRepackInput, ApplyRepackOutput, RepackFallback } from "./repack.types";
 
 /** The APK entry RN's gradle plugin writes the bundle to (`bundleAssetName`'s default). */
@@ -81,15 +81,15 @@ function resolveKeystore(options: AndroidRepackerOptions): { keystore: AndroidKe
 /** Run a tool; a non-zero exit is an error naming the tool and its stderr (or stdout). */
 async function run(exec: Exec, cmd: readonly string[], cwd?: string): AsyncResult<ExecResult> {
 	const res = await exec(cmd, cwd === undefined ? undefined : { cwd });
-	if (res.exitCode === 0) return ok(res);
+	if (res.exitCode === 0) return resultFactory.ok(res);
 	const detail = (res.stderr.trim() || res.stdout.trim()).split("\n").slice(-6).join("\n");
-	return err(`${basename(cmd[0] ?? "")} failed (exit ${res.exitCode}): ${detail}`);
+	return resultFactory.err(`${basename(cmd[0] ?? "")} failed (exit ${res.exitCode}): ${detail}`);
 }
 
 async function listEntries(exec: Exec, apk: string): AsyncResult<string[]> {
 	const res = await run(exec, ["unzip", "-Z1", apk]);
 	if (!res.success) return res;
-	return ok(res.data.stdout.split("\n").filter((line) => line !== ""));
+	return resultFactory.ok(res.data.stdout.split("\n").filter((line) => line !== ""));
 }
 
 /** Every file under `root`, as posix-style paths relative to it. */
@@ -181,7 +181,7 @@ function fallbackReason(missing: string[]): string {
 async function packageName(exec: Exec, aapt2: string, apk: string): AsyncResult<string | undefined> {
 	const res = await run(exec, [aapt2, "dump", "badging", apk]);
 	if (!res.success) return res;
-	return ok(/package: name='([^']+)'/.exec(res.data.stdout)?.[1]);
+	return resultFactory.ok(/package: name='([^']+)'/.exec(res.data.stdout)?.[1]);
 }
 
 function stageFile(from: string, stageDir: string, entry: string): void {
@@ -215,9 +215,9 @@ async function swapEntries(input: ApplyRepackInput, swap: Swap, work: string, ap
 	const bundled = await run(exec, ["zip", "-q", "-X", "-D", "-0", apk, BUNDLE_ENTRY], bundleStage);
 	if (!bundled.success) return bundled;
 	const roots = existsSync(assetStage) ? readdirSync(assetStage) : [];
-	if (roots.length === 0) return ok(undefined);
+	if (roots.length === 0) return resultFactory.ok(undefined);
 	const added = await run(exec, ["zip", "-q", "-X", "-D", "-r", apk, ...roots], assetStage);
-	return added.success ? ok(undefined) : added;
+	return added.success ? resultFactory.ok(undefined) : added;
 }
 
 /** zipalign `apk`, sign it (v2/v3) to `signed`, and verify. */
@@ -243,21 +243,22 @@ async function alignAndSign(exec: Exec, swap: Swap, work: string, apk: string, s
 	]);
 	if (!sign.success) return sign;
 	const verify = await run(exec, [tools.apksigner, "verify", signed]);
-	return verify.success ? ok(undefined) : verify;
+	return verify.success ? resultFactory.ok(undefined) : verify;
 }
 
 /** The signed APK holds the bundle and still has the base's package name (checked when `aapt2` is available). */
 async function validate(exec: Exec, tools: Tools, baseArtifact: string, signed: string): AsyncResult<void> {
 	const entries = await listEntries(exec, signed);
 	if (!entries.success) return entries;
-	if (!entries.data.includes(BUNDLE_ENTRY)) return err(`repacked APK has no ${BUNDLE_ENTRY} entry`);
-	if (tools.aapt2 === undefined) return ok(undefined);
+	if (!entries.data.includes(BUNDLE_ENTRY)) return resultFactory.err(`repacked APK has no ${BUNDLE_ENTRY} entry`);
+	if (tools.aapt2 === undefined) return resultFactory.ok(undefined);
 	const before = await packageName(exec, tools.aapt2, baseArtifact);
 	if (!before.success) return before;
 	const after = await packageName(exec, tools.aapt2, signed);
 	if (!after.success) return after;
-	if (before.data !== after.data) return err(`repack changed the package name (${before.data} -> ${after.data})`);
-	return ok(undefined);
+	if (before.data !== after.data)
+		return resultFactory.err(`repack changed the package name (${before.data} -> ${after.data})`);
+	return resultFactory.ok(undefined);
 }
 
 type Prepared = { swap: Swap } | { fallback: RepackFallback } | { error: string };
@@ -293,8 +294,8 @@ export function androidRepacker(options: AndroidRepackerOptions = {}): ApplyRepa
 	return async (input: ApplyRepackInput): AsyncResult<ApplyRepackOutput | RepackFallback> => {
 		const { exec, baseArtifact, outDir } = input;
 		const prepared = await prepare(options, input);
-		if ("error" in prepared) return err(prepared.error);
-		if ("fallback" in prepared) return ok(prepared.fallback);
+		if ("error" in prepared) return resultFactory.err(prepared.error);
+		if ("fallback" in prepared) return resultFactory.ok(prepared.fallback);
 		const { swap } = prepared;
 
 		mkdirSync(outDir, { recursive: true });
@@ -313,9 +314,9 @@ export function androidRepacker(options: AndroidRepackerOptions = {}): ApplyRepa
 			}
 			const artifact = join(outDir, basename(baseArtifact));
 			renameSync(signed, artifact);
-			return ok({ artifact });
+			return resultFactory.ok({ artifact });
 		} catch (error) {
-			return err(error);
+			return resultFactory.err(error);
 		} finally {
 			rmSync(work, { recursive: true, force: true });
 		}

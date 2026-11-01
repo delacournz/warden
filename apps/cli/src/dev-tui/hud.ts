@@ -1,6 +1,6 @@
 import { parseDuration } from "@delacour/warden-config/duration";
 import type { MetricsSampler, MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { HUD_HISTORY, type HudFps, type HudSample } from "./model";
 
@@ -16,8 +16,9 @@ export const HUD_TICK_TIMEOUT_MS = 15_000;
 export function parseHudInterval(raw: string): Result<number> {
 	const parsed = parseDuration(raw);
 	if (!parsed.success) return parsed;
-	if (parsed.data < HUD_MIN_INTERVAL_MS) return err(`${raw} is under the ${HUD_MIN_INTERVAL_MS}ms minimum`);
-	return ok(parsed.data);
+	if (parsed.data < HUD_MIN_INTERVAL_MS)
+		return resultFactory.err(`${raw} is under the ${HUD_MIN_INTERVAL_MS}ms minimum`);
+	return resultFactory.ok(parsed.data);
 }
 
 export type HudDeps = {
@@ -89,14 +90,14 @@ export function startHud(deps: HudDeps): Hud {
 	};
 
 	const samplerFor = async (target: MetricsTarget): Promise<Result<MetricsSampler, string>> => {
-		if (current && sameTarget(current.target, target)) return ok(current.sampler);
+		if (current && sameTarget(current.target, target)) return resultFactory.ok(current.sampler);
 		const made = await makeSampler(deps.ctx, target, deps.now());
-		if (!made.success) return err(made.error.message);
+		if (!made.success) return resultFactory.err(made.error.message);
 		current = { target, sampler: made.data };
 		history = [];
 		fps = undefined;
 		ticks = 0;
-		return ok(made.data);
+		return resultFactory.ok(made.data);
 	};
 
 	const frameStats = async (target: MetricsTarget): Promise<void> => {

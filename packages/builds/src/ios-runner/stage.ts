@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { isSafeSourcePath } from "./pack";
 import type { RunnerSourceFiles } from "./runner-build.types";
 
@@ -49,15 +49,16 @@ export async function stageRunnerSources(o: {
 	if (!loaded.success) return loaded;
 	const files = loaded.data;
 	const project = "ios-runner/WardenRunner.xcodeproj/project.pbxproj";
-	if (!(project in files)) return err(`the iOS runner sources lack ${project}`);
+	if (!(project in files)) return resultFactory.err(`the iOS runner sources lack ${project}`);
 	for (const name of Object.keys(files)) {
-		if (!isSafeSourcePath(name)) return err(`the iOS runner sources have a bad path ${JSON.stringify(name)}`);
+		if (!isSafeSourcePath(name))
+			return resultFactory.err(`the iOS runner sources have a bad path ${JSON.stringify(name)}`);
 	}
 	const hash = runnerSourceHash(files);
 	const key = `${o.version}-${hash}`;
 	const dir = join(runnerRoot(o.home), "src", key);
 	const staged: StagedRunner = { dir, project: join(dir, "ios-runner", "WardenRunner.xcodeproj"), key, hash };
-	if (existsSync(join(dir, READY_MARKER))) return ok(staged);
+	if (existsSync(join(dir, READY_MARKER))) return resultFactory.ok(staged);
 	const tmp = `${dir}.tmp-${process.pid}`;
 	try {
 		rmSync(tmp, { recursive: true, force: true });
@@ -75,9 +76,9 @@ export async function stageRunnerSources(o: {
 			// another warden renamed its copy in first: same key, same content
 			if (!existsSync(join(dir, READY_MARKER))) throw cause;
 		}
-		return ok(staged);
+		return resultFactory.ok(staged);
 	} catch (cause) {
-		return err(`could not stage the iOS runner sources to ${dir}: ${String(cause)}`);
+		return resultFactory.err(`could not stage the iOS runner sources to ${dir}: ${String(cause)}`);
 	} finally {
 		rmSync(tmp, { recursive: true, force: true });
 	}

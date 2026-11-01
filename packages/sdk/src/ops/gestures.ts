@@ -10,7 +10,7 @@ import {
 } from "@delacour/warden-screen/actions";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction, pointAt, recordTarget, targetLabel, targetOf } from "./act";
 import { currentScreen } from "./actions";
 import { fail, fromDriver, opError } from "./errors";
@@ -51,7 +51,7 @@ export function parsePaths(raw: readonly string[], screen: ScreenInfo): Result<P
 		if (points.length < 2) return bad(`path ${index + 1} needs at least 2 points`);
 		paths.push(points);
 	}
-	return ok(paths);
+	return resultFactory.ok(paths);
 }
 
 /** `x,y x,y|x,y x,y`: the recorded form of the paths. */
@@ -75,7 +75,7 @@ export async function gestureRegion(
 	if (!screen.success) return screen;
 	const whole = screenRect(screen.data);
 	if (target === undefined || target.trim() === "") {
-		return ok({ rect: whole, screen: screen.data, center: { x: whole.width / 2, y: whole.height / 2 } });
+		return resultFactory.ok({ rect: whole, screen: screen.data, center: { x: whole.width / 2, y: whole.height / 2 } });
 	}
 	const parsed = targetOf(target);
 	if (!parsed.success) return parsed;
@@ -83,10 +83,10 @@ export async function gestureRegion(
 	if (!resolved.success) return resolved;
 	const where = recordTarget(parsed.data, resolved.data);
 	if (!resolved.data.element) {
-		return ok({ rect: whole, screen: screen.data, center: resolved.data.point, target: where });
+		return resultFactory.ok({ rect: whole, screen: screen.data, center: resolved.data.point, target: where });
 	}
 	const rect = visibleRect(resolved.data.element.frame, screen.data);
-	return ok({
+	return resultFactory.ok({
 		rect,
 		screen: screen.data,
 		center: { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
@@ -103,7 +103,7 @@ export function requireCapability(
 	fingers = 2
 ): Result<void, WardenError> {
 	const { capabilities } = driver;
-	if ((key === "path" || capabilities.pinch) && fingers <= capabilities.maxPointers) return ok(undefined);
+	if ((key === "path" || capabilities.pinch) && fingers <= capabilities.maxPointers) return resultFactory.ok(undefined);
 	return fail(
 		opError("failed", `${verb} is not supported on ${platform} here`, {
 			hint: "Android needs warden-uiad (Android 8+, WARDEN_ANDROID_UIAD unset)",
@@ -159,7 +159,7 @@ async function twoFinger(
 			: await driver.rotate(center, amount, { durationMs, radius })
 	);
 	if (!driven.success) return driven;
-	return ok({ target, center, radius, durationMs });
+	return resultFactory.ok({ target, center, radius, durationMs });
 }
 
 const around = (run: TwoFingerRun): string =>

@@ -1,6 +1,6 @@
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
 import { describeOwner, isPhysicalIosId } from "@delacour/warden-store/types";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { conditionsLine } from "./condition-text";
 import type { UiDevice } from "./device";
@@ -51,7 +51,11 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 			`recording ${result.recording === null ? "none" : `${result.recording.name} → ${result.recording.target} (${result.recording.steps ?? "?"} steps)`}`,
 			...(conditionsText === undefined ? [] : [`conditions ${conditionsText}`]),
 		].join("\n");
-		return ok({ device: { udid: device.udid, platform: device.platform, name: device.name }, result, text });
+		return resultFactory.ok({
+			device: { udid: device.udid, platform: device.platform, name: device.name },
+			result,
+			text,
+		});
 	});
 }
 

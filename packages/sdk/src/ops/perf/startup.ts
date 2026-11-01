@@ -7,7 +7,7 @@ import { formatSessionId } from "@delacour/warden-perf/shared/session.schema";
 import { type StartupMethod, slowStartupFinding } from "@delacour/warden-perf/startup/findings";
 import { type StartupStats, summarize } from "@delacour/warden-perf/startup/stats";
 import type { Platform } from "@delacour/warden-store/types";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { writeFileAtomic } from "./device-state";
 import type { PerfEnv } from "./env";
 import { perfRoot } from "./paths";
@@ -77,7 +77,7 @@ export const defaultStartupIo: StartupIo = {
 			}
 			try {
 				const out = await session.data.evaluate(MARKS_EXPRESSION);
-				return out.success ? ok(toMarks(String(out.data))) : { success: false, error: out.error.message };
+				return out.success ? resultFactory.ok(toMarks(String(out.data))) : { success: false, error: out.error.message };
 			} finally {
 				session.data.close();
 			}
@@ -229,5 +229,5 @@ export async function startupWork(
 		},
 		{ maxLines: MAX_TEXT_LINES }
 	);
-	return ok({ device: info, result: { ...doc, path: file }, text });
+	return resultFactory.ok({ device: info, result: { ...doc, path: file }, text });
 }

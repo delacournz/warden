@@ -1,5 +1,5 @@
 import { gunzipSync } from "node:zlib";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 const BLOCK = 512;
 const decoder = new TextDecoder();
@@ -49,9 +49,9 @@ function* entries(tar: Uint8Array): Generator<Entry> {
 
 function gunzip(tgz: Uint8Array): Result<Uint8Array> {
 	try {
-		return ok(gunzipSync(tgz));
+		return resultFactory.ok(gunzipSync(tgz));
 	} catch (error) {
-		return err(`not a gzipped tarball: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`not a gzipped tarball: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -60,7 +60,7 @@ export function extractFile(tgz: Uint8Array, path: string): Result<Uint8Array> {
 	const tar = gunzip(tgz);
 	if (!tar.success) return tar;
 	for (const entry of entries(tar.data)) {
-		if ((entry.type === "0" || entry.type === "") && entry.name === path) return ok(entry.body.slice());
+		if ((entry.type === "0" || entry.type === "") && entry.name === path) return resultFactory.ok(entry.body.slice());
 	}
-	return err(`${path} not found in tarball`);
+	return resultFactory.err(`${path} not found in tarball`);
 }

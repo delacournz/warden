@@ -2,7 +2,7 @@ import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { type OpenParams, open } from "@delacour/warden-sdk/ops/open";
 import type { WardenError } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { leaseHostFromContext } from "../lease-host";
 import { type ActionOptionValues, parseSettle } from "./args";
@@ -62,7 +62,7 @@ async function installKind(
 	});
 	if (!done.success) return { success: false, error: uiError("failed", `--kind ${kind}: ${done.error.message}`) };
 	const app = "kindApp" in done.data ? done.data.kindApp : undefined;
-	return ok({
+	return resultFactory.ok({
 		kind: app?.kind ?? kind,
 		fresh: done.data.source !== "installed",
 		...(app?.kind === "simulator" ? { jsKey: app.repack.jsKey } : {}),
@@ -78,7 +78,7 @@ async function installRequestedKind(
 	opts: OpenOptionValues
 ): Promise<Result<KindInstall | undefined, WardenError>> {
 	const { kind, metro } = opts;
-	if (kind === undefined) return ok(undefined);
+	if (kind === undefined) return resultFactory.ok(undefined);
 	if (metro !== undefined && kind !== "dev") {
 		return {
 			success: false,
@@ -153,7 +153,7 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		if (!settle.success) return settle;
 		const isUrl = URL_SCHEME.test(what);
 		if (isUrl && hasLaunchOptions(opts)) return urlWithLaunchOptions();
-		const kinded = isUrl ? ok(undefined) : await installRequestedKind(ctx, deps, device, opts);
+		const kinded = isUrl ? resultFactory.ok(undefined) : await installRequestedKind(ctx, deps, device, opts);
 		if (!kinded.success) return kinded;
 		const installed = kinded.data;
 		const relaunch = opts.relaunch === true || installed?.fresh === true;
@@ -162,6 +162,6 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 			openParams(what, opts, device, relaunch, settle.data)
 		);
 		if (!done.success || installed === undefined) return reply(device, done);
-		return reply(device, ok(withKind(done.data, installed)));
+		return reply(device, resultFactory.ok(withKind(done.data, installed)));
 	});
 }

@@ -1,10 +1,15 @@
 import type { DriverError } from "@delacour/warden-driver/driver.types";
-import { type WardenError, type WardenErrorCode, type WardenErrorExtra, wardenErr } from "@delacour/warden-types/error";
-import { ok, type Result } from "@delacour/warden-types/result";
+import {
+	type WardenError,
+	type WardenErrorCode,
+	type WardenErrorExtra,
+	wardenErrors,
+} from "@delacour/warden-types/error";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** A coded {@link WardenError} value (not wrapped in a `Result`). Optional fields are omitted unless given. */
 export function opError(code: WardenErrorCode, message: string, extra: WardenErrorExtra = {}): WardenError {
-	return wardenErr(code, message, extra).error;
+	return wardenErrors.err(code, message, extra).error;
 }
 
 /** A failed `Result` over an op error: `return fail(opError(...))`. */
@@ -39,5 +44,5 @@ export function driverError(error: DriverError): WardenError {
 
 /** `DriverError` → {@link WardenError} on a driver call's `Result`. */
 export function fromDriver<T>(result: Result<T, DriverError>): Result<T, WardenError> {
-	return result.success ? ok(result.data) : fail(driverError(result.error));
+	return result.success ? resultFactory.ok(result.data) : fail(driverError(result.error));
 }

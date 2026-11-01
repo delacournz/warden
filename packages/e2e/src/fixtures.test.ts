@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { whileLinkInFlight } from "@delacour/warden-device/device-link";
 import { devtoolsErr } from "@delacour/warden-devtools/devtools.types";
 import { stubFacet } from "@delacour/warden-devtools/testing/facet";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
 import { screenHostFor } from "./fixtures";
 import type { DevtoolsOpener } from "./session";
@@ -44,7 +44,7 @@ function hostFor(metroUrl: string | undefined, devtools: DevtoolsOpener) {
 
 describe("screenHostFor devtools", () => {
 	test("none without a Metro URL, so getByTestId never looks in React", () => {
-		const host = hostFor(undefined, async () => ok(stubFacet().facet));
+		const host = hostFor(undefined, async () => resultFactory.ok(stubFacet().facet));
 		expect(host.devtools?.()).toBeUndefined();
 	});
 
@@ -53,7 +53,7 @@ describe("screenHostFor devtools", () => {
 		let opens = 0;
 		const host = hostFor("http://127.0.0.1:8081", async () => {
 			opens += 1;
-			return ok(stub.facet);
+			return resultFactory.ok(stub.facet);
 		});
 		const devtools = host.devtools?.();
 		expect(devtools).toBeDefined();

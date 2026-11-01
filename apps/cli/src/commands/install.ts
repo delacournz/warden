@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { wardenHome } from "@delacour/warden-store/store";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import { type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";
 import type { CommandContext } from "../context";
@@ -227,11 +227,11 @@ async function guardedWrite(
 }
 
 function parseJson(text: string | undefined): Result<unknown> {
-	if (text === undefined || text.trim() === "") return ok(undefined);
+	if (text === undefined || text.trim() === "") return resultFactory.ok(undefined);
 	try {
-		return ok(JSON.parse(text));
+		return resultFactory.ok(JSON.parse(text));
 	} catch (error) {
-		return err(`invalid JSON: ${errorMessage(error)}`);
+		return resultFactory.err(`invalid JSON: ${errorMessage(error)}`);
 	}
 }
 

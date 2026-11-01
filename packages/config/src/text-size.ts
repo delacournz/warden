@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { TEXT_SIZE_NAMES, type TextSize } from "./conditions.types";
 
 /** Approximate font scale of each iOS content size category (UIFontMetrics body text; 1 = `large`, the default). */
@@ -33,16 +33,19 @@ const isName = (v: string): v is (typeof TEXT_SIZE_NAMES)[number] => (TEXT_SIZE_
 /** A name or a scale as both: the category iOS needs and the scale Android needs. */
 export function resolveTextSize(size: TextSize): Result<ResolvedTextSize> {
 	if (typeof size === "number") {
-		if (!Number.isFinite(size) || size <= 0) return err(`text size must be a positive scale, got ${String(size)}`);
+		if (!Number.isFinite(size) || size <= 0)
+			return resultFactory.err(`text size must be a positive scale, got ${String(size)}`);
 		let best = TEXT_SIZE_NAMES[0] as (typeof TEXT_SIZE_NAMES)[number];
 		for (const name of TEXT_SIZE_NAMES) {
 			if (Math.abs(TEXT_SIZE_SCALE[name] - size) < Math.abs(TEXT_SIZE_SCALE[best] - size)) best = name;
 		}
-		return ok({ category: best, scale: size });
+		return resultFactory.ok({ category: best, scale: size });
 	}
 	if (!isName(size))
-		return err(`unknown text size "${String(size)}" (use ${TEXT_SIZE_NAMES.join(", ")} or a scale like 1.3)`);
-	return ok({ category: size, scale: TEXT_SIZE_SCALE[size] });
+		return resultFactory.err(
+			`unknown text size "${String(size)}" (use ${TEXT_SIZE_NAMES.join(", ")} or a scale like 1.3)`
+		);
+	return resultFactory.ok({ category: size, scale: TEXT_SIZE_SCALE[size] });
 }
 
 /** Android's `font_scale` for `scale`, clamped to what the platform takes. */

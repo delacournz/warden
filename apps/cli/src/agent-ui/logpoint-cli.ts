@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { LogpointAddParams, LogpointInfo } from "../dev-broker/logpoints";
 import {
@@ -32,7 +32,7 @@ async function callLogpoint<T>(
 	const handle = await resolveBroker(target, deps);
 	if (!handle.success) return handle;
 	const reply = await (deps.call ?? lazyCall)(handle.data.socketPath, { method, params });
-	return reply.success ? ok(reply.data as T) : { success: false, error: brokerUiError(reply.error) };
+	return reply.success ? resultFactory.ok(reply.data as T) : { success: false, error: brokerUiError(reply.error) };
 }
 
 /** Add a logpoint; `location` is `src/x.tsx:42[:col]` (a path suffix inside the bundle). */
@@ -109,7 +109,7 @@ export async function logpointHits(
 		const error = rest.startsWith("error ") || rest === "error";
 		return [{ id, ts: line.ts, value: error ? rest.slice("error".length).trim() : rest, error, args: line.args ?? [] }];
 	});
-	return ok({ hits, total: lines.data.total });
+	return resultFactory.ok({ hits, total: lines.data.total });
 }
 
 type LogpointOptionValues = { udid?: string; json?: true };
@@ -173,7 +173,7 @@ export function uiLogpointAdd(
 		);
 		if (!added.success) return added;
 		const { logpoint } = added.data;
-		return ok({
+		return resultFactory.ok({
 			result: added.data,
 			text: describeLogpoint(logpoint),
 			...(logpoint.armed ? {} : { warnings: [logpoint.error ?? "not armed yet"] }),
@@ -191,7 +191,7 @@ export function uiLogpointList(
 		const listed = await listLogpoints(target, deps);
 		if (!listed.success) return listed;
 		const { logpoints } = listed.data;
-		return ok({
+		return resultFactory.ok({
 			result: listed.data,
 			text: logpoints.length === 0 ? "no logpoints" : logpoints.map(describeLogpoint).join("\n"),
 		});
@@ -207,7 +207,9 @@ export function uiLogpointRemove(
 ): Promise<number> {
 	return runLogpoint(ctx, deps, "logpoint rm", opts, async (target) => {
 		const removed = await removeLogpoint(target, { id }, deps);
-		return removed.success ? ok({ result: removed.data, text: `removed ${removed.data.removed}` }) : removed;
+		return removed.success
+			? resultFactory.ok({ result: removed.data, text: `removed ${removed.data.removed}` })
+			: removed;
 	});
 }
 
@@ -221,7 +223,7 @@ export function uiLogpointClear(
 		const cleared = await clearLogpoints(target, deps);
 		if (!cleared.success) return cleared;
 		const n = cleared.data.removed.length;
-		return ok({ result: cleared.data, text: `removed ${n} logpoint${n === 1 ? "" : "s"}` });
+		return resultFactory.ok({ result: cleared.data, text: `removed ${n} logpoint${n === 1 ? "" : "s"}` });
 	});
 }
 
@@ -240,7 +242,7 @@ function hitsQuery(
 	if (opts.limit !== undefined && !/^[1-9]\d*$/.test(opts.limit)) {
 		return { success: false, error: uiError("usage", `--limit must be a positive integer, got "${opts.limit}"`) };
 	}
-	return ok({
+	return resultFactory.ok({
 		...(id === undefined ? {} : { id }),
 		...(since === undefined ? {} : { since }),
 		...(opts.limit === undefined ? {} : { limit: Number(opts.limit) }),
@@ -262,7 +264,7 @@ export function uiLogpointHits(
 		const text = found.data.hits
 			.map((hit) => `${clock(hit.ts)} [${hit.id}]${hit.error ? " error" : ""} ${hit.value}`)
 			.join("\n");
-		return ok({ result: found.data, text: text === "" ? "no hits yet" : text });
+		return resultFactory.ok({ result: found.data, text: text === "" ? "no hits yet" : text });
 	});
 }
 

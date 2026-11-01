@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /**
  * What `warden sim slim` may switch off inside an iOS simulator: 15 categories of `launchd_sim`
@@ -352,14 +352,14 @@ export function validateProfile(profile: SlimProfile): Result<SlimProfile> {
 	const ids = new Set(SLIM_CATEGORIES.map((category) => category.id));
 	const badIds = profile.except.filter((id) => !ids.has(id));
 	if (badIds.length > 0)
-		return err(
+		return resultFactory.err(
 			`unknown slim categor${badIds.length === 1 ? "y" : "ies"}: ${badIds.join(", ")} (known: ${[...ids].join(", ")})`
 		);
 	const managed = managedSet();
 	const badLabels = profile.keep.filter((label) => !managed.has(label));
 	if (badLabels.length > 0)
-		return err(`not a slimmable label: ${badLabels.join(", ")} (see \`warden sim profiles --json\`)`);
-	return ok({ except: [...profile.except], keep: [...profile.keep] });
+		return resultFactory.err(`not a slimmable label: ${badLabels.join(", ")} (see \`warden sim profiles --json\`)`);
+	return resultFactory.ok({ except: [...profile.except], keep: [...profile.keep] });
 }
 
 /** The categories for `warden sim profiles`. */

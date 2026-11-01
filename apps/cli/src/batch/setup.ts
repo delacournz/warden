@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
 import type { BatchWorker } from "@delacour/warden-core/batch/schedule";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 /** What `warden e2e` runs on each leased device before its first spec. */
 export type DeviceSetupSpec = {
@@ -106,12 +106,14 @@ export function startEarlySlim<C extends { device: { id: string } }>(deps: {
 }): EarlySlim<C> {
 	const started = new Map<string, Promise<Awaited<ReturnType<typeof deps.slim>>>>();
 	const run = (udid: string) =>
-		deps.slim(udid).catch((error: unknown) => err(error instanceof Error ? error.message : String(error)));
+		deps
+			.slim(udid)
+			.catch((error: unknown) => resultFactory.err(error instanceof Error ? error.message : String(error)));
 	return {
 		leased: (outcome) => {
 			for (const c of outcome.claimed) {
 				const udid = c.device.id;
-				if (!started.has(udid)) started.set(udid, deps.skip(c) ? Promise.resolve(ok([])) : run(udid));
+				if (!started.has(udid)) started.set(udid, deps.skip(c) ? Promise.resolve(resultFactory.ok([])) : run(udid));
 			}
 		},
 		slim: (udid) => started.get(udid) ?? run(udid),

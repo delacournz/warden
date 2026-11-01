@@ -3,7 +3,7 @@ import { devClientLaunchArgs } from "@delacour/warden-builds/metro";
 import { appSwitches } from "@delacour/warden-config/app-option.schema";
 import type { Suite } from "@delacour/warden-core/affected/affected";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { projectContextFor } from "../project-context";
 
@@ -28,7 +28,7 @@ export async function specBundleId(
 ): AsyncResult<string> {
 	const explicit = suite.config.spec?.bundleId;
 	const phone = physical && platform === "ios";
-	if (explicit !== undefined && !phone) return ok(explicit);
+	if (explicit !== undefined && !phone) return resultFactory.ok(explicit);
 	const { variant } = appSwitches(suite.config.app);
 	const project = await projectContextFor(ctx, {
 		start: suite.projectRoot ?? suite.cwd,
@@ -36,11 +36,11 @@ export async function specBundleId(
 	});
 	// on an iPhone the app is installed under the project's device bundle id (`ios.device.bundleIdentifier`), when it sets one
 	const deviceId = phone && project.success ? project.data.project.iosDeviceBundleId : undefined;
-	if (deviceId !== undefined) return ok(deviceId);
-	if (explicit !== undefined) return ok(explicit);
+	if (deviceId !== undefined) return resultFactory.ok(deviceId);
+	if (explicit !== undefined) return resultFactory.ok(explicit);
 	const bundleId = project.success ? bundleIdFor(project.data.project, platform) : undefined;
 	if (bundleId?.success) return bundleId;
-	return err(`e2e.${suite.name}: no bundle id — set spec.bundleId or projects[].bundleId.${platform}`);
+	return resultFactory.err(`e2e.${suite.name}: no bundle id — set spec.bundleId or projects[].bundleId.${platform}`);
 }
 
 /**

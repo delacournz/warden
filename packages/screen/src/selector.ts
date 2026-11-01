@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { NodeEntry } from "./nodes";
 import type { LocatorExpression } from "./query";
 import { matchesText, normalizeText } from "./text";
@@ -36,23 +36,23 @@ type Token = { key: string; raw: string; value: SelectorValue };
 function readQuoted(input: string, start: number): Result<{ value: string; end: number }> {
 	let end = start + 1;
 	while (end < input.length && input[end] !== '"') end += input[end] === "\\" ? 2 : 1;
-	if (end >= input.length) return err("unterminated quoted value");
+	if (end >= input.length) return resultFactory.err("unterminated quoted value");
 	const literal = input.slice(start, end + 1);
 	try {
 		const value: unknown = JSON.parse(literal);
-		if (typeof value !== "string") return err(`invalid escape in ${literal}`);
-		return ok({ value, end: end + 1 });
+		if (typeof value !== "string") return resultFactory.err(`invalid escape in ${literal}`);
+		return resultFactory.ok({ value, end: end + 1 });
 	} catch {
-		return err(`invalid escape in ${literal}`);
+		return resultFactory.err(`invalid escape in ${literal}`);
 	}
 }
 
 function readRegex(input: string, start: number): Result<{ value: SelectorValue; end: number }> {
 	let end = start + 1;
 	while (end < input.length && input[end] !== "/") end += input[end] === "\\" ? 2 : 1;
-	if (end >= input.length) return err("unterminated regex value");
+	if (end >= input.length) return resultFactory.err("unterminated regex value");
 	const source = input.slice(start + 1, end);
-	if (source === "") return err("empty regex //");
+	if (source === "") return resultFactory.err("empty regex //");
 	let flagsEnd = end + 1;
 	while (flagsEnd < input.length && !isSpace(input[flagsEnd])) flagsEnd += 1;
 	const flags = input.slice(end + 1, flagsEnd);
@@ -60,24 +60,24 @@ function readRegex(input: string, start: number): Result<{ value: SelectorValue;
 		if (!REGEX_FLAGS.test(flags)) throw new Error("bad flags");
 		new RegExp(source, flags);
 	} catch {
-		return err(`invalid regex /${source}/${flags}`);
+		return resultFactory.err(`invalid regex /${source}/${flags}`);
 	}
-	return ok({ value: { kind: "regex", source, flags }, end: flagsEnd });
+	return resultFactory.ok({ value: { kind: "regex", source, flags }, end: flagsEnd });
 }
 
 function readValue(input: string, start: number, key: string): Result<{ value: SelectorValue; end: number }> {
 	const first = input[start];
-	if (isSpace(first)) return err(`missing value for ${key}=`);
+	if (isSpace(first)) return resultFactory.err(`missing value for ${key}=`);
 	if (first === '"') {
 		const quoted = readQuoted(input, start);
 		if (!quoted.success) return quoted;
-		if (!isSpace(input[quoted.data.end])) return err(`unexpected text after quoted value of ${key}=`);
-		return ok({ value: { kind: "text", value: quoted.data.value }, end: quoted.data.end });
+		if (!isSpace(input[quoted.data.end])) return resultFactory.err(`unexpected text after quoted value of ${key}=`);
+		return resultFactory.ok({ value: { kind: "text", value: quoted.data.value }, end: quoted.data.end });
 	}
 	if (first === "/") return readRegex(input, start);
 	let end = start;
 	while (!isSpace(input[end])) end += 1;
-	return ok({ value: { kind: "text", value: input.slice(start, end) }, end });
+	return resultFactory.ok({ value: { kind: "text", value: input.slice(start, end) }, end });
 }
 
 function tokenize(input: string): Result<Token[]> {
@@ -85,11 +85,12 @@ function tokenize(input: string): Result<Token[]> {
 	let position = 0;
 	for (;;) {
 		while (position < input.length && isSpace(input[position])) position += 1;
-		if (position >= input.length) return ok(tokens);
+		if (position >= input.length) return resultFactory.ok(tokens);
 		const equals = input.indexOf("=", position);
 		let wordEnd = position;
 		while (!isSpace(input[wordEnd])) wordEnd += 1;
-		if (equals === -1 || equals > wordEnd) return err(`expected key=value, got "${input.slice(position, wordEnd)}"`);
+		if (equals === -1 || equals > wordEnd)
+			return resultFactory.err(`expected key=value, got "${input.slice(position, wordEnd)}"`);
 		const key = input.slice(position, equals);
 		const read = readValue(input, equals + 1, key);
 		if (!read.success) return read;
@@ -108,21 +109,21 @@ function isValueKey(key: SelectorKey): key is ValueKey {
 
 /** Parses `id=x label="Sign in" text=/regex/i role=button editable=true nth=1`. */
 export function parseSelector(input: string): Result<ParsedSelector> {
-	if (input.trim() === "") return err("empty selector");
+	if (input.trim() === "") return resultFactory.err("empty selector");
 	const tokens = tokenize(input);
 	if (!tokens.success) return tokens;
 	const selector: ParsedSelector = {};
 	const seen = new Set<string>();
 	for (const token of tokens.data) {
 		if (!isSelectorKey(token.key)) {
-			return err(`unknown key "${token.key}" (expected ${KEY_ORDER.join(", ")})`);
+			return resultFactory.err(`unknown key "${token.key}" (expected ${KEY_ORDER.join(", ")})`);
 		}
-		if (seen.has(token.key)) return err(`duplicate key "${token.key}"`);
+		if (seen.has(token.key)) return resultFactory.err(`duplicate key "${token.key}"`);
 		seen.add(token.key);
 		const failure = applyToken(selector, token.key, token);
-		if (failure !== undefined) return err(failure);
+		if (failure !== undefined) return resultFactory.err(failure);
 	}
-	return ok(selector);
+	return resultFactory.ok(selector);
 }
 
 /** Stores one token on the selector; returns the error message when its value is not valid for the key. */

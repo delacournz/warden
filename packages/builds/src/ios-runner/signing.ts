@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { RunnerBuildError, SigningTeam, TeamSource } from "./runner-build.types";
 
 /** Env var that names the signing team; wins over `ios.teamId`. */
@@ -105,11 +105,13 @@ export function teamOfCertificate(der: Uint8Array): string | undefined {
 /** The teams the keychain holds a valid `Apple Development` identity for. Read-only: two `security` calls. */
 export async function listSigningTeams(exec: Exec): AsyncResult<SigningTeam[]> {
 	const found = await exec(["security", "find-identity", "-v", "-p", "codesigning"]);
-	if (found.exitCode !== 0) return err(`security find-identity exited ${found.exitCode}: ${found.stderr.trim()}`);
+	if (found.exitCode !== 0)
+		return resultFactory.err(`security find-identity exited ${found.exitCode}: ${found.stderr.trim()}`);
 	const identities = parseIdentities(found.stdout);
-	if (identities.length === 0) return ok([]);
+	if (identities.length === 0) return resultFactory.ok([]);
 	const certs = await exec(["security", "find-certificate", "-a", "-c", "Apple Development", "-p"]);
-	if (certs.exitCode !== 0) return err(`security find-certificate exited ${certs.exitCode}: ${certs.stderr.trim()}`);
+	if (certs.exitCode !== 0)
+		return resultFactory.err(`security find-certificate exited ${certs.exitCode}: ${certs.stderr.trim()}`);
 	const teamBySha1 = new Map<string, string>();
 	for (const der of certificatesFromPem(certs.stdout)) {
 		const team = teamOfCertificate(der);
@@ -120,7 +122,7 @@ export async function listSigningTeams(exec: Exec): AsyncResult<SigningTeam[]> {
 		const team = teamBySha1.get(identity.sha1);
 		if (team !== undefined) teams.set(team, [...(teams.get(team) ?? []), identity.name]);
 	}
-	return ok(
+	return resultFactory.ok(
 		[...teams]
 			.map(([teamId, names]) => ({ teamId, identities: names }))
 			.sort((a, b) => a.teamId.localeCompare(b.teamId))
@@ -155,7 +157,9 @@ export async function resolveTeam(input: {
 	];
 	for (const [source, value, from] of sources) {
 		if (!value) continue;
-		return TEAM_ID.test(value) ? ok({ team: value, source }) : { success: false, error: badTeam(value, from) };
+		return TEAM_ID.test(value)
+			? resultFactory.ok({ team: value, source })
+			: { success: false, error: badTeam(value, from) };
 	}
 	const listed = await listSigningTeams(input.exec);
 	if (!listed.success) {
@@ -169,7 +173,7 @@ export async function resolveTeam(input: {
 		};
 	}
 	const [only, ...others] = listed.data;
-	if (only !== undefined && others.length === 0) return ok({ team: only.teamId, source: "keychain" });
+	if (only !== undefined && others.length === 0) return resultFactory.ok({ team: only.teamId, source: "keychain" });
 	if (only === undefined) {
 		return {
 			success: false,

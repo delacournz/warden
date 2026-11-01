@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import type { ConditionsConfig } from "@delacour/warden-config/conditions.config";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
 import type { Platform } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { sourceDirFromCliPath } from "../update/build-info";
 
 /**
@@ -139,13 +139,14 @@ const PERF_CAPTURES = ["all", "js", "react", "native", "metrics", "frames", "log
  * frames, logs: cheap, observe-only). `all` is every capture.
  */
 export function parsePerfFlag(raw: string | boolean | undefined): Result<string[] | undefined> {
-	if (raw === undefined || raw === false) return ok(undefined);
-	if (raw === true || raw.trim() === "") return ok([]);
+	if (raw === undefined || raw === false) return resultFactory.ok(undefined);
+	if (raw === true || raw.trim() === "") return resultFactory.ok([]);
 	const names = raw
 		.split(",")
 		.map((n) => n.trim())
 		.filter((n) => n !== "");
 	const unknown = names.find((n) => !(PERF_CAPTURES as readonly string[]).includes(n));
-	if (unknown !== undefined) return err(`--perf: unknown capture "${unknown}" (${PERF_CAPTURES.join(", ")})`);
-	return ok(names);
+	if (unknown !== undefined)
+		return resultFactory.err(`--perf: unknown capture "${unknown}" (${PERF_CAPTURES.join(", ")})`);
+	return resultFactory.ok(names);
 }

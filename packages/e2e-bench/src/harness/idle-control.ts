@@ -3,7 +3,7 @@
  * framework attached, so a framework's `sim` column can be read net of the app's own work. `scripts/idle-sim.ts`
  * samples with `startSampler` for `seconds`; this module holds the argument parsing and the summary text.
  */
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { bytes } from "../report/format";
 import type { Series } from "../results/schema";
 
@@ -53,12 +53,12 @@ export function parseIdleArgs(argv: readonly string[]): Result<IdleArgs> {
 		const flag = argv[i] ?? "";
 		const value = argv[i + 1];
 		const set = FLAGS[flag];
-		if (set === undefined || value === undefined) return err(`unknown or incomplete flag: ${flag}`);
+		if (set === undefined || value === undefined) return resultFactory.err(`unknown or incomplete flag: ${flag}`);
 		const problem = set(out, value);
-		if (problem !== undefined) return err(problem);
+		if (problem !== undefined) return resultFactory.err(problem);
 	}
-	if (out.udid === "") return err("--udid <sim udid> is required");
-	return ok(out);
+	if (out.udid === "") return resultFactory.err("--udid <sim udid> is required");
+	return resultFactory.ok(out);
 }
 
 function line(scope: "sim" | "host", s: Series, seconds: number): string {

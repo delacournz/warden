@@ -4,7 +4,7 @@ import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import type { GitFacts } from "@delacour/warden-runtime/git-facts";
 import { findNodeBin } from "@delacour/warden-runtime/node-bin";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { AppFramework } from "./native-ids";
 
 /**
@@ -250,7 +250,7 @@ export async function startMetro(deps: MetroDeps, o: MetroOptions): AsyncResult<
 			o.projectRoot
 		);
 	} catch (error) {
-		return err(`could not start Metro: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`could not start Metro: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	let exitCode: number | undefined;
 	void proc.exited.then((code) => {
@@ -259,9 +259,9 @@ export async function startMetro(deps: MetroDeps, o: MetroOptions): AsyncResult<
 	const failure = await waitForOurs(deps, o, () => exitCode);
 	if (failure) {
 		if (!failure.exited) await stopMetro(deps, proc);
-		return err(failure.error);
+		return resultFactory.err(failure.error);
 	}
-	return ok({ port: o.port, url: metroUrl(o.port), proc, stop: () => stopMetro(deps, proc) });
+	return resultFactory.ok({ port: o.port, url: metroUrl(o.port), proc, stop: () => stopMetro(deps, proc) });
 }
 
 /** A Metro being started in the background; see `launchMetro`. */
@@ -283,7 +283,7 @@ export function launchMetro(deps: MetroDeps, o: MetroOptions): MetroLaunchHandle
 	let cancelled = false;
 	const handle: MetroLaunchHandle = {
 		started: undefined,
-		pending: Promise.resolve(err("Metro not started")),
+		pending: Promise.resolve(resultFactory.err("Metro not started")),
 		stop: async () => {
 			cancelled = true;
 			await handle.pending;
@@ -293,7 +293,7 @@ export function launchMetro(deps: MetroDeps, o: MetroOptions): MetroLaunchHandle
 		},
 	};
 	handle.pending = startMetro(deps, { ...o, aborted: () => cancelled || (o.aborted?.() ?? false) })
-		.catch((error: unknown) => err(error instanceof Error ? error.message : String(error)))
+		.catch((error: unknown) => resultFactory.err(error instanceof Error ? error.message : String(error)))
 		.then((result) => {
 			if (result.success) handle.started = result.data;
 			return result;
@@ -326,7 +326,7 @@ export async function prewarmMetro(
 		signal
 			? AbortSignal.any([signal, AbortSignal.timeout(PREWARM_TIMEOUT_MS)])
 			: AbortSignal.timeout(PREWARM_TIMEOUT_MS);
-	const interrupted = err(`interrupted while building the ${platform} bundle`);
+	const interrupted = resultFactory.err(`interrupted while building the ${platform} bundle`);
 	let bundleUrl: string;
 	try {
 		const res = await fetch(`${url}/`, {
@@ -334,20 +334,22 @@ export async function prewarmMetro(
 			signal: bounded(),
 		});
 		const assetUrl = launchAssetUrl(await res.json());
-		if (!res.ok || assetUrl === undefined) return ok({ bundled: false });
+		if (!res.ok || assetUrl === undefined) return resultFactory.ok({ bundled: false });
 		bundleUrl = assetUrl;
 	} catch {
-		return signal?.aborted ? interrupted : ok({ bundled: false });
+		return signal?.aborted ? interrupted : resultFactory.ok({ bundled: false });
 	}
 	try {
 		const res = await fetch(bundleUrl, { signal: bounded() });
 		const body = await res.text();
-		if (res.ok) return ok({ bundled: true });
+		if (res.ok) return resultFactory.ok({ bundled: true });
 		const detail = body.trim().split("\n").slice(0, 3).join(" | ").slice(0, 600);
-		return err(`Metro could not build the ${platform} bundle (HTTP ${res.status})${detail ? `: ${detail}` : ""}`);
+		return resultFactory.err(
+			`Metro could not build the ${platform} bundle (HTTP ${res.status})${detail ? `: ${detail}` : ""}`
+		);
 	} catch (error) {
 		if (signal?.aborted) return interrupted;
-		return err(`Metro bundle request failed: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`Metro bundle request failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -425,8 +427,8 @@ const ADB_WAIT_MS = 30_000;
  */
 export async function reverseMetroPort(exec: Exec, serial: string, port: number): AsyncResult<void> {
 	const argv = adbReverseArgv(serial, port);
-	if ((await exec(argv)).exitCode === 0) return ok(undefined);
+	if ((await exec(argv)).exitCode === 0) return resultFactory.ok(undefined);
 	await exec(["adb", "-s", serial, "wait-for-device"], { timeoutMs: ADB_WAIT_MS });
 	const again = await exec(argv);
-	return again.exitCode === 0 ? ok(undefined) : err(execError(argv, again));
+	return again.exitCode === 0 ? resultFactory.ok(undefined) : resultFactory.err(execError(argv, again));
 }

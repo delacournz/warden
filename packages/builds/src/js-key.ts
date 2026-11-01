@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { jsInputsHash, type ReadFile, readFileOrUndefined } from "./js-inputs";
 
 /**
@@ -68,7 +68,7 @@ export async function computeJsKey(deps: JsKeyDeps): AsyncResult<string> {
 		`platform:${deps.platform}`,
 		`native:${deps.nativeFp}`,
 	].join("\n");
-	return ok(createHash("sha256").update(text).digest("hex").slice(0, 40));
+	return resultFactory.ok(createHash("sha256").update(text).digest("hex").slice(0, 40));
 }
 
 /** Where a checkout is: what a repack's `meta.json` and the `worktree` / `branch` columns record. Metadata, never a key. */
@@ -83,11 +83,15 @@ export type GitContext = {
 /** The checkout `root` is in. Errors outside a git checkout or before the first commit. */
 export async function gitContext(exec: Exec, root: string, git?: GitFactsCache): AsyncResult<GitContext> {
 	const facts = await readGitFacts(exec, root, git ?? createGitFactsCache());
-	if (!facts) return err(`not a git checkout: ${root}`);
+	if (!facts) return resultFactory.err(`not a git checkout: ${root}`);
 	const head = await exec(["git", "rev-parse", "HEAD"], { cwd: root });
 	const sha = head.stdout.trim();
-	if (head.exitCode !== 0 || sha === "") return err(`could not read HEAD of ${facts.toplevel}`);
-	return ok({ worktree: facts.toplevel, ...(facts.branch !== "" ? { branch: facts.branch } : {}), head: sha });
+	if (head.exitCode !== 0 || sha === "") return resultFactory.err(`could not read HEAD of ${facts.toplevel}`);
+	return resultFactory.ok({
+		worktree: facts.toplevel,
+		...(facts.branch !== "" ? { branch: facts.branch } : {}),
+		head: sha,
+	});
 }
 
 /** `<repackDir>/meta.json`: who made this repack, from where, and what the bundle step cost. */

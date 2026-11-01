@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hotspots } from "@delacour/warden-perf/js/hotspots";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { brokerErr } from "../dev-broker/broker.types";
 import { type BrokerServer, serveBroker } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
@@ -68,10 +68,10 @@ describe("warden perf js with a dev-session broker", () => {
 		const calls: Array<{ method: string; params: unknown }> = [];
 		const served = await serveBroker(join(dir, "b.sock"), async (method, params) => {
 			calls.push({ method, params });
-			if (method === "status") return ok({});
-			if (method === "profile.start") return ok({ kind: "cpu", startedAt: T0 });
+			if (method === "status") return resultFactory.ok({});
+			if (method === "profile.start") return resultFactory.ok({ kind: "cpu", startedAt: T0 });
 			if (method === "profile.stop") {
-				return ok({
+				return resultFactory.ok({
 					kind: "cpu",
 					path: cpuPath,
 					summary: { kind: "cpu", sampleCount: 3, durationMs: 600, idlePct: 50, hotspotsPath, topSelf: [] },

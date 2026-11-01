@@ -11,7 +11,7 @@ import {
 } from "@delacour/warden-store/builds-table";
 import type { Store } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { FINGERPRINT_TIMEOUT_MS, PROBE_TIMEOUT_MS } from "./builds.defaults";
 import type { Project } from "./config";
 import { combineKey, jsInputsHash, type ReadFile, readFileOrUndefined } from "./js-inputs";
@@ -36,7 +36,7 @@ function jsonHash(text: string): string | undefined {
  */
 export function parseFingerprintOutput(stdout: string): Result<string> {
 	const whole = jsonHash(stdout);
-	if (whole) return ok(whole);
+	if (whole) return resultFactory.ok(whole);
 	const last = stdout
 		.trim()
 		.split("\n")
@@ -45,10 +45,12 @@ export function parseFingerprintOutput(stdout: string): Result<string> {
 		.at(-1);
 	if (last) {
 		const lineHash = jsonHash(last);
-		if (lineHash) return ok(lineHash);
-		if (BARE_HASH.test(last)) return ok(last);
+		if (lineHash) return resultFactory.ok(lineHash);
+		if (BARE_HASH.test(last)) return resultFactory.ok(last);
 	}
-	return err(`could not read a fingerprint hash from output: ${stdout.trim().slice(0, 200) || "(empty)"}`);
+	return resultFactory.err(
+		`could not read a fingerprint hash from output: ${stdout.trim().slice(0, 200) || "(empty)"}`
+	);
 }
 
 /** `node_modules/.bin/fingerprint` nearest to `root` (hoisted monorepos put it at the repo root). */
@@ -81,7 +83,7 @@ export async function computeFingerprint(exec: Exec, project: Project, platform:
 		env: { EXPO_NO_TELEMETRY: "1" },
 		timeoutMs: FINGERPRINT_TIMEOUT_MS,
 	});
-	if (res.exitCode !== 0) return err(`fingerprint failed: ${execError(argv, res)}`);
+	if (res.exitCode !== 0) return resultFactory.err(`fingerprint failed: ${execError(argv, res)}`);
 	return parseFingerprintOutput(res.stdout);
 }
 
@@ -440,7 +442,7 @@ async function memoisedFingerprint(
 	const before = await signatureOrUndefined(exec, project.root);
 	if (before === undefined) return computeFingerprint(exec, project, platform);
 	const row = getFingerprintMemo(memo.store, project, platform);
-	if (row?.signature === before) return ok(row.native);
+	if (row?.signature === before) return resultFactory.ok(row.native);
 	const fresh = await computeFingerprint(exec, project, platform);
 	if (!fresh.success) return fresh;
 	if ((await signatureOrUndefined(exec, project.root)) === before)
@@ -508,8 +510,8 @@ export async function computeCacheKey(
 	const salted = (key: string): string => (salt ? combineKey(key, salt) : key);
 	if (js === undefined) {
 		const key = project.buildConfiguration === "Release" ? releaseKey(native.data) : native.data;
-		return ok({ key: salted(key), native: native.data });
+		return resultFactory.ok({ key: salted(key), native: native.data });
 	}
 	if (!js.success) return js;
-	return ok({ key: salted(combineKey(native.data, js.data)), native: native.data, js: js.data });
+	return resultFactory.ok({ key: salted(combineKey(native.data, js.data)), native: native.data, js: js.data });
 }

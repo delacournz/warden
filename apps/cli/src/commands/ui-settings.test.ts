@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { ConditionArea } from "@delacour/warden-config/conditions.types";
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
 import { failWith, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { updateState } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 
@@ -14,7 +14,11 @@ function setup(platform: "ios" | "android" = "android", onCall?: Override) {
 	const h: Harness = harness([snapshotOf(LOGIN)], {
 		platform,
 		...(onCall ? { onCall } : {}),
-		conditions: { open: async () => ok(h.driver), proxyStatus: async () => undefined, proxyPid: () => undefined },
+		conditions: {
+			open: async () => resultFactory.ok(h.driver),
+			proxyStatus: async () => undefined,
+			proxyPid: () => undefined,
+		},
 	});
 	return h;
 }

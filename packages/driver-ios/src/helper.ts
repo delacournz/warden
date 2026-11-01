@@ -25,9 +25,9 @@ import {
 } from "@delacour/warden-store/process-identity";
 import { type Store, wardenHome } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { type WardenError, wardenErr } from "@delacour/warden-types/error";
+import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import type { WardenHost } from "@delacour/warden-types/host";
-import { ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type HelperRecord, knownUdids, readHelperRecord, simdDir, updateHelperRecord } from "./helper-state";
 import { resolveHelper } from "./locate-helper";
 import type { SimdClient } from "./simd-client";
@@ -299,7 +299,7 @@ export function simdEnvKey(env: Readonly<Record<string, string | undefined>>): s
 
 /** A coded error as a plain value (not a `Result`). */
 function uiErr(code: WardenError["code"], message: string, extra: { hint?: string } = {}): WardenError {
-	return wardenErr(code, message, extra).error;
+	return wardenErrors.err(code, message, extra).error;
 }
 
 const rowKey = (udid: string) => `simd_spawn:${udid}`;
@@ -347,16 +347,16 @@ function releaseSpawnRow(host: Required<Pick<HelperHost, "store">> & HelperHost,
 
 /** `undefined` leaves the client's default; the value is a duration, and a bad one is a usage error up front. */
 function requestTimeoutMs(value: string | undefined): Result<number | undefined, WardenError> {
-	if (value === undefined || value === "") return ok(undefined);
+	if (value === undefined || value === "") return resultFactory.ok(undefined);
 	const ms = parseDuration(value);
 	if (!ms.success) return { success: false, error: uiErr("usage", `${REQUEST_TIMEOUT_ENV}: ${ms.error}`) };
-	return ok(Math.max(1, ms.data));
+	return resultFactory.ok(Math.max(1, ms.data));
 }
 
 function idleSeconds(idleTimeout: string): Result<number, WardenError> {
 	const ms = parseDuration(idleTimeout);
 	if (!ms.success) return { success: false, error: uiErr("usage", `idle timeout: ${ms.error}`) };
-	return ok(Math.max(1, Math.round(ms.data / 1000)));
+	return resultFactory.ok(Math.max(1, Math.round(ms.data / 1000)));
 }
 
 function logTail(logPath: string): string {
@@ -491,7 +491,7 @@ function spawnHelper(
 		...(lease !== undefined ? { lease: lease.id } : {}),
 	};
 	updateHelperRecord(host, udid, () => record);
-	return ok(spawned);
+	return resultFactory.ok(spawned);
 }
 
 /** What one `ensureHelper` attempt settled: an answer, another attempt right away, or a pause then another. */
@@ -527,9 +527,9 @@ async function answered(a: Attempt, client: SimdClient): Promise<Step> {
 		spawned: a.spawned !== undefined,
 		...(a.spawned ? { pid: a.spawned.pid } : {}),
 	};
-	if (a.opts.keepClient === true) return { kind: "done", result: ok({ ...info, client }) };
+	if (a.opts.keepClient === true) return { kind: "done", result: resultFactory.ok({ ...info, client }) };
 	await client.close();
-	return { kind: "done", result: ok(info) };
+	return { kind: "done", result: resultFactory.ok(info) };
 }
 
 /** Something answers on the socket: use it, unless it is stale and this caller may replace it. */
@@ -658,7 +658,7 @@ function attemptFor(
 	mkdirSync(dirname(socketPath), { recursive: true });
 	mkdirSync(simdDir(host), { recursive: true });
 	const logPath = join(simdDir(host), `${udid}.log`);
-	return ok({
+	return resultFactory.ok({
 		host,
 		udid,
 		socketPath,

@@ -7,7 +7,7 @@ import {
 } from "@delacour/warden-store/builds-table";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { DEFAULT_MAX_CACHE_SIZE } from "./builds.defaults";
 import { removeBuild, repacksOf } from "./cache";
 import { buildLockKey, liveBuildLocks } from "./lock";
@@ -18,8 +18,8 @@ const UNITS: Record<string, number> = { "": 1, K: 1024, M: 1024 ** 2, G: 1024 **
 export function parseSize(raw: string): Result<number> {
 	const match = /^(\d+(?:\.\d+)?)\s*([KMGT]?)(?:i?B)?$/i.exec(raw.trim());
 	const unit = UNITS[(match?.[2] ?? "").toUpperCase()];
-	if (!match?.[1] || unit === undefined) return err(`invalid size "${raw}" (e.g. 20G, 500M)`);
-	return ok(Math.floor(Number(match[1]) * unit));
+	if (!match?.[1] || unit === undefined) return resultFactory.err(`invalid size "${raw}" (e.g. 20G, 500M)`);
+	return resultFactory.ok(Math.floor(Number(match[1]) * unit));
 }
 
 export function formatSize(bytes: number): string {

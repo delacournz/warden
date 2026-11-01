@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { readRoute, routeKey } from "./route";
 import { ROUTE_SCRIPT } from "./route.script";
 
@@ -75,7 +75,7 @@ describe("routeKey", () => {
 });
 
 describe("readRoute", () => {
-	const facet = (data: unknown) => ({ evaluate: async () => ok(data) });
+	const facet = (data: unknown) => ({ evaluate: async () => resultFactory.ok(data) });
 
 	test("the route key from the script's reply", async () => {
 		const read = await readRoute(facet(JSON.stringify({ route: ["(tabs)", "todos"] })));

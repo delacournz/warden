@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { E2E_ENTRIES } from "./manifests";
 
 /** Imports the bundle leaves to the consumer: bun's own test module and the declared `zod` dependency. */
@@ -28,6 +28,6 @@ export async function bundleE2e(input: {
 		naming: { entry: "[name].mjs", chunk: "chunk-[hash].mjs" },
 		define: { __WARDEN_E2E_VERSION__: JSON.stringify(input.version) },
 	});
-	if (!result.success) return err(`@delacour/warden-e2e bundle failed:\n${result.logs.join("\n")}`);
-	return ok(result.outputs.map((output) => output.path));
+	if (!result.success) return resultFactory.err(`@delacour/warden-e2e bundle failed:\n${result.logs.join("\n")}`);
+	return resultFactory.ok(result.outputs.map((output) => output.path));
 }

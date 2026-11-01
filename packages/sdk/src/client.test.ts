@@ -7,8 +7,8 @@ import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { fieldFixture } from "@delacour/warden-screen/testing/screen";
 import { openStore, type Store } from "@delacour/warden-store/store";
 import type { InventoryDevice } from "@delacour/warden-store/types";
-import { wardenErr } from "@delacour/warden-types/error";
-import { ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
 import type { ClientSeams } from "./core";
 import { isWardenError, WardenError } from "./errors";
@@ -50,19 +50,19 @@ function fakeProvider(size: number): FakeProvider {
 	return {
 		platform: "ios",
 		calls,
-		inventory: async () => ok(devices.map((d) => ({ ...d }))),
-		create: async () => wardenErr("failed", "no create in this fake"),
+		inventory: async () => resultFactory.ok(devices.map((d) => ({ ...d }))),
+		create: async () => wardenErrors.err("failed", "no create in this fake"),
 		boot: async (id) => {
 			calls.push(`boot ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 		waitReady: async (id) => {
 			calls.push(`ready ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 		shutdown: async (id) => {
 			calls.push(`shutdown ${id}`);
-			return ok(undefined);
+			return resultFactory.ok(undefined);
 		},
 	};
 }
@@ -97,7 +97,7 @@ function rig(driver: () => FakeDriver, extra: Partial<WardenClientOptions> = {},
 			openDriver: async () => {
 				const d = driver();
 				opened.push(d);
-				return ok(d);
+				return resultFactory.ok(d);
 			},
 		},
 		options: {

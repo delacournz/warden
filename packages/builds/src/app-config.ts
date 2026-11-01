@@ -1,5 +1,5 @@
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { Project } from "./config";
 
 /** What warden reads off a resolved Expo config: the ids `app.json` would carry, plus the slug and scheme. */
@@ -47,9 +47,9 @@ export async function readExpoConfig(exec: Exec, dir: string): AsyncResult<ExpoA
 		timeoutMs: EXPO_CONFIG_TIMEOUT_MS,
 	});
 	const info = res.exitCode === 0 ? parseExpoConfig(res.stdout) : undefined;
-	if (info) return ok(info);
+	if (info) return resultFactory.ok(info);
 	const why = (res.stderr || res.stdout).trim().split("\n").filter(Boolean).slice(-3).join(" ");
-	return err(
+	return resultFactory.err(
 		`\`${EXPO_CONFIG_ARGV.join(" ")}\` in ${dir} ${res.exitCode === 0 ? "printed no config" : `failed (exit ${res.exitCode})`}${why ? `: ${why}` : ""}`
 	);
 }

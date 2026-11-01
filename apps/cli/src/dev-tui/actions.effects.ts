@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { StartOptions } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { wardenHome } from "@delacour/warden-store/store";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { DevActionHost, DevReady, MetroTerminal } from "../commands/dev-ui";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "../perf/device";
@@ -64,7 +64,7 @@ async function viaCommand(
 	const { code, out, err } = await captured(ctx, run);
 	if (code !== 0) return failure(stripAnsi(err.at(-1) ?? out.at(-1) ?? `exit ${code}`));
 	for (const line of [...out, ...err]) log(line);
-	return ok(undefined);
+	return resultFactory.ok(undefined);
 }
 
 function perfTarget(info: DevReady): PerfTarget {
@@ -95,7 +95,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		async reveal(info) {
 			const { revealSimWindow } = await import("@delacour/warden-leasing/sim-windows");
 			const shown = await revealSimWindow(ctx, info.deviceId);
-			return shown.success ? ok(undefined) : failure(shown.error);
+			return shown.success ? resultFactory.ok(undefined) : failure(shown.error);
 		},
 
 		async screenshot(info) {
@@ -108,7 +108,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			const done = await captured(ctx, (c) =>
 				uiScreenshot(c, defaultUiDeps, path, { udid: info.deviceId, force: true, record: false })
 			);
-			return done.code === 0 ? ok(path) : failure(stripAnsi(done.err.at(-1) ?? `exit ${done.code}`));
+			return done.code === 0 ? resultFactory.ok(path) : failure(stripAnsi(done.err.at(-1) ?? `exit ${done.code}`));
 		},
 
 		openClient: (log) => deps.host()?.openClient(log).then(toFx) ?? Promise.resolve(needHost()),
@@ -160,7 +160,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			}
 			const { session, warnings } = started.data;
 			const captures = session.capturers.filter((c) => c.kind !== "collector");
-			return ok({
+			return resultFactory.ok({
 				sessionId: session.id,
 				startedAt: session.startedAt.wallMs,
 				maxDurationMs: session.maxDurationMs,
@@ -194,7 +194,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 				return failure(message, code === "session_not_found" ? "session_not_found" : undefined);
 			}
 			const { report, reportPath, warnings } = stopped.data;
-			return ok({
+			return resultFactory.ok({
 				reportPath,
 				lines: report === undefined ? [] : renderReportMarkdown(report, { maxLines: MAX_TEXT_LINES }).split("\n"),
 				warnings,

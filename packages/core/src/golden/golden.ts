@@ -9,7 +9,7 @@
 
 import { GOLDEN_PREFIX } from "@delacour/warden-providers/golden-name";
 import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /**
  * Bump when what building a golden does to the device changes, so existing goldens go stale.
@@ -80,7 +80,9 @@ export function planGolden(
 
 export function parseXcodeBuild(stdout: string): Result<string> {
 	const match = /^Build version (\S+)$/m.exec(stdout);
-	return match?.[1] ? ok(match[1]) : err(`unexpected \`xcodebuild -version\` output: ${stdout.trim()}`);
+	return match?.[1]
+		? resultFactory.ok(match[1])
+		: resultFactory.err(`unexpected \`xcodebuild -version\` output: ${stdout.trim()}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

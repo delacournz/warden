@@ -6,7 +6,7 @@ import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
 import { type FakeReply, fakePage, startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
 import { el, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { uiDir } from "../agent-ui/paths";
 import { readState, writeState } from "../agent-ui/state";
@@ -123,7 +123,7 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 		screens: [snapshotOf([el("window")], { platform: options.platform ?? "ios" })],
 		platform: options.platform ?? "ios",
 	});
-	const deps: UiDeps = { driver: async () => ok(driver), sleep: async () => undefined, devtools };
+	const deps: UiDeps = { driver: async () => resultFactory.ok(driver), sleep: async () => undefined, devtools };
 
 	const c = testContext([], { now: () => 1_700_000_000_000 });
 	ctx = c;

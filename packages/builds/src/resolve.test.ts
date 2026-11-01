@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
-import { err, ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type EasStepOutcome, type InstalledApp, type ResolveSource, type ResolveSteps, resolveApp } from "./resolve";
 
 type World = {
@@ -33,7 +33,7 @@ function steps(world: World) {
 		legacy: async () => {
 			calls.push("legacy");
 			if (world.legacy) cache = world.legacy;
-			return ok(world.legacy);
+			return resultFactory.ok(world.legacy);
 		},
 		lock: async (fn) => {
 			calls.push("lock");
@@ -52,15 +52,15 @@ function steps(world: World) {
 	if (eas !== "skip") {
 		s.eas = async () => {
 			calls.push(`eas${locked ? "(locked)" : ""}`);
-			if (eas === "error") return err("boom");
-			return ok(eas ?? { kind: "miss", reason: "none" });
+			if (eas === "error") return resultFactory.err("boom");
+			return resultFactory.ok(eas ?? { kind: "miss", reason: "none" });
 		};
 	}
 	if (world.build !== "skip") {
 		s.build = async () => {
 			calls.push(`build${locked ? "(locked)" : ""}`);
-			if (world.build === "error" || world.build === undefined) return err("xcodebuild failed");
-			return ok({ kind: "built" as const, path: world.build });
+			if (world.build === "error" || world.build === undefined) return resultFactory.err("xcodebuild failed");
+			return resultFactory.ok({ kind: "built" as const, path: world.build });
 		};
 	}
 	if (world.device !== false) {
@@ -68,27 +68,27 @@ function steps(world: World) {
 			installedHash: () => world.installedHash,
 			confirm: async () => {
 				calls.push("confirm");
-				return ok(world.onDevice ? { present: true, container: "/dev/App.app" } : { present: false });
+				return resultFactory.ok(world.onDevice ? { present: true, container: "/dev/App.app" } : { present: false });
 			},
 			...(world.matches === undefined
 				? {}
 				: {
 						matches: async (path: string, installed: InstalledApp) => {
 							calls.push(`matches ${path} in ${installed.container}`);
-							return ok(world.matches === true);
+							return resultFactory.ok(world.matches === true);
 						},
 					}),
 			uninstall: async () => {
 				calls.push("uninstall");
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 			reset: async () => {
 				calls.push("reset");
-				return world.resetFails ? err("pm clear failed") : ok(undefined);
+				return world.resetFails ? resultFactory.err("pm clear failed") : resultFactory.ok(undefined);
 			},
 			install: async (path) => {
 				calls.push(`install ${path}`);
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 		};
 	}
@@ -268,14 +268,14 @@ describe("resolveApp decision table", () => {
 
 	test("install failure is an error", async () => {
 		const { s } = steps({ cache: "/c/A.app" });
-		if (s.device) s.device.install = async () => err("simctl install failed");
+		if (s.device) s.device.install = async () => resultFactory.err("simctl install failed");
 		const res = await resolveApp(s);
 		expect(res).toEqual({ success: false, error: "simctl install failed" });
 	});
 
 	test("installMode reinstall: an uninstall failure stops before the install", async () => {
 		const { s, calls } = steps({ cache: "/c/A.app", installMode: "reinstall" });
-		if (s.device) s.device.uninstall = async () => err("simctl uninstall failed");
+		if (s.device) s.device.uninstall = async () => resultFactory.err("simctl uninstall failed");
 		const res = await resolveApp(s);
 		expect(res).toEqual({ success: false, error: "simctl uninstall failed" });
 		expect(calls.some((c) => c.startsWith("install"))).toBe(false);

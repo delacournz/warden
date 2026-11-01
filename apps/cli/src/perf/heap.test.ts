@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { buildHeapSnapshot, fakeCdp } from "@delacour/warden-perf/js/js.testing";
 import { jsOk } from "@delacour/warden-perf/js/js.types";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfHeapDiff, perfHeapSnapshot } from "./heap";
 import { asMe, fakePerfDeps } from "./testing";
@@ -39,7 +39,7 @@ function setup(chunks: string[] = [SNAPSHOT.slice(0, 40), SNAPSHOT.slice(40)]) {
 		{ "HeapProfiler.takeHeapSnapshot": chunks.map((chunk) => ({ chunk })) }
 	);
 	const js: JsDeps = {
-		open: async () => ok({ ...cdp, close: () => undefined }),
+		open: async () => resultFactory.ok({ ...cdp, close: () => undefined }),
 		fetchMap: async () => jsOk(""),
 		sleep: async () => undefined,
 	};
@@ -71,7 +71,7 @@ describe("warden perf heap snapshot", () => {
 		const bare = fakeCdp({
 			"HeapProfiler.takeHeapSnapshot": { __error: "'HeapProfiler.takeHeapSnapshot' wasn't found" },
 		});
-		s.js.open = async () => ok({ ...bare, close: () => undefined });
+		s.js.open = async () => resultFactory.ok({ ...bare, close: () => undefined });
 		expect(await snap(s)).toBe(3);
 		const doc = JSON.parse(s.c.stdout.join("\n"));
 		expect(doc.error).toMatchObject({ code: "engine_unavailable" });

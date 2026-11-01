@@ -7,8 +7,8 @@ import { type BuildSource, getBuild, getInstall, recordInstall } from "@delacour
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Owner, Platform } from "@delacour/warden-store/types";
-import { textError } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { readExpoConfig } from "./app-config";
 import {
 	aliasBuild,
@@ -97,7 +97,7 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 		if (dynamicDir === undefined) return project;
 		// the app's config is code: only Expo can resolve it, so ask Expo once and detect again with its answer
 		const read = await readExpoConfig(input.exec, dynamicDir);
-		if (!read.success) return err(`${project.error}; ${read.error}`);
+		if (!read.success) return resultFactory.err(`${project.error}; ${read.error}`);
 		appConfig = {
 			...(read.data.slug ? { slug: read.data.slug } : {}),
 			...(read.data.scheme ? { scheme: read.data.scheme } : {}),
@@ -111,7 +111,7 @@ export async function projectContext(input: ProjectContextInput): AsyncResult<Pr
 	}
 	const key = await readProjectKey(input.exec, project.data.root, input.git);
 	if (!key.success) return key;
-	return ok({ project: project.data, projectKey: key.data, ...(appConfig ? { appConfig } : {}) });
+	return resultFactory.ok({ project: project.data, projectKey: key.data, ...(appConfig ? { appConfig } : {}) });
 }
 
 export type EnsureInput = ProjectContext & {
@@ -174,11 +174,11 @@ export type KindBuildKey = Exclude<KindKey, { kind: "simulator-repack" }>;
  */
 async function cleanHead(exec: Exec, cwd: string): AsyncResult<string> {
 	const status = await exec(["git", "status", "--porcelain"], { cwd });
-	if (status.exitCode !== 0) return err("EAS skipped: not a git checkout");
-	if (status.stdout.trim() !== "") return err("EAS skipped: working tree is not clean (JS-aware key)");
+	if (status.exitCode !== 0) return resultFactory.err("EAS skipped: not a git checkout");
+	if (status.stdout.trim() !== "") return resultFactory.err("EAS skipped: working tree is not clean (JS-aware key)");
 	const head = await exec(["git", "rev-parse", "HEAD"], { cwd });
 	const sha = head.stdout.trim();
-	return head.exitCode === 0 && sha ? ok(sha) : err("EAS skipped: could not read HEAD");
+	return head.exitCode === 0 && sha ? resultFactory.ok(sha) : resultFactory.err("EAS skipped: could not read HEAD");
 }
 
 /** Cache `profile`: the EAS profile (or `local`), `:<variant>` / `:<kind>` when the project was resolved with one. */
@@ -214,7 +214,7 @@ function easStep(input: EnsureInput, eas: EasSettings, cache: CacheFn): NonNulla
 	const hash = input.native ?? input.hash;
 	return async () => {
 		const head = project.jsInputs === undefined ? undefined : await cleanHead(input.exec, project.root);
-		if (head && !head.success) return ok({ kind: "miss", reason: head.error });
+		if (head && !head.success) return resultFactory.ok({ kind: "miss", reason: head.error });
 		input.onPhase?.({ phase: "fetching", source: "eas" });
 		const outcome = await resolveFromEas({
 			exec: input.exec,
@@ -229,9 +229,9 @@ function easStep(input: EnsureInput, eas: EasSettings, cache: CacheFn): NonNulla
 			...(input.download ? { download: input.download } : {}),
 			...(input.easPollMs !== undefined ? { pollMs: input.easPollMs } : {}),
 		});
-		if (outcome.kind === "miss") return ok(outcome);
+		if (outcome.kind === "miss") return resultFactory.ok(outcome);
 		const stored = await cache(outcome.path, "eas", true);
-		return stored.success ? ok({ kind: "hit", path: stored.data.path }) : stored;
+		return stored.success ? resultFactory.ok({ kind: "hit", path: stored.data.path }) : stored;
 	};
 }
 
@@ -305,19 +305,19 @@ async function builtMeanwhile(
 ): AsyncResult<BuildStepOutcome | undefined> {
 	const { store, projectKey, platform, hash } = input;
 	const mine = cachedBuild(store, projectKey, platform, hash, input.now());
-	if (mine) return ok({ kind: "cached", path: mine.path });
+	if (mine) return resultFactory.ok({ kind: "cached", path: mine.path });
 	const verified = input.kind?.buildKey ?? hash;
 	const now = await computeCacheKey(input.exec, input.project, platform, undefined, undefined, input.env);
 	if (!now.success) return now;
-	if (now.data.key === verified) return ok(undefined);
+	if (now.data.key === verified) return resultFactory.ok(undefined);
 	const movedHash = input.kind ? postKindHash(input.kind.key, now.data.key) : now.data.key;
 	const theirs = movedHash === undefined ? undefined : cachedBuild(store, projectKey, platform, movedHash, input.now());
 	if (movedHash !== undefined && theirs) {
 		input.log(`the checkout was built meanwhile (now ${now.data.key}): using that build`);
 		onPostKey(movedHash);
-		return ok({ kind: "cached", path: theirs.path });
+		return resultFactory.ok({ kind: "cached", path: theirs.path });
 	}
-	return err(
+	return resultFactory.err(
 		`the ${platform} checkout changed since it was fingerprinted (${verified} → ${now.data.key}): another build or an edit; run again`
 	);
 }
@@ -358,7 +358,7 @@ async function buildHere(
 	const stored = await cache(built.data.artifact, "build", false);
 	if (!stored.success) return stored;
 	aliasPostKey(input, stored.data, built.data.postKey, onPostKey);
-	return ok({ kind: "built", path: stored.data.path });
+	return resultFactory.ok({ kind: "built", path: stored.data.path });
 }
 
 /**
@@ -378,7 +378,7 @@ function buildStep(
 	const run = async (): AsyncResult<BuildStepOutcome> => {
 		const meanwhile = await builtMeanwhile(input, onPostKey);
 		if (!meanwhile.success) return meanwhile;
-		return meanwhile.data ? ok(meanwhile.data) : buildHere(input, cache, onPostKey, [treeKey, fpKey]);
+		return meanwhile.data ? resultFactory.ok(meanwhile.data) : buildHere(input, cache, onPostKey, [treeKey, fpKey]);
 	};
 	return () => lockFollowing(input, treeKey, run, waitLine);
 }
@@ -425,11 +425,11 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 		...(input.onPhase ? { onPhase: input.onPhase } : {}),
 		cached: () => cachedBuild(store, projectKey, platform, hash, input.now())?.path,
 		legacy: async () => {
-			if (input.kind) return ok(undefined);
+			if (input.kind) return resultFactory.ok(undefined);
 			const found = findLegacyArtifact(project.cacheDirs, platform, hash);
-			if (!found) return ok(undefined);
+			if (!found) return resultFactory.ok(undefined);
 			const stored = await cache(found, "legacy", false);
-			return stored.success ? ok(stored.data.path) : stored;
+			return stored.success ? resultFactory.ok(stored.data.path) : stored;
 		},
 		lock: (fn) => lockFollowing(input, buildLockKey(projectKey, platform, hash), fn),
 	};
@@ -448,7 +448,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	const deviceId = input.deviceId;
 	if (deviceId !== undefined) {
 		const bundleId = bundleIdFor(project, platform);
-		if (!bundleId.success) return textError(bundleId);
+		if (!bundleId.success) return wardenErrors.toText(bundleId);
 		const target = { platform, deviceId, ...(input.physical === true ? { physical: true } : {}) };
 		const deps = {
 			exec: input.exec,
@@ -462,12 +462,12 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			confirm: () => probeApp(deps, target, bundleId.data),
 			matches: async (cachedPath, installed) => {
 				// a phone has no container to stat: the install record named this build, devicectl names its version
-				if (isPhoneIos(target)) return ok(await phoneAppMatches(input.exec, cachedPath, installed));
+				if (isPhoneIos(target)) return resultFactory.ok(await phoneAppMatches(input.exec, cachedPath, installed));
 				// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
 				const record = getInstall(store, platform, deviceId, bundleId.data);
 				const container = installed.container;
 				if (container !== undefined && record?.container === container && record.exeStamp !== undefined) {
-					if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return ok(true);
+					if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return resultFactory.ok(true);
 				}
 				return appMatchesArtifact(deps, target, bundleId.data, cachedPath, container);
 			},
@@ -496,7 +496,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 					...(container !== undefined ? { container } : {}),
 					...(exeStamp !== undefined ? { exeStamp } : {}),
 				});
-				return ok(undefined);
+				return resultFactory.ok(undefined);
 			},
 		};
 	}

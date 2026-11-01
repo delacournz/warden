@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { StepResult, TestResult } from "../../results/schema";
 
@@ -94,11 +94,13 @@ export function parseTesterReport(text: string): Result<TesterNative[]> {
 	try {
 		json = JSON.parse(text);
 	} catch (e) {
-		return err(`report.json is not JSON: ${e instanceof Error ? e.message : String(e)}`);
+		return resultFactory.err(`report.json is not JSON: ${e instanceof Error ? e.message : String(e)}`);
 	}
 	const parsed = reportSchema.safeParse(json);
 	if (!parsed.success)
-		return err(`report.json: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+		return resultFactory.err(
+			`report.json: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`
+		);
 	const tests = parsed.data.run.results
 		.filter((r) => r.kind === undefined || r.kind === "test")
 		.map(
@@ -108,5 +110,5 @@ export function parseTesterReport(text: string): Result<TesterNative[]> {
 				...fromAttempts(r),
 			})
 		);
-	return ok(tests);
+	return resultFactory.ok(tests);
 }

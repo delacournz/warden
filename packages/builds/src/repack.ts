@@ -17,7 +17,7 @@ import type { Exec } from "@delacour/warden-runtime/exec";
 import { findNodeBin } from "@delacour/warden-runtime/node-bin";
 import { touchBuild } from "@delacour/warden-store/builds-table";
 import type { Platform } from "@delacour/warden-store/types";
-import { type AsyncResult, err, ok } from "@delacour/warden-types/result";
+import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { diskSize, findRepack, findSimulatorBase, kindHash, recordRepack, repackDir } from "./cache";
 import { type EnsureKindInput, ensureKindBuild, LOCAL_PROFILE } from "./ensure";
 import { type GitContext, gitContext, readRepackMeta, writeRepackMeta } from "./js-key";
@@ -205,13 +205,14 @@ type BundleStep = {
 async function compileHermes(step: BundleStep, bundle: string, assetsDir: string): AsyncResult<BundleOutput> {
 	const { exec, root, scratch } = step;
 	const hermesc = findHermesc(root);
-	if (!hermesc) return err(`repack: Hermes is on in the base but hermesc was not found under ${root}/node_modules`);
+	if (!hermesc)
+		return resultFactory.err(`repack: Hermes is on in the base but hermesc was not found under ${root}/node_modules`);
 	const hbc = join(scratch, `${basename(bundle)}.hbc`);
 	step.log("compiling Hermes bytecode");
 	const compile = await exec([hermesc, "-emit-binary", "-O", "-output-source-map", "-out", hbc, bundle], { cwd: root });
 	if (compile.exitCode !== 0)
-		return err(`repack: hermesc failed: ${(compile.stderr || compile.stdout).trim().slice(-2000)}`);
-	if (!hasHbcMagic(hbc)) return err("repack: hermesc output is not Hermes bytecode (bad magic bytes)");
+		return resultFactory.err(`repack: hermesc failed: ${(compile.stderr || compile.stdout).trim().slice(-2000)}`);
+	if (!hasHbcMagic(hbc)) return resultFactory.err("repack: hermesc output is not Hermes bytecode (bad magic bytes)");
 	let sourcemap = `${bundle}.map`;
 	const compose = findComposeScript(root);
 	if (compose && existsSync(`${hbc}.map`)) {
@@ -220,7 +221,7 @@ async function compileHermes(step: BundleStep, bundle: string, assetsDir: string
 		if (merged.exitCode === 0 && existsSync(composed)) sourcemap = composed;
 		else step.log("composing source maps failed: keeping the JS source map");
 	}
-	return ok({ bundle: hbc, assetsDir, sourcemap, hermes: true });
+	return resultFactory.ok({ bundle: hbc, assetsDir, sourcemap, hermes: true });
 }
 
 /** Bundle the JS into `scratch`, then Hermes-compile it when the base runs Hermes. */
@@ -228,7 +229,8 @@ async function bundleJs(step: BundleStep): AsyncResult<BundleOutput> {
 	const { exec, root, platform, scratch } = step;
 	const binName = step.framework === "expo" ? "expo" : "react-native";
 	const bin = findNodeBin(root, binName);
-	if (!bin) return err(`repack: no ${binName} binary under ${root}/node_modules/.bin (install dependencies)`);
+	if (!bin)
+		return resultFactory.err(`repack: no ${binName} binary under ${root}/node_modules/.bin (install dependencies)`);
 	const bundle = join(scratch, BUNDLE_FILE[platform]);
 	const argv = bundleArgv(bin, step.flags, step.entry, platform, scratch);
 	step.log(`bundling ${platform} JS (${binName} ${argv[1]})`);
@@ -238,12 +240,12 @@ async function bundleJs(step: BundleStep): AsyncResult<BundleOutput> {
 		...(step.output ? { onLine: step.output } : {}),
 	});
 	if (run.exitCode !== 0)
-		return err(`repack: ${binName} ${argv[1]} failed: ${(run.stderr || run.stdout).trim().slice(-2000)}`);
+		return resultFactory.err(`repack: ${binName} ${argv[1]} failed: ${(run.stderr || run.stdout).trim().slice(-2000)}`);
 	if (!existsSync(bundle) || statSync(bundle).size === 0)
-		return err(`repack: the bundler wrote no ${basename(bundle)}`);
+		return resultFactory.err(`repack: the bundler wrote no ${basename(bundle)}`);
 	const assetsDir = join(scratch, "assets");
 	mkdirSync(assetsDir, { recursive: true });
-	if (!step.hermes) return ok({ bundle, assetsDir, sourcemap: `${bundle}.map`, hermes: false });
+	if (!step.hermes) return resultFactory.ok({ bundle, assetsDir, sourcemap: `${bundle}.map`, hermes: false });
 
 	return compileHermes(step, bundle, assetsDir);
 }
@@ -258,7 +260,7 @@ async function bundleJs(step: BundleStep): AsyncResult<BundleOutput> {
 export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	const { store, exec, platform, project, projectKey } = input;
 	const entry = resolveEntryFile(project.root);
-	if (!entry) return err(`repack: no entry file in ${project.root} (package.json "main" or index.js/ts)`);
+	if (!entry) return resultFactory.err(`repack: no entry file in ${project.root} (package.json "main" or index.js/ts)`);
 	const flags = bundlerFlags(platform, project.framework, relative(project.root, entry));
 	const keys = await computeKindKey({
 		exec,
@@ -270,7 +272,7 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	});
 	if (!keys.success) return keys;
 	const repack = keys.data.repack;
-	if (!repack) return err("repack: no repack key for the simulator kind");
+	if (!repack) return resultFactory.err("repack: no repack key for the simulator kind");
 	const hash = kindHash(repack);
 	const baseHash = kindHash(keys.data.key);
 	const query = { projectKey, platform, nativeFp: repack.nativeFp, jsKey: repack.jsKey };
@@ -291,7 +293,7 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 		};
 	};
 	const early = await reuse();
-	if (early) return ok(early);
+	if (early) return resultFactory.ok(early);
 
 	const base = await ensureKindBuild({
 		...input,
@@ -303,7 +305,7 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	const baseRecord = findSimulatorBase(store, { projectKey, platform, nativeFp: repack.nativeFp });
 	const baseArtifact = baseRecord?.path ?? base.data.appPath;
 	if (!baseArtifact || !existsSync(baseArtifact))
-		return err(`repack: the simulator base build is missing (${baseHash})`);
+		return resultFactory.err(`repack: the simulator base build is missing (${baseHash})`);
 	touchBuild(store, projectKey, platform, baseHash, input.now());
 
 	const lock = {
@@ -318,7 +320,7 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	};
 	return withBuildLock(lock, buildLockKey(projectKey, platform, repack.jsKey), async () => {
 		const again = await reuse();
-		if (again) return ok(again);
+		if (again) return resultFactory.ok(again);
 		return makeRepack(input, { keys: keys.data, repack, flags, entry, hash, baseHash, baseArtifact });
 	});
 }
@@ -389,11 +391,12 @@ async function makeRepack(input: RepackInput, made: Made): AsyncResult<RepackRes
 		const bundleMs = Math.max(0, input.now() - started);
 
 		const applied = await input.repackers[platform]({ exec, baseArtifact, outDir: staging, bundle: bundled.data });
-		if (!applied.success) return err(`repack: ${applied.error}`);
-		if ("fallback" in applied.data) return ok({ kind: "fallback", reason: applied.data.reason });
+		if (!applied.success) return resultFactory.err(`repack: ${applied.error}`);
+		if ("fallback" in applied.data) return resultFactory.ok({ kind: "fallback", reason: applied.data.reason });
 
 		const stagedArtifact = applied.data.artifact;
-		if (!existsSync(stagedArtifact)) return err(`repack: the repacker wrote no artifact (${stagedArtifact})`);
+		if (!existsSync(stagedArtifact))
+			return resultFactory.err(`repack: the repacker wrote no artifact (${stagedArtifact})`);
 		const artifact = join(finalDir, basename(stagedArtifact));
 		writeRepackMeta(staging, {
 			worktree: git.data.worktree,
@@ -405,9 +408,9 @@ async function makeRepack(input: RepackInput, made: Made): AsyncResult<RepackRes
 		rmSync(finalDir, { recursive: true, force: true });
 		renameSync(staging, finalDir);
 		recordMade(input, made, git.data, artifact);
-		return ok({ kind: "repacked", artifact, hash, baseHash, jsKey: repack.jsKey, bundleMs });
+		return resultFactory.ok({ kind: "repacked", artifact, hash, baseHash, jsKey: repack.jsKey, bundleMs });
 	} catch (error) {
-		return err(`repack: ${error instanceof Error ? error.message : String(error)}`);
+		return resultFactory.err(`repack: ${error instanceof Error ? error.message : String(error)}`);
 	} finally {
 		if (scratch) rmSync(scratch, { recursive: true, force: true });
 		if (staging) rmSync(staging, { recursive: true, force: true });

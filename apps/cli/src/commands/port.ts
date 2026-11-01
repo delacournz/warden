@@ -12,7 +12,7 @@ import {
 import type { PortLeasesJson, PortReleaseJson } from "@delacour/warden-sdk/contracts/leases";
 import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
 import { describeOwner, type Lease, type Owner, ownerLocation } from "@delacour/warden-store/types";
-import { err, ok, type Result } from "@delacour/warden-types/result";
+import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, reportError, table, warn } from "../output";
@@ -32,9 +32,11 @@ function portOf(lease: Lease): number | undefined {
 }
 
 function parseCount(raw: string | undefined, name: string, fallback: number): Result<number> {
-	if (raw === undefined) return ok(fallback);
+	if (raw === undefined) return resultFactory.ok(fallback);
 	const n = Number(raw);
-	return Number.isInteger(n) && n >= 1 ? ok(n) : err(`invalid --${name} "${raw}" (must be an integer ≥ 1)`);
+	return Number.isInteger(n) && n >= 1
+		? resultFactory.ok(n)
+		: resultFactory.err(`invalid --${name} "${raw}" (must be an integer ≥ 1)`);
 }
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
@@ -52,11 +54,11 @@ function parsePortClaim(opts: PortClaimOpts): Result<PortClaim> {
 	if (!range.success) return range;
 	const count = parseCount(opts.count, "count", 1);
 	if (!count.success) return count;
-	const ttl = opts.ttl === undefined ? ok(DEFAULT_TTL_MS) : parseDuration(opts.ttl);
+	const ttl = opts.ttl === undefined ? resultFactory.ok(DEFAULT_TTL_MS) : parseDuration(opts.ttl);
 	if (!ttl.success) return ttl;
 	const flags: PortClaim = { ...range.data, count: count.data, ttlMs: ttl.data };
 	if (opts.label !== undefined) flags.label = opts.label;
-	return ok(flags);
+	return resultFactory.ok(flags);
 }
 
 /** Lease free ports; stdout = one port per line (script-friendly: `PORT=$(warden port claim)`). */
@@ -88,15 +90,15 @@ type PortReleaseOpts = { lease?: string[]; mine?: true; force?: true; json?: tru
 function releaseSelector(ports: string[], opts: PortReleaseOpts, owner: () => Owner): Result<PortReleaseSelector> {
 	const leaseIds = opts.lease ?? [];
 	const modes = [ports.length > 0, leaseIds.length > 0, opts.mine === true].filter(Boolean).length;
-	if (modes !== 1) return err("give exactly one of <port…>, --lease <id…>, --mine");
-	if (opts.mine) return ok({ by: "owner", owner: owner() });
-	if (leaseIds.length > 0) return ok({ by: "lease", ids: leaseIds });
+	if (modes !== 1) return resultFactory.err("give exactly one of <port…>, --lease <id…>, --mine");
+	if (opts.mine) return resultFactory.ok({ by: "owner", owner: owner() });
+	if (leaseIds.length > 0) return resultFactory.ok({ by: "lease", ids: leaseIds });
 	const bad = ports.find((p) => {
 		const n = Number(p);
 		return !Number.isInteger(n) || n < 1 || n > 65_535;
 	});
-	if (bad !== undefined) return err(`invalid port "${bad}"`);
-	return ok({ by: "port", ports: ports.map(Number) });
+	if (bad !== undefined) return resultFactory.err(`invalid port "${bad}"`);
+	return resultFactory.ok({ by: "port", ports: ports.map(Number) });
 }
 
 async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOpts): Promise<number> {

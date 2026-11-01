@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { devtoolsErr } from "@delacour/warden-devtools/devtools.types";
 import { startFakeMetro } from "@delacour/warden-devtools/testing/devtools";
 import { stubFacet } from "@delacour/warden-devtools/testing/facet";
-import { ok } from "@delacour/warden-types/result";
+import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
 import { createSession } from "./session";
 
@@ -40,7 +40,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async () => {
 				opens += 1;
-				return ok(stubFacet().facet);
+				return resultFactory.ok(stubFacet().facet);
 			},
 		});
 		const result = await session.devtools();
@@ -57,7 +57,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async (env) => {
 				seen.push(env);
-				return ok(stub.facet);
+				return resultFactory.ok(stub.facet);
 			},
 		});
 		expect(session.peekDevtools()).toBeUndefined();
@@ -76,7 +76,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async () => {
 				attempts += 1;
-				return attempts === 1 ? devtoolsErr("devtools_unavailable", "Metro is down") : ok(stub.facet);
+				return attempts === 1 ? devtoolsErr("devtools_unavailable", "Metro is down") : resultFactory.ok(stub.facet);
 			},
 		});
 		const first = await session.devtools();
@@ -103,7 +103,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async () => {
 				const next = opened.shift();
-				return next === undefined ? devtoolsErr("devtools_unavailable", "no more") : ok(next);
+				return next === undefined ? devtoolsErr("devtools_unavailable", "no more") : resultFactory.ok(next);
 			},
 		});
 		const a = await session.devtools();
@@ -125,7 +125,7 @@ describe("Session devtools", () => {
 		const session = createSession({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
-			devtools: async () => ok(stub.facet),
+			devtools: async () => resultFactory.ok(stub.facet),
 		});
 		await session.devtools();
 		await Promise.all([session.close(), session.close()]);
@@ -139,7 +139,7 @@ describe("Session devtools", () => {
 			exitHook: false,
 			devtools: async () => {
 				opens += 1;
-				return ok(stubFacet().facet);
+				return resultFactory.ok(stubFacet().facet);
 			},
 		});
 		await session.close();

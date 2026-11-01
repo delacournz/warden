@@ -18,8 +18,8 @@ import { biometricProfile } from "@delacour/warden-providers/biometrics";
 import { isGoldenName } from "@delacour/warden-providers/golden-name";
 import { slimSimulator } from "@delacour/warden-providers/slim";
 import { type DeviceRequest, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-store/types";
-import { codedError, textError } from "@delacour/warden-types/error";
-import { type AsyncResult, err, ok, type Result } from "@delacour/warden-types/result";
+import { wardenErrors } from "@delacour/warden-types/error";
+import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 import { leaseHostFromContext } from "./lease-host";
 import { applyPhysicalAllow, parsePhysicalIds, resolvePhysicalAllow } from "./physical-allow";
@@ -78,7 +78,7 @@ export async function resolvePlatform(ctx: CommandContext, arg: string | undefin
 		{ value: "ios", label: "iOS", hint: "simulators" },
 		{ value: "android", label: "Android", hint: "emulators" },
 	]);
-	return picked ? ok(picked) : err("cancelled");
+	return picked ? resultFactory.ok(picked) : resultFactory.err("cancelled");
 }
 
 export type ClaimFlagValues = {
@@ -138,14 +138,17 @@ export type ClaimFlags = ClaimRequest;
 export const DEFAULT_WAIT = "30m";
 
 export function parsePlatform(value: string | undefined): Result<Platform> {
-	if (value === "ios" || value === "android") return ok(value);
-	return err(value === undefined ? "missing platform (ios|android)" : `unknown platform "${value}" (ios|android)`);
+	if (value === "ios" || value === "android") return resultFactory.ok(value);
+	return resultFactory.err(
+		value === undefined ? "missing platform (ios|android)" : `unknown platform "${value}" (ios|android)`
+	);
 }
 
 function positiveInt(name: string, raw: string | undefined, fallback: number, min = 1): Result<number> {
-	if (raw === undefined) return ok(fallback);
-	if (!/^\d+$/.test(raw) || Number(raw) < min) return err(`--${name} must be an integer >= ${min}, got "${raw}"`);
-	return ok(Number(raw));
+	if (raw === undefined) return resultFactory.ok(fallback);
+	if (!/^\d+$/.test(raw) || Number(raw) < min)
+		return resultFactory.err(`--${name} must be an integer >= ${min}, got "${raw}"`);
+	return resultFactory.ok(Number(raw));
 }
 
 /**
@@ -167,18 +170,18 @@ export function parseClaimFlags(
 	if (!count.success) return count;
 	const max = positiveInt("max", values.max, Math.max(defaultMax(cores), count.data), 0);
 	if (!max.success) return max;
-	const waitMs = values.wait === false ? ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
+	const waitMs = values.wait === false ? resultFactory.ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
 	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
-	if (priority && !priority.success) return textError(priority);
-	const ttlMs = values.ttl === undefined ? ok(defaultTtlMs) : parseDuration(values.ttl);
+	if (priority && !priority.success) return wardenErrors.toText(priority);
+	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : parseDuration(values.ttl);
 	if (!ttlMs.success) return ttlMs;
 
 	const request = deviceRequest(values, platform.data, count.data, max.data);
 	const flags: ClaimFlags = { request, waitMs: waitMs.data, ttlMs: ttlMs.data };
 	if (priority) flags.priority = priority.data;
 	if (defaultPriority !== undefined) flags.defaultPriority = defaultPriority;
-	return ok(withOptionalFlags(flags, values));
+	return resultFactory.ok(withOptionalFlags(flags, values));
 }
 
 /** Flags that make no sense on a device warden never creates, boots or arranges. */
@@ -206,28 +209,32 @@ function parseTiming(
 	values: ClaimFlagValues,
 	defaultTtlMs: number
 ): Result<{ flags: Pick<ClaimFlags, "waitMs" | "ttlMs" | "priority"> }> {
-	const waitMs = values.wait === false ? ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
+	const waitMs = values.wait === false ? resultFactory.ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
 	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
-	if (priority && !priority.success) return textError(priority);
-	const ttlMs = values.ttl === undefined ? ok(defaultTtlMs) : parseDuration(values.ttl);
+	if (priority && !priority.success) return wardenErrors.toText(priority);
+	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : parseDuration(values.ttl);
 	if (!ttlMs.success) return ttlMs;
-	return ok({ flags: { waitMs: waitMs.data, ttlMs: ttlMs.data, ...(priority ? { priority: priority.data } : {}) } });
+	return resultFactory.ok({
+		flags: { waitMs: waitMs.data, ttlMs: ttlMs.data, ...(priority ? { priority: priority.data } : {}) },
+	});
 }
 
 /** The physical ids named by `--serial` (android) / `--udid` (ios), checked against the platform. */
 function physicalIds(platform: Platform, values: ClaimFlagValues): Result<string[] | undefined> {
 	if (platform === "ios" && values.physicalSerial !== undefined)
-		return err("--serial is android-only; use --udid for iOS");
+		return resultFactory.err("--serial is android-only; use --udid for iOS");
 	if (platform === "android" && values.physicalUdid !== undefined)
-		return err("--udid is ios-only; use --serial for Android");
+		return resultFactory.err("--udid is ios-only; use --serial for Android");
 	const ids = platform === "android" ? values.physicalSerial : values.physicalUdid;
-	if (ids === undefined) return ok(undefined);
+	if (ids === undefined) return resultFactory.ok(undefined);
 	const bad = platform === "ios" ? ids.find((id) => !isPhysicalIosId(id)) : undefined;
 	if (bad !== undefined) {
-		return err(`--udid ${bad} is not a physical iOS device id (simulators are claimed without --physical)`);
+		return resultFactory.err(
+			`--udid ${bad} is not a physical iOS device id (simulators are claimed without --physical)`
+		);
 	}
-	return ok([...new Set(ids)]);
+	return resultFactory.ok([...new Set(ids)]);
 }
 
 /** `parseClaimFlags` for a physical claim: one device per named id (else one), never created or booted. */
@@ -238,7 +245,7 @@ function parsePhysicalClaim(
 	defaultPriority: number | undefined
 ): Result<ClaimFlags> {
 	const conflict = physicalConflict(values);
-	if (conflict) return err(conflict);
+	if (conflict) return resultFactory.err(conflict);
 	const ids = physicalIds(platform, values);
 	if (!ids.success) return ids;
 	const timing = parseTiming(values, defaultTtlMs);
@@ -254,7 +261,7 @@ function parsePhysicalClaim(
 	const flags: ClaimFlags = { request, ...timing.data.flags };
 	if (defaultPriority !== undefined) flags.defaultPriority = defaultPriority;
 	if (values.label !== undefined) flags.label = values.label;
-	return ok(flags);
+	return resultFactory.ok(flags);
 }
 
 function deviceRequest(values: ClaimFlagValues, platform: Platform, count: number, max: number): DeviceRequest {
@@ -283,16 +290,17 @@ function withOptionalFlags(flags: ClaimFlags, values: ClaimFlagValues): ClaimFla
  * `warden.config.ts`). A config that cannot be read fails the claim: guessing could take a device the list excludes.
  */
 export async function withPhysicalAllowlist(ctx: CommandContext, request: DeviceRequest): AsyncResult<DeviceRequest> {
-	if (!request.physical || request.physical.ids !== undefined) return ok(request);
+	if (!request.physical || request.physical.ids !== undefined) return resultFactory.ok(request);
 	let configAllow: string[] | undefined;
 	if (parsePhysicalIds(ctx.env.WARDEN_PHYSICAL_IDS) === undefined) {
 		// loaded here only: a plain claim never pays for the config loader
 		const { findWardenConfig } = await import("@delacour/warden-builds/config");
 		const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
-		if (!found.success) return err(`cannot read the physical-device allowlist from warden.config: ${found.error}`);
+		if (!found.success)
+			return resultFactory.err(`cannot read the physical-device allowlist from warden.config: ${found.error}`);
 		configAllow = found.data?.config.physical?.allow;
 	}
-	return ok(applyPhysicalAllow(request, resolvePhysicalAllow(ctx.env, configAllow)));
+	return resultFactory.ok(applyPhysicalAllow(request, resolvePhysicalAllow(ctx.env, configAllow)));
 }
 
 /**
@@ -308,7 +316,7 @@ export async function claimWithFlags(
 	options: ClaimHideOptions = {}
 ): Promise<ClaimResult> {
 	const allowed = await withPhysicalAllowlist(ctx, flags.request);
-	if (!allowed.success) return codedError(allowed, "failed");
+	if (!allowed.success) return wardenErrors.coded(allowed, "failed");
 	const request = allowed.data;
 	if (request.physical !== undefined && request.platform === "ios") {
 		const unlocked = await awaitPhonesUnlocked(ctx, owner, request, {
@@ -316,7 +324,7 @@ export async function claimWithFlags(
 			...(options.abort ? { abort: options.abort } : {}),
 			...(options.unlockSleep ? { sleep: options.unlockSleep } : {}),
 		});
-		if (!unlocked.success) return codedError(unlocked, "failed");
+		if (!unlocked.success) return wardenErrors.coded(unlocked, "failed");
 	}
 	const outcome = await claimWithRequest(leaseHostFromContext(ctx), owner, { ...flags, request }, pid, options);
 	if (outcome.success && request.platform === "ios" && !request.physical) {
