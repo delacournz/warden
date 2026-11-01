@@ -6,9 +6,9 @@ import type { RecordedStep, Recording } from "@delacour/warden-e2e/authoring/rec
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordUsed, RecordVerify } from "../../contracts/record.schema";
-import { uiDir } from "../paths";
+import { uiPaths } from "../paths";
 import type { OpOutcome, OpSession } from "../session";
-import { takeSnapshot } from "../snapshot";
+import { snapshotOps } from "../snapshot";
 import { activeRecording, failed, findSuiteOf, journalFailure, write } from "./common";
 import { visitedRoutes } from "./config";
 import type { VerifyReport } from "./deps";
@@ -102,7 +102,7 @@ async function runUseSpec(
 		});
 	}
 	const stamp = String(session.host.now());
-	const outDir = join(uiDir(session.host.home, session.device.id), "use", stamp);
+	const outDir = join(uiPaths.uiDir(session.host.home, session.device.id), "use", stamp);
 	const specDir = join(suite.data.cwd, "node_modules", ".cache", "warden-use", stamp);
 	const specPath = join(specDir, "use.e2e.ts");
 	const useStep: RecordedStep = { i: 0, at: session.host.now(), kind: "use", module: helper.module, fn: helper.fn };
@@ -136,7 +136,7 @@ function useFailed(session: OpSession, run: UseRun, helper: UsedHelper): { succe
 async function snapshotAfterUse(session: OpSession): Promise<void> {
 	const driver = await session.driver();
 	if (!driver.success) return;
-	await takeSnapshot(session, driver.data, {
+	await snapshotOps.takeSnapshot(session, driver.data, {
 		interactiveOnly: true,
 		all: false,
 		settle: { budgetMs: USE_SETTLE_MS },

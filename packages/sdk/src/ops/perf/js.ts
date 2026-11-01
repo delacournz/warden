@@ -6,7 +6,7 @@ import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { DEV_BUILD_BANNER, markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv } from "./env";
 import {
 	devtoolsPerfError,
@@ -32,14 +32,17 @@ export function planJs(opts: JsParams): Result<JsPlan, WardenError> {
 	if (duration === undefined || duration < 1) {
 		return {
 			success: false,
-			error: opError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
+			error: opErrors.opError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
 		};
 	}
 	const interval = opts.samplingInterval === undefined ? DEFAULT_SAMPLING_INTERVAL_US : Number(opts.samplingInterval);
 	if (!Number.isInteger(interval) || interval < 10) {
 		return {
 			success: false,
-			error: opError("usage", `--sampling-interval is microseconds, at least 10, got "${opts.samplingInterval}"`),
+			error: opErrors.opError(
+				"usage",
+				`--sampling-interval is microseconds, at least 10, got "${opts.samplingInterval}"`
+			),
 		};
 	}
 	return resultFactory.ok({ durationMs: Math.min(duration, HARD_MAX_DURATION_MS), samplingIntervalUs: interval });
@@ -56,7 +59,7 @@ export async function metroFor(
 	if (url !== undefined) return resultFactory.ok(url);
 	return {
 		success: false,
-		error: opError(
+		error: opErrors.opError(
 			"devtools_unavailable",
 			"no Metro found for this device: a release build, or no dev client running",
 			{
@@ -160,9 +163,13 @@ export async function jsWork(
 	if (out.jsCapturing) {
 		return {
 			success: false,
-			error: opError("session_active", `session ${out.sessionId} already holds the JS profiler on ${target.udid}`, {
-				hint: "its profile lands in js/cpu.cpuprofile when it stops (warden perf stop)",
-			}),
+			error: opErrors.opError(
+				"session_active",
+				`session ${out.sessionId} already holds the JS profiler on ${target.udid}`,
+				{
+					hint: "its profile lands in js/cpu.cpuprofile when it stops (warden perf stop)",
+				}
+			),
 		};
 	}
 	const connected = await connectJsApp(ctx, deps, js, target, app, metro, timeoutMs);

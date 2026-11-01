@@ -1,13 +1,13 @@
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv } from "./env";
 import { listSessions, readSession } from "./session";
 
 export const notFound = (message: string): { success: false; error: WardenError } => ({
 	success: false,
-	error: opError("session_not_found", message, { hint: "warden perf ls" }),
+	error: opErrors.opError("session_not_found", message, { hint: "warden perf ls" }),
 });
 
 /** A session by id, unique id prefix or `latest` (the newest). */

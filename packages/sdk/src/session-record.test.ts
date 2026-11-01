@@ -13,7 +13,7 @@ import { createWardenClient } from "./client";
 import type { ClientSeams } from "./core";
 import { isWardenError } from "./errors";
 import type { VerifyInput } from "./ops/authoring/deps";
-import { recordingFile } from "./ops/paths";
+import { uiPaths } from "./ops/paths";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
@@ -110,7 +110,7 @@ test("session.record journals interactions and stop writes a verified spec", asy
 	await session.record.note("press the button");
 	await session.interactions.press({ selector: "id=sign-in-submit" });
 
-	const journal = recordingSchema.parse(JSON.parse(readFileSync(recordingFile(home, UDID), "utf8")));
+	const journal = recordingSchema.parse(JSON.parse(readFileSync(uiPaths.recordingFile(home, UDID), "utf8")));
 	expect(journal.steps.map((step) => step.kind)).toEqual(["note", "press"]);
 
 	const stopped = await session.record.stop();
@@ -118,7 +118,7 @@ test("session.record journals interactions and stop writes a verified spec", asy
 	expect(stopped.configSnippet).toContain("specs:");
 	expect(readFileSync(join(repoDir, "specs", "sign-in.e2e.ts"), "utf8")).toContain("sign-in-submit");
 	expect(verified).toHaveLength(1);
-	expect(existsSync(recordingFile(home, UDID))).toBe(false);
+	expect(existsSync(uiPaths.recordingFile(home, UDID))).toBe(false);
 });
 
 test("session.record throws a typed WardenError", async () => {

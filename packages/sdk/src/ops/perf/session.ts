@@ -17,7 +17,7 @@ import {
 } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { readPerfPointer, setPerfPointer, writeFileAtomic } from "./device-state";
 import type { PerfEnv } from "./env";
 import { perfRoot, sessionDir } from "./paths";
@@ -236,7 +236,7 @@ export function createSession(
 		if (live?.status === "running") {
 			return {
 				success: false,
-				error: opError("session_active", `perf session ${live.id} is already running on ${udid}`, {
+				error: opErrors.opError("session_active", `perf session ${live.id} is already running on ${udid}`, {
 					hint: "warden perf start --join attaches read-only to it; warden perf stop ends it",
 					details: { sessionId: live.id, owner: live.target.holder ?? null },
 				}),

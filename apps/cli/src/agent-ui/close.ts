@@ -4,7 +4,7 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseAfter } from "../perf/release-after";
 import type { UiDevice } from "./device";
-import { fromDriver, type UiDeps } from "./driver";
+import { opErrors, type UiDeps } from "./driver";
 import { stopAndroidHost, stopHelper, stopIosRunner } from "./helper";
 import { type UiError, uiError } from "./output";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
@@ -58,7 +58,7 @@ async function terminateApp(
 	}
 	const driver = await env.driver();
 	if (!driver.success) return driver;
-	const done = fromDriver(await driver.data.app.terminate(bundleId));
+	const done = opErrors.fromDriver(await driver.data.app.terminate(bundleId));
 	await driver.data.close();
 	return done.success ? resultFactory.ok(bundleId) : done;
 }

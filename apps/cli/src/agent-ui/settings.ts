@@ -15,7 +15,7 @@ import type { CommandContext } from "../context";
 import { deviceInfo, fail, recordOf, resolveDeps, withPort } from "./conditions";
 import type { ConditionsDeps } from "./conditions-types";
 import type { UiDevice } from "./device";
-import { driverUiError, fromDriver, type UiDeps } from "./driver";
+import { opErrors, type UiDeps } from "./driver";
 import type { UiError, UiSuccess } from "./output";
 import { runUi, type UiOptionValues } from "./run";
 import { parseLevel, parsePermissionPairs, parsePushPayload, parseTextSizeArg } from "./settings-parse";
@@ -104,7 +104,7 @@ async function permissionSet(
 	const grants = parsePermissionPairs(rest);
 	if (!grants.success) return fail("usage", grants.error);
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const applied = fromDriver(await port.permissions(grants.data, appOf(ctx, device, opts.app)));
+		const applied = opErrors.fromDriver(await port.permissions(grants.data, appOf(ctx, device, opts.app)));
 		if (!applied.success) return applied;
 		const state = applied.data;
 		const previous = recordOf(ctx, device.lease.id, "permission")?.value;
@@ -142,7 +142,7 @@ async function permissionReset(
 			const done = await port.permissions(back, { bundleId });
 			// an app that does not declare the permission has nothing to reset
 			if (!done.success && done.error.code !== "E_UNSUPPORTED")
-				return { success: false, error: driverUiError(done.error) };
+				return { success: false, error: opErrors.driverError(done.error) };
 		}
 		const rest = record.value.grants.filter((g) => !bundles.includes(g.bundleId));
 		if (rest.length === 0) forget(ctx, device, "permission");
@@ -215,7 +215,7 @@ async function timezoneApply(
 	const record = recordOf(ctx, device.lease.id, "locale")?.value ?? {};
 	const resetting = arg === "reset";
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const applied = fromDriver(
+		const applied = opErrors.fromDriver(
 			await port.timezone(
 				resetting ? null : arg,
 				record.previousTimezone ? { previous: record.previousTimezone } : undefined
@@ -263,7 +263,7 @@ async function localeApply(
 	const record = recordOf(ctx, device.lease.id, "locale")?.value ?? {};
 	const resetting = arg === "reset";
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const applied = fromDriver(
+		const applied = opErrors.fromDriver(
 			await port.locale(resetting ? null : arg, appOf(ctx, device, opts.app ?? record.bundleId))
 		);
 		if (!applied.success) return applied;
@@ -330,7 +330,7 @@ async function a11ySet(
 	const op = a11yOpOf(opts);
 	if (!op.success) return op;
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const applied = fromDriver(await port.a11y(op.data));
+		const applied = opErrors.fromDriver(await port.a11y(op.data));
 		if (!applied.success) return applied;
 		const resolved = op.data.textSize === undefined ? undefined : textSizes.resolveTextSize(op.data.textSize);
 		const previous = recordOf(ctx, device.lease.id, "a11y")?.value ?? {};
@@ -360,7 +360,7 @@ async function a11yReset(ctx: CommandContext, deps: Deps, device: UiDevice): Pro
 		return success(device, "a11y-reset", "a11y was not changed", { changed: false });
 	}
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const done = fromDriver(await port.a11y(null));
+		const done = opErrors.fromDriver(await port.a11y(null));
 		if (!done.success) return done;
 		forget(ctx, device, "a11y");
 		return success(device, "a11y-reset", "a11y reset", { changed: true });
@@ -410,7 +410,7 @@ async function batterySet(
 	if (Object.keys(op).length === 0)
 		return fail("usage", "battery set needs --level <0-100> and/or --charging / --no-charging");
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const applied = fromDriver(await port.battery(op));
+		const applied = opErrors.fromDriver(await port.battery(op));
 		if (!applied.success) return applied;
 		const previous = recordOf(ctx, device.lease.id, "battery")?.value ?? {};
 		const next: BatteryCondition = { ...previous, ...op, cosmetic: applied.data.cosmetic };
@@ -443,7 +443,7 @@ export function uiBattery(
 					return success(device, "battery-reset", "battery was not changed", { changed: false });
 				}
 				return withPort<UiSuccess>(ctx, await resolveDeps(deps), device, async (port) => {
-					const done = fromDriver(await port.battery(null));
+					const done = opErrors.fromDriver(await port.battery(null));
 					if (!done.success) return done;
 					forget(ctx, device, "battery");
 					return success(device, "battery-reset", "battery reset", { changed: true });
@@ -472,7 +472,7 @@ export function uiBattery(
 export function uiMemoryWarning(ctx: CommandContext, deps: UiDeps, opts: AppOptionValues): Promise<number> {
 	return runUi(ctx, deps, "memory-warning", opts, async (device) =>
 		withPort<UiSuccess>(ctx, await resolveDeps(deps), device, async (port) => {
-			const sent = fromDriver(await port.memoryWarning(appOf(ctx, device, opts.app)));
+			const sent = opErrors.fromDriver(await port.memoryWarning(appOf(ctx, device, opts.app)));
 			return sent.success ? success(device, "memory-warning", "memory warning sent", {}) : sent;
 		})
 	);
@@ -484,7 +484,7 @@ export function uiPush(ctx: CommandContext, deps: UiDeps, payload: string, opts:
 		const parsed = parsePushPayload(payload, ctx.cwd);
 		if (!parsed.success) return fail("usage", parsed.error);
 		return withPort<UiSuccess>(ctx, await resolveDeps(deps), device, async (port) => {
-			const sent = fromDriver(await port.push(parsed.data, appOf(ctx, device, opts.app)));
+			const sent = opErrors.fromDriver(await port.push(parsed.data, appOf(ctx, device, opts.app)));
 			return sent.success ? success(device, "push", "push delivered", {}) : sent;
 		});
 	});

@@ -7,7 +7,7 @@ import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { iosAppBundle } from "./app-process";
 import type { PerfEnv } from "./env";
 
@@ -51,7 +51,7 @@ const adb = (ctx: PerfEnv, device: AppDevice, args: readonly string[]): string[]
 ];
 
 const failed = (message: string, hint?: string): WardenError =>
-	opError("failed", message, hint === undefined ? {} : { hint });
+	opErrors.opError("failed", message, hint === undefined ? {} : { hint });
 
 /** The app's launcher activity (`pkg/.Activity`), from `cmd package resolve-activity --brief`. */
 export async function resolveLauncher(
@@ -64,7 +64,7 @@ export async function resolveLauncher(
 	if (component === undefined) {
 		return {
 			success: false,
-			error: opError("app_not_found", `${appId} has no launcher activity on ${device.id}`, {
+			error: opErrors.opError("app_not_found", `${appId} has no launcher activity on ${device.id}`, {
 				hint: "install the app (warden dev android) or pass --app <package>",
 			}),
 		};

@@ -4,7 +4,7 @@ import { HARD_MAX_DURATION_MS } from "@delacour/warden-perf/shared/caps";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv, PerfUiEnv } from "./env";
 import { appendSample, type MetricsOut, metricsOutFor } from "./metrics-out";
 import { createSampler, type FrameRateSource } from "./metrics-sampler";
@@ -28,13 +28,16 @@ export function planSeries(opts: MetricsParams): Result<SeriesPlan, WardenError>
 	if (interval === undefined) {
 		return {
 			success: false,
-			error: opError("usage", `--interval must be a duration like 500ms or 2s, got "${opts.interval}"`),
+			error: opErrors.opError("usage", `--interval must be a duration like 500ms or 2s, got "${opts.interval}"`),
 		};
 	}
 	if (interval < MIN_INTERVAL_MS) {
 		return {
 			success: false,
-			error: opError("usage", `--interval must be at least ${MIN_INTERVAL_MS}ms: sampling faster skews the app`),
+			error: opErrors.opError(
+				"usage",
+				`--interval must be at least ${MIN_INTERVAL_MS}ms: sampling faster skews the app`
+			),
 		};
 	}
 	const fallback = opts.watch === true ? HARD_MAX_DURATION_MS : DEFAULT_ONE_SHOT_MS;
@@ -42,7 +45,7 @@ export function planSeries(opts: MetricsParams): Result<SeriesPlan, WardenError>
 	if (duration === undefined) {
 		return {
 			success: false,
-			error: opError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
+			error: opErrors.opError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
 		};
 	}
 	return resultFactory.ok({ intervalMs: interval, durationMs: Math.min(duration, HARD_MAX_DURATION_MS) });
@@ -148,7 +151,7 @@ function seriesSuccess(
 	if (summary === undefined) {
 		return {
 			success: false,
-			error: series.stopped ?? opError("interrupted", "interrupted before the first sample"),
+			error: series.stopped ?? opErrors.opError("interrupted", "interrupted before the first sample"),
 		};
 	}
 	const finding = sampleSeries.memoryGrowthFinding(summary);

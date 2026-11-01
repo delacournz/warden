@@ -42,4 +42,4 @@ export const defaultUiDeps: UiDeps = {
 };
 
 /** Driver failures as `warden ui` errors (engine problems exit 3, a stale ref exits 4, the rest exit 1). */
-export { DEVICE_LOCKED_HINT, driverError as driverUiError, fromDriver } from "@delacour/warden-sdk/ops/errors";
+export { DEVICE_LOCKED_HINT, opErrors } from "@delacour/warden-sdk/ops/errors";

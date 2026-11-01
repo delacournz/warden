@@ -3,7 +3,7 @@ import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv } from "./env";
 
 export type PerfAppRef = { id: string; source: "flag" | "foreground" | "config" };
@@ -60,6 +60,6 @@ export async function resolveAppWith(
 			: `no app detected on ${device.id}`;
 	return {
 		success: false,
-		error: opError("app_not_found", message, { hint: "pass --app <bundleId|package>" }),
+		error: opErrors.opError("app_not_found", message, { hint: "pass --app <bundleId|package>" }),
 	};
 }

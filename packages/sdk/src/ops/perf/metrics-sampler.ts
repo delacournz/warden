@@ -5,7 +5,7 @@ import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { appPid, type IosAppBundle, iosAppBundle } from "./app-process";
 import type { PerfEnv } from "./env";
 
@@ -23,7 +23,7 @@ export type MetricsSampler = {
 };
 
 const notRunning = (target: MetricsTarget): WardenError =>
-	opError("app_not_found", `${target.app} is not running on ${target.udid}`, {
+	opErrors.opError("app_not_found", `${target.app} is not running on ${target.udid}`, {
 		hint: "launch the app first (warden ui open <app>)",
 	});
 
@@ -60,7 +60,7 @@ function iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, s
 		);
 		if (row !== undefined) return { kind: "row", row };
 		if (res.exitCode !== 0 && res.stderr.trim() !== "") {
-			return { kind: "error", error: opError("failed", `ps failed: ${res.stderr.trim()}`) };
+			return { kind: "error", error: opErrors.opError("failed", `ps failed: ${res.stderr.trim()}`) };
 		}
 		return { kind: "gone" };
 	};

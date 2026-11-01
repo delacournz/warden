@@ -11,7 +11,7 @@ import { leaseModel } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
-import { fromDriver } from "./driver";
+import { opErrors } from "./driver";
 import { connectAndroidHost, connectHelper, connectIosRunner, stopAndroidHost } from "./helper";
 import type { UiError } from "./output";
 import { ownedPackages } from "./phone";
@@ -66,7 +66,7 @@ export async function openAndroidInProcess(
 	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
 ): Promise<Result<Driver, UiError>> {
 	const remembered = readDumpRoute(ctx, serial);
-	return fromDriver(
+	return opErrors.fromDriver(
 		await androidDrivers.open({
 			serial,
 			adb: androidToolsLocator.locate(ctx.env).adb,

@@ -78,8 +78,8 @@ async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmCon
 	});
 	if (!driver.success) {
 		await client?.close();
-		const { driverUiError } = await import("../agent-ui/driver");
-		return resultFactory.err(runnerWarmError(driverUiError(driver.error)));
+		const { opErrors } = await import("../agent-ui/driver");
+		return resultFactory.err(runnerWarmError(opErrors.driverError(driver.error)));
 	}
 	return resultFactory.ok({
 		socketPath,

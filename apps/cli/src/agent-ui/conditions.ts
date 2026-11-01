@@ -34,7 +34,7 @@ import {
 } from "./conditions-parse";
 import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import { physicalDevice, type UiDevice } from "./device";
-import { driverUiError, fromDriver, type UiDeps } from "./driver";
+import { opErrors, type UiDeps } from "./driver";
 import { type UiError, type UiSuccess, uiError } from "./output";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
 import { readState } from "./state";
@@ -149,7 +149,7 @@ function seedFailure(
 	result: Awaited<ReturnType<ConditionsPort["network" | "networkFaults"]>>
 ): { success: false; error: UiError } | undefined {
 	if (result.success || result.error.code === "E_NETWORK_RELAUNCH") return undefined;
-	return { success: false, error: driverUiError(result.error) };
+	return { success: false, error: opErrors.driverError(result.error) };
 }
 
 function faultText(fault: HostFault): string {
@@ -230,7 +230,7 @@ async function setNetwork(
 			const seeded = seedFailure(await port.networkFaults(live.faults));
 			if (seeded) return seeded;
 		}
-		const applied = fromDriver(await port.network(condition, networkOptions(ctx, device, opts)));
+		const applied = opErrors.fromDriver(await port.network(condition, networkOptions(ctx, device, opts)));
 		if (!applied.success) return applied;
 		if (worthRecording(ctx, deps, lease, condition)) {
 			const saved = record(ctx, lease, "network", condition, ownedPids(deps, ctx, lease, []));
@@ -290,7 +290,7 @@ async function flapNetwork(
 	await stopOwned(ctx, env, deps, recordOf(ctx, lease.id, "network"), SCHEDULER_MARK, deps.proxyPid(ctx, lease.id));
 	const base: NetworkCondition = { kind: "online" };
 	const applied = await withPort<NetworkState>(ctx, deps, device, async (port) =>
-		fromDriver(await port.network(base, networkOptions(ctx, device, opts)))
+		opErrors.fromDriver(await port.network(base, networkOptions(ctx, device, opts)))
 	);
 	if (!applied.success) return applied;
 	if (device.platform === "ios") {
@@ -367,7 +367,7 @@ async function faultNetwork(
 			const seeded = seedFailure(await port.network(condition, networkOptions(ctx, device, {} as NetOptionValues)));
 			if (seeded) return seeded;
 		}
-		const applied = fromDriver(await port.networkFaults(rules));
+		const applied = opErrors.fromDriver(await port.networkFaults(rules));
 		if (!applied.success) return applied;
 		const saved = record(ctx, lease, "network", condition, ownedPids(deps, ctx, lease, []));
 		if (!saved.success) return saved;
@@ -403,7 +403,7 @@ async function resetNetwork(
 			const cleared = seedFailure(await port.networkFaults([]));
 			if (cleared) return cleared;
 		}
-		const applied = fromDriver(await port.network({ kind: "online" }, networkOptions(ctx, device, opts)));
+		const applied = opErrors.fromDriver(await port.network({ kind: "online" }, networkOptions(ctx, device, opts)));
 		if (!applied.success) return applied;
 		// the proxy stays up (an injected app still routes through it) until the lease is released
 		const saved = record(ctx, lease, "network", { kind: "online" }, ownedPids(deps, ctx, lease, []));
@@ -523,7 +523,7 @@ async function moveLocation(
 	await stopOwned(ctx, env, deps, recordOf(ctx, lease.id, "location"), TICKER_MARK);
 	if (device.platform === "ios") {
 		return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-			const played = fromDriver(await port.location(value));
+			const played = opErrors.fromDriver(await port.location(value));
 			if (!played.success) return played;
 			const saved = record(ctx, lease, "location", value, []);
 			return saved.success ? locationSuccess(device, action, value) : saved;
@@ -538,7 +538,7 @@ async function moveLocation(
 		const first = plan.points[0];
 		return first === undefined
 			? fail("usage", "a route needs at least one point")
-			: fromDriver(await port.location({ kind: "point", lat: first.lat, lon: first.lon }));
+			: opErrors.fromDriver(await port.location({ kind: "point", lat: first.lat, lon: first.lon }));
 	});
 	if (!placed.success) return placed;
 	if (plan.points.length < 2) {
@@ -586,7 +586,7 @@ async function setPoint(
 	await stopOwned(ctx, env, deps, recordOf(ctx, lease.id, "location"), TICKER_MARK);
 	const value: LocationCondition = { kind: "point", ...point, ...(altM === undefined ? {} : { altM }) };
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const placed = fromDriver(await port.location(value));
+		const placed = opErrors.fromDriver(await port.location(value));
 		if (!placed.success) return placed;
 		const saved = record(ctx, lease, "location", value, []);
 		return saved.success ? locationSuccess(device, "location-set", value) : saved;
@@ -603,7 +603,7 @@ async function clearLocation(
 	const stored = recordOf(ctx, lease.id, "location");
 	await stopOwned(ctx, env, deps, stored, TICKER_MARK);
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const cleared = fromDriver(await port.location({ kind: "clear" }));
+		const cleared = opErrors.fromDriver(await port.location({ kind: "clear" }));
 		if (!cleared.success) return cleared;
 		leaseConditions.clear(ctx.store(), lease.id, "location");
 		return resultFactory.ok<UiSuccess>({
@@ -761,7 +761,9 @@ async function applyClock(
 	opts: ClockOptionValues
 ): Promise<Result<UiSuccess, UiError>> {
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
-		const applied = fromDriver(await port.clock(condition, networkOptions(ctx, device, opts as NetOptionValues)));
+		const applied = opErrors.fromDriver(
+			await port.clock(condition, networkOptions(ctx, device, opts as NetOptionValues))
+		);
 		if (!applied.success) return applied;
 		if (condition.kind === "real") leaseConditions.clear(ctx.store(), device.lease.id, "clock");
 		else {

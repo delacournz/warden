@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { journalStore } from "@delacour/warden-e2e/authoring/journal";
 import { z } from "zod";
-import { uiRoot } from "../paths";
+import { uiPaths } from "../paths";
 import { functionSource } from "./spec-target";
 
 /**
@@ -23,7 +23,7 @@ const sidecarSchema = z.object({
 /** `<home>/ui/helper-routes/<hash>.json`: one file per `module#fn`, kept out of the app repo. */
 export function helperRoutesFile(home: string, module: string, fn: string): string {
 	return join(
-		uiRoot(home),
+		uiPaths.uiRoot(home),
 		"helper-routes",
 		`${createHash("sha1").update(`${module}#${fn}`).digest("hex").slice(0, 16)}.json`
 	);

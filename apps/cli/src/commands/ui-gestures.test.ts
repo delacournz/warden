@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ScreenInfo } from "@delacour/warden-driver/driver.types";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
-import { parsePaths } from "@delacour/warden-sdk/ops/gestures";
+import { gestureOps } from "@delacour/warden-sdk/ops/gestures";
 import { splitAmount } from "../agent-ui/gestures";
 import { cleanupHarnesses, doc, harness, LOGIN } from "./ui.testing";
 
@@ -50,7 +50,7 @@ describe("splitAmount", () => {
 
 describe("parsePaths", () => {
 	test("points split on spaces or `;`, one or two paths", () => {
-		expect(parsePaths(["10,20 30,40;50,60"], SCREEN)).toEqual({
+		expect(gestureOps.parsePaths(["10,20 30,40;50,60"], SCREEN)).toEqual({
 			success: true,
 			data: [
 				[
@@ -60,13 +60,13 @@ describe("parsePaths", () => {
 				],
 			],
 		});
-		const two = parsePaths(["1,2 3,4", "5,6 7,8"], SCREEN);
+		const two = gestureOps.parsePaths(["1,2 3,4", "5,6 7,8"], SCREEN);
 		expect(two.success && two.data).toHaveLength(2);
 	});
 
 	test("rejects none, three, a single point, junk and off-screen points", () => {
 		for (const raw of [[], ["1,1 2,2", "1,1 2,2", "1,1 2,2"], ["1,1"], ["1,1 a,b"], ["1,1 391,2"], ["1,1 2,-1"]]) {
-			expect(parsePaths(raw, SCREEN).success).toBe(false);
+			expect(gestureOps.parsePaths(raw, SCREEN).success).toBe(false);
 		}
 	});
 });

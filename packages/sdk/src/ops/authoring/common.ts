@@ -5,8 +5,8 @@ import { type JournalError, journalStore } from "@delacour/warden-e2e/authoring/
 import type { LintFinding } from "@delacour/warden-e2e/authoring/lint";
 import type { WardenError, WardenErrorCode } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
-import { recordingFile } from "../paths";
+import { opErrors } from "../errors";
+import { uiPaths } from "../paths";
 import type { OpSession } from "../session";
 import { type AuthoringColor, type AuthoringDeps, PLAIN } from "./deps";
 import type { RecordingPointer } from "./pointer";
@@ -17,7 +17,7 @@ export function failed(
 	message: string,
 	extra: { hint?: string; details?: Record<string, unknown> } = {}
 ): { success: false; error: WardenError } {
-	return { success: false, error: opError(code, message, extra) };
+	return { success: false, error: opErrors.opError(code, message, extra) };
 }
 
 /** A journal failure as a {@link WardenError}; the journal's own code rides along in `details.code`. */
@@ -36,7 +36,7 @@ export const depsOf = (session: OpSession): AuthoringDeps => session.authoring ?
 export const colorOf = (session: OpSession): AuthoringColor => depsOf(session).color ?? PLAIN;
 
 /** The journal of this device's recording (`<home>/ui/<udid>/recording.json`). */
-export const journalOf = (session: OpSession): string => recordingFile(session.host.home, session.device.id);
+export const journalOf = (session: OpSession): string => uiPaths.recordingFile(session.host.home, session.device.id);
 
 /** The recording in progress and its journal, or `no_recording`. */
 export function activeRecording(

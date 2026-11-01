@@ -24,7 +24,7 @@ import {
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { ReportSection } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 
 export const JS_DIR = "js";
 export const CPU_FILE = "cpu.cpuprofile";
@@ -116,19 +116,20 @@ export const defaultJsDeps: JsDeps = {
 /** A JS profiling failure as a `warden perf` error: a runtime without the method is `engine_unavailable` (exit 3). */
 export function jsUiError(error: JsError): WardenError {
 	const extra = { ...(error.hint === undefined ? {} : { hint: error.hint }), details: { js: error.code } };
-	if (error.code === "unsupported") return opError("engine_unavailable", `unsupported: ${error.message}`, extra);
-	return opError("failed", error.message, extra);
+	if (error.code === "unsupported")
+		return opErrors.opError("engine_unavailable", `unsupported: ${error.message}`, extra);
+	return opErrors.opError("failed", error.message, extra);
 }
 
 /** A devtools failure (no Metro target, socket) as a `warden perf` error: no dev client is exit 3. */
 export function devtoolsPerfError(error: { code: string; message: string }): WardenError {
 	const unreachable = error.code === "devtools_unavailable" || error.code === "device_mismatch";
 	return unreachable
-		? opError("devtools_unavailable", error.message, {
+		? opErrors.opError("devtools_unavailable", error.message, {
 				hint: "start the dev client with `warden ui open <bundle> --metro <url>`",
 				details: { devtools: error.code },
 			})
-		: opError("failed", `${error.code}: ${error.message}`, { details: { devtools: error.code } });
+		: opErrors.opError("failed", `${error.code}: ${error.message}`, { details: { devtools: error.code } });
 }
 
 /** The running capture: hold it between `startJsProfile` and `stopJsProfile`. */

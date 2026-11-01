@@ -11,7 +11,7 @@ import {
 } from "@delacour/warden-driver-android/testing/uiautomator.fixture";
 import { uiautomatorParser } from "@delacour/warden-driver-android/uiautomator";
 import { elementNormalizer } from "@delacour/warden-driver-ios/normalize";
-import { preorder } from "@delacour/warden-sdk/ops/ref-store";
+import { refStores } from "@delacour/warden-sdk/ops/ref-store";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { readLastSnapshot } from "./state";
 import { createFileRefStore } from "./state-stores";
@@ -106,7 +106,7 @@ describe("last-snapshot.json against real captures", () => {
 			const back = readLastSnapshot(ctx, "U1");
 			expect(back).toBeDefined();
 			expect(back?.generation).toBe(generation);
-			expect(back?.snapshot.flat).toEqual(preorder(back?.snapshot.elements ?? []));
+			expect(back?.snapshot.flat).toEqual(refStores.preorder(back?.snapshot.elements ?? []));
 			expect(onDisk(back?.snapshot ?? taken)).toEqual(onDisk(taken));
 			expect(back?.snapshot.flat.length).toBe(taken.flat.length);
 		});

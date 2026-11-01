@@ -4,7 +4,7 @@ import type { Element, Snapshot } from "@delacour/warden-driver/driver.types";
 import type { DumpRoute } from "@delacour/warden-driver-android/android-dump";
 import type { HelperRecord } from "@delacour/warden-driver-ios/helper-state";
 import type { RecordingPointer, RecordingTarget } from "@delacour/warden-sdk/ops/authoring/pointer";
-import { preorder, type StoredSnapshot } from "@delacour/warden-sdk/ops/ref-store";
+import { refStores, type StoredSnapshot } from "@delacour/warden-sdk/ops/ref-store";
 import { z } from "zod";
 import type { CommandContext } from "../context";
 import { uiDir } from "./paths";
@@ -213,7 +213,7 @@ export function readLastSnapshot(ctx: Pick<CommandContext, "env">, udid: string)
 	const parsed = storedSnapshotSchema.safeParse(readJson(join(uiDir(ctx, udid), "last-snapshot.json")));
 	if (!parsed.success) return undefined;
 	const file: StoredSnapshotFile = parsed.data;
-	return { ...file, snapshot: { ...file.snapshot, flat: preorder(file.snapshot.elements) } };
+	return { ...file, snapshot: { ...file.snapshot, flat: refStores.preorder(file.snapshot.elements) } };
 }
 
 export function writeLastSnapshot(ctx: Pick<CommandContext, "env">, udid: string, stored: StoredSnapshot): void {

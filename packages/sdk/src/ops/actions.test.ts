@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
-import { fill, key, press, swipe } from "./actions";
-import { path, pinch } from "./gestures";
-import { createMemoryRefStore } from "./ref-store";
-import { scroll } from "./scroll";
+import { actionOps } from "./actions";
+import { gestureOps } from "./gestures";
+import { refStores } from "./ref-store";
+import { scrollOps } from "./scroll";
 import type { OpSession } from "./session";
-import { createMemoryStateStore } from "./state-store";
+import { stateStores } from "./state-store";
 
 const SCREEN = driverFixtures.snapshotOf([
 	driverFixtures.el("window", {
@@ -45,8 +45,8 @@ function session(driver: FakeDriver): { session: OpSession; clock: { t: number }
 				},
 			},
 			driver: async () => resultFactory.ok(driver),
-			refs: createMemoryRefStore(),
-			state: createMemoryStateStore(),
+			refs: refStores.createMemoryRefStore(),
+			state: stateStores.createMemoryStateStore(),
 			timeoutMs: 5000,
 		},
 	};
@@ -56,7 +56,7 @@ describe("press", () => {
 	test("by selector taps the element and reports the target", async () => {
 		const driver = new FakeDriver({ screens: [SCREEN] });
 		const { session: s } = session(driver);
-		const done = await press(s, { target: "id=go" });
+		const done = await actionOps.press(s, { target: "id=go" });
 		expect(done.success).toBe(true);
 		if (done.success) {
 			expect(done.data.result).toMatchObject({ action: "press", target: { selector: "id=go" } });
@@ -68,13 +68,13 @@ describe("press", () => {
 	test("an @eN without a snapshot is stale_ref", async () => {
 		const driver = new FakeDriver({ screens: [SCREEN] });
 		const { session: s } = session(driver);
-		const stale = await press(s, { target: "@e1" });
+		const stale = await actionOps.press(s, { target: "@e1" });
 		expect(!stale.success && stale.error.code).toBe("stale_ref");
 	});
 
 	test("an empty target is a usage error", async () => {
 		const { session: s } = session(new FakeDriver({ screens: [SCREEN] }));
-		const done = await press(s, { target: "  " });
+		const done = await actionOps.press(s, { target: "  " });
 		expect(!done.success && done.error.code).toBe("usage");
 	});
 });
@@ -83,7 +83,7 @@ describe("fill and key", () => {
 	test("fill without verify types and reports characters", async () => {
 		const driver = new FakeDriver({ screens: [SCREEN] });
 		const { session: s } = session(driver);
-		const done = await fill(s, { target: "id=email", text: "x", verify: false });
+		const done = await actionOps.fill(s, { target: "id=email", text: "x", verify: false });
 		expect(done.success && done.data.result).toMatchObject({ action: "fill", characters: 1 });
 	});
 
@@ -92,10 +92,10 @@ describe("fill and key", () => {
 		const { session: s } = session(driver);
 		const steps: unknown[] = [];
 		s.recorder = { append: async (_udid, step) => void steps.push(step) };
-		const pasted = await fill(s, { target: "id=email", text: "x", verify: false, via: "paste" });
+		const pasted = await actionOps.fill(s, { target: "id=email", text: "x", verify: false, via: "paste" });
 		expect(pasted.success).toBe(true);
 		expect(driver.callsOf("pasteText")).toHaveLength(1);
-		const typed = await fill(s, { target: "id=email", text: "y", verify: false });
+		const typed = await actionOps.fill(s, { target: "id=email", text: "y", verify: false });
 		expect(typed.success).toBe(true);
 		expect(driver.callsOf("pasteText")).toHaveLength(1);
 		expect(steps[0]).toMatchObject({ args: { text: "x", via: "paste" } });
@@ -105,7 +105,7 @@ describe("fill and key", () => {
 
 	test("an unknown key is a usage error naming the choices", async () => {
 		const { session: s } = session(new FakeDriver({ screens: [SCREEN] }));
-		const done = await key(s, { key: "f13" });
+		const done = await actionOps.key(s, { key: "f13" });
 		expect(!done.success && done.error.hint).toContain("Enter");
 	});
 });
@@ -114,7 +114,7 @@ describe("swipe and scroll", () => {
 	test("swipe by direction works inside the screen", async () => {
 		const driver = new FakeDriver({ screens: [SCREEN] });
 		const { session: s } = session(driver);
-		const done = await swipe(s, { direction: "up" });
+		const done = await actionOps.swipe(s, { direction: "up" });
 		expect(done.success).toBe(true);
 		expect(driver.callsOf("swipe")).toHaveLength(1);
 	});
@@ -122,7 +122,7 @@ describe("swipe and scroll", () => {
 	test("scroll until a missing selector gives up with target_not_found after max swipes", async () => {
 		const driver = new FakeDriver({ screens: [SCREEN] });
 		const { session: s } = session(driver);
-		const done = await scroll(s, { direction: "down", until: "id=far", max: 2 });
+		const done = await scrollOps.scroll(s, { direction: "down", until: "id=far", max: 2 });
 		expect(!done.success && done.error.code).toBe("target_not_found");
 		expect(driver.callsOf("swipe")).toHaveLength(2);
 	});
@@ -132,13 +132,13 @@ describe("gestures", () => {
 	test("pinch on a driver without two-finger support names E_UNSUPPORTED", async () => {
 		const driver = new FakeDriver({ screens: [SCREEN], capabilities: { pinch: false } });
 		const { session: s } = session(driver);
-		const done = await pinch(s, { scale: 2 });
+		const done = await gestureOps.pinch(s, { scale: 2 });
 		expect(!done.success && done.error.details).toMatchObject({ driver: "E_UNSUPPORTED", capability: "pinch" });
 	});
 
 	test("path rejects a single point", async () => {
 		const { session: s } = session(new FakeDriver({ screens: [SCREEN] }));
-		const done = await path(s, { paths: ["5,5"] });
+		const done = await gestureOps.path(s, { paths: ["5,5"] });
 		expect(!done.success && done.error.code).toBe("usage");
 	});
 });

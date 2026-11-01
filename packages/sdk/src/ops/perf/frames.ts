@@ -7,7 +7,7 @@ import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { writeFileAtomic } from "./device-state";
 import type { PerfEnv, PerfUiEnv } from "./env";
 import { activeSessionFor, sessionDir } from "./session";
@@ -173,9 +173,13 @@ async function androidFrames(
 function noStats(pkg: string): Result<never, WardenError> {
 	return {
 		success: false,
-		error: opError("app_not_found", `no render stats for ${pkg}: the app is not running or has not drawn a frame`, {
-			hint: "launch the app (and interact with it), then run warden perf frames again",
-		}),
+		error: opErrors.opError(
+			"app_not_found",
+			`no render stats for ${pkg}: the app is not running or has not drawn a frame`,
+			{
+				hint: "launch the app (and interact with it), then run warden perf frames again",
+			}
+		),
 	};
 }
 

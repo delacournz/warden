@@ -3,10 +3,10 @@ import type { DevtoolsFacet, DevtoolsResult } from "@delacour/warden-devtools/de
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { DevtoolsDeps } from "./devtools";
-import { createMemoryRefStore } from "./ref-store";
-import { route } from "./route";
+import { refStores } from "./ref-store";
+import { routeOps } from "./route";
 import type { OpSession } from "./session";
-import { createMemoryStateStore } from "./state-store";
+import { stateStores } from "./state-store";
 
 const METRO = { metro: "http://127.0.0.1:8081" };
 
@@ -22,8 +22,8 @@ function session(open: DevtoolsDeps["open"]): OpSession {
 			sleep: async () => undefined,
 		},
 		driver: async () => ({ success: false, error: { code: "engine_unavailable", message: "none" } }),
-		refs: createMemoryRefStore(),
-		state: createMemoryStateStore(),
+		refs: refStores.createMemoryRefStore(),
+		state: stateStores.createMemoryStateStore(),
 		timeoutMs: 100,
 		devtools: {
 			open,
@@ -50,7 +50,7 @@ function facetReplying(reply: unknown): { open: DevtoolsDeps["open"]; closes: ()
 describe("route op", () => {
 	test("the focused screens joined into the route key, without Expo Router's root wrapper", async () => {
 		const { open, closes } = facetReplying(JSON.stringify({ route: ["__root", "(tabs)", "todos"] }));
-		const done = await route(session(open), METRO);
+		const done = await routeOps.route(session(open), METRO);
 		expect(done.success && done.data.result).toEqual({ route: "(tabs)/todos" });
 		expect(done.success && done.data.text).toBe("(tabs)/todos");
 		expect(closes()).toBe(1);
@@ -58,14 +58,14 @@ describe("route op", () => {
 
 	test("no focused screen yet is an undefined route, not an error", async () => {
 		const { open } = facetReplying(JSON.stringify({ route: [] }));
-		const done = await route(session(open), METRO);
+		const done = await routeOps.route(session(open), METRO);
 		expect(done.success && done.data.result).toEqual({ route: undefined });
 		expect(done.success && done.data.text).toBe("unknown");
 	});
 
 	test("a build without the DevTools hook is devtools_unavailable", async () => {
 		const { open } = facetReplying(JSON.stringify({ error: "no-hook" }));
-		const done = await route(session(open), METRO);
+		const done = await routeOps.route(session(open), METRO);
 		expect(!done.success && done.error.code).toBe("devtools_unavailable");
 	});
 
@@ -73,7 +73,7 @@ describe("route op", () => {
 		const { open } = facetReplying("{}");
 		const s = session(open);
 		const unreachable: OpSession = { ...s, devtools: s.devtools && { ...s.devtools, probe: async () => "none" } };
-		const done = await route(unreachable, {});
+		const done = await routeOps.route(unreachable, {});
 		expect(!done.success && done.error.code).toBe("devtools_unavailable");
 	});
 });

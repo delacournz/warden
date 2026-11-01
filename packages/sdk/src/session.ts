@@ -20,24 +20,24 @@ import { defaultDevtoolsDeps } from "./devtools-deps";
 import { fromThrown, interrupted, toWardenError, WardenError } from "./errors";
 import { hidLostIn, recoverSimHid } from "./hid-recovery";
 import { nativeLogsMethod } from "./native-logs-namespace";
-import { fill, key, longPress, parseKey, press, swipe, type as typeOp } from "./ops/actions";
+import { actionOps } from "./ops/actions";
 import { authoringFor } from "./ops/authoring/authoring-default";
 import { journalRecorder, routeAfterFor } from "./ops/authoring/recorder";
-import { alert, hardware, screenAppearance, screenRotate, screenshot as screenshotOp } from "./ops/controls";
-import { evaluate, logs, network, reload, tree } from "./ops/devtools";
-import { driverError } from "./ops/errors";
-import { path as pathOp, pinch, rotate } from "./ops/gestures";
-import { followNativeLogs as followNativeLogsOp, nativeLogs as nativeLogsOp } from "./ops/native-logs";
-import { open as openOp } from "./ops/open";
-import { get, is, wait } from "./ops/query";
-import { createMemoryRefStore } from "./ops/ref-store";
-import { route as routeOp } from "./ops/route";
-import { scroll } from "./ops/scroll";
+import { controlOps } from "./ops/controls";
+import { devtoolsOps } from "./ops/devtools";
+import { opErrors } from "./ops/errors";
+import { gestureOps } from "./ops/gestures";
+import { nativeLogOps } from "./ops/native-logs";
+import { openOps } from "./ops/open";
+import { queryOps } from "./ops/query";
+import { refStores } from "./ops/ref-store";
+import { routeOps } from "./ops/route";
+import { scrollOps } from "./ops/scroll";
 import type { OpDevice, OpDone, OpOutcome, OpSession } from "./ops/session";
 import type { ElementJson } from "./ops/snapshot";
-import { find, snapshot } from "./ops/snapshot";
-import { createMemoryStateStore } from "./ops/state-store";
-import { video } from "./ops/video";
+import { snapshotOps } from "./ops/snapshot";
+import { stateStores } from "./ops/state-store";
+import { videoOps } from "./ops/video";
 import { buildSessionPerf } from "./perf";
 import type { SessionPerfNamespace } from "./perf.types";
 import type {
@@ -277,8 +277,8 @@ export class WardenSession implements Session {
 	private readonly dev: OpDevice;
 	private readonly appId: string | undefined;
 	private readonly leaseId: string;
-	private readonly refs = createMemoryRefStore();
-	private readonly state = createMemoryStateStore();
+	private readonly refs = refStores.createMemoryRefStore();
+	private readonly state = stateStores.createMemoryStateStore();
 	private driverOpen: Promise<Result<Driver, EngineError>> | undefined;
 	private opened: Driver | undefined;
 	private closed = false;
@@ -441,7 +441,7 @@ export class WardenSession implements Session {
 			...(this.appId !== undefined ? { appId: this.appId } : {}),
 			host: { exec: core.host.exec, home: core.host.home },
 		});
-		return opened.success ? opened : { success: false, error: driverError(opened.error) };
+		return opened.success ? opened : { success: false, error: opErrors.driverError(opened.error) };
 	}
 
 	/** The driver of a device a provider plugin leased: its `driver(id)`, whose throw becomes a typed failure. */
@@ -607,7 +607,7 @@ export class WardenSession implements Session {
 			const result = await work(driver.data);
 			return result.success
 				? resultFactory.ok({ result: result.data, text: name })
-				: { success: false as const, error: driverError(result.error) };
+				: { success: false as const, error: opErrors.driverError(result.error) };
 		});
 		return done.result;
 	}
@@ -645,7 +645,7 @@ export class WardenSession implements Session {
 		const launch = async (params: AppOpenParams | undefined, opts: CallOptions | undefined, relaunch: boolean) => {
 			const app = this.appFor(params?.app);
 			if (params?.url !== undefined) {
-				await this.run("apps.open", opts, (s) => openOp(s, { target: params.url ?? "" }));
+				await this.run("apps.open", opts, (s) => openOps.open(s, { target: params.url ?? "" }));
 				return;
 			}
 			if (params?.env !== undefined && Object.keys(params.env).length > 0) {
@@ -659,7 +659,7 @@ export class WardenSession implements Session {
 				return;
 			}
 			await this.run("apps.open", opts, (s) =>
-				openOp(s, { target: app, relaunch, ...(params?.args ? { args: params.args } : {}) })
+				openOps.open(s, { target: app, relaunch, ...(params?.args ? { args: params.args } : {}) })
 			);
 		};
 		return {
@@ -707,7 +707,7 @@ export class WardenSession implements Session {
 		return {
 			snapshot: async (params: SnapshotParams | undefined, opts) => {
 				const done = await this.run("capture.snapshot", opts, (s) =>
-					snapshot(s, {
+					snapshotOps.snapshot(s, {
 						interactiveOnly: params?.interactiveOnly === true,
 						all: params?.offscreen === true,
 					})
@@ -733,7 +733,7 @@ export class WardenSession implements Session {
 					await this.direct("capture.screenshot", opts, (d) => d.screenshot({ path, scale: params.scale ?? 1 }));
 				} else {
 					const done = await this.run("capture.screenshot", opts, (s) =>
-						screenshotOp(s, params?.path !== undefined ? { path: params.path } : {})
+						controlOps.screenshot(s, params?.path !== undefined ? { path: params.path } : {})
 					);
 					path = done.result.path;
 				}
@@ -743,11 +743,11 @@ export class WardenSession implements Session {
 			},
 			video: {
 				start: async (params: VideoStartParams, opts) => {
-					await this.run("capture.video.start", opts, (s) => video(s, { action: "start", path: params.path }));
+					await this.run("capture.video.start", opts, (s) => videoOps.video(s, { action: "start", path: params.path }));
 					this.videoStartedAt = this.core.host.now();
 				},
 				stop: async (opts): Promise<VideoResult> => {
-					const done = await this.run("capture.video.stop", opts, (s) => video(s, { action: "stop" }));
+					const done = await this.run("capture.video.stop", opts, (s) => videoOps.video(s, { action: "stop" }));
 					const started = this.videoStartedAt ?? this.core.host.now();
 					this.videoStartedAt = undefined;
 					return {
@@ -763,41 +763,43 @@ export class WardenSession implements Session {
 		return {
 			press: async (params: PressParams, opts) => {
 				for (let i = 0; i < (params.count ?? 1); i += 1) {
-					await this.run("interactions.press", opts, (s) => press(s, { target: targetText(params) }));
+					await this.run("interactions.press", opts, (s) => actionOps.press(s, { target: targetText(params) }));
 				}
 			},
 			longPress: async (params: LongPressParams, opts) => {
 				await this.run("interactions.longPress", opts, (s) =>
-					longPress(s, {
+					actionOps.longPress(s, {
 						target: targetText(params),
 						...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
 					})
 				);
 			},
 			fill: async (params: FillParams, opts) => {
-				await this.run("interactions.fill", opts, (s) => fill(s, { target: targetText(params), text: params.text }));
+				await this.run("interactions.fill", opts, (s) =>
+					actionOps.fill(s, { target: targetText(params), text: params.text })
+				);
 			},
 			type: async (params: TypeParams, opts) => {
-				await this.run("interactions.type", opts, (s) => typeOp(s, { text: params.text }));
+				await this.run("interactions.type", opts, (s) => actionOps.type(s, { text: params.text }));
 			},
 			key: async (params: KeyParams, opts) => {
 				const times = params.times ?? 1;
 				for (let i = 0; i < times; i += 1) {
 					if (params.modifiers && params.modifiers.length > 0) {
-						const name = parseKey(params.key);
+						const name = actionOps.parseKey(params.key);
 						if (!name.success) throw toWardenError(name.error);
 						await this.direct("interactions.key", opts, (d) => d.key(name.data, params.modifiers));
 					} else {
-						await this.run("interactions.key", opts, (s) => key(s, { key: params.key }));
+						await this.run("interactions.key", opts, (s) => actionOps.key(s, { key: params.key }));
 					}
 				}
 			},
 			swipe: async (params: SwipeParams, opts) => {
-				await this.run("interactions.swipe", opts, (s) => swipe(s, { from: params.from, to: params.to }));
+				await this.run("interactions.swipe", opts, (s) => actionOps.swipe(s, { from: params.from, to: params.to }));
 			},
 			scroll: async (params: ScrollParams, opts) => {
 				await this.run("interactions.scroll", opts, (s) =>
-					scroll(s, {
+					scrollOps.scroll(s, {
 						direction: params.direction,
 						...(params.amount !== undefined ? { amount: params.amount } : {}),
 						...(params.target ? { within: targetText(params.target) } : {}),
@@ -807,7 +809,7 @@ export class WardenSession implements Session {
 			},
 			pinch: async (params: PinchParams, opts) => {
 				await this.run("interactions.pinch", opts, (s) =>
-					pinch(s, {
+					gestureOps.pinch(s, {
 						scale: params.scale,
 						target: targetText(params),
 						...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
@@ -816,7 +818,7 @@ export class WardenSession implements Session {
 			},
 			rotate: async (params: RotateParams, opts) => {
 				await this.run("interactions.rotate", opts, (s) =>
-					rotate(s, {
+					gestureOps.rotate(s, {
 						degrees: params.degrees,
 						target: targetText(params),
 						...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
@@ -826,7 +828,7 @@ export class WardenSession implements Session {
 			gesture: async (params: GestureParams, opts) => {
 				const durationMs = params.paths.find((p) => p.durationMs !== undefined)?.durationMs;
 				await this.run("interactions.gesture", opts, (s) =>
-					pathOp(s, {
+					gestureOps.path(s, {
 						paths: params.paths.map((p) => p.points.map((pt) => `${pt.x},${pt.y}`).join(" ")),
 						...(durationMs !== undefined ? { durationMs } : {}),
 					})
@@ -838,7 +840,7 @@ export class WardenSession implements Session {
 	private buildQuery(): SessionQueryNamespace {
 		return {
 			find: async (params: FindParams, opts) => {
-				const done = await this.run("query.find", opts, (s) => find(s, { selector: params.selector }));
+				const done = await this.run("query.find", opts, (s) => snapshotOps.find(s, { selector: params.selector }));
 				const all = elementsOf(done.result.elements);
 				return params.all === false ? all.slice(0, 1) : all;
 			},
@@ -874,13 +876,13 @@ export class WardenSession implements Session {
 					(s) => {
 						switch (params.for) {
 							case "visible":
-								return wait(s, { mode: "visible", selector: this.selectorOf(params) });
+								return queryOps.wait(s, { mode: "visible", selector: this.selectorOf(params) });
 							case "absent":
-								return wait(s, { mode: "absent", selector: this.selectorOf(params) });
+								return queryOps.wait(s, { mode: "absent", selector: this.selectorOf(params) });
 							case "text":
-								return wait(s, { mode: "text", text: params.text });
+								return queryOps.wait(s, { mode: "text", text: params.text });
 							default:
-								return wait(s, { mode: "stable" });
+								return queryOps.wait(s, { mode: "stable" });
 						}
 					},
 					timeoutMs
@@ -890,13 +892,15 @@ export class WardenSession implements Session {
 			},
 			is: async (params: IsParams, opts) => {
 				const done = await this.run("query.is", opts, (s) =>
-					is(s, { selector: this.selectorOf(params), state: params.state })
+					queryOps.is(s, { selector: this.selectorOf(params), state: params.state })
 				);
 				return done.result.matched;
 			},
 			get: async (params: GetParams, opts): Promise<GetResult> => {
 				const property = params.property === "identifier" ? "id" : params.property;
-				const done = await this.run("query.get", opts, (s) => get(s, { selector: this.selectorOf(params), property }));
+				const done = await this.run("query.get", opts, (s) =>
+					queryOps.get(s, { selector: this.selectorOf(params), property })
+				);
 				const r = done.result;
 				if (r.property === "count") return { property: "text", value: String(r.value) };
 				const text = typeof r.value === "string" ? r.value : undefined;
@@ -919,14 +923,14 @@ export class WardenSession implements Session {
 	private buildDevice(): SessionDeviceNamespace {
 		return {
 			home: async (opts) => {
-				await this.run("device.home", opts, (s) => hardware(s, { button: "home" }));
+				await this.run("device.home", opts, (s) => controlOps.hardware(s, { button: "home" }));
 			},
 			back: async (opts) => {
-				await this.run("device.back", opts, (s) => hardware(s, { button: "back" }));
+				await this.run("device.back", opts, (s) => controlOps.hardware(s, { button: "back" }));
 			},
 			button: async (button, opts) => {
 				if (button === "home" || button === "back") {
-					await this.run(`device.${button}`, opts, (s) => hardware(s, { button }));
+					await this.run(`device.${button}`, opts, (s) => controlOps.hardware(s, { button }));
 					return;
 				}
 				await this.direct("device.button", opts, (d) => d.pressButton(button));
@@ -938,7 +942,7 @@ export class WardenSession implements Session {
 				}
 				const action = params.action;
 				if (action === "accept" || action === "dismiss") {
-					await this.run("device.alert", opts, (s) => alert(s, { action }));
+					await this.run("device.alert", opts, (s) => controlOps.alert(s, { action }));
 					return undefined;
 				}
 				await this.direct("device.alert", opts, async (d) => {
@@ -959,13 +963,13 @@ export class WardenSession implements Session {
 			},
 			orientation: async (params, opts) => {
 				const done = await this.run("device.orientation", opts, (s) =>
-					screenRotate(s, params?.set !== undefined ? { orientation: kebab(params.set) } : {})
+					controlOps.screenRotate(s, params?.set !== undefined ? { orientation: kebab(params.set) } : {})
 				);
 				return camel(kebab(done.result.orientation));
 			},
 			appearance: async (params, opts) => {
 				const done = await this.run("device.appearance", opts, (s) =>
-					screenAppearance(s, params?.set !== undefined ? { mode: params.set } : {})
+					controlOps.screenAppearance(s, params?.set !== undefined ? { mode: params.set } : {})
 				);
 				return done.result.appearance;
 			},
@@ -978,7 +982,7 @@ export class WardenSession implements Session {
 				return this.direct("device.clipboard", opts, (d) => d.clipboard());
 			},
 			openUrl: async (params, opts) => {
-				await this.run("device.openUrl", opts, (s) => openOp(s, { target: params.url }));
+				await this.run("device.openUrl", opts, (s) => openOps.open(s, { target: params.url }));
 			},
 		};
 	}
@@ -1021,16 +1025,16 @@ export class WardenSession implements Session {
 		return {
 			eval: async (params: EvalParams, opts) => {
 				const done = await this.run("devtools.eval", opts, (s) =>
-					evaluate(s, { expression: params.expression, await: true })
+					devtoolsOps.evaluate(s, { expression: params.expression, await: true })
 				);
 				return done.result.value;
 			},
 			console: async (params: ConsoleParams | undefined, opts): Promise<ConsoleEntry[]> => {
 				if (!this.state.read().collector) {
-					await this.run("devtools.console", opts, (s) => logs(s, { action: "start" }));
+					await this.run("devtools.console", opts, (s) => devtoolsOps.logs(s, { action: "start" }));
 				}
 				const done = await this.run("devtools.console", opts, (s) =>
-					logs(s, { action: "tail", count: params?.limit ?? 200 })
+					devtoolsOps.logs(s, { action: "tail", count: params?.limit ?? 200 })
 				);
 				const result = done.result;
 				if (!("lines" in result)) return [];
@@ -1042,7 +1046,7 @@ export class WardenSession implements Session {
 			},
 			network: async (params: NetworkParams | undefined, opts): Promise<NetworkEntry[]> => {
 				const done = await this.run("devtools.network", opts, (s) =>
-					network(s, params?.limit !== undefined ? { count: params.limit } : {})
+					devtoolsOps.network(s, params?.limit !== undefined ? { count: params.limit } : {})
 				);
 				const result = done.result;
 				if (!("entries" in result)) return [];
@@ -1061,17 +1065,17 @@ export class WardenSession implements Session {
 			},
 			tree: async (params, opts) => {
 				const done = await this.run("devtools.tree", opts, (s) =>
-					tree(s, params?.maxDepth !== undefined ? { max: params.maxDepth } : {})
+					devtoolsOps.tree(s, params?.maxDepth !== undefined ? { max: params.maxDepth } : {})
 				);
 				return treeOf(done.result.components);
 			},
 			reload: async (opts) => {
-				await this.run("devtools.reload", opts, (s) => reload(s));
+				await this.run("devtools.reload", opts, (s) => devtoolsOps.reload(s));
 			},
-			route: async (opts) => (await this.run("devtools.route", opts, (s) => routeOp(s))).result.route,
+			route: async (opts) => (await this.run("devtools.route", opts, (s) => routeOps.route(s))).result.route,
 			nativeLogs: nativeLogsMethod({
 				read: async (params, opts) =>
-					(await this.run("devtools.nativeLogs", opts, (s) => nativeLogsOp(s, params ?? {}))).result.lines,
+					(await this.run("devtools.nativeLogs", opts, (s) => nativeLogOps.nativeLogs(s, params ?? {}))).result.lines,
 				follow: (params, opts) => this.followNativeLogs(params, opts),
 			}),
 		};
@@ -1084,7 +1088,7 @@ export class WardenSession implements Session {
 	): AsyncGenerator<NativeLogEntry, void, void> {
 		if (this.closed) throw usage("session is closed");
 		const signal = this.core.signalFor(opts);
-		for await (const batch of followNativeLogsOp(this.opSession(signal), params, signal)) {
+		for await (const batch of nativeLogOps.followNativeLogs(this.opSession(signal), params, signal)) {
 			if (!batch.success) throw toWardenError(batch.error);
 			yield* batch.data;
 		}

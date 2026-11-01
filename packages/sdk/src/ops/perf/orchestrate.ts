@@ -10,7 +10,7 @@ import { startupFindings } from "@delacour/warden-perf/startup/findings";
 import { startupStatistics } from "@delacour/warden-perf/startup/stats";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { type PerfAppRef, resolveAppWith } from "./app";
 import { readClockOffsetMs } from "./clock";
 import { type CrashOut, readCrashes } from "./crashes";
@@ -81,7 +81,7 @@ export function chooseCapturers(flags: StartFlags): Result<CapturerChoice, Warde
 	if (flavor !== "" && !NATIVE_FLAVORS.includes(flavor)) {
 		return {
 			success: false,
-			error: opError("usage", `--native must be one of ${NATIVE_FLAVORS.join(", ")}, got "${flavor}"`),
+			error: opErrors.opError("usage", `--native must be one of ${NATIVE_FLAVORS.join(", ")}, got "${flavor}"`),
 		};
 	}
 	const named = [flags.js, flags.react, flags.native, flags.metrics, flags.frames, flags.logs].some(
@@ -208,7 +208,7 @@ function requestedMaxDuration(raw: string | undefined): Result<number | undefine
 	if (ms === undefined) {
 		return {
 			success: false,
-			error: opError("usage", `--max-duration must be a duration like 30s or 2m, got "${raw}"`),
+			error: opErrors.opError("usage", `--max-duration must be a duration like 30s or 2m, got "${raw}"`),
 		};
 	}
 	return resultFactory.ok(ms);
@@ -366,7 +366,7 @@ async function startNativeNow(run: StartRun): Promise<void> {
 /** The `StartFailure` for a failed cold launch. */
 function launchFailure(launch: Extract<LaunchResult, { kind: "failed" }>): StartFailure {
 	return new StartFailure(
-		opError(launch.reason === "no_launcher" ? "app_not_found" : "failed", launch.message, {
+		opErrors.opError(launch.reason === "no_launcher" ? "app_not_found" : "failed", launch.message, {
 			...(launch.hint === undefined ? {} : { hint: launch.hint }),
 		})
 	);
@@ -500,7 +500,7 @@ export async function startPerf(
 		await abortStart(ctx, deps, id);
 		return {
 			success: false,
-			error: error instanceof StartFailure ? error.error : opError("failed", errorMessage(error)),
+			error: error instanceof StartFailure ? error.error : opErrors.opError("failed", errorMessage(error)),
 		};
 	}
 }
@@ -620,7 +620,10 @@ export async function finalizeSession(
 ): Promise<Result<StopOutcome, WardenError>> {
 	const first = readSession(ctx, id);
 	if (first === undefined)
-		return { success: false, error: opError("session_not_found", `no perf session ${id}`, { hint: "warden perf ls" }) };
+		return {
+			success: false,
+			error: opErrors.opError("session_not_found", `no perf session ${id}`, { hint: "warden perf ls" }),
+		};
 	const plan = readPlan(ctx, id);
 	const warnings: string[] = [];
 	const target = sessionTarget(first);

@@ -14,7 +14,7 @@ import { iosAppLaunch } from "@delacour/warden-perf/startup/ios-app-launch";
 import { type PidIdentity, processIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { appPid, iosAppBundle } from "./app-process";
 import type { PerfUiEnv } from "./env";
 import { readHandleFile } from "./native-state";
@@ -70,7 +70,7 @@ export const defaultIosNativeFs: IosNativeFs = {
 const fail = (error: WardenError): { success: false; error: WardenError } => ({ success: false, error });
 
 const failed = (message: string, hint?: string): { success: false; error: WardenError } =>
-	fail(opError("failed", message, hint === undefined ? {} : { hint }));
+	fail(opErrors.opError("failed", message, hint === undefined ? {} : { hint }));
 
 /** Xcode 26.4+ deadlocks `xctrace record --device`; an unreadable version assumes the plain path. */
 async function deviceDeadlock(ctx: PerfUiEnv): Promise<boolean> {
@@ -90,7 +90,7 @@ async function chooseInstruments(ctx: PerfUiEnv, leaks: boolean): Promise<Result
 	);
 	if (check === undefined) {
 		return fail(
-			opError("tool_missing", "xcrun xctrace is unavailable or failed to list instruments", {
+			opErrors.opError("tool_missing", "xcrun xctrace is unavailable or failed to list instruments", {
 				hint: "install Xcode and run `xcode-select -s /Applications/Xcode.app`; warden perf doctor checks it",
 			})
 		);
@@ -103,7 +103,7 @@ async function chooseInstruments(ctx: PerfUiEnv, leaks: boolean): Promise<Result
 			return `${m}${alt.length > 0 ? ` (try: ${alt.join(", ")})` : ""}`;
 		});
 		return fail(
-			opError("unsupported", `this Xcode's xctrace has no instrument: ${lines.join("; ")}`, {
+			opErrors.opError("unsupported", `this Xcode's xctrace has no instrument: ${lines.join("; ")}`, {
 				hint: "`xcrun xctrace list instruments` shows what is available; update Xcode or file an issue",
 			})
 		);
@@ -164,7 +164,7 @@ async function prepareAttach(
 	const pid = await appPid(ctx, { platform: "ios" as const, id: udid }, app);
 	if (pid === undefined) {
 		return fail(
-			opError("app_not_found", `${app} is not running on ${udid}`, {
+			opErrors.opError("app_not_found", `${app} is not running on ${udid}`, {
 				hint: "launch the app first (warden ui open <bundleId>), or pass --leaks to cold-launch it under the profiler",
 			})
 		);
@@ -281,7 +281,9 @@ export async function analyzeTraceFile(
 			...(input.traceStartWallMs === undefined ? {} : { traceStartWallMs: input.traceStartWallMs }),
 		});
 		if (!res.success) {
-			return fail(opError("failed", res.error.message, res.error.hint === undefined ? {} : { hint: res.error.hint }));
+			return fail(
+				opErrors.opError("failed", res.error.message, res.error.hint === undefined ? {} : { hint: res.error.hint })
+			);
 		}
 		return resultFactory.ok(toAnalysis(res.data, input, fs));
 	} finally {
@@ -343,7 +345,7 @@ async function analyze(
 	fs: IosNativeFs,
 	input: NativeAnalyzeInput
 ): Promise<Result<NativeAnalysis, WardenError>> {
-	if (!fs.exists(input.trace)) return fail(opError("usage", `no such trace: ${input.trace}`));
+	if (!fs.exists(input.trace)) return fail(opErrors.opError("usage", `no such trace: ${input.trace}`));
 	const side = readHandleFile(dirname(input.trace));
 	const state = side?.handle.state;
 	const pid = typeof state?.appPid === "number" && state.allProcesses === true ? state.appPid : undefined;

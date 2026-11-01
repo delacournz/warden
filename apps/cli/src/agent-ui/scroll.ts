@@ -1,5 +1,5 @@
-import { isWay, parseAmount } from "@delacour/warden-sdk/ops/actions";
-import { scroll } from "@delacour/warden-sdk/ops/scroll";
+import { actionOps } from "@delacour/warden-sdk/ops/actions";
+import { scrollOps } from "@delacour/warden-sdk/ops/scroll";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type ActionOptionValues, parseSettle, positiveInt } from "./args";
@@ -29,7 +29,7 @@ export function uiScroll(
 		if (!request.success) return request;
 		return reply(
 			device,
-			await scroll(opSessionFor(ctx, deps, device, env), {
+			await scrollOps.scroll(opSessionFor(ctx, deps, device, env), {
 				...request.data,
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 			})
@@ -37,7 +37,7 @@ export function uiScroll(
 	});
 }
 
-type ScrollParams = Parameters<typeof scroll>[1];
+type ScrollParams = Parameters<typeof scrollOps.scroll>[1];
 
 /** The op's params from the words and flags (everything but `--settle`); usage errors for a bad direction, amount or `--max`. */
 function scrollRequest(
@@ -45,13 +45,13 @@ function scrollRequest(
 	amountRaw: string | undefined,
 	opts: ScrollOptionValues
 ): Result<ScrollParams, UiError> {
-	if (!isWay(direction)) {
+	if (!actionOps.isWay(direction)) {
 		return {
 			success: false,
 			error: uiError("usage", `unknown direction "${direction}"`, { hint: "up, down, left or right" }),
 		};
 	}
-	const amount = parseAmount(amountRaw);
+	const amount = actionOps.parseAmount(amountRaw);
 	if (!amount.success) return amount;
 	const max = opts.max === undefined ? undefined : positiveInt("--max", opts.max);
 	if (max && !max.success) return max;

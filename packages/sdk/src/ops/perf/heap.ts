@@ -13,7 +13,7 @@ import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { DEV_BUILD_BANNER, markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv } from "./env";
 import { connectJsApp } from "./js";
 import { type JsDeps, jsUiError } from "./js-capture";
@@ -177,9 +177,9 @@ export function heapDiffWork(
 	b: string
 ): Result<{ result: HeapDiffResult; text: string }, WardenError> {
 	const before = loadHeap(ctx, a);
-	if (!before.success) return { success: false, error: opError("usage", before.error) };
+	if (!before.success) return { success: false, error: opErrors.opError("usage", before.error) };
 	const after = loadHeap(ctx, b);
-	if (!after.success) return { success: false, error: opError("usage", after.error) };
+	if (!after.success) return { success: false, error: opErrors.opError("usage", after.error) };
 	const diff = heapAnalyzer.diffHeaps(before.data, after.data, HEAP_TOP);
 	const text = markdownRenderer.renderMarkdown({
 		title: "Heap diff",

@@ -2,7 +2,7 @@ import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfUiEnv } from "./env";
 import {
 	findRunningOneShot,
@@ -51,7 +51,7 @@ export async function startNative(
 	if (session?.capturers.some((c) => c.kind === "native" && c.state === "running")) {
 		return {
 			success: false,
-			error: opError("session_active", `session ${session.id} already has a native recording`, {
+			error: opErrors.opError("session_active", `session ${session.id} already has a native recording`, {
 				hint: "warden perf native stop",
 			}),
 		};
@@ -59,7 +59,7 @@ export async function startNative(
 	if (session === undefined && findRunningOneShot(ctx, target.udid) !== undefined) {
 		return {
 			success: false,
-			error: opError("session_active", `a native recording is already running on ${target.udid}`, {
+			error: opErrors.opError("session_active", `a native recording is already running on ${target.udid}`, {
 				hint: "warden perf native stop",
 			}),
 		};
@@ -141,7 +141,7 @@ export async function stopNative(
 	if (found === undefined) {
 		return {
 			success: false,
-			error: opError("session_not_found", `no native recording is running on ${target.udid}`, {
+			error: opErrors.opError("session_not_found", `no native recording is running on ${target.udid}`, {
 				hint: "warden perf native start",
 			}),
 		};

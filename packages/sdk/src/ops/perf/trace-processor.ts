@@ -5,7 +5,7 @@ import { TRACE_PROCESSOR_VERSION, traceProcessorPins } from "@delacour/warden-pe
 import { storeLocator } from "@delacour/warden-store/store";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv, PerfUiEnv } from "./env";
 
 /** Effects the download reaches the host through; tests inject fakes (never a real download). */
@@ -93,7 +93,7 @@ export async function downloadTraceProcessor(
 	const pinned = deps.pinFor(deps.platform, deps.arch);
 	if (pinned === undefined) {
 		return fail(
-			opError("tool_missing", `no prebuilt trace_processor for ${deps.platform}-${deps.arch}`, {
+			opErrors.opError("tool_missing", `no prebuilt trace_processor for ${deps.platform}-${deps.arch}`, {
 				hint: "set WARDEN_TRACE_PROCESSOR to a trace_processor_shell binary",
 			})
 		);
@@ -110,7 +110,9 @@ export async function downloadTraceProcessor(
 		const res = await deps.fetch(url);
 		if (!res.ok || res.body === null) {
 			return fail(
-				opError("tool_missing", `GET ${url} → HTTP ${res.status}`, { hint: "retry, or set WARDEN_TRACE_PROCESSOR" })
+				opErrors.opError("tool_missing", `GET ${url} → HTTP ${res.status}`, {
+					hint: "retry, or set WARDEN_TRACE_PROCESSOR",
+				})
 			);
 		}
 		const total = Number(res.headers.get("content-length")) || pin.bytes;
@@ -136,7 +138,7 @@ export async function downloadTraceProcessor(
 		if (actual !== pin.sha256) {
 			rmSync(tmp, { force: true });
 			return fail(
-				opError("tool_missing", `checksum mismatch for ${url}: expected ${pin.sha256}, got ${actual}`, {
+				opErrors.opError("tool_missing", `checksum mismatch for ${url}: expected ${pin.sha256}, got ${actual}`, {
 					hint: "the download was corrupted or tampered with; nothing was installed",
 				})
 			);
@@ -148,7 +150,7 @@ export async function downloadTraceProcessor(
 		if (fd !== undefined) closeSync(fd);
 		rmSync(tmp, { force: true });
 		return fail(
-			opError(
+			opErrors.opError(
 				"tool_missing",
 				`download of ${label} failed: ${error instanceof Error ? error.message : String(error)}`,
 				{
@@ -172,10 +174,10 @@ export async function resolveTraceProcessor(
 	const path = traceProcessorPath(ctx);
 	if (existsSync(path)) return resultFactory.ok(path);
 	if (ctx.env.WARDEN_TRACE_PROCESSOR !== undefined && ctx.env.WARDEN_TRACE_PROCESSOR !== "") {
-		return fail(opError("tool_missing", `WARDEN_TRACE_PROCESSOR points at ${path}, which does not exist`));
+		return fail(opErrors.opError("tool_missing", `WARDEN_TRACE_PROCESSOR points at ${path}, which does not exist`));
 	}
 	const pinned = deps.pinFor(deps.platform, deps.arch);
-	const missing = opError("tool_missing", `trace_processor ${TRACE_PROCESSOR_VERSION} is not installed`, {
+	const missing = opErrors.opError("tool_missing", `trace_processor ${TRACE_PROCESSOR_VERSION} is not installed`, {
 		hint: INSTALL_HINT,
 	});
 	if (!opts.yes) {

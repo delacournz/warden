@@ -1,7 +1,7 @@
 import type { PerfReportJson } from "@delacour/warden-perf/shared/report";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv, PerfUiEnv } from "./env";
 import type { StartOutcome, StopOutcome } from "./orchestrate";
 import { sessionDir } from "./paths";
@@ -80,12 +80,12 @@ export async function markWork(
 	rawLabel: string
 ): PerfOutcome<MarkResult> {
 	const label = rawLabel.trim();
-	if (label === "") return { success: false, error: opError("usage", "a mark needs a label") };
+	if (label === "") return { success: false, error: opErrors.opError("usage", "a mark needs a label") };
 	const session = activeSessionFor(ctx, deps.session, target.udid);
 	if (session === undefined) {
 		return {
 			success: false,
-			error: opError("session_not_found", `no active perf session on ${target.udid}`, {
+			error: opErrors.opError("session_not_found", `no active perf session on ${target.udid}`, {
 				hint: "warden perf start (marks only land in a running session)",
 			}),
 		};

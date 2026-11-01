@@ -3,8 +3,8 @@ import type { Driver, Point } from "@delacour/warden-driver/driver.types";
 import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-driver/settle";
 import { uiadBackendRules } from "@delacour/warden-driver-android/uiad-backend";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
-import { devtoolsError, withFacet } from "@delacour/warden-sdk/ops/devtools";
-import { takeSnapshot } from "@delacour/warden-sdk/ops/snapshot";
+import { devtoolsOps } from "@delacour/warden-sdk/ops/devtools";
+import { snapshotOps } from "@delacour/warden-sdk/ops/snapshot";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -12,7 +12,7 @@ import type { CommandContext } from "../context";
 import { positiveInt } from "./args";
 import type { UiDevice } from "./device";
 import { defaultDevtoolsDeps } from "./devtools-cli";
-import { driverUiError, type UiDeps } from "./driver";
+import { opErrors, type UiDeps } from "./driver";
 import { socketPathFor, stopHelper } from "./helper";
 import type { UiError, UiSuccess } from "./output";
 import { runUi, type UiOptionValues, type UiRunEnv } from "./run";
@@ -215,7 +215,7 @@ async function defaultOpenSecond(
 		ios: { socketPath },
 		android: { adb: androidToolsLocator.locate(ctx.env).adb, uiad: uiadBackendRules.uiadFromEnv(ctx.env) ?? false },
 	});
-	return opened.success ? opened : { success: false, error: driverUiError(opened.error) };
+	return opened.success ? opened : { success: false, error: opErrors.driverError(opened.error) };
 }
 
 const centre = (width: number, height: number): Point => ({ x: width / 2, y: height / 2 });
@@ -223,8 +223,8 @@ const centre = (width: number, height: number): Point => ({ x: width / 2, y: hei
 const capped = (name: BenchMetricName, runs: number): number => Math.min(runs, SAMPLE_CAPS[name] ?? runs);
 
 /** A driver call's result as the `Result<unknown, UiError>` `sample` wants. */
-function viaUi<T>(result: Result<T, Parameters<typeof driverUiError>[0]>): Result<T, UiError> {
-	return result.success ? resultFactory.ok(result.data) : { success: false, error: driverUiError(result.error) };
+function viaUi<T>(result: Result<T, Parameters<typeof opErrors.driverError>[0]>): Result<T, UiError> {
+	return result.success ? resultFactory.ok(result.data) : { success: false, error: opErrors.driverError(result.error) };
 }
 
 /** What one bench run shares between its metric steps. */
@@ -259,7 +259,7 @@ async function benchColdStart(session: BenchSession): Promise<Result<undefined, 
 		const taken = await opened.data.snapshot({ interactiveOnly: true });
 		cold.push(clock() - start);
 		await opened.data.close().catch(() => undefined);
-		if (!taken.success) return { success: false, error: driverUiError(taken.error) };
+		if (!taken.success) return { success: false, error: opErrors.driverError(taken.error) };
 	}
 	recordMetric(session, "helperColdToSnapshot", cold);
 	return resultFactory.ok(undefined);
@@ -295,7 +295,7 @@ async function benchPressSettle(
 	const settle = await sample(clock, capped("pressSettle", session.runs), async () => {
 		const tapped = viaUi(await driver.tap(point));
 		if (!tapped.success) return tapped;
-		return takeSnapshot(ops, driver, {
+		return snapshotOps.takeSnapshot(ops, driver, {
 			interactiveOnly: true,
 			all: false,
 			settle: { budgetMs: DEFAULT_SETTLE_TIMEOUT_MS },
@@ -309,12 +309,12 @@ async function benchPressSettle(
 /** iOS: the dev client's component tree; skipped (not failed) when devtools is unreachable. */
 async function benchTree(session: BenchSession): Promise<void> {
 	const { opts, clock, runs, targets } = session;
-	const tree = await withFacet(benchOpSession(session), opts, async (facet) => {
+	const tree = await devtoolsOps.withFacet(benchOpSession(session), opts, async (facet) => {
 		const fetchTree = async () => {
 			const fetched = await facet.tree({ pixelRatio: 1 });
 			return fetched.success
 				? resultFactory.ok(undefined)
-				: { success: false as const, error: devtoolsError(fetched.error) };
+				: { success: false as const, error: devtoolsOps.devtoolsError(fetched.error) };
 		};
 		const probe = await fetchTree();
 		return probe.success ? sample(clock, runs, fetchTree) : probe;

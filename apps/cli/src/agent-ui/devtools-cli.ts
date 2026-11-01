@@ -8,17 +8,11 @@ import {
 	CONSOLE_FILE,
 	DEFAULT_TAIL,
 	type DevtoolsDeps,
-	devtoolsError,
-	evaluate,
+	devtoolsOps,
 	type LogsParams,
-	logs,
 	NETWORK_FILE,
 	NETWORK_INCLUDES,
 	type NetworkInclude,
-	network,
-	reload,
-	tree,
-	withFacet,
 } from "@delacour/warden-sdk/ops/devtools";
 import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
@@ -159,7 +153,7 @@ export function uiEval(ctx: CommandContext, deps: UiDeps, expression: string, op
 		}
 		return reply(
 			device,
-			await evaluate(opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device)), {
+			await devtoolsOps.evaluate(opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device)), {
 				expression,
 				await: opts.await === true,
 				...(opts.metro === undefined ? {} : { metro: opts.metro }),
@@ -220,7 +214,7 @@ export function uiTree(ctx: CommandContext, deps: UiDeps, opts: TreeOptionValues
 		if (via !== undefined) return via;
 		return reply(
 			device,
-			await tree(opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device)), {
+			await devtoolsOps.tree(opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device)), {
 				all: opts.all === true,
 				...(max.data === undefined ? {} : { max: max.data }),
 				...(opts.screen === undefined ? {} : { screen: opts.screen }),
@@ -247,7 +241,7 @@ export function uiReload(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOption
 		}
 		return reply(
 			device,
-			await reload(
+			await devtoolsOps.reload(
 				opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device)),
 				opts.metro === undefined ? {} : { metro: opts.metro }
 			)
@@ -426,7 +420,10 @@ export function uiLogs(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 		}
 		const params = logsParams(words, opts);
 		if (!params.success) return params;
-		return reply(device, await logs(opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device)), params.data));
+		return reply(
+			device,
+			await devtoolsOps.logs(opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device)), params.data)
+		);
 	});
 }
 
@@ -457,11 +454,11 @@ export function uiRoute(ctx: CommandContext, deps: UiDeps, opts: DevtoolsOptionV
 		);
 		if (via !== undefined) return via.success ? routePayload(via.data.route) : via;
 		const session = opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device));
-		const read = await withFacet(session, opts, async (facet) => {
+		const read = await devtoolsOps.withFacet(session, opts, async (facet) => {
 			const found = await routeReader.read(facet);
 			return found.success
 				? resultFactory.ok(found.data ?? null)
-				: { success: false, error: devtoolsError(found.error) };
+				: { success: false, error: devtoolsOps.devtoolsError(found.error) };
 		});
 		return read.success ? routePayload(read.data) : read;
 	});
@@ -655,7 +652,7 @@ export function uiNetwork(
 		}
 		return reply(
 			device,
-			await network(opSessionFor(ctx, deps, device, env), {
+			await devtoolsOps.network(opSessionFor(ctx, deps, device, env), {
 				count: count.data,
 				include: includeParts as NetworkInclude[],
 				...(id.data === undefined ? {} : { id: id.data }),

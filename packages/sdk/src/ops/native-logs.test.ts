@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { followNativeLogs, nativeLogs, parseAndroidLine, parseIosLine } from "./native-logs";
-import { createMemoryRefStore } from "./ref-store";
+import { nativeLogOps } from "./native-logs";
+import { refStores } from "./ref-store";
 import type { OpSession } from "./session";
-import { createMemoryStateStore } from "./state-store";
+import { stateStores } from "./state-store";
 
 const NOW = Date.parse("2026-10-25T12:00:00.000+13:00");
 
@@ -18,7 +18,7 @@ function rig(
 	app: string | null = "com.example.app"
 ): Rig {
 	const calls: string[] = [];
-	const state = createMemoryStateStore();
+	const state = stateStores.createMemoryStateStore();
 	if (app !== null) state.update((s) => ({ ...s, app }));
 	const session: OpSession = {
 		device: { id: "UDID", platform },
@@ -35,7 +35,7 @@ function rig(
 			sleep: async () => undefined,
 		},
 		driver: async () => ({ success: false, error: { code: "engine_unavailable", message: "none" } }),
-		refs: createMemoryRefStore(),
+		refs: refStores.createMemoryRefStore(),
 		state,
 		timeoutMs: 100,
 	};
@@ -53,23 +53,23 @@ const iosReplies =
 
 describe("line parsers", () => {
 	test("iOS ndjson: timestamp, level and message; headers and torn lines are dropped", () => {
-		expect(parseIosLine(iosLine("12:00:00.123456", "Error", "boom"))).toEqual({
+		expect(nativeLogOps.parseIosLine(iosLine("12:00:00.123456", "Error", "boom"))).toEqual({
 			ts: Date.parse("2026-10-25T12:00:00.123+13:00"),
 			level: "error",
 			text: "boom",
 		});
-		expect(parseIosLine(iosLine("12:00:00.5", "Default", "hi"))?.level).toBe("info");
-		expect(parseIosLine('{"count":3}')).toBeUndefined();
-		expect(parseIosLine('{"timestamp":')).toBeUndefined();
+		expect(nativeLogOps.parseIosLine(iosLine("12:00:00.5", "Default", "hi"))?.level).toBe("info");
+		expect(nativeLogOps.parseIosLine('{"count":3}')).toBeUndefined();
+		expect(nativeLogOps.parseIosLine('{"timestamp":')).toBeUndefined();
 	});
 
 	test("Android threadtime + epoch", () => {
-		expect(parseAndroidLine("1761346800.250  1234  1250 W ReactNative: slow frame")).toEqual({
+		expect(nativeLogOps.parseAndroidLine("1761346800.250  1234  1250 W ReactNative: slow frame")).toEqual({
 			ts: 1761346800250,
 			level: "warn",
 			text: "ReactNative: slow frame",
 		});
-		expect(parseAndroidLine("--------- beginning of main")).toBeUndefined();
+		expect(nativeLogOps.parseAndroidLine("--------- beginning of main")).toBeUndefined();
 	});
 });
 
@@ -81,7 +81,7 @@ describe("nativeLogs op", () => {
 			iosLine("11:59:40.000", "Debug", "noise"),
 		].join("\n");
 		const { session, calls } = rig("ios", iosReplies(log));
-		const done = await nativeLogs(session, { since: NOW - 30_000, level: "info" });
+		const done = await nativeLogOps.nativeLogs(session, { since: NOW - 30_000, level: "info" });
 		expect(done.success && done.data.result.lines.map((l) => l.text)).toEqual(["started", "crashed"]);
 		const show = calls.find((c) => c.includes("log show"));
 		expect(show).toContain("--last 30s");
@@ -91,7 +91,7 @@ describe("nativeLogs op", () => {
 	test("limit keeps the newest lines", async () => {
 		const log = [iosLine("11:59:50.000", "Info", "a"), iosLine("11:59:51.000", "Info", "b")].join("\n");
 		const { session } = rig("ios", iosReplies(log));
-		const done = await nativeLogs(session, { limit: 1 });
+		const done = await nativeLogOps.nativeLogs(session, { limit: 1 });
 		expect(done.success && done.data.result.lines.map((l) => l.text)).toEqual(["b"]);
 	});
 
@@ -103,15 +103,15 @@ describe("nativeLogs op", () => {
 			}
 			return undefined;
 		});
-		const done = await nativeLogs(session, {});
+		const done = await nativeLogOps.nativeLogs(session, {});
 		expect(done.success && done.data.result.lines).toEqual([{ ts: NOW - 5000, level: "error", text: "App: failed" }]);
 		expect(calls.find((c) => c.includes("logcat"))).toContain("--pid=4242");
 	});
 
 	test("no app opened is a usage error; a failing log show is a failure", async () => {
-		const none = await nativeLogs(rig("ios", () => undefined, null).session, {});
+		const none = await nativeLogOps.nativeLogs(rig("ios", () => undefined, null).session, {});
 		expect(!none.success && none.error.code).toBe("usage");
-		const failing = await nativeLogs(
+		const failing = await nativeLogOps.nativeLogs(
 			rig("ios", (cmd) =>
 				cmd.includes("log show") ? { exitCode: 1, stdout: "", stderr: "denied\n" } : iosReplies("")(cmd)
 			).session,
@@ -134,7 +134,7 @@ describe("followNativeLogs", () => {
 			return { exitCode: 0, stdout: polls === 1 ? first : `${first}\n${second}`, stderr: "" };
 		});
 		const seen: string[] = [];
-		for await (const batch of followNativeLogs(session, {}, controller.signal)) {
+		for await (const batch of nativeLogOps.followNativeLogs(session, {}, controller.signal)) {
 			if (!batch.success) throw new Error(batch.error.message);
 			seen.push(...batch.data.map((l) => l.text));
 		}
@@ -146,7 +146,7 @@ describe("followNativeLogs", () => {
 			cmd.includes("log show") ? { exitCode: 2, stdout: "", stderr: "gone" } : iosReplies("")(cmd)
 		);
 		const out: boolean[] = [];
-		for await (const batch of followNativeLogs(session, {}, undefined)) out.push(batch.success);
+		for await (const batch of nativeLogOps.followNativeLogs(session, {}, undefined)) out.push(batch.success);
 		expect(out).toEqual([false]);
 	});
 });

@@ -16,7 +16,7 @@ import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
 import { compiledSubcommand } from "../self-command";
 import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import type { UiDevice } from "./device";
-import { driverUiError } from "./driver";
+import { opErrors } from "./driver";
 import type { UiError } from "./output";
 
 const GEO_FIX_MS = 10_000;
@@ -122,7 +122,10 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 		try {
 			return device.platform === "ios" ? await openIos(ctx, device) : await openAndroid(ctx, device);
 		} catch (error) {
-			return { success: false, error: driverUiError({ code: "E_INTERNAL", message: String(error), retryable: false }) };
+			return {
+				success: false,
+				error: opErrors.driverError({ code: "E_INTERNAL", message: String(error), retryable: false }),
+			};
 		}
 	},
 	...conditionSpawners(),

@@ -5,7 +5,7 @@ import type { NewStep, Target, Text } from "@delacour/warden-e2e/authoring/recor
 import { type Env, secretVault } from "@delacour/warden-e2e/authoring/secrets";
 import { targetResolver } from "@delacour/warden-e2e/authoring/target";
 import type { SwipeDirection as Direction } from "@delacour/warden-screen/actions";
-import { recordingFile } from "../paths";
+import { uiPaths } from "../paths";
 import type { RecordEvidence, RecordSink, RecordStep } from "../record";
 import type { RefStore } from "../ref-store";
 import type { StateStore } from "../state-store";
@@ -334,7 +334,7 @@ export function journalSink(init: JournalSinkInit): RecordSink {
 		append: async (udid, step) => {
 			const recording = init.state.read().recording;
 			if (!recording) return;
-			const journal = journalStore.createJournalRecorder(recordingFile(init.home, udid));
+			const journal = journalStore.createJournalRecorder(uiPaths.recordingFile(init.home, udid));
 			const grounded = ground(init.refs, step);
 			for (const next of stepsFromRecord(step, grounded, init.env, init.now())) {
 				const written = await journal.append(next);

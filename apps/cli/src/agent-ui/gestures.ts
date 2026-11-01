@@ -1,5 +1,5 @@
 import { MAX_ROTATE_DEGREES, SCALE_RANGE } from "@delacour/warden-screen/actions";
-import { path, pinch, rotate } from "@delacour/warden-sdk/ops/gestures";
+import { gestureOps } from "@delacour/warden-sdk/ops/gestures";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -91,8 +91,9 @@ function runTwoFinger(
 			...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 		};
 		const session = opSessionFor(ctx, deps, device, env);
-		if (kind === "pinch") return reply(device, await pinch(session, { ...common, scale: split.data.amount }));
-		return reply(device, await rotate(session, { ...common, degrees: split.data.amount }));
+		if (kind === "pinch")
+			return reply(device, await gestureOps.pinch(session, { ...common, scale: split.data.amount }));
+		return reply(device, await gestureOps.rotate(session, { ...common, degrees: split.data.amount }));
 	});
 }
 
@@ -126,7 +127,7 @@ export function uiGesturePath(ctx: CommandContext, deps: UiDeps, opts: GesturePa
 		if (!duration.success) return duration;
 		return reply(
 			device,
-			await path(opSessionFor(ctx, deps, device, env), {
+			await gestureOps.path(opSessionFor(ctx, deps, device, env), {
 				paths: opts.path,
 				...(duration.data !== undefined ? { durationMs: duration.data } : {}),
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),

@@ -11,16 +11,6 @@ export type RecordEvidence = { element: Element; snapshot: Snapshot };
 
 const evidenceByTarget = new WeakMap<RecordTarget, RecordEvidence>();
 
-/** Remember the element + snapshot behind a `RecordTarget` (see `act.ts` `recordTarget`). */
-export function attachEvidence(target: RecordTarget, evidence: RecordEvidence): RecordTarget {
-	evidenceByTarget.set(target, evidence);
-	return target;
-}
-
-export function evidenceOf(target: RecordTarget): RecordEvidence | undefined {
-	return evidenceByTarget.get(target);
-}
-
 /** One action a `warden ui` subcommand performed, handed to the active recording. */
 export type RecordStep = {
 	/** subcommand name: `press`, `fill`, `swipe`, `open`, … */
@@ -45,3 +35,17 @@ export type RecordStep = {
 export type RecordSink = {
 	append: (udid: string, step: RecordStep) => Promise<void>;
 };
+
+export class EvidenceStore {
+	/** Remember the element + snapshot behind a `RecordTarget` (see `act.ts` `recordTarget`). */
+	attachEvidence(target: RecordTarget, evidence: RecordEvidence): RecordTarget {
+		evidenceByTarget.set(target, evidence);
+		return target;
+	}
+
+	evidenceOf(target: RecordTarget): RecordEvidence | undefined {
+		return evidenceByTarget.get(target);
+	}
+}
+
+export const evidenceStore = new EvidenceStore();

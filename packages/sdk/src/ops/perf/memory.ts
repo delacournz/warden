@@ -6,7 +6,7 @@ import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { appPid } from "./app-process";
 import type { PerfEnv } from "./env";
 import type { PerfDone, PerfOutcome, PerfTarget } from "./types";
@@ -28,7 +28,7 @@ type Ctx = { ctx: PerfEnv; target: PerfTarget; app: string };
 const fail = (error: WardenError): { success: false; error: WardenError } => ({ success: false, error });
 
 const notRunning = (target: PerfTarget, app: string): WardenError =>
-	opError("app_not_found", `${app} is not running on ${target.udid}`, {
+	opErrors.opError("app_not_found", `${app} is not running on ${target.udid}`, {
 		hint: "launch the app first (warden ui open <app>)",
 	});
 
@@ -72,18 +72,18 @@ async function dumpHeap(
 		const said = `${dump.stdout}\n${dump.stderr}`;
 		if (NOT_DEBUGGABLE.test(said)) {
 			return fail(
-				opError("not_profileable", `${app} is not debuggable or profileable, so Android refuses a heap dump`, {
+				opErrors.opError("not_profileable", `${app} is not debuggable or profileable, so Android refuses a heap dump`, {
 					hint: 'debug build, or <profileable android:shell="true"/> in the manifest (warden perf doctor)',
 				})
 			);
 		}
 		if (dump.exitCode !== 0) {
-			return fail(opError("failed", `am dumpheap failed: ${said.trim() || `exit ${dump.exitCode}`}`));
+			return fail(opErrors.opError("failed", `am dumpheap failed: ${said.trim() || `exit ${dump.exitCode}`}`));
 		}
 		const bytes = await waitForDump(shell, remote, io);
 		if (bytes === undefined) {
 			return fail(
-				opError("failed", `the heap dump did not finish within ${DUMP_WAIT_MS / 1000}s`, {
+				opErrors.opError("failed", `the heap dump did not finish within ${DUMP_WAIT_MS / 1000}s`, {
 					hint: "retry; a large heap takes longer",
 				})
 			);
@@ -91,7 +91,7 @@ async function dumpHeap(
 		mkdirSync(join(outDir, "native"), { recursive: true });
 		const pulled = await ctx.exec([adb, "-s", target.udid, "pull", remote, local], { timeoutMs: SNAPSHOT_TIMEOUT_MS });
 		if (pulled.exitCode !== 0)
-			return fail(opError("failed", `adb pull failed: ${pulled.stderr.trim() || `exit ${pulled.exitCode}`}`));
+			return fail(opErrors.opError("failed", `adb pull failed: ${pulled.stderr.trim() || `exit ${pulled.exitCode}`}`));
 		return resultFactory.ok({ path: local, bytes });
 	} finally {
 		await shell("rm", "-f", remote);
@@ -168,12 +168,14 @@ async function iosMemory(c: Ctx, snapshot: boolean, outDir: string): PerfOutcome
 	if (vmmap === undefined) {
 		if (/cannot examine process/i.test(vm.stderr)) {
 			return fail(
-				opError("not_profileable", `the OS won't let vmmap read ${c.app} (pid ${pid})`, {
+				opErrors.opError("not_profileable", `the OS won't let vmmap read ${c.app} (pid ${pid})`, {
 					hint: "Apple-signed and release apps can't be inspected; use a debug build (get-task-allow)",
 				})
 			);
 		}
-		return fail(opError("failed", `vmmap failed for pid ${pid}: ${vm.stderr.trim() || `exit ${vm.exitCode}`}`));
+		return fail(
+			opErrors.opError("failed", `vmmap failed for pid ${pid}: ${vm.stderr.trim() || `exit ${vm.exitCode}`}`)
+		);
 	}
 	const lines = [
 		`${c.app} (pid ${pid}): footprint ${mb(vmmap.footprintKb)}${vmmap.footprintPeakKb === undefined ? "" : ` (peak ${mb(vmmap.footprintPeakKb)})`}`,
@@ -192,7 +194,7 @@ async function iosMemory(c: Ctx, snapshot: boolean, outDir: string): PerfOutcome
 	const leaks = leaksRun.exitCode <= 1 ? iosMemoryParser.parseLeaks(leaksRun.stdout) : undefined;
 	if (leaks === undefined) {
 		return fail(
-			opError(
+			opErrors.opError(
 				"failed",
 				`leaks failed for pid ${pid}: ${leaksRun.stderr.trim() || leaksRun.stdout.trim() || `exit ${leaksRun.exitCode}`}`
 			)

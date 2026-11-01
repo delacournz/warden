@@ -4,7 +4,7 @@ import { journalStore } from "@delacour/warden-e2e/authoring/journal";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordStarted } from "../../contracts/record.schema";
-import { fromDriver } from "../errors";
+import { opErrors } from "../errors";
 import type { OpOutcome, OpSession } from "../session";
 import type { DeviceState } from "../state-store";
 import { failed, findSuiteOf, journalFailure, journalOf, readIfExists, targetPath } from "./common";
@@ -239,7 +239,7 @@ export async function recordStart(session: OpSession, p: RecordStartParams): OpO
 	if (!shared.success) return shared;
 	const driver = await session.driver();
 	if (!driver.success) return driver;
-	const health = fromDriver(await driver.data.health());
+	const health = opErrors.fromDriver(await driver.data.health());
 	if (!health.success) return health;
 
 	const title = p.title?.trim();

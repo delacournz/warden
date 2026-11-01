@@ -3,12 +3,10 @@ import {
 	DEFAULT_STABLE_MS,
 	GET_PROPS,
 	type GetProp,
-	get,
 	IS_STATES,
 	type IsState,
-	is,
+	queryOps,
 	type WaitParams,
-	wait,
 } from "@delacour/warden-sdk/ops/query";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -56,7 +54,7 @@ export function uiWait(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 	return runUi(ctx, deps, "wait", opts, async (device, env) => {
 		const params = parseWait(words);
 		if (!params.success) return params;
-		return reply(device, await wait(opSessionFor(ctx, deps, device, env), params.data));
+		return reply(device, await queryOps.wait(opSessionFor(ctx, deps, device, env), params.data));
 	});
 }
 
@@ -83,7 +81,7 @@ export function uiIs(ctx: CommandContext, deps: UiDeps, words: string[], opts: U
 		if (!oneOf<IsState>(IS_STATES, state)) return { success: false, error: uiError("usage", usage) };
 		const selector = parseQuerySelector(source, usage);
 		if (!selector.success) return selector;
-		return reply(device, await is(opSessionFor(ctx, deps, device, env), { selector: selector.data, state }));
+		return reply(device, await queryOps.is(opSessionFor(ctx, deps, device, env), { selector: selector.data, state }));
 	});
 }
 
@@ -97,6 +95,9 @@ export function uiGet(ctx: CommandContext, deps: UiDeps, words: string[], opts: 
 		if (!oneOf<GetProp>(GET_PROPS, property)) return { success: false, error: uiError("usage", usage) };
 		const selector = parseQuerySelector(source, usage);
 		if (!selector.success) return selector;
-		return reply(device, await get(opSessionFor(ctx, deps, device, env), { selector: selector.data, property }));
+		return reply(
+			device,
+			await queryOps.get(opSessionFor(ctx, deps, device, env), { selector: selector.data, property })
+		);
 	});
 }

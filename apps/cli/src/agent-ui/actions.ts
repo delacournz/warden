@@ -1,14 +1,5 @@
 import type { Point } from "@delacour/warden-driver/driver.types";
-import {
-	DEFAULT_LONGPRESS_MS,
-	fill,
-	isWay,
-	key,
-	longPress,
-	press,
-	swipe,
-	type,
-} from "@delacour/warden-sdk/ops/actions";
+import { actionOps, DEFAULT_LONGPRESS_MS } from "@delacour/warden-sdk/ops/actions";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type ActionOptionValues, parseSettle } from "./args";
@@ -35,7 +26,7 @@ export function uiPress(
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await press(opSessionFor(ctx, deps, device, env), {
+			await actionOps.press(opSessionFor(ctx, deps, device, env), {
 				target: words.join(" "),
 				verify: opts.verify === true,
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
@@ -68,7 +59,7 @@ export function uiLongpress(
 		const split = splitDuration(words);
 		return reply(
 			device,
-			await longPress(opSessionFor(ctx, deps, device, env), {
+			await actionOps.longPress(opSessionFor(ctx, deps, device, env), {
 				target: split.target.join(" "),
 				durationMs: split.ms ?? DEFAULT_LONGPRESS_MS,
 				verify: opts.verify === true,
@@ -104,7 +95,7 @@ export function uiFill(ctx: CommandContext, deps: UiDeps, words: string[], opts:
 		}
 		return reply(
 			device,
-			await fill(opSessionFor(ctx, deps, device, env), {
+			await actionOps.fill(opSessionFor(ctx, deps, device, env), {
 				target: words.slice(0, -1).join(" "),
 				text,
 				secure: opts.secure === true,
@@ -123,7 +114,7 @@ export function uiType(ctx: CommandContext, deps: UiDeps, text: string, opts: Ty
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await type(opSessionFor(ctx, deps, device, env), {
+			await actionOps.type(opSessionFor(ctx, deps, device, env), {
 				text,
 				submit: opts.submit === true,
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
@@ -139,7 +130,7 @@ export function uiKey(ctx: CommandContext, deps: UiDeps, name: string, opts: Act
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await key(opSessionFor(ctx, deps, device, env), {
+			await actionOps.key(opSessionFor(ctx, deps, device, env), {
 				key: name,
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 			})
@@ -149,7 +140,7 @@ export function uiKey(ctx: CommandContext, deps: UiDeps, name: string, opts: Act
 
 const NUMBER = /^-?\d+(?:\.\d+)?$/;
 
-type SwipeParams = Parameters<typeof swipe>[1];
+type SwipeParams = Parameters<typeof actionOps.swipe>[1];
 
 /** The swipe as the op takes it: a direction inside `--from`, or four coordinates; a usage error for anything else. */
 function swipeParams(
@@ -158,7 +149,7 @@ function swipeParams(
 	settleMs: object
 ): Result<SwipeParams, UiError> {
 	const [first] = words;
-	if (words.length === 1 && isWay(first)) {
+	if (words.length === 1 && actionOps.isWay(first)) {
 		return resultFactory.ok({ direction: first, ...(within !== undefined ? { within } : {}), ...settleMs });
 	}
 	if (words.length === 4 && words.every((word) => NUMBER.test(word))) {
@@ -185,6 +176,6 @@ export function uiSwipe(ctx: CommandContext, deps: UiDeps, words: string[], opts
 		if (!settle.success) return settle;
 		const params = swipeParams(words, opts.from, settle.data !== undefined ? { settleMs: settle.data } : {});
 		if (!params.success) return params;
-		return reply(device, await swipe(opSessionFor(ctx, deps, device, env), params.data));
+		return reply(device, await actionOps.swipe(opSessionFor(ctx, deps, device, env), params.data));
 	});
 }

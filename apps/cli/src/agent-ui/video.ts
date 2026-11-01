@@ -1,4 +1,4 @@
-import { video } from "@delacour/warden-sdk/ops/video";
+import { videoOps } from "@delacour/warden-sdk/ops/video";
 import type { CommandContext } from "../context";
 import type { UiDeps } from "./driver";
 import { runUi, type UiOptionValues } from "./run";
@@ -15,7 +15,7 @@ export function uiVideo(
 	return runUi(ctx, deps, "screen video", opts, async (device, env) =>
 		reply(
 			device,
-			await video(opSessionFor(ctx, deps, device, env), {
+			await videoOps.video(opSessionFor(ctx, deps, device, env), {
 				action: what,
 				...(pathArg !== undefined ? { path: pathArg } : {}),
 			})

@@ -40,14 +40,18 @@ export type StateStore = {
 	update: (change: (state: DeviceState) => DeviceState) => DeviceState;
 };
 
-/** In-process {@link StateStore}. */
-export function createMemoryStateStore(initial: DeviceState = {}): StateStore {
-	let state: DeviceState = initial;
-	return {
-		read: () => state,
-		update: (change) => {
-			state = change(state);
-			return state;
-		},
-	};
+export class StateStores {
+	/** In-process {@link StateStore}. */
+	createMemoryStateStore(initial: DeviceState = {}): StateStore {
+		let state: DeviceState = initial;
+		return {
+			read: () => state,
+			update: (change) => {
+				state = change(state);
+				return state;
+			},
+		};
+	}
 }
+
+export const stateStores = new StateStores();

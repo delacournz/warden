@@ -23,85 +23,85 @@ const KEYERS: readonly Keyer[] = [
 	(entry) => `path:${entry.role}\u0000${entry.element.id}`,
 ];
 
-function bucket(entries: readonly NodeEntry[], keyer: Keyer): Map<string, NodeEntry[]> {
-	const groups = new Map<string, NodeEntry[]>();
-	for (const entry of entries) {
-		const key = keyer(entry);
-		if (key === undefined) continue;
-		const group = groups.get(key);
-		if (group) group.push(entry);
-		else groups.set(key, [entry]);
-	}
-	return groups;
-}
-
-/** Pair up elements of `before` and `after`: each pass matches what the stronger passes left over, in document order. */
-function matchEntries(before: readonly NodeEntry[], after: readonly NodeEntry[]): Map<NodeEntry, NodeEntry> {
-	const pairs = new Map<NodeEntry, NodeEntry>();
-	const matchedAfter = new Set<NodeEntry>();
-	for (const keyer of KEYERS) {
-		const left = before.filter((entry) => !pairs.has(entry));
-		const right = after.filter((entry) => !matchedAfter.has(entry));
-		const rightGroups = bucket(right, keyer);
-		const used = new Map<string, number>();
-		for (const entry of left) {
+export class SnapshotDiffer {
+	private bucket(entries: readonly NodeEntry[], keyer: Keyer): Map<string, NodeEntry[]> {
+		const groups = new Map<string, NodeEntry[]>();
+		for (const entry of entries) {
 			const key = keyer(entry);
 			if (key === undefined) continue;
-			const position = used.get(key) ?? 0;
-			const candidate = rightGroups.get(key)?.[position];
-			if (candidate === undefined) continue;
-			used.set(key, position + 1);
-			pairs.set(entry, candidate);
-			matchedAfter.add(candidate);
+			const group = groups.get(key);
+			if (group) group.push(entry);
+			else groups.set(key, [entry]);
 		}
+		return groups;
 	}
-	return pairs;
-}
 
-/** An element's line without ref or indentation: equal lines = unchanged. */
-function content(entry: NodeEntry): string {
-	return snapshotRenderer.renderEntryLine(entry);
-}
-
-/**
- * `+/-/=` between two snapshots of one screen. Elements are paired by identifier, then role+label,
- * then path; a pair whose rendered line changed (value, state, frame …) is one `-` and one `+`.
- * `refs` (element id → `@eN`) labels the `+` lines with their ref in the new snapshot.
- */
-export function diffSnapshots(
-	before: Snapshot,
-	after: Snapshot,
-	refs: ReadonlyMap<string, string> = new Map()
-): SnapshotDiff {
-	const a = nodeIndexer.indexSnapshot(before).entries;
-	const b = nodeIndexer.indexSnapshot(after).entries;
-	const pairs = matchEntries(a, b);
-	const reverse = new Map([...pairs].map(([from, to]) => [to, from]));
-	const removed: DiffEntry[] = [];
-	const added: DiffEntry[] = [];
-	let unchanged = 0;
-	for (const entry of a) {
-		const partner = pairs.get(entry);
-		if (partner === undefined) removed.push({ kind: "-", line: content(entry) });
-		else if (content(partner) === content(entry)) unchanged += 1;
-		else removed.push({ kind: "-", line: content(entry) });
-	}
-	for (const entry of b) {
-		const ref = refs.get(entry.element.id);
-		const withRef = ref === undefined ? {} : { ref };
-		const partner = reverse.get(entry);
-		if (partner === undefined || content(partner) !== content(entry)) {
-			added.push({ kind: "+", line: content(entry), ...withRef });
+	/** Pair up elements of `before` and `after`: each pass matches what the stronger passes left over, in document order. */
+	private matchEntries(before: readonly NodeEntry[], after: readonly NodeEntry[]): Map<NodeEntry, NodeEntry> {
+		const pairs = new Map<NodeEntry, NodeEntry>();
+		const matchedAfter = new Set<NodeEntry>();
+		for (const keyer of KEYERS) {
+			const left = before.filter((entry) => !pairs.has(entry));
+			const right = after.filter((entry) => !matchedAfter.has(entry));
+			const rightGroups = this.bucket(right, keyer);
+			const used = new Map<string, number>();
+			for (const entry of left) {
+				const key = keyer(entry);
+				if (key === undefined) continue;
+				const position = used.get(key) ?? 0;
+				const candidate = rightGroups.get(key)?.[position];
+				if (candidate === undefined) continue;
+				used.set(key, position + 1);
+				pairs.set(entry, candidate);
+				matchedAfter.add(candidate);
+			}
 		}
+		return pairs;
 	}
-	return { added, removed, unchanged };
+
+	/** An element's line without ref or indentation: equal lines = unchanged. */
+	private content(entry: NodeEntry): string {
+		return snapshotRenderer.renderEntryLine(entry);
+	}
+
+	/**
+	 * `+/-/=` between two snapshots of one screen. Elements are paired by identifier, then role+label,
+	 * then path; a pair whose rendered line changed (value, state, frame …) is one `-` and one `+`.
+	 * `refs` (element id → `@eN`) labels the `+` lines with their ref in the new snapshot.
+	 */
+	diffSnapshots(before: Snapshot, after: Snapshot, refs: ReadonlyMap<string, string> = new Map()): SnapshotDiff {
+		const a = nodeIndexer.indexSnapshot(before).entries;
+		const b = nodeIndexer.indexSnapshot(after).entries;
+		const pairs = this.matchEntries(a, b);
+		const reverse = new Map([...pairs].map(([from, to]) => [to, from]));
+		const removed: DiffEntry[] = [];
+		const added: DiffEntry[] = [];
+		let unchanged = 0;
+		for (const entry of a) {
+			const partner = pairs.get(entry);
+			if (partner === undefined) removed.push({ kind: "-", line: this.content(entry) });
+			else if (this.content(partner) === this.content(entry)) unchanged += 1;
+			else removed.push({ kind: "-", line: this.content(entry) });
+		}
+		for (const entry of b) {
+			const ref = refs.get(entry.element.id);
+			const withRef = ref === undefined ? {} : { ref };
+			const partner = reverse.get(entry);
+			if (partner === undefined || this.content(partner) !== this.content(entry)) {
+				added.push({ kind: "+", line: this.content(entry), ...withRef });
+			}
+		}
+		return { added, removed, unchanged };
+	}
+
+	/** Text rendering: `-`/`+` lines (new lines carry their ref), then a `= N unchanged` summary. */
+	renderDiff(diff: SnapshotDiff): string[] {
+		return [
+			...diff.removed.map((entry) => `- ${entry.line}`),
+			...diff.added.map((entry) => `+ ${entry.ref === undefined ? "" : `${entry.ref} `}${entry.line}`),
+			`= ${diff.unchanged} unchanged`,
+		];
+	}
 }
 
-/** Text rendering: `-`/`+` lines (new lines carry their ref), then a `= N unchanged` summary. */
-export function renderDiff(diff: SnapshotDiff): string[] {
-	return [
-		...diff.removed.map((entry) => `- ${entry.line}`),
-		...diff.added.map((entry) => `+ ${entry.ref === undefined ? "" : `${entry.ref} `}${entry.line}`),
-		`= ${diff.unchanged} unchanged`,
-	];
-}
+export const snapshotDiffer = new SnapshotDiffer();

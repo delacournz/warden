@@ -2,7 +2,7 @@ import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv } from "./env";
 
 type DeviceRef = { platform: Platform; id: string };
@@ -23,7 +23,7 @@ export async function iosAppBundle(
 	if (container.exitCode !== 0 || appPath === "") {
 		return {
 			success: false,
-			error: opError("app_not_found", `${bundleId} is not installed on ${udid}`, {
+			error: opErrors.opError("app_not_found", `${bundleId} is not installed on ${udid}`, {
 				hint: "install the app (warden dev ios) or pass --app <bundleId>",
 			}),
 		};
@@ -36,7 +36,7 @@ export async function iosAppBundle(
 	if (plist.exitCode !== 0 || executable === "") {
 		return {
 			success: false,
-			error: opError("app_not_found", `no CFBundleExecutable in ${appPath}/Info.plist`),
+			error: opErrors.opError("app_not_found", `no CFBundleExecutable in ${appPath}/Info.plist`),
 		};
 	}
 	return resultFactory.ok({ appPath, executable, executablePath: `${appPath}/${executable}` });

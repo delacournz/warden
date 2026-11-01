@@ -18,7 +18,7 @@ import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { appPid } from "./app-process";
 import type { PerfUiEnv } from "./env";
 import type {
@@ -77,7 +77,7 @@ type Adb = { adb: string; serial: string };
 
 const failed = (message: string, hint?: string): { success: false; error: WardenError } => ({
 	success: false,
-	error: opError("failed", message, hint === undefined ? {} : { hint }),
+	error: opErrors.opError("failed", message, hint === undefined ? {} : { hint }),
 });
 
 const tail = (r: ExecResult): string => (r.stderr || r.stdout).trim().split("\n").slice(-2).join(" | ");
@@ -168,7 +168,7 @@ async function startAndroid(
 		if (pid === undefined) {
 			return {
 				success: false,
-				error: opError("app_not_found", `${input.app} is not running on ${a.serial}`, {
+				error: opErrors.opError("app_not_found", `${input.app} is not running on ${a.serial}`, {
 					hint: "launch the app first (warden ui open <app>)",
 				}),
 			};
@@ -195,7 +195,7 @@ async function startAndroid(
 
 	const config = perfettoConfigBuilder.build({ packageName: input.app, durationMs: input.maxDurationMs });
 	if (config === undefined)
-		return { success: false, error: opError("usage", `"${input.app}" is not an Android package name`) };
+		return { success: false, error: opErrors.opError("usage", `"${input.app}" is not an Android package name`) };
 	const remote = androidCaptureArgv.remoteTracePath(stamp);
 	const res = await deps.execWithStdin(androidCaptureArgv.perfettoStartArgv(a, remote), config, 30_000);
 	const devicePid = androidCaptureArgv.parsePerfettoPid(res.stdout);
@@ -309,7 +309,7 @@ function perfettoLines(
 type AnalyzeInput = NativeAnalyzeInput & { yes: boolean; hz: number };
 
 const notProfileable = (app: string): WardenError =>
-	opError(
+	opErrors.opError(
 		"not_profileable",
 		`no CPU samples for ${app}: Android only lets the shell profile debuggable or profileable apps`,
 		{
@@ -360,7 +360,8 @@ async function runQuery(
 	app: string
 ): Promise<Result<TpRow[], WardenError>> {
 	const sql = traceQueryRenderer.render(name, app);
-	if (sql === undefined) return { success: false, error: opError("usage", `"${app}" is not an Android package name`) };
+	if (sql === undefined)
+		return { success: false, error: opErrors.opError("usage", `"${app}" is not an Android package name`) };
 	const file = join(dir, "queries", `${name}.sql`);
 	mkdirSync(dirname(file), { recursive: true });
 	writeFileSync(file, sql);

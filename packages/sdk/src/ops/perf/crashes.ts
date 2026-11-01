@@ -12,7 +12,7 @@ import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { iosAppBundle } from "./app-process";
 import type { PerfEnv, PerfUiEnv } from "./env";
 import { activeSessionFor, sessionDir } from "./session";
@@ -84,7 +84,10 @@ async function symbolicate(
 ): Promise<Result<string[], WardenError>> {
 	const dump = await ctx.exec(["dwarfdump", "--uuid", dsym], { timeoutMs });
 	if (dump.exitCode !== 0)
-		return { success: false, error: opError("failed", `dwarfdump --uuid ${dsym} failed: ${dump.stderr.trim()}`) };
+		return {
+			success: false,
+			error: opErrors.opError("failed", `dwarfdump --uuid ${dsym} failed: ${dump.stderr.trim()}`),
+		};
 	const slices = logSymbolicator.parseDwarfdumpUuid(dump.stdout);
 	const frames = ipsParser.appFrameAddresses(text);
 	const out: string[] = [];
@@ -110,7 +113,7 @@ async function symbolicate(
 	if (out.length === 0) {
 		return {
 			success: false,
-			error: opError("failed", `${dsym} does not match this crash's build (no UUID in common)`, {
+			error: opErrors.opError("failed", `${dsym} does not match this crash's build (no UUID in common)`, {
 				hint: "use the dSYM from the same archive/build as the app that crashed",
 			}),
 		};
@@ -309,7 +312,7 @@ export async function readCrashes(
 }
 
 export type CrashFlagError = { success: false; error: WardenError };
-const crashUsage = (message: string): CrashFlagError => ({ success: false, error: opError("usage", message) });
+const crashUsage = (message: string): CrashFlagError => ({ success: false, error: opErrors.opError("usage", message) });
 
 /** Validate `--since` / `--symbolicate` / `--dsym` against the device platform; returns the parsed `--since` in ms. */
 export function checkCrashFlags(

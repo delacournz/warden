@@ -1,6 +1,6 @@
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
-import { type OpenParams, open } from "@delacour/warden-sdk/ops/open";
+import { type OpenParams, openOps } from "@delacour/warden-sdk/ops/open";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -95,7 +95,7 @@ function buildNote(installed: KindInstall): string {
 	return ` (${installed.kind} build${key}${fallback})`;
 }
 
-type OpenData = Extract<Awaited<ReturnType<typeof open>>, { success: true }>["data"];
+type OpenData = Extract<Awaited<ReturnType<typeof openOps.open>>, { success: true }>["data"];
 
 /** The op's params from the flags: only what was given is passed. */
 function openParams(
@@ -157,7 +157,7 @@ export function uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: Op
 		if (!kinded.success) return kinded;
 		const installed = kinded.data;
 		const relaunch = opts.relaunch === true || installed?.fresh === true;
-		const done = await open(
+		const done = await openOps.open(
 			opSessionFor(ctx, deps, device, env),
 			openParams(what, opts, device, relaunch, settle.data)
 		);

@@ -6,7 +6,7 @@ import type { Recording } from "@delacour/warden-e2e/authoring/recording.schema"
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordSpecConfig, RecordStopped, RecordVerify } from "../../contracts/record.schema";
-import { uiDir } from "../paths";
+import { uiPaths } from "../paths";
 import type { OpDone, OpOutcome, OpSession } from "../session";
 import {
 	activeRecording,
@@ -175,7 +175,7 @@ async function verifyWritten(
 			}).error
 		);
 	}
-	const outDir = join(uiDir(session.host.home, session.device.id), "verify", String(session.host.now()));
+	const outDir = join(uiPaths.uiDir(session.host.home, session.device.id), "verify", String(session.host.now()));
 	const ran = await runSpec(session, verifyInputFor(session, pointer.target.path, suite.data, outDir));
 	if (!ran.success) {
 		return keep(

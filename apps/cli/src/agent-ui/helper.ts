@@ -18,6 +18,7 @@ import type { Driver, DriverError } from "@delacour/warden-driver/driver.types";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import { helperLocator } from "@delacour/warden-driver-ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
+import { uiPaths } from "@delacour/warden-sdk/ops/paths";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type ProcessCommand, processCommand, processIdentity } from "@delacour/warden-store/process-identity";
@@ -27,10 +28,10 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { readServedIdentity } from "../ios-runner/served-identity";
 import { selfCommand } from "../self-command";
-import { DEVICE_LOCKED_HINT, driverUiError } from "./driver";
+import { DEVICE_LOCKED_HINT, opErrors } from "./driver";
 import { knownUdids } from "./helper-sweep";
 import { type UiError, uiError } from "./output";
-import { androidHostDir, fsSafeId, iosRunnerDir, simdDir } from "./paths";
+import { androidHostDir, iosRunnerDir, simdDir } from "./paths";
 import { type HelperRecord, readState, type UiState, updateState } from "./state";
 
 /**
@@ -274,7 +275,7 @@ export function socketPathFor(host: Pick<CommandContext, "env">, udid: string): 
 
 /** `socketPathFor` for any helper kind: `<kind dir>/<id>.sock`, or a short `/tmp` path when that is too long. */
 export function socketPathOf(kind: HelperKind, host: Pick<CommandContext, "env">, id: string): string {
-	const preferred = join(kind.dir(host), `${fsSafeId(id)}.sock`);
+	const preferred = join(kind.dir(host), `${uiPaths.fsSafeId(id)}.sock`);
 	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
 	const tag = Bun.hash(storeLocator.wardenHome(host.env)).toString(36).slice(0, 8);
 	// the id's own hash, not just its first 8 characters: `192.168.*` / `adb-*` serials share those
@@ -685,7 +686,7 @@ function spawnHelper(
 	const idle = idleSeconds(opts.idleTimeout ?? host.env[kind.idleEnv] ?? DEFAULT_IDLE_TIMEOUT);
 	if (!idle.success) return idle;
 	const located = kind.locate(host, udid, opts, deps);
-	if (!located.success) return { success: false, error: driverUiError(located.error) };
+	if (!located.success) return { success: false, error: opErrors.driverError(located.error) };
 	const self = (deps.self ?? selfCommand)();
 	const cmd = kind.command({ binary: located.data, id: udid, socket: socketPath, idleSeconds: idle.data, self });
 	unlinkQuietly(socketPath);
@@ -1011,7 +1012,7 @@ export async function connectHelper(
 	});
 	if (driver.success) return driver;
 	await client?.close();
-	return { success: false, error: driverUiError(driver.error) };
+	return { success: false, error: opErrors.driverError(driver.error) };
 }
 
 /** `warning`: the helper may still be running but could not be stopped (its command line could not be read). */
@@ -1308,7 +1309,7 @@ export async function connectIosRunner(
 	});
 	if (driver.success) return driver;
 	await client?.close();
-	return { success: false, error: driverUiError(driver.error) };
+	return { success: false, error: opErrors.driverError(driver.error) };
 }
 
 /** `stopHelper` for a physical iPhone's runner host. */

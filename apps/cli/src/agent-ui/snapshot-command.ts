@@ -1,4 +1,4 @@
-import { find, type SnapshotParams, snapshot } from "@delacour/warden-sdk/ops/snapshot";
+import { type SnapshotParams, snapshotOps } from "@delacour/warden-sdk/ops/snapshot";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { parseSettle, positiveInt } from "./args";
@@ -38,13 +38,13 @@ export function uiSnapshot(ctx: CommandContext, deps: UiDeps, opts: SnapshotOpti
 	return runUi(ctx, deps, "snapshot", opts, async (device, env) => {
 		const params = parseParams(opts, readState(ctx, device.udid).recording !== undefined);
 		if (!params.success) return params;
-		return reply(device, await snapshot(opSessionFor(ctx, deps, device, env), params.data));
+		return reply(device, await snapshotOps.snapshot(opSessionFor(ctx, deps, device, env), params.data));
 	});
 }
 
 /** `warden ui find <selector…>`: elements matching a selector, with refs; bumps the generation. */
 export function uiFind(ctx: CommandContext, deps: UiDeps, words: string[], opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "find", opts, async (device, env) =>
-		reply(device, await find(opSessionFor(ctx, deps, device, env), { selector: words.join(" ") }))
+		reply(device, await snapshotOps.find(opSessionFor(ctx, deps, device, env), { selector: words.join(" ") }))
 	);
 }

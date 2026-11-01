@@ -6,7 +6,7 @@ import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { appPid, iosAppBundle } from "./app-process";
 import type { PerfEnv } from "./env";
 import { type LaunchResult, launchApp, type RelaunchIo, resolveLauncher, terminateApp } from "./relaunch";
@@ -49,7 +49,7 @@ const fail = (error: WardenError): { success: false; error: WardenError } => ({ 
 
 /** A launch that did not start, as the `WardenError` the command reports. */
 function launchError(result: Extract<LaunchResult, { kind: "failed" }>): WardenError {
-	return opError(
+	return opErrors.opError(
 		result.reason === "no_launcher" ? "app_not_found" : "failed",
 		result.message,
 		result.hint === undefined ? {} : { hint: result.hint }
@@ -178,27 +178,29 @@ async function xctraceRun(c: MeasureCtx, appPath: string, trace: string): Promis
 	const rec = await ctx.exec(iosAppLaunch.xctraceLaunchArgv(device.id, appPath, trace), { timeoutMs: 120_000 });
 	if (rec.exitCode !== 0) {
 		const why = (rec.stderr || rec.stdout).trim().split("\n").pop();
-		return fail(opError("failed", `xctrace record failed: ${why}`, { hint: XCTRACE_HINT }));
+		return fail(opErrors.opError("failed", `xctrace record failed: ${why}`, { hint: XCTRACE_HINT }));
 	}
 	const toc = await ctx.exec(iosAppLaunch.xctraceTocArgv(trace), { timeoutMs: 60_000 });
 	const schema = toc.exitCode === 0 ? iosAppLaunch.pickLaunchSchema(toc.stdout) : undefined;
 	if (schema === undefined) {
 		return fail(
-			opError("failed", "the trace has no launch table (life-cycle-period / app-launch)", { hint: XCTRACE_HINT })
+			opErrors.opError("failed", "the trace has no launch table (life-cycle-period / app-launch)", {
+				hint: XCTRACE_HINT,
+			})
 		);
 	}
 	const table = await ctx.exec(iosAppLaunch.xctraceTableArgv(trace, schema), { timeoutMs: 60_000 });
 	const periods = iosAppLaunch.parseLaunchPeriods(table.stdout);
-	if (!periods.success) return fail(opError("failed", periods.error, { hint: XCTRACE_HINT }));
+	if (!periods.success) return fail(opErrors.opError("failed", periods.error, { hint: XCTRACE_HINT }));
 	const total = iosAppLaunch.launchDurationMs(periods.data);
 	return total === undefined
-		? fail(opError("failed", "no launch period in the trace", { hint: XCTRACE_HINT }))
+		? fail(opErrors.opError("failed", "no launch period in the trace", { hint: XCTRACE_HINT }))
 		: resultFactory.ok(total);
 }
 
 /** SPIKE: iOS `xctrace record --template 'App Launch' --launch`, cold only; traces are kept under `native/`. */
 export async function measureIosXctrace(c: MeasureCtx): Promise<Result<Measured, WardenError>> {
-	if (c.kinds.includes("warm")) return fail(opError("usage", "--method xctrace measures cold launches only"));
+	if (c.kinds.includes("warm")) return fail(opErrors.opError("usage", "--method xctrace measures cold launches only"));
 	const bundle = await iosAppBundle(c.ctx, c.device.id, c.appId);
 	if (!bundle.success) return bundle;
 	const dir = join(c.outDir, "native");

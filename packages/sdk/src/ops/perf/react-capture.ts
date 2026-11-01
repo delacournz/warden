@@ -13,7 +13,7 @@ import { reactResultFactory } from "@delacour/warden-perf/react/react.types";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { ReportSection } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import type { PerfEnv } from "./env";
 import { CPU_FILE, HOTSPOTS_FILE } from "./js-capture";
 import { COMMITS_FILE, FINDINGS_FILE } from "./react-out";
@@ -27,16 +27,16 @@ export function reactUiError(error: ReactError): WardenError {
 	switch (error.code) {
 		case "rn_too_old":
 		case "devtools_backend_missing":
-			return opError("engine_unavailable", `${error.code}: ${error.message}`, extra);
+			return opErrors.opError("engine_unavailable", `${error.code}: ${error.message}`, extra);
 		case "release_build":
-			return opError("not_profileable", `${error.code}: ${error.message}`, extra);
+			return opErrors.opError("not_profileable", `${error.code}: ${error.message}`, extra);
 		case "session_active":
-			return opError("session_active", error.message, {
+			return opErrors.opError("session_active", error.message, {
 				...extra,
 				details: { react: error.code, ...(error.owner === undefined ? {} : { owner: error.owner }) },
 			});
 		default:
-			return opError("failed", error.message, extra);
+			return opErrors.opError("failed", error.message, extra);
 	}
 }
 

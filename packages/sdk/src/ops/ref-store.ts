@@ -21,21 +21,25 @@ export type RefStore = {
 	commit: (entry: Omit<StoredSnapshot, "generation">) => StoredSnapshot;
 };
 
-/** In-process {@link RefStore}: generations count up from 1, nothing outlives the object. */
-export function createMemoryRefStore(): RefStore {
-	let generation = 0;
-	let stored: StoredSnapshot | undefined;
-	return {
-		last: () => stored,
-		commit: (entry) => {
-			generation += 1;
-			stored = { ...entry, generation };
-			return stored;
-		},
-	};
+export class RefStores {
+	/** In-process {@link RefStore}: generations count up from 1, nothing outlives the object. */
+	createMemoryRefStore(): RefStore {
+		let generation = 0;
+		let stored: StoredSnapshot | undefined;
+		return {
+			last: () => stored,
+			commit: (entry) => {
+				generation += 1;
+				stored = { ...entry, generation };
+				return stored;
+			},
+		};
+	}
+
+	/** Every element of a tree in document order (the `flat` list a stored snapshot is rebuilt with). */
+	preorder(elements: readonly Element[]): Element[] {
+		return elements.flatMap((element) => [element, ...this.preorder(element.children)]);
+	}
 }
 
-/** Every element of a tree in document order (the `flat` list a stored snapshot is rebuilt with). */
-export function preorder(elements: readonly Element[]): Element[] {
-	return elements.flatMap((element) => [element, ...preorder(element.children)]);
-}
+export const refStores = new RefStores();

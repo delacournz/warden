@@ -10,7 +10,7 @@ import { logRedactor } from "@delacour/warden-perf/logs/redact";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { opError } from "../errors";
+import { opErrors } from "../errors";
 import { appPid, iosAppBundle } from "./app-process";
 import type { PerfEnv, PerfUiEnv } from "./env";
 import type { PerfOutcome, PerfTarget } from "./types";
@@ -92,7 +92,7 @@ export type ParsedFlags = { filter: LogFilter; sinceDurationMs?: number; lines: 
 export function parseFlags(flags: LogFlags): Result<ParsedFlags, WardenError> {
 	const usage = (message: string): Result<ParsedFlags, WardenError> => ({
 		success: false,
-		error: opError("usage", message),
+		error: opErrors.opError("usage", message),
 	});
 	const filter: LogFilter = {};
 	if (flags.level !== undefined) {
@@ -167,7 +167,7 @@ export async function streamAppLogs(
 	if (first === "aborted") return resultFactory.ok(undefined);
 	return {
 		success: false,
-		error: opError("failed", `log stream ended (exit ${first})`, { hint: "is the simulator still booted?" }),
+		error: opErrors.opError("failed", `log stream ended (exit ${first})`, { hint: "is the simulator still booted?" }),
 	};
 }
 
@@ -205,7 +205,10 @@ export type OneShot = { entries: LogEntry[]; truncated: boolean };
 
 /** The failed `exec` as a `failed` error naming the tool and the last line of its output. */
 function execFailure(what: string, res: { exitCode: number; stdout: string; stderr: string }): WardenError {
-	return opError("failed", `${what} failed: ${(res.stderr || res.stdout).trim().split("\n").pop() ?? res.exitCode}`);
+	return opErrors.opError(
+		"failed",
+		`${what} failed: ${(res.stderr || res.stdout).trim().split("\n").pop() ?? res.exitCode}`
+	);
 }
 
 /** Android: the app's pid-scoped logcat tail. */
@@ -220,7 +223,7 @@ async function androidLogcat(
 	if (pid === undefined) {
 		return {
 			success: false,
-			error: opError("app_not_found", `${appId} is not running on ${device.udid}`, {
+			error: opErrors.opError("app_not_found", `${appId} is not running on ${device.udid}`, {
 				hint: "launch the app, or check `warden perf crashes` for why it died",
 			}),
 		};

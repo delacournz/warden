@@ -3,7 +3,7 @@ import type { Snapshot } from "@delacour/warden-driver/driver.types";
 import { settler } from "@delacour/warden-driver/settle";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { StoredSnapshot } from "./ref-store";
-import { parseTarget, REF_MAX_AGE_MS, resolveTarget, type Target } from "./target";
+import { REF_MAX_AGE_MS, type Target, targetResolver } from "./target";
 
 const T0 = 1_000_000;
 
@@ -12,7 +12,7 @@ function stored(snapshot: Snapshot, takenAt = T0, generation = 4): StoredSnapsho
 }
 
 function unwrapTarget(text: string): Target {
-	const parsed = parseTarget(text);
+	const parsed = targetResolver.parseTarget(text);
 	if (!parsed.success) throw new Error(parsed.error.message);
 	return parsed.data;
 }
@@ -29,7 +29,7 @@ describe("parseTarget", () => {
 	});
 
 	test("garbage is a usage error with the grammar as hint", () => {
-		const parsed = parseTarget("@e0");
+		const parsed = targetResolver.parseTarget("@e0");
 		expect(parsed.success).toBe(false);
 		if (!parsed.success) {
 			expect(parsed.error.code).toBe("usage");
@@ -41,7 +41,12 @@ describe("parseTarget", () => {
 describe("resolveTarget: coordinates", () => {
 	test("a point needs no snapshot and no driver call", async () => {
 		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
-		const res = await resolveTarget(unwrapTarget("10 20"), { lastSnapshot: undefined, now: T0, verify: false, driver });
+		const res = await targetResolver.resolveTarget(unwrapTarget("10 20"), {
+			lastSnapshot: undefined,
+			now: T0,
+			verify: false,
+			driver,
+		});
 		expect(res).toEqual({ success: true, data: { kind: "point", point: { x: 10, y: 20 } } });
 		expect(driver.calls).toEqual([]);
 	});
@@ -56,7 +61,7 @@ describe("resolveTarget: @eN", () => {
 
 	test("recent ref: taken from the stored snapshot, no device call; tap point = frame centre", async () => {
 		const driver = new FakeDriver({ screens: [screen()] });
-		const res = await resolveTarget(unwrapTarget("@e2"), {
+		const res = await targetResolver.resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0 + REF_MAX_AGE_MS,
 			verify: false,
@@ -73,7 +78,7 @@ describe("resolveTarget: @eN", () => {
 			driverFixtures.el("button", { label: "Sign in", id: "go", frame: { x: 20, y: 400, width: 200, height: 40 } }),
 		]);
 		const driver = new FakeDriver({ screens: [moved] });
-		const res = await resolveTarget(unwrapTarget("@e2"), {
+		const res = await targetResolver.resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0 + REF_MAX_AGE_MS + 1,
 			verify: false,
@@ -85,7 +90,7 @@ describe("resolveTarget: @eN", () => {
 
 	test("--verify re-checks a recent ref too", async () => {
 		const driver = new FakeDriver({ screens: [screen()] });
-		const res = await resolveTarget(unwrapTarget("@e2"), {
+		const res = await targetResolver.resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0,
 			verify: true,
@@ -103,7 +108,7 @@ describe("resolveTarget: @eN", () => {
 			driverFixtures.el("button", { label: "Done", frame: { x: 0, y: 500, width: 100, height: 40 } }),
 			driverFixtures.el("text", { label: "Title" }),
 		]);
-		const byLabel = await resolveTarget(unwrapTarget("@e2"), {
+		const byLabel = await targetResolver.resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(plain),
 			now: T0,
 			verify: true,
@@ -115,7 +120,7 @@ describe("resolveTarget: @eN", () => {
 			driverFixtures.el("text", { label: "Title" }),
 			driverFixtures.el("button", { label: "Finished" }),
 		]);
-		const byPath = await resolveTarget(unwrapTarget("@e2"), {
+		const byPath = await targetResolver.resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(plain),
 			now: T0,
 			verify: true,
@@ -129,7 +134,7 @@ describe("resolveTarget: @eN", () => {
 			driverFixtures.el("text", { label: "Settings" }),
 			driverFixtures.el("switch", { label: "Dark mode", id: "dark" }),
 		]);
-		const res = await resolveTarget(unwrapTarget("@e2"), {
+		const res = await targetResolver.resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0 + 31_000,
 			verify: false,
@@ -146,14 +151,19 @@ describe("resolveTarget: @eN", () => {
 
 	test("a ref beyond the stored snapshot, or with no snapshot at all, is stale_ref", async () => {
 		const driver = new FakeDriver({ screens: [screen()] });
-		const missing = await resolveTarget(unwrapTarget("@e9"), {
+		const missing = await targetResolver.resolveTarget(unwrapTarget("@e9"), {
 			lastSnapshot: stored(screen()),
 			now: T0,
 			verify: false,
 			driver,
 		});
 		expect(!missing.success && missing.error.code).toBe("stale_ref");
-		const none = await resolveTarget(unwrapTarget("@e1"), { lastSnapshot: undefined, now: T0, verify: false, driver });
+		const none = await targetResolver.resolveTarget(unwrapTarget("@e1"), {
+			lastSnapshot: undefined,
+			now: T0,
+			verify: false,
+			driver,
+		});
 		expect(!none.success && none.error.code).toBe("stale_ref");
 	});
 
@@ -162,7 +172,7 @@ describe("resolveTarget: @eN", () => {
 			screens: [screen()],
 			onCall: () => ({ error: { code: "E_HELPER_CRASHED", message: "boom", retryable: true } }),
 		});
-		const res = await resolveTarget(unwrapTarget("@e2"), {
+		const res = await targetResolver.resolveTarget(unwrapTarget("@e2"), {
 			lastSnapshot: stored(screen()),
 			now: T0,
 			verify: true,
@@ -180,7 +190,7 @@ describe("resolveTarget: selectors", () => {
 		driverFixtures.el("button", { label: "Save", frame: { x: 0, y: 300, width: 100, height: 40 } }),
 	]);
 	const resolveIn = (text: string) =>
-		resolveTarget(unwrapTarget(text), {
+		targetResolver.resolveTarget(unwrapTarget(text), {
 			lastSnapshot: undefined,
 			now: T0,
 			verify: false,
@@ -189,7 +199,12 @@ describe("resolveTarget: selectors", () => {
 
 	test("always matched against a fresh snapshot", async () => {
 		const driver = new FakeDriver({ screens: [SCREEN] });
-		await resolveTarget(unwrapTarget("id=save"), { lastSnapshot: undefined, now: T0, verify: false, driver });
+		await targetResolver.resolveTarget(unwrapTarget("id=save"), {
+			lastSnapshot: undefined,
+			now: T0,
+			verify: false,
+			driver,
+		});
 		expect(driver.callsOf("snapshot")).toHaveLength(1);
 	});
 

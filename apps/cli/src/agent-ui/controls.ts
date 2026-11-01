@@ -1,11 +1,11 @@
 import type { BiometricOp } from "@delacour/warden-driver/driver.types";
 import { driverErrors } from "@delacour/warden-driver/errors";
-import { finishAction } from "@delacour/warden-sdk/ops/act";
-import { alert, hardware, screenAppearance, screenRotate, screenshot } from "@delacour/warden-sdk/ops/controls";
+import { actionFlow } from "@delacour/warden-sdk/ops/act";
+import { controlOps } from "@delacour/warden-sdk/ops/controls";
 import type { CommandContext } from "../context";
 import { type ActionOptionValues, parseSettle } from "./args";
 import { physicalDevice } from "./device";
-import { fromDriver, type UiDeps } from "./driver";
+import { opErrors, type UiDeps } from "./driver";
 import { uiError } from "./output";
 import { runUi } from "./run";
 import { opSessionFor, reply } from "./session";
@@ -17,7 +17,7 @@ export function uiAlert(ctx: CommandContext, deps: UiDeps, what: string, opts: A
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await alert(opSessionFor(ctx, deps, device, env), {
+			await controlOps.alert(opSessionFor(ctx, deps, device, env), {
 				action: what,
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 			})
@@ -37,7 +37,7 @@ export function uiHardware(
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await hardware(opSessionFor(ctx, deps, device, env), {
+			await controlOps.hardware(opSessionFor(ctx, deps, device, env), {
 				button,
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 			})
@@ -57,7 +57,7 @@ export function uiRotate(
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await screenRotate(opSessionFor(ctx, deps, device, env), {
+			await controlOps.screenRotate(opSessionFor(ctx, deps, device, env), {
 				...(raw !== undefined ? { orientation: raw } : {}),
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 			})
@@ -77,7 +77,7 @@ export function uiAppearance(
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await screenAppearance(opSessionFor(ctx, deps, device, env), {
+			await controlOps.screenAppearance(opSessionFor(ctx, deps, device, env), {
 				...(raw !== undefined ? { mode: raw } : {}),
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 			})
@@ -106,7 +106,7 @@ export function uiBiometrics(
 		}
 		if (physicalDevice(device)) {
 			const what = device.platform === "ios" ? "a physical iPhone" : "a physical Android device";
-			return fromDriver(
+			return opErrors.fromDriver(
 				driverErrors.err(
 					"E_UNSUPPORTED",
 					`biometrics is not available on ${what}: a real Face ID / fingerprint sensor is never enrolled or matched; use a simulator or emulator`
@@ -115,12 +115,12 @@ export function uiBiometrics(
 		}
 		const driver = await env.driver();
 		if (!driver.success) return driver;
-		const state = fromDriver(await driver.data.biometrics(op));
+		const state = opErrors.fromDriver(await driver.data.biometrics(op));
 		if (!state.success) return state;
 		const { enrolled, modality } = state.data;
 		return reply(
 			device,
-			await finishAction(opSessionFor(ctx, deps, device, env), driver.data, settle.data, {
+			await actionFlow.finishAction(opSessionFor(ctx, deps, device, env), driver.data, settle.data, {
 				action: "biometrics",
 				text:
 					op === "status"
@@ -144,7 +144,7 @@ export function uiScreenshot(
 		if (!settle.success) return settle;
 		return reply(
 			device,
-			await screenshot(opSessionFor(ctx, deps, device, env), {
+			await controlOps.screenshot(opSessionFor(ctx, deps, device, env), {
 				...(pathArg !== undefined ? { path: pathArg } : {}),
 				...(settle.data !== undefined ? { settleMs: settle.data } : {}),
 			})

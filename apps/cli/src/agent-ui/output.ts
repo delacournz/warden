@@ -1,5 +1,5 @@
 import type { UiDeviceInfoJson, UiJsonDoc } from "@delacour/warden-sdk/contracts/ui";
-import { opError } from "@delacour/warden-sdk/ops/errors";
+import { opErrors } from "@delacour/warden-sdk/ops/errors";
 import type { WardenError, WardenErrorCode } from "@delacour/warden-types/error";
 import type { CommandContext } from "../context";
 
@@ -73,7 +73,7 @@ export function uiError(
 	message: string,
 	extra: { hint?: string; details?: Record<string, unknown> } = {}
 ): UiError {
-	return opError(code, message, extra);
+	return opErrors.opError(code, message, extra);
 }
 
 /** Human form of an error: `message — hint`. */
