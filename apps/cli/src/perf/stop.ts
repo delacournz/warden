@@ -1,6 +1,6 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
-import { renderReportMarkdown } from "@delacour/warden-perf/shared/report";
+import { reportBuilder } from "@delacour/warden-perf/shared/report";
 import { finalizeSession, type SessionKit, type StopOutcome } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { runningSessionFor } from "@delacour/warden-sdk/ops/perf/session";
 import { stopResult } from "@delacour/warden-sdk/ops/perf/session-ops";
@@ -22,7 +22,7 @@ export function stoppedSuccess(ctx: CommandContext, target: PerfTarget, out: Sto
 	const text =
 		report === undefined
 			? `stopped ${session.id}\nnext:\n  warden perf report ${session.id}`
-			: renderReportMarkdown(report, { maxLines: MAX_TEXT_LINES });
+			: reportBuilder.renderReportMarkdown(report, { maxLines: MAX_TEXT_LINES });
 	return { device: info, result, text, ...(out.warnings.length > 0 ? { warnings: out.warnings } : {}) };
 }
 

@@ -5,13 +5,17 @@
  */
 const BUNDLE_URL = /^https?:\/\/[^\s]*\.bundle(?:\?|\/\/&|$)/;
 
-/** A Metro bundle URL, in either form. */
-export function isBundleUrl(url: string): boolean {
-	return BUNDLE_URL.test(url);
+export class BundleUrls {
+	/** A Metro bundle URL, in either form. */
+	isBundleUrl(url: string): boolean {
+		return BUNDLE_URL.test(url);
+	}
+
+	/** The plain `?query` form of a bundle URL (what `new URL` can split into path and search). */
+	toNormalBundleUrl(url: string): string {
+		const at = url.indexOf("//&");
+		return at < 0 || url.includes("?") ? url : `${url.slice(0, at)}?${url.slice(at + 3)}`;
+	}
 }
 
-/** The plain `?query` form of a bundle URL (what `new URL` can split into path and search). */
-export function toNormalBundleUrl(url: string): string {
-	const at = url.indexOf("//&");
-	return at < 0 || url.includes("?") ? url : `${url.slice(0, at)}?${url.slice(at + 3)}`;
-}
+export const bundleUrls = new BundleUrls();

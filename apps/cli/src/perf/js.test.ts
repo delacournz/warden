@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { buildProfile, buildSourceMap, fakeCdp } from "@delacour/warden-perf/js/js.testing";
-import { jsOk } from "@delacour/warden-perf/js/js.types";
+import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
+import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { createSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -17,7 +17,7 @@ const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 const METRO = "http://127.0.0.1:8081";
 const BUNDLE = `${METRO}/index.bundle?platform=ios`;
 
-const profile = buildProfile(
+const profile = jsFixtures.buildProfile(
 	[
 		{ id: 1, name: "(root)", children: [2, 3] },
 		{ id: 2, name: "renderFeed", url: BUNDLE, scriptId: "7" },
@@ -37,7 +37,7 @@ function setup(metro: string | null = METRO) {
 	asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
 	const deps = fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => metro ?? undefined });
-	const cdp = fakeCdp(
+	const cdp = jsFixtures.fakeCdp(
 		{
 			"Profiler.stop": { profile },
 			"Runtime.evaluate": (params) =>
@@ -52,7 +52,7 @@ function setup(metro: string | null = METRO) {
 			opened.push(o);
 			return resultFactory.ok({ ...cdp, close: () => undefined });
 		},
-		fetchMap: async () => jsOk(buildSourceMap(["/work/src/Feed.tsx"], [[[0, 0, 11, 0]]])),
+		fetchMap: async () => jsResultFactory.ok(jsFixtures.buildSourceMap(["/work/src/Feed.tsx"], [[[0, 0, 11, 0]]])),
 		sleep: async (ms) => {
 			slept.push(ms);
 		},
@@ -108,7 +108,7 @@ describe("warden perf js", () => {
 
 	test("Hermes without a Profiler: engine_unavailable naming the method, exit 3", async () => {
 		const s = setup();
-		const bare = fakeCdp({ "Profiler.start": { __error: "'Profiler.start' wasn't found" } });
+		const bare = jsFixtures.fakeCdp({ "Profiler.start": { __error: "'Profiler.start' wasn't found" } });
 		s.js.open = async () => resultFactory.ok({ ...bare, close: () => undefined });
 		expect(await run(s)).toBe(3);
 		const doc = JSON.parse(s.c.stdout.join("\n"));

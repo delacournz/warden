@@ -1,14 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	type AmStart,
-	amStartArgv,
-	parseAmStart,
-	parseResolveActivity,
-	resolveActivityArgv,
-} from "@delacour/warden-perf/startup/android-am-start";
-import { parseSimctlLaunch, simctlLaunchArgv } from "@delacour/warden-perf/startup/ios-app-launch";
+import { type AmStart, amStartParser } from "@delacour/warden-perf/startup/android-am-start";
+import { iosAppLaunch } from "@delacour/warden-perf/startup/ios-app-launch";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -65,8 +59,8 @@ export async function resolveLauncher(
 	device: AppDevice,
 	appId: string
 ): Promise<Result<string, WardenError>> {
-	const res = await ctx.exec(adb(ctx, device, resolveActivityArgv(appId)), { timeoutMs: 15_000 });
-	const component = res.exitCode === 0 ? parseResolveActivity(res.stdout) : undefined;
+	const res = await ctx.exec(adb(ctx, device, amStartParser.resolveActivityArgv(appId)), { timeoutMs: 15_000 });
+	const component = res.exitCode === 0 ? amStartParser.parseResolveActivity(res.stdout) : undefined;
 	if (component === undefined) {
 		return {
 			success: false,
@@ -117,9 +111,9 @@ async function launchAndroid(
 		component = resolved.data;
 	}
 	const t0 = io.monotonicMs();
-	const res = await ctx.exec(adb(ctx, device, amStartArgv(component, opts.cold)), { timeoutMs: 60_000 });
+	const res = await ctx.exec(adb(ctx, device, amStartParser.amStartArgv(component, opts.cold)), { timeoutMs: 60_000 });
 	const wallMs = Math.round(io.monotonicMs() - t0);
-	const parsed = parseAmStart(`${res.stdout}\n${res.stderr}`);
+	const parsed = amStartParser.parseAmStart(`${res.stdout}\n${res.stderr}`);
 	if (res.exitCode !== 0 && !parsed.success) {
 		return { kind: "failed", reason: "launch_failed", message: parsed.error };
 	}
@@ -135,7 +129,7 @@ async function launchIos(
 	io: RelaunchIo
 ): Promise<LaunchResult> {
 	const t0 = io.monotonicMs();
-	const res = await ctx.exec(simctlLaunchArgv(device.id, appId, opts.cold), { timeoutMs: 60_000 });
+	const res = await ctx.exec(iosAppLaunch.simctlLaunchArgv(device.id, appId, opts.cold), { timeoutMs: 60_000 });
 	const wallMs = Math.round(io.monotonicMs() - t0);
 	if (res.exitCode !== 0) {
 		return {
@@ -145,7 +139,7 @@ async function launchIos(
 			hint: "is the app installed? warden dev ios installs it",
 		};
 	}
-	const pid = parseSimctlLaunch(res.stdout);
+	const pid = iosAppLaunch.parseSimctlLaunch(res.stdout);
 	return { kind: "launched", wallMs, ...(pid !== undefined ? { pid } : {}) };
 }
 

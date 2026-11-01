@@ -2,10 +2,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
-import { renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
-import { formatSessionId } from "@delacour/warden-perf/shared/session.schema";
-import { type StartupMethod, slowStartupFinding } from "@delacour/warden-perf/startup/findings";
-import { type StartupStats, summarize } from "@delacour/warden-perf/startup/stats";
+import { markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
+import { sessionCodec } from "@delacour/warden-perf/shared/session.schema";
+import { type StartupMethod, startupFindings } from "@delacour/warden-perf/startup/findings";
+import { type StartupStats, startupStatistics } from "@delacour/warden-perf/startup/stats";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { writeFileAtomic } from "./device-state";
@@ -109,7 +109,7 @@ function outDirFor(ctx: PerfEnv, deps: PerfEngineDeps, udid: string): string {
 	const session = activeSessionFor(ctx, deps.session, udid);
 	const dir =
 		session === undefined
-			? join(perfRoot(ctx), formatSessionId(ctx.now(), deps.session.random()))
+			? join(perfRoot(ctx), sessionCodec.formatSessionId(ctx.now(), deps.session.random()))
 			: sessionDir(ctx, session.id);
 	mkdirSync(join(dir, "metrics"), { recursive: true });
 	return dir;
@@ -127,7 +127,7 @@ function summaryLines(method: StartupMethod, runs: readonly StartupRun[], by: Ki
 		);
 	}
 	const drawn = runs.flatMap((r) => (r.fullyDrawnMs === undefined ? [] : [r.fullyDrawnMs]));
-	const fully = summarize(drawn);
+	const fully = startupStatistics.summarize(drawn);
 	if (fully !== undefined)
 		lines.push(`fully drawn (reportFullyDrawn)  median ${fully.medianMs}ms  max ${fully.maxMs}ms`);
 	else if (runs.some((r) => r.launchState !== undefined))
@@ -143,7 +143,7 @@ function measure(platform: Platform, method: StartupMethod, c: MeasureCtx) {
 function statsByKind(runs: readonly StartupRun[], kinds: readonly StartupKind[]): KindSummary {
 	const by: KindSummary = {};
 	for (const kind of kinds) {
-		const stats = summarize(runs.filter((r) => r.kind === kind).map((r) => r.totalMs));
+		const stats = startupStatistics.summarize(runs.filter((r) => r.kind === kind).map((r) => r.totalMs));
 		if (stats !== undefined) by[kind] = stats;
 	}
 	return by;
@@ -196,7 +196,11 @@ export async function startupWork(
 	const marks = await collectMarks(ctx, deps, io, target.udid, appId, target.name);
 	if (marks.note !== undefined) notes.push(marks.note);
 	const by = statsByKind(runs, plan.kinds);
-	const finding = slowStartupFinding(plan.method, by.cold, marks.marks.length > 0 || marks.note === undefined);
+	const finding = startupFindings.slowStartupFinding(
+		plan.method,
+		by.cold,
+		marks.marks.length > 0 || marks.note === undefined
+	);
 	const findings: Finding[] = finding === undefined ? [] : [finding];
 	const file = join(outDir, "metrics", "startup.json");
 	const info = { udid: target.udid, platform: target.platform, name: target.name };
@@ -214,7 +218,7 @@ export async function startupWork(
 	};
 	writeFileAtomic(file, `${JSON.stringify(doc, null, 2)}\n`);
 	const markLines = marks.marks.slice(0, 8).map((m) => `${m.name}  +${m.startTimeMs}ms`);
-	const text = renderMarkdown(
+	const text = markdownRenderer.renderMarkdown(
 		{
 			title: `perf startup ${appId}`,
 			banners: [SIMULATOR_BANNER],

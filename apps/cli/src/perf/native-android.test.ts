@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { traceProcessorPin } from "@delacour/warden-perf/android/trace-processor.data";
+import { traceProcessorPins } from "@delacour/warden-perf/android/trace-processor.data";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { type AndroidNativeDeps, createAndroidNativeProfiler } from "@delacour/warden-sdk/ops/perf/native-android";
 import type { NativeHandle, NativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
@@ -382,7 +382,7 @@ describe("analyze", () => {
 			...env.deps,
 			traceProcessor: {
 				...env.deps.traceProcessor,
-				pinFor: traceProcessorPin,
+				pinFor: traceProcessorPins.lookup.bind(traceProcessorPins),
 				fetch: async (url) => {
 					fetched.push(url);
 					throw new Error("offline");

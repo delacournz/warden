@@ -9,48 +9,54 @@ const LEVELS: Record<string, LogLevel> = { Db: "D", Df: "I", I: "I", E: "E", Fa:
 /** `[subsystem:category] ` at the start of a message. */
 const SUBSYSTEM = /^\[([^\]\s]+)\]\s?/;
 
-/** One compact line, or undefined for the `Filtering the log data…` / `Timestamp  Ty Process` headers and continuation lines. */
-export function parseCompactLine(line: string): LogEntry | undefined {
-	const m = COMPACT.exec(line.replace(/\r$/, ""));
-	if (!m) return undefined;
-	const [, y, mo, d, h, mi, s, frac, lvl, proc, pid, tid, rest = ""] = m;
-	const sub = SUBSYSTEM.exec(rest);
-	return {
-		ts: `${y}-${mo}-${d} ${h}:${mi}:${s}.${frac}`,
-		tsMs: Date.UTC(
-			Number(y),
-			Number(mo) - 1,
-			Number(d),
-			Number(h),
-			Number(mi),
-			Number(s),
-			Math.round(Number(`0.${frac}`) * 1000)
-		),
-		pid: Number(pid),
-		tid: Number.parseInt(tid ?? "0", 16),
-		level: LEVELS[lvl ?? ""] ?? "I",
-		tag: sub?.[1] ?? proc ?? "",
-		msg: sub ? rest.slice(sub[0].length) : rest,
-	};
+export class IosLogParser {
+	/** One compact line, or undefined for the `Filtering the log data…` / `Timestamp  Ty Process` headers and continuation lines. */
+	parseCompactLine(line: string): LogEntry | undefined {
+		const m = COMPACT.exec(line.replace(/\r$/, ""));
+		if (!m) return undefined;
+		const [, y, mo, d, h, mi, s, frac, lvl, proc, pid, tid, rest = ""] = m;
+		const sub = SUBSYSTEM.exec(rest);
+		return {
+			ts: `${y}-${mo}-${d} ${h}:${mi}:${s}.${frac}`,
+			tsMs: Date.UTC(
+				Number(y),
+				Number(mo) - 1,
+				Number(d),
+				Number(h),
+				Number(mi),
+				Number(s),
+				Math.round(Number(`0.${frac}`) * 1000)
+			),
+			pid: Number(pid),
+			tid: Number.parseInt(tid ?? "0", 16),
+			level: LEVELS[lvl ?? ""] ?? "I",
+			tag: sub?.[1] ?? proc ?? "",
+			msg: sub ? rest.slice(sub[0].length) : rest,
+		};
+	}
+
+	private quote(value: string): string {
+		return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+	}
+
+	/** The app's own logs: its subsystem (and sub-subsystems), or anything its executable prints. */
+	iosPredicate(bundleId: string, executable: string): string {
+		return [
+			`subsystem == ${this.quote(bundleId)}`,
+			`subsystem BEGINSWITH ${this.quote(bundleId)}`,
+			`process == ${this.quote(executable)}`,
+		].join(" OR ");
+	}
+
+	/** argv after `xcrun simctl spawn <udid>` for a live stream. */
+	iosStreamArgv(predicate: string): string[] {
+		return ["log", "stream", "--style", "compact", "--level", "info", "--predicate", predicate];
+	}
+
+	/** argv after `xcrun simctl spawn <udid>` for a one-shot read of the last `since` (e.g. `5m`). */
+	iosShowArgv(predicate: string, since: string): string[] {
+		return ["log", "show", "--style", "compact", "--info", "--last", since, "--predicate", predicate];
+	}
 }
 
-const quote = (value: string): string => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-
-/** The app's own logs: its subsystem (and sub-subsystems), or anything its executable prints. */
-export function iosPredicate(bundleId: string, executable: string): string {
-	return [
-		`subsystem == ${quote(bundleId)}`,
-		`subsystem BEGINSWITH ${quote(bundleId)}`,
-		`process == ${quote(executable)}`,
-	].join(" OR ");
-}
-
-/** argv after `xcrun simctl spawn <udid>` for a live stream. */
-export function iosStreamArgv(predicate: string): string[] {
-	return ["log", "stream", "--style", "compact", "--level", "info", "--predicate", predicate];
-}
-
-/** argv after `xcrun simctl spawn <udid>` for a one-shot read of the last `since` (e.g. `5m`). */
-export function iosShowArgv(predicate: string, since: string): string[] {
-	return ["log", "show", "--style", "compact", "--info", "--last", since, "--predicate", predicate];
-}
+export const iosLogParser = new IosLogParser();

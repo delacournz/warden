@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { buildProfile } from "@delacour/warden-perf/js/js.testing";
+import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
 import { type TestContext, testContext } from "../testing";
 import { hangLines, type PerfQueryOptions, parseWindow, perfQuery } from "./query";
 import { fixtureText, SEED_T0, seedSession } from "./session-fixture.testing";
@@ -51,7 +51,7 @@ const hotspots = {
 	warnings: [],
 };
 
-const profile = buildProfile(
+const profile = jsFixtures.buildProfile(
 	[
 		{ id: 1, name: "(root)", children: [2] },
 		{ id: 2, name: "parseFeed", children: [3] },

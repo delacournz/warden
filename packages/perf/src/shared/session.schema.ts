@@ -4,21 +4,6 @@ export const SESSION_FILE = "session.json";
 
 const SESSION_ID = /^\d{8}-\d{6}-[0-9a-f]{6}$/;
 
-const pad = (n: number, width = 2) => String(n).padStart(width, "0");
-
-/** `<yyyymmdd-hhmmss>-<hash6>`, UTC, so ids sort by start time and never depend on the host's zone. */
-export function formatSessionId(nowMs: number, hash6: string): string {
-	const d = new Date(nowMs);
-	const date = `${pad(d.getUTCFullYear(), 4)}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
-	const time = `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
-	return `${date}-${time}-${hash6}`;
-}
-
-/** Only ids `formatSessionId` makes are accepted, so an id from argv can never walk out of the perf dir. */
-export function isSessionId(value: string): boolean {
-	return SESSION_ID.test(value);
-}
-
 export const CAPTURER_KINDS = ["collector", "metrics", "frames", "logs", "js", "react", "native", "startup"] as const;
 
 const capturerSchema = z.object({
@@ -54,9 +39,30 @@ export type PerfSession = z.infer<typeof sessionSchema>;
 export type Capturer = PerfSession["capturers"][number];
 export type Mark = PerfSession["marks"][number];
 
-export function parseSession(raw: unknown): { success: true; data: PerfSession } | { success: false; error: string } {
-	const parsed = sessionSchema.safeParse(raw);
-	return parsed.success
-		? { success: true, data: parsed.data }
-		: { success: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
+export class SessionCodec {
+	private pad(n: number, width = 2) {
+		return String(n).padStart(width, "0");
+	}
+
+	/** `<yyyymmdd-hhmmss>-<hash6>`, UTC, so ids sort by start time and never depend on the host's zone. */
+	formatSessionId(nowMs: number, hash6: string): string {
+		const d = new Date(nowMs);
+		const date = `${this.pad(d.getUTCFullYear(), 4)}${this.pad(d.getUTCMonth() + 1)}${this.pad(d.getUTCDate())}`;
+		const time = `${this.pad(d.getUTCHours())}${this.pad(d.getUTCMinutes())}${this.pad(d.getUTCSeconds())}`;
+		return `${date}-${time}-${hash6}`;
+	}
+
+	/** Only ids `formatSessionId` makes are accepted, so an id from argv can never walk out of the perf dir. */
+	isSessionId(value: string): boolean {
+		return SESSION_ID.test(value);
+	}
+
+	parseSession(raw: unknown): { success: true; data: PerfSession } | { success: false; error: string } {
+		const parsed = sessionSchema.safeParse(raw);
+		return parsed.success
+			? { success: true, data: parsed.data }
+			: { success: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
+	}
 }
+
+export const sessionCodec = new SessionCodec();

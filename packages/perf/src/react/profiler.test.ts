@@ -1,15 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { reactProfileStatus, startReactProfile, stopReactProfile } from "./profiler";
-import { fakeGlobal, fakeHook, fakeRenderer, runtimeCdp } from "./react.testing";
+import { reactProfiler } from "./profiler";
+import { reactFixtures } from "./react.testing";
 
 describe("start / stop over CDP", () => {
 	test("start and stop are separate connections: the state lives in the runtime", async () => {
-		const g = fakeGlobal(fakeHook([fakeRenderer()]));
-		const started = await startReactProfile(runtimeCdp(g), { owner: "agent:a" });
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]));
+		const started = await reactProfiler.startReactProfile(reactFixtures.runtimeCdp(g), { owner: "agent:a" });
 		expect(started).toMatchObject({ success: true, data: { dev: true, bootstrapped: false } });
-		const status = await reactProfileStatus(runtimeCdp(g));
+		const status = await reactProfiler.reactProfileStatus(reactFixtures.runtimeCdp(g));
 		expect(status).toMatchObject({ success: true, data: { profiling: true, owner: { owner: "agent:a" } } });
-		const stopped = await stopReactProfile(runtimeCdp(g), { owner: "agent:a", hostWallMs: 42 });
+		const stopped = await reactProfiler.stopReactProfile(reactFixtures.runtimeCdp(g), {
+			owner: "agent:a",
+			hostWallMs: 42,
+		});
 		if (!stopped.success) throw new Error(stopped.error.message);
 		const file = stopped.data;
 		expect(file.anchor.hostWallMs).toBe(42);
@@ -42,22 +45,30 @@ describe("start / stop over CDP", () => {
 	});
 
 	test("typed failures survive the round trip", async () => {
-		const release = await startReactProfile(runtimeCdp(fakeGlobal(fakeHook([fakeRenderer()]), { __DEV__: false })), {
-			owner: "a",
-		});
+		const release = await reactProfiler.startReactProfile(
+			reactFixtures.runtimeCdp(
+				reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]), { __DEV__: false })
+			),
+			{
+				owner: "a",
+			}
+		);
 		expect(release).toMatchObject({ success: false, error: { code: "release_build" } });
-		const g = fakeGlobal(fakeHook([fakeRenderer()]));
-		await startReactProfile(runtimeCdp(g), { owner: "a" });
-		const busy = await startReactProfile(runtimeCdp(g), { owner: "b" });
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]));
+		await reactProfiler.startReactProfile(reactFixtures.runtimeCdp(g), { owner: "a" });
+		const busy = await reactProfiler.startReactProfile(reactFixtures.runtimeCdp(g), { owner: "b" });
 		expect(busy).toMatchObject({ success: false, error: { code: "session_active", owner: "a" } });
-		const idle = await stopReactProfile(runtimeCdp(fakeGlobal(fakeHook([fakeRenderer()]))), { owner: "a" });
+		const idle = await reactProfiler.stopReactProfile(
+			reactFixtures.runtimeCdp(reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]))),
+			{ owner: "a" }
+		);
 		expect(idle).toMatchObject({ success: false, error: { code: "not_profiling" } });
 	});
 
 	test("an evaluate that throws, or a non-string reply, is cdp_failed / invalid_data", async () => {
-		const threw = runtimeCdp(fakeGlobal(fakeHook([])));
+		const threw = reactFixtures.runtimeCdp(reactFixtures.fakeGlobal(reactFixtures.fakeHook([])));
 		const bad = { ...threw, send: async () => ({ success: true as const, data: { result: { value: 5 } } }) };
-		expect(await startReactProfile(bad, { owner: "a" })).toMatchObject({
+		expect(await reactProfiler.startReactProfile(bad, { owner: "a" })).toMatchObject({
 			success: false,
 			error: { code: "invalid_data" },
 		});
@@ -65,7 +76,7 @@ describe("start / stop over CDP", () => {
 			...threw,
 			send: async () => ({ success: false as const, error: { code: "x", message: "socket closed" } }),
 		};
-		expect(await startReactProfile(down, { owner: "a" })).toMatchObject({
+		expect(await reactProfiler.startReactProfile(down, { owner: "a" })).toMatchObject({
 			success: false,
 			error: { code: "cdp_failed" },
 		});

@@ -8,9 +8,9 @@ import {
 	type FakeReply,
 	fakeMetros,
 } from "@delacour/warden-devtools/testing/devtools";
-import { buildProfile } from "@delacour/warden-perf/js/js.testing";
-import { jsErr } from "@delacour/warden-perf/js/js.types";
-import { fakeGlobal, fakeHook, fakeRenderer } from "@delacour/warden-perf/react/react.testing";
+import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
+import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
+import { reactFixtures } from "@delacour/warden-perf/react/react.testing";
 import { type Broker, callBroker, startBroker } from "./broker";
 import { withExtensions } from "./extensions";
 import { profileStatus, startProfile, stopProfile } from "./profile-client";
@@ -35,7 +35,7 @@ async function until(check: () => boolean, label: string): Promise<void> {
 }
 
 const T0 = Date.UTC(2026, 9, 27, 10, 0, 0);
-const CPU = buildProfile(
+const CPU = jsFixtures.buildProfile(
 	[
 		{ id: 1, name: "(root)", children: [2, 3] },
 		{ id: 2, name: "renderFeed", url: "http://m/index.bundle" },
@@ -63,7 +63,7 @@ const HEAP = {
 
 /** An app behind the fake Metro: Hermes Profiler/HeapProfiler answers, and the React profiler script run in-process. */
 function app(options: { heapFails?: boolean }) {
-	const g = fakeGlobal(fakeHook([fakeRenderer()]));
+	const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]));
 	return (request: FakeCdpRequest): FakeReply | undefined => {
 		switch (request.method) {
 			case "Profiler.stop":
@@ -103,7 +103,7 @@ async function setup(options: { heapFails?: boolean } = {}) {
 		createProfilesExtension({
 			now: () => T0,
 			cwd: logDir,
-			fetchMap: async () => jsErr("cdp_failed", "no source maps in this test"),
+			fetchMap: async () => jsResultFactory.err("cdp_failed", "no source maps in this test"),
 		}),
 	]);
 	brokers.push(broker);

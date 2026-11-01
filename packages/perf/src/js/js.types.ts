@@ -5,12 +5,6 @@ export type JsError = { code: JsErrorCode; message: string; hint?: string };
 
 export type JsResult<T> = { success: true; data: T } | { success: false; error: JsError };
 
-export const jsOk = <T>(data: T): JsResult<T> => ({ success: true, data });
-
-export function jsErr(code: JsErrorCode, message: string, hint?: string): JsResult<never> {
-	return { success: false, error: { code, message, ...(hint === undefined ? {} : { hint }) } };
-}
-
 export type CdpFailure = { code: string; message: string };
 
 /** The slice of a devtools session the JS capturers use (`DevtoolsSession` satisfies it). */
@@ -25,30 +19,49 @@ export type JsCdp = {
 
 const UNSUPPORTED = /not found|not supported|unsupported|unknown method|not implemented|wasn't found/i;
 
-/** Hermes answers a domain/method it lacks with an error like "'Profiler.start' wasn't found". */
-export function isUnsupported(failure: CdpFailure): boolean {
-	return UNSUPPORTED.test(failure.message);
+export class JsResultFactory {
+	ok<T>(data: T): JsResult<T> {
+		return { success: true, data };
+	}
+
+	err(code: JsErrorCode, message: string, hint?: string): JsResult<never> {
+		return { success: false, error: { code, message, ...(hint === undefined ? {} : { hint }) } };
+	}
 }
 
-/** `Runtime.evaluate` by value through any `JsCdp`. */
-export async function evaluateValue(cdp: JsCdp, expression: string): Promise<JsResult<unknown>> {
-	const reply = await cdp.send("Runtime.evaluate", { expression, returnByValue: true });
-	if (!reply.success) return jsErr("cdp_failed", reply.error.message);
-	const data = reply.data;
-	if (typeof data !== "object" || data === null) return jsOk(undefined);
-	if ("exceptionDetails" in data && data.exceptionDetails) return jsErr("cdp_failed", `evaluate threw: ${expression}`);
-	const result = "result" in data ? data.result : undefined;
-	return jsOk(typeof result === "object" && result !== null && "value" in result ? result.value : undefined);
+export const jsResultFactory = new JsResultFactory();
+
+export class JsCdpReader {
+	/** Hermes answers a domain/method it lacks with an error like "'Profiler.start' wasn't found". */
+	isUnsupported(failure: CdpFailure): boolean {
+		return UNSUPPORTED.test(failure.message);
+	}
+
+	/** `Runtime.evaluate` by value through any `JsCdp`. */
+	async evaluateValue(cdp: JsCdp, expression: string): Promise<JsResult<unknown>> {
+		const reply = await cdp.send("Runtime.evaluate", { expression, returnByValue: true });
+		if (!reply.success) return jsResultFactory.err("cdp_failed", reply.error.message);
+		const data = reply.data;
+		if (typeof data !== "object" || data === null) return jsResultFactory.ok(undefined);
+		if ("exceptionDetails" in data && data.exceptionDetails)
+			return jsResultFactory.err("cdp_failed", `evaluate threw: ${expression}`);
+		const result = "result" in data ? data.result : undefined;
+		return jsResultFactory.ok(
+			typeof result === "object" && result !== null && "value" in result ? result.value : undefined
+		);
+	}
+
+	/** `__DEV__` in the app: true on a dev build, false on release, undefined when it cannot be read. */
+	async readDevFlag(cdp: JsCdp): Promise<boolean | undefined> {
+		const value = await this.evaluateValue(cdp, "typeof __DEV__ === 'undefined' ? null : !!__DEV__");
+		return value.success && typeof value.data === "boolean" ? value.data : undefined;
+	}
+
+	/** The device's `Date.now()`: the alignment anchor against host wall time. */
+	async readDeviceWallMs(cdp: JsCdp): Promise<number | undefined> {
+		const value = await this.evaluateValue(cdp, "Date.now()");
+		return value.success && typeof value.data === "number" ? value.data : undefined;
+	}
 }
 
-/** `__DEV__` in the app: true on a dev build, false on release, undefined when it cannot be read. */
-export async function readDevFlag(cdp: JsCdp): Promise<boolean | undefined> {
-	const value = await evaluateValue(cdp, "typeof __DEV__ === 'undefined' ? null : !!__DEV__");
-	return value.success && typeof value.data === "boolean" ? value.data : undefined;
-}
-
-/** The device's `Date.now()`: the alignment anchor against host wall time. */
-export async function readDeviceWallMs(cdp: JsCdp): Promise<number | undefined> {
-	const value = await evaluateValue(cdp, "Date.now()");
-	return value.success && typeof value.data === "number" ? value.data : undefined;
-}
+export const jsCdpReader = new JsCdpReader();

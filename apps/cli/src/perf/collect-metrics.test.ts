@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeSamples } from "@delacour/warden-perf/metrics/series";
+import { sampleSeries } from "@delacour/warden-perf/metrics/series";
 import { COLLECT_METRICS_INTERVAL_MS, createMetricsTicker } from "@delacour/warden-sdk/ops/perf/collect-metrics";
 import { type TestContext, testContext } from "../testing";
 
@@ -42,7 +42,7 @@ describe("createMetricsTicker", () => {
 		await made.data.tick();
 		clock.now += COLLECT_METRICS_INTERVAL_MS;
 		await made.data.tick();
-		const rows = decodeSamples(readFileSync(join(dir ?? "", "metrics", "samples.jsonl"), "utf8"));
+		const rows = sampleSeries.decodeSamples(readFileSync(join(dir ?? "", "metrics", "samples.jsonl"), "utf8"));
 		expect(rows.map((r) => r.atMs)).toEqual([1000, 2000]);
 		expect(rows[0]).toMatchObject({ pid: 4321, cpuPct: 25, rssKb: 256000 });
 	});
@@ -55,7 +55,7 @@ describe("createMetricsTicker", () => {
 		await made.data.tick();
 		up = false;
 		expect(await made.data.tick()).toBeUndefined();
-		const rows = decodeSamples(readFileSync(join(dir ?? "", "metrics", "samples.jsonl"), "utf8"));
+		const rows = sampleSeries.decodeSamples(readFileSync(join(dir ?? "", "metrics", "samples.jsonl"), "utf8"));
 		expect(rows).toHaveLength(1);
 	});
 

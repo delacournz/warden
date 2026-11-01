@@ -13,10 +13,16 @@ export type LogEntry = {
 	msg: string;
 };
 
-/** `error`, `E`, `warn`… → level; undefined when unknown. */
-export function parseLevel(raw: string): LogLevel | undefined {
-	const first = raw.trim().charAt(0).toUpperCase();
-	return (LOG_LEVELS as readonly string[]).includes(first) ? (first as LogLevel) : undefined;
+export class LogLevels {
+	/** `error`, `E`, `warn`… → level; undefined when unknown. */
+	parseLevel(raw: string): LogLevel | undefined {
+		const first = raw.trim().charAt(0).toUpperCase();
+		return (LOG_LEVELS as readonly string[]).includes(first) ? (first as LogLevel) : undefined;
+	}
+
+	levelRank(level: LogLevel): number {
+		return LOG_LEVELS.indexOf(level);
+	}
 }
 
-export const levelRank = (level: LogLevel): number => LOG_LEVELS.indexOf(level);
+export const logLevels = new LogLevels();

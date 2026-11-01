@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatSessionId, isSessionId, type PerfSession, parseSession } from "./session.schema";
+import { type PerfSession, sessionCodec } from "./session.schema";
 
 const base: PerfSession = {
 	version: 1,
@@ -16,19 +16,19 @@ const base: PerfSession = {
 
 describe("session id", () => {
 	test("is <yyyymmdd-hhmmss>-<hash6> in UTC", () => {
-		expect(formatSessionId(Date.UTC(2026, 9, 24, 10, 15, 30), "a1b2c3")).toBe("20261024-101530-a1b2c3");
+		expect(sessionCodec.formatSessionId(Date.UTC(2026, 9, 24, 10, 15, 30), "a1b2c3")).toBe("20261024-101530-a1b2c3");
 	});
 
 	test("isSessionId only accepts that shape (no path traversal)", () => {
-		expect(isSessionId("20261024-101530-a1b2c3")).toBe(true);
-		expect(isSessionId("../etc")).toBe(false);
-		expect(isSessionId("20261024-101530-ZZZZZZ")).toBe(false);
+		expect(sessionCodec.isSessionId("20261024-101530-a1b2c3")).toBe(true);
+		expect(sessionCodec.isSessionId("../etc")).toBe(false);
+		expect(sessionCodec.isSessionId("20261024-101530-ZZZZZZ")).toBe(false);
 	});
 });
 
 describe("parseSession", () => {
 	test("round-trips a valid session", () => {
-		const parsed = parseSession(JSON.parse(JSON.stringify(base)));
+		const parsed = sessionCodec.parseSession(JSON.parse(JSON.stringify(base)));
 		expect(parsed).toEqual({ success: true, data: base });
 	});
 
@@ -41,13 +41,13 @@ describe("parseSession", () => {
 			capturers: [{ kind: "collector", pid: 99, startedAtIso: "2026-10-24T10:15:30.000Z", state: "running" }],
 			marks: [{ label: "scroll feed", wallMs: 2_000, atMs: 1_000 }],
 		};
-		expect(parseSession(full)).toEqual({ success: true, data: full });
+		expect(sessionCodec.parseSession(full)).toEqual({ success: true, data: full });
 	});
 
 	test("rejects a bad id, a missing device and an unknown status", () => {
-		expect(parseSession({ ...base, id: "nope" }).success).toBe(false);
-		expect(parseSession({ ...base, device: undefined }).success).toBe(false);
-		expect(parseSession({ ...base, status: "weird" }).success).toBe(false);
-		expect(parseSession("garbage").success).toBe(false);
+		expect(sessionCodec.parseSession({ ...base, id: "nope" }).success).toBe(false);
+		expect(sessionCodec.parseSession({ ...base, device: undefined }).success).toBe(false);
+		expect(sessionCodec.parseSession({ ...base, status: "weird" }).success).toBe(false);
+		expect(sessionCodec.parseSession("garbage").success).toBe(false);
 	});
 });

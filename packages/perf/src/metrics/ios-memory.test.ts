@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseLeaks, parseVmmap, sizeToKb } from "./ios-memory";
+import { iosMemoryParser } from "./ios-memory";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "..", "..", "fixtures", name), "utf8");
 
@@ -10,13 +10,13 @@ describe("sizeToKb", () => {
 		["512K", 512],
 		["168.4M", 172442],
 		["1.1G", 1153434],
-	])("%s", (text, kb) => expect(sizeToKb(text)).toBe(kb));
-	test("junk", () => expect(sizeToKb("12")).toBeUndefined());
+	])("%s", (text, kb) => expect(iosMemoryParser.sizeToKb(text)).toBe(kb));
+	test("junk", () => expect(iosMemoryParser.sizeToKb("12")).toBeUndefined());
 });
 
 describe("parseLeaks", () => {
 	test("count, bytes and the leaked types by instance count", () => {
-		expect(parseLeaks(fx("leaks-summary.txt"))).toEqual({
+		expect(iosMemoryParser.parseLeaks(fx("leaks-summary.txt"))).toEqual({
 			leakCount: 3,
 			leakedBytes: 224,
 			types: [
@@ -26,14 +26,15 @@ describe("parseLeaks", () => {
 		});
 	});
 	test("no leaks", () => {
-		expect(parseLeaks(fx("leaks-clean.txt"))).toEqual({ leakCount: 0, leakedBytes: 0, types: [] });
+		expect(iosMemoryParser.parseLeaks(fx("leaks-clean.txt"))).toEqual({ leakCount: 0, leakedBytes: 0, types: [] });
 	});
-	test("tool failure: undefined", () => expect(parseLeaks("leaks: cannot examine process 845")).toBeUndefined());
+	test("tool failure: undefined", () =>
+		expect(iosMemoryParser.parseLeaks("leaks: cannot examine process 845")).toBeUndefined());
 });
 
 describe("parseVmmap", () => {
 	test("footprint, peak and the top 5 regions by dirty size", () => {
-		const v = parseVmmap(fx("vmmap-summary.txt"));
+		const v = iosMemoryParser.parseVmmap(fx("vmmap-summary.txt"));
 		expect(v?.footprintKb).toBe(172442);
 		expect(v?.footprintPeakKb).toBe(186266);
 		expect(v?.regions.map((r) => r.type)).toEqual([
@@ -45,5 +46,5 @@ describe("parseVmmap", () => {
 		]);
 		expect(v?.regions[0]).toEqual({ type: "MALLOC_SMALL", residentKb: 76390, dirtyKb: 74650, swappedKb: 2355 });
 	});
-	test("no footprint: undefined", () => expect(parseVmmap("No such process")).toBeUndefined());
+	test("no footprint: undefined", () => expect(iosMemoryParser.parseVmmap("No such process")).toBeUndefined());
 });

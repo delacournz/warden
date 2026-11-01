@@ -1,14 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { overCap } from "@delacour/warden-perf/shared/caps";
+import { captureCaps } from "@delacour/warden-perf/shared/caps";
 import {
-	formatSessionId,
-	isSessionId,
 	type PerfSession,
-	parseSession,
 	SESSION_FILE,
 	type STOP_REASONS,
+	sessionCodec,
 } from "@delacour/warden-perf/shared/session.schema";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import {
@@ -82,9 +80,9 @@ function writeSession(ctx: SessionHost, session: PerfSession): void {
 
 /** `session.json` of `id`; undefined for an unknown, malformed or unreadable one (the id is validated before it touches a path). */
 export function readSession(ctx: Pick<PerfEnv, "env">, id: string): PerfSession | undefined {
-	if (!isSessionId(id)) return undefined;
+	if (!sessionCodec.isSessionId(id)) return undefined;
 	try {
-		const parsed = parseSession(JSON.parse(readFileSync(join(sessionDir(ctx, id), SESSION_FILE), "utf8")));
+		const parsed = sessionCodec.parseSession(JSON.parse(readFileSync(join(sessionDir(ctx, id), SESSION_FILE), "utf8")));
 		return parsed.success ? parsed.data : undefined;
 	} catch {
 		return undefined;
@@ -119,7 +117,7 @@ export function listSessions(ctx: Pick<PerfEnv, "env">): PerfSession[] {
 		return [];
 	}
 	return names
-		.filter(isSessionId)
+		.filter(sessionCodec.isSessionId.bind(sessionCodec))
 		.flatMap((id) => readSession(ctx, id) ?? [])
 		.sort((a, b) => b.startedAt.wallMs - a.startedAt.wallMs || (a.id < b.id ? 1 : -1));
 }
@@ -180,7 +178,9 @@ export function stopSession(
 /** Settle one running session: over its cap → stopped (`max-duration`); collector gone → aborted (`stale`). */
 function sweepOne(ctx: SessionHost, deps: SessionDeps, session: PerfSession): StopReason | undefined {
 	if (session.status !== "running") return undefined;
-	if (overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, ctx.now())) {
+	if (
+		captureCaps.overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, ctx.now())
+	) {
 		stopSession(ctx, deps, session.id, "max-duration");
 		return "max-duration";
 	}
@@ -204,7 +204,10 @@ export function activeSessionFor(ctx: SessionHost, deps: SessionDeps, udid: stri
 	const id = readPerfPointer(ctx, udid);
 	const session = id === undefined ? undefined : readSession(ctx, id);
 	if (session === undefined || session.status !== "running") return undefined;
-	const expired = overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, ctx.now());
+	const expired = captureCaps.overCap(
+		{ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs },
+		ctx.now()
+	);
 	return expired || !collectorAlive(deps, session) ? undefined : session;
 }
 
@@ -242,7 +245,7 @@ export function createSession(
 		const now = ctx.now();
 		const session: PerfSession = {
 			version: 1,
-			id: formatSessionId(now, deps.random()),
+			id: sessionCodec.formatSessionId(now, deps.random()),
 			device: input.device,
 			target: input.target,
 			...(input.app !== undefined ? { app: input.app } : {}),

@@ -1,6 +1,6 @@
 import type { Fetch } from "@delacour/warden-devtools/devtools.types";
 import type { DevtoolsSession } from "@delacour/warden-devtools/session";
-import { isBundleUrl } from "@delacour/warden-perf/js/bundle-url";
+import { bundleUrls } from "@delacour/warden-perf/js/bundle-url";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { Broker } from "./broker";
@@ -285,7 +285,7 @@ export function createLogpointsExtension(options: LogpointsOptions = {}): Broker
 		const onScriptParsed = (params: unknown) => {
 			if (!listening || !bound) return;
 			const { scriptId, url, sourceMapURL } = record(params);
-			if (typeof scriptId !== "string" || typeof url !== "string" || !isBundleUrl(url)) return;
+			if (typeof scriptId !== "string" || typeof url !== "string" || !bundleUrls.isBundleUrl(url)) return;
 			if (bundles.get(url)?.scriptId === scriptId) return;
 			cache.invalidate(url);
 			const bundle: Bundle = {

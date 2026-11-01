@@ -77,118 +77,126 @@ export type IpsCrash = {
 	firstAppFrame?: IpsFrame;
 };
 
-/** `2026-10-24 10:02:11.00 +1300` → epoch ms. */
-export function parseIpsTimestamp(raw: string): number | undefined {
-	const m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d(?:\.\d+)?) ([+-])(\d\d)(\d\d)$/.exec(raw.trim());
-	if (!m) return undefined;
-	const ms = Date.parse(`${m[1]}T${m[2]}${m[3]}${m[4]}:${m[5]}`);
-	return Number.isNaN(ms) ? undefined : ms;
-}
-
 const MAX_FRAMES = 10;
-
-/** `ShopApp +4521772` / `objc_msgSend +32 (libobjc.A.dylib)` — one frame as a line. */
-export function formatFrame(f: IpsFrame): string {
-	return f.symbol === undefined ? `${f.image} +${f.imageOffset}` : `${f.symbol} +${f.symbolLocation ?? 0} (${f.image})`;
-}
-
-function leaf(path: string | undefined, fallback: string): string {
-	return path?.split("/").pop() || fallback;
-}
 
 type IpsHeader = z.infer<typeof headerSchema>;
 type IpsBody = z.infer<typeof bodySchema>;
 type IpsThread = IpsBody["threads"][number];
 
-/** The faulting thread, else the first one flagged `triggered`. */
-function crashedThread(body: IpsBody): IpsThread | undefined {
-	return body.threads[body.faultingThread ?? -1] ?? body.threads.find((t) => t.triggered === true);
-}
-
-/** One raw thread frame resolved against the report's image table. */
-function resolveFrame(f: IpsThread["frames"][number], body: IpsBody): IpsFrame {
-	const image = f.imageIndex === undefined ? undefined : body.usedImages[f.imageIndex];
-	const path = image?.path ?? "";
-	return {
-		image: image?.name ?? leaf(image?.path, "?"),
-		...(f.symbol !== undefined ? { symbol: f.symbol } : {}),
-		imageOffset: f.imageOffset,
-		...(f.symbolLocation !== undefined ? { symbolLocation: f.symbolLocation } : {}),
-		app: path.includes(".app/"),
-		...(image?.uuid !== undefined ? { imageUuid: image.uuid } : {}),
-		...(image !== undefined ? { imageBase: image.base } : {}),
-		...(image?.arch !== undefined ? { arch: image.arch } : {}),
-	};
-}
-
-/** The exception and termination fields of a report that are present. */
-function exceptionFields(body: IpsBody): Pick<IpsCrash, "exceptionType" | "signal" | "subtype" | "termination"> {
-	return {
-		...(body.exception?.type !== undefined ? { exceptionType: body.exception.type } : {}),
-		...(body.exception?.signal !== undefined ? { signal: body.exception.signal } : {}),
-		...(body.exception?.subtype ? { subtype: body.exception.subtype } : {}),
-		...(body.termination?.indicator !== undefined ? { termination: body.termination.indicator } : {}),
-	};
-}
-
-/** An `.ips` crash report: line 1 is a JSON header, the rest the JSON body. */
-export function parseIps(text: string): { success: true; data: IpsCrash } | { success: false; error: string } {
-	const newline = text.indexOf("\n");
-	if (newline < 0) return { success: false, error: "not an .ips report (no body)" };
-	let header: IpsHeader;
-	let body: IpsBody;
-	try {
-		header = headerSchema.parse(JSON.parse(text.slice(0, newline)));
-		body = bodySchema.parse(JSON.parse(text.slice(newline + 1)));
-	} catch (error) {
-		return { success: false, error: `not an .ips report: ${error instanceof Error ? error.message : String(error)}` };
-	}
-	const thread = crashedThread(body);
-	const frames: IpsFrame[] = (thread?.frames ?? []).map((f) => resolveFrame(f, body));
-	const processName = body.procName ?? header.app_name ?? header.name ?? "?";
-	const atMs = header.timestamp === undefined ? undefined : parseIpsTimestamp(header.timestamp);
-	const firstApp = frames.find((f) => f.app);
-	return {
-		success: true,
-		data: {
-			...(header.incident_id !== undefined ? { incidentId: header.incident_id } : {}),
-			appName: header.app_name ?? header.name ?? processName,
-			...(header.bundleID !== undefined ? { bundleId: header.bundleID } : {}),
-			processName,
-			...(body.pid !== undefined ? { pid: body.pid } : {}),
-			...(atMs !== undefined ? { atMs } : {}),
-			...exceptionFields(body),
-			...(thread?.name !== undefined ? { crashedThread: thread.name } : {}),
-			frames: frames.slice(0, MAX_FRAMES),
-			...(firstApp !== undefined ? { firstAppFrame: firstApp } : {}),
-		},
-	};
-}
-
 export type IpsQuery = { bundleId: string; executable?: string; udid?: string; sinceMs?: number };
 
-/** Does this report belong to the app (bundle id or executable), on this simulator, within the window? `text` is the raw file. */
-export function ipsMatches(crash: IpsCrash, text: string, q: IpsQuery): boolean {
-	const app = crash.bundleId === q.bundleId || (q.executable !== undefined && crash.processName === q.executable);
-	if (!app) return false;
-	if (q.udid !== undefined && !text.toLowerCase().includes(q.udid.toLowerCase())) return false;
-	if (q.sinceMs !== undefined && crash.atMs !== undefined && crash.atMs < q.sinceMs) return false;
-	return true;
-}
+export class IpsParser {
+	/** `2026-10-24 10:02:11.00 +1300` → epoch ms. */
+	parseIpsTimestamp(raw: string): number | undefined {
+		const m = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d(?:\.\d+)?) ([+-])(\d\d)(\d\d)$/.exec(raw.trim());
+		if (!m) return undefined;
+		const ms = Date.parse(`${m[1]}T${m[2]}${m[3]}${m[4]}:${m[5]}`);
+		return Number.isNaN(ms) ? undefined : ms;
+	}
 
-/** Full-body frame list for symbolication: every app-image frame of the crashed thread (not just the top 10), with load addresses. */
-export function appFrameAddresses(text: string): Array<{ uuid: string; arch: string; base: number; address: number }> {
-	const newline = text.indexOf("\n");
-	if (newline < 0) return [];
-	try {
-		const body = bodySchema.parse(JSON.parse(text.slice(newline + 1)));
-		const thread = body.threads[body.faultingThread ?? -1] ?? body.threads.find((t) => t.triggered === true);
-		return (thread?.frames ?? []).flatMap((f) => {
-			const image = f.imageIndex === undefined ? undefined : body.usedImages[f.imageIndex];
-			if (image === undefined || image.uuid === undefined || !(image.path ?? "").includes(".app/")) return [];
-			return [{ uuid: image.uuid, arch: image.arch ?? "arm64", base: image.base, address: image.base + f.imageOffset }];
-		});
-	} catch {
-		return [];
+	/** `ShopApp +4521772` / `objc_msgSend +32 (libobjc.A.dylib)` — one frame as a line. */
+	formatFrame(f: IpsFrame): string {
+		return f.symbol === undefined
+			? `${f.image} +${f.imageOffset}`
+			: `${f.symbol} +${f.symbolLocation ?? 0} (${f.image})`;
+	}
+
+	private leaf(path: string | undefined, fallback: string): string {
+		return path?.split("/").pop() || fallback;
+	}
+
+	/** The faulting thread, else the first one flagged `triggered`. */
+	private crashedThread(body: IpsBody): IpsThread | undefined {
+		return body.threads[body.faultingThread ?? -1] ?? body.threads.find((t) => t.triggered === true);
+	}
+
+	/** One raw thread frame resolved against the report's image table. */
+	private resolveFrame(f: IpsThread["frames"][number], body: IpsBody): IpsFrame {
+		const image = f.imageIndex === undefined ? undefined : body.usedImages[f.imageIndex];
+		const path = image?.path ?? "";
+		return {
+			image: image?.name ?? this.leaf(image?.path, "?"),
+			...(f.symbol !== undefined ? { symbol: f.symbol } : {}),
+			imageOffset: f.imageOffset,
+			...(f.symbolLocation !== undefined ? { symbolLocation: f.symbolLocation } : {}),
+			app: path.includes(".app/"),
+			...(image?.uuid !== undefined ? { imageUuid: image.uuid } : {}),
+			...(image !== undefined ? { imageBase: image.base } : {}),
+			...(image?.arch !== undefined ? { arch: image.arch } : {}),
+		};
+	}
+
+	/** The exception and termination fields of a report that are present. */
+	private exceptionFields(body: IpsBody): Pick<IpsCrash, "exceptionType" | "signal" | "subtype" | "termination"> {
+		return {
+			...(body.exception?.type !== undefined ? { exceptionType: body.exception.type } : {}),
+			...(body.exception?.signal !== undefined ? { signal: body.exception.signal } : {}),
+			...(body.exception?.subtype ? { subtype: body.exception.subtype } : {}),
+			...(body.termination?.indicator !== undefined ? { termination: body.termination.indicator } : {}),
+		};
+	}
+
+	/** An `.ips` crash report: line 1 is a JSON header, the rest the JSON body. */
+	parseIps(text: string): { success: true; data: IpsCrash } | { success: false; error: string } {
+		const newline = text.indexOf("\n");
+		if (newline < 0) return { success: false, error: "not an .ips report (no body)" };
+		let header: IpsHeader;
+		let body: IpsBody;
+		try {
+			header = headerSchema.parse(JSON.parse(text.slice(0, newline)));
+			body = bodySchema.parse(JSON.parse(text.slice(newline + 1)));
+		} catch (error) {
+			return { success: false, error: `not an .ips report: ${error instanceof Error ? error.message : String(error)}` };
+		}
+		const thread = this.crashedThread(body);
+		const frames: IpsFrame[] = (thread?.frames ?? []).map((f) => this.resolveFrame(f, body));
+		const processName = body.procName ?? header.app_name ?? header.name ?? "?";
+		const atMs = header.timestamp === undefined ? undefined : this.parseIpsTimestamp(header.timestamp);
+		const firstApp = frames.find((f) => f.app);
+		return {
+			success: true,
+			data: {
+				...(header.incident_id !== undefined ? { incidentId: header.incident_id } : {}),
+				appName: header.app_name ?? header.name ?? processName,
+				...(header.bundleID !== undefined ? { bundleId: header.bundleID } : {}),
+				processName,
+				...(body.pid !== undefined ? { pid: body.pid } : {}),
+				...(atMs !== undefined ? { atMs } : {}),
+				...this.exceptionFields(body),
+				...(thread?.name !== undefined ? { crashedThread: thread.name } : {}),
+				frames: frames.slice(0, MAX_FRAMES),
+				...(firstApp !== undefined ? { firstAppFrame: firstApp } : {}),
+			},
+		};
+	}
+
+	/** Does this report belong to the app (bundle id or executable), on this simulator, within the window? `text` is the raw file. */
+	ipsMatches(crash: IpsCrash, text: string, q: IpsQuery): boolean {
+		const app = crash.bundleId === q.bundleId || (q.executable !== undefined && crash.processName === q.executable);
+		if (!app) return false;
+		if (q.udid !== undefined && !text.toLowerCase().includes(q.udid.toLowerCase())) return false;
+		if (q.sinceMs !== undefined && crash.atMs !== undefined && crash.atMs < q.sinceMs) return false;
+		return true;
+	}
+
+	/** Full-body frame list for symbolication: every app-image frame of the crashed thread (not just the top 10), with load addresses. */
+	appFrameAddresses(text: string): Array<{ uuid: string; arch: string; base: number; address: number }> {
+		const newline = text.indexOf("\n");
+		if (newline < 0) return [];
+		try {
+			const body = bodySchema.parse(JSON.parse(text.slice(newline + 1)));
+			const thread = body.threads[body.faultingThread ?? -1] ?? body.threads.find((t) => t.triggered === true);
+			return (thread?.frames ?? []).flatMap((f) => {
+				const image = f.imageIndex === undefined ? undefined : body.usedImages[f.imageIndex];
+				if (image === undefined || image.uuid === undefined || !(image.path ?? "").includes(".app/")) return [];
+				return [
+					{ uuid: image.uuid, arch: image.arch ?? "arm64", base: image.base, address: image.base + f.imageOffset },
+				];
+			});
+		} catch {
+			return [];
+		}
 	}
 }
+
+export const ipsParser = new IpsParser();

@@ -2,12 +2,12 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
 import { crashFindings } from "@delacour/warden-perf/logs/crash-findings";
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
-import { clampMaxDuration } from "@delacour/warden-perf/shared/caps";
+import { perfDuration } from "@delacour/warden-perf/metrics/duration";
+import { captureCaps } from "@delacour/warden-perf/shared/caps";
 import type { PerfReportJson } from "@delacour/warden-perf/shared/report";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
-import { slowStartupFinding } from "@delacour/warden-perf/startup/findings";
-import { summarize } from "@delacour/warden-perf/startup/stats";
+import { startupFindings } from "@delacour/warden-perf/startup/findings";
+import { startupStatistics } from "@delacour/warden-perf/startup/stats";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -163,9 +163,9 @@ function writeLaunchStartup(
 	launch: Extract<LaunchResult, { kind: "launched" }>
 ): void {
 	const totalMs = launch.am?.totalMs ?? launch.wallMs;
-	const stats = summarize([totalMs]);
+	const stats = startupStatistics.summarize([totalMs]);
 	const method = target.platform === "android" ? "am-start" : "simctl-approx";
-	const finding = slowStartupFinding(method, stats, true);
+	const finding = startupFindings.slowStartupFinding(method, stats, true);
 	const doc = {
 		version: 1,
 		method,
@@ -204,7 +204,7 @@ type StartRun = {
 /** Parse `--max-duration`; `undefined` data when the flag is absent. */
 function requestedMaxDuration(raw: string | undefined): Result<number | undefined, WardenError> {
 	if (raw === undefined) return resultFactory.ok(undefined);
-	const ms = parseDuration(raw);
+	const ms = perfDuration.parseDuration(raw);
 	if (ms === undefined) {
 		return {
 			success: false,
@@ -454,7 +454,7 @@ export async function startPerf(
 	if (!choice.success) return choice;
 	const requested = requestedMaxDuration(opts.maxDuration);
 	if (!requested.success) return requested;
-	const cap = clampMaxDuration(requested.data);
+	const cap = captureCaps.clampMaxDuration(requested.data);
 	const warnings: string[] = cap.warning === undefined ? [] : [cap.warning];
 	const caps = choice.data;
 	adjustForPlatform(caps, target.platform, warnings);
@@ -598,7 +598,7 @@ async function crashStep(
 		mkdirSync(join(sessionDir(ctx, id), "crashes"), { recursive: true });
 		writeFileAtomic(
 			join(sessionDir(ctx, id), CRASH_SUMMARY),
-			`${JSON.stringify({ count: read.crashes.length, lines: read.crashes.map(crashLine), findings: crashFindings(read.crashes), notes: read.notes }, null, 2)}\n`
+			`${JSON.stringify({ count: read.crashes.length, lines: read.crashes.map(crashLine), findings: crashFindings.crashFindings(read.crashes), notes: read.notes }, null, 2)}\n`
 		);
 	} catch (error) {
 		warnings.push(`crashes: ${errorMessage(error)}`);

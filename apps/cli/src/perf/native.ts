@@ -1,10 +1,10 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
+import { perfDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
-import { renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
+import { markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import {
 	defaultNativeProfilers,
 	type NativeProfilers,
@@ -61,7 +61,7 @@ function nativeSuccess(
 		...(target.platform === "ios" ? ["warden perf native --leaks   (cold launch, leak check)"] : []),
 		"warden perf native --duration 30s",
 	];
-	const text = renderMarkdown(
+	const text = markdownRenderer.renderMarkdown(
 		{
 			title: `Native profile (${target.platform})`,
 			banners: [SIMULATOR_BANNER],
@@ -78,7 +78,7 @@ function nativeSuccess(
 	);
 	if (analysis !== undefined && input.sessionId === undefined && input.writeReport !== false) {
 		const root = dirname(input.dir);
-		const full = renderMarkdown({
+		const full = markdownRenderer.renderMarkdown({
 			title: `Native profile (${target.platform})`,
 			banners: [SIMULATOR_BANNER],
 			summary: analysis.summary,
@@ -111,7 +111,7 @@ function nativeSuccess(
 
 function planDuration(opts: PerfNativeOptions): Result<number, UiError> {
 	if (opts.duration === undefined) return resultFactory.ok(DEFAULT_DURATION_MS);
-	const ms = parseDuration(opts.duration);
+	const ms = perfDuration.parseDuration(opts.duration);
 	if (ms === undefined) {
 		return {
 			success: false,

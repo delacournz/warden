@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { formatEntry, type LogFilter, matchesFilter } from "@delacour/warden-perf/logs/filter";
+import { type LogFilter, logMatcher } from "@delacour/warden-perf/logs/filter";
 import { LOG_LEVELS, type LogLevel } from "@delacour/warden-perf/logs/levels";
 import {
 	DEFAULT_LOG_LINES,
@@ -73,8 +73,8 @@ async function followLogs(
 					signal: interrupt.signal,
 					onLine: (raw) => {
 						const entry = parseLogLine(target.data.platform, raw, year);
-						if (entry === undefined || !matchesFilter(entry, filter)) return;
-						ctx.out(json ? JSON.stringify(entry) : formatEntry(entry));
+						if (entry === undefined || !logMatcher.matchesFilter(entry, filter)) return;
+						ctx.out(json ? JSON.stringify(entry) : logMatcher.formatEntry(entry));
 					},
 				},
 				logDeps

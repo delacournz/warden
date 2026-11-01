@@ -1,5 +1,5 @@
 import type { ConsoleLine, StackFrame } from "@delacour/warden-devtools/devtools.types";
-import { isBundleUrl } from "@delacour/warden-perf/js/bundle-url";
+import { bundleUrls } from "@delacour/warden-perf/js/bundle-url";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import type { LineProcessor } from "./broker.types";
@@ -34,7 +34,7 @@ const replySchema = z.looseObject({
 
 /** Frames of a Metro bundle (`http…/index.bundle?…`, or its `//&` form): the only ones Metro has a source map for. */
 export function isBundleFrame(frame: StackFrame): boolean {
-	return isBundleUrl(frame.file);
+	return bundleUrls.isBundleUrl(frame.file);
 }
 
 /**

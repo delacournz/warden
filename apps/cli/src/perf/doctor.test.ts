@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resetInstrumentCache } from "@delacour/warden-perf/ios/instruments";
+import { instrumentChecker } from "@delacour/warden-perf/ios/instruments";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { type DoctorCheck, perfDoctor } from "./doctor";
 import { asMe, fakePerfDeps } from "./testing";
@@ -9,7 +9,7 @@ import { asMe, fakePerfDeps } from "./testing";
 let ctx: TestContext | undefined;
 afterEach(() => {
 	ctx?.cleanup();
-	resetInstrumentCache();
+	instrumentChecker.reset();
 });
 
 const fx = (name: string) =>

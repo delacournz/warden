@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildProfile } from "@delacour/warden-perf/js/js.testing";
-import { loadCommitsFixture } from "@delacour/warden-perf/react/react.testing";
+import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
+import { reactFixtures } from "@delacour/warden-perf/react/react.testing";
 import { analyzeAndWrite, loadCpuCorrelation } from "@delacour/warden-sdk/ops/perf/react-capture";
 import type { SourceDeps } from "@delacour/warden-sdk/ops/perf/react-source";
 
@@ -22,7 +22,7 @@ const noProject: SourceDeps = { files: () => [], read: () => undefined };
 describe("analyzeAndWrite", () => {
 	test("writes commits.json and findings.json; the runtime's source and the project grep locate components", () => {
 		const out = tmp();
-		const file = loadCommitsFixture();
+		const file = reactFixtures.loadCommitsFixture();
 		const project: Record<string, string> = { "/work/shop/src/Feed.tsx": "export const FeedRow = memo(() => null);" };
 		const result = analyzeAndWrite(file, {
 			dir: join(out, "react"),
@@ -47,12 +47,12 @@ describe("analyzeAndWrite", () => {
 
 	test("correlates hot commits with the session's JS profile", () => {
 		const out = tmp();
-		const file = loadCommitsFixture();
+		const file = reactFixtures.loadCommitsFixture();
 		const jsDir = join(out, "js");
 		mkdirSync(jsDir);
 		const samples: Array<[number, number]> = [[1, 0]];
 		for (let i = 0; i < 100; i++) samples.push([2, 1000]);
-		const profile = buildProfile(
+		const profile = jsFixtures.buildProfile(
 			[
 				{ id: 1, name: "(root)", children: [2] },
 				{ id: 2, name: "sortRows", url: "http://m/index.bundle", line: 9 },
@@ -81,7 +81,10 @@ describe("analyzeAndWrite", () => {
 		expect(loadCpuCorrelation(join(out, "missing"))).toBeUndefined();
 		const jsDir = join(out, "js");
 		mkdirSync(jsDir);
-		writeFileSync(join(jsDir, "cpu.cpuprofile"), JSON.stringify(buildProfile([{ id: 1, name: "(root)" }], [[1, 0]])));
+		writeFileSync(
+			join(jsDir, "cpu.cpuprofile"),
+			JSON.stringify(jsFixtures.buildProfile([{ id: 1, name: "(root)" }], [[1, 0]]))
+		);
 		writeFileSync(join(jsDir, "hotspots.json"), JSON.stringify({ topSelf: [] }));
 		expect(loadCpuCorrelation(jsDir)).toBeUndefined();
 	});

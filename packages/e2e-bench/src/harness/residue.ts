@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { type PsRow, parsePs, withDescendants } from "@delacour/warden-perf/metrics/ps";
+import { type PsRow, psParser } from "@delacour/warden-perf/metrics/ps";
 import type { ResiduePatterns } from "../adapters/adapter.types";
 import type { Platform, Residue } from "../results/schema";
 import type { Exec } from "./exec";
@@ -65,7 +65,7 @@ export function ownerFilter(rows: readonly PsRow[], owner: Owner): PsRow[] {
 		const hitsUdid = owner.udid !== undefined && owner.udid !== "" && r.command.includes(owner.udid);
 		if (hitsUdid || owner.ownedPaths.some((p) => p !== "" && r.command.includes(p))) seeds.add(r.pid);
 	}
-	const owned = withDescendants(rows, seeds);
+	const owned = psParser.withDescendants(rows, seeds);
 	return rows.filter((r) => owned.has(r.pid));
 }
 
@@ -109,7 +109,7 @@ export async function listMatchingProcesses(
 	if (patterns.length === 0) return [];
 	const r = await exec.run("ps", ["-axo", "pid,ppid,rss,%cpu,command"], { timeoutMs: 10_000 });
 	if (r.code !== 0) return [];
-	const rows = parsePs(r.stdout);
+	const rows = psParser.parsePs(r.stdout);
 	const byPid = new Map(rows.map((row) => [row.pid, row]));
 	const protectedPids = new Set<number>();
 	for (let pid: number | undefined = selfPid; pid !== undefined && !protectedPids.has(pid); ) {

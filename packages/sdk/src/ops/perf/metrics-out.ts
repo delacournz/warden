@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { encodeSample, type MetricSample } from "@delacour/warden-perf/metrics/series";
-import { formatSessionId } from "@delacour/warden-perf/shared/session.schema";
+import { type MetricSample, sampleSeries } from "@delacour/warden-perf/metrics/series";
+import { sessionCodec } from "@delacour/warden-perf/shared/session.schema";
 import type { PerfEnv } from "./env";
 import { perfRoot, sessionDir } from "./paths";
 import { activeSessionFor, type SessionDeps } from "./session";
@@ -32,13 +32,16 @@ export function metricsOutFor(ctx: PerfEnv, deps: SessionDeps, udid: string): Me
 		};
 	}
 	const now = ctx.now();
-	return { file: join(perfRoot(ctx), `metrics-${formatSessionId(now, deps.random())}`, SAMPLES_FILE), startMs: now };
+	return {
+		file: join(perfRoot(ctx), `metrics-${sessionCodec.formatSessionId(now, deps.random())}`, SAMPLES_FILE),
+		startMs: now,
+	};
 }
 
 /** Append one sample row (creating the directory on the first). */
 export function appendSample(file: string, sample: MetricSample): void {
 	mkdirSync(dirname(file), { recursive: true });
-	appendFileSync(file, encodeSample(sample));
+	appendFileSync(file, sampleSeries.encodeSample(sample));
 }
 
 /**
@@ -48,5 +51,5 @@ export function appendSample(file: string, sample: MetricSample): void {
 export function artifactDirFor(ctx: PerfEnv, deps: SessionDeps, udid: string): { dir: string; sessionId?: string } {
 	const session = activeSessionFor(ctx, deps, udid);
 	if (session !== undefined) return { dir: sessionDir(ctx, session.id), sessionId: session.id };
-	return { dir: join(perfRoot(ctx), `memory-${formatSessionId(ctx.now(), deps.random())}`) };
+	return { dir: join(perfRoot(ctx), `memory-${sessionCodec.formatSessionId(ctx.now(), deps.random())}`) };
 }

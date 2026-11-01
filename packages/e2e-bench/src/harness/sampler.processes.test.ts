@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parsePs } from "@delacour/warden-perf/metrics/ps";
+import { psParser } from "@delacour/warden-perf/metrics/ps";
 import { fakeExec } from "./exec";
 import { aggregateProcesses, processLabel, processReadings, startSampler, type Tick, windowSummary } from "./sampler";
 
@@ -88,7 +88,7 @@ describe("per-process attribution (CPU-2.1)", () => {
 	});
 
 	test("a process with no CPU and under 1 MiB RSS is left out of a tick", () => {
-		const rows = parsePs(fx("ps-time-2.txt"));
+		const rows = psParser.parsePs(fx("ps-time-2.txt"));
 		const tiny = rows.map((r) => (r.pid === 105 ? { ...r, rssKb: 100 } : r));
 		const pids = new Set([100, 105]);
 		const idle = processReadings(tiny, pids, new Map([[100, 0.1]]), "host");

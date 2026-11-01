@@ -1,16 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-	type CpuReadings,
-	cpuDeltas,
-	findByExecutable,
-	type PsRow,
-	parseAdbTop,
-	parseCpuTime,
-	parsePs,
-	withDescendants,
-} from "./ps";
+import { type CpuReadings, type PsRow, psParser } from "./ps";
 
 const fx = (name: string) => readFileSync(join(import.meta.dir, "..", "..", "fixtures", name), "utf8");
 
@@ -26,7 +17,7 @@ function psTimed(rows: readonly { pid: number; ppid: number; rssKb: number; time
 
 describe("parsePs", () => {
 	test("parses rows and skips the header", () => {
-		const rows = parsePs(fx("ps.txt"));
+		const rows = psParser.parsePs(fx("ps.txt"));
 		expect(rows).toHaveLength(14);
 		expect(rows[2]).toEqual({
 			pid: 101,
@@ -38,7 +29,7 @@ describe("parsePs", () => {
 	});
 
 	test("reads the lstart column into startedAt and keeps the command whole", () => {
-		const rows = parsePs(fx("ps-lstart.txt"));
+		const rows = psParser.parsePs(fx("ps-lstart.txt"));
 		expect(rows).toHaveLength(6);
 		expect(rows[2]).toEqual({
 			pid: 101,
@@ -49,11 +40,13 @@ describe("parsePs", () => {
 			command: "/usr/bin/node /repo/runner.js --flag value",
 		});
 		expect(rows[0]?.startedAt).toBe("Thu Oct  1 08:00:00 2026");
-		expect(parsePs(fx("ps.txt")).every((r) => r.startedAt === undefined)).toBe(true);
+		expect(psParser.parsePs(fx("ps.txt")).every((r) => r.startedAt === undefined)).toBe(true);
 	});
 
 	test("reads the time column next to lstart", () => {
-		const rows = parsePs(psTimed([{ pid: 100, ppid: 1, rssKb: 2048, time: "1:02.25", cmd: "bun test --preload x" }]));
+		const rows = psParser.parsePs(
+			psTimed([{ pid: 100, ppid: 1, rssKb: 2048, time: "1:02.25", cmd: "bun test --preload x" }])
+		);
 		expect(rows).toEqual([
 			{
 				pid: 100,
@@ -70,18 +63,18 @@ describe("parsePs", () => {
 
 describe("parseCpuTime", () => {
 	test("reads macOS M:SS.ss and procps [DD-]HH:MM:SS", () => {
-		expect(parseCpuTime("0:01.50")).toBeCloseTo(1.5, 6);
-		expect(parseCpuTime("12:34.56")).toBeCloseTo(754.56, 6);
-		expect(parseCpuTime("01:02:03")).toBe(3723);
-		expect(parseCpuTime("1-00:00:01")).toBe(86_401);
-		expect(parseCpuTime("Fri")).toBeUndefined();
-		expect(parseCpuTime("")).toBeUndefined();
+		expect(psParser.parseCpuTime("0:01.50")).toBeCloseTo(1.5, 6);
+		expect(psParser.parseCpuTime("12:34.56")).toBeCloseTo(754.56, 6);
+		expect(psParser.parseCpuTime("01:02:03")).toBe(3723);
+		expect(psParser.parseCpuTime("1-00:00:01")).toBe(86_401);
+		expect(psParser.parseCpuTime("Fri")).toBeUndefined();
+		expect(psParser.parseCpuTime("")).toBeUndefined();
 	});
 });
 
 describe("parseAdbTop", () => {
 	test("parses toybox rows with unit suffixes", () => {
-		const rows = parseAdbTop(fx("adb-top.txt"));
+		const rows = psParser.parseAdbTop(fx("adb-top.txt"));
 		expect(rows).toHaveLength(4);
 		expect(rows[0]).toEqual({
 			pid: 4321,
@@ -94,8 +87,8 @@ describe("parseAdbTop", () => {
 
 describe("withDescendants", () => {
 	test("returns the seeds plus every transitive child", () => {
-		const rows = parsePs(fx("ps.txt"));
-		const tree = withDescendants(rows, new Set([100]));
+		const rows = psParser.parsePs(fx("ps.txt"));
+		const tree = psParser.withDescendants(rows, new Set([100]));
 		expect(tree.has(100)).toBe(true);
 		expect(tree.has(101)).toBe(true);
 		expect(tree.has(1)).toBe(false);
@@ -115,17 +108,17 @@ describe("cpuDeltas", () => {
 
 	test("the first snapshot is the baseline: nothing a process used before the sampler started is charged", () => {
 		const prev: CpuReadings = new Map();
-		const first = cpuDeltas([row(100, 30), row(101, 2)], prev, true);
+		const first = psParser.cpuDeltas([row(100, 30), row(101, 2)], prev, true);
 		expect([...first.values()]).toEqual([0, 0]);
-		const second = cpuDeltas([row(100, 30.5), row(101, 2.25)], prev, false);
+		const second = psParser.cpuDeltas([row(100, 30.5), row(101, 2.25)], prev, false);
 		expect(second.get(100)).toBeCloseTo(0.5, 6);
 		expect(second.get(101)).toBeCloseTo(0.25, 6);
 	});
 
 	test("a process born after the last snapshot is charged all its CPU time; a dead one drops out", () => {
 		const prev: CpuReadings = new Map();
-		cpuDeltas([row(100, 1)], prev, true);
-		const d = cpuDeltas([row(200, 0.4)], prev, false);
+		psParser.cpuDeltas([row(100, 1)], prev, true);
+		const d = psParser.cpuDeltas([row(200, 0.4)], prev, false);
 		expect(d.get(200)).toBeCloseTo(0.4, 6);
 		expect(d.has(100)).toBe(false);
 		expect(prev.has(100)).toBe(false);
@@ -133,8 +126,8 @@ describe("cpuDeltas", () => {
 
 	test("a reused pid (new start time) or a smaller reading is a new process, never a negative delta", () => {
 		const prev: CpuReadings = new Map();
-		cpuDeltas([row(100, 5), row(101, 5)], prev, true);
-		const d = cpuDeltas(
+		psParser.cpuDeltas([row(100, 5), row(101, 5)], prev, true);
+		const d = psParser.cpuDeltas(
 			[row(100, 0.3, "Fri Oct 16 12:09:00 2026"), { ...row(101, 0.2), startedAt: undefined }],
 			prev,
 			false
@@ -145,17 +138,17 @@ describe("cpuDeltas", () => {
 });
 
 describe("findByExecutable", () => {
-	const rows = parsePs(fx("ps-timed-app.txt"));
+	const rows = psParser.parsePs(fx("ps-timed-app.txt"));
 	const exe =
 		"/Users/chris/Library/Developer/CoreSimulator/Devices/U1/data/Containers/Bundle/Application/AAAA-1111/Example.app/Example";
 
 	test("matches the main executable by full path, not its extensions", () => {
-		expect(findByExecutable(rows, exe)?.pid).toBe(845);
+		expect(psParser.findByExecutable(rows, exe)?.pid).toBe(845);
 	});
 	test("a prefix of another path is not a match", () => {
-		expect(findByExecutable(rows, exe.replace("Example.app/Example", "Example.app/Exam"))).toBeUndefined();
+		expect(psParser.findByExecutable(rows, exe.replace("Example.app/Example", "Example.app/Exam"))).toBeUndefined();
 	});
 	test("not running: undefined", () => {
-		expect(findByExecutable(rows, "/nope/App.app/App")).toBeUndefined();
+		expect(psParser.findByExecutable(rows, "/nope/App.app/App")).toBeUndefined();
 	});
 });

@@ -36,20 +36,23 @@ export const TRACE_PROCESSOR_PINS: Record<TraceProcessorTarget, TraceProcessorPi
 
 const BASE_URL = "https://commondatastorage.googleapis.com/perfetto-luci-artifacts";
 
-/** The pin for `platform`/`arch` (Node's `process.platform`/`process.arch` spellings), or undefined when none is published. */
-export function traceProcessorPin(
-	platform: string,
-	arch: string
-): { target: TraceProcessorTarget; pin: TraceProcessorPin } | undefined {
-	const target = `${platform}-${arch}`;
-	if (!(TRACE_PROCESSOR_TARGETS as readonly string[]).includes(target)) return undefined;
-	const key = target as TraceProcessorTarget;
-	return { target: key, pin: TRACE_PROCESSOR_PINS[key] };
+export class TraceProcessorPins {
+	/** The pin for `platform`/`arch` (Node's `process.platform`/`process.arch` spellings), or undefined when none is published. */
+	lookup(platform: string, arch: string): { target: TraceProcessorTarget; pin: TraceProcessorPin } | undefined {
+		const target = `${platform}-${arch}`;
+		if (!(TRACE_PROCESSOR_TARGETS as readonly string[]).includes(target)) return undefined;
+		const key = target as TraceProcessorTarget;
+		return { target: key, pin: TRACE_PROCESSOR_PINS[key] };
+	}
+
+	url(pin: TraceProcessorPin): string {
+		return `${BASE_URL}/${TRACE_PROCESSOR_VERSION}/${pin.artifact}/trace_processor_shell`;
+	}
+
+	/** File name in `$WARDEN_HOME/tools/`. */
+	fileName(): string {
+		return `trace_processor_shell-${TRACE_PROCESSOR_VERSION}`;
+	}
 }
 
-export function traceProcessorUrl(pin: TraceProcessorPin): string {
-	return `${BASE_URL}/${TRACE_PROCESSOR_VERSION}/${pin.artifact}/trace_processor_shell`;
-}
-
-/** File name in `$WARDEN_HOME/tools/`. */
-export const traceProcessorFileName = (): string => `trace_processor_shell-${TRACE_PROCESSOR_VERSION}`;
+export const traceProcessorPins = new TraceProcessorPins();

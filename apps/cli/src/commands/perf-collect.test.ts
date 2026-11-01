@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { jsOk } from "@delacour/warden-perf/js/js.types";
+import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { SessionKit } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { writePlan } from "@delacour/warden-sdk/ops/perf/plan";
 import { createSession, readSession, sessionDir, stopSession } from "@delacour/warden-sdk/ops/perf/session";
@@ -142,7 +142,7 @@ describe("warden perf-collect with a plan", () => {
 						onCdp: () => () => {},
 						close: () => {},
 					}),
-				fetchMap: async () => jsOk(""),
+				fetchMap: async () => jsResultFactory.ok(""),
 				sleep,
 			},
 		};

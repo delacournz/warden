@@ -1,5 +1,5 @@
 import type { Fetch } from "@delacour/warden-devtools/devtools.types";
-import { toNormalBundleUrl } from "@delacour/warden-perf/js/bundle-url";
+import { bundleUrls } from "@delacour/warden-perf/js/bundle-url";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 export type SourceMapErrorCode =
@@ -194,7 +194,7 @@ export function sourceMapLocation(
 			text: base64 ? Buffer.from(payload, "base64").toString("utf8") : decodeURIComponent(payload),
 		};
 	}
-	const bundle = new URL(toNormalBundleUrl(bundleUrl));
+	const bundle = new URL(bundleUrls.toNormalBundleUrl(bundleUrl));
 	const target =
 		sourceMapURL !== undefined && sourceMapURL !== ""
 			? new URL(sourceMapURL, bundle)

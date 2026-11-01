@@ -1,37 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-	analyzeCpu,
-	analyzeHangs,
-	analyzeRss,
-	analyzeThreads,
+	androidAnalyzer,
 	type CpuAnalysis,
-	cpuFindings,
-	describeBuckets,
 	type HangAnalysis,
-	hangFindings,
 	type RssAnalysis,
-	rssFindings,
 	type ThreadBreakdown,
 } from "@delacour/warden-perf/android/analyze";
-import {
-	aliveArgv,
-	killArgv,
-	parsePerfettoPid,
-	perfettoStartArgv,
-	pullArgv,
-	remoteSimpleperfPath,
-	remoteTracePath,
-	removeArgv,
-	SIMPLEPERF_HZ,
-	simpleperfReportArgv,
-	simpleperfStartArgv,
-} from "@delacour/warden-perf/android/capture";
-import { buildPerfettoConfig, DEFAULT_SAMPLE_HZ } from "@delacour/warden-perf/android/perfetto.config";
-import { type QueryName, renderQuery } from "@delacour/warden-perf/android/queries";
-import { parseSimpleperfReport, simpleperfFindings } from "@delacour/warden-perf/android/simpleperf";
-import { parseTpOutput, type TpRow } from "@delacour/warden-perf/android/tp-output";
-import { parsePackageFlags } from "@delacour/warden-perf/shared/app-detect";
+import { androidCaptureArgv, SIMPLEPERF_HZ } from "@delacour/warden-perf/android/capture";
+import { DEFAULT_SAMPLE_HZ, perfettoConfigBuilder } from "@delacour/warden-perf/android/perfetto.config";
+import { type QueryName, traceQueryRenderer } from "@delacour/warden-perf/android/queries";
+import { simpleperfAnalyzer } from "@delacour/warden-perf/android/simpleperf";
+import { type TpRow, traceProcessorOutputParser } from "@delacour/warden-perf/android/tp-output";
+import { appDetector } from "@delacour/warden-perf/shared/app-detect";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
@@ -115,7 +96,7 @@ async function deviceClock(ctx: PerfUiEnv, a: Adb): Promise<{ wallMs: number; de
 async function warnIfNotProfileable(ctx: PerfUiEnv, a: Adb, app: string): Promise<void> {
 	const res = await ctx.exec([a.adb, "-s", a.serial, "shell", "dumpsys", "package", app], { timeoutMs: 15_000 });
 	if (res.exitCode !== 0) return;
-	const flags = parsePackageFlags(res.stdout);
+	const flags = appDetector.parsePackageFlags(res.stdout);
 	if (flags.debuggable || flags.profileable) return;
 	ctx.err(
 		ctx.ui.color.yellow(
@@ -134,7 +115,7 @@ async function waitGone(
 ): Promise<boolean> {
 	const deadline = ctx.now() + timeoutMs;
 	for (;;) {
-		const res = await ctx.exec(aliveArgv(a, pid), { timeoutMs: 5_000 });
+		const res = await ctx.exec(androidCaptureArgv.aliveArgv(a, pid), { timeoutMs: 5_000 });
 		if (res.exitCode !== 0) return true;
 		if (ctx.now() >= deadline) return false;
 		await io.sleep(deps.pollMs);
@@ -151,7 +132,7 @@ async function stopOnDevice(
 	signals: ReadonlyArray<"INT" | "TERM" | "KILL">
 ): Promise<boolean> {
 	for (const signal of signals) {
-		await ctx.exec(killArgv(a, pid, signal), { timeoutMs: 5_000 });
+		await ctx.exec(androidCaptureArgv.killArgv(a, pid, signal), { timeoutMs: 5_000 });
 		if (await waitGone(ctx, io, deps, a, pid, deps.stopTimeoutMs)) return true;
 	}
 	return false;
@@ -192,9 +173,11 @@ async function startAndroid(
 				}),
 			};
 		}
-		const remote = remoteSimpleperfPath(stamp);
-		const res = await ctx.exec(simpleperfStartArgv(a, pid, remote, input.maxDurationMs), { timeoutMs: 15_000 });
-		const devicePid = parsePerfettoPid(res.stdout);
+		const remote = androidCaptureArgv.remoteSimpleperfPath(stamp);
+		const res = await ctx.exec(androidCaptureArgv.simpleperfStartArgv(a, pid, remote, input.maxDurationMs), {
+			timeoutMs: 15_000,
+		});
+		const devicePid = androidCaptureArgv.parsePerfettoPid(res.stdout);
 		if (res.exitCode !== 0 || devicePid === undefined) {
 			return failed(
 				`simpleperf did not start: ${tail(res) || "no pid printed"}`,
@@ -210,12 +193,12 @@ async function startAndroid(
 		});
 	}
 
-	const config = buildPerfettoConfig({ packageName: input.app, durationMs: input.maxDurationMs });
+	const config = perfettoConfigBuilder.build({ packageName: input.app, durationMs: input.maxDurationMs });
 	if (config === undefined)
 		return { success: false, error: opError("usage", `"${input.app}" is not an Android package name`) };
-	const remote = remoteTracePath(stamp);
-	const res = await deps.execWithStdin(perfettoStartArgv(a, remote), config, 30_000);
-	const devicePid = parsePerfettoPid(res.stdout);
+	const remote = androidCaptureArgv.remoteTracePath(stamp);
+	const res = await deps.execWithStdin(androidCaptureArgv.perfettoStartArgv(a, remote), config, 30_000);
+	const devicePid = androidCaptureArgv.parsePerfettoPid(res.stdout);
 	if (res.exitCode !== 0 || devicePid === undefined) {
 		return failed(
 			`perfetto did not start: ${tail(res) || "no pid printed"}`,
@@ -250,7 +233,7 @@ async function stopAndroid(
 		);
 
 	mkdirSync(dirname(input.handle.out), { recursive: true });
-	const pulled = await ctx.exec(pullArgv(a, state.remote, input.handle.out), { timeoutMs: 120_000 });
+	const pulled = await ctx.exec(androidCaptureArgv.pullArgv(a, state.remote, input.handle.out), { timeoutMs: 120_000 });
 	if (pulled.exitCode !== 0 || !existsSync(input.handle.out)) {
 		return failed(
 			`could not pull ${state.remote}: ${tail(pulled)}`,
@@ -258,11 +241,11 @@ async function stopAndroid(
 		);
 	}
 	if (state.mode === "simpleperf") {
-		const report = await ctx.exec(simpleperfReportArgv(a, state.remote), { timeoutMs: 120_000 });
+		const report = await ctx.exec(androidCaptureArgv.simpleperfReportArgv(a, state.remote), { timeoutMs: 120_000 });
 		if (report.exitCode === 0) writeFileSync(`${input.handle.out}${SIMPLEPERF_REPORT_SUFFIX}`, report.stdout);
 		else warnings.push(`simpleperf report failed: ${tail(report)}`);
 	}
-	await ctx.exec(removeArgv(a, state.remote), { timeoutMs: 10_000 });
+	await ctx.exec(androidCaptureArgv.removeArgv(a, state.remote), { timeoutMs: 10_000 });
 
 	if (!input.analyze) return resultFactory.ok({ out: input.handle.out, warnings });
 	const analysis = await analyzeAndroid(ctx, perf, deps, {
@@ -305,7 +288,9 @@ function perfettoLines(
 	if (hangs.hangs.length > 0) {
 		lines.push(`hangs (${hangs.missedFrames} of ${hangs.totalFrames} frames missed the app deadline):`);
 		for (const h of hangs.hangs.slice(0, 5)) {
-			lines.push(`  ${fmtMs(h.durMs)} @ ${(h.atMs / 1000).toFixed(1)}s  main: ${describeBuckets(h.main) || "n/a"}`);
+			lines.push(
+				`  ${fmtMs(h.durMs)} @ ${(h.atMs / 1000).toFixed(1)}s  main: ${androidAnalyzer.describeBuckets(h.main) || "n/a"}`
+			);
 		}
 	}
 	if (rss !== undefined) {
@@ -347,9 +332,9 @@ async function analyzeSimpleperf(
 			"the report is generated on the device at stop; re-record with --native=simpleperf"
 		);
 	}
-	const report = parseSimpleperfReport(readFileSync(reportPath, "utf8"));
+	const report = simpleperfAnalyzer.parseSimpleperfReport(readFileSync(reportPath, "utf8"));
 	if (report.samples === 0 || report.rows.length === 0) return { success: false, error: notProfileable(app) };
-	const findings = simpleperfFindings(report, hz);
+	const findings = simpleperfAnalyzer.simpleperfFindings(report, hz);
 	const top = report.rows.slice(0, 10);
 	const lines = top.map((r) => `${r.percent.toFixed(1)}%  ${r.command}  ${r.symbol}  (${r.dso.split("/").pop()})`);
 	const out = join(dir, "android-native.json");
@@ -374,14 +359,14 @@ async function runQuery(
 	name: QueryName,
 	app: string
 ): Promise<Result<TpRow[], WardenError>> {
-	const sql = renderQuery(name, app);
+	const sql = traceQueryRenderer.render(name, app);
 	if (sql === undefined) return { success: false, error: opError("usage", `"${app}" is not an Android package name`) };
 	const file = join(dir, "queries", `${name}.sql`);
 	mkdirSync(dirname(file), { recursive: true });
 	writeFileSync(file, sql);
 	const res = await ctx.exec([tp, "--query-file", file, trace], { timeoutMs: 180_000 });
 	if (res.exitCode !== 0) return failed(`trace_processor ${name} failed: ${tail(res)}`);
-	return resultFactory.ok(parseTpOutput(res.stdout));
+	return resultFactory.ok(traceProcessorOutputParser.parseTpOutput(res.stdout));
 }
 
 /** Everything `analyze` reads from the trace, one query per PerfettoSQL file. */
@@ -411,18 +396,22 @@ async function analyzeAndroid(
 		rows[name] = res.data;
 	}
 
-	const cpu = analyzeCpu(rows["cpu-hotspots"]);
+	const cpu = androidAnalyzer.analyzeCpu(rows["cpu-hotspots"]);
 	if (cpu.totalSamples === 0) return { success: false, error: notProfileable(input.app) };
 	const window = input.windowMs;
-	const allHangs = analyzeHangs(rows["ui-hangs"], rows["hang-folds-batched"]);
+	const allHangs = androidAnalyzer.analyzeHangs(rows["ui-hangs"], rows["hang-folds-batched"]);
 	const hangs =
 		window === undefined
 			? allHangs
 			: { ...allHangs, hangs: allHangs.hangs.filter((h) => h.atMs >= window.startMs && h.atMs <= window.endMs) };
-	const rss = analyzeRss(rows["memory-rss"]);
-	const threads = analyzeThreads(rows["thread-breakdown"]);
+	const rss = androidAnalyzer.analyzeRss(rows["memory-rss"]);
+	const threads = androidAnalyzer.analyzeThreads(rows["thread-breakdown"]);
 
-	const findings: Finding[] = [...cpuFindings(cpu, input.hz), ...hangFindings(hangs), ...rssFindings(rss)];
+	const findings: Finding[] = [
+		...androidAnalyzer.cpuFindings(cpu, input.hz),
+		...androidAnalyzer.hangFindings(hangs),
+		...androidAnalyzer.rssFindings(rss),
+	];
 
 	const lines = perfettoLines(cpu, hangs, rss, threads);
 

@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { BOOTSTRAP_SCRIPT } from "./bootstrap.script";
 import { PROFILER_GLOBAL, PROFILER_SCRIPT } from "./profiler.script";
-import { componentType, type FakeFiber, fakeGlobal, fakeHook, fakeRenderer, runScript } from "./react.testing";
+import { type FakeFiber, reactFixtures } from "./react.testing";
 
 type Reply = Record<string, unknown>;
-const call = (cfg: Record<string, unknown>, g: ReturnType<typeof fakeGlobal>): Reply =>
-	JSON.parse(String(runScript(PROFILER_SCRIPT, cfg, g))) as Reply;
+const call = (cfg: Record<string, unknown>, g: ReturnType<typeof reactFixtures.fakeGlobal>): Reply =>
+	JSON.parse(String(reactFixtures.runScript(PROFILER_SCRIPT, cfg, g))) as Reply;
 
 describe("script source", () => {
 	test("is Hermes-safe text: no template literals, backslashes, arrows or optional chaining", () => {
@@ -21,8 +21,8 @@ describe("script source", () => {
 
 describe("start", () => {
 	test("wraps every renderer's start/stopProfiling, records the owner and starts with change descriptions", () => {
-		const r = fakeRenderer();
-		const g = fakeGlobal(fakeHook([r]));
+		const r = reactFixtures.fakeRenderer();
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([r]));
 		const reply = call({ action: "start", owner: "agent:a" }, g);
 		expect(reply).toMatchObject({ ok: true, dev: true, bootstrapped: false });
 		expect(r.calls).toEqual(["start"]);
@@ -32,9 +32,9 @@ describe("start", () => {
 	});
 
 	test("idempotent: a second install does not double-wrap or double-patch", () => {
-		const r = fakeRenderer();
-		const hook = fakeHook([r]);
-		const g = fakeGlobal(hook);
+		const r = reactFixtures.fakeRenderer();
+		const hook = reactFixtures.fakeHook([r]);
+		const g = reactFixtures.fakeGlobal(hook);
 		call({ action: "start", owner: "a" }, g);
 		const patched = hook.onCommitFiberRoot;
 		call({ action: "start", owner: "a" }, g);
@@ -43,7 +43,7 @@ describe("start", () => {
 	});
 
 	test("a second owner is refused with session_active unless --force", () => {
-		const g = fakeGlobal(fakeHook([fakeRenderer()]));
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]));
 		call({ action: "start", owner: "agent:a" }, g);
 		expect(call({ action: "start", owner: "agent:b" }, g)).toMatchObject({
 			ok: false,
@@ -54,7 +54,7 @@ describe("start", () => {
 	});
 
 	test("a stale owner marker (five minutes without a heartbeat) is taken over", () => {
-		const g = fakeGlobal(fakeHook([fakeRenderer()]));
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]));
 		call({ action: "start", owner: "agent:a" }, g);
 		const state = g[PROFILER_GLOBAL] as { owner: { startedAt: number; heartbeat: number } };
 		state.owner.startedAt -= 301_000;
@@ -63,9 +63,9 @@ describe("start", () => {
 	});
 
 	test("release build: __DEV__ false, or no hook", () => {
-		const off = fakeGlobal(fakeHook([fakeRenderer()]), { __DEV__: false });
+		const off = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]), { __DEV__: false });
 		expect(call({ action: "start", owner: "a" }, off)).toMatchObject({ ok: false, code: "release_build" });
-		expect(call({ action: "start", owner: "a" }, fakeGlobal(undefined))).toMatchObject({
+		expect(call({ action: "start", owner: "a" }, reactFixtures.fakeGlobal(undefined))).toMatchObject({
 			ok: false,
 			code: "release_build",
 		});
@@ -85,8 +85,8 @@ describe("bootstrap", () => {
 	});
 
 	test("no renderer interfaces: attaches react-devtools-core with no-op handlers", () => {
-		const hook = fakeHook([]);
-		const r = fakeRenderer();
+		const hook = reactFixtures.fakeHook([]);
+		const r = reactFixtures.fakeRenderer();
 		let args: Record<string, unknown> | undefined;
 		const core = {
 			connectWithCustomMessagingProtocol: (a: Record<string, unknown>) => {
@@ -94,7 +94,7 @@ describe("bootstrap", () => {
 				hook.rendererInterfaces.set(1, r);
 			},
 		};
-		const g = fakeGlobal(hook, {
+		const g = reactFixtures.fakeGlobal(hook, {
 			__r: registry(
 				{
 					1: { verboseName: "node_modules/react-native/Libraries/Utilities/Platform.ios.js" },
@@ -109,7 +109,7 @@ describe("bootstrap", () => {
 	});
 
 	test("react native below 0.74 is rn_too_old", () => {
-		const g = fakeGlobal(fakeHook([fakeRenderer()]), {
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]), {
 			__r: registry(
 				{ 1: { verboseName: "node_modules/react-native/Libraries/Utilities/Platform.android.js" } },
 				{ 1: platform(73) }
@@ -119,23 +119,25 @@ describe("bootstrap", () => {
 	});
 
 	test("no devtools-core in the bundle, or one that attaches nothing, is devtools_backend_missing", () => {
-		const bare = fakeGlobal(fakeHook([]), { __r: registry({}, {}) });
+		const bare = reactFixtures.fakeGlobal(reactFixtures.fakeHook([]), { __r: registry({}, {}) });
 		expect(call({ action: "start", owner: "a" }, bare)).toMatchObject({ ok: false, code: "devtools_backend_missing" });
-		const inert = fakeGlobal(fakeHook([]), {
+		const inert = reactFixtures.fakeGlobal(reactFixtures.fakeHook([]), {
 			__r: registry(
 				{ 2: { verboseName: "node_modules/react-devtools-core/dist/backend.js" } },
 				{ 2: { connectWithCustomMessagingProtocol: () => undefined } }
 			),
 		});
 		expect(call({ action: "start", owner: "a" }, inert)).toMatchObject({ ok: false, code: "devtools_backend_missing" });
-		expect(call({ action: "start", owner: "a" }, fakeGlobal(fakeHook([]))).hint).toContain("react-devtools-core");
+		expect(call({ action: "start", owner: "a" }, reactFixtures.fakeGlobal(reactFixtures.fakeHook([]))).hint).toContain(
+			"react-devtools-core"
+		);
 	});
 });
 
 describe("commit hook", () => {
 	const fiber = (id: number, name: string, flags: number, over: Partial<FakeFiber> = {}): FakeFiber => ({
 		tag: 0,
-		type: componentType(name),
+		type: reactFixtures.componentType(name),
 		flags,
 		subtreeFlags: 0,
 		alternate: {} as FakeFiber,
@@ -146,9 +148,9 @@ describe("commit hook", () => {
 	});
 
 	test("calls the original first, then names rendered fibers and their parents, skipping idle subtrees", () => {
-		const r = fakeRenderer();
-		const hook = fakeHook([r]);
-		const g = fakeGlobal(hook);
+		const r = reactFixtures.fakeRenderer();
+		const hook = reactFixtures.fakeHook([r]);
+		const g = reactFixtures.fakeGlobal(hook);
 		call({ action: "start", owner: "a" }, g);
 		const leaf = fiber(3, "Leaf", 1);
 		const idleLeaf = fiber(9, "IdleLeaf", 0);
@@ -169,8 +171,8 @@ describe("commit hook", () => {
 	});
 
 	test("does nothing while not profiling", () => {
-		const hook = fakeHook([fakeRenderer()]);
-		const g = fakeGlobal(hook);
+		const hook = reactFixtures.fakeHook([reactFixtures.fakeRenderer()]);
+		const g = reactFixtures.fakeGlobal(hook);
 		call({ action: "start", owner: "a" }, g);
 		(g[PROFILER_GLOBAL] as { profiling: boolean }).profiling = false;
 		hook.onCommitFiberRoot(1, { current: fiber(1, "Screen", 1) });
@@ -180,8 +182,8 @@ describe("commit hook", () => {
 
 describe("stop", () => {
 	test("flattens getProfilingData: durations, change descriptions, updaters, names, compiler flags", () => {
-		const r = fakeRenderer();
-		const g = fakeGlobal(fakeHook([r]));
+		const r = reactFixtures.fakeRenderer();
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([r]));
 		call({ action: "start", owner: "a" }, g);
 		const out = call({ action: "stop", owner: "a" }, g) as {
 			ok: boolean;
@@ -203,13 +205,13 @@ describe("stop", () => {
 	});
 
 	test("reports _debugSource of components found in the live fiber tree", () => {
-		const r = fakeRenderer();
-		const hook = fakeHook([r]);
-		const g = fakeGlobal(hook);
+		const r = reactFixtures.fakeRenderer();
+		const hook = reactFixtures.fakeHook([r]);
+		const g = reactFixtures.fakeGlobal(hook);
 		call({ action: "start", owner: "a" }, g);
 		const row: FakeFiber = {
 			tag: 0,
-			type: componentType("FeedRow"),
+			type: reactFixtures.componentType("FeedRow"),
 			flags: 0,
 			subtreeFlags: 0,
 			alternate: null,
@@ -223,7 +225,7 @@ describe("stop", () => {
 	});
 
 	test("nothing running is not_profiling; another owner's profile is session_active", () => {
-		const g = fakeGlobal(fakeHook([fakeRenderer()]));
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]));
 		expect(call({ action: "stop", owner: "a" }, g)).toMatchObject({ ok: false, code: "not_profiling" });
 		call({ action: "start", owner: "a" }, g);
 		expect(call({ action: "stop", owner: "b" }, g)).toMatchObject({ ok: false, code: "session_active", owner: "a" });
@@ -231,7 +233,7 @@ describe("stop", () => {
 	});
 
 	test("status says who holds it", () => {
-		const g = fakeGlobal(fakeHook([fakeRenderer()]));
+		const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([reactFixtures.fakeRenderer()]));
 		expect(call({ action: "status" }, g)).toMatchObject({ ok: true, profiling: false, owner: null, renderers: 1 });
 		call({ action: "start", owner: "a" }, g);
 		expect(call({ action: "status" }, g)).toMatchObject({ profiling: true, owner: { owner: "a" } });

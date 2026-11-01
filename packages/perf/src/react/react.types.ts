@@ -14,18 +14,6 @@ export type ReactError = { code: ReactErrorCode; message: string; hint?: string;
 
 export type ReactResult<T> = { success: true; data: T } | { success: false; error: ReactError };
 
-export const reactOk = <T>(data: T): ReactResult<T> => ({ success: true, data });
-
-export function reactErr(code: ReactErrorCode, message: string, extra: { hint?: string; owner?: string } = {}) {
-	const error: ReactError = {
-		code,
-		message,
-		...(extra.hint === undefined ? {} : { hint: extra.hint }),
-		...(extra.owner === undefined ? {} : { owner: extra.owner }),
-	};
-	return { success: false, error } as const;
-}
-
 /** What changed for one fiber in one commit (the DevTools change description, normalised). */
 export const causesSchema = z.object({
 	firstMount: z.boolean(),
@@ -90,13 +78,35 @@ export type CommitsFile = z.infer<typeof commitsFileSchema>;
 
 export type CauseKind = "mount" | "context" | "state" | "props" | "parent" | "unknown";
 
-/** Why a fiber rendered, most specific first. */
-export function causeOf(fiber: FiberRender): CauseKind {
-	const c = fiber.causes;
-	if (c === null) return "unknown";
-	if (c.firstMount) return "mount";
-	if (c.context) return "context";
-	if (c.state || c.hooks.length > 0) return "state";
-	if (c.props.length > 0) return "props";
-	return "parent";
+export class ReactResultFactory {
+	ok<T>(data: T): ReactResult<T> {
+		return { success: true, data };
+	}
+
+	err(code: ReactErrorCode, message: string, extra: { hint?: string; owner?: string } = {}) {
+		const error: ReactError = {
+			code,
+			message,
+			...(extra.hint === undefined ? {} : { hint: extra.hint }),
+			...(extra.owner === undefined ? {} : { owner: extra.owner }),
+		};
+		return { success: false, error } as const;
+	}
 }
+
+export const reactResultFactory = new ReactResultFactory();
+
+export class ReactCauseClassifier {
+	/** Why a fiber rendered, most specific first. */
+	classify(fiber: FiberRender): CauseKind {
+		const c = fiber.causes;
+		if (c === null) return "unknown";
+		if (c.firstMount) return "mount";
+		if (c.context) return "context";
+		if (c.state || c.hooks.length > 0) return "state";
+		if (c.props.length > 0) return "props";
+		return "parent";
+	}
+}
+
+export const reactCauseClassifier = new ReactCauseClassifier();

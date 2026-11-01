@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { formatSessionId } from "@delacour/warden-perf/shared/session.schema";
+import { sessionCodec } from "@delacour/warden-perf/shared/session.schema";
 import type { PerfEnv } from "./env";
 import { JS_DIR } from "./js-capture";
 import { perfRoot, sessionDir } from "./paths";
@@ -25,7 +25,7 @@ export function jsOutFor(ctx: PerfEnv, deps: SessionDeps, udid: string, prefix: 
 	}
 	const now = ctx.now();
 	return {
-		dir: join(perfRoot(ctx), `${prefix}-${formatSessionId(now, deps.random())}`, JS_DIR),
+		dir: join(perfRoot(ctx), `${prefix}-${sessionCodec.formatSessionId(now, deps.random())}`, JS_DIR),
 		startMs: now,
 		jsCapturing: false,
 	};

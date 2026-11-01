@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseAdbTop, parsePs } from "@delacour/warden-perf/metrics/ps";
+import { psParser } from "@delacour/warden-perf/metrics/ps";
 import type { HostGroup } from "../results/schema";
 import { fakeExec } from "./exec";
 import { ownerFilter } from "./residue";
@@ -22,7 +22,7 @@ const fx = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name
 
 describe("parseAdbTop", () => {
 	test("parses toybox rows with unit suffixes and totals the targets", () => {
-		const rows = parseAdbTop(fx("adb-top.txt"));
+		const rows = psParser.parseAdbTop(fx("adb-top.txt"));
 		expect(rows).toHaveLength(4);
 		expect(rows[0]).toEqual({
 			pid: 4321,
@@ -59,7 +59,7 @@ describe("android sampling targets", () => {
 	});
 
 	test("totals count agent-device, argent and warden-uiad, not only warden's own helpers", () => {
-		const rows = parseAdbTop(fx("adb-top-helpers.txt"));
+		const rows = psParser.parseAdbTop(fx("adb-top-helpers.txt"));
 		expect(rows).toHaveLength(13);
 		const only = (re: RegExp) => androidTotals(rows.filter((r) => re.test(r.name)));
 		expect(only(/agentdevice/)).toEqual({ cpuPct: 10, rssBytes: 128 * 1024 ** 2 });
@@ -357,7 +357,7 @@ describe("host groups (19-7, 13-4)", () => {
 	});
 
 	test("hostGroupOf: own argv first, else the label of the nearest bench-spawned ancestor, else other", () => {
-		const rows = parsePs(
+		const rows = psParser.parsePs(
 			psTimed([
 				{ pid: 100, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/bun /repo/apps/cli/src/cli.ts ui snapshot" },
 				{ pid: 101, ppid: 100, rssKb: 1, time: "0:00.00", cmd: "/usr/bin/xcrun simctl spawn" },
@@ -507,7 +507,7 @@ describe("review fixes (bench-fidelity R1-R3, R8)", () => {
 			"  PID  PPID    RSS  %CPU      TIME STARTED                      COMMAND",
 			"  100     1   2048   5.0   0:01,50 Fri Oct 16 12:07:30 2026     /opt/bun test --preload p",
 		].join("\n");
-		expect(parsePs(odd)).toEqual([
+		expect(psParser.parsePs(odd)).toEqual([
 			{
 				pid: 100,
 				ppid: 1,
@@ -536,7 +536,7 @@ describe("review fixes (bench-fidelity R1-R3, R8)", () => {
 	});
 
 	test("R3: a grandchild of warden-simd under bun test is warden-simd, not bun-test", () => {
-		const rows = parsePs(
+		const rows = psParser.parsePs(
 			psTimed([
 				{ pid: 100, ppid: 1, rssKb: 1, time: "0:00.00", cmd: "/opt/bun test --preload p" },
 				{ pid: 101, ppid: 100, rssKb: 1, time: "0:00.00", cmd: "/Users/x/bin/warden-simd --udid A" },

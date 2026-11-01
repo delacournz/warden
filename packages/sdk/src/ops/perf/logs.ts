@@ -1,12 +1,12 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { durationParser } from "@delacour/warden-config/duration";
-import { compileGrep, formatEntry, type LogFilter, matchesFilter } from "@delacour/warden-perf/logs/filter";
-import { iosPredicate, iosShowArgv, iosStreamArgv, parseCompactLine } from "@delacour/warden-perf/logs/ios-log";
-import { LOG_LEVELS, type LogEntry, parseLevel } from "@delacour/warden-perf/logs/levels";
-import { logcatArgv, parseDeviceDate, parseThreadtime } from "@delacour/warden-perf/logs/logcat";
-import { followPid, type LogStream, type SpawnLines } from "@delacour/warden-perf/logs/pid-follow";
-import { redact } from "@delacour/warden-perf/logs/redact";
+import { type LogFilter, logMatcher } from "@delacour/warden-perf/logs/filter";
+import { iosLogParser } from "@delacour/warden-perf/logs/ios-log";
+import { LOG_LEVELS, type LogEntry, logLevels } from "@delacour/warden-perf/logs/levels";
+import { logcatParser } from "@delacour/warden-perf/logs/logcat";
+import { type LogStream, pidFollower, type SpawnLines } from "@delacour/warden-perf/logs/pid-follow";
+import { logRedactor } from "@delacour/warden-perf/logs/redact";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -75,14 +75,14 @@ const hostNaive = (ms: number): number => ms - new Date(ms).getTimezoneOffset() 
 export async function deviceNaiveNow(ctx: PerfEnv, device: DeviceRef): Promise<number> {
 	if (device.platform === "android") {
 		const res = await ctx.exec([...adb(ctx, device.udid), "shell", "date", "+%Y-%m-%d %H:%M:%S"], { timeoutMs: 5_000 });
-		const parsed = res.exitCode === 0 ? parseDeviceDate(res.stdout) : undefined;
+		const parsed = res.exitCode === 0 ? logcatParser.parseDeviceDate(res.stdout) : undefined;
 		if (parsed !== undefined) return parsed;
 	}
 	return hostNaive(ctx.now());
 }
 
 export function parseLogLine(platform: "ios" | "android", raw: string, year: number): LogEntry | undefined {
-	return platform === "ios" ? parseCompactLine(raw) : parseThreadtime(raw, year);
+	return platform === "ios" ? iosLogParser.parseCompactLine(raw) : logcatParser.parseThreadtime(raw, year);
 }
 
 export type LogFlags = { level?: string; grep?: string; since?: string; lines?: string };
@@ -96,7 +96,7 @@ export function parseFlags(flags: LogFlags): Result<ParsedFlags, WardenError> {
 	});
 	const filter: LogFilter = {};
 	if (flags.level !== undefined) {
-		const level = parseLevel(flags.level);
+		const level = logLevels.parseLevel(flags.level);
 		if (level === undefined)
 			return usage(
 				`--level must be one of ${LOG_LEVELS.join(" ")} (or verbose|debug|info|warn|error|fatal), got "${flags.level}"`
@@ -104,7 +104,7 @@ export function parseFlags(flags: LogFlags): Result<ParsedFlags, WardenError> {
 		filter.minLevel = level;
 	}
 	if (flags.grep !== undefined) {
-		const grep = compileGrep(flags.grep);
+		const grep = logMatcher.compileGrep(flags.grep);
 		if (!grep.success) return usage(grep.error);
 		filter.grep = grep.data;
 	}
@@ -136,11 +136,11 @@ export async function streamAppLogs(
 	run: { signal: AbortSignal; onLine: (line: string) => void },
 	deps: LogDeps = defaultLogDeps
 ): Promise<Result<void, WardenError>> {
-	const onLine = (raw: string) => run.onLine(redact(raw));
+	const onLine = (raw: string) => run.onLine(logRedactor.redact(raw));
 	if (device.platform === "android") {
-		await followPid({
+		await pidFollower.followPid({
 			resolvePid: () => appPid(ctx, { platform: "android", id: device.udid }, app.id),
-			argvFor: (pid) => [...adb(ctx, device.udid), ...logcatArgv(pid)],
+			argvFor: (pid) => [...adb(ctx, device.udid), ...logcatParser.logcatArgv(pid)],
 			spawn: deps.spawn,
 			sleep: deps.sleep,
 			onLine,
@@ -155,7 +155,7 @@ export async function streamAppLogs(
 		"simctl",
 		"spawn",
 		device.udid,
-		...iosStreamArgv(iosPredicate(app.id, bundle.data.executable)),
+		...iosLogParser.iosStreamArgv(iosLogParser.iosPredicate(app.id, bundle.data.executable)),
 	];
 	const stream = deps.spawn(argv, onLine);
 	const aborted = new Promise<"aborted">((resolve) => {
@@ -225,7 +225,7 @@ async function androidLogcat(
 			}),
 		};
 	}
-	const res = await ctx.exec([...adb(ctx, device.udid), ...logcatArgv(pid, { tail })], { timeoutMs });
+	const res = await ctx.exec([...adb(ctx, device.udid), ...logcatParser.logcatArgv(pid, { tail })], { timeoutMs });
 	if (res.exitCode !== 0) return { success: false, error: execFailure("logcat", res) };
 	return resultFactory.ok(res.stdout);
 }
@@ -246,7 +246,7 @@ async function iosLogShow(
 		"simctl",
 		"spawn",
 		device.udid,
-		...iosShowArgv(iosPredicate(appId, bundle.data.executable), `${window}s`),
+		...iosLogParser.iosShowArgv(iosLogParser.iosPredicate(appId, bundle.data.executable), `${window}s`),
 	];
 	const res = await ctx.exec(argv, { timeoutMs });
 	if (res.exitCode !== 0) return { success: false, error: execFailure("log show", res) };
@@ -272,10 +272,11 @@ export async function readOnce(
 		: await iosLogShow(ctx, device, app.id, flags.sinceDurationMs, timeoutMs);
 	if (!out.success) return out;
 	if (!isAndroid) delete filter.sinceMs;
-	const all = redact(out.data)
+	const all = logRedactor
+		.redact(out.data)
 		.split("\n")
 		.flatMap((line) => parseLogLine(device.platform, line, year) ?? [])
-		.filter((entry) => matchesFilter(entry, filter));
+		.filter((entry) => logMatcher.matchesFilter(entry, filter));
 	return resultFactory.ok({ entries: all.slice(-flags.lines), truncated: all.length > flags.lines });
 }
 
@@ -294,7 +295,9 @@ export async function logsWork(
 	if (!read.success) return read;
 	const { entries, truncated } = read.data;
 	const text =
-		entries.length === 0 ? ctx.ui.color.dim(`no log lines from ${app.id}`) : entries.map(formatEntry).join("\n");
+		entries.length === 0
+			? ctx.ui.color.dim(`no log lines from ${app.id}`)
+			: entries.map(logMatcher.formatEntry.bind(logMatcher)).join("\n");
 	return resultFactory.ok({
 		device: { udid: target.udid, platform: target.platform, name: target.name },
 		result: { app: app.id, count: entries.length, truncated, entries },
@@ -343,7 +346,7 @@ export async function* followLogEntries(
 			signal,
 			onLine: (raw) => {
 				const entry = parseLogLine(target.platform, raw, year);
-				if (entry === undefined || !matchesFilter(entry, filter)) return;
+				if (entry === undefined || !logMatcher.matchesFilter(entry, filter)) return;
 				queue.push(entry);
 				poke();
 			},

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compileGrep, formatEntry, matchesFilter } from "./filter";
+import { logMatcher } from "./filter";
 import type { LogEntry } from "./levels";
 
 const entry = (over: Partial<LogEntry> = {}): LogEntry => ({
@@ -15,28 +15,28 @@ const entry = (over: Partial<LogEntry> = {}): LogEntry => ({
 
 describe("matchesFilter", () => {
 	test("min level", () => {
-		expect(matchesFilter(entry({ level: "D" }), { minLevel: "W" })).toBe(false);
-		expect(matchesFilter(entry({ level: "E" }), { minLevel: "W" })).toBe(true);
+		expect(logMatcher.matchesFilter(entry({ level: "D" }), { minLevel: "W" })).toBe(false);
+		expect(logMatcher.matchesFilter(entry({ level: "E" }), { minLevel: "W" })).toBe(true);
 	});
 
 	test("since", () => {
 		const e = entry();
-		expect(matchesFilter(e, { sinceMs: e.tsMs + 1 })).toBe(false);
-		expect(matchesFilter(e, { sinceMs: e.tsMs })).toBe(true);
+		expect(logMatcher.matchesFilter(e, { sinceMs: e.tsMs + 1 })).toBe(false);
+		expect(logMatcher.matchesFilter(e, { sinceMs: e.tsMs })).toBe(true);
 	});
 
 	test("grep matches tag or message, case-insensitively", () => {
-		const g = compileGrep("reactnative");
+		const g = logMatcher.compileGrep("reactnative");
 		if (!g.success) throw new Error("grep");
-		expect(matchesFilter(entry(), { grep: g.data })).toBe(true);
-		expect(matchesFilter(entry({ tag: "OkHttp", msg: "GET /" }), { grep: g.data })).toBe(false);
+		expect(logMatcher.matchesFilter(entry(), { grep: g.data })).toBe(true);
+		expect(logMatcher.matchesFilter(entry({ tag: "OkHttp", msg: "GET /" }), { grep: g.data })).toBe(false);
 	});
 
 	test("bad pattern is an error, not a throw", () => {
-		expect(compileGrep("(").success).toBe(false);
+		expect(logMatcher.compileGrep("(").success).toBe(false);
 	});
 });
 
 test("formatEntry", () => {
-	expect(formatEntry(entry())).toBe("10-24 10:00:01.123  4321 I ReactNativeJS: Running main");
+	expect(logMatcher.formatEntry(entry())).toBe("10-24 10:00:01.123  4321 I ReactNativeJS: Running main");
 });

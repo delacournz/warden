@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildProfile, buildSourceMap, fakeCdp } from "@delacour/warden-perf/js/js.testing";
-import { jsOk } from "@delacour/warden-perf/js/js.types";
+import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
+import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import {
 	CPU_FILE,
 	devtoolsPerfError,
@@ -26,7 +26,7 @@ const tmp = (): string => {
 };
 
 const BUNDLE = "http://127.0.0.1:8081/index.bundle?platform=ios";
-const profile = buildProfile(
+const profile = jsFixtures.buildProfile(
 	[
 		{ id: 1, name: "(root)", children: [2, 3] },
 		{ id: 2, name: "render", url: BUNDLE, scriptId: "7", line: 0, column: 0 },
@@ -39,10 +39,10 @@ const profile = buildProfile(
 		[3, 100_000],
 	]
 );
-const map = buildSourceMap(["/app/src/Feed.tsx"], [[[0, 0, 41, 2]]]);
+const map = jsFixtures.buildSourceMap(["/app/src/Feed.tsx"], [[[0, 0, 41, 2]]]);
 
 function profilerCdp() {
-	return fakeCdp(
+	return jsFixtures.fakeCdp(
 		{
 			"Profiler.stop": { profile },
 			"Runtime.evaluate": (params) =>
@@ -71,7 +71,7 @@ describe("startJsProfile / stopJsProfile", () => {
 			projectRoot: "/app",
 			fetchMap: async (url) => {
 				expect(url).toBe("http://127.0.0.1:8081/index.map?platform=ios");
-				return jsOk(map);
+				return jsResultFactory.ok(map);
 			},
 		});
 		if (!stopped.success) throw new Error(stopped.error.message);
@@ -86,18 +86,22 @@ describe("startJsProfile / stopJsProfile", () => {
 	});
 
 	test("Profiler.start unsupported: typed error, no files", async () => {
-		const cdp = fakeCdp({ "Profiler.start": { __error: "'Profiler.start' wasn't found" } });
+		const cdp = jsFixtures.fakeCdp({ "Profiler.start": { __error: "'Profiler.start' wasn't found" } });
 		const started = await startJsProfile(cdp);
 		expect(started).toMatchObject({ success: false, error: { code: "unsupported" } });
 		expect(cdp.sent.at(-1)?.method).toBe("Debugger.disable");
 	});
 
 	test("a failed Profiler.stop writes nothing", async () => {
-		const cdp = fakeCdp({ "Profiler.stop": { __error: "socket closed" } });
+		const cdp = jsFixtures.fakeCdp({ "Profiler.stop": { __error: "socket closed" } });
 		const started = await startJsProfile(cdp);
 		if (!started.success) throw new Error("start");
 		const dir = tmp();
-		const stopped = await stopJsProfile(started.data, { dir, metroUrl: undefined, fetchMap: async () => jsOk("") });
+		const stopped = await stopJsProfile(started.data, {
+			dir,
+			metroUrl: undefined,
+			fetchMap: async () => jsResultFactory.ok(""),
+		});
 		expect(stopped.success).toBe(false);
 		expect(existsSync(join(dir, CPU_FILE))).toBe(false);
 	});
@@ -108,7 +112,7 @@ describe("startJsProfile / stopJsProfile", () => {
 		const stopped = await stopJsProfile(started.data, {
 			dir: tmp(),
 			metroUrl: undefined,
-			fetchMap: async () => jsOk(""),
+			fetchMap: async () => jsResultFactory.ok(""),
 		});
 		expect(stopped.success && stopped.data.hotspots.warnings[0]).toContain("not source-mapped");
 	});
@@ -122,7 +126,7 @@ describe("runJsCapture", () => {
 		const result = await runJsCapture(cdp, {
 			dir: tmp(),
 			metroUrl: "http://127.0.0.1:8081",
-			fetchMap: async () => jsOk(map),
+			fetchMap: async () => jsResultFactory.ok(map),
 			durationMs: 4_000,
 			sleep: async (ms) => {
 				slept.push(ms);
@@ -150,7 +154,7 @@ describe("runJsCapture", () => {
 		const result = await runJsCapture(profilerCdp(), {
 			dir,
 			metroUrl: undefined,
-			fetchMap: async () => jsOk(""),
+			fetchMap: async () => jsResultFactory.ok(""),
 			durationMs: 60_000,
 			signal: ctl.signal,
 			sleep: async (_ms, signal) => {

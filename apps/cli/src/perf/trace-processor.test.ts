@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { type TraceProcessorPin, traceProcessorFileName } from "@delacour/warden-perf/android/trace-processor.data";
+import { type TraceProcessorPin, traceProcessorPins } from "@delacour/warden-perf/android/trace-processor.data";
 import {
 	downloadTraceProcessor,
 	resolveTraceProcessor,
@@ -73,7 +73,7 @@ describe("downloadTraceProcessor", () => {
 		const res = await downloadTraceProcessor(c, f.deps);
 		expect(res.success).toBe(true);
 		const path = traceProcessorPath(c);
-		expect(path.endsWith(traceProcessorFileName())).toBe(true);
+		expect(path.endsWith(traceProcessorPins.fileName())).toBe(true);
 		expect(statSync(path).mode & 0o777).toBe(0o755);
 		expect(statSync(path).size).toBe(PAYLOAD.byteLength);
 		expect(readdirSync(dirname(path)).filter((n) => n.endsWith(".tmp"))).toEqual([]);

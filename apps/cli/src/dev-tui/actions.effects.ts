@@ -121,7 +121,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			const controller = new AbortController();
 			const done = (async (): Promise<string | undefined> => {
 				if (info.bundleId === undefined) return "no bundle id for the dev client";
-				const [{ streamAppLogs, parseLogLine }, { formatEntry }] = await Promise.all([
+				const [{ streamAppLogs, parseLogLine }, { logMatcher }] = await Promise.all([
 					import("@delacour/warden-sdk/ops/perf/logs"),
 					import("@delacour/warden-perf/logs/filter"),
 				]);
@@ -134,7 +134,7 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 						signal: controller.signal,
 						onLine: (raw) => {
 							const entry = parseLogLine(info.platform, raw, year);
-							if (entry !== undefined) onLine(formatEntry(entry));
+							if (entry !== undefined) onLine(logMatcher.formatEntry(entry));
 						},
 					}
 				);
@@ -172,19 +172,14 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		},
 
 		async perfStop(info, sessionId, log): FxResult<PerfStopped> {
-			const [
-				{ finalizeSession },
-				{ defaultSessionKit },
-				{ defaultPerfDeps },
-				{ renderReportMarkdown },
-				{ MAX_TEXT_LINES },
-			] = await Promise.all([
-				import("@delacour/warden-sdk/ops/perf/orchestrate"),
-				import("../perf/session-kit"),
-				import("../perf/run"),
-				import("@delacour/warden-perf/shared/report"),
-				import("@delacour/warden-perf/shared/caps"),
-			]);
+			const [{ finalizeSession }, { defaultSessionKit }, { defaultPerfDeps }, { reportBuilder }, { MAX_TEXT_LINES }] =
+				await Promise.all([
+					import("@delacour/warden-sdk/ops/perf/orchestrate"),
+					import("../perf/session-kit"),
+					import("../perf/run"),
+					import("@delacour/warden-perf/shared/report"),
+					import("@delacour/warden-perf/shared/caps"),
+				]);
 			void info;
 			const stopped = await finalizeSession(scoped(log), defaultPerfDeps, defaultSessionKit, sessionId, {
 				reason: "user",
@@ -197,7 +192,10 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			const { report, reportPath, warnings } = stopped.data;
 			return resultFactory.ok({
 				reportPath,
-				lines: report === undefined ? [] : renderReportMarkdown(report, { maxLines: MAX_TEXT_LINES }).split("\n"),
+				lines:
+					report === undefined
+						? []
+						: reportBuilder.renderReportMarkdown(report, { maxLines: MAX_TEXT_LINES }).split("\n"),
 				warnings,
 			});
 		},

@@ -21,42 +21,46 @@ export type PidFollowOptions = {
 
 export const PID_FOLLOW_INTERVAL_MS = 2000;
 
-/**
- * `logcat --pid` is bound to one pid, so an app that restarts (crash, relaunch, hot reload of the process) would
- * silence the stream. Re-resolve the pid every `intervalMs` and restart the stream when it changes, or when the
- * stream died while the pid held. Resolves when `signal` aborts, after killing the stream.
- */
-export async function followPid(opts: PidFollowOptions): Promise<void> {
-	const interval = opts.intervalMs ?? PID_FOLLOW_INTERVAL_MS;
-	let current: { pid: number; stream: LogStream; dead: boolean } | undefined;
-	let reported: number | undefined;
-	const stop = () => {
-		current?.stream.kill();
-		current = undefined;
-	};
-	const aborted = new Promise<void>((resolve) => {
-		if (opts.signal.aborted) resolve();
-		else opts.signal.addEventListener("abort", () => resolve(), { once: true });
-	});
-	try {
-		while (!opts.signal.aborted) {
-			const pid = await opts.resolvePid();
-			if (current !== undefined && (current.pid !== pid || current.dead)) stop();
-			if (current === undefined && pid !== undefined) {
-				const stream = opts.spawn(opts.argvFor(pid), opts.onLine);
-				const started = { pid, stream, dead: false };
-				stream.exited.then(() => {
-					started.dead = true;
-				});
-				current = started;
+export class PidFollower {
+	/**
+	 * `logcat --pid` is bound to one pid, so an app that restarts (crash, relaunch, hot reload of the process) would
+	 * silence the stream. Re-resolve the pid every `intervalMs` and restart the stream when it changes, or when the
+	 * stream died while the pid held. Resolves when `signal` aborts, after killing the stream.
+	 */
+	async followPid(opts: PidFollowOptions): Promise<void> {
+		const interval = opts.intervalMs ?? PID_FOLLOW_INTERVAL_MS;
+		let current: { pid: number; stream: LogStream; dead: boolean } | undefined;
+		let reported: number | undefined;
+		const stop = () => {
+			current?.stream.kill();
+			current = undefined;
+		};
+		const aborted = new Promise<void>((resolve) => {
+			if (opts.signal.aborted) resolve();
+			else opts.signal.addEventListener("abort", () => resolve(), { once: true });
+		});
+		try {
+			while (!opts.signal.aborted) {
+				const pid = await opts.resolvePid();
+				if (current !== undefined && (current.pid !== pid || current.dead)) stop();
+				if (current === undefined && pid !== undefined) {
+					const stream = opts.spawn(opts.argvFor(pid), opts.onLine);
+					const started = { pid, stream, dead: false };
+					stream.exited.then(() => {
+						started.dead = true;
+					});
+					current = started;
+				}
+				if (pid !== reported) {
+					reported = pid;
+					opts.onPid?.(pid);
+				}
+				await Promise.race([opts.sleep(interval), aborted]);
 			}
-			if (pid !== reported) {
-				reported = pid;
-				opts.onPid?.(pid);
-			}
-			await Promise.race([opts.sleep(interval), aborted]);
+		} finally {
+			stop();
 		}
-	} finally {
-		stop();
 	}
 }
+
+export const pidFollower = new PidFollower();

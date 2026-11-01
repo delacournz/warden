@@ -1,15 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CpuProfile } from "../js/cpu-profile";
 import type { Commit } from "../react/react.types";
-import {
-	commitsByComponent,
-	commitsByIndex,
-	commitsByWindow,
-	commitsCascade,
-	cpuTree,
-	cpuWindow,
-	jsCallers,
-} from "./query";
+import { sessionQuery } from "./query";
 
 const fiber = (name: string, selfMs: number, causes: Commit["fibers"][number]["causes"] = null) => ({
 	id: 1,
@@ -49,26 +41,26 @@ const commits: Commit[] = [
 
 describe("commit queries", () => {
 	test("by component ranks by self time", () => {
-		const rows = commitsByComponent(commits);
+		const rows = sessionQuery.commitsByComponent(commits);
 		expect(rows.map((r) => r.name)).toEqual(["List", "Row", "Badge"]);
 		expect(rows[0]).toMatchObject({ renders: 2, sumSelfMs: 45, maxSelfMs: 30 });
 	});
 
 	test("by window buckets and ranks busiest first", () => {
-		const rows = commitsByWindow(commits, 1000);
+		const rows = sessionQuery.commitsByWindow(commits, 1000);
 		expect(rows[0]).toMatchObject({ fromMs: 1000, commits: 2, renderMs: 68, worstMs: 60 });
 		expect(rows[0]?.top[0]).toBe("List");
 	});
 
 	test("by index lists the slowest, or one commit in depth", () => {
-		expect(commitsByIndex(commits, { limit: 1 })[0]?.index).toBe(1);
-		const one = commitsByIndex(commits, { only: 1 });
+		expect(sessionQuery.commitsByIndex(commits, { limit: 1 })[0]?.index).toBe(1);
+		const one = sessionQuery.commitsByIndex(commits, { only: 1 });
 		expect(one).toHaveLength(1);
 		expect(one[0]?.top.map((t) => t.cause)).toContain("parent");
 	});
 
 	test("cascade counts parent-driven re-renders per updater", () => {
-		const [top] = commitsCascade(commits);
+		const [top] = sessionQuery.commitsCascade(commits);
 		expect(top).toMatchObject({ origin: "App", commits: 2, cascadeFibers: 2 });
 	});
 });
@@ -91,14 +83,14 @@ const label = (f: { functionName: string }) => ({ name: f.functionName });
 
 describe("cpu queries", () => {
 	test("window keeps only the samples inside it", () => {
-		const rows = cpuWindow(profile, label, { fromMs: 5000, toMs: 5004, profileStartMs: 5000 });
+		const rows = sessionQuery.cpuWindow(profile, label, { fromMs: 5000, toMs: 5004, profileStartMs: 5000 });
 		expect(rows[0]).toMatchObject({ name: "parse" });
-		const later = cpuWindow(profile, label, { fromMs: 5005, toMs: 5008, profileStartMs: 5000 });
+		const later = sessionQuery.cpuWindow(profile, label, { fromMs: 5005, toMs: 5008, profileStartMs: 5000 });
 		expect(later.map((r) => r.name)).toEqual(["render"]);
 	});
 
 	test("tree nests by total time and drops idle", () => {
-		const rows = cpuTree(profile, label, { minPct: 0 });
+		const rows = sessionQuery.cpuTree(profile, label, { minPct: 0 });
 		expect(rows.map((r) => [r.depth, r.name])).toEqual([
 			[1, "app"],
 			[2, "parse"],
@@ -108,6 +100,6 @@ describe("cpu queries", () => {
 	});
 
 	test("callers sum the time under each caller", () => {
-		expect(jsCallers(profile, label, "parse")).toEqual([{ caller: "app", ms: 4, pct: 100 }]);
+		expect(sessionQuery.jsCallers(profile, label, "parse")).toEqual([{ caller: "app", ms: 4, pct: 100 }]);
 	});
 });

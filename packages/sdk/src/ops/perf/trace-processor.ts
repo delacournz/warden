@@ -1,12 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-	TRACE_PROCESSOR_VERSION,
-	traceProcessorFileName,
-	traceProcessorPin,
-	traceProcessorUrl,
-} from "@delacour/warden-perf/android/trace-processor.data";
+import { TRACE_PROCESSOR_VERSION, traceProcessorPins } from "@delacour/warden-perf/android/trace-processor.data";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -22,7 +17,7 @@ export type TraceProcessorDeps = {
 	writeErr: (text: string) => void;
 	now: () => number;
 	/** which pinned artifact fits this host; tests swap in one whose hash matches their fake payload */
-	pinFor: typeof traceProcessorPin;
+	pinFor: typeof traceProcessorPins.lookup;
 };
 
 export const defaultTraceProcessorDeps: TraceProcessorDeps = {
@@ -33,7 +28,7 @@ export const defaultTraceProcessorDeps: TraceProcessorDeps = {
 		process.stderr.write(text);
 	},
 	now: () => Date.now(),
-	pinFor: traceProcessorPin,
+	pinFor: traceProcessorPins.lookup.bind(traceProcessorPins),
 };
 
 export const INSTALL_HINT = "warden perf tools install trace-processor --yes";
@@ -42,7 +37,7 @@ export const INSTALL_HINT = "warden perf tools install trace-processor --yes";
 export function traceProcessorPath(ctx: Pick<PerfEnv, "env">): string {
 	const override = ctx.env.WARDEN_TRACE_PROCESSOR;
 	if (override !== undefined && override !== "") return override;
-	return join(storeLocator.wardenHome(ctx.env), "tools", traceProcessorFileName());
+	return join(storeLocator.wardenHome(ctx.env), "tools", traceProcessorPins.fileName());
 }
 
 const MB = 1024 * 1024;
@@ -104,8 +99,8 @@ export async function downloadTraceProcessor(
 		);
 	}
 	const { pin } = pinned;
-	const url = traceProcessorUrl(pin);
-	const dest = join(storeLocator.wardenHome(ctx.env), "tools", traceProcessorFileName());
+	const url = traceProcessorPins.url(pin);
+	const dest = join(storeLocator.wardenHome(ctx.env), "tools", traceProcessorPins.fileName());
 	const label = `trace_processor ${TRACE_PROCESSOR_VERSION}`;
 	const tmp = `${dest}.${deps.now()}.tmp`;
 	mkdirSync(dirname(dest), { recursive: true });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseDuration } from "./duration";
+import { perfDuration } from "./duration";
 
 describe("parseDuration", () => {
 	test.each([
@@ -9,9 +9,9 @@ describe("parseDuration", () => {
 		["2m", 120_000],
 		["3", 3000],
 		[" 10s ", 10_000],
-	])("%s -> %d", (text, ms) => expect(parseDuration(text)).toBe(ms));
+	])("%s -> %d", (text, ms) => expect(perfDuration.parseDuration(text)).toBe(ms));
 
 	test.each(["", "0", "0s", "-1s", "abc", "1h", "1 s"])("rejects %p", (text) =>
-		expect(parseDuration(text)).toBeUndefined()
+		expect(perfDuration.parseDuration(text)).toBeUndefined()
 	);
 });

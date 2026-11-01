@@ -8,13 +8,17 @@ const API_KEY = /(\bapi[_-]?key["']?\s*[=:]\s*["']?)[^\s&"',;]+/gi;
 const PASSWORD = /(\bpass(?:word|wd)["']?\s*[=:]\s*["']?)[^\s&"',;]+/gi;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
 
-/** Mask secrets in one log line: Authorization/Bearer tokens, `api_key=`, JWTs, `password=`, emails → `[redacted]`. */
-export function redact(line: string): string {
-	return line
-		.replace(AUTHORIZATION, `$1${REDACTED}`)
-		.replace(BEARER, `Bearer ${REDACTED}`)
-		.replace(JWT, REDACTED)
-		.replace(API_KEY, `$1${REDACTED}`)
-		.replace(PASSWORD, `$1${REDACTED}`)
-		.replace(EMAIL, REDACTED);
+export class LogRedactor {
+	/** Mask secrets in one log line: Authorization/Bearer tokens, `api_key=`, JWTs, `password=`, emails → `[redacted]`. */
+	redact(line: string): string {
+		return line
+			.replace(AUTHORIZATION, `$1${REDACTED}`)
+			.replace(BEARER, `Bearer ${REDACTED}`)
+			.replace(JWT, REDACTED)
+			.replace(API_KEY, `$1${REDACTED}`)
+			.replace(PASSWORD, `$1${REDACTED}`)
+			.replace(EMAIL, REDACTED);
+	}
 }
+
+export const logRedactor = new LogRedactor();

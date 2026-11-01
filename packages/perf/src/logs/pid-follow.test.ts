@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { followPid, type LogStream } from "./pid-follow";
+import { type LogStream, pidFollower } from "./pid-follow";
 
 /** Drive `followPid` through `pids` (one per tick), then abort. */
 async function run(pids: Array<number | undefined>, opts: { dieAfterStart?: boolean } = {}) {
@@ -8,7 +8,7 @@ async function run(pids: Array<number | undefined>, opts: { dieAfterStart?: bool
 	const killed: string[][] = [];
 	const seen: Array<number | undefined> = [];
 	let tick = 0;
-	await followPid({
+	await pidFollower.followPid({
 		resolvePid: async () => pids[tick],
 		argvFor: (pid) => ["logcat", "--pid", String(pid)],
 		spawn: (argv, onLine) => {

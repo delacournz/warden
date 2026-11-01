@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildProfile, buildSourceMap, type FakeCdp, fakeCdp } from "@delacour/warden-perf/js/js.testing";
-import { jsOk } from "@delacour/warden-perf/js/js.types";
+import { type FakeCdp, jsFixtures } from "@delacour/warden-perf/js/js.testing";
+import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { LogStream } from "@delacour/warden-perf/logs/pid-follow";
-import { decodeSamples } from "@delacour/warden-perf/metrics/series";
+import { sampleSeries } from "@delacour/warden-perf/metrics/series";
 import type { JsSession } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { type PerfPlan, writePlan } from "@delacour/warden-sdk/ops/perf/plan";
 import { createSession, readSession, sessionDir, stopSession } from "@delacour/warden-sdk/ops/perf/session";
@@ -38,7 +38,7 @@ const plan = (over: Partial<PerfPlan> = {}): PerfPlan => ({
 	...over,
 });
 
-const profile = buildProfile(
+const profile = jsFixtures.buildProfile(
 	[
 		{ id: 1, name: "(root)", children: [2] },
 		{ id: 2, name: "render", url: BUNDLE, scriptId: "7", line: 0, column: 0 },
@@ -50,7 +50,7 @@ const profile = buildProfile(
 );
 
 function profilerCdp(): FakeCdp {
-	return fakeCdp(
+	return jsFixtures.fakeCdp(
 		{
 			"Profiler.stop": { profile },
 			"Runtime.evaluate": (params) =>
@@ -110,7 +110,7 @@ function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpaw
 				opened++;
 				return resultFactory.ok(session);
 			},
-			fetchMap: async () => jsOk(buildSourceMap(["/app/src/Feed.tsx"], [[[0, 0, 41, 2]]])),
+			fetchMap: async () => jsResultFactory.ok(jsFixtures.buildSourceMap(["/app/src/Feed.tsx"], [[[0, 0, 41, 2]]])),
 			sleep: async (ms, signal) => {
 				const until = clock.now + ms;
 				while (!signal?.aborted && clock.now < until) await Bun.sleep(0);
@@ -193,7 +193,9 @@ describe("runSessionCollector", () => {
 	test("metrics: one sample per tick, timed from the session start on the injected clock", async () => {
 		const h = setup({ plan: { metrics: true }, maxDurationMs: 4_000 });
 		await runSessionCollector(h.c, h.perfDeps, h.deps, h.id, new AbortController().signal);
-		const rows = decodeSamples(readFileSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8"));
+		const rows = sampleSeries.decodeSamples(
+			readFileSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8")
+		);
 		expect(rows.length).toBeGreaterThanOrEqual(2);
 		expect(rows[0]).toMatchObject({ pid: 4321, cpuPct: 25 });
 		for (const r of rows) expect(r.atMs).toBe(r.wallMs - T0);
@@ -268,7 +270,9 @@ describe("runSessionCollector", () => {
 		expect(r).toEqual({ success: true, data: "capped" });
 		expect(states(h)).toEqual({ logs: "failed", metrics: "stopped" });
 		expect(h.log.join("\n")).toContain("logs: logcat exploded");
-		const rows = decodeSamples(readFileSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8"));
+		const rows = sampleSeries.decodeSamples(
+			readFileSync(join(sessionDir(h.c, h.id), "metrics", "samples.jsonl"), "utf8")
+		);
 		expect(rows.length).toBeGreaterThanOrEqual(2);
 		expect(h.finalized).toEqual([h.id]);
 	});

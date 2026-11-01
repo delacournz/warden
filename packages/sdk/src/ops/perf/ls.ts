@@ -1,4 +1,4 @@
-import { overCap } from "@delacour/warden-perf/shared/caps";
+import { captureCaps } from "@delacour/warden-perf/shared/caps";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import type { PerfEnv } from "./env";
 import { listSessions } from "./session";
@@ -20,7 +20,7 @@ export type SessionRow = {
 export function rowOf(session: PerfSession, now: number): SessionRow {
 	const overdue =
 		session.status === "running" &&
-		overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, now);
+		captureCaps.overCap({ startedWallMs: session.startedAt.wallMs, maxDurationMs: session.maxDurationMs }, now);
 	return {
 		id: session.id,
 		device: session.device.udid,

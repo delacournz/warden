@@ -60,105 +60,119 @@ export type ReportDiff = {
 	improvements: number;
 };
 
-const round = (n: number, digits = 1): number => Math.round(n * 10 ** digits) / 10 ** digits;
-
-function judge(spec: MetricSpec, before: number, after: number, thresholdPct: number): MetricDelta["verdict"] {
-	const worse = spec.higherIsBetter === true ? before - after : after - before;
-	const moved = Math.abs(after - before);
-	if (moved < spec.minAbs) return "same";
-	const pct = before === 0 ? Number.POSITIVE_INFINITY : (moved / Math.abs(before)) * 100;
-	if (pct < thresholdPct) return "same";
-	return worse > 0 ? "regress" : "improve";
-}
-
 /** Functions whose self share moved by at least this many percentage points are listed. */
 const FUNCTION_MIN_POINTS = 2;
 
-/** Verdict for a function whose self share went from `x` to `x + delta` percent. */
-function functionVerdict(x: number, delta: number, thresholdPct: number): FunctionDelta["verdict"] {
-	const relative = x === 0 ? Number.POSITIVE_INFINITY : (Math.abs(delta) / x) * 100;
-	if (relative < thresholdPct) return "same";
-	if (delta <= 0) return "improve";
-	return x === 0 ? "new" : "regress";
-}
-
-function diffFunctions(a: ReportMetrics, b: ReportMetrics, thresholdPct: number): FunctionDelta[] {
-	const before = new Map(a.topFunctions.map((f) => [f.name, f.selfPct]));
-	const after = new Map(b.topFunctions.map((f) => [f.name, f.selfPct]));
-	const names = new Set([...before.keys(), ...after.keys()]);
-	const out: FunctionDelta[] = [];
-	for (const name of names) {
-		const x = before.get(name) ?? 0;
-		const y = after.get(name) ?? 0;
-		const delta = round(y - x);
-		if (Math.abs(delta) < FUNCTION_MIN_POINTS) continue;
-		out.push({ kind: "function", name, before: x, after: y, delta, verdict: functionVerdict(x, delta, thresholdPct) });
-	}
-	return out.sort((p, q) => Math.abs(q.delta) - Math.abs(p.delta)).slice(0, 10);
-}
-
-/** Per-metric deltas of two session reports with a regression verdict past `thresholdPct`. Metrics only one side has are skipped. */
-export function diffReports(
-	a: Pick<PerfReportJson, "sessionId" | "metrics">,
-	b: Pick<PerfReportJson, "sessionId" | "metrics">,
-	thresholdPct: number = DEFAULT_THRESHOLD_PCT
-): ReportDiff {
-	const metrics: MetricDelta[] = [];
-	for (const spec of SPECS) {
-		const before = a.metrics[spec.key];
-		const after = b.metrics[spec.key];
-		if (before === undefined || after === undefined) continue;
-		metrics.push({
-			kind: "metric",
-			key: spec.key,
-			label: spec.label,
-			unit: spec.unit,
-			before,
-			after,
-			delta: round(after - before, 2),
-			...(before === 0 ? {} : { pct: round(((after - before) / Math.abs(before)) * 100) }),
-			verdict: judge(spec, before, after, thresholdPct),
-		});
-	}
-	const functions = diffFunctions(a.metrics, b.metrics, thresholdPct);
-	const all = [...metrics, ...functions];
-	return {
-		a: a.sessionId,
-		b: b.sessionId,
-		thresholdPct,
-		metrics,
-		functions,
-		regressions: all.filter((d) => d.verdict === "regress" || d.verdict === "new").length,
-		improvements: all.filter((d) => d.verdict === "improve").length,
-	};
-}
-
 const UNIT: Record<MetricSpec["unit"], string> = { ms: "ms", "%": "%", KB: "KB", count: "" };
 
-/** The trailing verdict label, empty when nothing moved. */
-const verdictLabel = (verdict: MetricDelta["verdict"] | FunctionDelta["verdict"]): string =>
-	verdict === "same" ? "" : verdict.toUpperCase();
+export class ReportDiffer {
+	private round(n: number, digits = 1): number {
+		return Math.round(n * 10 ** digits) / 10 ** digits;
+	}
 
-/** One metric row of the text diff. */
-function metricLine(m: MetricDelta): string {
-	const u = UNIT[m.unit];
-	const sign = m.delta > 0 ? "+" : "";
-	const pct = m.pct === undefined ? "" : ` (${m.pct > 0 ? "+" : ""}${m.pct}%)`;
-	return `${m.label.padEnd(18)} ${m.before}${u} -> ${m.after}${u}  ${sign}${m.delta}${u}${pct}  ${verdictLabel(m.verdict)}`.trimEnd();
+	private judge(spec: MetricSpec, before: number, after: number, thresholdPct: number): MetricDelta["verdict"] {
+		const worse = spec.higherIsBetter === true ? before - after : after - before;
+		const moved = Math.abs(after - before);
+		if (moved < spec.minAbs) return "same";
+		const pct = before === 0 ? Number.POSITIVE_INFINITY : (moved / Math.abs(before)) * 100;
+		if (pct < thresholdPct) return "same";
+		return worse > 0 ? "regress" : "improve";
+	}
+
+	/** Verdict for a function whose self share went from `x` to `x + delta` percent. */
+	private functionVerdict(x: number, delta: number, thresholdPct: number): FunctionDelta["verdict"] {
+		const relative = x === 0 ? Number.POSITIVE_INFINITY : (Math.abs(delta) / x) * 100;
+		if (relative < thresholdPct) return "same";
+		if (delta <= 0) return "improve";
+		return x === 0 ? "new" : "regress";
+	}
+
+	private diffFunctions(a: ReportMetrics, b: ReportMetrics, thresholdPct: number): FunctionDelta[] {
+		const before = new Map(a.topFunctions.map((f) => [f.name, f.selfPct]));
+		const after = new Map(b.topFunctions.map((f) => [f.name, f.selfPct]));
+		const names = new Set([...before.keys(), ...after.keys()]);
+		const out: FunctionDelta[] = [];
+		for (const name of names) {
+			const x = before.get(name) ?? 0;
+			const y = after.get(name) ?? 0;
+			const delta = this.round(y - x);
+			if (Math.abs(delta) < FUNCTION_MIN_POINTS) continue;
+			out.push({
+				kind: "function",
+				name,
+				before: x,
+				after: y,
+				delta,
+				verdict: this.functionVerdict(x, delta, thresholdPct),
+			});
+		}
+		return out.sort((p, q) => Math.abs(q.delta) - Math.abs(p.delta)).slice(0, 10);
+	}
+
+	/** Per-metric deltas of two session reports with a regression verdict past `thresholdPct`. Metrics only one side has are skipped. */
+	diffReports(
+		a: Pick<PerfReportJson, "sessionId" | "metrics">,
+		b: Pick<PerfReportJson, "sessionId" | "metrics">,
+		thresholdPct: number = DEFAULT_THRESHOLD_PCT
+	): ReportDiff {
+		const metrics: MetricDelta[] = [];
+		for (const spec of SPECS) {
+			const before = a.metrics[spec.key];
+			const after = b.metrics[spec.key];
+			if (before === undefined || after === undefined) continue;
+			metrics.push({
+				kind: "metric",
+				key: spec.key,
+				label: spec.label,
+				unit: spec.unit,
+				before,
+				after,
+				delta: this.round(after - before, 2),
+				...(before === 0 ? {} : { pct: this.round(((after - before) / Math.abs(before)) * 100) }),
+				verdict: this.judge(spec, before, after, thresholdPct),
+			});
+		}
+		const functions = this.diffFunctions(a.metrics, b.metrics, thresholdPct);
+		const all = [...metrics, ...functions];
+		return {
+			a: a.sessionId,
+			b: b.sessionId,
+			thresholdPct,
+			metrics,
+			functions,
+			regressions: all.filter((d) => d.verdict === "regress" || d.verdict === "new").length,
+			improvements: all.filter((d) => d.verdict === "improve").length,
+		};
+	}
+
+	/** The trailing verdict label, empty when nothing moved. */
+	private verdictLabel(verdict: MetricDelta["verdict"] | FunctionDelta["verdict"]): string {
+		return verdict === "same" ? "" : verdict.toUpperCase();
+	}
+
+	/** One metric row of the text diff. */
+	private metricLine(m: MetricDelta): string {
+		const u = UNIT[m.unit];
+		const sign = m.delta > 0 ? "+" : "";
+		const pct = m.pct === undefined ? "" : ` (${m.pct > 0 ? "+" : ""}${m.pct}%)`;
+		return `${m.label.padEnd(18)} ${m.before}${u} -> ${m.after}${u}  ${sign}${m.delta}${u}${pct}  ${this.verdictLabel(m.verdict)}`.trimEnd();
+	}
+
+	/** One function row of the text diff. */
+	private functionLine(f: FunctionDelta): string {
+		const sign = f.delta > 0 ? "+" : "";
+		return `fn ${f.name}  ${f.before}% -> ${f.after}% self  ${sign}${f.delta}pt  ${this.verdictLabel(f.verdict)}`.trimEnd();
+	}
+
+	/** `startup cold p50  1200ms -> 1500ms  +300ms (+25%)  REGRESS` */
+	diffLines(diff: ReportDiff): string[] {
+		return [
+			`diff ${diff.a} -> ${diff.b} (threshold ${diff.thresholdPct}%)`,
+			...diff.metrics.map(this.metricLine.bind(this)),
+			...diff.functions.map(this.functionLine.bind(this)),
+			`${diff.regressions} regression${diff.regressions === 1 ? "" : "s"}, ${diff.improvements} improvement${diff.improvements === 1 ? "" : "s"}`,
+		];
+	}
 }
 
-/** One function row of the text diff. */
-function functionLine(f: FunctionDelta): string {
-	const sign = f.delta > 0 ? "+" : "";
-	return `fn ${f.name}  ${f.before}% -> ${f.after}% self  ${sign}${f.delta}pt  ${verdictLabel(f.verdict)}`.trimEnd();
-}
-
-/** `startup cold p50  1200ms -> 1500ms  +300ms (+25%)  REGRESS` */
-export function diffLines(diff: ReportDiff): string[] {
-	return [
-		`diff ${diff.a} -> ${diff.b} (threshold ${diff.thresholdPct}%)`,
-		...diff.metrics.map(metricLine),
-		...diff.functions.map(functionLine),
-		`${diff.regressions} regression${diff.regressions === 1 ? "" : "s"}, ${diff.improvements} improvement${diff.improvements === 1 ? "" : "s"}`,
-	];
-}
+export const reportDiffer = new ReportDiffer();

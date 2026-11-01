@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cellFrames, cellNumber, cellPid, cellText, createRowParser, parseRows } from "./xml-rows";
+import { xmlRowParser } from "./xml-rows";
 
 const XML = `<?xml version="1.0"?>
 <trace-query-result>
@@ -13,34 +13,34 @@ const XML = `<?xml version="1.0"?>
 
 describe("parseRows", () => {
 	test("resolves id/ref for threads, processes, frames and binaries", () => {
-		const rows = parseRows(XML);
+		const rows = xmlRowParser.parseRows(XML);
 		expect(rows).toHaveLength(3);
 		expect(rows[0]?.schema).toBe("time-profile");
 		expect(rows[0]?.columns).toEqual(["time", "thread", "weight", "stack"]);
 		const [r0, r1, r2] = rows;
-		expect(cellNumber(r0?.cells[0])).toBe(10_000_000);
-		expect(cellText(r1?.cells[1])).toContain("Main Thread");
-		expect(cellPid(r1?.cells[1])).toBe(4242);
-		expect(cellNumber(r1?.cells[2])).toBe(1_000_000);
-		expect(cellFrames(r0?.cells[3])).toEqual([
+		expect(xmlRowParser.cellNumber(r0?.cells[0])).toBe(10_000_000);
+		expect(xmlRowParser.cellText(r1?.cells[1])).toContain("Main Thread");
+		expect(xmlRowParser.cellPid(r1?.cells[1])).toBe(4242);
+		expect(xmlRowParser.cellNumber(r1?.cells[2])).toBe(1_000_000);
+		expect(xmlRowParser.cellFrames(r0?.cells[3])).toEqual([
 			{ name: "leaf & co", binary: "/a/ShopApp.app/ShopApp" },
 			{ name: "main", binary: "/a/ShopApp.app/ShopApp" },
 		]);
-		expect(cellFrames(r1?.cells[3])).toEqual([
+		expect(xmlRowParser.cellFrames(r1?.cells[3])).toEqual([
 			{ name: "leaf & co", binary: "/a/ShopApp.app/ShopApp" },
 			{ name: "other", binary: "/System/Library/UIKitCore" },
 		]);
-		expect(cellFrames(r2?.cells[3])).toEqual([]);
+		expect(xmlRowParser.cellFrames(r2?.cells[3])).toEqual([]);
 		expect(r2?.cells[3]?.tag).toBe("sentinel");
 	});
 
 	test("chunk boundaries anywhere give the same rows", () => {
-		const whole = parseRows(XML).map((r) => r.cells.map(cellText));
+		const whole = xmlRowParser.parseRows(XML).map((r) => r.cells.map(xmlRowParser.cellText.bind(xmlRowParser)));
 		for (const size of [1, 7, 64]) {
 			const rows: string[][] = [];
-			const p = createRowParser({
+			const p = xmlRowParser.createRowParser({
 				onSchema: () => undefined,
-				onRow: (cells) => rows.push(cells.map(cellText)),
+				onRow: (cells) => rows.push(cells.map(xmlRowParser.cellText.bind(xmlRowParser))),
 			});
 			for (let i = 0; i < XML.length; i += size) p.feed(XML.slice(i, i + size));
 			p.end();
@@ -51,7 +51,7 @@ describe("parseRows", () => {
 	test("several tables in one export keep their own columns", () => {
 		const xml = `<node><schema name="a"><col><mnemonic>x</mnemonic></col></schema><row><v fmt="1">1</v></row></node>
 <node><schema name="b"><col><mnemonic>y</mnemonic></col><col><mnemonic>z</mnemonic></col></schema><row><v fmt="2">2</v><v fmt="3">3</v></row></node>`;
-		const rows = parseRows(xml);
+		const rows = xmlRowParser.parseRows(xml);
 		expect(rows.map((r) => [r.schema, r.columns])).toEqual([
 			["a", ["x"]],
 			["b", ["y", "z"]],

@@ -1,8 +1,8 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { durationParser } from "@delacour/warden-config/duration";
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
+import { perfDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
-import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
+import { DEV_BUILD_BANNER, markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import { defaultJsDeps, type JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { displayPath } from "@delacour/warden-sdk/ops/perf/paths";
 import {
@@ -28,7 +28,7 @@ const DEFAULT_DURATION_MS = 10_000;
 
 function planDuration(opts: PerfReactOptions): Result<number, UiError> {
 	if (opts.duration === undefined) return resultFactory.ok(DEFAULT_DURATION_MS);
-	const duration = parseDuration(opts.duration);
+	const duration = perfDuration.parseDuration(opts.duration);
 	if (duration === undefined) {
 		return {
 			success: false,
@@ -55,7 +55,7 @@ function stoppedSuccess(
 			: []),
 		`full report: ${displayPath(ctx, result.findingsPath)}`,
 	];
-	const text = renderMarkdown(
+	const text = markdownRenderer.renderMarkdown(
 		{
 			title: "React renders",
 			banners: [SIMULATOR_BANNER, ...(analysis.dev === true ? [DEV_BUILD_BANNER] : [])],

@@ -1,9 +1,9 @@
 import { durationParser } from "@delacour/warden-config/duration";
 import { DEFAULT_SAMPLING_INTERVAL_US } from "@delacour/warden-perf/js/cpu-profile";
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
+import { perfDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
-import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
+import { DEV_BUILD_BANNER, markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -28,7 +28,7 @@ const DEFAULT_DURATION_MS = 10_000;
 export type JsPlan = { durationMs: number; samplingIntervalUs: number };
 
 export function planJs(opts: JsParams): Result<JsPlan, WardenError> {
-	const duration = opts.duration === undefined ? DEFAULT_DURATION_MS : parseDuration(opts.duration);
+	const duration = opts.duration === undefined ? DEFAULT_DURATION_MS : perfDuration.parseDuration(opts.duration);
 	if (duration === undefined || duration < 1) {
 		return {
 			success: false,
@@ -79,7 +79,7 @@ export function jsSuccess(
 		`warden perf js --duration ${durationParser.format(durationMs * 3)}`,
 		"warden perf mark <label>   (then compare hotspots across runs)",
 	];
-	const text = renderMarkdown(
+	const text = markdownRenderer.renderMarkdown(
 		{
 			title: "JS CPU profile",
 			banners: [SIMULATOR_BANNER, ...(h.dev === true ? [DEV_BUILD_BANNER] : [])],

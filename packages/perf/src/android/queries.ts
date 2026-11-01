@@ -18,8 +18,12 @@ export const QUERIES = {
 
 export type QueryName = keyof typeof QUERIES;
 
-/** The query with `{{PACKAGE}}` filled in; undefined for a package that is not a plain Android package name (it lands in SQL). */
-export function renderQuery(name: QueryName, packageName: string): string | undefined {
-	if (!PACKAGE_NAME.test(packageName)) return undefined;
-	return QUERIES[name].replaceAll("{{PACKAGE}}", packageName);
+export class TraceQueryRenderer {
+	/** The query with `{{PACKAGE}}` filled in; undefined for a package that is not a plain Android package name (it lands in SQL). */
+	render(name: QueryName, packageName: string): string | undefined {
+		if (!PACKAGE_NAME.test(packageName)) return undefined;
+		return QUERIES[name].replaceAll("{{PACKAGE}}", packageName);
+	}
 }
+
+export const traceQueryRenderer = new TraceQueryRenderer();

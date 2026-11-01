@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { type Anchor, analyzeFrames, type FramesReport, jankFinding } from "@delacour/warden-perf/frames/analyze";
-import { type GfxInfo, parseGfxinfo } from "@delacour/warden-perf/frames/gfxinfo";
+import { type Anchor, type FramesReport, framesAnalyzer } from "@delacour/warden-perf/frames/analyze";
+import { type GfxInfo, gfxinfoParser } from "@delacour/warden-perf/frames/gfxinfo";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
@@ -30,7 +30,7 @@ const adb = (ctx: PerfEnv, serial: string, ...args: string[]): string[] => [
 /** `dumpsys gfxinfo <pkg> framestats`, parsed; undefined when the call fails or the app has no render stats. */
 async function readGfxinfo(ctx: PerfEnv, serial: string, pkg: string): Promise<GfxInfo | undefined> {
 	const res = await ctx.exec(adb(ctx, serial, "dumpsys", "gfxinfo", pkg, "framestats"), { timeoutMs: 15_000 });
-	return res.exitCode === 0 ? parseGfxinfo(res.stdout) : undefined;
+	return res.exitCode === 0 ? gfxinfoParser.parseGfxinfo(res.stdout) : undefined;
 }
 
 /**
@@ -44,7 +44,7 @@ export async function androidFrameRate(
 ): Promise<{ fps: number; jankPct: number } | undefined> {
 	const info = await readGfxinfo(ctx, serial, pkg);
 	if (info === undefined || info.frames.length === 0) return undefined;
-	const report = analyzeFrames(info);
+	const report = framesAnalyzer.analyzeFrames(info);
 	return { fps: report.fps, jankPct: report.sampleJankPct };
 }
 
@@ -64,11 +64,11 @@ export async function captureSessionFrames(
 ): Promise<Result<Extract<FramesResult, { status: "ok" }>, WardenError>> {
 	const gfx = await readGfxinfo(ctx, udid, app);
 	if (gfx === undefined) return noStats(app);
-	const report = analyzeFrames(gfx, {
+	const report = framesAnalyzer.analyzeFrames(gfx, {
 		readAtSessionMs: ctx.now() - session.startedAt.wallMs,
 		marks: session.marks,
 	});
-	const finding = jankFinding(report);
+	const finding = framesAnalyzer.jankFinding(report);
 	const result: Extract<FramesResult, { status: "ok" }> = {
 		status: "ok",
 		app,
@@ -142,8 +142,8 @@ async function androidFrames(
 	const gfx = await readGfxinfo(ctx, target.udid, app);
 	if (gfx === undefined) return noStats(app);
 	const { anchor, sessionId } = anchorFor(ctx, deps, target.udid);
-	const report = analyzeFrames(gfx, anchor);
-	const finding = jankFinding(report);
+	const report = framesAnalyzer.analyzeFrames(gfx, anchor);
+	const finding = framesAnalyzer.jankFinding(report);
 	const result: Extract<FramesResult, { status: "ok" }> = {
 		status: "ok",
 		app,

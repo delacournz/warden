@@ -1,6 +1,6 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
-import { renderReportMarkdown } from "@delacour/warden-perf/shared/report";
+import { reportBuilder } from "@delacour/warden-perf/shared/report";
 import { sessionDir } from "@delacour/warden-sdk/ops/perf/paths";
 import { readSessionReport, writeSessionReport } from "@delacour/warden-sdk/ops/perf/report-read";
 import { reportError, reportOk, uiError } from "../agent-ui/output";
@@ -39,7 +39,7 @@ export async function perfReport(
 			opts.rebuild === true
 				? writeSessionReport(ctx, session)
 				: (readSessionReport(ctx, session.id) ?? writeSessionReport(ctx, session));
-		const text = renderReportMarkdown(report, opts.full === true ? {} : { maxLines: MAX_TEXT_LINES });
+		const text = reportBuilder.renderReportMarkdown(report, opts.full === true ? {} : { maxLines: MAX_TEXT_LINES });
 		return reportOk(ctx, meta, {
 			device: { udid: report.device.udid, platform: report.device.platform, name: report.device.name },
 			result: { sessionId: session.id, dir: sessionDir(ctx, session.id), report },

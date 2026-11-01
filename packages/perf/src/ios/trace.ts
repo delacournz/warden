@@ -1,15 +1,7 @@
-import {
-	buildReport,
-	createAccumulator,
-	hangFromRow,
-	hangWindows,
-	leakFromRow,
-	type NativeReport,
-	sampleFromRow,
-} from "./analyze";
-import { HANG_SCHEMAS, LEAK_SCHEMAS, parseToc, pickSchema, SAMPLE_SCHEMAS, type TraceRun } from "./export";
-import { exportTableArgv, exportTocArgv } from "./xctrace-argv";
-import { createRowParser, type XmlNode } from "./xml-rows";
+import { iosAnalyzer, type NativeReport } from "./analyze";
+import { HANG_SCHEMAS, iosTraceExport, LEAK_SCHEMAS, SAMPLE_SCHEMAS, type TraceRun } from "./export";
+import { xctraceArgv } from "./xctrace-argv";
+import { type XmlNode, xmlRowParser } from "./xml-rows";
 
 export type TraceError = { code: "export_failed" | "no_samples" | "empty_trace"; message: string; hint?: string };
 
@@ -33,116 +25,132 @@ export type AnalyzeOptions = {
 	run?: number;
 };
 
-const fail = (code: TraceError["code"], message: string, hint?: string): TraceResult<never> => ({
-	success: false,
-	error: { code, message, ...(hint === undefined ? {} : { hint }) },
-});
-
-/** Export one table to `workDir` and stream it through `onRow`; the file is removed afterwards. */
-async function streamTable(
-	deps: TraceDeps,
-	trace: string,
-	schema: string,
-	run: number,
-	workDir: string,
-	onRow: (cells: Parameters<Parameters<typeof createRowParser>[0]["onRow"]>[0], columns: string[]) => void
-): Promise<TraceError | undefined> {
-	const file = `${workDir}/${schema}.xml`;
-	const res = await deps.run(exportTableArgv(trace, schema, file, run));
-	if (res.exitCode !== 0) {
-		return {
-			code: "export_failed",
-			message: `xctrace export ${schema} failed: ${(res.stderr || res.stdout).trim().slice(0, 300)}`,
-		};
-	}
-	const parser = createRowParser({
-		onSchema: () => undefined,
-		onRow: (cells, _schema, columns) => onRow(cells, columns),
-	});
-	try {
-		for await (const chunk of deps.readChunks(file)) parser.feed(chunk);
-		parser.end();
-	} finally {
-		deps.remove(file);
-	}
-	return undefined;
-}
-
 type TableContext = { deps: TraceDeps; trace: string; run: number; workDir: string; warnings: string[] };
 
-/** Stream one optional table and keep every row `toItem` accepts; an export failure becomes a warning. */
-async function collectRows<T>(
-	ctx: TableContext,
-	schema: string | undefined,
-	toItem: (cells: readonly XmlNode[], columns: readonly string[]) => T | undefined
-): Promise<T[]> {
-	const items: T[] = [];
-	if (schema === undefined) return items;
-	const e = await streamTable(ctx.deps, ctx.trace, schema, ctx.run, ctx.workDir, (cells, columns) => {
-		const item = toItem(cells, columns);
-		if (item !== undefined) items.push(item);
-	});
-	if (e !== undefined) ctx.warnings.push(e.message);
-	return items;
-}
+export class IosTraceAnalyzer {
+	private fail(code: TraceError["code"], message: string, hint?: string): TraceResult<never> {
+		return {
+			success: false,
+			error: { code, message, ...(hint === undefined ? {} : { hint }) },
+		};
+	}
 
-/**
- * Read a recorded `.trace`: `--toc` to find the tables, then hangs, leaks and the CPU samples streamed one table at a
- * time. Hangs go first so the sample pass can collect each hang's main-thread stacks without keeping any sample.
- */
-export async function analyzeTrace(
-	deps: TraceDeps,
-	trace: string,
-	opts: AnalyzeOptions
-): Promise<TraceResult<NativeReport>> {
-	const toc = await deps.run(exportTocArgv(trace));
-	if (toc.exitCode !== 0) {
-		return fail(
-			"export_failed",
-			`xctrace export --toc failed: ${(toc.stderr || toc.stdout).trim().slice(0, 300)}`,
-			"is the recording finished? xcrun xctrace export needs a complete .trace"
-		);
+	/** Export one table to `workDir` and stream it through `onRow`; the file is removed afterwards. */
+	private async streamTable(
+		deps: TraceDeps,
+		trace: string,
+		schema: string,
+		run: number,
+		workDir: string,
+		onRow: (
+			cells: Parameters<Parameters<typeof xmlRowParser.createRowParser>[0]["onRow"]>[0],
+			columns: string[]
+		) => void
+	): Promise<TraceError | undefined> {
+		const file = `${workDir}/${schema}.xml`;
+		const res = await deps.run(xctraceArgv.exportTableArgv(trace, schema, file, run));
+		if (res.exitCode !== 0) {
+			return {
+				code: "export_failed",
+				message: `xctrace export ${schema} failed: ${(res.stderr || res.stdout).trim().slice(0, 300)}`,
+			};
+		}
+		const parser = xmlRowParser.createRowParser({
+			onSchema: () => undefined,
+			onRow: (cells, _schema, columns) => onRow(cells, columns),
+		});
+		try {
+			for await (const chunk of deps.readChunks(file)) parser.feed(chunk);
+			parser.end();
+		} finally {
+			deps.remove(file);
+		}
+		return undefined;
 	}
-	const runs = parseToc(toc.stdout);
-	const run: TraceRun | undefined = runs.find((r) => r.number === (opts.run ?? 1)) ?? runs[0];
-	if (run === undefined) return fail("empty_trace", "the trace has no runs");
-	const warnings: string[] = [];
-	const table = { deps, trace, run: run.number, workDir: opts.workDir, warnings };
-	const hangs = await collectRows(table, pickSchema(run, HANG_SCHEMAS, "hang"), hangFromRow);
-	const leaks = await collectRows(table, pickSchema(run, LEAK_SCHEMAS, "leak"), leakFromRow);
 
-	const sampleSchema = pickSchema(run, SAMPLE_SCHEMAS);
-	if (sampleSchema === undefined) {
-		return fail(
-			"no_samples",
-			`the trace has no CPU samples (tables: ${run.schemas.join(", ") || "none"})`,
-			"record with the Time Profiler template"
-		);
+	/** Stream one optional table and keep every row `toItem` accepts; an export failure becomes a warning. */
+	private async collectRows<T>(
+		ctx: TableContext,
+		schema: string | undefined,
+		toItem: (cells: readonly XmlNode[], columns: readonly string[]) => T | undefined
+	): Promise<T[]> {
+		const items: T[] = [];
+		if (schema === undefined) return items;
+		const e = await this.streamTable(ctx.deps, ctx.trace, schema, ctx.run, ctx.workDir, (cells, columns) => {
+			const item = toItem(cells, columns);
+			if (item !== undefined) items.push(item);
+		});
+		if (e !== undefined) ctx.warnings.push(e.message);
+		return items;
 	}
-	const acc = createAccumulator({ ...(opts.pid === undefined ? {} : { pid: opts.pid }), windows: hangWindows(hangs) });
-	const e = await streamTable(deps, trace, sampleSchema, run.number, opts.workDir, (cells, columns) => {
-		const s = sampleFromRow(cells, columns);
-		if (s !== undefined) acc.add(s);
-	});
-	if (e !== undefined) return { success: false, error: e };
-	const stats = acc.stats();
-	if (stats.sampleCount === 0) {
-		return fail(
-			"no_samples",
-			opts.pid === undefined ? "the trace holds no CPU samples" : `no CPU samples for pid ${opts.pid} in the trace`,
-			"is the app running and busy while recording? attach to the right pid, or use --duration longer"
+
+	/**
+	 * Read a recorded `.trace`: `--toc` to find the tables, then hangs, leaks and the CPU samples streamed one table at a
+	 * time. Hangs go first so the sample pass can collect each hang's main-thread stacks without keeping any sample.
+	 */
+	async analyzeTrace(deps: TraceDeps, trace: string, opts: AnalyzeOptions): Promise<TraceResult<NativeReport>> {
+		const toc = await deps.run(xctraceArgv.exportTocArgv(trace));
+		if (toc.exitCode !== 0) {
+			return this.fail(
+				"export_failed",
+				`xctrace export --toc failed: ${(toc.stderr || toc.stdout).trim().slice(0, 300)}`,
+				"is the recording finished? xcrun xctrace export needs a complete .trace"
+			);
+		}
+		const runs = iosTraceExport.parseToc(toc.stdout);
+		const run: TraceRun | undefined = runs.find((r) => r.number === (opts.run ?? 1)) ?? runs[0];
+		if (run === undefined) return this.fail("empty_trace", "the trace has no runs");
+		const warnings: string[] = [];
+		const table = { deps, trace, run: run.number, workDir: opts.workDir, warnings };
+		const hangs = await this.collectRows(
+			table,
+			iosTraceExport.pickSchema(run, HANG_SCHEMAS, "hang"),
+			iosAnalyzer.hangFromRow.bind(iosAnalyzer)
 		);
-	}
-	return {
-		success: true,
-		data: buildReport({
-			stats,
-			hangs,
-			leaks,
+		const leaks = await this.collectRows(
+			table,
+			iosTraceExport.pickSchema(run, LEAK_SCHEMAS, "leak"),
+			iosAnalyzer.leakFromRow.bind(iosAnalyzer)
+		);
+
+		const sampleSchema = iosTraceExport.pickSchema(run, SAMPLE_SCHEMAS);
+		if (sampleSchema === undefined) {
+			return this.fail(
+				"no_samples",
+				`the trace has no CPU samples (tables: ${run.schemas.join(", ") || "none"})`,
+				"record with the Time Profiler template"
+			);
+		}
+		const acc = iosAnalyzer.createAccumulator({
 			...(opts.pid === undefined ? {} : { pid: opts.pid }),
-			...(run.durationMs === undefined ? {} : { traceDurationMs: run.durationMs }),
-			...(opts.traceStartWallMs === undefined ? {} : { traceStartWallMs: opts.traceStartWallMs }),
-			warnings,
-		}),
-	};
+			windows: iosAnalyzer.hangWindows(hangs),
+		});
+		const e = await this.streamTable(deps, trace, sampleSchema, run.number, opts.workDir, (cells, columns) => {
+			const s = iosAnalyzer.sampleFromRow(cells, columns);
+			if (s !== undefined) acc.add(s);
+		});
+		if (e !== undefined) return { success: false, error: e };
+		const stats = acc.stats();
+		if (stats.sampleCount === 0) {
+			return this.fail(
+				"no_samples",
+				opts.pid === undefined ? "the trace holds no CPU samples" : `no CPU samples for pid ${opts.pid} in the trace`,
+				"is the app running and busy while recording? attach to the right pid, or use --duration longer"
+			);
+		}
+		return {
+			success: true,
+			data: iosAnalyzer.buildReport({
+				stats,
+				hangs,
+				leaks,
+				...(opts.pid === undefined ? {} : { pid: opts.pid }),
+				...(run.durationMs === undefined ? {} : { traceDurationMs: run.durationMs }),
+				...(opts.traceStartWallMs === undefined ? {} : { traceStartWallMs: opts.traceStartWallMs }),
+				warnings,
+			}),
+		};
+	}
 }
+
+export const iosTraceAnalyzer = new IosTraceAnalyzer();

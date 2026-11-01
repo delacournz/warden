@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { type Hotspots, hotspotFindings, hotspotsSection } from "@delacour/warden-perf/js/hotspots";
+import { type Hotspots, hotspotsAnalyzer } from "@delacour/warden-perf/js/hotspots";
 import { connectJsApp, type JsParams, type JsPlan, jsSuccess, jsWork, planJs } from "@delacour/warden-sdk/ops/perf/js";
 import {
 	defaultJsDeps,
@@ -84,8 +84,8 @@ async function brokeredProfile(
 			cpuPath: stopped.data.path,
 			hotspotsPath: summary.hotspotsPath,
 			hotspots,
-			findings: hotspotFindings(hotspots),
-			section: hotspotsSection(hotspots),
+			findings: hotspotsAnalyzer.hotspotFindings(hotspots),
+			section: hotspotsAnalyzer.hotspotsSection(hotspots),
 		};
 		const app = await resolveApp(ctx, { platform: target.platform, id: udid }, opts.app);
 		return resultFactory.ok(jsSuccess(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs));

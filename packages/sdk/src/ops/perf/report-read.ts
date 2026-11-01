@@ -1,13 +1,12 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Hotspots } from "@delacour/warden-perf/js/hotspots";
-import { decodeSamples, summarize } from "@delacour/warden-perf/metrics/series";
+import { sampleSeries } from "@delacour/warden-perf/metrics/series";
 import type { ReactAnalysis } from "@delacour/warden-perf/react/analyze";
 import { type CommitsFile, commitsFileSchema } from "@delacour/warden-perf/react/react.types";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { ReportSection } from "@delacour/warden-perf/shared/render-md";
 import {
-	buildReport,
 	type CommitBrief,
 	type CrashesInput,
 	type FramesInput,
@@ -15,9 +14,8 @@ import {
 	type NativeInput,
 	type PerfReportJson,
 	type ReportInput,
-	renderReportMarkdown,
+	reportBuilder,
 	type StartupInput,
-	summarizeLogs,
 } from "@delacour/warden-perf/shared/report";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { writeFileAtomic } from "./device-state";
@@ -258,8 +256,8 @@ function readCrashes(dir: string): CrashesInput | undefined {
 /** Everything the merger needs, read from the session directory. Capturers that left nothing are simply absent. */
 export function loadReportInput(ctx: Pick<PerfEnv, "env" | "now">, session: PerfSession): ReportInput {
 	const dir = sessionDir(ctx, session.id);
-	const samples = decodeSamples(readText(join(dir, "metrics", "samples.jsonl")) ?? "");
-	const metrics = summarize(samples);
+	const samples = sampleSeries.decodeSamples(readText(join(dir, "metrics", "samples.jsonl")) ?? "");
+	const metrics = sampleSeries.summarize(samples);
 	const logText = readText(join(dir, "logs", "device.log"));
 	const startup = readStartup(dir);
 	const frames = readFrames(dir);
@@ -276,17 +274,17 @@ export function loadReportInput(ctx: Pick<PerfEnv, "env" | "now">, session: Perf
 		...(js === undefined ? {} : { js }),
 		...(react === undefined ? {} : { react }),
 		...(native === undefined ? {} : { native }),
-		...(logText === undefined ? {} : { logs: summarizeLogs(logText) }),
+		...(logText === undefined ? {} : { logs: reportBuilder.summarizeLogs(logText) }),
 		...(crashes === undefined ? {} : { crashes }),
 	};
 }
 
 /** Merge the session's files into `report.json` + `report.md` (full markdown) in its directory. */
 export function writeSessionReport(ctx: Pick<PerfEnv, "env" | "now">, session: PerfSession): PerfReportJson {
-	const report = buildReport(loadReportInput(ctx, session));
+	const report = reportBuilder.buildReport(loadReportInput(ctx, session));
 	const dir = sessionDir(ctx, session.id);
 	writeFileAtomic(join(dir, REPORT_JSON), `${JSON.stringify(report, null, 2)}\n`);
-	writeFileAtomic(join(dir, REPORT_MD), `${renderReportMarkdown(report)}\n`);
+	writeFileAtomic(join(dir, REPORT_MD), `${reportBuilder.renderReportMarkdown(report)}\n`);
 	return report;
 }
 

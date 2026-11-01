@@ -3,17 +3,8 @@ import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { type CpuProfile, cpuProfileSchema } from "@delacour/warden-perf/js/cpu-profile";
 import type { Hotspots } from "@delacour/warden-perf/js/hotspots";
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
-import {
-	commitsByComponent,
-	commitsByIndex,
-	commitsByWindow,
-	commitsCascade,
-	cpuTree,
-	cpuWindow,
-	jsCallers,
-	type NamedFrame,
-} from "@delacour/warden-perf/shared/query";
+import { perfDuration } from "@delacour/warden-perf/metrics/duration";
+import { type NamedFrame, sessionQuery } from "@delacour/warden-perf/shared/query";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
 import { defaultNativeProfilers, type NativeProfilers } from "@delacour/warden-sdk/ops/perf/native";
 import { sessionNativeDir } from "@delacour/warden-sdk/ops/perf/native-state";
@@ -69,7 +60,7 @@ const ZERO = /^0+(?:\.0+)?(?:ms|s|m)?$/;
 export function parseWindow(raw: string): { fromMs: number; toMs: number } | undefined {
 	const parts = raw.split("-");
 	if (parts.length !== 2) return undefined;
-	const [a, b] = parts.map((p) => (ZERO.test(p.trim()) ? 0 : parseDuration(p)));
+	const [a, b] = parts.map((p) => (ZERO.test(p.trim()) ? 0 : perfDuration.parseDuration(p)));
 	return a === undefined || b === undefined || b <= a ? undefined : { fromMs: a, toMs: b };
 }
 
@@ -132,7 +123,7 @@ type CommitsQuery = {
 
 /** `commits --by component`: renders per component. */
 function commitsComponentAnswer({ commits, limit }: CommitsQuery): Result<Answer, UiError> {
-	const rows = commitsByComponent(commits, limit);
+	const rows = sessionQuery.commitsByComponent(commits, limit);
 	return resultFactory.ok({
 		result: { by: "component", rows },
 		lines: rows.map(
@@ -144,10 +135,10 @@ function commitsComponentAnswer({ commits, limit }: CommitsQuery): Result<Answer
 
 /** `commits --by window`: commits bucketed by `--size` (default 1s). */
 function commitsWindowAnswer({ commits, opts, limit }: CommitsQuery): Result<Answer, UiError> {
-	const size = opts.size === undefined ? 1000 : parseDuration(opts.size);
+	const size = opts.size === undefined ? 1000 : perfDuration.parseDuration(opts.size);
 	if (size === undefined)
 		return { success: false, error: uiError("usage", `--size must be a duration, got "${opts.size}"`) };
-	const rows = commitsByWindow(commits, size, limit);
+	const rows = sessionQuery.commitsByWindow(commits, size, limit);
 	return resultFactory.ok({
 		result: { by: "window", windowMs: size, rows },
 		lines: rows.map(
@@ -163,7 +154,7 @@ function commitsIndexAnswer({ commits, opts, rest, limit }: CommitsQuery): Resul
 	const only = raw === undefined ? undefined : Number(raw);
 	if (only !== undefined && !Number.isInteger(only))
 		return { success: false, error: uiError("usage", `commit index must be an integer, got "${raw}"`) };
-	const rows = commitsByIndex(commits, {
+	const rows = sessionQuery.commitsByIndex(commits, {
 		...(only === undefined ? {} : { only }),
 		...(limit === undefined ? {} : { limit }),
 	});
@@ -179,7 +170,7 @@ function commitsIndexAnswer({ commits, opts, rest, limit }: CommitsQuery): Resul
 
 /** `commits --by cascade`: origins whose commits re-rendered fibers through a parent or context. */
 function commitsCascadeAnswer({ commits, limit }: CommitsQuery): Result<Answer, UiError> {
-	const rows = commitsCascade(commits, limit);
+	const rows = sessionQuery.commitsCascade(commits, limit);
 	return resultFactory.ok({
 		result: { by: "cascade", rows },
 		lines: rows.map(
@@ -211,7 +202,7 @@ type NativeReport = NonNullable<ReturnType<typeof nativeReportOf>>;
 
 /** `cpu --tree`: the JS call tree. */
 function cpuTreeAnswer(profile: CpuProfile, label: NamedFrame): Result<Answer, UiError> {
-	const rows = cpuTree(profile, label);
+	const rows = sessionQuery.cpuTree(profile, label);
 	return resultFactory.ok({
 		result: { mode: "tree", rows },
 		lines: rows.map((r) => `${"  ".repeat(r.depth - 1)}${r.name}  ${r.totalPct}% (${r.totalMs}ms, self ${r.selfMs}ms)`),
@@ -232,7 +223,12 @@ function cpuWindowAnswer(
 		return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${rawWindow}"`) };
 	const anchor = isRecord(hotspots) && isRecord(hotspots.anchor) ? num(hotspots.anchor.hostWallMs) : undefined;
 	if (anchor === undefined) return missing("clock anchor for the JS profile", "re-record with --js");
-	const rows = cpuWindow(profile, label, { ...window, profileStartMs: anchor - session.startedAt.wallMs }, limit);
+	const rows = sessionQuery.cpuWindow(
+		profile,
+		label,
+		{ ...window, profileStartMs: anchor - session.startedAt.wallMs },
+		limit
+	);
 	return resultFactory.ok({
 		result: { mode: "window", window, rows },
 		lines: [
@@ -376,7 +372,7 @@ function callersStackAnswer(
 	const lines: string[] = [];
 	const result: Record<string, unknown> = { sub: "callers", fn };
 	if (profile !== undefined) {
-		const rows = jsCallers(profile, loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous, fn);
+		const rows = sessionQuery.jsCallers(profile, loadCpuCorrelation(join(dir, "js"))?.label ?? anonymous, fn);
 		result.js = rows;
 		lines.push(
 			`JS callers of ${fn}:`,

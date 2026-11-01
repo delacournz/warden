@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { ComponentSource } from "@delacour/warden-perf/react/analyze";
-import { declarationName, findDeclaration } from "@delacour/warden-perf/react/source-grep";
+import { sourceGrep } from "@delacour/warden-perf/react/source-grep";
 
 const SOURCE_EXT = /\.(tsx|jsx|ts|js)$/;
 const SKIP_DIRS = new Set([
@@ -83,7 +83,7 @@ function claimDeclared(
 ) {
 	for (const [name, decl] of todo) {
 		if (!text.includes(decl)) continue;
-		const line = findDeclaration(text, decl);
+		const line = sourceGrep.findDeclaration(text, decl);
 		if (line === undefined) continue;
 		out.set(name, { file: shown(cwd, path), line });
 		todo.delete(name);
@@ -105,7 +105,7 @@ export function resolveSources(
 	const todo = new Map<string, string>();
 	for (const name of names) {
 		const known = device[name];
-		const decl = declarationName(name);
+		const decl = sourceGrep.declarationName(name);
 		if (known !== undefined) out.set(name, { file: shown(cwd, known.file), line: known.line });
 		else if (decl !== undefined) todo.set(name, decl);
 	}

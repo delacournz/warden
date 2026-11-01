@@ -2,17 +2,12 @@ import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFile
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { durationParser } from "@delacour/warden-config/duration";
-import { type AndroidCrash, parseCrashBuffer, parseDropbox } from "@delacour/warden-perf/logs/android-crash";
-import {
-	androidCrashRecord,
-	type CrashRecord,
-	crashFindings,
-	iosCrashRecord,
-} from "@delacour/warden-perf/logs/crash-findings";
-import { appFrameAddresses, formatFrame, type IpsCrash, ipsMatches, parseIps } from "@delacour/warden-perf/logs/ips";
-import { parseDeviceDate } from "@delacour/warden-perf/logs/logcat";
-import { redact } from "@delacour/warden-perf/logs/redact";
-import { atosArgv, parseAtos, parseDwarfdumpUuid } from "@delacour/warden-perf/logs/symbolicate";
+import { type AndroidCrash, androidCrashParser } from "@delacour/warden-perf/logs/android-crash";
+import { type CrashRecord, crashFindings } from "@delacour/warden-perf/logs/crash-findings";
+import { type IpsCrash, ipsParser } from "@delacour/warden-perf/logs/ips";
+import { logcatParser } from "@delacour/warden-perf/logs/logcat";
+import { logRedactor } from "@delacour/warden-perf/logs/redact";
+import { logSymbolicator } from "@delacour/warden-perf/logs/symbolicate";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -54,7 +49,10 @@ export type CrashOut = CrashRecord & {
 type Parsed = { crash: IpsCrash; text: string; file: string; mtimeMs: number };
 
 /** Every `.ips` under `dir` that belongs to the app on this simulator, newest first. */
-function readIpsReports(dir: string, query: Parameters<typeof ipsMatches>[2]): { reports: Parsed[]; note?: string } {
+function readIpsReports(
+	dir: string,
+	query: Parameters<typeof ipsParser.ipsMatches>[2]
+): { reports: Parsed[]; note?: string } {
 	let names: string[];
 	try {
 		names = readdirSync(dir).filter((n) => n.endsWith(".ips"));
@@ -66,8 +64,8 @@ function readIpsReports(dir: string, query: Parameters<typeof ipsMatches>[2]): {
 		const file = join(dir, name);
 		try {
 			const text = readFileSync(file, "utf8");
-			const parsed = parseIps(text);
-			if (parsed.success && ipsMatches(parsed.data, text, query)) {
+			const parsed = ipsParser.parseIps(text);
+			if (parsed.success && ipsParser.ipsMatches(parsed.data, text, query)) {
 				reports.push({ crash: parsed.data, text, file, mtimeMs: statSync(file).mtimeMs });
 			}
 		} catch {
@@ -87,8 +85,8 @@ async function symbolicate(
 	const dump = await ctx.exec(["dwarfdump", "--uuid", dsym], { timeoutMs });
 	if (dump.exitCode !== 0)
 		return { success: false, error: opError("failed", `dwarfdump --uuid ${dsym} failed: ${dump.stderr.trim()}`) };
-	const slices = parseDwarfdumpUuid(dump.stdout);
-	const frames = appFrameAddresses(text);
+	const slices = logSymbolicator.parseDwarfdumpUuid(dump.stdout);
+	const frames = ipsParser.appFrameAddresses(text);
 	const out: string[] = [];
 	const uuids = [...new Set(frames.map((f) => f.uuid.toLowerCase()))];
 	for (const uuid of uuids) {
@@ -98,7 +96,7 @@ async function symbolicate(
 		const first = group[0];
 		if (first === undefined) continue;
 		const res = await ctx.exec(
-			atosArgv(
+			logSymbolicator.atosArgv(
 				slice.path,
 				slice.arch,
 				first.base,
@@ -107,7 +105,7 @@ async function symbolicate(
 			{ timeoutMs }
 		);
 		if (res.exitCode !== 0) continue;
-		out.push(...parseAtos(res.stdout, group.length).flatMap((s) => s ?? []));
+		out.push(...logSymbolicator.parseAtos(res.stdout, group.length).flatMap((s) => s ?? []));
 	}
 	if (out.length === 0) {
 		return {
@@ -122,13 +120,13 @@ async function symbolicate(
 
 function iosOut(r: Parsed): CrashOut {
 	return {
-		...iosCrashRecord(r.crash, basename(r.file)),
+		...crashFindings.iosCrashRecord(r.crash, basename(r.file)),
 		...(r.crash.pid !== undefined ? { pid: r.crash.pid } : {}),
 		...(r.crash.exceptionType !== undefined ? { exceptionType: r.crash.exceptionType } : {}),
 		...(r.crash.signal !== undefined ? { signal: r.crash.signal } : {}),
 		...(r.crash.subtype !== undefined ? { subtype: r.crash.subtype } : {}),
 		...(r.crash.crashedThread !== undefined ? { crashedThread: r.crash.crashedThread } : {}),
-		frames: r.crash.frames.map(formatFrame),
+		frames: r.crash.frames.map(ipsParser.formatFrame.bind(ipsParser)),
 		file: r.file,
 		atMs: r.crash.atMs ?? r.mtimeMs,
 	};
@@ -136,7 +134,7 @@ function iosOut(r: Parsed): CrashOut {
 
 function androidOut(c: AndroidCrash): CrashOut {
 	return {
-		...androidCrashRecord(c),
+		...crashFindings.androidCrashRecord(c),
 		...(c.pid !== undefined ? { pid: c.pid } : {}),
 		...(c.signal !== undefined ? { signal: c.signal } : {}),
 		frames: c.frames,
@@ -174,14 +172,14 @@ async function androidCrashes(
 	const adb = [androidToolsLocator.locate(ctx.env).adb, "-s", serial];
 	const notes = [TOMBSTONE_NOTE];
 	const date = await ctx.exec([...adb, "shell", "date", "+%Y-%m-%d %H:%M:%S"], { timeoutMs: 5_000 });
-	const naiveNow = (date.exitCode === 0 ? parseDeviceDate(date.stdout) : undefined) ?? ctx.now();
+	const naiveNow = (date.exitCode === 0 ? logcatParser.parseDeviceDate(date.stdout) : undefined) ?? ctx.now();
 	const year = new Date(naiveNow).getUTCFullYear();
 	const raw: Array<[string, string]> = [];
 	const found: AndroidCrash[] = [];
 	const buffer = await ctx.exec([...adb, "logcat", "-b", "crash", "-d", "-v", "threadtime"], { timeoutMs });
 	if (buffer.exitCode === 0) {
 		raw.push(["logcat-crash.txt", buffer.stdout]);
-		found.push(...parseCrashBuffer(buffer.stdout, year));
+		found.push(...androidCrashParser.parseCrashBuffer(buffer.stdout, year));
 	} else notes.push("logcat -b crash failed");
 	for (const tag of DROPBOX_TAGS) {
 		const box = await ctx.exec([...adb, "shell", "dumpsys", "dropbox", "--print", tag], { timeoutMs });
@@ -190,7 +188,7 @@ async function androidCrashes(
 			continue;
 		}
 		raw.push([`dropbox-${tag}.txt`, box.stdout]);
-		found.push(...parseDropbox(box.stdout));
+		found.push(...androidCrashParser.parseDropbox(box.stdout));
 	}
 	const cutoff = sinceMs === undefined ? undefined : naiveNow - sinceMs;
 	const mine = found.filter((c) => c.process === app && (cutoff === undefined || c.atMs >= cutoff));
@@ -283,7 +281,7 @@ async function readAndroidCrashList(
 	if (crashDir !== undefined) {
 		try {
 			mkdirSync(crashDir, { recursive: true });
-			for (const [name, text] of found.raw) writeFileSync(join(crashDir, name), redact(text));
+			for (const [name, text] of found.raw) writeFileSync(join(crashDir, name), logRedactor.redact(text));
 		} catch {
 			notes.push("could not write raw crash logs into the session");
 		}
@@ -378,7 +376,7 @@ export async function crashesWork(
 		readOptsFor(params, checked.data, crashDir, timeoutMs),
 		crashDeps
 	);
-	const findings: Finding[] = crashFindings(crashes);
+	const findings: Finding[] = crashFindings.crashFindings(crashes);
 	const text = crashes.length === 0 ? ctx.ui.color.dim(`no crashes for ${app.data.id}`) : renderCrashes(crashes);
 	const warnings = notes.filter((n) => n !== TOMBSTONE_NOTE);
 	return resultFactory.ok({

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { jsOk } from "@delacour/warden-perf/js/js.types";
-import { startReactProfile } from "@delacour/warden-perf/react/profiler";
-import { fakeGlobal, fakeHook, fakeRenderer, runtimeCdp } from "@delacour/warden-perf/react/react.testing";
+import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
+import { reactProfiler } from "@delacour/warden-perf/react/profiler";
+import { reactFixtures } from "@delacour/warden-perf/react/react.testing";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { createSession } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -23,16 +23,16 @@ function setup(globalOver: Record<string, unknown> = {}) {
 	asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
 	const deps = fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => METRO });
-	const renderer = fakeRenderer();
-	const g = fakeGlobal(fakeHook([renderer]), globalOver);
+	const renderer = reactFixtures.fakeRenderer();
+	const g = reactFixtures.fakeGlobal(reactFixtures.fakeHook([renderer]), globalOver);
 	const opened: Array<Parameters<JsDeps["open"]>[0]> = [];
 	const slept: number[] = [];
 	const js: JsDeps = {
 		open: async (o) => {
 			opened.push(o);
-			return resultFactory.ok({ ...runtimeCdp(g), close: () => undefined });
+			return resultFactory.ok({ ...reactFixtures.runtimeCdp(g), close: () => undefined });
 		},
-		fetchMap: async () => jsOk("{}"),
+		fetchMap: async () => jsResultFactory.ok("{}"),
 		sleep: async (ms) => {
 			slept.push(ms);
 		},
@@ -117,7 +117,7 @@ describe("warden perf react", () => {
 
 	test("another agent's live profile: session_active naming the owner; --take-over takes over", async () => {
 		const s = setup();
-		await startReactProfile(runtimeCdp(s.g), { owner: "agent:other" });
+		await reactProfiler.startReactProfile(reactFixtures.runtimeCdp(s.g), { owner: "agent:other" });
 		expect(await perfReact(s.c, s.deps, opts(), s.js)).toBe(1);
 		expect(doc(s).error).toMatchObject({ code: "session_active", details: { owner: "agent:other" } });
 		s.c.stdout.length = 0;
@@ -162,7 +162,7 @@ describe("warden perf react start / stop", () => {
 		expect(await perfReactStop(s.c, s.deps, opts(), s.js)).toBe(1);
 		expect(doc(s).error.message).toContain("no React profile is running");
 		s.c.stdout.length = 0;
-		await startReactProfile(runtimeCdp(s.g), { owner: "agent:other" });
+		await reactProfiler.startReactProfile(reactFixtures.runtimeCdp(s.g), { owner: "agent:other" });
 		expect(await perfReactStart(s.c, s.deps, opts(), s.js)).toBe(1);
 		expect(doc(s).error.code).toBe("session_active");
 	});

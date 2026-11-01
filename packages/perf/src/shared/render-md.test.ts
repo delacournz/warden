@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Finding } from "./findings.types";
-import { DEV_BUILD_BANNER, type Report, renderMarkdown, SIMULATOR_BANNER } from "./render-md";
+import { DEV_BUILD_BANNER, markdownRenderer, type Report, SIMULATOR_BANNER } from "./render-md";
 
 const finding = (over: Partial<Finding> & Pick<Finding, "kind">, costMs: number): Finding =>
 	({
@@ -24,7 +24,7 @@ const report = (over: Partial<Report> = {}): Report => ({
 
 describe("renderMarkdown", () => {
 	test("writes the title, banners, summary and a trailing next: block", () => {
-		const text = renderMarkdown(report({ banners: [SIMULATOR_BANNER] }));
+		const text = markdownRenderer.renderMarkdown(report({ banners: [SIMULATOR_BANNER] }));
 		const lines = text.split("\n");
 		expect(lines[0]).toBe("# warden perf report 20261024-101530-a1b2c3");
 		expect(text).toContain(`> ${SIMULATOR_BANNER}`);
@@ -34,7 +34,7 @@ describe("renderMarkdown", () => {
 	});
 
 	test("ranks findings by severity, then cost", () => {
-		const text = renderMarkdown(
+		const text = markdownRenderer.renderMarkdown(
 			report({
 				findings: [
 					finding({ kind: "hang", atMs: 1, severity: "warn" }, 500),
@@ -49,9 +49,12 @@ describe("renderMarkdown", () => {
 
 	test("caps the body at maxLines but keeps every next: hint", () => {
 		const many = Array.from({ length: 100 }, (_, i) => `line ${i}`);
-		const text = renderMarkdown(report({ sections: [{ title: "Big", lines: many }], next: ["a", "b", "c"] }), {
-			maxLines: 20,
-		});
+		const text = markdownRenderer.renderMarkdown(
+			report({ sections: [{ title: "Big", lines: many }], next: ["a", "b", "c"] }),
+			{
+				maxLines: 20,
+			}
+		);
 		const lines = text.split("\n");
 		expect(lines.length).toBeLessThanOrEqual(20);
 		expect(text).toContain("more lines");
@@ -60,7 +63,7 @@ describe("renderMarkdown", () => {
 
 	test("no cap without maxLines", () => {
 		const many = Array.from({ length: 100 }, (_, i) => `line ${i}`);
-		const text = renderMarkdown(report({ sections: [{ title: "Big", lines: many }] }));
+		const text = markdownRenderer.renderMarkdown(report({ sections: [{ title: "Big", lines: many }] }));
 		expect(text).toContain("line 99");
 	});
 

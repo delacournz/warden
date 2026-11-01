@@ -1,16 +1,16 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type NativeReport, reportFindings, reportSection } from "@delacour/warden-perf/ios/analyze";
-import { checkXctraceInstruments } from "@delacour/warden-perf/ios/instruments";
-import { analyzeTrace, type TraceDeps } from "@delacour/warden-perf/ios/trace";
+import { iosAnalyzer, type NativeReport } from "@delacour/warden-perf/ios/analyze";
+import { instrumentChecker } from "@delacour/warden-perf/ios/instruments";
+import { iosTraceAnalyzer, type TraceDeps } from "@delacour/warden-perf/ios/trace";
 import {
 	HANGS_INSTRUMENT,
 	LEAK_INSTRUMENTS,
 	type RecordTarget,
-	recordArgv,
+	xctraceArgv,
 } from "@delacour/warden-perf/ios/xctrace-argv";
-import { parseXcodeVersion, xctraceDeviceDeadlock } from "@delacour/warden-perf/shared/doctor-parse";
-import { parseSimctlLaunch } from "@delacour/warden-perf/startup/ios-app-launch";
+import { doctorParser } from "@delacour/warden-perf/shared/doctor-parse";
+import { iosAppLaunch } from "@delacour/warden-perf/startup/ios-app-launch";
 import { type PidIdentity, processIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -75,8 +75,8 @@ const failed = (message: string, hint?: string): { success: false; error: Warden
 /** Xcode 26.4+ deadlocks `xctrace record --device`; an unreadable version assumes the plain path. */
 async function deviceDeadlock(ctx: PerfUiEnv): Promise<boolean> {
 	const res = await ctx.exec(["xcodebuild", "-version"], { timeoutMs: 15_000 });
-	const version = res.exitCode === 0 ? parseXcodeVersion(res.stdout) : undefined;
-	return version !== undefined && xctraceDeviceDeadlock(version);
+	const version = res.exitCode === 0 ? doctorParser.parseXcodeVersion(res.stdout) : undefined;
+	return version !== undefined && doctorParser.xctraceDeviceDeadlock(version);
 }
 
 type Chosen = { instruments: string[]; warnings: string[] };
@@ -84,7 +84,10 @@ type Chosen = { instruments: string[]; warnings: string[] };
 /** The instruments to record with, verified against `xctrace list instruments`; a missing Hangs/Leaks is an error naming alternatives. */
 async function chooseInstruments(ctx: PerfUiEnv, leaks: boolean): Promise<Result<Chosen, WardenError>> {
 	const wanted = [HANGS_INSTRUMENT, ...(leaks ? LEAK_INSTRUMENTS : [])];
-	const check = await checkXctraceInstruments((argv) => ctx.exec(argv, { timeoutMs: 20_000 }), wanted);
+	const check = await instrumentChecker.checkXctraceInstruments(
+		(argv) => ctx.exec(argv, { timeoutMs: 20_000 }),
+		wanted
+	);
 	if (check === undefined) {
 		return fail(
 			opError("tool_missing", "xcrun xctrace is unavailable or failed to list instruments", {
@@ -183,7 +186,7 @@ async function launchAfterArming(
 		timeoutMs: 60_000,
 		env: { SIMCTL_CHILD_MallocStackLogging: "1" },
 	});
-	const appPidNow = launched.exitCode === 0 ? parseSimctlLaunch(launched.stdout) : undefined;
+	const appPidNow = launched.exitCode === 0 ? iosAppLaunch.parseSimctlLaunch(launched.stdout) : undefined;
 	if (appPidNow === undefined) {
 		io.kill(recorderPid, "SIGKILL");
 		return failed(`simctl launch ${app} failed: ${(launched.stderr || launched.stdout).trim()}`);
@@ -209,7 +212,7 @@ async function start(
 	if (!prepared.success) return prepared;
 	if (prepared.data.appPid !== undefined) state.appPid = prepared.data.appPid;
 
-	const argv = recordArgv({
+	const argv = xctraceArgv.recordArgv({
 		output: out,
 		instruments: chosen.data.instruments,
 		target: prepared.data.recordTarget,
@@ -272,7 +275,7 @@ export async function analyzeTraceFile(
 	const workDir = join(input.dir, ".export");
 	fs.mkdir(workDir);
 	try {
-		const res = await analyzeTrace(traceDeps(ctx, fs), input.trace, {
+		const res = await iosTraceAnalyzer.analyzeTrace(traceDeps(ctx, fs), input.trace, {
 			workDir,
 			...(input.pid === undefined ? {} : { pid: input.pid }),
 			...(input.traceStartWallMs === undefined ? {} : { traceStartWallMs: input.traceStartWallMs }),
@@ -294,8 +297,8 @@ function toAnalysis(report: NativeReport, input: AnalyzeTraceFile, fs: IosNative
 		`native: ${report.hotspots.length} hotspot${report.hotspots.length === 1 ? "" : "s"}, ${report.hangs.length} hang${report.hangs.length === 1 ? "" : "s"}${worst === undefined ? "" : ` (worst ${worst.durationMs}ms)`}, ${report.leaks.length} leak group${report.leaks.length === 1 ? "" : "s"}`,
 	];
 	return {
-		findings: reportFindings(report, input.trace),
-		section: reportSection(report),
+		findings: iosAnalyzer.reportFindings(report, input.trace),
+		section: iosAnalyzer.reportSection(report),
 		summary,
 		files: { trace: input.trace, analysis: file },
 		report,

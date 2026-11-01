@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeProfile, hotspotFindings, hotspotsSection, packageOf } from "./hotspots";
-import { buildProfile } from "./js.testing";
+import { hotspotsAnalyzer } from "./hotspots";
+import { jsFixtures } from "./js.testing";
 import type { FrameResolver } from "./symbolicate";
 
 const unmapped: FrameResolver = (f) => ({
@@ -37,7 +37,9 @@ const samples: Array<[number, number]> = [
 ];
 
 describe("analyzeProfile", () => {
-	const h = analyzeProfile(buildProfile(nodes, [...samples, [3, 20_000]]), mapped, { top: 5 });
+	const h = hotspotsAnalyzer.analyzeProfile(jsFixtures.buildProfile(nodes, [...samples, [3, 20_000]]), mapped, {
+		top: 5,
+	});
 
 	test("separates idle, native (program) and gc time", () => {
 		expect(h.idleMs).toBe(1020);
@@ -72,7 +74,7 @@ describe("analyzeProfile", () => {
 	});
 
 	test("recursion counts total once per sample", () => {
-		const recursive = buildProfile(
+		const recursive = jsFixtures.buildProfile(
 			[
 				{ id: 1, name: "(root)", children: [2] },
 				{ id: 2, name: "r", line: 3, children: [3] },
@@ -83,18 +85,18 @@ describe("analyzeProfile", () => {
 				[3, 10_000],
 			]
 		);
-		const r = analyzeProfile(recursive, unmapped).topTotal.find((f) => f.name === "r");
+		const r = hotspotsAnalyzer.analyzeProfile(recursive, unmapped).topTotal.find((f) => f.name === "r");
 		expect(r?.totalMs).toBe(20);
 	});
 
 	test("unmapped frames keep the bundle position and are reported", () => {
-		const u = analyzeProfile(buildProfile(nodes, samples), unmapped);
+		const u = hotspotsAnalyzer.analyzeProfile(jsFixtures.buildProfile(nodes, samples), unmapped);
 		expect(u.topSelf[0]?.mapped).toBe(false);
 		expect(u.unmappedPct).toBe(100);
 	});
 
 	test("an empty sample list falls back to hit counts", () => {
-		const profile = buildProfile(
+		const profile = jsFixtures.buildProfile(
 			[
 				{ id: 1, name: "(root)", children: [2] },
 				{ id: 2, name: "x", line: 1 },
@@ -103,15 +105,15 @@ describe("analyzeProfile", () => {
 		);
 		const node = profile.nodes[1];
 		if (node) (node as { hitCount?: number }).hitCount = 50;
-		const f = analyzeProfile(profile, unmapped, { samplingIntervalUs: 1000 });
+		const f = hotspotsAnalyzer.analyzeProfile(profile, unmapped, { samplingIntervalUs: 1000 });
 		expect(f.topSelf[0]).toMatchObject({ name: "x", selfMs: 50 });
 	});
 });
 
 describe("hotspotFindings", () => {
 	test("a dominant function is a js-hotspot finding at its source position", () => {
-		const h = analyzeProfile(buildProfile(nodes, samples), mapped);
-		const findings = hotspotFindings(h);
+		const h = hotspotsAnalyzer.analyzeProfile(jsFixtures.buildProfile(nodes, samples), mapped);
+		const findings = hotspotsAnalyzer.hotspotFindings(h);
 		expect(findings[0]).toMatchObject({
 			kind: "js-hotspot",
 			file: "/p/node_modules/@s/pkg/x.js",
@@ -122,7 +124,7 @@ describe("hotspotFindings", () => {
 	});
 
 	test("small shares make no finding", () => {
-		const small = buildProfile(
+		const small = jsFixtures.buildProfile(
 			[
 				{ id: 1, name: "(root)", children: [2] },
 				{ id: 2, name: "x", line: 1 },
@@ -132,13 +134,15 @@ describe("hotspotFindings", () => {
 				[2, 5_000],
 			]
 		);
-		expect(hotspotFindings(analyzeProfile(small, unmapped))).toEqual([]);
+		expect(hotspotsAnalyzer.hotspotFindings(hotspotsAnalyzer.analyzeProfile(small, unmapped))).toEqual([]);
 	});
 });
 
 describe("hotspotsSection", () => {
 	test("lists top self and total with file:line", () => {
-		const text = hotspotsSection(analyzeProfile(buildProfile(nodes, samples), mapped)).lines.join("\n");
+		const text = hotspotsAnalyzer
+			.hotspotsSection(hotspotsAnalyzer.analyzeProfile(jsFixtures.buildProfile(nodes, samples), mapped))
+			.lines.join("\n");
 		expect(text).toContain("parse  /p/node_modules/@s/pkg/x.js:2");
 		expect(text).toContain("node_modules by self time:");
 		expect(text).toContain("idle");
@@ -147,8 +151,8 @@ describe("hotspotsSection", () => {
 
 describe("packageOf", () => {
 	test("innermost package, scoped or not", () => {
-		expect(packageOf("/p/node_modules/a/node_modules/@s/b/x.js")).toBe("@s/b");
-		expect(packageOf("node_modules/lodash/debounce.js")).toBe("lodash");
-		expect(packageOf("src/app.ts")).toBeUndefined();
+		expect(hotspotsAnalyzer.packageOf("/p/node_modules/a/node_modules/@s/b/x.js")).toBe("@s/b");
+		expect(hotspotsAnalyzer.packageOf("node_modules/lodash/debounce.js")).toBe("lodash");
+		expect(hotspotsAnalyzer.packageOf("src/app.ts")).toBeUndefined();
 	});
 });

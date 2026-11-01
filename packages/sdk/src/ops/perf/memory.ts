@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { type LeaksSummary, parseLeaks, parseVmmap, type VmmapSummary } from "@delacour/warden-perf/metrics/ios-memory";
-import { type Meminfo, parseMeminfo } from "@delacour/warden-perf/metrics/meminfo";
+import { iosMemoryParser, type LeaksSummary, type VmmapSummary } from "@delacour/warden-perf/metrics/ios-memory";
+import { type Meminfo, meminfoParser } from "@delacour/warden-perf/metrics/meminfo";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -49,7 +49,7 @@ async function androidMeminfo({ ctx, target, app }: Ctx): Promise<Result<Meminfo
 			timeoutMs: 15_000,
 		}
 	);
-	const info = res.exitCode === 0 ? parseMeminfo(res.stdout) : undefined;
+	const info = res.exitCode === 0 ? meminfoParser.parseMeminfo(res.stdout) : undefined;
 	return info === undefined ? fail(notRunning(target, app)) : resultFactory.ok(info);
 }
 
@@ -164,7 +164,7 @@ async function iosMemory(c: Ctx, snapshot: boolean, outDir: string): PerfOutcome
 	const pid = await appPid(c.ctx, { platform: "ios", id: c.target.udid }, c.app);
 	if (pid === undefined) return fail(notRunning(c.target, c.app));
 	const vm = await simSpawn(c, ["vmmap", "--summary", String(pid)]);
-	const vmmap: VmmapSummary | undefined = vm.exitCode === 0 ? parseVmmap(vm.stdout) : undefined;
+	const vmmap: VmmapSummary | undefined = vm.exitCode === 0 ? iosMemoryParser.parseVmmap(vm.stdout) : undefined;
 	if (vmmap === undefined) {
 		if (/cannot examine process/i.test(vm.stderr)) {
 			return fail(
@@ -189,7 +189,7 @@ async function iosMemory(c: Ctx, snapshot: boolean, outDir: string): PerfOutcome
 	mkdirSync(join(outDir, "native"), { recursive: true });
 	const leaksRun = await simSpawn(c, ["leaks", `--outputGraph=${graph}`, String(pid)]);
 	// `leaks` exits 1 when it found leaks; anything else without a summary is a failure
-	const leaks = leaksRun.exitCode <= 1 ? parseLeaks(leaksRun.stdout) : undefined;
+	const leaks = leaksRun.exitCode <= 1 ? iosMemoryParser.parseLeaks(leaksRun.stdout) : undefined;
 	if (leaks === undefined) {
 		return fail(
 			opError(

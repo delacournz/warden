@@ -1,29 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { buildProfile } from "../js/js.testing";
+import { jsFixtures } from "../js/js.testing";
 import type { Finding } from "../shared/findings.types";
-import { analyzeReact, reactSection } from "./analyze";
-import { indexProfile } from "./pipeline/cpu-correlate";
-import { hotCommits, tierOf } from "./pipeline/hot-commits";
-import { rankComponents } from "./pipeline/rank";
-import { reduceComponents } from "./pipeline/reduce";
-import { tagComponents } from "./pipeline/tag";
-import { loadCommitsFixture } from "./react.testing";
+import { reactAnalyzer } from "./analyze";
+import { cpuCorrelator } from "./pipeline/cpu-correlate";
+import { hotCommits } from "./pipeline/hot-commits";
+import { componentRanker } from "./pipeline/rank";
+import { componentReducer } from "./pipeline/reduce";
+import { componentTagger } from "./pipeline/tag";
+import { reactFixtures } from "./react.testing";
 
-const file = loadCommitsFixture();
-const analysis = analyzeReact(file, { sessionId: "20261024-100000-abc123" });
+const file = reactFixtures.loadCommitsFixture();
+const analysis = reactAnalyzer.analyzeReact(file, { sessionId: "20261024-100000-abc123" });
 const of = <K extends Finding["kind"]>(kind: K) =>
 	analysis.findings.filter((f): f is Extract<Finding, { kind: K }> => f.kind === kind);
 
 describe("hot commits", () => {
 	test("absolute floor: under 16ms ok, 16-50 warm, over 50 hot", () => {
-		expect(tierOf(15.9)).toBe("ok");
-		expect(tierOf(16)).toBe("warm");
-		expect(tierOf(50)).toBe("warm");
-		expect(tierOf(50.1)).toBe("hot");
+		expect(hotCommits.tierOf(15.9)).toBe("ok");
+		expect(hotCommits.tierOf(16)).toBe("warm");
+		expect(hotCommits.tierOf(50)).toBe("warm");
+		expect(hotCommits.tierOf(50.1)).toBe("hot");
 	});
 
 	test("lists warm and hot commits slowest first with cbrt heat", () => {
-		const hot = hotCommits(file.commits);
+		const hot = hotCommits.hotCommits(file.commits);
 		expect(hot[0]).toMatchObject({ index: 0, durationMs: 140, tier: "hot", heat: 1 });
 		const warm = hot.find((h) => h.durationMs === 38);
 		expect(warm?.heat).toBeCloseTo(Math.cbrt(38 / 140), 5);
@@ -34,7 +34,7 @@ describe("hot commits", () => {
 });
 
 describe("reduce / tag / rank", () => {
-	const stats = tagComponents(reduceComponents(file.commits));
+	const stats = componentTagger.tagComponents(componentReducer.reduceComponents(file.commits));
 	const by = (name: string) => stats.find((s) => s.name === name);
 
 	test("per component n, sum, max, mean of self time and causes", () => {
@@ -54,7 +54,7 @@ describe("reduce / tag / rank", () => {
 	});
 
 	test("ranks renders >= 3 or max >= 30ms, costliest first", () => {
-		const ranked = rankComponents(stats).map((s) => s.name);
+		const ranked = componentRanker.rankComponents(stats).map((s) => s.name);
 		expect(ranked).toContain("ExpensiveSort");
 		expect(ranked).not.toContain("App");
 		expect(ranked.indexOf("ExpensiveSort")).toBeLessThan(ranked.indexOf("Avatar"));
@@ -128,7 +128,7 @@ describe("findings", () => {
 	});
 
 	test("locate adds file:line to the evidence", () => {
-		const located = analyzeReact(file, {
+		const located = reactAnalyzer.analyzeReact(file, {
 			locate: (n) => (n === "ExpensiveSort" ? { file: "src/ExpensiveSort.tsx", line: 14 } : undefined),
 		});
 		const f = located.findings.find((x) => x.kind === "slow-render" && x.component === "ExpensiveSort");
@@ -142,11 +142,11 @@ describe("findings", () => {
 	test("a compiled component is not blamed for cascades", () => {
 		const compiled = structuredClone(file);
 		for (const c of compiled.commits) for (const f of c.fibers) if (f.name === "Avatar") f.compiler = true;
-		expect(analyzeReact(compiled).findings.some((f) => f.kind === "parent-cascade")).toBe(false);
+		expect(reactAnalyzer.analyzeReact(compiled).findings.some((f) => f.kind === "parent-cascade")).toBe(false);
 	});
 
 	test("an empty recording has no findings", () => {
-		const empty = analyzeReact({ ...file, commits: [] });
+		const empty = reactAnalyzer.analyzeReact({ ...file, commits: [] });
 		expect(empty.findings).toEqual([]);
 		expect(empty.totals.commits).toBe(0);
 	});
@@ -154,13 +154,13 @@ describe("findings", () => {
 
 describe("cpu correlation", () => {
 	test("lists the top self-time functions inside each hot commit's window", () => {
-		const hot0 = hotCommits(file.commits)[0];
+		const hot0 = hotCommits.hotCommits(file.commits)[0];
 		if (hot0 === undefined) throw new Error("no hot commit");
 		// 1ms samples: 60 in `layout` then 40 in `sortRows`, all inside commit #0's 140ms window
 		const samples: Array<[number, number]> = [[1, 0]];
 		for (let i = 0; i < 60; i++) samples.push([2, 1000]);
 		for (let i = 0; i < 40; i++) samples.push([3, 1000]);
-		const profile = buildProfile(
+		const profile = jsFixtures.buildProfile(
 			[
 				{ id: 1, name: "(root)", children: [2, 3] },
 				{ id: 2, name: "layout", url: "bundle", line: 4 },
@@ -168,8 +168,8 @@ describe("cpu correlation", () => {
 			],
 			samples
 		);
-		const index = indexProfile(profile, hot0.wallMs);
-		const withCpu = analyzeReact(file, {
+		const index = cpuCorrelator.indexProfile(profile, hot0.wallMs);
+		const withCpu = reactAnalyzer.analyzeReact(file, {
 			cpu: { index, label: (f) => ({ name: f.functionName, file: "src/list.ts", line: f.lineNumber ?? 0 }) },
 		});
 		const first = withCpu.hotCommits.find((h) => h.index === 0);
@@ -181,11 +181,11 @@ describe("cpu correlation", () => {
 
 describe("section", () => {
 	test("summary, the top 10 hot commits inline, components with timings", () => {
-		const lines = reactSection(analysis).lines;
+		const lines = reactAnalyzer.reactSection(analysis).lines;
 		expect(lines[0]).toContain("commits in 10.0s");
 		expect(lines.filter((l) => l.startsWith("- #")).length).toBe(analysis.hotCommits.length);
 		expect(lines.some((l) => l.includes("more in react/findings.json"))).toBe(false);
-		const cut = reactSection(analysis, { commits: 3 }).lines;
+		const cut = reactAnalyzer.reactSection(analysis, { commits: 3 }).lines;
 		expect(cut.filter((l) => l.startsWith("- #")).length).toBe(3);
 		expect(cut.some((l) => l.includes("more in react/findings.json"))).toBe(true);
 		expect(lines.join("\n")).toContain("dev build (__DEV__)");

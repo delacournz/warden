@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
+import { perfDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS } from "@delacour/warden-perf/shared/caps";
 import { finalizeSession, type SessionKit, startPerf } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -51,7 +51,7 @@ export function perfRecord(
 	io: RecordIo = defaultRecordIo
 ): Promise<number> {
 	return runPerf(ctx, deps, "record", "observe", opts, async (target) => {
-		const durationMs = opts.duration === undefined ? DEFAULT_DURATION_MS : parseDuration(opts.duration);
+		const durationMs = opts.duration === undefined ? DEFAULT_DURATION_MS : perfDuration.parseDuration(opts.duration);
 		if (durationMs === undefined || durationMs > HARD_MAX_DURATION_MS) {
 			return {
 				success: false,

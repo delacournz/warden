@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { formatSessionId } from "@delacour/warden-perf/shared/session.schema";
+import { sessionCodec } from "@delacour/warden-perf/shared/session.schema";
 import type { Platform } from "@delacour/warden-store/types";
 import type { PerfEnv } from "./env";
 import type { NativeHandle } from "./native-types";
@@ -98,7 +98,7 @@ export const sessionNativeDir = (ctx: Pick<PerfEnv, "env">, sessionId: string): 
 
 /** A fresh one-shot dir `$WARDEN_HOME/perf/native-<id>/native` (the name is not a session id, so session listing ignores it). */
 export function newOneShotDir(ctx: Pick<PerfEnv, "env" | "now">, random: () => string): string {
-	return join(perfRoot(ctx), `native-${formatSessionId(ctx.now(), random())}`, NATIVE_DIR);
+	return join(perfRoot(ctx), `native-${sessionCodec.formatSessionId(ctx.now(), random())}`, NATIVE_DIR);
 }
 
 /** The newest one-shot recording still running on `udid`, if any. */

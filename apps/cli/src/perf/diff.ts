@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { DEFAULT_THRESHOLD_PCT, diffLines, diffReports } from "@delacour/warden-perf/shared/diff";
+import { DEFAULT_THRESHOLD_PCT, reportDiffer } from "@delacour/warden-perf/shared/diff";
 import { reportFor } from "@delacour/warden-sdk/ops/perf/report-read";
 import { sessionByRef } from "@delacour/warden-sdk/ops/perf/session-ref";
 import { reportError, reportOk, UI_EXIT, uiError } from "../agent-ui/output";
@@ -40,12 +40,12 @@ export async function perfDiff(ctx: CommandContext, a: string, b: string, opts: 
 		const [ra, rb] = reports;
 		if (ra === undefined || rb === undefined)
 			return reportError(ctx, meta, uiError("session_not_found", "could not build a report for one of the sessions"));
-		const diff = diffReports(ra, rb, threshold);
+		const diff = reportDiffer.diffReports(ra, rb, threshold);
 		const failed = opts.failOn === "regress" && diff.regressions > 0;
 		return reportOk(ctx, meta, {
 			device: { udid: rb.device.udid, platform: rb.device.platform, name: rb.device.name },
 			result: { ...diff, failed },
-			text: diffLines(diff).join("\n"),
+			text: reportDiffer.diffLines(diff).join("\n"),
 			exit: failed ? UI_EXIT.failed : UI_EXIT.ok,
 		});
 	} catch (error) {

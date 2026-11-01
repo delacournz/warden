@@ -1,11 +1,5 @@
-import { parseDuration } from "@delacour/warden-perf/metrics/duration";
-import {
-	type MetricSample,
-	memoryGrowthFinding,
-	type SeriesSummary,
-	type Stat,
-	summarize,
-} from "@delacour/warden-perf/metrics/series";
+import { perfDuration } from "@delacour/warden-perf/metrics/duration";
+import { type MetricSample, type SeriesSummary, type Stat, sampleSeries } from "@delacour/warden-perf/metrics/series";
 import { HARD_MAX_DURATION_MS } from "@delacour/warden-perf/shared/caps";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -30,7 +24,7 @@ const INTERRUPTED_EXIT = 130;
 export type SeriesPlan = { intervalMs: number; durationMs: number };
 
 export function planSeries(opts: MetricsParams): Result<SeriesPlan, WardenError> {
-	const interval = opts.interval === undefined ? DEFAULT_INTERVAL_MS : parseDuration(opts.interval);
+	const interval = opts.interval === undefined ? DEFAULT_INTERVAL_MS : perfDuration.parseDuration(opts.interval);
 	if (interval === undefined) {
 		return {
 			success: false,
@@ -44,7 +38,7 @@ export function planSeries(opts: MetricsParams): Result<SeriesPlan, WardenError>
 		};
 	}
 	const fallback = opts.watch === true ? HARD_MAX_DURATION_MS : DEFAULT_ONE_SHOT_MS;
-	const duration = opts.duration === undefined ? fallback : parseDuration(opts.duration);
+	const duration = opts.duration === undefined ? fallback : perfDuration.parseDuration(opts.duration);
 	if (duration === undefined) {
 		return {
 			success: false,
@@ -150,14 +144,14 @@ function seriesSuccess(
 	out: MetricsOut,
 	series: SeriesResult
 ): Result<PerfDone<MetricsResult>, WardenError> {
-	const summary = summarize(series.samples);
+	const summary = sampleSeries.summarize(series.samples);
 	if (summary === undefined) {
 		return {
 			success: false,
 			error: series.stopped ?? opError("interrupted", "interrupted before the first sample"),
 		};
 	}
-	const finding = memoryGrowthFinding(summary);
+	const finding = sampleSeries.memoryGrowthFinding(summary);
 	const device = describeTarget(target);
 	return resultFactory.ok({
 		device: {

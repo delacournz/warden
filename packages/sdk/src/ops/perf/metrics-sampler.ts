@@ -1,13 +1,5 @@
-import { parseMeminfo } from "@delacour/warden-perf/metrics/meminfo";
-import {
-	type CpuReadings,
-	cpuDeltas,
-	findByExecutable,
-	PS_ENV,
-	type PsRow,
-	parseAdbTop,
-	parsePs,
-} from "@delacour/warden-perf/metrics/ps";
+import { meminfoParser } from "@delacour/warden-perf/metrics/meminfo";
+import { type CpuReadings, PS_ENV, type PsRow, psParser } from "@delacour/warden-perf/metrics/ps";
 import type { MetricSample } from "@delacour/warden-perf/metrics/series";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
@@ -62,8 +54,8 @@ function iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, s
 	type Read = { kind: "row"; row: PsRow } | { kind: "gone" } | { kind: "error"; error: WardenError };
 	const read = async (pid: number): Promise<Read> => {
 		const res = await ctx.exec(psPidArgs(pid), { timeoutMs: 10_000, env: PS_ENV });
-		const row = findByExecutable(
-			parsePs(res.stdout).filter((r) => r.pid === pid),
+		const row = psParser.findByExecutable(
+			psParser.parsePs(res.stdout).filter((r) => r.pid === pid),
 			bundle.executablePath
 		);
 		if (row !== undefined) return { kind: "row", row };
@@ -95,7 +87,7 @@ function iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, s
 			const row = located.data;
 			const wallMs = ctx.now();
 			const baseline = lastWallMs === undefined;
-			const cpuSec = cpuDeltas([row], prev, baseline).get(row.pid);
+			const cpuSec = psParser.cpuDeltas([row], prev, baseline).get(row.pid);
 			const dtSec = baseline ? 0 : (wallMs - (lastWallMs ?? wallMs)) / 1000;
 			lastWallMs = wallMs;
 			return resultFactory.ok({
@@ -120,7 +112,7 @@ function androidSampler(ctx: PerfEnv, target: MetricsTarget, startMs: number): M
 		const res = await ctx.exec([adb, "-s", target.udid, "shell", "top", "-n", "1", "-b", "-p", String(p)], {
 			timeoutMs: 10_000,
 		});
-		return res.exitCode === 0 ? parseAdbTop(res.stdout).find((r) => r.pid === p) : undefined;
+		return res.exitCode === 0 ? psParser.parseAdbTop(res.stdout).find((r) => r.pid === p) : undefined;
 	};
 	return {
 		sample: async () => {
@@ -134,7 +126,7 @@ function androidSampler(ctx: PerfEnv, target: MetricsTarget, startMs: number): M
 			const mem = await ctx.exec([adb, "-s", target.udid, "shell", "dumpsys", "meminfo", target.app], {
 				timeoutMs: 15_000,
 			});
-			const info = mem.exitCode === 0 ? parseMeminfo(mem.stdout) : undefined;
+			const info = mem.exitCode === 0 ? meminfoParser.parseMeminfo(mem.stdout) : undefined;
 			const wallMs = ctx.now();
 			return resultFactory.ok({
 				wallMs,

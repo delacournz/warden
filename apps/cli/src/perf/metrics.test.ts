@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeSamples } from "@delacour/warden-perf/metrics/series";
+import { sampleSeries } from "@delacour/warden-perf/metrics/series";
 import { createSession, updateSession } from "@delacour/warden-sdk/ops/perf/session";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { perfMetrics } from "./metrics";
@@ -69,7 +69,7 @@ describe("warden perf metrics (one-shot)", () => {
 		expect(doc.result.summary.count).toBe(4);
 		expect(doc.result.summary.cpuPct.avg).toBe(25);
 		expect(doc.result.summary.pssKb.max).toBe(200_000);
-		const rows = decodeSamples(readFileSync(doc.result.samples, "utf8"));
+		const rows = sampleSeries.decodeSamples(readFileSync(doc.result.samples, "utf8"));
 		expect(rows.map((r) => r.atMs)).toEqual([0, 1000, 2000, 3000]);
 		expect(doc.result.samples).toContain(join("perf", "metrics-"));
 		expect(doc.warnings?.[0]).toContain("compare relative");
@@ -152,7 +152,9 @@ describe("warden perf metrics (one-shot)", () => {
 		const doc = json(c);
 		expect(doc.result.sessionId).toBe(made.data.id);
 		expect(doc.result.samples).toBe(join(c.env.WARDEN_HOME ?? "", "perf", made.data.id, "metrics", "samples.jsonl"));
-		expect(decodeSamples(readFileSync(doc.result.samples, "utf8")).map((r) => r.atMs)).toEqual([2000, 3000]);
+		expect(sampleSeries.decodeSamples(readFileSync(doc.result.samples, "utf8")).map((r) => r.atMs)).toEqual([
+			2000, 3000,
+		]);
 	});
 
 	test("while the session's collector samples metrics, a hand-run writes samples-manual.jsonl instead", async () => {

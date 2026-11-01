@@ -1,14 +1,8 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { parsePackageFlags } from "@delacour/warden-perf/shared/app-detect";
-import {
-	parseAdbVersion,
-	parseDeviceTools,
-	parseXcodeVersion,
-	parseXctraceVersion,
-	xctraceDeviceDeadlock,
-} from "@delacour/warden-perf/shared/doctor-parse";
+import { appDetector } from "@delacour/warden-perf/shared/app-detect";
+import { doctorParser } from "@delacour/warden-perf/shared/doctor-parse";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
@@ -33,7 +27,7 @@ const check = (id: string, status: CheckStatus, detail: string, hint?: string): 
 async function xctraceCheck(ctx: CommandContext, deps: PerfDeps): Promise<DoctorCheck> {
 	if (deps.host.platform !== "darwin") return check("xctrace", "skip", "not macOS");
 	const res = await ctx.exec(["xcrun", "xctrace", "version"], { timeoutMs: 15_000 });
-	const version = res.exitCode === 0 ? parseXctraceVersion(res.stdout) : undefined;
+	const version = res.exitCode === 0 ? doctorParser.parseXctraceVersion(res.stdout) : undefined;
 	return version === undefined
 		? check("xctrace", "fail", "xcrun xctrace not found", "install Xcode, then xcode-select --install")
 		: check("xctrace", "ok", version);
@@ -42,7 +36,7 @@ async function xctraceCheck(ctx: CommandContext, deps: PerfDeps): Promise<Doctor
 async function xcodeCheck(ctx: CommandContext, deps: PerfDeps): Promise<DoctorCheck> {
 	if (deps.host.platform !== "darwin") return check("xcode", "skip", "not macOS");
 	const res = await ctx.exec(["xcodebuild", "-version"], { timeoutMs: 15_000 });
-	const version = res.exitCode === 0 ? parseXcodeVersion(res.stdout) : undefined;
+	const version = res.exitCode === 0 ? doctorParser.parseXcodeVersion(res.stdout) : undefined;
 	if (version === undefined)
 		return check(
 			"xcode",
@@ -50,7 +44,7 @@ async function xcodeCheck(ctx: CommandContext, deps: PerfDeps): Promise<DoctorCh
 			"xcodebuild -version failed",
 			"select Xcode: sudo xcode-select -s /Applications/Xcode.app"
 		);
-	return xctraceDeviceDeadlock(version)
+	return doctorParser.xctraceDeviceDeadlock(version)
 		? check(
 				"xcode",
 				"warn",
@@ -65,8 +59,11 @@ const NATIVE_INSTRUMENTS = ["Time Profiler", "Hangs", "Leaks", "Allocations"] as
 /** `xctrace list instruments` has what `perf native` records with (Time Profiler, Hangs, Leaks, Allocations). */
 async function instrumentsCheck(ctx: CommandContext, deps: PerfDeps): Promise<DoctorCheck> {
 	if (deps.host.platform !== "darwin") return check("instruments", "skip", "not macOS");
-	const { checkXctraceInstruments } = await import("@delacour/warden-perf/ios/instruments");
-	const found = await checkXctraceInstruments((argv) => ctx.exec(argv, { timeoutMs: 30_000 }), NATIVE_INSTRUMENTS);
+	const { instrumentChecker } = await import("@delacour/warden-perf/ios/instruments");
+	const found = await instrumentChecker.checkXctraceInstruments(
+		(argv) => ctx.exec(argv, { timeoutMs: 30_000 }),
+		NATIVE_INSTRUMENTS
+	);
 	if (found === undefined) return check("instruments", "skip", "xctrace list instruments failed");
 	if (found.ok) return check("instruments", "ok", NATIVE_INSTRUMENTS.join(", "));
 	const alts = found.missing.map((m) => `${m} (try: ${found.alternatives[m]?.join(", ") || "none"})`);
@@ -80,7 +77,7 @@ async function instrumentsCheck(ctx: CommandContext, deps: PerfDeps): Promise<Do
 
 async function adbCheck(ctx: CommandContext): Promise<DoctorCheck> {
 	const res = await ctx.exec([androidToolsLocator.locate(ctx.env).adb, "version"], { timeoutMs: 10_000 });
-	const version = res.exitCode === 0 ? parseAdbVersion(res.stdout) : undefined;
+	const version = res.exitCode === 0 ? doctorParser.parseAdbVersion(res.stdout) : undefined;
 	return version === undefined
 		? check(
 				"adb",
@@ -128,7 +125,7 @@ async function deviceToolsCheck(
 			timeoutMs: 10_000,
 		}
 	);
-	const tools = parseDeviceTools(res.stdout);
+	const tools = doctorParser.parseDeviceTools(res.stdout);
 	const present = Object.entries(tools).flatMap(([name, has]) => (has ? [name] : []));
 	const missing = Object.entries(tools).flatMap(([name, has]) => (has ? [] : [name]));
 	if (missing.length === 0) return check("device-tools", "ok", present.join(", "));
@@ -157,7 +154,7 @@ async function appCheck(
 		}
 	);
 	if (res.exitCode !== 0) return check("app", "warn", `${app.data.id}: dumpsys package failed`);
-	const flags = parsePackageFlags(res.stdout);
+	const flags = appDetector.parsePackageFlags(res.stdout);
 	if (flags.debuggable || flags.profileable) {
 		return check("app", "ok", `${app.data.id} (${flags.debuggable ? "debuggable" : "profileable"})`);
 	}

@@ -3,18 +3,13 @@ import { join } from "node:path";
 import { type CpuProfile, cpuProfileSchema } from "@delacour/warden-perf/js/cpu-profile";
 import type { Hotspots } from "@delacour/warden-perf/js/hotspots";
 import type { JsCdp } from "@delacour/warden-perf/js/js.types";
-import {
-	analyzeReact,
-	type ComponentSource,
-	type ReactAnalysis,
-	reactSection,
-} from "@delacour/warden-perf/react/analyze";
-import { type CpuIndex, type FrameLabel, indexProfile } from "@delacour/warden-perf/react/pipeline/cpu-correlate";
+import { type ComponentSource, type ReactAnalysis, reactAnalyzer } from "@delacour/warden-perf/react/analyze";
+import { type CpuIndex, cpuCorrelator, type FrameLabel } from "@delacour/warden-perf/react/pipeline/cpu-correlate";
 import { hotCommits } from "@delacour/warden-perf/react/pipeline/hot-commits";
-import { reduceComponents } from "@delacour/warden-perf/react/pipeline/reduce";
-import { startReactProfile, stopReactProfile } from "@delacour/warden-perf/react/profiler";
+import { componentReducer } from "@delacour/warden-perf/react/pipeline/reduce";
+import { reactProfiler } from "@delacour/warden-perf/react/profiler";
 import type { CommitsFile, ReactError, ReactResult } from "@delacour/warden-perf/react/react.types";
-import { reactErr, reactOk } from "@delacour/warden-perf/react/react.types";
+import { reactResultFactory } from "@delacour/warden-perf/react/react.types";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { ReportSection } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -82,7 +77,7 @@ export function loadCpuCorrelation(jsDir: string | undefined): CpuCorrelation | 
 			const name = frame.functionName === "" ? "(anonymous)" : frame.functionName;
 			return frame.url === "" ? { name } : { name, file: frame.url, line: (frame.lineNumber ?? 0) + 1 };
 		};
-		return { index: indexProfile(profile, start), label };
+		return { index: cpuCorrelator.indexProfile(profile, start), label };
 	} catch {
 		return undefined;
 	}
@@ -109,11 +104,12 @@ export type ReactCaptureResult = {
 
 /** Names worth locating: the costliest components and whatever fills a hot commit. */
 function namesToLocate(file: CommitsFile): string[] {
-	const byCost = reduceComponents(file.commits)
+	const byCost = componentReducer
+		.reduceComponents(file.commits)
 		.sort((a, b) => b.sumSelfMs - a.sumSelfMs)
 		.slice(0, NAMES_TO_LOCATE)
 		.map((s) => s.name);
-	const hot = hotCommits(file.commits).flatMap((h) => h.top.map((t) => t.name));
+	const hot = hotCommits.hotCommits(file.commits).flatMap((h) => h.top.map((t) => t.name));
 	return [...new Set([...byCost, ...hot])];
 }
 
@@ -125,7 +121,7 @@ function namesToLocate(file: CommitsFile): string[] {
 export function analyzeAndWrite(file: CommitsFile, out: ReactOutputs): ReactCaptureResult {
 	const located = resolveSources(namesToLocate(file), out.cwd, file.sources, out.sourceDeps ?? defaultSourceDeps);
 	const cpu = loadCpuCorrelation(out.jsDir);
-	const analysis = analyzeReact(file, {
+	const analysis = reactAnalyzer.analyzeReact(file, {
 		...(out.sessionId === undefined ? {} : { sessionId: out.sessionId }),
 		locate: (name): ComponentSource | undefined => located.get(name),
 		...(cpu === undefined ? {} : { cpu }),
@@ -135,7 +131,14 @@ export function analyzeAndWrite(file: CommitsFile, out: ReactOutputs): ReactCapt
 	const findingsPath = join(out.dir, FINDINGS_FILE);
 	writeFileSync(commitsPath, JSON.stringify(file));
 	writeFileSync(findingsPath, `${JSON.stringify(analysis, null, 2)}\n`);
-	return { commitsPath, findingsPath, file, analysis, findings: analysis.findings, section: reactSection(analysis) };
+	return {
+		commitsPath,
+		findingsPath,
+		file,
+		analysis,
+		findings: analysis.findings,
+		section: reactAnalyzer.reactSection(analysis),
+	};
 }
 
 export type ReactStartResult = { startedWallMs: number; dev: boolean; rn: string | null; bootstrapped: boolean };
@@ -145,10 +148,10 @@ export async function startReactCapture(
 	cdp: JsCdp,
 	options: { owner: string; force?: boolean }
 ): Promise<ReactResult<ReactStartResult>> {
-	const started = await startReactProfile(cdp, options);
+	const started = await reactProfiler.startReactProfile(cdp, options);
 	if (!started.success) return started;
 	const { startedWall, dev, rn, bootstrapped } = started.data;
-	return reactOk({ startedWallMs: startedWall, dev, rn, bootstrapped });
+	return reactResultFactory.ok({ startedWallMs: startedWall, dev, rn, bootstrapped });
 }
 
 /** End React profiling, then analyse and write (see `analyzeAndWrite`). `hostWallMs` = host clock at start, for alignment. */
@@ -156,16 +159,16 @@ export async function stopReactCapture(
 	cdp: JsCdp,
 	options: ReactOutputs & { owner: string; force?: boolean; hostWallMs?: number }
 ): Promise<ReactResult<ReactCaptureResult>> {
-	const stopped = await stopReactProfile(cdp, {
+	const stopped = await reactProfiler.stopReactProfile(cdp, {
 		owner: options.owner,
 		...(options.force === undefined ? {} : { force: options.force }),
 		...(options.hostWallMs === undefined ? {} : { hostWallMs: options.hostWallMs }),
 	});
 	if (!stopped.success) return stopped;
 	try {
-		return reactOk(analyzeAndWrite(stopped.data, options));
+		return reactResultFactory.ok(analyzeAndWrite(stopped.data, options));
 	} catch (error) {
-		return reactErr(
+		return reactResultFactory.err(
 			"invalid_data",
 			`could not write the React report: ${error instanceof Error ? error.message : String(error)}`
 		);

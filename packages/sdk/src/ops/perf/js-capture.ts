@@ -3,16 +3,20 @@ import { join } from "node:path";
 import type { DevtoolsResult } from "@delacour/warden-devtools/devtools.types";
 import {
 	type CpuProfile,
+	cpuProfileCapture,
 	DEFAULT_SAMPLING_INTERVAL_US,
 	type ProfileStart,
-	startProfile,
-	stopProfile,
 } from "@delacour/warden-perf/js/cpu-profile";
-import { analyzeProfile, type Hotspots, hotspotFindings, hotspotsSection } from "@delacour/warden-perf/js/hotspots";
-import { type JsCdp, type JsError, type JsResult, jsErr, jsOk, readDevFlag } from "@delacour/warden-perf/js/js.types";
+import { type Hotspots, hotspotsAnalyzer } from "@delacour/warden-perf/js/hotspots";
 import {
-	collectScripts,
-	loadSourceMaps,
+	type JsCdp,
+	type JsError,
+	type JsResult,
+	jsCdpReader,
+	jsResultFactory,
+} from "@delacour/warden-perf/js/js.types";
+import {
+	jsSymbolicator,
 	MAX_SOURCE_MAP_BYTES,
 	type MapFetch,
 	type ScriptCollector,
@@ -48,11 +52,11 @@ export type JsDeps = {
 
 /** Read a response body, aborting the moment it passes `maxBytes`. */
 async function readCapped(res: Response, maxBytes: number): Promise<JsResult<string>> {
-	const tooBig = () => jsErr("too_large", `source map is over ${maxBytes / 1024 / 1024}MiB`);
+	const tooBig = () => jsResultFactory.err("too_large", `source map is over ${maxBytes / 1024 / 1024}MiB`);
 	const declared = Number(res.headers.get("content-length"));
 	if (Number.isFinite(declared) && declared > maxBytes) return tooBig();
 	const reader = res.body?.getReader();
-	if (reader === undefined) return jsOk("");
+	if (reader === undefined) return jsResultFactory.ok("");
 	const chunks: Uint8Array[] = [];
 	let size = 0;
 	for (;;) {
@@ -65,17 +69,17 @@ async function readCapped(res: Response, maxBytes: number): Promise<JsResult<str
 		}
 		chunks.push(value);
 	}
-	return jsOk(Buffer.concat(chunks).toString("utf8"));
+	return jsResultFactory.ok(Buffer.concat(chunks).toString("utf8"));
 }
 
 /** `fetch` with no redirects (a redirect could leave Metro's host), a timeout and a byte cap. */
 export const fetchMapCapped: MapFetch = async (url, maxBytes) => {
 	try {
 		const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(MAP_FETCH_TIMEOUT_MS) });
-		if (!res.ok) return jsErr("cdp_failed", `${url} answered ${res.status}`);
+		if (!res.ok) return jsResultFactory.err("cdp_failed", `${url} answered ${res.status}`);
 		return await readCapped(res, maxBytes);
 	} catch (error) {
-		return jsErr("cdp_failed", `${url}: ${error instanceof Error ? error.message : String(error)}`);
+		return jsResultFactory.err("cdp_failed", `${url}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 };
 
@@ -147,15 +151,15 @@ export async function startJsProfile(
 	cdp: JsCdp,
 	options: { samplingIntervalUs?: number; now?: () => number } = {}
 ): Promise<JsResult<JsCapture>> {
-	const scripts = await collectScripts(cdp);
-	const dev = await readDevFlag(cdp);
+	const scripts = await jsSymbolicator.collectScripts(cdp);
+	const dev = await jsCdpReader.readDevFlag(cdp);
 	const hostWallMs = (options.now ?? Date.now)();
-	const started = await startProfile(cdp, { samplingIntervalUs: options.samplingIntervalUs });
+	const started = await cpuProfileCapture.startProfile(cdp, { samplingIntervalUs: options.samplingIntervalUs });
 	if (!started.success) {
 		scripts.dispose();
 		return started;
 	}
-	return jsOk({ cdp, scripts, start: started.data, hostWallMs, dev });
+	return jsResultFactory.ok({ cdp, scripts, start: started.data, hostWallMs, dev });
 }
 
 export type JsOutputs = {
@@ -184,19 +188,19 @@ function frames(profile: CpuProfile) {
  * through the app's source maps, and write `js/hotspots.json`.
  */
 export async function stopJsProfile(capture: JsCapture, out: JsOutputs): Promise<JsResult<JsProfileResult>> {
-	const stopped = await stopProfile(capture.cdp);
+	const stopped = await cpuProfileCapture.stopProfile(capture.cdp);
 	capture.scripts.dispose();
 	if (!stopped.success) return stopped;
 	const profile = stopped.data;
 	mkdirSync(out.dir, { recursive: true });
 	const cpuPath = join(out.dir, CPU_FILE);
 	writeFileSync(cpuPath, JSON.stringify(profile));
-	const maps = await loadSourceMaps(frames(profile), capture.scripts.scripts, {
+	const maps = await jsSymbolicator.loadSourceMaps(frames(profile), capture.scripts.scripts, {
 		metroUrl: out.metroUrl,
 		fetchMap: out.fetchMap,
 		...(out.projectRoot === undefined ? {} : { projectRoot: out.projectRoot }),
 	});
-	const hotspots = analyzeProfile(profile, maps.resolve, {
+	const hotspots = hotspotsAnalyzer.analyzeProfile(profile, maps.resolve, {
 		samplingIntervalUs: capture.start.samplingIntervalUs,
 		...(capture.dev === undefined ? {} : { dev: capture.dev }),
 		warnings: maps.warnings,
@@ -204,12 +208,12 @@ export async function stopJsProfile(capture: JsCapture, out: JsOutputs): Promise
 	});
 	const hotspotsPath = join(out.dir, HOTSPOTS_FILE);
 	writeFileSync(hotspotsPath, `${JSON.stringify(hotspots, null, 2)}\n`);
-	return jsOk({
+	return jsResultFactory.ok({
 		cpuPath,
 		hotspotsPath,
 		hotspots,
-		findings: hotspotFindings(hotspots),
-		section: hotspotsSection(hotspots),
+		findings: hotspotsAnalyzer.hotspotFindings(hotspots),
+		section: hotspotsAnalyzer.hotspotsSection(hotspots),
 	});
 }
 

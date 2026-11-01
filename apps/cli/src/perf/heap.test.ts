@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildHeapSnapshot, fakeCdp } from "@delacour/warden-perf/js/js.testing";
-import { jsOk } from "@delacour/warden-perf/js/js.types";
+import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
+import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
@@ -21,7 +21,7 @@ const T0 = Date.UTC(2026, 9, 24, 10, 15, 0);
 const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 const METRO = "http://127.0.0.1:8081";
 
-const SNAPSHOT = buildHeapSnapshot([
+const SNAPSHOT = jsFixtures.buildHeapSnapshot([
 	["object", "Cart", 300],
 	["object", "Cart", 300],
 	["object", "Item", 50],
@@ -34,13 +34,13 @@ function setup(chunks: string[] = [SNAPSHOT.slice(0, 40), SNAPSHOT.slice(40)]) {
 	asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
 	const deps = fakePerfDeps([sim], { U1: "com.acme.shop" }, { metro: async () => METRO });
-	const cdp = fakeCdp(
+	const cdp = jsFixtures.fakeCdp(
 		{ "Runtime.evaluate": { result: { value: false } } },
 		{ "HeapProfiler.takeHeapSnapshot": chunks.map((chunk) => ({ chunk })) }
 	);
 	const js: JsDeps = {
 		open: async () => resultFactory.ok({ ...cdp, close: () => undefined }),
-		fetchMap: async () => jsOk(""),
+		fetchMap: async () => jsResultFactory.ok(""),
 		sleep: async () => undefined,
 	};
 	return { c, deps, js, cdp };
@@ -68,7 +68,7 @@ describe("warden perf heap snapshot", () => {
 
 	test("a runtime without the method: engine_unavailable, and no half-written file is left", async () => {
 		const s = setup();
-		const bare = fakeCdp({
+		const bare = jsFixtures.fakeCdp({
 			"HeapProfiler.takeHeapSnapshot": { __error: "'HeapProfiler.takeHeapSnapshot' wasn't found" },
 		});
 		s.js.open = async () => resultFactory.ok({ ...bare, close: () => undefined });
@@ -113,7 +113,7 @@ describe("warden perf heap diff", () => {
 	test("constructor deltas, biggest first", () => {
 		const dir = files(
 			SNAPSHOT,
-			buildHeapSnapshot([
+			jsFixtures.buildHeapSnapshot([
 				["object", "Cart", 300],
 				["object", "Cart", 300],
 				["object", "Cart", 300],

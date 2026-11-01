@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetInstrumentCache } from "@delacour/warden-perf/ios/instruments";
+import { instrumentChecker } from "@delacour/warden-perf/ios/instruments";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { createIosNativeProfiler, type IosNativeFs } from "@delacour/warden-sdk/ops/perf/native-ios";
 import type { NativeIo, NativeStartInput } from "@delacour/warden-sdk/ops/perf/native-types";
@@ -13,7 +13,7 @@ let ctx: TestContext | undefined;
 const dirs: string[] = [];
 afterEach(() => {
 	ctx?.cleanup();
-	resetInstrumentCache();
+	instrumentChecker.reset();
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 

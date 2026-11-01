@@ -19,48 +19,66 @@ export type RecordSpec = {
 	timeLimitMs?: number;
 };
 
-const timeLimit = (ms: number): string => `${Math.max(1, Math.ceil(ms / 1000))}s`;
-
-/** `xcrun xctrace record …` for the Time Profiler template plus `instruments`. */
-export function recordArgv(spec: RecordSpec): string[] {
-	const argv = ["xcrun", "xctrace", "record", "--template", TIME_PROFILER_TEMPLATE];
-	for (const instrument of spec.instruments) argv.push("--instrument", instrument);
-	argv.push("--output", spec.output, "--no-prompt");
-	if (spec.timeLimitMs !== undefined) argv.push("--time-limit", timeLimit(spec.timeLimitMs));
-	const { target } = spec;
-	if (target.kind === "attach") {
-		if (target.udid !== undefined) argv.push("--device", target.udid);
-		argv.push("--attach", String(target.pid));
-	} else if (target.kind === "all-processes") argv.push("--all-processes");
-	else {
-		argv.push("--device", target.udid);
-		for (const [key, value] of Object.entries(target.env)) argv.push("--env", `${key}=${value}`);
-		argv.push("--launch", "--", target.appPath);
+export class XctraceArgv {
+	private timeLimit(ms: number): string {
+		return `${Math.max(1, Math.ceil(ms / 1000))}s`;
 	}
-	return argv;
+
+	/** `xcrun xctrace record …` for the Time Profiler template plus `instruments`. */
+	recordArgv(spec: RecordSpec): string[] {
+		const argv = ["xcrun", "xctrace", "record", "--template", TIME_PROFILER_TEMPLATE];
+		for (const instrument of spec.instruments) argv.push("--instrument", instrument);
+		argv.push("--output", spec.output, "--no-prompt");
+		if (spec.timeLimitMs !== undefined) argv.push("--time-limit", this.timeLimit(spec.timeLimitMs));
+		const { target } = spec;
+		if (target.kind === "attach") {
+			if (target.udid !== undefined) argv.push("--device", target.udid);
+			argv.push("--attach", String(target.pid));
+		} else if (target.kind === "all-processes") argv.push("--all-processes");
+		else {
+			argv.push("--device", target.udid);
+			for (const [key, value] of Object.entries(target.env)) argv.push("--env", `${key}=${value}`);
+			argv.push("--launch", "--", target.appPath);
+		}
+		return argv;
+	}
+
+	/** `xctrace export --input <trace> --toc`: the table of contents (runs and the schemas each holds). */
+	exportTocArgv(trace: string): string[] {
+		return ["xcrun", "xctrace", "export", "--input", trace, "--toc"];
+	}
+
+	/** XPath of one run's tables of `schema`. */
+	tableXpath(schema: string, run = 1): string {
+		return `/trace-toc/run[@number="${run}"]/data/table[@schema="${schema}"]`;
+	}
+
+	/** `xctrace export --input <trace> --xpath … --output <file>`: a table streamed to disk, never held in memory. */
+	exportTableArgv(trace: string, schema: string, output: string, run = 1): string[] {
+		return [
+			"xcrun",
+			"xctrace",
+			"export",
+			"--input",
+			trace,
+			"--xpath",
+			this.tableXpath(schema, run),
+			"--output",
+			output,
+		];
+	}
+
+	listInstrumentsArgv(): string[] {
+		return ["xcrun", "xctrace", "list", "instruments"];
+	}
+
+	/** `xctrace list instruments` → every instrument name (section headers like `== Standard Instruments ==` dropped). */
+	parseInstruments(text: string): string[] {
+		return text
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line !== "" && !line.startsWith("=="));
+	}
 }
 
-/** `xctrace export --input <trace> --toc`: the table of contents (runs and the schemas each holds). */
-export function exportTocArgv(trace: string): string[] {
-	return ["xcrun", "xctrace", "export", "--input", trace, "--toc"];
-}
-
-/** XPath of one run's tables of `schema`. */
-export function tableXpath(schema: string, run = 1): string {
-	return `/trace-toc/run[@number="${run}"]/data/table[@schema="${schema}"]`;
-}
-
-/** `xctrace export --input <trace> --xpath … --output <file>`: a table streamed to disk, never held in memory. */
-export function exportTableArgv(trace: string, schema: string, output: string, run = 1): string[] {
-	return ["xcrun", "xctrace", "export", "--input", trace, "--xpath", tableXpath(schema, run), "--output", output];
-}
-
-export const listInstrumentsArgv = (): string[] => ["xcrun", "xctrace", "list", "instruments"];
-
-/** `xctrace list instruments` → every instrument name (section headers like `== Standard Instruments ==` dropped). */
-export function parseInstruments(text: string): string[] {
-	return text
-		.split("\n")
-		.map((line) => line.trim())
-		.filter((line) => line !== "" && !line.startsWith("=="));
-}
+export const xctraceArgv = new XctraceArgv();

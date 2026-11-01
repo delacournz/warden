@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { diffHeaps, heapDiffSection, heapSection, parseHeapSnapshot, summarizeHeap, takeHeapSnapshot } from "./heap";
-import { buildHeapSnapshot, fakeCdp } from "./js.testing";
+import { heapAnalyzer } from "./heap";
+import { jsFixtures } from "./js.testing";
 
-const snapshot = buildHeapSnapshot([
+const snapshot = jsFixtures.buildHeapSnapshot([
 	["object", "Foo", 100],
 	["object", "Foo", 100],
 	["object", "Bar", 500],
@@ -12,9 +12,9 @@ const snapshot = buildHeapSnapshot([
 
 describe("takeHeapSnapshot", () => {
 	test("streams chunks to the sink and counts bytes", async () => {
-		const cdp = fakeCdp({}, { "HeapProfiler.takeHeapSnapshot": [{ chunk: '{"a":' }, { chunk: "1}" }] });
+		const cdp = jsFixtures.fakeCdp({}, { "HeapProfiler.takeHeapSnapshot": [{ chunk: '{"a":' }, { chunk: "1}" }] });
 		const got: string[] = [];
-		const taken = await takeHeapSnapshot(cdp, (c) => got.push(c));
+		const taken = await heapAnalyzer.takeHeapSnapshot(cdp, (c) => got.push(c));
 		expect(got.join("")).toBe('{"a":1}');
 		expect(taken).toEqual({ success: true, data: { bytes: 7, chunks: 2 } });
 		expect(cdp.sent.map((s) => s.method)).toEqual([
@@ -25,16 +25,16 @@ describe("takeHeapSnapshot", () => {
 	});
 
 	test("a runtime without the method is unsupported, with a hint", async () => {
-		const cdp = fakeCdp({
+		const cdp = jsFixtures.fakeCdp({
 			"HeapProfiler.takeHeapSnapshot": { __error: "'HeapProfiler.takeHeapSnapshot' wasn't found" },
 		});
-		const taken = await takeHeapSnapshot(cdp, () => undefined);
+		const taken = await heapAnalyzer.takeHeapSnapshot(cdp, () => undefined);
 		expect(taken).toMatchObject({ success: false, error: { code: "unsupported" } });
 		expect(!taken.success && taken.error.hint).toContain("Hermes");
 	});
 
 	test("a reply with no chunks is unsupported", async () => {
-		expect(await takeHeapSnapshot(fakeCdp(), () => undefined)).toMatchObject({
+		expect(await heapAnalyzer.takeHeapSnapshot(jsFixtures.fakeCdp(), () => undefined)).toMatchObject({
 			success: false,
 			error: { code: "unsupported" },
 		});
@@ -43,7 +43,7 @@ describe("takeHeapSnapshot", () => {
 
 describe("parseHeapSnapshot / summarizeHeap", () => {
 	test("groups objects by constructor and other nodes by (type)", () => {
-		const parsed = parseHeapSnapshot(snapshot);
+		const parsed = heapAnalyzer.parseHeapSnapshot(snapshot);
 		if (!parsed.success) throw new Error("parse");
 		expect(parsed.data.nodeCount).toBe(5);
 		expect(parsed.data.totalSelfSize).toBe(800);
@@ -56,25 +56,28 @@ describe("parseHeapSnapshot / summarizeHeap", () => {
 	});
 
 	test("top by size and by count", () => {
-		const parsed = parseHeapSnapshot(snapshot);
+		const parsed = heapAnalyzer.parseHeapSnapshot(snapshot);
 		if (!parsed.success) throw new Error("parse");
-		const s = summarizeHeap(parsed.data, 2);
+		const s = heapAnalyzer.summarizeHeap(parsed.data, 2);
 		expect(s.topBySize.map((c) => c.name)).toEqual(["Bar", "Foo"]);
 		expect(s.topByCount[0]?.name).toBe("Foo");
-		expect(heapSection(s).lines.join("\n")).toContain("Foo");
+		expect(heapAnalyzer.heapSection(s).lines.join("\n")).toContain("Foo");
 	});
 
 	test("rejects non-snapshots", () => {
-		expect(parseHeapSnapshot("nope")).toMatchObject({ success: false, error: { code: "invalid_snapshot" } });
-		expect(parseHeapSnapshot("{}")).toMatchObject({ success: false, error: { code: "invalid_snapshot" } });
+		expect(heapAnalyzer.parseHeapSnapshot("nope")).toMatchObject({
+			success: false,
+			error: { code: "invalid_snapshot" },
+		});
+		expect(heapAnalyzer.parseHeapSnapshot("{}")).toMatchObject({ success: false, error: { code: "invalid_snapshot" } });
 	});
 });
 
 describe("diffHeaps", () => {
 	test("count and size deltas per constructor, biggest change first", () => {
-		const a = parseHeapSnapshot(snapshot);
-		const b = parseHeapSnapshot(
-			buildHeapSnapshot([
+		const a = heapAnalyzer.parseHeapSnapshot(snapshot);
+		const b = heapAnalyzer.parseHeapSnapshot(
+			jsFixtures.buildHeapSnapshot([
 				["object", "Foo", 100],
 				["object", "Foo", 100],
 				["object", "Foo", 100],
@@ -83,7 +86,7 @@ describe("diffHeaps", () => {
 			])
 		);
 		if (!a.success || !b.success) throw new Error("parse");
-		const diff = diffHeaps(a.data, b.data);
+		const diff = heapAnalyzer.diffHeaps(a.data, b.data);
 		expect(diff.rows.map((r) => [r.name, r.countDelta, r.sizeDelta])).toEqual([
 			["Baz", 1, 1000],
 			["Bar", -1, -500],
@@ -91,6 +94,6 @@ describe("diffHeaps", () => {
 			["(closure)", -1, -60],
 		]);
 		expect(diff.totalSizeDelta).toBe(540);
-		expect(heapDiffSection(diff).lines.join("\n")).toContain("Baz");
+		expect(heapAnalyzer.heapDiffSection(diff).lines.join("\n")).toContain("Baz");
 	});
 });

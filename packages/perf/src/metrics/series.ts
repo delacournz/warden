@@ -18,36 +18,7 @@ export const sampleSchema = z.object({
 
 export type MetricSample = z.infer<typeof sampleSchema>;
 
-export const encodeSample = (sample: MetricSample): string => `${JSON.stringify(sample)}\n`;
-
-/** Rows of a samples.jsonl; malformed lines are skipped (a collector killed mid-write leaves a torn last line). */
-export function decodeSamples(text: string): MetricSample[] {
-	return text.split("\n").flatMap((line) => {
-		if (line.trim() === "") return [];
-		try {
-			const parsed = sampleSchema.safeParse(JSON.parse(line));
-			return parsed.success ? [parsed.data] : [];
-		} catch {
-			return [];
-		}
-	});
-}
-
 export type Stat = { min: number; avg: number; p95: number; max: number };
-
-/** min/avg/p95 (nearest rank)/max; undefined for no values. */
-export function stat(values: readonly number[]): Stat | undefined {
-	if (values.length === 0) return undefined;
-	const sorted = [...values].sort((a, b) => a - b);
-	const rank = Math.max(1, Math.ceil(0.95 * sorted.length));
-	const sum = sorted.reduce((a, b) => a + b, 0);
-	return {
-		min: sorted[0] ?? 0,
-		avg: sum / sorted.length,
-		p95: sorted[rank - 1] ?? 0,
-		max: sorted[sorted.length - 1] ?? 0,
-	};
-}
 
 export type MemoryGrowth = {
 	metric: "pss" | "rss";
@@ -69,59 +40,6 @@ export type SeriesSummary = {
 	growth?: MemoryGrowth;
 };
 
-/** Least-squares slope of `ys` over `xs`. */
-function slope(xs: readonly number[], ys: readonly number[]): number {
-	const n = xs.length;
-	const mx = xs.reduce((a, b) => a + b, 0) / n;
-	const my = ys.reduce((a, b) => a + b, 0) / n;
-	let num = 0;
-	let den = 0;
-	for (let i = 0; i < n; i++) {
-		const dx = (xs[i] ?? 0) - mx;
-		num += dx * ((ys[i] ?? 0) - my);
-		den += dx * dx;
-	}
-	return den === 0 ? 0 : num / den;
-}
-
-/** PSS when every sample has it (Android), else RSS. */
-function growthOf(samples: readonly MetricSample[]): MemoryGrowth | undefined {
-	if (samples.length < 2) return undefined;
-	const usePss = samples.every((s) => s.pssKb !== undefined);
-	const ys = samples.map((s) => (usePss ? (s.pssKb ?? 0) : s.rssKb));
-	const xs = samples.map((s) => s.atMs / 1000);
-	let rising = 0;
-	for (let i = 1; i < ys.length; i++) if ((ys[i] ?? 0) >= (ys[i - 1] ?? 0)) rising++;
-	return {
-		metric: usePss ? "pss" : "rss",
-		startKb: ys[0] ?? 0,
-		endKb: ys[ys.length - 1] ?? 0,
-		slopeKbPerSec: slope(xs, ys),
-		risingShare: rising / (ys.length - 1),
-	};
-}
-
-/** Summary of a series, or undefined for an empty one. */
-export function summarize(samples: readonly MetricSample[]): SeriesSummary | undefined {
-	const first = samples[0];
-	const last = samples[samples.length - 1];
-	const rssKb = stat(samples.map((s) => s.rssKb));
-	if (first === undefined || last === undefined || rssKb === undefined) return undefined;
-	const cpuPct = stat(samples.flatMap((s) => s.cpuPct ?? []));
-	const pssKb = stat(samples.flatMap((s) => s.pssKb ?? []));
-	const fps = stat(samples.flatMap((s) => s.fps ?? []));
-	const growth = growthOf(samples);
-	return {
-		count: samples.length,
-		durationMs: last.atMs - first.atMs,
-		...(cpuPct !== undefined ? { cpuPct } : {}),
-		rssKb,
-		...(pssKb !== undefined ? { pssKb } : {}),
-		...(fps !== undefined ? { fps } : {}),
-		...(growth !== undefined ? { growth } : {}),
-	};
-}
-
 /** A leak hint needs a long enough, steadily rising series: shorter or noisier ones say nothing. */
 export const LEAK_MIN_SAMPLES = 6;
 export const LEAK_MIN_SPAN_MS = 5_000;
@@ -130,27 +48,117 @@ export const LEAK_MIN_SLOPE_KB_PER_SEC = 50;
 export const LEAK_MIN_RISING_SHARE = 0.7;
 const CRITICAL_SLOPE_KB_PER_SEC = 1024;
 
-const mb = (kb: number): string => `${(kb / 1024).toFixed(1)} MB`;
+export class SampleSeries {
+	encodeSample(sample: MetricSample): string {
+		return `${JSON.stringify(sample)}\n`;
+	}
 
-/** The `memory-growth` finding for a steadily climbing series, else undefined. */
-export function memoryGrowthFinding(summary: SeriesSummary): Finding | undefined {
-	const g = summary.growth;
-	if (g === undefined) return undefined;
-	const growthKb = g.endKb - g.startKb;
-	const steady =
-		summary.count >= LEAK_MIN_SAMPLES &&
-		summary.durationMs >= LEAK_MIN_SPAN_MS &&
-		growthKb >= LEAK_MIN_GROWTH_KB &&
-		g.slopeKbPerSec >= LEAK_MIN_SLOPE_KB_PER_SEC &&
-		g.risingShare >= LEAK_MIN_RISING_SHARE;
-	if (!steady) return undefined;
-	return {
-		kind: "memory-growth",
-		severity: g.slopeKbPerSec >= CRITICAL_SLOPE_KB_PER_SEC ? "critical" : "warn",
-		costMs: 0,
-		slopeKbPerSec: Math.round(g.slopeKbPerSec),
-		evidence: `${g.metric} grew ${mb(growthKb)} in ${(summary.durationMs / 1000).toFixed(0)}s (${mb(g.startKb)} to ${mb(g.endKb)}, +${Math.round(g.slopeKbPerSec)} KB/s, rising in ${Math.round(g.risingShare * 100)}% of readings)`,
-		fix: "Steady growth under a fixed workload often means a leak: look for listeners, timers, caches or closures that are never released.",
-		next: ["warden perf memory --snapshot", "warden perf heap snapshot"],
-	};
+	/** Rows of a samples.jsonl; malformed lines are skipped (a collector killed mid-write leaves a torn last line). */
+	decodeSamples(text: string): MetricSample[] {
+		return text.split("\n").flatMap((line) => {
+			if (line.trim() === "") return [];
+			try {
+				const parsed = sampleSchema.safeParse(JSON.parse(line));
+				return parsed.success ? [parsed.data] : [];
+			} catch {
+				return [];
+			}
+		});
+	}
+
+	/** min/avg/p95 (nearest rank)/max; undefined for no values. */
+	stat(values: readonly number[]): Stat | undefined {
+		if (values.length === 0) return undefined;
+		const sorted = [...values].sort((a, b) => a - b);
+		const rank = Math.max(1, Math.ceil(0.95 * sorted.length));
+		const sum = sorted.reduce((a, b) => a + b, 0);
+		return {
+			min: sorted[0] ?? 0,
+			avg: sum / sorted.length,
+			p95: sorted[rank - 1] ?? 0,
+			max: sorted[sorted.length - 1] ?? 0,
+		};
+	}
+
+	/** Least-squares slope of `ys` over `xs`. */
+	private slope(xs: readonly number[], ys: readonly number[]): number {
+		const n = xs.length;
+		const mx = xs.reduce((a, b) => a + b, 0) / n;
+		const my = ys.reduce((a, b) => a + b, 0) / n;
+		let num = 0;
+		let den = 0;
+		for (let i = 0; i < n; i++) {
+			const dx = (xs[i] ?? 0) - mx;
+			num += dx * ((ys[i] ?? 0) - my);
+			den += dx * dx;
+		}
+		return den === 0 ? 0 : num / den;
+	}
+
+	/** PSS when every sample has it (Android), else RSS. */
+	private growthOf(samples: readonly MetricSample[]): MemoryGrowth | undefined {
+		if (samples.length < 2) return undefined;
+		const usePss = samples.every((s) => s.pssKb !== undefined);
+		const ys = samples.map((s) => (usePss ? (s.pssKb ?? 0) : s.rssKb));
+		const xs = samples.map((s) => s.atMs / 1000);
+		let rising = 0;
+		for (let i = 1; i < ys.length; i++) if ((ys[i] ?? 0) >= (ys[i - 1] ?? 0)) rising++;
+		return {
+			metric: usePss ? "pss" : "rss",
+			startKb: ys[0] ?? 0,
+			endKb: ys[ys.length - 1] ?? 0,
+			slopeKbPerSec: this.slope(xs, ys),
+			risingShare: rising / (ys.length - 1),
+		};
+	}
+
+	/** Summary of a series, or undefined for an empty one. */
+	summarize(samples: readonly MetricSample[]): SeriesSummary | undefined {
+		const first = samples[0];
+		const last = samples[samples.length - 1];
+		const rssKb = this.stat(samples.map((s) => s.rssKb));
+		if (first === undefined || last === undefined || rssKb === undefined) return undefined;
+		const cpuPct = this.stat(samples.flatMap((s) => s.cpuPct ?? []));
+		const pssKb = this.stat(samples.flatMap((s) => s.pssKb ?? []));
+		const fps = this.stat(samples.flatMap((s) => s.fps ?? []));
+		const growth = this.growthOf(samples);
+		return {
+			count: samples.length,
+			durationMs: last.atMs - first.atMs,
+			...(cpuPct !== undefined ? { cpuPct } : {}),
+			rssKb,
+			...(pssKb !== undefined ? { pssKb } : {}),
+			...(fps !== undefined ? { fps } : {}),
+			...(growth !== undefined ? { growth } : {}),
+		};
+	}
+
+	private mb(kb: number): string {
+		return `${(kb / 1024).toFixed(1)} MB`;
+	}
+
+	/** The `memory-growth` finding for a steadily climbing series, else undefined. */
+	memoryGrowthFinding(summary: SeriesSummary): Finding | undefined {
+		const g = summary.growth;
+		if (g === undefined) return undefined;
+		const growthKb = g.endKb - g.startKb;
+		const steady =
+			summary.count >= LEAK_MIN_SAMPLES &&
+			summary.durationMs >= LEAK_MIN_SPAN_MS &&
+			growthKb >= LEAK_MIN_GROWTH_KB &&
+			g.slopeKbPerSec >= LEAK_MIN_SLOPE_KB_PER_SEC &&
+			g.risingShare >= LEAK_MIN_RISING_SHARE;
+		if (!steady) return undefined;
+		return {
+			kind: "memory-growth",
+			severity: g.slopeKbPerSec >= CRITICAL_SLOPE_KB_PER_SEC ? "critical" : "warn",
+			costMs: 0,
+			slopeKbPerSec: Math.round(g.slopeKbPerSec),
+			evidence: `${g.metric} grew ${this.mb(growthKb)} in ${(summary.durationMs / 1000).toFixed(0)}s (${this.mb(g.startKb)} to ${this.mb(g.endKb)}, +${Math.round(g.slopeKbPerSec)} KB/s, rising in ${Math.round(g.risingShare * 100)}% of readings)`,
+			fix: "Steady growth under a fixed workload often means a leak: look for listeners, timers, caches or closures that are never released.",
+			next: ["warden perf memory --snapshot", "warden perf heap snapshot"],
+		};
+	}
 }
+
+export const sampleSeries = new SampleSeries();

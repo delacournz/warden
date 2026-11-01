@@ -2,13 +2,10 @@ import { basename } from "node:path";
 import {
 	type AdbTopRow,
 	type CpuReadings,
-	cpuDeltas,
 	PS_ARGS,
 	PS_ENV,
 	type PsRow,
-	parseAdbTop,
-	parsePs,
-	withDescendants,
+	psParser,
 } from "@delacour/warden-perf/metrics/ps";
 import type { GroupSeries, HostGroup, Platform, ProcessRow, RepResources, Series } from "../results/schema";
 import type { Exec } from "./exec";
@@ -161,7 +158,7 @@ export function recordTrees(rows: readonly PsRow[], roots: readonly number[], tr
 	const byPid = new Map(rows.map((r) => [r.pid, r]));
 	for (const root of roots) {
 		const seen = trees.get(root) ?? new Map<number, number>();
-		for (const pid of withDescendants(rows, new Set([root]))) {
+		for (const pid of psParser.withDescendants(rows, new Set([root]))) {
 			const sec = byPid.get(pid)?.cpuTimeSec;
 			if (sec !== undefined) seen.set(pid, sec);
 		}
@@ -178,13 +175,13 @@ export function hostPids(
 ): Set<number> {
 	const seeds = new Set(rootPids);
 	for (const r of owned) if (patterns.some((p) => p.test(r.command))) seeds.add(r.pid);
-	return withDescendants(rows, seeds);
+	return psParser.withDescendants(rows, seeds);
 }
 
 /** iOS simulator processes: anything mentioning the udid (launchd_sim) and its descendants, minus the host set. */
 export function simPids(rows: readonly PsRow[], udid: string, exclude: ReadonlySet<number>): Set<number> {
 	const seeds = new Set(rows.filter((r) => r.command.includes(udid)).map((r) => r.pid));
-	const all = withDescendants(rows, seeds);
+	const all = psParser.withDescendants(rows, seeds);
 	for (const pid of exclude) all.delete(pid);
 	return all;
 }
@@ -548,7 +545,7 @@ type SimReading = { cpuPct: number; rssBytes: number; cpuSec?: number; processes
 async function readAdb(exec: Exec, serial: string): Promise<SimReading | undefined> {
 	const r = await exec.run("adb", ["-s", serial, "shell", "top", "-n", "1", "-b"], { timeoutMs: 5_000 });
 	if (r.code !== 0) return undefined;
-	return androidTotals(parseAdbTop(r.stdout));
+	return androidTotals(psParser.parseAdbTop(r.stdout));
 }
 
 /** One tick from the host and sim readings; CPU seconds only when ps had a `time` column (Android sim: never). */
@@ -635,8 +632,8 @@ export function startSampler(options: SamplerOptions): {
 		const ps = await options.exec.run("ps", [...PS_ARGS], { timeoutMs: 5_000, env: { ...PS_ENV } });
 		if (ps.code !== 0) return;
 		const t = now() - start;
-		const rows = parsePs(ps.stdout);
-		const deltas = cpuDeltas(rows, readings, ticks.length === 0);
+		const rows = psParser.parsePs(ps.stdout);
+		const deltas = psParser.cpuDeltas(rows, readings, ticks.length === 0);
 		const timed = rows.some((r) => r.cpuTimeSec !== undefined);
 		if (!timed) noteUntimed(rows);
 		const byPid = new Map(rows.map((r) => [r.pid, r]));

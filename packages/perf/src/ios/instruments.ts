@@ -1,4 +1,4 @@
-import { listInstrumentsArgv, parseInstruments } from "./xctrace-argv";
+import { xctraceArgv } from "./xctrace-argv";
 
 export type InstrumentCheck =
 	| { ok: true; available: string[] }
@@ -11,48 +11,49 @@ const SIMILAR: Record<string, readonly string[]> = {
 	Allocations: ["Leaks", "VM Tracker"],
 };
 
-function alternativesFor(name: string, available: readonly string[]): string[] {
-	const wanted = SIMILAR[name] ?? [];
-	const lead = name.toLowerCase().slice(0, 4);
-	const found = available.filter((a) => wanted.includes(a) || a.toLowerCase().includes(lead));
-	return [...new Set(found)].filter((a) => a !== name).slice(0, 5);
-}
-
-/** Compare `wanted` against a `xctrace list instruments` listing. */
-export function checkInstruments(wanted: readonly string[], available: readonly string[]): InstrumentCheck {
-	const have = new Set(available);
-	const missing = wanted.filter((w) => !have.has(w));
-	if (missing.length === 0) return { ok: true, available: [...available] };
-	return {
-		ok: false,
-		missing,
-		alternatives: Object.fromEntries(missing.map((m) => [m, alternativesFor(m, available)])),
-		available: [...available],
-	};
-}
-
 type RunText = (argv: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
 
 let cache: string[] | undefined;
 
-/** Forget the cached listing (tests). */
-export function resetInstrumentCache(): void {
-	cache = undefined;
+export class InstrumentChecker {
+	private alternativesFor(name: string, available: readonly string[]): string[] {
+		const wanted = SIMILAR[name] ?? [];
+		const lead = name.toLowerCase().slice(0, 4);
+		const found = available.filter((a) => wanted.includes(a) || a.toLowerCase().includes(lead));
+		return [...new Set(found)].filter((a) => a !== name).slice(0, 5);
+	}
+
+	/** Compare `wanted` against a `xctrace list instruments` listing. */
+	checkInstruments(wanted: readonly string[], available: readonly string[]): InstrumentCheck {
+		const have = new Set(available);
+		const missing = wanted.filter((w) => !have.has(w));
+		if (missing.length === 0) return { ok: true, available: [...available] };
+		return {
+			ok: false,
+			missing,
+			alternatives: Object.fromEntries(missing.map((m) => [m, this.alternativesFor(m, available)])),
+			available: [...available],
+		};
+	}
+
+	/** Forget the cached listing (tests). */
+	reset(): void {
+		cache = undefined;
+	}
+
+	/**
+	 * Check `wanted` against `xctrace list instruments` on this host. The listing is fetched once per process and
+	 * cached; a failing `xctrace` is reported as `undefined` (the caller decides: record and let xctrace complain).
+	 * Exported for `warden perf doctor`.
+	 */
+	async checkXctraceInstruments(run: RunText, wanted: readonly string[]): Promise<InstrumentCheck | undefined> {
+		if (cache === undefined) {
+			const res = await run(xctraceArgv.listInstrumentsArgv());
+			if (res.exitCode !== 0) return undefined;
+			cache = xctraceArgv.parseInstruments(res.stdout);
+		}
+		return this.checkInstruments(wanted, cache);
+	}
 }
 
-/**
- * Check `wanted` against `xctrace list instruments` on this host. The listing is fetched once per process and
- * cached; a failing `xctrace` is reported as `undefined` (the caller decides: record and let xctrace complain).
- * Exported for `warden perf doctor`.
- */
-export async function checkXctraceInstruments(
-	run: RunText,
-	wanted: readonly string[]
-): Promise<InstrumentCheck | undefined> {
-	if (cache === undefined) {
-		const res = await run(listInstrumentsArgv());
-		if (res.exitCode !== 0) return undefined;
-		cache = parseInstruments(res.stdout);
-	}
-	return checkInstruments(wanted, cache);
-}
+export const instrumentChecker = new InstrumentChecker();

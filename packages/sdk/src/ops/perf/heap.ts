@@ -1,22 +1,16 @@
 import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-	diffHeaps,
-	formatBytes,
 	HEAP_TOP,
 	type HeapDiff,
 	type HeapSummary,
-	heapDiffSection,
-	heapSection,
+	heapAnalyzer,
 	MAX_PARSE_BYTES,
 	type ParsedHeap,
-	parseHeapSnapshot,
-	summarizeHeap,
-	takeHeapSnapshot,
 } from "@delacour/warden-perf/js/heap";
-import { readDevFlag } from "@delacour/warden-perf/js/js.types";
+import { jsCdpReader } from "@delacour/warden-perf/js/js.types";
 import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
-import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
+import { DEV_BUILD_BANNER, markdownRenderer, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -38,11 +32,11 @@ type Summarized = { summary?: HeapSummary; warning?: string };
 /** The top-constructor summary of a snapshot on disk, or why there is none (the file is kept either way). */
 function summarizeFile(file: string, bytes: number): Summarized {
 	if (statSync(file).size > MAX_PARSE_BYTES) {
-		return { warning: `snapshot is ${formatBytes(bytes)}: not summarized; open it in Chrome DevTools` };
+		return { warning: `snapshot is ${heapAnalyzer.formatBytes(bytes)}: not summarized; open it in Chrome DevTools` };
 	}
-	const parsed = parseHeapSnapshot(readFileSync(file, "utf8"));
+	const parsed = heapAnalyzer.parseHeapSnapshot(readFileSync(file, "utf8"));
 	return parsed.success
-		? { summary: summarizeHeap(parsed.data) }
+		? { summary: heapAnalyzer.summarizeHeap(parsed.data) }
 		: { warning: `snapshot written but not summarized: ${parsed.error.message}` };
 }
 
@@ -64,16 +58,16 @@ function successOf(f: SnapshotFacts): PerfDone<HeapSnapshotResult> {
 		"warden perf mark <label>, act in the app, then warden perf heap snapshot again",
 		`warden perf heap diff ${f.file} <later.heapsnapshot>`,
 	];
-	const text = renderMarkdown(
+	const text = markdownRenderer.renderMarkdown(
 		{
 			title: "Hermes heap snapshot",
 			banners: [SIMULATOR_BANNER, ...(f.dev === true ? [DEV_BUILD_BANNER] : [])],
 			summary: [
-				`${f.app} on ${f.target.name ?? f.target.udid}: ${formatBytes(f.bytes)} snapshot in ${f.chunks} chunks`,
+				`${f.app} on ${f.target.name ?? f.target.udid}: ${heapAnalyzer.formatBytes(f.bytes)} snapshot in ${f.chunks} chunks`,
 				`snapshot: ${f.file}`,
 			],
 			findings: [],
-			sections: f.summary === undefined ? [] : [heapSection(f.summary)],
+			sections: f.summary === undefined ? [] : [heapAnalyzer.heapSection(f.summary)],
 			next,
 		},
 		{ maxLines: MAX_TEXT_LINES }
@@ -106,7 +100,7 @@ function loadHeap(
 	} catch (error) {
 		return { success: false, error: `cannot read ${path}: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	const parsed = parseHeapSnapshot(text);
+	const parsed = heapAnalyzer.parseHeapSnapshot(text);
 	return parsed.success ? parsed : { success: false, error: `${path}: ${parsed.error.message}` };
 }
 
@@ -145,8 +139,8 @@ export async function heapSnapshotWork(
 		const name = `heap-${stamp(ctx.now())}`;
 		const file = join(out.dir, `${name}.heapsnapshot`);
 		writeFileSync(file, "");
-		const dev = await readDevFlag(session);
-		const taken = await takeHeapSnapshot(session, (chunk) => appendFileSync(file, chunk));
+		const dev = await jsCdpReader.readDevFlag(session);
+		const taken = await heapAnalyzer.takeHeapSnapshot(session, (chunk) => appendFileSync(file, chunk));
 		if (!taken.success) {
 			rmSync(file, { force: true });
 			return { success: false, error: jsUiError(taken.error) };
@@ -186,13 +180,13 @@ export function heapDiffWork(
 	if (!before.success) return { success: false, error: opError("usage", before.error) };
 	const after = loadHeap(ctx, b);
 	if (!after.success) return { success: false, error: opError("usage", after.error) };
-	const diff = diffHeaps(before.data, after.data, HEAP_TOP);
-	const text = renderMarkdown({
+	const diff = heapAnalyzer.diffHeaps(before.data, after.data, HEAP_TOP);
+	const text = markdownRenderer.renderMarkdown({
 		title: "Heap diff",
 		banners: [],
 		summary: [`${a} -> ${b}`],
 		findings: [],
-		sections: [heapDiffSection(diff)],
+		sections: [heapAnalyzer.heapDiffSection(diff)],
 		next: [],
 	});
 	return resultFactory.ok({ result: { a, b, ...diff }, text });

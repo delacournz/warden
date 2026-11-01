@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildPerfettoConfig } from "./perfetto.config";
+import { perfettoConfigBuilder } from "./perfetto.config";
 
 describe("buildPerfettoConfig", () => {
-	const cfg = buildPerfettoConfig({ packageName: "com.shop.app", durationMs: 30_000 }) ?? "";
+	const cfg = perfettoConfigBuilder.build({ packageName: "com.shop.app", durationMs: 30_000 }) ?? "";
 
 	test("two ring buffers of 64MB and 16MB", () => {
 		expect(cfg).toContain("buffers { size_kb: 65536 fill_policy: RING_BUFFER }");
@@ -21,7 +21,7 @@ describe("buildPerfettoConfig", () => {
 	});
 
 	test("kernel frames only when asked", () => {
-		const k = buildPerfettoConfig({ packageName: "com.shop.app", durationMs: 1000, kernelFrames: true });
+		const k = perfettoConfigBuilder.build({ packageName: "com.shop.app", durationMs: 1000, kernelFrames: true });
 		expect(k).toContain("kernel_frames: true");
 	});
 
@@ -39,6 +39,6 @@ describe("buildPerfettoConfig", () => {
 	});
 
 	test("refuses a package that could break out of the proto string", () => {
-		expect(buildPerfettoConfig({ packageName: 'x" } evil', durationMs: 1 })).toBeUndefined();
+		expect(perfettoConfigBuilder.build({ packageName: 'x" } evil', durationMs: 1 })).toBeUndefined();
 	});
 });

@@ -1,17 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-	buildReport,
-	classifyFrame,
-	createAccumulator,
-	dominantFrame,
-	hangSeverity,
-	leakSeverity,
-	type NativeSample,
-	normaliseThread,
-	reportFindings,
-	reportSection,
-} from "./analyze";
-import { analyzeTrace, type TraceDeps } from "./trace";
+import { iosAnalyzer, type NativeSample } from "./analyze";
+import { iosTraceAnalyzer, type TraceDeps } from "./trace";
 
 const APP = "/D/Containers/Bundle/Application/X/ShopApp.app/ShopApp";
 const SYS =
@@ -19,24 +8,26 @@ const SYS =
 
 describe("classifyFrame", () => {
 	test("app code under CoreSimulator is app, the simulator runtime root is system", () => {
-		expect(classifyFrame({ name: "f", binary: APP })).toBe("app");
-		expect(classifyFrame({ name: "f", binary: SYS })).toBe("system");
-		expect(classifyFrame({ name: "f", binary: "/usr/lib/system/libdispatch.dylib" })).toBe("system");
-		expect(classifyFrame({ name: "f", binary: "/System/Library/Frameworks/Foundation" })).toBe("system");
+		expect(iosAnalyzer.classifyFrame({ name: "f", binary: APP })).toBe("app");
+		expect(iosAnalyzer.classifyFrame({ name: "f", binary: SYS })).toBe("system");
+		expect(iosAnalyzer.classifyFrame({ name: "f", binary: "/usr/lib/system/libdispatch.dylib" })).toBe("system");
+		expect(iosAnalyzer.classifyFrame({ name: "f", binary: "/System/Library/Frameworks/Foundation" })).toBe("system");
 	});
 	test("react native runtime", () => {
-		expect(classifyFrame({ name: "-[RCTView layoutSubviews]", binary: APP })).toBe("rn");
-		expect(classifyFrame({ name: "YGNodeCalculateLayout", binary: APP })).toBe("rn");
-		expect(classifyFrame({ name: "facebook::jsi::Value::Value", binary: APP })).toBe("rn");
-		expect(classifyFrame({ name: "x", binary: `${APP}.app/Frameworks/hermes.framework/hermes` })).toBe("rn");
+		expect(iosAnalyzer.classifyFrame({ name: "-[RCTView layoutSubviews]", binary: APP })).toBe("rn");
+		expect(iosAnalyzer.classifyFrame({ name: "YGNodeCalculateLayout", binary: APP })).toBe("rn");
+		expect(iosAnalyzer.classifyFrame({ name: "facebook::jsi::Value::Value", binary: APP })).toBe("rn");
+		expect(iosAnalyzer.classifyFrame({ name: "x", binary: `${APP}.app/Frameworks/hermes.framework/hermes` })).toBe(
+			"rn"
+		);
 	});
 	test("app frame beats rn frame beats nothing", () => {
 		const rn = { name: "RCTFoo", binary: APP };
 		const app = { name: "myWork", binary: "/Frameworks/Third.framework/Third" };
 		const sys = { name: "objc_msgSend", binary: "/usr/lib/libobjc.A.dylib" };
-		expect(dominantFrame([sys, rn, app])?.frame.name).toBe("myWork");
-		expect(dominantFrame([sys, rn])?.cls).toBe("rn");
-		expect(dominantFrame([sys])).toBeUndefined();
+		expect(iosAnalyzer.dominantFrame([sys, rn, app])?.frame.name).toBe("myWork");
+		expect(iosAnalyzer.dominantFrame([sys, rn])?.cls).toBe("rn");
+		expect(iosAnalyzer.dominantFrame([sys])).toBeUndefined();
 	});
 });
 
@@ -52,7 +43,7 @@ describe("normaliseThread", () => {
 		["Preferences (0x1bb1cea) (Preferences, pid: 15431)", "Main Thread"],
 		["com.apple.uikit.eventfetch-thread (0x1bb2001) (Preferences, pid: 15431)", "com.apple.uikit.eventfetch-thread"],
 		["Thread (0x2c03) (A, pid: 1)", "Thread"],
-	])("%s", (raw, want) => expect(normaliseThread(raw)).toBe(want));
+	])("%s", (raw, want) => expect(iosAnalyzer.normaliseThread(raw)).toBe(want));
 });
 
 describe("thresholds", () => {
@@ -63,7 +54,7 @@ describe("thresholds", () => {
 		frames: [{ name: frame, binary: APP }],
 	});
 	test("over 15% red, 3-15% yellow, under 3% dropped", () => {
-		const acc = createAccumulator();
+		const acc = iosAnalyzer.createAccumulator();
 		let i = 0;
 		for (const [name, n] of [
 			["red", 20],
@@ -72,19 +63,27 @@ describe("thresholds", () => {
 			["filler", 73],
 		] as const)
 			for (let k = 0; k < n; k++) acc.add(sample(name, i++));
-		const r = buildReport({ stats: acc.stats(), hangs: [], leaks: [] });
+		const r = iosAnalyzer.buildReport({ stats: acc.stats(), hangs: [], leaks: [] });
 		expect(r.hotspots.map((h) => [h.frame, h.severity])).toEqual([
 			["filler", "critical"],
 			["red", "critical"],
 			["yellow", "warn"],
 		]);
-		const findings = reportFindings(r, "t.trace");
+		const findings = iosAnalyzer.reportFindings(r, "t.trace");
 		expect(findings.every((f) => f.kind === "native-hotspot")).toBe(true);
-		expect(reportSection(r).lines.join("\n")).toContain("yellow");
+		expect(iosAnalyzer.reportSection(r).lines.join("\n")).toContain("yellow");
 	});
 	test("hang and leak severities", () => {
-		expect([hangSeverity(600), hangSeverity(300), hangSeverity(100)]).toEqual(["critical", "warn", "info"]);
-		expect([leakSeverity(2_000_000), leakSeverity(100_000), leakSeverity(10)]).toEqual(["critical", "warn", "info"]);
+		expect([iosAnalyzer.hangSeverity(600), iosAnalyzer.hangSeverity(300), iosAnalyzer.hangSeverity(100)]).toEqual([
+			"critical",
+			"warn",
+			"info",
+		]);
+		expect([
+			iosAnalyzer.leakSeverity(2_000_000),
+			iosAnalyzer.leakSeverity(100_000),
+			iosAnalyzer.leakSeverity(10),
+		]).toEqual(["critical", "warn", "info"]);
 	});
 });
 
@@ -119,7 +118,7 @@ describe("large exports", () => {
 		Bun.gc(true);
 		const before = process.memoryUsage().rss;
 		const t0 = performance.now();
-		const res = await analyzeTrace(deps, "big.trace", { workDir: "/w" });
+		const res = await iosTraceAnalyzer.analyzeTrace(deps, "big.trace", { workDir: "/w" });
 		const ms = performance.now() - t0;
 		const grew = process.memoryUsage().rss - before;
 		if (!res.success) throw new Error(res.error.message);

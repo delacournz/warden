@@ -1,14 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { parseFullyDrawn } from "@delacour/warden-perf/startup/android-am-start";
-import {
-	launchDurationMs,
-	parseLaunchPeriods,
-	pickLaunchSchema,
-	xctraceLaunchArgv,
-	xctraceTableArgv,
-	xctraceTocArgv,
-} from "@delacour/warden-perf/startup/ios-app-launch";
+import { amStartParser } from "@delacour/warden-perf/startup/android-am-start";
+import { iosAppLaunch } from "@delacour/warden-perf/startup/ios-app-launch";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -87,7 +80,7 @@ async function newFullyDrawn(c: MeasureCtx, s: AndroidState): Promise<number | u
 	const log = await c.ctx.exec([s.adb, "-s", c.device.id, "logcat", "-d", "-s", "ActivityTaskManager"], {
 		timeoutMs: 15_000,
 	});
-	const drawn = parseFullyDrawn(log.stdout).filter((d) => d.component.startsWith(`${c.appId}/`));
+	const drawn = amStartParser.parseFullyDrawn(log.stdout).filter((d) => d.component.startsWith(`${c.appId}/`));
 	const fresh = drawn.slice(s.drawnSeen).at(-1);
 	s.drawnSeen = drawn.length;
 	return fresh?.ms;
@@ -182,22 +175,22 @@ const XCTRACE_HINT = "xctrace App Launch on a simulator is a spike; --method app
 /** SPIKE: one xctrace App Launch recording of the installed `.app`, exported to its launch time. */
 async function xctraceRun(c: MeasureCtx, appPath: string, trace: string): Promise<Result<number, WardenError>> {
 	const { ctx, device } = c;
-	const rec = await ctx.exec(xctraceLaunchArgv(device.id, appPath, trace), { timeoutMs: 120_000 });
+	const rec = await ctx.exec(iosAppLaunch.xctraceLaunchArgv(device.id, appPath, trace), { timeoutMs: 120_000 });
 	if (rec.exitCode !== 0) {
 		const why = (rec.stderr || rec.stdout).trim().split("\n").pop();
 		return fail(opError("failed", `xctrace record failed: ${why}`, { hint: XCTRACE_HINT }));
 	}
-	const toc = await ctx.exec(xctraceTocArgv(trace), { timeoutMs: 60_000 });
-	const schema = toc.exitCode === 0 ? pickLaunchSchema(toc.stdout) : undefined;
+	const toc = await ctx.exec(iosAppLaunch.xctraceTocArgv(trace), { timeoutMs: 60_000 });
+	const schema = toc.exitCode === 0 ? iosAppLaunch.pickLaunchSchema(toc.stdout) : undefined;
 	if (schema === undefined) {
 		return fail(
 			opError("failed", "the trace has no launch table (life-cycle-period / app-launch)", { hint: XCTRACE_HINT })
 		);
 	}
-	const table = await ctx.exec(xctraceTableArgv(trace, schema), { timeoutMs: 60_000 });
-	const periods = parseLaunchPeriods(table.stdout);
+	const table = await ctx.exec(iosAppLaunch.xctraceTableArgv(trace, schema), { timeoutMs: 60_000 });
+	const periods = iosAppLaunch.parseLaunchPeriods(table.stdout);
 	if (!periods.success) return fail(opError("failed", periods.error, { hint: XCTRACE_HINT }));
-	const total = launchDurationMs(periods.data);
+	const total = iosAppLaunch.launchDurationMs(periods.data);
 	return total === undefined
 		? fail(opError("failed", "no launch period in the trace", { hint: XCTRACE_HINT }))
 		: resultFactory.ok(total);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parsePs } from "@delacour/warden-perf/metrics/ps";
+import { psParser } from "@delacour/warden-perf/metrics/ps";
 import type { ResiduePatterns } from "../adapters/adapter.types";
 import { fakeExec } from "./exec";
 import {
@@ -128,7 +128,7 @@ describe("killMatching", () => {
 });
 
 describe("ownerFilter", () => {
-	const rows = parsePs(fx("ps.txt"));
+	const rows = psParser.parsePs(fx("ps.txt"));
 	const pids = (o: Owner) => ownerFilter(rows, o).map((r) => r.pid);
 
 	test("udid match, bench-pid trees and owned paths are ours; foreign helpers are not", () => {
@@ -171,7 +171,7 @@ describe("listMatchingProcesses never matches shells", () => {
 
 	test("an owned zsh watcher mentioning the helper and udid is owned but not listed", async () => {
 		const row = `/bin/zsh -c while true; do warden-simd --udid ${udid}; done`;
-		const rows = parsePs(psOut(row));
+		const rows = psParser.parsePs(psOut(row));
 		expect(ownerFilter(rows, own).map((r) => r.pid)).toEqual([900]);
 		expect(await list([/warden-simd/], row)).toEqual([]);
 	});

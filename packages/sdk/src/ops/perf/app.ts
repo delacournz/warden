@@ -1,4 +1,4 @@
-import { parseIosRunningApps, parseResumedActivity, pickIosApp } from "@delacour/warden-perf/shared/app-detect";
+import { appDetector } from "@delacour/warden-perf/shared/app-detect";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -23,10 +23,10 @@ async function detect(ctx: PerfEnv, device: DeviceRef): Promise<Detected> {
 	const res = await ctx.exec(listArgv(ctx, device), { timeoutMs: 10_000 });
 	if (res.exitCode !== 0) return { kind: "none" };
 	if (device.platform === "android") {
-		const resumed = parseResumedActivity(res.stdout);
+		const resumed = appDetector.parseResumedActivity(res.stdout);
 		return resumed ? { kind: "app", id: resumed.package } : { kind: "none" };
 	}
-	const pick = pickIosApp(parseIosRunningApps(res.stdout));
+	const pick = appDetector.pickIosApp(appDetector.parseIosRunningApps(res.stdout));
 	if (pick.kind === "app") return { kind: "app", id: pick.bundleId };
 	return pick;
 }
