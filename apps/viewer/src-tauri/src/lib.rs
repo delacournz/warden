@@ -1,5 +1,7 @@
 mod billing;
 mod device;
+#[allow(dead_code)]
+mod ipc;
 mod registry;
 mod session;
 
