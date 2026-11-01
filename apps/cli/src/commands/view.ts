@@ -4,7 +4,7 @@ import type { AsyncResult } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { VIEWER_BINARY, viewerAsset } from "../npm/viewer";
-import { emit, note, reportError } from "../output";
+import { emit, note, reportError, warn } from "../output";
 import type { ViewerScope } from "../remote/api.types";
 import { withSpinner } from "../spinner-context";
 import { currentBuild } from "../update/build-info";
@@ -38,9 +38,53 @@ async function ensureViewer(ctx: CommandContext): AsyncResult<string> {
 	});
 }
 
+/** Stop the hosted device behind `lease` and drop the lease: the window's Shut down choice, or Ctrl+C. */
+async function endRemoteLease(ctx: CommandContext, lease: Lease): Promise<Ended> {
+	const [{ stopRemoteLeases }, { releaseDevices }] = await Promise.all([
+		import("../remote/claim"),
+		import("../device-lease"),
+	]);
+	const remote = await stopRemoteLeases(ctx, [lease]);
+	await releaseDevices(ctx, [lease.id]);
+	return { remoteStopped: remote.stopped, notes: remote.notes };
+}
+
+type Ended = { remoteStopped: string[]; notes: string[] };
+
+/** The `warden view` summary line / JSON once the viewer has returned. */
+function reportViewer(
+	ctx: CommandContext,
+	lease: Lease,
+	opts: AttachOptions,
+	r: { exitCode: number; pid: number; detached: boolean; ended: Ended | undefined }
+): void {
+	const remoteId = lease.resource.kind === "remote-device" ? lease.resource.id : lease.id;
+	const closed = r.ended
+		? `viewer closed; stopped remote ${remoteId} and released ${lease.id}`
+		: `viewer closed (exit ${r.exitCode}); ${remoteId} keeps running (lease ${lease.id}, TTL applies)`;
+	const text = r.detached
+		? `viewer opened on ${remoteId} (pid ${r.pid}); it closes with its token, ~30 min, and the lease TTL applies`
+		: closed;
+	emit(
+		ctx,
+		opts.json,
+		{
+			leaseId: lease.id,
+			remoteId,
+			scope: opts.scope,
+			detached: r.detached,
+			exitCode: r.exitCode,
+			...(r.detached ? { pid: r.pid } : {}),
+			...(r.ended ? { released: true, remoteStopped: r.ended.remoteStopped } : {}),
+		},
+		r.exitCode === 0 ? ctx.ui.color.green(text) : ctx.ui.color.yellow(text)
+	);
+}
+
 /**
- * Open the viewer on `lease` and stay attached until the window closes (Ctrl+C closes it); with `detach` it
- * returns as soon as the viewer has its token. Returns the command's exit code: the viewer's own.
+ * Open the viewer on `lease` and stay attached until the window closes; with `detach` it returns as soon as the
+ * viewer has its token. Ctrl+C, or Shut down in the window's close prompt, stops the hosted device and releases the
+ * lease; Keep running leaves both (the lease TTL applies). Returns the command's exit code: the viewer's own.
  */
 export async function attachViewer(
 	ctx: CommandContext,
@@ -72,17 +116,15 @@ export async function attachViewer(
 	const { exitCode, events, pid, detached } = outcome.data;
 	const failure = events.filter((e) => e.event === "error").at(-1);
 	if (failure) reportError(ctx, scope, `viewer: ${failure.message}`);
-	if (!opts.report) return exitCode;
-	const remoteId = lease.resource.kind === "remote-device" ? lease.resource.id : lease.id;
-	const text = detached
-		? `viewer opened on ${remoteId} (pid ${pid}); it closes with its token, ~30 min, and the lease TTL applies`
-		: `viewer closed (exit ${exitCode})`;
-	emit(
-		ctx,
-		opts.json,
-		{ leaseId: lease.id, remoteId, scope: opts.scope, detached, exitCode, ...(detached ? { pid } : {}) },
-		exitCode === 0 ? ctx.ui.color.green(text) : ctx.ui.color.yellow(text)
-	);
+	const release = !detached && (abort.signal.aborted || outcome.data.release);
+	const ended = release ? await endRemoteLease(ctx, lease) : undefined;
+	for (const n of ended?.notes ?? []) warn(ctx, n);
+	if (!opts.report) {
+		if (ended && !opts.json)
+			note(ctx, `released ${lease.id}; stopped remote ${ended.remoteStopped.join(" ") || "(none)"}`);
+		return exitCode;
+	}
+	reportViewer(ctx, lease, opts, { exitCode, pid, detached, ended });
 	return exitCode;
 }
 

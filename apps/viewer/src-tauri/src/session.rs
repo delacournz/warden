@@ -1,10 +1,10 @@
-//! The session handed over on stdin, and the stdout events going back.
+//! The session a CLI hands over on stdin (relayed to the host), and the stdout events going back.
 //!
 //! The first stdin line is the whole session; every later line is a token refresh. The token lives
 //! in `SessionState` and is never serialised towards the webview.
 
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::sync::RwLock;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -130,23 +130,24 @@ pub fn parse_refresh(line: &str) -> Result<Refresh, String> {
     Ok(refresh)
 }
 
-/// Read the first line of `reader` as the session.
-pub fn read_start<R: BufRead>(reader: &mut R) -> Result<Session, StartError> {
-    let mut line = String::new();
-    let read = reader
-        .read_line(&mut line)
-        .map_err(|e| StartError::Read(e.to_string()))?;
-    if read == 0 {
-        return Err(StartError::Eof);
-    }
-    parse_session(&line)
-}
-
 pub struct SessionState(RwLock<Session>);
 
 impl SessionState {
     pub fn new(session: Session) -> Self {
         Self(RwLock::new(session))
+    }
+
+    /// Swap the whole session (the same device was opened again by another `warden view`).
+    pub fn replace(&self, session: Session) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = session;
+    }
+
+    pub fn title(&self) -> String {
+        self.0
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .title
+            .clone()
     }
 
     pub fn apply_refresh(&self, refresh: Refresh) {
@@ -200,22 +201,6 @@ impl SessionState {
     }
 }
 
-/// Apply every remaining line as a refresh, then call `on_eof`. A malformed line is logged and
-/// skipped so one bad refresh never ends the session.
-pub fn pump_refreshes<R: BufRead>(reader: R, state: &SessionState, on_eof: impl FnOnce()) {
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        match parse_refresh(&line) {
-            Ok(refresh) => state.apply_refresh(refresh),
-            Err(e) => log::warn!("ignoring stdin line: {e}"),
-        }
-    }
-    on_eof();
-}
-
 /// True once `expires_at` (RFC 3339) is not after `now`. An unparseable value counts as expired, so
 /// a malformed token never keeps a detached window live.
 pub fn is_expired(expires_at: &str, now: OffsetDateTime) -> bool {
@@ -246,7 +231,13 @@ pub fn eof_action(detached: bool) -> EofAction {
 pub enum Event<'a> {
     Ready,
     Streaming,
-    Error { message: &'a str },
+    Error {
+        message: &'a str,
+    },
+    /// The user closed the window from its prompt; `release` = Shut down. Attached only.
+    Close {
+        release: bool,
+    },
 }
 
 pub fn event_line(event: &Event) -> String {
@@ -263,7 +254,6 @@ pub fn emit(event: &Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     const START: &str = r#"{"apiUrl":"https://api.warden.co.nz","deviceId":"d1","token":"wvt_a","expiresAt":"2030-01-01T00:00:00Z","scope":"drive","title":"iphone-17 · warden","platform":"ios","detached":false}"#;
 
@@ -289,22 +279,6 @@ mod tests {
     }
 
     #[test]
-    fn read_start_reports_eof() {
-        let mut empty = Cursor::new(Vec::new());
-        assert!(matches!(read_start(&mut empty), Err(StartError::Eof)));
-    }
-
-    #[test]
-    fn read_start_takes_only_the_first_line() {
-        let input = format!("{START}\n{{\"token\":\"wvt_b\",\"expiresAt\":\"x\"}}\n");
-        let mut cursor = Cursor::new(input.into_bytes());
-        assert!(read_start(&mut cursor).is_ok());
-        let mut rest = String::new();
-        cursor.read_line(&mut rest).unwrap();
-        assert!(rest.contains("wvt_b"));
-    }
-
-    #[test]
     fn refresh_replaces_the_token_in_memory() {
         let state = SessionState::new(parse_session(START).unwrap());
         state.apply_refresh(
@@ -315,13 +289,17 @@ mod tests {
     }
 
     #[test]
-    fn pump_applies_refreshes_skips_junk_and_signals_eof() {
+    fn replace_swaps_the_whole_session() {
         let state = SessionState::new(parse_session(START).unwrap());
-        let input = "{\"token\":\"wvt_b\",\"expiresAt\":\"e1\"}\nnot json\n\n{\"token\":\"wvt_c\",\"expiresAt\":\"e2\"}\n";
-        let mut eof = false;
-        pump_refreshes(Cursor::new(input.as_bytes()), &state, || eof = true);
-        assert!(eof);
-        assert_eq!(state.credentials().token, "wvt_c");
+        let next = START
+            .replace("wvt_a", "wvt_z")
+            .replace("\"drive\"", "\"view\"")
+            .replace("\"detached\":false", "\"detached\":true");
+        state.replace(parse_session(&next).unwrap());
+        assert_eq!(state.credentials().token, "wvt_z");
+        assert_eq!(state.credentials().scope, Scope::View);
+        assert!(state.detached());
+        assert_eq!(state.title(), "iphone-17 · warden");
     }
 
     #[test]
@@ -443,6 +421,14 @@ mod tests {
         assert_eq!(
             event_line(&Event::Error { message: "boom" }),
             r#"{"event":"error","message":"boom"}"#
+        );
+        assert_eq!(
+            event_line(&Event::Close { release: true }),
+            r#"{"event":"close","release":true}"#
+        );
+        assert_eq!(
+            event_line(&Event::Close { release: false }),
+            r#"{"event":"close","release":false}"#
         );
     }
 }

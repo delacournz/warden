@@ -55,8 +55,18 @@ export type Ui = {
 	select: <T extends string>(message: string, choices: Choice<T>[]) => Promise<T | undefined>;
 	/** space toggles, enter submits; `selected` choices start ticked, disabled ones show but can't be picked. undefined = cancelled */
 	multiselect: <T extends string>(message: string, choices: Choice<T>[]) => Promise<T[] | undefined>;
+	/** one line of text; `validate` returns why the value is refused (shown inline, asked again). undefined = cancelled */
+	text: (message: string, opts?: TextPrompt) => Promise<string | undefined>;
 	/** clack's cancel line */
 	cancelled: (message: string) => void;
+};
+
+export type TextPrompt = {
+	/** editable starting value */
+	initialValue?: string;
+	/** dim hint shown while empty */
+	placeholder?: string;
+	validate?: (value: string) => string | undefined;
 };
 
 /** chalk level for stderr/stdout: honours NO_COLOR / FORCE_COLOR, else colour only on a TTY. */
@@ -136,6 +146,18 @@ export function terminalUi(env: Record<string, string | undefined>): Ui {
 				required: false,
 				initialValues: choices.filter((c) => c.selected && !c.disabled).map((c) => c.value),
 				options: choices.map(toOption),
+			});
+			return isCancel(answer) ? undefined : answer;
+		},
+		text: async (message, opts = {}) => {
+			const { text, isCancel } = loadClack();
+			const { validate } = opts;
+			const answer = await text({
+				message,
+				output: process.stderr,
+				...(opts.initialValue !== undefined ? { initialValue: opts.initialValue } : {}),
+				...(opts.placeholder !== undefined ? { placeholder: opts.placeholder } : {}),
+				...(validate ? { validate: (v: string | undefined) => validate(v ?? "") } : {}),
 			});
 			return isCancel(answer) ? undefined : answer;
 		},
