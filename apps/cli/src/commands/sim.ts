@@ -7,7 +7,7 @@ import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, reportError, success } from "../output";
+import { output } from "../output";
 import { registerSimMeasure } from "./sim-measure";
 
 type SlimOpts = { booted?: true; dryRun?: true; restore?: true; json?: true; except?: string; keep?: string };
@@ -65,7 +65,7 @@ function describeReport(report: SlimReport, opts: SlimOpts): string {
 async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const fail = (message: string) => {
-		reportError(ctx, "sim slim", message);
+		output.reportError(ctx, "sim slim", message);
 		return 1;
 	};
 	if ((udid === undefined) === (opts.booted !== true)) return fail("pass <udid> or --booted");
@@ -85,7 +85,7 @@ async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpt
 		const line = describeReport(report, opts);
 		ctx.err(report.error === undefined ? line : color.red(line));
 	}
-	if (opts.json) emit(ctx, true, reports, "");
+	if (opts.json) output.emit(ctx, true, reports, "");
 	return reports.every((r) => r.error === undefined) ? 0 : 1;
 }
 
@@ -96,17 +96,17 @@ function profiles(ctx: CommandContext, opts: { json?: true }): number {
 	const text = rows
 		.map((row) => `${row.id.padEnd(width)}  ${String(row.labelCount).padStart(2)} labels  ${row.name}`)
 		.join("\n");
-	emit(ctx, opts.json === true, rows, text);
+	output.emit(ctx, opts.json === true, rows, text);
 	return 0;
 }
 
 /** `warden sim unquarantine <id>`: let claims hand the device out again. */
 function unquarantine(ctx: CommandContext, id: string): number {
 	if (ctx.store().unquarantineDevice(id) === 0) {
-		reportError(ctx, "sim unquarantine", `${id} is not quarantined`);
+		output.reportError(ctx, "sim unquarantine", `${id} is not quarantined`);
 		return 1;
 	}
-	success(ctx, `${id}: quarantine cleared`);
+	output.success(ctx, `${id}: quarantine cleared`);
 	return 0;
 }
 

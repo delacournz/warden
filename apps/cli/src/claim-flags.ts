@@ -20,7 +20,7 @@ import { type DeviceRequest, leaseModel, type Owner, type Platform } from "@dela
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
-import { leaseHostFromContext } from "./lease-host";
+import { leaseHostBuilder } from "./lease-host";
 import { applyPhysicalAllow, parsePhysicalIds, resolvePhysicalAllow } from "./physical-allow";
 import { awaitPhonesUnlocked } from "./physical-lock";
 
@@ -325,7 +325,7 @@ export async function claimWithFlags(
 		});
 		if (!unlocked.success) return wardenErrors.coded(unlocked, "failed");
 	}
-	const outcome = await new ClaimRequestRunner(leaseHostFromContext(ctx)).claim(
+	const outcome = await new ClaimRequestRunner(leaseHostBuilder.leaseHostFromContext(ctx)).claim(
 		owner,
 		{ ...flags, request },
 		pid,

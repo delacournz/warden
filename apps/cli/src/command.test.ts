@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Chalk } from "chalk";
 import { type Command, type CommandEntry, defineCommand, runLazyProgram, runProgram } from "./command";
-import { reportError } from "./output";
+import { output } from "./output";
 import { withSpinner } from "./spinner-context";
 import { scriptedUi, type TestContext, testContext } from "./testing";
 
@@ -160,10 +160,11 @@ describe("runProgram --json failures", () => {
 				.argument("[rest...]")
 				.action(async (_rest, opts) => {
 					if (opts.wrote) ctx.out(JSON.stringify({ unknown: ["x"] }));
-					else if (opts.spin) await withSpinner(ctx, "working", async (sctx) => reportError(sctx, "delta", "boom"));
+					else if (opts.spin)
+						await withSpinner(ctx, "working", async (sctx) => output.reportError(sctx, "delta", "boom"));
 					else if (!opts.silent) {
-						reportError(ctx, "delta", "boom");
-						reportError(ctx, "delta", "and then this");
+						output.reportError(ctx, "delta", "boom");
+						output.reportError(ctx, "delta", "and then this");
 					}
 					done(opts.silent ? 4 : 1);
 				});
@@ -177,7 +178,7 @@ describe("runProgram --json failures", () => {
 				.command("sub")
 				.option("--json", "machine-readable output")
 				.action(() => {
-					reportError(ctx, "eps sub", "nope");
+					output.reportError(ctx, "eps sub", "nope");
 					done(2);
 				});
 		},

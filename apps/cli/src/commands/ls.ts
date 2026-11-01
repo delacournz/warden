@@ -5,7 +5,7 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { leaseModel, type Resource } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, plural, table } from "../output";
+import { output } from "../output";
 
 export function describeResource(resource: Resource): string {
 	switch (resource.kind) {
@@ -39,13 +39,13 @@ function list(ctx: CommandContext, json: boolean): number {
 	const text =
 		leases.length === 0
 			? color.dim("no leases")
-			: table(ctx, [...HEADERS.slice(0, 2), ...(withProvider ? ["PROVIDER"] : []), ...HEADERS.slice(2)], rows, {
+			: output.table(ctx, [...HEADERS.slice(0, 2), ...(withProvider ? ["PROVIDER"] : []), ...HEADERS.slice(2)], rows, {
 					column: withProvider ? 5 : 4,
 					keep: "end",
 				});
 	const stale = leases.filter((l) => l.state === "stale").length;
-	const detail = `${plural(leases.length, "lease")}${stale > 0 ? ` · ${stale} stale` : ""}`;
-	emit(ctx, json, { leases }, text, { scope: "ls", detail });
+	const detail = `${output.plural(leases.length, "lease")}${stale > 0 ? ` · ${stale} stale` : ""}`;
+	output.emit(ctx, json, { leases }, text, { scope: "ls", detail });
 	return 0;
 }
 

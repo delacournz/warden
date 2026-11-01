@@ -15,9 +15,9 @@ import { wardenErrors } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { parsePlatform, resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
+import { type CommandContext, contextBuilder } from "../context";
 import { installModeOption, kindOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
-import { emit, heading, reportError } from "../output";
+import { output } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type ProjectOpts = { project?: string; bundleId?: string; variant?: string; kind?: string; json?: true };
@@ -59,7 +59,7 @@ export function kindJson(app: KindApp): Record<string, unknown> {
 }
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	reportError(ctx, `app ${sub}`, message);
+	output.reportError(ctx, `app ${sub}`, message);
 	return 1;
 }
 
@@ -99,16 +99,21 @@ async function ensureCmd(
 	if (!flags.success) return fail(ctx, "ensure", flags.error);
 	const phone = platform.data === "ios" && device.data !== undefined && leaseModel.isPhysicalIosId(device.data);
 	const { install, kind } = flags.data;
-	if (!opts.json) heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
+	if (!opts.json) output.heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
-		const result = await new AppPreparer(appHostFromContext(sctx), deps).ensureFor(owner, platform.data, device.data, {
-			...projectOptions(opts),
-			...(kind !== undefined ? { kind } : {}),
-			...(phone ? { physical: true } : {}),
-			eas: opts.eas,
-			build: opts.build,
-			...install,
-		});
+		const result = await new AppPreparer(contextBuilder.appHostFromContext(sctx), deps).ensureFor(
+			owner,
+			platform.data,
+			device.data,
+			{
+				...projectOptions(opts),
+				...(kind !== undefined ? { kind } : {}),
+				...(phone ? { physical: true } : {}),
+				eas: opts.eas,
+				build: opts.build,
+				...install,
+			}
+		);
 		if (result.success) spinner.succeed(`${platform.data} app ready (${result.data.source})`);
 		else spinner.fail(`${platform.data} app not ready`);
 		return result;
@@ -117,7 +122,7 @@ async function ensureCmd(
 	const { kindApp, ...r } = res.data;
 	const where = device.data ? ` → ${r.installed ? "installed on" : "not installed on"} ${device.data}` : "";
 	const ensured: AppEnsureJson = r;
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		kindApp === undefined ? ensured : { ...ensured, ...kindJson(kindApp) },
@@ -138,7 +143,7 @@ async function fingerprintCmd(
 		if (!p.success) return fail(ctx, "fingerprint", p.error);
 		platforms.push(p.data);
 	}
-	const project = await new AppPreparer(appHostFromContext(ctx)).loadProject(
+	const project = await new AppPreparer(contextBuilder.appHostFromContext(ctx)).loadProject(
 		projectOptions(opts),
 		platforms.length === 1 ? platforms[0] : undefined
 	);
@@ -147,7 +152,7 @@ async function fingerprintCmd(
 	const native: Partial<Record<Platform, string>> = {};
 	const failed = await withSpinner(ctx, `fingerprinting ${platforms.join(" + ")}…`, async (sctx) => {
 		for (const platform of platforms) {
-			const hash = await new AppPreparer(appHostFromContext(sctx)).fingerprint(project.data, platform);
+			const hash = await new AppPreparer(contextBuilder.appHostFromContext(sctx)).fingerprint(project.data, platform);
 			if (!hash.success) return hash.error;
 			fingerprints[platform] = hash.data.key;
 			if (hash.data.js !== undefined) native[platform] = hash.data.native;
@@ -156,7 +161,7 @@ async function fingerprintCmd(
 	});
 	if (failed !== undefined) return fail(ctx, "fingerprint", failed);
 	const text = platforms.map((p) => `${p.padEnd(7)}  ${ctx.ui.color.bold(fingerprints[p] ?? "")}`).join("\n");
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		{

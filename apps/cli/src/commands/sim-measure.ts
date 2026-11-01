@@ -4,7 +4,7 @@ import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
-import { emit, reportError } from "../output";
+import { output } from "../output";
 
 const BYTES_PER_MB = 1024 ** 2;
 const TOP_COUNT = 10;
@@ -35,7 +35,7 @@ function describe(m: SimMeasurement): string {
 /** `warden sim measure <udid>|--booted [--json]`: real footprint (summed phys_footprint under launchd_sim) per simulator. */
 async function measure(ctx: CommandContext, udid: string | undefined, opts: MeasureOpts): Promise<number> {
 	const fail = (message: string) => {
-		reportError(ctx, "sim measure", message);
+		output.reportError(ctx, "sim measure", message);
 		return 1;
 	};
 	if ((udid === undefined) === (opts.booted !== true)) return fail("pass <udid> or --booted");
@@ -49,7 +49,7 @@ async function measure(ctx: CommandContext, udid: string | undefined, opts: Meas
 		return { udid: id, error: res?.error ?? `${id}: not measured` };
 	});
 	const text = reports.map((r) => ("error" in r ? r.error : describe(r))).join("\n\n");
-	emit(ctx, opts.json === true, reports, text);
+	output.emit(ctx, opts.json === true, reports, text);
 	return reports.every((r) => !("error" in r)) ? 0 : 1;
 }
 

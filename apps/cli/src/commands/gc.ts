@@ -19,9 +19,9 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
 import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
-import { leaseHostFromContext } from "../lease-host";
-import { emit, heading, plural, reportError } from "../output";
+import { type CommandContext, contextBuilder } from "../context";
+import { leaseHostBuilder } from "../lease-host";
+import { output } from "../output";
 import { hasForegroundApp } from "../running-apps";
 import { withSpinner } from "../spinner-context";
 
@@ -99,7 +99,7 @@ async function gcPlatform(
 	const outcome: PlatformOutcome = { shutdown: [], forgotten: [], notes: [] };
 	const records = ctx.store().listDevices(platform);
 	if (records.length === 0) return outcome;
-	const provider = hostDeps.providerFor(platform, appHostFromContext(ctx), owner);
+	const provider = hostDeps.providerFor(platform, contextBuilder.appHostFromContext(ctx), owner);
 	const inventory = await provider.inventory();
 	if (!inventory.success) {
 		outcome.notes.push(`${platform}: skipped (${inventory.error.message})`);
@@ -161,7 +161,7 @@ function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[
 		if (removed.length === 0) return [];
 		const freed = removed.reduce((sum, b) => sum + b.size, 0);
 		return [
-			`pruned ${plural(removed.length, "cached build")} (${prune.formatSize(freed)}; cache ${prune.formatSize(plan.total)} → ${prune.formatSize(plan.after)}, max ${prune.formatSize(maxBytes)})`,
+			`pruned ${output.plural(removed.length, "cached build")} (${prune.formatSize(freed)}; cache ${prune.formatSize(plan.total)} → ${prune.formatSize(plan.after)}, max ${prune.formatSize(maxBytes)})`,
 		];
 	} catch (e) {
 		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
@@ -206,7 +206,7 @@ function sweepDevDirs(ctx: CommandContext, now: number): string[] {
 		return isMissing(e) ? [] : [`dev session dirs sweep failed: ${e instanceof Error ? e.message : String(e)}`];
 	}
 	const removed = entries.filter((name) => removeIfIdle(join(root, name), now)).length;
-	return removed === 0 ? [] : [`removed ${plural(removed, "old dev session dir")}`];
+	return removed === 0 ? [] : [`removed ${output.plural(removed, "old dev session dir")}`];
 }
 
 const isMissing = (e: unknown): boolean => e instanceof Error && "code" in e && e.code === "ENOENT";
@@ -242,14 +242,14 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const idle = parseIdle(opts.idle);
 	if (!idle.success) {
-		reportError(ctx, "gc", idle.error);
+		output.reportError(ctx, "gc", idle.error);
 		return 1;
 	}
 	// a bad --max-cache-size is the caller's typo: fail. A bad WARDEN_MAX_CACHE_SIZE must not stop lease
 	// reclaim or device shutdown (auto-gc would fail silently every pass): it skips the prune, with a note.
 	const cap = prune.cacheCap(opts.maxCacheSize, ctx.env);
 	if (!cap.bytes.success && cap.source === "flag") {
-		reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
+		output.reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
 		return 1;
 	}
 	const store = ctx.store();
@@ -260,14 +260,18 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		.filter((l) => l.resource.kind === "device" && !liveness.isLeaseAlive(l, now, liveness.processAlive));
 	const shutDownIdle = async (sctx: CommandContext): Promise<GcOutcome> => {
 		// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
-		const orphaned = await new ReleasedDeviceShutdown(leaseHostFromContext(sctx)).run(stale, owner, async (lease) => {
-			const r = lease.resource;
-			if (r.kind !== "device") return undefined;
-			return (
-				shutdownPolicy.staleShutdownBlock(lease, now, false) ??
-				shutdownPolicy.staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
-			);
-		});
+		const orphaned = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(sctx)).run(
+			stale,
+			owner,
+			async (lease) => {
+				const r = lease.resource;
+				if (r.kind !== "device") return undefined;
+				return (
+					shutdownPolicy.staleShutdownBlock(lease, now, false) ??
+					shutdownPolicy.staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
+				);
+			}
+		);
 		const staleIds = store
 			.listLeases()
 			.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive))
@@ -296,7 +300,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		const plan: GcPlan = { now, idleMs: idle.data, leased };
 		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
 		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
-		const snapshotNotes = await hostDeps.androidSnapshotPass(appHostFromContext(sctx), owner);
+		const snapshotNotes = await hostDeps.androidSnapshotPass(contextBuilder.appHostFromContext(sctx), owner);
 		return {
 			reclaimed,
 			shutdown: [
@@ -312,7 +316,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		};
 	};
 	if (!opts.quiet && !opts.json)
-		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${durationParser.format(idle.data)}`);
+		output.heading(
+			ctx,
+			"gc",
+			`${output.plural(stale.length, "stale lease")} · idle > ${durationParser.format(idle.data)}`
+		);
 	// `--quiet` is the detached auto-gc: no terminal, so no spinner.
 	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
 		? await shutDownIdle(ctx)
@@ -336,7 +344,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		...notes.map((n) => color.yellow(n)),
 	].join("\n");
 	const doc: GcJson = { reclaimed, shutdown, forgotten, notes };
-	emit(ctx, opts.json === true, doc, text);
+	output.emit(ctx, opts.json === true, doc, text);
 	return 0;
 }
 

@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { Chalk } from "chalk";
-import { formatTable, heading, note, plural, reportError, success, table, warn } from "./output";
+import { output } from "./output";
 import { scriptedUi, type TestContext, testContext } from "./testing";
 
 describe("formatTable", () => {
 	test("pads columns", () => {
-		expect(formatTable(["A", "BB"], [["xxx", "y"]])).toBe("A    BB\nxxx  y");
+		expect(output.formatTable(["A", "BB"], [["xxx", "y"]])).toBe("A    BB\nxxx  y");
 	});
 });
 
 describe("formatTable width", () => {
 	test("shrinks the flex column to fit, keeping its end", () => {
-		const text = formatTable(["ID", "PATH"], [["a", "/very/long/path/to/Some.app"]], undefined, {
+		const text = output.formatTable(["ID", "PATH"], [["a", "/very/long/path/to/Some.app"]], undefined, {
 			width: 16,
 			flex: { column: 1, keep: "end" },
 		});
@@ -19,7 +19,7 @@ describe("formatTable width", () => {
 	});
 
 	test("keeps the start by default and never shrinks below the header", () => {
-		const text = formatTable(["ID", "LABEL"], [["a", "abcdefghijklmnop"]], undefined, {
+		const text = output.formatTable(["ID", "LABEL"], [["a", "abcdefghijklmnop"]], undefined, {
 			width: 9,
 			flex: { column: 1 },
 		});
@@ -27,7 +27,7 @@ describe("formatTable width", () => {
 	});
 
 	test("fits → untouched", () => {
-		expect(formatTable(["A", "BB"], [["xxx", "y"]], undefined, { width: 80, flex: { column: 1 } })).toBe(
+		expect(output.formatTable(["A", "BB"], [["xxx", "y"]], undefined, { width: 80, flex: { column: 1 } })).toBe(
 			"A    BB\nxxx  y"
 		);
 	});
@@ -46,11 +46,11 @@ describe("say", () => {
 
 	test("piped: bare lines, no heading", () => {
 		const { out, err } = lines(false, (ctx) => {
-			heading(ctx, "ls", "2 leases");
-			reportError(ctx, "claim", "nope");
-			warn(ctx, "careful");
-			success(ctx, "done");
-			note(ctx, "fyi");
+			output.heading(ctx, "ls", "2 leases");
+			output.reportError(ctx, "claim", "nope");
+			output.warn(ctx, "careful");
+			output.success(ctx, "done");
+			output.note(ctx, "fyi");
 		});
 		expect(out).toEqual([]);
 		expect(err).toEqual(["warden claim: nope", "careful", "done", "fyi"]);
@@ -58,33 +58,33 @@ describe("say", () => {
 
 	test("terminal: heading + glyphs, all on stderr", () => {
 		const { out, err } = lines(true, (ctx) => {
-			heading(ctx, "ls", "2 leases");
-			heading(ctx, "gc");
-			reportError(ctx, "claim", "nope");
-			warn(ctx, "careful");
-			success(ctx, "done");
-			note(ctx, "fyi");
+			output.heading(ctx, "ls", "2 leases");
+			output.heading(ctx, "gc");
+			output.reportError(ctx, "claim", "nope");
+			output.warn(ctx, "careful");
+			output.success(ctx, "done");
+			output.note(ctx, "fyi");
 		});
 		expect(out).toEqual([]);
 		expect(err).toEqual(["warden ls  2 leases", "warden gc", "✗ warden claim: nope", "! careful", "✓ done", "· fyi"]);
 	});
 
 	test("plural", () => {
-		expect(plural(1, "lease")).toBe("1 lease");
-		expect(plural(0, "lease")).toBe("0 leases");
-		expect(plural(2, "match", "matches")).toBe("2 matches");
+		expect(output.plural(1, "lease")).toBe("1 lease");
+		expect(output.plural(0, "lease")).toBe("0 leases");
+		expect(output.plural(2, "match", "matches")).toBe("2 matches");
 	});
 });
 
 describe("formatTable never wraps", () => {
 	test("lines wider than `width` are clipped with …, header included", () => {
-		const text = formatTable(["NAME", "DETAIL"], [["a", "x".repeat(30)]], undefined, { width: 12 });
+		const text = output.formatTable(["NAME", "DETAIL"], [["a", "x".repeat(30)]], undefined, { width: 12 });
 		expect(text.split("\n")).toEqual(["NAME  DETAIL", "a     xxxxx…"]);
 	});
 
 	test("clipping keeps colour codes intact and resets after the cut", () => {
 		const color = new Chalk({ level: 1 });
-		const text = formatTable(["A", "B"], [[color.green("ok"), color.red("x".repeat(20))]], color, { width: 8 });
+		const text = output.formatTable(["A", "B"], [[color.green("ok"), color.red("x".repeat(20))]], color, { width: 8 });
 		const row = text.split("\n")[1] ?? "";
 		expect(Bun.stripANSI(row)).toBe("ok  xxx…");
 		expect(row.endsWith("\u001b[0m")).toBe(true);
@@ -95,8 +95,8 @@ describe("formatTable never wraps", () => {
 		const rich = testContext([], { ui: scriptedUi({ rich: true, columns: 20 }) });
 		const piped = testContext([], { ui: scriptedUi({ columns: 20 }) });
 		try {
-			for (const line of table(rich, ["K", "V"], rows).split("\n")) expect(line.length).toBeLessThanOrEqual(20);
-			expect(table(piped, ["K", "V"], rows)).toContain("y".repeat(100));
+			for (const line of output.table(rich, ["K", "V"], rows).split("\n")) expect(line.length).toBeLessThanOrEqual(20);
+			expect(output.table(piped, ["K", "V"], rows)).toContain("y".repeat(100));
 		} finally {
 			rich.cleanup();
 			piped.cleanup();
@@ -106,7 +106,7 @@ describe("formatTable never wraps", () => {
 
 describe("formatTable several flex columns", () => {
 	test("shrinks them in order, each down to its floor, before clipping", () => {
-		const text = formatTable(["A", "B", "C"], [["aaaaaaaaaa", "bbbbbbbbbb", "c"]], undefined, {
+		const text = output.formatTable(["A", "B", "C"], [["aaaaaaaaaa", "bbbbbbbbbb", "c"]], undefined, {
 			width: 16,
 			flex: [
 				{ column: 0, min: 5 },

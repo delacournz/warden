@@ -2,7 +2,7 @@ import type { Command as Commander } from "@commander-js/extra-typings";
 import { durationParser } from "@delacour/warden-config/duration";
 import { perfLsOps } from "@delacour/warden-sdk/ops/perf/ls";
 import type { CommandContext } from "../context";
-import { emit, plural, table } from "../output";
+import { output } from "../output";
 import { listPerfCandidates } from "./device";
 import type { PerfDeps } from "./run";
 
@@ -17,12 +17,12 @@ export async function perfLs(ctx: CommandContext, deps: PerfDeps, opts: PerfLsOp
 		const text =
 			devices.length === 0
 				? color.dim("no booted warden devices")
-				: table(
+				: output.table(
 						ctx,
 						["UDID", "PLATFORM", "NAME", "HELD BY", "APP"],
 						devices.map((d) => [d.udid, d.platform, d.name, d.holder ?? "", d.app ?? ""])
 					);
-		emit(ctx, json, { devices }, text, { scope: "perf ls", detail: plural(devices.length, "device") });
+		output.emit(ctx, json, { devices }, text, { scope: "perf ls", detail: output.plural(devices.length, "device") });
 		return 0;
 	}
 	const now = ctx.now();
@@ -30,7 +30,7 @@ export async function perfLs(ctx: CommandContext, deps: PerfDeps, opts: PerfLsOp
 	const text =
 		rows.length === 0
 			? color.dim("no perf sessions")
-			: table(
+			: output.table(
 					ctx,
 					["SESSION", "DEVICE", "APP", "STATUS", "AGE", "CAP", "MARKS"],
 					rows.map((r) => [
@@ -44,7 +44,7 @@ export async function perfLs(ctx: CommandContext, deps: PerfDeps, opts: PerfLsOp
 					]),
 					{ column: 2, keep: "end" }
 				);
-	emit(ctx, json, { sessions: rows }, text, { scope: "perf ls", detail: plural(rows.length, "session") });
+	output.emit(ctx, json, { sessions: rows }, text, { scope: "perf ls", detail: output.plural(rows.length, "session") });
 	return 0;
 }
 

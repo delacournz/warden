@@ -10,8 +10,8 @@ import {
 import { liveness } from "@delacour/warden-store/liveness";
 import { type DeviceRequest, leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
-import { appHostFromContext, type CommandContext } from "./context";
-import { reportError } from "./output";
+import { type CommandContext, contextBuilder } from "./context";
+import { output } from "./output";
 
 /** A phone about to be claimed: its CoreDevice UDID and the name the person knows it by. */
 type Phone = { id: string; name: string };
@@ -24,7 +24,7 @@ type Phone = { id: string; name: string };
 async function phonesToClaim(ctx: CommandContext, owner: Owner, request: DeviceRequest): Promise<Phone[]> {
 	const ids = request.physical?.ids;
 	const inventory = await hostDeps
-		.providerFor("ios", appHostFromContext(ctx), owner, {
+		.providerFor("ios", contextBuilder.appHostFromContext(ctx), owner, {
 			physical: true,
 			...(ids ? { namedPhysical: ids } : {}),
 		})
@@ -99,7 +99,7 @@ export const lockedClaimMessage = (error: string): string => error.slice(PREFIX.
  */
 export function reportClaimFailure(ctx: CommandContext, scope: string, error: string): 1 | 2 {
 	if (!isLockedClaimError(error)) {
-		reportError(ctx, scope, error);
+		output.reportError(ctx, scope, error);
 		return 1;
 	}
 	const message = lockedClaimMessage(error);

@@ -16,7 +16,7 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
-import { emit, heading, reportError, table, warn } from "../output";
+import { output } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type OwnerFilter = SimOwner | "all";
@@ -25,7 +25,7 @@ type AuditOpts = CommonOpts & { owner?: string; stale?: string };
 type PruneOpts = CommonOpts & { dryRun?: true; yes?: true };
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	reportError(ctx, `sims ${sub}`, message);
+	output.reportError(ctx, `sims ${sub}`, message);
 	return 1;
 }
 
@@ -102,7 +102,7 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimEn
 		describeVerdict(e, color),
 	]);
 	const lines = [
-		table(ctx, ["NAME", "UDID", "RUNTIME", "STATE", "OWNER", "LAST USED", "SIZE", "VERDICT"], rows, [
+		output.table(ctx, ["NAME", "UDID", "RUNTIME", "STATE", "OWNER", "LAST USED", "SIZE", "VERDICT"], rows, [
 			{ column: 0, min: 18 },
 			{ column: 1, min: 9 },
 		]),
@@ -161,7 +161,7 @@ function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
 		describeRuntimeVerdict(r.verdict, color),
 	]);
 	const lines = [
-		table(ctx, ["RUNTIME", "BUILD", "IDENTIFIER", "SIMS", "LAST USED", "SIZE", "VERDICT"], rows, {
+		output.table(ctx, ["RUNTIME", "BUILD", "IDENTIFIER", "SIMS", "LAST USED", "SIZE", "VERDICT"], rows, {
 			column: 2,
 			keep: "end",
 			min: 16,
@@ -201,7 +201,8 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	if (!parsed.success) return fail(ctx, "audit", parsed.error);
 	const owner = parseOwner(opts.owner);
 	if (!owner.success) return fail(ctx, "audit", owner.error);
-	if (!opts.json) heading(ctx, "sims audit", opts.owner && opts.owner !== "all" ? `owner ${opts.owner}` : undefined);
+	if (!opts.json)
+		output.heading(ctx, "sims audit", opts.owner && opts.owner !== "all" ? `owner ${opts.owner}` : undefined);
 	const audit = await withSpinner(ctx, "auditing simulators…", (sctx) =>
 		new SimsPruner(simsDeps(sctx)).audit(parsed.data)
 	);
@@ -214,7 +215,12 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 		runtimes: runtimes.kind === "ok" ? runtimes.audit : null,
 		...(runtimes.kind === "error" ? { runtimesError: runtimes.error } : {}),
 	};
-	emit(ctx, opts.json === true, json, `${auditText(ctx, audit.data, entries)}\n\n${runtimesText(ctx, runtimes)}`);
+	output.emit(
+		ctx,
+		opts.json === true,
+		json,
+		`${auditText(ctx, audit.data, entries)}\n\n${runtimesText(ctx, runtimes)}`
+	);
 	return 0;
 }
 
@@ -224,7 +230,7 @@ const describeSim = (e: SimEntry) =>
 /** Terminal confirm of the preview's deletes; true = go ahead. */
 async function confirmDeletes(ctx: CommandContext, preview: SimsPruneResult): Promise<boolean> {
 	const { ui } = ctx;
-	for (const e of preview.removed) warn(ctx, `will delete ${describeSim(e)}`);
+	for (const e of preview.removed) output.warn(ctx, `will delete ${describeSim(e)}`);
 	const answer = await ui.confirm(
 		`Delete ${preview.removed.length} simulator(s) (${prune.formatSize(preview.freedBytes)})?`
 	);
@@ -257,7 +263,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	const dryRun = opts.dryRun === true;
 	const ask = !dryRun && !opts.yes;
 	if (ask && !ctx.ui.interactive) return fail(ctx, "prune", "refusing to delete without --yes (or --dry-run)");
-	if (!opts.json) heading(ctx, "sims prune", dryRun ? "dry run" : undefined);
+	if (!opts.json) output.heading(ctx, "sims prune", dryRun ? "dry run" : undefined);
 	const deps = simsDeps(ctx);
 	const preview = await withSpinner(ctx, "auditing simulators…", () =>
 		new SimsPruner(deps).prune({ ...parsed.data, dryRun: true })
@@ -273,7 +279,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 				);
 	if (!result.success) return fail(ctx, "prune", result.error);
 	const { removed, skipped, failed, freedBytes, audit } = result.data;
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		{ dryRun, removed, skipped, failed, freedBytes, totalBytes: audit.totalBytes },

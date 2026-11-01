@@ -5,8 +5,8 @@ import type { CapacityJson } from "@delacour/warden-sdk/contracts/capacity";
 import type { InventoryDevice, Platform } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { leaseHostFromContext } from "../lease-host";
-import { emit, table } from "../output";
+import { leaseHostBuilder } from "../lease-host";
+import { output } from "../output";
 
 type PlatformUsage = CapacityJson["usage"]["ios"];
 
@@ -34,12 +34,12 @@ function usageOf(
 /** `warden capacity`: what the machine can run, what is running, and why a claim would queue. */
 async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 	const enabled = capacityEnv.enabled(ctx.env);
-	const basis = await new CapacityDepsBuilder(leaseHostFromContext(ctx)).basis();
+	const basis = await new CapacityDepsBuilder(leaseHostBuilder.leaseHostFromContext(ctx)).basis();
 	const { host, budget, config } = basis;
 	const owner = ownerResolver.resolve(ctx);
-	const inventory = await new CapacityDepsBuilder(leaseHostFromContext(ctx)).hostInventoryOf(owner)();
+	const inventory = await new CapacityDepsBuilder(leaseHostBuilder.leaseHostFromContext(ctx)).hostInventoryOf(owner)();
 	const devices = inventory.success ? inventory.data : [];
-	const pressure = await new CapacityDepsBuilder(leaseHostFromContext(ctx)).pressure()();
+	const pressure = await new CapacityDepsBuilder(leaseHostBuilder.leaseHostFromContext(ctx)).pressure()();
 	const costs = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, capacityMath.deviceCost(p, config)])) as Record<
 		Platform,
 		Cost
@@ -105,11 +105,11 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		`usage     ${used.cpu.toFixed(1)} units · ${Math.round(used.memMb)} MB booted`,
 		`pressure  ${data.pressure}`,
 		"",
-		table(ctx, ["PLATFORM", "BOOTED", "COST/DEVICE", "MAX ALONE"], rows),
+		output.table(ctx, ["PLATFORM", "BOOTED", "COST/DEVICE", "MAX ALONE"], rows),
 		"",
 		why,
 	].join("\n");
-	emit(ctx, json, data, text, { scope: "capacity", detail: enabled ? "on" : "off" });
+	output.emit(ctx, json, data, text, { scope: "capacity", detail: enabled ? "on" : "off" });
 	return 0;
 }
 

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { expoInstallCommand, missingPackages } from "../expo-app";
-import { emit, note, reportError, success, warn } from "../output";
+import { output } from "../output";
 import { currentBuild } from "../update/build-info";
 import { type InitApp, SMOKE_SPEC_SOURCE, wardenConfigSource } from "./init.data";
 
@@ -122,7 +122,7 @@ function installCommands(root: string): string[] {
  */
 function init(ctx: CommandContext, opts: InitOpts): number {
 	const fail = (message: string) => {
-		reportError(ctx, "init", message);
+		output.reportError(ctx, "init", message);
 		return 1;
 	};
 	const start = appLookup.projectStart(ctx, opts.project);
@@ -138,7 +138,7 @@ function init(ctx: CommandContext, opts: InitOpts): number {
 			mkdirSync(dirname(join(root, path)), { recursive: true });
 			writeFileSync(join(root, path), content);
 		}
-		(dry ? note : success)(ctx, `warden init: ${verb} ${path}`);
+		(dry ? output.note.bind(output) : output.success.bind(output))(ctx, `warden init: ${verb} ${path}`);
 	};
 	if (appJson !== undefined) write("app.json", appJson);
 	const written: string[] = [];
@@ -146,16 +146,19 @@ function init(ctx: CommandContext, opts: InitOpts): number {
 	for (const file of files) {
 		if (file.exists && !opts.force) {
 			skipped.push(file.path);
-			note(ctx, `warden init: kept ${file.path} (--force overwrites)`);
+			output.note(ctx, `warden init: kept ${file.path} (--force overwrites)`);
 			continue;
 		}
 		write(file.path, file.content);
 		written.push(file.path);
 	}
 	const install = installCommands(root);
-	for (const command of install) warn(ctx, `warden init: install first: ${command}`);
-	note(ctx, "warden init: next: warden dev (dev client + Metro on a leased simulator), warden e2e (the e2e/ specs)");
-	if (opts.json) emit(ctx, true, { root, written, skipped, install }, "");
+	for (const command of install) output.warn(ctx, `warden init: install first: ${command}`);
+	output.note(
+		ctx,
+		"warden init: next: warden dev (dev client + Metro on a leased simulator), warden e2e (the e2e/ specs)"
+	);
+	if (opts.json) output.emit(ctx, true, { root, written, skipped, install }, "");
 	return 0;
 }
 

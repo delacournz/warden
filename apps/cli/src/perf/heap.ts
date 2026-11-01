@@ -3,7 +3,7 @@ import { perfHeap } from "@delacour/warden-sdk/ops/perf/heap";
 import { defaultJsDeps, type JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { reportError } from "../agent-ui/output";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { output } from "../output";
 import { resolveApp } from "./app";
 import { withPerfOptions } from "./options";
 import { type PerfDeps, type PerfOptionValues, runPerf } from "./run";
@@ -37,7 +37,7 @@ export function perfHeapDiff(ctx: CommandContext, a: string, b: string, opts: Pe
 	const report = { command: "perf heap diff", label: "perf heap diff", json, startedAt: ctx.now() };
 	const diff = perfHeap.heapDiffWork(ctx, a, b);
 	if (!diff.success) return reportError(ctx, report, diff.error);
-	emit(ctx, json, diff.data.result, diff.data.text, { scope: "perf heap diff" });
+	output.emit(ctx, json, diff.data.result, diff.data.text, { scope: "perf heap diff" });
 	return 0;
 }
 

@@ -8,9 +8,9 @@ import type { ReleaseJson } from "@delacour/warden-sdk/contracts/leases";
 import { type Lease, leaseModel } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { leaseHostFromContext } from "../lease-host";
+import { leaseHostBuilder } from "../lease-host";
 import { type SelectOptionValues, selectorFrom, withSelectOptions } from "../lease-select";
-import { emit, note, plural, reportError } from "../output";
+import { output } from "../output";
 import { releaseAfter } from "../perf/release-after";
 import { withSpinner } from "../spinner-context";
 import { describeResource } from "./ls";
@@ -52,7 +52,7 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 	const { ui } = ctx;
 	const all = ctx.store().listLeases();
 	if (!ui.interactive || opts.json || all.length === 0) {
-		reportError(ctx, "release", NOTHING_SELECTED);
+		output.reportError(ctx, "release", NOTHING_SELECTED);
 		return { kind: "exit", code: 1 };
 	}
 	const me = ownerResolver.resolve(ctx);
@@ -73,7 +73,7 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 		return { kind: "exit", code: 1 };
 	}
 	if (answer.length === 0) {
-		note(ctx, "nothing selected");
+		output.note(ctx, "nothing selected");
 		return { kind: "exit", code: 0 };
 	}
 	return { kind: "ids", ids: answer };
@@ -93,7 +93,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 	const { shutdown, notes }: ShutdownOutcome =
 		opts.shutdown && devices.length > 0
 			? await withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {
-					const outcome = await new ReleasedDeviceShutdown(leaseHostFromContext(sctx)).run(
+					const outcome = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(sctx)).run(
 						leases,
 						ownerResolver.resolve(ctx)
 					);
@@ -112,8 +112,8 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 		{ after: releaseAfter(ctx, { helper: opts.shutdown === true }) }
 	);
 
-	for (const u of unknown) reportError(ctx, "release", `no lease for ${u}`);
-	const title = { scope: "release", detail: plural(leases.length, "lease") };
+	for (const u of unknown) output.reportError(ctx, "release", `no lease for ${u}`);
+	const title = { scope: "release", detail: output.plural(leases.length, "lease") };
 	const text = [
 		leases.length === 0
 			? color.yellow("nothing released")
@@ -131,7 +131,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 		unknown,
 		notes: [...notes, ...bad.notes],
 	};
-	emit(ctx, opts.json === true, doc, text, title);
+	output.emit(ctx, opts.json === true, doc, text, title);
 	return unknown.length > 0 ? 1 : 0;
 }
 

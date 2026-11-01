@@ -13,7 +13,7 @@ import {
 	RUNTIME_ID,
 } from "@delacour/warden-core/testing/golden.testing";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { appHostFromContext } from "../context";
+import { contextBuilder } from "../context";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createGoldenCommand } from "./golden";
 
@@ -173,9 +173,9 @@ describe("warden golden --platform android (16-3)", () => {
 	}
 
 	async function current(c: TestContext): Promise<string> {
-		const read = await new AndroidGolden(hostDeps.androidGoldenDeps(appHostFromContext(c), owner)).readInputs(
-			"Pixel_10"
-		);
+		const read = await new AndroidGolden(
+			hostDeps.androidGoldenDeps(contextBuilder.appHostFromContext(c), owner)
+		).readInputs("Pixel_10");
 		if (!read.success || read.data === undefined) throw new Error("no inputs");
 		return androidSnapshotModel.name(androidSnapshotModel.key(read.data.inputs));
 	}

@@ -9,8 +9,8 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { type InventoryDevice, type Lease, leaseModel, type Platform } from "@delacour/warden-store/types";
 import type { ChalkInstance } from "chalk";
 import { defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
-import { emit, plural, reportError, table, warn } from "../output";
+import { type CommandContext, contextBuilder } from "../context";
+import { output } from "../output";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 const BYTES_PER_MB = 1024 ** 2;
@@ -33,12 +33,12 @@ function lockedHint(d: InventoryDevice): string | undefined {
 async function platformRows(ctx: CommandContext, platform: Platform, leases: Map<string, Lease>): Promise<DeviceRow[]> {
 	const store = ctx.store();
 	const inventory = await hostDeps
-		.providerFor(platform, appHostFromContext(ctx), ownerResolver.resolve(ctx), {
+		.providerFor(platform, contextBuilder.appHostFromContext(ctx), ownerResolver.resolve(ctx), {
 			physical: true,
 		})
 		.inventory();
 	if (!inventory.success) {
-		warn(ctx, `${platform}: skipped (${inventory.error.message})`);
+		output.warn(ctx, `${platform}: skipped (${inventory.error.message})`);
 		return [];
 	}
 	const records = new Map(store.listDevices(platform).map((r) => [r.id, r]));
@@ -70,7 +70,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 			rows.push(
 				...avds.data.map((name): DeviceRow => ({ platform, kind: "virtual", name, state: "avd", warden: false }))
 			);
-		else warn(ctx, `android avds: skipped (${avds.error.message})`);
+		else output.warn(ctx, `android avds: skipped (${avds.error.message})`);
 	}
 	return rows;
 }
@@ -108,7 +108,7 @@ async function addFootprints(ctx: CommandContext, rows: DeviceRow[]): Promise<vo
 	for (const row of booted) {
 		const res = row.id !== undefined ? results.get(row.id) : undefined;
 		if (res?.success) row.footprintMb = Math.round(res.data.footprintBytes / BYTES_PER_MB);
-		else if (res) warn(ctx, `${row.id}: ${res.error}`);
+		else if (res) output.warn(ctx, `${row.id}: ${res.error}`);
 	}
 }
 
@@ -121,7 +121,7 @@ async function devices(
 	const { json, mem, physical } = opts;
 	const { color } = ctx.ui;
 	if (filter !== undefined && filter !== "ios" && filter !== "android") {
-		reportError(ctx, "devices", `unknown platform "${filter}" (ios|android)`);
+		output.reportError(ctx, "devices", `unknown platform "${filter}" (ios|android)`);
 		return 1;
 	}
 	const now = ctx.now();
@@ -134,7 +134,7 @@ async function devices(
 	if (mem) await addFootprints(ctx, rows);
 
 	const none = color.dim("-");
-	const text = table(
+	const text = output.table(
 		ctx,
 		["PLATFORM", "KIND", "NAME", "ID", "STATE", "RUNTIME", "WARDEN", ...(mem ? ["MB"] : [])],
 		rows.map((r) => [
@@ -158,9 +158,9 @@ async function devices(
 		.filter((r) => r.hint !== undefined)
 		.map((r) => color.yellow(`${r.name} (${r.id ?? "?"}): ${r.hint}`));
 	const body = rows.length > 0 ? [text, ...hints].join("\n") : color.dim("no devices");
-	emit(ctx, json, rows, body, {
+	output.emit(ctx, json, rows, body, {
 		scope: "devices",
-		detail: `${plural(rows.length, "device")} · ${booted} booted · ${leased} leased`,
+		detail: `${output.plural(rows.length, "device")} · ${booted} booted · ${leased} leased`,
 	});
 	return 0;
 }

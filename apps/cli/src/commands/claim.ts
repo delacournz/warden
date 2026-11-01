@@ -17,7 +17,7 @@ import {
 } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, heading, reportError, table, warn } from "../output";
+import { output } from "../output";
 import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
@@ -29,7 +29,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	const { color } = ctx.ui;
 	const platform = await resolvePlatform(ctx, platformArg);
 	if (!platform.success) {
-		reportError(ctx, "claim", platform.error);
+		output.reportError(ctx, "claim", platform.error);
 		return 1;
 	}
 	const owner = ownerResolver.resolve(ctx);
@@ -49,7 +49,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		shortLived ? BARE_CLAIM_AGENT_TTL_MS : DEFAULT_TTL_MS
 	);
 	if (!flags.success) {
-		reportError(ctx, "claim", flags.error);
+		output.reportError(ctx, "claim", flags.error);
 		return 1;
 	}
 	// before the spinner and any lease: several usable phones are asked about, or refused (ambiguous_device, exit 2)
@@ -58,7 +58,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	const claimFlags = picked.flags[0] ?? flags.data;
 	const { count, profile, physical } = claimFlags.request;
 	const kind = physical ? "physical" : profile;
-	if (!opts.json) heading(ctx, "claim", `${platform.data} · ${kind} ×${count}`);
+	if (!opts.json) output.heading(ctx, "claim", `${platform.data} · ${kind} ×${count}`);
 	const outcome = await withSpinner(
 		ctx,
 		`claiming ${count} ${kind} ${platform.data} device(s)…`,
@@ -74,18 +74,18 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	if (!outcome.success) return reportClaimFailure(ctx, "claim", outcome.error.message);
 	if (opts.slim === false) hintSlimmed(ctx, outcome.data);
 	if (shortLived) {
-		warn(
+		output.warn(
 			ctx,
 			`lease expires in ${durationParser.format(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
 		);
 	}
 	const leases: ClaimedDeviceJson[] = claimRequestRules.claimedJson(outcome.data);
 	const doc: ClaimJson = { leases, udids: leases.map((l) => l.udid), reclaimed: outcome.data.reclaimed };
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		doc,
-		table(
+		output.table(
 			ctx,
 			["LEASE", "UDID", "NAME", "ACTION"],
 			leases.map((l) => [l.leaseId, color.bold(l.udid), l.name, color.dim(l.action)])

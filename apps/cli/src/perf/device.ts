@@ -52,11 +52,11 @@ export const defaultPerfDeviceDeps: PerfDeviceDeps = {
 	pidAlive: liveness.processAlive,
 	booted: async (ctx) => {
 		const { hostDeps } = await import("@delacour/warden-core/host-deps");
-		const { appHostFromContext } = await import("../context");
+		const { contextBuilder } = await import("../context");
 		const owner = ownerResolver.resolve(ctx);
 		const inventories = await Promise.all(
 			(["ios", "android"] as const).map((platform) =>
-				hostDeps.providerFor(platform, appHostFromContext(ctx), owner).inventory()
+				hostDeps.providerFor(platform, contextBuilder.appHostFromContext(ctx), owner).inventory()
 			)
 		);
 		return inventories.flatMap((inventory) =>

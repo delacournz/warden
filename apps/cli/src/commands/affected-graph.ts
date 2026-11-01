@@ -4,7 +4,7 @@ import type { GraphDoc, GraphRequest } from "@delacour/warden-core/affected/grap
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { reportError } from "../output";
+import { output } from "../output";
 
 const SUMMARY = "walk the import graph for `warden affected` and print it as JSON (internal)";
 
@@ -36,12 +36,12 @@ export async function walk(
 ): Promise<number> {
 	const request = await parseRequest(raw);
 	if (!request.success) {
-		reportError(ctx, GRAPH_WORKER_SUBCOMMAND, request.error);
+		output.reportError(ctx, GRAPH_WORKER_SUBCOMMAND, request.error);
 		return 1;
 	}
 	const doc = await build(request.data);
 	if (!doc.success) {
-		reportError(ctx, GRAPH_WORKER_SUBCOMMAND, doc.error);
+		output.reportError(ctx, GRAPH_WORKER_SUBCOMMAND, doc.error);
 		return TYPESCRIPT_UNUSABLE_EXIT;
 	}
 	ctx.out(JSON.stringify(doc.data));

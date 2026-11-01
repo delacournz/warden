@@ -1,6 +1,6 @@
 import type { WardenLogEvent } from "@delacour/warden-types/host";
 import type { CommandContext } from "./context";
-import { reportError } from "./output";
+import { output } from "./output";
 
 /** The fingerprint banner's rule. */
 const RULE = "────────────────────────────────────────────────────────";
@@ -33,7 +33,7 @@ export function renderLogEvent(ctx: CommandContext, event: WardenLogEvent): void
 			else ctx.err(`warden: ${event.message}`);
 			return;
 		case "warn":
-			if (event.scope === "lease") reportError(ctx, "lease", event.message);
+			if (event.scope === "lease") output.reportError(ctx, "lease", event.message);
 			else if (event.scope === "headless") ctx.err(ctx.ui.color.yellow(`warden: ${event.message}`));
 			else ctx.err(`warden: ${event.message}`);
 			return;

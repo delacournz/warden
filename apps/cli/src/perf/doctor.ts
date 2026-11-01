@@ -6,7 +6,7 @@ import { doctorParser } from "@delacour/warden-perf/shared/doctor-parse";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
-import { emit } from "../output";
+import { output } from "../output";
 import { SYMBOLS } from "../ui";
 import { resolveApp } from "./app";
 import { type PerfTarget, resolvePerfDevice } from "./device";
@@ -213,7 +213,9 @@ export async function perfDoctor(ctx: CommandContext, deps: PerfDeps, opts: Perf
 	const info = device && { udid: device.udid, platform: device.platform, name: device.name };
 	const header = info ? `${info.udid} ${info.name ?? ""} (${info.platform})`.trim() : `no device: ${why}`;
 	const text = [ctx.ui.color.dim(header), ...checks.flatMap((c) => line(ctx, c))].join("\n");
-	emit(ctx, opts.json === true, { ok, ...(info ? { device: info } : {}), checks }, text, { scope: "perf doctor" });
+	output.emit(ctx, opts.json === true, { ok, ...(info ? { device: info } : {}), checks }, text, {
+		scope: "perf doctor",
+	});
 	return ok ? 0 : 1;
 }
 

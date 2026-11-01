@@ -4,7 +4,7 @@ import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { expoInstallCommand, missingPackages } from "../expo-app";
-import { note, success } from "../output";
+import { output } from "../output";
 import { withSpinner } from "../spinner-context";
 import { wardenConfigSource } from "./init.data";
 
@@ -107,7 +107,7 @@ async function formatWithPrettier(ctx: CommandContext, root: string, file: strin
 	try {
 		const res = await ctx.exec(command, { cwd: root, timeoutMs: 60_000 });
 		if (res.exitCode !== 0)
-			note(ctx, `warden dev: ${command.join(" ")} failed (exit ${res.exitCode}); the file is unformatted`);
+			output.note(ctx, `warden dev: ${command.join(" ")} failed (exit ${res.exitCode}); the file is unformatted`);
 	} catch {
 		// prettier is a courtesy
 	}
@@ -132,7 +132,7 @@ export async function offerDevSetup(
 ): AsyncResult<"changed" | "unchanged"> {
 	if (issues.length === 0) return resultFactory.ok("unchanged");
 	if (!options.interactive) {
-		for (const issue of issues.filter((i) => !blocking(i))) note(ctx, `warden dev: ${describeIssue(issue)}`);
+		for (const issue of issues.filter((i) => !blocking(i))) output.note(ctx, `warden dev: ${describeIssue(issue)}`);
 		const stop = issues.filter(blocking);
 		return stop.length > 0 ? resultFactory.err(stop.map(describeIssue).join("; ")) : resultFactory.ok("unchanged");
 	}
@@ -172,7 +172,7 @@ async function applyIssue(ctx: CommandContext, issue: DevIssue, deps: DevSetupDe
 				const tail = (res.stderr || res.stdout).trim().split("\n").filter(Boolean).slice(-5).join("\n");
 				return resultFactory.err(`${issue.command.join(" ")} failed (exit ${res.exitCode})${tail ? `:\n${tail}` : ""}`);
 			}
-			success(ctx, `warden dev: installed ${what} (${issue.command.join(" ")})`);
+			output.success(ctx, `warden dev: installed ${what} (${issue.command.join(" ")})`);
 			return resultFactory.ok(true);
 		}
 		case "config":
@@ -201,7 +201,7 @@ async function applyConfig(
 			file,
 			wardenConfigSource({ name: issue.name, root: issue.overlay.root, bundleId: issue.bundleId }, { e2e: false })
 		);
-		success(
+		output.success(
 			ctx,
 			`warden dev: wrote ${file} (outside the repo, shared by every worktree; a repo warden.config.ts wins)`
 		);
@@ -211,6 +211,6 @@ async function applyConfig(
 	const file = join(issue.root, "warden.config.ts");
 	write(file, wardenConfigSource({ name: issue.name, bundleId: issue.bundleId }, { e2e: false }));
 	await formatWithPrettier(ctx, issue.root, file);
-	success(ctx, `warden dev: wrote ${file}`);
+	output.success(ctx, `warden dev: wrote ${file}`);
 	return true;
 }

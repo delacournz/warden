@@ -50,7 +50,7 @@ import { stopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
+import { type CommandContext, contextBuilder } from "../context";
 import type { Broker, BrokerOptions } from "../dev-broker/broker";
 import type { BrokerResult } from "../dev-broker/broker.types";
 import {
@@ -64,9 +64,9 @@ import { removeDevSession, updateDevSession, writeDevSession } from "../dev-sess
 import { parseHudInterval } from "../dev-tui/hud";
 import { missingPackages } from "../expo-app";
 import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
-import { leaseHostFromContext } from "../lease-host";
+import { leaseHostBuilder } from "../lease-host";
 import { splitCommand } from "../lease-options";
-import { heading, note, reportError, warn } from "../output";
+import { output } from "../output";
 import { withSpinner } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { registerDevControl } from "./dev-control";
@@ -221,7 +221,7 @@ async function bootHeldDevice(
 	platform: Platform,
 	deviceId: string
 ): AsyncResult<void> {
-	const provider = hostDeps.providerFor(platform, appHostFromContext(ctx), owner);
+	const provider = hostDeps.providerFor(platform, contextBuilder.appHostFromContext(ctx), owner);
 	const inventory = await provider.inventory();
 	// only a device known to be off is booted; anything else goes on as before (the install reports it)
 	const device = inventory.success ? inventory.data.find((d) => d.id === deviceId) : undefined;
@@ -312,10 +312,10 @@ async function showDevice(
 	const shown = await new SimWindowArranger(ctx).reveal(deviceId);
 	if (shown.success) {
 		const viewer = shown.data.viewer === "device-hub" ? "Device Hub" : "Simulator";
-		note(ctx, `warden dev: showing ${deviceId} in ${viewer}`);
+		output.note(ctx, `warden dev: showing ${deviceId} in ${viewer}`);
 		task.ok(viewer);
 	} else {
-		warn(ctx, `warden dev: couldn't show ${deviceId} (${shown.error}); --headless skips this`);
+		output.warn(ctx, `warden dev: couldn't show ${deviceId} (${shown.error}); --headless skips this`);
 		task.fail(shown.error);
 	}
 }
@@ -326,9 +326,9 @@ async function showDevice(
  * Problems are warnings, never failures.
  */
 async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[]): Promise<void> {
-	const outcome = await new ReleasedDeviceShutdown(leaseHostFromContext(ctx)).run(leases, owner);
-	for (const id of outcome.shutdown) note(ctx, `warden dev: shut down ${id}`);
-	for (const line of outcome.notes) warn(ctx, `warden dev: ${line}`);
+	const outcome = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(ctx)).run(leases, owner);
+	for (const id of outcome.shutdown) output.note(ctx, `warden dev: shut down ${id}`);
+	for (const line of outcome.notes) output.warn(ctx, `warden dev: ${line}`);
 }
 
 /** The dashboard shows a local build's own output on the task's row; plain output (pipes, agents) keeps only warden's lines. */
@@ -375,7 +375,7 @@ async function openSession(
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return resultFactory.err("warden dev runs on one device (drop --count)");
 		let showing: Promise<void> | undefined;
-		const session = await new LeaseSessionRunner(leaseHostFromContext(ctx), {
+		const session = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(ctx), {
 			...deps,
 			ensureApp: noteInstall,
 		}).claimAll(
@@ -429,7 +429,7 @@ async function openSession(
 		});
 	}
 	const deviceId = held.data;
-	const ports = await new RunPortClaimer(leaseHostFromContext(ctx)).claim(
+	const ports = await new RunPortClaimer(leaseHostBuilder.leaseHostFromContext(ctx)).claim(
 		owner,
 		[opts.port],
 		deps.pid,
@@ -439,7 +439,9 @@ async function openSession(
 	if (!ports.success) return wardenErrors.toText(ports);
 	const leaseIds = ports.data.map((p) => p.leaseId);
 	const release = () =>
-		new DeviceReleaser(leaseHostFromContext(ctx)).release(leaseIds, { touch: false }).then(() => undefined);
+		new DeviceReleaser(leaseHostBuilder.leaseHostFromContext(ctx))
+			.release(leaseIds, { touch: false })
+			.then(() => undefined);
 	const port = ports.data[0]?.port;
 	if (port === undefined) {
 		await release();
@@ -452,7 +454,7 @@ async function openSession(
 		return booted;
 	}
 	const showing = showDevice(ctx, ui, platform, deviceId, opts.headless === true);
-	const ensured = await noteInstall(leaseHostFromContext(ctx), owner, platform, deviceId, app);
+	const ensured = await noteInstall(leaseHostBuilder.leaseHostFromContext(ctx), owner, platform, deviceId, app);
 	await showing;
 	if (!ensured.success) {
 		await release();
@@ -589,7 +591,7 @@ async function restartDevice(
 	log: (line: string) => void
 ): AsyncResult<void> {
 	const { deviceId } = r.session;
-	const provider = hostDeps.providerFor(r.platform, appHostFromContext(ctx), r.owner);
+	const provider = hostDeps.providerFor(r.platform, contextBuilder.appHostFromContext(ctx), r.owner);
 	log(`shutting down ${deviceId}`);
 	const down = await provider.shutdown(deviceId);
 	if (!down.success) return wardenErrors.toText(down);
@@ -640,11 +642,17 @@ function devActions(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running, swap: M
 	return {
 		openClient: (log) => openDevClient(scopedCtx(ctx, log), r.platform, deviceId, r.project, r.scheme, port),
 		reinstall: async (log) => {
-			const ensured = await deps.ensureApp(leaseHostFromContext(scopedCtx(ctx, log)), r.owner, r.platform, deviceId, {
-				...r.app,
-				installMode: "reinstall",
-				buildOutput: log,
-			});
+			const ensured = await deps.ensureApp(
+				leaseHostBuilder.leaseHostFromContext(scopedCtx(ctx, log)),
+				r.owner,
+				r.platform,
+				deviceId,
+				{
+					...r.app,
+					installMode: "reinstall",
+					buildOutput: log,
+				}
+			);
 			return ensured.success
 				? resultFactory.ok({ source: ensured.data.source, hash: ensured.data.hash })
 				: resultFactory.err(ensured.error.message);
@@ -773,7 +781,10 @@ async function serveDevExtras(ctx: CommandContext, r: Running, extras: DevExtras
 				: extras.set(request.feature, request.on)
 	);
 	if (!served.success) {
-		warn(ctx, `warden dev: no control socket (${served.error}); warden dev enable|disable won't reach this session`);
+		output.warn(
+			ctx,
+			`warden dev: no control socket (${served.error}); warden dev enable|disable won't reach this session`
+		);
 		return async () => undefined;
 	}
 	updateDevSession(ctx.env, leaseId, { controlSocket: served.data.socketPath });
@@ -793,7 +804,7 @@ async function startDevExtras(
 	const closeControl = await serveDevExtras(ui.ctx, r, extras);
 	if (opts.devtools === true) {
 		const started = await extras.set("devtools", true);
-		if (!started.ok) warn(ui.ctx, `warden dev: devtools didn't start (${started.error})`);
+		if (!started.ok) output.warn(ui.ctx, `warden dev: devtools didn't start (${started.error})`);
 	}
 	return async () => {
 		await closeControl();
@@ -816,7 +827,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 	try {
 		const metro = await r.launch.pending;
 		if (!metro.success) {
-			reportError(ctx, "dev", metro.error);
+			output.reportError(ctx, "dev", metro.error);
 			return 1;
 		}
 		unregister = registerDevSession(ctx, deps, r, metro.data.url);
@@ -825,12 +836,12 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 			const opened = await openDevClient(ctx, r.platform, deviceId, r.project, r.scheme, port);
 			if (opened.success) {
 				clientTask.ok(metro.data.url);
-				note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
+				output.note(ctx, `warden dev: opened the dev client on ${deviceId} at ${metro.data.url}`);
 			} else {
 				clientTask.fail(opened.error);
 				const scheme = await r.scheme();
 				const link = scheme.success ? ` — open ${devClientUrl(scheme.data, port)} yourself` : "";
-				warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
+				output.warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
 			}
 		}
 		const bundle = projectConfig.bundleIdFor(r.project, r.platform);
@@ -958,7 +969,7 @@ function within(dir: string, target: string): boolean {
 /** An app found below where dev was started (a monorepo root): say which one it is. */
 function noteAppBelow(ctx: CommandContext, start: string, project: Project): void {
 	if (project.root !== start && within(start, project.root))
-		note(ctx, `app ${relative(start, project.root)} (${project.name})`);
+		output.note(ctx, `app ${relative(start, project.root)} (${project.name})`);
 }
 
 /**
@@ -1030,14 +1041,14 @@ async function dev(
 ): Promise<number> {
 	const hudInterval = parseHudInterval(opts.hudInterval);
 	if (!hudInterval.success) {
-		reportError(rawCtx, "dev", `--hud-interval: ${hudInterval.error}`);
+		output.reportError(rawCtx, "dev", `--hud-interval: ${hudInterval.error}`);
 		return 1;
 	}
 	// everything that can be wrong with the request or the app is found (and offered a fix) on the plain
 	// terminal, before the dashboard takes the screen: a failure there is a line, not a flash
 	const prepared = await prepareDev(rawCtx, platformArg, opts);
 	if (!prepared.success) {
-		reportError(rawCtx, "dev", prepared.error);
+		output.reportError(rawCtx, "dev", prepared.error);
 		return 1;
 	}
 	const uiOpts: DevUiOpts = {
@@ -1160,7 +1171,7 @@ async function claimDevice(
 async function devWithUi(ui: DevUi, deps: DevDeps, prepared: Prepared, opts: DevOpts): Promise<number> {
 	const ctx = ui.ctx;
 	const fail = (message: string) => {
-		reportError(ctx, "dev", message);
+		output.reportError(ctx, "dev", message);
 		return 1;
 	};
 	const { owner, project, app } = prepared;
@@ -1184,7 +1195,7 @@ async function devWithUi(ui: DevUi, deps: DevDeps, prepared: Prepared, opts: Dev
 			void run.launch?.stop();
 		})
 	);
-	if (!opts.json) heading(ctx, "dev", `${platform.data} · ${project.project.name}`);
+	if (!opts.json) output.heading(ctx, "dev", `${platform.data} · ${project.project.name}`);
 	const session = await claimDevice(ui, deps, { owner, platform: platform.data, opts, app, early });
 	// after the claim: its own lease keeps the background gc off the device it just took (16-1)
 	maybeAutoGc(ctx);

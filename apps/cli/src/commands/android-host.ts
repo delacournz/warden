@@ -2,7 +2,7 @@ import type { Driver } from "@delacour/warden-driver/driver.types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { reportError } from "../output";
+import { output } from "../output";
 
 /** What `__android-host` reaches the outside world through; tests inject the driver and an abort signal. */
 export type AndroidHostDeps = {
@@ -35,17 +35,17 @@ function idleMs(raw: string | undefined): Result<number, string> {
 async function host(ctx: CommandContext, deps: AndroidHostDeps, opts: HostOptionValues): Promise<number> {
 	const { serial, socket } = opts;
 	if (serial === undefined || socket === undefined) {
-		reportError(ctx, "__android-host", "--serial and --socket are required");
+		output.reportError(ctx, "__android-host", "--serial and --socket are required");
 		return 1;
 	}
 	const idle = idleMs(opts.idleTimeout);
 	if (!idle.success) {
-		reportError(ctx, "__android-host", idle.error);
+		output.reportError(ctx, "__android-host", idle.error);
 		return 1;
 	}
 	const opened = await (deps.openDriver ?? defaultOpenDriver)(ctx, serial);
 	if (!opened.success) {
-		reportError(ctx, "__android-host", `cannot open ${serial}: ${opened.error}`);
+		output.reportError(ctx, "__android-host", `cannot open ${serial}: ${opened.error}`);
 		return EXIT_ENGINE;
 	}
 	const { DriverServer } = await import("@delacour/warden-device/remote/remote-server");

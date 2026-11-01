@@ -6,7 +6,7 @@ import { type AsyncResult, type ErrorResult, type Result, resultFactory } from "
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { NPM_PACKAGE, platformPackageName, releaseTarget } from "../npm/platforms";
-import { emit, heading, note, reportError, warn } from "../output";
+import { output } from "../output";
 import { withSpinner } from "../spinner-context";
 import { type BuildInfo, currentBuild, describeBuild } from "../update/build-info";
 import { installBinary } from "../update/install-binary";
@@ -110,7 +110,7 @@ async function updateStandalone(
 	if (github.success || github.error.kind !== "unreachable") {
 		return github.success ? github : resultFactory.err(github.error.message);
 	}
-	note(ctx, `GitHub releases unavailable — trying npm (${NPM_PACKAGE})`);
+	output.note(ctx, `GitHub releases unavailable — trying npm (${NPM_PACKAGE})`);
 	const npm = await updateFromNpm(ctx, deps, flags, target);
 	return npm.success ? npm : resultFactory.err(`${github.error.message}\nnpm: ${npm.error}`);
 }
@@ -306,17 +306,17 @@ function reportText(ctx: CommandContext, report: UpdateReport): string {
 
 async function update(ctx: CommandContext, deps: UpdateDeps, flags: Flags): Promise<number> {
 	const target = flags.to ?? defaultTarget(ctx, deps);
-	if (!flags.json) heading(ctx, "update", describeBuild(deps.build));
+	if (!flags.json) output.heading(ctx, "update", describeBuild(deps.build));
 	const report = await plan(ctx, deps, flags, target);
 	if (!report.success) {
-		reportError(ctx, "update", report.error);
+		output.reportError(ctx, "update", report.error);
 		return 1;
 	}
-	emit(ctx, flags.json === true, report.data, reportText(ctx, report.data));
+	output.emit(ctx, flags.json === true, report.data, reportText(ctx, report.data));
 	if (report.data.status === "updated") {
 		const resolved = deps.which("warden", ctx.env.PATH);
 		if (resolved !== report.data.path) {
-			warn(
+			output.warn(
 				ctx,
 				`note: your PATH resolves \`warden\` to ${resolved ?? "nothing"}, not ${report.data.path} — add its directory to PATH (then \`hash -r\`)`
 			);

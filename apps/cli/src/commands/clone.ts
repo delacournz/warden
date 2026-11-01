@@ -7,7 +7,7 @@ import { leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, heading, reportError } from "../output";
+import { output } from "../output";
 import { withSpinner } from "../spinner-context";
 
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
@@ -63,7 +63,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 	const profile = profileOf(source.data) ?? leaseModel.profileSlug(source.data.name);
 	const name = opts.name ?? nextPoolName(sims.data, profile);
 	const cloneCmd = ["xcrun", "simctl", "clone", source.data.udid, name];
-	if (!opts.json) heading(ctx, "clone", `${source.data.name} → ${name}`);
+	if (!opts.json) output.heading(ctx, "clone", `${source.data.name} → ${name}`);
 	const cloned = await withSpinner(ctx, `cloning ${source.data.name} → ${name}…`, async (_, spinner) => {
 		const result = await ctx.exec(cloneCmd);
 		if (result.exitCode === 0) spinner.succeed(`cloned ${name}`);
@@ -82,7 +82,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 		runtime,
 		fromGolden: goldenNames.isGolden(source.data.name),
 	};
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		result,
@@ -92,7 +92,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 }
 
 function fail(ctx: CommandContext, error: string): number {
-	reportError(ctx, "clone", error);
+	output.reportError(ctx, "clone", error);
 	return 1;
 }
 

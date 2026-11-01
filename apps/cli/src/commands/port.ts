@@ -9,7 +9,7 @@ import { type Lease, leaseModel, type Owner } from "@delacour/warden-store/types
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, plural, reportError, table, warn } from "../output";
+import { output } from "../output";
 
 const DEFAULT_FROM = 8091;
 
@@ -34,7 +34,7 @@ function parseCount(raw: string | undefined, name: string, fallback: number): Re
 }
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	reportError(ctx, `port ${sub}`, message);
+	output.reportError(ctx, `port ${sub}`, message);
 	return 1;
 }
 
@@ -74,7 +74,7 @@ async function claim(ctx: CommandContext, opts: PortClaimOpts): Promise<number> 
 	);
 	if (!res.success) return fail(ctx, "claim", res.error.message);
 	const claimed: PortLeasesJson = res.data;
-	emit(ctx, opts.json === true, claimed, res.data.map((l) => String(portOf(l))).join("\n"));
+	output.emit(ctx, opts.json === true, claimed, res.data.map((l) => String(portOf(l))).join("\n"));
 	return 0;
 }
 
@@ -106,11 +106,11 @@ async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOp
 	const res = new PortAllocator(ctx.store()).release(selector.data, opts.force ? {} : { onlyOwner: me() });
 	const lines = res.released.map((l) => color.green(`released ${portOf(l)} (${l.id})`));
 	const doc: PortReleaseJson = res;
-	emit(ctx, opts.json === true, doc, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
+	output.emit(ctx, opts.json === true, doc, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
 	for (const l of res.denied) {
-		warn(ctx, `port ${portOf(l)} is leased by ${leaseModel.describeOwner(l.owner)} — use --force to release it`);
+		output.warn(ctx, `port ${portOf(l)} is leased by ${leaseModel.describeOwner(l.owner)} — use --force to release it`);
 	}
-	for (const m of res.missing) reportError(ctx, "port release", `no port lease for ${m}`);
+	for (const m of res.missing) output.reportError(ctx, "port release", `no port lease for ${m}`);
 	return res.denied.length > 0 || res.missing.length > 0 ? 1 : 0;
 }
 
@@ -136,14 +136,14 @@ function ls(ctx: CommandContext, json: boolean): number {
 	const text =
 		leases.length === 0
 			? color.dim("no port leases")
-			: table(
+			: output.table(
 					ctx,
 					["PORT", "STATE", "OWNER", "WHERE", "LABEL", "AGE", "HEARTBEAT", "LEASE"],
 					leases.map((l) => lsRow(ctx, l, now)),
 					{ column: 3, keep: "end", min: 16 }
 				);
 	const doc: PortLeasesJson = leases;
-	emit(ctx, json, doc, text, { scope: "port ls", detail: plural(leases.length, "port lease") });
+	output.emit(ctx, json, doc, text, { scope: "port ls", detail: output.plural(leases.length, "port lease") });
 	return 0;
 }
 

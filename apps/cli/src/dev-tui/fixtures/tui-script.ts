@@ -1,8 +1,8 @@
 // Run under a PTY by harness.pty.test.ts: `bun tui-script.ts`. A tiny dev session on the real createDevTui.
-import { defaultContext } from "../../context";
+import { contextBuilder } from "../../context";
 import { createDevTui } from "../tui";
 
-const ui = createDevTui({ ctx: defaultContext([]) });
+const ui = createDevTui({ ctx: contextBuilder.defaultContext([]) });
 
 ui.onQuit(() => {
 	void ui.close().then(() => process.exit(0));

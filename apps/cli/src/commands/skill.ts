@@ -1,7 +1,7 @@
 import { Option } from "@commander-js/extra-typings";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, note, reportError } from "../output";
+import { output } from "../output";
 import { embeddedFile, RULE_PATH, SKILL_FILES, SKILL_MD, SKILL_NAME, SKILL_PATHS } from "../skill";
 import {
 	localSkillRoot,
@@ -24,7 +24,7 @@ export type SkillInstallOpts = SkillsAddOpts & { from: Source; dryRun?: true; js
 /** Raw SKILL.md (or `--file <path>`) on stdout, never coloured — made to be piped (`warden skill show | pbcopy`). */
 function show(ctx: CommandContext, json: boolean, file?: string): number {
 	if (file === undefined) {
-		emit(ctx, json, { name: SKILL_NAME, content: SKILL_MD, files: SKILL_FILES }, SKILL_MD.trimEnd());
+		output.emit(ctx, json, { name: SKILL_NAME, content: SKILL_MD, files: SKILL_FILES }, SKILL_MD.trimEnd());
 		return 0;
 	}
 	const content = embeddedFile(file);
@@ -34,14 +34,14 @@ function show(ctx: CommandContext, json: boolean, file?: string): number {
 		);
 		return 1;
 	}
-	emit(ctx, json, { name: SKILL_NAME, file, content }, content.trimEnd());
+	output.emit(ctx, json, { name: SKILL_NAME, file, content }, content.trimEnd());
 	return 0;
 }
 
 async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallOpts): Promise<number> {
 	const prefix = runner(deps);
 	if (!prefix) {
-		reportError(
+		output.reportError(
 			ctx,
 			"skill",
 			"neither bunx nor npx found — install bun or node, or copy it by hand: `warden skill show`"
@@ -51,13 +51,13 @@ async function install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallO
 	const source: Record<Source, string> = { local: localSkillRoot(ctx), github: releaseRepo(ctx.env) };
 	const cmd = [...prefix, ...skillsAddArgs(source[opts.from], opts)];
 	if (opts.dryRun) {
-		emit(ctx, opts.json === true, { command: cmd }, cmd.join(" "));
+		output.emit(ctx, opts.json === true, { command: cmd }, cmd.join(" "));
 		return 0;
 	}
 	if (opts.from === "local") {
 		stageSkillFolder(ctx);
 	}
-	note(ctx, `warden skill: ${cmd.join(" ")}`);
+	output.note(ctx, `warden skill: ${cmd.join(" ")}`);
 	return deps.runInteractive(cmd, { stdout: opts.json ? "stderr" : "inherit" });
 }
 

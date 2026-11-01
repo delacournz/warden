@@ -89,11 +89,11 @@ import {
 	withPhysicalOptions,
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
+import { type CommandContext, contextBuilder } from "../context";
 import { helperDir } from "../e2e/bun-runner";
 import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
 import { residentSocket, warmConnect } from "../e2e/warm-connect";
-import { leaseHostFromContext } from "../lease-host";
+import { leaseHostBuilder } from "../lease-host";
 import {
 	type AppFlagValues,
 	appPhaseProgress,
@@ -102,7 +102,7 @@ import {
 	splitCommand,
 	withLeaseOptions,
 } from "../lease-options";
-import { emit, note, reportError, warn } from "../output";
+import { output } from "../output";
 import { isLockedClaimError, reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
@@ -947,8 +947,8 @@ async function report(ctx: CommandContext, deps: BatchDeps, args: BatchArgs, r: 
 	);
 	await deps.writeFile(join(r.batchDir, "batch.json"), `${JSON.stringify(doc, null, 2)}\n`);
 	if (r.cast) await deps.writeFile(join(r.batchDir, "tui.cast"), r.cast.text());
-	if (args.json) emit(ctx, true, doc, "");
-	note(ctx, `warden batch: logs in ${r.logDir}${args.record ? `, recording in ${args.record}` : ""}`);
+	if (args.json) output.emit(ctx, true, doc, "");
+	output.note(ctx, `warden batch: logs in ${r.logDir}${args.record ? `, recording in ${args.record}` : ""}`);
 	if (args.tui && deps.terminal.isTTY) {
 		const passed = r.summary.results.filter((j) => j.exitCode === 0).length;
 		ctx.err(`warden batch: ${passed}/${r.total} passed, ${r.summary.failed.length} failed`);
@@ -1027,11 +1027,11 @@ async function shutdownDevices(
 	const leases = session.leaseIds.flatMap((id) => store.getLease(id) ?? []);
 	const owner = ownerResolver.resolve(ctx);
 	const { notes } = await withSpinner(ctx, "shutting down devices…", async (sctx, spinner) => {
-		const outcome = await new ReleasedDeviceShutdown(leaseHostFromContext(sctx)).run(leases, owner);
+		const outcome = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(sctx)).run(leases, owner);
 		spinner.succeed(outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down");
 		return outcome;
 	});
-	for (const line of notes) note(ctx, `warden ${hooks.name}: ${line}`);
+	for (const line of notes) output.note(ctx, `warden ${hooks.name}: ${line}`);
 }
 
 /** Per-device setup (`hooks.setup`) of one pool: who is left to run jobs and every outcome. */
@@ -1065,8 +1065,8 @@ async function prepareDevices(
 		},
 	});
 	for (const d of setups) {
-		if (d.slim && "error" in d.slim) warn(ctx, `warden ${name}: slim ${d.udid}: ${d.slim.error}`);
-		if (!d.ok) reportError(ctx, name, `setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`);
+		if (d.slim && "error" in d.slim) output.warn(ctx, `warden ${name}: slim ${d.udid}: ${d.slim.error}`);
+		if (!d.ok) output.reportError(ctx, name, `setup failed on ${d.udid} (exit ${d.exitCode}) — log: ${d.log}`);
 	}
 	return { live: devices.filter((d) => setups.find((s) => s.worker === d.worker)?.ok), setups };
 }
@@ -1277,7 +1277,7 @@ export async function openOnDevices(
 			if (plan.bundleId === undefined) return undefined;
 			const argv = metroTools.devClientLaunchArgv(d.udid, plan.bundleId, metro.url, plan.launchArgs);
 			const res = await ctx.exec(argv, { timeoutMs: OPEN_LAUNCH_MS });
-			if (res.exitCode !== 0) warn(ctx, `warden ${name}: ${execErrors.format(argv, res)}`);
+			if (res.exitCode !== 0) output.warn(ctx, `warden ${name}: ${execErrors.format(argv, res)}`);
 			return undefined;
 		})
 	);
@@ -1471,7 +1471,7 @@ type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 /** A resident `warden ui` host would fight the jobs' own drivers for an emulator's one `warden-uiad` slot: stop it. */
 async function stopResidentHosts(ctx: CommandContext, name: string, devices: readonly Device[]): Promise<void> {
 	const serials = devices.map((d) => d.udid);
-	for (const warning of await stopAndroidHostsLazily(ctx, serials)) warn(ctx, `warden ${name}: ${warning}`);
+	for (const warning of await stopAndroidHostsLazily(ctx, serials)) output.warn(ctx, `warden ${name}: ${warning}`);
 }
 
 /**
@@ -1498,7 +1498,7 @@ async function preparePool(
 	const lost = new Map((session.lost ?? []).map((udid) => [udid, "did not come back after the headless hide"]));
 	const devices = pool.devices.filter((d) => !lost.has(d.udid));
 	for (const d of pool.devices)
-		if (lost.has(d.udid)) reportError(ctx, r.name, `${d.udid} ${lost.get(d.udid)}, dropped`);
+		if (lost.has(d.udid)) output.reportError(ctx, r.name, `${d.udid} ${lost.get(d.udid)}, dropped`);
 	const setupEnv = poolEnv(o.env, pool, devices);
 	if (r.platform === "android") await stopResidentHosts(ctx, r.name, devices);
 	const setup = await prepareDevices(
@@ -1518,7 +1518,7 @@ async function preparePool(
 		o.metro ? openOnDevices(ctx, r.name, r.platform, o.metro.plan, o.metro.up, setup.live) : [],
 		hideLateWindows(ctx, deps, args, r, session, setup.live),
 	]);
-	for (const u of unreachable) reportError(ctx, r.name, `${u.udid} cannot reach Metro, dropped: ${u.error}`);
+	for (const u of unreachable) output.reportError(ctx, r.name, `${u.udid} cannot reach Metro, dropped: ${u.error}`);
 	const failed = new Map([...lost, ...unreachable.map((u): [string, string] => [u.udid, u.error])]);
 	const live = setup.live.filter((d) => !failed.has(d.udid));
 	if (o.warm)
@@ -1552,7 +1552,11 @@ function startPools(
 	const preparing = r.pools.map((pool) =>
 		preparePool(ctx, deps, args, r, session, pool, prepare).catch((error: unknown): PreparedPool => {
 			const message = error instanceof Error ? error.message : String(error);
-			reportError(ctx, r.name, `${pool.devices.map((d) => d.udid).join(", ")}: setup failed, dropped: ${message}`);
+			output.reportError(
+				ctx,
+				r.name,
+				`${pool.devices.map((d) => d.udid).join(", ")}: setup failed, dropped: ${message}`
+			);
 			const setups = pool.devices.map((d) => ({ worker: d.worker, udid: d.udid, ok: false, error: message }));
 			return { pool, live: [], setups };
 		})
@@ -1633,7 +1637,7 @@ function poolQueue(
 	const qualified = r.pools.length > 1;
 	const onTimeout = (job: string, w: BatchWorker) => {
 		const after = durationParser.format(args.jobTimeoutMs ?? 0);
-		reportError(ctx, r.name, `${job} still running on ${w.udid} after ${after} — killing it`);
+		output.reportError(ctx, r.name, `${job} still running on ${w.udid} after ${after} — killing it`);
 	};
 	return {
 		workers: p.live,
@@ -1697,7 +1701,7 @@ async function hideLateWindows(
 		exec: ctx.exec,
 		sleep: deps.sleep,
 		warn,
-		detachLock: claimRequestRules.detachLockFor(appHostFromContext(ctx)),
+		detachLock: claimRequestRules.detachLockFor(contextBuilder.appHostFromContext(ctx)),
 		onShutDown: stopHelperAfter(ctx),
 	}).hide(live);
 }
@@ -1811,7 +1815,7 @@ function elasticRun(
 				firstWorker: plan.plan.first,
 				handle,
 				signal: r.signal,
-				log: (line) => warn(ctx, `warden ${r.name}: ${line}`),
+				log: (line) => output.warn(ctx, `warden ${r.name}: ${line}`),
 				claim: (o) => claimLateWorker(ctx, deps, args, r, session, run, prepare, { ...o, flags: plan.flags, ...sink }),
 			});
 		},
@@ -1877,7 +1881,7 @@ async function supervise(
 	const logs = new Map<string, string>();
 	const resultFiles = new Map<string, string>();
 	const drains = new Map<string, number>();
-	const stopHold = new LeaseHeartbeat(appHostFromContext(ctx), deps).hold(session.leaseIds, (signal) => {
+	const stopHold = new LeaseHeartbeat(contextBuilder.appHostFromContext(ctx), deps).hold(session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
 	});
@@ -1894,7 +1898,7 @@ async function supervise(
 	};
 	const pctx: CommandContext = { ...ctx, err: say };
 	const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
-		reportError(ctx, r.name, message);
+		output.reportError(ctx, r.name, message);
 		return { code: r.interrupted() ? 130 : 1, ...extra };
 	};
 	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
@@ -2116,7 +2120,7 @@ async function batch(
 	passed: ReadonlySet<string>
 ): Promise<number> {
 	const fail = (message: string) => {
-		reportError(ctx, "batch", message);
+		output.reportError(ctx, "batch", message);
 		return 1;
 	};
 	const split = batchOperands(ctx.argv, operands);
@@ -2272,7 +2276,7 @@ async function abortClaim(
 	if (!interrupted && claimError !== undefined && isLockedClaimError(claimError)) {
 		return { code: reportClaimFailure(ctx, name, claimError) };
 	}
-	reportError(ctx, name, reason);
+	output.reportError(ctx, name, reason);
 	return { code: interrupted ? 130 : 1 };
 }
 
@@ -2292,7 +2296,7 @@ export async function runSession(
 ): Promise<SessionResult> {
 	const name = hooks.name ?? "batch";
 	const clamped = clampToJobs(args, jobs.length);
-	if (clamped !== args) note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
+	if (clamped !== args) output.note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
 	const owner = ownerResolver.resolve(ctx);
 	const { platform } = clamped.flags.request;
 	// capacity on and the host fits fewer workers than wanted: start with what fits, the rest join later
@@ -2347,7 +2351,11 @@ export async function runSession(
 			// a failed leg releases the others at once: their early slim and warm-up end first (R3)
 			...(warm || slim ? { beforeRelease: quiesce } : {}),
 		};
-		const result = await new LeaseSessionRunner(leaseHostFromContext(sctx), deps).claimAll(owner, claimArgs, name);
+		const result = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(sctx), deps).claimAll(
+			owner,
+			claimArgs,
+			name
+		);
 		run.claimDone = true;
 		// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
 		maybeAutoGc(ctx);
@@ -2394,12 +2402,11 @@ async function elasticSplit(
 	const whole = { lease: args, extra: 0, setup: undefined };
 	// phones are not created: a physical request claims exactly the devices it names
 	if (args.legs || request.count < 2 || request.physical !== undefined) return whole;
-	const plan = await new ElasticPlanner(await new CapacityDepsBuilder(leaseHostFromContext(ctx)).build(owner)).plan(
-		request.platform,
-		request.count
-	);
+	const plan = await new ElasticPlanner(
+		await new CapacityDepsBuilder(leaseHostBuilder.leaseHostFromContext(ctx)).build(owner)
+	).plan(request.platform, request.count);
 	if (!plan) return whole;
-	note(
+	output.note(
 		ctx,
 		`warden ${name}: host fits ${plan.first} of ${plan.first + plan.extra} ${request.platform} workers — starting with ${plan.first}, the rest join as capacity frees`
 	);

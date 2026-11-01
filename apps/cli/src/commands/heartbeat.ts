@@ -2,7 +2,7 @@ import { LeaseSelection, leaseSelectorRules, NOTHING_SELECTED } from "@delacour/
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { type SelectOptionValues, selectorFrom, withSelectOptions } from "../lease-select";
-import { emit, reportError } from "../output";
+import { output } from "../output";
 
 type HeartbeatOpts = SelectOptionValues & { json?: true };
 
@@ -10,14 +10,14 @@ async function heartbeat(ctx: CommandContext, leaseIds: string[], opts: Heartbea
 	const { color } = ctx.ui;
 	const selector = selectorFrom(leaseIds, opts);
 	if (leaseSelectorRules.isEmpty(selector)) {
-		reportError(ctx, "heartbeat", NOTHING_SELECTED);
+		output.reportError(ctx, "heartbeat", NOTHING_SELECTED);
 		return 1;
 	}
 	const { leases, unknown } = new LeaseSelection(ctx).select(selector);
 	const ids = leases.map((l) => l.id);
 	ctx.store().heartbeat(ids, ctx.now());
-	for (const u of unknown) reportError(ctx, "heartbeat", `no lease for ${u}`);
-	emit(
+	for (const u of unknown) output.reportError(ctx, "heartbeat", `no lease for ${u}`);
+	output.emit(
 		ctx,
 		opts.json === true,
 		{ heartbeat: ids, unknown },

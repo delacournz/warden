@@ -1,12 +1,12 @@
 import { type Arranged, SimWindowArranger } from "@delacour/warden-leasing/sim-windows";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, reportError } from "../output";
+import { output } from "../output";
 
 /** Tile open Simulator.app (Xcode ≤ 26) / Device Hub (Xcode 27) windows of warden sims in name order. */
 async function arrange(ctx: CommandContext, json: boolean, open: readonly string[]): Promise<number> {
 	if ((ctx.os ?? process.platform) !== "darwin") {
-		emit(
+		output.emit(
 			ctx,
 			json,
 			open.length > 0 ? { opened: [] } : { arranged: [], viewer: "none" },
@@ -16,16 +16,16 @@ async function arrange(ctx: CommandContext, json: boolean, open: readonly string
 	}
 	if (open.length > 0) {
 		const opened = await new SimWindowArranger(ctx).reopen(open);
-		emit(ctx, json, { opened }, opened.length === 0 ? "no windows opened" : `opened ${opened.join(", ")}`);
+		output.emit(ctx, json, { opened }, opened.length === 0 ? "no windows opened" : `opened ${opened.join(", ")}`);
 		return 0;
 	}
 	const result = await new SimWindowArranger({ exec: ctx.exec }).arrange();
 	if (!result.success) {
-		reportError(ctx, "arrange", result.error);
+		output.reportError(ctx, "arrange", result.error);
 		return 1;
 	}
 	const { arranged, viewer } = result.data;
-	emit(ctx, json, { arranged, viewer }, arrangeText(ctx, result.data));
+	output.emit(ctx, json, { arranged, viewer }, arrangeText(ctx, result.data));
 	return 0;
 }
 

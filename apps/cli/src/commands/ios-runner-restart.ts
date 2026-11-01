@@ -1,6 +1,6 @@
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { reportError } from "../output";
+import { output } from "../output";
 
 /** What `__ios-runner-restart` reaches the outside world through; tests inject both. */
 export type IosRunnerRestartDeps = {
@@ -13,7 +13,7 @@ const EXIT_ENGINE = 3;
 
 async function restart(ctx: CommandContext, deps: IosRunnerRestartDeps, udid: string | undefined): Promise<number> {
 	if (udid === undefined) {
-		reportError(ctx, "__ios-runner-restart", "--udid is required");
+		output.reportError(ctx, "__ios-runner-restart", "--udid is required");
 		return 1;
 	}
 	const stop =
@@ -33,7 +33,7 @@ async function restart(ctx: CommandContext, deps: IosRunnerRestartDeps, udid: st
 	if (stopped.warning !== undefined) ctx.err(`warden __ios-runner-restart: ${stopped.warning}`);
 	const started = await ensure(ctx, udid);
 	if (!started.success) {
-		reportError(ctx, "__ios-runner-restart", started.error);
+		output.reportError(ctx, "__ios-runner-restart", started.error);
 		return EXIT_ENGINE;
 	}
 	return 0;

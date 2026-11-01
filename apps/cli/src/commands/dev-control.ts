@@ -2,7 +2,7 @@ import type { Command as Commander } from "@commander-js/extra-typings";
 import type { CommandContext } from "../context";
 import { callDevControl, type DevFeature, type DevFeatures, parseDevFeatures } from "../dev-control";
 import { type DevSessionDeps, findDevSession } from "../dev-session";
-import { reportError } from "../output";
+import { output } from "../output";
 
 export type DevControlOpts = { udid?: string; json?: boolean };
 export type DevControlVerb = "enable" | "disable" | "status";
@@ -36,18 +36,22 @@ export async function devControl(
 	const scope = `dev ${verb}`;
 	const parsed = verb === "status" ? undefined : parseDevFeatures(names);
 	if (parsed !== undefined && !parsed.success) {
-		reportError(ctx, scope, parsed.error);
+		output.reportError(ctx, scope, parsed.error);
 		return 1;
 	}
 	const session = findDevSession(ctx.env, opts.udid === undefined ? {} : { udid: opts.udid }, deps);
 	if (!session.success) {
 		const { message, hint } = session.error;
-		reportError(ctx, scope, hint === undefined ? message : `${message} (${hint})`);
+		output.reportError(ctx, scope, hint === undefined ? message : `${message} (${hint})`);
 		return 1;
 	}
 	const socket = session.data.controlSocket;
 	if (socket === undefined) {
-		reportError(ctx, scope, `no control socket for the session on ${session.data.deviceId} (restart \`warden dev\`)`);
+		output.reportError(
+			ctx,
+			scope,
+			`no control socket for the session on ${session.data.deviceId} (restart \`warden dev\`)`
+		);
 		return 1;
 	}
 	const sent = await send(ctx, scope, socket, verb, parsed === undefined ? undefined : parsed.data);
@@ -77,13 +81,13 @@ async function send(
 			feature === undefined ? { op: "status" } : { op: "set", feature, on: verb === "enable" }
 		);
 		if (!called.success) {
-			reportError(ctx, scope, called.error);
+			output.reportError(ctx, scope, called.error);
 			return { features: state, failed: true };
 		}
 		state = called.data.features;
 		if (!called.data.ok) {
 			failed = true;
-			reportError(ctx, scope, `${feature}: ${called.data.error}`);
+			output.reportError(ctx, scope, `${feature}: ${called.data.error}`);
 		}
 	}
 	return { features: state, failed };

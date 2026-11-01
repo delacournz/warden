@@ -2,8 +2,8 @@ import { hostDeps } from "@delacour/warden-core/host-deps";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type InventoryDevice, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type ClaimFlags, withPhysicalAllowlist } from "./claim-flags";
-import { appHostFromContext, type CommandContext } from "./context";
-import { formatTable } from "./output";
+import { type CommandContext, contextBuilder } from "./context";
+import { output } from "./output";
 
 /** The hint every `ambiguous_device` physical claim carries. */
 export const AMBIGUOUS_HINT = "pass --udid <id> (iOS) / --serial <id> (Android), or set WARDEN_PHYSICAL_IDS";
@@ -63,7 +63,12 @@ async function candidatesFor(
 ): Promise<Found> {
 	const { request } = flags;
 	const inventory = await hostDeps
-		.providerFor(request.platform, appHostFromContext(ctx), owner, request.platform === "ios" ? { physical: true } : {})
+		.providerFor(
+			request.platform,
+			contextBuilder.appHostFromContext(ctx),
+			owner,
+			request.platform === "ios" ? { physical: true } : {}
+		)
 		.inventory();
 	if (!inventory.success) return { ok: false, message: inventory.error.message };
 	const now = ctx.now();
@@ -152,7 +157,7 @@ export function ambiguousMessage(platform: Platform, candidates: readonly Physic
 
 /** Candidates as a table (plain text). */
 export function candidateTable(candidates: readonly PhysicalCandidate[]): string {
-	return formatTable(
+	return output.formatTable(
 		["ID", "NAME", "MODEL", "OS", "TRANSPORT"],
 		candidates.map((c) => [
 			c.id,

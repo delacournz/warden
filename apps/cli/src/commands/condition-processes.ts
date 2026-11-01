@@ -1,6 +1,6 @@
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { reportError } from "../output";
+import { output } from "../output";
 
 /** What the detached condition processes run (tests inject; the real ones are imported when the subcommand runs). */
 export type ConditionProcessDeps = {
@@ -38,7 +38,7 @@ export function createNetproxyCommand(deps: ConditionProcessDeps = {}) {
 				try {
 					await (deps.netproxy ?? defaultNetproxy)(raw);
 				} catch (error) {
-					reportError(ctx, "__netproxy", error instanceof Error ? error.message : String(error));
+					output.reportError(ctx, "__netproxy", error instanceof Error ? error.message : String(error));
 					done(1);
 					return;
 				}
@@ -58,7 +58,7 @@ async function runToEnd(
 	try {
 		return await run(raw);
 	} catch (error) {
-		reportError(ctx, name, error instanceof Error ? error.message : String(error));
+		output.reportError(ctx, name, error instanceof Error ? error.message : String(error));
 		return 1;
 	}
 }

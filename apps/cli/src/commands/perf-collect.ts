@@ -4,7 +4,7 @@ import { perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
 import { defaultSessionDeps, perfSessionStore, type SessionDeps } from "@delacour/warden-sdk/ops/perf/session";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { reportError } from "../output";
+import { output } from "../output";
 import type { CollectorDeps } from "../perf/collector";
 import type { PerfDeps } from "../perf/run";
 
@@ -21,12 +21,12 @@ export type PerfCollectDeps = {
 
 async function collect(ctx: CommandContext, deps: PerfCollectDeps, id: string | undefined): Promise<number> {
 	if (id === undefined) {
-		reportError(ctx, "perf-collect", "--session <id> is required");
+		output.reportError(ctx, "perf-collect", "--session <id> is required");
 		return 1;
 	}
 	const session = perfSessionStore.readSession(ctx, id);
 	if (session === undefined || session.status !== "running") {
-		reportError(ctx, "perf-collect", `no running perf session ${id}`);
+		output.reportError(ctx, "perf-collect", `no running perf session ${id}`);
 		return 1;
 	}
 	const controller = new AbortController();

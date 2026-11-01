@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { type CommandEntry, runLazyProgram } from "./command";
 import { COMMANDS } from "./commands/registry";
-import { type CommandContext, defaultContext, STDERR, STDOUT } from "./context";
+import { type CommandContext, contextBuilder, STDERR, STDOUT } from "./context";
 
 /**
  * Run warden with `argv` (without `bun cli.ts`). Returns the exit code. Only the dispatched command's module is
@@ -9,7 +9,7 @@ import { type CommandContext, defaultContext, STDERR, STDOUT } from "./context";
  */
 export async function main(
 	argv: string[],
-	makeContext: (argv: string[]) => CommandContext = defaultContext,
+	makeContext: (argv: string[]) => CommandContext = contextBuilder.defaultContext.bind(contextBuilder),
 	entries: readonly CommandEntry[] = COMMANDS
 ): Promise<number> {
 	const [first, ...rest] = argv;

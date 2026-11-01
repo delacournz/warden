@@ -5,14 +5,15 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { type HookDeps, type HookResult, handleSessionEnd } from "../hooks/claude-pretool";
 import { errorMessage } from "../hooks/json";
-import { leaseHostFromContext } from "../lease-host";
+import { leaseHostBuilder } from "../lease-host";
 
 function hookDeps(ctx: CommandContext): HookDeps {
 	return {
 		store: ctx.store,
 		now: ctx.now,
 		pidAlive: liveness.processAlive,
-		shutdown: (leases, owner) => new ReleasedDeviceShutdown(leaseHostFromContext(ctx)).run(leases, owner),
+		shutdown: (leases, owner) =>
+			new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(ctx)).run(leases, owner),
 		endInBackground: (sessionId) => {
 			if (!backgroundAllowed(ctx.env)) return false;
 			spawnDetached([...selfCommand(), "release", "--session", sessionId, "--shutdown"], {

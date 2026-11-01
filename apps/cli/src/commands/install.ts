@@ -10,7 +10,7 @@ import { mergeClaudeSettings } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook, mergeCodexHooks } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { lineDiff } from "../hooks/text-diff";
-import { heading, reportError } from "../output";
+import { output } from "../output";
 import { RULE_MD, SKILL_NAME, staleSkillFiles } from "../skill";
 import {
 	CLAUDE_AGENT,
@@ -429,11 +429,11 @@ export async function runInstall(ctx: CommandContext, deps: InstallDeps, flags: 
 	const { color } = ctx.ui;
 	const home = ctx.env.HOME;
 	if (!home) {
-		reportError(ctx, "install", "$HOME is not set");
+		output.reportError(ctx, "install", "$HOME is not set");
 		return 1;
 	}
 	const agents = targetAgents(ctx, flags);
-	if (!flags.json) heading(ctx, "install", agents.length > 0 ? agents.join(" + ") : "binary only");
+	if (!flags.json) output.heading(ctx, "install", agents.length > 0 ? agents.join(" + ") : "binary only");
 	const steps = await install(ctx, deps, flags, home, agents);
 	const binaryPresent = existsSync(join(home, ".local", "bin", "warden"));
 	const notes = installNotes(flags, agents, steps, binaryPresent, home);

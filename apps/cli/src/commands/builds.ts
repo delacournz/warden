@@ -15,12 +15,12 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, heading, plural, reportError, table, warn } from "../output";
+import { output } from "../output";
 import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
 
 function fail(ctx: CommandContext, sub: string, message: string): number {
-	reportError(ctx, `builds ${sub}`, message);
+	output.reportError(ctx, `builds ${sub}`, message);
 	return 1;
 }
 
@@ -75,16 +75,16 @@ function lsCmd(ctx: CommandContext, json: boolean): number {
 	const text =
 		builds.length === 0
 			? color.dim("no cached builds")
-			: `${table(ctx, columns, rows, [
+			: `${output.table(ctx, columns, rows, [
 					{ column: 10, keep: "end", min: 20 },
 					{ column: 0, keep: "end", min: 20 },
 					{ column: 7, min: 12 },
 					{ column: 6, min: 12 },
 				])}\n\ntotal ${color.bold(pruneTools.formatSize(total))}`;
 	const listed = builds.map((b) => ({ ...b, ...buildFacts(b) }));
-	emit(ctx, json, { builds: listed, totalBytes: total }, text, {
+	output.emit(ctx, json, { builds: listed, totalBytes: total }, text, {
 		scope: "builds",
-		detail: `${plural(builds.length, "build")} · ${pruneTools.formatSize(total)}`,
+		detail: `${output.plural(builds.length, "build")} · ${pruneTools.formatSize(total)}`,
 	});
 	return 0;
 }
@@ -97,7 +97,7 @@ const describeBuild = (b: { projectKey: string; platform: string; hash: string; 
 /** List what an LRU prune removes and ask; true = go ahead (nothing to remove counts as yes). */
 async function confirmPrune(ctx: CommandContext, remove: readonly BuildRecord[]): Promise<boolean> {
 	if (remove.length === 0) return true;
-	for (const b of remove) warn(ctx, `will remove ${describeBuild(b)}`);
+	for (const b of remove) output.warn(ctx, `will remove ${describeBuild(b)}`);
 	const freed = remove.reduce((sum, b) => sum + b.size, 0);
 	if ((await ctx.ui.confirm(`Remove ${remove.length} cached build(s) (${pruneTools.formatSize(freed)})?`)) === true)
 		return true;
@@ -129,10 +129,10 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 		});
 	const preview = prune(true);
 	if (!opts.json) {
-		heading(
+		output.heading(
 			ctx,
 			"builds prune",
-			`${plural(preview.remove.length, "build")} over ${pruneTools.formatSize(max.data)}${dryRun ? " · dry run" : ""}`
+			`${output.plural(preview.remove.length, "build")} over ${pruneTools.formatSize(max.data)}${dryRun ? " · dry run" : ""}`
 		);
 	}
 	if (!dryRun && ui.interactive && !opts.yes && !(await confirmPrune(ctx, preview.remove))) return 1;
@@ -145,7 +145,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 		...plan.remove.map((b) => (dryRun ? color.yellow : color.green)(`${verb} ${describeBuild(b)}`)),
 		`${pruneTools.formatSize(plan.total)} → ${color.bold(pruneTools.formatSize(plan.after))} ${color.dim(`(max ${pruneTools.formatSize(max.data)})`)}`,
 	].join("\n");
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		{ dryRun, removed: plan.remove, totalBytes: plan.total, afterBytes: plan.after, maxBytes: max.data },
@@ -182,7 +182,11 @@ async function rmCmd(ctx: CommandContext, prefixes: string[], opts: RmOpts): Pro
 	const preview = remove(true);
 	if (!preview.success) return fail(ctx, "rm", preview.error);
 	if (!opts.json)
-		heading(ctx, "builds rm", `${plural(preview.data.remove.length, "build")}${dryRun ? " · dry run" : ""}`);
+		output.heading(
+			ctx,
+			"builds rm",
+			`${output.plural(preview.data.remove.length, "build")}${dryRun ? " · dry run" : ""}`
+		);
 	if (!dryRun && ctx.ui.interactive && !opts.yes && !(await confirmPrune(ctx, preview.data.remove))) return 1;
 	const done = dryRun ? preview : remove(false);
 	if (!done.success) return fail(ctx, "rm", done.error);
@@ -191,10 +195,10 @@ async function rmCmd(ctx: CommandContext, prefixes: string[], opts: RmOpts): Pro
 	const text = [
 		...removed.map((b) => (dryRun ? color.yellow : color.green)(`${verb} ${describeBuild(b)}`)),
 		color.dim(
-			`${dryRun ? "would forget" : "forgot"} ${plural(forgotInstalls, "install record")}: the next ensure reinstalls there`
+			`${dryRun ? "would forget" : "forgot"} ${output.plural(forgotInstalls, "install record")}: the next ensure reinstalls there`
 		),
 	].join("\n");
-	emit(ctx, opts.json === true, { dryRun, removed, forgotInstalls }, text);
+	output.emit(ctx, opts.json === true, { dryRun, removed, forgotInstalls }, text);
 	return 0;
 }
 
@@ -243,7 +247,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 	);
 	if (!stored.success) return fail(ctx, "import", stored.error);
 	const b = stored.data;
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		b,

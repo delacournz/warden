@@ -4,7 +4,7 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { leaseModel } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, warn } from "../output";
+import { output } from "../output";
 
 type CheckOpts = { udid: string; session?: string; json?: true };
 
@@ -24,19 +24,19 @@ function check(ctx: CommandContext, opts: CheckOpts): number {
 	const json = opts.json === true;
 	if (!lease) {
 		const free: CheckJson = { udid, free: true, mine: false };
-		emit(ctx, json, free, color.green(`device ${udid} is free`));
+		output.emit(ctx, json, free, color.green(`device ${udid} is free`));
 		return 0;
 	}
 	if (leaseModel.sameOwner(lease.owner, me)) {
 		const mine: CheckJson = { udid, free: false, mine: true, leaseId: lease.id };
-		emit(ctx, json, mine, `${color.green(`device ${udid} leased by you`)} ${color.dim(`(${lease.id})`)}`);
+		output.emit(ctx, json, mine, `${color.green(`device ${udid} leased by you`)} ${color.dim(`(${lease.id})`)}`);
 		return 0;
 	}
 	const where = leaseModel.ownerLocation(lease.owner);
 	const message = `device ${udid} leased by ${leaseModel.describeOwner(lease.owner)}${where ? ` (${where})` : ""}`;
 	const held: CheckJson = { udid, free: false, mine: false, leaseId: lease.id, owner: lease.owner };
-	if (json) emit(ctx, true, held, "");
-	warn(ctx, message);
+	if (json) output.emit(ctx, true, held, "");
+	output.warn(ctx, message);
 	return 2;
 }
 

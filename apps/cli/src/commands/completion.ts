@@ -2,12 +2,16 @@ import { Argument } from "@commander-js/extra-typings";
 import { defineCommand } from "../command";
 import { COMPLETION_SHELLS, type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";
 import type { CommandContext } from "../context";
-import { reportError } from "../output";
+import { output } from "../output";
 
 function runCompletion(ctx: CommandContext, shell: CompletionShell | undefined): number {
 	const target = shell ?? shellFromEnv(ctx.env);
 	if (!target) {
-		reportError(ctx, "completion", `can't tell your shell from $SHELL — name it: ${COMPLETION_SHELLS.join(" | ")}`);
+		output.reportError(
+			ctx,
+			"completion",
+			`can't tell your shell from $SHELL — name it: ${COMPLETION_SHELLS.join(" | ")}`
+		);
 		return 1;
 	}
 	ctx.out(completionScript(target).replace(/\n$/, ""));

@@ -48,75 +48,79 @@ export type LineWriter = {
 	drained: () => Promise<void>;
 };
 
-/**
- * A pipe queues writes once its 64 KB buffer is full and `process.exit` drops that queue, which cut a large
- * `--json` document off for a reader that started late. Bun reports the full buffer only through `write`'s
- * return value (`writableNeedDrain` stays false), so that is what is tracked.
- */
-export function lineWriter(stream: NodeJS.WritableStream): LineWriter {
-	let backlog = false;
-	return {
-		write: (line) => {
-			if (!stream.write(`${line}\n`)) backlog = true;
-		},
-		drained: () => {
-			if (!backlog) return Promise.resolve();
-			return new Promise((done) => {
-				const events = ["drain", "error", "close"] as const;
-				const finish = () => {
-					for (const event of events) stream.off(event, finish);
-					backlog = false;
-					done();
-				};
-				for (const event of events) stream.once(event, finish);
-			});
-		},
-	};
+export class ContextBuilder {
+	/**
+	 * A pipe queues writes once its 64 KB buffer is full and `process.exit` drops that queue, which cut a large
+	 * `--json` document off for a reader that started late. Bun reports the full buffer only through `write`'s
+	 * return value (`writableNeedDrain` stays false), so that is what is tracked.
+	 */
+	lineWriter(stream: NodeJS.WritableStream): LineWriter {
+		let backlog = false;
+		return {
+			write: (line) => {
+				if (!stream.write(`${line}\n`)) backlog = true;
+			},
+			drained: () => {
+				if (!backlog) return Promise.resolve();
+				return new Promise((done) => {
+					const events = ["drain", "error", "close"] as const;
+					const finish = () => {
+						for (const event of events) stream.off(event, finish);
+						backlog = false;
+						done();
+					};
+					for (const event of events) stream.once(event, finish);
+				});
+			},
+		};
+	}
+
+	/**
+	 * The context as a {@link WardenHost}: the engine's injected effects. Its `log` renders each event on
+	 * `ctx.err` exactly as the engine used to print it, so build it from the context in force where `err`
+	 * is swapped (a spinner's).
+	 */
+	hostFromContext(ctx: CommandContext): WardenHost {
+		return {
+			env: ctx.env,
+			cwd: ctx.cwd,
+			home: storeLocator.wardenHome(ctx.env),
+			now: ctx.now,
+			exec: ctx.exec,
+			sleep: (ms) => Bun.sleep(ms),
+			pidAlive: liveness.processAlive,
+			log: (event) => renderLogEvent(ctx, event),
+		};
+	}
+
+	/** {@link hostFromContext} plus the shared store and git-facts memo: what app preparation reads. */
+	appHostFromContext(ctx: CommandContext): AppHost {
+		return { ...this.hostFromContext(ctx), store: ctx.store, git: ctx.git };
+	}
+
+	defaultContext(argv: string[]): CommandContext {
+		const env = process.env;
+		let store: Store | undefined;
+		return {
+			argv,
+			env,
+			cwd: process.cwd(),
+			now: () => Date.now(),
+			out: STDOUT.write,
+			err: STDERR.write,
+			store: () => {
+				store ??= storeLocator.open(storeLocator.defaultDbPath(env));
+				return store;
+			},
+			exec: processExec.run,
+			git: new GitFactsCache(),
+			readStdin: () => Bun.stdin.text(),
+			ui: terminalUi(process.env),
+		};
+	}
 }
 
-export const STDOUT = lineWriter(process.stdout);
-export const STDERR = lineWriter(process.stderr);
+export const contextBuilder = new ContextBuilder();
 
-/**
- * The context as a {@link WardenHost}: the engine's injected effects. Its `log` renders each event on
- * `ctx.err` exactly as the engine used to print it, so build it from the context in force where `err`
- * is swapped (a spinner's).
- */
-export function hostFromContext(ctx: CommandContext): WardenHost {
-	return {
-		env: ctx.env,
-		cwd: ctx.cwd,
-		home: storeLocator.wardenHome(ctx.env),
-		now: ctx.now,
-		exec: ctx.exec,
-		sleep: (ms) => Bun.sleep(ms),
-		pidAlive: liveness.processAlive,
-		log: (event) => renderLogEvent(ctx, event),
-	};
-}
-
-/** {@link hostFromContext} plus the shared store and git-facts memo: what app preparation reads. */
-export function appHostFromContext(ctx: CommandContext): AppHost {
-	return { ...hostFromContext(ctx), store: ctx.store, git: ctx.git };
-}
-
-export function defaultContext(argv: string[]): CommandContext {
-	const env = process.env;
-	let store: Store | undefined;
-	return {
-		argv,
-		env,
-		cwd: process.cwd(),
-		now: () => Date.now(),
-		out: STDOUT.write,
-		err: STDERR.write,
-		store: () => {
-			store ??= storeLocator.open(storeLocator.defaultDbPath(env));
-			return store;
-		},
-		exec: processExec.run,
-		git: new GitFactsCache(),
-		readStdin: () => Bun.stdin.text(),
-		ui: terminalUi(process.env),
-	};
-}
+export const STDOUT = contextBuilder.lineWriter(process.stdout);
+export const STDERR = contextBuilder.lineWriter(process.stderr);

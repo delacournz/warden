@@ -4,7 +4,7 @@ import { type OpenParams, openOps } from "@delacour/warden-sdk/ops/open";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { leaseHostFromContext } from "../lease-host";
+import { leaseHostBuilder } from "../lease-host";
 import { type ActionOptionValues, parseSettle } from "./args";
 import { sharedNote, type UiDevice } from "./device";
 import type { UiDeps } from "./driver";
@@ -54,12 +54,18 @@ async function installKind(
 			const { AppPreparer, defaultAppDeps } = await import("@delacour/warden-builds/prepare");
 			return new AppPreparer(args[0], defaultAppDeps).ensureFor(args[1], args[2], args[3], args[4]);
 		});
-	const done = await ensure(leaseHostFromContext(ctx), ownerResolver.resolve(ctx), device.platform, device.udid, {
-		eas: true,
-		build: true,
-		kind,
-		...(opts.project !== undefined ? { project: opts.project } : {}),
-	});
+	const done = await ensure(
+		leaseHostBuilder.leaseHostFromContext(ctx),
+		ownerResolver.resolve(ctx),
+		device.platform,
+		device.udid,
+		{
+			eas: true,
+			build: true,
+			kind,
+			...(opts.project !== undefined ? { project: opts.project } : {}),
+		}
+	);
 	if (!done.success) return { success: false, error: uiError("failed", `--kind ${kind}: ${done.error.message}`) };
 	const app = "kindApp" in done.data ? done.data.kindApp : undefined;
 	return resultFactory.ok({

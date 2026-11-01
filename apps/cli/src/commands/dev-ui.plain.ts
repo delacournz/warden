@@ -1,6 +1,6 @@
 import { resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { note } from "../output";
+import { output } from "../output";
 import type { DevReady, DevTaskHandle, DevUi } from "./dev-ui";
 
 /**
@@ -21,7 +21,7 @@ export function plainDevUi(ctx: CommandContext): DevUi {
 		task: () => handle,
 		metro: { kind: "inherit" },
 		ready: (info: DevReady) => {
-			note(
+			output.note(
 				ctx,
 				`warden dev: holding ${info.deviceId} + :${info.port} until Metro exits (WARDEN_UDID=${info.deviceId})`
 			);

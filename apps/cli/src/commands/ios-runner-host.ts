@@ -7,7 +7,7 @@ import { devicectlList, type RouteDeps } from "../ios-runner/route";
 import { removeServedIdentity, writeServedIdentity } from "../ios-runner/served-identity";
 import { type SessionDeps, type SessionEnd, startSession } from "../ios-runner/session";
 import type { RunnerBuildPort, RunnerFault, SpawnRunner } from "../ios-runner/types";
-import { reportError } from "../output";
+import { output } from "../output";
 
 /** What `__ios-runner-host` reaches the outside world through; tests inject all of it. */
 export type IosRunnerHostDeps = {
@@ -64,17 +64,17 @@ export function faultCode(fault: RunnerFault): string {
 async function host(ctx: CommandContext, deps: IosRunnerHostDeps, opts: HostOptionValues): Promise<number> {
 	const { udid, socket } = opts;
 	if (udid === undefined || socket === undefined) {
-		reportError(ctx, "__ios-runner-host", "--udid and --socket are required");
+		output.reportError(ctx, "__ios-runner-host", "--udid and --socket are required");
 		return 1;
 	}
 	const idle = idleMs(opts.idleTimeout);
 	if (!idle.success) {
-		reportError(ctx, "__ios-runner-host", idle.error);
+		output.reportError(ctx, "__ios-runner-host", idle.error);
 		return 1;
 	}
 	const die = (code: string, message: string): number => {
 		ctx.out(fatalLine(code, message));
-		reportError(ctx, "__ios-runner-host", `${code}: ${message}`);
+		output.reportError(ctx, "__ios-runner-host", `${code}: ${message}`);
 		return EXIT_ENGINE;
 	};
 	// a leftover file from an earlier host must never vouch for this one

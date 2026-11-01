@@ -55,7 +55,7 @@ import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "..
 import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
 import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
 import { type AppFlagValues, withLeaseOptions } from "../lease-options";
-import { emit, note, reportError, success, warn } from "../output";
+import { output } from "../output";
 import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
 import { currentBuild } from "../update/build-info";
 import { type AffectedOpts, explain, runAffected, selectedSpecs } from "./affected";
@@ -308,7 +308,7 @@ async function publish(ctx: CommandContext, deps: BatchDeps, opts: E2eOpts, repo
 	const text = `${JSON.stringify(report, null, 2)}\n`;
 	if (report.batchDir) await deps.writeFile(join(report.batchDir, "e2e-report.json"), text);
 	if (opts.report) await deps.writeFile(opts.report, text);
-	if (opts.json) emit(ctx, true, report, "");
+	if (opts.json) output.emit(ctx, true, report, "");
 }
 
 /** ` on <device> — log <path> — screenshot <path>` for a spec that ran and failed (empty otherwise). */
@@ -355,8 +355,8 @@ function printVerdict(ctx: CommandContext, report: E2eReport): void {
 	for (const file of report.only ?? []) ctx.err(color.red(`warden e2e: test.only left in ${file}`));
 	const passed = report.specs.filter((f) => f.verdict === "passed").length;
 	const line = `warden e2e: ${passed}/${report.specs.length} spec(s) passed — ${report.ok ? "gate passed" : "gate failed"}`;
-	if (report.ok) success(ctx, line);
-	else reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
+	if (report.ok) output.success(ctx, line);
+	else output.reportError(ctx, "e2e", line.replace(/^warden e2e: /, ""));
 }
 
 /** `CI` is set to something other than empty / `0` / `false`. */
@@ -391,7 +391,7 @@ async function plan(ctx: CommandContext, suiteName: string | undefined, opts: E2
 	if (!affected.success) return affected;
 	const selection = onePlatform(affected.data);
 	if (!selection.success) return selection;
-	for (const w of [...affected.data.warnings, ...selection.data.warnings]) warn(ctx, `warden e2e: ${w}`);
+	for (const w of [...affected.data.warnings, ...selection.data.warnings]) output.warn(ctx, `warden e2e: ${w}`);
 	if (opts.explain || opts.dryRun) ctx.err(explain(affected.data, opts.requiredOnly === true, color));
 	const specs = selectedSpecs(selection.data, opts.requiredOnly === true);
 	if (opts.specs !== undefined && specs.length === 0) return resultFactory.err("--specs matched no spec");
@@ -413,7 +413,7 @@ async function e2e(
 	passed: ReadonlySet<string>
 ): Promise<number> {
 	const fail = (message: string) => {
-		reportError(ctx, "e2e", message);
+		output.reportError(ctx, "e2e", message);
 		return 1;
 	};
 	const planned = await plan(ctx, suiteName, opts);
@@ -429,7 +429,7 @@ async function e2e(
 		...(affected.base !== undefined ? { base: affected.base } : {}),
 	};
 	if (specs.length === 0 || opts.dryRun) {
-		if (specs.length === 0) success(ctx, "warden e2e: no affected specs — nothing to run");
+		if (specs.length === 0) output.success(ctx, "warden e2e: no affected specs — nothing to run");
 		const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
 		await publish(ctx, deps, opts, {
 			...base,
@@ -512,7 +512,7 @@ async function preparedRun(
 	passed: ReadonlySet<string>,
 	kind: RunKind
 ): AsyncResult<RunPlan & { spec: SpecPlan }> {
-	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
+	if (suite.config.slim && platform !== "ios") output.note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
 	if (slimsDevices(suite.config, platform) && suite.config.slim !== undefined) {
 		const slim = slimProfiles.validateProfile(slimProfile(suite.config.slim));
 		if (!slim.success) return resultFactory.err(`suite "${suite.name}": slim: ${slim.error}`);

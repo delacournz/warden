@@ -5,7 +5,7 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { leaseModel } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, plural, table } from "../output";
+import { output } from "../output";
 
 export type QueueRow = QueueRowJson;
 
@@ -32,7 +32,7 @@ function queue(ctx: CommandContext, json: boolean): number {
 	const text =
 		rows.length === 0
 			? color.dim("queue empty")
-			: table(
+			: output.table(
 					ctx,
 					["#", "PRIORITY", "AGE", "PLATFORM", "PROFILE", "UNITS", "OWNER", "REPO/WORKTREE", "LABEL", "PID"],
 					rows.map((r) => [
@@ -48,7 +48,10 @@ function queue(ctx: CommandContext, json: boolean): number {
 						r.pid === undefined ? "" : r.stale ? color.yellow(`${r.pid} stale`) : String(r.pid),
 					])
 				);
-	emit(ctx, json, { queue: rows }, text, { scope: "queue", detail: plural(rows.length, "waiting claim") });
+	output.emit(ctx, json, { queue: rows }, text, {
+		scope: "queue",
+		detail: output.plural(rows.length, "waiting claim"),
+	});
 	return 0;
 }
 

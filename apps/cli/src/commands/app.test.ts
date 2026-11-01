@@ -8,7 +8,7 @@ import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { appEnsureJsonSchema, appFingerprintJsonSchema } from "@delacour/warden-sdk/contracts/dev";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
-import { appHostFromContext } from "../context";
+import { contextBuilder } from "../context";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { createAppCommand } from "./app";
@@ -400,15 +400,27 @@ describe("warden app ensure on a physical iPhone", () => {
 		const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
 		const c = testContext([], { env: { HOME: "/h" } });
 		writeFileSync(join(c.cwd, "warden.config.json"), JSON.stringify({ ios: { teamId: "ABCDE12345" }, e2e: {} }));
-		const phone = new AppPreparer(appHostFromContext(c), deps).kindAppInput(owner, "ios", base, "release", {
-			eas: false,
-			build: true,
-			physical: true,
-		});
-		const sim = new AppPreparer(appHostFromContext(c), deps).kindAppInput(owner, "ios", base, "release", {
-			eas: false,
-			build: true,
-		});
+		const phone = new AppPreparer(contextBuilder.appHostFromContext(c), deps).kindAppInput(
+			owner,
+			"ios",
+			base,
+			"release",
+			{
+				eas: false,
+				build: true,
+				physical: true,
+			}
+		);
+		const sim = new AppPreparer(contextBuilder.appHostFromContext(c), deps).kindAppInput(
+			owner,
+			"ios",
+			base,
+			"release",
+			{
+				eas: false,
+				build: true,
+			}
+		);
 		expect(phone.configTeamId).toBe("ABCDE12345");
 		expect(phone.physical).toBe(true);
 		expect(sim.configTeamId).toBeUndefined();
@@ -422,7 +434,7 @@ describe("kindAppInput bundle env", () => {
 	const bundleEnv = { EXPO_PUBLIC_API: "http://fake" };
 	const input = (kind: "dev" | "simulator" | "release") => {
 		const c = testContext([], { env: { HOME: "/h", EXPO_PUBLIC_API: "http://real" } });
-		return new AppPreparer(appHostFromContext(c), deps).kindAppInput(owner, "ios", project, kind, {
+		return new AppPreparer(contextBuilder.appHostFromContext(c), deps).kindAppInput(owner, "ios", project, kind, {
 			eas: false,
 			build: true,
 			bundleEnv,

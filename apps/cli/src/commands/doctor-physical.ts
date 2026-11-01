@@ -9,7 +9,7 @@ import { Devicectl } from "@delacour/warden-providers/devicectl";
 import { timers } from "@delacour/warden-providers/health";
 import { storeLocator } from "@delacour/warden-store/store";
 import { type InventoryDevice, leaseModel } from "@delacour/warden-store/types";
-import { appHostFromContext, type CommandContext } from "../context";
+import { type CommandContext, contextBuilder } from "../context";
 import type { CheckStatus, DoctorCheck } from "./doctor";
 
 /**
@@ -164,7 +164,7 @@ async function adbServerCount(ctx: CommandContext): Promise<number> {
 
 async function androidRows(ctx: CommandContext): Promise<DoctorCheck[]> {
 	const [inventory, servers] = await Promise.all([
-		hostDeps.providerFor("android", appHostFromContext(ctx), ownerResolver.resolve(ctx)).inventory(),
+		hostDeps.providerFor("android", contextBuilder.appHostFromContext(ctx), ownerResolver.resolve(ctx)).inventory(),
 		adbServerCount(ctx),
 	]);
 	const phones = (inventory.success ? inventory.data : []).filter((d) => d.physical?.platform === "android");

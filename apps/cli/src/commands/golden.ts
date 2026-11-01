@@ -10,8 +10,8 @@ import { leaseModel } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
-import { emit, heading, plural, reportError, table } from "../output";
+import { type CommandContext, contextBuilder } from "../context";
+import { output } from "../output";
 import { withSpinner } from "../spinner-context";
 
 type PlatformOpt = { platform?: string };
@@ -22,7 +22,7 @@ type PruneOpts = PlatformOpt & { all?: true; yes?: true; json?: true };
 function platformOf(ctx: CommandContext, opts: PlatformOpt): "ios" | "android" | undefined {
 	const platform = opts.platform ?? "ios";
 	if (platform === "ios" || platform === "android") return platform;
-	reportError(ctx, "golden", `--platform must be ios or android, not "${platform}"`);
+	output.reportError(ctx, "golden", `--platform must be ios or android, not "${platform}"`);
 	return undefined;
 }
 
@@ -43,12 +43,12 @@ async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string>
 async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts: EnsureOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const profile = opts.profile ?? DEFAULT_PROFILE.android;
-	if (!opts.json) heading(ctx, "golden ensure", `android ${profile}`);
+	if (!opts.json) output.heading(ctx, "golden ensure", `android ${profile}`);
 	const avd = await avdFor(ctx, profile);
 	if (!avd.success) return fail(ctx, avd.error);
 	const snapshot = await withSpinner(ctx, `ensuring quick-boot snapshot of ${avd.data}…`, async (sctx, spinner) => {
 		const result = await new AndroidGolden(
-			hostDeps.androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+			hostDeps.androidGoldenDeps(contextBuilder.appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
 		).ensure(avd.data, {
 			explicit: true,
 		});
@@ -62,7 +62,7 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 		return fail(ctx, `no snapshot of ${avd.data}: set ANDROID_HOME, and stop its running emulators first`);
 	}
 	const { name, built } = snapshot.data;
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		snapshot.data,
@@ -74,18 +74,18 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 async function lsAndroid(ctx: CommandContext, sleep: Sleep | undefined, json: boolean): Promise<number> {
 	const { color } = ctx.ui;
 	const snapshots = await new AndroidGolden(
-		hostDeps.androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+		hostDeps.androidGoldenDeps(contextBuilder.appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
 	).list();
 	if (!snapshots.success) return fail(ctx, snapshots.error);
-	const text = table(
+	const text = output.table(
 		ctx,
 		["NAME", "AVD", "CURRENT"],
 		snapshots.data.map((s) => [s.name, s.avd, s.current ? color.green("yes") : color.red("stale")]),
 		[{ column: 0, min: 18 }]
 	);
-	emit(ctx, json, snapshots.data, snapshots.data.length > 0 ? text : color.dim("no warden snapshots"), {
+	output.emit(ctx, json, snapshots.data, snapshots.data.length > 0 ? text : color.dim("no warden snapshots"), {
 		scope: "golden ls",
-		detail: plural(snapshots.data.length, "android snapshot"),
+		detail: output.plural(snapshots.data.length, "android snapshot"),
 	});
 	return 0;
 }
@@ -96,10 +96,10 @@ async function ensure(ctx: CommandContext, sleep: Sleep | undefined, opts: Ensur
 	if (platform === "android") return ensureAndroid(ctx, sleep, opts);
 	const { color } = ctx.ui;
 	const profile = opts.profile ?? DEFAULT_PROFILE.ios;
-	if (!opts.json) heading(ctx, "golden ensure", profile);
+	if (!opts.json) output.heading(ctx, "golden ensure", profile);
 	const golden = await withSpinner(ctx, `ensuring golden ${profile} image…`, async (sctx, spinner) => {
 		const result = await new IosGolden(
-			hostDeps.goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+			hostDeps.goldenDeps(contextBuilder.appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
 		).ensure(profile, opts.runtime);
 		if (result.success) spinner.succeed(`golden ${result.data.name} ${result.data.built ? "built" : "reused"}`);
 		else spinner.fail("golden image failed");
@@ -107,7 +107,7 @@ async function ensure(ctx: CommandContext, sleep: Sleep | undefined, opts: Ensur
 	});
 	if (!golden.success) return fail(ctx, golden.error);
 	const { name, udid, built } = golden.data;
-	emit(
+	output.emit(
 		ctx,
 		opts.json === true,
 		golden.data,
@@ -123,10 +123,10 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, opts: PlatformO
 	if (platform === "android") return lsAndroid(ctx, sleep, json);
 	const { color } = ctx.ui;
 	const goldens = await new IosGolden(
-		hostDeps.goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+		hostDeps.goldenDeps(contextBuilder.appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
 	).list();
 	if (!goldens.success) return fail(ctx, goldens.error);
-	const text = table(
+	const text = output.table(
 		ctx,
 		["NAME", "UDID", "STATE", "RUNTIME", "AVAILABLE"],
 		goldens.data.map((g) => [
@@ -141,9 +141,9 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, opts: PlatformO
 			{ column: 1, min: 9 },
 		]
 	);
-	emit(ctx, json, goldens.data, goldens.data.length > 0 ? text : color.dim("no golden images"), {
+	output.emit(ctx, json, goldens.data, goldens.data.length > 0 ? text : color.dim("no golden images"), {
 		scope: "golden ls",
-		detail: plural(goldens.data.length, "golden image"),
+		detail: output.plural(goldens.data.length, "golden image"),
 	});
 	return 0;
 }
@@ -156,15 +156,17 @@ async function confirmPruneAll(ctx: CommandContext, sleep: Sleep | undefined, op
 	if (opts.yes) return 0;
 	const { ui } = ctx;
 	if (!ui.interactive || opts.json) {
-		reportError(ctx, "golden prune", "--all deletes every golden image — pass --yes to confirm");
+		output.reportError(ctx, "golden prune", "--all deletes every golden image — pass --yes to confirm");
 		return 1;
 	}
 	const goldens: Result<unknown[]> =
 		opts.platform === "android"
 			? await new AndroidGolden(
-					hostDeps.androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+					hostDeps.androidGoldenDeps(contextBuilder.appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
 				).list()
-			: await new IosGolden(hostDeps.goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)).list();
+			: await new IosGolden(
+					hostDeps.goldenDeps(contextBuilder.appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+				).list();
 	if (!goldens.success) return fail(ctx, goldens.error);
 	if (goldens.data.length === 0) return 0;
 	const answer = await ui.confirm(`Delete all ${goldens.data.length} golden image(s)?`, false);
@@ -188,21 +190,23 @@ async function prune(ctx: CommandContext, sleep: Sleep | undefined, opts: PruneO
 		(sctx): AsyncResult<Array<{ name: string }>> =>
 			platform === "android"
 				? new AndroidGolden(
-						hostDeps.androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+						hostDeps.androidGoldenDeps(contextBuilder.appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
 					).prune({ all })
-				: new IosGolden(hostDeps.goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)).prune({ all })
+				: new IosGolden(
+						hostDeps.goldenDeps(contextBuilder.appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+					).prune({ all })
 	);
 	if (!pruned.success) return fail(ctx, pruned.error);
 	const text =
 		pruned.data.length > 0
 			? color.green(`deleted ${pruned.data.map((g) => g.name).join(" ")}`)
 			: color.dim("nothing to prune");
-	emit(ctx, opts.json === true, pruned.data, text);
+	output.emit(ctx, opts.json === true, pruned.data, text);
 	return 0;
 }
 
 function fail(ctx: CommandContext, error: string): number {
-	reportError(ctx, "golden", error);
+	output.reportError(ctx, "golden", error);
 	return 1;
 }
 

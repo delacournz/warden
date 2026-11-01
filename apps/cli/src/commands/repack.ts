@@ -5,8 +5,8 @@ import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { resolvePlatform } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
-import { emit, heading, reportError } from "../output";
+import { type CommandContext, contextBuilder } from "../context";
+import { output } from "../output";
 import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
 
@@ -55,7 +55,7 @@ async function repack(
 	if (!start.success) return start;
 	const project = await projectContextFor(ctx, { start: start.data });
 	if (!project.success) return project;
-	const { kind: _kind, ...input } = new AppPreparer(appHostFromContext(ctx), deps).kindAppInput(
+	const { kind: _kind, ...input } = new AppPreparer(contextBuilder.appHostFromContext(ctx), deps).kindAppInput(
 		ownerResolver.resolve(ctx),
 		platform,
 		project.data,
@@ -92,10 +92,10 @@ async function repackCmd(
 ): Promise<number> {
 	const platform = await resolvePlatform(ctx, platformArg);
 	if (!platform.success) {
-		reportError(ctx, "repack", platform.error);
+		output.reportError(ctx, "repack", platform.error);
 		return 1;
 	}
-	if (!opts.json) heading(ctx, "repack", platform.data);
+	if (!opts.json) output.heading(ctx, "repack", platform.data);
 	const res = await withSpinner(ctx, `repacking the ${platform.data} JS…`, async (sctx, spinner) => {
 		const done = await repack(sctx, deps, run, platform.data, opts);
 		if (!done.success) spinner.fail(`${platform.data} repack failed`);
@@ -104,10 +104,10 @@ async function repackCmd(
 		return done;
 	});
 	if (!res.success) {
-		reportError(ctx, "repack", res.error);
+		output.reportError(ctx, "repack", res.error);
 		return 1;
 	}
-	emit(ctx, opts.json === true, res.data, text(ctx, res.data));
+	output.emit(ctx, opts.json === true, res.data, text(ctx, res.data));
 	return res.data.result === "fallback" ? 1 : 0;
 }
 

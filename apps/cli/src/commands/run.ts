@@ -26,8 +26,8 @@ import {
 	withPhysicalOptions,
 } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
-import { appHostFromContext, type CommandContext } from "../context";
-import { leaseHostFromContext } from "../lease-host";
+import { type CommandContext, contextBuilder } from "../context";
+import { leaseHostBuilder } from "../lease-host";
 import {
 	type AppFlagValues,
 	appPhaseProgress,
@@ -36,7 +36,7 @@ import {
 	splitOperands,
 	withLeaseOptions,
 } from "../lease-options";
-import { heading, note, reportError } from "../output";
+import { output } from "../output";
 import { reportClaimFailure } from "../physical-lock";
 import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
 import { withSpinner } from "../spinner-context";
@@ -86,10 +86,12 @@ async function supervise(
 		child = deps.spawn(cmd, env, stdout);
 	} catch (error) {
 		await release();
-		reportError(ctx, "run", error instanceof Error ? error.message : String(error));
+		output.reportError(ctx, "run", error instanceof Error ? error.message : String(error));
 		return 127;
 	}
-	const stop = new LeaseHeartbeat(appHostFromContext(ctx), deps).hold(leaseIds, (signal) => child.kill(signal));
+	const stop = new LeaseHeartbeat(contextBuilder.appHostFromContext(ctx), deps).hold(leaseIds, (signal) =>
+		child.kill(signal)
+	);
 	try {
 		return await child.exited;
 	} finally {
@@ -101,7 +103,7 @@ async function supervise(
 /** Claim (under a spinner) → spawn child with leases in env → heartbeat → release on exit; exit code passthrough. */
 async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string[], opts: RunOpts): Promise<number> {
 	const fail = (message: string) => {
-		reportError(ctx, "run", message);
+		output.reportError(ctx, "run", message);
 		return 1;
 	};
 	const target = splitOperands(ctx.argv, operands);
@@ -124,7 +126,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	if (picked.kind !== "ok") return reportPick(ctx, "run", picked);
 	const flags = picked.flags[0] ?? args.data.flags;
 	const { count, profile } = flags.request;
-	if (!args.data.json) heading(ctx, "run", `${platform.data} · ${profile} ×${count} · ${cmd.join(" ")}`);
+	if (!args.data.json) output.heading(ctx, "run", `${platform.data} · ${profile} ×${count} · ${cmd.join(" ")}`);
 	const claimed = await withSpinner(
 		ctx,
 		`claiming ${count} ${profile} ${platform.data} device(s)…`,
@@ -132,7 +134,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 			const app = args.data.app !== undefined;
 			const onLeased = leasedProgress(spinner, ctx.ui.color, app);
 			const onAppPhase = appPhaseProgress(spinner, app);
-			const result = await new LeaseSessionRunner(leaseHostFromContext(sctx), deps).claimAll(owner, {
+			const result = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(sctx), deps).claimAll(owner, {
 				...args.data,
 				flags,
 				self: selfCommand(),
@@ -152,7 +154,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	const summary: RunJson = { leases: claimRequestRules.claimedJson(outcome), ports, cmd };
 	// one line: the child runs on, so a reader takes the summary from the first stdout line
 	if (args.data.json) ctx.out(JSON.stringify(summary));
-	else note(ctx, `warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`);
+	else output.note(ctx, `warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`);
 	return supervise(ctx, deps, cmd, env, leaseIds, release, args.data.json ? "stderr" : "inherit");
 }
 

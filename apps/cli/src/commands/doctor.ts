@@ -10,7 +10,7 @@ import { hasWardenHook } from "../hooks/claude-settings";
 import { codexConfigPath, codexHooksPath, codexTomlHasWardenHook } from "../hooks/codex-hooks";
 import { errorMessage } from "../hooks/json";
 import { NPM_PACKAGE } from "../npm/platforms";
-import { emit, plural } from "../output";
+import { output } from "../output";
 import { RULE_MD, staleSkillFiles } from "../skill";
 import { SYMBOLS } from "../ui";
 import { type BuildInfo, currentBuild } from "../update/build-info";
@@ -302,10 +302,13 @@ async function doctor(
 	const count = (status: CheckStatus) => checks.filter((c) => c.status === status).length;
 	const detail = [
 		`${count("ok")} ok`,
-		...(count("warn") > 0 ? [plural(count("warn"), "warning")] : []),
+		...(count("warn") > 0 ? [output.plural(count("warn"), "warning")] : []),
 		...(count("fail") > 0 ? [`${count("fail")} failed`] : []),
 	].join(" · ");
-	emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text, { scope: "doctor", detail });
+	output.emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text, {
+		scope: "doctor",
+		detail,
+	});
 	return ok ? 0 : 1;
 }
 
