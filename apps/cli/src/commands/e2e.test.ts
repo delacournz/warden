@@ -10,8 +10,8 @@ import { e2eReportSchema } from "@delacour/warden-sdk/contracts/e2e-report";
 import { jsonl, result } from "../batch/results.testing";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { type Harness, harness, type Spawned } from "./batch.testing";
-import { createE2eCommand, type E2eReport } from "./e2e";
+import { batchTesting, type Harness, type Spawned } from "./batch.testing";
+import { E2eCommand, type E2eReport } from "./e2e";
 
 let dir: string;
 let write: (path: string, text: string) => void;
@@ -96,8 +96,8 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		const jobs = h.jobs();
 		expect(jobs.map((j) => j.opts.env.WARDEN_JOB).sort()).toEqual(["chats", "settings"]);
 		const chats = jobs.find((j) => j.opts.env.WARDEN_JOB === "chats");
@@ -117,12 +117,12 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup([]);
-		const optional = harness({ exitCodes: { settings: 1 } });
-		expect(await createE2eCommand(optional.deps).run(c)).toBe(0);
+		const optional = batchTesting.harness({ exitCodes: { settings: 1 } });
+		expect(await new E2eCommand(optional.deps).definition().run(c)).toBe(0);
 		expect(c.stderr.join("\n")).toContain("settings failed (optional)");
 
-		const required = harness({ exitCodes: { chats: 1 } });
-		expect(await createE2eCommand(required.deps).run(c)).toBe(1);
+		const required = batchTesting.harness({ exitCodes: { chats: 1 } });
+		expect(await new E2eCommand(required.deps).definition().run(c)).toBe(1);
 		expect(reportOf(required.files, c).ok).toBe(false);
 		expect(c.stderr.join("\n")).toContain("gate failed");
 	});
@@ -131,8 +131,8 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
-		const h = harness({ exitCodes: { chats: 1 } });
-		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		const h = batchTesting.harness({ exitCodes: { chats: 1 } });
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 		const report = reportOf(h.files, c);
 		const chats = report.specs.find((f) => f.id === "chats");
 		const chatsRun = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "chats");
@@ -145,8 +145,8 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
-		const h = harness({ exitCodes: { chats: 1 } });
-		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		const h = batchTesting.harness({ exitCodes: { chats: 1 } });
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 		const run = h.jobs().find((j) => j.opts.env.WARDEN_JOB === "chats");
 		const chats = reportOf(h.files, c).specs.find((f) => f.id === "chats");
 		expect(chats?.device?.udid).toBe(run?.opts.env.WARDEN_UDID);
@@ -164,8 +164,8 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup([]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).size).toBe(1);
 		expect(h.jobs()).toHaveLength(2);
 	});
@@ -173,20 +173,20 @@ describe("warden e2e", () => {
 	test("suite passes (2) → every spec runs twice on its device", async () => {
 		await resuite({ passes: 2 });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs().map((j) => j.opts.env.WARDEN_PASS)).toEqual(["0", "1"]);
 	});
 
 	test("nothing affected → exit 0 without claiming; --dry-run runs nothing", async () => {
 		const c = setup([]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("no affected specs");
 
 		c.argv = ["--files", "src/chat/lazy.tsx", "--dry-run"];
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("● chats");
 	});
@@ -198,8 +198,8 @@ describe("warden e2e", () => {
 		writeFileSync(join(app, "app.json"), JSON.stringify({ expo: { slug: "fresh", ios: { bundleIdentifier: "x.y" } } }));
 		writeFileSync(join(app, "e2e/smoke.e2e.ts"), "export {};\n");
 		c.cwd = app;
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		const report: E2eReport = JSON.parse(c.stdout.join("\n"));
 		e2eReportSchema.parse(report);
 		expect(report).toMatchObject({ suite: "fresh", platform: "ios", ok: true });
@@ -209,21 +209,21 @@ describe("warden e2e", () => {
 	test("suite app: { installMode, resetKeychain } reaches the ensure step on every device", async () => {
 		await resuite({ app: { installMode: "clean", resetKeychain: true } });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		const h = harness();
+		const h = batchTesting.harness();
 		const seen: Array<string | undefined> = [];
 		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
 			seen.push(`${opts.installMode}/${opts.resetKeychain}`);
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(seen).toEqual(["clean/true"]);
 	});
 
 	test("--install-mode on a suite without an app is refused before any device is claimed, naming the suite", async () => {
 		await resuite({ app: false });
 		const c = setup(["--files", "src/chat/lazy.tsx", "--install-mode", "clean"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 		expect(h.jobs()).toEqual([]);
 		const err = c.stderr.join("\n");
 		expect(err).toContain("--install-mode");
@@ -235,7 +235,7 @@ describe("warden e2e", () => {
 		await resuite({ app: false });
 		for (const flag of [["--install-mode", "clean", "--reset-keychain"], ["--clean"]]) {
 			const c = setup(["--files", "src/chat/lazy.tsx", ...flag]);
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain('suite "');
 		}
 	});
@@ -243,18 +243,18 @@ describe("warden e2e", () => {
 	test("--install-mode with --app on the CLI is fine for a suite without an app", async () => {
 		await resuite({ app: false });
 		const c = setup(["--files", "src/chat/lazy.tsx", "--app", "--install-mode", "clean"]);
-		const h = harness();
+		const h = batchTesting.harness();
 		h.deps.ensureApp = async () => ({
 			success: true,
 			data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true },
 		});
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 	});
 
 	test("a two-platform suite needs --platform", async () => {
 		await resuite({ platform: undefined });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+		expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("pass --platform");
 	});
 
@@ -264,13 +264,13 @@ describe("warden e2e", () => {
 			{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
 		);
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		const h = harness();
+		const h = batchTesting.harness();
 		const projects: Array<string | undefined> = [];
 		h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
 			projects.push(opts.project);
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		const root = join(dir, "packages/ui");
 		expect(projects).toEqual([root]);
 		expect(h.jobs()[0]?.opts.cwd).toBe(root);
@@ -281,8 +281,8 @@ describe("warden e2e", () => {
 	test("suite serve / ports / env reach serve and every runner; a CLI flag overrides serve", async () => {
 		await resuite({ serve: "bun api", serveReady: "tcp:9000", ports: ["8091:5"], env: { API: "http://x" } });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api"]);
 		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 9000 }]);
 		for (const s of [h.serve(), ...h.jobs()]) {
@@ -291,16 +291,16 @@ describe("warden e2e", () => {
 			expect(s?.opts.env.API).toBe("http://x");
 		}
 		c.argv = ["--files", "src/chat/lazy.tsx", "--serve", "bun other"];
-		const h2 = harness();
-		await createE2eCommand(h2.deps).run(c);
+		const h2 = batchTesting.harness();
+		await new E2eCommand(h2.deps).definition().run(c);
 		expect(h2.serve()?.cmd).toEqual(["sh", "-c", "bun other"]);
 	});
 
 	test("serve / serveReady see the leased port ({port}); specs get WARDEN_PORT", async () => {
 		await resuite({ serve: "bun api --port {port}", serveReady: "tcp:{port}", ports: ["8091:5"] });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.serve()?.cmd).toEqual(["sh", "-c", "bun api --port 8091"]);
 		expect(h.probes).toEqual([{ kind: "tcp", host: "127.0.0.1", port: 8091 }]);
 		const job = h.jobs()[0];
@@ -319,8 +319,8 @@ describe("warden e2e", () => {
 			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(ctx)).toBe(0);
 			return h.jobs().map((j) => j.opts.env.WARDEN_UDID ?? "");
 		};
 		expect(await claimed({ biometrics: true, count: 1 })).toEqual(["B1"]);
@@ -335,8 +335,8 @@ describe("warden e2e", () => {
 			await resuite({ ...suite, ports: ["8091:5"], spec: { launchArgs: ["--seed", "7"] } }, projects);
 			const calls: string[][] = [];
 			const c = setup(["--files", "src/chat/lazy.tsx"], calls);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const root = join(dir, "packages/ui");
 			const metro = h.metro();
 			expect(metro?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
@@ -383,9 +383,9 @@ describe("warden e2e", () => {
 		test("runs the project's own node_modules/.bin/expo directly when node can run it, else bunx", async () => {
 			await resuite(suite, projects);
 			write("packages/ui/node_modules/.bin/expo", "#!/usr/bin/env node\n");
-			const withNode = harness();
+			const withNode = batchTesting.harness();
 			withNode.deps.which = (cmd) => (cmd === "node" ? "/usr/bin/node" : cmd === "bun" ? BUN : null);
-			expect(await createE2eCommand(withNode.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
+			expect(await new E2eCommand(withNode.deps).definition().run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
 			expect(withNode.metro()?.cmd).toEqual([
 				join(dir, "packages/ui/node_modules/.bin/expo"),
 				"start",
@@ -395,8 +395,8 @@ describe("warden e2e", () => {
 			]);
 			ctx?.cleanup();
 
-			const noNode = harness();
-			expect(await createE2eCommand(noNode.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
+			const noNode = batchTesting.harness();
+			expect(await new E2eCommand(noNode.deps).definition().run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
 			expect(noNode.metro()?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
 		});
 
@@ -410,8 +410,8 @@ describe("warden e2e", () => {
 			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
-			const h = harness();
-			const run = createE2eCommand(h.deps).run(ctx);
+			const h = batchTesting.harness();
+			const run = new E2eCommand(h.deps).definition().run(ctx);
 			await waitFor(() => reads.includes("launch:start"));
 			// the claim's own hide has read the windows once; the late one is the second read, while the launch is still pending
 			await waitFor(() => reads.filter((r) => r === "read").length === 2);
@@ -438,8 +438,8 @@ describe("warden e2e", () => {
 			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(ctx)).toBe(0);
 			expect(timeouts).toEqual([30_000]);
 			expect(h.jobs()).toHaveLength(1);
 			expect(ctx.stderr.join("\n")).toContain("simctl launch --terminate-running-process U1 com.x");
@@ -449,8 +449,8 @@ describe("warden e2e", () => {
 			await resuite({ ...suite, metro: { ...suite.metro, open: false } }, projects);
 			const calls: string[][] = [];
 			const c = setup(["--files", "src/chat/lazy.tsx"], calls);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs()[0]?.opts.env.WARDEN_METRO_URL).toBe("http://127.0.0.1:8081");
 			expect(calls.filter((cmd) => cmd.includes("launch"))).toEqual([]);
 		});
@@ -458,8 +458,8 @@ describe("warden e2e", () => {
 		test("a foreign Metro on the leased port: the run never starts a spec and names the other checkout", async () => {
 			await resuite(suite, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ metroOwner: { kind: "foreign", root: "/other/worktree/app" } });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ metroOwner: { kind: "foreign", root: "/other/worktree/app" } });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(h.jobs()).toEqual([]);
 			expect(c.stderr.join("\n")).toContain("port 8081 is served by /other/worktree/app, not this worktree");
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
@@ -469,8 +469,8 @@ describe("warden e2e", () => {
 		test("a bundle that does not build fails the run before any spec", async () => {
 			await resuite(suite, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ prewarm: "fail" });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ prewarm: "fail" });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(h.jobs()).toEqual([]);
 			expect(c.stderr.join("\n")).toContain("SyntaxError");
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
@@ -484,7 +484,7 @@ describe("warden e2e", () => {
 		test("Metro starts and prewarms while the app is still installing; stopped last", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			const install = Promise.withResolvers<void>();
 			let ensures = 0;
 			h.deps.ensureApp = async () => {
@@ -492,7 +492,7 @@ describe("warden e2e", () => {
 				await install.promise;
 				return installed;
 			};
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.prewarmed.length === 1);
 			expect(ensures).toBe(1);
 			expect(h.metro()).toBeDefined();
@@ -507,9 +507,9 @@ describe("warden e2e", () => {
 		test("the install fails → the early Metro is stopped, no spec runs, nothing stays leased", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			h.deps.ensureApp = async () => ({ success: false, error: { code: "build_failed", message: "no build" } });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
 			expect(h.jobs()).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
@@ -525,9 +525,9 @@ describe("warden e2e", () => {
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const c = ctx;
-			const h = harness();
+			const h = batchTesting.harness();
 			h.deps.ensureApp = async () => installed;
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
 			expect(h.jobs()).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
@@ -536,7 +536,7 @@ describe("warden e2e", () => {
 		test("Metro turns out foreign while the app installs → exit 1 naming the other checkout, no spec", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			const probe = Promise.withResolvers<void>();
 			h.deps.metroProbe = async () => {
 				await probe.promise;
@@ -549,7 +549,7 @@ describe("warden e2e", () => {
 				await Bun.sleep(5);
 				return installed;
 			};
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(ensures).toBe(1);
 			expect(h.jobs()).toEqual([]);
 			expect(c.stderr.join("\n")).toContain("port 8081 is served by /other/worktree/app, not this worktree");
@@ -560,13 +560,13 @@ describe("warden e2e", () => {
 		test("SIGINT during the install → exit 130, the early Metro is stopped, nothing stays leased", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			const install = Promise.withResolvers<void>();
 			h.deps.ensureApp = async () => {
 				await install.promise;
 				return installed;
 			};
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.signals.has("SIGINT") && h.prewarmed.length === 1);
 			h.signals.get("SIGINT")?.();
 			install.resolve();
@@ -579,13 +579,13 @@ describe("warden e2e", () => {
 		test("SIGINT while the bundle still builds → exit 130 without waiting for it; Metro is stopped (12-5)", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ prewarm: "hang" });
+			const h = batchTesting.harness({ prewarm: "hang" });
 			const install = Promise.withResolvers<void>();
 			h.deps.ensureApp = async () => {
 				await install.promise;
 				return installed;
 			};
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.signals.has("SIGINT") && h.prewarmed.length === 1);
 			h.signals.get("SIGINT")?.();
 			install.resolve();
@@ -599,12 +599,12 @@ describe("warden e2e", () => {
 		test("a claim that fails while the bundle still builds is reported without waiting for it (12-5)", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ prewarm: "hang" });
+			const h = batchTesting.harness({ prewarm: "hang" });
 			h.deps.ensureApp = async () => {
 				await waitFor(() => h.prewarmed.length === 1);
 				return { success: false, error: { code: "build_failed", message: "no build" } };
 			};
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(h.events).toContain("prewarm:aborted");
 			expect(h.metro()?.kills).toEqual(["SIGTERM"]);
 			expect(c.stderr.join("\n")).toContain("no build");
@@ -615,13 +615,13 @@ describe("warden e2e", () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const ui = scriptedUi();
 			c.ui = ui;
-			const h = harness();
+			const h = batchTesting.harness();
 			h.deps.ensureApp = async () => {
 				await waitFor(() => h.prewarmed.length === 1);
 				await Bun.sleep(5);
 				return installed;
 			};
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const announced = ui.events.filter((e) => /Metro on :8081 serves/.test(e));
 			expect(announced).toHaveLength(1);
 			expect(ui.events.indexOf(announced[0] ?? "")).toBeLessThan(ui.events.indexOf("ok: app ready on 1 device(s)"));
@@ -633,8 +633,8 @@ describe("warden e2e", () => {
 		test("a spec process still going after the timeout is shot, killed, and its spec fails with exit 124", async () => {
 			await resuite({ jobTimeoutMs: 90_000 });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ manual: true });
-			const running = createE2eCommand(h.deps).run(c);
+			const h = batchTesting.harness({ manual: true });
+			const running = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.jobs().length === 1);
 			const job = h.jobs()[0];
 			expect(job?.opts.group).toBe(true);
@@ -656,8 +656,8 @@ describe("warden e2e", () => {
 
 		test("a spec process that finishes in time disarms its timeout; the default is 10 min", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			// the 120 s timer is the warm-up's
 			expect(h.timers.filter((t) => t.ms !== 120_000).map((t) => [t.ms, t.cancelled])).toEqual([[600_000, true]]);
 		});
@@ -675,8 +675,8 @@ describe("warden e2e", () => {
 				},
 			});
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const job = h.jobs()[0];
 			expect(job?.cmd).toEqual([
 				BUN,
@@ -705,8 +705,8 @@ describe("warden e2e", () => {
 		test("defaults: 2m / 30s / 5s, no launch args without Metro, WARDEN_HELPER_DIR from the shell wins", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			c.env = { ...c.env, WARDEN_HELPER_DIR: "/mine" };
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs()[0]?.opts.env).toMatchObject({
 				WARDEN_BUNDLE_ID: "com.x",
 				WARDEN_LAUNCH_ARGS: "[]",
@@ -720,15 +720,15 @@ describe("warden e2e", () => {
 		test("the suite's conditions (over the top-level ones, per area) reach the spec process as WARDEN_CONDITIONS", async () => {
 			await resuite({ conditions: { network: "3g" } }, { conditions: { network: "offline", locale: "fr" } });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(JSON.parse(h.jobs()[0]?.opts.env.WARDEN_CONDITIONS ?? "null")).toEqual({ network: "3g", locale: "fr" });
 		});
 
 		test("no conditions, no WARDEN_CONDITIONS", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs()[0]?.opts.env.WARDEN_CONDITIONS).toBeUndefined();
 		});
 
@@ -738,16 +738,16 @@ describe("warden e2e", () => {
 				{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.project" } }] }
 			);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs()[0]?.opts.env.WARDEN_BUNDLE_ID).toBe("com.project");
 		});
 
 		test("no bundle id anywhere fails before any device is leased", async () => {
 			await resuite({ spec: undefined });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("e2e.mobile: no bundle id — set spec.bundleId or projects[].bundleId.ios");
 			expect(h.jobs()).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
@@ -755,36 +755,36 @@ describe("warden e2e", () => {
 
 		test("no bun on PATH: warden runs the specs as bun itself, unless WARDEN_BUN names one", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const none = harness({ bun: null, execPath: "/usr/local/bin/warden" });
-			expect(await createE2eCommand(none.deps).run(c)).toBe(0);
+			const none = batchTesting.harness({ bun: null, execPath: "/usr/local/bin/warden" });
+			expect(await new E2eCommand(none.deps).definition().run(c)).toBe(0);
 			expect(none.jobs()[0]?.cmd[0]).toBe("/usr/local/bin/warden");
 			expect(none.jobs()[0]?.opts.env.BUN_BE_BUN).toBe("1");
 
 			c.env = { ...c.env, WARDEN_BUN: "/opt/bun" };
-			const set = harness({ bun: null });
-			expect(await createE2eCommand(set.deps).run(c)).toBe(0);
+			const set = batchTesting.harness({ bun: null });
+			expect(await new E2eCommand(set.deps).definition().run(c)).toBe(0);
 			expect(set.jobs()[0]?.cmd[0]).toBe("/opt/bun");
 		});
 
 		test("no @delacour/warden-e2e in the repo: the specs run on the copy warden ships", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ preload: null, bundled: "/home/e2e-runtime/1/fallback-preload.mjs" });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness({ preload: null, bundled: "/home/e2e-runtime/1/fallback-preload.mjs" });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs()[0]?.cmd.slice(2, 4)).toEqual(["--preload", "/home/e2e-runtime/1/fallback-preload.mjs"]);
 		});
 
 		test("no @delacour/warden-e2e and the bundled copy cannot be extracted: the error is surfaced", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ preload: null, bundled: "fail" });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ preload: null, bundled: "fail" });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("could not extract the bundled @delacour/warden-e2e");
 			expect(h.jobs()).toEqual([]);
 		});
 
 		test("the repo's @delacour/warden-e2e at another version: a clear error, no job", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ e2eVersion: "0.0.1" });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ e2eVersion: "0.0.1" });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("does not match warden");
 			expect(h.jobs()).toEqual([]);
 		});
@@ -792,19 +792,19 @@ describe("warden e2e", () => {
 		test("a bad spec duration is a config error naming the key", async () => {
 			await resuite({ spec: { bundleId: "com.x", timeout: "soon" } });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("e2e.mobile.spec.timeout");
 		});
 
 		test("--dry-run needs neither bun nor the preload", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx", "--dry-run"]);
-			expect(await createE2eCommand(harness({ bun: null, preload: null }).deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness({ bun: null, preload: null }).deps).definition().run(c)).toBe(0);
 		});
 
 		test("a leftover warmRunners key is a migration error", async () => {
 			await resuite({ warmRunners: false });
 			const w = setup(["--files", "src/chat/lazy.tsx"]);
-			expect(await createE2eCommand(harness().deps).run(w)).toBe(1);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(w)).toBe(1);
 			expect(w.stderr.join("\n")).toContain("e2e.mobile.warmRunners was removed: renamed to warmDrivers");
 		});
 	});
@@ -816,8 +816,8 @@ describe("warden e2e", () => {
 		test("one bun test process per device over its round-robin shard of the specs", async () => {
 			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const jobs = h.jobs().sort((a, b) => (shardOf(a) ?? "").localeCompare(shardOf(b) ?? ""));
 			expect(jobs.map(shardOf)).toEqual(["shard-0", "shard-1"]);
 			expect(jobs[0]?.cmd).toEqual(bunTest(join(dir, "specs/chats.e2e.ts")));
@@ -835,22 +835,22 @@ describe("warden e2e", () => {
 
 		test("one device runs every spec in one process; shards never outnumber specs", async () => {
 			await resuite({ isolate: "device", count: 1 });
-			const one = harness();
-			expect(await createE2eCommand(one.deps).run(setup(["--all"]))).toBe(0);
+			const one = batchTesting.harness();
+			expect(await new E2eCommand(one.deps).definition().run(setup(["--all"]))).toBe(0);
 			expect(one.jobs().map((j) => j.cmd)).toEqual([bunTest(...specFiles())]);
 			expect(one.jobs().map(shardOf)).toEqual(["shard-0"]);
 
 			await resuite({ isolate: "device", count: 5 });
-			const many = harness();
-			expect(await createE2eCommand(many.deps).run(setup(["--all"]))).toBe(0);
+			const many = batchTesting.harness();
+			expect(await new E2eCommand(many.deps).definition().run(setup(["--all"]))).toBe(0);
 			expect(many.jobs()).toHaveLength(2);
 		});
 
 		test("a failing shard fails only its specs", async () => {
 			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
-			const h = harness({ exitCodes: { "shard-1": 1 } });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness({ exitCodes: { "shard-1": 1 } });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(reportOf(h.files, c).specs.map((f) => [f.id, f.verdict])).toEqual([
 				["chats", "passed"],
 				["settings", "failed"],
@@ -860,8 +860,8 @@ describe("warden e2e", () => {
 		test("live spec progress: the grid lists a device's shard and marks each spec as its results.jsonl reports it", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
-			const h = harness({ manual: true, isTTY: true });
-			const running = createE2eCommand(h.deps).run(c);
+			const h = batchTesting.harness({ manual: true, isTTY: true });
+			const running = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.jobs().length > 0);
 			const job = h.jobs()[0];
 			h.files.set(
@@ -879,8 +879,8 @@ describe("warden e2e", () => {
 		test("each device's row lists only its own shard", async () => {
 			await resuite({ isolate: "device", count: 2 });
 			const c = setup(["--all"]);
-			const h = harness({ isTTY: true });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness({ isTTY: true });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const frame = h.terminal.join("").split("\u001b[0J").at(-1) ?? "";
 			const lines = frame.split("\n").filter((l) => l.includes("chats") || l.includes("settings"));
 			expect(lines).toHaveLength(2);
@@ -890,8 +890,8 @@ describe("warden e2e", () => {
 		test("the process's exit code decides when it wrote no results, with a warning", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
-			const h = harness({ exitCodeFor: () => 1 });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ exitCodeFor: () => 1 });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(reportOf(h.files, c).specs.map((f) => f.verdict)).toEqual(["failed", "failed"]);
 			expect(c.stderr.join("\n")).toContain("shard-0: no results.jsonl — verdict from exit code 1");
 		});
@@ -899,7 +899,7 @@ describe("warden e2e", () => {
 		test("per-spec verdicts from results.jsonl: a failing test fails its spec only, the exit code blames the rest", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
-			const h: Harness = harness({
+			const h: Harness = batchTesting.harness({
 				exitCodeFor: (env) => {
 					h.files.set(
 						resultsPath(env),
@@ -911,7 +911,7 @@ describe("warden e2e", () => {
 					return 1;
 				},
 			});
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const report = reportOf(h.files, c);
 			expect(report.specs.map((f) => [f.id, f.verdict])).toEqual([
 				["chats", "passed"],
@@ -928,7 +928,7 @@ describe("warden e2e", () => {
 		test("a failed test with the runner's failure.png: no batch screenshot, the report points at the runner's", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
-			const h: Harness = harness({
+			const h: Harness = batchTesting.harness({
 				exitCodeFor: (env) => {
 					h.files.set(
 						resultsPath(env),
@@ -942,7 +942,7 @@ describe("warden e2e", () => {
 					return 1;
 				},
 			});
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.shots).toEqual([]);
 			const report = reportOf(h.files, c);
 			expect(report.specs.find((f) => f.id === "settings")?.screenshot).toBe("/art/settings-1/failure.png");
@@ -952,13 +952,13 @@ describe("warden e2e", () => {
 		test("a failed test without failure.png still gets the batch screenshot", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
-			const h: Harness = harness({
+			const h: Harness = batchTesting.harness({
 				exitCodeFor: (env) => {
 					h.files.set(resultsPath(env), jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed")));
 					return 1;
 				},
 			});
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.shots).toHaveLength(1);
 		});
 	});
@@ -966,7 +966,7 @@ describe("warden e2e", () => {
 	describe("results.jsonl", () => {
 		/** a harness whose jobs write `text` (or `build(env)`) as their results and exit with `exit` */
 		const writing = (build: (env: Record<string, string | undefined>) => string, exit = 0): Harness => {
-			const h: Harness = harness({
+			const h: Harness = batchTesting.harness({
 				exitCodeFor: (env) => {
 					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), build(env));
 					return exit;
@@ -988,7 +988,7 @@ describe("warden e2e", () => {
 				1
 			);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			const report = reportOf(h.files, c);
 			expect(report.headless).toBe(false);
 			expect(report.specs[0]?.verdict).toBe("failed");
@@ -1010,7 +1010,7 @@ describe("warden e2e", () => {
 		test("passed: tests recorded, no warning", async () => {
 			const h = writing(() => jsonl(spec("chats", "opens")));
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(reportOf(h.files, c).specs[0]?.tests).toHaveLength(1);
 			expect(c.stderr.join("\n")).not.toContain("no results.jsonl");
 		});
@@ -1018,28 +1018,28 @@ describe("warden e2e", () => {
 		test("a timed-out test fails the spec even when the process exited 0", async () => {
 			const h = writing(() => jsonl(spec("chats", "slow", "timed-out")));
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(reportOf(h.files, c).specs[0]).toMatchObject({ verdict: "failed", tests: [{ status: "timed-out" }] });
 		});
 
 		test("no results file: the exit code decides, with a warning", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const pass = harness();
-			expect(await createE2eCommand(pass.deps).run(c)).toBe(0);
+			const pass = batchTesting.harness();
+			expect(await new E2eCommand(pass.deps).definition().run(c)).toBe(0);
 			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 0");
 			expect(reportOf(pass.files, c).specs[0]).not.toHaveProperty("tests");
-			const fail = harness({ exitCodes: { chats: 1 } });
-			expect(await createE2eCommand(fail.deps).run(c)).toBe(1);
+			const fail = batchTesting.harness({ exitCodes: { chats: 1 } });
+			expect(await new E2eCommand(fail.deps).definition().run(c)).toBe(1);
 		});
 
 		test("an unparseable results file counts as missing; a truncated last line is skipped", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			const junk = writing(() => "this is not json\n{oops\n", 1);
-			expect(await createE2eCommand(junk.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(junk.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 1");
 
 			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "specs/chats.e2e.ts")}","ti`);
-			expect(await createE2eCommand(cut.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(cut.deps).definition().run(c)).toBe(0);
 			expect(reportOf(cut.files, c).specs[0]?.tests).toHaveLength(1);
 		});
 
@@ -1048,20 +1048,20 @@ describe("warden e2e", () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			c.env = { ...c.env, CI: "true" };
 			const h = writing(build);
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain(`test.only left in ${join(dir, "specs/chats.e2e.ts")}`);
 			expect(reportOf(h.files, c)).toMatchObject({ ok: false, only: [join(dir, "specs/chats.e2e.ts")] });
 			expect(reportOf(h.files, c).specs[0]?.verdict).toBe("passed");
 
 			c.env = { ...c.env, CI: "" };
-			expect(await createE2eCommand(writing(build).deps).run(c)).toBe(0);
+			expect(await new E2eCommand(writing(build).deps).definition().run(c)).toBe(0);
 		});
 
 		test("--no-tui: a line per finished test as results arrive, then a line per finished spec", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all", "--no-tui"]);
-			const h = harness({ manual: true });
-			const running = createE2eCommand(h.deps).run(c);
+			const h = batchTesting.harness({ manual: true });
+			const running = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.jobs().length > 0);
 			const job = h.jobs()[0];
 			h.files.set(
@@ -1079,7 +1079,7 @@ describe("warden e2e", () => {
 		test("per-spec mode prints the same test lines", async () => {
 			const h = writing(() => jsonl(spec("chats", "opens")));
 			const c = setup(["--files", "src/chat/lazy.tsx", "--no-tui"]);
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(c.stderr.join("\n")).toContain("✓ chats › opens (1.25s)");
 		});
 	});
@@ -1105,8 +1105,8 @@ describe("warden e2e", () => {
 		test("by default only the default legs run", async () => {
 			await resuite({ devices });
 			const c = legSetup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs().map((j) => [j.cmd, j.opts.env.WARDEN_UDID, j.opts.env.WARDEN_LEG])).toEqual([
 				[bunTest(join(dir, "specs/chats.e2e.ts")), "U1", "iphone-17"],
 			]);
@@ -1118,8 +1118,8 @@ describe("warden e2e", () => {
 		test("--devices all: every leg claims its own pool and runs every spec, with its env and only its devices", async () => {
 			await resuite({ devices });
 			const c = legSetup(["--files", "src/chat/lazy.tsx", "--devices", "all"]);
-			const h = harness({ exitCodeFor: (env) => (env.WARDEN_LEG === "ipad" ? 1 : 0) });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ exitCodeFor: (env) => (env.WARDEN_LEG === "ipad" ? 1 : 0) });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			const byLeg = new Map(h.jobs().map((j) => [j.opts.env.WARDEN_LEG, j]));
 			expect([...byLeg.keys()].sort()).toEqual(["ipad", "iphone-17"]);
 			expect(byLeg.get("ipad")?.cmd).toEqual(bunTest(join(dir, "specs/chats.e2e.ts")));
@@ -1145,11 +1145,11 @@ describe("warden e2e", () => {
 		test("--devices <profile> picks legs by name; an unknown one is an error", async () => {
 			await resuite({ devices });
 			const c = legSetup(["--files", "src/chat/lazy.tsx", "--devices", "ipad"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs().map((j) => j.opts.env.WARDEN_LEG)).toEqual(["ipad"]);
 			c.argv = ["--files", "src/chat/lazy.tsx", "--devices", "watch"];
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain('--devices: no leg "watch" (iphone-17, ipad)');
 		});
 	});
@@ -1161,8 +1161,8 @@ describe("warden e2e", () => {
 			write("src/chat/lazy.tsx", "export const x = 2;\n");
 			write("src/settings/form.tsx", "export const y = 2;\n");
 			const c = setup(["--count", "2"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.warmed.sort()).toEqual(["U1", "U2"]);
 			const firstJob = h.events.findIndex((e) => e.startsWith("job:"));
 			expect(h.events.lastIndexOf("warm:U1")).toBeLessThan(firstJob);
@@ -1182,7 +1182,7 @@ describe("warden e2e", () => {
 				{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
 			);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			const install = Promise.withResolvers<void>();
 			h.deps.ensureApp = async () => {
 				h.events.push("app:start");
@@ -1190,7 +1190,7 @@ describe("warden e2e", () => {
 				h.events.push("app:end");
 				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 			};
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.warmed.length === 1);
 			expect(h.events).toContain("app:start");
 			expect(h.events).not.toContain("app:end");
@@ -1208,14 +1208,14 @@ describe("warden e2e", () => {
 			write("src/settings/form.tsx", "export const y = 2;\n");
 			const c = setup(["--count", "2"]);
 			let bad: string | undefined;
-			const h = harness({
+			const h = batchTesting.harness({
 				exitCodeFor: (env) => {
 					if (env.WARDEN_JOB !== undefined) return 0;
 					bad ??= env.WARDEN_UDID;
 					return env.WARDEN_UDID === bad ? 3 : 0;
 				},
 			});
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const firstJob = h.events.findIndex((e) => e.startsWith("job:"));
 			expect(h.events.indexOf(`warm-close:${bad}`)).toBeGreaterThan(-1);
 			expect(h.events.indexOf(`warm-close:${bad}`)).toBeLessThan(firstJob);
@@ -1229,8 +1229,8 @@ describe("warden e2e", () => {
 			write("src/chat/lazy.tsx", "export const x = 2;\n");
 			write("src/settings/form.tsx", "export const y = 2;\n");
 			const c = setup(["--count", "2"]);
-			const h = harness({ exitCodeFor: () => 1 });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ exitCodeFor: () => 1 });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect([...h.warmed].sort()).toEqual(["U1", "U2"]);
 			expect([...h.warmClosed].sort()).toEqual(["U1", "U2"]);
 		});
@@ -1241,8 +1241,8 @@ describe("warden e2e", () => {
 				{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
 			);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ prewarm: "fail" });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			const h = batchTesting.harness({ prewarm: "fail" });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(h.jobs()).toEqual([]);
 			expect(h.warmClosed).toEqual(["U1"]);
 		});
@@ -1263,8 +1263,8 @@ describe("warden e2e", () => {
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(ctx)).toBe(0);
 			const log = (worker: number) =>
 				h.files.get(join(ctx?.env.WARDEN_HOME ?? "", "batches", "b1", "logs", `warm-${worker}.log`)) ?? "";
 			expect(log(0)).toContain("warming U1");
@@ -1295,14 +1295,14 @@ describe("warden e2e", () => {
 		test("legs: a device whose warm-up hangs holds only its own first job, not the other leg's (12-3)", async () => {
 			await resuite({ devices: legs });
 			const c = twoLegs();
-			const h = harness();
+			const h = batchTesting.harness();
 			const base = h.deps.warmConnect(c);
 			const hung = Promise.withResolvers<void>();
 			h.deps.warmConnect = () => async (udid) => {
 				if (udid === "P1") await hung.promise;
 				return base(udid);
 			};
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.jobs().length === 1);
 			expect(h.jobs().map((j) => [j.opts.env.WARDEN_UDID, j.opts.env.WARDEN_SIMD_SOCKET])).toEqual([
 				["U1", "/tmp/warden-simd-U1.sock"],
@@ -1319,14 +1319,14 @@ describe("warden e2e", () => {
 		test("legs: a leg still slimming does not hold the other leg's first job (12-3)", async () => {
 			await resuite({ devices: legs, slim: true });
 			const c = twoLegs();
-			const h = harness();
+			const h = batchTesting.harness();
 			const slow = Promise.withResolvers<void>();
 			const slim = h.deps.slim;
 			h.deps.slim = async (udid) => {
 				if (udid === "P1") await slow.promise;
 				return slim(udid);
 			};
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.jobs().length === 1);
 			expect(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).toEqual(["U1"]);
 			slow.resolve();
@@ -1342,7 +1342,7 @@ describe("warden e2e", () => {
 		test("legs: one leg's install fails while the other is slimming → nothing is released until the slim is done (batch-pipeline R3)", async () => {
 			await resuite({ devices: legs, slim: true, app: { installMode: "clean" } });
 			const c = twoLegs();
-			const h = harness();
+			const h = batchTesting.harness();
 			const slow = Promise.withResolvers<void>();
 			const slim = h.deps.slim;
 			let slimming = false;
@@ -1359,7 +1359,7 @@ describe("warden e2e", () => {
 				failed = true;
 				return { success: false, error: { code: "build_failed", message: "no build" } };
 			};
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => slimming && failed);
 			await Bun.sleep(20);
 			// U1 is still being slimmed: its lease must outlive that, or another agent could lease it meanwhile
@@ -1386,7 +1386,7 @@ describe("warden e2e", () => {
 			ctx = c;
 			c.env = { ...c.env, ...OWNER_ENV };
 			c.cwd = dir;
-			const h = harness({ manual: true });
+			const h = batchTesting.harness({ manual: true });
 			const slow = Promise.withResolvers<void>();
 			const slim = h.deps.slim;
 			h.deps.slim = async (udid) => {
@@ -1394,7 +1394,8 @@ describe("warden e2e", () => {
 				return slim(udid);
 			};
 			let settled = false;
-			const run = createE2eCommand(h.deps)
+			const run = new E2eCommand(h.deps)
+				.definition()
 				.run(c)
 				.finally(() => {
 					settled = true;
@@ -1417,7 +1418,7 @@ describe("warden e2e", () => {
 		const lateLeg = async (argv: string[], isTTY: boolean, late = "P1", failing?: string) => {
 			await resuite({ devices: legs, slim: true, isolate: "device" });
 			const c = twoLegs(...argv);
-			const h: Harness = harness({
+			const h: Harness = batchTesting.harness({
 				isTTY,
 				exitCodeFor: (env) => {
 					const status = env.WARDEN_UDID === failing ? "failed" : "passed";
@@ -1432,7 +1433,7 @@ describe("warden e2e", () => {
 				return slim(udid);
 			};
 			if (failing) c.ui.color.level = 1;
-			const run = createE2eCommand(h.deps).run(c);
+			const run = new E2eCommand(h.deps).definition().run(c);
 			await waitFor(() => h.jobs().length === 1);
 			slow.resolve();
 			expect(await run).toBe(failing ? 1 : 0);
@@ -1464,7 +1465,7 @@ describe("warden e2e", () => {
 			if (process.platform !== "darwin") return;
 			await resuite({ headless: true });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			const base = c.exec;
 			c.exec = async (cmd, opts) => {
 				if (cmd[0] !== "osascript") return base(cmd, opts);
@@ -1476,7 +1477,7 @@ describe("warden e2e", () => {
 					stderr: "",
 				};
 			};
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			const close = h.events.lastIndexOf("close");
 			expect(close).toBeGreaterThanOrEqual(0);
 			expect(close).toBeLessThan(h.events.indexOf("warm:U1"));
@@ -1485,8 +1486,8 @@ describe("warden e2e", () => {
 
 		test("a failed warm-up only warns: jobs still run, with no socket", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ warm: "fail" });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness({ warm: "fail" });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(c.stderr.join("\n")).toContain("warm U1: helper did not start");
 			expect(jobEnv(h)).toEqual([undefined]);
 			expect(h.jobs()).toHaveLength(1);
@@ -1494,8 +1495,8 @@ describe("warden e2e", () => {
 
 		test("a helper that cannot snapshot warns, is stopped, and its jobs get no socket", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ warm: "snapshot-fail" });
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness({ warm: "snapshot-fail" });
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(c.stderr.join("\n")).toContain("snapshot failed: AX denied");
 			expect(jobEnv(h)).toEqual([undefined]);
 			// stopped, not only disconnected: no resident helper beside the jobs' own (20-1)
@@ -1507,28 +1508,28 @@ describe("warden e2e", () => {
 		test("suite warmDrivers: false skips it", async () => {
 			await resuite({ warmDrivers: false });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.warmed).toEqual([]);
 			expect(jobEnv(h)).toEqual([undefined]);
 		});
 
 		test("--no-warm skips it", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx", "--no-warm"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.warmed).toEqual([]);
 		});
 
 		test("--no-warm with a helper still running for the device: its jobs get that socket (20-1)", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx", "--no-warm"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			const asked: string[] = [];
 			h.deps.residentSocket = () => async (udid) => {
 				asked.push(udid);
 				return `/home/simd/${udid}.sock`;
 			};
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.warmed).toEqual([]);
 			expect(asked).toEqual(["U1"]);
 			expect(jobEnv(h)).toEqual(["/home/simd/U1.sock"]);
@@ -1536,30 +1537,30 @@ describe("warden e2e", () => {
 
 		test("--no-warm with no helper running: no socket", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx", "--no-warm"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			h.deps.residentSocket = () => async () => undefined;
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(jobEnv(h)).toEqual([undefined]);
 		});
 
 		test("suite warmDrivers: false also uses a running helper's socket", async () => {
 			await resuite({ warmDrivers: false });
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness();
+			const h = batchTesting.harness();
 			h.deps.residentSocket = () => async (udid) => `/home/simd/${udid}.sock`;
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(jobEnv(h)).toEqual(["/home/simd/U1.sock"]);
 		});
 
 		test("with the warm-up on, a running helper is not looked up separately", async () => {
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const h = harness({ warm: "snapshot-fail" });
+			const h = batchTesting.harness({ warm: "snapshot-fail" });
 			const asked: string[] = [];
 			h.deps.residentSocket = () => async (udid) => {
 				asked.push(udid);
 				return `/home/simd/${udid}.sock`;
 			};
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(asked).toEqual([]);
 			expect(jobEnv(h)).toEqual([undefined]);
 		});
@@ -1567,8 +1568,8 @@ describe("warden e2e", () => {
 		test("device isolation warms once per device, before its shard starts", async () => {
 			await resuite({ isolate: "device" });
 			const c = setup(["--all"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.warmed).toEqual(["U1"]);
 			expect(jobEnv(h)).toEqual(["/tmp/warden-simd-U1.sock"]);
 		});
@@ -1580,8 +1581,8 @@ describe("warden e2e", () => {
 		test("a suite that says nothing runs one spec process per device", async () => {
 			await resuiteDefault({ count: 2 });
 			const c = setup(["--all"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(jobNames(h).sort()).toEqual(["shard-0", "shard-1"]);
 			expect(reportOf(h.files, c)).toMatchObject({ ok: true, isolate: "device" });
 		});
@@ -1589,8 +1590,8 @@ describe("warden e2e", () => {
 		test("isolate: spec keeps one process per spec", async () => {
 			await resuiteDefault({ isolate: "spec", count: 2 });
 			const c = setup(["--all"]);
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(jobNames(h).sort()).toEqual(["chats", "settings"]);
 			const report = reportOf(h.files, c);
 			expect(report.isolate).toBe("spec");
@@ -1598,15 +1599,17 @@ describe("warden e2e", () => {
 
 		test("passes > 1 needs a process per spec, so the default falls back to it", async () => {
 			await resuiteDefault({ passes: 2 });
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(setup(["--files", "src/chat/lazy.tsx"]))).toBe(0);
 			expect(jobNames(h)).toEqual(["chats", "chats"]);
 		});
 
 		test("a CLI --passes 2 also falls back to a process per spec; each pass writes its own out dir (12-10)", async () => {
 			await resuiteDefault();
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(setup(["--files", "src/chat/lazy.tsx", "--passes", "2"]))).toBe(0);
+			const h = batchTesting.harness();
+			expect(
+				await new E2eCommand(h.deps).definition().run(setup(["--files", "src/chat/lazy.tsx", "--passes", "2"]))
+			).toBe(0);
 			expect(jobNames(h)).toEqual(["chats", "chats"]);
 			const outs = h.jobs().map((j) => j.opts.env.WARDEN_E2E_OUT ?? "");
 			expect(new Set(outs).size).toBe(2);
@@ -1615,9 +1618,9 @@ describe("warden e2e", () => {
 
 		test("a CLI --passes 2 with isolate: device is refused before anything is claimed (12-10)", async () => {
 			await resuiteDefault({ isolate: "device" });
-			const h = harness();
+			const h = batchTesting.harness();
 			const c = setup(["--files", "src/chat/lazy.tsx", "--passes", "2"]);
-			expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain('--passes 2 needs isolate "spec"');
 			expect(h.jobs()).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
@@ -1625,8 +1628,8 @@ describe("warden e2e", () => {
 
 		test("specs run in id order in a device's one process", async () => {
 			await resuiteDefault({ count: 1 });
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(setup(["--all"]))).toBe(0);
 			expect(h.jobs().map((j) => j.cmd)).toEqual([
 				bunTest(join(dir, "specs/chats.e2e.ts"), join(dir, "specs/settings.e2e.ts")),
 			]);
@@ -1634,21 +1637,21 @@ describe("warden e2e", () => {
 
 		test("jobTimeoutMs is per spec: a device's process gets it once for each spec it runs", async () => {
 			await resuiteDefault({ count: 1, jobTimeoutMs: 60_000 });
-			const device = harness();
-			expect(await createE2eCommand(device.deps).run(setup(["--all"]))).toBe(0);
+			const device = batchTesting.harness();
+			expect(await new E2eCommand(device.deps).definition().run(setup(["--all"]))).toBe(0);
 			expect(device.timers.map((t) => t.ms)).toContain(120_000);
 			expect(device.timers.map((t) => t.ms)).not.toContain(60_000);
 
 			await resuiteDefault({ isolate: "spec", count: 1, jobTimeoutMs: 60_000 });
-			const spec = harness();
-			expect(await createE2eCommand(spec.deps).run(setup(["--all"]))).toBe(0);
+			const spec = batchTesting.harness();
+			expect(await new E2eCommand(spec.deps).definition().run(setup(["--all"]))).toBe(0);
 			expect(spec.timers.map((t) => t.ms)).toContain(60_000);
 		});
 
 		test("--job-timeout is per spec too", async () => {
 			await resuiteDefault({ count: 1 });
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(setup(["--all", "--job-timeout", "30s"]))).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(setup(["--all", "--job-timeout", "30s"]))).toBe(0);
 			expect(h.timers.map((t) => t.ms)).toContain(60_000);
 		});
 
@@ -1666,7 +1669,7 @@ describe("warden e2e", () => {
 			test("a device's retry reruns only the specs that failed", async () => {
 				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
 				const c = setup(["--all"]);
-				const h: Harness = harness({
+				const h: Harness = batchTesting.harness({
 					exitCodeFor: (env) => {
 						const first = attempt(env) === 0;
 						h.files.set(
@@ -1678,7 +1681,7 @@ describe("warden e2e", () => {
 						return first ? 1 : 0;
 					},
 				});
-				expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+				expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 				expect(h.jobs().map((j) => j.cmd)).toEqual([bunTest(chatsFile(), settingsFile()), bunTest(settingsFile())]);
 				const report = reportOf(h.files, c);
 				expect(report.ok).toBe(true);
@@ -1693,7 +1696,7 @@ describe("warden e2e", () => {
 				write("specs/profile.e2e.ts", "export {};\n");
 				const c = setup(["--all"]);
 				const profileFile = join(dir, "specs/profile.e2e.ts");
-				const h: Harness = harness({
+				const h: Harness = batchTesting.harness({
 					exitCodeFor: (env) => {
 						const first = attempt(env) === 0;
 						h.files.set(
@@ -1705,7 +1708,7 @@ describe("warden e2e", () => {
 						return first ? 137 : 0;
 					},
 				});
-				expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+				expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 				expect(h.jobs().map((j) => j.cmd)).toEqual([
 					bunTest(chatsFile(), profileFile, settingsFile()),
 					bunTest(profileFile, settingsFile()),
@@ -1722,7 +1725,7 @@ describe("warden e2e", () => {
 				const c = setup(["--all"]);
 				// results older than the run are ignored by the grid's report
 				const fresh = { startedAt: Number.MAX_SAFE_INTEGER };
-				const h: Harness = harness({
+				const h: Harness = batchTesting.harness({
 					isTTY: true,
 					exitCodeFor: (env) => {
 						const first = attempt(env) === 0;
@@ -1735,7 +1738,7 @@ describe("warden e2e", () => {
 						return first ? 1 : 0;
 					},
 				});
-				expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+				expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 				const frame = h.terminal.join("").split("\u001b[0J").at(-1) ?? "";
 				expect(frame).toContain("✓ chats  ✓ settings");
 				expect(frame).not.toContain("✗ settings");
@@ -1744,7 +1747,7 @@ describe("warden e2e", () => {
 			test("a spec that still fails after its retry fails the gate; the one that passed keeps its pass", async () => {
 				await resuite({ isolate: "device", count: 1, retry: 1, ...bothRequired });
 				const c = setup(["--all"]);
-				const h: Harness = harness({
+				const h: Harness = batchTesting.harness({
 					exitCodeFor: (env) => {
 						h.files.set(
 							resultsPath(env),
@@ -1755,7 +1758,7 @@ describe("warden e2e", () => {
 						return 1;
 					},
 				});
-				expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+				expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 				expect(h.jobs()).toHaveLength(2);
 				expect(reportOf(h.files, c).specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 					["chats", "passed", 1],
@@ -1765,8 +1768,8 @@ describe("warden e2e", () => {
 
 			test("a process per spec retries just that spec, as before", async () => {
 				await resuite({ isolate: "spec", count: 1, retry: 1 });
-				const h = harness({ exitCodes: { chats: 1 } });
-				expect(await createE2eCommand(h.deps).run(setup(["--all"]))).toBe(1);
+				const h = batchTesting.harness({ exitCodes: { chats: 1 } });
+				expect(await new E2eCommand(h.deps).definition().run(setup(["--all"]))).toBe(1);
 				expect(h.jobs().map((j) => [j.opts.env.WARDEN_JOB, j.cmd.at(-1)])).toEqual([
 					["chats", chatsFile()],
 					["chats", chatsFile()],
@@ -1794,8 +1797,8 @@ describe("warden e2e", () => {
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(ctx)).toBe(0);
 			expect(h.jobs().map((j) => j.opts.env.WARDEN_HEADLESS)).toEqual(["1", "1"]);
 			expect(reportOf(h.files, ctx).headless).toBe(true);
 		});
@@ -1803,30 +1806,30 @@ describe("warden e2e", () => {
 		test("top-level headless is the default; --no-headless beats it and clears WARDEN_HEADLESS", async () => {
 			await resuite({}, { headless: true });
 			const on = setup(["--files", "src/chat/lazy.tsx"]);
-			const h1 = harness();
-			expect(await createE2eCommand(h1.deps).run(on)).toBe(0);
+			const h1 = batchTesting.harness();
+			expect(await new E2eCommand(h1.deps).definition().run(on)).toBe(0);
 			expect(h1.jobs()[0]?.opts.env.WARDEN_HEADLESS).toBe("1");
 			expect(reportOf(h1.files, on).headless).toBe(true);
 			on.cleanup();
 
 			const off = setup(["--files", "src/chat/lazy.tsx", "--no-headless"]);
 			off.env = { ...off.env, WARDEN_HEADLESS: "1" };
-			const h2 = harness();
-			expect(await createE2eCommand(h2.deps).run(off)).toBe(0);
+			const h2 = batchTesting.harness();
+			expect(await new E2eCommand(h2.deps).definition().run(off)).toBe(0);
 			expect("WARDEN_HEADLESS" in (h2.jobs()[0]?.opts.env ?? {})).toBe(false);
 			expect(reportOf(h2.files, off).headless).toBe(false);
 		});
 
 		test("default: not headless; WARDEN_HEADLESS=1 turns it on; --dry-run reports it too", async () => {
 			const plain = setup(["--files", "src/chat/lazy.tsx"]);
-			const h1 = harness();
-			expect(await createE2eCommand(h1.deps).run(plain)).toBe(0);
+			const h1 = batchTesting.harness();
+			expect(await new E2eCommand(h1.deps).definition().run(plain)).toBe(0);
 			expect(reportOf(h1.files, plain).headless).toBe(false);
 			plain.cleanup();
 
 			const env = setup(["--files", "src/chat/lazy.tsx", "--dry-run", "--json"]);
 			env.env = { ...env.env, WARDEN_HEADLESS: "1" };
-			expect(await createE2eCommand(harness().deps).run(env)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(env)).toBe(0);
 			expect(JSON.parse(env.stdout.join("\n")).headless).toBe(true);
 		});
 	});
@@ -1841,12 +1844,12 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
-		const h = harness();
+		const h = batchTesting.harness();
 		h.deps.ensureApp = async () => {
 			h.events.push("app");
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		const setups = h.setups();
 		expect(setups).toHaveLength(2);
 		const udids = setups.map((s) => s.opts.env.WARDEN_UDID).sort();
@@ -1884,14 +1887,14 @@ describe("warden e2e", () => {
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
 		let bad: string | undefined;
-		const h = harness({
+		const h = batchTesting.harness({
 			exitCodeFor: (env) => {
 				if (env.WARDEN_JOB !== undefined) return 0;
 				bad ??= env.WARDEN_UDID;
 				return env.WARDEN_UDID === bad ? 3 : 0;
 			},
 		});
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		const jobDevices = new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID));
 		expect(jobDevices.size).toBe(1);
 		expect(jobDevices.has(bad ?? "")).toBe(false);
@@ -1906,8 +1909,8 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
-		const h = harness({ exitCodeFor: () => 1 });
-		expect(await createE2eCommand(h.deps).run(c)).toBe(1);
+		const h = batchTesting.harness({ exitCodeFor: () => 1 });
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 		expect(h.jobs()).toEqual([]);
 		expect(c.stderr.join("\n")).toMatch(/setup failed on every device.*setup-\d\.log/s);
 		const report = reportOf(h.files, c);
@@ -1920,8 +1923,8 @@ describe("warden e2e", () => {
 		await resuite({ slim: true });
 		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
 		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.slimmed).toEqual(["U1"]);
 		expect(c.db.listDevices().find((d) => d.id === "U1")?.slimmedAt).toBe(c.now());
 	});
@@ -1929,30 +1932,30 @@ describe("warden e2e", () => {
 	test("slim: true slims with the default profile; an object passes its except / keep through", async () => {
 		await resuite({ slim: true });
 		const plain = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
-		const first = harness();
-		expect(await createE2eCommand(first.deps).run(plain)).toBe(0);
+		const first = batchTesting.harness();
+		expect(await new E2eCommand(first.deps).definition().run(plain)).toBe(0);
 		expect(first.slimProfiles).toEqual([{ except: [], keep: [] }]);
 
 		await resuite({ slim: { except: ["store"], keep: ["com.apple.swcd"] } });
 		const custom = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
-		const second = harness();
-		expect(await createE2eCommand(second.deps).run(custom)).toBe(0);
+		const second = batchTesting.harness();
+		expect(await new E2eCommand(second.deps).definition().run(custom)).toBe(0);
 		expect(second.slimProfiles).toEqual([{ except: ["store"], keep: ["com.apple.swcd"] }]);
 	});
 
 	test("slim: false does not slim", async () => {
 		await resuite({ slim: false });
 		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.slimmed).toEqual([]);
 	});
 
 	test("a slim profile naming an unknown category is a config error before any device is leased", async () => {
 		await resuite({ slim: { except: ["nope"] } });
 		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).not.toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).not.toBe(0);
 		expect(c.stderr.join("\n")).toContain("nope");
 		expect(h.slimmed).toEqual([]);
 	});
@@ -1962,8 +1965,8 @@ describe("warden e2e", () => {
 		const c = setup(["--files", "src/chat/lazy.tsx", "--no-shutdown"]);
 		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
 		c.db.setSlimmed("ios", "U1", 5);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.slimmed).toEqual([]);
 		expect(reportOf(h.files, c).setup).toEqual([{ worker: 0, udid: "U1", ok: true, slim: { jobs: 0 } }]);
 	});
@@ -1977,8 +1980,8 @@ describe("warden e2e", () => {
 		ctx.cwd = dir;
 		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
 		ctx.db.setSlimmed("ios", "U1", 5);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(ctx)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(ctx)).toBe(0);
 		expect(h.slimmed).toEqual([]);
 	});
 
@@ -1988,7 +1991,7 @@ describe("warden e2e", () => {
 			{ projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] }
 		);
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		const h = harness();
+		const h = batchTesting.harness();
 		const install = Promise.withResolvers<void>();
 		h.deps.ensureApp = async () => {
 			h.events.push("app:start");
@@ -1996,7 +1999,7 @@ describe("warden e2e", () => {
 			h.events.push("app:end");
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
-		const run = createE2eCommand(h.deps).run(c);
+		const run = new E2eCommand(h.deps).definition().run(c);
 		await waitFor(() => h.slimmed.length === 1);
 		expect(h.slimmed).toEqual(["U1"]);
 		expect(h.events).not.toContain("app:end");
@@ -2011,8 +2014,8 @@ describe("warden e2e", () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
 		write("src/settings/form.tsx", "export const y = 2;\n");
 		const c = setup(["--count", "2"]);
-		const h = harness({ slim: "fail" });
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness({ slim: "fail" });
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.slimmed).toHaveLength(2);
 		for (const udid of h.slimmed) {
 			expect(h.events.indexOf(`slim:${udid}`)).toBeLessThan(h.events.indexOf(`setup:${udid}`));
@@ -2025,8 +2028,8 @@ describe("warden e2e", () => {
 	test("slim alone (no setup command) still slims", async () => {
 		await resuite({ slim: true });
 		const c = setup(["--files", "src/chat/lazy.tsx"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.slimmed).toHaveLength(1);
 		expect(h.setups()).toEqual([]);
 	});
@@ -2035,8 +2038,8 @@ describe("warden e2e", () => {
 		await resuite({ slim: true, setup: "prep {udid}" });
 		const calls: string[][] = [];
 		const c = setup(["--files", "src/chat/lazy.tsx", "--platform", "android"], calls);
-		const h = harness();
-		await createE2eCommand(h.deps).run(c);
+		const h = batchTesting.harness();
+		await new E2eCommand(h.deps).definition().run(c);
 		const stderr = c.stderr.join("\n");
 		expect(stderr.split("\n").filter((line) => line.includes("slim is iOS-only; skipped on android"))).toHaveLength(1);
 		// not refused at config: the run went on to claim android devices
@@ -2046,8 +2049,8 @@ describe("warden e2e", () => {
 
 	test("--all runs every spec with no diff; include / exclude narrow it", async () => {
 		const c = setup(["--all"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(
 			h
 				.jobs()
@@ -2058,23 +2061,23 @@ describe("warden e2e", () => {
 
 		await resuite({ exclude: ["settings"] });
 		const c2 = setup(["--all"]);
-		const h2 = harness();
-		expect(await createE2eCommand(h2.deps).run(c2)).toBe(0);
+		const h2 = batchTesting.harness();
+		expect(await new E2eCommand(h2.deps).definition().run(c2)).toBe(0);
 		expect(h2.jobs().map((j) => j.opts.env.WARDEN_JOB)).toEqual(["chats"]);
 	});
 
 	test("--specs runs exactly the named specs; an unknown one fails", async () => {
 		const c = setup(["--specs", "settings"]);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs().map((j) => j.opts.env.WARDEN_JOB)).toEqual(["settings"]);
 
 		const bad = setup(["--specs", "nope"]);
-		expect(await createE2eCommand(harness().deps).run(bad)).toBe(1);
+		expect(await new E2eCommand(batchTesting.harness().deps).definition().run(bad)).toBe(1);
 		expect(bad.stderr.join("\n")).toContain('"nope" matches no spec');
 
 		const both = setup(["--all", "--specs", "chats"]);
-		expect(await createE2eCommand(harness().deps).run(both)).toBe(1);
+		expect(await new E2eCommand(batchTesting.harness().deps).definition().run(both)).toBe(1);
 		expect(both.stderr.join("\n")).toContain("exclusive");
 	});
 
@@ -2092,7 +2095,7 @@ describe("warden e2e", () => {
 		test("under CI a passed gate shuts the devices warden created down, then releases them", async () => {
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
@@ -2100,7 +2103,7 @@ describe("warden e2e", () => {
 		test("locally a passed gate shuts the devices warden created down too, then releases them", async () => {
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls);
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
@@ -2109,7 +2112,7 @@ describe("warden e2e", () => {
 			await resuite({ shutdown: "idle" });
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls);
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
@@ -2118,7 +2121,7 @@ describe("warden e2e", () => {
 			await resuite({ shutdown: "always" });
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls);
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 			expect(shutdowns(calls).sort()).toEqual(["U1", "U2"]);
 		});
 
@@ -2126,7 +2129,7 @@ describe("warden e2e", () => {
 			await resuite({ shutdown: "idle" });
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--count", "2"], calls, "true");
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 		});
 
@@ -2139,7 +2142,9 @@ describe("warden e2e", () => {
 				await resuite({ shutdown });
 				const calls: string[][] = [];
 				const c = wardenSetup(["--all", "--count", "2"], calls, ci);
-				expect(await createE2eCommand(harness({ exitCodes: { chats: 1 } }).deps).run(c)).toBe(1);
+				expect(await new E2eCommand(batchTesting.harness({ exitCodes: { chats: 1 } }).deps).definition().run(c)).toBe(
+					1
+				);
 				expect(shutdowns(calls)).toEqual([]);
 				expect(c.db.listLeases()).toEqual([]);
 			}
@@ -2149,7 +2154,7 @@ describe("warden e2e", () => {
 			await resuite({ shutdown: "always" });
 			const calls: string[][] = [];
 			const c = wardenSetup(["--all", "--no-shutdown"], calls, "true");
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 			expect(c.db.listLeases()).toEqual([]);
 		});
@@ -2158,7 +2163,7 @@ describe("warden e2e", () => {
 			const calls: string[][] = [];
 			const c = setup(["--all"], calls);
 			c.env = { ...c.env, CI: "true" };
-			expect(await createE2eCommand(harness().deps).run(c)).toBe(0);
+			expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 			expect(shutdowns(calls)).toEqual([]);
 		});
 	});
@@ -2180,7 +2185,7 @@ describe("warden e2e", () => {
 		}> {
 			await resuite({ project: "app", ...suite }, withVariant);
 			const c = setup(["--files", "src/chat/lazy.tsx", ...argv]);
-			const h = harness();
+			const h = batchTesting.harness();
 			const asked: string[] = [];
 			const bundleEnv: Array<Record<string, string> | undefined> = [];
 			h.deps.ensureApp = async (_ctx, _owner, _platform, _deviceId, opts) => {
@@ -2188,7 +2193,7 @@ describe("warden e2e", () => {
 				bundleEnv.push(opts.bundleEnv);
 				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 			};
-			const code = await createE2eCommand(h.deps).run(c);
+			const code = await new E2eCommand(h.deps).definition().run(c);
 			return { code, asked, bundleEnv, metro: h.metro() !== undefined, stderr: c.stderr.join("\n") };
 		}
 
@@ -2309,8 +2314,8 @@ describe("warden e2e on physical devices", () => {
 	test("--physical --platform android: the phone is the only device, with no reboot / emu / kill / shutdown argv", async () => {
 		const calls: string[][] = [];
 		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical"], calls);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		const [job] = h.jobs();
 		expect(job?.opts.env.WARDEN_UDIDS).toBe(PHONE);
 		expect(job?.opts.env.WARDEN_UDID).toBe(PHONE);
@@ -2332,8 +2337,8 @@ describe("warden e2e on physical devices", () => {
 	test("--serial names the phone and implies --physical; the suite's headless setting does not conflict", async () => {
 		const calls: string[][] = [];
 		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--serial", PHONE], calls);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
 	});
 
@@ -2341,8 +2346,8 @@ describe("warden e2e on physical devices", () => {
 		await resuite({ platform: "android", physical: { ids: [PHONE] } });
 		const calls: string[][] = [];
 		const c = phoneSetup(["--files", "src/chat/lazy.tsx"], calls);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
 		expect(h.jobs()[0]?.opts.env.WARDEN_DEVICE_KIND).toBe("physical");
 	});
@@ -2351,8 +2356,8 @@ describe("warden e2e on physical devices", () => {
 		await resuite({ platform: "android", devices: [{ profile: "pixel-8", physical: true }] });
 		const calls: string[][] = [];
 		const c = phoneSetup(["--files", "src/chat/lazy.tsx"], calls);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
 		expect(argvs(calls).some((line) => /emulator|-avd/.test(line))).toBe(false);
 	});
@@ -2368,7 +2373,7 @@ describe("warden e2e on physical devices", () => {
 		});
 		const run = async (argv: string[]) => {
 			const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", ...argv], []);
-			const code = await createE2eCommand(withEnsure(harness())).run(c);
+			const code = await new E2eCommand(withEnsure(batchTesting.harness())).definition().run(c);
 			expect(code).toBe(0);
 		};
 		await run(["--physical", "--app"]);
@@ -2383,15 +2388,15 @@ describe("warden e2e on physical devices", () => {
 		await resuite({ platform: "android", count: 2 });
 		const calls: string[][] = [];
 		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--serial", PHONE], calls);
-		const h = harness();
-		expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 		expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(PHONE);
 	});
 
 	test("--physical with --count / --headless is refused like a physical claim", async () => {
 		const calls: string[][] = [];
 		const c = phoneSetup(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical", "--headless"], calls);
-		expect(await createE2eCommand(harness().deps).run(c)).toBe(1);
+		expect(await new E2eCommand(batchTesting.harness().deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--headless cannot be used with --physical");
 	});
 
@@ -2416,7 +2421,7 @@ describe("warden e2e on physical devices", () => {
 
 		test("--physical --json fails ambiguous_device (exit 2) before any lease, build or job", async () => {
 			let ensured = 0;
-			const h = harness();
+			const h = batchTesting.harness();
 			const deps: Harness["deps"] = {
 				...h.deps,
 				ensureApp: async () => {
@@ -2428,7 +2433,7 @@ describe("warden e2e on physical devices", () => {
 				["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical", "--app", "--json"],
 				[]
 			);
-			expect(await createE2eCommand(deps).run(c)).toBe(2);
+			expect(await new E2eCommand(deps).definition().run(c)).toBe(2);
 			const doc = JSON.parse(c.stdout.join("\n"));
 			expect(doc).toMatchObject({ ok: false, command: "e2e", error: { code: "ambiguous_device" } });
 			expect(doc.error.details.candidates.map((x: { id: string }) => x.id)).toEqual([PHONE, SECOND]);
@@ -2440,8 +2445,8 @@ describe("warden e2e on physical devices", () => {
 		test("in a terminal the picker chooses the device the run uses", async () => {
 			const c = twoPhones(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical"], []);
 			c.ui = scriptedUi({ interactive: true, select: [SECOND] });
-			const h = harness();
-			expect(await createE2eCommand(h.deps).run(c)).toBe(0);
+			const h = batchTesting.harness();
+			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(SECOND);
 		});
 	});

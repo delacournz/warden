@@ -6,7 +6,7 @@ import { readServedIdentity } from "../ios-runner/served-identity";
 import { type FakeProc, fakeProc, fakeRoute, manualTimers, UDID } from "../ios-runner/session.testing";
 import type { RunnerBuildPort } from "../ios-runner/types";
 import { type TestContext, testContext } from "../testing";
-import { createIosRunnerHostCommand } from "./ios-runner-host";
+import { IosRunnerHostCommand } from "./ios-runner-host";
 
 let ctx: TestContext | undefined;
 const closers: Array<() => void> = [];
@@ -51,7 +51,7 @@ function run(opts: { build?: RunnerBuildPort; extra?: string[]; script?: (p: Fak
 	c.argv.splice(0, c.argv.length, "--udid", UDID, "--socket", socket, ...(opts.extra ?? []));
 	const procs: FakeProc[] = [];
 	const timers = manualTimers();
-	const done = createIosRunnerHostCommand({
+	const done = new IosRunnerHostCommand({
 		build: opts.build ?? build,
 		spawn: (cmd, env) => {
 			const p = fakeProc(cmd, env);
@@ -62,7 +62,9 @@ function run(opts: { build?: RunnerBuildPort; extra?: string[]; script?: (p: Fak
 		route: fakeRoute([["connected", opts.tunnelIp ?? "127.0.0.1"]]).deps,
 		after: timers.after,
 		pollMs: 10,
-	}).run(c);
+	})
+		.definition()
+		.run(c);
 	return { c, socket, procs, done };
 }
 
@@ -163,7 +165,7 @@ describe("warden __ios-runner-host", () => {
 	test("rejects a missing udid or socket, and a bad idle timeout", async () => {
 		const bad = testContext(["--udid", UDID]);
 		ctx = bad;
-		expect(await createIosRunnerHostCommand({ build }).run(bad)).toBe(1);
+		expect(await new IosRunnerHostCommand({ build }).definition().run(bad)).toBe(1);
 		const { done } = run({ extra: ["--idle-timeout", "soon"] });
 		expect(await done).toBe(1);
 	});

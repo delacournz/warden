@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { writeDevSession } from "../dev-session";
 import { BUNDLE_OK, BUNDLE_SYNTAX_ERROR, RUNTIME_LOGS } from "../dev-tui/metro-log.testing";
 import { type TestContext, testContext } from "../testing";
-import { createDevCommand, defaultDevDeps } from "./dev";
+import { DevCommand, defaultDevDeps } from "./dev";
 import { type DevLogsDeps, devLogs } from "./dev-logs";
 
 let ctx: TestContext | undefined;
@@ -44,14 +44,14 @@ const deps = (overrides: Partial<DevLogsDeps> = {}): DevLogsDeps => ({
 describe("warden dev logs", () => {
 	test("prints each entry's text", async () => {
 		const c = withSession(BUNDLE_OK + BUNDLE_SYNTAX_ERROR);
-		expect(await devLogs(c, {}, deps())).toBe(0);
+		expect(await devLogs.devLogs(c, {}, deps())).toBe(0);
 		expect(c.stdout.join("\n")).toContain("Bundled 1432ms");
 		expect(c.stdout.join("\n")).toContain("Unexpected token");
 	});
 
 	test("--json prints one JSON object per line", async () => {
 		const c = withSession(BUNDLE_OK + BUNDLE_SYNTAX_ERROR);
-		expect(await devLogs(c, { json: true, kind: "bundle_failed" }, deps())).toBe(0);
+		expect(await devLogs.devLogs(c, { json: true, kind: "bundle_failed" }, deps())).toBe(0);
 		expect(c.stdout).toHaveLength(1);
 		const parsed = JSON.parse(c.stdout[0] ?? "");
 		expect(parsed).toMatchObject({ kind: "bundle_failed", line: 12, col: 20 });
@@ -59,44 +59,44 @@ describe("warden dev logs", () => {
 
 	test("--tail, --grep and --kind narrow", async () => {
 		const c = withSession(BUNDLE_OK + BUNDLE_SYNTAX_ERROR + RUNTIME_LOGS);
-		await devLogs(c, { json: true, tail: "1" }, deps());
+		await devLogs.devLogs(c, { json: true, tail: "1" }, deps());
 		expect(c.stdout).toHaveLength(1);
 		c.stdout.length = 0;
-		await devLogs(c, { json: true, grep: "fast refresh" }, deps());
+		await devLogs.devLogs(c, { json: true, grep: "fast refresh" }, deps());
 		expect(c.stdout.map((l) => JSON.parse(l).kind)).toEqual(["info"]);
 		c.stdout.length = 0;
-		await devLogs(c, { json: true, kind: "error,warn" }, deps());
+		await devLogs.devLogs(c, { json: true, kind: "error,warn" }, deps());
 		expect(c.stdout.map((l) => JSON.parse(l).kind)).toEqual(["warn", "error"]);
 	});
 
 	test("bad flags are reported, exit 1", async () => {
 		const c = withSession(BUNDLE_OK);
-		expect(await devLogs(c, { since: "soon" }, deps())).toBe(1);
-		expect(await devLogs(c, { tail: "-3" }, deps())).toBe(1);
-		expect(await devLogs(c, { kind: "nope" }, deps())).toBe(1);
-		expect(await devLogs(c, { grep: "(" }, deps())).toBe(1);
+		expect(await devLogs.devLogs(c, { since: "soon" }, deps())).toBe(1);
+		expect(await devLogs.devLogs(c, { tail: "-3" }, deps())).toBe(1);
+		expect(await devLogs.devLogs(c, { kind: "nope" }, deps())).toBe(1);
+		expect(await devLogs.devLogs(c, { grep: "(" }, deps())).toBe(1);
 		expect(c.stderr.join("\n")).toContain("invalid --since");
 	});
 
 	test("--since skips a log last written before it", async () => {
 		const c = withSession(BUNDLE_OK);
 		c.now = () => Date.now() + 3_600_000;
-		expect(await devLogs(c, { since: "5m" }, deps())).toBe(0);
+		expect(await devLogs.devLogs(c, { since: "5m" }, deps())).toBe(0);
 		expect(c.stdout).toEqual([]);
 	});
 
 	test("no dev session: code in --json, message otherwise, exit 1", async () => {
 		const c = testContext([]);
 		ctx = c;
-		expect(await devLogs(c, { json: true }, deps())).toBe(1);
+		expect(await devLogs.devLogs(c, { json: true }, deps())).toBe(1);
 		expect(JSON.parse(c.stdout[0] ?? "").error.code).toBe("no_dev_session");
-		expect(await devLogs(c, {}, deps())).toBe(1);
+		expect(await devLogs.devLogs(c, {}, deps())).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no running `warden dev` session");
 	});
 
 	test("no metro.log: metro_log_unavailable with the TUI hint", async () => {
 		const c = withSession(undefined);
-		expect(await devLogs(c, { json: true }, deps())).toBe(1);
+		expect(await devLogs.devLogs(c, { json: true }, deps())).toBe(1);
 		const { ok, command, error } = JSON.parse(c.stdout[0] ?? "");
 		expect({ ok, command }).toEqual({ ok: false, command: "dev logs" });
 		expect(error.code).toBe("metro_log_unavailable");
@@ -108,7 +108,7 @@ describe("warden dev logs", () => {
 		const path = join(home(c), "dev", "L1", "metro.log");
 		let abort: () => void = () => {};
 		let ticks = 0;
-		const code = await devLogs(
+		const code = await devLogs.devLogs(
 			c,
 			{ follow: true, json: true },
 			deps({
@@ -141,7 +141,7 @@ describe("warden dev logs routing", () => {
 			"--tail",
 			"5",
 		]);
-		const code = await createDevCommand(defaultDevDeps).run(c);
+		const code = await new DevCommand(defaultDevDeps).definition().run(c);
 		expect(code).toBe(0);
 		expect(c.stdout).toHaveLength(1);
 		expect(JSON.parse(c.stdout[0] ?? "").kind).toBe("bundle_failed");
@@ -149,7 +149,7 @@ describe("warden dev logs routing", () => {
 
 	test("--udid selects the session", async () => {
 		const c = withSession(BUNDLE_OK, ["logs", "--udid", "UDID-9"]);
-		expect(await createDevCommand(defaultDevDeps).run(c)).toBe(1);
+		expect(await new DevCommand(defaultDevDeps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no running `warden dev` session");
 	});
 });

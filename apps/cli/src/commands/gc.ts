@@ -18,7 +18,7 @@ import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-st
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { uiHelperSweep } from "../agent-ui/helper-sweep";
 import { uiStopHelperAfter } from "../agent-ui/stop-helper-after";
-import { defineCommand } from "../command";
+import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
 import { leaseHostBuilder } from "../lease-host";
 import { output } from "../output";
@@ -39,320 +39,23 @@ type ShutDevice = { platform: Platform; id: string; name: string };
 /** What a pass reads: when it is, how idle is idle, and which devices someone holds. */
 type GcPlan = { now: number; idleMs: number; leased: ReadonlySet<string> };
 
-/** Conditions a deleted lease left on devices nobody holds now are undone; a failed reset stays for the next pass. */
-async function undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<string>): Promise<string[]> {
-	const { orphanConditions } = await import("@delacour/warden-core/conditions/orphans");
-	const { hostDeps: orphanDeps } = await import("@delacour/warden-core/host-deps");
-	const notes: string[] = [];
-	for (const device of orphanConditions.devices(ctx.store())) {
-		if (leased.has(`${device.platform}:${device.id}`)) continue;
-		const report = await orphanDeps.undoOrphansWith(
-			ctx.store(),
-			{ exec: ctx.exec, env: ctx.env, now: ctx.now },
-			device
-		);
-		notes.push(...report.errors.map((e) => `leftover conditions on ${device.id}: ${e}`));
-	}
-	return notes;
-}
-
 /** What one platform's pass did. */
 type PlatformOutcome = { shutdown: ShutDevice[]; forgotten: ShutDevice[]; notes: string[] };
 
-/**
- * Re-check one planned shutdown under the store lock, right before it happens: a claim may have
- * leased the device (or used it) since the pass read its leases. Still unleased and unused → take a
- * short `gc-shutdown` lease so a concurrent claim sees the device as held for the shutdown's length.
- */
-function holdForShutdown(ctx: CommandContext, owner: Owner, record: DeviceRecord): Lease | undefined {
-	const store = ctx.store();
-	const resource: DeviceResource = { kind: "device", platform: record.platform, id: record.id, name: record.name };
-	return store.transaction(() => {
-		if (store.findLeaseByResource(resource)) return undefined;
-		const current = store.listDevices(record.platform).find((d) => d.id === record.id);
-		if (current?.lastUsedAt !== record.lastUsedAt) return undefined;
-		return store.insertLease(
-			{ resource, owner, ttlMs: GC_SHUTDOWN_TTL_MS, label: GC_SHUTDOWN_LABEL, pid: process.pid },
-			ctx.now()
-		);
-	});
-}
-
-/** The viewer windows of the sims gc just shut down: a Device Hub page stays open otherwise, offering "Start". */
-async function closeShutDownWindows(ctx: CommandContext, platform: Platform, outcome: PlatformOutcome): Promise<void> {
-	if (platform !== "ios") return;
-	const unclosed = await new SimWindowCloser(ctx).after(outcome.shutdown.map((d) => ({ udid: d.id, name: d.name })));
-	if (unclosed !== undefined) outcome.notes.push(`couldn't close the simulator window (${unclosed})`);
-}
-
-/**
- * Shut down this platform's booted, unleased, idle warden-created devices, several at a time. Only
- * devices in the store's `devices` table (warden made or launched them) are candidates: a booted
- * device warden does not know is never in the list, however many go down at once.
- */
-async function gcPlatform(
-	ctx: CommandContext,
-	platform: Platform,
-	owner: Owner,
-	plan: GcPlan
-): Promise<PlatformOutcome> {
-	const outcome: PlatformOutcome = { shutdown: [], forgotten: [], notes: [] };
-	const records = ctx.store().listDevices(platform);
-	if (records.length === 0) return outcome;
-	const provider = hostDeps.providerFor(platform, contextBuilder.appHostFromContext(ctx), owner);
-	const inventory = await provider.inventory();
-	if (!inventory.success) {
-		outcome.notes.push(`${platform}: skipped (${inventory.error.message})`);
-		return outcome;
-	}
-	const booted = new Set(
-		inventory.data.filter((d) => d.state !== "shutdown" && d.physical === undefined).map((d) => d.id)
-	);
-	if (platform === "android") {
-		const listed = new Set(inventory.data.map((d) => d.id));
-		for (const r of records) {
-			if (listed.has(r.id) || plan.leased.has(`${platform}:${r.id}`)) continue;
-			ctx.store().forgetDevice(platform, r.id);
-			outcome.forgotten.push({ platform, id: r.id, name: r.name });
-		}
-	}
-	const idle = records.filter(
-		(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
-	);
-	const results = await boundedRunner.map(idle, SHUTDOWN_CONCURRENCY, async (record) => {
-		const hold = holdForShutdown(ctx, owner, record);
-		if (!hold) return { record, result: undefined };
-		try {
-			const result = await provider.shutdown(record.id);
-			if (result.success) await uiStopHelperAfter.stopHelperAfter(ctx)(record.id);
-			return { record, result };
-		} finally {
-			ctx.store().deleteLeases([hold.id]);
-		}
-	});
-	for (const { record, result } of results) {
-		if (result === undefined) outcome.notes.push(`${record.name}: in use again, left running`);
-		else if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
-		else outcome.notes.push(`shutdown ${record.id} failed: ${result.error.message}`);
-	}
-	await closeShutDownWindows(ctx, platform, outcome);
-	return outcome;
-}
-
-function parseIdle(raw: string | undefined): Result<number> {
-	return raw === undefined ? resultFactory.ok(DEFAULT_IDLE_MS) : durationParser.parse(raw);
-}
-
-/**
- * LRU-prune the build cache down to `maxBytes` (17-11). Builds whose build lock is held or that were used
- * in the last 30 min (a cache hit being installed takes no lock) stay. Returns gc's notes about it.
- */
-function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[] {
-	try {
-		const plan = prune.builds({
-			store: ctx.store(),
-			env: ctx.env,
-			maxBytes,
-			now,
-			pidAlive: liveness.processAlive,
-			graceMs: GC_PRUNE_GRACE_MS,
-		});
-		const removed = plan.remove.filter((b) => !prune.isAlias(b));
-		if (removed.length === 0) return [];
-		const freed = removed.reduce((sum, b) => sum + b.size, 0);
-		return [
-			`pruned ${output.plural(removed.length, "cached build")} (${prune.formatSize(freed)}; cache ${prune.formatSize(plan.total)} → ${prune.formatSize(plan.after)}, max ${prune.formatSize(maxBytes)})`,
-		];
-	} catch (e) {
-		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
-	}
-}
-
 /** A `warden dev` session dir (`$WARDEN_HOME/dev/<leaseId>`) is swept once idle this long. */
 const DEV_DIR_IDLE_MS = 24 * 60 * 60_000;
-
-/** The newest file mtime anywhere under `path` (directories' own times move with every create); the dir's own when it holds no file. */
-function newestMtime(path: string): number {
-	const files: number[] = [];
-	const walk = (dir: string): void => {
-		for (const entry of readdirSync(dir, { withFileTypes: true })) {
-			const child = join(dir, entry.name);
-			if (entry.isDirectory()) walk(child);
-			else files.push(statSync(child).mtimeMs);
-		}
-	};
-	walk(path);
-	return files.length > 0 ? Math.max(...files) : statSync(path).mtimeMs;
-}
-
-/**
- * Remove `$WARDEN_HOME/dev/<leaseId>` dirs (the dev TUI's logs and screenshots) whose lease is gone and whose
- * newest file is over 24 h old. Returns gc's notes about it.
- */
-function sweepDevDirs(ctx: CommandContext, now: number): string[] {
-	const root = join(storeLocator.wardenHome(ctx.env), "dev");
-	const leased = new Set(
-		ctx
-			.store()
-			.listLeases()
-			.map((l) => l.id)
-	);
-	let entries: string[];
-	try {
-		entries = readdirSync(root, { withFileTypes: true })
-			.filter((e) => e.isDirectory() && !leased.has(e.name))
-			.map((e) => e.name);
-	} catch (e) {
-		return isMissing(e) ? [] : [`dev session dirs sweep failed: ${e instanceof Error ? e.message : String(e)}`];
-	}
-	const removed = entries.filter((name) => removeIfIdle(join(root, name), now)).length;
-	return removed === 0 ? [] : [`removed ${output.plural(removed, "old dev session dir")}`];
-}
-
-const isMissing = (e: unknown): boolean => e instanceof Error && "code" in e && e.code === "ENOENT";
-
-/** Remove `dir` when its newest file is over 24 h old; one unreadable dir must not stop the others. */
-function removeIfIdle(dir: string, now: number): boolean {
-	try {
-		if (now - newestMtime(dir) < DEV_DIR_IDLE_MS) return false;
-		rmSync(dir, { recursive: true, force: true });
-		return true;
-	} catch {
-		return false;
-	}
-}
 
 type GcOpts = { idle?: string; maxCacheSize?: string; quiet?: true; json?: true };
 
 /** Everything a pass reports. */
 type GcOutcome = PlatformOutcome & { reclaimed: string[] };
 
-/**
- * Stale leases (owner died without releasing, e.g. a Claude session killed before SessionEnd) are
- * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
- * by that owner) — unless the lease went stale under 10 min ago or an app is running on the device,
- * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
- * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time), and LRU-prune the build cache to its cap. Foreign devices are never touched; no device is
- * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
- * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note. Then one
- * AVD a claim cold-booted for want of a quick-boot snapshot gets it built, if no emulator of it runs
- * (never under `CI`).
- */
-async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
-	const { color } = ctx.ui;
-	const idle = parseIdle(opts.idle);
-	if (!idle.success) {
-		output.reportError(ctx, "gc", idle.error);
-		return 1;
-	}
-	// a bad --max-cache-size is the caller's typo: fail. A bad WARDEN_MAX_CACHE_SIZE must not stop lease
-	// reclaim or device shutdown (auto-gc would fail silently every pass): it skips the prune, with a note.
-	const cap = prune.cacheCap(opts.maxCacheSize, ctx.env);
-	if (!cap.bytes.success && cap.source === "flag") {
-		output.reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
-		return 1;
-	}
-	const store = ctx.store();
-	const now = ctx.now();
-	const owner = ownerResolver.resolve(ctx);
-	const stale = store
-		.listLeases()
-		.filter((l) => l.resource.kind === "device" && !liveness.isLeaseAlive(l, now, liveness.processAlive));
-	const shutDownIdle = async (sctx: CommandContext): Promise<GcOutcome> => {
-		// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
-		const orphaned = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(sctx)).run(
-			stale,
-			owner,
-			async (lease) => {
-				const r = lease.resource;
-				if (r.kind !== "device") return undefined;
-				return (
-					shutdownPolicy.staleShutdownBlock(lease, now, false) ??
-					shutdownPolicy.staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
-				);
-			}
-		);
-		const staleIds = store
-			.listLeases()
-			.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive))
-			.map((l) => l.id);
-		const reclaimed = (
-			await new DeviceReleaser(sctx).release(staleIds, {
-				touch: false,
-				only: (l) => !liveness.isLeaseAlive(l, now, liveness.processAlive),
-				after: uiStopHelperAfter.stopHelperAfter(sctx),
-			})
-		).map((l) => l.id);
-		// resident helpers (a live pid on a live socket) are not residue: only records whose process is gone are swept
-		await uiHelperSweep.sweepDeadHelpersLazily(sctx);
-		const leased = new Set(
-			store
-				.listLeases()
-				.flatMap((l) => (l.resource.kind === "device" ? [`${l.resource.platform}:${l.resource.id}`] : []))
-		);
-		const orphanNotes = await undoUnleasedOrphans(sctx, leased);
-		for (const l of stale) {
-			if (l.resource.kind !== "device" || !orphaned.kept.includes(l.resource.id)) continue;
-			// Spared on purpose: restart its idle clock and keep the idle pass off it this run.
-			store.touchDevice(l.resource.platform, l.resource.id, now);
-			leased.add(`${l.resource.platform}:${l.resource.id}`);
-		}
-		const plan: GcPlan = { now, idleMs: idle.data, leased };
-		const platforms = await Promise.all(PLATFORMS.map((platform) => gcPlatform(sctx, platform, owner, plan)));
-		// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
-		const snapshotNotes = await hostDeps.androidSnapshotPass(contextBuilder.appHostFromContext(sctx), owner);
-		return {
-			reclaimed,
-			shutdown: [
-				...stale.flatMap((l) =>
-					l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
-						? [{ platform: l.resource.platform, id: l.resource.id, name: l.resource.name }]
-						: []
-				),
-				...platforms.flatMap((p) => p.shutdown),
-			],
-			forgotten: platforms.flatMap((p) => p.forgotten),
-			notes: [...orphaned.notes, ...orphanNotes, ...platforms.flatMap((p) => p.notes), ...snapshotNotes],
-		};
-	};
-	if (!opts.quiet && !opts.json)
-		output.heading(
-			ctx,
-			"gc",
-			`${output.plural(stale.length, "stale lease")} · idle > ${durationParser.format(idle.data)}`
-		);
-	// `--quiet` is the detached auto-gc: no terminal, so no spinner.
-	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
-		? await shutDownIdle(ctx)
-		: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
-	notes.push(
-		...(cap.bytes.success
-			? pruneCache(ctx, cap.bytes.data, now)
-			: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
-	);
-	notes.push(...sweepDevDirs(ctx, now));
-	store.setMeta("last_gc_at", String(now));
-	if (opts.quiet) return 0;
-	const text = [
-		`reclaimed ${reclaimed.length} stale lease${reclaimed.length === 1 ? "" : "s"}`,
-		shutdown.length > 0
-			? color.green(`shut down ${shutdown.map((d) => d.name).join(" ")} (idle > ${durationParser.format(idle.data)})`)
-			: color.dim("no idle devices"),
-		...(forgotten.length > 0
-			? [color.yellow(`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`)]
-			: []),
-		...notes.map((n) => color.yellow(n)),
-	].join("\n");
-	const doc: GcJson = { reclaimed, shutdown, forgotten, notes };
-	output.emit(ctx, opts.json === true, doc, text);
-	return 0;
-}
+export class GcCommand extends CliCommand {
+	override readonly name = "gc";
+	override readonly group = "Lease";
+	override readonly summary = "reclaim stale leases; shut down idle warden devices (never deletes)";
 
-export const gcCommand = defineCommand({
-	name: "gc",
-	group: "Lease",
-	summary: "reclaim stale leases; shut down idle warden devices (never deletes)",
-	register: (cmd, ctx, done) => {
+	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
 		cmd
 			.option(
 				"--idle <duration>",
@@ -364,6 +67,308 @@ export const gcCommand = defineCommand({
 			)
 			.option("--quiet", "print nothing (background auto-gc)")
 			.option("--json", "machine-readable output")
-			.action(async (opts) => done(await gc(ctx, opts)));
-	},
-});
+			.action(async (opts) => done(await this.gc(ctx, opts)));
+	}
+
+	/** Conditions a deleted lease left on devices nobody holds now are undone; a failed reset stays for the next pass. */
+	private async undoUnleasedOrphans(ctx: CommandContext, leased: ReadonlySet<string>): Promise<string[]> {
+		const { orphanConditions } = await import("@delacour/warden-core/conditions/orphans");
+		const { hostDeps: orphanDeps } = await import("@delacour/warden-core/host-deps");
+		const notes: string[] = [];
+		for (const device of orphanConditions.devices(ctx.store())) {
+			if (leased.has(`${device.platform}:${device.id}`)) continue;
+			const report = await orphanDeps.undoOrphansWith(
+				ctx.store(),
+				{ exec: ctx.exec, env: ctx.env, now: ctx.now },
+				device
+			);
+			notes.push(...report.errors.map((e) => `leftover conditions on ${device.id}: ${e}`));
+		}
+		return notes;
+	}
+
+	/**
+	 * Re-check one planned shutdown under the store lock, right before it happens: a claim may have
+	 * leased the device (or used it) since the pass read its leases. Still unleased and unused → take a
+	 * short `gc-shutdown` lease so a concurrent claim sees the device as held for the shutdown's length.
+	 */
+	private holdForShutdown(ctx: CommandContext, owner: Owner, record: DeviceRecord): Lease | undefined {
+		const store = ctx.store();
+		const resource: DeviceResource = { kind: "device", platform: record.platform, id: record.id, name: record.name };
+		return store.transaction(() => {
+			if (store.findLeaseByResource(resource)) return undefined;
+			const current = store.listDevices(record.platform).find((d) => d.id === record.id);
+			if (current?.lastUsedAt !== record.lastUsedAt) return undefined;
+			return store.insertLease(
+				{ resource, owner, ttlMs: GC_SHUTDOWN_TTL_MS, label: GC_SHUTDOWN_LABEL, pid: process.pid },
+				ctx.now()
+			);
+		});
+	}
+
+	/** The viewer windows of the sims gc just shut down: a Device Hub page stays open otherwise, offering "Start". */
+	private async closeShutDownWindows(ctx: CommandContext, platform: Platform, outcome: PlatformOutcome): Promise<void> {
+		if (platform !== "ios") return;
+		const unclosed = await new SimWindowCloser(ctx).after(outcome.shutdown.map((d) => ({ udid: d.id, name: d.name })));
+		if (unclosed !== undefined) outcome.notes.push(`couldn't close the simulator window (${unclosed})`);
+	}
+
+	/**
+	 * Shut down this platform's booted, unleased, idle warden-created devices, several at a time. Only
+	 * devices in the store's `devices` table (warden made or launched them) are candidates: a booted
+	 * device warden does not know is never in the list, however many go down at once.
+	 */
+	private async gcPlatform(
+		ctx: CommandContext,
+		platform: Platform,
+		owner: Owner,
+		plan: GcPlan
+	): Promise<PlatformOutcome> {
+		const outcome: PlatformOutcome = { shutdown: [], forgotten: [], notes: [] };
+		const records = ctx.store().listDevices(platform);
+		if (records.length === 0) return outcome;
+		const provider = hostDeps.providerFor(platform, contextBuilder.appHostFromContext(ctx), owner);
+		const inventory = await provider.inventory();
+		if (!inventory.success) {
+			outcome.notes.push(`${platform}: skipped (${inventory.error.message})`);
+			return outcome;
+		}
+		const booted = new Set(
+			inventory.data.filter((d) => d.state !== "shutdown" && d.physical === undefined).map((d) => d.id)
+		);
+		if (platform === "android") {
+			const listed = new Set(inventory.data.map((d) => d.id));
+			for (const r of records) {
+				if (listed.has(r.id) || plan.leased.has(`${platform}:${r.id}`)) continue;
+				ctx.store().forgetDevice(platform, r.id);
+				outcome.forgotten.push({ platform, id: r.id, name: r.name });
+			}
+		}
+		const idle = records.filter(
+			(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
+		);
+		const results = await boundedRunner.map(idle, SHUTDOWN_CONCURRENCY, async (record) => {
+			const hold = this.holdForShutdown(ctx, owner, record);
+			if (!hold) return { record, result: undefined };
+			try {
+				const result = await provider.shutdown(record.id);
+				if (result.success) await uiStopHelperAfter.stopHelperAfter(ctx)(record.id);
+				return { record, result };
+			} finally {
+				ctx.store().deleteLeases([hold.id]);
+			}
+		});
+		for (const { record, result } of results) {
+			if (result === undefined) outcome.notes.push(`${record.name}: in use again, left running`);
+			else if (result.success) outcome.shutdown.push({ platform, id: record.id, name: record.name });
+			else outcome.notes.push(`shutdown ${record.id} failed: ${result.error.message}`);
+		}
+		await this.closeShutDownWindows(ctx, platform, outcome);
+		return outcome;
+	}
+
+	private parseIdle(raw: string | undefined): Result<number> {
+		return raw === undefined ? resultFactory.ok(DEFAULT_IDLE_MS) : durationParser.parse(raw);
+	}
+
+	/**
+	 * LRU-prune the build cache down to `maxBytes` (17-11). Builds whose build lock is held or that were used
+	 * in the last 30 min (a cache hit being installed takes no lock) stay. Returns gc's notes about it.
+	 */
+	private pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[] {
+		try {
+			const plan = prune.builds({
+				store: ctx.store(),
+				env: ctx.env,
+				maxBytes,
+				now,
+				pidAlive: liveness.processAlive,
+				graceMs: GC_PRUNE_GRACE_MS,
+			});
+			const removed = plan.remove.filter((b) => !prune.isAlias(b));
+			if (removed.length === 0) return [];
+			const freed = removed.reduce((sum, b) => sum + b.size, 0);
+			return [
+				`pruned ${output.plural(removed.length, "cached build")} (${prune.formatSize(freed)}; cache ${prune.formatSize(plan.total)} → ${prune.formatSize(plan.after)}, max ${prune.formatSize(maxBytes)})`,
+			];
+		} catch (e) {
+			return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
+		}
+	}
+
+	/** The newest file mtime anywhere under `path` (directories' own times move with every create); the dir's own when it holds no file. */
+	private newestMtime(path: string): number {
+		const files: number[] = [];
+		const walk = (dir: string): void => {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				const child = join(dir, entry.name);
+				if (entry.isDirectory()) walk(child);
+				else files.push(statSync(child).mtimeMs);
+			}
+		};
+		walk(path);
+		return files.length > 0 ? Math.max(...files) : statSync(path).mtimeMs;
+	}
+
+	/**
+	 * Remove `$WARDEN_HOME/dev/<leaseId>` dirs (the dev TUI's logs and screenshots) whose lease is gone and whose
+	 * newest file is over 24 h old. Returns gc's notes about it.
+	 */
+	private sweepDevDirs(ctx: CommandContext, now: number): string[] {
+		const root = join(storeLocator.wardenHome(ctx.env), "dev");
+		const leased = new Set(
+			ctx
+				.store()
+				.listLeases()
+				.map((l) => l.id)
+		);
+		let entries: string[];
+		try {
+			entries = readdirSync(root, { withFileTypes: true })
+				.filter((e) => e.isDirectory() && !leased.has(e.name))
+				.map((e) => e.name);
+		} catch (e) {
+			return this.isMissing(e) ? [] : [`dev session dirs sweep failed: ${e instanceof Error ? e.message : String(e)}`];
+		}
+		const removed = entries.filter((name) => this.removeIfIdle(join(root, name), now)).length;
+		return removed === 0 ? [] : [`removed ${output.plural(removed, "old dev session dir")}`];
+	}
+
+	private isMissing(e: unknown): boolean {
+		return e instanceof Error && "code" in e && e.code === "ENOENT";
+	}
+
+	/** Remove `dir` when its newest file is over 24 h old; one unreadable dir must not stop the others. */
+	private removeIfIdle(dir: string, now: number): boolean {
+		try {
+			if (now - this.newestMtime(dir) < DEV_DIR_IDLE_MS) return false;
+			rmSync(dir, { recursive: true, force: true });
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Stale leases (owner died without releasing, e.g. a Claude session killed before SessionEnd) are
+	 * reclaimed, and their devices shut down when the shutdown policy allows (warden-created, or booted
+	 * by that owner) — unless the lease went stale under 10 min ago or an app is running on the device,
+	 * which then stays up with its idle clock restarted. Then shut down warden-created devices (store `devices` table) that are
+	 * booted, unleased and idle longer than `--idle` (both platforms at once, a few devices at a time), and LRU-prune the build cache to its cap. Foreign devices are never touched; no device is
+	 * ever deleted. Android records whose emulator has exited (and is unleased) are forgotten — an
+	 * emulator can't be rebooted in place. A platform whose provider fails is skipped with a note. Then one
+	 * AVD a claim cold-booted for want of a quick-boot snapshot gets it built, if no emulator of it runs
+	 * (never under `CI`).
+	 */
+	private async gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
+		const { color } = ctx.ui;
+		const idle = this.parseIdle(opts.idle);
+		if (!idle.success) {
+			output.reportError(ctx, "gc", idle.error);
+			return 1;
+		}
+		// a bad --max-cache-size is the caller's typo: fail. A bad WARDEN_MAX_CACHE_SIZE must not stop lease
+		// reclaim or device shutdown (auto-gc would fail silently every pass): it skips the prune, with a note.
+		const cap = prune.cacheCap(opts.maxCacheSize, ctx.env);
+		if (!cap.bytes.success && cap.source === "flag") {
+			output.reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
+			return 1;
+		}
+		const store = ctx.store();
+		const now = ctx.now();
+		const owner = ownerResolver.resolve(ctx);
+		const stale = store
+			.listLeases()
+			.filter((l) => l.resource.kind === "device" && !liveness.isLeaseAlive(l, now, liveness.processAlive));
+		const shutDownIdle = async (sctx: CommandContext): Promise<GcOutcome> => {
+			// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
+			const orphaned = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(sctx)).run(
+				stale,
+				owner,
+				async (lease) => {
+					const r = lease.resource;
+					if (r.kind !== "device") return undefined;
+					return (
+						shutdownPolicy.staleShutdownBlock(lease, now, false) ??
+						shutdownPolicy.staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
+					);
+				}
+			);
+			const staleIds = store
+				.listLeases()
+				.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive))
+				.map((l) => l.id);
+			const reclaimed = (
+				await new DeviceReleaser(sctx).release(staleIds, {
+					touch: false,
+					only: (l) => !liveness.isLeaseAlive(l, now, liveness.processAlive),
+					after: uiStopHelperAfter.stopHelperAfter(sctx),
+				})
+			).map((l) => l.id);
+			// resident helpers (a live pid on a live socket) are not residue: only records whose process is gone are swept
+			await uiHelperSweep.sweepDeadHelpersLazily(sctx);
+			const leased = new Set(
+				store
+					.listLeases()
+					.flatMap((l) => (l.resource.kind === "device" ? [`${l.resource.platform}:${l.resource.id}`] : []))
+			);
+			const orphanNotes = await this.undoUnleasedOrphans(sctx, leased);
+			for (const l of stale) {
+				if (l.resource.kind !== "device" || !orphaned.kept.includes(l.resource.id)) continue;
+				// Spared on purpose: restart its idle clock and keep the idle pass off it this run.
+				store.touchDevice(l.resource.platform, l.resource.id, now);
+				leased.add(`${l.resource.platform}:${l.resource.id}`);
+			}
+			const plan: GcPlan = { now, idleMs: idle.data, leased };
+			const platforms = await Promise.all(PLATFORMS.map((platform) => this.gcPlatform(sctx, platform, owner, plan)));
+			// after the idle shutdowns, which may have freed the AVD: one pending Android snapshot build
+			const snapshotNotes = await hostDeps.androidSnapshotPass(contextBuilder.appHostFromContext(sctx), owner);
+			return {
+				reclaimed,
+				shutdown: [
+					...stale.flatMap((l) =>
+						l.resource.kind === "device" && orphaned.shutdown.includes(l.resource.id)
+							? [{ platform: l.resource.platform, id: l.resource.id, name: l.resource.name }]
+							: []
+					),
+					...platforms.flatMap((p) => p.shutdown),
+				],
+				forgotten: platforms.flatMap((p) => p.forgotten),
+				notes: [...orphaned.notes, ...orphanNotes, ...platforms.flatMap((p) => p.notes), ...snapshotNotes],
+			};
+		};
+		if (!opts.quiet && !opts.json)
+			output.heading(
+				ctx,
+				"gc",
+				`${output.plural(stale.length, "stale lease")} · idle > ${durationParser.format(idle.data)}`
+			);
+		// `--quiet` is the detached auto-gc: no terminal, so no spinner.
+		const { reclaimed, shutdown, forgotten, notes } = opts.quiet
+			? await shutDownIdle(ctx)
+			: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
+		notes.push(
+			...(cap.bytes.success
+				? this.pruneCache(ctx, cap.bytes.data, now)
+				: [`WARDEN_MAX_CACHE_SIZE: ${cap.bytes.error}; build cache prune skipped`])
+		);
+		notes.push(...this.sweepDevDirs(ctx, now));
+		store.setMeta("last_gc_at", String(now));
+		if (opts.quiet) return 0;
+		const text = [
+			`reclaimed ${reclaimed.length} stale lease${reclaimed.length === 1 ? "" : "s"}`,
+			shutdown.length > 0
+				? color.green(`shut down ${shutdown.map((d) => d.name).join(" ")} (idle > ${durationParser.format(idle.data)})`)
+				: color.dim("no idle devices"),
+			...(forgotten.length > 0
+				? [color.yellow(`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`)]
+				: []),
+			...notes.map((n) => color.yellow(n)),
+		].join("\n");
+		const doc: GcJson = { reclaimed, shutdown, forgotten, notes };
+		output.emit(ctx, opts.json === true, doc, text);
+		return 0;
+	}
+}
+
+export const gcCommand = new GcCommand().definition();

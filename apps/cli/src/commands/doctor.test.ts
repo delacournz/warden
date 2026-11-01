@@ -12,7 +12,7 @@ import { fakeHelperDist } from "../npm/helper.testing";
 import { packHelper } from "../npm/helper-asset";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { createDoctorCommand, type DoctorCheck, doctorCommand, installProbe } from "./doctor";
+import { type DoctorCheck, DoctorCommand, doctor, doctorCommand } from "./doctor";
 import type { HelperDeps } from "./doctor-helper";
 
 let ctx: TestContext | undefined;
@@ -252,7 +252,7 @@ describe("warden doctor", () => {
 
 describe("installProbe", () => {
 	test("npm global install → names it and the npm upgrade command", () => {
-		const probe = installProbe(
+		const probe = doctor.installProbe(
 			{ channel: "release", version: "0.3.0" },
 			"/usr/local/lib/node_modules/@delacour/warden/node_modules/@delacour/warden-linux-x64/bin/warden"
 		);
@@ -262,16 +262,16 @@ describe("installProbe", () => {
 	});
 
 	test("a copy from npx / bunx → updates from npm", () => {
-		expect(installProbe({ channel: "release", version: "0.3.0" }, "/h/.local/bin/warden", "npm").detail).toBe(
+		expect(doctor.installProbe({ channel: "release", version: "0.3.0" }, "/h/.local/bin/warden", "npm").detail).toBe(
 			"release binary /h/.local/bin/warden (from npm) — `warden update` upgrades it from @delacour/warden on npm"
 		);
 	});
 
 	test("standalone builds → channel + `warden update`", () => {
-		expect(installProbe({ channel: "release", version: "0.3.0" }, "/h/.local/bin/warden").detail).toBe(
+		expect(doctor.installProbe({ channel: "release", version: "0.3.0" }, "/h/.local/bin/warden").detail).toBe(
 			"release binary /h/.local/bin/warden — `warden update` upgrades it"
 		);
-		expect(installProbe({ channel: "dev", version: "0.3.0", sourceDir: "/repo" }, "/bin/bun").detail).toBe(
+		expect(doctor.installProbe({ channel: "dev", version: "0.3.0", sourceDir: "/repo" }, "/bin/bun").detail).toBe(
 			"running from source /repo — `warden update` builds ~/.local/bin/warden"
 		);
 	});
@@ -304,13 +304,13 @@ describe("warden doctor --fetch-helper", () => {
 			return { exitCode: 127, stdout: "", stderr: "" };
 		});
 		c.env = { ...c.env, WARDEN_HELPER_URL: BASE };
-		const command = createDoctorCommand({
+		const command = new DoctorCommand({
 			helper: helperDeps(),
 			fetch: async (url) => {
 				asked.push(url);
 				return url.endsWith("SHA256SUMS") ? new Response(`${sha}  warden-simd-darwin-arm64.tgz\n`) : new Response(TGZ);
 			},
-		});
+		}).definition();
 		expect(await command.run(c)).toBe(1);
 		expect(asked).toEqual([`${BASE}/SHA256SUMS`, `${BASE}/warden-simd-darwin-arm64.tgz`]);
 		expect(extracted).toHaveLength(1);
@@ -320,12 +320,12 @@ describe("warden doctor --fetch-helper", () => {
 
 	test("darwin-x64: refuses without fetching", async () => {
 		const c = setup(["--fetch-helper", "--json"]);
-		const command = createDoctorCommand({
+		const command = new DoctorCommand({
 			helper: helperDeps({ arch: "x64" }),
 			fetch: async () => {
 				throw new Error("should not fetch");
 			},
-		});
+		}).definition();
 		expect(await command.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no helper for darwin-x64 in this version");
 	});
@@ -344,13 +344,13 @@ describe("warden doctor --fetch-helper", () => {
 				cmd[0] === "tar" ? processExec.run(cmd, opts) : { exitCode: 127, stdout: "", stderr: "" }
 			);
 			c.env = { ...c.env, WARDEN_HELPER_URL: BASE };
-			const command = createDoctorCommand({
+			const command = new DoctorCommand({
 				helper: helperDeps({
 					exists: existsSync,
 					readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
 				}),
 				fetch: async (url) => new Response(url.endsWith("SHA256SUMS") ? sums : bytes),
-			});
+			}).definition();
 			expect(await command.run(c)).toBe(0);
 			const report = JSON.parse(c.stdout.join("\n"));
 			const dir = join(c.env.WARDEN_HOME ?? "", "simd", "0.3.0");

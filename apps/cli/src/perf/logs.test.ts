@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LogStream } from "@delacour/warden-perf/logs/pid-follow";
 import { defaultLogDeps, type LogDeps, perfLogsOps } from "@delacour/warden-sdk/ops/perf/logs";
-import { createPerfCommand } from "../commands/perf";
+import { PerfCommand } from "../commands/perf";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { perfLogs, registerLogs } from "./logs";
 import { asMe, fakePerfDeps } from "./testing";
@@ -219,6 +219,6 @@ test("logs is wired onto warden perf with its flags", async () => {
 	ctx?.cleanup();
 	ctx = c;
 	c.db.recordDevice({ platform: "android", id: EMU, name: "dev" }, 1);
-	expect(await createPerfCommand(deps, [registerLogs]).run(c)).toBe(1);
+	expect(await new PerfCommand(deps, [registerLogs]).definition().run(c)).toBe(1);
 	expect(JSON.parse(c.stdout.join("\n")).error.code).toBe("usage");
 });

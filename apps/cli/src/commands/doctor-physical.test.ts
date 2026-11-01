@@ -10,7 +10,7 @@ import {
 	FAKE_IPHONE_UDID,
 } from "@delacour/warden-providers/devicectl.fixtures";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { physicalChecks } from "./doctor-physical";
+import { doctorPhysical } from "./doctor-physical";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -53,14 +53,14 @@ const IOS_HANDLERS: Handlers = [
 describe("physicalChecks", () => {
 	test("silent with no phones and no team", async () => {
 		const c = setup([]);
-		expect(await physicalChecks(c)).toEqual([]);
+		expect(await doctorPhysical.physicalChecks(c)).toEqual([]);
 		c.cleanup();
 		const quiet = setup([["security find-identity", { stdout: "     0 valid identities found\n" }]]);
-		expect(await physicalChecks(quiet)).toEqual([]);
+		expect(await doctorPhysical.physicalChecks(quiet)).toEqual([]);
 	});
 
 	test("ios-team names the team and where it came from", async () => {
-		const rows = await physicalChecks(setup(IOS_HANDLERS, { WARDEN_IOS_TEAM_ID: TEAM }));
+		const rows = await doctorPhysical.physicalChecks(setup(IOS_HANDLERS, { WARDEN_IOS_TEAM_ID: TEAM }));
 		expect(rows.find((r) => r.name === "ios-team")).toEqual({
 			name: "ios-team",
 			level: "optional",
@@ -73,7 +73,7 @@ describe("physicalChecks", () => {
 		const derA = signing.certificatesFromPem(CERT_TEAM_A)[0] as Uint8Array;
 		const derB = signing.certificatesFromPem(CERT_TEAM_B)[0] as Uint8Array;
 		const identities = `  1) ${signing.sha1Hex(derA)} "Apple Development: Test A"\n  2) ${signing.sha1Hex(derB)} "Apple Development: Test B"\n     2 valid identities found\n`;
-		const rows = await physicalChecks(
+		const rows = await doctorPhysical.physicalChecks(
 			setup([
 				...IOS_HANDLERS,
 				["security find-identity", { stdout: identities }],
@@ -86,7 +86,7 @@ describe("physicalChecks", () => {
 	});
 
 	test("ios-devices: pairing, transport, Developer Mode, DDI, reachability and lock state per device", async () => {
-		const rows = await physicalChecks(setup(IOS_HANDLERS, { WARDEN_IOS_TEAM_ID: TEAM }));
+		const rows = await doctorPhysical.physicalChecks(setup(IOS_HANDLERS, { WARDEN_IOS_TEAM_ID: TEAM }));
 		const devices = rows.find((r) => r.name === "ios-devices");
 		expect(devices?.status).toBe("ok");
 		expect(devices?.detail).toContain(`${FAKE_IPHONE_UDID} iPhone 27.2`);
@@ -110,14 +110,14 @@ describe("physicalChecks", () => {
 				developerMode: "disabled",
 			}),
 		]);
-		const rows = await physicalChecks(setup([["xcrun devicectl list devices", { stdout: only }]]));
+		const rows = await doctorPhysical.physicalChecks(setup([["xcrun devicectl list devices", { stdout: only }]]));
 		const devices = rows.find((r) => r.name === "ios-devices");
 		expect(devices?.status).toBe("warn");
 		expect(devices?.detail).toContain("Developer Mode off");
 	});
 
 	test("ios-runner: no cached build yet", async () => {
-		const rows = await physicalChecks(setup(IOS_HANDLERS, { WARDEN_IOS_TEAM_ID: TEAM }));
+		const rows = await doctorPhysical.physicalChecks(setup(IOS_HANDLERS, { WARDEN_IOS_TEAM_ID: TEAM }));
 		const runner = rows.find((r) => r.name === "ios-runner");
 		expect(runner?.status).toBe("ok");
 		expect(runner?.detail).toContain("no cached build");
@@ -141,7 +141,7 @@ describe("physicalChecks", () => {
 			join(c.cwd, "ios-runner", `${FAKE_IPHONE_UDID}.json`),
 			JSON.stringify({ code: "device_locked", message: "unlock the phone", at: NOW - 5000 })
 		);
-		const runner = (await physicalChecks(c)).find((r) => r.name === "ios-runner");
+		const runner = (await doctorPhysical.physicalChecks(c)).find((r) => r.name === "ios-runner");
 		expect(runner?.status).toBe("warn");
 		expect(runner?.detail).toContain("profile expires in 3d");
 		expect(runner?.detail).toContain("last failure: device_locked");
@@ -155,13 +155,13 @@ describe("physicalChecks", () => {
 			join(dir, "meta.json"),
 			JSON.stringify({ udids: [], profileExpires: NOW - 1000, builtAt: NOW - 9999, bundleId: "com.example.runner" })
 		);
-		const runner = (await physicalChecks(c)).find((r) => r.name === "ios-runner");
+		const runner = (await doctorPhysical.physicalChecks(c)).find((r) => r.name === "ios-runner");
 		expect(runner?.status).toBe("warn");
 		expect(runner?.detail).toContain("profile expired");
 	});
 
 	test("android-devices: unauthorized phones and a second adb server", async () => {
-		const rows = await physicalChecks(
+		const rows = await doctorPhysical.physicalChecks(
 			setup([
 				[
 					"adb devices -l",
@@ -188,7 +188,7 @@ describe("physicalChecks", () => {
 	});
 
 	test("android-devices stays silent with no phones and one adb server", async () => {
-		const rows = await physicalChecks(
+		const rows = await doctorPhysical.physicalChecks(
 			setup([
 				["adb devices -l", { stdout: "List of devices attached\n\n" }],
 				["ps -axo", { stdout: " 101 /sdk/platform-tools/adb -L tcp:5037 fork-server server --reply-fd 4\n" }],

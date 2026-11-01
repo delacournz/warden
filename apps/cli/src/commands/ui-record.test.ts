@@ -14,7 +14,7 @@ import { cliUiPaths } from "../agent-ui/paths";
 import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { createUiCommand } from "./ui";
+import { UiCommand } from "./ui";
 
 let cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -136,7 +136,7 @@ function harness(
 		},
 		clock.t
 	);
-	const command = createUiCommand(deps);
+	const command = new UiCommand(deps).definition();
 	return {
 		c,
 		verified,
@@ -551,10 +551,12 @@ describe("record start --help", () => {
 	test("documents that the journal outlives a failed stop", async () => {
 		const h = harness();
 		h.c.argv = ["record", "--help"];
-		await createUiCommand({
+		await new UiCommand({
 			driver: async () => resultFactory.ok(new FakeDriver({ screens: [driverFixtures.snapshotOf(login())] })),
 			sleep: async () => {},
-		}).run(h.c);
+		})
+			.definition()
+			.run(h.c);
 		expect(h.c.stdout.join("\n").replaceAll(/\s+/g, " ")).toContain("kept until a successful stop or cancel");
 	});
 });

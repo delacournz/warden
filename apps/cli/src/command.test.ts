@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Chalk } from "chalk";
-import { type Command, type CommandEntry, defineCommand, runLazyProgram, runProgram } from "./command";
+import { CliCommand, type Command, type CommandEntry, type CommandNode, defineCommand, programRunner } from "./command";
+import type { CommandContext } from "./context";
 import { output } from "./output";
 import { withSpinner } from "./spinner-context";
 import { scriptedUi, type TestContext, testContext } from "./testing";
@@ -25,7 +26,7 @@ const gamma = defineCommand({ name: "gamma", group: "Lease", summary: "third thi
 
 function run(argv: string[], ui = scriptedUi()): Promise<number> {
 	ctx = testContext(argv, { ui });
-	return runProgram([alpha, beta, gamma], argv, ctx);
+	return programRunner.run([alpha, beta, gamma], argv, ctx);
 }
 
 describe("runProgram help", () => {
@@ -93,7 +94,7 @@ describe("runLazyProgram", () => {
 	async function lazy(argv: string[], ui = scriptedUi()): Promise<{ code: number; loaded: string[] }> {
 		const loaded: string[] = [];
 		ctx = testContext(argv, { ui });
-		const code = await runLazyProgram(lazyEntries(all, loaded), argv, ctx);
+		const code = await programRunner.runLazy(lazyEntries(all, loaded), argv, ctx);
 		return { code, loaded };
 	}
 
@@ -126,9 +127,9 @@ describe("runLazyProgram", () => {
 	test("output matches the eager program byte for byte", async () => {
 		for (const argv of [["--help"], ["alpha", "--help"], ["nope"], ["alpha", "--nope"], ["help", "alpha"], []]) {
 			const eager = testContext(argv);
-			const eagerCode = await runProgram(all, argv, eager);
+			const eagerCode = await programRunner.run(all, argv, eager);
 			const lazyRun = testContext(argv);
-			const lazyCode = await runLazyProgram(lazyEntries(all, []), argv, lazyRun);
+			const lazyCode = await programRunner.runLazy(lazyEntries(all, []), argv, lazyRun);
 			expect({ argv, code: lazyCode, out: lazyRun.stdout, err: lazyRun.stderr }).toEqual({
 				argv,
 				code: eagerCode,
@@ -186,7 +187,7 @@ describe("runProgram --json failures", () => {
 
 	function runJson(argv: string[]): Promise<number> {
 		ctx = testContext(argv);
-		return runProgram([alpha, failing, nested], argv, ctx);
+		return programRunner.run([alpha, failing, nested], argv, ctx);
 	}
 	const doc = () => JSON.parse(ctx?.stdout.join("\n") ?? "");
 
@@ -246,7 +247,45 @@ describe("runProgram --json failures", () => {
 			},
 		});
 		ctx = testContext([]);
-		expect(await runProgram([ok], ["zeta", "--json"], ctx)).toBe(0);
+		expect(await programRunner.run([ok], ["zeta", "--json"], ctx)).toBe(0);
 		expect(ctx.stdout).toEqual([]);
+	});
+});
+
+describe("CliCommand", () => {
+	class Probe extends CliCommand {
+		override readonly name = "probe";
+		override readonly group = "Run";
+		override readonly summary = "a probe";
+		override readonly aliases = ["p"];
+		registered = 0;
+
+		protected register(cmd: CommandNode, _ctx: CommandContext, done: (code: number) => void): void {
+			this.registered++;
+			cmd.action(() => done(7));
+		}
+	}
+	class Bare extends CliCommand {
+		override readonly name = "bare";
+		override readonly summary = "bare";
+		protected register(): void {}
+	}
+
+	test("definition() carries the subclass's listing fields", () => {
+		const def = new Probe().definition();
+		expect(def).toMatchObject({ name: "probe", group: "Run", summary: "a probe", aliases: ["p"] });
+		expect("hidden" in def).toBe(false);
+	});
+
+	test("definition() omits the optional fields a subclass leaves out", () => {
+		const def = new Bare().definition();
+		expect(Object.keys(def).sort()).toEqual(["name", "register", "run", "summary"]);
+	});
+
+	test("register runs on the instance and its exit code comes back through run()", async () => {
+		const probe = new Probe();
+		ctx = testContext([]);
+		expect(await probe.definition().run(ctx)).toBe(7);
+		expect(probe.registered).toBe(1);
 	});
 });

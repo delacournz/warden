@@ -5,7 +5,7 @@ import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driv
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import type { Platform } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
-import { createUiCommand } from "../commands/ui";
+import { UiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { BENCH_TARGETS, BENCH_TOLERANCE, type BenchMetric, type BenchResult, uiBench } from "./bench";
@@ -178,7 +178,7 @@ function harness(options: { platform?: Platform; withMetro?: boolean } = {}): Ha
 		},
 		clock.t
 	);
-	const command = createUiCommand(deps);
+	const command = new UiCommand(deps).definition();
 	return {
 		c,
 		clock,
@@ -273,7 +273,7 @@ describe("warden ui bench (ios)", () => {
 			},
 			devtools: undefined,
 		};
-		const command = createUiCommand(deps);
+		const command = new UiCommand(deps).definition();
 		h.c.argv = ["bench", "--runs", "3", "--json", "--udid", UDID];
 		h.c.stdout.length = 0;
 		expect(await command.run(h.c)).toBe(0);

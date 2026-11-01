@@ -6,7 +6,7 @@ import type { CommandContext } from "../context";
 import { expoInstallCommand, missingPackages } from "../expo-app";
 import { output } from "../output";
 import { withSpinner } from "../spinner-context";
-import { wardenConfigSource } from "./init.data";
+import { initData } from "./init.data";
 
 /** What `warden dev` found missing or costly in the app, each with the fix it can apply. */
 export type DevIssue =
@@ -30,50 +30,6 @@ export type DevOverlay = { overlayDir?: string; checkoutRoot?: string };
 
 export const DEV_SETUP_INSTALL_TIMEOUT_MS = 10 * 60_000;
 
-/** The issues for this project, blocking ones first. */
-export function diagnoseDev(context: ProjectContext, where: DevOverlay = {}): DevIssue[] {
-	const { project } = context;
-	const issues: DevIssue[] = [];
-	// a bare React Native app runs itself against Metro: no dev client to install
-	const missing = project.framework === "expo" ? missingPackages(project.root, ["expo-dev-client"]) : [];
-	if (missing.length > 0)
-		issues.push({
-			kind: "package",
-			root: project.root,
-			packages: missing,
-			command: expoInstallCommand(project.root, missing),
-		});
-	if (
-		context.appConfig !== undefined &&
-		project.source === "auto" &&
-		!existsSync(join(project.root, "warden.config.ts"))
-	)
-		issues.push({
-			kind: "config",
-			root: project.root,
-			name: project.name,
-			bundleId: project.bundleId,
-			...(where.overlayDir !== undefined
-				? {
-						overlay: { dir: where.overlayDir, root: relative(where.checkoutRoot ?? project.root, project.root) || "." },
-					}
-				: {}),
-		});
-	return issues;
-}
-
-/** One line per issue: what is missing and the command or file that fixes it. */
-export function describeIssue(issue: DevIssue): string {
-	switch (issue.kind) {
-		case "package":
-			return `${issue.packages.join(", ")} isn't installed in ${issue.root} — run: ${issue.command.join(" ")}`;
-		case "config":
-			return `${issue.root}/app.config.* is read through \`expo config\` on every start — \`warden init\` writes a warden.config.ts that skips it`;
-	}
-}
-
-const blocking = (issue: DevIssue): boolean => issue.kind === "package";
-
 const PRETTIER_CONFIGS = [
 	".prettierrc",
 	".prettierrc.json",
@@ -87,130 +43,189 @@ const PRETTIER_CONFIGS = [
 	"prettier.config.mjs",
 ];
 
-/** Does a prettier config govern `root` (there or in a parent)? File names only. */
-export function usesPrettier(root: string): boolean {
-	for (let dir = root; ; dir = dirname(dir)) {
-		if (PRETTIER_CONFIGS.some((f) => existsSync(join(dir, f)))) return true;
-		if (dirname(dir) === dir) return false;
-	}
-}
-
-/**
- * A file warden writes into a checkout that formats with prettier is run through the checkout's prettier
- * (via its package manager), so the repo's own format check stays green. Best effort: a missing or failing
- * prettier leaves the file as written.
- */
-async function formatWithPrettier(ctx: CommandContext, root: string, file: string): Promise<void> {
-	if (!usesPrettier(root)) return;
-	const [runner] = expoInstallCommand(root, []);
-	const command = [runner ?? "bunx", "prettier", "--write", file];
-	try {
-		const res = await ctx.exec(command, { cwd: root, timeoutMs: 60_000 });
-		if (res.exitCode !== 0)
-			output.note(ctx, `warden dev: ${command.join(" ")} failed (exit ${res.exitCode}); the file is unformatted`);
-	} catch {
-		// prettier is a courtesy
-	}
-}
-
 export type DevSetupDeps = {
 	/** writes a file, creating its dir (default: the filesystem) */
 	write?: (path: string, content: string) => void;
 };
 
-/**
- * Offer each fix when a person is at the terminal: install the missing packages through the checkout's
- * package manager, write a `warden.config.ts` with the resolved ids. Without a terminal (or `--json`) the
- * blocking issues become the error, with their commands, and the rest a note. Resolves `changed` when a
- * fix was applied, so the caller resolves the project again.
- */
-export async function offerDevSetup(
-	ctx: CommandContext,
-	issues: readonly DevIssue[],
-	options: { interactive: boolean },
-	deps: DevSetupDeps = {}
-): AsyncResult<"changed" | "unchanged"> {
-	if (issues.length === 0) return resultFactory.ok("unchanged");
-	if (!options.interactive) {
-		for (const issue of issues.filter((i) => !blocking(i))) output.note(ctx, `warden dev: ${describeIssue(issue)}`);
-		const stop = issues.filter(blocking);
-		return stop.length > 0 ? resultFactory.err(stop.map(describeIssue).join("; ")) : resultFactory.ok("unchanged");
+export class DevSetup {
+	/** The issues for this project, blocking ones first. */
+	diagnoseDev(context: ProjectContext, where: DevOverlay = {}): DevIssue[] {
+		const { project } = context;
+		const issues: DevIssue[] = [];
+		// a bare React Native app runs itself against Metro: no dev client to install
+		const missing = project.framework === "expo" ? missingPackages(project.root, ["expo-dev-client"]) : [];
+		if (missing.length > 0)
+			issues.push({
+				kind: "package",
+				root: project.root,
+				packages: missing,
+				command: expoInstallCommand(project.root, missing),
+			});
+		if (
+			context.appConfig !== undefined &&
+			project.source === "auto" &&
+			!existsSync(join(project.root, "warden.config.ts"))
+		)
+			issues.push({
+				kind: "config",
+				root: project.root,
+				name: project.name,
+				bundleId: project.bundleId,
+				...(where.overlayDir !== undefined
+					? {
+							overlay: {
+								dir: where.overlayDir,
+								root: relative(where.checkoutRoot ?? project.root, project.root) || ".",
+							},
+						}
+					: {}),
+			});
+		return issues;
 	}
-	let changed = false;
-	for (const issue of issues) {
-		const applied = await applyIssue(ctx, issue, deps);
-		if (!applied.success) return applied;
-		changed ||= applied.data;
-	}
-	return resultFactory.ok(changed ? "changed" : "unchanged");
-}
 
-/** One prompt + fix; true when applied. A declined blocking fix is the error; a declined optional one is skipped. */
-async function applyIssue(ctx: CommandContext, issue: DevIssue, deps: DevSetupDeps): AsyncResult<boolean> {
-	const write =
-		deps.write ??
-		((path, content) => {
-			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, content);
-		});
-	switch (issue.kind) {
-		case "package": {
-			const what = issue.packages.join(", ");
-			const answer = await ctx.ui.confirm(
-				`${what} isn't in ${issue.root}/package.json. Add and install it now? (${issue.command.join(" ")})`,
-				true
-			);
-			if (answer === undefined) {
-				ctx.ui.cancelled("Aborted.");
-				return resultFactory.err(describeIssue(issue));
-			}
-			if (!answer) return resultFactory.err(describeIssue(issue));
-			const res = await withSpinner(ctx, `installing ${what}`, (sctx) =>
-				sctx.exec(issue.command, { cwd: issue.root, timeoutMs: DEV_SETUP_INSTALL_TIMEOUT_MS })
-			);
-			if (res.exitCode !== 0) {
-				const tail = (res.stderr || res.stdout).trim().split("\n").filter(Boolean).slice(-5).join("\n");
-				return resultFactory.err(`${issue.command.join(" ")} failed (exit ${res.exitCode})${tail ? `:\n${tail}` : ""}`);
-			}
-			output.success(ctx, `warden dev: installed ${what} (${issue.command.join(" ")})`);
-			return resultFactory.ok(true);
+	/** One line per issue: what is missing and the command or file that fixes it. */
+	readonly describeIssue = (issue: DevIssue): string => {
+		switch (issue.kind) {
+			case "package":
+				return `${issue.packages.join(", ")} isn't installed in ${issue.root} — run: ${issue.command.join(" ")}`;
+			case "config":
+				return `${issue.root}/app.config.* is read through \`expo config\` on every start — \`warden init\` writes a warden.config.ts that skips it`;
 		}
-		case "config":
-			return resultFactory.ok(await applyConfig(ctx, issue, write));
-	}
-}
+	};
 
-/**
- * Yes writes `<app>/warden.config.ts`; no writes it to the repo's overlay instead (outside the repo, under warden's
- * home: every worktree of the repo reads it, and a repo config still wins), when there is one. True when written.
- */
-async function applyConfig(
-	ctx: CommandContext,
-	issue: Extract<DevIssue, { kind: "config" }>,
-	write: (path: string, content: string) => void
-): Promise<boolean> {
-	const id = issue.bundleId.ios ?? issue.bundleId.android ?? "?";
-	const elsewhere = issue.overlay ? ` (no: keep it in ${issue.overlay.dir}, outside the repo)` : "";
-	const answer = await ctx.ui.confirm(
-		`Write ${issue.root}/warden.config.ts (project "${issue.name}", bundle id ${id}) so warden dev starts without asking Expo for the config?${elsewhere}`,
-		true
-	);
-	if (answer === false && issue.overlay !== undefined) {
-		const file = join(issue.overlay.dir, "warden.config.ts");
-		write(
-			file,
-			wardenConfigSource({ name: issue.name, root: issue.overlay.root, bundleId: issue.bundleId }, { e2e: false })
+	private readonly blocking = (issue: DevIssue): boolean => issue.kind === "package";
+
+	/** Does a prettier config govern `root` (there or in a parent)? File names only. */
+	usesPrettier(root: string): boolean {
+		for (let dir = root; ; dir = dirname(dir)) {
+			if (PRETTIER_CONFIGS.some((f) => existsSync(join(dir, f)))) return true;
+			if (dirname(dir) === dir) return false;
+		}
+	}
+
+	/**
+	 * A file warden writes into a checkout that formats with prettier is run through the checkout's prettier
+	 * (via its package manager), so the repo's own format check stays green. Best effort: a missing or failing
+	 * prettier leaves the file as written.
+	 */
+	private async formatWithPrettier(ctx: CommandContext, root: string, file: string): Promise<void> {
+		if (!this.usesPrettier(root)) return;
+		const [runner] = expoInstallCommand(root, []);
+		const command = [runner ?? "bunx", "prettier", "--write", file];
+		try {
+			const res = await ctx.exec(command, { cwd: root, timeoutMs: 60_000 });
+			if (res.exitCode !== 0)
+				output.note(ctx, `warden dev: ${command.join(" ")} failed (exit ${res.exitCode}); the file is unformatted`);
+		} catch {
+			// prettier is a courtesy
+		}
+	}
+
+	/**
+	 * Offer each fix when a person is at the terminal: install the missing packages through the checkout's
+	 * package manager, write a `warden.config.ts` with the resolved ids. Without a terminal (or `--json`) the
+	 * blocking issues become the error, with their commands, and the rest a note. Resolves `changed` when a
+	 * fix was applied, so the caller resolves the project again.
+	 */
+	async offerDevSetup(
+		ctx: CommandContext,
+		issues: readonly DevIssue[],
+		options: { interactive: boolean },
+		deps: DevSetupDeps = {}
+	): AsyncResult<"changed" | "unchanged"> {
+		if (issues.length === 0) return resultFactory.ok("unchanged");
+		if (!options.interactive) {
+			for (const issue of issues.filter((i) => !this.blocking(i)))
+				output.note(ctx, `warden dev: ${this.describeIssue(issue)}`);
+			const stop = issues.filter(this.blocking);
+			return stop.length > 0
+				? resultFactory.err(stop.map(this.describeIssue).join("; "))
+				: resultFactory.ok("unchanged");
+		}
+		let changed = false;
+		for (const issue of issues) {
+			const applied = await this.applyIssue(ctx, issue, deps);
+			if (!applied.success) return applied;
+			changed ||= applied.data;
+		}
+		return resultFactory.ok(changed ? "changed" : "unchanged");
+	}
+
+	/** One prompt + fix; true when applied. A declined blocking fix is the error; a declined optional one is skipped. */
+	private async applyIssue(ctx: CommandContext, issue: DevIssue, deps: DevSetupDeps): AsyncResult<boolean> {
+		const write =
+			deps.write ??
+			((path, content) => {
+				mkdirSync(dirname(path), { recursive: true });
+				writeFileSync(path, content);
+			});
+		switch (issue.kind) {
+			case "package": {
+				const what = issue.packages.join(", ");
+				const answer = await ctx.ui.confirm(
+					`${what} isn't in ${issue.root}/package.json. Add and install it now? (${issue.command.join(" ")})`,
+					true
+				);
+				if (answer === undefined) {
+					ctx.ui.cancelled("Aborted.");
+					return resultFactory.err(this.describeIssue(issue));
+				}
+				if (!answer) return resultFactory.err(this.describeIssue(issue));
+				const res = await withSpinner(ctx, `installing ${what}`, (sctx) =>
+					sctx.exec(issue.command, { cwd: issue.root, timeoutMs: DEV_SETUP_INSTALL_TIMEOUT_MS })
+				);
+				if (res.exitCode !== 0) {
+					const tail = (res.stderr || res.stdout).trim().split("\n").filter(Boolean).slice(-5).join("\n");
+					return resultFactory.err(
+						`${issue.command.join(" ")} failed (exit ${res.exitCode})${tail ? `:\n${tail}` : ""}`
+					);
+				}
+				output.success(ctx, `warden dev: installed ${what} (${issue.command.join(" ")})`);
+				return resultFactory.ok(true);
+			}
+			case "config":
+				return resultFactory.ok(await this.applyConfig(ctx, issue, write));
+		}
+	}
+
+	/**
+	 * Yes writes `<app>/warden.config.ts`; no writes it to the repo's overlay instead (outside the repo, under warden's
+	 * home: every worktree of the repo reads it, and a repo config still wins), when there is one. True when written.
+	 */
+	private async applyConfig(
+		ctx: CommandContext,
+		issue: Extract<DevIssue, { kind: "config" }>,
+		write: (path: string, content: string) => void
+	): Promise<boolean> {
+		const id = issue.bundleId.ios ?? issue.bundleId.android ?? "?";
+		const elsewhere = issue.overlay ? ` (no: keep it in ${issue.overlay.dir}, outside the repo)` : "";
+		const answer = await ctx.ui.confirm(
+			`Write ${issue.root}/warden.config.ts (project "${issue.name}", bundle id ${id}) so warden dev starts without asking Expo for the config?${elsewhere}`,
+			true
 		);
-		output.success(
-			ctx,
-			`warden dev: wrote ${file} (outside the repo, shared by every worktree; a repo warden.config.ts wins)`
-		);
+		if (answer === false && issue.overlay !== undefined) {
+			const file = join(issue.overlay.dir, "warden.config.ts");
+			write(
+				file,
+				initData.wardenConfigSource(
+					{ name: issue.name, root: issue.overlay.root, bundleId: issue.bundleId },
+					{ e2e: false }
+				)
+			);
+			output.success(
+				ctx,
+				`warden dev: wrote ${file} (outside the repo, shared by every worktree; a repo warden.config.ts wins)`
+			);
+			return true;
+		}
+		if (answer !== true) return false;
+		const file = join(issue.root, "warden.config.ts");
+		write(file, initData.wardenConfigSource({ name: issue.name, bundleId: issue.bundleId }, { e2e: false }));
+		await this.formatWithPrettier(ctx, issue.root, file);
+		output.success(ctx, `warden dev: wrote ${file}`);
 		return true;
 	}
-	if (answer !== true) return false;
-	const file = join(issue.root, "warden.config.ts");
-	write(file, wardenConfigSource({ name: issue.name, bundleId: issue.bundleId }, { e2e: false }));
-	await formatWithPrettier(ctx, issue.root, file);
-	output.success(ctx, `warden dev: wrote ${file}`);
-	return true;
 }
+
+export const devSetup = new DevSetup();

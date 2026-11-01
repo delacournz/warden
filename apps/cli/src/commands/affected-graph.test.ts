@@ -8,7 +8,7 @@ import { fixtureRepos } from "@delacour/warden-core/testing/fixture.testing";
 import { resultFactory } from "@delacour/warden-types/result";
 import { main } from "../cli";
 import { type TestContext, testContext } from "../testing";
-import { affectedGraphCommand, walk } from "./affected-graph";
+import { affectedGraphCli, affectedGraphCommand } from "./affected-graph";
 import { COMMANDS } from "./registry";
 
 let dir: string;
@@ -59,7 +59,7 @@ describe("warden __affected-graph", () => {
 	test("no usable typescript: the reason on stderr, its own exit code, no stdout, no throw (cli-size-R5)", async () => {
 		ctx = testContext([]);
 		const why = "needs typescript in the analysed project: add it as a devDependency";
-		const code = await walk(ctx, JSON.stringify(request()), async () => resultFactory.err(why));
+		const code = await affectedGraphCli.walk(ctx, JSON.stringify(request()), async () => resultFactory.err(why));
 		expect(code).toBe(TYPESCRIPT_UNUSABLE_EXIT);
 		expect(ctx.stdout).toEqual([]);
 		expect(ctx.stderr.join("\n")).toContain(`__affected-graph: ${why}`);

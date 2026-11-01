@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { type CommandEntry, runLazyProgram } from "./command";
+import { type CommandEntry, programRunner } from "./command";
 import { COMMANDS } from "./commands/registry";
 import { type CommandContext, contextBuilder, STDERR, STDOUT } from "./context";
 
@@ -14,7 +14,7 @@ export async function main(
 ): Promise<number> {
 	const [first, ...rest] = argv;
 	const normalised = first === "--version" || first === "-V" ? ["version", ...rest] : argv;
-	return runLazyProgram(entries, normalised, makeContext(normalised));
+	return programRunner.runLazy(entries, normalised, makeContext(normalised));
 }
 
 /**

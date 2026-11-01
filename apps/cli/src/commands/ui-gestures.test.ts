@@ -3,9 +3,9 @@ import type { ScreenInfo } from "@delacour/warden-driver/driver.types";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { gestureOps } from "@delacour/warden-sdk/ops/gestures";
 import { uiGestures } from "../agent-ui/gestures";
-import { cleanupHarnesses, doc, harness, LOGIN } from "./ui.testing";
+import { LOGIN, uiTesting } from "./ui.testing";
 
-afterEach(cleanupHarnesses);
+afterEach(uiTesting.cleanupHarnesses);
 
 const LIST = driverFixtures.snapshotOf([
 	driverFixtures.el("window", {
@@ -76,7 +76,7 @@ describe("parsePaths", () => {
 
 describe("gesture pinch", () => {
 	test("no target: around the screen centre", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "pinch", "2")).toBe(0);
 		expect(h.driver.callsOf("pinch")).toEqual([
 			{ method: "pinch", center: CENTRE, scale: 2, opts: { durationMs: 500, radius: 78 } },
@@ -84,31 +84,31 @@ describe("gesture pinch", () => {
 	});
 
 	test("an element: the centre of its visible rect", async () => {
-		const h = harness([LIST]);
+		const h = uiTesting.harness([LIST]);
 		expect(await h.run("gesture", "pinch", "id=list", "0.5")).toBe(0);
 		expect(h.driver.callsOf("pinch")[0]).toMatchObject({ center: { x: 195, y: 300 }, scale: 0.5 });
 	});
 
 	test("x y <scale> pinches around that point", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "pinch", "100", "200", "2")).toBe(0);
 		expect(h.driver.callsOf("pinch")[0]).toMatchObject({ center: { x: 100, y: 200 }, scale: 2 });
 	});
 
 	test("--duration and --radius go to the driver", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "pinch", "2", "--duration", "900", "--radius", "60")).toBe(0);
 		expect(h.driver.callsOf("pinch")[0]).toMatchObject({ opts: { durationMs: 900, radius: 60 } });
 	});
 
 	test("a driver without two-finger support: exit 1, E_UNSUPPORTED, nothing sent", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { capabilities: { pinch: false } });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { capabilities: { pinch: false } });
 		expect(await h.run("gesture", "pinch", "2", "--json")).toBe(1);
-		expect(doc(h.c).error).toMatchObject({
+		expect(uiTesting.doc(h.c).error).toMatchObject({
 			code: "failed",
 			details: { driver: "E_UNSUPPORTED", capability: "pinch" },
 		});
-		expect(doc(h.c).error.hint).toContain("warden-uiad");
+		expect(uiTesting.doc(h.c).error.hint).toContain("warden-uiad");
 		expect(h.driver.callsOf("pinch")).toHaveLength(0);
 	});
 
@@ -119,17 +119,17 @@ describe("gesture pinch", () => {
 			["@e1", "abc"],
 			["@e1", "1"],
 		]) {
-			const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+			const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 			expect(await h.run("gesture", "pinch", ...argv, "--json")).toBe(1);
-			expect(doc(h.c).error.code).toBe("usage");
+			expect(uiTesting.doc(h.c).error.code).toBe("usage");
 			expect(h.driver.callsOf("pinch")).toHaveLength(0);
 		}
 	});
 
 	test("--json: command, action and the numbers used", async () => {
-		const h = harness([LIST]);
+		const h = uiTesting.harness([LIST]);
 		expect(await h.run("gesture", "pinch", "id=list", "2", "--json")).toBe(0);
-		expect(doc(h.c)).toMatchObject({
+		expect(uiTesting.doc(h.c)).toMatchObject({
 			ok: true,
 			command: "gesture pinch",
 			result: {
@@ -144,7 +144,7 @@ describe("gesture pinch", () => {
 	});
 
 	test("records the step, with the radius only when given", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("gesture", "pinch", "2");
 		await h.run("gesture", "pinch", "0.5", "--radius", "50", "--duration", "700");
 		expect(h.steps.map((step) => [step.action, step.args])).toEqual([
@@ -154,18 +154,21 @@ describe("gesture pinch", () => {
 	});
 
 	test("--settle reports what changed", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "pinch", "2", "--settle", "--json")).toBe(0);
-		expect(doc(h.c).result.settled).toMatchObject({ quiet: true });
+		expect(uiTesting.doc(h.c).result.settled).toMatchObject({ quiet: true });
 	});
 });
 
 describe("gesture rotate", () => {
 	test("positive degrees around the screen centre", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "rotate", "90", "--json")).toBe(0);
 		expect(h.driver.callsOf("rotate")[0]).toMatchObject({ center: CENTRE, degrees: 90, opts: { durationMs: 500 } });
-		expect(doc(h.c)).toMatchObject({ command: "gesture rotate", result: { action: "gesture-rotate", degrees: 90 } });
+		expect(uiTesting.doc(h.c)).toMatchObject({
+			command: "gesture rotate",
+			result: { action: "gesture-rotate", degrees: 90 },
+		});
 	});
 
 	test("--json rounds a derived radius to 0.01", async () => {
@@ -174,13 +177,13 @@ describe("gesture rotate", () => {
 				children: [driverFixtures.el("other", { id: "sq", frame: { x: 20, y: 100, width: 333, height: 333 } })],
 			}),
 		]);
-		const h = harness([square]);
+		const h = uiTesting.harness([square]);
 		expect(await h.run("gesture", "rotate", "id=sq", "45", "--json")).toBe(0);
-		expect(doc(h.c)).toMatchObject({ result: { radius: 99.9 } });
+		expect(uiTesting.doc(h.c)).toMatchObject({ result: { radius: 99.9 } });
 	});
 
 	test("negative degrees parse and reach the driver", async () => {
-		const h = harness([LIST]);
+		const h = uiTesting.harness([LIST]);
 		expect(await h.run("gesture", "rotate", "id=list", "-45")).toBe(0);
 		expect(h.driver.callsOf("rotate")[0]).toMatchObject({ center: { x: 195, y: 300 }, degrees: -45 });
 		expect(await h.run("gesture", "rotate", "-30")).toBe(0);
@@ -188,20 +191,20 @@ describe("gesture rotate", () => {
 	});
 
 	test("0 degrees is a usage error", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "rotate", "0", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 		expect(h.driver.callsOf("rotate")).toHaveLength(0);
 	});
 
 	test("unsupported driver: E_UNSUPPORTED", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { capabilities: { pinch: false } });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { capabilities: { pinch: false } });
 		expect(await h.run("gesture", "rotate", "45", "--json")).toBe(1);
-		expect(doc(h.c).error.details).toMatchObject({ driver: "E_UNSUPPORTED" });
+		expect(uiTesting.doc(h.c).error.details).toMatchObject({ driver: "E_UNSUPPORTED" });
 	});
 
 	test("records the step", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("gesture", "rotate", "45");
 		expect(h.steps[0]).toMatchObject({ action: "gesture-rotate", args: { degrees: 45, ms: 500 } });
 	});
@@ -209,7 +212,7 @@ describe("gesture rotate", () => {
 
 describe("gesture path", () => {
 	test("one finger", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "path", "--path", "10,20 100,200 150,50", "--json")).toBe(0);
 		expect(h.driver.callsOf("gesture")).toHaveLength(1);
 		expect(h.driver.callsOf("gesture")[0]).toMatchObject({
@@ -224,14 +227,14 @@ describe("gesture path", () => {
 			],
 			opts: { durationMs: 600 },
 		});
-		expect(doc(h.c)).toMatchObject({
+		expect(uiTesting.doc(h.c)).toMatchObject({
 			command: "gesture path",
 			result: { action: "gesture-path", fingers: 1, durationMs: 600 },
 		});
 	});
 
 	test("two fingers, --duration, and the recorded form", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(
 			await h.run("gesture", "path", "--path", "100,400 100,200", "--path", "200,400;200,200", "--duration", "800")
 		).toBe(0);
@@ -249,17 +252,20 @@ describe("gesture path", () => {
 			["--path", "10,10 999,10"],
 			[],
 		]) {
-			const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+			const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 			expect(await h.run("gesture", "path", ...argv, "--json")).toBe(1);
-			expect(doc(h.c).error.code).toBe("usage");
+			expect(uiTesting.doc(h.c).error.code).toBe("usage");
 			expect(h.driver.callsOf("gesture")).toHaveLength(0);
 		}
 	});
 
 	test("two paths on a one-pointer driver: E_UNSUPPORTED; one path still works", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { capabilities: { pinch: false, maxPointers: 1 } });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { capabilities: { pinch: false, maxPointers: 1 } });
 		expect(await h.run("gesture", "path", "--path", "1,1 9,9", "--path", "5,5 8,8", "--json")).toBe(1);
-		expect(doc(h.c).error).toMatchObject({ code: "failed", details: { driver: "E_UNSUPPORTED", capability: "path" } });
+		expect(uiTesting.doc(h.c).error).toMatchObject({
+			code: "failed",
+			details: { driver: "E_UNSUPPORTED", capability: "path" },
+		});
 		expect(h.driver.callsOf("gesture")).toHaveLength(0);
 		expect(await h.run("gesture", "path", "--path", "1,1 9,9")).toBe(0);
 		expect(h.driver.callsOf("gesture")).toHaveLength(1);
@@ -276,17 +282,17 @@ describe("regrouped commands", () => {
 			["appearance"],
 			["video", "stop"],
 		]) {
-			const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+			const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 			expect(await h.run(...argv)).toBe(1);
 			expect(h.c.stderr.join("\n")).toContain("unknown command");
 		}
 	});
 
 	test("the grouped commands name themselves with the group in --json", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("screen", "rotate", "portrait", "--json")).toBe(0);
-		expect(doc(h.c)).toMatchObject({ command: "screen rotate", result: { action: "screen-rotate" } });
+		expect(uiTesting.doc(h.c)).toMatchObject({ command: "screen rotate", result: { action: "screen-rotate" } });
 		expect(await h.run("gesture", "swipe", "up", "--json")).toBe(0);
-		expect(doc(h.c)).toMatchObject({ command: "gesture swipe", result: { action: "gesture-swipe" } });
+		expect(uiTesting.doc(h.c)).toMatchObject({ command: "gesture swipe", result: { action: "gesture-swipe" } });
 	});
 });

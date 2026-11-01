@@ -9,7 +9,7 @@ import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { fakePerfDeps } from "../perf/testing";
 import { type TestContext, testContext } from "../testing";
-import { createPerfCollectCommand } from "./perf-collect";
+import { PerfCollectCommand } from "./perf-collect";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -38,7 +38,7 @@ describe("warden perf-collect", () => {
 	test("records itself as the collector and stops the session at its cap", async () => {
 		const { c, deps, id, sleep } = setup(3_000);
 		c.argv = ["--session", id];
-		const command = createPerfCollectCommand({ sleep, session: deps.session });
+		const command = new PerfCollectCommand({ sleep, session: deps.session }).definition();
 		expect(await command.run(c)).toBe(0);
 		const s = perfSessionStore.readSession(c, id);
 		expect(s).toMatchObject({ status: "stopped", stopReason: "max-duration" });
@@ -49,7 +49,7 @@ describe("warden perf-collect", () => {
 
 	test("a missing or malformed session is exit 1", async () => {
 		const { c, deps, sleep } = setup(3_000);
-		const command = createPerfCollectCommand({ sleep, session: deps.session });
+		const command = new PerfCollectCommand({ sleep, session: deps.session }).definition();
 		c.argv = ["--session", "nope"];
 		expect(await command.run(c)).toBe(1);
 		c.argv = ["--session", "20000101-000000-abcdef"];
@@ -62,14 +62,14 @@ describe("warden perf-collect", () => {
 		const { c, deps, id, sleep } = setup(3_000);
 		perfSessionStore.stopSession(c, deps.session, id, "user", { signalCollector: false });
 		c.argv = ["--session", id];
-		const command = createPerfCollectCommand({ sleep, session: deps.session });
+		const command = new PerfCollectCommand({ sleep, session: deps.session }).definition();
 		expect(await command.run(c)).toBe(1);
 		expect(perfSessionStore.readSession(c, id)).toMatchObject({ stopReason: "user", capturers: [] });
 		expect(c.stderr.join("\n")).toContain(`no running perf session ${id}`);
 	});
 
 	test("is hidden from --help", () => {
-		expect(createPerfCollectCommand().hidden).toBe(true);
+		expect(new PerfCollectCommand().definition().hidden).toBe(true);
 	});
 });
 
@@ -153,7 +153,7 @@ describe("warden perf-collect with a plan", () => {
 	test("hosts the collector, then at the cap runs the stop path: session stopped max-duration with a report", async () => {
 		const { c, deps, id, kit, collector } = planned(3_000);
 		c.argv = ["--session", id];
-		const command = createPerfCollectCommand({ perf: deps, kit, collector, session: deps.session });
+		const command = new PerfCollectCommand({ perf: deps, kit, collector, session: deps.session }).definition();
 		expect(await command.run(c)).toBe(0);
 		expect(perfSessionStore.readSession(c, id)).toMatchObject({ status: "stopped", stopReason: "max-duration" });
 		expect(existsSync(join(perfPaths.sessionDir(c, id), "metrics", "samples.jsonl"))).toBe(true);
@@ -173,13 +173,13 @@ describe("warden perf-collect with a plan", () => {
 			if (n === 4) stop.abort();
 		};
 		c.argv = ["--session", id];
-		const command = createPerfCollectCommand({
+		const command = new PerfCollectCommand({
 			perf: deps,
 			kit,
 			collector,
 			session: deps.session,
 			signal: stop.signal,
-		});
+		}).definition();
 		expect(await command.run(c)).toBe(0);
 		expect(perfSessionStore.readSession(c, id)).toMatchObject({ status: "running" });
 		expect(perfSessionStore.readSession(c, id)?.capturers.find((x) => x.kind === "metrics")?.state).toBe("stopped");

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { CrashDeps } from "@delacour/warden-sdk/ops/perf/crashes";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
-import { createPerfCommand } from "../commands/perf";
+import { PerfCommand } from "../commands/perf";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { perfCrashes, registerCrashes } from "./crashes";
 import { asMe, fakePerfDeps } from "./testing";
@@ -220,6 +220,6 @@ test("crashes is wired onto warden perf with its flags", async () => {
 	ctx?.cleanup();
 	ctx = c;
 	c.db.recordDevice({ platform: "ios", id: SIM1, name: "dev" }, 1);
-	expect(await createPerfCommand(deps, [registerCrashes]).run(c)).toBe(1);
+	expect(await new PerfCommand(deps, [registerCrashes]).definition().run(c)).toBe(1);
 	expect(JSON.parse(c.stdout.join("\n")).error.code).toBe("usage");
 });

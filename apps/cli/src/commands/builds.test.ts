@@ -6,7 +6,7 @@ import { buildLock } from "@delacour/warden-builds/lock";
 import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { buildsCommand, inferPlatform } from "./builds";
+import { buildsCli, buildsCommand } from "./builds";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -46,10 +46,10 @@ async function seed(c: TestContext, hash: string, lastUsed: number): Promise<str
 
 describe("inferPlatform", () => {
 	test("from extension or flag", () => {
-		expect(inferPlatform("/x/App.app/", undefined)).toEqual({ success: true, data: "ios" });
-		expect(inferPlatform("/x/a.apk", undefined)).toEqual({ success: true, data: "android" });
-		expect(inferPlatform("/x/a.zip", undefined).success).toBe(false);
-		expect(inferPlatform("/x/a.zip", "android")).toEqual({ success: true, data: "android" });
+		expect(buildsCli.inferPlatform("/x/App.app/", undefined)).toEqual({ success: true, data: "ios" });
+		expect(buildsCli.inferPlatform("/x/a.apk", undefined)).toEqual({ success: true, data: "android" });
+		expect(buildsCli.inferPlatform("/x/a.zip", undefined).success).toBe(false);
+		expect(buildsCli.inferPlatform("/x/a.zip", "android")).toEqual({ success: true, data: "android" });
 	});
 });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createPerfCommand } from "../commands/perf";
+import { PerfCommand } from "../commands/perf";
 import { type TestContext, testContext } from "../testing";
 import { registerMemory } from "./memory";
 import { registerMetrics } from "./metrics";
@@ -15,7 +15,7 @@ function setup(argv: string[]) {
 	ctx = c;
 	asMe(c);
 	c.db.recordDevice(droid, c.now());
-	return { c, command: createPerfCommand(fakePerfDeps([droid]), [registerMetrics, registerMemory]) };
+	return { c, command: new PerfCommand(fakePerfDeps([droid]), [registerMetrics, registerMemory]).definition() };
 }
 
 describe("registerMetrics / registerMemory", () => {

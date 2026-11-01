@@ -4,8 +4,8 @@ import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/test
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { createBatchCommand } from "./batch";
-import { harness } from "./batch.testing";
+import { BatchCommand } from "./batch";
+import { batchTesting } from "./batch.testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -80,8 +80,8 @@ function freeForeign(c: TestContext, sims: FixtureSim[]) {
 describe("warden batch elastic workers", () => {
 	test("3 wanted, 2 fit: starts with 2; a freed slot lets the 3rd join and take jobs", async () => {
 		const { c, sims } = setup();
-		const h = harness({ manual: true });
-		const done = createBatchCommand(h.deps).run(c);
+		const h = batchTesting.harness({ manual: true });
+		const done = new BatchCommand(h.deps).definition().run(c);
 		await until(() => h.jobs().length === 2);
 		expect(new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID))).toEqual(new Set(["U1", "U2"]));
 		expect(c.stderr.join("\n")).toContain("host fits 2 of 3 ios workers");
@@ -111,8 +111,8 @@ describe("warden batch elastic workers", () => {
 
 	test("the queue drains before the late claim lands: the claim is abandoned and nothing stays leased", async () => {
 		const { c } = setup();
-		const h = harness({ manual: true });
-		const done = createBatchCommand(h.deps).run(c);
+		const h = batchTesting.harness({ manual: true });
+		const done = new BatchCommand(h.deps).definition().run(c);
 		await until(() => h.jobs().length === 2);
 		for (const job of ["a", "b", "c", "d", "e"]) {
 			await until(() => h.jobs().some((j) => j.opts.env.WARDEN_JOB === job));
@@ -128,8 +128,8 @@ describe("warden batch elastic workers", () => {
 
 	test("SIGINT aborts the pending claim: exit 130, every lease released", async () => {
 		const { c } = setup();
-		const h = harness({ manual: true });
-		const done = createBatchCommand(h.deps).run(c);
+		const h = batchTesting.harness({ manual: true });
+		const done = new BatchCommand(h.deps).definition().run(c);
 		await until(() => h.jobs().length === 2);
 		await until(() => c.db.listQueue().length === 1);
 		h.signals.get("SIGINT")?.();
@@ -141,8 +141,8 @@ describe("warden batch elastic workers", () => {
 
 	test("WARDEN_CAPACITY=off: all workers claimed up front, no elastic note", async () => {
 		const { c } = setup({ WARDEN_CAPACITY: "off" });
-		const h = harness();
-		expect(await createBatchCommand(h.deps).run(c)).toBe(0);
+		const h = batchTesting.harness();
+		expect(await new BatchCommand(h.deps).definition().run(c)).toBe(0);
 		expect(new Set(h.jobs().map((j) => j.opts.env.WARDEN_UDID)).size).toBe(3);
 		expect(c.stderr.join("\n")).not.toContain("host fits");
 		expect(c.db.listLeases().filter((l) => !(l.owner.kind === "agent" && l.owner.sessionId === "other"))).toEqual([]);

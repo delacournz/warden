@@ -11,7 +11,7 @@ import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { contextBuilder } from "../context";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
-import { createAppCommand } from "./app";
+import { AppCommand } from "./app";
 
 let ctx: TestContext | undefined;
 let deviceDir: string | undefined;
@@ -100,7 +100,7 @@ describe("warden app fingerprint (native+js)", () => {
 				],
 			})
 		);
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
 		appFingerprintJsonSchema.parse(out);
 		expect(out.native).toEqual({ ios: HASH });
@@ -114,7 +114,7 @@ describe("warden app fingerprint", () => {
 		const c = setup(["fingerprint", "--json"]);
 		const ui = scriptedUi();
 		c.ui = ui;
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
 		appFingerprintJsonSchema.parse(out);
 		expect(out).toMatchObject({ project: "demo", fingerprints: { ios: HASH, android: `${HASH}ff` } });
@@ -125,7 +125,7 @@ describe("warden app fingerprint", () => {
 
 	test("one platform, text output", async () => {
 		const c = setup(["fingerprint", "android"]);
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toBe(`android  ${HASH}ff`);
 	});
 });
@@ -138,7 +138,7 @@ describe("git facts of one command", () => {
 		const calls: string[][] = [];
 		const c = setup(["fingerprint", "ios", "--json"], [], calls);
 		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(rev(calls)).toEqual([]);
 	});
 
@@ -167,7 +167,7 @@ describe("git facts of one command", () => {
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
 		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).source).toBe("build");
 		expect(rev(calls)).toEqual([]);
 	});
@@ -177,14 +177,14 @@ describe("warden app ensure", () => {
 	test("--kind with --variant is refused before anything is built", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ensure", "ios", "--no-install", "--kind", "simulator", "--variant", "dev"], [], calls);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--kind and --variant can't be combined");
 		expect(calls.some((cmd) => cmd.includes("make-ios"))).toBe(false);
 	});
 
 	test("--kind takes dev, simulator or release only", async () => {
 		const c = setup(["ensure", "ios", "--no-install", "--kind", "debug"]);
-		expect(await createAppCommand(deps).run(c)).not.toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).not.toBe(0);
 	});
 
 	test("--udid: cache hit → simctl install, then installed on the second run", async () => {
@@ -199,7 +199,7 @@ describe("warden app ensure", () => {
 			calls
 		);
 		const path = await seed(c);
-		const cmd = createAppCommand(deps);
+		const cmd = new AppCommand(deps).definition();
 		expect(await cmd.run(c)).toBe(0);
 		expect(appEnsureJsonSchema.parse(JSON.parse(c.stdout.join("\n")))).toEqual({
 			appPath: path,
@@ -237,7 +237,7 @@ describe("warden app ensure", () => {
 			hash: HASH,
 			installedAt: 1,
 		});
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).source).toBe("cache");
 		const verbs = calls.map((x) => x.join(" ")).filter((x) => /simctl (un)?install/.test(x));
 		expect(verbs).toEqual(["xcrun simctl uninstall U1 com.demo", expect.stringContaining("xcrun simctl install U1")]);
@@ -245,19 +245,19 @@ describe("warden app ensure", () => {
 
 	test("deprecated --clean still means --install-mode reinstall", async () => {
 		const c = setup(["ensure", "ios", "--no-install", "--clean"]);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--install-mode needs a device");
 	});
 
 	test("--install-mode with --no-install is an error", async () => {
 		const c = setup(["ensure", "ios", "--no-install", "--install-mode", "clean"]);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--install-mode needs a device");
 	});
 
 	test("--reset-keychain without --install-mode is an error", async () => {
 		const c = setup(["ensure", "ios", "--udid", "U1", "--reset-keychain"]);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--reset-keychain needs --install-mode");
 	});
 
@@ -278,7 +278,7 @@ describe("warden app ensure", () => {
 			},
 			c.now()
 		);
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(new BuildsTable(c.db).getInstall("ios", "U7", "com.demo")).toBeDefined();
 	});
 
@@ -300,33 +300,33 @@ describe("warden app ensure", () => {
 			c.now()
 		);
 		c.argv = ["ensure", "ios", "--lease", lease.id];
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toContain("installed on U9");
 	});
 
 	test("no device leased and no flags → exit 1 with a hint", async () => {
 		const c = setup(["ensure", "ios"]);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("warden claim ios");
 	});
 
 	test("--no-install --no-eas --no-build on a miss → exit 1, nothing built", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ensure", "ios", "--no-install", "--no-eas", "--no-build"], [], calls);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain(`no build for fingerprint ${HASH}`);
 		expect(calls.some((cmdline) => cmdline.includes("eas-cli"))).toBe(false);
 	});
 
 	test("unknown subcommand / bad platform / unknown option → exit 1", async () => {
 		const c = setup(["nope"]);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("unknown command 'nope'");
 		c.argv = ["ensure", "windows"];
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain('unknown platform "windows"');
 		c.argv = ["ensure", "ios", "--bogus"];
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
 	});
 
@@ -341,7 +341,7 @@ describe("warden app ensure", () => {
 		await seed(c);
 		const ui = scriptedUi({ interactive: true, select: ["ios"] });
 		c.ui = ui;
-		expect(await createAppCommand(deps).run(c)).toBe(0);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(ui.events[0]).toBe("select: Which platform?");
 		expect(ui.events[1]).toBe("spin: ensuring the ios app…");
 		expect(ui.events.slice(-2)).toEqual(["ok: ios app ready (cache)", "stop"]);
@@ -350,20 +350,20 @@ describe("warden app ensure", () => {
 
 	test("no platform, not a terminal → exit 1", async () => {
 		const c = setup(["ensure", "--no-install"]);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("missing platform");
 	});
 
 	test("--project that is not a directory → one clear error, nothing spawned", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ensure", "ios", "--no-install", "--project", "apps/nope"], [], calls);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain(
 			`--project apps/nope: no such directory ${join(c.cwd, "apps/nope")} (cwd ${c.cwd})`
 		);
 		expect(calls).toEqual([]);
 		c.argv = ["fingerprint", "ios", "--project", "apps/nope"];
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(calls).toEqual([]);
 	});
 });
@@ -374,7 +374,7 @@ describe("warden app ensure on a physical iPhone", () => {
 	test("--kind simulator is refused with the way out; nothing is built or installed", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ensure", "ios", "--udid", IPHONE, "--kind", "simulator"], [], calls);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("simulator kind is not supported on a physical iPhone");
 		expect(calls.some((cmd) => cmd.includes("devicectl") || cmd.includes("xcodebuild") || cmd.includes("simctl"))).toBe(
 			false
@@ -383,7 +383,7 @@ describe("warden app ensure on a physical iPhone", () => {
 
 	test("--variant builds are simulator builds: refused on a phone", async () => {
 		const c = setup(["ensure", "ios", "--udid", IPHONE, "--variant", "dev"]);
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("use --kind release");
 	});
 
@@ -391,7 +391,7 @@ describe("warden app ensure on a physical iPhone", () => {
 		const calls: string[][] = [];
 		const c = setup(["ensure", "ios", "--udid", IPHONE, "--kind", "dev", "--no-build", "--no-eas"], [], calls);
 		c.env = { ...c.env, WARDEN_IOS_TEAM_ID: "ABCDE12345" };
-		expect(await createAppCommand(deps).run(c)).toBe(1);
+		expect(await new AppCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain(`${HASH}:device-ABCDE12345:dev`);
 	});
 

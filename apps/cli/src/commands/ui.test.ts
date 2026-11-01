@@ -5,7 +5,7 @@ import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { uiCommand } from "./ui";
-import { cleanupHarnesses, doc, UDID as HARNESS_UDID, harness, LOGIN } from "./ui.testing";
+import { UDID as HARNESS_UDID, LOGIN, uiTesting } from "./ui.testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -206,12 +206,12 @@ describe("warden ui status", () => {
 });
 
 describe("warden ui on a device a live warden process holds (refuse unless --force)", () => {
-	afterEach(cleanupHarnesses);
+	afterEach(uiTesting.cleanupHarnesses);
 	const RUN = { pid: 4242, label: "warden e2e" };
 	const busy = `device sim (${HARNESS_UDID}) is in use by agent me (pid 4242, warden e2e); re-run with --force to drive it anyway`;
 
 	test("live run pid on the caller's own lease: exit 2 naming owner, pid and label; no driver opened", async () => {
-		const h = harness(() => snap(), { lease: RUN, pidAlive: (pid) => pid === 4242 });
+		const h = uiTesting.harness(() => snap(), { lease: RUN, pidAlive: (pid) => pid === 4242 });
 		expect(await h.run("snapshot")).toBe(2);
 		expect(h.c.stderr.join("\n")).toContain(busy);
 		expect(h.opens.count).toBe(0);
@@ -219,9 +219,9 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 	});
 
 	test("--json: one failure document with code device_busy", async () => {
-		const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { lease: RUN, pidAlive: () => true });
 		expect(await h.run("press", "id=sign-in-submit", "--json")).toBe(2);
-		expect(doc(h.c)).toEqual({ ok: false, command: "press", error: { code: "device_busy", message: busy } });
+		expect(uiTesting.doc(h.c)).toEqual({ ok: false, command: "press", error: { code: "device_busy", message: busy } });
 		expect(h.opens.count).toBe(0);
 	});
 
@@ -235,31 +235,31 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 			["close"],
 			["gesture", "swipe", "up"],
 		]) {
-			const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+			const h = uiTesting.harness(() => snap(), { lease: RUN, pidAlive: () => true });
 			expect(await h.run(...argv)).toBe(2);
 			expect(h.opens.count).toBe(0);
 		}
 	});
 
 	test("status still reports (it opens no driver)", async () => {
-		const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { lease: RUN, pidAlive: () => true });
 		expect(await h.run("status")).toBe(0);
 	});
 
 	test("dead run pid: proceeds", async () => {
-		const h = harness(() => snap(), { lease: RUN, pidAlive: () => false });
+		const h = uiTesting.harness(() => snap(), { lease: RUN, pidAlive: () => false });
 		expect(await h.run("snapshot")).toBe(0);
 		expect(h.opens.count).toBe(1);
 	});
 
 	test("same owner, no holder pid (a plain claim): proceeds", async () => {
-		const h = harness(() => snap(), { pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { pidAlive: () => true });
 		expect(await h.run("snapshot")).toBe(0);
 		expect(h.opens.count).toBe(1);
 	});
 
 	test("--force: proceeds as before", async () => {
-		const h = harness(() => snap(), { lease: RUN, pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { lease: RUN, pidAlive: () => true });
 		expect(await h.run("snapshot", "--force")).toBe(0);
 		expect(h.opens.count).toBe(1);
 	});
@@ -275,35 +275,35 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 });
 
 describe("warden ui on the caller's own `warden dev` device (shared lease: attach, don't steal)", () => {
-	afterEach(cleanupHarnesses);
+	afterEach(uiTesting.cleanupHarnesses);
 	const DEV = { pid: 4242, shared: true };
-	const leaseId = (h: ReturnType<typeof harness>) => h.c.db.listLeases()[0]?.id ?? "";
+	const leaseId = (h: ReturnType<typeof uiTesting.harness>) => h.c.db.listLeases()[0]?.id ?? "";
 
 	test("snapshot proceeds without --force; --json carries attachedTo: <dev lease id>", async () => {
-		const h = harness(() => snap(), { lease: DEV, pidAlive: (pid) => pid === 4242 });
+		const h = uiTesting.harness(() => snap(), { lease: DEV, pidAlive: (pid) => pid === 4242 });
 		const id = leaseId(h);
 		expect(await h.run("snapshot", "--json")).toBe(0);
-		expect(doc(h.c)).toMatchObject({ ok: true, command: "snapshot", attachedTo: id });
+		expect(uiTesting.doc(h.c)).toMatchObject({ ok: true, command: "snapshot", attachedTo: id });
 		expect(h.opens.count).toBe(1);
 	});
 
 	test("open says it is sharing the dev lease", async () => {
-		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { lease: DEV, pidAlive: () => true });
 		expect(await h.run("open", "com.x.y")).toBe(0);
 		expect(h.c.stdout.join("\n")).toContain(`sharing ${leaseId(h)} with warden dev (pid 4242)`);
 	});
 
 	test("status reports action attached", async () => {
-		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { lease: DEV, pidAlive: () => true });
 		expect(await h.run("status", "--json")).toBe(0);
-		expect(doc(h.c).result.lease.action).toBe("attached");
+		expect(uiTesting.doc(h.c).result.lease.action).toBe("attached");
 	});
 
 	test("close --release keeps the dev lease (warden dev owns it) and says so", async () => {
-		const h = harness(() => snap(), { lease: DEV, pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { lease: DEV, pidAlive: () => true });
 		const id = leaseId(h);
 		expect(await h.run("close", "--release", "--json")).toBe(0);
-		const out = doc(h.c);
+		const out = uiTesting.doc(h.c);
 		expect(out.attachedTo).toBe(id);
 		expect(out.result.released).toBe(false);
 		expect(out.warnings.join("\n")).toContain(`not released: ${id} belongs to warden dev (pid 4242)`);
@@ -311,16 +311,16 @@ describe("warden ui on the caller's own `warden dev` device (shared lease: attac
 	});
 
 	test("a running e2e suite (not shared) is still refused", async () => {
-		const h = harness(() => snap(), { lease: { pid: 4242, label: "warden e2e" }, pidAlive: () => true });
+		const h = uiTesting.harness(() => snap(), { lease: { pid: 4242, label: "warden e2e" }, pidAlive: () => true });
 		expect(await h.run("snapshot")).toBe(2);
 		expect(h.opens.count).toBe(0);
 	});
 
 	test("dev holder gone: an ordinary own lease again (no attachedTo, close --release releases)", async () => {
-		const h = harness(() => snap(), { lease: DEV, pidAlive: () => false });
+		const h = uiTesting.harness(() => snap(), { lease: DEV, pidAlive: () => false });
 		const id = leaseId(h);
 		expect(await h.run("close", "--release", "--json")).toBe(0);
-		const out = doc(h.c);
+		const out = uiTesting.doc(h.c);
 		expect(out.attachedTo).toBeUndefined();
 		expect(out.result.released).toBe(true);
 		expect(h.c.db.getLease(id)).toBeUndefined();

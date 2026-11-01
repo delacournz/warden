@@ -6,7 +6,7 @@ import type { Owner } from "@delacour/warden-store/types";
 import { gcCommand } from "../commands/gc";
 import { hookCommand } from "../commands/hook";
 import { releaseCommand } from "../commands/release";
-import { createUiCommand } from "../commands/ui";
+import { UiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { defaultUiDeps } from "./driver";
@@ -142,7 +142,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		);
 		c.argv = ["close", "--udid", UDID, "--json"];
 		const began = Date.now();
-		expect(await createUiCommand(defaultUiDeps).run(c)).toBe(0);
+		expect(await new UiCommand(defaultUiDeps).definition().run(c)).toBe(0);
 		expect(Date.now() - began).toBeLessThan(2500);
 		expect(JSON.parse(c.stdout.join("\n")).result.helper).toEqual({ stopped: true, how: "sigterm" });
 		expect(existsSync(socketPath)).toBe(false);
@@ -158,7 +158,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 			c.now()
 		);
 		c.argv = ["close", "--release", "--udid", UDID];
-		expect(await createUiCommand(defaultUiDeps).run(c)).toBe(0);
+		expect(await new UiCommand(defaultUiDeps).definition().run(c)).toBe(0);
 		expect(c.db.listLeases()).toHaveLength(0);
 		expect(existsSync(socketPath)).toBe(false);
 	});

@@ -6,7 +6,7 @@ import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { splitCommand, splitOperands } from "../lease-options";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createRunCommand, type RunChildStdout, type RunDeps } from "./run";
+import { type RunChildStdout, RunCommand, type RunDeps } from "./run";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -102,7 +102,7 @@ describe("warden run", () => {
 		let clock = c.now();
 		c.now = () => clock;
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 
 		const [child] = h.spawned;
@@ -132,7 +132,7 @@ describe("warden run", () => {
 			const c = setup(argv);
 			c.env = { ...c.env, ...env };
 			const h = harness();
-			const running = createRunCommand(h.deps).run(c);
+			const running = new RunCommand(h.deps).definition().run(c);
 			await waitFor(() => h.spawned.length > 0);
 			h.finish(0);
 			await running;
@@ -150,7 +150,7 @@ describe("warden run", () => {
 	test("forwards SIGHUP (the terminal went away) to the child", async () => {
 		const c = setup(["ios", "--", "sleep", "60"]);
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		h.signals.get("SIGHUP")?.();
 		expect(h.kills).toEqual(["SIGHUP"]);
@@ -161,7 +161,7 @@ describe("warden run", () => {
 	test("forwards SIGINT/SIGTERM to the child", async () => {
 		const c = setup(["ios", "--", "sleep", "60"]);
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		h.signals.get("SIGINT")?.();
 		h.signals.get("SIGTERM")?.();
@@ -174,7 +174,7 @@ describe("warden run", () => {
 	test("leases one port per --port spec, exports WARDEN_PORT_<i>, releases on exit", async () => {
 		const c = setup(["ios", "--port", "8091:20", "--port", "3208:20", "--", "true"]);
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		const env = h.spawned[0]?.env;
 		expect(env?.WARDEN_PORT_0).toBe("8092");
@@ -190,7 +190,7 @@ describe("warden run", () => {
 	test("bad --port spec → exit 1, device leases released", async () => {
 		const c = setup(["ios", "--port", "nope", "--", "true"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(h.spawned).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
 	});
@@ -198,14 +198,14 @@ describe("warden run", () => {
 	test("missing command → exit 1, nothing claimed", async () => {
 		const c = setup(["ios"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.db.listLeases()).toEqual([]);
 	});
 
 	test("spawn failure → leases released, exit 127", async () => {
 		const c = setup(["ios", "--", "nope"]);
 		const h = harness({ spawnThrows: true });
-		expect(await createRunCommand(h.deps).run(c)).toBe(127);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(127);
 		expect(c.db.listLeases()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("ENOENT");
 	});
@@ -213,7 +213,7 @@ describe("warden run", () => {
 	test("claim failure → exit 1, child never spawned", async () => {
 		const c = setup(["ios", "--count", "3", "--max", "2", "--no-wait", "--", "true"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(h.spawned).toEqual([]);
 	});
 
@@ -225,7 +225,7 @@ describe("warden run", () => {
 			seen.push(`${platform} ${deviceId} ${opts.project} eas=${opts.eas} build=${opts.build}`);
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(seen.sort()).toEqual(["ios U1 apps/x eas=false build=true", "ios U2 apps/x eas=false build=true"]);
 		expect(h.spawned[0]?.env.WARDEN_APP_PATH).toBe("/c/A.app");
@@ -246,7 +246,7 @@ describe("warden run", () => {
 			inFlight--;
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(peak).toBe(2);
 		h.finish(0);
@@ -263,7 +263,7 @@ describe("warden run", () => {
 			settled++;
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 		};
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(settled).toBe(1);
 		expect(c.db.listLeases()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("app on U1: install failed");
@@ -276,7 +276,7 @@ describe("warden run", () => {
 			success: false,
 			error: { code: "build_failed", message: "no build for fingerprint H" },
 		});
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(h.spawned).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
 		expect(c.stderr.join("\n")).toContain("no build for fingerprint H");
@@ -285,7 +285,7 @@ describe("warden run", () => {
 	test("everything after -- reaches the child untouched (options, --help, a second --)", async () => {
 		const c = setup(["ios", "--count", "2", "--", "bun", "test", "--x", "--help", "--count", "9", "--", "y"]);
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(h.spawned[0]?.cmd).toEqual(["bun", "test", "--x", "--help", "--count", "9", "--", "y"]);
 		expect(c.db.listLeases()).toHaveLength(2);
@@ -296,7 +296,7 @@ describe("warden run", () => {
 	test("options after the platform are parsed, the platform can come after options", async () => {
 		const c = setup(["--label", "x", "ios", "--count", "2", "--", "true"]);
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(c.db.listLeases().map((l) => l.label)).toEqual(["x", "x"]);
 		expect(h.spawned[0]?.stdout).toBe("inherit");
@@ -307,7 +307,7 @@ describe("warden run", () => {
 	test("--json: one JSON line on stdout; the child's stdout goes to stderr", async () => {
 		const c = setup(["ios", "--json", "--", "true"]);
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		const lines = c.stdout.join("\n").split("\n");
 		expect(lines).toHaveLength(1);
@@ -330,7 +330,7 @@ describe("warden run", () => {
 			ui.events.push("spawn");
 			return spawn(cmd, env, stdout);
 		};
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(ui.events[0]).toBe("select: Which platform?");
 		expect(ui.events[1]).toStartWith("spin: claiming 1 iphone-17 ios");
@@ -342,7 +342,7 @@ describe("warden run", () => {
 	test("no platform, not a terminal → exit 1, nothing claimed", async () => {
 		const c = setup(["--", "true"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("missing platform");
 		expect(c.db.listLeases()).toEqual([]);
 	});
@@ -350,7 +350,7 @@ describe("warden run", () => {
 	test("unknown option before -- → commander usage error, exit 1", async () => {
 		const c = setup(["ios", "--bogus", "--", "true"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("unknown option '--bogus'");
 		expect(h.spawned).toEqual([]);
 	});
@@ -358,14 +358,14 @@ describe("warden run", () => {
 	test("--no-eas without --app → exit 1", async () => {
 		const c = setup(["ios", "--no-eas", "--", "true"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("need --app");
 	});
 
 	test("--project without --app → exit 1", async () => {
 		const c = setup(["ios", "--project", "x", "--", "true"]);
 		const h = harness();
-		expect(await createRunCommand(h.deps).run(c)).toBe(1);
+		expect(await new RunCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.db.listLeases()).toEqual([]);
 	});
 });
@@ -377,7 +377,7 @@ describe("warden run auto-gc (16-1)", () => {
 		const c = ctx;
 		c.env = allowAutoGc({ ...c.env, ...OWNER_ENV });
 		const h = harness();
-		const running = createRunCommand(h.deps).run(c);
+		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(order.gcBeforeClaim()).toBe(false);
 		expect(autoGcConsidered(c.db)).toBe(true);

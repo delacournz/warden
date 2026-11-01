@@ -11,7 +11,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { devShim } from "../../src/commands/install";
+import { install } from "../../src/commands/install";
 
 /**
  * What `cli:link` overwrites, remembered so `cli:unlink` can put it back.
@@ -84,7 +84,7 @@ export function snapshotLink(paths: LinkPaths): Snapshot {
 export function writeShim(paths: LinkPaths, cliPath: string): void {
 	mkdirSync(dirname(paths.bin), { recursive: true });
 	const staged = `${paths.bin}.tmp-${process.pid}`;
-	writeFileSync(staged, devShim(cliPath));
+	writeFileSync(staged, install.devShim(cliPath));
 	chmodSync(staged, 0o755);
 	renameSync(staged, paths.bin);
 }

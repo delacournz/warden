@@ -6,7 +6,7 @@ import type { RepackInput } from "@delacour/warden-builds/repack";
 import { resultFactory } from "@delacour/warden-types/result";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { createRepackCommand, type RepackRun } from "./repack";
+import { RepackCommand, type RepackRun } from "./repack";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -39,10 +39,12 @@ describe("warden repack", () => {
 	test("--json reports the keys, artifact and bundle time; the input is the simulator kind of the project", async () => {
 		const seen: RepackInput[] = [];
 		const c = setup(["ios", "--json"]);
-		const code = await createRepackCommand(deps, async (input) => {
+		const code = await new RepackCommand(deps, async (input) => {
 			seen.push(input);
 			return repacked;
-		}).run(c);
+		})
+			.definition()
+			.run(c);
 		expect(code).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
 			result: "repacked",
@@ -62,27 +64,33 @@ describe("warden repack", () => {
 	test("--force reaches the repack", async () => {
 		const seen: RepackInput[] = [];
 		const c = setup(["android", "--force", "--json"]);
-		await createRepackCommand(deps, async (input) => {
+		await new RepackCommand(deps, async (input) => {
 			seen.push(input);
 			return repacked;
-		}).run(c);
+		})
+			.definition()
+			.run(c);
 		expect(seen[0]).toMatchObject({ platform: "android", force: true });
 	});
 
 	test("a reused repack is reported as reused, exit 0", async () => {
 		const c = setup(["ios", "--json"]);
-		const code = await createRepackCommand(deps, async () =>
+		const code = await new RepackCommand(deps, async () =>
 			resultFactory.ok({ kind: "reused", artifact: "/a", hash: "h", baseHash: "b", jsKey: "j" })
-		).run(c);
+		)
+			.definition()
+			.run(c);
 		expect(code).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).result).toBe("reused");
 	});
 
 	test("a fallback names the reason and exits 1", async () => {
 		const c = setup(["android", "--json"]);
-		const code = await createRepackCommand(deps, async () =>
+		const code = await new RepackCommand(deps, async () =>
 			resultFactory.ok({ kind: "fallback", reason: "images changed" })
-		).run(c);
+		)
+			.definition()
+			.run(c);
 		expect(code).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
 			result: "fallback",
@@ -93,7 +101,9 @@ describe("warden repack", () => {
 
 	test("an error is reported on stderr, exit 1, and as the --json failure envelope", async () => {
 		const c = setup(["ios", "--json"]);
-		const code = await createRepackCommand(deps, async () => resultFactory.err("repack: metro exploded")).run(c);
+		const code = await new RepackCommand(deps, async () => resultFactory.err("repack: metro exploded"))
+			.definition()
+			.run(c);
 		expect(code).toBe(1);
 		expect(c.stderr.join("\n")).toContain("warden repack: repack: metro exploded");
 		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({
@@ -105,6 +115,6 @@ describe("warden repack", () => {
 
 	test("an unknown platform is refused", async () => {
 		const c = setup(["windows"]);
-		expect(await createRepackCommand(deps, async () => repacked).run(c)).toBe(1);
+		expect(await new RepackCommand(deps, async () => repacked).definition().run(c)).toBe(1);
 	});
 });

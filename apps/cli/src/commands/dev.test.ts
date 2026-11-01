@@ -14,17 +14,9 @@ import { callDevControl } from "../dev-control";
 import { listDevSessions } from "../dev-session";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
-import {
-	createDevCommand,
-	type DevDeps,
-	type DevSpawnOutput,
-	type DevUiOpts,
-	defaultDevDeps,
-	devClientUrl,
-	selectDevUi,
-} from "./dev";
+import { DevCommand, type DevDeps, type DevSpawnOutput, type DevUiOpts, defaultDevDeps, dev } from "./dev";
 import type { DevMetroMode, DevReady, DevUi, MetroTerminal } from "./dev-ui";
-import { plainDevUi } from "./dev-ui.plain";
+import { devUiPlain } from "./dev-ui.plain";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -100,7 +92,7 @@ async function waitFor(cond: () => boolean): Promise<void> {
 
 describe("devClientUrl", () => {
 	test("exp+<slug> dev-client link to the local Metro", () => {
-		expect(devClientUrl("exp+demo", 8082)).toBe(
+		expect(dev.devClientUrl("exp+demo", 8082)).toBe(
 			"exp+demo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8082"
 		);
 	});
@@ -120,7 +112,7 @@ describe("warden dev: showing the simulator", () => {
 		const ui = scriptedUi();
 		c.ui = ui;
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(shown(calls)).toEqual([["open", "devices://device/open?id=U1"]]);
 		expect(calls.findIndex((cmd) => cmd[0] === "open")).toBeLessThan(calls.findIndex((cmd) => cmd.includes("launch")));
@@ -133,7 +125,7 @@ describe("warden dev: showing the simulator", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--headless"], calls, hubRunning);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(shown(calls)).toEqual([]);
 		h.finish(0);
@@ -144,7 +136,7 @@ describe("warden dev: showing the simulator", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--udid", "U1"], calls, hubRunning);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(shown(calls)).toEqual([["open", "devices://device/open?id=U1"]]);
 		h.finish(0);
@@ -159,7 +151,7 @@ describe("warden dev: the simulator when dev ends", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Shutdown");
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(shutdowns(calls)).toEqual([]);
 		h.finish(0);
@@ -182,7 +174,7 @@ describe("warden dev: the simulator when dev ends", () => {
 			"Shutdown"
 		);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		h.finish(0);
 		expect(await running).toBe(0);
@@ -208,7 +200,7 @@ describe("warden dev: the simulator when dev ends", () => {
 			"Shutdown"
 		);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		h.finish(0);
 		expect(await running).toBe(0);
@@ -219,7 +211,7 @@ describe("warden dev: the simulator when dev ends", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, [], "Booted");
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		h.finish(0);
 		expect(await running).toBe(0);
@@ -231,7 +223,7 @@ describe("warden dev: the simulator when dev ends", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--no-shutdown"], calls, [], "Shutdown");
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		h.finish(0);
 		expect(await running).toBe(0);
@@ -243,7 +235,7 @@ describe("warden dev: the simulator when dev ends", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--udid", "U1"], calls);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		h.finish(0);
 		expect(await running).toBe(0);
@@ -271,7 +263,7 @@ describe("warden dev: the simulator when dev ends", () => {
 				},
 			};
 		};
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		const hup = signals.get("SIGHUP");
 		expect(hup).toBeDefined();
@@ -288,7 +280,7 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--", "--clear"], calls);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 
 		expect(h.ensured).toHaveLength(1);
@@ -326,7 +318,7 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup([], calls);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(h.ensured[0]?.deviceId).toBe("U1");
 		expect(calls).toContainEqual(
@@ -340,7 +332,7 @@ describe("warden dev", () => {
 		const c = setup(["ios"], []);
 		writeFileSync(join(c.cwd, "package.json"), JSON.stringify({ dependencies: { expo: "~57.0.0" } }));
 		const h = harness();
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("bunx expo install expo-dev-client");
 		expect(h.ensured).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
@@ -350,7 +342,7 @@ describe("warden dev", () => {
 		const c = setup(["ios"], []);
 		writeFileSync(join(c.cwd, "app.json"), JSON.stringify({ expo: { slug: "demo" } }));
 		const h = harness();
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("expo.ios.bundleIdentifier");
 		expect(h.ensured).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
@@ -362,7 +354,7 @@ describe("warden dev", () => {
 			const c = setup(argv, calls);
 			c.env = { ...c.env, ...env };
 			const h = harness();
-			const running = createDevCommand(h.deps).run(c);
+			const running = new DevCommand(h.deps).definition().run(c);
 			await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 			h.finish(0);
 			await running;
@@ -376,7 +368,7 @@ describe("warden dev", () => {
 	test("an explicit --variant must exist", async () => {
 		const c = setup(["ios", "--variant", "qa"], []);
 		const h = harness();
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain('variant "qa"');
 		expect(h.spawned).toEqual([]);
 	});
@@ -385,7 +377,7 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		const byKind = Object.fromEntries(c.db.listLeases().map((l) => [l.resource.kind, l]));
 		expect(byKind.device?.shared).toBe(true);
@@ -399,7 +391,7 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--udid", "U9"], calls);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(h.ensured[0]?.deviceId).toBe("U9");
 		expect(calls).toContainEqual(
@@ -415,12 +407,12 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup(["android", "--udid", "emulator-5554", "--scheme", "myapp"], calls);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("am")));
 		const joined = calls.map((cmd) => cmd.join(" "));
 		expect(joined).toContain("adb -s emulator-5554 reverse tcp:8081 tcp:8081");
 		expect(joined).toContain(
-			`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d ${devClientUrl("myapp", 8081)} com.demo`
+			`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d ${dev.devClientUrl("myapp", 8081)} com.demo`
 		);
 		h.finish(0);
 		expect(await running).toBe(0);
@@ -443,7 +435,7 @@ describe("warden dev", () => {
 				},
 			};
 		};
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(h.spawned).toHaveLength(1);
 		expect(kills).toEqual(["SIGTERM"]);
 		expect(c.db.listLeases()).toEqual([]);
@@ -464,7 +456,7 @@ describe("warden dev", () => {
 				await gate.promise;
 				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 			};
-			const running = createDevCommand(h.deps).run(c);
+			const running = new DevCommand(h.deps).definition().run(c);
 			await waitFor(() => h.spawned.length === 1 && h.ensured.length === 1);
 			expect(h.spawned).toHaveLength(1);
 			expect(h.ensured).toHaveLength(1);
@@ -499,7 +491,7 @@ describe("warden dev", () => {
 		h.deps.sleep = async (ms) => {
 			clock += ms;
 		};
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(kills).toEqual(["SIGTERM"]);
 		expect(c.db.listLeases()).toEqual([]);
 	});
@@ -509,7 +501,7 @@ describe("warden dev", () => {
 		const c = setup(["ios"], calls);
 		const h = harness();
 		h.deps.probe = async () => ({ kind: "foreign", root: "/other/checkout/app" });
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		h.finish(143);
 		expect(await running).toBe(1);
@@ -522,7 +514,7 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--json", "--no-open"], calls);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => c.stdout.length > 0);
 		const leaseIds = c.db.listLeases().map((l) => l.id);
 		// warden dev keeps running, so a reader takes the document from the first line alone
@@ -543,7 +535,7 @@ describe("warden dev", () => {
 		const c = setup(["ios", "--", "--clear"], calls);
 		const h = harness();
 		h.deps.expoBin = (root) => `${root}/node_modules/.bin/expo`;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(h.spawned[0]?.cmd).toEqual([
 			`${c.cwd}/node_modules/.bin/expo`,
@@ -571,7 +563,7 @@ describe("warden dev", () => {
 			const c = setup(["ios"], calls, [slugOut]);
 			noSlug(c);
 			const h = harness();
-			const running = createDevCommand(h.deps).run(c);
+			const running = new DevCommand(h.deps).definition().run(c);
 			await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 			expect(expoConfig(calls)).toEqual([]);
 			h.finish(0);
@@ -586,10 +578,10 @@ describe("warden dev", () => {
 			c.exec = async (cmd, opts) =>
 				cmd.includes("launch") ? { exitCode: 1, stdout: "", stderr: "boom" } : exec(cmd, opts);
 			const h = harness();
-			const running = createDevCommand(h.deps).run(c);
+			const running = new DevCommand(h.deps).definition().run(c);
 			await waitFor(() => c.stderr.join("\n").includes("yourself"));
 			expect(expoConfig(calls)).toHaveLength(1);
-			expect(c.stderr.join("\n")).toContain(devClientUrl("exp+demo", 8081));
+			expect(c.stderr.join("\n")).toContain(dev.devClientUrl("exp+demo", 8081));
 			h.finish(0);
 			expect(await running).toBe(0);
 		});
@@ -608,13 +600,13 @@ describe("warden dev", () => {
 				await gate.promise;
 				return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "cache", installed: true } };
 			};
-			const running = createDevCommand(h.deps).run(c);
+			const running = new DevCommand(h.deps).definition().run(c);
 			await waitFor(() => h.ensured.length === 1);
 			gate.resolve();
 			await waitFor(() => calls.some((cmd) => cmd.includes("am")));
 			expect(configReadBeforeInstallEnded).toBe(true);
 			expect(calls.map((cmd) => cmd.join(" "))).toContain(
-				`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d ${devClientUrl("exp+demo", 8081)} com.demo`
+				`adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d ${dev.devClientUrl("exp+demo", 8081)} com.demo`
 			);
 			h.finish(0);
 			expect(await running).toBe(0);
@@ -625,7 +617,7 @@ describe("warden dev", () => {
 			const c = setup(["android", "--udid", "emulator-5554", "--no-open"], calls, [slugOut]);
 			noSlug(c);
 			const h = harness();
-			const running = createDevCommand(h.deps).run(c);
+			const running = new DevCommand(h.deps).definition().run(c);
 			await waitFor(() => c.stderr.join("\n").includes("holding"));
 			expect(expoConfig(calls)).toEqual([]);
 			h.finish(0);
@@ -649,7 +641,7 @@ describe("warden dev", () => {
 					},
 				};
 			};
-			expect(await createDevCommand(h.deps).run(c)).toBe(1);
+			expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("could not read the app slug");
 			expect(kills).toEqual(["SIGTERM"]);
 			expect(c.db.listLeases()).toEqual([]);
@@ -661,7 +653,7 @@ describe("warden dev", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--project", "nope"], calls);
 		const h = harness();
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain(`--project nope: no such directory ${join(c.cwd, "nope")} (cwd ${c.cwd})`);
 		expect(calls).toEqual([]);
 		expect(c.db.listLeases()).toEqual([]);
@@ -676,7 +668,7 @@ describe("warden dev auto-gc (16-1)", () => {
 		c.exec = order.exec;
 		c.env = allowAutoGc(c.env);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(order.gcBeforeClaim()).toBe(false);
 		expect(autoGcConsidered(c.db)).toBe(true);
@@ -775,7 +767,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		};
 		return {
 			ui: {
-				...plainDevUi(c),
+				...devUiPlain.plainDevUi(c),
 				metro,
 				onQuit: (handler) => {
 					onQuit = handler;
@@ -816,7 +808,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		const fake = fakeUi(c);
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		const out = h.spawned[0]?.stdout;
 		expect(typeof out === "object" && out.kind === "pty" ? [out.cols, out.rows] : undefined).toEqual([90, 30]);
@@ -847,7 +839,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 			return { success: true, data: { appPath: "/c/A.app", hash: "H", source: "build", installed: true } };
 		};
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && h.ensured.length > 0);
 		expect(logs).toContainEqual(["app", "› Compiling Demo"]);
 		h.finish(0);
@@ -867,7 +859,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		};
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && h.ensured.length > 0);
 		expect(logs).toContainEqual(["claim", "warden: WARDEN_CAPACITY_MAX=nope must be a number > 0 — ignored"]);
 		h.finish(0);
@@ -886,7 +878,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 			c.now()
 		);
 		const h = harness();
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && h.ensured.length > 0);
 		const boot = calls.findIndex((cmd) => cmd.join(" ").startsWith("xcrun simctl bootstatus U1"));
 		expect(boot).toBeGreaterThanOrEqual(0);
@@ -899,7 +891,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--udid", "U1"], calls, [], "Shutdown");
 		const h = harness();
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(calls.some((cmd) => cmd.join(" ").startsWith("xcrun simctl boot"))).toBe(false);
 		expect(c.stderr.some((l) => l.includes("U1 is shut down"))).toBe(true);
 		expect(h.ensured).toEqual([]);
@@ -914,7 +906,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		fake.ui.ready = (info) => void readies.push(info);
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => readies.length > 0);
 		expect(readies[0]?.deviceName).toBe("warden-iphone-1");
 		h.finish(0);
@@ -930,7 +922,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		fake.ui.ready = (info) => void readies.push(info);
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => readies.length > 0);
 		expect(readies[0]).toMatchObject({ platform: "ios", deviceId: "U1", app: { source: "cache", hash: "H" } });
 		expect(readies[0]?.deviceName).toEqual(expect.any(String));
@@ -946,7 +938,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		fake.ui.ready = (info) => void readies.push(info);
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => readies.length > 0);
 		const live = listDevSessions(c.env, { isAlive: () => true });
 		expect(live.success && live.data).toHaveLength(1);
@@ -983,7 +975,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		fake.ui.ready = () => void trace.push("ready");
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => trace.includes("ready"));
 		const ends = trace.filter((e) => !e.startsWith("start "));
 		expect(
@@ -1010,7 +1002,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		const fake = fakeUi(c);
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		fake.quit();
 		expect(await running).toBe(130);
@@ -1033,7 +1025,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		};
 		const h = ptyHarness();
 		h.deps.selectUi = () => fake.ui;
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		h.finish(0);
 		await running;
@@ -1074,7 +1066,7 @@ describe("warden dev: what the action keys call back into", () => {
 				onData: () => {},
 				attach: () => {},
 			};
-			return { ...plainDevUi(c), metro, ready: (info) => void readies.push(info) };
+			return { ...devUiPlain.plainDevUi(c), metro, ready: (info) => void readies.push(info) };
 		};
 		return { h, readies, procs, make };
 	}
@@ -1084,7 +1076,7 @@ describe("warden dev: what the action keys call back into", () => {
 		const c = setup(["ios"], calls);
 		const a = actionHarness();
 		a.h.deps.selectUi = () => a.make(c);
-		const running = createDevCommand(a.h.deps).run(c);
+		const running = new DevCommand(a.h.deps).definition().run(c);
 		await waitFor(() => a.readies.length > 0);
 		const actions = a.readies[0]?.actions;
 		expect(actions).toBeDefined();
@@ -1104,7 +1096,7 @@ describe("warden dev: what the action keys call back into", () => {
 		const c = setup(["ios"], calls);
 		const a = actionHarness();
 		a.h.deps.selectUi = () => a.make(c);
-		const running = createDevCommand(a.h.deps).run(c);
+		const running = new DevCommand(a.h.deps).definition().run(c);
 		await waitFor(() => a.readies.length > 0);
 		const before = calls.filter((cmd) => cmd.includes("launch")).length;
 		const done = await a.readies[0]?.actions?.openClient(() => {});
@@ -1119,7 +1111,7 @@ describe("warden dev: what the action keys call back into", () => {
 		const c = setup(["ios"], calls);
 		const a = actionHarness();
 		a.h.deps.selectUi = () => a.make(c);
-		const running = createDevCommand(a.h.deps).run(c);
+		const running = new DevCommand(a.h.deps).definition().run(c);
 		await waitFor(() => a.readies.length > 0);
 		const done = await a.readies[0]?.actions?.restartSim(() => {});
 		const sim = calls.filter((cmd) => cmd[1] === "simctl").map((cmd) => cmd[2]);
@@ -1137,7 +1129,8 @@ describe("warden dev: what the action keys call back into", () => {
 		const a = actionHarness();
 		a.h.deps.selectUi = () => a.make(c);
 		let code: number | undefined;
-		const running = createDevCommand(a.h.deps)
+		const running = new DevCommand(a.h.deps)
+			.definition()
 			.run(c)
 			.then((value) => {
 				code = value;
@@ -1172,7 +1165,7 @@ describe("warden dev: what the action keys call back into", () => {
 			if (spawns === 2) throw new Error("expo missing");
 			return spawn(cmd, env, cwd, stdout);
 		};
-		const running = createDevCommand(a.h.deps).run(c);
+		const running = new DevCommand(a.h.deps).definition().run(c);
 		await waitFor(() => a.readies.length > 0);
 		const restarted = await a.readies[0]?.actions?.restartMetro(() => {});
 		expect(restarted?.success).toBe(false);
@@ -1188,9 +1181,9 @@ describe("warden dev: HUD options", () => {
 		const seen: DevUiOpts[] = [];
 		h.deps.selectUi = (rawCtx, opts) => {
 			seen.push(opts);
-			return plainDevUi(rawCtx);
+			return devUiPlain.plainDevUi(rawCtx);
 		};
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		h.finish(0);
 		return { code: await running, seen, c };
@@ -1218,7 +1211,7 @@ describe("warden dev: HUD options", () => {
 		const calls: string[][] = [];
 		const c = setup(["ios", "--hud-interval", "50ms"], calls);
 		const h = harness();
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--hud-interval");
 		expect(c.stderr.join("\n")).toContain("200ms");
 		expect(h.spawned).toHaveLength(0);
@@ -1227,7 +1220,7 @@ describe("warden dev: HUD options", () => {
 
 	test("an unparsable --hud-interval fails too", async () => {
 		const c = setup(["ios", "--hud-interval", "soon"], []);
-		expect(await createDevCommand(harness().deps).run(c)).toBe(1);
+		expect(await new DevCommand(harness().deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--hud-interval");
 	});
 });
@@ -1251,7 +1244,7 @@ describe("warden dev: opt-in extras", () => {
 			};
 			return resultFactory.ok(broker);
 		};
-		const running = createDevCommand(h.deps).run(c);
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		const socket = (): string | undefined => {
 			const listed = listDevSessions(c.env, { isAlive: () => true });
@@ -1328,7 +1321,7 @@ describe("selectDevUi", () => {
 	test("an interactive rich terminal gets the dashboard, loaded lazily", async () => {
 		const l = loader();
 		const c = context();
-		const ui = await selectDevUi(c, opts({ tui: true }), l.load);
+		const ui = await dev.selectDevUi(c, opts({ tui: true }), l.load);
 		expect(ui).toBe(l.fake);
 		expect(l.created).toEqual([c]);
 		expect(l.huds).toEqual([HUD]);
@@ -1336,7 +1329,7 @@ describe("selectDevUi", () => {
 
 	test("the dashboard is the default when --no-tui is not given (opts.tui undefined)", async () => {
 		const l = loader();
-		expect(await selectDevUi(context(), opts(), l.load)).toBe(l.fake);
+		expect(await dev.selectDevUi(context(), opts(), l.load)).toBe(l.fake);
 	});
 
 	test("plain for --json, --no-tui, WARDEN_TUI=0, pipes and non-rich terminals; the dashboard is never loaded", async () => {
@@ -1350,7 +1343,7 @@ describe("selectDevUi", () => {
 		for (const [name, c, opts] of cases) {
 			let loaded = false;
 			const l = loader();
-			const ui = await selectDevUi(c, opts, () => {
+			const ui = await dev.selectDevUi(c, opts, () => {
 				loaded = true;
 				return l.load();
 			});
@@ -1360,7 +1353,7 @@ describe("selectDevUi", () => {
 
 	test("WARDEN_TUI=1 does not switch the dashboard on for a pipe", async () => {
 		const l = loader();
-		const ui = await selectDevUi(context({ WARDEN_TUI: "1" }, scriptedUi()), opts(), l.load);
+		const ui = await dev.selectDevUi(context({ WARDEN_TUI: "1" }, scriptedUi()), opts(), l.load);
 		expect(ui.metro.kind).toBe("inherit");
 	});
 
@@ -1398,9 +1391,9 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		let uiAsked = 0;
 		h.deps.selectUi = () => {
 			uiAsked++;
-			return plainDevUi(c);
+			return devUiPlain.plainDevUi(c);
 		};
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(uiAsked).toBe(0);
 		expect(h.spawned).toEqual([]);
 		const line = c.stderr.find((l) => l.includes("app.config.ts is dynamic"));
@@ -1415,8 +1408,8 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		dynamicApp(c);
 		const readies: DevReady[] = [];
 		const h = harness();
-		h.deps.selectUi = () => ({ ...plainDevUi(c), ready: (info) => void readies.push(info) });
-		const running = createDevCommand(h.deps).run(c);
+		h.deps.selectUi = () => ({ ...devUiPlain.plainDevUi(c), ready: (info) => void readies.push(info) });
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => readies.length > 0);
 		expect(readies[0]).toMatchObject({ bundleId: "com.x.dev", projectName: "ctna-wallet" });
 		expect(h.ensured[0]?.opts.bundleId).toBeUndefined();
@@ -1427,7 +1420,7 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		const flagged = setup(["ios", "--bundle-id", "com.flag"], calls, [[EXPO_CONFIG, { stdout: "{}" }]]);
 		dynamicApp(flagged);
 		const h2 = harness();
-		const r2 = createDevCommand(h2.deps).run(flagged);
+		const r2 = new DevCommand(h2.deps).definition().run(flagged);
 		await waitFor(() => h2.spawned.length > 0);
 		h2.finish(0);
 		await r2;
@@ -1451,8 +1444,8 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		c.cwd = root;
 		const readies: DevReady[] = [];
 		const h = harness();
-		h.deps.selectUi = () => ({ ...plainDevUi(c), ready: (info) => void readies.push(info) });
-		const running = createDevCommand(h.deps).run(c);
+		h.deps.selectUi = () => ({ ...devUiPlain.plainDevUi(c), ready: (info) => void readies.push(info) });
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => readies.length > 0);
 		expect(readies[0]).toMatchObject({ bundleId: "com.w", projectName: "wallet" });
 		expect(c.stderr.some((l) => l.includes("apps/mobile"))).toBe(true);
@@ -1470,7 +1463,7 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		);
 		const piped = setup(["ios"], calls);
 		piped.cwd = root;
-		expect(await createDevCommand(harness().deps).run(piped)).toBe(1);
+		expect(await new DevCommand(harness().deps).definition().run(piped)).toBe(1);
 		expect(piped.stderr.some((l) => l.includes("apps/admin, apps/mobile"))).toBe(true);
 
 		const asked = setup(["ios"], calls);
@@ -1478,8 +1471,8 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		asked.ui = scriptedUi({ interactive: true, select: [join(root, "apps", "admin")] });
 		const readies2: DevReady[] = [];
 		const h2 = harness();
-		h2.deps.selectUi = () => ({ ...plainDevUi(asked), ready: (info) => void readies2.push(info) });
-		const r2 = createDevCommand(h2.deps).run(asked);
+		h2.deps.selectUi = () => ({ ...devUiPlain.plainDevUi(asked), ready: (info) => void readies2.push(info) });
+		const r2 = new DevCommand(h2.deps).definition().run(asked);
 		await waitFor(() => readies2.length > 0);
 		expect((asked.ui as ScriptedUi).events.some((e) => e.startsWith("select: Which app"))).toBe(true);
 		expect(readies2[0]).toMatchObject({ bundleId: "com.a", projectName: "admin" });
@@ -1498,8 +1491,8 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		writeFileSync(join(app, "ios", "Wallet.xcodeproj", "project.pbxproj"), 'PRODUCT_BUNDLE_IDENTIFIER = "com.x.bare";');
 		const readies: DevReady[] = [];
 		const h = harness();
-		h.deps.selectUi = () => ({ ...plainDevUi(c), ready: (info) => void readies.push(info) });
-		const running = createDevCommand(h.deps).run(c);
+		h.deps.selectUi = () => ({ ...devUiPlain.plainDevUi(c), ready: (info) => void readies.push(info) });
+		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => readies.length > 0);
 		expect(readies[0]).toMatchObject({ bundleId: "com.x.bare", projectName: "Wallet" });
 		const metro = h.spawned[0]?.cmd ?? [];
@@ -1523,7 +1516,7 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 		);
 		writeFileSync(join(app, "yarn.lock"), "");
 		const h = harness();
-		expect(await createDevCommand(h.deps).run(c)).toBe(1);
+		expect(await new DevCommand(h.deps).definition().run(c)).toBe(1);
 		expect(c.stderr.some((l) => l.includes("run: yarn expo install expo-dev-client"))).toBe(true);
 		expect(h.spawned).toEqual([]);
 
@@ -1546,7 +1539,7 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 			return exec(cmd, opts);
 		};
 		const h2 = harness();
-		const running = createDevCommand(h2.deps).run(asked);
+		const running = new DevCommand(h2.deps).definition().run(asked);
 		await waitFor(() => h2.spawned.length > 0);
 		expect(calls.some((cmd) => cmd.join(" ") === "yarn expo install expo-dev-client")).toBe(true);
 		expect((asked.ui as ScriptedUi).events.some((e) => e.startsWith("confirm: expo-dev-client isn't in"))).toBe(true);

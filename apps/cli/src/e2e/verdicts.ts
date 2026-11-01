@@ -4,7 +4,7 @@ import type { BatchSummary, JobResult } from "@delacour/warden-core/batch/schedu
 import { resultsFiles, type TestResult, type TestStatus } from "@delacour/warden-e2e/runner/results";
 import { runnerFailureShot } from "../batch/screenshot";
 import { failing, realPath, specOf } from "../batch/spec-progress";
-import { attemptKey, legJob, type SessionResult } from "../commands/batch";
+import { batch, type SessionResult } from "../commands/batch";
 
 /** One test of a spec, as `e2e-report.json` carries it. */
 export type TestVerdict = {
@@ -79,10 +79,10 @@ function lastFailure(
 	const last = failed.at(-1);
 	if (!last) return {};
 	const screenshot = failed
-		.map((r) => runnerShots.get(r) ?? session.screenshots?.get(attemptKey(r)))
+		.map((r) => runnerShots.get(r) ?? session.screenshots?.get(batch.attemptKey(r)))
 		.reverse()
 		.find((path) => path !== undefined);
-	const log = session.logs?.get(attemptKey(last));
+	const log = session.logs?.get(batch.attemptKey(last));
 	const name = session.devices?.find((d) => d.worker === last.worker)?.name ?? last.udid;
 	return {
 		device: { udid: last.udid, name },
@@ -224,7 +224,7 @@ type Run = {
 
 /** One attempt of `job` judged for every spec it ran (once per attempt). */
 function judgeAttempt(run: Run, job: string, attempt: JobResult): Promise<Map<string, Judged>> {
-	const key = attemptKey(attempt);
+	const key = batch.attemptKey(attempt);
 	const known = run.judgements.get(key);
 	if (known) return known;
 	const ranIds = run.attempts.get(key);
@@ -258,10 +258,10 @@ async function failedAttempts(run: Run, job: string, spec: SelectedSpec, ran: re
 /** One spec on one leg: the attempts of its job that ran it, then the verdict of the last of them. */
 async function specVerdict(run: Run, spec: SelectedSpec, leg: string | undefined): Promise<SpecVerdict> {
 	const { session, shape } = run;
-	const job = legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
+	const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
 	const ran = (session.summary?.results ?? [])
 		.filter((r) => r.job === job)
-		.filter((r) => run.attempts.get(attemptKey(r))?.has(spec.id) ?? true);
+		.filter((r) => run.attempts.get(batch.attemptKey(r))?.has(spec.id) ?? true);
 	const last = ran.at(-1);
 	const base = { ...spec, ...(leg !== undefined ? { leg } : {}), attempts: ran.length };
 	if (!last) return { ...base, verdict: "not-run" };
@@ -289,7 +289,7 @@ export async function verdicts(
 	const jobSpecs = new Map<string, SelectedSpec[]>();
 	for (const leg of shape.legs) {
 		for (const spec of specs) {
-			const job = legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
+			const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
 			jobSpecs.set(job, [...(jobSpecs.get(job) ?? []), spec]);
 		}
 	}
@@ -320,7 +320,7 @@ export function exitGate(specs: readonly SelectedSpec[], summary: BatchSummary, 
 		(spec) =>
 			!spec.required ||
 			shape.legs.every((leg) => {
-				const job = legJob(shape.shardOf?.get(spec.id) ?? spec.id, qualified ? leg : undefined);
+				const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, qualified ? leg : undefined);
 				return summary.results.some((r) => r.job === job) && !failed.has(job);
 			})
 	);

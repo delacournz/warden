@@ -1,25 +1,24 @@
-import { type Command, defineCommand } from "../command";
+import { CliCommand, type CommandNode } from "../command";
+import type { CommandContext } from "../context";
 import { PERF_SUBCOMMANDS, type PerfRegister } from "../perf/register";
 import { defaultPerfDeps, type PerfDeps } from "../perf/run";
 
-/**
- * `warden perf <subcommand>`: profile an app on a warden simulator / emulator. Subcommands live in
- * `perf/<sub>.ts` and are listed in `perf/register.ts` `PERF_SUBCOMMANDS`; `deps` injects the process table, the
- * booted-device list and host facts for tests. Exit codes are `warden ui`'s: 0 ok · 1 failed/usage · 2 lease.
- */
-export function createPerfCommand(
-	deps: PerfDeps = defaultPerfDeps,
-	subcommands: readonly PerfRegister[] = PERF_SUBCOMMANDS
-): Command {
-	return defineCommand({
-		name: "perf",
-		group: "Run",
-		summary:
-			"profile an app on a warden device: sessions, marks, doctor (CPU, memory, frames, startup, JS, React, native)",
-		register: (cmd, ctx, done) => {
-			for (const register of subcommands) register(cmd, ctx, done, deps);
-		},
-	});
+export class PerfCommand extends CliCommand {
+	override readonly name = "perf";
+	override readonly group = "Run";
+	override readonly summary =
+		"profile an app on a warden device: sessions, marks, doctor (CPU, memory, frames, startup, JS, React, native)";
+
+	constructor(
+		private readonly deps: PerfDeps = defaultPerfDeps,
+		private readonly subcommands: readonly PerfRegister[] = PERF_SUBCOMMANDS
+	) {
+		super();
+	}
+
+	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
+		for (const register of this.subcommands) register(cmd, ctx, done, this.deps);
+	}
 }
 
-export const perfCommand = createPerfCommand();
+export const perfCommand = new PerfCommand().definition();

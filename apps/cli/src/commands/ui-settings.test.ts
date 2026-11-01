@@ -4,14 +4,14 @@ import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { uiStatePersistence } from "../agent-ui/state";
-import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
+import { type Harness, LOGIN, UDID, uiTesting } from "./ui.testing";
 
-afterEach(cleanupHarnesses);
+afterEach(uiTesting.cleanupHarnesses);
 
-type Override = NonNullable<Parameters<typeof harness>[1]>["onCall"];
+type Override = NonNullable<Parameters<typeof uiTesting.harness>[1]>["onCall"];
 
 function setup(platform: "ios" | "android" = "android", onCall?: Override) {
-	const h: Harness = harness([driverFixtures.snapshotOf(LOGIN)], {
+	const h: Harness = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 		platform,
 		...(onCall ? { onCall } : {}),
 		conditions: {
@@ -35,7 +35,11 @@ describe("permission", () => {
 			grants: { location: "denied", camera: "granted" },
 			opts: { bundleId: "com.example.app" },
 		});
-		expect(doc(h.c)).toMatchObject({ ok: true, command: "permission set", result: { action: "permission-set" } });
+		expect(uiTesting.doc(h.c)).toMatchObject({
+			ok: true,
+			command: "permission set",
+			result: { action: "permission-set" },
+		});
 		await h.run("permission", "set", "location=granted");
 		expect(row(h, "permission")?.value).toEqual({
 			grants: [
@@ -65,7 +69,7 @@ describe("permission", () => {
 				: undefined
 		);
 		expect(await h.run("permission", "set", "photos=granted", "camera=granted", "--json")).toBe(0);
-		expect(doc(h.c).warnings).toEqual(["camera not applied: no camera on a simulator"]);
+		expect(uiTesting.doc(h.c).warnings).toEqual(["camera not applied: no camera on a simulator"]);
 	});
 
 	test("reset sets every recorded name to unset per app and forgets the row", async () => {
@@ -82,14 +86,14 @@ describe("permission", () => {
 		const h = setup();
 		expect(await h.run("permission", "reset", "--json")).toBe(0);
 		expect(h.driver.callsOf("permissions")).toHaveLength(0);
-		expect(doc(h.c).result.changed).toBe(false);
+		expect(uiTesting.doc(h.c).result.changed).toBe(false);
 	});
 
 	test("usage errors: no pairs, a bad pair, an unknown action", async () => {
 		const h = setup();
 		expect(await h.run("permission", "set", "--json")).toBe(1);
 		expect(await h.run("permission", "set", "wifi=granted", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 		expect(await h.run("permission", "forget", "--json")).toBe(1);
 		expect(h.driver.callsOf("permissions")).toHaveLength(0);
 	});
@@ -98,7 +102,7 @@ describe("permission", () => {
 		const h = setup();
 		await h.run("permission", "set", "location=denied");
 		expect(await h.run("permission", "status", "--json")).toBe(0);
-		expect(doc(h.c).result.grants).toHaveLength(1);
+		expect(uiTesting.doc(h.c).result.grants).toHaveLength(1);
 	});
 });
 
@@ -131,8 +135,8 @@ describe("timezone and locale", () => {
 			call.method === "timezone" ? { data: { timezone: "Asia/Tokyo", appliesOnLaunch: true } } : undefined
 		);
 		expect(await h.run("timezone", "Asia/Tokyo", "--json")).toBe(0);
-		expect(doc(h.c).result.staged).toBe(true);
-		expect(doc(h.c).warnings[0]).toContain("staged");
+		expect(uiTesting.doc(h.c).result.staged).toBe(true);
+		expect(uiTesting.doc(h.c).warnings[0]).toContain("staged");
 	});
 
 	test("locale set uses --app, the opened app, then the recorded one; reset keeps the timezone", async () => {
@@ -158,7 +162,7 @@ describe("timezone and locale", () => {
 		const h = setup();
 		await h.run("timezone", "Asia/Tokyo");
 		expect(await h.run("timezone", "status", "--json")).toBe(0);
-		expect(doc(h.c).result.timezone).toBe("Asia/Tokyo");
+		expect(uiTesting.doc(h.c).result.timezone).toBe("Asia/Tokyo");
 	});
 });
 
@@ -198,7 +202,7 @@ describe("a11y", () => {
 			call.method === "a11y" ? driverFixtures.failWith("E_UNSUPPORTED", "boldText: no switch") : undefined
 		);
 		expect(await h.run("a11y", "set", "--bold", "--json")).toBe(1);
-		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
+		expect(uiTesting.doc(h.c).error.message).toContain("E_UNSUPPORTED");
 	});
 });
 
@@ -216,7 +220,7 @@ describe("battery", () => {
 	test("a cosmetic result warns", async () => {
 		const h = setup("ios", (call) => (call.method === "battery" ? { data: { level: 20, cosmetic: true } } : undefined));
 		await h.run("battery", "set", "--level", "20", "--json");
-		expect(doc(h.c).warnings[0]).toContain("cosmetic");
+		expect(uiTesting.doc(h.c).warnings[0]).toContain("cosmetic");
 		expect(row(h, "battery")?.value).toMatchObject({ cosmetic: true });
 	});
 
@@ -240,7 +244,7 @@ describe("memory-warning and push", () => {
 			call.method === "memoryWarning" ? driverFixtures.failWith("E_UNSUPPORTED", "no mechanism") : undefined
 		);
 		expect(await h.run("memory-warning", "--json")).toBe(1);
-		expect(doc(h.c).error.message).toContain("no mechanism");
+		expect(uiTesting.doc(h.c).error.message).toContain("no mechanism");
 	});
 
 	test("push takes inline JSON", async () => {
@@ -255,7 +259,7 @@ describe("memory-warning and push", () => {
 	test("push without aps is a usage error and sends nothing", async () => {
 		const h = setup("ios");
 		expect(await h.run("push", '{"alert":"hi"}', "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 		expect(h.driver.callsOf("push")).toHaveLength(0);
 	});
 });

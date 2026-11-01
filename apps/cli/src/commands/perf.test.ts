@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PERF_SUBCOMMANDS, type PerfRegister } from "../perf/register";
 import { fakePerfDeps } from "../perf/testing";
 import { type TestContext, testContext } from "../testing";
-import { createPerfCommand } from "./perf";
+import { PerfCommand } from "./perf";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -19,20 +19,20 @@ function setup(argv: string[]) {
 describe("warden perf", () => {
 	test("--help lists ls, mark and doctor", async () => {
 		const { c, deps } = setup(["--help"]);
-		expect(await createPerfCommand(deps).run(c)).toBe(0);
+		expect(await new PerfCommand(deps).definition().run(c)).toBe(0);
 		const help = c.stdout.join("\n");
 		for (const sub of ["ls", "mark", "doctor"]) expect(help).toContain(sub);
 	});
 
 	test("ls --json dispatches to the ls subcommand", async () => {
 		const { c, deps } = setup(["ls", "--json"]);
-		expect(await createPerfCommand(deps).run(c)).toBe(0);
+		expect(await new PerfCommand(deps).definition().run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ sessions: [] });
 	});
 
 	test("mark with no session reports session_not_found through the UiJson envelope", async () => {
 		const { c, deps } = setup(["mark", "hello", "--json"]);
-		expect(await createPerfCommand(deps).run(c)).toBe(1);
+		expect(await new PerfCommand(deps).definition().run(c)).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({
 			ok: false,
 			command: "perf mark",
@@ -42,7 +42,7 @@ describe("warden perf", () => {
 
 	test("text-mode errors read `warden perf <sub>: …`", async () => {
 		const { c, deps } = setup(["mark", "hello"]);
-		await createPerfCommand(deps).run(c);
+		await new PerfCommand(deps).definition().run(c);
 		expect(c.stderr.join("\n")).toContain("warden perf mark: no active perf session");
 	});
 
@@ -51,7 +51,7 @@ describe("warden perf", () => {
 		const registerPing: PerfRegister = (cmd, _ctx, done) => {
 			cmd.command("ping").action(() => done(7));
 		};
-		const command = createPerfCommand(deps, [...PERF_SUBCOMMANDS, registerPing]);
+		const command = new PerfCommand(deps, [...PERF_SUBCOMMANDS, registerPing]).definition();
 		expect(await command.run(c)).toBe(7);
 	});
 

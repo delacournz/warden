@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { defineCommand } from "../command";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { registerSimMeasure } from "./sim-measure";
+import { simMeasure } from "./sim-measure";
 
 let ctx: TestContext | undefined;
 afterEach(() => {
@@ -10,7 +10,12 @@ afterEach(() => {
 	ctx = undefined;
 });
 
-const simCommand = defineCommand({ name: "sim", group: "Devices", summary: "x", register: registerSimMeasure });
+const simCommand = defineCommand({
+	name: "sim",
+	group: "Devices",
+	summary: "x",
+	register: simMeasure.registerSimMeasure,
+});
 
 const BOOTED = simctlFixtures.devicesJson({
 	"iOS-26-5": [

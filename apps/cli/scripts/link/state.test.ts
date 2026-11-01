@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { devShim } from "../../src/commands/install";
+import { install } from "../../src/commands/install";
 import { type LinkPaths, linkPaths, restoreLink, shimTarget, snapshotLink, writeShim } from "./state";
 
 let home: string;
@@ -45,7 +45,7 @@ describe("linkPaths", () => {
 describe("writeShim", () => {
 	test("writes the shim `warden install --shim` writes, executable", () => {
 		writeShim(paths, TREE);
-		expect(readFileSync(paths.bin, "utf8")).toBe(devShim(TREE));
+		expect(readFileSync(paths.bin, "utf8")).toBe(install.devShim(TREE));
 		expect(statSync(paths.bin).mode & 0o777).toBe(0o755);
 		expect(shimTarget(paths.bin)).toBe(TREE);
 	});

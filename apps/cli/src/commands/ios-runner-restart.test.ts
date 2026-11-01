@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { type TestContext, testContext } from "../testing";
-import { createIosRunnerRestartCommand } from "./ios-runner-restart";
+import { IosRunnerRestartCommand } from "./ios-runner-restart";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -11,7 +11,7 @@ describe("warden __ios-runner-restart", () => {
 	test("stops the host, then starts a new one, in that order, for the udid", async () => {
 		ctx = testContext(["--udid", UDID]);
 		const events: string[] = [];
-		const command = createIosRunnerRestartCommand({
+		const command = new IosRunnerRestartCommand({
 			stop: async (_c, udid) => {
 				events.push(`stop ${udid}`);
 				return {};
@@ -20,17 +20,17 @@ describe("warden __ios-runner-restart", () => {
 				events.push(`ensure ${udid}`);
 				return { success: true };
 			},
-		});
+		}).definition();
 		expect(await command.run(ctx)).toBe(0);
 		expect(events).toEqual([`stop ${UDID}`, `ensure ${UDID}`]);
 	});
 
 	test("a host that does not come back exits 3 with the reason; --udid is required", async () => {
 		ctx = testContext(["--udid", UDID]);
-		const command = createIosRunnerRestartCommand({
+		const command = new IosRunnerRestartCommand({
 			stop: async () => ({}),
 			ensure: async () => ({ success: false, error: "device locked" }),
-		});
+		}).definition();
 		expect(await command.run(ctx)).toBe(3);
 		expect(ctx.stderr.join("\n")).toContain("device locked");
 		const bare = testContext([]);

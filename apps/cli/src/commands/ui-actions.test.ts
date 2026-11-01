@@ -7,22 +7,22 @@ import type { VideoSpec } from "@delacour/warden-sdk/ops/video";
 import { wardenErrors } from "@delacour/warden-types/error";
 import type { UiDeps } from "../agent-ui/driver";
 import { uiStatePersistence } from "../agent-ui/state";
-import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
+import { LOGIN, UDID, uiTesting } from "./ui.testing";
 
-afterEach(cleanupHarnesses);
+afterEach(uiTesting.cleanupHarnesses);
 
 /** SIGN-IN is the third row of LOGIN: frame (0,150 390×44), centre (195,172). */
 const SIGN_IN = { x: 195, y: 172 };
 
 describe("press / tap", () => {
 	test("@ref: taps the centre of the element, no snapshot needed", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		const before = h.driver.callsOf("snapshot").length;
 		expect(await h.run("press", "@e4", "--json")).toBe(0);
 		expect(h.driver.callsOf("tap")).toEqual([{ method: "tap", point: SIGN_IN }]);
 		expect(h.driver.callsOf("snapshot")).toHaveLength(before);
-		expect(doc(h.c)).toMatchObject({
+		expect(uiTesting.doc(h.c)).toMatchObject({
 			ok: true,
 			command: "press",
 			result: { action: "press", target: { ref: "@e4", point: SIGN_IN } },
@@ -30,59 +30,59 @@ describe("press / tap", () => {
 	});
 
 	test("selector: resolves against a fresh snapshot; `tap` is an alias", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("tap", "id=sign-in-submit", "--json")).toBe(0);
 		expect(h.driver.callsOf("tap")).toEqual([{ method: "tap", point: SIGN_IN }]);
-		expect(doc(h.c).result.target).toEqual({ selector: "id=sign-in-submit", point: SIGN_IN });
+		expect(uiTesting.doc(h.c).result.target).toEqual({ selector: "id=sign-in-submit", point: SIGN_IN });
 	});
 
 	test("selector that matches nothing: target_not_found, exit 1, no tap", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("press", "id=nope", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("target_not_found");
+		expect(uiTesting.doc(h.c).error.code).toBe("target_not_found");
 		expect(h.driver.callsOf("tap")).toHaveLength(0);
 	});
 
 	test("x y: taps that point without looking at the screen", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("press", "120", "340")).toBe(0);
 		expect(h.driver.calls.map((call) => call.method)).toEqual(["tap", "close"]);
 		expect(h.driver.callsOf("tap")[0]?.point).toEqual({ x: 120, y: 340 });
 	});
 
 	test("an @ref older than 30 s is re-verified against a fresh snapshot, then tapped", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		h.clock.t += 31_000;
 		const before = h.driver.callsOf("snapshot").length;
 		expect(await h.run("press", "@e4", "--json")).toBe(0);
 		expect(h.driver.callsOf("snapshot")).toHaveLength(before + 1);
-		expect(doc(h.c).result.verified).toBe(true);
+		expect(uiTesting.doc(h.c).result.verified).toBe(true);
 	});
 
 	test("an old @ref whose element is gone: stale_ref, exit 4, no tap", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		h.clock.t += 31_000;
 		h.driver.set(driverFixtures.snapshotOf([driverFixtures.el("text", { label: "Elsewhere" })]));
 		expect(await h.run("press", "@e4", "--json")).toBe(4);
-		expect(doc(h.c).error.code).toBe("stale_ref");
+		expect(uiTesting.doc(h.c).error.code).toBe("stale_ref");
 		expect(h.driver.callsOf("tap")).toHaveLength(0);
 	});
 
 	test("--verify re-checks a recent @ref too", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		const before = h.driver.callsOf("snapshot").length;
 		expect(await h.run("press", "@e4", "--verify", "--json")).toBe(0);
 		expect(h.driver.callsOf("snapshot")).toHaveLength(before + 1);
-		expect(doc(h.c).result.verified).toBe(true);
+		expect(uiTesting.doc(h.c).result.verified).toBe(true);
 	});
 
 	test("--settle waits for two equal hashes >= 250 ms apart and reports the diff", async () => {
 		const after = driverFixtures.snapshotOf([driverFixtures.el("text", { label: "Signed in" })]);
 		let tapped = false;
-		const h = harness(() => (tapped ? after : driverFixtures.snapshotOf(LOGIN)), {
+		const h = uiTesting.harness(() => (tapped ? after : driverFixtures.snapshotOf(LOGIN)), {
 			onCall: (call) => {
 				if (call.method === "tap") tapped = true;
 				return undefined;
@@ -91,7 +91,7 @@ describe("press / tap", () => {
 		await h.run("snapshot");
 		const start = h.clock.t;
 		expect(await h.run("press", "@e4", "--settle", "--json")).toBe(0);
-		const out = doc(h.c);
+		const out = uiTesting.doc(h.c);
 		expect(out.generation).toBe(2);
 		expect(out.result.settled.quiet).toBe(true);
 		expect(out.result.settled.waitedMs).toBeGreaterThanOrEqual(250);
@@ -103,7 +103,7 @@ describe("press / tap", () => {
 	});
 
 	test("--settle in text mode prints the verdict and the diff", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		expect(await h.run("press", "@e4", "--settle")).toBe(0);
 		const text = h.c.stdout.join("\n");
@@ -113,7 +113,7 @@ describe("press / tap", () => {
 	});
 
 	test("every action is appended to the recording; --no-record skips it", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("press", "id=sign-in-submit");
 		expect(h.steps).toMatchObject([{ action: "press", target: { selector: "id=sign-in-submit", point: SIGN_IN } }]);
 		expect(h.steps[0]?.evidence?.element.identifier).toBe("sign-in-submit");
@@ -124,7 +124,7 @@ describe("press / tap", () => {
 
 describe("longpress", () => {
 	test("default 800 ms, explicit ms after a ref, and x y with / without ms", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
 		await h.run("gesture", "longpress", "@e4");
 		await h.run("gesture", "longpress", "@e4", "700");
@@ -155,7 +155,7 @@ function typingScreen(value: string): Snapshot {
 describe("fill", () => {
 	test("focuses at the caret, backspaces the old text, types, and confirms by reading back", async () => {
 		let typed = "";
-		const h = harness([typingScreen("a@b.co")], {
+		const h = uiTesting.harness([typingScreen("a@b.co")], {
 			onCall: (call, driver) => {
 				if (call.method === "typeText") {
 					typed += call.text;
@@ -173,13 +173,13 @@ describe("fill", () => {
 		expect(h.driver.callsOf("tap")[0]?.point).toEqual({ x: 351, y: 122 });
 		expect(h.driver.callsOf("key").every((call) => call.key === "Backspace")).toBe(true);
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new@x.co"]);
-		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co" });
 	});
 
 	test("a driver with select-all types over the selection: no Backspace at all", async () => {
 		let typed = "";
-		const h = harness([typingScreen("a@b.co")], {
+		const h = uiTesting.harness([typingScreen("a@b.co")], {
 			selectAll: true,
 			onCall: (call, driver) => {
 				if (call.method === "typeText") {
@@ -195,7 +195,7 @@ describe("fill", () => {
 			.filter((m) => m !== "snapshot" && m !== "elementAtPoint");
 		expect(methods).toEqual(["tap", "selectAll", "typeText", "close"]);
 		expect(h.driver.callsOf("key")).toEqual([]);
-		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "fill", verified: true });
 	});
 
 	test("a field that shows its placeholder as the value is typed into with no clearing keys", async () => {
@@ -215,7 +215,7 @@ describe("fill", () => {
 					],
 				}),
 			]);
-		const h = harness([placeholderScreen("")], {
+		const h = uiTesting.harness([placeholderScreen("")], {
 			selectAll: true,
 			onCall: (call, driver) => {
 				if (call.method === "tap") {
@@ -232,13 +232,13 @@ describe("fill", () => {
 		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
 		expect(h.driver.callsOf("key")).toEqual([]);
 		expect(h.driver.callsOf("selectAll")).toEqual([]);
-		expect(doc(h.c).result).toMatchObject({ verified: true });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ verified: true });
 		// one hit-test sees the field take focus after the tap, two confirm the text
 		expect(h.driver.callsOf("elementAtPoint")).toHaveLength(3);
 	});
 
 	test("the retry after a field did not take the text backspaces per character, not by select-all", async () => {
-		const h = harness([typingScreen("old")], { selectAll: true });
+		const h = uiTesting.harness([typingScreen("old")], { selectAll: true });
 		expect(await h.run("fill", "id=email", "new", "--json")).toBe(1);
 		const methods: string[] = h.driver.calls
 			.map((call) => call.method)
@@ -255,16 +255,16 @@ describe("fill", () => {
 	});
 
 	test("a field that does not take the text: retried once, then failed with what it holds", async () => {
-		const h = harness([typingScreen("old")]);
+		const h = uiTesting.harness([typingScreen("old")]);
 		expect(await h.run("fill", "id=email", "new", "--json")).toBe(1);
-		const out = doc(h.c);
+		const out = uiTesting.doc(h.c);
 		expect(out.error.code).toBe("failed");
 		expect(out.error.message).toBe('fill did not take: expected "new" but the field holds "old"');
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new", "new"]);
 	});
 
 	test("--secure: no read-back, reported as unconfirmed, the text is neither echoed nor recorded", async () => {
-		const h = harness([typingScreen("")]);
+		const h = uiTesting.harness([typingScreen("")]);
 		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure")).toBe(0);
 		expect(h.c.stdout.join("\n")).toContain("(unconfirmed)");
 		expect(h.c.stdout.join("\n")).not.toContain("hunter2");
@@ -276,28 +276,28 @@ describe("fill", () => {
 		).toBe("hunter2hunter2");
 		expect(h.steps[0]?.args).toEqual({ secure: true });
 		await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json");
-		expect(doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
 		expect(h.c.stdout[0]).not.toContain("hunter2");
 	});
 
 	test("--no-verify types without reading back", async () => {
-		const h = harness([typingScreen("")]);
+		const h = uiTesting.harness([typingScreen("")]);
 		expect(await h.run("fill", "id=email", "x", "--no-verify", "--json")).toBe(0);
-		expect(doc(h.c).result.verified).toBeUndefined();
+		expect(uiTesting.doc(h.c).result.verified).toBeUndefined();
 		expect(h.driver.callsOf("snapshot")).toHaveLength(1);
 	});
 
 	test("an x y target is typed into unconfirmed", async () => {
-		const h = harness([typingScreen("")]);
+		const h = uiTesting.harness([typingScreen("")]);
 		expect(await h.run("fill", "50", "60", "abc", "--json")).toBe(0);
-		expect(doc(h.c).result.verified).toBe("unconfirmed");
+		expect(uiTesting.doc(h.c).result.verified).toBe("unconfirmed");
 		expect(h.driver.callsOf("tap")[0]?.point).toEqual({ x: 50, y: 60 });
 	});
 
 	test("needs a target and a text", async () => {
-		const h = harness([typingScreen("")]);
+		const h = uiTesting.harness([typingScreen("")]);
 		expect(await h.run("fill", "id=email", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 	});
 });
 
@@ -305,7 +305,7 @@ describe("fill on a driver with pasteText (iOS)", () => {
 	/** a filled email field; a paste or typed text leaves the field showing what it was given */
 	function pasteHarness(onPaste?: (text: string) => string | undefined) {
 		let typed = "";
-		return harness([typingScreen("a@b.co")], {
+		return uiTesting.harness([typingScreen("a@b.co")], {
 			selectAll: true,
 			pasteText: true,
 			onCall: (call, driver) => {
@@ -330,7 +330,7 @@ describe("fill on a driver with pasteText (iOS)", () => {
 		const h = pasteHarness();
 		expect(await h.run("fill", "id=email", "new@x.co", "--via", "paste", "--json")).toBe(0);
 		expect(inputs(h)).toEqual(["tap", "selectAll", "pasteText", "close"]);
-		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
 		expect(h.steps[0]?.args).toEqual({ text: "new@x.co", via: "paste" });
 	});
 
@@ -356,7 +356,7 @@ describe("fill on a driver with pasteText (iOS)", () => {
 
 	test("a paste the field mangles is retried by typing", async () => {
 		let pastes = 0;
-		const h = harness([typingScreen("a@b.co")], {
+		const h = uiTesting.harness([typingScreen("a@b.co")], {
 			selectAll: true,
 			pasteText: true,
 			onCall: (call, driver) => {
@@ -377,12 +377,12 @@ describe("fill on a driver with pasteText (iOS)", () => {
 	test("an unknown --via is a usage error", async () => {
 		const h = pasteHarness();
 		expect(await h.run("fill", "id=email", "x", "--via", "clipboard", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 		expect(h.driver.callsOf("tap")).toEqual([]);
 	});
 
 	test("--secure --via paste pastes and records no text", async () => {
-		const h = harness([typingScreen("")], { pasteText: true });
+		const h = uiTesting.harness([typingScreen("")], { pasteText: true });
 		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--via", "paste", "--json")).toBe(0);
 		expect(h.driver.callsOf("pasteText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
 		expect(h.steps[0]?.args).toEqual({ secure: true, via: "paste" });
@@ -394,7 +394,7 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 	/** a filled email field; `setText` and `typeText` both leave the field showing what they were given */
 	function setTextHarness(optIn: boolean) {
 		let typed = "";
-		const h = harness([typingScreen("a@b.co")], {
+		const h = uiTesting.harness([typingScreen("a@b.co")], {
 			selectAll: true,
 			setText: true,
 			onCall: (call, driver) => {
@@ -416,7 +416,7 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 		const h = setTextHarness(false);
 		expect(await h.run("fill", "id=email", "new@x.co", "--json")).toBe(0);
 		expect(inputs(h)).toEqual(["tap", "selectAll", "typeText", "close"]);
-		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "fill", verified: true });
 	});
 
 	test("WARDEN_ANDROID_SETTEXT=1: one setText after the focus tap, then the read-back confirms it", async () => {
@@ -425,7 +425,7 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 		expect(inputs(h)).toEqual(["tap", "setText", "close"]);
 		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["new@x.co"]);
 		expect(h.driver.callsOf("elementAtPoint").length).toBeGreaterThan(0);
-		expect(doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "fill", verified: true, characters: 8 });
 	});
 
 	test("WARDEN_ANDROID_SETTEXT=1 with a setText that did not take: the counted retry types", async () => {
@@ -437,7 +437,7 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 		expect(await h.run("fill", "id=email", "new", "--json")).toBe(0);
 		expect(h.driver.callsOf("setText")).toHaveLength(1);
 		expect(h.driver.callsOf("typeText").map((call) => call.text)).toEqual(["new"]);
-		expect(doc(h.c).result).toMatchObject({ verified: true });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ verified: true });
 	});
 
 	test("WARDEN_ANDROID_SETTEXT=1 --no-verify: set without a read-back", async () => {
@@ -445,7 +445,7 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 		expect(await h.run("fill", "id=email", "x", "--no-verify", "--json")).toBe(0);
 		expect(inputs(h)).toEqual(["tap", "setText", "close"]);
 		expect(h.driver.callsOf("elementAtPoint")).toEqual([]);
-		expect(doc(h.c).result.verified).toBeUndefined();
+		expect(uiTesting.doc(h.c).result.verified).toBeUndefined();
 	});
 
 	test("WARDEN_ANDROID_SETTEXT=1 --secure: set, unconfirmed, the text neither echoed nor recorded", async () => {
@@ -453,7 +453,7 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 		expect(await h.run("fill", "id=email", "hunter2hunter2", "--secure", "--json")).toBe(0);
 		expect(h.driver.callsOf("setText").map((call) => call.text)).toEqual(["hunter2hunter2"]);
 		expect(h.driver.callsOf("elementAtPoint")).toEqual([]);
-		expect(doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ verified: "unconfirmed", secure: true, characters: 14 });
 		expect(h.c.stdout.join("\n")).not.toContain("hunter2");
 		expect(h.steps[0]?.args).toEqual({ secure: true });
 	});
@@ -468,27 +468,27 @@ describe("fill on a driver with setText (Android warden-uiad)", () => {
 
 describe("type / key", () => {
 	test("type --submit types then presses Enter", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("type", "hello", "--submit", "--json")).toBe(0);
 		expect(h.driver.calls.filter((call) => call.method === "typeText" || call.method === "key")).toEqual([
 			{ method: "typeText", text: "hello" },
 			{ method: "key", key: "Enter" },
 		]);
-		expect(doc(h.c).result).toMatchObject({ action: "type", submitted: true });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "type", submitted: true });
 	});
 
 	test("key accepts any case and rejects unknown names", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("key", "enter")).toBe(0);
 		expect(h.driver.callsOf("key")).toEqual([{ method: "key", key: "Enter" }]);
 		expect(await h.run("key", "f13", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 	});
 });
 
 describe("swipe", () => {
 	test("a direction is the way the finger moves, across the middle of the screen", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "swipe", "up")).toBe(0);
 		expect(h.driver.callsOf("swipe")).toEqual([
 			{
@@ -501,7 +501,7 @@ describe("swipe", () => {
 	});
 
 	test("`swipe up` (finger direction) and `scroll down` (content direction) are the same gesture", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("gesture", "swipe", "up");
 		await h.run("scroll", "down");
 		const [finger, content] = h.driver.callsOf("swipe");
@@ -509,7 +509,7 @@ describe("swipe", () => {
 	});
 
 	test("x1 y1 x2 y2 is used as given", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "swipe", "10", "20", "30", "40")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({ from: { x: 10, y: 20 }, to: { x: 30, y: 40 } });
 	});
@@ -520,7 +520,7 @@ describe("swipe", () => {
 				children: [driverFixtures.el("list", { id: "list", frame: { x: 20, y: 100, width: 350, height: 400 } })],
 			}),
 		]);
-		const h = harness([list]);
+		const h = uiTesting.harness([list]);
 		expect(await h.run("gesture", "swipe", "left", "--from", "id=list")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({
 			from: { x: 195 + 87.5, y: 300 },
@@ -529,9 +529,9 @@ describe("swipe", () => {
 	});
 
 	test("nonsense: usage error", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("gesture", "swipe", "sideways", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 	});
 });
 
@@ -543,7 +543,7 @@ const FOOTER = driverFixtures.el("button", {
 
 describe("scroll", () => {
 	test("scroll down moves the finger up (content reveals what is below)", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("scroll", "down")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({ from: { x: 195, y: 633 }, to: { x: 195, y: 211 } });
 	});
@@ -554,16 +554,16 @@ describe("scroll", () => {
 				children: [driverFixtures.el("list", { id: "list", frame: { x: 20, y: 100, width: 350, height: 400 } })],
 			}),
 		]);
-		const h = harness([list]);
+		const h = uiTesting.harness([list]);
 		expect(await h.run("scroll", "down", "0.25", "--in", "id=list")).toBe(0);
 		expect(h.driver.callsOf("swipe")[0]).toMatchObject({ from: { x: 195, y: 350 }, to: { x: 195, y: 250 } });
 		expect(await h.run("scroll", "down", "2", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 	});
 
 	test("--until stops as soon as the selector is on screen and returns its fresh @ref", async () => {
 		let swipes = 0;
-		const h = harness(() => driverFixtures.snapshotOf(swipes >= 2 ? [...LOGIN, FOOTER] : LOGIN), {
+		const h = uiTesting.harness(() => driverFixtures.snapshotOf(swipes >= 2 ? [...LOGIN, FOOTER] : LOGIN), {
 			onCall: (call) => {
 				if (call.method === "swipe") swipes += 1;
 				return undefined;
@@ -571,7 +571,7 @@ describe("scroll", () => {
 		});
 		expect(await h.run("scroll", "down", "--until", "id=footer", "--json")).toBe(0);
 		expect(h.driver.callsOf("swipe")).toHaveLength(2);
-		const out = doc(h.c);
+		const out = uiTesting.doc(h.c);
 		expect(out.result).toMatchObject({ action: "scroll", swipes: 2, target: { selector: "id=footer" } });
 		expect(out.result.target.ref).toMatch(/^@e\d+$/);
 		expect(out.generation).toBeUndefined();
@@ -579,15 +579,15 @@ describe("scroll", () => {
 	});
 
 	test("--until finds an already visible element without swiping", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("scroll", "down", "--until", "id=email")).toBe(0);
 		expect(h.driver.callsOf("swipe")).toHaveLength(0);
 	});
 
 	test("--until gives up after --max swipes with target_not_found", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("scroll", "down", "--until", "id=footer", "--max", "3", "--json")).toBe(1);
-		expect(doc(h.c).error).toMatchObject({ code: "target_not_found", details: { swipes: 3 } });
+		expect(uiTesting.doc(h.c).error).toMatchObject({ code: "target_not_found", details: { swipes: 3 } });
 		expect(h.driver.callsOf("swipe")).toHaveLength(3);
 	});
 
@@ -597,13 +597,13 @@ describe("scroll", () => {
 			id: "far",
 			frame: { x: 0, y: 900, width: 390, height: 44 },
 		});
-		const h = harness([driverFixtures.snapshotOf([...LOGIN, offscreen])]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf([...LOGIN, offscreen])]);
 		expect(await h.run("scroll", "down", "--until", "id=far", "--max", "2")).toBe(1);
 		expect(h.driver.callsOf("swipe")).toHaveLength(2);
 	});
 
 	test("the default budget is 10 swipes", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("scroll", "down", "--until", "id=footer")).toBe(1);
 		expect(h.driver.callsOf("swipe")).toHaveLength(10);
 	});
@@ -623,42 +623,42 @@ const ALERT = driverFixtures.snapshotOf([
 
 describe("alert", () => {
 	test("accept presses Allow, dismiss presses Don't Allow", async () => {
-		const accept = harness([ALERT], { answerAlertOnTap: true });
+		const accept = uiTesting.harness([ALERT], { answerAlertOnTap: true });
 		expect(await accept.run("alert", "accept")).toBe(0);
 		expect(accept.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 250, y: 520 }]);
-		const dismiss = harness([ALERT], { answerAlertOnTap: true });
+		const dismiss = uiTesting.harness([ALERT], { answerAlertOnTap: true });
 		expect(await dismiss.run("alert", "dismiss")).toBe(0);
 		expect(dismiss.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 100, y: 520 }]);
 	});
 
 	test("get reads the alert", async () => {
-		const h = harness([ALERT]);
+		const h = uiTesting.harness([ALERT]);
 		expect(await h.run("alert", "get", "--json")).toBe(0);
-		expect(doc(h.c).result.alert).toEqual({
+		expect(uiTesting.doc(h.c).result.alert).toEqual({
 			title: "Allow notifications?",
 			message: "Alerts may include sounds",
 			buttons: ["Don't Allow", "Allow"],
 		});
-		expect(doc(h.c).result).toMatchObject({ present: true, buttons: ["Don't Allow", "Allow"] });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ present: true, buttons: ["Don't Allow", "Allow"] });
 		expect(h.driver.callsOf("tap")).toHaveLength(0);
 	});
 
 	test("no alert showing: get is ok with no buttons, accept and dismiss are no_alert", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("alert", "get", "--json")).toBe(0);
-		expect(doc(h.c).result).toMatchObject({ action: "alert", present: false, alert: null, buttons: [] });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "alert", present: false, alert: null, buttons: [] });
 		expect(await h.run("alert", "get")).toBe(0);
 		expect(h.c.stdout.join("\n")).toBe("no alert showing");
 		for (const choice of ["accept", "dismiss"]) {
 			expect(await h.run("alert", choice, "--json")).toBe(1);
-			const out = doc(h.c);
+			const out = uiTesting.doc(h.c);
 			expect(out.ok).toBe(false);
 			expect(out.error.code).toBe("no_alert");
 			expect(out.error.message).toBe(`no alert is showing to ${choice}`);
 		}
 		expect(h.driver.callsOf("tap")).toHaveLength(0);
 		expect(await h.run("alert", "maybe", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 	});
 });
 
@@ -690,17 +690,17 @@ describe("open --kind", () => {
 
 	test("installs the kind on the leased device, then launches (relaunch: a new build must not leave the old process) without Metro", async () => {
 		const asked: Asked[] = [];
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure(asked, "build") });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure(asked, "build") });
 		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--project", "app", "--json")).toBe(0);
 		expect(asked).toEqual([{ platform: "ios", deviceId: UDID, kind: "simulator", project: "app" }]);
 		expect(h.driver.callsOf("app.launch")).toEqual([
 			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: true } },
 		]);
-		expect(doc(h.c).result).toMatchObject({ bundleId: "com.example.app", relaunch: true, kind: "simulator" });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ bundleId: "com.example.app", relaunch: true, kind: "simulator" });
 	});
 
 	test("a device that already runs the build is attached to, not relaunched", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "installed") });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "installed") });
 		expect(await h.run("open", "com.example.app", "--kind", "release", "--json")).toBe(0);
 		expect(h.driver.callsOf("app.launch")).toEqual([
 			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: false } },
@@ -713,17 +713,17 @@ describe("open --kind", () => {
 			kind: "simulator",
 			repack: { jsKey: "abcdef0123456789", baseHash: "b", reused: false },
 		};
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "build", repack) });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "build", repack) });
 		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(0);
-		expect(doc(h.c).result).toMatchObject({ kind: "simulator", jsKey: "abcdef0123456789" });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ kind: "simulator", jsKey: "abcdef0123456789" });
 		const fell: KindApp = { ...built, kind: "release", fallbackReason: "images changed" };
-		const g = harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "build", fell) });
+		const g = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "build", fell) });
 		expect(await g.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(0);
-		expect(doc(g.c).result).toMatchObject({ kind: "release", fallbackReason: "images changed" });
+		expect(uiTesting.doc(g.c).result).toMatchObject({ kind: "release", fallbackReason: "images changed" });
 	});
 
 	test("an install failure is the command's error and nothing is launched", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			ensureApp: async () => wardenErrors.err("failed", "repack: metro exploded"),
 		});
 		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--json")).toBe(1);
@@ -732,7 +732,7 @@ describe("open --kind", () => {
 	});
 
 	test("--metro with a build that has no dev client is a usage error; --kind with a URL too", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "build") });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { ensureApp: ensure([], "build") });
 		expect(await h.run("open", "com.example.app", "--kind", "simulator", "--metro", "http://localhost:8081")).toBe(1);
 		expect(await h.run("open", "myapp://x", "--kind", "simulator")).toBe(1);
 		expect(h.driver.callsOf("app.launch")).toEqual([]);
@@ -741,17 +741,17 @@ describe("open --kind", () => {
 
 describe("open", () => {
 	test("a bundle id launches the app and is remembered for `close --app`", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("open", "com.example.app", "--json")).toBe(0);
 		expect(h.driver.callsOf("app.launch")).toEqual([
 			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: false } },
 		]);
 		expect(uiStatePersistence.readState(h.c, UDID).app).toBe("com.example.app");
-		expect(doc(h.c).result).toMatchObject({ action: "open", bundleId: "com.example.app", relaunch: false });
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "open", bundleId: "com.example.app", relaunch: false });
 	});
 
 	test("--relaunch terminates first (driver relaunch); --metro launches the dev client with --initialUrl, no dev menu onboarding, and stores the url", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(
 			await h.run("open", "com.example.app", "--relaunch", "--metro", "http://localhost:8081", "--args", "--foo", "bar")
 		).toBe(0);
@@ -781,34 +781,34 @@ describe("open", () => {
 	});
 
 	test("without --relaunch an already running app is attached to, and the output says so", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.driver.app.launch("com.example.app");
 		expect(await h.run("open", "com.example.app", "--json")).toBe(0);
-		expect(doc(h.c).result).toMatchObject({
+		expect(uiTesting.doc(h.c).result).toMatchObject({
 			action: "open",
 			bundleId: "com.example.app",
 			relaunch: false,
 			attached: true,
 		});
 		expect(h.driver.callsOf("app.launch")[1]?.opts).toEqual({ relaunch: false });
-		const text = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const text = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await text.driver.app.launch("com.example.app");
 		expect(await text.run("open", "com.example.app")).toBe(0);
 		expect(text.c.stdout.join("\n")).toContain("attached to com.example.app");
 	});
 
 	test("--relaunch never reports attached, and a first launch is not attached", async () => {
-		const first = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const first = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await first.run("open", "com.example.app", "--json");
-		expect(doc(first.c).result.attached).toBe(false);
-		const again = harness([driverFixtures.snapshotOf(LOGIN)]);
+		expect(uiTesting.doc(first.c).result.attached).toBe(false);
+		const again = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		await again.driver.app.launch("com.example.app");
 		await again.run("open", "com.example.app", "--relaunch", "--json");
-		expect(doc(again.c).result).toMatchObject({ relaunch: true, attached: false });
+		expect(uiTesting.doc(again.c).result).toMatchObject({ relaunch: true, attached: false });
 	});
 
 	test("a url is opened and the iOS `Open in …?` sheet is accepted", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call, driver) => {
 				if (call.method === "app.openUrl") driver.set(OPEN_SHEET);
 				if (call.method === "tap") driver.set(driverFixtures.snapshotOf(LOGIN));
@@ -822,69 +822,72 @@ describe("open", () => {
 	});
 
 	test("--metro with a url is a usage error", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("open", "myapp://x", "--metro", "http://localhost:8081", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 	});
 
 	test("a failed launch is reported with the driver code, exit 1", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) =>
 				call.method === "app.launch" ? driverFixtures.failWith("E_APP_UNAVAILABLE", "not installed") : undefined,
 		});
 		expect(await h.run("open", "com.example.app", "--json")).toBe(1);
-		expect(doc(h.c).error.message).toBe("E_APP_UNAVAILABLE: not installed");
+		expect(uiTesting.doc(h.c).error.message).toBe("E_APP_UNAVAILABLE: not installed");
 		expect(uiStatePersistence.readState(h.c, UDID).app).toBeUndefined();
 	});
 });
 
 describe("device controls", () => {
 	test("home presses home; back is Android only", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("home")).toBe(0);
 		expect(h.driver.callsOf("pressButton")).toEqual([{ method: "pressButton", button: "home" }]);
 		expect(await h.run("back", "--json")).toBe(1);
-		expect(doc(h.c).error.message).toContain("Android only");
+		expect(uiTesting.doc(h.c).error.message).toContain("Android only");
 	});
 
 	test("rotate sets (and reads) the orientation", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("screen", "rotate", "landscape-left", "--json")).toBe(0);
 		expect(h.driver.callsOf("orientation")).toEqual([{ method: "orientation", set: "landscapeLeft" }]);
-		expect(doc(h.c).result.orientation).toBe("landscapeLeft");
+		expect(uiTesting.doc(h.c).result.orientation).toBe("landscapeLeft");
 		expect(await h.run("screen", "rotate", "--json")).toBe(0);
-		expect(doc(h.c).result.orientation).toBe("landscapeLeft");
+		expect(uiTesting.doc(h.c).result.orientation).toBe("landscapeLeft");
 		expect(await h.run("screen", "rotate", "sideways", "--json")).toBe(1);
 	});
 
 	test("appearance sets (and reads) light / dark", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("screen", "appearance", "dark", "--json")).toBe(0);
 		expect(h.driver.callsOf("appearance")).toEqual([{ method: "appearance", set: "dark" }]);
 		expect(await h.run("screen", "appearance", "--json")).toBe(0);
-		expect(doc(h.c).result.appearance).toBe("dark");
+		expect(uiTesting.doc(h.c).result.appearance).toBe("dark");
 		expect(await h.run("screen", "appearance", "blue", "--json")).toBe(1);
 	});
 
 	test("biometrics reads (default) and runs enroll / match / fail / unenroll", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("biometrics", "--json")).toBe(0);
-		expect(doc(h.c).result.biometrics).toEqual({ enrolled: false, modality: "face" });
+		expect(uiTesting.doc(h.c).result.biometrics).toEqual({ enrolled: false, modality: "face" });
 		expect(await h.run("biometrics", "enroll", "--json")).toBe(0);
-		expect(doc(h.c).result.biometrics).toEqual({ enrolled: true, modality: "face" });
+		expect(uiTesting.doc(h.c).result.biometrics).toEqual({ enrolled: true, modality: "face" });
 		expect(await h.run("biometrics", "match", "--json")).toBe(0);
 		expect(await h.run("biometrics", "fail", "--json")).toBe(0);
 		expect(await h.run("biometrics", "unenroll", "--json")).toBe(0);
-		expect(doc(h.c).result.biometrics.enrolled).toBe(false);
+		expect(uiTesting.doc(h.c).result.biometrics.enrolled).toBe(false);
 		expect(h.driver.callsOf("biometrics").map((c) => c.op)).toEqual(["status", "enroll", "match", "fail", "unenroll"]);
 	});
 
 	for (const platform of ["ios", "android"] as const) {
 		test(`biometrics on a physical ${platform} device: E_UNSUPPORTED before the device is opened`, async () => {
-			const h = harness([driverFixtures.snapshotOf(LOGIN)], { platform, lease: { physical: { transport: "usb" } } });
+			const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
+				platform,
+				lease: { physical: { transport: "usb" } },
+			});
 			for (const op of ["status", "enroll", "match"]) {
 				expect(await h.run("biometrics", op, "--json")).not.toBe(0);
-				const out = JSON.stringify(doc(h.c));
+				const out = JSON.stringify(uiTesting.doc(h.c));
 				expect(out).toContain("E_UNSUPPORTED");
 				expect(out).toContain("real Face ID / fingerprint sensor");
 			}
@@ -893,27 +896,27 @@ describe("device controls", () => {
 	}
 
 	test("biometrics: an unknown op is a usage error", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("biometrics", "scan", "--json")).toBe(1);
-		expect(doc(h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(h.c).error.code).toBe("usage");
 		expect(h.driver.callsOf("biometrics")).toHaveLength(0);
 	});
 
 	test("screenshot numbers its files under $WARDEN_HOME/ui/<udid>/shots, or goes where told", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) => {
 				if (call.method === "screenshot" && call.opts?.path) writeFileSync(call.opts.path, "png");
 				return undefined;
 			},
 		});
 		await h.run("screen", "screenshot", "--json");
-		const first: string = doc(h.c).result.path;
+		const first: string = uiTesting.doc(h.c).result.path;
 		expect(first).toMatch(new RegExp(`/ui/${UDID}/shots/001\\.png$`));
 		expect(h.driver.callsOf("screenshot")[0]?.opts?.path).toBe(first);
 		await h.run("screen", "screenshot", "--json");
-		expect(doc(h.c).result.path).toMatch(/\/shots\/002\.png$/);
+		expect(uiTesting.doc(h.c).result.path).toMatch(/\/shots\/002\.png$/);
 		await h.run("screen", "screenshot", "out/shot.png", "--json");
-		expect(doc(h.c).result.path).toBe(`${h.c.cwd}/out/shot.png`);
+		expect(uiTesting.doc(h.c).result.path).toBe(`${h.c.cwd}/out/shot.png`);
 	});
 });
 
@@ -939,9 +942,9 @@ describe("video", () => {
 
 	test("iOS: start spawns simctl recordVideo and remembers the pid; stop sends SIGINT and forgets it", async () => {
 		const fake = fakeVideo();
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
 		expect(await h.run("screen", "video", "start", "--json")).toBe(0);
-		const path: string = doc(h.c).result.path;
+		const path: string = uiTesting.doc(h.c).result.path;
 		expect(path).toMatch(new RegExp(`/ui/${UDID}/videos/001\\.mp4$`));
 		expect(fake.specs[0]?.argv).toEqual([
 			"xcrun",
@@ -956,18 +959,18 @@ describe("video", () => {
 		expect(uiStatePersistence.readState(h.c, UDID).video).toMatchObject({ pid: 4242, path });
 
 		expect(await h.run("screen", "video", "start", "--json")).toBe(1);
-		expect(doc(h.c).error.message).toContain("already recording");
+		expect(uiTesting.doc(h.c).error.message).toContain("already recording");
 
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT"]);
-		expect(doc(h.c).result).toEqual({ action: "video", state: "stopped", path });
+		expect(uiTesting.doc(h.c).result).toEqual({ action: "video", state: "stopped", path });
 		expect(uiStatePersistence.readState(h.c, UDID).video).toBeUndefined();
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(1);
 	});
 
 	test("a record another call writes while stop waits on the recorder survives the stop (14-6)", async () => {
 		const fake = fakeVideo();
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
 		const kill = fake.video.kill;
 		fake.video.kill = (pid, signal) => {
 			kill(pid, signal);
@@ -981,38 +984,38 @@ describe("video", () => {
 
 	test("a recorder pid now running another program is never signalled: stop forgets it, start records anew (14-4)", async () => {
 		const fake = fakeVideo();
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
 		await h.run("screen", "video", "start");
 		fake.video.command = () => "/usr/bin/vim notes.txt";
 		expect(await h.run("screen", "video", "start", "--json")).toBe(0);
 		expect(fake.specs).toHaveLength(2);
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual([]);
-		expect(doc(h.c).warnings?.[0]).toContain("had already ended");
+		expect(uiTesting.doc(h.c).warnings?.[0]).toContain("had already ended");
 		expect(uiStatePersistence.readState(h.c, UDID).video).toBeUndefined();
 	});
 
 	test("a live recorder whose command line cannot be read is not signalled and stays recorded, with a warning", async () => {
 		const fake = fakeVideo();
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
 		await h.run("screen", "video", "start");
 		const recorded = uiStatePersistence.readState(h.c, UDID).video;
 		fake.video.command = () => undefined;
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual([]);
-		expect(doc(h.c).result).toMatchObject({ action: "video", state: "recording", pid: 4242 });
-		expect(doc(h.c).warnings?.[0]).toContain("could not stop the recorder (pid 4242)");
+		expect(uiTesting.doc(h.c).result).toMatchObject({ action: "video", state: "recording", pid: 4242 });
+		expect(uiTesting.doc(h.c).warnings?.[0]).toContain("could not stop the recorder (pid 4242)");
 		expect(uiStatePersistence.readState(h.c, UDID).video).toEqual(recorded);
 	});
 
 	test("the recorder is signalled while its command line is still this device's recordVideo into the file", async () => {
 		const fake = fakeVideo();
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
 		fake.video.command = () => fake.specs.at(-1)?.argv.join(" ");
 		await h.run("screen", "video", "start");
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT"]);
-		expect(doc(h.c).warnings ?? []).toEqual([]);
+		expect(uiTesting.doc(h.c).warnings ?? []).toEqual([]);
 	});
 
 	test("a recorder that ignores SIGINT is killed with a warning", async () => {
@@ -1021,10 +1024,10 @@ describe("video", () => {
 			fake.signals.push(signal);
 			if (signal === "SIGKILL") return;
 		};
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
 		await h.run("screen", "video", "start");
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT", "SIGKILL"]);
-		expect(doc(h.c).warnings?.[0]).toContain("ignored SIGINT");
+		expect(uiTesting.doc(h.c).warnings?.[0]).toContain("ignored SIGINT");
 	});
 });

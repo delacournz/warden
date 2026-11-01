@@ -11,7 +11,7 @@ import { type BrokerServer, serveBroker } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { createUiCommand } from "./ui";
+import { UiCommand } from "./ui";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 const NOW = 1_700_000_000_000;
@@ -129,7 +129,7 @@ async function harness(options: { broker: boolean }): Promise<Harness> {
 		});
 	}
 	const deps: UiDeps = { driver: async () => resultFactory.ok(null as never), sleep: async () => undefined };
-	const command = createUiCommand(deps);
+	const command = new UiCommand(deps).definition();
 	return {
 		c,
 		calls,

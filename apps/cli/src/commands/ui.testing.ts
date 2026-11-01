@@ -13,7 +13,7 @@ import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { createUiCommand } from "./ui";
+import { UiCommand } from "./ui";
 
 /** Test harness shared by the `warden ui` command tests: a leased device, fake driver, fake clock. */
 
@@ -72,86 +72,90 @@ export type HarnessOptions = {
 
 const live: TestContext[] = [];
 
-/** Call from `afterEach`: removes every temp `WARDEN_HOME` the harnesses made. */
-export function cleanupHarnesses(): void {
-	for (const c of live.splice(0)) c.cleanup();
-}
-
-/** A leased device, a fake clock that `sleep` advances, a fake driver over `screens`, and a recording sink. */
-export function harness(screens: Snapshot[] | (() => Snapshot), options: HarnessOptions = {}): Harness {
-	const clock = { t: 1_000_000 };
-	const steps: RecordStep[] = [];
-	const driver: FakeDriver = new FakeDriver({
-		screens,
-		...(options.selectAll ? { selectAll: true } : {}),
-		...(options.setText ? { setText: true } : {}),
-		...(options.pasteText ? { pasteText: true } : {}),
-		...(options.answerAlertOnTap ? { answerAlertOnTap: true } : {}),
-		...(options.capabilities ? { capabilities: options.capabilities } : {}),
-		onCall: (call) => options.onCall?.(call, driver),
-	});
-	const opens = { count: 0 };
-	const deps: UiDeps = {
-		driver: async () => {
-			opens.count += 1;
-			return resultFactory.ok(driver);
-		},
-		sleep: async (ms) => {
-			clock.t += ms;
-		},
-		...(options.realRecorder
-			? {}
-			: {
-					record: {
-						append: async (_udid: string, step: RecordStep) => {
-							steps.push(step);
-						},
-					},
-				}),
-		...options.extraDeps,
-		...(options.video ? { video: options.video } : {}),
-		...(options.pidAlive ? { pidAlive: options.pidAlive } : {}),
-		...(options.ensureApp ? { ensureApp: options.ensureApp } : {}),
-		...(options.conditions ? { conditions: options.conditions } : {}),
+export class UiTesting {
+	/** Call from `afterEach`: removes every temp `WARDEN_HOME` the harnesses made. */
+	readonly cleanupHarnesses = (): void => {
+		for (const c of live.splice(0)) c.cleanup();
 	};
-	const c = testContext([], { now: () => clock.t });
-	live.push(c);
-	c.env = { ...c.env, ...OWNER_ENV };
-	c.db.insertLease(
-		{
-			resource: {
-				kind: "device",
-				platform: options.platform ?? "ios",
-				id: UDID,
-				name: "sim",
-				...(options.lease?.physical ? { physical: options.lease.physical } : {}),
+
+	/** A leased device, a fake clock that `sleep` advances, a fake driver over `screens`, and a recording sink. */
+	readonly harness = (screens: Snapshot[] | (() => Snapshot), options: HarnessOptions = {}): Harness => {
+		const clock = { t: 1_000_000 };
+		const steps: RecordStep[] = [];
+		const driver: FakeDriver = new FakeDriver({
+			screens,
+			...(options.selectAll ? { selectAll: true } : {}),
+			...(options.setText ? { setText: true } : {}),
+			...(options.pasteText ? { pasteText: true } : {}),
+			...(options.answerAlertOnTap ? { answerAlertOnTap: true } : {}),
+			...(options.capabilities ? { capabilities: options.capabilities } : {}),
+			onCall: (call) => options.onCall?.(call, driver),
+		});
+		const opens = { count: 0 };
+		const deps: UiDeps = {
+			driver: async () => {
+				opens.count += 1;
+				return resultFactory.ok(driver);
 			},
-			owner: { kind: "agent", sessionId: "me", cwd: "/w" },
-			ttlMs: 10 * 60 * 60_000,
-			...(options.lease?.pid !== undefined ? { pid: options.lease.pid } : {}),
-			...(options.lease?.label !== undefined ? { label: options.lease.label } : {}),
-			...(options.lease?.shared ? { shared: true } : {}),
-		},
-		clock.t
-	);
-	const command = createUiCommand(deps);
-	return {
-		c,
-		clock,
-		driver,
-		steps,
-		opens,
-		run: (...argv) => {
-			c.argv = [...argv, "--udid", UDID];
-			c.stdout.length = 0;
-			c.stderr.length = 0;
-			return command.run(c);
-		},
+			sleep: async (ms) => {
+				clock.t += ms;
+			},
+			...(options.realRecorder
+				? {}
+				: {
+						record: {
+							append: async (_udid: string, step: RecordStep) => {
+								steps.push(step);
+							},
+						},
+					}),
+			...options.extraDeps,
+			...(options.video ? { video: options.video } : {}),
+			...(options.pidAlive ? { pidAlive: options.pidAlive } : {}),
+			...(options.ensureApp ? { ensureApp: options.ensureApp } : {}),
+			...(options.conditions ? { conditions: options.conditions } : {}),
+		};
+		const c = testContext([], { now: () => clock.t });
+		live.push(c);
+		c.env = { ...c.env, ...OWNER_ENV };
+		c.db.insertLease(
+			{
+				resource: {
+					kind: "device",
+					platform: options.platform ?? "ios",
+					id: UDID,
+					name: "sim",
+					...(options.lease?.physical ? { physical: options.lease.physical } : {}),
+				},
+				owner: { kind: "agent", sessionId: "me", cwd: "/w" },
+				ttlMs: 10 * 60 * 60_000,
+				...(options.lease?.pid !== undefined ? { pid: options.lease.pid } : {}),
+				...(options.lease?.label !== undefined ? { label: options.lease.label } : {}),
+				...(options.lease?.shared ? { shared: true } : {}),
+			},
+			clock.t
+		);
+		const command = new UiCommand(deps).definition();
+		return {
+			c,
+			clock,
+			driver,
+			steps,
+			opens,
+			run: (...argv) => {
+				c.argv = [...argv, "--udid", UDID];
+				c.stdout.length = 0;
+				c.stderr.length = 0;
+				return command.run(c);
+			},
+		};
 	};
+
+	/** The one JSON document a `--json` run printed. */
+	doc(c: TestContext) {
+		expect(c.stdout).toHaveLength(1);
+		return JSON.parse(c.stdout[0] ?? "");
+	}
 }
 
-/** The one JSON document a `--json` run printed. */
-export const doc = (c: TestContext) => {
-	expect(c.stdout).toHaveLength(1);
-	return JSON.parse(c.stdout[0] ?? "");
-};
+export const uiTesting = new UiTesting();

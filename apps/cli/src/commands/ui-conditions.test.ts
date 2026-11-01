@@ -6,9 +6,9 @@ import type { TickerConfig } from "@delacour/warden-driver/conditions/route-tick
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { uiStatePersistence } from "../agent-ui/state";
-import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
+import { type Harness, LOGIN, UDID, uiTesting } from "./ui.testing";
 
-afterEach(cleanupHarnesses);
+afterEach(uiTesting.cleanupHarnesses);
 
 const STATS = { connections: 4, resets: 1, stalls: 0, faulted: 2, bytesUp: 0, bytesDown: 0 };
 
@@ -35,7 +35,7 @@ function setup(platform: "ios" | "android" = "ios", physical = false): Setup {
 	let nextPid = 900;
 	const networkOptions: unknown[] = [];
 	const s = { killed, schedulers, tickers, alive, proxy, ensured, networkOptions } as Setup;
-	s.h = harness([driverFixtures.snapshotOf(LOGIN)], {
+	s.h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 		platform,
 		pidAlive: (pid) => alive.has(pid),
 		...(physical ? { lease: { physical: { transport: "usb" } } } : {}),
@@ -100,7 +100,7 @@ describe("conditions on a physical device", () => {
 				["clock", "set", "2026-01-01T00:00:00Z", "--json"],
 			]) {
 				expect(await s.h.run(...argv)).not.toBe(0);
-				const out = JSON.stringify(doc(s.h.c));
+				const out = JSON.stringify(uiTesting.doc(s.h.c));
 				expect(out).toContain("E_UNSUPPORTED");
 				expect(out).toContain("is not available on physical");
 			}
@@ -116,7 +116,7 @@ describe("net <condition>", () => {
 		const s = setup();
 		expect(await s.h.run("network", "set", "3g", "--json")).toBe(0);
 		expect(s.h.driver.callsOf("network")).toEqual([{ method: "network", op: { kind: "preset", preset: "3g" } }]);
-		expect(doc(s.h.c)).toMatchObject({
+		expect(uiTesting.doc(s.h.c)).toMatchObject({
 			ok: true,
 			command: "net",
 			result: { action: "net", condition: { kind: "preset", preset: "3g" } },
@@ -156,7 +156,7 @@ describe("net <condition>", () => {
 	});
 
 	test("E_NETWORK_RELAUNCH is reported verbatim and nothing is recorded", async () => {
-		const failing = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const failing = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) =>
 				call.method === "network"
 					? driverFixtures.failWith("E_NETWORK_RELAUNCH", "app runs without the dylib")
@@ -168,14 +168,14 @@ describe("net <condition>", () => {
 			},
 		});
 		expect(await failing.run("network", "set", "offline", "--json")).toBe(1);
-		const out = doc(failing.c);
+		const out = uiTesting.doc(failing.c);
 		expect(out.error.message).toContain("E_NETWORK_RELAUNCH");
 		expect(out.error.details).toEqual({ driver: "E_NETWORK_RELAUNCH" });
 		expect(leaseConditions.active(failing.c.store(), failing.c.store().listLeases()[0]?.id as string)).toEqual([]);
 	});
 
 	test("E_UNSUPPORTED (a physical device) is reported verbatim", async () => {
-		const failing = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const failing = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) =>
 				call.method === "network" ? driverFixtures.failWith("E_UNSUPPORTED", "network needs an emulator") : undefined,
 			conditions: {
@@ -185,7 +185,7 @@ describe("net <condition>", () => {
 			},
 		});
 		expect(await failing.run("network", "set", "3g", "--json")).toBe(1);
-		expect(doc(failing.c).error.message).toContain("E_UNSUPPORTED");
+		expect(uiTesting.doc(failing.c).error.message).toContain("E_UNSUPPORTED");
 	});
 
 	test.each([
@@ -196,7 +196,7 @@ describe("net <condition>", () => {
 	])("usage: %j", async (argv, text) => {
 		const s = setup();
 		expect(await s.h.run(...argv, "--json")).toBe(1);
-		const out = doc(s.h.c);
+		const out = uiTesting.doc(s.h.c);
 		expect(out.error.code).toBe("usage");
 		expect(out.error.message + (out.error.hint ?? "")).toContain(text);
 		expect(s.h.driver.callsOf("network")).toHaveLength(0);
@@ -256,7 +256,7 @@ describe("net flap", () => {
 		const record = stored(s, "network");
 		expect(record?.value).toMatchObject({ kind: "flap", upMs: 10_000, downMs: 3_000, jitterPct: 20 });
 		expect(record?.owned).toEqual([{ kind: "pid", pid: 900 }]);
-		expect(doc(s.h.c).result).toMatchObject({ action: "net-flap", pid: 900 });
+		expect(uiTesting.doc(s.h.c).result).toMatchObject({ action: "net-flap", pid: 900 });
 	});
 
 	test("iOS: the proxy is up first and the lease rides along", async () => {
@@ -279,7 +279,7 @@ describe("net flap", () => {
 	test("needs --up and --down", async () => {
 		const s = setup("android");
 		expect(await s.h.run("network", "flap", "--up", "10s", "--json")).toBe(1);
-		expect(doc(s.h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(s.h.c).error.code).toBe("usage");
 		expect(s.schedulers).toHaveLength(0);
 	});
 
@@ -298,7 +298,7 @@ describe("net fault", () => {
 		expect(s.h.driver.callsOf("networkFaults")[0]?.faults).toEqual([
 			{ match: "api.example.com", action: { kind: "status", code: 503 } },
 		]);
-		const out = doc(s.h.c);
+		const out = uiTesting.doc(s.h.c);
 		expect(out.result.faults).toHaveLength(1);
 		expect(out.warnings?.[0]).toContain("https://");
 	});
@@ -348,7 +348,7 @@ describe("net fault", () => {
 	])("usage: %j", async (argv) => {
 		const s = setup();
 		expect(await s.h.run(...argv, "--json")).toBe(1);
-		expect(doc(s.h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(s.h.c).error.code).toBe("usage");
 		expect(s.h.driver.callsOf("networkFaults")).toHaveLength(0);
 	});
 
@@ -374,7 +374,7 @@ describe("net status / reset", () => {
 		s.h.opens.count = 0;
 		expect(await s.h.run("network", "status", "--json")).toBe(0);
 		expect(s.h.opens.count).toBe(0);
-		const out = doc(s.h.c).result;
+		const out = uiTesting.doc(s.h.c).result;
 		expect(out).toMatchObject({
 			action: "net-status",
 			condition: { kind: "flap" },
@@ -410,7 +410,7 @@ describe("net status / reset", () => {
 		const s = setup();
 		expect(await s.h.run("network", "reset", "--json")).toBe(0);
 		expect(s.h.opens.count).toBe(0);
-		expect(doc(s.h.c).result).toMatchObject({ changed: false });
+		expect(uiTesting.doc(s.h.c).result).toMatchObject({ changed: false });
 	});
 });
 
@@ -439,7 +439,7 @@ describe("location", () => {
 	});
 
 	test("iOS --loop is the driver's E_UNSUPPORTED, verbatim", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			onCall: (call) =>
 				call.method === "location"
 					? driverFixtures.failWith("E_UNSUPPORTED", "simctl location has no loop")
@@ -451,7 +451,7 @@ describe("location", () => {
 			},
 		});
 		expect(await h.run("location", "route", "0,0", "1,1", "--loop", "--json")).toBe(1);
-		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
+		expect(uiTesting.doc(h.c).error.message).toContain("E_UNSUPPORTED");
 	});
 
 	test("Android route: first fix, then a detached ticker the lease owns", async () => {
@@ -472,7 +472,7 @@ describe("location", () => {
 			},
 		]);
 		expect(stored(s, "location")?.owned).toEqual([{ kind: "pid", pid: 900 }]);
-		expect(doc(s.h.c).result).toMatchObject({ action: "location-route", pid: 900, loop: true });
+		expect(uiTesting.doc(s.h.c).result).toMatchObject({ action: "location-route", pid: 900, loop: true });
 	});
 
 	test("Android scenario plays the bundled route", async () => {
@@ -507,7 +507,7 @@ describe("location", () => {
 		expect(await s.h.run("location", "clear", "--json")).toBe(0);
 		expect(s.killed).toEqual([900]);
 		expect(stored(s, "location")).toBeUndefined();
-		expect(doc(s.h.c).result).toMatchObject({ cleared: true });
+		expect(uiTesting.doc(s.h.c).result).toMatchObject({ cleared: true });
 	});
 
 	test("status", async () => {
@@ -516,7 +516,7 @@ describe("location", () => {
 		s.h.opens.count = 0;
 		expect(await s.h.run("location", "status", "--json")).toBe(0);
 		expect(s.h.opens.count).toBe(0);
-		expect(doc(s.h.c).result).toMatchObject({
+		expect(uiTesting.doc(s.h.c).result).toMatchObject({
 			location: { kind: "scenario", name: "city-run" },
 			ticker: { pid: 900, running: true },
 		});
@@ -534,7 +534,7 @@ describe("location", () => {
 	])("usage: %j", async (argv) => {
 		const s = setup();
 		expect(await s.h.run(...argv, "--json")).toBe(1);
-		expect(doc(s.h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(s.h.c).error.code).toBe("usage");
 		expect(s.h.driver.callsOf("location")).toHaveLength(0);
 	});
 });
@@ -545,7 +545,10 @@ describe("ui status", () => {
 		await s.h.run("network", "set", "3g");
 		await s.h.run("location", "set", "1,2");
 		expect(await s.h.run("status", "--json")).toBe(0);
-		expect(doc(s.h.c).result.conditions.map((c: { area: string }) => c.area)).toEqual(["network", "location"]);
+		expect(uiTesting.doc(s.h.c).result.conditions.map((c: { area: string }) => c.area)).toEqual([
+			"network",
+			"location",
+		]);
 		await s.h.run("status");
 		expect(s.h.c.stdout.join("\n")).toContain("conditions network 3g · location 1,2");
 	});
@@ -559,7 +562,7 @@ describe("clock", () => {
 		expect(await s.h.run("clock", "set", "2026-01-31T09:00:00Z", "--json")).toBe(0);
 		expect(s.h.driver.callsOf("clock")[0]?.op).toEqual({ kind: "fixed", at: "2026-01-31T09:00:00.000Z" });
 		expect(clockOf(s)?.value).toEqual({ kind: "fixed", at: "2026-01-31T09:00:00.000Z" });
-		expect(doc(s.h.c).result).toMatchObject({ action: "clock-set" });
+		expect(uiTesting.doc(s.h.c).result).toMatchObject({ action: "clock-set" });
 	});
 
 	test("set --frozen holds the instant", async () => {
@@ -574,7 +577,7 @@ describe("clock", () => {
 		expect(clockOf(s)?.value).toEqual({ kind: "offset", ms: 172_800_000 });
 		await s.h.run("clock", "advance", "1d", "--json");
 		expect(clockOf(s)?.value).toEqual({ kind: "offset", ms: 259_200_000 });
-		expect(doc(s.h.c).warnings?.[0]).toContain("HTTPS");
+		expect(uiTesting.doc(s.h.c).warnings?.[0]).toContain("HTTPS");
 	});
 
 	test("advance on a frozen clock moves the frozen instant", async () => {
@@ -585,7 +588,7 @@ describe("clock", () => {
 	});
 
 	test("a frozen Android clock is the driver's E_UNSUPPORTED, verbatim, and nothing is recorded", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)], {
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)], {
 			platform: "android",
 			onCall: (call) =>
 				call.method === "clock" ? driverFixtures.failWith("E_UNSUPPORTED", "no frozen clock on Android") : undefined,
@@ -596,7 +599,7 @@ describe("clock", () => {
 			},
 		});
 		expect(await h.run("clock", "set", "2026-01-01T00:00:00Z", "--frozen", "--json")).toBe(1);
-		expect(doc(h.c).error.message).toContain("E_UNSUPPORTED");
+		expect(uiTesting.doc(h.c).error.message).toContain("E_UNSUPPORTED");
 		expect(leaseConditions.active(h.c.store(), h.c.store().listLeases()[0]?.id as string)).toEqual([]);
 	});
 
@@ -606,7 +609,7 @@ describe("clock", () => {
 		s.h.opens.count = 0;
 		expect(await s.h.run("clock", "status", "--json")).toBe(0);
 		expect(s.h.opens.count).toBe(0);
-		expect(doc(s.h.c).result).toMatchObject({ action: "clock-status", offsetMs: 172_800_000, frozen: false });
+		expect(uiTesting.doc(s.h.c).result).toMatchObject({ action: "clock-status", offsetMs: 172_800_000, frozen: false });
 	});
 
 	test("reset puts real time back and forgets the area; with nothing set it opens nothing", async () => {
@@ -629,7 +632,7 @@ describe("clock", () => {
 	])("usage: %j", async (argv) => {
 		const s = setup();
 		expect(await s.h.run(...argv, "--json")).toBe(1);
-		expect(doc(s.h.c).error.code).toBe("usage");
+		expect(uiTesting.doc(s.h.c).error.code).toBe("usage");
 		expect(s.h.driver.callsOf("clock")).toHaveLength(0);
 	});
 });

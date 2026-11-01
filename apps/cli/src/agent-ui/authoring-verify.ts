@@ -4,7 +4,7 @@ import { resultsFiles, type TestResult } from "@delacour/warden-e2e/runner/resul
 import type { VerifyInput, VerifyReport, VerifyTest } from "@delacour/warden-sdk/ops/authoring/deps";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BatchDeps } from "../commands/batch";
-import { type SpecPlanDeps, specPlan } from "../commands/e2e";
+import { e2e, type SpecPlanDeps } from "../commands/e2e";
 import type { CommandContext } from "../context";
 import { runnerArgv, specEnv } from "../e2e/bun-runner";
 import { specLaunchArgs } from "../e2e/launch";
@@ -32,7 +32,7 @@ export class UiAuthoringVerify {
 	 * not start (no bun, no bundle id, …).
 	 */
 	async runVerify(ctx: CommandContext, deps: VerifyDeps, input: VerifyInput): AsyncResult<VerifyReport> {
-		const plan = await specPlan(ctx, deps, input.suite, input.platform);
+		const plan = await e2e.specPlan(ctx, deps, input.suite, input.platform);
 		if (!plan.success) return plan;
 		await deps.mkdir(input.outDir);
 		const log = join(input.outDir, "spec.log");

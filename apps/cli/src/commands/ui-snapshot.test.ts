@@ -6,7 +6,7 @@ import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { createUiCommand, uiCommand } from "./ui";
+import { UiCommand, uiCommand } from "./ui";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -52,7 +52,7 @@ function harness(screens: Snapshot[] | (() => Snapshot)): Harness {
 		},
 		clock.t
 	);
-	const command = createUiCommand(deps);
+	const command = new UiCommand(deps).definition();
 	return {
 		c,
 		clock,
@@ -245,7 +245,10 @@ describe("warden ui snapshot", () => {
 					? { error: { code: "E_AX_UNAVAILABLE", message: "no ax", retryable: false } }
 					: undefined,
 		});
-		const command = createUiCommand({ driver: async () => resultFactory.ok(failing), sleep: async () => undefined });
+		const command = new UiCommand({
+			driver: async () => resultFactory.ok(failing),
+			sleep: async () => undefined,
+		}).definition();
 		h.c.argv = ["snapshot", "--udid", UDID, "--json"];
 		expect(await command.run(h.c)).toBe(3);
 		expect(doc(h.c).error.code).toBe("engine_unavailable");

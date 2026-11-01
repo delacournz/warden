@@ -42,207 +42,211 @@ export type Harness = {
 	warmStopped: string[];
 };
 
-/** A job spawn's `logDrainMs` when the harness reports one. */
-function drainOf(ms: number | undefined, spawnOpts: SpawnOptions): Pick<ProcHandle, "logDrainMs"> {
-	return ms !== undefined && spawnOpts.job ? { logDrainMs: () => ms } : {};
+export class BatchTesting {
+	/** A job spawn's `logDrainMs` when the harness reports one. */
+	private drainOf(ms: number | undefined, spawnOpts: SpawnOptions): Pick<ProcHandle, "logDrainMs"> {
+		return ms !== undefined && spawnOpts.job ? { logDrainMs: () => ms } : {};
+	}
+
+	/**
+	 * Fake effects: jobs exit on their own with `exitCodes[WARDEN_JOB]` (default 0) unless `manual`;
+	 * serve (a `group` spawn) runs until killed; `probe` answers from `ready()`.
+	 */
+	harness(
+		opts: {
+			exitCodes?: Record<string, number>;
+			manual?: boolean;
+			ready?: () => boolean;
+			isTTY?: boolean;
+			serveExitsOnKill?: boolean;
+			/** overrides `exitCodes`: the exit code for one job spawn, from its env */
+			exitCodeFor?: (env: Record<string, string | undefined>) => number;
+			/** the failure-screenshot capture: "fail" resolves false, "throw" rejects */
+			screenshot?: "ok" | "fail" | "throw";
+			/** the `slim` effect: "fail" resolves an error */
+			slim?: "ok" | "fail";
+			/** who the Metro probe finds on the leased port (default: this project's Metro) */
+			metroOwner?: MetroOwner;
+			/** the prewarm outcome: "fail" = the bundle does not build, "hang" = still building until its signal aborts */
+			prewarm?: "ok" | "fail" | "hang";
+			/** the warm-up helper: "fail" = cannot connect, "snapshot-fail" = connects but cannot snapshot (default "ok") */
+			warm?: "ok" | "fail" | "snapshot-fail";
+			/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
+			bun?: string | null;
+			/** this process's executable, what the specs run as when `WARDEN_BUN` is unset (default `/usr/bin/bun`) */
+			execPath?: string;
+			/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
+			preload?: string | null;
+			/** the published version of the repo's `@delacour/warden-e2e` (default: undefined = workspace sources) */
+			e2eVersion?: string;
+			/** the bundled fallback copy: where its preload is (default `/home/e2e-runtime/x/fallback-preload.mjs`; "fail" = cannot extract) */
+			bundled?: string | "fail";
+			/** how long each job's log took to drain after it exited (`ProcHandle.logDrainMs`; default: not reported) */
+			logDrainMs?: number;
+		} = {}
+	): Harness {
+		const h: Harness = {
+			spawned: [],
+			jobs: () => h.spawned.filter((s) => s.opts.job),
+			setups: () => h.spawned.filter((s) => s.opts.setup),
+			serve: () => h.spawned.find((s) => s.opts.group && !s.opts.job && !s.opts.metro),
+			metro: () => h.spawned.find((s) => s.opts.metro),
+			files: new Map(),
+			dirs: [],
+			events: [],
+			signals: new Map(),
+			probes: [],
+			terminal: [],
+			shots: [],
+			slimmed: [],
+			slimProfiles: [],
+			warmed: [],
+			warmClosed: [],
+			warmStopped: [],
+			timers: [],
+			tickers: [],
+			metroProbes: [],
+			prewarmed: [],
+			deps: {
+				pid: 777,
+				isPortFree: async () => true,
+				spawn: (cmd, spawnOpts): ProcHandle => {
+					let resolveExit: (code: number) => void = () => {};
+					const exited = new Promise<number>((resolve) => {
+						resolveExit = resolve;
+					});
+					const entry: Spawned = { cmd, opts: spawnOpts, kills: [], finish: (code) => resolveExit(code) };
+					h.spawned.push(entry);
+					const job = spawnOpts.env.WARDEN_JOB;
+					const daemon = spawnOpts.metro ? "metro" : spawnOpts.group && !spawnOpts.job ? "serve" : undefined;
+					h.events.push(
+						daemon ? `${daemon}:start` : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
+					);
+					if (!daemon && !opts.manual)
+						queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
+					return {
+						exited,
+						...this.drainOf(opts.logDrainMs, spawnOpts),
+						kill: (signal) => {
+							entry.kills.push(signal);
+							h.events.push(`${daemon ?? `job:${job}`}:${signal}`);
+							if (daemon && opts.serveExitsOnKill !== false) resolveExit(143);
+						},
+					};
+				},
+				probe: async (spec) => {
+					h.probes.push(spec);
+					return opts.ready ? opts.ready() : true;
+				},
+				sleep: () => Bun.sleep(0),
+				record: async (udid, path) => {
+					h.events.push(`record:${udid}:${path}`);
+					return {
+						startedAt: 1_000_500,
+						stop: async () => {
+							h.events.push(`record-stop:${udid}`);
+							return 0;
+						},
+					};
+				},
+				screenshot: async (platform, udid, path) => {
+					h.shots.push(`${platform} ${udid} ${path}`);
+					if (opts.screenshot === "throw") throw new Error("no device");
+					return opts.screenshot !== "fail";
+				},
+				slim: async (udid, profile) => {
+					h.slimmed.push(udid);
+					h.slimProfiles.push(profile);
+					h.events.push(`slim:${udid}`);
+					return opts.slim === "fail" ? { success: false, error: "not booted" } : { success: true, data: ["a", "b"] };
+				},
+				writeFile: async (path, data) => {
+					h.files.set(path, data);
+				},
+				readFile: async (path) => {
+					const data = h.files.get(path);
+					if (data === undefined) throw new Error(`ENOENT: ${path}`);
+					return data;
+				},
+				readFrom: (path, offset) => memoryReadFrom(h.files)(path, offset),
+				mkdir: async (dir) => {
+					h.dirs.push(dir);
+				},
+				newId: () => "b1",
+				terminal: { isTTY: opts.isTTY ?? false, columns: 80, write: (data) => h.terminal.push(data) },
+				onSignal: (signal, handler) => {
+					h.signals.set(signal, handler);
+					return () => h.signals.delete(signal);
+				},
+				every: (ms, fn) => {
+					const ticker = { ms, fn, stopped: false };
+					h.tickers.push(ticker);
+					return () => {
+						ticker.stopped = true;
+					};
+				},
+				after: (ms, fn) => {
+					const timer = { ms, fire: fn, cancelled: false };
+					h.timers.push(timer);
+					return () => {
+						timer.cancelled = true;
+					};
+				},
+				metroProbe: async (port, projectRoot) => {
+					h.metroProbes.push(`${port} ${projectRoot}`);
+					return opts.metroOwner ?? { kind: "ours" };
+				},
+				which: (cmd) => (cmd === "bun" ? (opts.bun === undefined ? "/usr/bin/bun" : opts.bun) : null),
+				execPath: () => opts.execPath ?? "/usr/bin/bun",
+				resolveModule: (specifier) => {
+					if (opts.preload === null) throw new Error(`Cannot find package '${specifier}'`);
+					return opts.preload ?? "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";
+				},
+				e2eVersion: () => opts.e2eVersion,
+				bundledE2e: async () =>
+					opts.bundled === "fail"
+						? { success: false, error: "could not extract the bundled @delacour/warden-e2e" }
+						: { success: true, data: opts.bundled ?? "/home/e2e-runtime/x/fallback-preload.mjs" },
+				helperDir: () => "/opt/warden",
+				warmConnect: () => async (udid) => {
+					h.warmed.push(udid);
+					h.events.push(`warm:${udid}`);
+					if (opts.warm === "fail") return { success: false, error: "helper did not start" };
+					return {
+						success: true,
+						data: {
+							socketPath: `/tmp/warden-simd-${udid}.sock`,
+							snapshot: async () =>
+								opts.warm === "snapshot-fail" ? { success: false, error: "AX denied" } : { success: true, data: null },
+							close: async () => {
+								h.warmClosed.push(udid);
+								h.events.push(`warm-close:${udid}`);
+							},
+							stop: async () => {
+								h.warmStopped.push(udid);
+								h.events.push(`warm-stop:${udid}`);
+							},
+						},
+					};
+				},
+				prewarm: async (url, platform, signal) => {
+					h.prewarmed.push(`${platform} ${url}`);
+					if (opts.prewarm === "hang") {
+						await new Promise<void>((resolve) => {
+							if (signal?.aborted) resolve();
+							signal?.addEventListener("abort", () => resolve(), { once: true });
+						});
+						h.events.push("prewarm:aborted");
+						return { success: false, error: `interrupted while building the ${platform} bundle` };
+					}
+					return opts.prewarm === "fail"
+						? { success: false, error: "Metro could not build the ios bundle (HTTP 500): SyntaxError" }
+						: { success: true, data: { bundled: true } };
+				},
+			},
+		};
+		return h;
+	}
 }
 
-/**
- * Fake effects: jobs exit on their own with `exitCodes[WARDEN_JOB]` (default 0) unless `manual`;
- * serve (a `group` spawn) runs until killed; `probe` answers from `ready()`.
- */
-export function harness(
-	opts: {
-		exitCodes?: Record<string, number>;
-		manual?: boolean;
-		ready?: () => boolean;
-		isTTY?: boolean;
-		serveExitsOnKill?: boolean;
-		/** overrides `exitCodes`: the exit code for one job spawn, from its env */
-		exitCodeFor?: (env: Record<string, string | undefined>) => number;
-		/** the failure-screenshot capture: "fail" resolves false, "throw" rejects */
-		screenshot?: "ok" | "fail" | "throw";
-		/** the `slim` effect: "fail" resolves an error */
-		slim?: "ok" | "fail";
-		/** who the Metro probe finds on the leased port (default: this project's Metro) */
-		metroOwner?: MetroOwner;
-		/** the prewarm outcome: "fail" = the bundle does not build, "hang" = still building until its signal aborts */
-		prewarm?: "ok" | "fail" | "hang";
-		/** the warm-up helper: "fail" = cannot connect, "snapshot-fail" = connects but cannot snapshot (default "ok") */
-		warm?: "ok" | "fail" | "snapshot-fail";
-		/** `bun` on PATH (default `/usr/bin/bun`; null = not installed) */
-		bun?: string | null;
-		/** this process's executable, what the specs run as when `WARDEN_BUN` is unset (default `/usr/bin/bun`) */
-		execPath?: string;
-		/** where `@delacour/warden-e2e/preload` resolves (default under `/proj/node_modules`; null = not installed) */
-		preload?: string | null;
-		/** the published version of the repo's `@delacour/warden-e2e` (default: undefined = workspace sources) */
-		e2eVersion?: string;
-		/** the bundled fallback copy: where its preload is (default `/home/e2e-runtime/x/fallback-preload.mjs`; "fail" = cannot extract) */
-		bundled?: string | "fail";
-		/** how long each job's log took to drain after it exited (`ProcHandle.logDrainMs`; default: not reported) */
-		logDrainMs?: number;
-	} = {}
-): Harness {
-	const h: Harness = {
-		spawned: [],
-		jobs: () => h.spawned.filter((s) => s.opts.job),
-		setups: () => h.spawned.filter((s) => s.opts.setup),
-		serve: () => h.spawned.find((s) => s.opts.group && !s.opts.job && !s.opts.metro),
-		metro: () => h.spawned.find((s) => s.opts.metro),
-		files: new Map(),
-		dirs: [],
-		events: [],
-		signals: new Map(),
-		probes: [],
-		terminal: [],
-		shots: [],
-		slimmed: [],
-		slimProfiles: [],
-		warmed: [],
-		warmClosed: [],
-		warmStopped: [],
-		timers: [],
-		tickers: [],
-		metroProbes: [],
-		prewarmed: [],
-		deps: {
-			pid: 777,
-			isPortFree: async () => true,
-			spawn: (cmd, spawnOpts): ProcHandle => {
-				let resolveExit: (code: number) => void = () => {};
-				const exited = new Promise<number>((resolve) => {
-					resolveExit = resolve;
-				});
-				const entry: Spawned = { cmd, opts: spawnOpts, kills: [], finish: (code) => resolveExit(code) };
-				h.spawned.push(entry);
-				const job = spawnOpts.env.WARDEN_JOB;
-				const daemon = spawnOpts.metro ? "metro" : spawnOpts.group && !spawnOpts.job ? "serve" : undefined;
-				h.events.push(
-					daemon ? `${daemon}:start` : spawnOpts.setup ? `setup:${spawnOpts.env.WARDEN_UDID}` : `job:${job}`
-				);
-				if (!daemon && !opts.manual)
-					queueMicrotask(() => resolveExit(opts.exitCodeFor?.(spawnOpts.env) ?? opts.exitCodes?.[job ?? ""] ?? 0));
-				return {
-					exited,
-					...drainOf(opts.logDrainMs, spawnOpts),
-					kill: (signal) => {
-						entry.kills.push(signal);
-						h.events.push(`${daemon ?? `job:${job}`}:${signal}`);
-						if (daemon && opts.serveExitsOnKill !== false) resolveExit(143);
-					},
-				};
-			},
-			probe: async (spec) => {
-				h.probes.push(spec);
-				return opts.ready ? opts.ready() : true;
-			},
-			sleep: () => Bun.sleep(0),
-			record: async (udid, path) => {
-				h.events.push(`record:${udid}:${path}`);
-				return {
-					startedAt: 1_000_500,
-					stop: async () => {
-						h.events.push(`record-stop:${udid}`);
-						return 0;
-					},
-				};
-			},
-			screenshot: async (platform, udid, path) => {
-				h.shots.push(`${platform} ${udid} ${path}`);
-				if (opts.screenshot === "throw") throw new Error("no device");
-				return opts.screenshot !== "fail";
-			},
-			slim: async (udid, profile) => {
-				h.slimmed.push(udid);
-				h.slimProfiles.push(profile);
-				h.events.push(`slim:${udid}`);
-				return opts.slim === "fail" ? { success: false, error: "not booted" } : { success: true, data: ["a", "b"] };
-			},
-			writeFile: async (path, data) => {
-				h.files.set(path, data);
-			},
-			readFile: async (path) => {
-				const data = h.files.get(path);
-				if (data === undefined) throw new Error(`ENOENT: ${path}`);
-				return data;
-			},
-			readFrom: (path, offset) => memoryReadFrom(h.files)(path, offset),
-			mkdir: async (dir) => {
-				h.dirs.push(dir);
-			},
-			newId: () => "b1",
-			terminal: { isTTY: opts.isTTY ?? false, columns: 80, write: (data) => h.terminal.push(data) },
-			onSignal: (signal, handler) => {
-				h.signals.set(signal, handler);
-				return () => h.signals.delete(signal);
-			},
-			every: (ms, fn) => {
-				const ticker = { ms, fn, stopped: false };
-				h.tickers.push(ticker);
-				return () => {
-					ticker.stopped = true;
-				};
-			},
-			after: (ms, fn) => {
-				const timer = { ms, fire: fn, cancelled: false };
-				h.timers.push(timer);
-				return () => {
-					timer.cancelled = true;
-				};
-			},
-			metroProbe: async (port, projectRoot) => {
-				h.metroProbes.push(`${port} ${projectRoot}`);
-				return opts.metroOwner ?? { kind: "ours" };
-			},
-			which: (cmd) => (cmd === "bun" ? (opts.bun === undefined ? "/usr/bin/bun" : opts.bun) : null),
-			execPath: () => opts.execPath ?? "/usr/bin/bun",
-			resolveModule: (specifier) => {
-				if (opts.preload === null) throw new Error(`Cannot find package '${specifier}'`);
-				return opts.preload ?? "/proj/node_modules/@delacour/warden-e2e/src/preload.ts";
-			},
-			e2eVersion: () => opts.e2eVersion,
-			bundledE2e: async () =>
-				opts.bundled === "fail"
-					? { success: false, error: "could not extract the bundled @delacour/warden-e2e" }
-					: { success: true, data: opts.bundled ?? "/home/e2e-runtime/x/fallback-preload.mjs" },
-			helperDir: () => "/opt/warden",
-			warmConnect: () => async (udid) => {
-				h.warmed.push(udid);
-				h.events.push(`warm:${udid}`);
-				if (opts.warm === "fail") return { success: false, error: "helper did not start" };
-				return {
-					success: true,
-					data: {
-						socketPath: `/tmp/warden-simd-${udid}.sock`,
-						snapshot: async () =>
-							opts.warm === "snapshot-fail" ? { success: false, error: "AX denied" } : { success: true, data: null },
-						close: async () => {
-							h.warmClosed.push(udid);
-							h.events.push(`warm-close:${udid}`);
-						},
-						stop: async () => {
-							h.warmStopped.push(udid);
-							h.events.push(`warm-stop:${udid}`);
-						},
-					},
-				};
-			},
-			prewarm: async (url, platform, signal) => {
-				h.prewarmed.push(`${platform} ${url}`);
-				if (opts.prewarm === "hang") {
-					await new Promise<void>((resolve) => {
-						if (signal?.aborted) resolve();
-						signal?.addEventListener("abort", () => resolve(), { once: true });
-					});
-					h.events.push("prewarm:aborted");
-					return { success: false, error: `interrupted while building the ${platform} bundle` };
-				}
-				return opts.prewarm === "fail"
-					? { success: false, error: "Metro could not build the ios bundle (HTTP 500): SyntaxError" }
-					: { success: true, data: { bundled: true } };
-			},
-		},
-	};
-	return h;
-}
+export const batchTesting = new BatchTesting();

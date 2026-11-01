@@ -5,7 +5,7 @@ import { Chalk } from "chalk";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import { installOrigin } from "../update/install-origin";
-import { createInstallCommand, detectRuntime, type InstallDeps, legacyRules, type Runtime } from "./install";
+import { InstallCommand, type InstallDeps, install, type Runtime } from "./install";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -71,7 +71,7 @@ function setup(argv: string[], opts: SetupOpts = {}): Setup {
 	return { c, home, deps, questions, ui, runs, runOpts };
 }
 
-const runInstall = (c: TestContext, deps: InstallDeps) => createInstallCommand(() => deps).run(c);
+const runInstall = (c: TestContext, deps: InstallDeps) => new InstallCommand(() => deps).definition().run(c);
 
 const read = (path: string) => readFileSync(path, "utf8");
 const claudeFile = (home: string, ...parts: string[]) => join(home, ".claude", ...parts);
@@ -521,7 +521,7 @@ describe("warden install (skill via the skills CLI + rule)", () => {
 		seedClaude(home);
 		mkdirSync(claudeFile(home, "rules"), { recursive: true });
 		writeFileSync(claudeFile(home, "rules", "agent-device.md"), "legacy");
-		expect(legacyRules(claudeFile(home))).toEqual([claudeFile(home, "rules", "agent-device.md")]);
+		expect(install.legacyRules(claudeFile(home))).toEqual([claudeFile(home, "rules", "agent-device.md")]);
 		expect(await runInstall(c, deps)).toBe(0);
 		expect(read(claudeFile(home, "rules", "agent-device.md"))).toBe("legacy");
 		const notes: string[] = JSON.parse(c.stdout.join("\n")).notes;
@@ -593,11 +593,11 @@ describe("warden install (prompts + ui)", () => {
 
 describe("detectRuntime", () => {
 	test("bun-compiled entry → compiled; otherwise dev", () => {
-		expect(detectRuntime("/$bunfs/root/warden", "/usr/local/bin/warden")).toEqual({
+		expect(install.detectRuntime("/$bunfs/root/warden", "/usr/local/bin/warden")).toEqual({
 			kind: "compiled",
 			execPath: "/usr/local/bin/warden",
 		});
-		expect(detectRuntime("/repo/apps/cli/src/cli.ts", "/opt/bun")).toEqual({
+		expect(install.detectRuntime("/repo/apps/cli/src/cli.ts", "/opt/bun")).toEqual({
 			kind: "dev",
 			cliPath: "/repo/apps/cli/src/cli.ts",
 		});

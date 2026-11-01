@@ -3,7 +3,7 @@ import { delimiter, join } from "node:path";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { liveness } from "@delacour/warden-store/liveness";
 import { MIGRATIONS, storeLocator } from "@delacour/warden-store/store";
-import { type Command, defineCommand } from "../command";
+import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { codexDetected } from "../hooks/agents";
 import { hasWardenHook } from "../hooks/claude-settings";
@@ -18,9 +18,9 @@ import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
 import { type InstallOrigin, installOrigin } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
 import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
-import { type HelperDeps, helperChecks, realHelperDeps } from "./doctor-helper";
-import { physicalChecks } from "./doctor-physical";
-import { xcodeChecks } from "./doctor-xcode";
+import { doctorHelper, type HelperDeps } from "./doctor-helper";
+import { doctorPhysical } from "./doctor-physical";
+import { doctorXcode } from "./doctor-xcode";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 /** core failures make doctor exit 1; optional ones only warn */
@@ -29,233 +29,9 @@ export type DoctorCheck = { name: string; level: CheckLevel; status: CheckStatus
 
 type Probe = { ok: true; detail: string } | { ok: false; detail: string };
 
-function check(name: string, level: CheckLevel, probe: Probe): DoctorCheck {
-	const status: CheckStatus = probe.ok ? "ok" : level === "core" ? "fail" : "warn";
-	return { name, level, status, detail: probe.detail };
-}
-
-function attempt(fn: () => Probe): Probe {
-	try {
-		return fn();
-	} catch (error) {
-		return { ok: false, detail: errorMessage(error) };
-	}
-}
-
-function homeWritable(dir: string): Probe {
-	return attempt(() => {
-		mkdirSync(dir, { recursive: true });
-		const probe = join(dir, `.doctor-${process.pid}`);
-		writeFileSync(probe, "");
-		rmSync(probe);
-		return { ok: true, detail: dir };
-	});
-}
-
-function dbSchema(ctx: CommandContext): Probe {
-	return attempt(() => {
-		const row = ctx.store().db.query<{ user_version: number }, []>("PRAGMA user_version").get();
-		const version = row?.user_version ?? 0;
-		if (version > MIGRATIONS.length) {
-			return { ok: false, detail: `schema v${version} is newer than this warden (v${MIGRATIONS.length}) — upgrade` };
-		}
-		return { ok: true, detail: `schema v${version}` };
-	});
-}
-
-async function tool(ctx: CommandContext, cmd: string[], missing: string): Promise<Probe> {
-	try {
-		const result = await ctx.exec(cmd, { timeoutMs: 10_000 });
-		if (result.exitCode !== 0) return { ok: false, detail: missing };
-		const first = result.stdout.trim().split("\n")[0] ?? "";
-		return { ok: true, detail: first || cmd.join(" ") };
-	} catch {
-		return { ok: false, detail: missing };
-	}
-}
-
-function executable(path: string): boolean {
-	try {
-		accessSync(path, constants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-/** Hooks run `$HOME/.local/bin/warden`; the shell may find `warden` there or elsewhere (e.g. an npm global bin). */
-function onPath(ctx: CommandContext, home: string): Probe {
-	const bin = join(home, ".local", "bin");
-	const binary = join(bin, "warden");
-	if (!executable(binary)) return { ok: false, detail: `${binary} missing — run \`warden install\` (hooks call it)` };
-	return attempt(() => {
-		const dirs = (ctx.env.PATH ?? "").split(delimiter).filter(Boolean);
-		if (dirs.includes(bin)) return { ok: true, detail: binary };
-		const other = dirs.map((dir) => join(dir, "warden")).find(executable);
-		return other
-			? { ok: true, detail: `${binary} (hooks); \`warden\` on PATH → ${other}` }
-			: { ok: false, detail: `${bin} is not on PATH (hooks still work: they use $HOME/.local/bin/warden)` };
-	});
-}
-
-/** How this warden was installed and how it upgrades. Informational: always ok. */
-export function installProbe(build: BuildInfo, execPath: string, origin?: InstallOrigin): Probe {
-	if (build.channel === "dev") {
-		return {
-			ok: true,
-			detail: `running from source ${build.sourceDir} — \`warden update\` builds ~/.local/bin/warden`,
-		};
-	}
-	const managed = detectPackageInstall(execPath);
-	if (managed) return { ok: true, detail: `${describePackageInstall(managed)} — upgrade: ${upgradeCommand(managed)}` };
-	if (origin === "npm") {
-		return {
-			ok: true,
-			detail: `${build.channel} binary ${execPath} (from npm) — \`warden update\` upgrades it from ${NPM_PACKAGE} on npm`,
-		};
-	}
-	return { ok: true, detail: `${build.channel} binary ${execPath} — \`warden update\` upgrades it` };
-}
-
-function claudeHook(home: string): Probe {
-	const path = join(home, ".claude", "settings.json");
-	return attempt(() => {
-		const settings: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-		const missing = (["session-end"] as const).filter((name) => !hasWardenHook(settings, name));
-		return missing.length === 0
-			? { ok: true, detail: path }
-			: { ok: false, detail: `missing warden hook ${missing.join(", ")} — run \`warden install --claude\`` };
-	});
-}
-
-/** Codex: optional — only checked when Codex is detected; hooks may live in hooks.json or config.toml. */
-function codexHook(ctx: CommandContext): Probe {
-	if (!codexDetected(ctx.env)) return { ok: true, detail: "codex not detected" };
-	const path = codexHooksPath(ctx.env);
-	const configPath = codexConfigPath(ctx.env);
-	if (!path || !configPath) return { ok: false, detail: "$HOME / $CODEX_HOME not set" };
-	return attempt(() => {
-		const hooks: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-		const toml = existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
-		const missing = (["session-end"] as const).filter(
-			(name) => !hasWardenHook(hooks, name) && !codexTomlHasWardenHook(toml, name)
-		);
-		return missing.length === 0
-			? { ok: true, detail: path }
-			: { ok: false, detail: `missing warden hook ${missing.join(", ")} — run \`warden install --codex\`` };
-	});
-}
-
 const INSTALL_HINT = "run `warden install --claude`";
 
-/** The skill folder under `~/.claude/skills/warden`: every embedded file present and current. */
-function skillProbe(home: string): Probe {
-	const dir = join(home, ".claude", "skills", "warden");
-	if (!existsSync(join(dir, "SKILL.md"))) return { ok: false, detail: INSTALL_HINT };
-	const { missing, outdated } = staleSkillFiles(dir);
-	if (missing.length === 0 && outdated.length === 0) return { ok: true, detail: dir };
-	const parts = [
-		...(missing.length > 0 ? [`missing ${missing.join(", ")}`] : []),
-		...(outdated.length > 0 ? [`outdated ${outdated.join(", ")}`] : []),
-	];
-	return { ok: false, detail: `${parts.join("; ")} — ${INSTALL_HINT}` };
-}
-
-/** `~/.claude/rules/warden.md` matches the embedded rule. */
-function ruleProbe(home: string): Probe {
-	const path = join(home, ".claude", "rules", "warden.md");
-	if (!existsSync(path)) return { ok: false, detail: INSTALL_HINT };
-	return readFileSync(path, "utf8") === RULE_MD
-		? { ok: true, detail: path }
-		: { ok: false, detail: `outdated — ${INSTALL_HINT}` };
-}
-
-function staleLeases(ctx: CommandContext): Probe {
-	return attempt(() => {
-		const now = ctx.now();
-		const leases = ctx.store().listLeases();
-		const stale = leases.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive)).length;
-		if (stale === 0) return { ok: true, detail: `${leases.length} active` };
-		return { ok: false, detail: `${stale} stale lease${stale === 1 ? "" : "s"} — run \`warden gc\`` };
-	});
-}
-
-/**
- * Expo iOS project in the cwd: native builds are only worth caching with ccache enabled in the Podfile
- * properties, and React Native built from source defeats it. Not an Expo iOS project → ok.
- */
-export function ccacheProject(cwd: string): Probe {
-	const path = join(cwd, "ios", "Podfile.properties.json");
-	if (!existsSync(path)) return { ok: true, detail: "no ios/Podfile.properties.json here" };
-	return attempt(() => {
-		const props: unknown = JSON.parse(readFileSync(path, "utf8"));
-		const get = (key: string): unknown =>
-			typeof props === "object" && props !== null ? Reflect.get(props, key) : undefined;
-		const problems: string[] = [];
-		if (get("apple.ccacheEnabled") !== "true") {
-			problems.push('"apple.ccacheEnabled" is not "true" — set expo-build-properties `ios.ccacheEnabled: true`');
-		}
-		if (get("ios.buildReactNativeFromSource") === "true") {
-			problems.push('"ios.buildReactNativeFromSource" is "true" — rebuilds React Native every cache miss');
-		}
-		return problems.length === 0 ? { ok: true, detail: path } : { ok: false, detail: problems.join("; ") };
-	});
-}
-
-export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
-	const home = ctx.env.HOME ?? "";
-	const { adb, emulator } = androidToolsLocator.locate(ctx.env);
-	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, physical] = await Promise.all([
-		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
-		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
-		tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
-		tool(
-			ctx,
-			["ccache", "--version"],
-			"ccache not on PATH — `brew install ccache` to speed up native iOS cache-miss builds"
-		),
-		helperChecks(ctx, helper),
-		xcodeChecks(ctx.exec, ctx.env),
-		physicalChecks(ctx),
-	]);
-	return [
-		check("home", "core", homeWritable(storeLocator.wardenHome(ctx.env))),
-		check("db", "core", dbSchema(ctx)),
-		check("simctl", "optional", simctl),
-		...xcode,
-		check("adb", "optional", adbProbe),
-		check("emulator", "optional", emulatorProbe),
-		check(
-			"install",
-			"optional",
-			installProbe(currentBuild(), process.execPath, installOrigin(ctx.env, process.execPath))
-		),
-		check("ccache", "optional", ccache),
-		check("ccache-project", "optional", ccacheProject(ctx.cwd)),
-		...simHelper,
-		check("path", "optional", onPath(ctx, home)),
-		check("claude-hook", "optional", claudeHook(home)),
-		check("codex-hook", "optional", codexHook(ctx)),
-		check("skill", "optional", skillProbe(home)),
-		check("rule", "optional", ruleProbe(home)),
-		check("stale-leases", "optional", staleLeases(ctx)),
-		...physical,
-	];
-}
-
 const MARK: Record<CheckStatus, string> = SYMBOLS;
-
-function mark(ctx: CommandContext, status: CheckStatus): string {
-	const { color } = ctx.ui;
-	switch (status) {
-		case "ok":
-			return color.green(MARK.ok);
-		case "warn":
-			return color.yellow(MARK.warn);
-		case "fail":
-			return color.red(MARK.fail);
-	}
-}
 
 /** Outside world for `warden doctor`, injectable for tests. */
 export type DoctorDeps = {
@@ -266,67 +42,297 @@ export type DoctorDeps = {
 
 type FetchedHelperReport = { dir: string; url: string; sha256: string };
 
-async function doctor(
-	ctx: CommandContext,
-	deps: DoctorDeps,
-	opts: { json: boolean; fetchHelper: boolean }
-): Promise<number> {
-	const { color } = ctx.ui;
-	let fetched: FetchedHelperReport | undefined;
-	if (opts.fetchHelper) {
-		const result = await fetchHelper({
-			fetch: deps.fetch,
-			extract: tarExtractHelper(ctx.exec),
-			env: ctx.env,
-			platform: deps.helper.platform,
-			arch: deps.helper.arch,
-			version: deps.helper.version,
-			wardenHome: storeLocator.wardenHome(ctx.env),
-		});
-		if (!result.success) {
-			ctx.err(color.red(`warden doctor: --fetch-helper: ${result.error}`));
-			return 1;
-		}
-		fetched = result.data;
-		if (!opts.json) ctx.out(`fetched warden-simd → ${fetched.dir} (${fetched.url})`);
+export class DoctorCommand extends CliCommand {
+	override readonly name = "doctor";
+	override readonly group = "Setup";
+	override readonly summary =
+		"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases";
+
+	constructor(private readonly deps: DoctorDeps) {
+		super();
 	}
-	const checks = await runChecks(ctx, deps.helper);
-	const ok = checks.every((c) => c.status !== "fail");
-	const width = Math.max(...checks.map((c) => c.name.length));
-	const text = checks
-		.map((c) => {
-			const detail = c.status === "ok" ? color.dim(c.detail) : c.detail;
-			return `${mark(ctx, c.status)} ${c.name.padEnd(width)}  ${detail}`;
-		})
-		.join("\n");
-	const count = (status: CheckStatus) => checks.filter((c) => c.status === status).length;
-	const detail = [
-		`${count("ok")} ok`,
-		...(count("warn") > 0 ? [output.plural(count("warn"), "warning")] : []),
-		...(count("fail") > 0 ? [`${count("fail")} failed`] : []),
-	].join(" · ");
-	output.emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text, {
-		scope: "doctor",
-		detail,
-	});
-	return ok ? 0 : 1;
+
+	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
+		cmd
+			.option("--fetch-helper", "download warden-simd for this version into $WARDEN_HOME/simd/<version>/ first")
+			.option("--json", "machine-readable output")
+			.action(async (opts) =>
+				done(await this.doctor(ctx, this.deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }))
+			);
+	}
+
+	private check(name: string, level: CheckLevel, probe: Probe): DoctorCheck {
+		const status: CheckStatus = probe.ok ? "ok" : level === "core" ? "fail" : "warn";
+		return { name, level, status, detail: probe.detail };
+	}
+
+	private attempt(fn: () => Probe): Probe {
+		try {
+			return fn();
+		} catch (error) {
+			return { ok: false, detail: errorMessage(error) };
+		}
+	}
+
+	private homeWritable(dir: string): Probe {
+		return this.attempt(() => {
+			mkdirSync(dir, { recursive: true });
+			const probe = join(dir, `.doctor-${process.pid}`);
+			writeFileSync(probe, "");
+			rmSync(probe);
+			return { ok: true, detail: dir };
+		});
+	}
+
+	private dbSchema(ctx: CommandContext): Probe {
+		return this.attempt(() => {
+			const row = ctx.store().db.query<{ user_version: number }, []>("PRAGMA user_version").get();
+			const version = row?.user_version ?? 0;
+			if (version > MIGRATIONS.length) {
+				return { ok: false, detail: `schema v${version} is newer than this warden (v${MIGRATIONS.length}) — upgrade` };
+			}
+			return { ok: true, detail: `schema v${version}` };
+		});
+	}
+
+	private async tool(ctx: CommandContext, cmd: string[], missing: string): Promise<Probe> {
+		try {
+			const result = await ctx.exec(cmd, { timeoutMs: 10_000 });
+			if (result.exitCode !== 0) return { ok: false, detail: missing };
+			const first = result.stdout.trim().split("\n")[0] ?? "";
+			return { ok: true, detail: first || cmd.join(" ") };
+		} catch {
+			return { ok: false, detail: missing };
+		}
+	}
+
+	private readonly executable = (path: string): boolean => {
+		try {
+			accessSync(path, constants.X_OK);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	/** Hooks run `$HOME/.local/bin/warden`; the shell may find `warden` there or elsewhere (e.g. an npm global bin). */
+	private onPath(ctx: CommandContext, home: string): Probe {
+		const bin = join(home, ".local", "bin");
+		const binary = join(bin, "warden");
+		if (!this.executable(binary))
+			return { ok: false, detail: `${binary} missing — run \`warden install\` (hooks call it)` };
+		return this.attempt(() => {
+			const dirs = (ctx.env.PATH ?? "").split(delimiter).filter(Boolean);
+			if (dirs.includes(bin)) return { ok: true, detail: binary };
+			const other = dirs.map((dir) => join(dir, "warden")).find(this.executable);
+			return other
+				? { ok: true, detail: `${binary} (hooks); \`warden\` on PATH → ${other}` }
+				: { ok: false, detail: `${bin} is not on PATH (hooks still work: they use $HOME/.local/bin/warden)` };
+		});
+	}
+
+	/** How this warden was installed and how it upgrades. Informational: always ok. */
+	installProbe(build: BuildInfo, execPath: string, origin?: InstallOrigin): Probe {
+		if (build.channel === "dev") {
+			return {
+				ok: true,
+				detail: `running from source ${build.sourceDir} — \`warden update\` builds ~/.local/bin/warden`,
+			};
+		}
+		const managed = detectPackageInstall(execPath);
+		if (managed)
+			return { ok: true, detail: `${describePackageInstall(managed)} — upgrade: ${upgradeCommand(managed)}` };
+		if (origin === "npm") {
+			return {
+				ok: true,
+				detail: `${build.channel} binary ${execPath} (from npm) — \`warden update\` upgrades it from ${NPM_PACKAGE} on npm`,
+			};
+		}
+		return { ok: true, detail: `${build.channel} binary ${execPath} — \`warden update\` upgrades it` };
+	}
+
+	private claudeHook(home: string): Probe {
+		const path = join(home, ".claude", "settings.json");
+		return this.attempt(() => {
+			const settings: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+			const missing = (["session-end"] as const).filter((name) => !hasWardenHook(settings, name));
+			return missing.length === 0
+				? { ok: true, detail: path }
+				: { ok: false, detail: `missing warden hook ${missing.join(", ")} — run \`warden install --claude\`` };
+		});
+	}
+
+	/** Codex: optional — only checked when Codex is detected; hooks may live in hooks.json or config.toml. */
+	private codexHook(ctx: CommandContext): Probe {
+		if (!codexDetected(ctx.env)) return { ok: true, detail: "codex not detected" };
+		const path = codexHooksPath(ctx.env);
+		const configPath = codexConfigPath(ctx.env);
+		if (!path || !configPath) return { ok: false, detail: "$HOME / $CODEX_HOME not set" };
+		return this.attempt(() => {
+			const hooks: unknown = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+			const toml = existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
+			const missing = (["session-end"] as const).filter(
+				(name) => !hasWardenHook(hooks, name) && !codexTomlHasWardenHook(toml, name)
+			);
+			return missing.length === 0
+				? { ok: true, detail: path }
+				: { ok: false, detail: `missing warden hook ${missing.join(", ")} — run \`warden install --codex\`` };
+		});
+	}
+
+	/** The skill folder under `~/.claude/skills/warden`: every embedded file present and current. */
+	private skillProbe(home: string): Probe {
+		const dir = join(home, ".claude", "skills", "warden");
+		if (!existsSync(join(dir, "SKILL.md"))) return { ok: false, detail: INSTALL_HINT };
+		const { missing, outdated } = staleSkillFiles(dir);
+		if (missing.length === 0 && outdated.length === 0) return { ok: true, detail: dir };
+		const parts = [
+			...(missing.length > 0 ? [`missing ${missing.join(", ")}`] : []),
+			...(outdated.length > 0 ? [`outdated ${outdated.join(", ")}`] : []),
+		];
+		return { ok: false, detail: `${parts.join("; ")} — ${INSTALL_HINT}` };
+	}
+
+	/** `~/.claude/rules/warden.md` matches the embedded rule. */
+	private ruleProbe(home: string): Probe {
+		const path = join(home, ".claude", "rules", "warden.md");
+		if (!existsSync(path)) return { ok: false, detail: INSTALL_HINT };
+		return readFileSync(path, "utf8") === RULE_MD
+			? { ok: true, detail: path }
+			: { ok: false, detail: `outdated — ${INSTALL_HINT}` };
+	}
+
+	private staleLeases(ctx: CommandContext): Probe {
+		return this.attempt(() => {
+			const now = ctx.now();
+			const leases = ctx.store().listLeases();
+			const stale = leases.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive)).length;
+			if (stale === 0) return { ok: true, detail: `${leases.length} active` };
+			return { ok: false, detail: `${stale} stale lease${stale === 1 ? "" : "s"} — run \`warden gc\`` };
+		});
+	}
+
+	/**
+	 * Expo iOS project in the cwd: native builds are only worth caching with ccache enabled in the Podfile
+	 * properties, and React Native built from source defeats it. Not an Expo iOS project → ok.
+	 */
+	ccacheProject(cwd: string): Probe {
+		const path = join(cwd, "ios", "Podfile.properties.json");
+		if (!existsSync(path)) return { ok: true, detail: "no ios/Podfile.properties.json here" };
+		return this.attempt(() => {
+			const props: unknown = JSON.parse(readFileSync(path, "utf8"));
+			const get = (key: string): unknown =>
+				typeof props === "object" && props !== null ? Reflect.get(props, key) : undefined;
+			const problems: string[] = [];
+			if (get("apple.ccacheEnabled") !== "true") {
+				problems.push('"apple.ccacheEnabled" is not "true" — set expo-build-properties `ios.ccacheEnabled: true`');
+			}
+			if (get("ios.buildReactNativeFromSource") === "true") {
+				problems.push('"ios.buildReactNativeFromSource" is "true" — rebuilds React Native every cache miss');
+			}
+			return problems.length === 0 ? { ok: true, detail: path } : { ok: false, detail: problems.join("; ") };
+		});
+	}
+
+	async runChecks(ctx: CommandContext, helper: HelperDeps = doctorHelper.realHelperDeps()): Promise<DoctorCheck[]> {
+		const home = ctx.env.HOME ?? "";
+		const { adb, emulator } = androidToolsLocator.locate(ctx.env);
+		const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, physical] = await Promise.all([
+			this.tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
+			this.tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),
+			this.tool(ctx, [emulator, "-version"], `${emulator} not found (set ANDROID_HOME) — Android disabled`),
+			this.tool(
+				ctx,
+				["ccache", "--version"],
+				"ccache not on PATH — `brew install ccache` to speed up native iOS cache-miss builds"
+			),
+			doctorHelper.helperChecks(ctx, helper),
+			doctorXcode.xcodeChecks(ctx.exec, ctx.env),
+			doctorPhysical.physicalChecks(ctx),
+		]);
+		return [
+			this.check("home", "core", this.homeWritable(storeLocator.wardenHome(ctx.env))),
+			this.check("db", "core", this.dbSchema(ctx)),
+			this.check("simctl", "optional", simctl),
+			...xcode,
+			this.check("adb", "optional", adbProbe),
+			this.check("emulator", "optional", emulatorProbe),
+			this.check(
+				"install",
+				"optional",
+				this.installProbe(currentBuild(), process.execPath, installOrigin(ctx.env, process.execPath))
+			),
+			this.check("ccache", "optional", ccache),
+			this.check("ccache-project", "optional", this.ccacheProject(ctx.cwd)),
+			...simHelper,
+			this.check("path", "optional", this.onPath(ctx, home)),
+			this.check("claude-hook", "optional", this.claudeHook(home)),
+			this.check("codex-hook", "optional", this.codexHook(ctx)),
+			this.check("skill", "optional", this.skillProbe(home)),
+			this.check("rule", "optional", this.ruleProbe(home)),
+			this.check("stale-leases", "optional", this.staleLeases(ctx)),
+			...physical,
+		];
+	}
+
+	private mark(ctx: CommandContext, status: CheckStatus): string {
+		const { color } = ctx.ui;
+		switch (status) {
+			case "ok":
+				return color.green(MARK.ok);
+			case "warn":
+				return color.yellow(MARK.warn);
+			case "fail":
+				return color.red(MARK.fail);
+		}
+	}
+
+	private async doctor(
+		ctx: CommandContext,
+		deps: DoctorDeps,
+		opts: { json: boolean; fetchHelper: boolean }
+	): Promise<number> {
+		const { color } = ctx.ui;
+		let fetched: FetchedHelperReport | undefined;
+		if (opts.fetchHelper) {
+			const result = await fetchHelper({
+				fetch: deps.fetch,
+				extract: tarExtractHelper(ctx.exec),
+				env: ctx.env,
+				platform: deps.helper.platform,
+				arch: deps.helper.arch,
+				version: deps.helper.version,
+				wardenHome: storeLocator.wardenHome(ctx.env),
+			});
+			if (!result.success) {
+				ctx.err(color.red(`warden doctor: --fetch-helper: ${result.error}`));
+				return 1;
+			}
+			fetched = result.data;
+			if (!opts.json) ctx.out(`fetched warden-simd → ${fetched.dir} (${fetched.url})`);
+		}
+		const checks = await this.runChecks(ctx, deps.helper);
+		const ok = checks.every((c) => c.status !== "fail");
+		const width = Math.max(...checks.map((c) => c.name.length));
+		const text = checks
+			.map((c) => {
+				const detail = c.status === "ok" ? color.dim(c.detail) : c.detail;
+				return `${this.mark(ctx, c.status)} ${c.name.padEnd(width)}  ${detail}`;
+			})
+			.join("\n");
+		const count = (status: CheckStatus) => checks.filter((c) => c.status === status).length;
+		const detail = [
+			`${count("ok")} ok`,
+			...(count("warn") > 0 ? [output.plural(count("warn"), "warning")] : []),
+			...(count("fail") > 0 ? [`${count("fail")} failed`] : []),
+		].join(" · ");
+		output.emit(ctx, opts.json, { ok, checks, ...(fetched ? { helperFetch: fetched } : {}) }, text, {
+			scope: "doctor",
+			detail,
+		});
+		return ok ? 0 : 1;
+	}
 }
 
-export function createDoctorCommand(deps: DoctorDeps): Command {
-	return defineCommand({
-		name: "doctor",
-		group: "Setup",
-		summary:
-			"check warden's setup: home, db, device tools, simulator helper, install method, PATH, Claude/Codex hooks + skill, stale leases",
-		register: (cmd, ctx, done) => {
-			cmd
-				.option("--fetch-helper", "download warden-simd for this version into $WARDEN_HOME/simd/<version>/ first")
-				.option("--json", "machine-readable output")
-				.action(async (opts) =>
-					done(await doctor(ctx, deps, { json: opts.json === true, fetchHelper: opts.fetchHelper === true }))
-				);
-		},
-	});
-}
-
-export const doctorCommand: Command = createDoctorCommand({ helper: realHelperDeps(), fetch: (url) => fetch(url) });
+export const doctor = new DoctorCommand({ helper: doctorHelper.realHelperDeps(), fetch: (url) => fetch(url) });
+export const doctorCommand = doctor.definition();

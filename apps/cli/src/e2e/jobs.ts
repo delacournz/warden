@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { SelectedSpec } from "@delacour/warden-core/affected/select";
 import { resultsFiles } from "@delacour/warden-e2e/runner/results";
 import { realPath } from "../batch/spec-progress";
-import { attemptKey } from "../commands/batch";
+import { batch } from "../commands/batch";
 import { shardSpecs } from "./bun-runner";
 import { judgeJob } from "./verdicts";
 
@@ -99,7 +99,7 @@ export function shardRuns(plan: JobPlan, io: ShardRunsIO): ShardRuns {
 			else if (run.attempt > known.attempt) state = { attempt: run.attempt, specs: await failedSpecs(known), out };
 			else state = known;
 			states.set(key, state);
-			attempts.set(attemptKey(run), new Set(state.specs.map((f) => f.id)));
+			attempts.set(batch.attemptKey(run), new Set(state.specs.map((f) => f.id)));
 			return io.argvOf(state.specs.map((f) => f.file));
 		},
 	};

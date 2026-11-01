@@ -15,7 +15,7 @@ import {
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { contextBuilder } from "../context";
 import { scriptedUi, type TestContext, testContext } from "../testing";
-import { createGoldenCommand } from "./golden";
+import { GoldenCommand } from "./golden";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -38,7 +38,7 @@ function setup(argv: string[], host: FakeHost): TestContext {
 describe("warden golden", () => {
 	test("ensure builds once, then reuses", async () => {
 		const host = goldenTesting.fakeHost({ migrationPolls: 0 });
-		const cmd = createGoldenCommand(instant);
+		const cmd = new GoldenCommand(instant).definition();
 		const c = setup(["ensure", "--json"], host);
 		expect(await cmd.run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ name: GOLDEN, built: true });
@@ -55,7 +55,7 @@ describe("warden golden", () => {
 			],
 		});
 		const c = setup(["ls"], host);
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toContain(GOLDEN);
 		expect(c.stdout.join("\n")).not.toContain("warden-iphone-17-1");
 	});
@@ -65,7 +65,7 @@ describe("warden golden", () => {
 		const c = setup(["ensure"], host);
 		const ui = scriptedUi();
 		c.ui = ui;
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(ui.events[0]).toBe("spin: ensuring golden iphone-17 image…");
 		expect(ui.events).toContain(`ok: golden ${GOLDEN} built`);
 		expect(ui.events.at(-1)).toBe("stop");
@@ -84,7 +84,7 @@ describe("warden golden", () => {
 	test("prune --all --yes deletes goldens only", async () => {
 		const host = goldenHost();
 		const c = setup(["prune", "--all", "--yes", "--json"], host);
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(host.sims.map((s) => s.udid)).toEqual(["P"]);
 		expect(JSON.parse(c.stdout.join("\n")).map((g: { udid: string }) => g.udid)).toEqual(["G"]);
 	});
@@ -92,7 +92,7 @@ describe("warden golden", () => {
 	test("prune --all without a terminal needs --yes", async () => {
 		const host = goldenHost();
 		const c = setup(["prune", "--all"], host);
-		expect(await createGoldenCommand(instant).run(c)).toBe(1);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--yes");
 		expect(host.sims).toHaveLength(2);
 	});
@@ -102,7 +102,7 @@ describe("warden golden", () => {
 		const c = setup(["prune", "--all"], host);
 		const ui = scriptedUi({ interactive: true, confirm: [true] });
 		c.ui = ui;
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(ui.events[0]).toBe("confirm: Delete all 1 golden image(s)?");
 		expect(ui.events).toContain("spin: deleting golden images…");
 		expect(host.sims.map((s) => s.udid)).toEqual(["P"]);
@@ -114,7 +114,7 @@ describe("warden golden", () => {
 			const c = setup(["prune", "--all"], host);
 			const ui = scriptedUi({ interactive: true, confirm: [answer] });
 			c.ui = ui;
-			expect(await createGoldenCommand(instant).run(c)).toBe(1);
+			expect(await new GoldenCommand(instant).definition().run(c)).toBe(1);
 			expect(ui.events).toContain("cancelled: Aborted.");
 			expect(host.sims).toHaveLength(2);
 			c.cleanup();
@@ -127,15 +127,15 @@ describe("warden golden", () => {
 		const c = setup(["prune"], host);
 		const ui = scriptedUi({ interactive: true });
 		c.ui = ui;
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(ui.events.some((e) => e.startsWith("confirm"))).toBe(false);
 	});
 
 	test("unknown / missing subcommand → exit 1", async () => {
-		expect(await createGoldenCommand(instant).run(setup(["nope"], goldenTesting.fakeHost()))).toBe(1);
+		expect(await new GoldenCommand(instant).definition().run(setup(["nope"], goldenTesting.fakeHost()))).toBe(1);
 		expect(ctx?.stderr.join("\n")).toContain("unknown command 'nope'");
 		ctx?.cleanup();
-		expect(await createGoldenCommand(instant).run(setup([], goldenTesting.fakeHost()))).toBe(1);
+		expect(await new GoldenCommand(instant).definition().run(setup([], goldenTesting.fakeHost()))).toBe(1);
 	});
 });
 
@@ -184,7 +184,7 @@ describe("warden golden --platform android (16-3)", () => {
 		const c = androidSetup(["ensure", "--platform", "android", "--json"]);
 		const name = await current(c);
 		plant(c, name);
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ avd: "Pixel_10", name, built: false });
 	});
 
@@ -192,7 +192,7 @@ describe("warden golden --platform android (16-3)", () => {
 		const c = androidSetup(["ensure", "--platform", "android", "--json"]);
 		for (let i = 0; i < 3; i++) new AndroidSnapshotPending(c.db).recordLoadFailure("Pixel_10", c.now());
 		plant(c, await current(c));
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(new AndroidSnapshotPending(c.db).givenUp()).toEqual([]);
 		expect(new AndroidSnapshotPending(c.db).recordLoadFailure("Pixel_10", c.now()).loadFailures).toBe(1);
 	});
@@ -203,7 +203,7 @@ describe("warden golden --platform android (16-3)", () => {
 		plant(c, name);
 		plant(c, "warden-0000000000");
 		plant(c, "default_boot");
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		const rows: Array<{ name: string; current: boolean }> = JSON.parse(c.stdout.join("\n"));
 		expect(rows.map((r) => [r.name, r.current]).sort()).toEqual(
 			[
@@ -218,18 +218,18 @@ describe("warden golden --platform android (16-3)", () => {
 		const mine = plant(c, await current(c));
 		const stale = plant(c, "warden-0000000000");
 		const userBoot = plant(c, "default_boot");
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(existsSync(stale)).toBe(false);
 		expect(existsSync(mine)).toBe(true);
 		c.argv = ["prune", "--platform", "android", "--all", "--yes", "--json"];
-		expect(await createGoldenCommand(instant).run(c)).toBe(0);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(existsSync(mine)).toBe(false);
 		expect(existsSync(userBoot)).toBe(true);
 	});
 
 	test("an unknown --platform → exit 1", async () => {
 		const c = androidSetup(["ls", "--platform", "windows"]);
-		expect(await createGoldenCommand(instant).run(c)).toBe(1);
+		expect(await new GoldenCommand(instant).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--platform");
 	});
 });

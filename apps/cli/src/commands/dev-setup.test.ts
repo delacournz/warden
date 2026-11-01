@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { projectConfig } from "@delacour/warden-builds/config";
 import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import { fakeExec, type ScriptedUi, scriptedUi, testContext } from "../testing";
-import { describeIssue, diagnoseDev, offerDevSetup } from "./dev-setup";
+import { devSetup } from "./dev-setup";
 
 let dir: string | undefined;
 afterEach(() => {
@@ -42,21 +42,21 @@ function context(root: string, over: Partial<ProjectContext> = {}): ProjectConte
 describe("diagnoseDev", () => {
 	test("a missing expo-dev-client is a package issue with the checkout's installer", () => {
 		const root = app({ dependencies: { expo: "58.0.0" } });
-		const issues = diagnoseDev(context(root));
+		const issues = devSetup.diagnoseDev(context(root));
 		expect(issues).toEqual([
 			{ kind: "package", root, packages: ["expo-dev-client"], command: ["yarn", "expo", "install", "expo-dev-client"] },
 		]);
-		expect(describeIssue(issues[0] as never)).toContain("run: yarn expo install expo-dev-client");
+		expect(devSetup.describeIssue(issues[0] as never)).toContain("run: yarn expo install expo-dev-client");
 	});
 
 	test("an app resolved through expo config gets the warden.config.ts offer; a configured one does not", () => {
 		const root = app({ dependencies: { "expo-dev-client": "1" } });
-		expect(diagnoseDev(context(root))).toEqual([]);
-		expect(diagnoseDev(context(root, { appConfig: { slug: "wallet" } }))).toEqual([
+		expect(devSetup.diagnoseDev(context(root))).toEqual([]);
+		expect(devSetup.diagnoseDev(context(root, { appConfig: { slug: "wallet" } }))).toEqual([
 			{ kind: "config", root, name: "wallet", bundleId: { ios: "com.x.dev" } },
 		]);
 		writeFileSync(join(root, "warden.config.ts"), "export default {}");
-		expect(diagnoseDev(context(root, { appConfig: { slug: "wallet" } }))).toEqual([]);
+		expect(devSetup.diagnoseDev(context(root, { appConfig: { slug: "wallet" } }))).toEqual([]);
 	});
 });
 
@@ -64,7 +64,9 @@ describe("offerDevSetup", () => {
 	test("without a terminal the blocking issue is the error, named with its command", async () => {
 		const root = app({ dependencies: {} });
 		const c = testContext([]);
-		const res = await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} })), { interactive: false });
+		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} })), {
+			interactive: false,
+		});
 		expect(res).toEqual({ success: false, error: expect.stringContaining("yarn expo install expo-dev-client") });
 		expect(c.stderr.some((l) => l.includes("warden init"))).toBe(true);
 	});
@@ -81,7 +83,7 @@ describe("offerDevSetup", () => {
 			},
 		});
 		c.ui = scriptedUi({ interactive: true, confirm: [true] });
-		const res = await offerDevSetup(c, diagnoseDev(context(root)), { interactive: true });
+		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root)), { interactive: true });
 		expect(res).toEqual({ success: true, data: "changed" });
 		expect(calls).toEqual([["yarn", "expo", "install", "expo-dev-client"]]);
 		expect(cwds).toEqual([root]);
@@ -92,11 +94,11 @@ describe("offerDevSetup", () => {
 		const root = app({ dependencies: {} });
 		const declined = testContext([]);
 		declined.ui = scriptedUi({ interactive: true, confirm: [false] });
-		const no = await offerDevSetup(declined, diagnoseDev(context(root)), { interactive: true });
+		const no = await devSetup.offerDevSetup(declined, devSetup.diagnoseDev(context(root)), { interactive: true });
 		expect(no.success).toBe(false);
 		const failing = testContext([], { exec: fakeExec([["yarn expo install", { exitCode: 1, stderr: "ECONNRESET" }]]) });
 		failing.ui = scriptedUi({ interactive: true, confirm: [true] });
-		const res = await offerDevSetup(failing, diagnoseDev(context(root)), { interactive: true });
+		const res = await devSetup.offerDevSetup(failing, devSetup.diagnoseDev(context(root)), { interactive: true });
 		expect(res).toEqual({ success: false, error: expect.stringContaining("ECONNRESET") });
 	});
 
@@ -105,9 +107,13 @@ describe("offerDevSetup", () => {
 		const calls: string[][] = [];
 		const c = testContext([], { exec: fakeExec([], calls) });
 		c.ui = scriptedUi({ interactive: true, confirm: [true] });
-		const res = await offerDevSetup(c, diagnoseDev(context(root, { appConfig: { slug: "wallet" } })), {
-			interactive: true,
-		});
+		const res = await devSetup.offerDevSetup(
+			c,
+			devSetup.diagnoseDev(context(root, { appConfig: { slug: "wallet" } })),
+			{
+				interactive: true,
+			}
+		);
 		expect(res).toEqual({ success: true, data: "changed" });
 		const written = readFileSync(join(root, "warden.config.ts"), "utf8");
 		expect(written).toContain('name: "wallet"');
@@ -116,7 +122,9 @@ describe("offerDevSetup", () => {
 		expect(calls.filter((cmd) => cmd[1] === "prettier")).toEqual([]);
 		const again = testContext([]);
 		again.ui = scriptedUi({ interactive: true, confirm: [false] });
-		expect(await offerDevSetup(again, diagnoseDev(context(root, { appConfig: {} })), { interactive: true })).toEqual({
+		expect(
+			await devSetup.offerDevSetup(again, devSetup.diagnoseDev(context(root, { appConfig: {} })), { interactive: true })
+		).toEqual({
 			success: true,
 			data: "unchanged",
 		});
@@ -133,7 +141,7 @@ describe("declining the config offer", () => {
 		const root = app({ dependencies: { "expo-dev-client": "1" } });
 		const checkout = join(root, "..", "..");
 		const where = overlayOf(checkout);
-		expect(diagnoseDev(context(root, { appConfig: {} }), where)).toEqual([
+		expect(devSetup.diagnoseDev(context(root, { appConfig: {} }), where)).toEqual([
 			{
 				kind: "config",
 				root,
@@ -150,7 +158,9 @@ describe("declining the config offer", () => {
 		const where = overlayOf(checkout);
 		const c = testContext([]);
 		c.ui = scriptedUi({ interactive: true, confirm: [false] });
-		const res = await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} }), where), { interactive: true });
+		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} }), where), {
+			interactive: true,
+		});
 		expect(res).toEqual({ success: true, data: "changed" });
 		expect(existsSync(join(root, "warden.config.ts"))).toBe(false);
 		const written = readFileSync(join(where.overlayDir, "warden.config.ts"), "utf8");
@@ -165,7 +175,9 @@ describe("declining the config offer", () => {
 		const where = overlayOf(checkout);
 		const c = testContext([]);
 		c.ui = scriptedUi({ interactive: true, confirm: [false] });
-		await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} }), where), { interactive: true });
+		await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} }), where), {
+			interactive: true,
+		});
 		const worktree = join(checkout, "..", "worktree");
 		mkdirSync(join(worktree, "apps", "mobile"), { recursive: true });
 		const fromWorktree = projectConfig.load({
@@ -190,12 +202,16 @@ describe("declining the config offer", () => {
 		const where = overlayOf(dir);
 		const c = testContext([]);
 		c.ui = scriptedUi({ interactive: true, confirm: [false] });
-		await offerDevSetup(c, diagnoseDev(context(dir, { appConfig: {} }), where), { interactive: true });
+		await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(dir, { appConfig: {} }), where), {
+			interactive: true,
+		});
 		expect(readFileSync(join(where.overlayDir, "warden.config.ts"), "utf8")).not.toContain("root:");
 		const bare = mkdtempSync(join(dir, "bare-"));
 		const none = testContext([]);
 		none.ui = scriptedUi({ interactive: true, confirm: [false] });
-		expect(await offerDevSetup(none, diagnoseDev(context(bare, { appConfig: {} })), { interactive: true })).toEqual({
+		expect(
+			await devSetup.offerDevSetup(none, devSetup.diagnoseDev(context(bare, { appConfig: {} })), { interactive: true })
+		).toEqual({
 			success: true,
 			data: "unchanged",
 		});
@@ -203,7 +219,9 @@ describe("declining the config offer", () => {
 		const cancel = testContext([]);
 		cancel.ui = scriptedUi({ interactive: true, confirm: [undefined] });
 		expect(
-			await offerDevSetup(cancel, diagnoseDev(context(bare, { appConfig: {} }), cancelWhere), { interactive: true })
+			await devSetup.offerDevSetup(cancel, devSetup.diagnoseDev(context(bare, { appConfig: {} }), cancelWhere), {
+				interactive: true,
+			})
 		).toEqual({ success: true, data: "unchanged" });
 		expect(existsSync(cancelWhere.overlayDir)).toBe(false);
 	});
@@ -223,7 +241,9 @@ describe("formatting the written config", () => {
 			},
 		});
 		c.ui = scriptedUi({ interactive: true, confirm: [true] });
-		const res = await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} })), { interactive: true });
+		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} })), {
+			interactive: true,
+		});
 		expect(res).toEqual({ success: true, data: "changed" });
 		expect(calls).toEqual([["yarn", "prettier", "--write", join(root, "warden.config.ts")]]);
 		expect(cwds).toEqual([root]);

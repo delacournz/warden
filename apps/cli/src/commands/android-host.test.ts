@@ -5,7 +5,7 @@ import type { Driver } from "@delacour/warden-driver/driver.types";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
-import { createAndroidHostCommand } from "./android-host";
+import { AndroidHostCommand } from "./android-host";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -30,7 +30,7 @@ function run(open: () => Promise<Result<Driver, string>>, extra: string[] = []) 
 	ctx = c;
 	const socket = join(c.cwd, "h.sock");
 	c.argv.splice(0, c.argv.length, "--serial", SERIAL, "--socket", socket, ...extra);
-	const done = createAndroidHostCommand({ openDriver: async () => open() }).run(c);
+	const done = new AndroidHostCommand({ openDriver: async () => open() }).definition().run(c);
 	return { c, socket, done };
 }
 

@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { uiJsonSchema } from "@delacour/warden-sdk/contracts/ui";
 import { uiResultLookup } from "@delacour/warden-sdk/contracts/ui-result";
-import { cleanupHarnesses, type Harness, harness, LOGIN, UDID } from "./ui.testing";
+import { type Harness, LOGIN, UDID, uiTesting } from "./ui.testing";
 
-afterEach(cleanupHarnesses);
+afterEach(uiTesting.cleanupHarnesses);
 afterEach(() => {
 	const problems = schemaProblems.splice(0);
 	expect(problems).toEqual([]);
@@ -48,7 +48,7 @@ type Case = {
 	/** commands run first (their output is dropped) */
 	pre?: string[][];
 	argv: string[];
-	options?: Parameters<typeof harness>[1];
+	options?: Parameters<typeof uiTesting.harness>[1];
 };
 
 type Captured = { exit: number; stdout: unknown[]; stderr: string[] };
@@ -86,7 +86,7 @@ function checkResultSchema(doc: unknown): void {
 }
 
 async function capture(testCase: Case): Promise<Captured> {
-	const h = harness([FORM], { realRecorder: false, ...testCase.options });
+	const h = uiTesting.harness([FORM], { realRecorder: false, ...testCase.options });
 	for (const pre of testCase.pre ?? []) await h.run(...pre);
 	const exit = await h.run(...testCase.argv, "--json");
 	return {
@@ -214,7 +214,7 @@ describe("warden ui golden --json", () => {
 	}
 
 	test("a login-only tree still works for the legacy fixture", async () => {
-		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
+		const h = uiTesting.harness([driverFixtures.snapshotOf(LOGIN)]);
 		expect(await h.run("find", "id=email", "--json")).toBe(0);
 		expect(UDID.length).toBeGreaterThan(0);
 	});

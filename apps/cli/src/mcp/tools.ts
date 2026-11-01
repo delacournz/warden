@@ -2,7 +2,7 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { uiBrokerClient } from "../agent-ui/broker-client";
 import { uiLogpointCli } from "../agent-ui/logpoint-cli";
-import { parseSince } from "../commands/dev-logs";
+import { devLogs } from "../commands/dev-logs";
 import { profileStatus, startProfile, stopProfile } from "../dev-broker/profile-client";
 import { listDevSessions } from "../dev-session";
 import { METRO_LOG_KINDS } from "../dev-tui/metro-log";
@@ -49,7 +49,7 @@ function defined<T extends Record<string, unknown>>(value: T): { [K in keyof T]?
 /** `since` as epoch ms, or the `invalid_query` error the tool returns. */
 function since(value: string | undefined, now: number): Result<number | undefined, ToolError> {
 	if (value === undefined) return resultFactory.ok(undefined);
-	const parsed = parseSince(value, now);
+	const parsed = devLogs.parseSince(value, now);
 	if (parsed.ok) return resultFactory.ok(parsed.ms);
 	return { success: false, error: { code: "invalid_query", message: parsed.message.replace("--since", "since") } };
 }

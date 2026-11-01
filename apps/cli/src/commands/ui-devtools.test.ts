@@ -12,7 +12,7 @@ import { cliUiPaths } from "../agent-ui/paths";
 import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import { createUiCommand } from "./ui";
+import { UiCommand } from "./ui";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 const cleanup: (() => unknown)[] = [];
@@ -139,7 +139,7 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 		},
 		c.now()
 	);
-	const command = createUiCommand(deps);
+	const command = new UiCommand(deps).definition();
 	const h: Harness & { fake: typeof fake; evaluated: string[]; driver: typeof driver } = {
 		c,
 		fake,

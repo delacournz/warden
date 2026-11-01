@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import type { CommandUnknownOpts } from "@commander-js/extra-typings";
-import { buildProgram } from "./command";
+import { programRunner } from "./command";
 import { COMMANDS } from "./commands/registry";
 import { wardenTools } from "./mcp/tools";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "./skill";
@@ -46,7 +46,7 @@ function walk(cmd: CommandUnknownOpts, prefix: string[]): Node[] {
 
 const ctx = testContext([]);
 afterAll(() => ctx.cleanup());
-const program = buildProgram(await Promise.all(COMMANDS.map((entry) => entry.load())), [], ctx);
+const program = programRunner.build(await Promise.all(COMMANDS.map((entry) => entry.load())), [], ctx);
 const NODES = walk(program, []);
 const PATHS = new Set(NODES.map((n) => n.path));
 

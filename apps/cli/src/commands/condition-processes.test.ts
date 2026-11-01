@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { testContext } from "../testing";
-import { createRouteTickerCommand, createSchedulerCommand } from "./condition-processes";
+import { RouteTickerCommand, SchedulerCommand } from "./condition-processes";
 import { COMMANDS } from "./registry";
 
 describe("hidden condition processes", () => {
@@ -13,12 +13,14 @@ describe("hidden condition processes", () => {
 	test("__scheduler passes its JSON argument through and returns the run's exit code", async () => {
 		const c = testContext(['{"a":1}']);
 		const seen: string[] = [];
-		const code = await createSchedulerCommand({
+		const code = await new SchedulerCommand({
 			scheduler: async (raw) => {
 				seen.push(raw);
 				return 2;
 			},
-		}).run(c);
+		})
+			.definition()
+			.run(c);
 		expect(code).toBe(2);
 		expect(seen).toEqual(['{"a":1}']);
 		c.cleanup();
@@ -26,11 +28,13 @@ describe("hidden condition processes", () => {
 
 	test("__route-ticker reports a throw as exit 1", async () => {
 		const c = testContext(["{}"]);
-		const code = await createRouteTickerCommand({
+		const code = await new RouteTickerCommand({
 			routeTicker: async () => {
 				throw new Error("boom");
 			},
-		}).run(c);
+		})
+			.definition()
+			.run(c);
 		expect(code).toBe(1);
 		expect(c.stderr.join("\n")).toContain("boom");
 		c.cleanup();

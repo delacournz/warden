@@ -7,151 +7,24 @@ import type { PortLeasesJson, PortReleaseJson } from "@delacour/warden-sdk/contr
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Lease, leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { defineCommand } from "../command";
+import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
 
 const DEFAULT_FROM = 8091;
 
-/** The caller: agent session (WARDEN_SESSION_ID / CLAUDE_* env), CI, or the invoking shell. */
-function callerOwner(ctx: CommandContext): Owner {
-	const input: OwnerContext = { env: ctx.env, pid: process.pid, ppid: process.ppid, cwd: ctx.cwd };
-	const git = ownerResolver.readGitInfo(ctx.cwd, { cache: ctx.git });
-	if (git) input.git = git;
-	return ownerResolver.detect(input);
-}
-
-function portOf(lease: Lease): number | undefined {
-	return lease.resource.kind === "port" ? lease.resource.port : undefined;
-}
-
-function parseCount(raw: string | undefined, name: string, fallback: number): Result<number> {
-	if (raw === undefined) return resultFactory.ok(fallback);
-	const n = Number(raw);
-	return Number.isInteger(n) && n >= 1
-		? resultFactory.ok(n)
-		: resultFactory.err(`invalid --${name} "${raw}" (must be an integer ≥ 1)`);
-}
-
-function fail(ctx: CommandContext, sub: string, message: string): number {
-	output.reportError(ctx, `port ${sub}`, message);
-	return 1;
-}
-
 type PortClaimOpts = { from?: string; span?: string; count?: string; ttl?: string; label?: string; json?: true };
 
 type PortClaim = { from: number; span: number; count: number; ttlMs: number; label?: string };
 
-function parsePortClaim(opts: PortClaimOpts): Result<PortClaim> {
-	const from = opts.from ?? String(DEFAULT_FROM);
-	const range = portSpecParser.parse(opts.span === undefined ? from : `${from}:${opts.span}`);
-	if (!range.success) return range;
-	const count = parseCount(opts.count, "count", 1);
-	if (!count.success) return count;
-	const ttl = opts.ttl === undefined ? resultFactory.ok(DEFAULT_TTL_MS) : durationParser.parse(opts.ttl);
-	if (!ttl.success) return ttl;
-	const flags: PortClaim = { ...range.data, count: count.data, ttlMs: ttl.data };
-	if (opts.label !== undefined) flags.label = opts.label;
-	return resultFactory.ok(flags);
-}
-
-/** Lease free ports; stdout = one port per line (script-friendly: `PORT=$(warden port claim)`). */
-async function claim(ctx: CommandContext, opts: PortClaimOpts): Promise<number> {
-	const flags = parsePortClaim(opts);
-	if (!flags.success) return fail(ctx, "claim", flags.error);
-	const owner = callerOwner(ctx);
-	const res = await new PortAllocator(ctx.store()).claim(
-		{
-			owner,
-			from: flags.data.from,
-			span: flags.data.span,
-			count: flags.data.count,
-			ttlMs: flags.data.ttlMs,
-			...(flags.data.label !== undefined ? { label: flags.data.label } : {}),
-			...(owner.kind === "user" ? { pid: owner.pid } : {}),
-		},
-		{ now: ctx.now, pidAlive: liveness.processAlive, isPortFree: (port) => portProbe.isFree(port) }
-	);
-	if (!res.success) return fail(ctx, "claim", res.error.message);
-	const claimed: PortLeasesJson = res.data;
-	output.emit(ctx, opts.json === true, claimed, res.data.map((l) => String(portOf(l))).join("\n"));
-	return 0;
-}
-
 type PortReleaseOpts = { lease?: string[]; mine?: true; force?: true; json?: true };
 
-function releaseSelector(ports: string[], opts: PortReleaseOpts, owner: () => Owner): Result<PortReleaseSelector> {
-	const leaseIds = opts.lease ?? [];
-	const modes = [ports.length > 0, leaseIds.length > 0, opts.mine === true].filter(Boolean).length;
-	if (modes !== 1) return resultFactory.err("give exactly one of <port…>, --lease <id…>, --mine");
-	if (opts.mine) return resultFactory.ok({ by: "owner", owner: owner() });
-	if (leaseIds.length > 0) return resultFactory.ok({ by: "lease", ids: leaseIds });
-	const bad = ports.find((p) => {
-		const n = Number(p);
-		return !Number.isInteger(n) || n < 1 || n > 65_535;
-	});
-	if (bad !== undefined) return resultFactory.err(`invalid port "${bad}"`);
-	return resultFactory.ok({ by: "port", ports: ports.map(Number) });
-}
+export class PortCommand extends CliCommand {
+	override readonly name = "port";
+	override readonly group = "Lease";
+	override readonly summary = "lease TCP ports from a range (bind-probed, never handed out twice)";
 
-async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOpts): Promise<number> {
-	const { color } = ctx.ui;
-	let owner: Owner | undefined;
-	const me = () => {
-		owner ??= callerOwner(ctx);
-		return owner;
-	};
-	const selector = releaseSelector(ports, opts, me);
-	if (!selector.success) return fail(ctx, "release", selector.error);
-	const res = new PortAllocator(ctx.store()).release(selector.data, opts.force ? {} : { onlyOwner: me() });
-	const lines = res.released.map((l) => color.green(`released ${portOf(l)} (${l.id})`));
-	const doc: PortReleaseJson = res;
-	output.emit(ctx, opts.json === true, doc, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
-	for (const l of res.denied) {
-		output.warn(ctx, `port ${portOf(l)} is leased by ${leaseModel.describeOwner(l.owner)} — use --force to release it`);
-	}
-	for (const m of res.missing) output.reportError(ctx, "port release", `no port lease for ${m}`);
-	return res.denied.length > 0 || res.missing.length > 0 ? 1 : 0;
-}
-
-function lsRow(ctx: CommandContext, lease: Lease, now: number): string[] {
-	const { color } = ctx.ui;
-	const alive = liveness.isLeaseAlive(lease, now, liveness.processAlive);
-	return [
-		color.bold(String(portOf(lease))),
-		alive ? color.green("alive") : color.yellow("stale"),
-		leaseModel.describeOwner(lease.owner),
-		leaseModel.ownerLocation(lease.owner) ?? "",
-		lease.label ?? "",
-		durationParser.format(now - lease.acquiredAt),
-		`${durationParser.format(now - lease.heartbeatAt)} ago`,
-		color.dim(lease.id),
-	];
-}
-
-function ls(ctx: CommandContext, json: boolean): number {
-	const { color } = ctx.ui;
-	const leases = new PortAllocator(ctx.store()).list();
-	const now = ctx.now();
-	const text =
-		leases.length === 0
-			? color.dim("no port leases")
-			: output.table(
-					ctx,
-					["PORT", "STATE", "OWNER", "WHERE", "LABEL", "AGE", "HEARTBEAT", "LEASE"],
-					leases.map((l) => lsRow(ctx, l, now)),
-					{ column: 3, keep: "end", min: 16 }
-				);
-	const doc: PortLeasesJson = leases;
-	output.emit(ctx, json, doc, text, { scope: "port ls", detail: output.plural(leases.length, "port lease") });
-	return 0;
-}
-
-export const portCommand = defineCommand({
-	name: "port",
-	group: "Lease",
-	summary: "lease TCP ports from a range (bind-probed, never handed out twice)",
-	register: (cmd, ctx, done) => {
+	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
 		cmd
 			.command("claim")
 			.description("lease free port(s) from FROM..FROM+SPAN-1 (inclusive); prints one port per line")
@@ -161,7 +34,7 @@ export const portCommand = defineCommand({
 			.option("--ttl <duration>", "lease TTL without heartbeat (default 30m)")
 			.option("--label <label>", "label shown in `warden port ls`")
 			.option("--json", "machine-readable output")
-			.action(async (opts) => done(await claim(ctx, opts)));
+			.action(async (opts) => done(await this.claim(ctx, opts)));
 		cmd
 			.command("release")
 			.description("release port leases: <port…> | --lease <id…> | --mine (own leases only unless --force)")
@@ -170,11 +43,144 @@ export const portCommand = defineCommand({
 			.option("--mine", "release all of your port leases")
 			.option("--force", "release leases held by someone else")
 			.option("--json", "machine-readable output")
-			.action(async (ports, opts) => done(await release(ctx, ports, opts)));
+			.action(async (ports, opts) => done(await this.release(ctx, ports, opts)));
 		cmd
 			.command("ls")
 			.description("list port leases")
 			.option("--json", "machine-readable output")
-			.action((opts) => done(ls(ctx, opts.json === true)));
-	},
-});
+			.action((opts) => done(this.ls(ctx, opts.json === true)));
+	}
+
+	/** The caller: agent session (WARDEN_SESSION_ID / CLAUDE_* env), CI, or the invoking shell. */
+	private callerOwner(ctx: CommandContext): Owner {
+		const input: OwnerContext = { env: ctx.env, pid: process.pid, ppid: process.ppid, cwd: ctx.cwd };
+		const git = ownerResolver.readGitInfo(ctx.cwd, { cache: ctx.git });
+		if (git) input.git = git;
+		return ownerResolver.detect(input);
+	}
+
+	private portOf(lease: Lease): number | undefined {
+		return lease.resource.kind === "port" ? lease.resource.port : undefined;
+	}
+
+	private parseCount(raw: string | undefined, name: string, fallback: number): Result<number> {
+		if (raw === undefined) return resultFactory.ok(fallback);
+		const n = Number(raw);
+		return Number.isInteger(n) && n >= 1
+			? resultFactory.ok(n)
+			: resultFactory.err(`invalid --${name} "${raw}" (must be an integer ≥ 1)`);
+	}
+
+	private fail(ctx: CommandContext, sub: string, message: string): number {
+		output.reportError(ctx, `port ${sub}`, message);
+		return 1;
+	}
+
+	private parsePortClaim(opts: PortClaimOpts): Result<PortClaim> {
+		const from = opts.from ?? String(DEFAULT_FROM);
+		const range = portSpecParser.parse(opts.span === undefined ? from : `${from}:${opts.span}`);
+		if (!range.success) return range;
+		const count = this.parseCount(opts.count, "count", 1);
+		if (!count.success) return count;
+		const ttl = opts.ttl === undefined ? resultFactory.ok(DEFAULT_TTL_MS) : durationParser.parse(opts.ttl);
+		if (!ttl.success) return ttl;
+		const flags: PortClaim = { ...range.data, count: count.data, ttlMs: ttl.data };
+		if (opts.label !== undefined) flags.label = opts.label;
+		return resultFactory.ok(flags);
+	}
+
+	/** Lease free ports; stdout = one port per line (script-friendly: `PORT=$(warden port claim)`). */
+	private async claim(ctx: CommandContext, opts: PortClaimOpts): Promise<number> {
+		const flags = this.parsePortClaim(opts);
+		if (!flags.success) return this.fail(ctx, "claim", flags.error);
+		const owner = this.callerOwner(ctx);
+		const res = await new PortAllocator(ctx.store()).claim(
+			{
+				owner,
+				from: flags.data.from,
+				span: flags.data.span,
+				count: flags.data.count,
+				ttlMs: flags.data.ttlMs,
+				...(flags.data.label !== undefined ? { label: flags.data.label } : {}),
+				...(owner.kind === "user" ? { pid: owner.pid } : {}),
+			},
+			{ now: ctx.now, pidAlive: liveness.processAlive, isPortFree: (port) => portProbe.isFree(port) }
+		);
+		if (!res.success) return this.fail(ctx, "claim", res.error.message);
+		const claimed: PortLeasesJson = res.data;
+		output.emit(ctx, opts.json === true, claimed, res.data.map((l) => String(this.portOf(l))).join("\n"));
+		return 0;
+	}
+
+	private releaseSelector(ports: string[], opts: PortReleaseOpts, owner: () => Owner): Result<PortReleaseSelector> {
+		const leaseIds = opts.lease ?? [];
+		const modes = [ports.length > 0, leaseIds.length > 0, opts.mine === true].filter(Boolean).length;
+		if (modes !== 1) return resultFactory.err("give exactly one of <port…>, --lease <id…>, --mine");
+		if (opts.mine) return resultFactory.ok({ by: "owner", owner: owner() });
+		if (leaseIds.length > 0) return resultFactory.ok({ by: "lease", ids: leaseIds });
+		const bad = ports.find((p) => {
+			const n = Number(p);
+			return !Number.isInteger(n) || n < 1 || n > 65_535;
+		});
+		if (bad !== undefined) return resultFactory.err(`invalid port "${bad}"`);
+		return resultFactory.ok({ by: "port", ports: ports.map(Number) });
+	}
+
+	private async release(ctx: CommandContext, ports: string[], opts: PortReleaseOpts): Promise<number> {
+		const { color } = ctx.ui;
+		let owner: Owner | undefined;
+		const me = () => {
+			owner ??= this.callerOwner(ctx);
+			return owner;
+		};
+		const selector = this.releaseSelector(ports, opts, me);
+		if (!selector.success) return this.fail(ctx, "release", selector.error);
+		const res = new PortAllocator(ctx.store()).release(selector.data, opts.force ? {} : { onlyOwner: me() });
+		const lines = res.released.map((l) => color.green(`released ${this.portOf(l)} (${l.id})`));
+		const doc: PortReleaseJson = res;
+		output.emit(ctx, opts.json === true, doc, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
+		for (const l of res.denied) {
+			output.warn(
+				ctx,
+				`port ${this.portOf(l)} is leased by ${leaseModel.describeOwner(l.owner)} — use --force to release it`
+			);
+		}
+		for (const m of res.missing) output.reportError(ctx, "port release", `no port lease for ${m}`);
+		return res.denied.length > 0 || res.missing.length > 0 ? 1 : 0;
+	}
+
+	private lsRow(ctx: CommandContext, lease: Lease, now: number): string[] {
+		const { color } = ctx.ui;
+		const alive = liveness.isLeaseAlive(lease, now, liveness.processAlive);
+		return [
+			color.bold(String(this.portOf(lease))),
+			alive ? color.green("alive") : color.yellow("stale"),
+			leaseModel.describeOwner(lease.owner),
+			leaseModel.ownerLocation(lease.owner) ?? "",
+			lease.label ?? "",
+			durationParser.format(now - lease.acquiredAt),
+			`${durationParser.format(now - lease.heartbeatAt)} ago`,
+			color.dim(lease.id),
+		];
+	}
+
+	private ls(ctx: CommandContext, json: boolean): number {
+		const { color } = ctx.ui;
+		const leases = new PortAllocator(ctx.store()).list();
+		const now = ctx.now();
+		const text =
+			leases.length === 0
+				? color.dim("no port leases")
+				: output.table(
+						ctx,
+						["PORT", "STATE", "OWNER", "WHERE", "LABEL", "AGE", "HEARTBEAT", "LEASE"],
+						leases.map((l) => this.lsRow(ctx, l, now)),
+						{ column: 3, keep: "end", min: 16 }
+					);
+		const doc: PortLeasesJson = leases;
+		output.emit(ctx, json, doc, text, { scope: "port ls", detail: output.plural(leases.length, "port lease") });
+		return 0;
+	}
+}
+
+export const portCommand = new PortCommand().definition();

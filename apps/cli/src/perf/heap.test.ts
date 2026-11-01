@@ -152,18 +152,18 @@ describe("warden perf heap diff", () => {
 
 describe("registration", () => {
 	test("js, heap snapshot and heap diff are wired onto warden perf", async () => {
-		const { createPerfCommand } = await import("../commands/perf");
+		const { PerfCommand } = await import("../commands/perf");
 		const { registerJs } = await import("./js");
 		const { registerHeap } = await import("./heap");
 		const s = setup();
 		const c = testContext(["heap", "--help"]);
 		ctx = c;
-		expect(await createPerfCommand(s.deps, [registerJs, registerHeap]).run(c)).toBe(0);
+		expect(await new PerfCommand(s.deps, [registerJs, registerHeap]).definition().run(c)).toBe(0);
 		const help = c.stdout.join("\n");
 		expect(help).toContain("snapshot");
 		expect(help).toContain("diff");
 		const c2 = testContext(["js", "--help"]);
-		expect(await createPerfCommand(s.deps, [registerJs, registerHeap]).run(c2)).toBe(0);
+		expect(await new PerfCommand(s.deps, [registerJs, registerHeap]).definition().run(c2)).toBe(0);
 		expect(c2.stdout.join("\n")).toContain("--duration");
 		c2.cleanup();
 	});

@@ -4,7 +4,7 @@ import { fakeExec } from "../testing";
 
 type Handler = [prefix: string, result: Partial<ExecResult>];
 
-import { mcpStatusProbe, parseMcpStatus, viewerProbe, xcodeChecks } from "./doctor-xcode";
+import { doctorXcode } from "./doctor-xcode";
 
 /** Real `xcrun mcp-server status --format json` from Xcode 27.1 (27A9275), nothing open. */
 const STATUS_27_1 = `{
@@ -32,7 +32,7 @@ const xcode26: Handler[] = [
 
 describe("parseMcpStatus", () => {
 	test("real Xcode 27.1 output", () => {
-		expect(parseMcpStatus(STATUS_27_1)).toEqual({
+		expect(doctorXcode.parseMcpStatus(STATUS_27_1)).toEqual({
 			success: true,
 			data: { enabled: true, running: false, allowAll: false, openWorkspaces: 0 },
 		});
@@ -43,14 +43,14 @@ describe("parseMcpStatus", () => {
 			permission: { enabled: true, unsafeAlwaysAllowAllAgents: true },
 			running: true,
 		});
-		expect(parseMcpStatus(raw)).toEqual({
+		expect(doctorXcode.parseMcpStatus(raw)).toEqual({
 			success: true,
 			data: { enabled: true, running: true, allowAll: true, openWorkspaces: 2 },
 		});
 	});
 	test("not JSON / wrong shape is an error", () => {
-		expect(parseMcpStatus("usage: mcp-server").success).toBe(false);
-		expect(parseMcpStatus("[]").success).toBe(false);
+		expect(doctorXcode.parseMcpStatus("usage: mcp-server").success).toBe(false);
+		expect(doctorXcode.parseMcpStatus("[]").success).toBe(false);
 	});
 });
 
@@ -60,7 +60,7 @@ describe("mcpStatusProbe", () => {
 			["xcrun --find mcpbridge", { stdout: "/x/mcpbridge\n" }],
 			["xcrun mcp-server status --format json", { stdout: STATUS_27_1 }],
 		]);
-		const probe = await mcpStatusProbe(exec, 27);
+		const probe = await doctorXcode.mcpStatusProbe(exec, 27);
 		expect(probe.ok).toBe(true);
 		expect(probe.detail).toContain("mcpbridge");
 		expect(probe.detail).toContain("headless enabled");
@@ -80,18 +80,18 @@ describe("mcpStatusProbe", () => {
 				},
 			],
 		]);
-		const probe = await mcpStatusProbe(exec, 27);
+		const probe = await doctorXcode.mcpStatusProbe(exec, 27);
 		expect(probe.ok).toBe(false);
 		expect(probe.detail).toContain("unsafeAlwaysAllowAllAgents");
 	});
 	test("Xcode 26: no mcp-server, still ok", async () => {
 		const exec = fakeExec([["xcrun --find mcpbridge", { stdout: "/x/mcpbridge\n" }]]);
-		const probe = await mcpStatusProbe(exec, 26);
+		const probe = await doctorXcode.mcpStatusProbe(exec, 26);
 		expect(probe).toMatchObject({ ok: true });
 		expect(probe.detail).toContain("Xcode 27");
 	});
 	test("no mcpbridge at all is ok and says so", async () => {
-		const probe = await mcpStatusProbe(fakeExec([]), 27);
+		const probe = await doctorXcode.mcpStatusProbe(fakeExec([]), 27);
 		expect(probe).toMatchObject({ ok: true });
 		expect(probe.detail).toContain("not available");
 	});
@@ -103,7 +103,7 @@ describe("viewerProbe", () => {
 			["pgrep -xq Simulator", { exitCode: 1 }],
 			["pgrep -xq DeviceHub", { exitCode: 0 }],
 		]);
-		expect(await viewerProbe(exec)).toEqual({
+		expect(await doctorXcode.viewerProbe(exec)).toEqual({
 			ok: true,
 			detail:
 				"Device Hub (Xcode 27): non-headless claims open and tile a window per sim; headless opens none. Quitting Device Hub shuts down every booted sim",
@@ -114,7 +114,7 @@ describe("viewerProbe", () => {
 			["pgrep -xq Simulator", { exitCode: 1 }],
 			["pgrep -xq DeviceHub", { exitCode: 1 }],
 		]);
-		expect((await viewerProbe(exec)).detail).toContain("none running");
+		expect((await doctorXcode.viewerProbe(exec)).detail).toContain("none running");
 	});
 });
 
@@ -127,19 +127,19 @@ describe("xcodeChecks", () => {
 			["pgrep -xq Simulator", { exitCode: 1 }],
 			["pgrep -xq DeviceHub", { exitCode: 1 }],
 		]);
-		const checks = await xcodeChecks(exec, {});
+		const checks = await doctorXcode.xcodeChecks(exec, {});
 		expect(checks.map((c) => c.name)).toEqual(["xcode", "xcode-mcp", "sim-viewer"]);
 		expect(checks[0]?.detail).toContain("Xcode 27.1 (27A9275)");
 		expect(checks.every((c) => c.status === "ok")).toBe(true);
 	});
 	test("26.6 host degrades gracefully", async () => {
 		const exec = fakeExec([...xcode26, ["pgrep -xq Simulator", { exitCode: 0 }]]);
-		const checks = await xcodeChecks(exec, {});
+		const checks = await doctorXcode.xcodeChecks(exec, {});
 		expect(checks.every((c) => c.status === "ok")).toBe(true);
 		expect(checks[1]?.detail).toContain("not available");
 	});
 	test("no Xcode selected: ok with a note (iOS is reported by the simctl check)", async () => {
-		const checks = await xcodeChecks(fakeExec([]), {});
+		const checks = await doctorXcode.xcodeChecks(fakeExec([]), {});
 		expect(checks[0]).toMatchObject({ name: "xcode", status: "ok" });
 		expect(checks[0]?.detail).toContain("no Xcode");
 	});
