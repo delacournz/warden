@@ -74,6 +74,7 @@ warden claim ios --remote --view
 - The window holds a short-lived token that works for that one device only, and `--watch` gives it no input rights. The token is handed over on stdin, never in the command line or environment, and the command refreshes it while the window is open.
 - Staying attached also keeps the lease and the hosted device alive. Closing the window (or Ctrl+C) ends the command, and the lease stays until you release it.
 - `--detach` uses one 30 minute token and stops heartbeating, so the lease TTL applies. `--json` prints `{ leaseId, remoteId, scope, detached, exitCode }`, plus `pid` when detached.
+- Closing a window on a running device always asks **Keep running** or **Shut down device**. A detached window stops the device itself; its lease stays until `warden release`. A detached `--watch` window can't stop the device, so it just closes.
 
 ## What is not remote (yet)
 

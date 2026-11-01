@@ -338,30 +338,46 @@ pub async fn fetch_device(
     Ok((status, body))
 }
 
-/// Close from the window's prompt. Attached, it first tells this window's CLI the choice:
-/// `release` = Shut down (the CLI stops the device and ends the lease), otherwise Keep running. A
-/// detached viewer has no CLI listening, so it refuses `release` and closes without a line. Only
-/// this window closes; the host keeps the others (its `Destroyed` handler ends the relay).
+/// Close from the window's prompt: `release` = Shut down, otherwise Keep running. Attached, the
+/// choice goes to this window's CLI (it stops the device and ends the lease). Detached, no CLI is
+/// listening, so Shut down stops the device here with the window's `drive` viewer token (the
+/// lease stays until `warden release` or gc, showing `stop_reason: user`). A failed stop keeps the
+/// window open. Only this window closes; the host keeps the others (its `Destroyed` handler ends
+/// the relay).
 #[tauri::command]
-pub fn close_viewer(
+pub async fn close_viewer(
     window: tauri::WebviewWindow,
     registry: State<'_, Arc<Registry>>,
     release: bool,
 ) -> CmdResult<()> {
     let viewer = viewer_for(&registry, window.label())?;
-    if viewer.session.detached() {
-        if release {
-            return Err(ApiError::new(
-                "DETACHED",
-                "a detached viewer can't end the lease; run warden release",
-            ));
-        }
-    } else {
+    if !viewer.session.detached() {
         viewer.send(&Event::Close { release });
+    } else if release {
+        let c = viewer.session.credentials();
+        require_drive(&c)?;
+        stop_device(registry.client(), &c).await?;
     }
     window
         .destroy()
         .map_err(|e| ApiError::new("WINDOW", e.to_string()))
+}
+
+/// `DELETE /v1/devices/:id` with the viewer token. `stopped: false` (Revyl still releasing) is fine:
+/// the stop is under way and the server finishes it.
+async fn stop_device(client: &reqwest::Client, c: &Credentials) -> CmdResult<()> {
+    let response = client
+        .delete(device_url(c, ""))
+        .bearer_auth(&c.token)
+        .send()
+        .await?;
+    let status = response.status().as_u16();
+    let result = ok_or_failure(response).await;
+    match &result {
+        Ok(_) => log::info!("device stop: {status}"),
+        Err(e) => log::warn!("device stop: {status} {}", e.code),
+    }
+    result.map(|_| ())
 }
 
 /// Open the launch-time billing URL in the system browser. Takes no argument: JS cannot choose

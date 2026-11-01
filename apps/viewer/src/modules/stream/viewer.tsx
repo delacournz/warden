@@ -104,7 +104,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 	}, [size, orientation]);
 
 	const [closing, setClosing] = useState<"asking" | "busy" | null>(null);
-	const asks = asksOnClose(info.detached, overlay);
+	const asks = asksOnClose({ detached: info.detached, scope: info.scope, overlay });
 	const close = useCallback(() => {
 		if (asks) setClosing((current) => current ?? "asking");
 		else void getCurrentWindow().close();
