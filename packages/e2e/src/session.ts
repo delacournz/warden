@@ -15,13 +15,7 @@ import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { observations } from "@delacour/warden-driver/observation-cache";
 import { type SpanRunner, spans } from "@delacour/warden-driver/trace/span";
 import { driverTracer } from "@delacour/warden-driver/traced-driver";
-import {
-	type HidRecoveryDeps,
-	rebootSim,
-	restartRunnerHost,
-	runAfterReboot,
-	stopResidentHelper,
-} from "@delacour/warden-driver-ios/hid-recovery";
+import { type HidRecoveryDeps, hidRecovery } from "@delacour/warden-driver-ios/hid-recovery";
 import { type E2eEnv, readEnv } from "./env";
 import type { AttemptContext, FixtureFactory } from "./runner/fixtures.types";
 import { openResults, type ResultsWriter } from "./runner/results";
@@ -263,7 +257,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 		}
 		hidRecovered = true;
 		await resetDevice();
-		const restarted = await restartRunnerHost(deps, resolved.iosRunnerRestart, resolved.udid);
+		const restarted = await hidRecovery.restartRunnerHost(deps, resolved.iosRunnerRestart, resolved.udid);
 		if (!restarted.success) {
 			note(`iPhone ${name}: runner connection lost, restart failed: ${restarted.error}`);
 			return false;
@@ -284,17 +278,17 @@ export function createSession(opts: SessionOptions = {}): Session {
 		hidRecovered = true;
 		await resetDevice();
 		if (resolved.simdSocket !== undefined) {
-			const stopped = await stopResidentHelper(hid, resolved.simdSocket);
+			const stopped = await hidRecovery.stopResidentHelper(hid, resolved.simdSocket);
 			if (!stopped.success) note(`sim ${name}: ${stopped.error}`);
 		}
-		const rebooted = await rebootSim(hid, resolved.udid);
+		const rebooted = await hidRecovery.rebootSim(hid, resolved.udid);
 		if (!rebooted.success) {
 			note(
 				`sim ${name}: HID connection lost, reboot failed: ${rebooted.error}; \`warden release <id> --shutdown\` and retry`
 			);
 			return false;
 		}
-		await runAfterReboot({ ...hid, log: note }, resolved.afterReboot, resolved.udid);
+		await hidRecovery.runAfterReboot({ ...hid, log: note }, resolved.afterReboot, resolved.udid);
 		await warmBridge();
 		note(`sim ${name}: HID connection lost (Device Hub quit?), rebooted; running the test again`);
 		return true;

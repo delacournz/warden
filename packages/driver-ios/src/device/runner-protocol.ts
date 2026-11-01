@@ -17,15 +17,20 @@ export type AppState = z.infer<typeof appStateSchema>;
 
 export const appStateDataSchema = z.looseObject({ state: z.string() });
 
-/** `appState` reply data, or undefined when it is not shaped like one. */
-export function parseAppState(data: unknown): AppState | undefined {
-	const parsed = appStateDataSchema.safeParse(data);
-	if (!parsed.success) return undefined;
-	const known = appStateSchema.safeParse(parsed.data.state);
-	return known.success ? known.data : "unknown";
+/** Reads the runner's `appState` reply. Use the shared {@link runnerProtocol} singleton. */
+export class RunnerProtocol {
+	/** `appState` reply data, or undefined when it is not shaped like one. */
+	parseAppState(data: unknown): AppState | undefined {
+		const parsed = appStateDataSchema.safeParse(data);
+		if (!parsed.success) return undefined;
+		const known = appStateSchema.safeParse(parsed.data.state);
+		return known.success ? known.data : "unknown";
+	}
+
+	/** The app is alive in some form (a suspended background app still has its process). */
+	isRunning(state: AppState): boolean {
+		return state === "runningForeground" || state === "runningBackground" || state === "runningBackgroundSuspended";
+	}
 }
 
-/** The app is alive in some form (a suspended background app still has its process). */
-export function isRunning(state: AppState): boolean {
-	return state === "runningForeground" || state === "runningBackground" || state === "runningBackgroundSuspended";
-}
+export const runnerProtocol = new RunnerProtocol();

@@ -7,7 +7,7 @@ import { observations } from "@delacour/warden-driver/observation-cache";
 import { refResolver } from "@delacour/warden-driver/refs";
 import { driverTracer } from "@delacour/warden-driver/traced-driver";
 
-import { connectHelper } from "@delacour/warden-driver-ios/helper";
+import { helperLifecycle } from "@delacour/warden-driver-ios/helper";
 import { type CallerLease, CallerLeaseGate } from "@delacour/warden-leasing/device-lease";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { formatSelector } from "@delacour/warden-screen/selector";
@@ -430,7 +430,7 @@ export class WardenSession implements Session {
 		const pluginName = core.store().getLease(this.leaseId)?.provider;
 		if (pluginName !== undefined) return this.openPluginDriver(pluginName);
 		if (this.dev.platform === "ios") {
-			return connectHelper(
+			return helperLifecycle.connect(
 				{ env: core.host.env, now: core.host.now, store: core.store, exec: core.host.exec },
 				this.dev.id
 			);

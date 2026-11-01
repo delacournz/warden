@@ -22,12 +22,12 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 	return async (udid) => {
 		if (leaseModel.isPhysicalIosId(udid)) return warmRunner(ctx, udid);
 		const { ensureHelper } = await import("../agent-ui/helper");
-		const { openIosDriver } = await import("@delacour/warden-driver-ios/ios-driver");
+		const { iosDriverOpener } = await import("@delacour/warden-driver-ios/ios-driver");
 		const helper = await ensureHelper(ctx, udid, { keepClient: true });
 		if (!helper.success)
 			return resultFactory.err(`${helper.error.message}${helper.error.hint ? ` (${helper.error.hint})` : ""}`);
 		const { client, socketPath } = helper.data;
-		const driver = await openIosDriver({
+		const driver = await iosDriverOpener.open({
 			udid,
 			exec: ctx.exec,
 			socketPath,
@@ -65,11 +65,11 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
  */
 async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmConnect> {
 	const { ensureIosRunner, stopIosRunner } = await import("../agent-ui/helper");
-	const { openIosDeviceDriver } = await import("@delacour/warden-driver-ios/device/device-driver");
+	const { iosDeviceDriverOpener } = await import("@delacour/warden-driver-ios/device/device-driver");
 	const host = await ensureIosRunner(ctx, udid, { keepClient: true });
 	if (!host.success) return resultFactory.err(runnerWarmError(host.error));
 	const { client, socketPath } = host.data;
-	const driver = await openIosDeviceDriver({
+	const driver = await iosDeviceDriverOpener.open({
 		udid,
 		exec: ctx.exec,
 		socketPath,

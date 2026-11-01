@@ -3,8 +3,11 @@ import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types"
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import { type AndroidDriverOptions, androidDrivers } from "@delacour/warden-driver-android/android-driver";
 import { androidState, FileAndroidStateStore } from "@delacour/warden-driver-android/android-state";
-import { type OpenIosDeviceDriverOptions, openIosDeviceDriver } from "@delacour/warden-driver-ios/device/device-driver";
-import { type OpenIosDriverOptions, openIosDriver } from "@delacour/warden-driver-ios/ios-driver";
+import {
+	iosDeviceDriverOpener,
+	type OpenIosDeviceDriverOptions,
+} from "@delacour/warden-driver-ios/device/device-driver";
+import { iosDriverOpener, type OpenIosDriverOptions } from "@delacour/warden-driver-ios/ios-driver";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { leaseModel } from "@delacour/warden-store/types";
 
@@ -139,8 +142,8 @@ export async function openDriver(options: OpenDriverOptions): DriverResult<Drive
 	const debug = options.debug ?? false;
 	switch (options.platform) {
 		case "ios":
-			if (leaseModel.isPhysicalIosId(options.id)) return openIosDeviceDriver(iosDeviceOptions(options, debug));
-			return openIosDriver(iosOptions(options, debug));
+			if (leaseModel.isPhysicalIosId(options.id)) return iosDeviceDriverOpener.open(iosDeviceOptions(options, debug));
+			return iosDriverOpener.open(iosOptions(options, debug));
 		case "android":
 			return androidDrivers.open(androidOptions(options, debug));
 	}

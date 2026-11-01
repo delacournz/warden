@@ -4,7 +4,7 @@ import type { AppDeps, AppHost } from "@delacour/warden-builds/prepare";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { hostDeps } from "@delacour/warden-core/host-deps";
 import type { Driver } from "@delacour/warden-driver/driver.types";
-import { stopHelper } from "@delacour/warden-driver-ios/helper";
+import { helperLifecycle } from "@delacour/warden-driver-ios/helper";
 import { allocator } from "@delacour/warden-leasing/allocate";
 import { type ClaimRequest, ClaimRequestRunner } from "@delacour/warden-leasing/claim-request";
 import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
@@ -266,7 +266,7 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 				seams.stopHelper ??
 				(async (udid) => {
 					if (!IOS_UDID.test(udid)) return;
-					await stopHelper({ env, now: host.now, store: openStoreOnce }, udid);
+					await helperLifecycle.stop({ env, now: host.now, store: openStoreOnce }, udid);
 				}),
 		};
 	};

@@ -4,9 +4,9 @@ import { adbSessions } from "@delacour/warden-driver-android/adb-session";
 import { androidArgv } from "@delacour/warden-driver-android/android-argv";
 import { realClock } from "@delacour/warden-driver-android/android-device";
 import { AndroidNetwork } from "@delacour/warden-driver-android/android-network";
-import { createInjectChannel, injectStatePath } from "@delacour/warden-driver-ios/inject";
-import { createIosNetwork } from "@delacour/warden-driver-ios/ios-network";
-import { locationClearArgv, locationSetArgv } from "@delacour/warden-driver-ios/simctl";
+import { FileInjectChannel, injectProtocol } from "@delacour/warden-driver-ios/inject";
+import { IosNetworkController } from "@delacour/warden-driver-ios/ios-network";
+import { simctlArgv } from "@delacour/warden-driver-ios/simctl";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { storeLocator } from "@delacour/warden-store/store";
 import { leaseNetworkProxy } from "./lease-network-proxy";
@@ -67,13 +67,13 @@ const openIosTarget: TargetOpener = (config) => {
 	const env = process.env;
 	const home = storeLocator.wardenHome(env);
 	const store = storeLocator.open(storeLocator.defaultDbPath(env));
-	const ios = createIosNetwork({
+	const ios = new IosNetworkController({
 		proxy: leaseNetworkProxy(
 			{ store, env, now: () => Date.now(), ...(config.proxyCommand ? { command: config.proxyCommand } : {}) },
 			lease
 		),
-		channel: createInjectChannel({
-			statePath: injectStatePath(home, udid),
+		channel: new FileInjectChannel({
+			statePath: injectProtocol.statePath(home, udid),
 			now: () => Date.now(),
 			sleep: (ms) => Bun.sleep(ms),
 		}),
@@ -94,7 +94,7 @@ const openIosTarget: TargetOpener = (config) => {
 					error: { message: `a ${op.kind} location cannot run inside a scheduler step; use \`location ${op.kind}\`` },
 				};
 			}
-			const argv = op.kind === "clear" ? locationClearArgv(udid) : locationSetArgv(udid, op);
+			const argv = op.kind === "clear" ? simctlArgv.locationClear(udid) : simctlArgv.locationSet(udid, op);
 			const res = await processExec.run(argv, { timeoutMs: GEO_FIX_MS });
 			return res.exitCode === 0
 				? { success: true }

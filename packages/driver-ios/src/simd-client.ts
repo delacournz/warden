@@ -64,6 +64,21 @@ export type ClientOptions = {
 	shutdownOnClose?: boolean;
 };
 
+export type SpawnSimdOptions = ClientOptions & {
+	helperPath: string;
+	udid: string;
+	/** `--resources <dir>`: where the in-sim AX bridge guest lives */
+	resources?: string;
+	/** extra helper arguments after the standard ones (e.g. `--hid indigo`) */
+	args?: readonly string[];
+	/** injectable process spawn (tests); defaults to `Bun.spawn` */
+	spawn?: SimdSpawn;
+	/** grace period for `close()` before the helper is killed */
+	graceMs?: number;
+};
+
+export type ConnectSimdOptions = ClientOptions & { socketPath: string };
+
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_READY_TIMEOUT_MS = 15_000;
 const SHUTDOWN_TIMEOUT_MS = 500;
@@ -85,68 +100,120 @@ type Session = {
 
 type Listener = (payload: SimdEventMap[keyof SimdEventMap]) => void;
 
-function crashed(info: TransportClose | undefined, what: string): DriverError {
-	const exit = info?.exitCode === null || info?.exitCode === undefined ? "" : ` (exit ${info.exitCode})`;
-	const tail = info?.stderrTail.length ? `: ${info.stderrTail.slice(-3).join(" | ")}` : "";
-	return driverErrors.make("E_HELPER_CRASHED", `warden-simd ${what}${exit}${tail}`, {
-		detail: info ? { exitCode: info.exitCode, stderrTail: info.stderrTail } : undefined,
-	});
-}
+/** One `SimdClient`: the multiplexing engine behind a transport factory. Built through {@link SimdClients}. */
+class SimdClientEngine implements SimdClient {
+	private readonly defaultTimeoutMs: number;
+	private readonly readyTimeoutMs: number;
+	private readonly maxRespawns: number;
+	private readonly shutdownOnClose: boolean;
+	private readonly log: Logger | undefined;
 
-/** Shared client engine; the transport decides stdio vs socket. */
-export async function createSimdClient(
-	factory: TransportFactory,
-	options: ClientOptions = {}
-): Promise<Result<SimdClient, DriverError>> {
-	const defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
-	const maxRespawns = options.maxRespawns ?? 0;
-	const shutdownOnClose = options.shutdownOnClose ?? false;
-	const log = options.log;
-
-	const pending = new Map<string, Pending>();
-	const listeners = new Map<keyof SimdEventMap, Set<Listener>>();
-	let seq = 0;
-	let respawns = 0;
-	let closed = false;
-	let closing = false;
+	private readonly pending = new Map<string, Pending>();
+	private readonly listeners = new Map<keyof SimdEventMap, Set<Listener>>();
+	private seq = 0;
+	private respawns = 0;
+	private closed = false;
+	private closing = false;
 	/** the helper already acknowledged `shutdown`, so `close()` need not ask again */
-	let shutdownAcked = false;
-	let current: Session | undefined;
-	let opening: Promise<Result<Session, DriverError>> | undefined;
+	private shutdownAcked = false;
+	private current: Session | undefined;
+	private opening: Promise<Result<Session, DriverError>> | undefined;
 	/** why the last session died, when it was not a fatal */
-	let lastCrash: DriverError | undefined;
+	private lastCrash: DriverError | undefined;
 	/** sticky: a `fatal` is not retried (the device is the problem, not the process) */
-	let fatalError: DriverError | undefined;
+	private fatalError: DriverError | undefined;
+	private firstReady: ReadyEvent | undefined;
 
-	function emit<E extends keyof SimdEventMap>(event: E, payload: SimdEventMap[E]): void {
-		for (const listener of listeners.get(event) ?? []) {
+	constructor(
+		private readonly factory: TransportFactory,
+		options: ClientOptions
+	) {
+		this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+		this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+		this.maxRespawns = options.maxRespawns ?? 0;
+		this.shutdownOnClose = options.shutdownOnClose ?? false;
+		this.log = options.log;
+	}
+
+	get ready(): ReadyEvent {
+		const ready = this.current?.ready ?? this.firstReady;
+		if (!ready) throw new Error("warden-simd client has no handshake");
+		return ready;
+	}
+
+	// `request` is the untyped engine: `validate` parses each op's data against `opSchemas` at run time, so
+	// narrowing the result to `OpData<Op>` here is the one place the static op map is trusted.
+	request = ((op: string, params: Record<string, unknown> = {}, opts: RequestOptions = {}) =>
+		this.send(op, params, opts)) as SimdClient["request"];
+
+	on<E extends keyof SimdEventMap>(event: E, handler: (payload: SimdEventMap[E]) => void): () => void {
+		// `listeners` stores every handler as the payload union; `emit` only ever passes `event`'s own payload, so
+		// widening the per-event handler on the way in is safe.
+		const stored = handler as Listener;
+		const set = this.listeners.get(event) ?? new Set<Listener>();
+		set.add(stored);
+		this.listeners.set(event, set);
+		return () => {
+			set.delete(stored);
+		};
+	}
+
+	async close(): Promise<void> {
+		if (this.closed) return;
+		this.closing = true;
+		const session = this.current;
+		if (this.shutdownOnClose && session?.alive && !this.fatalError && !this.shutdownAcked) {
+			await this.send("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
+		}
+		this.closed = true;
+		this.failAll(driverErrors.make("E_INTERNAL", "warden-simd client closed", { retryable: false }));
+		await session?.transport?.close().catch(() => undefined);
+	}
+
+	/** Open the first session; the client is only handed out once the helper has said `ready`. */
+	async open(): Promise<Result<SimdClient, DriverError>> {
+		const first = await this.openSession();
+		if (!first.success) return first;
+		this.firstReady = first.data.ready;
+		return { success: true, data: this };
+	}
+
+	private crashed(info: TransportClose | undefined, what: string): DriverError {
+		const exit = info?.exitCode === null || info?.exitCode === undefined ? "" : ` (exit ${info.exitCode})`;
+		const tail = info?.stderrTail.length ? `: ${info.stderrTail.slice(-3).join(" | ")}` : "";
+		return driverErrors.make("E_HELPER_CRASHED", `warden-simd ${what}${exit}${tail}`, {
+			detail: info ? { exitCode: info.exitCode, stderrTail: info.stderrTail } : undefined,
+		});
+	}
+
+	private emit<E extends keyof SimdEventMap>(event: E, payload: SimdEventMap[E]): void {
+		for (const listener of this.listeners.get(event) ?? []) {
 			try {
 				listener(payload);
 			} catch (error) {
-				log?.(`[simd] ${event} listener threw: ${error instanceof Error ? error.message : String(error)}`);
+				this.log?.(`[simd] ${event} listener threw: ${error instanceof Error ? error.message : String(error)}`);
 			}
 		}
 	}
 
-	function failAll(error: DriverError): void {
-		for (const [id, entry] of pending) {
+	private failAll(error: DriverError): void {
+		for (const [id, entry] of this.pending) {
 			clearTimeout(entry.timer);
-			pending.delete(id);
+			this.pending.delete(id);
 			entry.resolve({ success: false, error });
 		}
 	}
 
-	function handleResponse(response: SimdResponse): void {
+	private handleResponse(response: SimdResponse): void {
 		// any answer proves the (re)spawned helper works: the respawn budget is per crash window
-		respawns = 0;
-		const entry = pending.get(response.id);
+		this.respawns = 0;
+		const entry = this.pending.get(response.id);
 		if (!entry) {
-			log?.(`[simd] response for unknown id ${response.id} (timed out?)`);
+			this.log?.(`[simd] response for unknown id ${response.id} (timed out?)`);
 			return;
 		}
 		clearTimeout(entry.timer);
-		pending.delete(response.id);
+		this.pending.delete(response.id);
 		entry.resolve(
 			response.ok
 				? { success: true, data: response.data ?? null }
@@ -154,94 +221,85 @@ export async function createSimdClient(
 		);
 	}
 
-	function handleFatal(session: Session, event: FatalEvent): void {
+	private handleFatal(session: Session, event: FatalEvent): void {
 		const error = simdProtocol.mapWireError(event.error);
-		fatalError = error;
-		log?.(`[simd] fatal: ${error.code}: ${error.message}`);
-		emit("fatal", error);
+		this.fatalError = error;
+		this.log?.(`[simd] fatal: ${error.code}: ${error.message}`);
+		this.emit("fatal", error);
 		if (session.handshaking) {
 			session.handshaking = false;
 			session.handshake({ success: false, error });
 		}
-		failAll(error);
+		this.failAll(error);
 	}
 
-	function handleEvent(session: Session, event: SimdEvent): void {
+	private handleEvent(session: Session, event: SimdEvent): void {
 		if (event.event === "log") {
-			log?.(`[simd] ${event.level}: ${event.message}`);
-			emit("log", event);
+			this.log?.(`[simd] ${event.level}: ${event.message}`);
+			this.emit("log", event);
 		} else if (event.event === "fatal") {
-			handleFatal(session, event);
+			this.handleFatal(session, event);
 		} else if (session.handshaking) {
 			session.handshaking = false;
 			session.ready = event;
-			emit("ready", event);
+			this.emit("ready", event);
 			session.handshake({ success: true, data: event });
 		}
 	}
 
-	function handleMessage(session: Session, message: SimdMessage): void {
-		if (message.kind === "response") handleResponse(message.response);
-		else handleEvent(session, message.event);
+	private handleMessage(session: Session, message: SimdMessage): void {
+		if (message.kind === "response") this.handleResponse(message.response);
+		else this.handleEvent(session, message.event);
 	}
 
-	function handleLine(session: Session, line: string): void {
+	private handleLine(session: Session, line: string): void {
 		const parsed = simdProtocol.parseLine(line);
 		if (!parsed.success) {
-			log?.(`[simd] ignoring line (${parsed.reason}): ${line.slice(0, 200)}`);
+			this.log?.(`[simd] ignoring line (${parsed.reason}): ${line.slice(0, 200)}`);
 			return;
 		}
-		handleMessage(session, parsed.message);
+		this.handleMessage(session, parsed.message);
 	}
 
-	function handleClose(session: Session, info: TransportClose): void {
+	private handleClose(session: Session, info: TransportClose): void {
 		if (!session.alive) return;
 		session.alive = false;
-		const expected = closed || closing;
-		emit("exit", { exitCode: info.exitCode, expected });
+		const expected = this.closed || this.closing;
+		this.emit("exit", { exitCode: info.exitCode, expected });
 		if (session.handshaking) {
 			session.handshaking = false;
-			session.handshake({ success: false, error: fatalError ?? crashed(info, "exited before it was ready") });
+			session.handshake({
+				success: false,
+				error: this.fatalError ?? this.crashed(info, "exited before it was ready"),
+			});
 			return;
 		}
-		if (fatalError) return;
-		const error = crashed(info, expected ? "stopped" : "exited unexpectedly");
-		if (!expected) lastCrash = error;
-		failAll(expected ? driverErrors.make("E_INTERNAL", "client closed", { retryable: false }) : error);
+		if (this.fatalError) return;
+		const error = this.crashed(info, expected ? "stopped" : "exited unexpectedly");
+		if (!expected) this.lastCrash = error;
+		this.failAll(expected ? driverErrors.make("E_INTERNAL", "client closed", { retryable: false }) : error);
 	}
 
-	async function openSession(): Promise<Result<Session, DriverError>> {
+	private async openSession(): Promise<Result<Session, DriverError>> {
 		let resolveHandshake: (result: Result<ReadyEvent, DriverError>) => void = () => undefined;
 		const handshake = new Promise<Result<ReadyEvent, DriverError>>((resolve) => {
 			resolveHandshake = resolve;
 		});
 		const session: Session = { alive: true, handshake: resolveHandshake, handshaking: true };
 		const stderrTail: string[] = [];
-		const opened = await factory({
-			onLine: (line) => handleLine(session, line),
+		const opened = await this.factory({
+			onLine: (line) => this.handleLine(session, line),
 			onDiagnostic: (line) => {
 				stderrTail.push(line);
 				if (stderrTail.length > STDERR_TAIL) stderrTail.shift();
-				log?.(`[simd:stderr] ${line}`);
+				this.log?.(`[simd:stderr] ${line}`);
 			},
 			onClose: (info) =>
-				handleClose(session, { ...info, stderrTail: info.stderrTail.length ? info.stderrTail : [...stderrTail] }),
+				this.handleClose(session, { ...info, stderrTail: info.stderrTail.length ? info.stderrTail : [...stderrTail] }),
 		});
 		if (!opened.success) return opened;
 		session.transport = opened.data;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const timeout = new Promise<Result<ReadyEvent, DriverError>>((resolve) => {
-			timer = setTimeout(
-				() =>
-					resolve({
-						success: false,
-						error: driverErrors.make("E_TIMEOUT", `warden-simd sent no ready event within ${readyTimeoutMs} ms`),
-					}),
-				readyTimeoutMs
-			);
-		});
-		const ready = await Promise.race([handshake, timeout]);
-		clearTimeout(timer);
+		const ready = await this.awaitReady(handshake);
 		if (!ready.success) {
 			session.handshaking = false;
 			session.alive = false;
@@ -260,28 +318,47 @@ export async function createSimdClient(
 				),
 			};
 		}
-		current = session;
+		this.current = session;
 		return { success: true, data: session };
 	}
 
-	async function ensureSession(): Promise<Result<Session, DriverError>> {
-		if (current?.alive) return { success: true, data: current };
-		if (opening) return opening;
-		if (respawns >= maxRespawns) {
-			return {
-				success: false,
-				error: lastCrash ?? driverErrors.make("E_HELPER_CRASHED", "warden-simd connection is closed"),
-			};
-		}
-		respawns += 1;
-		log?.(`[simd] respawning helper (${respawns}/${maxRespawns})`);
-		opening = openSession().finally(() => {
-			opening = undefined;
+	private async awaitReady(
+		handshake: Promise<Result<ReadyEvent, DriverError>>
+	): Promise<Result<ReadyEvent, DriverError>> {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<Result<ReadyEvent, DriverError>>((resolve) => {
+			timer = setTimeout(
+				() =>
+					resolve({
+						success: false,
+						error: driverErrors.make("E_TIMEOUT", `warden-simd sent no ready event within ${this.readyTimeoutMs} ms`),
+					}),
+				this.readyTimeoutMs
+			);
 		});
-		return opening;
+		const ready = await Promise.race([handshake, timeout]);
+		clearTimeout(timer);
+		return ready;
 	}
 
-	function validate(op: string, data: unknown): Result<unknown, DriverError> {
+	private async ensureSession(): Promise<Result<Session, DriverError>> {
+		if (this.current?.alive) return { success: true, data: this.current };
+		if (this.opening) return this.opening;
+		if (this.respawns >= this.maxRespawns) {
+			return {
+				success: false,
+				error: this.lastCrash ?? driverErrors.make("E_HELPER_CRASHED", "warden-simd connection is closed"),
+			};
+		}
+		this.respawns += 1;
+		this.log?.(`[simd] respawning helper (${this.respawns}/${this.maxRespawns})`);
+		this.opening = this.openSession().finally(() => {
+			this.opening = undefined;
+		});
+		return this.opening;
+	}
+
+	private validate(op: string, data: unknown): Result<unknown, DriverError> {
 		if (!simdProtocol.hasOpSchema(op)) return { success: true, data };
 		const parsed = opSchemas[op].safeParse(data);
 		if (parsed.success) return { success: true, data: parsed.data };
@@ -297,26 +374,26 @@ export async function createSimdClient(
 		};
 	}
 
-	async function request(
+	private async send(
 		op: string,
 		params: Record<string, unknown>,
 		opts: RequestOptions
 	): Promise<Result<unknown, DriverError>> {
-		if (closed)
+		if (this.closed)
 			return {
 				success: false,
 				error: driverErrors.make("E_INTERNAL", "warden-simd client is closed", { retryable: false }),
 			};
-		if (fatalError) return { success: false, error: fatalError };
-		const session = await ensureSession();
+		if (this.fatalError) return { success: false, error: this.fatalError };
+		const session = await this.ensureSession();
 		if (!session.success) return session;
 		const transport = session.data.transport;
 		if (!transport) return { success: false, error: driverErrors.make("E_INTERNAL", "warden-simd transport missing") };
-		const timeoutMs = opts.timeoutMs ?? defaultTimeoutMs;
-		const id = String(++seq);
+		const timeoutMs = opts.timeoutMs ?? this.defaultTimeoutMs;
+		const id = String(++this.seq);
 		const result = await new Promise<Result<unknown, DriverError>>((resolve) => {
 			const timer = setTimeout(() => {
-				pending.delete(id);
+				this.pending.delete(id);
 				resolve({
 					success: false,
 					error: driverErrors.make("E_TIMEOUT", `warden-simd \`${op}\` timed out after ${timeoutMs} ms`, {
@@ -324,100 +401,57 @@ export async function createSimdClient(
 					}),
 				});
 			}, timeoutMs);
-			pending.set(id, { op, resolve, timer });
+			this.pending.set(id, { op, resolve, timer });
 			try {
 				transport.send(simdProtocol.encodeRequest({ timeoutMs, ...params, id, op }));
 			} catch (error) {
 				clearTimeout(timer);
-				pending.delete(id);
+				this.pending.delete(id);
 				resolve({
 					success: false,
-					error: crashed(
+					error: this.crashed(
 						undefined,
 						`rejected the \`${op}\` request: ${error instanceof Error ? error.message : String(error)}`
 					),
 				});
 			}
 		});
-		if (result.success && op === "shutdown") shutdownAcked = true;
-		return result.success ? validate(op, result.data) : result;
+		if (result.success && op === "shutdown") this.shutdownAcked = true;
+		return result.success ? this.validate(op, result.data) : result;
+	}
+}
+
+/** Builds {@link SimdClient}s. Use the shared {@link simdClients} singleton. */
+export class SimdClients {
+	/** Shared client engine; the transport decides stdio vs socket. */
+	create(factory: TransportFactory, options: ClientOptions = {}): Promise<Result<SimdClient, DriverError>> {
+		return new SimdClientEngine(factory, options).open();
 	}
 
-	const first = await openSession();
-	if (!first.success) return first;
+	/** Stdio mode: own a helper process for this client (by-hand runs). Crashes are retried by one respawn. */
+	spawn(options: SpawnSimdOptions): Promise<Result<SimdClient, DriverError>> {
+		const cmd = [
+			options.helperPath,
+			"--udid",
+			options.udid,
+			...(options.resources ? ["--resources", options.resources] : []),
+			...(options.args ?? []),
+		];
+		return this.create(simdTransports.stdio({ cmd, spawn: options.spawn, graceMs: options.graceMs }), {
+			...options,
+			maxRespawns: options.maxRespawns ?? 1,
+			shutdownOnClose: options.shutdownOnClose ?? true,
+		});
+	}
 
-	const client: SimdClient = {
-		get ready() {
-			const ready = current?.ready ?? first.data.ready;
-			if (!ready) throw new Error("warden-simd client has no handshake");
-			return ready;
-		},
-		// `request` is the untyped engine: `validate` parses each op's data against `opSchemas` at run time, so
-		// narrowing the result to `OpData<Op>` here is the one place the static op map is trusted.
-		request: ((op: string, params: Record<string, unknown> = {}, opts: RequestOptions = {}) =>
-			request(op, params, opts)) as SimdClient["request"],
-		on(event, handler) {
-			// `listeners` stores every handler as the payload union; `emit` only ever passes `event`'s own payload, so
-			// widening the per-event handler on the way in is safe.
-			const stored = handler as Listener;
-			const set = listeners.get(event) ?? new Set<Listener>();
-			set.add(stored);
-			listeners.set(event, set);
-			return () => {
-				set.delete(stored);
-			};
-		},
-		async close() {
-			if (closed) return;
-			closing = true;
-			const session = current;
-			if (shutdownOnClose && session?.alive && !fatalError && !shutdownAcked) {
-				await request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
-			}
-			closed = true;
-			failAll(driverErrors.make("E_INTERNAL", "warden-simd client closed", { retryable: false }));
-			await session?.transport?.close().catch(() => undefined);
-		},
-	};
-	return { success: true, data: client };
+	/** Socket mode: attach to a running (pre-warmed) helper daemon. `close()` only disconnects; the daemon idles out. */
+	connect(options: ConnectSimdOptions): Promise<Result<SimdClient, DriverError>> {
+		return this.create(simdTransports.socket({ socketPath: options.socketPath }), {
+			...options,
+			maxRespawns: options.maxRespawns ?? 0,
+			shutdownOnClose: options.shutdownOnClose ?? false,
+		});
+	}
 }
 
-export type SpawnSimdOptions = ClientOptions & {
-	helperPath: string;
-	udid: string;
-	/** `--resources <dir>`: where the in-sim AX bridge guest lives */
-	resources?: string;
-	/** extra helper arguments after the standard ones (e.g. `--hid indigo`) */
-	args?: readonly string[];
-	/** injectable process spawn (tests); defaults to `Bun.spawn` */
-	spawn?: SimdSpawn;
-	/** grace period for `close()` before the helper is killed */
-	graceMs?: number;
-};
-
-/** Stdio mode: own a helper process for this client (by-hand runs). Crashes are retried by one respawn. */
-export function spawnSimd(options: SpawnSimdOptions): Promise<Result<SimdClient, DriverError>> {
-	const cmd = [
-		options.helperPath,
-		"--udid",
-		options.udid,
-		...(options.resources ? ["--resources", options.resources] : []),
-		...(options.args ?? []),
-	];
-	return createSimdClient(simdTransports.stdio({ cmd, spawn: options.spawn, graceMs: options.graceMs }), {
-		...options,
-		maxRespawns: options.maxRespawns ?? 1,
-		shutdownOnClose: options.shutdownOnClose ?? true,
-	});
-}
-
-export type ConnectSimdOptions = ClientOptions & { socketPath: string };
-
-/** Socket mode: attach to a running (pre-warmed) helper daemon. `close()` only disconnects; the daemon idles out. */
-export function connectSimd(options: ConnectSimdOptions): Promise<Result<SimdClient, DriverError>> {
-	return createSimdClient(simdTransports.socket({ socketPath: options.socketPath }), {
-		...options,
-		maxRespawns: options.maxRespawns ?? 0,
-		shutdownOnClose: options.shutdownOnClose ?? false,
-	});
-}
+export const simdClients = new SimdClients();

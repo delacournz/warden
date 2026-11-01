@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { WireElement } from "@delacour/warden-driver/helper/simd-protocol";
-import { normalizeElement, normalizeElements, toSnapshot } from "./normalize";
+import { elementNormalizer } from "./normalize";
 
 const screen = { width: 400, height: 800, scale: 2 };
 const frame = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
@@ -25,7 +25,7 @@ const tree: WireElement[] = [
 
 describe("normalizeElements", () => {
 	test("fills path ids, depth, normFrame, traits, enabled and children; flat is preorder", () => {
-		const { elements, flat } = normalizeElements(tree, screen);
+		const { elements, flat } = elementNormalizer.elements(tree, screen);
 		expect(flat.map((e) => e.id)).toEqual(["0", "0.0", "0.1", "0.1.0", "1"]);
 		expect(flat.map((e) => e.depth)).toEqual([0, 1, 1, 2, 0]);
 		expect(elements).toHaveLength(2);
@@ -38,7 +38,7 @@ describe("normalizeElements", () => {
 	});
 
 	test("keeps what the helper sent", () => {
-		const { flat } = normalizeElements(
+		const { flat } = elementNormalizer.elements(
 			[
 				{
 					id: "ax-7",
@@ -59,14 +59,14 @@ describe("normalizeElements", () => {
 	});
 
 	test("a zero-size screen does not divide by zero", () => {
-		const { flat } = normalizeElements(tree, { width: 0, height: 0, scale: 1 });
+		const { flat } = elementNormalizer.elements(tree, { width: 0, height: 0, scale: 1 });
 		expect(flat[0]?.normFrame).toEqual(frame(0, 0, 0, 0));
 	});
 });
 
 describe("nulls from the helper", () => {
 	test("null optional fields are dropped, enabled follows the not-enabled trait", () => {
-		const { flat } = normalizeElements(
+		const { flat } = elementNormalizer.elements(
 			[
 				{
 					role: "textfield",
@@ -95,18 +95,21 @@ describe("nulls from the helper", () => {
 	});
 
 	test("a null modal is no modal", () => {
-		const snapshot = toSnapshot({ backend: "ax", screen, truncated: false, elements: [], ms: 1, modal: null }, 1);
+		const snapshot = elementNormalizer.snapshot(
+			{ backend: "ax", screen, truncated: false, elements: [], ms: 1, modal: null },
+			1
+		);
 		expect("modal" in snapshot).toBe(false);
 	});
 });
 
 test("normalizeElement", () => {
-	const element = normalizeElement({ role: "button", rawType: "Button", frame: frame(0, 0, 40, 80) }, screen);
+	const element = elementNormalizer.element({ role: "button", rawType: "Button", frame: frame(0, 0, 40, 80) }, screen);
 	expect(element).toMatchObject({ id: "0", depth: 0, children: [] });
 });
 
 test("toSnapshot", () => {
-	const snapshot = toSnapshot(
+	const snapshot = elementNormalizer.snapshot(
 		{ backend: "ax", screen, truncated: true, elements: tree, ms: 12, modal: { description: "alert" } },
 		1234
 	);
@@ -122,7 +125,7 @@ test("toSnapshot", () => {
 
 describe("focus", () => {
 	test("the text field UIKit is editing is focused even from a helper that left `focused` false", () => {
-		const { flat } = normalizeElements(
+		const { flat } = elementNormalizer.elements(
 			[
 				{
 					role: "textfield",

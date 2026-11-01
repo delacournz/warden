@@ -24,15 +24,6 @@ export type FakeSimd = {
 	of(op: string): FakeSimdRequest[];
 };
 
-function wireReply(request: FakeSimdRequest, reply: FakeSimdReply): Record<string, unknown> {
-	if (reply === undefined) {
-		const error = { code: "E_BAD_REQUEST", message: `fakeSimd: no reply for ${request.op}` };
-		return { id: request.id, ok: false, error };
-	}
-	if ("error" in reply) return { id: request.id, ok: false, error: reply.error };
-	return { id: request.id, ok: true, data: reply.data ?? null };
-}
-
 const READY = {
 	event: "ready",
 	protocol: 1,
@@ -43,70 +34,85 @@ const READY = {
 	screen: { width: 390, height: 844, scale: 3 },
 };
 
-/**
- * In-memory `warden-simd`: an injectable `SimdSpawn` whose "process" answers requests from `handler`
- * synchronously, with no subprocess. Use it to assert the exact requests a driver sends; use
- * `native/scripts/fake-simd.ts` when you need a real process (crashes, delays, stderr).
- */
-export function fakeSimd(
-	handler: (request: FakeSimdRequest) => FakeSimdReply | Promise<FakeSimdReply>,
-	options: FakeSimdOptions = {}
-): FakeSimd {
-	const requests: FakeSimdRequest[] = [];
-	const spawns: string[][] = [];
-	const encoder = new TextEncoder();
+/** Builds in-memory `warden-simd` fakes. Use the shared {@link fakeSimd} singleton. */
+export class FakeSimdFactory {
+	/**
+	 * In-memory `warden-simd`: an injectable `SimdSpawn` whose "process" answers requests from `handler`
+	 * synchronously, with no subprocess. Use it to assert the exact requests a driver sends; use
+	 * `native/scripts/fake-simd.ts` when you need a real process (crashes, delays, stderr).
+	 */
+	build(
+		handler: (request: FakeSimdRequest) => FakeSimdReply | Promise<FakeSimdReply>,
+		options: FakeSimdOptions = {}
+	): FakeSimd {
+		const wireReply = (request: FakeSimdRequest, reply: FakeSimdReply) => this.wireReply(request, reply);
+		const requests: FakeSimdRequest[] = [];
+		const spawns: string[][] = [];
+		const encoder = new TextEncoder();
 
-	const spawn: SimdSpawn = (cmd) => {
-		spawns.push([...cmd]);
-		let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
-		let closed = false;
-		let finish: (code: number) => void = () => undefined;
-		const exited = new Promise<number>((resolve) => {
-			finish = resolve;
-		});
-		const emit = (value: unknown) => {
-			if (!closed)
-				controller?.enqueue(encoder.encode(`${typeof value === "string" ? value : JSON.stringify(value)}\n`));
+		const spawn: SimdSpawn = (cmd) => {
+			spawns.push([...cmd]);
+			let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+			let closed = false;
+			let finish: (code: number) => void = () => undefined;
+			const exited = new Promise<number>((resolve) => {
+				finish = resolve;
+			});
+			const emit = (value: unknown) => {
+				if (!closed)
+					controller?.enqueue(encoder.encode(`${typeof value === "string" ? value : JSON.stringify(value)}\n`));
+			};
+			const stop = (code: number) => {
+				if (closed) return;
+				closed = true;
+				controller?.close();
+				finish(code);
+			};
+			const stdout = new ReadableStream<Uint8Array>({
+				start(c) {
+					controller = c;
+					for (const line of options.preamble ?? []) emit(line);
+					emit({ ...READY, ...options.ready });
+				},
+			});
+			let buffer = "";
+			const proc: SimdProcess = {
+				stdout,
+				exited,
+				write(data) {
+					buffer += data;
+					const lines = buffer.split("\n");
+					buffer = lines.pop() ?? "";
+					for (const line of lines) {
+						if (!line.trim()) continue;
+						const request = JSON.parse(line) as FakeSimdRequest;
+						requests.push(request);
+						void (async () => {
+							const reply = await handler(request);
+							if (request.op === "shutdown" && reply === undefined) {
+								emit({ id: request.id, ok: true, data: null });
+								stop(0);
+							} else emit(wireReply(request, reply));
+						})();
+					}
+				},
+				end: () => stop(0),
+				kill: () => stop(137),
+			};
+			return proc;
 		};
-		const stop = (code: number) => {
-			if (closed) return;
-			closed = true;
-			controller?.close();
-			finish(code);
-		};
-		const stdout = new ReadableStream<Uint8Array>({
-			start(c) {
-				controller = c;
-				for (const line of options.preamble ?? []) emit(line);
-				emit({ ...READY, ...options.ready });
-			},
-		});
-		let buffer = "";
-		const proc: SimdProcess = {
-			stdout,
-			exited,
-			write(data) {
-				buffer += data;
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				for (const line of lines) {
-					if (!line.trim()) continue;
-					const request = JSON.parse(line) as FakeSimdRequest;
-					requests.push(request);
-					void (async () => {
-						const reply = await handler(request);
-						if (request.op === "shutdown" && reply === undefined) {
-							emit({ id: request.id, ok: true, data: null });
-							stop(0);
-						} else emit(wireReply(request, reply));
-					})();
-				}
-			},
-			end: () => stop(0),
-			kill: () => stop(137),
-		};
-		return proc;
-	};
 
-	return { spawn, requests, spawns, of: (op) => requests.filter((request) => request.op === op) };
+		return { spawn, requests, spawns, of: (op) => requests.filter((request) => request.op === op) };
+	}
+
+	private wireReply(request: FakeSimdRequest, reply: FakeSimdReply): Record<string, unknown> {
+		if (reply === undefined) {
+			const error = { code: "E_BAD_REQUEST", message: `fakeSimd: no reply for ${request.op}` };
+			return { id: request.id, ok: false, error };
+		}
+		if ("error" in reply) return { id: request.id, ok: false, error: reply.error };
+		return { id: request.id, ok: true, data: reply.data ?? null };
+	}
 }
+
+export const fakeSimd = new FakeSimdFactory();

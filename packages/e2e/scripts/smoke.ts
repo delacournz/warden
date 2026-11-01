@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { alertCapabilities } from "@delacour/warden-driver/alerts";
 import type { AlertInfo, Driver, DriverResult, Element, Point, Snapshot } from "@delacour/warden-driver/driver.types";
 import { deviceTyping } from "@delacour/warden-driver/typing";
-import { openIosDriver } from "@delacour/warden-driver-ios/ios-driver";
+import { iosDriverOpener } from "@delacour/warden-driver-ios/ios-driver";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { focusPoint } from "@delacour/warden-screen/actions";
 import { focusClearType, tapToFocus } from "@delacour/warden-screen/field";
@@ -556,7 +556,7 @@ async function killBridgeCheck(driver: Driver): Promise<void> {
 	);
 }
 
-const opened = await openIosDriver({
+const opened = await iosDriverOpener.open({
 	udid,
 	exec: processExec.run,
 	env: {

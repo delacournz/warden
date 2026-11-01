@@ -11,7 +11,7 @@
  */
 import { unlinkSync } from "node:fs";
 import net from "node:net";
-import { loadRecording, RECORDING_PATH, RUNNER_READY, recordingHandler } from "../../src/device/runner.testing";
+import { RECORDING_PATH, RUNNER_READY, runnerFakes } from "../../src/device/runner.testing";
 
 function arg(name: string): string | undefined {
 	const index = process.argv.indexOf(`--${name}`);
@@ -24,7 +24,7 @@ if (!socketPath) {
 	process.exit(2);
 }
 
-const handler = recordingHandler(loadRecording(arg("recording") ?? RECORDING_PATH));
+const handler = runnerFakes.recordingHandler(runnerFakes.loadRecording(arg("recording") ?? RECORDING_PATH));
 
 try {
 	unlinkSync(socketPath);

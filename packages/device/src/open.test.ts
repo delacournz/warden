@@ -15,10 +15,10 @@ const base = (platform: "ios" | "android") => ({ platform, id: "UDID-1", appId: 
 
 describe("openDriver", () => {
 	test("ios opens the iOS driver on the id, using simdPath as the helper", async () => {
-		const helper = fakeSimd(() => ({ data: null }));
+		const helper = fakeSimd.build(() => ({ data: null }));
 		const result = await openDriver({
 			...base("ios"),
-			host: { exec: fakeExec([["xcrun", {}]]) },
+			host: { exec: fakeExec.build([["xcrun", {}]]) },
 			ios: { simdPath: "/x/warden-simd", spawn: helper.spawn, exists: (path) => path === "/x/warden-simd" },
 		});
 		expect(result.success).toBe(true);
@@ -30,13 +30,13 @@ describe("openDriver", () => {
 	});
 
 	test("debug turns the latency log on", async () => {
-		const helper = fakeSimd(() => ({ data: null }));
+		const helper = fakeSimd.build(() => ({ data: null }));
 		const logs: string[] = [];
 		const result = await openDriver({
 			...base("ios"),
 			debug: true,
 			log: (line) => logs.push(line),
-			host: { exec: fakeExec([["xcrun", {}]]) },
+			host: { exec: fakeExec.build([["xcrun", {}]]) },
 			ios: { spawn: helper.spawn, helperPath: "/x/warden-simd", exists: () => false },
 		});
 		if (!result.success) throw new Error(result.error.message);
@@ -122,7 +122,7 @@ describe("openDriver", () => {
 	test("a missing helper is E_HELPER_MISSING", async () => {
 		const result = await openDriver({
 			...base("ios"),
-			host: { exec: fakeExec([["xcrun", {}]]), home: "/nowhere/.warden" },
+			host: { exec: fakeExec.build([["xcrun", {}]]), home: "/nowhere/.warden" },
 			ios: { exists: () => false, execPath: "/nowhere/warden", importDir: "/nowhere/packages/driver-ios/src" },
 		});
 		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
@@ -131,7 +131,7 @@ describe("openDriver", () => {
 	test("an explicit simdPath that points at nothing is an error, not a fall-through", async () => {
 		const result = await openDriver({
 			...base("ios"),
-			host: { exec: fakeExec([["xcrun", {}]]) },
+			host: { exec: fakeExec.build([["xcrun", {}]]) },
 			ios: { simdPath: "/stale/warden-simd", exists: (path) => path !== "/stale/warden-simd" },
 		});
 		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
@@ -144,7 +144,7 @@ describe("openDriver", () => {
 		try {
 			const result = await openDriver({
 				...base("ios"),
-				host: { exec: fakeExec([["xcrun", {}]]) },
+				host: { exec: fakeExec.build([["xcrun", {}]]) },
 				ios: { exists: () => false, execPath: "/nowhere/warden", importDir: "/nowhere/x/y/z" },
 			});
 			expect(!result.success && result.error.message).not.toContain("from-process-env");
@@ -184,11 +184,11 @@ describe("androidOptions and the resident server", () => {
 
 describe("a physical iPhone", () => {
 	test("opens the device driver, not warden-simd: without a runner socket it says so", async () => {
-		const helper = fakeSimd(() => ({ data: null }));
+		const helper = fakeSimd.build(() => ({ data: null }));
 		const result = await openDriver({
 			platform: "ios",
 			id: PHONE,
-			host: { exec: fakeExec([]) },
+			host: { exec: fakeExec.build([]) },
 			ios: { spawn: helper.spawn, helperPath: "/x/warden-simd" },
 		});
 		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
@@ -200,7 +200,7 @@ describe("a physical iPhone", () => {
 		const result = await openDriver({
 			platform: "ios",
 			id: PHONE,
-			host: { exec: fakeExec([]) },
+			host: { exec: fakeExec.build([]) },
 			iosDevice: { runnerSocket: "/nonexistent/r.sock", defaultTimeoutMs: 100 },
 		});
 		expect(result.success).toBe(false);

@@ -6,8 +6,6 @@ import type {
 	DriverError,
 	DriverResult,
 	Element,
-	HardwareButton,
-	HealthInfo,
 	Logger,
 	Orientation,
 	Point,
@@ -16,17 +14,17 @@ import type {
 import { driverErrors } from "@delacour/warden-driver/errors";
 import type { AlertButtonsData, OpData } from "@delacour/warden-driver/helper/simd-protocol";
 import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
-import { type SettleDetail, settler } from "@delacour/warden-driver/settle";
+import { settler } from "@delacour/warden-driver/settle";
 import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Result } from "@delacour/warden-types/result";
 import { KEY_USAGE } from "../ios-driver";
-import { normalizeElements, toSnapshot } from "../normalize";
-import { connectSimd, type RequestOptions, type SimdClient } from "../simd-client";
-import { deviceTypeTextBudgetMs } from "../type-budget";
+import { elementNormalizer } from "../normalize";
+import { type RequestOptions, type SimdClient, simdClients } from "../simd-client";
+import { typeBudget } from "../type-budget";
 import { IOS_DEVICE_CAPABILITIES } from "./capabilities";
-import { createDevicectl, type Devicectl } from "./devicectl";
-import { isRunning, parseAppState } from "./runner-protocol";
+import { type Devicectl, DevicectlClient } from "./devicectl";
+import { runnerProtocol } from "./runner-protocol";
 
 /**
  * The `Driver` for a physical iPhone / iPad: input, accessibility and app lifecycle through `warden-runner` (the
@@ -77,18 +75,7 @@ const SCREENSHOT_FALLBACK: ReadonlySet<string> = new Set(["E_UNSUPPORTED", "E_IO
 
 type Params = Record<string, unknown>;
 
-function params(values: Record<string, unknown>): Params {
-	return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
-}
-
 const okVoid = { success: true as const, data: undefined };
-
-function fail(error: DriverError) {
-	return { success: false as const, error };
-}
-
-const unsupported = (what: string, why: string) =>
-	fail(driverErrors.make("E_UNSUPPORTED", `${what} is not available on a physical iPhone: ${why}`));
 
 class DriverFailure extends Error {
 	constructor(readonly error: DriverError) {
@@ -96,126 +83,68 @@ class DriverFailure extends Error {
 	}
 }
 
-/** The last element (deepest, topmost in preorder) whose frame holds `point`, ignoring hidden ones. */
-function hitTest(snapshot: Snapshot, point: Point): Element | null {
-	let hit: Element | null = null;
-	for (const element of snapshot.flat) {
-		if (element.hidden === true) continue;
-		const { x, y, width, height } = element.frame;
-		if (point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height) hit = element;
-	}
-	return hit;
-}
+export type IosDeviceEngineOptions = Omit<
+	OpenIosDeviceDriverOptions,
+	"client" | "exec" | "devicectl" | "env" | "socketPath"
+> & {
+	now: () => number;
+	sleep: (ms: number) => Promise<void>;
+	write: (path: string, bytes: Uint8Array) => Promise<void>;
+};
 
-const gestureTimeout = (durationMs: number | undefined, base = 0) => (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
+/** The `Driver` of one physical iPhone over its runner client and `devicectl`. Built by {@link IosDeviceDriverOpener}. */
+export class IosDeviceEngine implements IosDeviceDriver {
+	readonly platform = "ios" as const;
+	readonly id: string;
+	readonly capabilities = IOS_DEVICE_CAPABILITIES;
 
-export function createIosDeviceDriver(
-	client: SimdClient,
-	devicectl: Devicectl,
-	opts: Omit<OpenIosDeviceDriverOptions, "client" | "exec" | "devicectl" | "env" | "socketPath"> & {
-		now: () => number;
-		sleep: (ms: number) => Promise<void>;
-		write: (path: string, bytes: Uint8Array) => Promise<void>;
-	}
-): IosDeviceDriver {
-	const { udid, now, sleep } = opts;
+	readonly network: IosDeviceDriver["network"];
+	readonly networkFaults: IosDeviceDriver["networkFaults"];
+	readonly location: IosDeviceDriver["location"];
+	readonly clock: IosDeviceDriver["clock"];
+	readonly permissions: IosDeviceDriver["permissions"];
+	readonly timezone: IosDeviceDriver["timezone"];
+	readonly locale: IosDeviceDriver["locale"];
+	readonly a11y: IosDeviceDriver["a11y"];
+	readonly battery: IosDeviceDriver["battery"];
+	readonly memoryWarning: IosDeviceDriver["memoryWarning"];
+	readonly push: IosDeviceDriver["push"];
+
+	private readonly client: SimdClient;
+	private readonly devicectl: Devicectl;
+	private readonly opts: IosDeviceEngineOptions;
 	/** bundles this session may uninstall: the app under test, earlier installs, and what this driver installed */
-	const owned = new Set<string>([...(opts.ownedBundles ?? []), ...(opts.bundleId ? [opts.bundleId] : [])]);
+	private readonly owned: Set<string>;
 
-	async function request<Op extends string>(op: Op, p: Params = {}, o: RequestOptions = {}): DriverResult<OpData<Op>> {
-		return client.request(op, p, o);
+	constructor(client: SimdClient, devicectl: Devicectl, opts: IosDeviceEngineOptions) {
+		this.client = client;
+		this.devicectl = devicectl;
+		this.opts = opts;
+		this.id = opts.udid;
+		this.owned = new Set<string>([...(opts.ownedBundles ?? []), ...(opts.bundleId ? [opts.bundleId] : [])]);
+		const ops = physicalConditions.ops(`physical iPhone ${opts.udid}`);
+		this.network = ops.network;
+		this.networkFaults = ops.networkFaults;
+		this.location = ops.location;
+		this.clock = ops.clock;
+		this.permissions = ops.permissions;
+		this.timezone = ops.timezone;
+		this.locale = ops.locale;
+		this.a11y = ops.a11y;
+		this.battery = ops.battery;
+		this.memoryWarning = ops.memoryWarning;
+		this.push = ops.push;
 	}
 
-	const sendVoid = async (op: string, p: Params = {}, timeoutMs?: number): DriverResult<void> => {
-		const result = await request(op, p, timeoutMs === undefined ? {} : { timeoutMs });
-		return result.success ? okVoid : result;
-	};
-
-	async function snapshot(o?: { interactiveOnly?: boolean; backend?: Snapshot["backend"] }): DriverResult<Snapshot> {
-		const result = await request("snapshot", params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend }));
-		if (!result.success) return result;
-		const { fallback } = result.data;
-		if (fallback) opts.log?.(`[ios-device] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
-		return { success: true, data: toSnapshot(result.data, now()) };
-	}
-
-	async function settle(o: { quietMs?: number; timeoutMs?: number } = {}): DriverResult<SettleDetail> {
-		try {
-			const outcome = await settler.byHash(
-				async () => {
-					const snap = await snapshot();
-					if (!snap.success) throw new DriverFailure(snap.error);
-					return settler.snapshotHash(snap.data);
-				},
-				{ quietMs: o.quietMs ?? DEFAULT_QUIET_MS, timeoutMs: o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS, now, sleep }
-			);
-			spanDetails.note("via", "hash");
-			return { success: true, data: { ...outcome, via: "hash" } };
-		} catch (error) {
-			if (error instanceof DriverFailure) return fail(error.error);
-			throw error;
-		}
-	}
-
-	async function screenshot(o?: { path?: string; scale?: number }): DriverResult<{ path?: string; png?: Uint8Array }> {
-		const viaRunner = await request("screenshot", params({ scale: o?.scale }));
-		if (viaRunner.success) {
-			const { png } = viaRunner.data;
-			if (png === undefined) return fail(driverErrors.make("E_INTERNAL", "warden-runner screenshot returned no png"));
-			const bytes = new Uint8Array(Buffer.from(png, "base64"));
-			if (o?.path === undefined) return { success: true, data: { png: bytes } };
-			await opts.write(o.path, bytes);
-			return { success: true, data: { path: o.path } };
-		}
-		if (!SCREENSHOT_FALLBACK.has(viaRunner.error.code)) return viaRunner;
-		opts.log?.(`[ios-device] runner screenshot failed (${viaRunner.error.code}), using devicectl`);
-		return devicectl.screenshot(o?.path);
-	}
-
-	async function readOrientation(): DriverResult<Orientation> {
-		const result = await request("orientation");
-		if (!result.success) return result;
-		const read = result.data.orientation;
-		if (read === "faceUp" || read === "faceDown" || read === "unknown") return { success: true, data: "portrait" };
-		return { success: true, data: read };
-	}
-
-	async function orientation(set?: Orientation): DriverResult<Orientation> {
-		if (set !== undefined) {
-			const changed = await devicectl.setOrientation(set);
-			if (!changed.success) return changed;
-		}
-		return readOrientation();
-	}
-
-	function toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
-		const { title, message, buttons } = data;
-		const info: AlertInfo = { buttons: normalizeElements(buttons, client.ready.screen).elements };
-		if (title !== undefined) info.title = title;
-		if (message !== undefined) info.message = message;
-		return info;
-	}
-
-	async function alert(): DriverResult<AlertInfo | null> {
-		const result = await request("alertButtons");
-		if (!result.success) return result;
-		return { success: true, data: result.data === null ? null : toAlertInfo(result.data) };
-	}
-
-	async function isFrontmost(bundleId: string): DriverResult<boolean> {
-		const result = await request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
-		return result.success ? { success: true, data: result.data.frontmost } : result;
-	}
-
-	async function health(): DriverResult<HealthInfo> {
-		const result = await request("health");
+	health: IosDeviceDriver["health"] = async () => {
+		const result = await this.request("health");
 		if (!result.success) return result;
 		const d = result.data;
 		return {
 			success: true,
 			data: {
 				platform: "ios",
-				id: udid,
+				id: this.id,
 				version: d.version,
 				transport: d.hid.transport,
 				bridge: d.ax.bridge === "degraded" ? "available" : d.ax.bridge,
@@ -223,185 +152,328 @@ export function createIosDeviceDriver(
 				detail: { axDefault: d.ax.default, ...(d.state ? { state: d.state } : {}) },
 			},
 		};
-	}
+	};
 
-	async function pressButton(button: HardwareButton): DriverResult<void> {
-		if (button === "back") return fail(driverErrors.make("E_UNSUPPORTED", "iOS has no hardware back button"));
-		if (button === "shake") return unsupported("shake", "the XCUITest runner cannot shake the phone");
-		return sendVoid("pressButton", { button });
-	}
+	snapshot: IosDeviceDriver["snapshot"] = async (o) => {
+		const result = await this.request(
+			"snapshot",
+			this.params({ interactiveOnly: o?.interactiveOnly, backend: o?.backend })
+		);
+		if (!result.success) return result;
+		const { fallback } = result.data;
+		if (fallback) {
+			this.opts.log?.(`[ios-device] snapshot fell back ${fallback.from} -> ${fallback.to}: ${fallback.reason}`);
+		}
+		return { success: true, data: elementNormalizer.snapshot(result.data, this.opts.now()) };
+	};
 
-	async function clipboard(set?: string): DriverResult<string> {
-		if (set === undefined) return devicectl.pasteboardPaste();
-		const copied = await devicectl.pasteboardCopy(set);
+	elementAtPoint: IosDeviceDriver["elementAtPoint"] = async (point) => {
+		const snap = await this.snapshot();
+		return snap.success ? { success: true, data: this.hitTest(snap.data, point) } : snap;
+	};
+
+	tap: IosDeviceDriver["tap"] = (point, o) =>
+		this.sendVoid("tap", this.params({ x: point.x, y: point.y, count: o?.count, durationMs: o?.durationMs }));
+
+	longPress: IosDeviceDriver["longPress"] = (point, o) =>
+		this.sendVoid(
+			"longPress",
+			this.params({ x: point.x, y: point.y, durationMs: o?.durationMs }),
+			this.gestureTimeout(o?.durationMs, 1_000)
+		);
+
+	swipe: IosDeviceDriver["swipe"] = (from, to, o) =>
+		this.sendVoid(
+			"swipe",
+			this.params({ from, to, durationMs: o?.durationMs }),
+			this.gestureTimeout(o?.durationMs, 300)
+		);
+
+	drag: IosDeviceDriver["drag"] = (from, to, o) =>
+		this.sendVoid(
+			"drag",
+			this.params({ from, to, pressMs: o?.pressMs, durationMs: o?.durationMs, releaseMs: o?.releaseMs }),
+			this.gestureTimeout((o?.pressMs ?? 0) + (o?.durationMs ?? 0) + (o?.releaseMs ?? 0), 300)
+		);
+
+	pinch: IosDeviceDriver["pinch"] = async () => this.unsupported("pinch", "the XCUITest runner takes one finger");
+	rotate: IosDeviceDriver["rotate"] = async () => this.unsupported("rotate", "the XCUITest runner takes one finger");
+	gesture: IosDeviceDriver["gesture"] = async () =>
+		this.unsupported("gesture", "the XCUITest runner takes taps, swipes and drags only");
+	biometrics: IosDeviceDriver["biometrics"] = async () =>
+		this.unsupported("biometrics", "Face ID / Touch ID cannot be simulated on a real sensor; use a simulator");
+
+	typeText: IosDeviceDriver["typeText"] = (text) =>
+		this.sendVoid("typeText", { text }, typeBudget.deviceTypeText(text));
+
+	key: IosDeviceDriver["key"] = (key, modifiers) =>
+		this.sendVoid("key", this.params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] }));
+
+	pressButton: IosDeviceDriver["pressButton"] = async (button) => {
+		if (button === "back") return this.fail(driverErrors.make("E_UNSUPPORTED", "iOS has no hardware back button"));
+		if (button === "shake") return this.unsupported("shake", "the XCUITest runner cannot shake the phone");
+		return this.sendVoid("pressButton", { button });
+	};
+
+	screenshot: IosDeviceDriver["screenshot"] = async (o) => {
+		const viaRunner = await this.request("screenshot", this.params({ scale: o?.scale }));
+		if (viaRunner.success) {
+			const { png } = viaRunner.data;
+			if (png === undefined) {
+				return this.fail(driverErrors.make("E_INTERNAL", "warden-runner screenshot returned no png"));
+			}
+			const bytes = new Uint8Array(Buffer.from(png, "base64"));
+			if (o?.path === undefined) return { success: true, data: { png: bytes } };
+			await this.opts.write(o.path, bytes);
+			return { success: true, data: { path: o.path } };
+		}
+		if (!SCREENSHOT_FALLBACK.has(viaRunner.error.code)) return viaRunner;
+		this.opts.log?.(`[ios-device] runner screenshot failed (${viaRunner.error.code}), using devicectl`);
+		return this.devicectl.screenshot(o?.path);
+	};
+
+	orientation: IosDeviceDriver["orientation"] = async (set) => {
+		if (set !== undefined) {
+			const changed = await this.devicectl.setOrientation(set);
+			if (!changed.success) return changed;
+		}
+		return this.readOrientation();
+	};
+
+	settle: IosDeviceDriver["settle"] = async (o = {}) => {
+		try {
+			const outcome = await settler.byHash(
+				async () => {
+					const snap = await this.snapshot();
+					if (!snap.success) throw new DriverFailure(snap.error);
+					return settler.snapshotHash(snap.data);
+				},
+				{
+					quietMs: o.quietMs ?? DEFAULT_QUIET_MS,
+					timeoutMs: o.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS,
+					now: this.opts.now,
+					sleep: this.opts.sleep,
+				}
+			);
+			spanDetails.note("via", "hash");
+			return { success: true, data: { ...outcome, via: "hash" } };
+		} catch (error) {
+			if (error instanceof DriverFailure) return this.fail(error.error);
+			throw error;
+		}
+	};
+
+	alert: IosDeviceDriver["alert"] = async () => {
+		const result = await this.request("alertButtons");
+		if (!result.success) return result;
+		return { success: true, data: result.data === null ? null : this.toAlertInfo(result.data) };
+	};
+
+	alertOn: IosDeviceDriver["alertOn"] = (_backend: AlertBackend) => this.alert();
+
+	isFrontmost: IosDeviceDriver["isFrontmost"] = async (bundleId) => {
+		const result = await this.request("frontmost", { bundleId }, { timeoutMs: FRONTMOST_TIMEOUT_MS });
+		return result.success ? { success: true, data: result.data.frontmost } : result;
+	};
+
+	appearance: IosDeviceDriver["appearance"] = async (set) => {
+		if (set !== undefined) {
+			return this.fail(
+				driverErrors.make(
+					"E_REFUSED",
+					`physical_protected: changing the appearance is a persistent settings write on physical device ${this.id}`,
+					{ retryable: false, detail: { reason: "physical_protected" } }
+				)
+			);
+		}
+		return this.devicectl.appearance();
+	};
+
+	clipboard: IosDeviceDriver["clipboard"] = async (set) => {
+		if (set === undefined) return this.devicectl.pasteboardPaste();
+		const copied = await this.devicectl.pasteboardCopy(set);
 		if (!copied.success) return copied;
-		const back = await devicectl.pasteboardPaste();
+		const back = await this.devicectl.pasteboardPaste();
 		if (!back.success) return back;
 		if (back.data !== set) {
-			return fail(
+			return this.fail(
 				driverErrors.make("E_IO", "devicectl pasteboard copy exited 0 but the pasteboard does not hold the text")
 			);
 		}
 		return { success: true, data: set };
+	};
+
+	readonly app: IosDeviceDriver["app"] = {
+		launch: (bundleId, o) =>
+			this.sendVoid(
+				"launch",
+				this.params({
+					bundleId,
+					args: o?.args && [...o.args],
+					env: o?.env,
+					terminateRunning: o?.relaunch !== false,
+				}),
+				LAUNCH_TIMEOUT_MS
+			),
+		terminate: (bundleId) => this.sendVoid("terminate", { bundleId }, APP_OP_TIMEOUT_MS),
+		openUrl: (url) => this.sendVoid("openUrl", { url }, APP_OP_TIMEOUT_MS),
+		install: (path) => this.install(path),
+		uninstall: (bundleId) => this.uninstall(bundleId),
+		isInstalled: (bundleId) => this.devicectl.isInstalled(bundleId),
+		isRunning: async (bundleId) => {
+			const result = await this.request("appState", { bundleId });
+			if (!result.success) return result;
+			const state = runnerProtocol.parseAppState(result.data);
+			if (state === undefined)
+				return this.fail(driverErrors.make("E_INTERNAL", "warden-runner appState returned no state"));
+			return { success: true, data: runnerProtocol.isRunning(state) };
+		},
+		clearData: (bundleId) => this.clearData(bundleId),
+	};
+
+	close: IosDeviceDriver["close"] = () => this.client.close();
+
+	private params(values: Record<string, unknown>): Params {
+		return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+	}
+
+	private fail(error: DriverError) {
+		return { success: false as const, error };
+	}
+
+	private unsupported(what: string, why: string) {
+		return this.fail(driverErrors.make("E_UNSUPPORTED", `${what} is not available on a physical iPhone: ${why}`));
+	}
+
+	private gestureTimeout(durationMs: number | undefined, base = 0): number {
+		return (durationMs ?? 0) + base + GESTURE_MARGIN_MS;
+	}
+
+	/** The last element (deepest, topmost in preorder) whose frame holds `point`, ignoring hidden ones. */
+	private hitTest(snapshot: Snapshot, point: Point): Element | null {
+		let hit: Element | null = null;
+		for (const element of snapshot.flat) {
+			if (element.hidden === true) continue;
+			const { x, y, width, height } = element.frame;
+			if (point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height) hit = element;
+		}
+		return hit;
+	}
+
+	private async request<Op extends string>(op: Op, p: Params = {}, o: RequestOptions = {}): DriverResult<OpData<Op>> {
+		return this.client.request(op, p, o);
+	}
+
+	private async sendVoid(op: string, p: Params = {}, timeoutMs?: number): DriverResult<void> {
+		const result = await this.request(op, p, timeoutMs === undefined ? {} : { timeoutMs });
+		return result.success ? okVoid : result;
+	}
+
+	private async readOrientation(): DriverResult<Orientation> {
+		const result = await this.request("orientation");
+		if (!result.success) return result;
+		const read = result.data.orientation;
+		if (read === "faceUp" || read === "faceDown" || read === "unknown") return { success: true, data: "portrait" };
+		return { success: true, data: read };
+	}
+
+	private toAlertInfo(data: NonNullable<AlertButtonsData>): AlertInfo {
+		const { title, message, buttons } = data;
+		const info: AlertInfo = { buttons: elementNormalizer.elements(buttons, this.client.ready.screen).elements };
+		if (title !== undefined) info.title = title;
+		if (message !== undefined) info.message = message;
+		return info;
 	}
 
 	/** The refusal for a bundle warden did not install; a phone is somebody's, only warden's own installs are touched. */
-	function guard(bundleId: string, action: "uninstall" | "clear the data of"): DriverError | undefined {
-		if (owned.has(bundleId)) return undefined;
+	private guard(bundleId: string, action: "uninstall" | "clear the data of"): DriverError | undefined {
+		if (this.owned.has(bundleId)) return undefined;
 		return driverErrors.make(
 			"E_REFUSED",
-			`physical_protected: ${bundleId} was not installed by warden; refusing to ${action} it on physical device ${udid}`,
+			`physical_protected: ${bundleId} was not installed by warden; refusing to ${action} it on physical device ${this.id}`,
 			{ retryable: false, detail: { reason: "physical_protected", bundleId } }
 		);
 	}
 
-	async function install(path: string): DriverResult<void> {
-		const installed = await devicectl.install(path);
+	private async install(path: string): DriverResult<void> {
+		const installed = await this.devicectl.install(path);
 		if (!installed.success) return installed;
-		for (const bundleId of installed.data.bundleIds) owned.add(bundleId);
+		for (const bundleId of installed.data.bundleIds) this.owned.add(bundleId);
 		return okVoid;
 	}
 
-	async function uninstall(bundleId: string): DriverResult<void> {
-		const refused = guard(bundleId, "uninstall");
-		return refused ? fail(refused) : devicectl.uninstall(bundleId);
+	private async uninstall(bundleId: string): DriverResult<void> {
+		const refused = this.guard(bundleId, "uninstall");
+		return refused ? this.fail(refused) : this.devicectl.uninstall(bundleId);
 	}
 
 	/** uninstall + reinstall from `WARDEN_APP_PATH`: the keychain survives an uninstall on iOS, so only the sandbox is wiped */
-	async function clearData(bundleId: string): DriverResult<void> {
-		const refused = guard(bundleId, "clear the data of");
-		if (refused) return fail(refused);
-		if (opts.appPath === undefined) {
-			return fail(
+	private async clearData(bundleId: string): DriverResult<void> {
+		const refused = this.guard(bundleId, "clear the data of");
+		if (refused) return this.fail(refused);
+		if (this.opts.appPath === undefined) {
+			return this.fail(
 				driverErrors.make(
 					"E_BAD_REQUEST",
 					"clearData reinstalls the app and needs WARDEN_APP_PATH (the build to put back)"
 				)
 			);
 		}
-		const removed = await devicectl.uninstall(bundleId);
+		const removed = await this.devicectl.uninstall(bundleId);
 		if (!removed.success) return removed;
 		spanDetails.note("keychainKept", true);
-		opts.log?.(`[ios-device] clearData(${bundleId}): reinstalled; the keychain items of the app were kept`);
-		return install(opts.appPath);
+		this.opts.log?.(`[ios-device] clearData(${bundleId}): reinstalled; the keychain items of the app were kept`);
+		return this.install(this.opts.appPath);
+	}
+}
+
+/** Opens {@link IosDeviceEngine}s. Use the shared {@link iosDeviceDriverOpener} singleton. */
+export class IosDeviceDriverOpener {
+	/**
+	 * Open the driver for the phone `udid` against its runner host's socket (`socketPath` / `env.iosRunnerSocket` /
+	 * `client`). `E_HELPER_MISSING` without any: the host is started by `warden ui` / `warden e2e`, never by the driver.
+	 */
+	async open(o: OpenIosDeviceDriverOptions): DriverResult<Driver> {
+		const log: Logger = o.log ?? (() => undefined);
+		const client = await this.runnerClient(o, log);
+		if (!client.success) return client;
+		const bundleId = o.bundleId ?? o.env?.bundleId;
+		const appPath = o.appPath ?? o.env?.appPath;
+		const devicectl = o.devicectl ?? new DevicectlClient({ udid: o.udid, exec: o.exec });
+		return {
+			success: true,
+			data: new IosDeviceEngine(client.data, devicectl, {
+				udid: o.udid,
+				log,
+				now: o.now ?? Date.now,
+				sleep: o.sleep ?? ((ms) => Bun.sleep(ms)),
+				write: o.writeFile ?? ((path, bytes) => writeFile(path, bytes)),
+				...(bundleId ? { bundleId } : {}),
+				...(appPath ? { appPath } : {}),
+				...(o.ownedBundles ? { ownedBundles: o.ownedBundles } : {}),
+			}),
+		};
 	}
 
-	return {
-		platform: "ios",
-		id: udid,
-		capabilities: IOS_DEVICE_CAPABILITIES,
-		health,
-		snapshot,
-		async elementAtPoint(point) {
-			const snap = await snapshot();
-			return snap.success ? { success: true, data: hitTest(snap.data, point) } : snap;
-		},
-		tap: (point, o) => sendVoid("tap", params({ x: point.x, y: point.y, count: o?.count, durationMs: o?.durationMs })),
-		longPress: (point, o) =>
-			sendVoid(
-				"longPress",
-				params({ x: point.x, y: point.y, durationMs: o?.durationMs }),
-				gestureTimeout(o?.durationMs, 1_000)
-			),
-		swipe: (from, to, o) =>
-			sendVoid("swipe", params({ from, to, durationMs: o?.durationMs }), gestureTimeout(o?.durationMs, 300)),
-		drag: (from, to, o) =>
-			sendVoid(
-				"drag",
-				params({ from, to, pressMs: o?.pressMs, durationMs: o?.durationMs, releaseMs: o?.releaseMs }),
-				gestureTimeout((o?.pressMs ?? 0) + (o?.durationMs ?? 0) + (o?.releaseMs ?? 0), 300)
-			),
-		pinch: async () => unsupported("pinch", "the XCUITest runner takes one finger"),
-		rotate: async () => unsupported("rotate", "the XCUITest runner takes one finger"),
-		gesture: async () => unsupported("gesture", "the XCUITest runner takes taps, swipes and drags only"),
-		biometrics: async () =>
-			unsupported("biometrics", "Face ID / Touch ID cannot be simulated on a real sensor; use a simulator"),
-		...physicalConditions.ops(`physical iPhone ${udid}`),
-		typeText: (text) => sendVoid("typeText", { text }, deviceTypeTextBudgetMs(text)),
-		key: (key, modifiers) => sendVoid("key", params({ usage: KEY_USAGE[key], modifiers: modifiers && [...modifiers] })),
-		pressButton,
-		screenshot,
-		orientation,
-		settle,
-		alert,
-		alertOn: (_backend: AlertBackend) => alert(),
-		isFrontmost,
-		async appearance(set) {
-			if (set !== undefined) {
-				return fail(
-					driverErrors.make(
-						"E_REFUSED",
-						`physical_protected: changing the appearance is a persistent settings write on physical device ${udid}`,
-						{ retryable: false, detail: { reason: "physical_protected" } }
-					)
-				);
-			}
-			return devicectl.appearance();
-		},
-		clipboard,
-		app: {
-			launch: (bundleId, o) =>
-				sendVoid(
-					"launch",
-					params({ bundleId, args: o?.args && [...o.args], env: o?.env, terminateRunning: o?.relaunch !== false }),
-					LAUNCH_TIMEOUT_MS
+	/** The runner host's client: the given one, else a connection to its socket; `E_HELPER_MISSING` with neither. */
+	private async runnerClient(o: OpenIosDeviceDriverOptions, log: Logger): Promise<Result<SimdClient, DriverError>> {
+		if (o.client) return { success: true, data: o.client };
+		const socketPath = o.socketPath ?? o.env?.iosRunnerSocket;
+		if (!socketPath) {
+			return {
+				success: false,
+				error: driverErrors.make(
+					"E_HELPER_MISSING",
+					`no iOS runner for ${o.udid}: WARDEN_IOS_RUNNER_SOCKET is not set (warden starts the runner host with \`warden ui\` / \`warden e2e\`)`
 				),
-			terminate: (bundleId) => sendVoid("terminate", { bundleId }, APP_OP_TIMEOUT_MS),
-			openUrl: (url) => sendVoid("openUrl", { url }, APP_OP_TIMEOUT_MS),
-			install,
-			uninstall,
-			isInstalled: (bundleId) => devicectl.isInstalled(bundleId),
-			async isRunning(bundleId) {
-				const result = await request("appState", { bundleId });
-				if (!result.success) return result;
-				const state = parseAppState(result.data);
-				if (state === undefined)
-					return fail(driverErrors.make("E_INTERNAL", "warden-runner appState returned no state"));
-				return { success: true, data: isRunning(state) };
-			},
-			clearData: (bundleId) => clearData(bundleId),
-		},
-		close: () => client.close(),
-	};
-}
-
-/** The runner host's client: the given one, else a connection to its socket; `E_HELPER_MISSING` with neither. */
-async function runnerClient(o: OpenIosDeviceDriverOptions, log: Logger): Promise<Result<SimdClient, DriverError>> {
-	if (o.client) return { success: true, data: o.client };
-	const socketPath = o.socketPath ?? o.env?.iosRunnerSocket;
-	if (!socketPath) {
-		return fail(
-			driverErrors.make(
-				"E_HELPER_MISSING",
-				`no iOS runner for ${o.udid}: WARDEN_IOS_RUNNER_SOCKET is not set (warden starts the runner host with \`warden ui\` / \`warden e2e\`)`
-			)
-		);
-	}
-	return connectSimd({ socketPath, log, ...(o.defaultTimeoutMs ? { defaultTimeoutMs: o.defaultTimeoutMs } : {}) });
-}
-
-/**
- * Open the driver for the phone `udid` against its runner host's socket (`socketPath` / `env.iosRunnerSocket` /
- * `client`). `E_HELPER_MISSING` without any: the host is started by `warden ui` / `warden e2e`, never by the driver.
- */
-export async function openIosDeviceDriver(o: OpenIosDeviceDriverOptions): DriverResult<Driver> {
-	const log: Logger = o.log ?? (() => undefined);
-	const client = await runnerClient(o, log);
-	if (!client.success) return client;
-	const bundleId = o.bundleId ?? o.env?.bundleId;
-	const appPath = o.appPath ?? o.env?.appPath;
-	const devicectl = o.devicectl ?? createDevicectl({ udid: o.udid, exec: o.exec });
-	return {
-		success: true,
-		data: createIosDeviceDriver(client.data, devicectl, {
-			udid: o.udid,
+			};
+		}
+		return simdClients.connect({
+			socketPath,
 			log,
-			now: o.now ?? Date.now,
-			sleep: o.sleep ?? ((ms) => Bun.sleep(ms)),
-			write: o.writeFile ?? ((path, bytes) => writeFile(path, bytes)),
-			...(bundleId ? { bundleId } : {}),
-			...(appPath ? { appPath } : {}),
-			...(o.ownedBundles ? { ownedBundles: o.ownedBundles } : {}),
-		}),
-	};
+			...(o.defaultTimeoutMs ? { defaultTimeoutMs: o.defaultTimeoutMs } : {}),
+		});
+	}
 }
+
+export const iosDeviceDriverOpener = new IosDeviceDriverOpener();

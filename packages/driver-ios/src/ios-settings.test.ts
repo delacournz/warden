@@ -1,16 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LaunchSettings } from "@delacour/warden-core/conditions/launch-settings";
-import { type ExecCall, fakeExec, joined } from "./exec.testing";
-import {
-	contentSizeArgv,
-	contrastArgv,
-	createIosSettings,
-	launchExtras,
-	privacyArgv,
-	pushArgv,
-	statusBarBatteryArgv,
-	withStagedSettings,
-} from "./ios-settings";
+import { type ExecCall, fakeExec } from "./exec.testing";
+import { IosSettingsController, iosLaunchSettings, iosSettingsArgv } from "./ios-settings";
 
 const UDID = "UDID-1";
 const APP = "com.example.app";
@@ -18,14 +9,14 @@ const APP = "com.example.app";
 function harness(opts: { last?: string; fail?: string } = {}) {
 	const calls: ExecCall[] = [];
 	let staged: LaunchSettings = {};
-	const exec = fakeExec(
+	const exec = fakeExec.build(
 		[
 			["xcrun", opts.fail ? { exitCode: 1, stderr: "boom" } : {}],
 			["sh", {}],
 		],
 		calls
 	);
-	const settings = createIosSettings({
+	const settings = new IosSettingsController({
 		udid: UDID,
 		exec,
 		lastBundle: () => opts.last,
@@ -43,7 +34,7 @@ function harness(opts: { last?: string; fail?: string } = {}) {
 
 describe("ios argv", () => {
 	test("privacy grant, revoke and reset", () => {
-		expect(privacyArgv(UDID, "granted", "location", APP)).toEqual([
+		expect(iosSettingsArgv.privacy(UDID, "granted", "location", APP)).toEqual([
 			"xcrun",
 			"simctl",
 			"privacy",
@@ -52,11 +43,11 @@ describe("ios argv", () => {
 			"location",
 			APP,
 		]);
-		expect(privacyArgv(UDID, "denied", "photos", APP).slice(4, 6)).toEqual(["revoke", "photos"]);
-		expect(privacyArgv(UDID, "unset", "microphone", APP).slice(4, 6)).toEqual(["reset", "microphone"]);
+		expect(iosSettingsArgv.privacy(UDID, "denied", "photos", APP).slice(4, 6)).toEqual(["revoke", "photos"]);
+		expect(iosSettingsArgv.privacy(UDID, "unset", "microphone", APP).slice(4, 6)).toEqual(["reset", "microphone"]);
 	});
 	test("ui and status bar", () => {
-		expect(contentSizeArgv(UDID, "accessibility-large")).toEqual([
+		expect(iosSettingsArgv.contentSize(UDID, "accessibility-large")).toEqual([
 			"xcrun",
 			"simctl",
 			"ui",
@@ -64,8 +55,8 @@ describe("ios argv", () => {
 			"content_size",
 			"accessibility-large",
 		]);
-		expect(contrastArgv(UDID, true).slice(4)).toEqual(["increase_contrast", "enabled"]);
-		expect(statusBarBatteryArgv(UDID, { level: 20, charging: false })).toEqual([
+		expect(iosSettingsArgv.contrast(UDID, true).slice(4)).toEqual(["increase_contrast", "enabled"]);
+		expect(iosSettingsArgv.statusBarBattery(UDID, { level: 20, charging: false })).toEqual([
 			"xcrun",
 			"simctl",
 			"status_bar",
@@ -76,29 +67,29 @@ describe("ios argv", () => {
 			"--batteryLevel",
 			"20",
 		]);
-		expect(statusBarBatteryArgv(UDID, { level: 5 }).slice(5)).toEqual(["--batteryLevel", "5"]);
+		expect(iosSettingsArgv.statusBarBattery(UDID, { level: 5 }).slice(5)).toEqual(["--batteryLevel", "5"]);
 	});
 	test("push pipes the payload on stdin through sh with positional args", () => {
-		const argv = pushArgv(UDID, APP, { aps: { alert: "it's" } });
+		const argv = iosSettingsArgv.push(UDID, APP, { aps: { alert: "it's" } });
 		expect(argv.slice(0, 3)).toEqual(["sh", "-c", 'printf %s "$1" | xcrun simctl push "$2" "$3" -']);
 		expect(argv.slice(4)).toEqual(['{"aps":{"alert":"it\'s"}}', UDID, APP]);
 	});
 	test("launch extras: TZ env, language and locale args", () => {
-		expect(launchExtras({ timezone: "Asia/Tokyo", locale: "fr-FR" })).toEqual({
+		expect(iosLaunchSettings.extras({ timezone: "Asia/Tokyo", locale: "fr-FR" })).toEqual({
 			env: { TZ: "Asia/Tokyo" },
 			args: ["-AppleLanguages", "(fr-FR)", "-AppleLocale", "fr_FR"],
 		});
-		expect(launchExtras({})).toEqual({ env: {}, args: [] });
+		expect(iosLaunchSettings.extras({})).toEqual({ env: {}, args: [] });
 	});
 	test("staged settings merge into a launch, the caller's own env wins", () => {
-		const merged = withStagedSettings(
+		const merged = iosLaunchSettings.withStaged(
 			{ env: { TZ: "UTC", A: "1" }, args: ["--x"] },
 			{ timezone: "Asia/Tokyo", locale: "de" }
 		);
 		expect(merged?.env).toEqual({ TZ: "UTC", A: "1" });
 		expect(merged?.args).toEqual(["--x", "-AppleLanguages", "(de)", "-AppleLocale", "de"]);
 		const plain = { relaunch: true };
-		expect(withStagedSettings(plain, {})).toBe(plain);
+		expect(iosLaunchSettings.withStaged(plain, {})).toBe(plain);
 	});
 });
 
@@ -110,7 +101,7 @@ describe("ios permissions", () => {
 			{ bundleId: "x.y" }
 		);
 		expect(r.success && r.data.applied).toHaveLength(3);
-		expect(joined(h.calls)).toEqual([
+		expect(fakeExec.joined(h.calls)).toEqual([
 			"xcrun simctl privacy UDID-1 revoke location x.y",
 			"xcrun simctl privacy UDID-1 grant location-always x.y",
 			"xcrun simctl privacy UDID-1 reset microphone x.y",
@@ -119,10 +110,10 @@ describe("ios permissions", () => {
 	test("falls back to the last launched app, then the session's", async () => {
 		const a = harness({ last: "last.app" });
 		await a.settings.permissions({ photos: "granted" });
-		expect(joined(a.calls)[0]).toContain("last.app");
+		expect(fakeExec.joined(a.calls)[0]).toContain("last.app");
 		const b = harness();
 		await b.settings.permissions({ photos: "granted" });
-		expect(joined(b.calls)[0]).toContain(APP);
+		expect(fakeExec.joined(b.calls)[0]).toContain(APP);
 	});
 	test("camera and notifications are skipped with a reason; all-skipped is E_UNSUPPORTED", async () => {
 		const h = harness();
@@ -135,7 +126,7 @@ describe("ios permissions", () => {
 	test("a privacy call killed by the timeout (tccd still starting) is tried once more", async () => {
 		const calls: string[][] = [];
 		const exits = [143, 0];
-		const settings = createIosSettings({
+		const settings = new IosSettingsController({
 			udid: UDID,
 			exec: async (cmd) => {
 				calls.push([...cmd]);
@@ -187,7 +178,7 @@ describe("ios a11y", () => {
 		const r = await h.settings.a11y({ textSize: 1.9, contrast: "increased", boldText: true, reduceMotion: true });
 		expect(r.success && r.data.applied).toEqual(["textSize", "contrast"]);
 		expect(r.success && r.data.skipped.map((s) => s.setting)).toEqual(["boldText", "reduceMotion"]);
-		expect(joined(h.calls)).toEqual([
+		expect(fakeExec.joined(h.calls)).toEqual([
 			"xcrun simctl ui UDID-1 content_size accessibility-large",
 			"xcrun simctl ui UDID-1 increase_contrast enabled",
 		]);
@@ -199,7 +190,7 @@ describe("ios a11y", () => {
 	test("null puts text size and contrast back", async () => {
 		const h = harness();
 		await h.settings.a11y(null);
-		expect(joined(h.calls)).toEqual([
+		expect(fakeExec.joined(h.calls)).toEqual([
 			"xcrun simctl ui UDID-1 content_size large",
 			"xcrun simctl ui UDID-1 increase_contrast disabled",
 		]);
@@ -217,7 +208,7 @@ describe("ios battery, memory warning, push", () => {
 		expect(r.success && r.data).toEqual({ level: 15, charging: false, cosmetic: true });
 		const off = await h.settings.battery(null);
 		expect(off.success && off.data.cosmetic).toBe(true);
-		expect(joined(h.calls)[1]).toBe("xcrun simctl status_bar UDID-1 clear");
+		expect(fakeExec.joined(h.calls)[1]).toBe("xcrun simctl status_bar UDID-1 clear");
 	});
 	test("battery validates the level and needs something to set", async () => {
 		const h = harness();

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ExecCall, fakeExec, joined } from "../exec.testing";
-import { createDevicectl, installArgv, orientationArgv, screenshotArgv, uninstallArgv } from "./devicectl";
+import { type ExecCall, fakeExec } from "../exec.testing";
+import { DevicectlClient, devicectlArgv } from "./devicectl";
 
 const UDID = "00008140-000A0B0C0D0E0F10";
 
@@ -17,11 +17,11 @@ function writesJson(json: unknown) {
 	};
 }
 
-const tools = (handlers: Parameters<typeof fakeExec>[0]) => {
+const tools = (handlers: Parameters<typeof fakeExec.build>[0]) => {
 	const calls: ExecCall[] = [];
-	const devicectl = createDevicectl({
+	const devicectl = new DevicectlClient({
 		udid: UDID,
-		exec: fakeExec(handlers, calls),
+		exec: fakeExec.build(handlers, calls),
 		makeDir: async () => mkdtempSync(join(tmpdir(), "devicectl-test-")),
 		remove: async () => undefined,
 	});
@@ -30,7 +30,7 @@ const tools = (handlers: Parameters<typeof fakeExec>[0]) => {
 
 describe("argv", () => {
 	test("install, uninstall, orientation and screenshot name the device after the subcommand", () => {
-		expect(installArgv(UDID, "/b/App.app", "/o.json")).toEqual([
+		expect(devicectlArgv.install(UDID, "/b/App.app", "/o.json")).toEqual([
 			"xcrun",
 			"devicectl",
 			"device",
@@ -42,7 +42,7 @@ describe("argv", () => {
 			"--json-output",
 			"/o.json",
 		]);
-		expect(uninstallArgv(UDID, "com.x", "/o.json").slice(0, 7)).toEqual([
+		expect(devicectlArgv.uninstall(UDID, "com.x", "/o.json").slice(0, 7)).toEqual([
 			"xcrun",
 			"devicectl",
 			"device",
@@ -51,7 +51,7 @@ describe("argv", () => {
 			"--device",
 			UDID,
 		]);
-		expect(orientationArgv(UDID, "landscapeLeft")).toEqual([
+		expect(devicectlArgv.orientation(UDID, "landscapeLeft")).toEqual([
 			"xcrun",
 			"devicectl",
 			"device",
@@ -61,7 +61,7 @@ describe("argv", () => {
 			UDID,
 			"landscapeLeft",
 		]);
-		expect(screenshotArgv(UDID, "/s.png")).toEqual([
+		expect(devicectlArgv.screenshot(UDID, "/s.png")).toEqual([
 			"xcrun",
 			"devicectl",
 			"device",
@@ -85,7 +85,7 @@ describe("devicectl", () => {
 		]);
 		const result = await devicectl.install("/b/App.app");
 		expect(result).toEqual({ success: true, data: { bundleIds: ["com.x"] } });
-		expect(joined(calls)[0]).toContain("install app --device");
+		expect(fakeExec.joined(calls)[0]).toContain("install app --device");
 	});
 
 	test("isInstalled reads the apps listing for that bundle id", async () => {
@@ -93,7 +93,7 @@ describe("devicectl", () => {
 			["xcrun devicectl device info apps", writesJson({ result: { apps: [{ bundleIdentifier: "com.x" }] } })],
 		]);
 		expect(await present.devicectl.isInstalled("com.x")).toEqual({ success: true, data: true });
-		expect(joined(present.calls)[0]).toContain("--bundle-id com.x");
+		expect(fakeExec.joined(present.calls)[0]).toContain("--bundle-id com.x");
 		const absent = tools([["xcrun devicectl device info apps", writesJson({ result: { apps: [] } })]]);
 		expect(await absent.devicectl.isInstalled("com.x")).toEqual({ success: true, data: false });
 	});
@@ -123,13 +123,13 @@ describe("devicectl", () => {
 		]);
 		expect(await devicectl.pasteboardPaste()).toEqual({ success: true, data: "hello" });
 		expect((await devicectl.pasteboardCopy("hello")).success).toBe(true);
-		expect(joined(calls)[1]).toContain("pasteboard copy");
+		expect(fakeExec.joined(calls)[1]).toContain("pasteboard copy");
 	});
 
 	test("screenshot with a path writes there and answers the path", async () => {
 		const { devicectl, calls } = tools([["xcrun devicectl device capture screenshot", {}]]);
 		const result = await devicectl.screenshot("/out/s.png");
 		expect(result).toEqual({ success: true, data: { path: "/out/s.png" } });
-		expect(joined(calls)[0]).toContain("--destination /out/s.png");
+		expect(fakeExec.joined(calls)[0]).toContain("--destination /out/s.png");
 	});
 });

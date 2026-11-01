@@ -3,24 +3,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { injectState } from "@delacour/warden-core/conditions/inject-state";
-import {
-	createInjectChannel,
-	encodeInjectState,
-	INJECT_DYLIB,
-	type InjectFs,
-	injectAckPath,
-	injectLaunchEnv,
-	injectStatePath,
-	locateInjectDylib,
-	parseInjectAck,
-	parseInjectState,
-	shouldInject,
-} from "./inject";
+import { FileInjectChannel, INJECT_DYLIB, type InjectFs, injectProtocol } from "./inject";
 
 describe("state message", () => {
 	test("is always the whole state: offline and clockOffsetMs default to off", () => {
-		expect(JSON.parse(encodeInjectState({ seq: 4 }))).toEqual({ seq: 4, offline: false, clockOffsetMs: 0 });
-		expect(JSON.parse(encodeInjectState({ seq: 5, offline: true, clockOffsetMs: 1500.9 }))).toEqual({
+		expect(JSON.parse(injectProtocol.encodeState({ seq: 4 }))).toEqual({ seq: 4, offline: false, clockOffsetMs: 0 });
+		expect(JSON.parse(injectProtocol.encodeState({ seq: 5, offline: true, clockOffsetMs: 1500.9 }))).toEqual({
 			seq: 5,
 			offline: true,
 			clockOffsetMs: 1500,
@@ -28,21 +16,21 @@ describe("state message", () => {
 	});
 
 	test("round-trips and rejects junk", () => {
-		const text = encodeInjectState({ seq: 9, offline: true, clockOffsetMs: -86_400_000 });
-		expect(parseInjectState(text)).toEqual({ seq: 9, offline: true, clockOffsetMs: -86_400_000 });
-		expect(parseInjectState("not json")).toBeUndefined();
-		expect(parseInjectState('{"offline":true}')).toBeUndefined();
+		const text = injectProtocol.encodeState({ seq: 9, offline: true, clockOffsetMs: -86_400_000 });
+		expect(injectProtocol.parseState(text)).toEqual({ seq: 9, offline: true, clockOffsetMs: -86_400_000 });
+		expect(injectProtocol.parseState("not json")).toBeUndefined();
+		expect(injectProtocol.parseState('{"offline":true}')).toBeUndefined();
 	});
 
 	test("ack carries the pid and whether the app was launched with a proxy", () => {
-		expect(parseInjectAck('{"seq":3,"pid":4242,"proxy":true}')).toEqual({ seq: 3, pid: 4242, proxy: true });
-		expect(parseInjectAck('{"seq":3,"pid":4242}')).toEqual({ seq: 3, pid: 4242, proxy: false });
-		expect(parseInjectAck('{"seq":3}')).toBeUndefined();
+		expect(injectProtocol.parseAck('{"seq":3,"pid":4242,"proxy":true}')).toEqual({ seq: 3, pid: 4242, proxy: true });
+		expect(injectProtocol.parseAck('{"seq":3,"pid":4242}')).toEqual({ seq: 3, pid: 4242, proxy: false });
+		expect(injectProtocol.parseAck('{"seq":3}')).toBeUndefined();
 	});
 
 	test("state lives in a per-device directory", () => {
-		expect(injectStatePath("/w", "UDID-1")).toBe("/w/inject/UDID-1/state.json");
-		expect(injectAckPath("/w/inject/U/state.json")).toBe("/w/inject/U/state.json.ack");
+		expect(injectProtocol.statePath("/w", "UDID-1")).toBe("/w/inject/UDID-1/state.json");
+		expect(injectProtocol.ackPath("/w/inject/U/state.json")).toBe("/w/inject/U/state.json.ack");
 	});
 });
 
@@ -50,11 +38,15 @@ describe("release reset (core)", () => {
 	test("core's neutral state parses as online on the real clock, with a higher seq", () => {
 		const dir = mkdtempSync(join(tmpdir(), "warden-inject-"));
 		try {
-			const path = injectStatePath(dir, "U1");
+			const path = injectProtocol.statePath(dir, "U1");
 			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, encodeInjectState({ seq: 3, offline: true, clockOffsetMs: 5, clockFrozenMs: 9 }));
+			writeFileSync(path, injectProtocol.encodeState({ seq: 3, offline: true, clockOffsetMs: 5, clockFrozenMs: 9 }));
 			expect(injectState.neutralize(path)).toBeUndefined();
-			expect(parseInjectState(readFileSync(path, "utf8"))).toEqual({ seq: 4, offline: false, clockOffsetMs: 0 });
+			expect(injectProtocol.parseState(readFileSync(path, "utf8"))).toEqual({
+				seq: 4,
+				offline: false,
+				clockOffsetMs: 0,
+			});
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -63,12 +55,12 @@ describe("release reset (core)", () => {
 
 describe("injectLaunchEnv", () => {
 	test("loads the dylib and names the channel; the proxy and clock only when set", () => {
-		expect(injectLaunchEnv({ dylib: "/d/lib.dylib", statePath: "/s/state.json" })).toEqual({
+		expect(injectProtocol.launchEnv({ dylib: "/d/lib.dylib", statePath: "/s/state.json" })).toEqual({
 			DYLD_INSERT_LIBRARIES: "/d/lib.dylib",
 			WARDEN_INJECT_STATE: "/s/state.json",
 		});
 		expect(
-			injectLaunchEnv({
+			injectProtocol.launchEnv({
 				dylib: "/d/lib.dylib",
 				statePath: "/s/state.json",
 				proxy: { host: "127.0.0.1", port: 19_081 },
@@ -87,23 +79,24 @@ describe("injectLaunchEnv", () => {
 
 describe("frozen clock", () => {
 	test("clockFrozenMs round-trips and is left out when the clock runs", () => {
-		const text = encodeInjectState({ seq: 3, clockFrozenMs: 1_700_000_000_123.9 });
+		const text = injectProtocol.encodeState({ seq: 3, clockFrozenMs: 1_700_000_000_123.9 });
 		expect(JSON.parse(text).clockFrozenMs).toBe(1_700_000_000_123);
-		expect(parseInjectState(text)?.clockFrozenMs).toBe(1_700_000_000_123);
-		expect(JSON.parse(encodeInjectState({ seq: 4 }))).not.toHaveProperty("clockFrozenMs");
-		expect(parseInjectState(encodeInjectState({ seq: 4 }))).not.toHaveProperty("clockFrozenMs");
+		expect(injectProtocol.parseState(text)?.clockFrozenMs).toBe(1_700_000_000_123);
+		expect(JSON.parse(injectProtocol.encodeState({ seq: 4 }))).not.toHaveProperty("clockFrozenMs");
+		expect(injectProtocol.parseState(injectProtocol.encodeState({ seq: 4 }))).not.toHaveProperty("clockFrozenMs");
 	});
 
 	test("the launch env carries the frozen instant", () => {
 		expect(
-			injectLaunchEnv({ dylib: "/d", statePath: "/s", clockFrozenMs: 1_700_000_000_000 }).WARDEN_CLOCK_FROZEN_MS
+			injectProtocol.launchEnv({ dylib: "/d", statePath: "/s", clockFrozenMs: 1_700_000_000_000 })
+				.WARDEN_CLOCK_FROZEN_MS
 		).toBe("1700000000000");
 	});
 });
 
 describe("shouldInject", () => {
 	test("a launch with no condition and no request stays plain", () => {
-		expect(shouldInject({ networkActive: false, clockActive: false, requested: false })).toBe(false);
+		expect(injectProtocol.shouldInject({ networkActive: false, clockActive: false, requested: false })).toBe(false);
 	});
 
 	test.each([
@@ -111,7 +104,7 @@ describe("shouldInject", () => {
 		{ networkActive: false, clockActive: true, requested: false },
 		{ networkActive: false, clockActive: false, requested: true },
 	])("injects for %o", (input) => {
-		expect(shouldInject(input)).toBe(true);
+		expect(injectProtocol.shouldInject(input)).toBe(true);
 	});
 });
 
@@ -125,19 +118,23 @@ describe("locateInjectDylib", () => {
 	};
 
 	test("next to the running warden wins over the source build", () => {
-		const found = locateInjectDylib({ ...base, exists: () => true });
+		const found = injectProtocol.locateDylib({ ...base, exists: () => true });
 		expect(found).toEqual({ success: true, data: `/opt/warden/bin/${INJECT_DYLIB}` });
 	});
 
 	test("falls back to native/dist, then the warden home copy", () => {
 		const dist = `/repo/packages/driver-ios/native/dist/${INJECT_DYLIB}`;
-		expect(locateInjectDylib({ ...base, exists: (p) => p === dist })).toEqual({ success: true, data: dist });
+		expect(injectProtocol.locateDylib({ ...base, exists: (p) => p === dist })).toEqual({ success: true, data: dist });
 		const home = `/home/.warden/simd/1.2.3/${INJECT_DYLIB}`;
-		expect(locateInjectDylib({ ...base, exists: (p) => p === home })).toEqual({ success: true, data: home });
+		expect(injectProtocol.locateDylib({ ...base, exists: (p) => p === home })).toEqual({ success: true, data: home });
 	});
 
 	test("WARDEN_INJECT_DYLIB that points at nothing is an error, not a fall-through", () => {
-		const result = locateInjectDylib({ ...base, env: { WARDEN_INJECT_DYLIB: "/nope" }, exists: (p) => p !== "/nope" });
+		const result = injectProtocol.locateDylib({
+			...base,
+			env: { WARDEN_INJECT_DYLIB: "/nope" },
+			exists: (p) => p !== "/nope",
+		});
 		expect(result.success).toBe(false);
 		if (!result.success) {
 			expect(result.error.code).toBe("E_HELPER_MISSING");
@@ -147,14 +144,16 @@ describe("locateInjectDylib", () => {
 
 	test("WARDEN_HELPER_DIR is searched for the dylib too", () => {
 		const path = `/helpers/${INJECT_DYLIB}`;
-		expect(locateInjectDylib({ ...base, env: { WARDEN_HELPER_DIR: "/helpers" }, exists: (p) => p === path })).toEqual({
+		expect(
+			injectProtocol.locateDylib({ ...base, env: { WARDEN_HELPER_DIR: "/helpers" }, exists: (p) => p === path })
+		).toEqual({
 			success: true,
 			data: path,
 		});
 	});
 
 	test("nothing found lists what was tried", () => {
-		const result = locateInjectDylib({ ...base, exists: () => false });
+		const result = injectProtocol.locateDylib({ ...base, exists: () => false });
 		expect(result.success).toBe(false);
 		if (!result.success)
 			expect(result.error.detail).toEqual({ tried: expect.arrayContaining([`/opt/warden/bin/${INJECT_DYLIB}`]) });
@@ -177,7 +176,7 @@ describe("createInjectChannel", () => {
 	function channel(alive: number[] = [], bundleId?: string) {
 		const mem = memoryFs(new Set(alive));
 		let t = 1_000;
-		const ch = createInjectChannel({
+		const ch = new FileInjectChannel({
 			statePath: "/s/state.json",
 			fs: mem.fs,
 			bundleId: () => bundleId,

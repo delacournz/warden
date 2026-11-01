@@ -35,78 +35,83 @@ export type HelperStateHost = {
 	store?: () => Store;
 };
 
-/** `$WARDEN_HOME/ui/<udid>`: everything `warden ui` remembers about one device between invocations. */
-function deviceDir(host: Pick<HelperStateHost, "env">, udid: string): string {
-	return join(storeLocator.wardenHome(host.env), "ui", udid);
-}
+/** The helper records in a device's `state.json`. Use the shared {@link helperState} singleton. */
+export class HelperState {
+	/** `$WARDEN_HOME/simd`: the resident `warden-simd` helpers' sockets and logs. */
+	simdDir(host: Pick<HelperStateHost, "env">): string {
+		return join(storeLocator.wardenHome(host.env), "simd");
+	}
 
-/** `$WARDEN_HOME/simd`: the resident `warden-simd` helpers' sockets and logs. */
-export function simdDir(host: Pick<HelperStateHost, "env">): string {
-	return join(storeLocator.wardenHome(host.env), "simd");
-}
+	/** The helper `state.json` records for `udid`, if any; any other shape is no record. */
+	read(host: Pick<HelperStateHost, "env">, udid: string): HelperRecord | undefined {
+		const parsed = helperRecordSchema.safeParse(this.readRaw(join(this.deviceDir(host, udid), "state.json")).helper);
+		if (!parsed.success) return undefined;
+		const { owner, binary, env, lease, ...base } = parsed.data;
+		return {
+			...base,
+			...(owner !== undefined ? { owner } : {}),
+			...(binary !== undefined ? { binary } : {}),
+			...(env !== undefined ? { env } : {}),
+			...(lease !== undefined ? { lease } : {}),
+		};
+	}
 
-function readRaw(path: string): Record<string, unknown> {
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-			? Object.fromEntries(Object.entries(parsed))
-			: {};
-	} catch {
-		return {};
+	/**
+	 * Read-modify-write of the `helper` record in `state.json`, under the store's `BEGIN IMMEDIATE` transaction when the
+	 * host has a store (the cross-process mutex: two processes never lose each other's records). Every other key of the
+	 * file is kept as is. `update` returns the record to keep (`undefined` drops it); returning what it was given writes
+	 * nothing. `update` must not block.
+	 */
+	update(
+		host: HelperStateHost,
+		udid: string,
+		update: (record: HelperRecord | undefined) => HelperRecord | undefined
+	): void {
+		const apply = (): void => {
+			const dir = this.deviceDir(host, udid);
+			const path = join(dir, "state.json");
+			const current = this.read(host, udid);
+			const next = update(current);
+			if (next === current) return;
+			const { helper: _drop, ...rest } = this.readRaw(path);
+			const base = typeof rest.generation === "number" ? rest : { ...rest, generation: 0 };
+			mkdirSync(dir, { recursive: true });
+			const body = { ...base, ...(next !== undefined ? { helper: next } : {}), updatedAt: host.now() };
+			const tmp = `${path}.${process.pid}.tmp`;
+			writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`);
+			renameSync(tmp, path);
+		};
+		if (host.store === undefined) apply();
+		else host.store().transaction(apply);
+	}
+
+	/** Every device that has a socket under `simd/` or a dir under `ui/`. */
+	knownUdids(host: Pick<HelperStateHost, "env">): string[] {
+		const udids = new Set<string>();
+		const sockets = this.simdDir(host);
+		if (existsSync(sockets)) {
+			for (const name of readdirSync(sockets)) if (name.endsWith(".sock")) udids.add(basename(name, ".sock"));
+		}
+		const root = join(storeLocator.wardenHome(host.env), "ui");
+		if (existsSync(root)) for (const name of readdirSync(root)) udids.add(name);
+		return [...udids];
+	}
+
+	/** `$WARDEN_HOME/ui/<udid>`: everything `warden ui` remembers about one device between invocations. */
+	private deviceDir(host: Pick<HelperStateHost, "env">, udid: string): string {
+		return join(storeLocator.wardenHome(host.env), "ui", udid);
+	}
+
+	private readRaw(path: string): Record<string, unknown> {
+		try {
+			const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+			return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+				? Object.fromEntries(Object.entries(parsed))
+				: {};
+		} catch {
+			return {};
+		}
 	}
 }
 
-/** The helper `state.json` records for `udid`, if any; any other shape is no record. */
-export function readHelperRecord(host: Pick<HelperStateHost, "env">, udid: string): HelperRecord | undefined {
-	const parsed = helperRecordSchema.safeParse(readRaw(join(deviceDir(host, udid), "state.json")).helper);
-	if (!parsed.success) return undefined;
-	const { owner, binary, env, lease, ...base } = parsed.data;
-	return {
-		...base,
-		...(owner !== undefined ? { owner } : {}),
-		...(binary !== undefined ? { binary } : {}),
-		...(env !== undefined ? { env } : {}),
-		...(lease !== undefined ? { lease } : {}),
-	};
-}
-
-/**
- * Read-modify-write of the `helper` record in `state.json`, under the store's `BEGIN IMMEDIATE` transaction when the
- * host has a store (the cross-process mutex: two processes never lose each other's records). Every other key of the
- * file is kept as is. `update` returns the record to keep (`undefined` drops it); returning what it was given writes
- * nothing. `update` must not block.
- */
-export function updateHelperRecord(
-	host: HelperStateHost,
-	udid: string,
-	update: (record: HelperRecord | undefined) => HelperRecord | undefined
-): void {
-	const apply = (): void => {
-		const dir = deviceDir(host, udid);
-		const path = join(dir, "state.json");
-		const current = readHelperRecord(host, udid);
-		const next = update(current);
-		if (next === current) return;
-		const { helper: _drop, ...rest } = readRaw(path);
-		const base = typeof rest.generation === "number" ? rest : { ...rest, generation: 0 };
-		mkdirSync(dir, { recursive: true });
-		const body = { ...base, ...(next !== undefined ? { helper: next } : {}), updatedAt: host.now() };
-		const tmp = `${path}.${process.pid}.tmp`;
-		writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`);
-		renameSync(tmp, path);
-	};
-	if (host.store === undefined) apply();
-	else host.store().transaction(apply);
-}
-
-/** Every device that has a socket under `simd/` or a dir under `ui/`. */
-export function knownUdids(host: Pick<HelperStateHost, "env">): string[] {
-	const udids = new Set<string>();
-	const sockets = simdDir(host);
-	if (existsSync(sockets)) {
-		for (const name of readdirSync(sockets)) if (name.endsWith(".sock")) udids.add(basename(name, ".sock"));
-	}
-	const root = join(storeLocator.wardenHome(host.env), "ui");
-	if (existsSync(root)) for (const name of readdirSync(root)) udids.add(name);
-	return [...udids];
-}
+export const helperState = new HelperState();

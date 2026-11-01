@@ -8,20 +8,25 @@ export const TYPE_BASE_MS = 10_000;
 export const TYPE_PER_CHAR_MS = 100;
 export const TYPE_PER_REPEAT_MS = 200;
 
-/** Base + ~100 ms per character + 200 ms per character equal to the one before it. */
-export function typeTextBudgetMs(text: string): number {
-	const characters = Array.from(text);
-	let repeats = 0;
-	for (let index = 1; index < characters.length; index += 1) {
-		if (characters[index] === characters[index - 1]) repeats += 1;
-	}
-	return TYPE_BASE_MS + characters.length * TYPE_PER_CHAR_MS + repeats * TYPE_PER_REPEAT_MS;
-}
-
 /** The XCUITest runner on a real device types one character per `typeText` call, each waiting for the app to go idle. */
 export const DEVICE_TYPE_PER_CHAR_MS = 600;
 
-/** Base + ~600 ms per character: the runner's per-character typing on a real device. */
-export function deviceTypeTextBudgetMs(text: string): number {
-	return TYPE_BASE_MS + Array.from(text).length * DEVICE_TYPE_PER_CHAR_MS;
+/** Per-request budgets for the helper's `typeText`. Use the shared {@link typeBudget} singleton. */
+export class TypeBudget {
+	/** Base + ~100 ms per character + 200 ms per character equal to the one before it. */
+	typeText(text: string): number {
+		const characters = Array.from(text);
+		let repeats = 0;
+		for (let index = 1; index < characters.length; index += 1) {
+			if (characters[index] === characters[index - 1]) repeats += 1;
+		}
+		return TYPE_BASE_MS + characters.length * TYPE_PER_CHAR_MS + repeats * TYPE_PER_REPEAT_MS;
+	}
+
+	/** Base + ~600 ms per character: the runner's per-character typing on a real device. */
+	deviceTypeText(text: string): number {
+		return TYPE_BASE_MS + Array.from(text).length * DEVICE_TYPE_PER_CHAR_MS;
+	}
 }
+
+export const typeBudget = new TypeBudget();

@@ -16,7 +16,7 @@ import type { RemoteClient } from "@delacour/warden-device/remote/remote-client"
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { Driver, DriverError } from "@delacour/warden-driver/driver.types";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
-import { resolveHelper } from "@delacour/warden-driver-ios/locate-helper";
+import { helperLocator } from "@delacour/warden-driver-ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
@@ -216,7 +216,7 @@ function isUpLine(line: string): boolean {
 
 export const defaultHelperDeps: HelperDeps<SimdClient> = {
 	connect: async (socketPath, options) =>
-		(await import("@delacour/warden-driver-ios/simd-client")).connectSimd({
+		(await import("@delacour/warden-driver-ios/simd-client")).simdClients.connect({
 			socketPath,
 			readyTimeoutMs: 2000,
 			...(options?.defaultTimeoutMs !== undefined ? { defaultTimeoutMs: options.defaultTimeoutMs } : {}),
@@ -612,7 +612,7 @@ function locateHelperBinary(
 	opts: { helperPath?: string },
 	deps: HelperDeps<HelperClient>
 ): Result<string, DriverError> {
-	return resolveHelper({
+	return helperLocator.resolve({
 		udid,
 		exec: async () => ({ exitCode: 1, stdout: "", stderr: "" }),
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
@@ -998,8 +998,8 @@ export async function connectHelper(
 	const helper = await ensureHelper(ctx, udid, { ...opts, keepClient: true });
 	if (!helper.success) return helper;
 	const { client, socketPath } = helper.data;
-	const { openIosDriver } = await import("@delacour/warden-driver-ios/ios-driver");
-	const driver = await openIosDriver({
+	const { iosDriverOpener } = await import("@delacour/warden-driver-ios/ios-driver");
+	const driver = await iosDriverOpener.open({
 		udid,
 		exec: ctx.exec,
 		socketPath,
@@ -1293,10 +1293,10 @@ export async function connectIosRunner(
 	const host = await ensureIosRunner(ctx, udid, { ...opts, keepClient: true });
 	if (!host.success) return host;
 	const { client, socketPath } = host.data;
-	const { openIosDeviceDriver } = await import("@delacour/warden-driver-ios/device/device-driver");
+	const { iosDeviceDriverOpener } = await import("@delacour/warden-driver-ios/device/device-driver");
 	const bundleId = ctx.env.WARDEN_BUNDLE_ID?.trim();
 	const appPath = ctx.env.WARDEN_APP_PATH?.trim();
-	const driver = await openIosDeviceDriver({
+	const driver = await iosDeviceDriverOpener.open({
 		udid,
 		exec: ctx.exec,
 		socketPath,

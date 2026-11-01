@@ -41,97 +41,103 @@ export const DOCTOR_HINT =
 
 type Candidate = { path: string; source: HelperLocation["source"] };
 
-/** The install locations searched when no env var names the helper, in order. */
-function installCandidates(input: LocateHelperInput, realpath: (path: string) => string): Candidate[] {
-	const candidates: Candidate[] = [
-		{ path: join(dirname(realpath(input.execPath)), HELPER_NAME), source: "execPath" },
-		{ path: resolve(input.importDir, "../native/dist", HELPER_NAME), source: "source-build" },
-	];
-	if (input.version && input.wardenHome) {
-		candidates.push({ path: join(input.wardenHome, "simd", input.version, HELPER_NAME), source: "warden-home" });
-	}
-	if (input.platformTarget && input.resolvePackage) {
-		const manifest = input.resolvePackage(`@delacour/warden-${input.platformTarget}/package.json`);
-		if (manifest) candidates.push({ path: join(dirname(manifest), "bin", HELPER_NAME), source: "platform-package" });
-	}
-	return candidates;
-}
+/** Finds the `warden-simd` binary. Use the shared {@link helperLocator} singleton. */
+export class HelperLocator {
+	/**
+	 * Find the `warden-simd` binary. Order: `WARDEN_SIMD` (file) → `WARDEN_HELPER_DIR/warden-simd` →
+	 * next to the real path of the running executable → `<packages/driver-ios>/native/dist/warden-simd` →
+	 * `$WARDEN_HOME/simd/<version>/warden-simd` → `bin/warden-simd` of the installed `@delacour/warden-<target>` npm
+	 * package (how `@delacour/warden-sdk` finds it: its optionalDependencies install it, `bin` points at the helper). An explicitly set env var that points at nothing is an
+	 * error, not a fall-through (a stale override should not silently pick another binary).
+	 */
+	locate(input: LocateHelperInput): Result<HelperLocation, DriverError> {
+		const tried: string[] = [];
+		const explicitFile = input.env[SIMD_ENV];
+		if (explicitFile) {
+			tried.push(explicitFile);
+			return input.exists(explicitFile)
+				? { success: true, data: { path: explicitFile, source: "WARDEN_SIMD" } }
+				: this.missing(tried, `WARDEN_SIMD=${explicitFile} does not exist`);
+		}
 
-/**
- * Find the `warden-simd` binary. Order: `WARDEN_SIMD` (file) → `WARDEN_HELPER_DIR/warden-simd` →
- * next to the real path of the running executable → `<packages/driver-ios>/native/dist/warden-simd` →
- * `$WARDEN_HOME/simd/<version>/warden-simd` → `bin/warden-simd` of the installed `@delacour/warden-<target>` npm
- * package (how `@delacour/warden-sdk` finds it: its optionalDependencies install it, `bin` points at the helper). An explicitly set env var that points at nothing is an
- * error, not a fall-through (a stale override should not silently pick another binary).
- */
-export function locateHelper(input: LocateHelperInput): Result<HelperLocation, DriverError> {
-	const resolveLink = input.realpath ?? ((path: string) => path);
-	const realpath = (path: string): string => {
+		const helperDir = input.env[HELPER_DIR_ENV];
+		if (helperDir) {
+			const candidate = join(helperDir, HELPER_NAME);
+			tried.push(candidate);
+			return input.exists(candidate)
+				? { success: true, data: { path: candidate, source: "WARDEN_HELPER_DIR" } }
+				: this.missing(tried, `WARDEN_HELPER_DIR=${helperDir} has no ${HELPER_NAME}`);
+		}
+
+		for (const candidate of this.installCandidates(input)) {
+			tried.push(candidate.path);
+			if (input.exists(candidate.path)) return { success: true, data: candidate };
+		}
+		return this.missing(tried, `${HELPER_NAME} not found (tried ${tried.join(", ")})`);
+	}
+
+	/**
+	 * The helper binary: the explicit `helperPath`, else `locate` over the env / install locations. Lives here,
+	 * not in `ios-driver.ts`, so a caller that only needs the path (`warden ui` spawning or replacing the helper)
+	 * does not load the driver and its protocol schemas.
+	 */
+	resolve(o: OpenIosDriverOptions): Result<string, DriverError> {
+		if (o.helperPath !== undefined) return { success: true, data: o.helperPath };
+		const importDir = o.importDir ?? import.meta.dir;
+		const located = this.locate({
+			env: { [SIMD_ENV]: o.env?.simd, [HELPER_DIR_ENV]: o.env?.helperDir },
+			execPath: o.execPath ?? process.execPath,
+			importDir,
+			platformTarget: o.platformTarget ?? `${process.platform}-${process.arch}`,
+			resolvePackage: o.resolvePackage ?? this.resolveInstalledPackage(importDir),
+			...(o.wardenHome ? { wardenHome: o.wardenHome } : {}),
+			exists: o.exists ?? existsSync,
+			realpath: o.realpath ?? realpathSync,
+			...(o.version ? { version: o.version } : {}),
+		});
+		return located.success ? { success: true, data: located.data.path } : located;
+	}
+
+	private missing(tried: string[], message: string): Result<HelperLocation, DriverError> {
+		return {
+			success: false,
+			error: driverErrors.make("E_HELPER_MISSING", `${message}; ${DOCTOR_HINT}`, { detail: { tried } }),
+		};
+	}
+
+	private realpathOf(input: LocateHelperInput, path: string): string {
 		try {
-			return resolveLink(path);
+			return (input.realpath ?? ((p: string) => p))(path);
 		} catch {
 			return path;
 		}
-	};
-	const tried: string[] = [];
-	const missing = (message: string): Result<HelperLocation, DriverError> => ({
-		success: false,
-		error: driverErrors.make("E_HELPER_MISSING", `${message}; ${DOCTOR_HINT}`, { detail: { tried } }),
-	});
-
-	const explicitFile = input.env[SIMD_ENV];
-	if (explicitFile) {
-		tried.push(explicitFile);
-		return input.exists(explicitFile)
-			? { success: true, data: { path: explicitFile, source: "WARDEN_SIMD" } }
-			: missing(`WARDEN_SIMD=${explicitFile} does not exist`);
 	}
 
-	const helperDir = input.env[HELPER_DIR_ENV];
-	if (helperDir) {
-		const candidate = join(helperDir, HELPER_NAME);
-		tried.push(candidate);
-		return input.exists(candidate)
-			? { success: true, data: { path: candidate, source: "WARDEN_HELPER_DIR" } }
-			: missing(`WARDEN_HELPER_DIR=${helperDir} has no ${HELPER_NAME}`);
-	}
-
-	const candidates = installCandidates(input, realpath);
-	for (const candidate of candidates) {
-		tried.push(candidate.path);
-		if (input.exists(candidate.path)) return { success: true, data: candidate };
-	}
-	return missing(`${HELPER_NAME} not found (tried ${tried.join(", ")})`);
-}
-
-function resolveInstalledPackage(from: string): (specifier: string) => string | undefined {
-	return (specifier) => {
-		try {
-			return Bun.resolveSync(specifier, from);
-		} catch {
-			return undefined;
+	/** The install locations searched when no env var names the helper, in order. */
+	private installCandidates(input: LocateHelperInput): Candidate[] {
+		const candidates: Candidate[] = [
+			{ path: join(dirname(this.realpathOf(input, input.execPath)), HELPER_NAME), source: "execPath" },
+			{ path: resolve(input.importDir, "../native/dist", HELPER_NAME), source: "source-build" },
+		];
+		if (input.version && input.wardenHome) {
+			candidates.push({ path: join(input.wardenHome, "simd", input.version, HELPER_NAME), source: "warden-home" });
 		}
-	};
+		if (input.platformTarget && input.resolvePackage) {
+			const manifest = input.resolvePackage(`@delacour/warden-${input.platformTarget}/package.json`);
+			if (manifest) candidates.push({ path: join(dirname(manifest), "bin", HELPER_NAME), source: "platform-package" });
+		}
+		return candidates;
+	}
+
+	private resolveInstalledPackage(from: string): (specifier: string) => string | undefined {
+		return (specifier) => {
+			try {
+				return Bun.resolveSync(specifier, from);
+			} catch {
+				return undefined;
+			}
+		};
+	}
 }
 
-/**
- * The helper binary: the explicit `helperPath`, else `locateHelper` over the env / install locations. Lives here,
- * not in `ios-driver.ts`, so a caller that only needs the path (`warden ui` spawning or replacing the helper)
- * does not load the driver and its protocol schemas.
- */
-export function resolveHelper(o: OpenIosDriverOptions): Result<string, DriverError> {
-	if (o.helperPath !== undefined) return { success: true, data: o.helperPath };
-	const importDir = o.importDir ?? import.meta.dir;
-	const located = locateHelper({
-		env: { [SIMD_ENV]: o.env?.simd, [HELPER_DIR_ENV]: o.env?.helperDir },
-		execPath: o.execPath ?? process.execPath,
-		importDir,
-		platformTarget: o.platformTarget ?? `${process.platform}-${process.arch}`,
-		resolvePackage: o.resolvePackage ?? resolveInstalledPackage(importDir),
-		...(o.wardenHome ? { wardenHome: o.wardenHome } : {}),
-		exists: o.exists ?? existsSync,
-		realpath: o.realpath ?? realpathSync,
-		...(o.version ? { version: o.version } : {}),
-	});
-	return located.success ? { success: true, data: located.data.path } : located;
-}
+export const helperLocator = new HelperLocator();

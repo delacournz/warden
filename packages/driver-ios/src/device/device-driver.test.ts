@@ -7,10 +7,10 @@ import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span
 import { deviceTyping } from "@delacour/warden-driver/typing";
 import { fakeExec } from "../exec.testing";
 import type { FakeSimd, FakeSimdReply, FakeSimdRequest } from "../simd.testing";
-import { spawnSimd } from "../simd-client";
-import { type OpenIosDeviceDriverOptions, openIosDeviceDriver } from "./device-driver";
+import { simdClients } from "../simd-client";
+import { iosDeviceDriverOpener, type OpenIosDeviceDriverOptions } from "./device-driver";
 import type { Devicectl } from "./devicectl";
-import { fakeRunner, replayRunner } from "./runner.testing";
+import { runnerFakes } from "./runner.testing";
 
 const UDID = "00008140-000A0B0C0D0E0F10";
 const BUNDLE = "nz.co.delacour.warden.example";
@@ -50,14 +50,14 @@ afterEach(async () => {
 });
 
 async function openWith(runner: FakeSimd, extra: Partial<OpenIosDeviceDriverOptions> = {}) {
-	const client = await spawnSimd({ helperPath: "/runner", udid: UDID, spawn: runner.spawn });
+	const client = await simdClients.spawn({ helperPath: "/runner", udid: UDID, spawn: runner.spawn });
 	if (!client.success) throw new Error(client.error.message);
 	const logs: string[] = [];
 	const writes: Array<{ path: string; bytes: Uint8Array }> = [];
 	const dc = fakeDevicectl();
-	const result = await openIosDeviceDriver({
+	const result = await iosDeviceDriverOpener.open({
 		udid: UDID,
-		exec: fakeExec([]),
+		exec: fakeExec.build([]),
 		client: client.data,
 		bundleId: BUNDLE,
 		devicectl: dc.devicectl,
@@ -73,7 +73,7 @@ async function openWith(runner: FakeSimd, extra: Partial<OpenIosDeviceDriverOpti
 }
 
 const open = (handler: Handler, extra: Partial<OpenIosDeviceDriverOptions> = {}) =>
-	openWith(fakeRunner(handler), extra);
+	openWith(runnerFakes.fakeRunner(handler), extra);
 
 const unwrapped = async <T>(promise: DriverResult<T>): Promise<T> => {
 	const result = await promise;
@@ -114,15 +114,15 @@ describe("openIosDeviceDriver", () => {
 	});
 
 	test("without a socket or a client it is E_HELPER_MISSING and names the env var", async () => {
-		const result = await openIosDeviceDriver({ udid: UDID, exec: fakeExec([]) });
+		const result = await iosDeviceDriverOpener.open({ udid: UDID, exec: fakeExec.build([]) });
 		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
 		expect(!result.success && result.error.message).toContain("WARDEN_IOS_RUNNER_SOCKET");
 	});
 
 	test("a socket that is not there is E_HELPER_CRASHED or E_HELPER_MISSING, never a hang", async () => {
-		const result = await openIosDeviceDriver({
+		const result = await iosDeviceDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([]),
+			exec: fakeExec.build([]),
 			socketPath: "/nonexistent/runner.sock",
 			defaultTimeoutMs: 200,
 		});
@@ -132,14 +132,14 @@ describe("openIosDeviceDriver", () => {
 
 describe("recorded runner session", () => {
 	test("health maps the runner's handshake", async () => {
-		const { driver } = await openWith(replayRunner());
+		const { driver } = await openWith(runnerFakes.replayRunner());
 		const health = await unwrapped(driver.health());
 		expect(health).toMatchObject({ platform: "ios", id: UDID, transport: "xcuitest", bridge: "missing" });
 		expect(health.screen).toEqual(SCREEN);
 	});
 
 	test("snapshot normalizes a real device tree", async () => {
-		const { driver } = await openWith(replayRunner());
+		const { driver } = await openWith(runnerFakes.replayRunner());
 		const snap = await unwrapped(driver.snapshot({ interactiveOnly: true }));
 		expect(snap).toMatchObject({ platform: "ios", backend: "ax", screen: SCREEN });
 		expect(snap.flat.length).toBeGreaterThan(10);
@@ -147,13 +147,13 @@ describe("recorded runner session", () => {
 	});
 
 	test("screenshot decodes the runner's PNG", async () => {
-		const { driver } = await openWith(replayRunner());
+		const { driver } = await openWith(runnerFakes.replayRunner());
 		const shot = await unwrapped(driver.screenshot());
 		expect(shot.png?.slice(0, 4)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 	});
 
 	test("orientation reads the device and shows a flat phone as portrait", async () => {
-		const { driver } = await openWith(replayRunner());
+		const { driver } = await openWith(runnerFakes.replayRunner());
 		expect(await unwrapped(driver.orientation())).toBe("portrait");
 	});
 });
@@ -337,13 +337,13 @@ describe("orientation, appearance, clipboard", () => {
 	});
 
 	test("clipboard reads and writes through the device pasteboard, a write is confirmed by reading it back", async () => {
-		const runner = fakeRunner(ok);
-		const client = await spawnSimd({ helperPath: "/runner", udid: UDID, spawn: runner.spawn });
+		const runner = runnerFakes.fakeRunner(ok);
+		const client = await simdClients.spawn({ helperPath: "/runner", udid: UDID, spawn: runner.spawn });
 		if (!client.success) throw new Error("client");
 		const dc = fakeDevicectl({ pasteboardPaste: { success: true, data: "hello" } });
-		const result = await openIosDeviceDriver({
+		const result = await iosDeviceDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([]),
+			exec: fakeExec.build([]),
 			client: client.data,
 			devicectl: dc.devicectl,
 		});

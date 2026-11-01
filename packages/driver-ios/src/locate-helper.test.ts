@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { locateHelper } from "./locate-helper";
+import { helperLocator } from "./locate-helper";
 
 let root: string;
 
@@ -28,7 +28,7 @@ function layout() {
 }
 
 function locate(env: Record<string, string>, l = layout()) {
-	return locateHelper({
+	return helperLocator.locate({
 		env,
 		execPath: join(l.binDir, "warden"),
 		importDir: l.importDir,
@@ -118,7 +118,7 @@ describe("locateHelper platform package", () => {
 		const l = layout();
 		const shipped = touch(join(pkgDir(), "bin", "warden-simd"));
 		writeFileSync(join(pkgDir(), "package.json"), "{}");
-		const result = locateHelper({
+		const result = helperLocator.locate({
 			env: {},
 			execPath: join(l.binDir, "warden"),
 			importDir: l.importDir,
@@ -134,7 +134,7 @@ describe("locateHelper platform package", () => {
 		touch(join(pkgDir(), "bin", "warden-simd"));
 		writeFileSync(join(pkgDir(), "package.json"), "{}");
 		const staged = touch(join(l.home, "simd", "1.2.3", "warden-simd"));
-		const result = locateHelper({
+		const result = helperLocator.locate({
 			env: {},
 			execPath: join(l.binDir, "warden"),
 			importDir: l.importDir,
@@ -150,8 +150,8 @@ describe("locateHelper platform package", () => {
 	test("package not installed (or no platformTarget) is skipped and not an error by itself", () => {
 		const l = layout();
 		const base = { env: {}, execPath: join(l.binDir, "warden"), importDir: l.importDir, exists: existsSync };
-		expect(locateHelper({ ...base, platformTarget: "darwin-arm64", resolvePackage }).success).toBe(false);
-		expect(locateHelper(base).success).toBe(false);
+		expect(helperLocator.locate({ ...base, platformTarget: "darwin-arm64", resolvePackage }).success).toBe(false);
+		expect(helperLocator.locate(base).success).toBe(false);
 	});
 });
 
@@ -188,7 +188,7 @@ describe("locateHelper failures", () => {
 
 	test("without a version the staged lookup is skipped; injected fs is respected", () => {
 		const seen: string[] = [];
-		const result = locateHelper({
+		const result = helperLocator.locate({
 			env: {},
 			execPath: "/opt/warden/bin/warden",
 			importDir: "/repo/packages/driver-ios/src",

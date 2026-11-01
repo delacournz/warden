@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { DriverResult } from "@delacour/warden-driver/driver.types";
 import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
-import { createInjectChannel, type InjectFs } from "./inject";
-import { createIosNetwork, INJECT_ACK_MS } from "./ios-network";
+import { FileInjectChannel, type InjectFs } from "./inject";
+import { INJECT_ACK_MS, IosNetworkController } from "./ios-network";
 
 const STATE = "/s/state.json";
 const ACK = `${STATE}.ack`;
@@ -30,7 +30,7 @@ function rig(
 	};
 	const app = { injected: false, proxy: true, silent: false };
 	let t = 0;
-	const channel = createInjectChannel({
+	const channel = new FileInjectChannel({
 		statePath: STATE,
 		fs,
 		now: () => (t += 1),
@@ -40,7 +40,7 @@ function rig(
 	});
 	const proxy = new FakeProxy(19_090, init.proxyLive);
 	const relaunches: string[] = [];
-	const net = createIosNetwork({
+	const net = new IosNetworkController({
 		proxy,
 		channel,
 		dylib: () =>

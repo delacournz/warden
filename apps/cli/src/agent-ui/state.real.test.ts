@@ -10,7 +10,7 @@ import {
 	REAL_DEV_LAUNCHER_SCREEN,
 } from "@delacour/warden-driver-android/testing/uiautomator.fixture";
 import { uiautomatorParser } from "@delacour/warden-driver-android/uiautomator";
-import { toSnapshot } from "@delacour/warden-driver-ios/normalize";
+import { elementNormalizer } from "@delacour/warden-driver-ios/normalize";
 import { preorder } from "@delacour/warden-sdk/ops/ref-store";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { readLastSnapshot } from "./state";
@@ -59,7 +59,7 @@ function context() {
 
 function iosGolden(name: string): Snapshot {
 	const data = snapshotDataSchema.parse(JSON.parse(readFileSync(join(goldens, name), "utf8")));
-	return toSnapshot(data, 99);
+	return elementNormalizer.snapshot(data, 99);
 }
 
 function androidDump(interactiveOnly: boolean): Snapshot {

@@ -1,7 +1,7 @@
 import { afterAll as bunAfterAll, beforeAll as bunBeforeAll, describe as bunDescribe, test as bunTest } from "bun:test";
 import type { Platform } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { missingRequirements, type Requirement } from "@delacour/warden-driver-ios/requirements";
+import { type Requirement, requirementChecker } from "@delacour/warden-driver-ios/requirements";
 import { getSession, markOnly } from "../session";
 import { buildBaseFixtures, type FixtureEntry, type FixtureSetup, runAttempt, runnerTiming } from "./attempt";
 import { callerFile } from "./callsite";
@@ -101,7 +101,8 @@ function registerTest<F extends object>(
 		defaults.platform !== undefined &&
 		!options.platforms.includes(defaults.platform);
 	const lacking =
-		missingRequirements({ platform: defaults.platform, deviceKind: defaults.deviceKind }, options.requires).length > 0;
+		requirementChecker.missing({ platform: defaults.platform, deviceKind: defaults.deviceKind }, options.requires)
+			.length > 0;
 	const only = mode === "only" || options.only === true;
 	if (only) markOnly();
 

@@ -2,15 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ExecCall, fakeExec, joined } from "./exec.testing";
-import {
-	createSimctl,
-	LOCATION_ARGV_MAX_POINTS,
-	locationClearArgv,
-	locationRunArgv,
-	locationSetArgv,
-	locationStartArgv,
-} from "./simctl";
+import { type ExecCall, fakeExec } from "./exec.testing";
+import { LOCATION_ARGV_MAX_POINTS, SimctlRunner, simctlArgv } from "./simctl";
 
 const UDID = "UDID-1";
 const A = { lat: 37.3318, lon: -122.0312 };
@@ -18,20 +11,20 @@ const B = { lat: 37.3349, lon: -122.009 };
 
 function harness() {
 	const calls: ExecCall[] = [];
-	const simctl = createSimctl({ udid: UDID, exec: fakeExec([["", {}]], calls), env: {}, devicesRoot: "/d" });
+	const simctl = new SimctlRunner({ udid: UDID, exec: fakeExec.build([["", {}]], calls), env: {}, devicesRoot: "/d" });
 	return { simctl, calls };
 }
 
 describe("location argv", () => {
 	test("set is lat,lon", () => {
-		expect(locationSetArgv(UDID, A)).toEqual(["xcrun", "simctl", "location", UDID, "set", "37.3318,-122.0312"]);
+		expect(simctlArgv.locationSet(UDID, A)).toEqual(["xcrun", "simctl", "location", UDID, "set", "37.3318,-122.0312"]);
 	});
 	test("clear and run", () => {
-		expect(locationClearArgv(UDID)).toEqual(["xcrun", "simctl", "location", UDID, "clear"]);
-		expect(locationRunArgv(UDID, "City Run")).toEqual(["xcrun", "simctl", "location", UDID, "run", "City Run"]);
+		expect(simctlArgv.locationClear(UDID)).toEqual(["xcrun", "simctl", "location", UDID, "clear"]);
+		expect(simctlArgv.locationRun(UDID, "City Run")).toEqual(["xcrun", "simctl", "location", UDID, "run", "City Run"]);
 	});
 	test("start carries speed and interval flags before the waypoints", () => {
-		expect(locationStartArgv(UDID, [A, B], { speedMps: 3, intervalS: 2 })).toEqual([
+		expect(simctlArgv.locationStart(UDID, [A, B], { speedMps: 3, intervalS: 2 })).toEqual([
 			"xcrun",
 			"simctl",
 			"location",
@@ -42,11 +35,11 @@ describe("location argv", () => {
 			"37.3318,-122.0312",
 			"37.3349,-122.009",
 		]);
-		expect(locationStartArgv(UDID, [A, B]).slice(4)).toEqual(["start", "37.3318,-122.0312", "37.3349,-122.009"]);
+		expect(simctlArgv.locationStart(UDID, [A, B]).slice(4)).toEqual(["start", "37.3318,-122.0312", "37.3349,-122.009"]);
 	});
 	test("a long route goes through stdin with the - operand", () => {
 		const points = Array.from({ length: LOCATION_ARGV_MAX_POINTS + 1 }, (_, i) => ({ lat: i / 1000, lon: 1 }));
-		const argv = locationStartArgv(UDID, points, { speedMps: 5 });
+		const argv = simctlArgv.locationStart(UDID, points, { speedMps: 5 });
 		expect(argv.slice(0, 2)).toEqual(["sh", "-c"]);
 		expect(argv[2]).toContain("start $3 -");
 		expect(argv[4]?.split("\n")).toHaveLength(points.length);
@@ -61,7 +54,7 @@ describe("simctl.location", () => {
 		await h.simctl.location({ kind: "clear" });
 		await h.simctl.location({ kind: "scenario", name: "city-bike" });
 		await h.simctl.location({ kind: "scenario", name: "freeway" });
-		expect(joined(h.calls)).toEqual([
+		expect(fakeExec.joined(h.calls)).toEqual([
 			`xcrun simctl location ${UDID} set 37.3318,-122.0312`,
 			`xcrun simctl location ${UDID} clear`,
 			`xcrun simctl location ${UDID} run City Bicycle Ride`,
@@ -73,7 +66,7 @@ describe("simctl.location", () => {
 		const h = harness();
 		await h.simctl.location({ kind: "route", points: [A, B], speedMps: 4, intervalS: 1 });
 		await h.simctl.location({ kind: "route", points: [A] });
-		expect(joined(h.calls)).toEqual([
+		expect(fakeExec.joined(h.calls)).toEqual([
 			`xcrun simctl location ${UDID} start --speed=4 --interval=1 37.3318,-122.0312 37.3349,-122.009`,
 			`xcrun simctl location ${UDID} set 37.3318,-122.0312`,
 		]);
@@ -95,15 +88,15 @@ describe("simctl.location", () => {
 		const h = harness();
 		const res = await h.simctl.location({ kind: "gpx", path: file, speedMps: 10 });
 		expect(res.success).toBe(true);
-		expect(joined(h.calls)).toEqual([`xcrun simctl location ${UDID} start --speed=10 1,2 3,4`]);
+		expect(fakeExec.joined(h.calls)).toEqual([`xcrun simctl location ${UDID} start --speed=10 1,2 3,4`]);
 		const bad = await h.simctl.location({ kind: "gpx", path: join(dir, "missing.gpx") });
 		expect(!bad.success && bad.error.code).toBe("E_BAD_REQUEST");
 	});
 
 	test("a failing simctl is the error", async () => {
-		const simctl = createSimctl({
+		const simctl = new SimctlRunner({
 			udid: UDID,
-			exec: fakeExec([["", { exitCode: 1, stderr: "Invalid device" }]]),
+			exec: fakeExec.build([["", { exitCode: 1, stderr: "Invalid device" }]]),
 			env: {},
 			devicesRoot: "/d",
 		});

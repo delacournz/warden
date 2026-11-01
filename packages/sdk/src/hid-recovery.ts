@@ -1,4 +1,4 @@
-import { isHidLostMessage, rebootSim, runAfterReboot } from "@delacour/warden-driver-ios/hid-recovery";
+import { hidRecovery } from "@delacour/warden-driver-ios/hid-recovery";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Result } from "@delacour/warden-types/result";
 
@@ -21,7 +21,7 @@ export type HidRecoverySeams = {
 
 /** Whether a failed result is "HID lost", by its error text. */
 export function hidLostIn(result: Result<unknown, { message: string }>): boolean {
-	return !result.success && isHidLostMessage(result.error.message);
+	return !result.success && hidRecovery.isHidLostMessage(result.error.message);
 }
 
 /** `WARDEN_AFTER_REBOOT` (a JSON argv array, `{udid}` replaced): reopen the sim's Device Hub window and tile again. */
@@ -39,12 +39,12 @@ function afterRebootArgv(env: Record<string, string | undefined>): string[] | un
 /** Reboot the sim and drop the driver. `true` = the sim is back and the failed op may run again. */
 export async function recoverSimHid(seams: HidRecoverySeams, udid: string): Promise<boolean> {
 	await seams.resetDriver();
-	const rebooted = await rebootSim({ exec: seams.exec, log: seams.log }, udid);
+	const rebooted = await hidRecovery.rebootSim({ exec: seams.exec, log: seams.log }, udid);
 	if (!rebooted.success) {
 		seams.log(`sim ${udid}: HID connection lost, reboot failed: ${rebooted.error}`);
 		return false;
 	}
-	await runAfterReboot({ exec: seams.exec, log: seams.log }, afterRebootArgv(seams.env), udid);
+	await hidRecovery.runAfterReboot({ exec: seams.exec, log: seams.log }, afterRebootArgv(seams.env), udid);
 	seams.log(`sim ${udid}: HID connection lost (Device Hub quit?), rebooted; running the call again`);
 	return true;
 }

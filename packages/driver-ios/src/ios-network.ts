@@ -11,7 +11,7 @@ import type {
 import { driverErrors } from "@delacour/warden-driver/errors";
 import { type NetworkProxyPort, networkProxyShaping } from "@delacour/warden-driver/network-proxy";
 import type { Result } from "@delacour/warden-types/result";
-import { type InjectChannel, injectLaunchEnv, shouldInject } from "./inject";
+import { type InjectChannel, injectProtocol } from "./inject";
 
 /**
  * iOS simulator network conditions: a simulator shares the host network, so nothing can shape one device. Instead
@@ -57,60 +57,214 @@ export type IosNetwork = {
 
 const okVoid = { success: true as const, data: undefined };
 
-export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
-	const { proxy, channel } = deps;
-	let condition: NetworkCondition = { kind: "online" };
-	let faults: readonly HostFault[] = [];
-	let clockOffsetMs = channel.current().clockOffsetMs ?? 0;
-	let clockFrozenMs: number | undefined = channel.current().clockFrozenMs;
-	const now = deps.now ?? Date.now;
-	let expectLoad = false;
+/** The shaping proxy and the inject state file behind one iOS simulator's network and clock conditions. */
+export class IosNetworkController implements IosNetwork {
+	private readonly proxy: NetworkProxyPort;
+	private readonly channel: InjectChannel;
+	private readonly now: () => number;
+	private condition: NetworkCondition = { kind: "online" };
+	private faults: readonly HostFault[] = [];
+	private clockOffsetMs: number;
+	private clockFrozenMs: number | undefined;
+	private expectLoad = false;
 
-	const routing = () => condition.kind !== "online" || faults.length > 0;
-	const clockActive = () => clockOffsetMs !== 0 || clockFrozenMs !== undefined;
-	const launchClock = (): { clockOffsetMs?: number; clockFrozenMs?: number } => ({
-		...(clockOffsetMs ? { clockOffsetMs } : {}),
-		...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
-	});
-	const writeState = () =>
-		channel.write({
-			offline: condition.kind === "offline",
-			clockOffsetMs,
-			...(clockFrozenMs === undefined ? {} : { clockFrozenMs }),
+	constructor(private readonly deps: IosNetworkDeps) {
+		this.proxy = deps.proxy;
+		this.channel = deps.channel;
+		this.now = deps.now ?? Date.now;
+		this.clockOffsetMs = this.channel.current().clockOffsetMs ?? 0;
+		this.clockFrozenMs = this.channel.current().clockFrozenMs;
+	}
+
+	async network(op: NetworkCondition, opts?: NetworkOptions): DriverResult<NetworkState> {
+		if (op.kind === "flap") {
+			return driverErrors.err(
+				"E_UNSUPPORTED",
+				"flap is run by the condition scheduler (COND-6) as online/offline transitions"
+			);
+		}
+		const previous = this.condition;
+		this.condition = op;
+		const applied = await this.apply(opts);
+		if (!applied.success) {
+			if (applied.error.code !== "E_NETWORK_RELAUNCH") this.condition = previous;
+			return applied;
+		}
+		const plan = networkPresets.resolveNetwork(op);
+		return {
+			success: true,
+			data: {
+				online: plan.online,
+				condition: op,
+				needsProxy: [],
+				...(applied.data || !this.routing() ? {} : { appliesOnLaunch: true as const }),
+			},
+		};
+	}
+
+	async networkFaults(next: readonly HostFault[]): DriverResult<{ notes: readonly string[] }> {
+		const previous = this.faults;
+		this.faults = next;
+		const applied = await this.apply(undefined);
+		if (!applied.success) {
+			if (applied.error.code !== "E_NETWORK_RELAUNCH") this.faults = previous;
+			return applied;
+		}
+		return { success: true, data: { notes: networkProxyShaping.faultNotes(next) } };
+	}
+
+	async launchEnv(opts: LaunchOptions): DriverResult<Record<string, string> | undefined> {
+		const live = await this.proxy.current();
+		if (
+			!injectProtocol.shouldInject({
+				networkActive: live !== undefined,
+				clockActive: this.clockActive(),
+				requested: opts.inject === true,
+			})
+		) {
+			// a plain launch has no dylib: forget the ack of an earlier app so `attached()` never reports a ghost
+			this.channel.reset();
+			return { success: true, data: undefined };
+		}
+		const dylib = this.deps.dylib();
+		if (!dylib.success) return dylib;
+		let address = live;
+		if (!address && (this.routing() || opts.inject === true)) {
+			const started = await this.proxy.ensure(
+				this.condition,
+				networkProxyShaping.conditionsFor(this.condition, this.faults)
+			);
+			if (!started.success) return driverErrors.err("E_IO", started.error);
+			address = started.data;
+		}
+		this.channel.reset();
+		this.writeState();
+		this.expectLoad = true;
+		return {
+			success: true,
+			data: injectProtocol.launchEnv({
+				dylib: dylib.data,
+				statePath: this.channel.statePath,
+				proxy: address,
+				...this.launchClock(),
+				...(this.deps.debug ? { debug: true } : {}),
+			}),
+		};
+	}
+
+	async confirmLoaded(): DriverResult<void> {
+		if (!this.expectLoad) return okVoid;
+		this.expectLoad = false;
+		const state = this.channel.current();
+		if (await this.channel.acked(state.seq, INJECT_LOAD_MS)) return okVoid;
+		return {
+			success: false,
+			error: driverErrors.make(
+				"E_INTERNAL",
+				`the app did not load libwarden-inject.dylib within ${INJECT_LOAD_MS} ms: network conditions would not reach it. Check the app is a simulator build, and run with WARDEN_E2E_DEBUG=1`,
+				{ detail: { statePath: this.channel.statePath } }
+			),
+		};
+	}
+
+	async setClockOffset(ms: number): DriverResult<void> {
+		this.clockOffsetMs = Math.trunc(ms);
+		this.clockFrozenMs = undefined;
+		return this.pushClock();
+	}
+
+	async clock(op: ClockCondition, opts?: NetworkOptions): DriverResult<ClockState> {
+		const target = this.clockTarget(op, this.now());
+		if (!target.success) return target;
+		const previous = { offset: this.clockOffsetMs, frozen: this.clockFrozenMs };
+		this.clockOffsetMs = target.data.offsetMs;
+		this.clockFrozenMs = target.data.frozenMs;
+		const relaunched =
+			opts?.relaunch === true ? await this.relaunchForClock(opts) : { success: true as const, data: false };
+		if (!relaunched.success) {
+			this.restoreClock(previous);
+			return relaunched;
+		}
+		const pushed = relaunched.data ? okVoid : await this.pushClock();
+		if (!pushed.success) {
+			this.restoreClock(previous);
+			return pushed;
+		}
+		const applied = relaunched.data || this.channel.attached() !== undefined;
+		return {
+			success: true,
+			data: {
+				condition: op,
+				offsetMs: this.clockOffsetMs,
+				frozen: this.clockFrozenMs !== undefined,
+				nowMs: this.clockFrozenMs ?? this.now() + this.clockOffsetMs,
+				...(applied ? {} : { appliesOnLaunch: true as const }),
+			},
+		};
+	}
+
+	private routing(): boolean {
+		return this.condition.kind !== "online" || this.faults.length > 0;
+	}
+
+	private clockActive(): boolean {
+		return this.clockOffsetMs !== 0 || this.clockFrozenMs !== undefined;
+	}
+
+	private launchClock(): { clockOffsetMs?: number; clockFrozenMs?: number } {
+		return {
+			...(this.clockOffsetMs ? { clockOffsetMs: this.clockOffsetMs } : {}),
+			...(this.clockFrozenMs === undefined ? {} : { clockFrozenMs: this.clockFrozenMs }),
+		};
+	}
+
+	private writeState() {
+		return this.channel.write({
+			offline: this.condition.kind === "offline",
+			clockOffsetMs: this.clockOffsetMs,
+			...(this.clockFrozenMs === undefined ? {} : { clockFrozenMs: this.clockFrozenMs }),
 		});
+	}
+
+	private restoreClock(previous: { offset: number; frozen: number | undefined }): void {
+		this.clockOffsetMs = previous.offset;
+		this.clockFrozenMs = previous.frozen;
+	}
 
 	/** Push the current condition + faults to the proxy and the state file. */
-	async function push(): DriverResult<{ staged: boolean; injected: boolean }> {
-		const conditions = networkProxyShaping.conditionsFor(condition, faults);
-		const live = await proxy.current();
+	private async push(): DriverResult<{ staged: boolean; injected: boolean }> {
+		const conditions = networkProxyShaping.conditionsFor(this.condition, this.faults);
+		const live = await this.proxy.current();
 		const pushed =
-			routing() || live ? await (live ? proxy.update(conditions) : proxy.ensure(condition, conditions)) : undefined;
+			this.routing() || live
+				? await (live ? this.proxy.update(conditions) : this.proxy.ensure(this.condition, conditions))
+				: undefined;
 		if (pushed && !pushed.success) return driverErrors.err("E_IO", pushed.error);
-		const state = writeState();
-		const attached = channel.attached();
+		const state = this.writeState();
+		const attached = this.channel.attached();
 		if (!attached) return { success: true, data: { staged: true, injected: false } };
-		if (!(await channel.acked(state.seq, INJECT_ACK_MS))) {
+		if (!(await this.channel.acked(state.seq, INJECT_ACK_MS))) {
 			return driverErrors.err(
 				"E_TIMEOUT",
 				`the injected app did not acknowledge the network state within ${INJECT_ACK_MS} ms`,
 				{
-					detail: { pid: attached.pid, statePath: channel.statePath },
+					detail: { pid: attached.pid, statePath: this.channel.statePath },
 				}
 			);
 		}
-		const routed = !routing() || attached.proxy === true;
+		const routed = !this.routing() || attached.proxy === true;
 		return { success: true, data: { staged: false, injected: routed } };
 	}
 
 	/** A running app that was not launched with the dylib (or without the proxy address) cannot be steered. */
-	async function ensureLaunchedInjected(opts: NetworkOptions | undefined): DriverResult<boolean> {
-		const bundle = opts?.bundleId ?? deps.lastBundle();
+	private async ensureLaunchedInjected(opts: NetworkOptions | undefined): DriverResult<boolean> {
+		const bundle = opts?.bundleId ?? this.deps.lastBundle();
 		if (!bundle) return { success: true, data: false };
-		const running = await deps.isRunning(bundle);
+		const running = await this.deps.isRunning(bundle);
 		if (!running.success) return running;
 		if (!running.data) return { success: true, data: false };
 		if (opts?.relaunch) {
-			const again = await deps.relaunch(bundle);
+			const again = await this.deps.relaunch(bundle);
 			return again.success ? { success: true, data: true } : again;
 		}
 		return driverErrors.err(
@@ -120,175 +274,52 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 		);
 	}
 
-	async function apply(opts: NetworkOptions | undefined): DriverResult<boolean> {
-		const pushed = await push();
+	private async apply(opts: NetworkOptions | undefined): DriverResult<boolean> {
+		const pushed = await this.push();
 		if (!pushed.success) return pushed;
 		// an explicit `relaunch` is honoured for `online` too, so the next preset switches live instead of E_NETWORK_RELAUNCH
-		if (pushed.data.injected || (!routing() && opts?.relaunch !== true)) {
+		if (pushed.data.injected || (!this.routing() && opts?.relaunch !== true)) {
 			return { success: true, data: pushed.data.injected };
 		}
-		const relaunched = await ensureLaunchedInjected(opts);
+		const relaunched = await this.ensureLaunchedInjected(opts);
 		if (!relaunched.success) return relaunched;
 		return { success: true, data: relaunched.data };
 	}
 
 	/** Write the clock to the state file and wait for a running injected app to apply it. */
-	async function pushClock(): DriverResult<void> {
-		const state = writeState();
-		if (!channel.attached()) return okVoid;
-		return (await channel.acked(state.seq, INJECT_ACK_MS))
+	private async pushClock(): DriverResult<void> {
+		const state = this.writeState();
+		if (!this.channel.attached()) return okVoid;
+		return (await this.channel.acked(state.seq, INJECT_ACK_MS))
 			? okVoid
 			: driverErrors.err("E_TIMEOUT", `the injected app did not acknowledge the clock within ${INJECT_ACK_MS} ms`);
 	}
 
 	/** `relaunch: true`: a running app without the dylib is launched again with it (true = relaunched). */
-	async function relaunchForClock(opts: NetworkOptions): DriverResult<boolean> {
-		if (channel.attached()) return { success: true, data: false };
-		const bundle = opts.bundleId ?? deps.lastBundle();
+	private async relaunchForClock(opts: NetworkOptions): DriverResult<boolean> {
+		if (this.channel.attached()) return { success: true, data: false };
+		const bundle = opts.bundleId ?? this.deps.lastBundle();
 		if (!bundle) return { success: true, data: false };
-		const running = await deps.isRunning(bundle);
+		const running = await this.deps.isRunning(bundle);
 		if (!running.success) return running;
 		if (!running.data) return { success: true, data: false };
-		const again = await deps.relaunch(bundle);
+		const again = await this.deps.relaunch(bundle);
 		return again.success ? { success: true, data: true } : again;
 	}
 
-	return {
-		async network(op, opts) {
-			if (op.kind === "flap") {
-				return driverErrors.err(
-					"E_UNSUPPORTED",
-					"flap is run by the condition scheduler (COND-6) as online/offline transitions"
-				);
-			}
-			const previous = condition;
-			condition = op;
-			const applied = await apply(opts);
-			if (!applied.success) {
-				if (applied.error.code !== "E_NETWORK_RELAUNCH") condition = previous;
-				return applied;
-			}
-			const plan = networkPresets.resolveNetwork(op);
-			return {
-				success: true,
-				data: {
-					online: plan.online,
-					condition: op,
-					needsProxy: [],
-					...(applied.data || !routing() ? {} : { appliesOnLaunch: true as const }),
-				},
-			};
-		},
-		async networkFaults(next) {
-			const previous = faults;
-			faults = next;
-			const applied = await apply(undefined);
-			if (!applied.success) {
-				if (applied.error.code !== "E_NETWORK_RELAUNCH") faults = previous;
-				return applied;
-			}
-			return { success: true, data: { notes: networkProxyShaping.faultNotes(next) } };
-		},
-		async launchEnv(opts) {
-			const live = await proxy.current();
-			if (
-				!shouldInject({
-					networkActive: live !== undefined,
-					clockActive: clockActive(),
-					requested: opts.inject === true,
-				})
-			) {
-				// a plain launch has no dylib: forget the ack of an earlier app so `attached()` never reports a ghost
-				channel.reset();
-				return { success: true, data: undefined };
-			}
-			const dylib = deps.dylib();
-			if (!dylib.success) return dylib;
-			let address = live;
-			if (!address && (routing() || opts.inject === true)) {
-				const started = await proxy.ensure(condition, networkProxyShaping.conditionsFor(condition, faults));
-				if (!started.success) return driverErrors.err("E_IO", started.error);
-				address = started.data;
-			}
-			channel.reset();
-			writeState();
-			expectLoad = true;
-			return {
-				success: true,
-				data: injectLaunchEnv({
-					dylib: dylib.data,
-					statePath: channel.statePath,
-					proxy: address,
-					...launchClock(),
-					...(deps.debug ? { debug: true } : {}),
-				}),
-			};
-		},
-		async confirmLoaded() {
-			if (!expectLoad) return okVoid;
-			expectLoad = false;
-			const state = channel.current();
-			if (await channel.acked(state.seq, INJECT_LOAD_MS)) return okVoid;
+	/** The offset or frozen instant that puts the wall clock at `op`, given the host time `nowMs`. */
+	private clockTarget(op: ClockCondition, nowMs: number): Result<{ offsetMs: number; frozenMs?: number }, DriverError> {
+		if (op.kind === "real") return { success: true, data: { offsetMs: 0 } };
+		if (op.kind === "offset") return { success: true, data: { offsetMs: Math.trunc(op.ms) } };
+		const at = Date.parse(op.at);
+		if (Number.isNaN(at)) {
 			return {
 				success: false,
-				error: driverErrors.make(
-					"E_INTERNAL",
-					`the app did not load libwarden-inject.dylib within ${INJECT_LOAD_MS} ms: network conditions would not reach it. Check the app is a simulator build, and run with WARDEN_E2E_DEBUG=1`,
-					{ detail: { statePath: channel.statePath } }
-				),
+				error: driverErrors.make("E_BAD_REQUEST", `clock ${op.kind}: "${op.at}" is not an ISO 8601 date-time`),
 			};
-		},
-		async setClockOffset(ms) {
-			clockOffsetMs = Math.trunc(ms);
-			clockFrozenMs = undefined;
-			return pushClock();
-		},
-		async clock(op, opts) {
-			const target = clockTarget(op, now());
-			if (!target.success) return target;
-			const previous = { offset: clockOffsetMs, frozen: clockFrozenMs };
-			clockOffsetMs = target.data.offsetMs;
-			clockFrozenMs = target.data.frozenMs;
-			const relaunched =
-				opts?.relaunch === true ? await relaunchForClock(opts) : { success: true as const, data: false };
-			if (!relaunched.success) {
-				clockOffsetMs = previous.offset;
-				clockFrozenMs = previous.frozen;
-				return relaunched;
-			}
-			const pushed = relaunched.data ? okVoid : await pushClock();
-			if (!pushed.success) {
-				clockOffsetMs = previous.offset;
-				clockFrozenMs = previous.frozen;
-				return pushed;
-			}
-			const applied = relaunched.data || channel.attached() !== undefined;
-			return {
-				success: true,
-				data: {
-					condition: op,
-					offsetMs: clockOffsetMs,
-					frozen: clockFrozenMs !== undefined,
-					nowMs: clockFrozenMs ?? now() + clockOffsetMs,
-					...(applied ? {} : { appliesOnLaunch: true as const }),
-				},
-			};
-		},
-	};
-}
-
-/** The offset or frozen instant that puts the wall clock at `op`, given the host time `nowMs`. */
-function clockTarget(op: ClockCondition, nowMs: number): Result<{ offsetMs: number; frozenMs?: number }, DriverError> {
-	if (op.kind === "real") return { success: true, data: { offsetMs: 0 } };
-	if (op.kind === "offset") return { success: true, data: { offsetMs: Math.trunc(op.ms) } };
-	const at = Date.parse(op.at);
-	if (Number.isNaN(at)) {
-		return {
-			success: false,
-			error: driverErrors.make("E_BAD_REQUEST", `clock ${op.kind}: "${op.at}" is not an ISO 8601 date-time`),
-		};
+		}
+		return op.kind === "fixed"
+			? { success: true, data: { offsetMs: at - nowMs } }
+			: { success: true, data: { offsetMs: 0, frozenMs: at } };
 	}
-	return op.kind === "fixed"
-		? { success: true, data: { offsetMs: at - nowMs } }
-		: { success: true, data: { offsetMs: 0, frozenMs: at } };
 }

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { loadRecording, recordingHandler } from "./runner.testing";
+import { runnerFakes } from "./runner.testing";
 
 describe("recordingHandler", () => {
-	const pairs = loadRecording();
+	const pairs = runnerFakes.loadRecording();
 
 	test("the real-device recording has the ops the driver needs and no personal UDID", () => {
 		const ops = new Set(pairs.map((pair) => pair.request.op));
@@ -13,7 +13,7 @@ describe("recordingHandler", () => {
 	});
 
 	test("answers recorded responses in order, repeats the last, and refuses an unrecorded op", async () => {
-		const handler = recordingHandler([
+		const handler = runnerFakes.recordingHandler([
 			{ request: { op: "tap" }, response: { ok: true, data: { n: 1 } } },
 			{ request: { op: "tap" }, response: { ok: false, error: { code: "E_IO", message: "x" } } },
 		]);

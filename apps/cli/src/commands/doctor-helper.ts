@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DOCTOR_HINT, locateHelper } from "@delacour/warden-driver-ios/locate-helper";
+import { DOCTOR_HINT, helperLocator } from "@delacour/warden-driver-ios/locate-helper";
 import { simctlParser } from "@delacour/warden-providers/ios";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
@@ -227,7 +227,7 @@ export async function helperChecks(ctx: CommandContext, deps: HelperDeps): Promi
 			),
 		];
 
-	const located = locateHelper({
+	const located = helperLocator.locate({
 		env: ctx.env,
 		execPath: deps.execPath,
 		importDir: deps.importDir,

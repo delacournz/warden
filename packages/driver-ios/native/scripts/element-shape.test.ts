@@ -14,7 +14,7 @@ import {
 	type WireElement,
 	wireElementSchema,
 } from "@delacour/warden-driver/helper/simd-protocol";
-import { normalizeElements } from "../../src/normalize";
+import { elementNormalizer } from "../../src/normalize";
 
 /**
  * The goldens in `ios/Tests/warden-simdTests/Fixtures` are what `warden-simd`'s Swift tests pin the AX ops to
@@ -86,7 +86,7 @@ describe("snapshot goldens", () => {
 
 		test(`${name} survives the driver's normalizer unchanged`, () => {
 			const data = snapshotDataSchema.parse(load(name));
-			const { flat } = normalizeElements(data.elements, data.screen);
+			const { flat } = elementNormalizer.elements(data.elements, data.screen);
 			const wireIds = walk(data.elements).map((node) => node.id ?? "");
 			expect(flat.map((element) => element.id)).toEqual(wireIds);
 		});
@@ -229,7 +229,7 @@ describe("warden-runner snapshot goldens", () => {
 				}
 			};
 			visit(data.elements, 0);
-			const { flat } = normalizeElements(data.elements, data.screen);
+			const { flat } = elementNormalizer.elements(data.elements, data.screen);
 			expect(flat.map((element) => element.id)).toEqual(walk(data.elements).map((node) => node.id ?? ""));
 		});
 	}

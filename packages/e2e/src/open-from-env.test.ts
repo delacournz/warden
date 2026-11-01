@@ -25,12 +25,12 @@ const env = (platform: "ios" | "android", extra: Partial<E2eEnv> = {}): E2eEnv =
 
 describe("openDriverFromEnv", () => {
 	test("WARDEN_SIMD from the spec env and WARDEN_E2E_DEBUG from processEnv", async () => {
-		const helper = fakeSimd(() => ({ data: null }));
+		const helper = fakeSimd.build(() => ({ data: null }));
 		const logs: string[] = [];
 		const result = await openDriverFromEnv(env("ios", { simd: "/x/warden-simd" }), {
 			processEnv: { WARDEN_E2E_DEBUG: "1", WARDEN_HOME: "/nowhere/.warden" },
 			log: (line) => logs.push(line),
-			host: { exec: fakeExec([["xcrun", {}]]) },
+			host: { exec: fakeExec.build([["xcrun", {}]]) },
 			ios: { spawn: helper.spawn, exists: (path) => path === "/x/warden-simd" },
 		});
 		if (!result.success) throw new Error(result.error.message);
@@ -80,7 +80,7 @@ describe("a physical iPhone", () => {
 
 	test("connects to env.iosRunnerSocket, not warden-simd", async () => {
 		const result = await openDriverFromEnv(env("ios", { udid: PHONE, iosRunnerSocket: "/nonexistent/r.sock" }), {
-			host: { exec: fakeExec([]) },
+			host: { exec: fakeExec.build([]) },
 			iosDevice: { defaultTimeoutMs: 100 },
 		});
 		expect(result.success).toBe(false);
@@ -88,7 +88,7 @@ describe("a physical iPhone", () => {
 	});
 
 	test("without a runner socket it says which variable is missing", async () => {
-		const result = await openDriverFromEnv(env("ios", { udid: PHONE }), { host: { exec: fakeExec([]) } });
+		const result = await openDriverFromEnv(env("ios", { udid: PHONE }), { host: { exec: fakeExec.build([]) } });
 		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
 		expect(!result.success && result.error.message).toContain("WARDEN_IOS_RUNNER_SOCKET");
 	});
@@ -110,10 +110,10 @@ describe("the lease's shaping proxy", () => {
 	});
 
 	test("ios driver opened under a lease gets a proxy; opening it opens no store", async () => {
-		const helper = fakeSimd(() => ({ data: null }));
+		const helper = fakeSimd.build(() => ({ data: null }));
 		let opened = 0;
 		const result = await openDriverFromEnv(env("ios", { simd: "/x/warden-simd", leaseId: "L1" }), {
-			host: { exec: fakeExec([["xcrun", {}]]) },
+			host: { exec: fakeExec.build([["xcrun", {}]]) },
 			ios: { spawn: helper.spawn, exists: (path) => path === "/x/warden-simd" },
 			openStore: () => {
 				opened++;
@@ -129,8 +129,8 @@ describe("the lease's shaping proxy", () => {
 		const own = new FakeProxy();
 		const result = await openDriverFromEnv(env("ios", { simd: "/x/warden-simd", leaseId: "L1" }), {
 			networkProxy: own,
-			host: { exec: fakeExec([["xcrun", {}]]) },
-			ios: { spawn: fakeSimd(() => ({ data: null })).spawn, exists: () => true },
+			host: { exec: fakeExec.build([["xcrun", {}]]) },
+			ios: { spawn: fakeSimd.build(() => ({ data: null })).spawn, exists: () => true },
 		});
 		expect(result.success).toBe(true);
 		if (result.success) await result.data.close();

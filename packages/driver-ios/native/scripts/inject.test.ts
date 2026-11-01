@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { createInjectChannel, injectLaunchEnv } from "../../src/inject";
+import { FileInjectChannel, injectProtocol } from "../../src/inject";
 import { dylibArgv, harnessArgv, INJECT_DYLIB, IOS_MIN, main } from "./inject";
 
 describe("build argv", () => {
@@ -120,14 +120,14 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 	test("the state file shifts the wall clocks live, acks the seq, and never touches monotonic time", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-state-"));
 		mkdirSync(stateDir, { recursive: true });
-		const channel = createInjectChannel({
+		const channel = new FileInjectChannel({
 			statePath: join(stateDir, "state.json"),
 			now: Date.now,
 			sleep: (ms) => Bun.sleep(ms),
 		});
 		writeFileSync(join(stateDir, "seed"), "");
 		const h = startHarness(
-			injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath, debug: true })
+			injectProtocol.launchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath, debug: true })
 		);
 		const day = 86_400_000;
 		const first = channel.write({ clockOffsetMs: 3 * day });
@@ -154,12 +154,12 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 
 	test("a frozen state holds every wall clock at one instant until it is lifted", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-state-"));
-		const channel = createInjectChannel({
+		const channel = new FileInjectChannel({
 			statePath: join(stateDir, "state.json"),
 			now: Date.now,
 			sleep: (ms) => Bun.sleep(ms),
 		});
-		const h = startHarness(injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath }));
+		const h = startHarness(injectProtocol.launchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath }));
 		const at = Date.parse("2031-03-04T05:06:07.000Z");
 		const frozen = channel.write({ clockFrozenMs: at });
 		expect(await channel.acked(frozen.seq, 5_000)).toBe(true);
@@ -190,12 +190,12 @@ run("libwarden-inject (macOS build, real dyld insertion)", () => {
 
 	test("offline makes reachability report no flags and fires the registered path monitor", async () => {
 		const stateDir = mkdtempSync(join(tmpdir(), "warden-inject-state-"));
-		const channel = createInjectChannel({
+		const channel = new FileInjectChannel({
 			statePath: join(stateDir, "state.json"),
 			now: Date.now,
 			sleep: (ms) => Bun.sleep(ms),
 		});
-		const h = startHarness(injectLaunchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath }));
+		const h = startHarness(injectProtocol.launchEnv({ dylib: join(dir, INJECT_DYLIB), statePath: channel.statePath }));
 		const online = await h.ask();
 		h.send("monitor");
 		const initial = await h.next<{ event: string; status: number }>();

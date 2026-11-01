@@ -10,7 +10,7 @@ import {
 	SYNTHETIC_FORM_SCREEN,
 } from "@delacour/warden-driver-android/testing/uiautomator.fixture";
 import { uiautomatorParser } from "@delacour/warden-driver-android/uiautomator";
-import { toSnapshot } from "@delacour/warden-driver-ios/normalize";
+import { elementNormalizer } from "@delacour/warden-driver-ios/normalize";
 
 const IOS_FIXTURES = join(
 	import.meta.dir,
@@ -36,7 +36,7 @@ export type NamedSnapshot = { name: string; snapshot: Snapshot };
 export function iosGoldenSnapshots(): NamedSnapshot[] {
 	return IOS_SNAPSHOT_GOLDENS.map((file) => {
 		const data = snapshotDataSchema.parse(JSON.parse(readFileSync(join(IOS_FIXTURES, file), "utf8")));
-		return { name: `ios ${file.replace(".golden.json", "")}`, snapshot: toSnapshot(data, 0) };
+		return { name: `ios ${file.replace(".golden.json", "")}`, snapshot: elementNormalizer.snapshot(data, 0) };
 	});
 }
 

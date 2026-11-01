@@ -10,11 +10,11 @@ import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
 import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import { deviceTyping } from "@delacour/warden-driver/typing";
-import { type ExecCall, fakeExec, joined } from "./exec.testing";
+import { type ExecCall, fakeExec } from "./exec.testing";
 import type { InjectFs } from "./inject";
-import { KEY_USAGE, type OpenIosDriverOptions, openIosDriver } from "./ios-driver";
+import { iosDriverOpener, KEY_USAGE, type OpenIosDriverOptions } from "./ios-driver";
 import { type FakeSimdReply, type FakeSimdRequest, fakeSimd } from "./simd.testing";
-import { spawnSimd } from "./simd-client";
+import { simdClients } from "./simd-client";
 
 const UDID = "UDID-1";
 const BUNDLE = "nz.co.delacour.warden.example";
@@ -54,14 +54,14 @@ afterEach(async () => {
 async function open(
 	handler: Handler,
 	extra: Partial<OpenIosDriverOptions> = {},
-	execHandlers: Parameters<typeof fakeExec>[0] = []
+	execHandlers: Parameters<typeof fakeExec.build>[0] = []
 ) {
 	const calls: ExecCall[] = [];
-	const helper = fakeSimd(handler);
+	const helper = fakeSimd.build(handler);
 	const logs: string[] = [];
-	const result = await openIosDriver({
+	const result = await iosDriverOpener.open({
 		udid: UDID,
-		exec: fakeExec([["xcrun simctl spawn UDID-1 defaults", {}], ...execHandlers], calls),
+		exec: fakeExec.build([["xcrun simctl spawn UDID-1 defaults", {}], ...execHandlers], calls),
 		spawn: helper.spawn,
 		helperPath: "/opt/warden-simd",
 		exists: () => false,
@@ -85,7 +85,7 @@ describe("openIosDriver", () => {
 	test("spawns the helper with --udid, enables AX automation and reports capabilities from ready", async () => {
 		const { driver, helper, calls } = await open(() => ({ data: null }));
 		expect(helper.spawns).toEqual([["/opt/warden-simd", "--udid", UDID]]);
-		expect(joined(calls)).toContain(
+		expect(fakeExec.joined(calls)).toContain(
 			`xcrun simctl spawn ${UDID} defaults write com.apple.Accessibility AutomationEnabled -bool true`
 		);
 		expect(driver.platform).toBe("ios");
@@ -97,23 +97,23 @@ describe("openIosDriver", () => {
 		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
 			["plutil -extract AutomationEnabled", { stdout: "true\n" }],
 		]);
-		expect(joined(calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
+		expect(fakeExec.joined(calls).filter((line) => line.startsWith("xcrun"))).toEqual([]);
 	});
 
 	test("opening writes AutomationEnabled once when the plist lacks it", async () => {
 		const { calls } = await open(() => ({ data: null }), { devicesRoot: "/devices" }, [
 			["plutil -extract AutomationEnabled", { exitCode: 1, stderr: "no such key" }],
 		]);
-		expect(joined(calls).filter((line) => line.includes("defaults write"))).toHaveLength(1);
+		expect(fakeExec.joined(calls).filter((line) => line.includes("defaults write"))).toHaveLength(1);
 	});
 
 	test("an AutomationEnabled failure is logged, not fatal", async () => {
 		const calls: ExecCall[] = [];
-		const helper = fakeSimd(() => ({ data: null }));
+		const helper = fakeSimd.build(() => ({ data: null }));
 		const logs2: string[] = [];
-		const result = await openIosDriver({
+		const result = await iosDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([], calls),
+			exec: fakeExec.build([], calls),
 			spawn: helper.spawn,
 			helperPath: "/opt/warden-simd",
 			log: (line) => logs2.push(line),
@@ -139,9 +139,9 @@ describe("openIosDriver", () => {
 
 	test("no helper anywhere → E_HELPER_MISSING with the doctor hint, before any simctl call", async () => {
 		const calls: ExecCall[] = [];
-		const result = await openIosDriver({
+		const result = await iosDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([["xcrun", {}]], calls),
+			exec: fakeExec.build([["xcrun", {}]], calls),
 			exists: () => false,
 			realpath: (path) => path,
 			execPath: "/usr/local/bin/warden",
@@ -207,12 +207,12 @@ describe("openIosDriver", () => {
 	});
 
 	test("a pre-connected client is used as is: no second connect, no spawn, no helper lookup", async () => {
-		const helper = fakeSimd((request) => (request.op === "snapshot" ? { data: snapshotData } : { data: null }));
-		const connected = await spawnSimd({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
+		const helper = fakeSimd.build((request) => (request.op === "snapshot" ? { data: snapshotData } : { data: null }));
+		const connected = await simdClients.spawn({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
 		if (!connected.success) throw new Error(connected.error.message);
-		const result = await openIosDriver({
+		const result = await iosDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([["xcrun simctl spawn UDID-1 defaults", {}]], []),
+			exec: fakeExec.build([["xcrun simctl spawn UDID-1 defaults", {}]], []),
 			client: connected.data,
 			socketPath: "/nonexistent/simd.sock",
 			exists: () => false,
@@ -225,12 +225,12 @@ describe("openIosDriver", () => {
 	});
 
 	test("a pre-connected client needs no helper binary on disk", async () => {
-		const helper = fakeSimd(() => ({ data: null }));
-		const connected = await spawnSimd({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
+		const helper = fakeSimd.build(() => ({ data: null }));
+		const connected = await simdClients.spawn({ helperPath: "/opt/warden-simd", udid: UDID, spawn: helper.spawn });
 		if (!connected.success) throw new Error(connected.error.message);
-		const result = await openIosDriver({
+		const result = await iosDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([], []),
+			exec: fakeExec.build([], []),
 			client: connected.data,
 			exists: () => false,
 			realpath: (path) => path,
@@ -656,12 +656,12 @@ describe("system alerts through one reader and the frontmost probe", () => {
 	});
 
 	test("without the AX bridge alertOn('axbridge') reads the host reader and isFrontmost is never asked", async () => {
-		const helper = fakeSimd((request) => (request.op === "alertButtons" ? { data: null } : undefined), {
+		const helper = fakeSimd.build((request) => (request.op === "alertButtons" ? { data: null } : undefined), {
 			ready: { ax: { default: "ax", bridge: "missing" } },
 		});
-		const result = await openIosDriver({
+		const result = await iosDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([["xcrun", {}]]),
+			exec: fakeExec.build([["xcrun", {}]]),
 			spawn: helper.spawn,
 			helperPath: "/opt/warden-simd",
 			exists: () => false,
@@ -692,7 +692,7 @@ describe("typeText", () => {
 		await unwrapped(driver.typeText("Hello, World 123!"));
 		expect(helper.of("typeText")[0]?.text).toBe("Hello, World 123!");
 		expect(helper.of("paste")).toHaveLength(0);
-		expect(joined(calls).some((line) => line.includes("pbcopy"))).toBe(false);
+		expect(fakeExec.joined(calls).some((line) => line.includes("pbcopy"))).toBe(false);
 	});
 
 	test("E_UNSUPPORTED_TEXT pastes the rest once the simulator pasteboard holds it", async () => {
@@ -711,7 +711,7 @@ describe("typeText", () => {
 		const copy = calls.find((call) => call.cmd[0] === "sh");
 		expect(copy?.cmd[2]).toContain("xcrun devicectl device pasteboard copy");
 		expect(copy?.cmd.slice(3)).toEqual(["sh", "é and more", UDID]);
-		expect(joined(calls).some((line) => line.startsWith("xcrun simctl pbpaste"))).toBe(true);
+		expect(fakeExec.joined(calls).some((line) => line.startsWith("xcrun simctl pbpaste"))).toBe(true);
 		expect(helper.requests.map((request) => request.op)).toEqual(["typeText", "paste"]);
 	});
 
@@ -1041,13 +1041,13 @@ describe("settle", () => {
 	});
 
 	test("without the AX bridge the helper's settle is never asked", async () => {
-		const helper = fakeSimd((request) => (request.op === "snapshot" ? { data: snapshotData } : undefined), {
+		const helper = fakeSimd.build((request) => (request.op === "snapshot" ? { data: snapshotData } : undefined), {
 			ready: { ax: { default: "ax", bridge: "missing" } },
 		});
 		let t = 0;
-		const result = await openIosDriver({
+		const result = await iosDriverOpener.open({
 			udid: UDID,
-			exec: fakeExec([["xcrun", {}]]),
+			exec: fakeExec.build([["xcrun", {}]]),
 			spawn: helper.spawn,
 			helperPath: "/opt/warden-simd",
 			exists: () => false,
@@ -1084,7 +1084,7 @@ describe("screenshot", () => {
 			[["xcrun simctl io", {}]]
 		);
 		expect(await unwrapped(driver.screenshot({ path: "/out/b.png" }))).toEqual({ path: "/out/b.png" });
-		expect(joined(calls)).toContain(`xcrun simctl io ${UDID} screenshot --type=png /out/b.png`);
+		expect(fakeExec.joined(calls)).toContain(`xcrun simctl io ${UDID} screenshot --type=png /out/b.png`);
 		expect(logs.some((line) => line.includes("simctl io"))).toBe(true);
 	});
 
@@ -1092,7 +1092,7 @@ describe("screenshot", () => {
 		const { driver, calls } = await open(() => ({ error: { code: "E_TIMEOUT", message: "slow" } }));
 		const result = await driver.screenshot({ path: "/out/c.png" });
 		expect(!result.success && result.error.code).toBe("E_TIMEOUT");
-		expect(joined(calls).some((line) => line.includes("simctl io"))).toBe(false);
+		expect(fakeExec.joined(calls).some((line) => line.includes("simctl io"))).toBe(false);
 	});
 });
 
@@ -1208,7 +1208,7 @@ describe("app lifecycle through the helper", () => {
 			timeoutMs: 30_000,
 		});
 		expect(notes).toMatchObject({ via: "simd", pid: 4242 });
-		expect(joined(calls).some((line) => line.includes("simctl launch"))).toBe(false);
+		expect(fakeExec.joined(calls).some((line) => line.includes("simctl launch"))).toBe(false);
 	});
 
 	test("relaunch: false keeps a running instance; absent options are not sent", async () => {
@@ -1230,7 +1230,7 @@ describe("app lifecycle through the helper", () => {
 		expect(helper.of("terminate")[0]).toMatchObject({ bundleId: BUNDLE });
 		expect(helper.of("openUrl")[0]).toMatchObject({ url: "myapp://home" });
 		expect(notes).toEqual({ via: "simd", terminated: true });
-		expect(joined(calls).some((line) => /simctl (terminate|openurl)/.test(line))).toBe(false);
+		expect(fakeExec.joined(calls).some((line) => /simctl (terminate|openurl)/.test(line))).toBe(false);
 	});
 
 	test("terminating an app that was not running is a success", async () => {
@@ -1263,7 +1263,7 @@ describe("app lifecycle through the helper", () => {
 		expect(helper.of("launch")).toHaveLength(1);
 		expect(helper.of("openUrl")).toHaveLength(0);
 		expect(helper.of("terminate")).toHaveLength(0);
-		const lines = joined(calls);
+		const lines = fakeExec.joined(calls);
 		expect(lines).toContain(`xcrun simctl launch ${UDID} ${BUNDLE} --x`);
 		expect(lines).toContain(`xcrun simctl launch --terminate-running-process ${UDID} ${BUNDLE}`);
 		expect(calls.find((call) => call.cmd.includes("launch"))?.opts?.env).toEqual({ SIMCTL_CHILD_A: "1" });
@@ -1282,7 +1282,7 @@ describe("app lifecycle through the helper", () => {
 		await unwrapped(driver.app.openUrl("myapp://a"));
 		await unwrapped(driver.app.openUrl("myapp://b"));
 		expect(helper.of("openUrl")).toHaveLength(1);
-		expect(joined(calls).filter((line) => line.includes("simctl openurl"))).toHaveLength(2);
+		expect(fakeExec.joined(calls).filter((line) => line.includes("simctl openurl"))).toHaveLength(2);
 	});
 
 	test("a real failure from the helper is the answer: no simctl, and the helper is asked again next time", async () => {
@@ -1295,7 +1295,7 @@ describe("app lifecycle through the helper", () => {
 		expect(!first.success && first.error.code).toBe("E_APP_UNAVAILABLE");
 		await driver.app.launch(BUNDLE);
 		expect(helper.of("launch")).toHaveLength(2);
-		expect(joined(calls).some((line) => line.includes("simctl launch"))).toBe(false);
+		expect(fakeExec.joined(calls).some((line) => line.includes("simctl launch"))).toBe(false);
 	});
 
 	test("an E_BAD_REQUEST about the request itself passes through", async () => {
@@ -1341,7 +1341,7 @@ describe("simctl-backed methods", () => {
 		expect(await unwrapped(driver.app.isRunning(BUNDLE))).toBe(true);
 		await unwrapped(driver.app.install("/b/App.app"));
 		await unwrapped(driver.app.uninstall(BUNDLE));
-		const lines = joined(calls);
+		const lines = fakeExec.joined(calls);
 		expect(lines).toContain(`xcrun simctl install ${UDID} /b/App.app`);
 		expect(lines).toContain(`xcrun simctl uninstall ${UDID} ${BUNDLE}`);
 		expect(lines).toContain(`xcrun simctl spawn ${UDID} launchctl list`);

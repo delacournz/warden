@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type SimdSpawn, simdTransports } from "@delacour/warden-driver/helper/simd-transport";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
-import { connectSimd, type SimdClient, spawnSimd } from "./simd-client";
+import { type SimdClient, simdClients } from "./simd-client";
 
 const FAKE = join(import.meta.dir, "../native/scripts/fake-simd.ts");
 
@@ -28,9 +28,9 @@ function fakeSpawn(script: object): SimdSpawn {
 	return (cmd) => simdTransports.spawn([process.execPath, FAKE, "--script", path, ...cmd.slice(1)]);
 }
 
-async function start(script: object, extra: Partial<Parameters<typeof spawnSimd>[0]> = {}) {
+async function start(script: object, extra: Partial<Parameters<typeof simdClients.spawn>[0]> = {}) {
 	const lines: string[] = [];
-	const result = await spawnSimd({
+	const result = await simdClients.spawn({
 		helperPath: "fake-simd",
 		udid: "UDID-1",
 		spawn: fakeSpawn(script),
@@ -42,7 +42,7 @@ async function start(script: object, extra: Partial<Parameters<typeof spawnSimd>
 	return { result, lines };
 }
 
-async function started(script: object, extra: Partial<Parameters<typeof spawnSimd>[0]> = {}) {
+async function started(script: object, extra: Partial<Parameters<typeof simdClients.spawn>[0]> = {}) {
 	const { result, lines } = await start(script, extra);
 	if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
 	return { client: result.data, lines };
@@ -99,7 +99,7 @@ describe("spawnSimd handshake", () => {
 	});
 
 	test("a missing binary → E_HELPER_MISSING", async () => {
-		const result = await spawnSimd({ helperPath: "/nonexistent/warden-simd", udid: "U" });
+		const result = await simdClients.spawn({ helperPath: "/nonexistent/warden-simd", udid: "U" });
 		expect(!result.success && result.error.code).toBe("E_HELPER_MISSING");
 	});
 });
@@ -370,7 +370,7 @@ describe("connectSimd (unix socket)", () => {
 			}
 		});
 		try {
-			const result = await connectSimd({ socketPath: daemon.socketPath });
+			const result = await simdClients.connect({ socketPath: daemon.socketPath });
 			if (!result.success) throw new Error(result.error.message);
 			clients.push(result.data);
 			expect(result.data.ready.udid).toBe("U");
@@ -409,7 +409,7 @@ describe("connectSimd (unix socket)", () => {
 			}
 		);
 		try {
-			const result = await connectSimd({ socketPath: daemon.socketPath });
+			const result = await simdClients.connect({ socketPath: daemon.socketPath });
 			if (!result.success) throw new Error(result.error.message);
 			clients.push(result.data);
 			expect(result.data.ready.ax.bridge).toBe("missing");
@@ -425,7 +425,7 @@ describe("connectSimd (unix socket)", () => {
 	test("the daemon closing the connection → E_HELPER_CRASHED, and the socket client does not respawn", async () => {
 		const daemon = listen(() => undefined);
 		try {
-			const result = await connectSimd({ socketPath: daemon.socketPath });
+			const result = await simdClients.connect({ socketPath: daemon.socketPath });
 			if (!result.success) throw new Error(result.error.message);
 			clients.push(result.data);
 			const inflight = result.data.request("hang", {}, { timeoutMs: 3000 });
@@ -444,7 +444,7 @@ describe("connectSimd (unix socket)", () => {
 	test("close() only disconnects: no shutdown is sent to the shared daemon", async () => {
 		const daemon = listen(() => undefined);
 		try {
-			const result = await connectSimd({ socketPath: daemon.socketPath });
+			const result = await simdClients.connect({ socketPath: daemon.socketPath });
 			if (!result.success) throw new Error(result.error.message);
 			await result.data.close();
 			await Bun.sleep(30);
@@ -461,7 +461,7 @@ describe("connectSimd (unix socket)", () => {
 			write(`${JSON.stringify({ id, ok: true, data: null })}\n`);
 		});
 		try {
-			const result = await connectSimd({ socketPath: daemon.socketPath });
+			const result = await simdClients.connect({ socketPath: daemon.socketPath });
 			if (!result.success) throw new Error(result.error.message);
 			clients.push(result.data);
 			const failed = await result.data.request("snapshot");
@@ -472,7 +472,7 @@ describe("connectSimd (unix socket)", () => {
 	});
 
 	test("no socket → a driver error, not a throw", async () => {
-		const result = await connectSimd({ socketPath: join(dir, "missing.sock") });
+		const result = await simdClients.connect({ socketPath: join(dir, "missing.sock") });
 		expect(!result.success && result.error.code).toBe("E_HELPER_CRASHED");
 	});
 });
