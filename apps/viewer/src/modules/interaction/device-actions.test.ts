@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createDeviceActions, type DeviceApi } from "./device-actions.ts";
+import type { InputFrame } from "../../core/api/device.api.ts";
+import { createDeviceActions, type DeviceApi, type LiveInput } from "./device-actions.ts";
 
 type Call = { name: string; args: unknown[] };
 
@@ -147,6 +148,120 @@ describe("createDeviceActions errors", () => {
 		const { device } = fakeDevice("boom");
 		const errors: string[] = [];
 		const actions = createDeviceActions({ device, onError: (m) => errors.push(m) });
+		actions.goHome({});
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(errors).toEqual(["boom"]);
+	});
+});
+
+describe("createDeviceActions live path", () => {
+	function liveSetup(initialReady = true) {
+		const { device, calls } = fakeDevice();
+		const errors: string[] = [];
+		const frames: InputFrame[] = [];
+		const state = { ready: initialReady, fail: null as unknown };
+		const live: LiveInput = {
+			ready: () => state.ready,
+			send: (frame) => {
+				frames.push(frame);
+				return state.fail ? Promise.reject(state.fail) : Promise.resolve();
+			},
+		};
+		const actions = createDeviceActions({ device, onError: (m) => errors.push(m), live });
+		return { actions, calls, frames, errors, state };
+	}
+
+	test("touch goes live as down, move, up with no http call", () => {
+		const { actions, calls, frames } = liveSetup();
+		actions.touchDown({ x: 1, y: 2 });
+		actions.touchMove({ x: 3, y: 4 });
+		actions.touchUp({ x: 5, y: 6, durationMs: 90, gesture: "drag" });
+		expect(calls).toEqual([]);
+		expect(frames).toEqual([
+			{ type: "touch", phase: "down", x: 1, y: 2 },
+			{ type: "touch", phase: "move", x: 3, y: 4 },
+			{ type: "touch", phase: "up", x: 5, y: 6, durationMs: 90, gesture: "drag" },
+		]);
+	});
+
+	test("not ready falls back to the buffered http path", () => {
+		const { actions, calls, frames } = liveSetup(false);
+		actions.touchDown({ x: 10, y: 20 });
+		actions.touchUp({ x: 10, y: 20, durationMs: 50, gesture: "tap" });
+		expect(frames).toEqual([]);
+		expect(calls).toEqual([{ name: "tap", args: [10, 20] }]);
+	});
+
+	test("a press keeps its path if the socket drops mid-gesture", () => {
+		const { actions, calls, frames, state } = liveSetup();
+		actions.touchDown({ x: 1, y: 1 });
+		state.ready = false;
+		actions.touchMove({ x: 2, y: 2 });
+		actions.touchUp({ x: 3, y: 3, durationMs: 50, gesture: "tap" });
+		expect(frames.map((f) => (f.type === "touch" ? f.phase : f.type))).toEqual(["down", "move", "up"]);
+		expect(calls).toEqual([]);
+	});
+
+	test("multiTouch goes live", () => {
+		const { actions, frames, calls } = liveSetup();
+		const touches = [
+			{ id: 1, x: 1, y: 2 },
+			{ id: 2, x: 3, y: 4 },
+		];
+		actions.multiTouchDown({ touches });
+		actions.multiTouchMove({ touches });
+		actions.multiTouchUp({ touches, gesture: "zoom_out" });
+		expect(calls).toEqual([]);
+		expect(frames).toEqual([
+			{ type: "multiTouch", phase: "down", touches },
+			{ type: "multiTouch", phase: "move", touches },
+			{ type: "multiTouch", phase: "up", touches, gesture: "zoom_out" },
+		]);
+	});
+
+	test("direct actions go live when ready", () => {
+		const { actions, frames, calls } = liveSetup();
+		actions.goHome({});
+		actions.shake({});
+		actions.openUrl({ url: "https://a.b" });
+		actions.setLocation({ latitude: 1, longitude: 2 });
+		actions.inputText({ text: "x", clearFirst: true, paste: true });
+		actions.key({ key: "BACKSPACE" });
+		actions.setOrientation({ orientation: "landscape" });
+		expect(calls).toEqual([]);
+		expect(frames).toEqual([
+			{ type: "goHome" },
+			{ type: "shake" },
+			{ type: "openUrl", url: "https://a.b" },
+			{ type: "location", latitude: 1, longitude: 2 },
+			{ type: "input", text: "x", clearFirst: true, paste: true },
+			{ type: "key", key: "BACKSPACE" },
+			{ type: "orientation", orientation: "landscape" },
+		]);
+	});
+
+	test("direct actions use http when not ready, orientation is a no-op", () => {
+		const { actions, frames, calls } = liveSetup(false);
+		actions.goHome({});
+		actions.setOrientation({ orientation: "landscape" });
+		expect(frames).toEqual([]);
+		expect(calls).toEqual([{ name: "goHome", args: [] }]);
+	});
+
+	test("NO_INPUT from a live send falls back to http", async () => {
+		const { actions, calls, state, errors } = liveSetup();
+		state.fail = Object.assign(new Error("not connected"), { code: "NO_INPUT" });
+		actions.shake({});
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(calls).toEqual([{ name: "shake", args: [] }]);
+		expect(errors).toEqual([]);
+	});
+
+	test("other live send errors are reported", async () => {
+		const { actions, state, errors } = liveSetup();
+		state.fail = new Error("boom");
 		actions.goHome({});
 		await Promise.resolve();
 		await Promise.resolve();

@@ -1,4 +1,4 @@
-import { DeviceError, whepClose, whepOffer } from "../../core/api/device.api.ts";
+import { DeviceError, streamIceServers, whepClose, whepOffer } from "../../core/api/device.api.ts";
 import { backoffDelay, iceGatheringComplete } from "./whep.ts";
 import { offerCandidateCount, watchDiagnostics } from "./whep-diagnostics.ts";
 
@@ -89,7 +89,9 @@ export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): 
 
 	const connect = async () => {
 		if (stopped) return;
-		const conn = new RTCPeerConnection();
+		const iceServers = await streamIceServers().catch(() => []);
+		if (stopped) return;
+		const conn = new RTCPeerConnection({ iceServers });
 		pc = conn;
 		conn.addTransceiver("video", { direction: "recvonly" });
 		conn.addTransceiver("audio", { direction: "recvonly" });

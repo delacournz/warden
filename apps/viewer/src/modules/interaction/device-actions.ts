@@ -1,4 +1,6 @@
+import type { InputFrame } from "../../core/api/device.api.ts";
 import { classifyFlick } from "./flick.ts";
+import { selectTransport, type Transport } from "./transport.ts";
 
 /**
  * Device actions for the interaction layer. `createDeviceActions` maps them onto the device API
@@ -93,6 +95,12 @@ export type DeviceApi = {
 	screenshot: () => Promise<unknown>;
 };
 
+/** The live input socket as the actions see it: whether it is ready, and a frame sender. */
+export type LiveInput = {
+	ready: () => boolean;
+	send: (frame: InputFrame) => Promise<void>;
+};
+
 type Point = { x: number; y: number };
 
 function centreOf(touches: FingerTouch[]): Point | null {
@@ -101,24 +109,46 @@ function centreOf(touches: FingerTouch[]): Point | null {
 	return { x: Math.round(sum.x / touches.length), y: Math.round(sum.y / touches.length) };
 }
 
+function isNoInput(e: unknown): boolean {
+	return typeof e === "object" && e !== null && "code" in e && e.code === "NO_INPUT";
+}
+
+function messageOf(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
+}
+
+type Options = { device: DeviceApi; onError: (message: string) => void; live?: LiveInput };
+
 /**
- * `DeviceActions` backed by the device API. Raw touch events are buffered: nothing is sent until
- * `touchUp`, which becomes a tap, long press, swipe (a fast flick) or drag from the press point.
- * Two-finger events buffer until `multiTouchUp`, which becomes a pinch at the fingers' centre.
- * Rotate is a no-op until a live input path exists. A rejected call reports its message to
- * `onError`; no action throws.
+ * `DeviceActions` over two paths. With the live socket ready, touches stream as down/move/up
+ * frames and two-finger events as multiTouch frames; goHome, shake, location, input, key, openUrl
+ * and orientation are frames too. A press keeps the path it started on. Otherwise the HTTP path
+ * runs: touch events buffer and nothing is sent until `touchUp`, which becomes `tap`, `longPress`,
+ * a `swipe` (a fast flick, see `classifyFlick`) or a `drag`; two-finger events become one pinch at
+ * their centre on `multiTouchUp`. Orientation is a no-op over HTTP. A direct action whose live send
+ * fails with NO_INPUT falls back to HTTP; any other rejection reports its message to `onError`.
  */
-export function createDeviceActions(options: { device: DeviceApi; onError: (message: string) => void }): DeviceActions {
-	const { device, onError } = options;
-	let pressStart: Point | null = null;
+export function createDeviceActions({ device, onError, live }: Options): DeviceActions {
+	let press: { start: Point; transport: Transport } | null = null;
+	let multiTransport: Transport | null = null;
+	const ready = () => live?.ready() ?? false;
 
 	const run = (call: Promise<unknown>) => {
-		call.catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)));
+		call.catch((e: unknown) => onError(messageOf(e)));
+	};
+	const sendLive = (frame: InputFrame, fallback?: () => Promise<unknown>) => {
+		if (!live) return;
+		live.send(frame).catch((e: unknown) => {
+			if (fallback && isNoInput(e)) run(fallback());
+			else onError(messageOf(e));
+		});
+	};
+	const direct = (frame: InputFrame, http: () => Promise<unknown>) => {
+		if (selectTransport(ready()) === "live") sendLive(frame, http);
+		else run(http());
 	};
 
-	const release = (up: Payload<"touchUp">) => {
-		const start = pressStart ?? { x: up.x, y: up.y };
-		pressStart = null;
+	const releaseHttp = (up: Payload<"touchUp">, start: Point) => {
 		if (up.gesture === "tap") return run(device.tap(up.x, up.y));
 		if (up.gesture === "long_press") return run(device.longPress(start.x, start.y, up.durationMs));
 		const flick = classifyFlick({ from: start, to: up, durationMs: up.durationMs });
@@ -128,30 +158,63 @@ export function createDeviceActions(options: { device: DeviceApi; onError: (mess
 		run(device.drag({ fromX: start.x, fromY: start.y, toX: up.x, toY: up.y, durationMs: up.durationMs }));
 	};
 
+	const touchUp = (up: Payload<"touchUp">) => {
+		const current = press;
+		press = null;
+		if (current?.transport === "live") {
+			return sendLive({ type: "touch", phase: "up", x: up.x, y: up.y, durationMs: up.durationMs, gesture: up.gesture });
+		}
+		releaseHttp(up, current?.start ?? { x: up.x, y: up.y });
+	};
+
+	const multiTouchUp = (p: Payload<"multiTouchUp">) => {
+		const transport = multiTransport;
+		multiTransport = null;
+		if (transport === "live") {
+			return sendLive({ type: "multiTouch", phase: "up", touches: p.touches, gesture: p.gesture });
+		}
+		const centre = centreOf(p.touches);
+		if (centre) run(device.pinch(centre.x, centre.y, p.gesture));
+	};
+
 	return {
 		touchDown: (p) => {
-			pressStart = { x: p.x, y: p.y };
+			const transport = selectTransport(ready());
+			press = { start: { x: p.x, y: p.y }, transport };
+			if (transport === "live") sendLive({ type: "touch", phase: "down", x: p.x, y: p.y });
 		},
-		touchMove: () => undefined,
-		touchUp: release,
+		touchMove: (p) => {
+			if (press?.transport === "live") sendLive({ type: "touch", phase: "move", x: p.x, y: p.y });
+		},
+		touchUp,
 		tap: (p) => run(device.tap(p.x, p.y)),
 		doubleTap: (p) => run(device.doubleTap(p.x, p.y)),
 		longPress: (p) => run(device.longPress(p.x, p.y, p.durationMs)),
 		swipe: (p) => run(device.swipe({ x: p.x, y: p.y, direction: p.direction })),
 		pinch: (p) => run(device.pinch(p.x, p.y, p.scale)),
-		multiTouchDown: () => undefined,
-		multiTouchMove: () => undefined,
-		multiTouchUp: (p) => {
-			const centre = centreOf(p.touches);
-			if (centre) run(device.pinch(centre.x, centre.y, p.gesture));
+		multiTouchDown: (p) => {
+			multiTransport = selectTransport(ready());
+			if (multiTransport === "live") sendLive({ type: "multiTouch", phase: "down", touches: p.touches });
 		},
-		goHome: () => run(device.goHome()),
-		shake: () => run(device.shake()),
-		setOrientation: () => undefined,
-		openUrl: (p) => run(device.openUrl(p.url)),
-		setLocation: (p) => run(device.setLocation(p.latitude, p.longitude)),
+		multiTouchMove: (p) => {
+			if (multiTransport === "live") sendLive({ type: "multiTouch", phase: "move", touches: p.touches });
+		},
+		multiTouchUp,
+		goHome: () => direct({ type: "goHome" }, () => device.goHome()),
+		shake: () => direct({ type: "shake" }, () => device.shake()),
+		setOrientation: (p) => {
+			if (selectTransport(ready()) === "live") sendLive({ type: "orientation", orientation: p.orientation });
+		},
+		openUrl: (p) => direct({ type: "openUrl", url: p.url }, () => device.openUrl(p.url)),
+		setLocation: (p) =>
+			direct({ type: "location", latitude: p.latitude, longitude: p.longitude }, () =>
+				device.setLocation(p.latitude, p.longitude)
+			),
 		screenshot: () => run(device.screenshot()),
-		inputText: (p) => run(device.input(p.text, p.clearFirst)),
-		key: (p) => run(device.key(p.key)),
+		inputText: (p) =>
+			direct({ type: "input", text: p.text, clearFirst: p.clearFirst, paste: p.paste }, () =>
+				device.input(p.text, p.clearFirst)
+			),
+		key: (p) => direct({ type: "key", key: p.key }, () => device.key(p.key)),
 	};
 }

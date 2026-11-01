@@ -16,6 +16,7 @@ import { StoppedState } from "./stopped-state.tsx";
 import { StreamState } from "./stream-state.tsx";
 import { useBilling } from "./use-billing.ts";
 import { useDeviceStream } from "./use-device-stream.ts";
+import { useInputSocket } from "./use-input-socket.ts";
 import type { StreamStatus } from "./whep-session.ts";
 import { needsRefit } from "./window-fit.ts";
 
@@ -67,7 +68,8 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 	const canDrive = info.scope === "drive" && driving && status === "streaming";
 
 	const showNotice = useCallback((text: string) => setNotice(text), []);
-	const actions = useMemo(() => createDeviceActions({ device, onError: showNotice }), [showNotice]);
+	const { live, ready: liveReady } = useInputSocket(info.scope === "drive" && status === "streaming", showNotice);
+	const actions = useMemo(() => createDeviceActions({ device, onError: showNotice, live }), [showNotice, live]);
 
 	useEffect(() => {
 		if (status !== "streaming") return;
@@ -147,7 +149,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 				onScreenshot={() => void run(device.screenshot())}
 				onMinimize={minimize}
 				onClose={close}
-				deviceControls={<DeviceControls actions={actions} disabledReason={availability.reason} />}
+				deviceControls={<DeviceControls actions={actions} disabledReason={availability.reason} canRotate={liveReady} />}
 			/>
 			<div className="min-h-0 flex-1" style={{ padding: `0 ${SCREEN_INSET}px ${SCREEN_INSET}px` }}>
 				<InteractionLayer
