@@ -15,6 +15,7 @@ import {
 } from "../remote/credentials";
 import { pollDeviceToken } from "../remote/device-login";
 import { machineDepsFor, machineHash } from "../remote/machine";
+import { createOrganization } from "../remote/org-create";
 import { anonApi } from "../remote/session";
 
 type LoginOpts = { account?: string; apiUrl?: string; browser?: boolean; org?: string; json?: true };
@@ -63,6 +64,19 @@ async function pickOrg(
 	return org ? { kind: "picked", org } : { kind: "cancelled" };
 }
 
+/**
+ * No organization yet: at a terminal, create one right here (name, then a slug prefilled from it) instead of
+ * sending the user to the dashboard. Cancelling or a failure still logs in, without an org.
+ */
+async function offerCreate(ctx: CommandContext, opts: LoginOpts, authed: WardenApi): Promise<Organization[]> {
+	if (opts.org !== undefined || opts.json || !ctx.ui.interactive) return [];
+	note(ctx, "no organization yet: create one now (Esc to skip)");
+	const result = await createOrganization(ctx, authed);
+	if (result.kind === "created") return [result.organization];
+	if (result.kind === "failed") warn(ctx, `could not create the organization: ${result.message}`);
+	return [];
+}
+
 type OrgResolution =
 	| { kind: "resolved"; orgs: Organization[]; organization: Organization | undefined }
 	| Exclude<OrgPick, { kind: "picked" }>;
@@ -79,7 +93,8 @@ async function resolveOrg(
 ): Promise<OrgResolution> {
 	const listed = await authed.listOrganizations();
 	if (!listed.success) warn(ctx, `could not list your organizations: ${listed.error.message}`);
-	const orgs = listed.success ? listed.data : active ? [active] : [];
+	const listedOrgs = listed.success ? listed.data : active ? [active] : [];
+	const orgs = listedOrgs.length === 0 && listed.success ? await offerCreate(ctx, opts, authed) : listedOrgs;
 	const pick = await pickOrg(ctx, opts, orgs, active);
 	if (pick.kind !== "picked") return pick;
 	const organization = pick.org;
@@ -202,7 +217,7 @@ async function login(ctx: CommandContext, opts: LoginOpts): Promise<number> {
 	if (machine === "failed")
 		warn(ctx, "could not register this machine; the free trial unlocks once it is (run warden login again)");
 	if (organization) note(ctx, `organization: ${organization.name} (${organization.slug})`);
-	else note(ctx, "no organization yet: create one in the browser, then warden login again");
+	else note(ctx, "no organization yet: warden org create <name>");
 	for (const p of profiles)
 		note(ctx, `profile ${p.organization.slug} → --account ${p.account} (${p.organization.name})`);
 	return 0;

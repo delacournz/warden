@@ -280,3 +280,81 @@ describe("warden claim --remote billing note", () => {
 		expect(stdoutJson(c)).toMatchObject({ account: "work", organization: "o1", via: "account" });
 	});
 });
+
+describe("warden org create", () => {
+	function noOrgAccount(c: TestContext, server: FakeServer): void {
+		expect(
+			writeAccount(c.env, "work", {
+				apiUrl: "https://api.test",
+				token: server.token,
+				user: { id: "u1", email: "work@acme.test" },
+				savedAt: 1,
+			}).success
+		).toBe(true);
+	}
+
+	test("name → slug from the name, created, saved as the account's org when it had none", async () => {
+		const server = fakeServer({ orgs: [] });
+		const c = setup(server);
+		noOrgAccount(c, server);
+		expect(await run(c, "create", "Acme Mobile", "--json")).toBe(0);
+		expect(stdoutJson(c)).toMatchObject({
+			organization: { slug: "acme-mobile", name: "Acme Mobile" },
+			account: "work",
+			saved: true,
+		});
+		expect(server.calls.find((x) => x.path === "/api/auth/organization/create")?.body).toEqual({
+			name: "Acme Mobile",
+			slug: "acme-mobile",
+		});
+		const saved = readAccounts(c.env);
+		expect(saved.success && saved.data?.accounts.work?.organizationId).toBe("o1");
+	});
+
+	test("the name's slug taken: falls back to a 6-hex suffix like the dashboard", async () => {
+		const server = fakeServer({ orgs: [], takenSlugs: ["acme"] });
+		const c = setup(server);
+		expect(await run(c, "create", "Acme", "--json")).toBe(0);
+		expect((stdoutJson(c) as { organization: { slug: string } }).organization.slug).toMatch(/^acme-[0-9a-f]{6}$/);
+	});
+
+	test("--slug taken or invalid: exit 1, nothing created", async () => {
+		const server = fakeServer({ orgs: [], takenSlugs: ["acme"] });
+		const c = setup(server);
+		expect(await run(c, "create", "Acme", "--slug", "acme")).toBe(1);
+		expect(c.stderr.join("\n")).toContain("acme is taken");
+		expect(await run(c, "create", "Acme", "--slug", "a--b")).toBe(1);
+		expect(c.stderr.join("\n")).toContain("lower-case");
+		expect(server.calls.some((x) => x.path === "/api/auth/organization/create")).toBe(false);
+	});
+
+	test("an account that already has an org keeps it and is told how to switch", async () => {
+		const server = fakeServer();
+		const c = setup(server);
+		expect(await run(c, "create", "New Co")).toBe(0);
+		const saved = readAccounts(c.env);
+		expect(saved.success && saved.data?.accounts.work?.organizationId).toBe("o1");
+		expect(c.stderr.join("\n")).toContain("warden org use new-co");
+	});
+
+	test("interactive with no name: asks name, prefills the slug, re-asks when the edited slug is taken", async () => {
+		const server = fakeServer({ orgs: [], takenSlugs: ["mine"] });
+		const c = setup(server);
+		const ui = scriptedUi({ interactive: true, text: ["Acme Mobile", "Mine", "acme-app"] });
+		c.ui = ui;
+		expect(await run(c, "create")).toBe(0);
+		expect(ui.events).toEqual([
+			"text: Organization name?",
+			"text: Slug? [acme-mobile]",
+			expect.stringMatching(/^text: Slug\? \[acme-mobile-[0-9a-f]{6}\]$/),
+		]);
+		expect(c.stderr.join("\n")).toContain("mine is taken");
+		expect(server.orgs.at(-1)).toMatchObject({ slug: "acme-app" });
+	});
+
+	test("no name and no terminal: exit 1 naming the argument", async () => {
+		const c = setup(fakeServer({ orgs: [] }));
+		expect(await run(c, "create")).toBe(1);
+		expect(c.stderr.join("\n")).toContain("warden org create <name>");
+	});
+});

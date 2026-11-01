@@ -80,8 +80,8 @@ Account:
                                 balance and remote-device status
   billing                       show the warden cloud balance and ledger, or top
                                 up credit
-  org                           list warden cloud organizations, switch the
-                                active one or link directories to one
+  org                           list, create or switch warden cloud
+                                organizations, or link directories to one
 
 Commands:
   ui                            drive a leased simulator / emulator (agents):
@@ -4480,8 +4480,7 @@ exports[`help output warden org --help (and nested subcommands) 1`] = `
 "$ warden org --help
 Usage: warden org [options] [command]
 
-list warden cloud organizations, switch the active one or link directories to
-one
+list, create or switch warden cloud organizations, or link directories to one
 
 Options:
   -h, --help      display help for command
@@ -4490,6 +4489,8 @@ Commands:
   list            list your organizations (the default)
   use <org>       switch the active organization (remote devices are billed to
                   it)
+  create [name]   create an organization (asks name and slug when omitted at a
+                  terminal)
   link [org]      bill remote devices claimed in this directory (or repo remote)
                   to an organization
   unlink          remove the link for this directory (or repo remote)
@@ -4516,6 +4517,20 @@ Arguments:
   org               organization slug or id
 
 Options:
+  --account <name>  saved account (default: the one for this directory)
+  --json            machine-readable output
+  -h, --help        display help for command
+
+$ warden org create --help
+Usage: warden org create [options] [name]
+
+create an organization (asks name and slug when omitted at a terminal)
+
+Arguments:
+  name              organization name; the slug is made from it
+
+Options:
+  --slug <slug>     slug instead of the one made from the name (must be free)
   --account <name>  saved account (default: the one for this directory)
   --json            machine-readable output
   -h, --help        display help for command

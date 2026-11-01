@@ -338,3 +338,38 @@ describe("warden whoami / org / logout", () => {
 		expect(readCredentials(c.env)).toEqual({ success: true, data: undefined });
 	});
 });
+
+describe("warden login: no organization yet", () => {
+	const noOrg = { user: { id: "u1", email: "dev@acme.test" }, organization: null, remote: null };
+
+	test("interactive: creates one right there and saves the login with it", async () => {
+		const server = fakeServer({ me: noOrg, orgs: [] });
+		const c = setup(server);
+		const ui = scriptedUi({ interactive: true, text: ["Acme Mobile", "acme-mobile"] });
+		c.ui = ui;
+		c.argv = ["--no-browser"];
+		expect(await loginCommand.run(c)).toBe(0);
+		expect(ui.events).toContain("text: Organization name?");
+		expect(ui.events).toContain("text: Slug? [acme-mobile]");
+		const saved = readAccounts(c.env);
+		expect(saved.success && saved.data?.accounts.default?.organizationId).toBe("o1");
+		expect(c.stderr.join("\n")).toContain("organization: Acme Mobile (acme-mobile)");
+	});
+
+	test("interactive, prompt cancelled: still logged in, told how to create one later", async () => {
+		const c = setup(fakeServer({ me: noOrg, orgs: [] }));
+		c.ui = scriptedUi({ interactive: true, text: [undefined] });
+		c.argv = ["--no-browser"];
+		expect(await loginCommand.run(c)).toBe(0);
+		expect(readCredentials(c.env)).toMatchObject({ success: true, data: { token: "sess_tok" } });
+		expect(c.stderr.join("\n")).toContain("warden org create");
+	});
+
+	test("non-interactive: no prompt, points at warden org create", async () => {
+		const server = fakeServer({ me: noOrg, orgs: [] });
+		const c = setup(server);
+		expect(await loginCommand.run(c)).toBe(0);
+		expect(server.calls.some((x) => x.path === "/api/auth/organization/create")).toBe(false);
+		expect(c.stderr.join("\n")).toContain("warden org create <name>");
+	});
+});

@@ -4,7 +4,7 @@ import { readGitFacts } from "@delacour/warden-core/git-facts";
 import { err, ok, type Result } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
-import { emit, reportError, success, table } from "../output";
+import { emit, note, reportError, success, table } from "../output";
 import type { Organization } from "../remote/api.types";
 import { writeAccount } from "../remote/credentials";
 import {
@@ -17,9 +17,10 @@ import {
 	removeLink,
 	upsertLink,
 } from "../remote/links";
+import { createOrganization } from "../remote/org-create";
 import { type Authed, authedApi } from "../remote/session";
 
-type Opts = { json?: true; account?: string; path?: string; remote?: true };
+type Opts = { json?: true; account?: string; path?: string; remote?: true; slug?: string };
 
 const SCOPE = "org";
 
@@ -106,6 +107,40 @@ async function use(ctx: CommandContext, target: string, opts: Opts): Promise<num
 	return 0;
 }
 
+/**
+ * `warden org create [name]`: create an organization (asks name + slug at a terminal). A saved account with no
+ * organization yet takes it as its own; one that has one keeps it.
+ */
+async function create(ctx: CommandContext, name: string | undefined, opts: Opts): Promise<number> {
+	const authed = authedApi(ctx, pinFor(opts));
+	if (!authed.success) return fail(ctx, authed.error);
+	const result = await createOrganization(ctx, authed.data.api, {
+		...(name !== undefined ? { name } : {}),
+		...(opts.slug !== undefined ? { slug: opts.slug } : {}),
+	});
+	if (result.kind === "cancelled") {
+		ctx.ui.cancelled("Aborted.");
+		return 1;
+	}
+	if (result.kind === "failed") return fail(ctx, result.message);
+	const org = result.organization;
+	const account = authed.data.source === "saved" ? authed.data.account : undefined;
+	let saved = false;
+	if (authed.data.source === "saved" && authed.data.credentials.organizationId === undefined) {
+		const written = writeAccount(ctx.env, authed.data.account, { ...authed.data.credentials, organizationId: org.id });
+		if (!written.success) return fail(ctx, written.error);
+		saved = true;
+	}
+	if (opts.json) {
+		emit(ctx, true, { organization: org, ...(account ? { account } : {}), saved }, "");
+		return 0;
+	}
+	success(ctx, `created ${org.name} (${org.slug})${saved ? ` for account ${account}` : ""}`);
+	if (account && !saved)
+		note(ctx, `account ${account} still uses its organization; warden org use ${org.slug} to switch`);
+	return 0;
+}
+
 /** `warden org link [org]`: bind a directory (or git remote) to an account + org. */
 async function link(ctx: CommandContext, orgArg: string | undefined, opts: Opts): Promise<number> {
 	const authed = authedApi(ctx, pinFor(opts));
@@ -172,7 +207,7 @@ async function links(ctx: CommandContext, opts: Opts): Promise<number> {
 export const orgCommand = defineCommand({
 	name: "org",
 	group: "Account",
-	summary: "list warden cloud organizations, switch the active one or link directories to one",
+	summary: "list, create or switch warden cloud organizations, or link directories to one",
 	register: (cmd, ctx, done) => {
 		const accountHelp = "saved account (default: the one for this directory)";
 		cmd
@@ -188,6 +223,14 @@ export const orgCommand = defineCommand({
 			.option("--account <name>", accountHelp)
 			.option("--json", "machine-readable output")
 			.action(async (target, opts) => done(await use(ctx, target, opts)));
+		cmd
+			.command("create")
+			.description("create an organization (asks name and slug when omitted at a terminal)")
+			.argument("[name]", "organization name; the slug is made from it")
+			.option("--slug <slug>", "slug instead of the one made from the name (must be free)")
+			.option("--account <name>", accountHelp)
+			.option("--json", "machine-readable output")
+			.action(async (name, opts) => done(await create(ctx, name, opts)));
 		cmd
 			.command("link")
 			.description("bill remote devices claimed in this directory (or repo remote) to an organization")
