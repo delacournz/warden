@@ -2,7 +2,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import * as device from "../../core/api/device.api.ts";
 import { type Screen, useDeviceInput } from "../input/use-device-input.ts";
+import { logActions } from "../interaction/device-actions.ts";
+import { InteractionLayer } from "../interaction/interaction-layer.tsx";
 import { actionAvailability } from "../toolbar/availability.ts";
+import { DeviceControls } from "../toolbar/device-controls.tsx";
 import { CHROME_HEIGHT, CHROME_WIDTH, SCREEN_INSET } from "../toolbar/layout.ts";
 import { Titlebar } from "../toolbar/titlebar.tsx";
 import { overlayFor } from "./billing-state.ts";
@@ -16,6 +19,12 @@ import { useDeviceStream } from "./use-device-stream.ts";
 import type { StreamStatus } from "./whep-session.ts";
 
 const NOTICE_VISIBLE_MS = 4000;
+
+/**
+ * Switch for the stub interaction layer (touch visuals, right-click menu, typing mode). It runs
+ * beside the real tap path in `useDeviceInput`: both see every press, the layer only logs.
+ */
+const INTERACTION_LAYER = true;
 
 /** Screen corner radius that echoes the platform's hardware. */
 const SCREEN_RADIUS = { ios: "rounded-[26px]", android: "rounded-[16px]" } as const;
@@ -143,9 +152,11 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 				onScreenshot={() => void run(device.screenshot())}
 				onMinimize={minimize}
 				onClose={close}
+				deviceControls={<DeviceControls actions={logActions} disabledReason={availability.reason} />}
 			/>
 			<div className="min-h-0 flex-1" style={{ padding: `0 ${SCREEN_INSET}px ${SCREEN_INSET}px` }}>
-				<div
+				<InteractionLayer
+					enabled={INTERACTION_LAYER && canDrive}
 					className={`relative h-full overflow-hidden bg-black ${SCREEN_RADIUS[info.platform]} ${ring}`}
 					style={{ cursor: canDrive ? "pointer" : "default" }}
 				>
@@ -190,7 +201,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 							{notice}
 						</p>
 					)}
-				</div>
+				</InteractionLayer>
 			</div>
 		</div>
 	);

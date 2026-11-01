@@ -1,4 +1,5 @@
 import { Camera, Coins, Eye, HandPointing, Minus, PushPin, X } from "@phosphor-icons/react";
+import type { ReactNode } from "react";
 import type { Scope } from "../../core/api/device.api.ts";
 import type { StreamStatus } from "../stream/whep-session.ts";
 import type { Availability } from "./availability.ts";
@@ -29,6 +30,7 @@ type TitlebarProps = {
 	onScreenshot: () => void;
 	onMinimize: () => void;
 	onClose: () => void;
+	deviceControls?: ReactNode;
 };
 
 /**
@@ -53,6 +55,7 @@ export function Titlebar({
 	onScreenshot,
 	onMinimize,
 	onClose,
+	deviceControls,
 }: TitlebarProps) {
 	const state = STATUS[status];
 
@@ -86,6 +89,12 @@ export function Titlebar({
 				<IconButton label="Save screenshot" onClick={onScreenshot} disabledReason={availability.reason}>
 					<Camera />
 				</IconButton>
+				{scope === "drive" && deviceControls && (
+					<>
+						{deviceControls}
+						<span aria-hidden className="mx-0.5 h-3.5 w-px bg-border" />
+					</>
+				)}
 				{scope === "drive" && (
 					<IconToggle
 						label={driving ? "Driving. Switch to watching" : "Watching. Switch to driving"}

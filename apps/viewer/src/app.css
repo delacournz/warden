@@ -26,3 +26,24 @@ body {
 		display: none;
 	}
 }
+
+.touch-fx {
+	transition:
+		opacity 180ms ease-out,
+		transform 180ms ease-out,
+		width 120ms ease-out,
+		height 120ms ease-out;
+}
+
+.finger-fx {
+	transition:
+		background 90ms ease-out,
+		transform 90ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.touch-fx,
+	.finger-fx {
+		transition: none;
+	}
+}
