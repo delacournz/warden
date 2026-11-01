@@ -4,13 +4,40 @@ import { offerCandidateCount, summarizeStats } from "./whep-diagnostics.ts";
 describe("summarizeStats", () => {
 	test("picks inbound video counters and the nominated candidate pair", () => {
 		const report = new Map<string, Record<string, unknown>>([
-			["v", { type: "inbound-rtp", kind: "video", packetsReceived: 120, framesDecoded: 30, bytesReceived: 9000 }],
+			[
+				"v",
+				{
+					type: "inbound-rtp",
+					kind: "video",
+					packetsReceived: 120,
+					framesDecoded: 30,
+					bytesReceived: 9000,
+					framesReceived: 31,
+					keyFramesDecoded: 1,
+					pliCount: 2,
+					codecId: "c1",
+					decoderImplementation: "VideoToolbox",
+					frameWidth: 390,
+					frameHeight: 844,
+				},
+			],
+			["c1", { type: "codec", mimeType: "video/H265", payloadType: 35 }],
 			["a", { type: "inbound-rtp", kind: "audio", packetsReceived: 5 }],
 			["p0", { type: "candidate-pair", state: "failed", nominated: false }],
 			["p1", { type: "candidate-pair", state: "succeeded", nominated: true }],
 		]);
 		expect(summarizeStats(report)).toEqual({
-			video: { packetsReceived: 120, framesDecoded: 30, bytesReceived: 9000 },
+			video: {
+				packetsReceived: 120,
+				framesDecoded: 30,
+				bytesReceived: 9000,
+				framesReceived: 31,
+				keyFramesDecoded: 1,
+				pliCount: 2,
+				codec: "video/H265 (35)",
+				decoder: "VideoToolbox",
+				size: "390x844",
+			},
 			pair: "succeeded",
 		});
 	});
