@@ -163,7 +163,7 @@ async fn post_json(
 #[tauri::command]
 pub fn viewer_info(
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<ViewerInfo> {
     Ok(viewer_for(&registry, window.label())?.session.info())
 }
@@ -183,14 +183,14 @@ pub async fn fetch_device(
     Ok((status, body))
 }
 
-/// Close from the window's prompt and exit 0. Attached, it first tells the CLI the choice on stdout:
+/// Close from the window's prompt. Attached, it first tells this window's CLI the choice:
 /// `release` = Shut down (the CLI stops the device and ends the lease), otherwise Keep running. A
-/// detached viewer has no CLI listening, so it refuses `release` and closes without a line.
+/// detached viewer has no CLI listening, so it refuses `release` and closes without a line. Only
+/// this window closes; the host keeps the others (its `Destroyed` handler ends the relay).
 #[tauri::command]
 pub fn close_viewer(
-    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
     release: bool,
 ) -> CmdResult<()> {
     let viewer = viewer_for(&registry, window.label())?;
@@ -204,8 +204,9 @@ pub fn close_viewer(
     } else {
         viewer.send(&Event::Close { release });
     }
-    app.exit(0);
-    Ok(())
+    window
+        .destroy()
+        .map_err(|e| ApiError::new("WINDOW", e.to_string()))
 }
 
 /// Open the launch-time billing URL in the system browser. Takes no argument: JS cannot choose
@@ -214,7 +215,7 @@ pub fn close_viewer(
 pub fn open_billing(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
     let Some(url) = viewer_for(&registry, window.label())?.session.billing_url() else {
         return Err(ApiError::new(
@@ -236,7 +237,7 @@ pub struct WhepAnswer {
 pub async fn whep_offer(
     sdp: String,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<WhepAnswer> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
@@ -273,7 +274,7 @@ pub async fn delete_resource(client: &reqwest::Client, c: &Credentials, resource
 #[tauri::command]
 pub async fn whep_close(
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
@@ -288,7 +289,7 @@ pub async fn tap(
     x: i64,
     y: i64,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
@@ -311,7 +312,7 @@ pub async fn swipe(
     to_y: i64,
     duration_ms: Option<u32>,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
@@ -330,7 +331,7 @@ pub async fn input(
     text: String,
     clear_first: Option<bool>,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
@@ -346,7 +347,7 @@ pub async fn input(
 pub async fn open_url(
     url: String,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
@@ -366,7 +367,7 @@ pub async fn open_url(
 pub async fn screenshot(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<Option<String>> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
@@ -398,7 +399,7 @@ pub async fn screenshot(
 #[tauri::command]
 pub fn viewer_streaming(
     window: tauri::WebviewWindow,
-    registry: State<'_, Registry>,
+    registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
     viewer_for(&registry, window.label())?.announce_streaming();
     Ok(())

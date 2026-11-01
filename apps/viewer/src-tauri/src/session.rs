@@ -1,10 +1,10 @@
-//! The session handed over on stdin, and the stdout events going back.
+//! The session a CLI hands over on stdin (relayed to the host), and the stdout events going back.
 //!
 //! The first stdin line is the whole session; every later line is a token refresh. The token lives
 //! in `SessionState` and is never serialised towards the webview.
 
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::sync::RwLock;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -130,18 +130,6 @@ pub fn parse_refresh(line: &str) -> Result<Refresh, String> {
     Ok(refresh)
 }
 
-/// Read the first line of `reader` as the session.
-pub fn read_start<R: BufRead>(reader: &mut R) -> Result<Session, StartError> {
-    let mut line = String::new();
-    let read = reader
-        .read_line(&mut line)
-        .map_err(|e| StartError::Read(e.to_string()))?;
-    if read == 0 {
-        return Err(StartError::Eof);
-    }
-    parse_session(&line)
-}
-
 pub struct SessionState(RwLock<Session>);
 
 impl SessionState {
@@ -213,22 +201,6 @@ impl SessionState {
     }
 }
 
-/// Apply every remaining line as a refresh, then call `on_eof`. A malformed line is logged and
-/// skipped so one bad refresh never ends the session.
-pub fn pump_refreshes<R: BufRead>(reader: R, state: &SessionState, on_eof: impl FnOnce()) {
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
-            continue;
-        }
-        match parse_refresh(&line) {
-            Ok(refresh) => state.apply_refresh(refresh),
-            Err(e) => log::warn!("ignoring stdin line: {e}"),
-        }
-    }
-    on_eof();
-}
-
 /// True once `expires_at` (RFC 3339) is not after `now`. An unparseable value counts as expired, so
 /// a malformed token never keeps a detached window live.
 pub fn is_expired(expires_at: &str, now: OffsetDateTime) -> bool {
@@ -282,7 +254,6 @@ pub fn emit(event: &Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     const START: &str = r#"{"apiUrl":"https://api.warden.co.nz","deviceId":"d1","token":"wvt_a","expiresAt":"2030-01-01T00:00:00Z","scope":"drive","title":"iphone-17 · warden","platform":"ios","detached":false}"#;
 
@@ -308,22 +279,6 @@ mod tests {
     }
 
     #[test]
-    fn read_start_reports_eof() {
-        let mut empty = Cursor::new(Vec::new());
-        assert!(matches!(read_start(&mut empty), Err(StartError::Eof)));
-    }
-
-    #[test]
-    fn read_start_takes_only_the_first_line() {
-        let input = format!("{START}\n{{\"token\":\"wvt_b\",\"expiresAt\":\"x\"}}\n");
-        let mut cursor = Cursor::new(input.into_bytes());
-        assert!(read_start(&mut cursor).is_ok());
-        let mut rest = String::new();
-        cursor.read_line(&mut rest).unwrap();
-        assert!(rest.contains("wvt_b"));
-    }
-
-    #[test]
     fn refresh_replaces_the_token_in_memory() {
         let state = SessionState::new(parse_session(START).unwrap());
         state.apply_refresh(
@@ -345,16 +300,6 @@ mod tests {
         assert_eq!(state.credentials().scope, Scope::View);
         assert!(state.detached());
         assert_eq!(state.title(), "iphone-17 · warden");
-    }
-
-    #[test]
-    fn pump_applies_refreshes_skips_junk_and_signals_eof() {
-        let state = SessionState::new(parse_session(START).unwrap());
-        let input = "{\"token\":\"wvt_b\",\"expiresAt\":\"e1\"}\nnot json\n\n{\"token\":\"wvt_c\",\"expiresAt\":\"e2\"}\n";
-        let mut eof = false;
-        pump_refreshes(Cursor::new(input.as_bytes()), &state, || eof = true);
-        assert!(eof);
-        assert_eq!(state.credentials().token, "wvt_c");
     }
 
     #[test]

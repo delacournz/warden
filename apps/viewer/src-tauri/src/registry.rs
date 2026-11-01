@@ -9,18 +9,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-/// Where one window's contract events go: stdout of a single-window process, or its relay.
+/// Where one window's contract events go: the relay that opened it.
 pub trait EventSink: Send + Sync {
     fn event(&self, event: &Event);
-}
-
-/// The single-window sink: JSON lines on this process's stdout.
-pub struct StdoutSink;
-
-impl EventSink for StdoutSink {
-    fn event(&self, event: &Event) {
-        crate::session::emit(event);
-    }
+    /// The window's session ended for this relay (window closed, EOF, superseded, ...).
+    fn closed(&self, _reason: crate::ipc::CloseReason) {}
 }
 
 /// The webview label for a device: `dev-<deviceId>`, with anything outside Tauri's label alphabet
@@ -82,6 +75,7 @@ impl Viewer {
         *self.resource.lock().unwrap_or_else(|e| e.into_inner()) = resource;
     }
 
+    #[cfg(test)]
     pub fn resource(&self) -> Option<String> {
         self.resource
             .lock()
@@ -200,6 +194,15 @@ impl Registry {
             v.close();
         }
         removed
+    }
+
+    pub fn labels(&self) -> Vec<String> {
+        self.viewers
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect()
     }
 
     pub fn len(&self) -> usize {

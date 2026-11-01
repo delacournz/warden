@@ -51,8 +51,16 @@ pub enum CloseReason {
 pub enum ToRelay {
     Ready,
     Streaming,
-    Closed { reason: CloseReason },
-    Error { message: String },
+    /// The user closed the window from its prompt; `release` = Shut down. Attached only.
+    Close {
+        release: bool,
+    },
+    Closed {
+        reason: CloseReason,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// One frame as a JSON line including the trailing `\n`.
@@ -369,6 +377,7 @@ pub async fn connect(ep: &Endpoint) -> io::Result<Conn> {
 #[cfg(unix)]
 pub struct Listener {
     inner: tokio::net::UnixListener,
+    #[cfg_attr(not(test), allow(dead_code))]
     path: PathBuf,
     uid: u32,
 }
@@ -412,7 +421,9 @@ impl Listener {
         }
     }
 
-    /// Unlink the socket file (best effort). Drop does not unlink.
+    /// Unlink the socket file (best effort). Drop does not unlink. The app's host never returns
+    /// its listener from the accept loop and unlinks through its `Endpoint` at exit instead.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn close(self) {
         unlink(&self.path);
     }
@@ -445,6 +456,7 @@ pub struct Endpoint {
 }
 
 /// `\\.\pipe\warden-viewer-{key}-{user}`, user reduced to `[A-Za-z0-9_.-]`.
+#[cfg_attr(unix, allow(dead_code))]
 pub fn pipe_name(key: &str, user: &str) -> String {
     let user: String = user
         .chars()
@@ -651,6 +663,10 @@ mod tests {
         assert_eq!(encode(&ToHost::Eof), "{\"t\":\"eof\"}\n");
         assert_eq!(encode(&ToRelay::Ready), "{\"t\":\"ready\"}\n");
         assert_eq!(encode(&ToRelay::Streaming), "{\"t\":\"streaming\"}\n");
+        assert_eq!(
+            encode(&ToRelay::Close { release: true }),
+            "{\"t\":\"close\",\"release\":true}\n"
+        );
         assert_eq!(
             encode(&ToRelay::Closed {
                 reason: CloseReason::Superseded
