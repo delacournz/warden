@@ -11,6 +11,7 @@ import { Titlebar } from "../toolbar/titlebar.tsx";
 import { overlayFor } from "./billing-state.ts";
 import { asksOnClose } from "./close-intent.ts";
 import { ClosePrompt } from "./close-prompt.tsx";
+import { DemoOrbHint } from "./demo-orb-hint.tsx";
 import { StoppedState } from "./stopped-state.tsx";
 import { StreamState } from "./stream-state.tsx";
 import { type Ripple, TapRipples } from "./tap-ripples.tsx";
@@ -76,7 +77,7 @@ function message(e: unknown): string {
 export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: boolean }) {
 	const billing = useBilling();
 	const overlay = overlayFor(expired, billing);
-	const { native, videoRef, canvasRef, status: streamStatus, size, error } = useDeviceStream(overlay === null);
+	const { native, demo, videoRef, canvasRef, status: streamStatus, size, error } = useDeviceStream(overlay === null);
 	const status: StreamStatus = overlay === "expired" ? "expired" : overlay ? "stopped" : streamStatus;
 	const [driving, setDriving] = useState(info.scope === "drive");
 	const [pinned, setPinned] = useState(false);
@@ -189,6 +190,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 						/>
 					)}
 					<TapRipples ripples={ripples} onDone={removeRipple} />
+					{demo && size && <DemoOrbHint size={size} />}
 					<StreamState status={status} unreachable={unreachable} />
 					{(overlay === "out-of-credits" || overlay === "stopped") && (
 						<StoppedState overlay={overlay} hasBillingUrl={info.hasBillingUrl} onTopUp={topUp} />

@@ -29,3 +29,14 @@ export function demoDevice(value: string | undefined): VideoSize | null {
 export function rotated(size: VideoSize): VideoSize {
 	return { width: size.height, height: size.width };
 }
+
+/** Demo points per pixel: 440 pt across the short edge, like an iPhone Pro Max. */
+export function demoUnit(size: VideoSize): number {
+	return Math.min(size.width, size.height) / 440;
+}
+
+/** Where the demo heartbeat orb sits, in picture pixels: 24 pt in from the top-right corner. */
+export function orbCentre(size: VideoSize): { x: number; y: number } {
+	const unit = demoUnit(size);
+	return { x: size.width - 24 * unit, y: 24 * unit };
+}

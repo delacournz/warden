@@ -1,9 +1,27 @@
 import { type RefObject, useEffect, useState } from "react";
-import { rotated } from "./demo-device.ts";
+import { demoUnit, orbCentre, rotated } from "./demo-device.ts";
 import type { VideoSize } from "./use-whep.ts";
 import type { StreamError, StreamStatus } from "./whep-session.ts";
 
 const TILE_COLOURS = ["#ef7470", "#f8d85b", "#84ca7f", "#5b93f8", "#b97ef8", "#f0a240"];
+
+/** A glowing white orb at (x, y) whose size and glow breathe with `pulse` (0..1). */
+function drawOrb(ctx: CanvasRenderingContext2D, x: number, y: number, unit: number, pulse: number) {
+	const core = (2.5 + 1 * pulse) * unit;
+	const glow = core * (2.5 + 1.5 * pulse);
+	const halo = ctx.createRadialGradient(x, y, 0, x, y, glow);
+	halo.addColorStop(0, `rgba(255, 255, 255, ${0.55 + 0.35 * pulse})`);
+	halo.addColorStop(0.35, `rgba(255, 255, 255, ${0.15 + 0.2 * pulse})`);
+	halo.addColorStop(1, "rgba(255, 255, 255, 0)");
+	ctx.fillStyle = halo;
+	ctx.beginPath();
+	ctx.arc(x, y, glow, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.fillStyle = "#ffffff";
+	ctx.beginPath();
+	ctx.arc(x, y, core, 0, Math.PI * 2);
+	ctx.fill();
+}
 
 function draw(ctx: CanvasRenderingContext2D, size: VideoSize, t: number) {
 	const { width: w, height: h } = size;
@@ -14,7 +32,7 @@ function draw(ctx: CanvasRenderingContext2D, size: VideoSize, t: number) {
 	ctx.fillStyle = bg;
 	ctx.fillRect(0, 0, w, h);
 
-	const unit = Math.min(w, h) / 440;
+	const unit = demoUnit(size);
 	const cols = w > h ? 8 : 4;
 	const tile = 66 * unit;
 	const gap = (w - cols * tile) / (cols + 1);
@@ -32,13 +50,10 @@ function draw(ctx: CanvasRenderingContext2D, size: VideoSize, t: number) {
 	ctx.lineWidth = 4 * unit;
 	ctx.strokeRect(ctx.lineWidth / 2, ctx.lineWidth / 2, w - ctx.lineWidth, h - ctx.lineWidth);
 
-	const r = 10 * unit;
-	const x = r + ((Math.sin(t / 900) + 1) / 2) * (w - 2 * r);
-	ctx.fillStyle = "#ffffff";
-	ctx.beginPath();
-	ctx.arc(x, h - 40 * unit, r, 0, Math.PI * 2);
-	ctx.fill();
+	const orb = orbCentre(size);
+	drawOrb(ctx, orb.x, orb.y, unit, (Math.sin(t / 500) + 1) / 2);
 
+	ctx.fillStyle = "#ffffff";
 	ctx.font = `600 ${16 * unit}px ui-monospace, monospace`;
 	ctx.textAlign = "center";
 	ctx.fillText(`DEMO ${w}×${h} · press R to rotate`, w / 2, 60 * unit);

@@ -24,5 +24,5 @@ export function useDeviceStream(enabled: boolean) {
 	const nativeStream = useNativeStream(canvasRef, enabled && native && DEMO === null);
 	const demo = useDemoStream(canvasRef, enabled && DEMO !== null, DEMO_SIZE);
 	const stream = DEMO !== null ? demo : native ? nativeStream : webview;
-	return { native, videoRef, canvasRef, ...stream };
+	return { native, demo: DEMO !== null, videoRef, canvasRef, ...stream };
 }
