@@ -1,12 +1,13 @@
-//! Commands that talk to warden-api with the bearer token held in `SessionState`.
+//! Commands that talk to warden-api with the bearer token held in the calling window's session.
 //!
 //! The webview makes no network requests: it calls these commands and gets data or a
-//! `{code, message}` error back.
+//! `{code, message}` error back. Every command resolves its session by the calling window's label,
+//! so one host process serves many device windows.
 
-use crate::session::{emit, Credentials, Event, Scope, SessionState, ViewerInfo};
+use crate::registry::{Registry, Viewer};
+use crate::session::{Credentials, Event, Scope, ViewerInfo};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::Arc;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -46,29 +47,11 @@ fn network_error(unreachable: bool, message: &str) -> ApiError {
 
 type CmdResult<T> = Result<T, ApiError>;
 
-pub struct DeviceState {
-    client: reqwest::Client,
-    resource: Mutex<Option<String>>,
-    streaming_announced: AtomicBool,
-}
-
-impl DeviceState {
-    pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("http client"),
-            resource: Mutex::new(None),
-            streaming_announced: AtomicBool::new(false),
-        }
-    }
-}
-
-impl Default for DeviceState {
-    fn default() -> Self {
-        Self::new()
-    }
+/// The calling window's viewer, or `NO_SESSION` when the window has none (closing, or unknown).
+fn viewer_for(registry: &Registry, label: &str) -> CmdResult<Arc<Viewer>> {
+    registry
+        .get(label)
+        .ok_or_else(|| ApiError::new("NO_SESSION", "this window has no session"))
 }
 
 fn trim_slash(s: &str) -> &str {
@@ -162,13 +145,12 @@ async fn ok_or_failure(response: reqwest::Response) -> CmdResult<reqwest::Respon
 }
 
 async fn post_json(
-    state: &DeviceState,
+    client: &reqwest::Client,
     c: &Credentials,
     tail: &str,
     body: serde_json::Value,
 ) -> CmdResult<()> {
-    let response = state
-        .client
+    let response = client
         .post(device_url(c, tail))
         .bearer_auth(&c.token)
         .json(&body)
@@ -179,17 +161,19 @@ async fn post_json(
 }
 
 #[tauri::command]
-pub fn viewer_info(session: State<'_, SessionState>) -> ViewerInfo {
-    session.info()
+pub fn viewer_info(
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
+) -> CmdResult<ViewerInfo> {
+    Ok(viewer_for(&registry, window.label())?.session.info())
 }
 
 /// One `GET /v1/devices/:id` with the viewer token: the status code and body, for `billing`.
 pub async fn fetch_device(
-    state: &DeviceState,
+    client: &reqwest::Client,
     c: &Credentials,
 ) -> Result<(u16, String), reqwest::Error> {
-    let response = state
-        .client
+    let response = client
         .get(device_url(c, ""))
         .bearer_auth(&c.token)
         .send()
@@ -205,10 +189,12 @@ pub async fn fetch_device(
 #[tauri::command]
 pub fn close_viewer(
     app: tauri::AppHandle,
-    session: State<'_, SessionState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
     release: bool,
 ) -> CmdResult<()> {
-    if session.detached() {
+    let viewer = viewer_for(&registry, window.label())?;
+    if viewer.session.detached() {
         if release {
             return Err(ApiError::new(
                 "DETACHED",
@@ -216,7 +202,7 @@ pub fn close_viewer(
             ));
         }
     } else {
-        emit(&Event::Close { release });
+        viewer.send(&Event::Close { release });
     }
     app.exit(0);
     Ok(())
@@ -225,8 +211,12 @@ pub fn close_viewer(
 /// Open the launch-time billing URL in the system browser. Takes no argument: JS cannot choose
 /// where this goes.
 #[tauri::command]
-pub fn open_billing(app: tauri::AppHandle, session: State<'_, SessionState>) -> CmdResult<()> {
-    let Some(url) = session.billing_url() else {
+pub fn open_billing(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
+) -> CmdResult<()> {
+    let Some(url) = viewer_for(&registry, window.label())?.session.billing_url() else {
         return Err(ApiError::new(
             "NO_BILLING_URL",
             "no billing URL was provided",
@@ -245,12 +235,13 @@ pub struct WhepAnswer {
 #[tauri::command]
 pub async fn whep_offer(
     sdp: String,
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
 ) -> CmdResult<WhepAnswer> {
-    let c = session.credentials();
-    let response = device
-        .client
+    let viewer = viewer_for(&registry, window.label())?;
+    let c = viewer.session.credentials();
+    let response = registry
+        .client()
         .post(device_url(&c, "/stream"))
         .bearer_auth(&c.token)
         .header("content-type", SDP)
@@ -266,33 +257,28 @@ pub async fn whep_offer(
         .ok_or_else(|| ApiError::new("NO_LOCATION", "stream response had no Location"))?;
     let resource = resolve_location(&c.api_url, &location)?;
     let answer = response.text().await?;
-    *device.resource.lock().unwrap_or_else(|e| e.into_inner()) = Some(resource);
+    viewer.set_resource(Some(resource));
     Ok(WhepAnswer { sdp: answer })
+}
+
+/// DELETE a WHEP resource. Best effort: the server expires it on its own, so a failure is logged.
+pub async fn delete_resource(client: &reqwest::Client, c: &Credentials, resource: String) {
+    if let Err(e) = client.delete(resource).bearer_auth(&c.token).send().await {
+        log::warn!("whep close failed: {}", e.without_url());
+    }
 }
 
 /// Tear the stream down. Best effort: a missing resource is not an error, and a failed DELETE is
 /// logged because the server expires the resource on its own.
 #[tauri::command]
 pub async fn whep_close(
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
 ) -> CmdResult<()> {
-    let c = session.credentials();
-    let resource = device
-        .resource
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take();
-    if let Some(resource) = resource {
-        if let Err(e) = device
-            .client
-            .delete(resource)
-            .bearer_auth(&c.token)
-            .send()
-            .await
-        {
-            log::warn!("whep close failed: {}", e.without_url());
-        }
+    let viewer = viewer_for(&registry, window.label())?;
+    let c = viewer.session.credentials();
+    if let Some(resource) = viewer.take_resource() {
+        delete_resource(registry.client(), &c, resource).await;
     }
     Ok(())
 }
@@ -301,12 +287,19 @@ pub async fn whep_close(
 pub async fn tap(
     x: i64,
     y: i64,
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
 ) -> CmdResult<()> {
-    let c = session.credentials();
+    let viewer = viewer_for(&registry, window.label())?;
+    let c = viewer.session.credentials();
     require_drive(&c)?;
-    post_json(&device, &c, "/tap", serde_json::json!({ "x": x, "y": y })).await
+    post_json(
+        registry.client(),
+        &c,
+        "/tap",
+        serde_json::json!({ "x": x, "y": y }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -317,10 +310,11 @@ pub async fn swipe(
     to_x: i64,
     to_y: i64,
     duration_ms: Option<u32>,
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
 ) -> CmdResult<()> {
-    let c = session.credentials();
+    let viewer = viewer_for(&registry, window.label())?;
+    let c = viewer.session.credentials();
     require_drive(&c)?;
     let mut body = serde_json::json!({
         "fromX": from_x, "fromY": from_y, "toX": to_x, "toY": to_y,
@@ -328,34 +322,42 @@ pub async fn swipe(
     if let Some(ms) = duration_ms {
         body["durationMs"] = ms.into();
     }
-    post_json(&device, &c, "/swipe", body).await
+    post_json(registry.client(), &c, "/swipe", body).await
 }
 
 #[tauri::command]
 pub async fn input(
     text: String,
     clear_first: Option<bool>,
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
 ) -> CmdResult<()> {
-    let c = session.credentials();
+    let viewer = viewer_for(&registry, window.label())?;
+    let c = viewer.session.credentials();
     require_drive(&c)?;
     let mut body = serde_json::json!({ "text": text });
     if let Some(clear) = clear_first {
         body["clearFirst"] = clear.into();
     }
-    post_json(&device, &c, "/input", body).await
+    post_json(registry.client(), &c, "/input", body).await
 }
 
 #[tauri::command]
 pub async fn open_url(
     url: String,
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
 ) -> CmdResult<()> {
-    let c = session.credentials();
+    let viewer = viewer_for(&registry, window.label())?;
+    let c = viewer.session.credentials();
     require_drive(&c)?;
-    post_json(&device, &c, "/open-url", serde_json::json!({ "url": url })).await
+    post_json(
+        registry.client(),
+        &c,
+        "/open-url",
+        serde_json::json!({ "url": url }),
+    )
+    .await
 }
 
 /// Fetch a PNG, ask where to save it, write it. Returns the path, or None when the panel was
@@ -363,12 +365,13 @@ pub async fn open_url(
 #[tauri::command]
 pub async fn screenshot(
     app: tauri::AppHandle,
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
 ) -> CmdResult<Option<String>> {
-    let c = session.credentials();
-    let response = device
-        .client
+    let viewer = viewer_for(&registry, window.label())?;
+    let c = viewer.session.credentials();
+    let response = registry
+        .client()
         .get(device_url(&c, "/screenshot"))
         .bearer_auth(&c.token)
         .send()
@@ -391,12 +394,14 @@ pub async fn screenshot(
     Ok(Some(path.display().to_string()))
 }
 
-/// JS calls this when the first frame plays. The event goes out once per process.
+/// JS calls this when the first frame plays. The event goes to this window's sink, once per session.
 #[tauri::command]
-pub fn viewer_streaming(device: State<'_, DeviceState>) {
-    if !device.streaming_announced.swap(true, Ordering::SeqCst) {
-        emit(&Event::Streaming);
-    }
+pub fn viewer_streaming(
+    window: tauri::WebviewWindow,
+    registry: State<'_, Registry>,
+) -> CmdResult<()> {
+    viewer_for(&registry, window.label())?.announce_streaming();
+    Ok(())
 }
 
 /// Resize the window so the video area has the device's aspect ratio. `chrome_height` is the
@@ -492,6 +497,20 @@ mod tests {
         assert_eq!(origin("https://a.b:8080/x/y"), Some("https://a.b:8080"));
         assert_eq!(origin("https://a.b"), Some("https://a.b"));
         assert_eq!(origin("/x"), None);
+    }
+
+    #[test]
+    fn a_window_without_a_session_gets_no_session() {
+        let reg = Registry::new();
+        let e = viewer_for(&reg, "dev-d1").err().unwrap();
+        assert_eq!(e.code, "NO_SESSION");
+        reg.insert(Arc::new(Viewer::new(
+            "dev-d1",
+            crate::registry::testing::session("d1", "wvt_a"),
+            Arc::new(crate::registry::testing::RecordingSink::default()),
+        )));
+        assert!(viewer_for(&reg, "dev-d1").is_ok());
+        assert_eq!(viewer_for(&reg, "dev-d2").err().unwrap().code, "NO_SESSION");
     }
 
     #[test]

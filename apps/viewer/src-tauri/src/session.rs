@@ -149,6 +149,19 @@ impl SessionState {
         Self(RwLock::new(session))
     }
 
+    /// Swap the whole session (the same device was opened again by another `warden view`).
+    pub fn replace(&self, session: Session) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = session;
+    }
+
+    pub fn title(&self) -> String {
+        self.0
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .title
+            .clone()
+    }
+
     pub fn apply_refresh(&self, refresh: Refresh) {
         let mut session = self.0.write().unwrap_or_else(|e| e.into_inner());
         session.token = refresh.token;
@@ -318,6 +331,20 @@ mod tests {
         );
         assert_eq!(state.credentials().token, "wvt_b");
         assert_eq!(state.info().expires_at, "2031-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn replace_swaps_the_whole_session() {
+        let state = SessionState::new(parse_session(START).unwrap());
+        let next = START
+            .replace("wvt_a", "wvt_z")
+            .replace("\"drive\"", "\"view\"")
+            .replace("\"detached\":false", "\"detached\":true");
+        state.replace(parse_session(&next).unwrap());
+        assert_eq!(state.credentials().token, "wvt_z");
+        assert_eq!(state.credentials().scope, Scope::View);
+        assert!(state.detached());
+        assert_eq!(state.title(), "iphone-17 · warden");
     }
 
     #[test]
