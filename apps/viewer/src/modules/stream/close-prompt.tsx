@@ -1,6 +1,10 @@
 import { Button } from "@delacournz/apogee/button";
 import { Power } from "@phosphor-icons/react";
 import { useEffect, useRef } from "react";
+import { ShuttingDown } from "./stream-state.tsx";
+
+/** Where closing is: the prompt is up, Keep running is closing the window, or Shut down is stopping the device. */
+export type Closing = "asking" | "keeping" | "shutting-down";
 
 type ClosePromptProps = {
 	busy: boolean;
@@ -58,4 +62,13 @@ export function ClosePrompt({ busy, onKeep, onShutDown, onCancel }: ClosePromptP
 			</div>
 		</div>
 	);
+}
+
+type CloseOverlayProps = Omit<ClosePromptProps, "busy"> & { closing: Closing | null };
+
+/** The close prompt while asking (disabled while Keep running closes), then the shutting-down screen. */
+export function CloseOverlay({ closing, ...handlers }: CloseOverlayProps) {
+	if (closing === null) return null;
+	if (closing === "shutting-down") return <ShuttingDown />;
+	return <ClosePrompt busy={closing === "keeping"} {...handlers} />;
 }

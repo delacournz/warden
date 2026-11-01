@@ -10,7 +10,7 @@ import { CHROME_HEIGHT, CHROME_WIDTH, screenPadding } from "../toolbar/layout.ts
 import { Titlebar } from "../toolbar/titlebar.tsx";
 import { overlayFor } from "./billing-state.ts";
 import { asksOnClose } from "./close-intent.ts";
-import { ClosePrompt } from "./close-prompt.tsx";
+import { CloseOverlay, type Closing } from "./close-prompt.tsx";
 import { DemoOrbHint } from "./demo-orb-hint.tsx";
 import { PICTURE_CONTAINER_STYLE, pictureStyle } from "./picture-style.ts";
 import { StoppedState } from "./stopped-state.tsx";
@@ -103,14 +103,14 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 		device.viewerStreaming().catch(() => undefined);
 	}, [size, orientation]);
 
-	const [closing, setClosing] = useState<"asking" | "busy" | null>(null);
+	const [closing, setClosing] = useState<Closing | null>(null);
 	const asks = asksOnClose({ detached: info.detached, scope: info.scope, overlay });
 	const close = useCallback(() => {
 		if (asks) setClosing((current) => current ?? "asking");
 		else void getCurrentWindow().close();
 	}, [asks]);
 	const finishClose = (release: boolean) => {
-		setClosing("busy");
+		setClosing(release ? "shutting-down" : "keeping");
 		device.closeViewer(release).catch((e: unknown) => {
 			setClosing(null);
 			showNotice(message(e));
@@ -191,14 +191,12 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 					{(overlay === "out-of-credits" || overlay === "stopped") && (
 						<StoppedState overlay={overlay} hasBillingUrl={info.hasBillingUrl} onTopUp={topUp} />
 					)}
-					{closing && (
-						<ClosePrompt
-							busy={closing === "busy"}
-							onKeep={() => finishClose(false)}
-							onShutDown={() => finishClose(true)}
-							onCancel={cancelClose}
-						/>
-					)}
+					<CloseOverlay
+						closing={closing}
+						onKeep={() => finishClose(false)}
+						onShutDown={() => finishClose(true)}
+						onCancel={cancelClose}
+					/>
 					{notice && (
 						<p
 							role="alert"

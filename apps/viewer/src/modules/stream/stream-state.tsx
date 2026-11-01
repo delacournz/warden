@@ -33,16 +33,28 @@ function copyFor(status: StreamStatus, unreachable: boolean): Copy | null {
  */
 export function StreamState({ status, unreachable }: { status: StreamStatus; unreachable: boolean }) {
 	const copy = copyFor(status, unreachable);
-	if (!copy) return null;
+	return copy ? <StatusOverlay {...copy} /> : null;
+}
+
+/** Shown in place of the close prompt while Shut down stops the device. */
+export function ShuttingDown() {
+	return <StatusOverlay icon={<Spinner />} title="Shutting down" hint="Stopping the device and releasing the lease." />;
+}
+
+/**
+ * The centred icon, title and hint over the picture, shared by the stream states and shutting
+ * down. Above the picture and the stream states; window controls stay usable.
+ */
+function StatusOverlay({ icon, title, hint }: Copy) {
 	return (
 		<div
 			role="status"
 			aria-live="polite"
-			className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 px-8 text-center backdrop-blur-sm"
+			className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/70 px-8 text-center backdrop-blur-sm"
 		>
-			<div className="text-muted-foreground">{copy.icon}</div>
-			<p className="text-sm font-medium text-foreground">{copy.title}</p>
-			<p className="max-w-56 text-xs text-muted-foreground">{copy.hint}</p>
+			<div className="text-muted-foreground">{icon}</div>
+			<p className="text-sm font-medium text-foreground">{title}</p>
+			<p className="max-w-56 text-xs text-muted-foreground">{hint}</p>
 		</div>
 	);
 }
