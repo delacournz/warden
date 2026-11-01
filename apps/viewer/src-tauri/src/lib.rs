@@ -121,7 +121,6 @@ pub fn run() {
             device::viewer_streaming,
             device::fit_window,
             device::whep_offer,
-            device::whep_candidate,
             device::whep_close,
             device::tap,
             device::swipe,

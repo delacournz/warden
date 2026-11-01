@@ -12,7 +12,6 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 const SDP: &str = "application/sdp";
-const TRICKLE: &str = "application/trickle-ice-sdpfrag";
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct ApiError {
@@ -246,36 +245,6 @@ pub async fn whep_offer(
     let answer = response.text().await?;
     *device.resource.lock().unwrap_or_else(|e| e.into_inner()) = Some(resource);
     Ok(WhepAnswer { sdp: answer })
-}
-
-fn current_resource(device: &DeviceState) -> Option<String> {
-    device
-        .resource
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-}
-
-#[tauri::command]
-pub async fn whep_candidate(
-    fragment: String,
-    session: State<'_, SessionState>,
-    device: State<'_, DeviceState>,
-) -> CmdResult<()> {
-    let c = session.credentials();
-    let Some(resource) = current_resource(&device) else {
-        return Err(ApiError::new("NO_STREAM", "no stream resource yet"));
-    };
-    let response = device
-        .client
-        .patch(resource)
-        .bearer_auth(&c.token)
-        .header("content-type", TRICKLE)
-        .body(fragment)
-        .send()
-        .await?;
-    ok_or_failure(response).await?;
-    Ok(())
 }
 
 /// Tear the stream down. Best effort: a missing resource is not an error, and a failed DELETE is

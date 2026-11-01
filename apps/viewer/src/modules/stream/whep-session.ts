@@ -1,14 +1,29 @@
-import { DeviceError, whepCandidate, whepClose, whepOffer } from "../../core/api/device.api.ts";
-import { backoffDelay, candidateFragment } from "./whep.ts";
+import { DeviceError, whepClose, whepOffer } from "../../core/api/device.api.ts";
+import { backoffDelay, iceGatheringComplete } from "./whep.ts";
 
 export type StreamStatus = "connecting" | "streaming" | "reconnecting" | "expired" | "stopped";
 export type StreamError = { code: string; message: string };
 
 const DISCONNECT_GRACE_MS = 2000;
+const ICE_GATHER_TIMEOUT_MS = 2000;
 
 function toStreamError(e: unknown): StreamError {
 	if (e instanceof DeviceError) return { code: e.code, message: e.message };
 	return { code: "UNKNOWN", message: e instanceof Error ? e.message : String(e) };
+}
+
+/**
+ * Non-trickle WHEP offer/answer: wait for ICE gathering so the offer carries every candidate.
+ * `stale` stops it once the session was stopped or replaced while a step was in flight.
+ */
+async function negotiate(conn: RTCPeerConnection, stale: () => boolean): Promise<void> {
+	const offer = await conn.createOffer();
+	await conn.setLocalDescription(offer);
+	await iceGatheringComplete(conn, ICE_GATHER_TIMEOUT_MS);
+	if (stale()) return;
+	const answer = await whepOffer(conn.localDescription?.sdp ?? offer.sdp ?? "");
+	if (stale()) return;
+	await conn.setRemoteDescription({ type: "answer", sdp: answer.sdp });
 }
 
 type SessionHooks = {
@@ -18,7 +33,7 @@ type SessionHooks = {
 
 /**
  * One WHEP receive session into `video`. Signalling goes through the Rust commands; the peer
- * connection is recvonly. A `failed` connection, or one that stays `disconnected` past a short grace,
+ * connection is recvonly and non-trickle: the offer waits for ICE gathering and carries every candidate. A `failed` connection, or one that stays `disconnected` past a short grace,
  * is rebuilt with backoff. Returns `stop`, which tears everything down.
  */
 export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): () => void {
@@ -32,7 +47,6 @@ export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): 
 		clearTimeout(graceTimer);
 		if (pc) {
 			pc.onconnectionstatechange = null;
-			pc.onicecandidate = null;
 			pc.ontrack = null;
 			pc.close();
 			pc = null;
@@ -68,23 +82,6 @@ export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): 
 		};
 	};
 
-	const trickle = (conn: RTCPeerConnection) => {
-		let answered = false;
-		const queued: string[] = [];
-		conn.onicecandidate = (event) => {
-			const sdp = conn.localDescription?.sdp;
-			if (!event.candidate || !sdp) return;
-			const fragment = candidateFragment(event.candidate, sdp);
-			if (!fragment) return;
-			if (answered) whepCandidate(fragment).catch(() => undefined);
-			else queued.push(fragment);
-		};
-		return () => {
-			answered = true;
-			for (const fragment of queued.splice(0)) whepCandidate(fragment).catch(() => undefined);
-		};
-	};
-
 	const connect = async () => {
 		if (stopped) return;
 		const conn = new RTCPeerConnection();
@@ -95,16 +92,10 @@ export function startWhepSession(video: HTMLVideoElement, hooks: SessionHooks): 
 			const stream = event.streams[0] ?? new MediaStream([event.track]);
 			if (video.srcObject !== stream) video.srcObject = stream;
 		};
-		const markAnswered = trickle(conn);
 		watchConnection(conn);
 
 		try {
-			const offer = await conn.createOffer();
-			await conn.setLocalDescription(offer);
-			const answer = await whepOffer(conn.localDescription?.sdp ?? offer.sdp ?? "");
-			if (stopped || pc !== conn) return;
-			await conn.setRemoteDescription({ type: "answer", sdp: answer.sdp });
-			markAnswered();
+			await negotiate(conn, () => stopped || pc !== conn);
 		} catch (e) {
 			if (stopped) return;
 			const error = toStreamError(e);
