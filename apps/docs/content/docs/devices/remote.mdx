@@ -31,7 +31,7 @@ warden login                           # your default account
 warden login --account client          # a second account, e.g. a client's
 warden account                         # * marks the default, > the one this directory uses
 
-warden org link acme --path ~/orca/workspaces/acme              # every worktree under it bills acme
+warden org link acme --path ~/code/acme                         # every checkout or worktree under it bills acme
 warden org link client-co --account client --path ~/code/client # this tree uses the client account
 warden org link side --remote          # any checkout of this repo's origin, wherever it lives
 warden org links                       # every link; * marks the one for this directory
