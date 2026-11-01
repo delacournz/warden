@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { SelectedSpec } from "@delacour/warden-core/affected/select";
-import { readResults } from "@delacour/warden-e2e/runner/results";
+import { resultsFiles } from "@delacour/warden-e2e/runner/results";
 import { realPath } from "../batch/spec-progress";
 import { attemptKey } from "../commands/batch";
 import { shardSpecs } from "./bun-runner";
@@ -82,7 +82,7 @@ export function shardRuns(plan: JobPlan, io: ShardRunsIO): ShardRuns {
 	const real = io.real ?? realPath;
 	const failedSpecs = async (state: ShardState): Promise<SelectedSpec[]> => {
 		const text = await io.readFile(join(state.out, "results.jsonl")).catch(() => undefined);
-		const judged = judgeJob(state.specs, text === undefined ? undefined : readResults(text), 1, real);
+		const judged = judgeJob(state.specs, text === undefined ? undefined : resultsFiles.read(text), 1, real);
 		const failed = state.specs.filter((f) => judged.get(f.id)?.verdict !== "passed");
 		return failed.length > 0 ? failed : [...state.specs];
 	};

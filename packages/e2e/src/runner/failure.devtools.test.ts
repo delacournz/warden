@@ -6,7 +6,7 @@ import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
 import { fakeMetros, fakePages } from "@delacour/warden-devtools/testing/devtools";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
-import { captureDevtoolsArtifacts } from "./failure";
+import { failureArtifacts } from "./failure";
 
 const cleanup: (() => void)[] = [];
 const dirs: string[] = [];
@@ -52,7 +52,7 @@ describe("captureDevtoolsArtifacts", () => {
 		await Bun.sleep(30);
 		queue.queue.push(fakePages.entry("https://api.test/me", { status: 500 }));
 		const dir = tmp();
-		const capture = await captureDevtoolsArtifacts(facet, dir);
+		const capture = await failureArtifacts.captureDevtoolsArtifacts(facet, dir);
 		expect(capture).toEqual({ files: ["console.jsonl", "network.jsonl"], problems: [] });
 		expect(readFileSync(join(dir, "console.jsonl"), "utf8")).toContain("kaboom");
 		expect(readFileSync(join(dir, "network.jsonl"), "utf8")).toContain("https://api.test/me");
@@ -64,7 +64,7 @@ describe("captureDevtoolsArtifacts", () => {
 			success: false,
 			error: { code: "io_failed", message: "no space" },
 		});
-		const capture = await captureDevtoolsArtifacts(stub.facet, tmp());
+		const capture = await failureArtifacts.captureDevtoolsArtifacts(stub.facet, tmp());
 		expect(capture.files).toEqual([]);
 		expect(capture.problems).toEqual(["devtools artifacts: io_failed: no space"]);
 	});
@@ -72,7 +72,7 @@ describe("captureDevtoolsArtifacts", () => {
 	test("a wedged facet is given up on after the timeout", async () => {
 		const stub = facetStubs.create();
 		stub.facet.attachArtifacts = () => new Promise(() => undefined);
-		const capture = await captureDevtoolsArtifacts(stub.facet, tmp(), 30);
+		const capture = await failureArtifacts.captureDevtoolsArtifacts(stub.facet, tmp(), 30);
 		expect(capture.files).toEqual([]);
 		expect(capture.problems[0]).toContain("timed out");
 	});
@@ -84,7 +84,7 @@ describe("captureDevtoolsArtifacts", () => {
 		};
 		const dir = tmp();
 		writeFileSync(join(dir, "keep"), "x");
-		const capture = await captureDevtoolsArtifacts(stub.facet, dir);
+		const capture = await failureArtifacts.captureDevtoolsArtifacts(stub.facet, dir);
 		expect(capture.problems).toEqual(["devtools artifacts: socket gone"]);
 	});
 });

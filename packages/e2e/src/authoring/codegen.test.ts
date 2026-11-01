@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { generateHelper, generateSpec, idKey, mergeIdsModule, parseIdsModule } from "./codegen";
+import { specGenerator } from "./codegen";
 import { ids as goldenIds } from "./codegen.golden/ids";
-import { allStepsRecording, recordingOf, selectorTarget } from "./recording.testing";
+import { recordingFixtures } from "./recording.testing";
 
 const GOLDEN = join(import.meta.dir, "codegen.golden");
 
@@ -17,31 +17,31 @@ function expectGolden(name: string, actual: string): void {
 /** `importFrom` for specs written next to the goldens, so `tsc` resolves them without the package self-reference. */
 const LOCAL = "../../index";
 
-const press = (selector: string, role: Parameters<typeof selectorTarget>[1] = "button") =>
-	({ kind: "press", at: 1, target: selectorTarget(selector, role) }) as const;
+const press = (selector: string, role: Parameters<typeof recordingFixtures.selectorTarget>[1] = "button") =>
+	({ kind: "press", at: 1, target: recordingFixtures.selectorTarget(selector, role) }) as const;
 
-function specFor(...steps: Parameters<typeof recordingOf>[0]): string {
-	return generateSpec(recordingOf(steps)).source;
+function specFor(...steps: Parameters<typeof recordingFixtures.recordingOf>[0]): string {
+	return specGenerator.generateSpec(recordingFixtures.recordingOf(steps)).source;
 }
 
 describe("goldens", () => {
 	test("a recording with every step kind", () => {
-		const { source: spec } = generateSpec(allStepsRecording(), { importFrom: LOCAL });
+		const { source: spec } = specGenerator.generateSpec(recordingFixtures.allStepsRecording(), { importFrom: LOCAL });
 		expectGolden("all-steps.e2e.ts", spec);
 	});
 
 	test("the default import is the published package name and resolves from inside the package", () => {
-		const { source: spec } = generateSpec(recordingOf([press('label="Sign in"')]));
+		const { source: spec } = specGenerator.generateSpec(recordingFixtures.recordingOf([press('label="Sign in"')]));
 		expectGolden("default-import.e2e.ts", spec);
 	});
 
 	test("ids imported from a module: known keys are reused, new ones are generated", () => {
-		const recording = recordingOf([
+		const recording = recordingFixtures.recordingOf([
 			press("id=sign-in-submit"),
-			{ kind: "fill", at: 2, target: selectorTarget("id=email", "textbox"), text: "me@example.com" },
+			{ kind: "fill", at: 2, target: recordingFixtures.selectorTarget("id=email", "textbox"), text: "me@example.com" },
 			press("id=sign-in-submit"),
 		]);
-		const result = generateSpec(recording, {
+		const result = specGenerator.generateSpec(recording, {
 			ids: { signIn: "sign-in-submit" },
 			idsImport: "./ids",
 			importFrom: LOCAL,
@@ -54,16 +54,20 @@ describe("goldens", () => {
 describe("test.use options", () => {
 	const useSignIn = { kind: "use", at: 1, module: join(GOLDEN, "helper-module.ts"), fn: "signIn" } as const;
 	const file = join(GOLDEN, "launch-none.e2e.ts");
-	const wait = { kind: "wait", at: 2, target: selectorTarget("id=todos-screen", "other") } as const;
+	const wait = { kind: "wait", at: 2, target: recordingFixtures.selectorTarget("id=todos-screen", "other") } as const;
 	const shared = { module: join(GOLDEN, "spec-options.ts"), name: "SPEC_OPTIONS", launch: "none" } as const;
 
 	test("a recording that opens the app itself turns the runner's launch off", () => {
-		const { source } = generateSpec(recordingOf([useSignIn, wait]), { importFrom: LOCAL, file, launch: "none" });
+		const { source } = specGenerator.generateSpec(recordingFixtures.recordingOf([useSignIn, wait]), {
+			importFrom: LOCAL,
+			file,
+			launch: "none",
+		});
 		expectGolden("launch-none.e2e.ts", source);
 	});
 
 	test("the suite's shared options are imported and passed; their launch already covers the recording", () => {
-		const { source } = generateSpec(recordingOf([useSignIn, wait]), {
+		const { source } = specGenerator.generateSpec(recordingFixtures.recordingOf([useSignIn, wait]), {
 			importFrom: LOCAL,
 			file: join(GOLDEN, "shared-options.e2e.ts"),
 			specOptions: shared,
@@ -73,20 +77,20 @@ describe("test.use options", () => {
 	});
 
 	test("shared options merge into the import of the same module, names in case-insensitive order", () => {
-		const recording = recordingOf([{ ...useSignIn, module: shared.module, fn: "zeta" }, wait]);
-		const { source } = generateSpec(recording, { file, specOptions: shared });
+		const recording = recordingFixtures.recordingOf([{ ...useSignIn, module: shared.module, fn: "zeta" }, wait]);
+		const { source } = specGenerator.generateSpec(recording, { file, specOptions: shared });
 		expect(source).toContain('import { SPEC_OPTIONS, zeta } from "./spec-options";');
 	});
 
 	test("shared options whose launch differs from the need are spread with the override", () => {
-		const recording = recordingOf([press("id=save")]);
-		const { source } = generateSpec(recording, {
+		const recording = recordingFixtures.recordingOf([press("id=save")]);
+		const { source } = specGenerator.generateSpec(recording, {
 			file,
 			specOptions: { ...shared, launch: "none" },
 			launch: "fresh",
 		});
 		expect(source).toContain('test.use({ ...SPEC_OPTIONS, launch: "fresh" });');
-		const bare = generateSpec(recording, {
+		const bare = specGenerator.generateSpec(recording, {
 			file,
 			specOptions: { module: shared.module, name: "OPTS" },
 			launch: "none",
@@ -95,7 +99,7 @@ describe("test.use options", () => {
 	});
 
 	test("shared options without a launch opinion are passed as they are", () => {
-		const { source } = generateSpec(recordingOf([press("id=save")]), {
+		const { source } = specGenerator.generateSpec(recordingFixtures.recordingOf([press("id=save")]), {
 			file,
 			specOptions: { ...shared, launch: undefined },
 		});
@@ -103,12 +107,17 @@ describe("test.use options", () => {
 	});
 
 	test("the default launch needs no line", () => {
-		expect(generateSpec(recordingOf([press("id=save")]), { launch: "fresh" }).source).not.toContain("test.use");
+		expect(
+			specGenerator.generateSpec(recordingFixtures.recordingOf([press("id=save")]), { launch: "fresh" }).source
+		).not.toContain("test.use");
 		expect(specFor(press("id=save"))).not.toContain("test.use");
 	});
 
 	test("a spec that needs no ids still gets the options after the imports", () => {
-		const { source } = generateSpec(recordingOf([press("label=Save")]), { file, launch: "none" });
+		const { source } = specGenerator.generateSpec(recordingFixtures.recordingOf([press("label=Save")]), {
+			file,
+			launch: "none",
+		});
 		expect(source.split("\n").slice(1, 5)).toEqual([
 			'import { test } from "@delacour/warden-e2e";',
 			"",
@@ -123,46 +132,46 @@ describe("use steps", () => {
 	const file = join(GOLDEN, "use-helper.e2e.ts");
 
 	test("a helper call imports the module relative to the spec and passes the fixtures on", () => {
-		const recording = recordingOf([
+		const recording = recordingFixtures.recordingOf([
 			useSignIn,
-			{ kind: "wait", at: 2, target: selectorTarget("id=todos-screen", "other") },
+			{ kind: "wait", at: 2, target: recordingFixtures.selectorTarget("id=todos-screen", "other") },
 			press("id=add-todo"),
 			{ kind: "screen", type: "screenshot", at: 4, name: "todos" },
 		]);
-		const { source } = generateSpec(recording, { importFrom: LOCAL, file });
+		const { source } = specGenerator.generateSpec(recording, { importFrom: LOCAL, file });
 		expectGolden("use-helper.e2e.ts", source);
 	});
 
 	test("imports from the same module are merged, one name per helper", () => {
-		const recording = recordingOf([useSignIn, { ...useSignIn, fn: "signOut" }, useSignIn]);
-		const { source } = generateSpec(recording, { file });
+		const recording = recordingFixtures.recordingOf([useSignIn, { ...useSignIn, fn: "signOut" }, useSignIn]);
+		const { source } = specGenerator.generateSpec(recording, { file });
 		expect(source).toContain('import { signIn, signOut } from "./helper-module";');
 		expect(source.match(/await signIn\(fixtures\);/g)).toHaveLength(2);
 		expect(source).toContain("async (fixtures) => {");
 	});
 
 	test("the import follows the spec's final path, above or below the module", () => {
-		const recording = recordingOf([useSignIn]);
-		const nested = generateSpec(recording, { file: join(GOLDEN, "deep", "er", "x.e2e.ts") }).source;
+		const recording = recordingFixtures.recordingOf([useSignIn]);
+		const nested = specGenerator.generateSpec(recording, { file: join(GOLDEN, "deep", "er", "x.e2e.ts") }).source;
 		expect(nested).toContain('from "../../helper-module"');
-		const parent = generateSpec(recording, { file: join(GOLDEN, "..", "x.e2e.ts") }).source;
+		const parent = specGenerator.generateSpec(recording, { file: join(GOLDEN, "..", "x.e2e.ts") }).source;
 		expect(parent).toContain('from "./codegen.golden/helper-module"');
 	});
 
 	test("a module that is not absolute is imported as written", () => {
-		const recording = recordingOf([{ ...useSignIn, module: "../helpers/steps" }]);
-		expect(generateSpec(recording, { file }).source).toContain('from "../helpers/steps"');
+		const recording = recordingFixtures.recordingOf([{ ...useSignIn, module: "../helpers/steps" }]);
+		expect(specGenerator.generateSpec(recording, { file }).source).toContain('from "../helpers/steps"');
 	});
 
 	test("relative imports are sorted by specifier (what the organize-imports lint wants)", () => {
-		const recording = recordingOf([useSignIn, press("id=save")]);
-		const { source } = generateSpec(recording, { file, idsImport: "./ids", idsMerged: true });
+		const recording = recordingFixtures.recordingOf([useSignIn, press("id=save")]);
+		const { source } = specGenerator.generateSpec(recording, { file, idsImport: "./ids", idsMerged: true });
 		expect(source.indexOf('from "./helper-module"')).toBeLessThan(source.indexOf('from "./ids"'));
 	});
 
 	test("the ids import and a helper module that share a specifier are one import", () => {
-		const recording = recordingOf([useSignIn, press("id=save")]);
-		const { source } = generateSpec(recording, { file, idsImport: "./helper-module", idsMerged: true });
+		const recording = recordingFixtures.recordingOf([useSignIn, press("id=save")]);
+		const { source } = specGenerator.generateSpec(recording, { file, idsImport: "./helper-module", idsMerged: true });
 		expect(source).toContain('import { ids, signIn } from "./helper-module";');
 		expect(source).toContain("const { screen } = fixtures;");
 	});
@@ -172,9 +181,13 @@ describe("use steps", () => {
 	});
 
 	test("a helper that calls another helper takes the fixtures object and imports it", () => {
-		const recording = recordingOf([useSignIn, press("id=save")]);
+		const recording = recordingFixtures.recordingOf([useSignIn, press("id=save")]);
 		const helperFile = join(GOLDEN, "composed.ts");
-		const generated = generateHelper(recording, { name: "afterSignIn", importFrom: LOCAL, file: helperFile });
+		const generated = specGenerator.generateHelper(recording, {
+			name: "afterSignIn",
+			importFrom: LOCAL,
+			file: helperFile,
+		});
 		if (!generated.success) throw new Error(generated.error.message);
 		expect(generated.data.source).toContain('import { signIn } from "./helper-module";');
 		expect(generated.data.source).toContain(
@@ -184,8 +197,11 @@ describe("use steps", () => {
 	});
 
 	test("a helper never imports itself", () => {
-		const recording = recordingOf([useSignIn]);
-		const generated = generateHelper(recording, { name: "again", file: join(GOLDEN, "helper-module.ts") });
+		const recording = recordingFixtures.recordingOf([useSignIn]);
+		const generated = specGenerator.generateHelper(recording, {
+			name: "again",
+			file: join(GOLDEN, "helper-module.ts"),
+		});
 		if (!generated.success) throw new Error(generated.error.message);
 		expect(generated.data.source).not.toContain('from "./helper-module"');
 	});
@@ -193,35 +209,40 @@ describe("use steps", () => {
 
 describe("ids", () => {
 	test("camelCases test ids into identifiers", () => {
-		expect(idKey("sign-in-submit")).toBe("signInSubmit");
-		expect(idKey("todos_screen")).toBe("todosScreen");
-		expect(idKey("Todo.Row 2")).toBe("todoRow2");
-		expect(idKey("2fa-code")).toBe("id2faCode");
-		expect(idKey("---")).toBe("id");
+		expect(specGenerator.idKey("sign-in-submit")).toBe("signInSubmit");
+		expect(specGenerator.idKey("todos_screen")).toBe("todosScreen");
+		expect(specGenerator.idKey("Todo.Row 2")).toBe("todoRow2");
+		expect(specGenerator.idKey("2fa-code")).toBe("id2faCode");
+		expect(specGenerator.idKey("---")).toBe("id");
 	});
 
 	test("generated keys never clash with provided ones", () => {
-		const recording = recordingOf([press("id=sign-in"), press("id=signIn")]);
-		const { ids } = generateSpec(recording, { ids: { signIn: "something-else" } });
+		const recording = recordingFixtures.recordingOf([press("id=sign-in"), press("id=signIn")]);
+		const { ids } = specGenerator.generateSpec(recording, { ids: { signIn: "something-else" } });
 		expect(ids).toEqual({ signIn: "something-else", signIn2: "sign-in", signIn3: "signIn" });
 	});
 
 	test("an inline ids map is emitted only when a test id is used", () => {
 		expect(specFor(press("label=Save", "button"))).not.toContain("const ids");
-		const used = generateSpec(recordingOf([press("id=save")]));
+		const used = specGenerator.generateSpec(recordingFixtures.recordingOf([press("id=save")]));
 		expect(used.source).toContain('const ids = {\n\tsave: "save",\n} as const;');
 		expect(used.source).toContain("screen.getByTestId(ids.save).tap()");
 	});
 
 	test("idsImport replaces the inline map and lists the new keys", () => {
-		const { source: spec } = generateSpec(recordingOf([press("id=save")]), { idsImport: "../ids" });
+		const { source: spec } = specGenerator.generateSpec(recordingFixtures.recordingOf([press("id=save")]), {
+			idsImport: "../ids",
+		});
 		expect(spec).toContain('import { ids } from "../ids";');
 		expect(spec).not.toContain("const ids");
 		expect(spec).toContain("New test ids to add to ../ids: save");
 	});
 
 	test("idsMerged leaves out the add-these-ids comment", () => {
-		const { source } = generateSpec(recordingOf([press("id=save")]), { idsImport: "../ids", idsMerged: true });
+		const { source } = specGenerator.generateSpec(recordingFixtures.recordingOf([press("id=save")]), {
+			idsImport: "../ids",
+			idsMerged: true,
+		});
 		expect(source).toContain('import { ids } from "../ids";');
 		expect(source).not.toContain("New test ids");
 	});
@@ -258,18 +279,20 @@ describe("locators", () => {
 });
 
 describe("steps", () => {
-	const target = selectorTarget("id=field", "textbox");
+	const target = recordingFixtures.selectorTarget("id=field", "textbox");
 
 	test("a secret is read from WARDEN_UI_SECRET_<NAME> and never written out", () => {
-		const { source: spec } = generateSpec(recordingOf([{ kind: "fill", at: 1, target, text: { secret: "PASSWORD" } }]));
+		const { source: spec } = specGenerator.generateSpec(
+			recordingFixtures.recordingOf([{ kind: "fill", at: 1, target, text: { secret: "PASSWORD" } }])
+		);
 		expect(spec).toContain("const passwordSecret = process.env.WARDEN_UI_SECRET_PASSWORD;");
 		expect(spec).toContain('throw new Error("set WARDEN_UI_SECRET_PASSWORD to run this spec")');
 		expect(spec).toContain(".fill(passwordSecret);");
 	});
 
 	test("a fill recorded with via paste passes it on; a plain or typed fill has no options", () => {
-		const { source: spec } = generateSpec(
-			recordingOf([
+		const { source: spec } = specGenerator.generateSpec(
+			recordingFixtures.recordingOf([
 				{ kind: "fill", at: 1, target, text: "a@b.co" },
 				{ kind: "fill", at: 2, target, text: "c@d.co", via: "paste" },
 				{ kind: "fill", at: 3, target, text: "e@f.co", via: "type" },
@@ -281,8 +304,8 @@ describe("steps", () => {
 	});
 
 	test("one declaration per secret, reused across steps", () => {
-		const { source: spec } = generateSpec(
-			recordingOf([
+		const { source: spec } = specGenerator.generateSpec(
+			recordingFixtures.recordingOf([
 				{ kind: "fill", at: 1, target, text: { secret: "PASSWORD" } },
 				{ kind: "fill", at: 2, target, text: { secret: "PASSWORD" } },
 			])
@@ -379,60 +402,71 @@ describe("steps", () => {
 	});
 
 	test("is deterministic", () => {
-		expect(generateSpec(allStepsRecording()).source).toBe(generateSpec(allStepsRecording()).source);
+		expect(specGenerator.generateSpec(recordingFixtures.allStepsRecording()).source).toBe(
+			specGenerator.generateSpec(recordingFixtures.allStepsRecording()).source
+		);
 	});
 });
 
 describe("notes", () => {
-	const field = selectorTarget("id=email", "textbox");
-	const recording = recordingOf([
+	const field = recordingFixtures.selectorTarget("id=email", "textbox");
+	const recording = recordingFixtures.recordingOf([
 		{ kind: "note", at: 1, text: "Open the app on the sign-in screen" },
-		{ kind: "wait", at: 2, target: selectorTarget("id=sign-in-screen", "other") },
+		{ kind: "wait", at: 2, target: recordingFixtures.selectorTarget("id=sign-in-screen", "other") },
 		{ kind: "note", at: 3, text: "Fill in\nthe credentials" },
 		{ kind: "fill", at: 4, target: field, text: "me@example.com" },
 		press("id=sign-in-submit"),
 		{ kind: "note", at: 6, text: "Lands on the home screen" },
-		{ kind: "wait", at: 7, target: selectorTarget("id=home-screen", "other") },
+		{ kind: "wait", at: 7, target: recordingFixtures.selectorTarget("id=home-screen", "other") },
 		{ kind: "note", at: 8, text: "Nothing else to check" },
 	]);
 
 	test("a note is a comment above the next step; between steps it gets a blank line before it", () => {
-		const { source } = generateSpec(recording, { importFrom: LOCAL });
+		const { source } = specGenerator.generateSpec(recording, { importFrom: LOCAL });
 		expectGolden("notes.e2e.ts", source);
 	});
 
 	test("a note at the very end is a trailing comment, not a step", () => {
-		const { source } = generateSpec(recording);
+		const { source } = specGenerator.generateSpec(recording);
 		expect(source).toContain("\t// Nothing else to check\n});");
 	});
 
 	test("a recording of notes only has no statements", () => {
-		const { source } = generateSpec(recordingOf([{ kind: "note", at: 1, text: "just a thought" }]));
+		const { source } = specGenerator.generateSpec(
+			recordingFixtures.recordingOf([{ kind: "note", at: 1, text: "just a thought" }])
+		);
 		expect(source).toContain('test("sign in", async () => {\n\t// just a thought\n});');
 	});
 });
 
 describe("title", () => {
 	test("options.title beats the recording title beats the name", () => {
-		const titled = recordingOf([{ kind: "home", at: 1 }], { title: "Sign in with email" });
-		expect(generateSpec(titled).source).toContain('test("Sign in with email"');
-		expect(generateSpec(titled, { title: "Signs in" }).source).toContain('test("Signs in"');
-		expect(generateSpec(recordingOf([{ kind: "home", at: 1 }])).source).toContain('test("sign in"');
+		const titled = recordingFixtures.recordingOf([{ kind: "home", at: 1 }], { title: "Sign in with email" });
+		expect(specGenerator.generateSpec(titled).source).toContain('test("Sign in with email"');
+		expect(specGenerator.generateSpec(titled, { title: "Signs in" }).source).toContain('test("Signs in"');
+		expect(specGenerator.generateSpec(recordingFixtures.recordingOf([{ kind: "home", at: 1 }])).source).toContain(
+			'test("sign in"'
+		);
 	});
 });
 
 describe("helpers", () => {
-	const recording = recordingOf([
+	const recording = recordingFixtures.recordingOf([
 		{ kind: "note", at: 1, text: "Open the sign-in form" },
 		press("id=sign-in-open"),
-		{ kind: "wait", at: 3, target: selectorTarget("id=sign-in-form", "other") },
-		{ kind: "fill", at: 4, target: selectorTarget("id=email", "textbox"), text: "me@example.com" },
-		{ kind: "fill", at: 5, target: selectorTarget("id=password", "textbox"), text: { secret: "PASSWORD" } },
+		{ kind: "wait", at: 3, target: recordingFixtures.selectorTarget("id=sign-in-form", "other") },
+		{ kind: "fill", at: 4, target: recordingFixtures.selectorTarget("id=email", "textbox"), text: "me@example.com" },
+		{
+			kind: "fill",
+			at: 5,
+			target: recordingFixtures.selectorTarget("id=password", "textbox"),
+			text: { secret: "PASSWORD" },
+		},
 		press("id=sign-in-submit"),
 	]);
 
 	test("a new helpers module: banner, imports, inline ids, documented exported function", () => {
-		const result = generateHelper(recording, {
+		const result = specGenerator.generateHelper(recording, {
 			name: "signIn",
 			prerequisite: "the app is open on the welcome screen",
 			importFrom: LOCAL,
@@ -457,7 +491,7 @@ describe("helpers", () => {
 			"}",
 			"",
 		].join("\n");
-		const result = generateHelper(recording, {
+		const result = specGenerator.generateHelper(recording, {
 			name: "signIn",
 			prerequisite: "on welcome",
 			existing,
@@ -470,11 +504,11 @@ describe("helpers", () => {
 	});
 
 	test("an existing export of the same name is refused without force and replaced in place with it", () => {
-		const first = generateHelper(recording, { name: "signIn", prerequisite: "old" });
+		const first = specGenerator.generateHelper(recording, { name: "signIn", prerequisite: "old" });
 		if (!first.success) throw new Error(first.error.message);
-		const again = generateHelper(recording, { name: "signIn", existing: first.data.source });
+		const again = specGenerator.generateHelper(recording, { name: "signIn", existing: first.data.source });
 		expect(!again.success && again.error.code).toBe("helper_exists");
-		const forced = generateHelper(recording, {
+		const forced = specGenerator.generateHelper(recording, {
 			name: "signIn",
 			prerequisite: "new",
 			existing: first.data.source,
@@ -488,7 +522,7 @@ describe("helpers", () => {
 	});
 
 	test("an export that is not a function declaration cannot be replaced, even with force", () => {
-		const result = generateHelper(recording, {
+		const result = specGenerator.generateHelper(recording, {
 			name: "signIn",
 			existing: "export const signIn = async () => {};\n",
 			force: true,
@@ -497,32 +531,40 @@ describe("helpers", () => {
 	});
 
 	test("the function name must be an identifier", () => {
-		const result = generateHelper(recording, { name: "sign-in" });
+		const result = specGenerator.generateHelper(recording, { name: "sign-in" });
 		expect(!result.success && result.error.code).toBe("bad_name");
 	});
 
 	test("ids from an ids module: imported, never declared inline", () => {
-		const result = generateHelper(recording, { name: "signIn", idsImport: "./ids" });
+		const result = specGenerator.generateHelper(recording, { name: "signIn", idsImport: "./ids" });
 		if (!result.success) throw new Error(result.error.message);
 		expect(result.data.source).toContain('import { ids } from "./ids";');
 		expect(result.data.source).not.toContain("const ids");
 	});
 
 	test("a helper that touches no fixture takes no parameter and imports no type", () => {
-		const result = generateHelper(recordingOf([{ kind: "note", at: 1, text: "nothing to do" }]), { name: "noop" });
+		const result = specGenerator.generateHelper(
+			recordingFixtures.recordingOf([{ kind: "note", at: 1, text: "nothing to do" }]),
+			{ name: "noop" }
+		);
 		if (!result.success) throw new Error(result.error.message);
 		expect(result.data.source).toContain("export async function noop(): Promise<void> {");
 		expect(result.data.source).not.toContain("import");
 	});
 
 	test("without a prerequisite the doc comment names the recording", () => {
-		const result = generateHelper(recordingOf([{ kind: "home", at: 1 }]), { name: "goHome" });
+		const result = specGenerator.generateHelper(recordingFixtures.recordingOf([{ kind: "home", at: 1 }]), {
+			name: "goHome",
+		});
 		if (!result.success) throw new Error(result.error.message);
 		expect(result.data.source).toContain('/** Replays the recording "sign in". */');
 	});
 
 	test("a prerequisite cannot close its own doc comment", () => {
-		const result = generateHelper(recordingOf([{ kind: "home", at: 1 }]), { name: "goHome", prerequisite: "a */ b" });
+		const result = specGenerator.generateHelper(recordingFixtures.recordingOf([{ kind: "home", at: 1 }]), {
+			name: "goHome",
+			prerequisite: "a */ b",
+		});
 		if (!result.success) throw new Error(result.error.message);
 		expect(result.data.source).toContain("/** Prerequisite: a * / b */");
 	});
@@ -530,7 +572,7 @@ describe("helpers", () => {
 
 describe("ids modules", () => {
 	test("a new module declares an exported ids map", () => {
-		const merged = mergeIdsModule(undefined, { signIn: "sign-in-submit", "odd-key": "odd" });
+		const merged = specGenerator.mergeIdsModule(undefined, { signIn: "sign-in-submit", "odd-key": "odd" });
 		expect(merged).toEqual({
 			success: true,
 			data: 'export const ids = {\n\tsignIn: "sign-in-submit",\n\t"odd-key": "odd",\n} as const;\n',
@@ -540,23 +582,23 @@ describe("ids modules", () => {
 	test("merging inserts only the missing keys and keeps everything else", () => {
 		const existing =
 			'// shared ids\nexport const ids = {\n\tsignIn: "sign-in-submit",\n} as const;\n\nexport const other = 1;\n';
-		const merged = mergeIdsModule(existing, { signIn: "changed", email: "email" });
+		const merged = specGenerator.mergeIdsModule(existing, { signIn: "changed", email: "email" });
 		if (!merged.success) throw new Error(merged.error.message);
 		expect(merged.data).toBe(
 			'// shared ids\nexport const ids = {\n\tsignIn: "sign-in-submit",\n\temail: "email",\n} as const;\n\nexport const other = 1;\n'
 		);
-		expect(mergeIdsModule(merged.data, { email: "email" })).toEqual({ success: true, data: merged.data });
+		expect(specGenerator.mergeIdsModule(merged.data, { email: "email" })).toEqual({ success: true, data: merged.data });
 	});
 
 	test("a module without an ids map cannot be merged into", () => {
-		const merged = mergeIdsModule("export const other = 1;\n", { a: "a" });
+		const merged = specGenerator.mergeIdsModule("export const other = 1;\n", { a: "a" });
 		expect(!merged.success && merged.error.code).toBe("ids_unreadable");
 	});
 
 	test("parseIdsModule reads the pairs back, quoted keys included", () => {
-		const source = mergeIdsModule(undefined, { signIn: "sign-in-submit", "odd-key": 'has "quotes"' });
+		const source = specGenerator.mergeIdsModule(undefined, { signIn: "sign-in-submit", "odd-key": 'has "quotes"' });
 		if (!source.success) throw new Error(source.error.message);
-		expect(parseIdsModule(source.data)).toEqual({ signIn: "sign-in-submit", "odd-key": 'has "quotes"' });
-		expect(parseIdsModule("export const nothing = 1;\n")).toEqual({});
+		expect(specGenerator.parseIdsModule(source.data)).toEqual({ signIn: "sign-in-submit", "odd-key": 'has "quotes"' });
+		expect(specGenerator.parseIdsModule("export const nothing = 1;\n")).toEqual({});
 	});
 });

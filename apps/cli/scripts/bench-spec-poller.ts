@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { readResults, type TestResult } from "@delacour/warden-e2e/runner/results";
+import { resultsFiles, type TestResult } from "@delacour/warden-e2e/runner/results";
 import { readFileFrom } from "../src/batch/results-tail";
 import { specPoller } from "../src/batch/spec-poller";
 import { failing, realPath, type SpecMark, specOf, type TrackedSpec, testLine } from "../src/batch/spec-progress";
@@ -59,7 +59,7 @@ function resultLine(specs: readonly TrackedSpec[], n: number): string {
 
 /** `resultsMarks` before PERF-5.1: parse the text, resolve every result's file against every spec */
 function legacyMarks(jsonl: string, specs: readonly TrackedSpec[], final: boolean): Record<string, SpecMark> {
-	const results = readResults(jsonl);
+	const results = resultsFiles.read(jsonl);
 	const owners = results.map((r) => specOf(r, specs, realPath)?.id);
 	const marks: Record<string, SpecMark> = {};
 	const last = new Map<string, number>();
@@ -91,7 +91,7 @@ async function runLegacy(path: string, specs: readonly TrackedSpec[]): Promise<R
 		const since = process.cpuUsage();
 		const text = await readFile(path, "utf8").catch(() => "");
 		legacyMarks(text, specs, tick === TICKS - 1);
-		const results = readResults(text);
+		const results = resultsFiles.read(text);
 		const fresh = results.slice(printed);
 		printed = results.length;
 		for (const result of fresh) {

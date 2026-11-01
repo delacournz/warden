@@ -18,57 +18,69 @@ export type TraceWriter = {
 /** Spans held in memory before they are appended without waiting for a step. */
 export const SPAN_BUFFER_MAX = 256;
 
-/** Append-only `trace.jsonl`; `mirror` also receives each event (the console reporter). */
-export function openTrace(path: string, mirror?: (event: TraceEvent) => void): TraceWriter {
-	let ready = false;
-	let pending: string[] = [];
-	const append = (lines: readonly string[]): void => {
-		if (!ready) {
-			mkdirSync(dirname(path), { recursive: true });
-			ready = true;
+class JsonlTraceWriter implements TraceWriter {
+	private ready = false;
+	private pending: string[] = [];
+
+	constructor(
+		readonly path: string,
+		private readonly mirror?: (event: TraceEvent) => void
+	) {}
+
+	write(event: TraceEvent): void {
+		const line = `${JSON.stringify(event)}\n`;
+		if (event.type === "span") {
+			this.pending.push(line);
+			if (this.pending.length >= SPAN_BUFFER_MAX) this.flush();
+		} else {
+			const lines = this.pending;
+			this.pending = [];
+			this.append([...lines, line]);
 		}
-		appendFileSync(path, lines.join(""));
-	};
-	const flush = (): void => {
-		if (pending.length === 0) return;
-		const lines = pending;
-		pending = [];
-		append(lines);
-	};
-	return {
-		path,
-		write(event) {
-			const line = `${JSON.stringify(event)}\n`;
-			if (event.type === "span") {
-				pending.push(line);
-				if (pending.length >= SPAN_BUFFER_MAX) flush();
-			} else {
-				const lines = pending;
-				pending = [];
-				append([...lines, line]);
-			}
-			mirror?.(event);
-		},
-		flush,
-	};
+		this.mirror?.(event);
+	}
+
+	flush(): void {
+		if (this.pending.length === 0) return;
+		const lines = this.pending;
+		this.pending = [];
+		this.append(lines);
+	}
+
+	private append(lines: readonly string[]): void {
+		if (!this.ready) {
+			mkdirSync(dirname(this.path), { recursive: true });
+			this.ready = true;
+		}
+		appendFileSync(this.path, lines.join(""));
+	}
 }
 
-/** Valid events in file order; blank, truncated and invalid lines are skipped. */
-export function readTrace(text: string): TraceEvent[] {
-	const events: TraceEvent[] = [];
-	for (const line of text.split("\n")) {
-		if (line.trim() === "") continue;
-		let json: unknown;
-		try {
-			json = JSON.parse(line);
-		} catch {
-			continue;
-		}
-		const parsed = traceEventSchema.safeParse(json);
-		if (parsed.success) events.push(parsed.data);
+export class TraceFile {
+	/** Append-only `trace.jsonl`; `mirror` also receives each event (the console reporter). */
+	open(path: string, mirror?: (event: TraceEvent) => void): TraceWriter {
+		return new JsonlTraceWriter(path, mirror);
 	}
-	return events;
+
+	/** Valid events in file order; blank, truncated and invalid lines are skipped. */
+	read(text: string): TraceEvent[] {
+		const events: TraceEvent[] = [];
+		for (const line of text.split("\n")) {
+			if (line.trim() === "") continue;
+			let json: unknown;
+			try {
+				json = JSON.parse(line);
+			} catch {
+				continue;
+			}
+			const parsed = traceEventSchema.safeParse(json);
+			if (parsed.success) events.push(parsed.data);
+		}
+		return events;
+	}
 }
+
+export const traceFile = new TraceFile();
 
 type TestRef = Pick<TestResult, "file" | "title" | "device">;
 
@@ -87,58 +99,70 @@ export type ConsoleLineOptions = {
 	depth?: number;
 };
 
-const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
+export class ConsoleLines {
+	/** `ts` as local `HH:MM:SS.mmm` (the clock warden stamps its logs with). */
+	clockOf(ts: number): string {
+		const d = new Date(ts);
+		return `${this.pad(d.getHours())}:${this.pad(d.getMinutes())}:${this.pad(d.getSeconds())}.${this.pad(d.getMilliseconds(), 3)}`;
+	}
 
-/** `ts` as local `HH:MM:SS.mmm` (the clock warden stamps its logs with). */
-export function clockOf(ts: number): string {
-	const d = new Date(ts);
-	return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
-}
+	/** `e2e/sign-in.e2e.ts` → `sign-in`. */
+	shortName(file: string): string {
+		return (file.split("/").pop() ?? file).replace(/\.e2e\.[cm]?[jt]sx?$/, "").replace(/\.[cm]?[jt]sx?$/, "");
+	}
 
-/** `e2e/sign-in.e2e.ts` → `sign-in`. */
-export function shortName(file: string): string {
-	return (file.split("/").pop() ?? file).replace(/\.e2e\.[cm]?[jt]sx?$/, "").replace(/\.[cm]?[jt]sx?$/, "");
-}
+	/**
+	 * The console line for an event, in PR #22's convention: `▶ test |<platform>| <file> › <title>` /
+	 * `■ … <status> <N.NN>s on <device>` per test, `▸`/`▪` per step. `undefined` for events that print
+	 * nothing (`screenshot`, `note`).
+	 */
+	format(event: ConsoleEvent, opts: ConsoleLineOptions): string | undefined {
+		const line = this.lineOf(event, opts);
+		if (line === undefined) return undefined;
+		return opts.clock ? `[${this.clockOf(line.ts)}] ${line.text}` : line.text;
+	}
 
-const deviceLabel = (device: TestRef["device"]): string =>
-	device.name ?? (device.udid.length > 9 ? `${device.udid.slice(0, 9)}…` : device.udid);
+	private pad(n: number, width = 2): string {
+		return String(n).padStart(width, "0");
+	}
 
-const testName = (test: TestRef): string => `${test.file} › ${test.title.join(" › ")}`;
+	private deviceLabel(device: TestRef["device"]): string {
+		return device.name ?? (device.udid.length > 9 ? `${device.udid.slice(0, 9)}…` : device.udid);
+	}
 
-function lineOf(event: ConsoleEvent, opts: ConsoleLineOptions): { ts: number; text: string } | undefined {
-	const short = opts.short ?? "test";
-	const indent = "  ".repeat((opts.depth ?? 0) + 1);
-	switch (event.type) {
-		case "test-start":
-			return { ts: event.test.startedAt, text: `▶ test |${event.test.device.platform}| ${testName(event.test)}` };
-		case "test-end": {
-			const r = event.result;
-			return {
-				ts: r.startedAt + r.durationMs,
-				text: `■ test |${r.device.platform}| ${testName(r)} ${r.status} ${(r.durationMs / 1000).toFixed(2)}s on ${deviceLabel(r.device)}`,
-			};
+	private testName(test: TestRef): string {
+		return `${test.file} › ${test.title.join(" › ")}`;
+	}
+
+	private lineOf(event: ConsoleEvent, opts: ConsoleLineOptions): { ts: number; text: string } | undefined {
+		const short = opts.short ?? "test";
+		const indent = "  ".repeat((opts.depth ?? 0) + 1);
+		switch (event.type) {
+			case "test-start":
+				return {
+					ts: event.test.startedAt,
+					text: `▶ test |${event.test.device.platform}| ${this.testName(event.test)}`,
+				};
+			case "test-end": {
+				const r = event.result;
+				return {
+					ts: r.startedAt + r.durationMs,
+					text: `■ test |${r.device.platform}| ${this.testName(r)} ${r.status} ${(r.durationMs / 1000).toFixed(2)}s on ${this.deviceLabel(r.device)}`,
+				};
+			}
+			case "step-start":
+				return { ts: event.ts, text: `${indent}▸ ${short} › ${event.kind} ${event.label}` };
+			case "step-end": {
+				const error = event.error ? ` — ${event.error}` : "";
+				return {
+					ts: event.ts,
+					text: `${indent}▪ ${short} › ${event.kind} ${event.label} ${event.status} ${event.ms}ms${error}`,
+				};
+			}
+			default:
+				return undefined;
 		}
-		case "step-start":
-			return { ts: event.ts, text: `${indent}▸ ${short} › ${event.kind} ${event.label}` };
-		case "step-end": {
-			const error = event.error ? ` — ${event.error}` : "";
-			return {
-				ts: event.ts,
-				text: `${indent}▪ ${short} › ${event.kind} ${event.label} ${event.status} ${event.ms}ms${error}`,
-			};
-		}
-		default:
-			return undefined;
 	}
 }
 
-/**
- * The console line for an event, in PR #22's convention: `▶ test |<platform>| <file> › <title>` /
- * `■ … <status> <N.NN>s on <device>` per test, `▸`/`▪` per step. `undefined` for events that print
- * nothing (`screenshot`, `note`).
- */
-export function formatConsoleLine(event: ConsoleEvent, opts: ConsoleLineOptions): string | undefined {
-	const line = lineOf(event, opts);
-	if (line === undefined) return undefined;
-	return opts.clock ? `[${clockOf(line.ts)}] ${line.text}` : line.text;
-}
+export const consoleLines = new ConsoleLines();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readEnv } from "@delacour/warden-e2e/env";
+import { envReader } from "@delacour/warden-e2e/env";
 import { findBun, helperDir, NETPROXY_SUBCOMMAND, parsePerfFlag, runnerArgv, shardSpecs, specEnv } from "./bun-runner";
 
 describe("runnerArgv", () => {
@@ -151,7 +151,7 @@ describe("specEnv conditions", () => {
 		const conditions = { network: "3g", location: { lat: 1, lon: 2 } } as const;
 		const env = specEnv({ ...base, conditions });
 		expect(env.WARDEN_CONDITIONS).toBe(JSON.stringify(conditions));
-		const read = readEnv({ WARDEN_UDID: "u", WARDEN_BUNDLE_ID: "b", ...env });
+		const read = envReader.read({ WARDEN_UDID: "u", WARDEN_BUNDLE_ID: "b", ...env });
 		expect(read.success && read.data?.conditions).toEqual(conditions);
 	});
 
@@ -176,7 +176,7 @@ describe("specEnv netproxy command", () => {
 	test("a compiled warden hands specs its hidden subcommand as JSON argv, and the spec process reads it back", () => {
 		const env = specEnv({ ...base, netproxyCommand: ["/bin/warden", NETPROXY_SUBCOMMAND] });
 		expect(env.WARDEN_NETPROXY_COMMAND).toBe('["/bin/warden","__netproxy"]');
-		const read = readEnv({ WARDEN_UDID: "u", WARDEN_BUNDLE_ID: "b", WARDEN_LEASE_ID: "L1", ...env });
+		const read = envReader.read({ WARDEN_UDID: "u", WARDEN_BUNDLE_ID: "b", WARDEN_LEASE_ID: "L1", ...env });
 		expect(read.success && read.data).toMatchObject({ leaseId: "L1", netproxyCommand: ["/bin/warden", "__netproxy"] });
 	});
 

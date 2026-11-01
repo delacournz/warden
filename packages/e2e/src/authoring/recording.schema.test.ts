@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { type Recording, recordingSchema, type StepKey, stepKey, stepSchema } from "./recording.schema";
-import { allStepsRecording, recordingOf } from "./recording.testing";
+import { type Recording, recordingSchema, type StepKey, stepKeys, stepSchema } from "./recording.schema";
+import { recordingFixtures } from "./recording.testing";
 
 const KEYS: StepKey[] = [
 	"open",
@@ -34,13 +34,13 @@ const pt = (x: number, y: number) => ({ x, y });
 
 describe("recording schema", () => {
 	test("the sample recording covers every step kind", () => {
-		const keys = new Set(allStepsRecording().steps.map(stepKey));
+		const keys = new Set(recordingFixtures.allStepsRecording().steps.map((step) => stepKeys.stepKey(step)));
 		for (const key of KEYS) expect(keys.has(key)).toBe(true);
 		expect(keys.size).toBe(KEYS.length);
 	});
 
 	test("round-trips through JSON unchanged", () => {
-		const recording = allStepsRecording();
+		const recording = recordingFixtures.allStepsRecording();
 		const again = recordingSchema.parse(JSON.parse(JSON.stringify(recording)));
 		expect(again).toEqual(recording);
 	});
@@ -62,12 +62,12 @@ describe("recording schema", () => {
 	});
 
 	test("v must be 1", () => {
-		const recording: unknown = { ...allStepsRecording(), v: 2 };
+		const recording: unknown = { ...recordingFixtures.allStepsRecording(), v: 2 };
 		expect(recordingSchema.safeParse(recording).success).toBe(false);
 	});
 
 	test("step indexes must equal their position", () => {
-		const recording = recordingOf([
+		const recording = recordingFixtures.recordingOf([
 			{ kind: "home", at: 1 },
 			{ kind: "back", at: 2 },
 		]);

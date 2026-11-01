@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { NativeFs } from "@delacour/warden-devtools/native-log";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { captureNativeArtifacts, nativeTarget } from "./failure";
+import { failureArtifacts } from "./failure";
 
 const fs: NativeFs = { listReports: () => [], copy: () => {}, write: () => {} };
 const exec: Exec = async (cmd) =>
@@ -11,12 +11,12 @@ const exec: Exec = async (cmd) =>
 
 describe("nativeTarget", () => {
 	test("ios udid / android serial", () => {
-		expect(nativeTarget({ platform: "ios", udid: "U", bundleId: "b.c" })).toEqual({
+		expect(failureArtifacts.nativeTarget({ platform: "ios", udid: "U", bundleId: "b.c" })).toEqual({
 			platform: "ios",
 			udid: "U",
 			bundleId: "b.c",
 		});
-		expect(nativeTarget({ platform: "android", udid: "emulator-5554", bundleId: "b.c" })).toEqual({
+		expect(failureArtifacts.nativeTarget({ platform: "android", udid: "emulator-5554", bundleId: "b.c" })).toEqual({
 			platform: "android",
 			serial: "emulator-5554",
 			pkg: "b.c",
@@ -25,9 +25,9 @@ describe("nativeTarget", () => {
 });
 
 describe("captureNativeArtifacts", () => {
-	const target = nativeTarget({ platform: "ios", udid: "U", bundleId: "b.c" });
+	const target = failureArtifacts.nativeTarget({ platform: "ios", udid: "U", bundleId: "b.c" });
 	test("lists native.log when written", async () => {
-		const capture = await captureNativeArtifacts(
+		const capture = await failureArtifacts.captureNativeArtifacts(
 			target,
 			{ exec, adb: "adb", fs, reportsDir: "/r" },
 			{ dir: "/o", sinceMs: Date.now() }
@@ -35,7 +35,7 @@ describe("captureNativeArtifacts", () => {
 		expect(capture.files).toEqual(["native.log"]);
 	});
 	test("spent budget skips with a problem", async () => {
-		const capture = await captureNativeArtifacts(
+		const capture = await failureArtifacts.captureNativeArtifacts(
 			target,
 			{ exec, adb: "adb", fs, reportsDir: "/r" },
 			{ dir: "/o", sinceMs: 0 },
@@ -47,7 +47,7 @@ describe("captureNativeArtifacts", () => {
 	});
 	test("a hung exec is cut at the timeout", async () => {
 		const hung: Exec = () => new Promise(() => {});
-		const capture = await captureNativeArtifacts(
+		const capture = await failureArtifacts.captureNativeArtifacts(
 			target,
 			{ exec: hung, adb: "adb", fs, reportsDir: "/r" },
 			{ dir: "/o", sinceMs: 0 },

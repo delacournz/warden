@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ConditionEvent, conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
-import { openResults, readResults } from "./runner/results";
+import { resultsFiles } from "./runner/results";
 
 const net = (at: number, kind: "online" | "offline"): ConditionEvent => ({
 	type: "condition",
@@ -22,7 +22,7 @@ describe("condition events in results.jsonl", () => {
 	test("share the file with test results; each reader skips the other's lines", () => {
 		const path = join(mkdtempSync(join(tmpdir(), "wdn-cond-")), "nested", "results.jsonl");
 		const sink = conditionEvents.openSink(path);
-		const results = openResults(path);
+		const results = resultsFiles.open(path);
 		sink(net(10, "offline"));
 		results.append({
 			file: "/a.e2e.ts",
@@ -34,7 +34,7 @@ describe("condition events in results.jsonl", () => {
 		});
 		sink(loc(12, 1));
 		const text = readFileSync(path, "utf8");
-		expect(readResults(text)).toHaveLength(1);
+		expect(resultsFiles.read(text)).toHaveLength(1);
 		expect(conditionEvents.read(text)).toEqual([net(10, "offline"), loc(12, 1)]);
 	});
 

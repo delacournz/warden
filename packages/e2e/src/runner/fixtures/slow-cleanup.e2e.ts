@@ -1,10 +1,10 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, test } from "../../index";
-import { setRunnerTiming } from "../attempt";
-import { fixtureLog as log } from "./fake-setup";
+import { attemptRunner } from "../attempt";
+import { fixtureLog } from "./fake-setup";
 
 // bun's own timeout is the test's + 1.5 s; the runner keeps 0.5 s of that for itself, and allows 0.8 s per hook
-setRunnerTiming({ bunMarginMs: 1_500, reserveMs: 500, cleanupTimeoutMs: 800 });
+attemptRunner.setRunnerTiming({ bunMarginMs: 1_500, reserveMs: 500, cleanupTimeoutMs: 800 });
 
 describe("slow", () => {
 	test.use({ timeout: 100, launch: "none" });
@@ -13,7 +13,7 @@ describe("slow", () => {
 	for (const n of [1, 2, 3, 4]) {
 		afterEach(async () => {
 			await sleep(700);
-			log(`afterEach ${n} done`);
+			fixtureLog.write(`afterEach ${n} done`);
 		});
 	}
 
@@ -24,6 +24,6 @@ describe("then", () => {
 	test.use({ launch: "none" });
 
 	test("next", { timeout: 5_000 }, async () => {
-		log("next body");
+		fixtureLog.write("next body");
 	});
 });

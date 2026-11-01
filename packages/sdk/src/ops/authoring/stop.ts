@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { deleteJournal, readJournal } from "@delacour/warden-e2e/authoring/journal";
-import { type LintFinding, lintRecording } from "@delacour/warden-e2e/authoring/lint";
+import { journalStore } from "@delacour/warden-e2e/authoring/journal";
+import { type LintFinding, recordingLinter } from "@delacour/warden-e2e/authoring/lint";
 import type { Recording } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -119,7 +119,7 @@ function wroteLines(session: OpSession, outcome: StopOutcome): string[] {
 /** Ends the recording once it is written (and verified): drops the journal and the pointer, shapes the result. */
 function makeFinish(session: OpSession, journal: string, summary: Summary, wrote: string[]): Finish {
 	return (verify, lines, outcome) => {
-		deleteJournal(journal);
+		journalStore.deleteJournal(journal);
 		clearPointer(session);
 		return { result: { outcome, ...summary, verify }, text: [...wrote, ...lines].join("\n") };
 	};
@@ -142,9 +142,9 @@ function skippedVerify(kind: "spec" | "helper", verify: boolean, finish: Finish)
 
 /** The journal `stop` turns into a file: read, linted, and not empty. */
 function readStoppable(journal: string): Result<{ recording: Recording; lints: LintFinding[] }, WardenError> {
-	const read = readJournal(journal);
+	const read = journalStore.readJournal(journal);
 	if (!read.success) return journalFailure(read.error, "`warden ui record cancel` clears it");
-	const lints = lintRecording(read.data);
+	const lints = recordingLinter.lintRecording(read.data);
 	if (lints.some((lint) => lint.code === "empty_recording")) {
 		return failed("empty_recording", "the recording has no steps", {
 			hint: "drive the app with warden ui actions after `record start`, or `record cancel`",

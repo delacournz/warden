@@ -7,7 +7,7 @@ import { LocatorAssertions } from "@delacour/warden-screen/matchers";
 import { screenFactory } from "@delacour/warden-screen/screen";
 import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
-import { answerAlertQuietly, deviceFor as createDevice } from "./fixtures";
+import { sessionFixtures } from "./fixtures";
 
 const env: E2eEnv = {
 	udid: "UDID",
@@ -56,13 +56,13 @@ function wire(driver: FakeDriver, action: "accept" | "dismiss" | "off") {
 	const holder: { device?: Device } = {};
 	if (action !== "off") {
 		host.answerSystemAlert = async () => {
-			holder.device ??= createDevice({
+			holder.device ??= sessionFixtures.deviceFor({
 				session: { out: "/tmp/out" },
 				driver: await host.driver(),
 				env: { ...env, platform: driver.platform },
 				clock: host.clock,
 			});
-			return answerAlertQuietly(holder.device, action);
+			return sessionFixtures.answerAlertQuietly(holder.device, action);
 		};
 	}
 	return { host, screen: screenFactory.createScreen(host) };

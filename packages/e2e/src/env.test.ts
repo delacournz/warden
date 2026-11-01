@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { ENV_NAMES, readEnv } from "./env";
+import { ENV_NAMES, envReader } from "./env";
 
 const base = { WARDEN_UDID: "UDID-1", WARDEN_BUNDLE_ID: "com.acme.app" };
 const fixedNow = () => new Date("2026-10-15T01:02:03.004Z");
 
 function read(env: Record<string, string | undefined>) {
-	const result = readEnv(env, { now: fixedNow });
+	const result = envReader.read(env, { now: fixedNow });
 	if (!result.success) throw new Error(result.error);
 	return result.data;
 }
 
-describe("readEnv", () => {
+describe("envReader.read", () => {
 	test("no WARDEN_UDID means not under warden", () => {
-		expect(readEnv({})).toEqual({ success: true, data: undefined });
-		expect(readEnv({ WARDEN_UDID: "", WARDEN_BUNDLE_ID: "x" })).toEqual({ success: true, data: undefined });
+		expect(envReader.read({})).toEqual({ success: true, data: undefined });
+		expect(envReader.read({ WARDEN_UDID: "", WARDEN_BUNDLE_ID: "x" })).toEqual({ success: true, data: undefined });
 	});
 
 	test("WARDEN_AFTER_REBOOT is a JSON argv; a bad value is reported by name", () => {
@@ -24,7 +24,7 @@ describe("readEnv", () => {
 			"{udid}",
 		]);
 		expect(read(base)?.afterReboot).toBeUndefined();
-		const bad = readEnv({ ...base, WARDEN_AFTER_REBOOT: "warden arrange" });
+		const bad = envReader.read({ ...base, WARDEN_AFTER_REBOOT: "warden arrange" });
 		expect(bad.success).toBe(false);
 		expect(bad.success ? "" : bad.error).toContain("WARDEN_AFTER_REBOOT");
 	});
@@ -86,7 +86,7 @@ describe("readEnv", () => {
 	});
 
 	test("WARDEN_DEVICE_KIND=physical and the runner restart argv are read; anything else is rejected", () => {
-		const env = readEnv({
+		const env = envReader.read({
 			...base,
 			WARDEN_DEVICE_KIND: "physical",
 			WARDEN_IOS_RUNNER_RESTART: JSON.stringify(["warden", "__ios-runner-restart", "--udid", "{udid}"]),
@@ -95,13 +95,13 @@ describe("readEnv", () => {
 			deviceKind: "physical",
 			iosRunnerRestart: ["warden", "__ios-runner-restart", "--udid", "{udid}"],
 		});
-		expect(readEnv({ ...base, WARDEN_DEVICE_KIND: "emulator" }).success).toBe(false);
-		const plain = readEnv(base);
+		expect(envReader.read({ ...base, WARDEN_DEVICE_KIND: "emulator" }).success).toBe(false);
+		const plain = envReader.read(base);
 		expect(plain.success && plain.data?.deviceKind).toBeUndefined();
 	});
 
 	test("WARDEN_HEADLESS and WARDEN_WORKER are for the spec's own tools: never validated, never parsed", () => {
-		const result = readEnv({ ...base, WARDEN_HEADLESS: "maybe", WARDEN_WORKER: "w1" });
+		const result = envReader.read({ ...base, WARDEN_HEADLESS: "maybe", WARDEN_WORKER: "w1" });
 		expect(result.success).toBe(true);
 		if (!result.success || result.data === undefined) return;
 		expect("headless" in result.data).toBe(false);
@@ -113,14 +113,14 @@ describe("readEnv", () => {
 	});
 
 	test("bundle id is required with a udid", () => {
-		expect(readEnv({ WARDEN_UDID: "U" })).toEqual({
+		expect(envReader.read({ WARDEN_UDID: "U" })).toEqual({
 			success: false,
 			error: "WARDEN_BUNDLE_ID: required when WARDEN_UDID is set",
 		});
 	});
 
 	test("errors name the env variables", () => {
-		const result = readEnv({
+		const result = envReader.read({
 			...base,
 			WARDEN_PLATFORM: "windows",
 			WARDEN_LAUNCH_ARGS: "not json",
@@ -134,13 +134,13 @@ describe("readEnv", () => {
 	});
 
 	test("launch args must be strings", () => {
-		expect(readEnv({ ...base, WARDEN_LAUNCH_ARGS: "[1]" }).success).toBe(false);
-		expect(readEnv({ ...base, WARDEN_LAUNCH_ARGS: '{"a":1}' }).success).toBe(false);
+		expect(envReader.read({ ...base, WARDEN_LAUNCH_ARGS: "[1]" }).success).toBe(false);
+		expect(envReader.read({ ...base, WARDEN_LAUNCH_ARGS: '{"a":1}' }).success).toBe(false);
 	});
 
 	test("timeouts must be positive", () => {
-		expect(readEnv({ ...base, WARDEN_E2E_TIMEOUT: "0" }).success).toBe(false);
-		expect(readEnv({ ...base, WARDEN_E2E_ACTION_TIMEOUT: "-5" }).success).toBe(false);
+		expect(envReader.read({ ...base, WARDEN_E2E_TIMEOUT: "0" }).success).toBe(false);
+		expect(envReader.read({ ...base, WARDEN_E2E_ACTION_TIMEOUT: "-5" }).success).toBe(false);
 	});
 });
 
@@ -154,25 +154,25 @@ describe("ENV_NAMES", () => {
 
 describe("WARDEN_VERSION", () => {
 	test("is read as wardenVersion, absent otherwise", () => {
-		expect(readEnv({ ...base, WARDEN_VERSION: "0.3.0" })).toMatchObject({
+		expect(envReader.read({ ...base, WARDEN_VERSION: "0.3.0" })).toMatchObject({
 			success: true,
 			data: { wardenVersion: "0.3.0" },
 		});
-		const plain = readEnv(base);
+		const plain = envReader.read(base);
 		expect(plain.success && plain.data && "wardenVersion" in plain.data).toBe(false);
 	});
 });
 
 describe("perf env", () => {
 	test("WARDEN_BIOMETRICS", () => {
-		expect(readEnv({ ...base, WARDEN_BIOMETRICS: "1" })).toMatchObject({ data: { biometrics: true } });
-		const off = readEnv({ ...base, WARDEN_BIOMETRICS: "0" });
+		expect(envReader.read({ ...base, WARDEN_BIOMETRICS: "1" })).toMatchObject({ data: { biometrics: true } });
+		const off = envReader.read({ ...base, WARDEN_BIOMETRICS: "0" });
 		expect(off.success && off.data && "biometrics" in off.data).toBe(false);
-		expect(readEnv(base)).toMatchObject({ success: true });
+		expect(envReader.read(base)).toMatchObject({ success: true });
 	});
 
 	test("WARDEN_BIN, WARDEN_PERF and WARDEN_PERF_BUDGETS", () => {
-		const r = readEnv({
+		const r = envReader.read({
 			...base,
 			WARDEN_BIN: '["bun","/x/cli.ts"]',
 			WARDEN_PERF: "react, js",
@@ -182,18 +182,20 @@ describe("perf env", () => {
 			success: true,
 			data: { wardenBin: ["bun", "/x/cli.ts"], perf: ["react", "js"], perfBudgets: '{"jankPct":5}' },
 		});
-		expect(readEnv({ ...base, WARDEN_BIN: "/bin/warden" })).toMatchObject({ data: { wardenBin: ["/bin/warden"] } });
-		const plain = readEnv(base);
+		expect(envReader.read({ ...base, WARDEN_BIN: "/bin/warden" })).toMatchObject({
+			data: { wardenBin: ["/bin/warden"] },
+		});
+		const plain = envReader.read(base);
 		expect(plain.success && plain.data && "perf" in plain.data).toBe(false);
 	});
 
 	test("WARDEN_CONDITIONS is the suite's conditions as JSON; a bad value is reported by name", () => {
 		const config = { network: "3g", location: { lat: 1, lon: 2 }, clock: "2026-01-01T00:00:00Z" } as const;
 		expect(read({ ...base, WARDEN_CONDITIONS: JSON.stringify(config) })?.conditions).toEqual(config);
-		const plain = readEnv(base);
+		const plain = envReader.read(base);
 		expect(plain.success && plain.data && "conditions" in plain.data).toBe(false);
 		for (const bad of ["{", '{"network":"5g"}']) {
-			const res = readEnv({ ...base, WARDEN_CONDITIONS: bad });
+			const res = envReader.read({ ...base, WARDEN_CONDITIONS: bad });
 			expect(res.success).toBe(false);
 			expect(res.success ? "" : res.error).toContain("WARDEN_CONDITIONS");
 		}
@@ -213,9 +215,9 @@ describe("lease env", () => {
 			"__netproxy",
 		]);
 		expect(read(base)?.netproxyCommand).toBeUndefined();
-		const bad = readEnv({ ...base, WARDEN_NETPROXY_COMMAND: "warden __netproxy" });
+		const bad = envReader.read({ ...base, WARDEN_NETPROXY_COMMAND: "warden __netproxy" });
 		expect(bad.success).toBe(false);
 		expect(bad.success ? "" : bad.error).toContain("WARDEN_NETPROXY_COMMAND");
-		expect(readEnv({ ...base, WARDEN_NETPROXY_COMMAND: "[]" }).success).toBe(false);
+		expect(envReader.read({ ...base, WARDEN_NETPROXY_COMMAND: "[]" }).success).toBe(false);
 	});
 });

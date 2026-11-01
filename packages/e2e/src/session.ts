@@ -16,10 +16,10 @@ import { observations } from "@delacour/warden-driver/observation-cache";
 import { type SpanRunner, spans } from "@delacour/warden-driver/trace/span";
 import { driverTracer } from "@delacour/warden-driver/traced-driver";
 import { type HidRecoveryDeps, hidRecovery } from "@delacour/warden-driver-ios/hid-recovery";
-import { type E2eEnv, readEnv } from "./env";
+import { type E2eEnv, envReader } from "./env";
 import type { AttemptContext, FixtureFactory } from "./runner/fixtures.types";
-import { openResults, type ResultsWriter } from "./runner/results";
-import { runStep } from "./runner/step";
+import { type ResultsWriter, resultsFiles } from "./runner/results";
+import { stepRunner } from "./runner/step";
 import type { TraceWriter } from "./runner/trace";
 
 /** A biometrics enroll right after a boot can be dropped: re-apply until the read-back shows enrolled. */
@@ -28,31 +28,8 @@ const ENROLL_RETRY_MS = 500;
 
 export type DriverFactory = (env: E2eEnv) => DriverResult<Driver>;
 
-/** How to attach to the app's dev client; default {@link openDevtools}. Tests inject a stub. */
+/** How to attach to the app's dev client; default {@link SessionRegistry.openDevtools}. Tests inject a stub. */
 export type DevtoolsOpener = (env: E2eEnv) => Promise<DevtoolsResult<DevtoolsFacet>>;
-
-/**
- * Which inspector page is this env's: the bundle id and the device name. Several devices can share one Metro;
- * without the name the newest page of any device would win and a reload or evaluate would hit another device's app.
- */
-export function devtoolsTarget(env: E2eEnv): { appId: string; deviceName?: string } {
-	return { appId: env.bundleId, ...(env.deviceName === undefined ? {} : { deviceName: env.deviceName }) };
-}
-
-/**
- * Metro's inspector for this env's app (`WARDEN_METRO_URL`), pinned by {@link devtoolsTarget}. LogBox is kept off:
- * its toasts and inspector cover the app and take taps, while the logs still reach the console capture.
- */
-export const openDevtools: DevtoolsOpener = (env) =>
-	devtoolsFacetOpener.open({
-		env: { metroUrl: env.metroUrl },
-		device: devtoolsTarget(env),
-		fetch,
-		WebSocket,
-		timeoutMs: 5_000,
-		log: (line) => process.stderr.write(`[devtools] ${line}\n`),
-		muteLogBox: true,
-	});
 
 export type Session = {
 	readonly env: E2eEnv;
@@ -110,17 +87,17 @@ export type Session = {
 };
 
 export type SessionOptions = {
-	/** parsed env; default `readEnv(process.env)` (throws `SESSION` when not under warden) */
+	/** parsed env; default `envReader.read(process.env)` (throws `SESSION` when not under warden) */
 	env?: E2eEnv;
-	/** how to open the device; default {@link setDefaultDriverFactory}'s */
+	/** how to open the device; default {@link SessionRegistry.setDefaultDriverFactory}'s */
 	driverFactory?: DriverFactory;
-	/** how to attach devtools; default {@link openDevtools} */
+	/** how to attach devtools; default {@link SessionRegistry.openDevtools} */
 	devtools?: DevtoolsOpener;
-	/** native log reader; default {@link setDefaultNativeLog}'s */
+	/** native log reader; default {@link SessionRegistry.setDefaultNativeLog}'s */
 	nativeLog?: NativeLogDeps;
-	/** sim reboot seams; default {@link setDefaultHidRecovery}'s */
+	/** sim reboot seams; default {@link SessionRegistry.setDefaultHidRecovery}'s */
 	hidRecovery?: HidRecoveryDeps;
-	/** fixture factory; default {@link setDefaultFixtureFactory}'s */
+	/** fixture factory; default {@link SessionRegistry.setDefaultFixtureFactory}'s */
 	fixtures?: FixtureFactory;
 	/** console line sink; default writes to fd 1 (bun test captures `process.stdout`, fd 1 is not captured) */
 	log?: (line: string) => void;
@@ -130,102 +107,106 @@ export type SessionOptions = {
 
 const SESSION_KEY = Symbol.for("@delacour/warden-e2e/session");
 type SessionSlot = { [SESSION_KEY]?: Session };
-const slot = (): SessionSlot => globalThis as SessionSlot;
-
-let defaultFactory: DriverFactory | undefined;
-let defaultFixtures: FixtureFactory | undefined;
-let defaultNativeLog: NativeLogDeps | undefined;
-let defaultHidRecovery: HidRecoveryDeps | undefined;
-
-/** Wires the HID-loss recovery used when a session gets none (`preload.ts` registers the real one). */
-export function setDefaultHidRecovery(deps: HidRecoveryDeps | undefined): void {
-	defaultHidRecovery = deps;
-}
-
-/** Wires the native-log reader used when a session gets none (`preload.ts` registers the real one). */
-export function setDefaultNativeLog(deps: NativeLogDeps | undefined): void {
-	defaultNativeLog = deps;
-}
-
-/** Wires the factory used when `getSession` gets none (`driver/open.ts`'s opener, set by the package entry). */
-export function setDefaultDriverFactory(factory: DriverFactory | undefined): void {
-	defaultFactory = factory;
-}
-
-/** Whether a default driver factory is wired (so the preload leaves a test-installed fake alone). */
-export function hasDefaultDriverFactory(): boolean {
-	return defaultFactory !== undefined;
-}
-
-/** Wires the `app`/`device`/`screen` factory used when `getSession` gets none. */
-export function setDefaultFixtureFactory(factory: FixtureFactory | undefined): void {
-	defaultFixtures = factory;
-}
-
-/** Whether a default fixture factory is wired (so the preload leaves a test-installed one alone). */
-export function hasDefaultFixtureFactory(): boolean {
-	return defaultFixtures !== undefined;
-}
-
-const missingFactory: DriverFactory = async () => ({
-	success: false,
-	error: {
-		code: "E_INTERNAL",
-		message: "no driver factory configured (setDefaultDriverFactory was never called)",
-		retryable: false,
-	},
-});
-
-function writeLine(line: string): void {
-	try {
-		writeSync(1, `${line}\n`);
-	} catch {
-		// a closed stdout must not fail a test
-	}
-}
-
-function resolveEnv(env: E2eEnv | undefined): E2eEnv {
-	if (env !== undefined) return env;
-	const read = readEnv(process.env);
-	if (!read.success) throw new E2eError("SESSION", `invalid warden e2e environment:\n${read.error}`);
-	if (read.data === undefined) throw new E2eError("SESSION", "not running under warden: WARDEN_UDID is not set");
-	return read.data;
-}
 
 const WARM_TRIES = 15;
 const WARM_INTERVAL_MS = 2_000;
 
-export function createSession(opts: SessionOptions = {}): Session {
-	const resolved = resolveEnv(opts.env);
-	const factory = opts.driverFactory ?? defaultFactory ?? missingFactory;
-	const out = resolve(resolved.out);
-	mkdirSync(out, { recursive: true });
-	const results = openResults(resolve(out, "results.jsonl"));
-	const idle = new AbortController().signal;
+/** The defaults a session takes when its options carry none; wired by the preload / package entry. */
+type SessionDefaults = {
+	driverFactory: DriverFactory | undefined;
+	fixtures: FixtureFactory | undefined;
+	nativeLog: NativeLogDeps | undefined;
+	hidRecovery: HidRecoveryDeps | undefined;
+};
 
-	let opened: Promise<Driver> | undefined;
-	let current: Driver | undefined;
-	let closing: Promise<void> | undefined;
-	let devtoolsOpening: Promise<DevtoolsResult<DevtoolsFacet>> | undefined;
-	let facet: DevtoolsFacet | undefined;
-	const openFacet = opts.devtools ?? openDevtools;
-	let attempt: AttemptContext | undefined;
+type ProcessSessionDeps = {
+	env: E2eEnv;
+	factory: DriverFactory;
+	fixtures: FixtureFactory | undefined;
+	nativeLog: NativeLogDeps | undefined;
+	hid: HidRecoveryDeps | undefined;
+	openFacet: DevtoolsOpener;
+	log: (line: string) => void;
+	exitHook: boolean;
+	/** called once the session has closed, so the registry can forget it */
+	onClosed: (session: Session) => void;
+};
 
-	const hid = opts.hidRecovery ?? defaultHidRecovery;
-	let hidRecovered = false;
-	const note = (line: string): void => (opts.log ?? writeLine)(line);
+/** One spec process's session: the lazily opened driver and devtools facet, the running attempt, HID recovery. */
+class ProcessSession implements Session {
+	readonly env: E2eEnv;
+	readonly out: string;
+	readonly results: ResultsWriter;
+	fixtures: FixtureFactory | undefined;
+	readonly nativeLog: NativeLogDeps | undefined;
+	readonly recoverHid: (() => Promise<boolean>) | undefined;
+	readonly log: (line: string) => void;
 
-	async function resetDevice(): Promise<void> {
-		const driver = opened;
-		opened = undefined;
-		current = undefined;
+	private readonly idle = new AbortController().signal;
+	private opened: Promise<Driver> | undefined;
+	private current: Driver | undefined;
+	private closing: Promise<void> | undefined;
+	private devtoolsOpening: Promise<DevtoolsResult<DevtoolsFacet>> | undefined;
+	private facet: DevtoolsFacet | undefined;
+	private running: AttemptContext | undefined;
+	private hidRecovered = false;
+	private readonly exitListener: (() => void) | undefined;
+
+	constructor(private readonly deps: ProcessSessionDeps) {
+		this.env = deps.env;
+		this.out = resolve(deps.env.out);
+		mkdirSync(this.out, { recursive: true });
+		this.results = resultsFiles.open(resolve(this.out, "results.jsonl"));
+		this.fixtures = deps.fixtures;
+		this.nativeLog = deps.nativeLog;
+		this.log = deps.log;
+		this.recoverHid =
+			deps.hid === undefined || deps.env.platform !== "ios" ? undefined : () => this.recoverFromHidLoss();
+		this.exitListener = deps.exitHook
+			? () => {
+					// `exit` handlers are synchronous: the best we can do is start the close
+					void this.close();
+				}
+			: undefined;
+		if (this.exitListener !== undefined) process.on("exit", this.exitListener);
+	}
+
+	get attempt(): AttemptContext | undefined {
+		return this.running;
+	}
+
+	get signal(): AbortSignal {
+		return this.running?.signal ?? this.idle;
+	}
+
+	get attemptDir(): string | undefined {
+		return this.running?.dir;
+	}
+
+	get trace(): TraceWriter | undefined {
+		return this.running?.trace;
+	}
+
+	/** The sleep the HID seams carry, else a timer. */
+	private sleeper(): (ms: number) => Promise<void> {
+		return this.deps.hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	}
+
+	private note(line: string): void {
+		this.deps.log(line);
+	}
+
+	async resetDevice(): Promise<void> {
+		const driver = this.opened;
+		this.opened = undefined;
+		this.current = undefined;
 		await driver?.then(
 			(d) => d.close(),
 			() => undefined
 		);
-		const attaching = devtoolsOpening;
-		devtoolsOpening = undefined;
-		facet = undefined;
+		const attaching = this.devtoolsOpening;
+		this.devtoolsOpening = undefined;
+		this.facet = undefined;
 		await attaching?.then(
 			(result) => (result.success ? result.data.close() : undefined),
 			() => undefined
@@ -236,11 +217,11 @@ export function createSession(opts: SessionOptions = {}): Session {
 	 * A freshly booted sim answers the first accessibility reads with `E_AX_UNAVAILABLE` until the in-sim bridge binds
 	 * (what `warden e2e`'s warm step waits out): snapshot until one succeeds, a few times, then carry on regardless.
 	 */
-	async function warmBridge(): Promise<void> {
-		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	private async warmBridge(): Promise<void> {
+		const sleep = this.sleeper();
 		for (let tries = 0; tries < WARM_TRIES; tries += 1) {
 			try {
-				const driver = await session.driver();
+				const driver = await this.driver();
 				if ((await driver.snapshot()).success) return;
 			} catch {
 				// not up yet: try again
@@ -250,47 +231,49 @@ export function createSession(opts: SessionOptions = {}): Session {
 	}
 
 	/** A physical iPhone: restart its runner host once. The phone is never rebooted and `simctl` is never run. */
-	async function recoverRunner(deps: HidRecoveryDeps, name: string): Promise<boolean> {
-		if (hidRecovered) {
-			note(`iPhone ${name}: the runner connection was lost again after a restart; check the phone and retry`);
+	private async recoverRunner(deps: HidRecoveryDeps, name: string): Promise<boolean> {
+		if (this.hidRecovered) {
+			this.note(`iPhone ${name}: the runner connection was lost again after a restart; check the phone and retry`);
 			return false;
 		}
-		hidRecovered = true;
-		await resetDevice();
-		const restarted = await hidRecovery.restartRunnerHost(deps, resolved.iosRunnerRestart, resolved.udid);
+		this.hidRecovered = true;
+		await this.resetDevice();
+		const restarted = await hidRecovery.restartRunnerHost(deps, this.env.iosRunnerRestart, this.env.udid);
 		if (!restarted.success) {
-			note(`iPhone ${name}: runner connection lost, restart failed: ${restarted.error}`);
+			this.note(`iPhone ${name}: runner connection lost, restart failed: ${restarted.error}`);
 			return false;
 		}
-		note(`iPhone ${name}: runner connection lost, runner host restarted; running the test again`);
+		this.note(`iPhone ${name}: runner connection lost, runner host restarted; running the test again`);
 		return true;
 	}
 
 	/** Only the device `warden e2e` leased (this session's `WARDEN_UDID`), only once: a second loss fails as before. */
-	async function recoverHid(): Promise<boolean> {
-		if (hid === undefined || closing !== undefined) return false;
-		const name = resolved.deviceName ?? resolved.udid;
-		if (resolved.deviceKind === "physical") return recoverRunner(hid, name);
-		if (hidRecovered) {
-			note(`sim ${name}: HID connection lost again after a reboot; \`warden release <id> --shutdown\` and retry`);
+	private async recoverFromHidLoss(): Promise<boolean> {
+		const hid = this.deps.hid;
+		if (hid === undefined || this.closing !== undefined) return false;
+		const env = this.env;
+		const name = env.deviceName ?? env.udid;
+		if (env.deviceKind === "physical") return this.recoverRunner(hid, name);
+		if (this.hidRecovered) {
+			this.note(`sim ${name}: HID connection lost again after a reboot; \`warden release <id> --shutdown\` and retry`);
 			return false;
 		}
-		hidRecovered = true;
-		await resetDevice();
-		if (resolved.simdSocket !== undefined) {
-			const stopped = await hidRecovery.stopResidentHelper(hid, resolved.simdSocket);
-			if (!stopped.success) note(`sim ${name}: ${stopped.error}`);
+		this.hidRecovered = true;
+		await this.resetDevice();
+		if (env.simdSocket !== undefined) {
+			const stopped = await hidRecovery.stopResidentHelper(hid, env.simdSocket);
+			if (!stopped.success) this.note(`sim ${name}: ${stopped.error}`);
 		}
-		const rebooted = await hidRecovery.rebootSim(hid, resolved.udid);
+		const rebooted = await hidRecovery.rebootSim(hid, env.udid);
 		if (!rebooted.success) {
-			note(
+			this.note(
 				`sim ${name}: HID connection lost, reboot failed: ${rebooted.error}; \`warden release <id> --shutdown\` and retry`
 			);
 			return false;
 		}
-		await hidRecovery.runAfterReboot({ ...hid, log: note }, resolved.afterReboot, resolved.udid);
-		await warmBridge();
-		note(`sim ${name}: HID connection lost (Device Hub quit?), rebooted; running the test again`);
+		await hidRecovery.runAfterReboot({ ...hid, log: (line) => this.note(line) }, env.afterReboot, env.udid);
+		await this.warmBridge();
+		this.note(`sim ${name}: HID connection lost (Device Hub quit?), rebooted; running the test again`);
 		return true;
 	}
 
@@ -299,152 +282,133 @@ export function createSession(opts: SessionOptions = {}): Session {
 	 * is left unenrolled by a spec that called `unenroll`. Best effort and idempotent; Android keeps its enrollment
 	 * in the golden snapshot. A physical iPhone is never enrolled: its Face ID / Touch ID is the real sensor.
 	 */
-	async function reenroll(driver: Driver): Promise<Driver> {
-		if (resolved.biometrics !== true || resolved.platform !== "ios" || resolved.deviceKind === "physical")
-			return driver;
-		const sleep = hid?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	private async reenroll(driver: Driver): Promise<Driver> {
+		const env = this.env;
+		if (env.biometrics !== true || env.platform !== "ios" || env.deviceKind === "physical") return driver;
+		const sleep = this.sleeper();
 		for (let attempt = 1; attempt <= ENROLL_TRIES; attempt += 1) {
 			const state = await driver.biometrics("enroll");
 			if (!state.success) {
-				note(`biometrics enroll failed: ${state.error.code}: ${state.error.message}`);
+				this.note(`biometrics enroll failed: ${state.error.code}: ${state.error.message}`);
 				return driver;
 			}
 			if (state.data.enrolled) return driver;
 			if (attempt < ENROLL_TRIES) await sleep(ENROLL_RETRY_MS);
 		}
-		note(`biometrics enroll did not take after ${ENROLL_TRIES} attempts`);
+		this.note(`biometrics enroll did not take after ${ENROLL_TRIES} attempts`);
 		return driver;
 	}
 
-	const session: Session = {
-		env: resolved,
-		out,
-		results,
-		fixtures: opts.fixtures ?? defaultFixtures,
-		nativeLog: opts.nativeLog ?? defaultNativeLog,
-		recoverHid: hid === undefined || resolved.platform !== "ios" ? undefined : recoverHid,
-		resetDevice,
-		log: opts.log ?? writeLine,
-		get attempt() {
-			return attempt;
-		},
-		get signal() {
-			return attempt?.signal ?? idle;
-		},
-		get attemptDir() {
-			return attempt?.dir;
-		},
-		get trace() {
-			return attempt?.trace;
-		},
-		driver() {
-			if (closing !== undefined) {
-				return Promise.reject(new E2eError("SESSION", "session is closed"));
+	driver(): Promise<Driver> {
+		if (this.closing !== undefined) {
+			return Promise.reject(new E2eError("SESSION", "session is closed"));
+		}
+		this.opened ??= this.deps.factory(this.env).then(
+			(result) => {
+				if (!result.success) {
+					this.opened = undefined;
+					const { code, message } = result.error;
+					throw new E2eError("DRIVER", `${code}: ${message}`);
+				}
+				this.current = observations.cache(driverTracer.trace(result.data, { trace: () => this.running?.trace }));
+				return this.reenroll(this.current);
+			},
+			(cause: unknown) => {
+				this.opened = undefined;
+				throw new E2eError("DRIVER", cause instanceof Error ? cause.message : String(cause));
 			}
-			opened ??= factory(resolved).then(
-				(result) => {
-					if (!result.success) {
-						opened = undefined;
-						const { code, message } = result.error;
-						throw new E2eError("DRIVER", `${code}: ${message}`);
-					}
-					current = observations.cache(driverTracer.trace(result.data, { trace: () => attempt?.trace }));
-					return reenroll(current);
-				},
-				(cause: unknown) => {
-					opened = undefined;
-					throw new E2eError("DRIVER", cause instanceof Error ? cause.message : String(cause));
-				}
-			);
-			return opened;
-		},
-		peekDriver() {
-			return current;
-		},
-		devtools() {
-			if (closing !== undefined)
-				return Promise.resolve(devtoolsErrors.err("devtools_unavailable", "session is closed"));
-			if (resolved.metroUrl === undefined) {
-				return Promise.resolve(
-					devtoolsErrors.err("devtools_unavailable", "no Metro URL (WARDEN_METRO_URL): release builds have no devtools")
-				);
-			}
-			if (devtoolsOpening !== undefined) return devtoolsOpening;
-			const opening = openFacet(resolved).then(
-				(result) => {
-					if (!result.success) {
-						if (devtoolsOpening === opening) devtoolsOpening = undefined;
-						return result;
-					}
-					const opened = result.data;
-					facet = opened;
-					// a facet that gave up reconnecting (an app relaunch outlasted its budget) is dropped, so the next
-					// call attaches again and failure capture never writes a dead facet's rings
-					opened.on("lost", () => {
-						if (facet !== opened) return;
-						facet = undefined;
-						if (devtoolsOpening === opening) devtoolsOpening = undefined;
-						opened.close();
-					});
-					return result;
-				},
-				(cause: unknown) => {
-					if (devtoolsOpening === opening) devtoolsOpening = undefined;
-					return devtoolsErrors.err("devtools_unavailable", cause instanceof Error ? cause.message : String(cause));
-				}
-			);
-			devtoolsOpening = opening;
-			return opening;
-		},
-		peekDevtools() {
-			return facet;
-		},
-		step(kind, label, fn) {
-			return runStep(attempt, kind, label, fn);
-		},
-		span(op, fn, options) {
-			return spans.run(attempt?.trace, op, fn, options);
-		},
-		enterAttempt(next, replacing) {
-			if (replacing !== undefined && attempt !== replacing) return;
-			attempt = next;
-		},
-		leaveAttempt(leaving) {
-			if (leaving !== undefined && attempt !== leaving) return;
-			attempt = undefined;
-		},
-		close() {
-			closing ??= (async () => {
-				if (opened !== undefined) {
-					await opened.then(
-						(d) => d.close(),
-						() => undefined
-					);
-				}
-				current = undefined;
-				if (devtoolsOpening !== undefined) {
-					await devtoolsOpening.then(
-						(result) => (result.success ? result.data.close() : undefined),
-						() => undefined
-					);
-				}
-				facet = undefined;
-				if (slot()[SESSION_KEY] === session) delete slot()[SESSION_KEY];
-				if (exitListener !== undefined) process.off("exit", exitListener);
-			})();
-			return closing;
-		},
-	};
+		);
+		return this.opened;
+	}
 
-	// `exit` handlers are synchronous: the best we can do is start the close
-	const exitListener: (() => void) | undefined =
-		opts.exitHook === false
-			? undefined
-			: () => {
-					void session.close();
-				};
-	if (exitListener !== undefined) process.on("exit", exitListener);
-	return session;
+	peekDriver(): Driver | undefined {
+		return this.current;
+	}
+
+	devtools(): Promise<DevtoolsResult<DevtoolsFacet>> {
+		if (this.closing !== undefined)
+			return Promise.resolve(devtoolsErrors.err("devtools_unavailable", "session is closed"));
+		if (this.env.metroUrl === undefined) {
+			return Promise.resolve(
+				devtoolsErrors.err("devtools_unavailable", "no Metro URL (WARDEN_METRO_URL): release builds have no devtools")
+			);
+		}
+		if (this.devtoolsOpening !== undefined) return this.devtoolsOpening;
+		const opening: Promise<DevtoolsResult<DevtoolsFacet>> = this.deps.openFacet(this.env).then(
+			(result) => {
+				if (!result.success) {
+					if (this.devtoolsOpening === opening) this.devtoolsOpening = undefined;
+					return result;
+				}
+				this.watchFacet(result.data, opening);
+				return result;
+			},
+			(cause: unknown) => {
+				if (this.devtoolsOpening === opening) this.devtoolsOpening = undefined;
+				return devtoolsErrors.err("devtools_unavailable", cause instanceof Error ? cause.message : String(cause));
+			}
+		);
+		this.devtoolsOpening = opening;
+		return opening;
+	}
+
+	/**
+	 * A facet that gave up reconnecting (an app relaunch outlasted its budget) is dropped, so the next call attaches
+	 * again and failure capture never writes a dead facet's rings.
+	 */
+	private watchFacet(opened: DevtoolsFacet, opening: Promise<DevtoolsResult<DevtoolsFacet>>): void {
+		this.facet = opened;
+		opened.on("lost", () => {
+			if (this.facet !== opened) return;
+			this.facet = undefined;
+			if (this.devtoolsOpening === opening) this.devtoolsOpening = undefined;
+			opened.close();
+		});
+	}
+
+	peekDevtools(): DevtoolsFacet | undefined {
+		return this.facet;
+	}
+
+	step<T>(kind: string, label: string, fn: () => Promise<T>): Promise<T> {
+		return stepRunner.run(this.running, kind, label, fn);
+	}
+
+	span: SpanRunner = (op, fn, options) => spans.run(this.running?.trace, op, fn, options);
+
+	enterAttempt(next: AttemptContext, replacing?: AttemptContext): void {
+		if (replacing !== undefined && this.running !== replacing) return;
+		this.running = next;
+	}
+
+	leaveAttempt(leaving?: AttemptContext): void {
+		if (leaving !== undefined && this.running !== leaving) return;
+		this.running = undefined;
+	}
+
+	close(): Promise<void> {
+		this.closing ??= this.shutDown();
+		return this.closing;
+	}
+
+	private async shutDown(): Promise<void> {
+		if (this.opened !== undefined) {
+			await this.opened.then(
+				(d) => d.close(),
+				() => undefined
+			);
+		}
+		this.current = undefined;
+		if (this.devtoolsOpening !== undefined) {
+			await this.devtoolsOpening.then(
+				(result) => (result.success ? result.data.close() : undefined),
+				() => undefined
+			);
+		}
+		this.facet = undefined;
+		this.deps.onClosed(this);
+		if (this.exitListener !== undefined) process.off("exit", this.exitListener);
+	}
 }
 
 /** Which context one attempt's own fixtures use right now; `finished` once the runner is done with the attempt. */
@@ -457,76 +421,101 @@ export type AttemptBinding = { readonly context: AttemptContext; readonly finish
  * `afterEach` past its limit) fails its next driver call instead of tapping into the next test. Everything else is
  * the shared session.
  */
-export function attemptSession(session: Session, binding: () => AttemptBinding): Session {
-	const context = (): AttemptContext => binding().context;
-	const trace = (): TraceWriter | undefined => (binding().finished ? undefined : context().trace);
-	return {
-		get env() {
-			return session.env;
-		},
-		get out() {
-			return session.out;
-		},
-		get results() {
-			return session.results;
-		},
-		get nativeLog() {
-			return session.nativeLog;
-		},
-		get recoverHid() {
-			return session.recoverHid;
-		},
-		resetDevice: () => session.resetDevice(),
-		get fixtures() {
-			return session.fixtures;
-		},
-		set fixtures(factory) {
-			session.fixtures = factory;
-		},
-		get log() {
-			return session.log;
-		},
-		get attempt() {
-			return binding().finished ? undefined : context();
-		},
-		get signal() {
-			return context().signal;
-		},
-		get attemptDir() {
-			return context().dir;
-		},
-		get trace() {
-			return trace();
-		},
-		driver: () => session.driver(),
-		peekDriver: () => session.peekDriver(),
-		devtools: () => session.devtools(),
-		peekDevtools: () => session.peekDevtools(),
-		step(kind, label, fn) {
-			return runStep(context(), kind, label, fn);
-		},
-		span(op, fn, options) {
-			return spans.run(trace(), op, fn, options);
-		},
-		enterAttempt: (next, replacing) => session.enterAttempt(next, replacing),
-		leaveAttempt: (leaving) => session.leaveAttempt(leaving),
-		close: () => session.close(),
-	};
-}
+class AttemptSession implements Session {
+	constructor(
+		private readonly shared: Session,
+		private readonly binding: () => AttemptBinding
+	) {}
 
-/** The process-wide session (`globalThis[Symbol.for("@delacour/warden-e2e/session")]`), created on first call. */
-export function getSession(opts: SessionOptions = {}): Session {
-	const existing = slot()[SESSION_KEY];
-	if (existing !== undefined) return existing;
-	const session = createSession(opts);
-	slot()[SESSION_KEY] = session;
-	return session;
-}
+	private context(): AttemptContext {
+		return this.binding().context;
+	}
 
-/** Closes and forgets the process-wide session, if any. */
-export async function resetSession(): Promise<void> {
-	await slot()[SESSION_KEY]?.close();
-	delete slot()[SESSION_KEY];
+	get env(): E2eEnv {
+		return this.shared.env;
+	}
+
+	get out(): string {
+		return this.shared.out;
+	}
+
+	get results(): ResultsWriter {
+		return this.shared.results;
+	}
+
+	get nativeLog(): NativeLogDeps | undefined {
+		return this.shared.nativeLog;
+	}
+
+	get recoverHid(): (() => Promise<boolean>) | undefined {
+		return this.shared.recoverHid;
+	}
+
+	get fixtures(): FixtureFactory | undefined {
+		return this.shared.fixtures;
+	}
+
+	set fixtures(factory: FixtureFactory | undefined) {
+		this.shared.fixtures = factory;
+	}
+
+	get log(): (line: string) => void {
+		return this.shared.log;
+	}
+
+	get attempt(): AttemptContext | undefined {
+		return this.binding().finished ? undefined : this.context();
+	}
+
+	get signal(): AbortSignal {
+		return this.context().signal;
+	}
+
+	get attemptDir(): string | undefined {
+		return this.context().dir;
+	}
+
+	get trace(): TraceWriter | undefined {
+		return this.binding().finished ? undefined : this.context().trace;
+	}
+
+	resetDevice(): Promise<void> {
+		return this.shared.resetDevice();
+	}
+
+	driver(): Promise<Driver> {
+		return this.shared.driver();
+	}
+
+	peekDriver(): Driver | undefined {
+		return this.shared.peekDriver();
+	}
+
+	devtools(): Promise<DevtoolsResult<DevtoolsFacet>> {
+		return this.shared.devtools();
+	}
+
+	peekDevtools(): DevtoolsFacet | undefined {
+		return this.shared.peekDevtools();
+	}
+
+	step<T>(kind: string, label: string, fn: () => Promise<T>): Promise<T> {
+		return stepRunner.run(this.context(), kind, label, fn);
+	}
+
+	span: SpanRunner = (op, fn, options) => spans.run(this.trace, op, fn, options);
+
+	enterAttempt(next: AttemptContext, replacing?: AttemptContext): void {
+		this.shared.enterAttempt(next, replacing);
+	}
+
+	leaveAttempt(leaving?: AttemptContext): void {
+		this.shared.leaveAttempt(leaving);
+	}
+
+	close(): Promise<void> {
+		return this.shared.close();
+	}
 }
 
 /**
@@ -537,15 +526,154 @@ export async function resetSession(): Promise<void> {
 const ONLY_KEY = Symbol.for("@delacour/warden-e2e/only");
 type OnlySlot = { [ONLY_KEY]?: boolean };
 
-/** Records that a `.only` was collected. */
-export function markOnly(): void {
-	(globalThis as OnlySlot)[ONLY_KEY] = true;
+/** The `.only` flag shared across module copies; see {@link onlyFlag}. */
+export class OnlyFlag {
+	/** Records that a `.only` was collected. */
+	mark(): void {
+		(globalThis as OnlySlot)[ONLY_KEY] = true;
+	}
+
+	wasSeen(): boolean {
+		return (globalThis as OnlySlot)[ONLY_KEY] === true;
+	}
+
+	reset(): void {
+		delete (globalThis as OnlySlot)[ONLY_KEY];
+	}
 }
 
-export function onlyWasSeen(): boolean {
-	return (globalThis as OnlySlot)[ONLY_KEY] === true;
+export const onlyFlag = new OnlyFlag();
+
+/**
+ * Creates sessions and keeps the process-wide one on `globalThis`. The default driver and fixture factories are
+ * plain instance state: they are wired by the package entry in the same copy that reads them.
+ */
+export class SessionRegistry {
+	private defaults: SessionDefaults = {
+		driverFactory: undefined,
+		fixtures: undefined,
+		nativeLog: undefined,
+		hidRecovery: undefined,
+	};
+
+	private slot(): SessionSlot {
+		return globalThis as SessionSlot;
+	}
+
+	/**
+	 * Which inspector page is this env's: the bundle id and the device name. Several devices can share one Metro;
+	 * without the name the newest page of any device would win and a reload or evaluate would hit another device's app.
+	 */
+	devtoolsTarget(env: E2eEnv): { appId: string; deviceName?: string } {
+		return { appId: env.bundleId, ...(env.deviceName === undefined ? {} : { deviceName: env.deviceName }) };
+	}
+
+	/**
+	 * Metro's inspector for this env's app (`WARDEN_METRO_URL`), pinned by {@link devtoolsTarget}. LogBox is kept off:
+	 * its toasts and inspector cover the app and take taps, while the logs still reach the console capture.
+	 */
+	openDevtools: DevtoolsOpener = (env) =>
+		devtoolsFacetOpener.open({
+			env: { metroUrl: env.metroUrl },
+			device: this.devtoolsTarget(env),
+			fetch,
+			WebSocket,
+			timeoutMs: 5_000,
+			log: (line) => process.stderr.write(`[devtools] ${line}\n`),
+			muteLogBox: true,
+		});
+
+	/** Wires the HID-loss recovery used when a session gets none (`preload.ts` registers the real one). */
+	setDefaultHidRecovery(deps: HidRecoveryDeps | undefined): void {
+		this.defaults.hidRecovery = deps;
+	}
+
+	/** Wires the native-log reader used when a session gets none (`preload.ts` registers the real one). */
+	setDefaultNativeLog(deps: NativeLogDeps | undefined): void {
+		this.defaults.nativeLog = deps;
+	}
+
+	/** Wires the factory used when `get` gets none (`driver/open.ts`'s opener, set by the package entry). */
+	setDefaultDriverFactory(factory: DriverFactory | undefined): void {
+		this.defaults.driverFactory = factory;
+	}
+
+	/** Whether a default driver factory is wired (so the preload leaves a test-installed fake alone). */
+	hasDefaultDriverFactory(): boolean {
+		return this.defaults.driverFactory !== undefined;
+	}
+
+	/** Wires the `app`/`device`/`screen` factory used when `get` gets none. */
+	setDefaultFixtureFactory(factory: FixtureFactory | undefined): void {
+		this.defaults.fixtures = factory;
+	}
+
+	/** Whether a default fixture factory is wired (so the preload leaves a test-installed one alone). */
+	hasDefaultFixtureFactory(): boolean {
+		return this.defaults.fixtures !== undefined;
+	}
+
+	private missingFactory: DriverFactory = async () => ({
+		success: false,
+		error: {
+			code: "E_INTERNAL",
+			message: "no driver factory configured (setDefaultDriverFactory was never called)",
+			retryable: false,
+		},
+	});
+
+	private writeLine(line: string): void {
+		try {
+			writeSync(1, `${line}\n`);
+		} catch {
+			// a closed stdout must not fail a test
+		}
+	}
+
+	private resolveEnv(env: E2eEnv | undefined): E2eEnv {
+		if (env !== undefined) return env;
+		const read = envReader.read(process.env);
+		if (!read.success) throw new E2eError("SESSION", `invalid warden e2e environment:\n${read.error}`);
+		if (read.data === undefined) throw new E2eError("SESSION", "not running under warden: WARDEN_UDID is not set");
+		return read.data;
+	}
+
+	create(opts: SessionOptions = {}): Session {
+		const session = new ProcessSession({
+			env: this.resolveEnv(opts.env),
+			factory: opts.driverFactory ?? this.defaults.driverFactory ?? this.missingFactory,
+			fixtures: opts.fixtures ?? this.defaults.fixtures,
+			nativeLog: opts.nativeLog ?? this.defaults.nativeLog,
+			hid: opts.hidRecovery ?? this.defaults.hidRecovery,
+			openFacet: opts.devtools ?? this.openDevtools,
+			log: opts.log ?? ((line) => this.writeLine(line)),
+			exitHook: opts.exitHook !== false,
+			onClosed: (closed) => {
+				if (this.slot()[SESSION_KEY] === closed) delete this.slot()[SESSION_KEY];
+			},
+		});
+		return session;
+	}
+
+	/** `session` as one attempt's fixtures see it; see {@link AttemptSession}. */
+	forAttempt(session: Session, binding: () => AttemptBinding): Session {
+		return new AttemptSession(session, binding);
+	}
+
+	/** The process-wide session (`globalThis[Symbol.for("@delacour/warden-e2e/session")]`), created on first call. */
+	get(opts: SessionOptions = {}): Session {
+		const existing = this.slot()[SESSION_KEY];
+		if (existing !== undefined) return existing;
+		const session = this.create(opts);
+		this.slot()[SESSION_KEY] = session;
+		return session;
+	}
+
+	/** Closes and forgets the process-wide session, if any. */
+	async reset(): Promise<void> {
+		await this.slot()[SESSION_KEY]?.close();
+		delete this.slot()[SESSION_KEY];
+	}
 }
 
-export function resetOnly(): void {
-	delete (globalThis as OnlySlot)[ONLY_KEY];
-}
+export const sessions = new SessionRegistry();

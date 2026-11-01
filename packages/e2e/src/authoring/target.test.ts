@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
-import { coordsTarget, targetFromElement } from "./target";
+import { targetResolver } from "./target";
 
 describe("targetFromElement", () => {
 	const snapshot = driverFixtures.snapshotOf([
@@ -23,7 +23,7 @@ describe("targetFromElement", () => {
 	};
 
 	test("builds the chain id → role+label → path and a landmark", () => {
-		const target = targetFromElement(at("0"), snapshot);
+		const target = targetResolver.targetFromElement(at("0"), snapshot);
 		expect(target).toEqual({
 			kind: "selector",
 			selector: "id=sign-in-submit",
@@ -38,28 +38,28 @@ describe("targetFromElement", () => {
 	});
 
 	test("pins repeated ids with nth in document order", () => {
-		const second = targetFromElement(at("3"), snapshot);
+		const second = targetResolver.targetFromElement(at("3"), snapshot);
 		expect(second.kind === "selector" && second.selector).toBe("id=row nth=1");
 	});
 
 	test("records how many nodes the primary selector matched, only when more than one", () => {
-		const unique = targetFromElement(at("0"), snapshot);
+		const unique = targetResolver.targetFromElement(at("0"), snapshot);
 		expect(unique.kind === "selector" && unique.matches).toBeUndefined();
-		const repeated = targetFromElement(at("3"), snapshot);
+		const repeated = targetResolver.targetFromElement(at("3"), snapshot);
 		expect(repeated.kind === "selector" && repeated.matches).toBe(2);
-		const bare = targetFromElement(at("6"), snapshot);
+		const bare = targetResolver.targetFromElement(at("6"), snapshot);
 		expect(bare.kind === "selector" && bare.matches).toBe(2);
 	});
 
 	test("an Android-style element with only text goes role+text", () => {
-		const target = targetFromElement(at("4"), snapshot);
+		const target = targetResolver.targetFromElement(at("4"), snapshot);
 		if (target.kind !== "selector") throw new Error("expected a selector target");
 		expect(target.chain.map((entry) => entry.by)).toEqual(["role-text", "path"]);
 		expect(target.selector).toBe("text=Save role=button");
 	});
 
 	test("an element with nothing to say falls back to role + nth and the path", () => {
-		const target = targetFromElement(at("6"), snapshot);
+		const target = targetResolver.targetFromElement(at("6"), snapshot);
 		if (target.kind !== "selector") throw new Error("expected a selector target");
 		expect(target.selector).toBe("role=other nth=1");
 		expect(target.chain).toEqual([{ by: "path", path: "6", role: "other" }]);
@@ -67,19 +67,19 @@ describe("targetFromElement", () => {
 
 	test("lists role+text after role+label only when text differs from the label", () => {
 		const both = driverFixtures.snapshotOf([driverFixtures.el("button", { id: "go", label: "Go", text: "GO NOW" })]);
-		const target = targetFromElement(both.flat[0] ?? at("0"), both);
+		const target = targetResolver.targetFromElement(both.flat[0] ?? at("0"), both);
 		if (target.kind !== "selector") throw new Error("expected a selector target");
 		expect(target.chain.map((entry) => entry.by)).toEqual(["id", "role-label", "role-text", "path"]);
 	});
 
 	test("never stores an @ref", () => {
-		const target = targetFromElement(at("0"), snapshot);
+		const target = targetResolver.targetFromElement(at("0"), snapshot);
 		expect(JSON.stringify(target)).not.toMatch(/@e\d/);
 	});
 
 	test("an element that is not in the snapshot becomes a coordinate target with a warning", () => {
 		const stranger = { ...at("0"), id: "9.9" };
-		const target = targetFromElement(stranger, snapshot);
+		const target = targetResolver.targetFromElement(stranger, snapshot);
 		expect(target.kind).toBe("coords");
 		if (target.kind === "coords") {
 			expect(target.x).toBe(195);
@@ -89,6 +89,6 @@ describe("targetFromElement", () => {
 	});
 
 	test("coordsTarget carries the default warning", () => {
-		expect(coordsTarget({ x: 1, y: 2 }).warning).toContain("coordinates");
+		expect(targetResolver.coordsTarget({ x: 1, y: 2 }).warning).toContain("coordinates");
 	});
 });

@@ -829,8 +829,8 @@ function jobRunner(deps: BatchDeps, o: JobRunnerOptions) {
 	const runnerShot = async (out: string | undefined): Promise<boolean> => {
 		if (!out) return false;
 		try {
-			const { readResults } = await import("@delacour/warden-e2e/runner/results");
-			return runnerFailureShot(readResults(await deps.readFile(join(out, "results.jsonl")))) !== undefined;
+			const { resultsFiles } = await import("@delacour/warden-e2e/runner/results");
+			return runnerFailureShot(resultsFiles.read(await deps.readFile(join(out, "results.jsonl")))) !== undefined;
 		} catch {
 			return false;
 		}

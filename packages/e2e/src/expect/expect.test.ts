@@ -6,7 +6,7 @@ import type { Locator } from "@delacour/warden-screen/locator";
 import { LocatorAssertions } from "@delacour/warden-screen/matchers";
 import { screenFactory } from "@delacour/warden-screen/screen";
 import { screenTesting } from "@delacour/warden-screen/testing/screen";
-import { createExpect, expect, softSinkFor } from "./expect";
+import { expect, expectFactory } from "./expect";
 
 function screenWithButton() {
 	const host = screenTesting.testHost(
@@ -90,7 +90,7 @@ describe("expect(actual)", () => {
 describe("expect.soft", () => {
 	function collecting() {
 		const failures: E2eError[] = [];
-		const soft = createExpect({ softSink: () => (error) => void failures.push(error) }).soft;
+		const soft = expectFactory.create({ softSink: () => (error) => void failures.push(error) }).soft;
 		return { failures, soft };
 	}
 
@@ -115,7 +115,7 @@ describe("expect.soft", () => {
 	});
 
 	test("without an attempt to collect for, failures throw as usual", async () => {
-		const loose = createExpect({ softSink: () => undefined }).soft;
+		const loose = expectFactory.create({ softSink: () => undefined }).soft;
 		bun(() => loose(1).toBe(2)).toThrow();
 		const { screen } = screenWithButton();
 		let thrown: unknown;
@@ -133,15 +133,15 @@ describe("expect.soft", () => {
 
 	test("the session's collector is the running attempt's softFailures", () => {
 		const softFailures: E2eError[] = [];
-		const sink = softSinkFor({ attempt: { softFailures } as never });
+		const sink = expectFactory.softSinkFor({ attempt: { softFailures } as never });
 		sink?.(new E2eError("ASSERTION", "x"));
 		bun(softFailures).toHaveLength(1);
-		bun(softSinkFor({ attempt: undefined })).toBeUndefined();
+		bun(expectFactory.softSinkFor({ attempt: undefined })).toBeUndefined();
 	});
 
 	test("typed as the locator matchers for a locator", () => {
 		const { screen } = screenWithButton();
 		const locator: Locator = screen.getByTestId("x");
-		bun(typeof createExpect({ softSink: () => undefined }).soft(locator).toBeVisible).toBe("function");
+		bun(typeof expectFactory.create({ softSink: () => undefined }).soft(locator).toBeVisible).toBe("function");
 	});
 });

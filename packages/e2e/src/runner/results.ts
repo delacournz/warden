@@ -39,34 +39,42 @@ export type ResultsWriter = {
 	append(result: TestResult): void;
 };
 
-/** Append-only `results.jsonl` writer; the directory is created on first use. */
-export function openResults(path: string): ResultsWriter {
-	let ready = false;
-	return {
-		path,
-		append(result) {
-			if (!ready) {
-				mkdirSync(dirname(path), { recursive: true });
-				ready = true;
-			}
-			appendFileSync(path, `${JSON.stringify(result)}\n`);
-		},
-	};
+class JsonlResultsWriter implements ResultsWriter {
+	private ready = false;
+
+	constructor(readonly path: string) {}
+
+	append(result: TestResult): void {
+		if (!this.ready) {
+			mkdirSync(dirname(this.path), { recursive: true });
+			this.ready = true;
+		}
+		appendFileSync(this.path, `${JSON.stringify(result)}\n`);
+	}
 }
 
-/** Valid results in file order. Blank, truncated (killed mid-write) and invalid lines are skipped. */
-export function readResults(text: string): TestResult[] {
-	const results: TestResult[] = [];
-	for (const line of text.split("\n")) {
-		if (line.trim() === "") continue;
-		let json: unknown;
-		try {
-			json = JSON.parse(line);
-		} catch {
-			continue;
-		}
-		const parsed = testResultSchema.safeParse(json);
-		if (parsed.success) results.push(parsed.data);
+export class ResultsFiles {
+	/** Append-only `results.jsonl` writer; the directory is created on first use. */
+	open(path: string): ResultsWriter {
+		return new JsonlResultsWriter(path);
 	}
-	return results;
+
+	/** Valid results in file order. Blank, truncated (killed mid-write) and invalid lines are skipped. */
+	read(text: string): TestResult[] {
+		const results: TestResult[] = [];
+		for (const line of text.split("\n")) {
+			if (line.trim() === "") continue;
+			let json: unknown;
+			try {
+				json = JSON.parse(line);
+			} catch {
+				continue;
+			}
+			const parsed = testResultSchema.safeParse(json);
+			if (parsed.success) results.push(parsed.data);
+		}
+		return results;
+	}
 }
+
+export const resultsFiles = new ResultsFiles();

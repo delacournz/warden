@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Suite, SuiteError } from "@delacour/warden-core/affected/affected";
-import { type JournalError, writeFileAtomic } from "@delacour/warden-e2e/authoring/journal";
+import { type JournalError, journalStore } from "@delacour/warden-e2e/authoring/journal";
 import type { LintFinding } from "@delacour/warden-e2e/authoring/lint";
 import type { WardenError, WardenErrorCode } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -76,7 +76,7 @@ export function readIfExists(path: string): string | undefined {
 
 export function write(path: string, source: string): void {
 	mkdirSync(dirname(path), { recursive: true });
-	writeFileAtomic(path, source);
+	journalStore.writeFileAtomic(path, source);
 }
 
 /** The lint findings as human lines (a finding, then its hint dimmed). */

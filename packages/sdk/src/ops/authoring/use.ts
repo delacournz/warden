@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { generateSpec } from "@delacour/warden-e2e/authoring/codegen";
-import { appendStep, readJournal } from "@delacour/warden-e2e/authoring/journal";
+import { specGenerator } from "@delacour/warden-e2e/authoring/codegen";
+import { journalStore } from "@delacour/warden-e2e/authoring/journal";
 import type { RecordedStep, Recording } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -49,7 +49,7 @@ function exportsHelper(source: string, fn: string): boolean {
 
 /** The throwaway spec for one helper call, built by the same codegen a recording goes through. */
 function useSpec(recording: Recording, step: RecordedStep, shape: SpecShape, file: string): string {
-	return generateSpec(
+	return specGenerator.generateSpec(
 		{ ...recording, name: `use ${step.kind === "use" ? step.fn : "helper"}`, title: "use helper", steps: [step] },
 		{ file, launch: shape.launch, ...(shape.specOptions !== undefined ? { specOptions: shape.specOptions } : {}) }
 	).source;
@@ -166,7 +166,7 @@ async function recordUseStep(
 	const recorded = loadHelperRoutes(session.host.home, module, fn);
 	const visited = visitedRoutes(before, recorded ?? [], after);
 	const partial = recorded === undefined || recorded.length === 0;
-	const appended = await appendStep(journal, {
+	const appended = await journalStore.appendStep(journal, {
 		kind: "use",
 		at: session.host.now(),
 		module,
@@ -206,7 +206,7 @@ export async function recordUse(session: OpSession, params: RecordUseParams): Op
 	const { pointer, journal } = active.data;
 	const helper = resolveUsedHelper(session, pointer, params.helper);
 	if (!helper.success) return helper;
-	const read = readJournal(journal);
+	const read = journalStore.readJournal(journal);
 	if (!read.success) return journalFailure(read.error, "`warden ui record cancel` clears it");
 	const run = await runUseSpec(session, pointer, read.data, helper.data, params.suite ?? pointer.suite);
 	if (!run.success) return run;

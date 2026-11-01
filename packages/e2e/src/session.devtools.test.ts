@@ -7,7 +7,7 @@ import { fakeMetros } from "@delacour/warden-devtools/testing/devtools";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
-import { createSession } from "./session";
+import { sessions } from "./session";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -35,7 +35,7 @@ const envIn = (extra: Partial<E2eEnv> = {}): E2eEnv => ({
 describe("Session devtools", () => {
 	test("without a Metro URL (release build) it is devtools_unavailable and nothing is opened", async () => {
 		let opens = 0;
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn(),
 			exitHook: false,
 			devtools: async () => {
@@ -52,7 +52,7 @@ describe("Session devtools", () => {
 	test("opens on the first call, once and shared, even concurrently", async () => {
 		const stub = facetStubs.create();
 		const seen: E2eEnv[] = [];
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
 			devtools: async (env) => {
@@ -71,7 +71,7 @@ describe("Session devtools", () => {
 	test("a failed open is returned and retried on the next call", async () => {
 		const stub = facetStubs.create();
 		let attempts = 0;
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
 			devtools: async () => {
@@ -100,7 +100,7 @@ describe("Session devtools", () => {
 			}) as typeof first.facet.on,
 		};
 		const opened = [lostable, second.facet];
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
 			devtools: async () => {
@@ -124,7 +124,7 @@ describe("Session devtools", () => {
 
 	test("close() closes an opened facet once", async () => {
 		const stub = facetStubs.create();
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
 			devtools: async () => resultFactory.ok(stub.facet),
@@ -136,7 +136,7 @@ describe("Session devtools", () => {
 
 	test("close() never opens devtools", async () => {
 		let opens = 0;
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn({ metroUrl: "http://127.0.0.1:8081" }),
 			exitHook: false,
 			devtools: async () => {
@@ -151,7 +151,7 @@ describe("Session devtools", () => {
 	test("the default opener connects to a real (fake) Metro", async () => {
 		const fake = fakeMetros.start();
 		try {
-			const session = createSession({ env: envIn({ metroUrl: fake.url }), exitHook: false });
+			const session = sessions.create({ env: envIn({ metroUrl: fake.url }), exitHook: false });
 			const result = await session.devtools();
 			expect(result.success).toBe(true);
 			if (result.success) expect(result.data.target.id).toBeDefined();

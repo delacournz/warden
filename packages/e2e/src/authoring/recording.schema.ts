@@ -297,10 +297,6 @@ export type StepOf<K extends StepKey> = K extends `${infer Kind}.${infer Type}`
 	? Extract<RecordedStep, { kind: Kind; type: Type }>
 	: Extract<RecordedStep, { kind: K }>;
 
-export function stepKey(step: RecordedStep): StepKey {
-	// the template is the union of `screen.<type>` and `gesture.<type>` spelled out; TS only sees the cross product
-	return step.kind === "screen" || step.kind === "gesture" ? (`${step.kind}.${step.type}` as StepKey) : step.kind;
-}
 export type RecordedOn = z.infer<typeof recordedOnSchema>;
 export type Recording = z.infer<typeof recordingSchema>;
 
@@ -310,3 +306,12 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type NewStep = DistributiveOmit<RecordedStep, "i">;
 
 export const RECORDING_VERSION = 1;
+
+export class StepKeys {
+	stepKey(step: RecordedStep): StepKey {
+		// the template is the union of `screen.<type>` and `gesture.<type>` spelled out; TS only sees the cross product
+		return step.kind === "screen" || step.kind === "gesture" ? (`${step.kind}.${step.type}` as StepKey) : step.kind;
+	}
+}
+
+export const stepKeys = new StepKeys();

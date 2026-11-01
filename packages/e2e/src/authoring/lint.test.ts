@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { type LintFinding, lintRecording } from "./lint";
+import { type LintFinding, recordingLinter } from "./lint";
 import type { NewStep } from "./recording.schema";
-import { allStepsRecording, recordingOf, selectorTarget } from "./recording.testing";
+import { recordingFixtures } from "./recording.testing";
 
 const press = (selector: string, extra: { snapshotHash?: string; matches?: number } = {}): NewStep => {
-	const target = selectorTarget(selector, "button");
+	const target = recordingFixtures.selectorTarget(selector, "button");
 	return {
 		kind: "press",
 		at: 1,
@@ -12,11 +12,16 @@ const press = (selector: string, extra: { snapshotHash?: string; matches?: numbe
 		...(extra.snapshotHash !== undefined && { snapshotHash: extra.snapshotHash }),
 	};
 };
-const wait = (selector = "id=home"): NewStep => ({ kind: "wait", at: 2, target: selectorTarget(selector, "other") });
+const wait = (selector = "id=home"): NewStep => ({
+	kind: "wait",
+	at: 2,
+	target: recordingFixtures.selectorTarget(selector, "other"),
+});
 
 const codes = (findings: readonly LintFinding[]): string[] =>
 	findings.map((finding) => `${finding.step}:${finding.code}`);
-const lint = (...steps: NewStep[]): LintFinding[] => lintRecording(recordingOf(steps));
+const lint = (...steps: NewStep[]): LintFinding[] =>
+	recordingLinter.lintRecording(recordingFixtures.recordingOf(steps));
 
 describe("use steps", () => {
 	const use: NewStep = { kind: "use", at: 1, module: "/repo/e2e/helpers.ts", fn: "signIn" };
@@ -83,7 +88,7 @@ describe("lintRecording", () => {
 		const findings = lint(press("id=next", { snapshotHash: "a" }), {
 			kind: "fill",
 			at: 2,
-			target: selectorTarget("id=name", "textbox"),
+			target: recordingFixtures.selectorTarget("id=name", "textbox"),
 			text: "x",
 			snapshotHash: "b",
 		});
@@ -95,7 +100,7 @@ describe("lintRecording", () => {
 		const fill: NewStep = {
 			kind: "fill",
 			at: 3,
-			target: selectorTarget("id=name", "textbox"),
+			target: recordingFixtures.selectorTarget("id=name", "textbox"),
 			text: "x",
 			snapshotHash: "b",
 		};
@@ -116,19 +121,26 @@ describe("lintRecording", () => {
 	});
 
 	test("an open followed straight by an action is unverified_navigation; the last step never is", () => {
-		const fill: NewStep = { kind: "fill", at: 2, target: selectorTarget("id=name", "textbox"), text: "x" };
+		const fill: NewStep = {
+			kind: "fill",
+			at: 2,
+			target: recordingFixtures.selectorTarget("id=name", "textbox"),
+			text: "x",
+		};
 		expect(codes(lint({ kind: "open", at: 1 }, fill))).toEqual(["0:unverified_navigation"]);
 		expect(lint({ kind: "open", at: 1 })).toEqual([]);
 	});
 
 	test("findings come out in step order, whole-recording findings first", () => {
-		const findings = lintRecording(allStepsRecording());
+		const findings = recordingLinter.lintRecording(recordingFixtures.allStepsRecording());
 		const order = findings.map((finding) => finding.step ?? -1);
 		expect(order).toEqual([...order].sort((a, b) => a - b));
 		expect(findings.some((finding) => finding.code === "coords_target")).toBe(true);
 	});
 
 	test("is deterministic", () => {
-		expect(lintRecording(allStepsRecording())).toEqual(lintRecording(allStepsRecording()));
+		expect(recordingLinter.lintRecording(recordingFixtures.allStepsRecording())).toEqual(
+			recordingLinter.lintRecording(recordingFixtures.allStepsRecording())
+		);
 	});
 });

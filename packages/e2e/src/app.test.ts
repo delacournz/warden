@@ -7,7 +7,7 @@ import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-d
 import { screenFactory } from "@delacour/warden-screen/screen";
 import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
-import { appFor as createApp } from "./fixtures";
+import { sessionFixtures } from "./fixtures";
 
 const baseEnv: E2eEnv = {
 	udid: "UDID",
@@ -26,7 +26,7 @@ const CONTENT = driverFixtures.snapshotOf([driverFixtures.el("button", { label: 
 
 function setup(env: Partial<E2eEnv> = {}) {
 	const driver = new FakeDriver({ screens: [CONTENT] });
-	const app = createApp({ session: { out: "/tmp/out" }, driver, env: { ...baseEnv, ...env } });
+	const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: { ...baseEnv, ...env } });
 	return { driver, app };
 }
 
@@ -68,7 +68,7 @@ describe("app.open", () => {
 				return Promise.resolve(devtoolsErrors.err("devtools_unavailable", "not under test"));
 			},
 		};
-		const app = createApp({ session, driver, env: { ...baseEnv, metroUrl: "http://localhost:8081" } });
+		const app = sessionFixtures.appFor({ session, driver, env: { ...baseEnv, metroUrl: "http://localhost:8081" } });
 		await app.open();
 		expect(attaches).toBe(1);
 	});
@@ -83,7 +83,7 @@ describe("app.open", () => {
 				return Promise.resolve(devtoolsErrors.err("devtools_unavailable", "not under test"));
 			},
 		};
-		await createApp({ session, driver, env: baseEnv }).open();
+		await sessionFixtures.appFor({ session, driver, env: baseEnv }).open();
 		expect(attaches).toBe(0);
 	});
 
@@ -102,20 +102,26 @@ describe("app.open", () => {
 
 	test("iOS launches with the network dylib when conditions want it; Android and a plain run do not", async () => {
 		const wanted = new FakeDriver({ screens: [CONTENT] });
-		await createApp({ session: { out: "/tmp/out" }, driver: wanted, env: baseEnv, injectWanted: () => true }).open();
+		await sessionFixtures
+			.appFor({ session: { out: "/tmp/out" }, driver: wanted, env: baseEnv, injectWanted: () => true })
+			.open();
 		expect(wanted.callsOf("app.launch")[0]?.opts?.inject).toBe(true);
 
 		const plain = new FakeDriver({ screens: [CONTENT] });
-		await createApp({ session: { out: "/tmp/out" }, driver: plain, env: baseEnv, injectWanted: () => false }).open();
+		await sessionFixtures
+			.appFor({ session: { out: "/tmp/out" }, driver: plain, env: baseEnv, injectWanted: () => false })
+			.open();
 		expect(plain.callsOf("app.launch")[0]?.opts).not.toHaveProperty("inject");
 
 		const android = new FakeDriver({ screens: [CONTENT], platform: "android" });
-		await createApp({
-			session: { out: "/tmp/out" },
-			driver: android,
-			env: { ...baseEnv, platform: "android", launchArgs: [] },
-			injectWanted: () => true,
-		}).open();
+		await sessionFixtures
+			.appFor({
+				session: { out: "/tmp/out" },
+				driver: android,
+				env: { ...baseEnv, platform: "android", launchArgs: [] },
+				injectWanted: () => true,
+			})
+			.open();
 		expect(android.callsOf("app.launch")[0]?.opts).not.toHaveProperty("inject");
 	});
 
@@ -164,7 +170,7 @@ describe("app.open wait", () => {
 			screens: [CONTENT],
 			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
 		});
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		await app.open({ wait: "quiet" });
 		expect(driver.callsOf("settle")).toHaveLength(1);
 	});
@@ -174,7 +180,7 @@ describe("app.open wait", () => {
 			screens: [CONTENT],
 			onCall: (call) => (call.method === "settle" ? driverFixtures.failWith("E_UNSUPPORTED") : undefined),
 		});
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		await app.open({ wait: "quiet" });
 	});
 
@@ -183,7 +189,7 @@ describe("app.open wait", () => {
 			screens: [CONTENT],
 			onCall: (call) => (call.method === "settle" ? driverFixtures.failWith("E_HELPER_CRASHED") : undefined),
 		});
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		const error = await app.open({ wait: "quiet" }).catch((e: unknown) => e);
 		expect((error as E2eError).code).toBe("DRIVER");
 	});
@@ -215,7 +221,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 	test("returns only once the screen has content (a control or a testID), then settles", async () => {
 		const clock = fakeClock();
 		const driver = launchingDriver(clock, { contentAt: 1000 });
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
 		// looks at 0, 100, 300, 700 and 1100 ms (the back-off below)
 		expect(clock.now()).toBe(1100);
@@ -236,7 +242,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 				return driver.snapshot(...args);
 			},
 		};
-		const app = createApp({ session: { out: "/tmp/out" }, driver: watched, env: baseEnv, clock });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver: watched, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
 		// the last gap is cut to the 3 s deadline
 		expect(looks).toEqual([0, 100, 300, 700, 1100, 1500, 1900, 2300, 2700, 3000]);
@@ -247,7 +253,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 		const inner = launchingDriver(clock, { contentAt: 300 });
 		const driver = observations.cache(inner, { now: clock.now });
 		await driver.snapshot();
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
 		expect(inner.callsOf("snapshot")).toHaveLength(1 + 3);
 		expect(clock.now()).toBe(300);
@@ -256,7 +262,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 	test("a launch screen that never gives way is waited out to the 3 s cap, then settled as before", async () => {
 		const clock = fakeClock();
 		const driver = launchingDriver(clock, { contentAt: Number.POSITIVE_INFINITY });
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
 		expect(clock.now()).toBe(3000);
 		expect(driver.callsOf("settle")).toHaveLength(1);
@@ -281,7 +287,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 				}),
 			],
 		});
-		const app = createApp({
+		const app = sessionFixtures.appFor({
 			session: { out: "/tmp/out" },
 			driver,
 			env: { ...baseEnv, platform: "android", launchArgs: [] },
@@ -306,7 +312,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 				}),
 			],
 		});
-		const app = createApp({
+		const app = sessionFixtures.appFor({
 			session: { out: "/tmp/out" },
 			driver,
 			env: { ...baseEnv, platform: "android", launchArgs: [] },
@@ -324,7 +330,7 @@ describe('app.open wait: "quiet" waits for the first screen, not the launch scre
 			onCall: (call) =>
 				call.method === "snapshot" && failures-- > 0 ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined,
 		});
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock });
 		await app.open({ wait: "quiet" });
 		expect(driver.callsOf("snapshot")).toHaveLength(3);
 		expect(clock.now()).toBe(300);
@@ -338,7 +344,7 @@ describe("app.open wait: { until }", () => {
 		const host = screenTesting.testHost(driver, { cache: true });
 		time.now = host.clock.now;
 		const screen = screenFactory.createScreen(host);
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock: host.clock });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock: host.clock });
 		await app.open({ wait: { until: screen.getByTestId("welcome.screen") } });
 		expect(host.clock.now()).toBeGreaterThanOrEqual(800);
 		const methods = driver.calls.map((c) => c.method);
@@ -352,7 +358,7 @@ describe("app.open wait: { until }", () => {
 		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([driverFixtures.el("image")])] });
 		const host = screenTesting.testHost(driver);
 		const screen = screenFactory.createScreen(host);
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		const error = await app
 			.open({ wait: { until: screen.getByTestId("welcome.screen"), timeout: 2000 } })
 			.catch((e: unknown) => e);
@@ -364,7 +370,7 @@ describe("app.open wait: { until }", () => {
 	test("with a url it waits after the link is opened", async () => {
 		const driver = new FakeDriver({ screens: [CONTENT] });
 		const screen = screenFactory.createScreen(screenTesting.testHost(driver));
-		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
+		const app = sessionFixtures.appFor({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		await app.open({ url: "myapp://home", wait: { until: screen.getByRole("button", { name: "Next" }) } });
 		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch", "app.openUrl", "snapshot", "settle"]);
 	});
@@ -386,7 +392,7 @@ describe("app.open on Android", () => {
 	test("drops WARDEN_LAUNCH_ARGS (Metro's --initialUrl) and launches with no args, logging it once", async () => {
 		const driver = androidDriver();
 		const lines: string[] = [];
-		const app = createApp({
+		const app = sessionFixtures.appFor({
 			session: { out: "/tmp/out" },
 			driver,
 			env: { ...baseEnv, ...androidEnv },
@@ -404,7 +410,7 @@ describe("app.open on Android", () => {
 
 	test("explicit args still fail loudly", async () => {
 		const driver = androidDriver();
-		const app = createApp({
+		const app = sessionFixtures.appFor({
 			session: { out: "/tmp/out" },
 			driver,
 			env: { ...baseEnv, ...androidEnv },
@@ -490,7 +496,11 @@ describe("signal", () => {
 		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([])] });
 		const controller = new AbortController();
 		controller.abort();
-		const app = createApp({ session: { out: "/tmp/out", signal: controller.signal }, driver, env: baseEnv });
+		const app = sessionFixtures.appFor({
+			session: { out: "/tmp/out", signal: controller.signal },
+			driver,
+			env: baseEnv,
+		});
 		const error = await app.open().catch((e: unknown) => e);
 		expect((error as E2eError).code).toBe("TIMEOUT");
 		expect(driver.calls).toHaveLength(0);

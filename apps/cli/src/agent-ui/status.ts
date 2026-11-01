@@ -66,8 +66,8 @@ async function recordingOf(
 ): Promise<{ name: string; target: string; steps: number | null } | null> {
 	const recording = readState(ctx, udid).recording;
 	if (!recording) return null;
-	const { readJournal } = await import("@delacour/warden-e2e/authoring/journal");
-	const journal = readJournal(recordingFile(ctx, udid));
+	const { journalStore } = await import("@delacour/warden-e2e/authoring/journal");
+	const journal = journalStore.readJournal(recordingFile(ctx, udid));
 	const target =
 		recording.target.kind === "spec" ? recording.target.path : `${recording.target.path}#${recording.target.fn}`;
 	return { name: recording.name, target, steps: journal.success ? journal.data.steps.length : null };

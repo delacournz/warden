@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeFileAtomic } from "@delacour/warden-e2e/authoring/journal";
+import { journalStore } from "@delacour/warden-e2e/authoring/journal";
 import { z } from "zod";
 import { uiRoot } from "../paths";
 import { functionSource } from "./spec-target";
@@ -43,7 +43,7 @@ export function saveHelperRoutes(home: string, module: string, fn: string, route
 	try {
 		mkdirSync(dirname(file), { recursive: true });
 		const body = { module, fn, sourceHash: helperSourceHash(readFileSync(module, "utf8"), fn), routes: [...routes] };
-		writeFileAtomic(file, `${JSON.stringify(body, null, 2)}\n`);
+		journalStore.writeFileAtomic(file, `${JSON.stringify(body, null, 2)}\n`);
 	} catch {
 		return;
 	}

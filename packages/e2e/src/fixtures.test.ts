@@ -7,9 +7,9 @@ import { devtoolsErrors } from "@delacour/warden-devtools/devtools.types";
 import { facetStubs } from "@delacour/warden-devtools/testing/facet";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
-import { screenHostFor } from "./fixtures";
+import { sessionFixtures } from "./fixtures";
 import type { DevtoolsOpener } from "./session";
-import { createSession } from "./session";
+import { sessions } from "./session";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -31,7 +31,7 @@ function hostFor(metroUrl: string | undefined, devtools: DevtoolsOpener) {
 		logTimestamps: false,
 		...(metroUrl === undefined ? {} : { metroUrl }),
 	};
-	const session = createSession({ env, exitHook: false, devtools });
+	const session = sessions.create({ env, exitHook: false, devtools });
 	const ctx = {
 		session,
 		signal: new AbortController().signal,
@@ -39,7 +39,7 @@ function hostFor(metroUrl: string | undefined, devtools: DevtoolsOpener) {
 		actionTimeoutMs: 1000,
 		assertionTimeoutMs: 1000,
 	};
-	return screenHostFor(ctx);
+	return sessionFixtures.screenHostFor(ctx);
 }
 
 describe("screenHostFor devtools", () => {
@@ -90,7 +90,7 @@ describe("screenHostFor systemAlerts", () => {
 			logTimestamps: false,
 		};
 		return {
-			session: createSession({ env, exitHook: false }),
+			session: sessions.create({ env, exitHook: false }),
 			signal: new AbortController().signal,
 			launch: "none" as const,
 			actionTimeoutMs: 1000,
@@ -101,16 +101,16 @@ describe("screenHostFor systemAlerts", () => {
 
 	test.each([undefined, "off"] as const)("%s: the host answers nothing", (mode) => {
 		const alert = async (): Promise<boolean> => true;
-		expect(screenHostFor(ctxFor(mode), { alert }).answerSystemAlert).toBeUndefined();
+		expect(sessionFixtures.screenHostFor(ctxFor(mode), { alert }).answerSystemAlert).toBeUndefined();
 	});
 
 	test("without a device there is nothing to answer with", () => {
-		expect(screenHostFor(ctxFor("dismiss")).answerSystemAlert).toBeUndefined();
+		expect(sessionFixtures.screenHostFor(ctxFor("dismiss")).answerSystemAlert).toBeUndefined();
 	});
 
 	test.each(["accept", "dismiss"] as const)("%s: answering is device.alert(%s)", async (mode) => {
 		const asked: unknown[] = [];
-		const host = screenHostFor(ctxFor(mode), {
+		const host = sessionFixtures.screenHostFor(ctxFor(mode), {
 			alert: async (action) => {
 				asked.push(action);
 				return true;
@@ -123,7 +123,7 @@ describe("screenHostFor systemAlerts", () => {
 	test("answers nothing while openLink is waiting on a link: the device owns the sheet then", async () => {
 		const ctx = ctxFor("dismiss");
 		const asked: unknown[] = [];
-		const host = screenHostFor(ctx, {
+		const host = sessionFixtures.screenHostFor(ctx, {
 			alert: async (action) => {
 				asked.push(action);
 				return true;

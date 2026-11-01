@@ -7,7 +7,7 @@ import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driv
 import { type SpanRunner, spans as spanWriter } from "@delacour/warden-driver/trace/span";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { E2eEnv } from "./env";
-import { deviceFor as createDevice } from "./fixtures";
+import { sessionFixtures } from "./fixtures";
 
 const env: E2eEnv = {
 	udid: "UDID",
@@ -36,7 +36,7 @@ function setup(platform: "ios" | "android" = "ios") {
 		],
 	});
 	const session: FixtureSession = { out: "/tmp/out", span };
-	const device = traceDevice(createDevice({ session, driver, env: { ...env, platform } }), span);
+	const device = traceDevice(sessionFixtures.deviceFor({ session, driver, env: { ...env, platform } }), span);
 	const spans = () => events.flatMap((e) => (e.type === "span" ? [e] : []));
 	return { device, driver, spans };
 }
@@ -134,7 +134,7 @@ describe("traceDevice", () => {
 					? { data: { quiet: false, waitedMs: 8000, via: "stream", reason: "frontmost_mismatch", frontmostPid: 7 } }
 					: undefined,
 		});
-		const device = traceDevice(createDevice({ session: { out: "/tmp/out", span }, driver, env }), span);
+		const device = traceDevice(sessionFixtures.deviceFor({ session: { out: "/tmp/out", span }, driver, env }), span);
 		await device.settle();
 		expect(events[0]).toMatchObject({
 			op: "device.settle",

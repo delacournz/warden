@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { SelectedSpec } from "@delacour/warden-core/affected/select";
 import type { BatchSummary, JobResult } from "@delacour/warden-core/batch/schedule";
-import { readResults, type TestResult, type TestStatus } from "@delacour/warden-e2e/runner/results";
+import { resultsFiles, type TestResult, type TestStatus } from "@delacour/warden-e2e/runner/results";
 import { runnerFailureShot } from "../batch/screenshot";
 import { failing, realPath, specOf } from "../batch/spec-progress";
 import { attemptKey, legJob, type SessionResult } from "../commands/batch";
@@ -111,7 +111,7 @@ function resultsLoader(io: VerdictIO) {
 		const hit = cache.get(path);
 		if (hit) return hit;
 		const read = io.readFile(path).then(
-			(text) => readResults(text),
+			(text) => resultsFiles.read(text),
 			() => undefined
 		);
 		cache.set(path, read);

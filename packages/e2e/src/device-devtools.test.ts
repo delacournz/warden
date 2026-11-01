@@ -7,7 +7,7 @@ import type { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { E2eEnv } from "./env";
-import { deviceFor as createDevice } from "./fixtures";
+import { sessionFixtures } from "./fixtures";
 
 function source(result: () => DevtoolsResult<DevtoolsFacet>) {
 	let opens = 0;
@@ -104,19 +104,21 @@ describe("device.devtools", () => {
 	test("undefined without a Metro URL (a release build)", () => {
 		const { src } = source(() => resultFactory.ok(facetStubs.create().facet));
 		const session: FixtureSession = { out: "/tmp/out", ...src };
-		expect(createDevice({ session, driver: driver(), env: env() }).devtools).toBeUndefined();
+		expect(sessionFixtures.deviceFor({ session, driver: driver(), env: env() }).devtools).toBeUndefined();
 	});
 
 	test("undefined when the session cannot attach devtools at all", () => {
 		const session: FixtureSession = { out: "/tmp/out" };
-		expect(createDevice({ session, driver: driver(), env: env("http://127.0.0.1:8081") }).devtools).toBeUndefined();
+		expect(
+			sessionFixtures.deviceFor({ session, driver: driver(), env: env("http://127.0.0.1:8081") }).devtools
+		).toBeUndefined();
 	});
 
 	test("first access starts the attach (so console capture begins) and the object is stable", async () => {
 		const stub = facetStubs.create();
 		const { src, opens } = source(() => resultFactory.ok(stub.facet));
 		const session: FixtureSession = { out: "/tmp/out", ...src };
-		const device = createDevice({ session, driver: driver(), env: env("http://127.0.0.1:8081") });
+		const device = sessionFixtures.deviceFor({ session, driver: driver(), env: env("http://127.0.0.1:8081") });
 		expect(opens()).toBe(0);
 		const first = device.devtools;
 		expect(opens()).toBe(1);

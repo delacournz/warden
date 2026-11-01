@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createJournal, deleteJournal } from "@delacour/warden-e2e/authoring/journal";
+import { journalStore } from "@delacour/warden-e2e/authoring/journal";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { RecordStarted } from "../../contracts/record.schema";
@@ -167,9 +167,9 @@ function startJournal(
 	title: string | undefined
 ): Result<string, WardenError> {
 	const journal = journalOf(session);
-	if (existsSync(journal)) deleteJournal(journal);
+	if (existsSync(journal)) journalStore.deleteJournal(journal);
 	const { width, height, scale } = screen;
-	const created = createJournal(journal, {
+	const created = journalStore.createJournal(journal, {
 		name,
 		...(title ? { title } : {}),
 		createdAt: session.host.now(),

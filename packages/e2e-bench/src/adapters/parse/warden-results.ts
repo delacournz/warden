@@ -1,7 +1,7 @@
 import { basename, relative } from "node:path";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
-import { readResults, type TestResult as WardenTestResult } from "@delacour/warden-e2e/runner/results";
-import { readTrace } from "@delacour/warden-e2e/runner/trace";
+import { resultsFiles, type TestResult as WardenTestResult } from "@delacour/warden-e2e/runner/results";
+import { traceFile } from "@delacour/warden-e2e/runner/trace";
 import type { StepResult, TestResult } from "../../results/schema";
 
 /** One test from `results.jsonl`, before the manifest maps its name to a canonical id. */
@@ -99,9 +99,9 @@ export function parseWardenResults(
 	readText: (path: string) => string | undefined,
 	relativeTo: string
 ): WardenNative[] {
-	return readResults(text).map((result) => {
+	return resultsFiles.read(text).map((result) => {
 		const traceText = result.artifacts !== undefined ? readText(`${result.artifacts.dir}/trace.jsonl`) : undefined;
-		const events = traceText !== undefined ? readTrace(traceText) : undefined;
+		const events = traceText !== undefined ? traceFile.read(traceText) : undefined;
 		return {
 			nativeName: nativeNameOf(result.file, result.title),
 			status: result.status,

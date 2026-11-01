@@ -1,11 +1,5 @@
 import { dirname, relative, resolve } from "node:path";
-import {
-	generateHelper,
-	generateSpec,
-	mergeIdsModule,
-	parseIdsModule,
-	type SharedSpecOptions,
-} from "@delacour/warden-e2e/authoring/codegen";
+import { type SharedSpecOptions, specGenerator } from "@delacour/warden-e2e/authoring/codegen";
 import type { Recording } from "@delacour/warden-e2e/authoring/recording.schema";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -84,7 +78,7 @@ function generateTarget(
 ): Result<Generated, WardenError> {
 	const { target } = pointer;
 	if (target.kind === "spec") {
-		const generated = generateSpec(recording, {
+		const generated = specGenerator.generateSpec(recording, {
 			ids: known,
 			file: target.path,
 			launch: shape.launch,
@@ -93,7 +87,7 @@ function generateTarget(
 		});
 		return resultFactory.ok({ source: generated.source, ids: generated.ids, replaced: false });
 	}
-	const generated = generateHelper(recording, {
+	const generated = specGenerator.generateHelper(recording, {
 		name: target.fn,
 		ids: known,
 		file: target.path,
@@ -118,7 +112,7 @@ function mergedIdsText(
 	existing: string | undefined,
 	ids: Record<string, string>
 ): Result<string | undefined, WardenError> {
-	const merged = mergeIdsModule(existing, ids);
+	const merged = specGenerator.mergeIdsModule(existing, ids);
 	if (!merged.success) {
 		return failed("failed", `${idsPath}: ${merged.error.message}`, { details: { code: merged.error.code } });
 	}
@@ -134,7 +128,7 @@ export function writeTarget(
 ): Result<Written, WardenError> {
 	const { target } = pointer;
 	const idsExisting = pointer.ids === undefined ? undefined : readIfExists(pointer.ids);
-	const known = idsExisting === undefined ? {} : parseIdsModule(idsExisting);
+	const known = idsExisting === undefined ? {} : specGenerator.parseIdsModule(idsExisting);
 	const idsImport = pointer.ids === undefined ? undefined : importPath(target.path, pointer.ids);
 
 	const generated = generateTarget(pointer, recording, overwrite || pointer.wrote === true, shape, known, idsImport);

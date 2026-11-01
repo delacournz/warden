@@ -168,89 +168,93 @@ export type E2eEnv = {
 
 type Parsed = z.infer<typeof schema>;
 
-/** Drops `undefined` values so optional fields are absent rather than `undefined`. */
-function defined<T extends Record<string, string | undefined>>(values: T): Partial<T> {
-	return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as Partial<T>;
-}
-
-/** `WARDEN_BIN` is a JSON array; a bare path counts as a one-word command. */
-function parseArgv(raw: string): string[] {
-	try {
-		const parsed = z.array(z.string()).min(1).safeParse(JSON.parse(raw));
-		if (parsed.success) return parsed.data;
-	} catch {
-		// a plain path
+/** Reads the spec env contract (`WARDEN_*`) into an {@link E2eEnv}. Pure; use the shared {@link envReader}. */
+export class EnvReader {
+	/** Drops `undefined` values so optional fields are absent rather than `undefined`. */
+	private defined<T extends Record<string, string | undefined>>(values: T): Partial<T> {
+		return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as Partial<T>;
 	}
-	return [raw];
-}
 
-function toEnv(v: Parsed, now: () => Date): E2eEnv {
-	return {
-		udid: v.udid,
-		platform: v.platform,
-		bundleId: v.bundleId,
-		launchArgs: v.launchArgs,
-		out: v.out ?? `.warden-e2e/${now().toISOString()}`,
-		timeoutMs: v.timeout,
-		actionTimeoutMs: v.actionTimeout,
-		assertionTimeoutMs: v.assertionTimeout,
-		logTimestamps: v.logTimestamps,
-		...defined({
-			deviceName: v.deviceName,
-			appPath: v.appPath,
-			metroUrl: v.metroUrl,
-			specsDir: v.specsDir,
-			helperDir: v.helperDir,
-			simd: v.simd,
-			simdSocket: v.simdSocket,
-			iosRunnerSocket: v.iosRunnerSocket,
-			wardenVersion: v.version,
-			perfBudgets: v.perfBudgets,
-		}),
-		...(v.deviceKind === undefined ? {} : { deviceKind: v.deviceKind }),
-		...(v.iosRunnerRestart === undefined ? {} : { iosRunnerRestart: v.iosRunnerRestart }),
-		...(v.conditions === undefined ? {} : { conditions: v.conditions }),
-		...(v.leaseId === undefined ? {} : { leaseId: v.leaseId }),
-		...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
-		...(v.biometrics === true ? { biometrics: true } : {}),
-		...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
-		...(v.bin === undefined ? {} : { wardenBin: parseArgv(v.bin) }),
-		...(v.perf === undefined
-			? {}
-			: {
-					perf: v.perf
-						.split(",")
-						.map((p) => p.trim())
-						.filter((p) => p !== ""),
-				}),
-	};
-}
-
-const isEnvKey = (key: unknown): key is EnvKey => typeof key === "string" && key in ENV_NAMES;
-
-/**
- * Reads the spec env contract. `undefined` data = not running under warden (no `WARDEN_UDID`); an
- * error lists every invalid variable by its env name. Empty values count as unset.
- */
-export function readEnv(
-	env: Readonly<Record<string, string | undefined>>,
-	opts: { now?: () => Date } = {}
-): Result<E2eEnv | undefined> {
-	const udid = env[ENV_NAMES.udid];
-	if (udid === undefined || udid === "") return { success: true, data: undefined };
-
-	const raw: Record<string, string | undefined> = {};
-	for (const [key, name] of Object.entries(ENV_NAMES)) {
-		const value = env[name];
-		raw[key] = value === undefined || value === "" ? undefined : value;
+	/** `WARDEN_BIN` is a JSON array; a bare path counts as a one-word command. */
+	private parseArgv(raw: string): string[] {
+		try {
+			const parsed = z.array(z.string()).min(1).safeParse(JSON.parse(raw));
+			if (parsed.success) return parsed.data;
+		} catch {
+			// a plain path
+		}
+		return [raw];
 	}
-	const parsed = schema.safeParse(raw);
-	if (!parsed.success) {
-		const lines = parsed.error.issues.map((issue) => {
-			const key = issue.path[0];
-			return `${isEnvKey(key) ? ENV_NAMES[key] : String(key)}: ${issue.message}`;
-		});
-		return { success: false, error: lines.join("\n") };
+
+	private toEnv(v: Parsed, now: () => Date): E2eEnv {
+		return {
+			udid: v.udid,
+			platform: v.platform,
+			bundleId: v.bundleId,
+			launchArgs: v.launchArgs,
+			out: v.out ?? `.warden-e2e/${now().toISOString()}`,
+			timeoutMs: v.timeout,
+			actionTimeoutMs: v.actionTimeout,
+			assertionTimeoutMs: v.assertionTimeout,
+			logTimestamps: v.logTimestamps,
+			...this.defined({
+				deviceName: v.deviceName,
+				appPath: v.appPath,
+				metroUrl: v.metroUrl,
+				specsDir: v.specsDir,
+				helperDir: v.helperDir,
+				simd: v.simd,
+				simdSocket: v.simdSocket,
+				iosRunnerSocket: v.iosRunnerSocket,
+				wardenVersion: v.version,
+				perfBudgets: v.perfBudgets,
+			}),
+			...(v.deviceKind === undefined ? {} : { deviceKind: v.deviceKind }),
+			...(v.iosRunnerRestart === undefined ? {} : { iosRunnerRestart: v.iosRunnerRestart }),
+			...(v.conditions === undefined ? {} : { conditions: v.conditions }),
+			...(v.leaseId === undefined ? {} : { leaseId: v.leaseId }),
+			...(v.netproxyCommand === undefined ? {} : { netproxyCommand: v.netproxyCommand }),
+			...(v.biometrics === true ? { biometrics: true } : {}),
+			...(v.afterReboot === undefined ? {} : { afterReboot: v.afterReboot }),
+			...(v.bin === undefined ? {} : { wardenBin: this.parseArgv(v.bin) }),
+			...(v.perf === undefined
+				? {}
+				: {
+						perf: v.perf
+							.split(",")
+							.map((p) => p.trim())
+							.filter((p) => p !== ""),
+					}),
+		};
 	}
-	return { success: true, data: toEnv(parsed.data, opts.now ?? (() => new Date())) };
+
+	private isEnvKey(key: unknown): key is EnvKey {
+		return typeof key === "string" && key in ENV_NAMES;
+	}
+
+	/**
+	 * Reads the spec env contract. `undefined` data = not running under warden (no `WARDEN_UDID`); an
+	 * error lists every invalid variable by its env name. Empty values count as unset.
+	 */
+	read(env: Readonly<Record<string, string | undefined>>, opts: { now?: () => Date } = {}): Result<E2eEnv | undefined> {
+		const udid = env[ENV_NAMES.udid];
+		if (udid === undefined || udid === "") return { success: true, data: undefined };
+
+		const raw: Record<string, string | undefined> = {};
+		for (const [key, name] of Object.entries(ENV_NAMES)) {
+			const value = env[name];
+			raw[key] = value === undefined || value === "" ? undefined : value;
+		}
+		const parsed = schema.safeParse(raw);
+		if (!parsed.success) {
+			const lines = parsed.error.issues.map((issue) => {
+				const key = issue.path[0];
+				return `${this.isEnvKey(key) ? ENV_NAMES[key] : String(key)}: ${issue.message}`;
+			});
+			return { success: false, error: lines.join("\n") };
+		}
+		return { success: true, data: this.toEnv(parsed.data, opts.now ?? (() => new Date())) };
+	}
 }
+
+export const envReader = new EnvReader();

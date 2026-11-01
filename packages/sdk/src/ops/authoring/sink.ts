@@ -1,9 +1,9 @@
 import { refResolver } from "@delacour/warden-driver/refs";
 import { settler } from "@delacour/warden-driver/settle";
-import { createJournalRecorder } from "@delacour/warden-e2e/authoring/journal";
+import { journalStore } from "@delacour/warden-e2e/authoring/journal";
 import type { NewStep, Target, Text } from "@delacour/warden-e2e/authoring/recording.schema";
-import { type Env, redactSecrets } from "@delacour/warden-e2e/authoring/secrets";
-import { coordsTarget, targetFromElement } from "@delacour/warden-e2e/authoring/target";
+import { type Env, secretVault } from "@delacour/warden-e2e/authoring/secrets";
+import { targetResolver } from "@delacour/warden-e2e/authoring/target";
 import type { SwipeDirection as Direction } from "@delacour/warden-screen/actions";
 import { recordingFile } from "../paths";
 import type { RecordEvidence, RecordSink, RecordStep } from "../record";
@@ -32,7 +32,7 @@ function num(args: RecordStep["args"], key: string): number | undefined {
 
 function fromEvidence(evidence: RecordEvidence): Grounded {
 	return {
-		target: targetFromElement(evidence.element, evidence.snapshot),
+		target: targetResolver.targetFromElement(evidence.element, evidence.snapshot),
 		hash: settler.snapshotHash(evidence.snapshot),
 	};
 }
@@ -48,13 +48,13 @@ function ground(refs: RefStore, step: RecordStep): Grounded {
 		last && target.ref !== undefined
 			? refResolver.assign(last.snapshot, last.generation).byRef.get(target.ref)
 			: undefined;
-	if (last && element) return { target: targetFromElement(element, last.snapshot), hash: last.hash };
-	return { target: coordsTarget(target.point) };
+	if (last && element) return { target: targetResolver.targetFromElement(element, last.snapshot), hash: last.hash };
+	return { target: targetResolver.coordsTarget(target.point) };
 }
 
 /** A secure field's text: the secret's name when it matches `WARDEN_UI_SECRET_*`, else a placeholder to fill in. */
 function secureText(secret: string, env: Env): { text: Text; note?: string } {
-	const named = redactSecrets(secret, env);
+	const named = secretVault.redactSecrets(secret, env);
 	if (typeof named !== "string") return { text: named };
 	return {
 		text: { secret: SECURE_TEXT_SECRET },
@@ -64,7 +64,7 @@ function secureText(secret: string, env: Env): { text: Text; note?: string } {
 
 function plainText(step: RecordStep, env: Env): { text: Text; note?: string } {
 	if (step.secret !== undefined) return secureText(step.secret, env);
-	return { text: redactSecrets(str(step.args, "text") ?? "", env) };
+	return { text: secretVault.redactSecrets(str(step.args, "text") ?? "", env) };
 }
 
 function parsePoint(raw: string | undefined): { x: number; y: number } | undefined {
@@ -334,7 +334,7 @@ export function journalSink(init: JournalSinkInit): RecordSink {
 		append: async (udid, step) => {
 			const recording = init.state.read().recording;
 			if (!recording) return;
-			const journal = createJournalRecorder(recordingFile(init.home, udid));
+			const journal = journalStore.createJournalRecorder(recordingFile(init.home, udid));
 			const grounded = ground(init.refs, step);
 			for (const next of stepsFromRecord(step, grounded, init.env, init.now())) {
 				const written = await journal.append(next);

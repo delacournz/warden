@@ -1,4 +1,4 @@
-import { readResults } from "@delacour/warden-e2e/runner/results";
+import { resultsFiles } from "@delacour/warden-e2e/runner/results";
 import { failing, realPath, type SpecMark, specOf, type TrackedSpec } from "./spec-progress";
 
 /** What a run's `results.jsonl` files say: each spec's verdict, and the specs each device ran. */
@@ -24,7 +24,7 @@ function foldAttempt(
 	real: (path: string) => string
 ): void {
 	const attempt: DeviceMarks = new Map();
-	for (const result of readResults(jsonl)) {
+	for (const result of resultsFiles.read(jsonl)) {
 		const spec = specOf(result, specs, real);
 		if (!spec || result.startedAt < since) continue;
 		const ran = attempt.get(result.device.udid) ?? new Map<string, SpecMark>();

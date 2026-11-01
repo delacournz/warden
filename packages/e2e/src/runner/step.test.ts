@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { AttemptContext } from "./fixtures.types";
-import { runStep } from "./step";
+import { stepRunner } from "./step";
 
 function attempt(controller = new AbortController()) {
 	const events: TraceEvent[] = [];
@@ -25,19 +25,19 @@ const clock = (): number => {
 
 describe("runStep", () => {
 	test("without an attempt it just runs", async () => {
-		expect(await runStep(undefined, "k", "l", async () => 5)).toBe(5);
+		expect(await stepRunner.run(undefined, "k", "l", async () => 5)).toBe(5);
 	});
 
 	test("writes start and end, with nesting depth restored", async () => {
 		const { ctx, events } = attempt();
 		const depths: number[] = [];
-		const value = await runStep(
+		const value = await stepRunner.run(
 			ctx,
 			"locator",
 			"tap",
 			async () => {
 				depths.push(ctx.depth);
-				return runStep(ctx, "driver", "snapshot", async () => 7, clock);
+				return stepRunner.run(ctx, "driver", "snapshot", async () => 7, clock);
 			},
 			clock
 		);
@@ -56,7 +56,7 @@ describe("runStep", () => {
 	test("a throwing step records the error and rethrows", async () => {
 		const { ctx, events } = attempt();
 		await expect(
-			runStep(
+			stepRunner.run(
 				ctx,
 				"expect",
 				"visible",
@@ -72,7 +72,7 @@ describe("runStep", () => {
 
 	test("gives up as soon as the signal aborts, even if the call never answers", async () => {
 		const { ctx, events, controller } = attempt();
-		const pending = runStep(ctx, "driver", "tap", () => new Promise<void>(() => undefined), clock);
+		const pending = stepRunner.run(ctx, "driver", "tap", () => new Promise<void>(() => undefined), clock);
 		controller.abort(new Error("deadline"));
 		await expect(pending).rejects.toThrow("deadline");
 		expect(events.at(-1)).toMatchObject({ type: "step-end", status: "failed", error: "deadline" });
@@ -83,7 +83,7 @@ describe("runStep", () => {
 		controller.abort(new Error("late"));
 		let ran = false;
 		await expect(
-			runStep(ctx, "k", "l", async () => {
+			stepRunner.run(ctx, "k", "l", async () => {
 				ran = true;
 			})
 		).rejects.toThrow("late");

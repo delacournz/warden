@@ -3,8 +3,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
-import { readResults, type TestResult } from "./results";
-import { readTrace } from "./trace";
+import { resultsFiles, type TestResult } from "./results";
+import { traceFile } from "./trace";
 
 /**
  * bun's `test` cannot be registered inside a running test, so every case runs a fixture spec in a
@@ -61,7 +61,7 @@ async function runSpec(names: string | string[], env: Record<string, string> = {
 		exitCode,
 		stdout,
 		stderr,
-		results: existsSync(resultsPath) ? readResults(readFileSync(resultsPath, "utf8")) : [],
+		results: existsSync(resultsPath) ? resultsFiles.read(readFileSync(resultsPath, "utf8")) : [],
 		log: existsSync(logPath) ? readFileSync(logPath, "utf8").trimEnd().split("\n") : [],
 		out,
 		spec,
@@ -156,7 +156,7 @@ describe("deadline", () => {
 		expect(run.log).toEqual(["next depth=0 aborted=false"]);
 
 		const dir = step.artifacts?.dir ?? "";
-		const trace = readTrace(readFileSync(join(dir, "trace.jsonl"), "utf8")).filter((e) => e.type !== "span");
+		const trace = traceFile.read(readFileSync(join(dir, "trace.jsonl"), "utf8")).filter((e) => e.type !== "span");
 		expect(trace.map((e) => [e.type, e.label])).toEqual([
 			["step-start", "app.open"],
 			["step-end", "app.open"],
@@ -186,7 +186,7 @@ describe("zombies", () => {
 		for (const victim of ["runs while the zombie body taps", "runs while the zombie afterEach taps"]) {
 			const dir = byTitle(run, victim).artifacts?.dir;
 			const path = dir === undefined ? "" : join(dir, "trace.jsonl");
-			const trace = existsSync(path) ? readTrace(readFileSync(path, "utf8")) : [];
+			const trace = existsSync(path) ? traceFile.read(readFileSync(path, "utf8")) : [];
 			expect(trace.filter((e) => e.type !== "span").map((e) => [e.type, e.label])).toEqual([]);
 			expect(trace.filter((e) => e.type === "span").map((e) => e.op)).toEqual([]);
 		}
@@ -354,7 +354,7 @@ describe("default fixtures", () => {
 
 		const tapped = byTitle(run, "taps a locator through app, device and screen");
 		expect(tapped.status).toBe("passed");
-		const trace = readTrace(readFileSync(join(tapped.artifacts?.dir ?? "", "trace.jsonl"), "utf8"));
+		const trace = traceFile.read(readFileSync(join(tapped.artifacts?.dir ?? "", "trace.jsonl"), "utf8"));
 		expect(trace.some((e) => e.type === "step-end" && e.kind === "locator" && /tap/.test(e.label))).toBe(true);
 		// trace.jsonl also holds the driver calls, device calls and locator reads as spans, flushed when the attempt ended
 		const spans = trace.flatMap((e) => (e.type === "span" ? [e] : []));

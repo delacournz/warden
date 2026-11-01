@@ -3,20 +3,11 @@ import { nativeLogDepsFactory } from "@delacour/warden-devtools/native-log";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { readEnv } from "./env";
-import { defaultFixtureFactory } from "./fixtures";
-import { defaultDriverFactory } from "./open-from-env";
+import { envReader } from "./env";
+import { sessionFixtures } from "./fixtures";
+import { envDriverOpener } from "./open-from-env";
 import { BUN_TIMEOUT_MARGIN_MS } from "./runner/scope";
-import {
-	getSession,
-	hasDefaultDriverFactory,
-	hasDefaultFixtureFactory,
-	onlyWasSeen,
-	setDefaultDriverFactory,
-	setDefaultFixtureFactory,
-	setDefaultHidRecovery,
-	setDefaultNativeLog,
-} from "./session";
+import { onlyFlag, type Session, type SessionOptions, sessions } from "./session";
 import { WARDEN_E2E_VERSION, WORKSPACE_VERSION } from "./version";
 
 export { BUN_TIMEOUT_MARGIN_MS };
@@ -25,7 +16,7 @@ export type PreloadDeps = {
 	env: Readonly<Record<string, string | undefined>>;
 	setDefaultTimeout: (ms: number) => void;
 	afterAll: (fn: () => Promise<void>) => void;
-	createSession: typeof getSession;
+	createSession: (opts?: SessionOptions) => Session;
 	/** this package's version (`WARDEN_E2E_VERSION`) */
 	version: string;
 	/** whether a `test.only` was collected */
@@ -34,74 +25,80 @@ export type PreloadDeps = {
 	exit: (code: number) => void;
 };
 
-/**
- * The protocol handshake: `warden e2e` and this package version in lock-step. A mismatch refuses the run (exit 2)
- * with the install fix spelled out. Nothing to compare without `WARDEN_VERSION`
- * (a by-hand run) or from the workspace sources (not a published build).
- */
-export function versionMismatch(wardenVersion: string | undefined, e2eVersion: string): string | undefined {
-	if (wardenVersion === undefined || wardenVersion === e2eVersion || e2eVersion === WORKSPACE_VERSION) return undefined;
-	return `warden e2e: @delacour/warden-e2e ${e2eVersion} does not match warden ${wardenVersion}, refusing to run; install the matching version: bun add -d @delacour/warden-e2e@${wardenVersion}`;
-}
-
-/** `CI=1`, `CI=true`, … — anything but empty, `0` and `false`. */
-export function isCi(env: Readonly<Record<string, string | undefined>>): boolean {
-	const value = env.CI;
-	return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
-}
-
-/**
- * `bun test --preload`: a no-op without `WARDEN_UDID` (safe in `bunfig.toml`); otherwise validates
- * the env (exit 2 when invalid), raises bun's default timeout above the test timeout, opens the
- * session eagerly and, in `afterAll`, closes it and (under `CI`) fails the run if a `.only` was collected.
- */
-export function installPreload(deps: PreloadDeps): void {
-	const read = readEnv(deps.env);
-	if (!read.success) {
-		deps.stderr(`warden e2e: invalid environment\n${read.error}\n`);
-		deps.exit(2);
-		return;
+/** The `bun test --preload` entry: handshake, env validation and session lifecycle; use the shared {@link preload}. */
+export class Preload {
+	/**
+	 * The protocol handshake: `warden e2e` and this package version in lock-step. A mismatch refuses the run (exit 2)
+	 * with the install fix spelled out. Nothing to compare without `WARDEN_VERSION`
+	 * (a by-hand run) or from the workspace sources (not a published build).
+	 */
+	versionMismatch(wardenVersion: string | undefined, e2eVersion: string): string | undefined {
+		if (wardenVersion === undefined || wardenVersion === e2eVersion || e2eVersion === WORKSPACE_VERSION)
+			return undefined;
+		return `warden e2e: @delacour/warden-e2e ${e2eVersion} does not match warden ${wardenVersion}, refusing to run; install the matching version: bun add -d @delacour/warden-e2e@${wardenVersion}`;
 	}
-	if (read.data === undefined) return;
-	const warning = versionMismatch(read.data.wardenVersion, deps.version);
-	if (warning !== undefined) {
-		deps.stderr(`${warning}\n`);
-		deps.exit(2);
-		return;
+
+	/** `CI=1`, `CI=true`, … — anything but empty, `0` and `false`. */
+	isCi(env: Readonly<Record<string, string | undefined>>): boolean {
+		const value = env.CI;
+		return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
 	}
-	deps.setDefaultTimeout(read.data.timeoutMs + BUN_TIMEOUT_MARGIN_MS);
-	const session = deps.createSession({ env: read.data });
-	deps.afterAll(async () => {
-		await session.close();
-		if (isCi(deps.env) && deps.onlySeen()) {
-			throw new E2eError("INVALID_ARGUMENT", "test.only / test(..., { only: true }) is not allowed in CI");
+
+	/**
+	 * `bun test --preload`: a no-op without `WARDEN_UDID` (safe in `bunfig.toml`); otherwise validates
+	 * the env (exit 2 when invalid), raises bun's default timeout above the test timeout, opens the
+	 * session eagerly and, in `afterAll`, closes it and (under `CI`) fails the run if a `.only` was collected.
+	 */
+	installPreload(deps: PreloadDeps): void {
+		const read = envReader.read(deps.env);
+		if (!read.success) {
+			deps.stderr(`warden e2e: invalid environment\n${read.error}\n`);
+			deps.exit(2);
+			return;
 		}
-	});
+		if (read.data === undefined) return;
+		const warning = this.versionMismatch(read.data.wardenVersion, deps.version);
+		if (warning !== undefined) {
+			deps.stderr(`${warning}\n`);
+			deps.exit(2);
+			return;
+		}
+		deps.setDefaultTimeout(read.data.timeoutMs + BUN_TIMEOUT_MARGIN_MS);
+		const session = deps.createSession({ env: read.data });
+		deps.afterAll(async () => {
+			await session.close();
+			if (this.isCi(deps.env) && deps.onlySeen()) {
+				throw new E2eError("INVALID_ARGUMENT", "test.only / test(..., { only: true }) is not allowed in CI");
+			}
+		});
+	}
+
+	/**
+	 * `warden e2e` may run this process as a compiled warden with `BUN_BE_BUN=1`; drop it so a `warden` the spec spawns
+	 * (`WARDEN_BIN`, `device.perf`) runs as warden, not bun.
+	 */
+	scrubRunnerEnv(env: Record<string, string | undefined>): void {
+		delete env.BUN_BE_BUN;
+	}
 }
 
-/**
- * `warden e2e` may run this process as a compiled warden with `BUN_BE_BUN=1`; drop it so a `warden` the spec spawns
- * (`WARDEN_BIN`, `device.perf`) runs as warden, not bun.
- */
-export function scrubRunnerEnv(env: Record<string, string | undefined>): void {
-	delete env.BUN_BE_BUN;
-}
+export const preload = new Preload();
 
-scrubRunnerEnv(process.env);
-if (!hasDefaultDriverFactory()) {
+preload.scrubRunnerEnv(process.env);
+if (!sessions.hasDefaultDriverFactory()) {
 	// a test-installed fake device has no simulator to read a native log from
-	setDefaultDriverFactory(defaultDriverFactory);
-	setDefaultNativeLog(nativeLogDepsFactory.deps(processExec.run, androidToolsLocator.locate(process.env).adb));
-	setDefaultHidRecovery({ exec: processExec.run });
+	sessions.setDefaultDriverFactory(envDriverOpener.defaultDriverFactory);
+	sessions.setDefaultNativeLog(nativeLogDepsFactory.deps(processExec.run, androidToolsLocator.locate(process.env).adb));
+	sessions.setDefaultHidRecovery({ exec: processExec.run });
 }
-if (!hasDefaultFixtureFactory()) setDefaultFixtureFactory(defaultFixtureFactory);
-installPreload({
+if (!sessions.hasDefaultFixtureFactory()) sessions.setDefaultFixtureFactory(sessionFixtures.defaultFixtureFactory);
+preload.installPreload({
 	env: process.env,
 	setDefaultTimeout,
 	afterAll,
-	createSession: getSession,
+	createSession: (opts) => sessions.get(opts),
 	version: WARDEN_E2E_VERSION,
-	onlySeen: onlyWasSeen,
+	onlySeen: () => onlyFlag.wasSeen(),
 	stderr: (text) => {
 		process.stderr.write(text);
 	},

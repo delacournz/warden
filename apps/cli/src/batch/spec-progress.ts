@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { readResults, type TestResult } from "@delacour/warden-e2e/runner/results";
+import { resultsFiles, type TestResult } from "@delacour/warden-e2e/runner/results";
 
 /** A spec finished inside a spec process, read off its `results.jsonl`. */
 export type SpecMark = "passed" | "failed";
@@ -112,7 +112,7 @@ export function resultsMarks(
 	options: MarkOptions = {}
 ): Record<string, SpecMark> {
 	const tracker = specTracker(specs, options.real);
-	tracker.add(readResults(jsonl));
+	tracker.add(resultsFiles.read(jsonl));
 	return tracker.marks(options.final === true);
 }
 

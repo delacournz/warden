@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { driverErrors } from "@delacour/warden-driver/errors";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
-import { captureFailure } from "./failure";
+import { failureArtifacts } from "./failure";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -28,7 +28,7 @@ describe("captureFailure", () => {
 				return undefined;
 			},
 		});
-		const capture = await captureFailure(driver, dir);
+		const capture = await failureArtifacts.captureFailure(driver, dir);
 		expect(capture).toEqual({ files: ["failure.png", "screen-at-failure.txt"], problems: [] });
 		expect(readFileSync(join(dir, "failure.png"), "utf8")).toBe("PNG");
 		const text = readFileSync(join(dir, "screen-at-failure.txt"), "utf8");
@@ -42,7 +42,7 @@ describe("captureFailure", () => {
 			screens,
 			onCall: (call) => (call.method === "screenshot" ? { data: { png: new Uint8Array([1, 2, 3]) } } : undefined),
 		});
-		await captureFailure(driver, dir);
+		await failureArtifacts.captureFailure(driver, dir);
 		expect([...readFileSync(join(dir, "failure.png"))]).toEqual([1, 2, 3]);
 	});
 
@@ -53,7 +53,7 @@ describe("captureFailure", () => {
 			onCall: (call) =>
 				call.method === "screenshot" ? { error: driverErrors.make("E_HELPER_CRASHED", "gone") } : undefined,
 		});
-		const capture = await captureFailure(driver, dir);
+		const capture = await failureArtifacts.captureFailure(driver, dir);
 		expect(capture.files).toEqual(["screen-at-failure.txt"]);
 		expect(capture.problems).toEqual(["screenshot: E_HELPER_CRASHED: gone"]);
 		expect(existsSync(join(dir, "failure.png"))).toBe(false);
@@ -68,7 +68,7 @@ describe("captureFailure", () => {
 			snapshots += 1;
 			return new Promise(() => undefined);
 		};
-		const capture = await captureFailure(driver, dir, 30);
+		const capture = await failureArtifacts.captureFailure(driver, dir, 30);
 		expect(capture.files).toEqual([]);
 		expect(capture.problems).toEqual([
 			"screenshot: timed out after 30ms",
@@ -81,7 +81,7 @@ describe("captureFailure", () => {
 		const dir = tmp();
 		const driver = new FakeDriver({ screens });
 		driver.snapshot = () => new Promise(() => undefined);
-		const capture = await captureFailure(driver, dir, 30);
+		const capture = await failureArtifacts.captureFailure(driver, dir, 30);
 		expect(capture.problems).toEqual(["snapshot: timed out after 30ms"]);
 	});
 
@@ -90,7 +90,7 @@ describe("captureFailure", () => {
 		const driver = new FakeDriver({ screens });
 		driver.screenshot = () => new Promise(() => undefined);
 		const started = Date.now();
-		const capture = await captureFailure(driver, dir, 10_000, () => 40);
+		const capture = await failureArtifacts.captureFailure(driver, dir, 10_000, () => 40);
 		expect(Date.now() - started).toBeLessThan(1_000);
 		expect(capture.problems[0]).toBe("screenshot: timed out after 40ms");
 	});
@@ -98,7 +98,7 @@ describe("captureFailure", () => {
 	test("a spent budget captures nothing and says so", async () => {
 		const dir = tmp();
 		const driver = new FakeDriver({ screens });
-		const capture = await captureFailure(driver, dir, 10_000, () => 0);
+		const capture = await failureArtifacts.captureFailure(driver, dir, 10_000, () => 0);
 		expect(capture.files).toEqual([]);
 		expect(capture.problems).toEqual([
 			"screenshot: skipped, the post-deadline budget is used up",

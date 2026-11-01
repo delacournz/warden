@@ -1,23 +1,23 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, test } from "../../index";
-import { fixtureLog as log } from "./fake-setup";
+import { fixtureLog } from "./fake-setup";
 
-beforeAll(() => log("beforeAll root"));
-afterAll(() => log("afterAll root"));
-beforeEach(() => log("beforeEach root"));
-afterEach(() => log("afterEach root"));
+beforeAll(() => fixtureLog.write("beforeAll root"));
+afterAll(() => fixtureLog.write("afterAll root"));
+beforeEach(() => fixtureLog.write("beforeEach root"));
+afterEach(() => fixtureLog.write("afterEach root"));
 
 describe("outer", () => {
-	beforeAll(() => log("beforeAll outer"));
-	afterAll(() => log("afterAll outer"));
-	beforeEach(() => log("beforeEach outer"));
-	afterEach(() => log("afterEach outer"));
+	beforeAll(() => fixtureLog.write("beforeAll outer"));
+	afterAll(() => fixtureLog.write("afterAll outer"));
+	beforeEach(() => fixtureLog.write("beforeEach outer"));
+	afterEach(() => fixtureLog.write("afterEach outer"));
 
 	describe("inner", () => {
-		beforeEach(() => log("beforeEach inner"));
-		afterEach(() => log("afterEach inner"));
+		beforeEach(() => fixtureLog.write("beforeEach inner"));
+		afterEach(() => fixtureLog.write("afterEach inner"));
 
 		test("runs in order", async ({ platform }) => {
-			log(`body ${platform}`);
+			fixtureLog.write(`body ${platform}`);
 		});
 	});
 });

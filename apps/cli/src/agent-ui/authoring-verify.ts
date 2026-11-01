@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
-import { readResults, type TestResult } from "@delacour/warden-e2e/runner/results";
+import { resultsFiles, type TestResult } from "@delacour/warden-e2e/runner/results";
 import type { VerifyInput, VerifyReport, VerifyTest } from "@delacour/warden-sdk/ops/authoring/deps";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BatchDeps } from "../commands/batch";
@@ -73,7 +73,7 @@ export async function runVerify(ctx: CommandContext, deps: VerifyDeps, input: Ve
 		cancel();
 	}
 	const read = await deps.readFile(resultsFile).then(
-		(text) => readResults(text),
+		(text) => resultsFiles.read(text),
 		() => []
 	);
 	const tests = testsOf(read);

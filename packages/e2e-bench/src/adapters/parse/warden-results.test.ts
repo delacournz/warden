@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
-import { readTrace } from "@delacour/warden-e2e/runner/trace";
+import { traceFile } from "@delacour/warden-e2e/runner/trace";
 import { nativeNameOf, parseWardenResults, stepsFromTrace, untracedMsOf } from "./warden-results";
 
 const fixture = (name: string) => readFileSync(join(import.meta.dir, "../fixtures/warden", name), "utf8");
@@ -114,7 +114,7 @@ describe("untracedMsOf", () => {
 	});
 
 	test("the fixture timeline: 1.9 s covered out of 10 s", () => {
-		const events = readTrace(fixture("trace-spans.jsonl"));
+		const events = traceFile.read(fixture("trace-spans.jsonl"));
 		expect(untracedMsOf(events, WINDOW)).toBe(8100);
 	});
 });

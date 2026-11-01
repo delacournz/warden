@@ -10,15 +10,7 @@ import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { E2eEnv } from "./env";
 import type { AttemptContext } from "./runner/fixtures.types";
 import type { TraceWriter } from "./runner/trace";
-import {
-	type AttemptBinding,
-	attemptSession,
-	createSession,
-	devtoolsTarget,
-	getSession,
-	resetSession,
-	setDefaultDriverFactory,
-} from "./session";
+import { type AttemptBinding, sessions } from "./session";
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -28,7 +20,7 @@ const tmp = (): string => {
 };
 
 afterEach(async () => {
-	await resetSession();
+	await sessions.reset();
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -70,7 +62,7 @@ function factory() {
 describe("Session biometrics", () => {
 	const scripted = (platform: "ios" | "android", biometrics: boolean, physical = false) => {
 		const fake = new FakeDriver({ platform, screens: [] });
-		const session = createSession({
+		const session = sessions.create({
 			env: {
 				...envIn(tmp()),
 				platform,
@@ -124,7 +116,7 @@ describe("Session biometrics", () => {
 describe("Session", () => {
 	test("driver factory is not called until the first driver()", async () => {
 		const f = factory();
-		const session = createSession({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
+		const session = sessions.create({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
 		expect(f.calls).toHaveLength(0);
 		await session.driver();
 		expect(f.calls).toHaveLength(1);
@@ -133,7 +125,7 @@ describe("Session", () => {
 	test("driver is opened once and shared, even concurrently", async () => {
 		const f = factory();
 		const env = envIn(tmp());
-		const session = createSession({ env, driverFactory: f.open, exitHook: false });
+		const session = sessions.create({ env, driverFactory: f.open, exitHook: false });
 		const [a, b] = await Promise.all([session.driver(), session.driver()]);
 		const c = await session.driver();
 		expect(a.id).toBe(f.fake.driver.id);
@@ -146,7 +138,7 @@ describe("Session", () => {
 	test("a failed open throws E2eError DRIVER and can be retried", async () => {
 		let attempts = 0;
 		const fake = fakeDriver();
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn(tmp()),
 			exitHook: false,
 			driverFactory: async () => {
@@ -164,7 +156,7 @@ describe("Session", () => {
 	});
 
 	test("a throwing factory is also a DRIVER error", async () => {
-		const session = createSession({
+		const session = sessions.create({
 			env: envIn(tmp()),
 			exitHook: false,
 			driverFactory: async () => {
@@ -176,7 +168,7 @@ describe("Session", () => {
 
 	test("out is absolute and created; results append under it", async () => {
 		const out = join(tmp(), "nested", "out");
-		const session = createSession({ env: envIn(out), driverFactory: factory().open, exitHook: false });
+		const session = sessions.create({ env: envIn(out), driverFactory: factory().open, exitHook: false });
 		expect(session.out).toBe(out);
 		expect(existsSync(out)).toBe(true);
 		session.results.append({
@@ -192,7 +184,7 @@ describe("Session", () => {
 
 	test("close() closes an opened driver once and is idempotent", async () => {
 		const f = factory();
-		const session = createSession({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
+		const session = sessions.create({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
 		await session.driver();
 		await Promise.all([session.close(), session.close()]);
 		await session.close();
@@ -202,7 +194,7 @@ describe("Session", () => {
 
 	test("close() without ever opening the driver never calls the factory", async () => {
 		const f = factory();
-		const session = createSession({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
+		const session = sessions.create({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
 		await session.close();
 		expect(f.calls).toHaveLength(0);
 		expect(f.fake.closed()).toBe(0);
@@ -210,7 +202,7 @@ describe("Session", () => {
 
 	test("registers an exit hook and removes it on close", async () => {
 		const before = process.listenerCount("exit");
-		const session = createSession({ env: envIn(tmp()), driverFactory: factory().open });
+		const session = sessions.create({ env: envIn(tmp()), driverFactory: factory().open });
 		expect(process.listenerCount("exit")).toBe(before + 1);
 		await session.close();
 		expect(process.listenerCount("exit")).toBe(before);
@@ -218,8 +210,8 @@ describe("Session", () => {
 
 	test("without a driver factory the open fails as DRIVER", async () => {
 		// another test file in this process may have imported the preload, which installs the real factory
-		setDefaultDriverFactory(undefined);
-		const session = createSession({ env: envIn(tmp()), exitHook: false });
+		sessions.setDefaultDriverFactory(undefined);
+		const session = sessions.create({ env: envIn(tmp()), exitHook: false });
 		await expect(session.driver()).rejects.toMatchObject({ code: "DRIVER" });
 	});
 });
@@ -250,7 +242,7 @@ const spansOf = (events: readonly TraceEvent[]) => events.flatMap((e) => (e.type
 
 describe("Session spans", () => {
 	const open = () =>
-		createSession({
+		sessions.create({
 			env: envIn(tmp()),
 			exitHook: false,
 			driverFactory: async () => ({
@@ -329,7 +321,7 @@ describe("Session spans", () => {
 
 describe("attempt slot", () => {
 	test("leaveAttempt(ctx) and enterAttempt(next, replacing) never touch another attempt's slot", () => {
-		const session = createSession({ env: envIn(tmp()), exitHook: false });
+		const session = sessions.create({ env: envIn(tmp()), exitHook: false });
 		const old = recordingAttempt().attempt;
 		const next = recordingAttempt().attempt;
 		session.enterAttempt(next);
@@ -347,11 +339,11 @@ describe("attempt slot", () => {
 	});
 
 	test("attemptSession follows its own binding, not the running attempt", async () => {
-		const session = createSession({ env: envIn(tmp()), exitHook: false });
+		const session = sessions.create({ env: envIn(tmp()), exitHook: false });
 		const own = recordingAttempt();
 		const other = recordingAttempt();
 		let binding: AttemptBinding = { context: own.attempt, finished: false };
-		const bound = attemptSession(session, () => binding);
+		const bound = sessions.forAttempt(session, () => binding);
 		session.enterAttempt(other.attempt);
 		await bound.step("locator", "tap", async () => undefined);
 		await bound.span("device.home", async () => undefined);
@@ -377,16 +369,16 @@ describe("attempt slot", () => {
 describe("getSession", () => {
 	test("is a process-wide singleton on globalThis", async () => {
 		const f = factory();
-		const first = getSession({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
-		expect(getSession()).toBe(first);
+		const first = sessions.get({ env: envIn(tmp()), driverFactory: f.open, exitHook: false });
+		expect(sessions.get()).toBe(first);
 		const holder = globalThis as Record<symbol, unknown>;
 		expect(holder[Symbol.for("@delacour/warden-e2e/session")]).toBe(first);
 	});
 
 	test("close() forgets the singleton", async () => {
-		const first = getSession({ env: envIn(tmp()), driverFactory: factory().open, exitHook: false });
+		const first = sessions.get({ env: envIn(tmp()), driverFactory: factory().open, exitHook: false });
 		await first.close();
-		const second = getSession({ env: envIn(tmp()), driverFactory: factory().open, exitHook: false });
+		const second = sessions.get({ env: envIn(tmp()), driverFactory: factory().open, exitHook: false });
 		expect(second).not.toBe(first);
 	});
 
@@ -394,7 +386,7 @@ describe("getSession", () => {
 		const saved = process.env.WARDEN_UDID;
 		delete process.env.WARDEN_UDID;
 		try {
-			expect(() => getSession()).toThrow(E2eError);
+			expect(() => sessions.get()).toThrow(E2eError);
 		} finally {
 			if (saved !== undefined) process.env.WARDEN_UDID = saved;
 		}
@@ -403,13 +395,13 @@ describe("getSession", () => {
 
 describe("devtoolsTarget", () => {
 	test("pins the inspector page to the leased device when it has a name", () => {
-		expect(devtoolsTarget({ ...envIn("/o"), deviceName: "warden-iphone-17-5" })).toEqual({
+		expect(sessions.devtoolsTarget({ ...envIn("/o"), deviceName: "warden-iphone-17-5" })).toEqual({
 			appId: "com.acme.app",
 			deviceName: "warden-iphone-17-5",
 		});
 	});
 
 	test("without a device name only the app id picks the page", () => {
-		expect(devtoolsTarget(envIn("/o"))).toEqual({ appId: "com.acme.app" });
+		expect(sessions.devtoolsTarget(envIn("/o"))).toEqual({ appId: "com.acme.app" });
 	});
 });

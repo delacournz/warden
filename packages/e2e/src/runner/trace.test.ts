@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import type { TestResult } from "./results";
-import { clockOf, formatConsoleLine, openTrace, readTrace, shortName } from "./trace";
+import { consoleLines, traceFile } from "./trace";
 
 const span = (op: string, ts: number, over: Partial<Extract<TraceEvent, { type: "span" }>> = {}): TraceEvent => ({
 	type: "span",
@@ -38,22 +38,22 @@ describe("formatConsoleLine goldens", () => {
 	const plain = { clock: false };
 
 	test("test start / end with clock", () => {
-		expect(formatConsoleLine({ type: "test-start", test: result }, clock)).toBe(
+		expect(consoleLines.format({ type: "test-start", test: result }, clock)).toBe(
 			"[00:54:25.766] ▶ test |ios| e2e/onboarding.e2e.ts › onboarding steps through to sign-in"
 		);
-		expect(formatConsoleLine({ type: "test-end", result }, clock)).toBe(
+		expect(consoleLines.format({ type: "test-end", result }, clock)).toBe(
 			"[00:54:32.646] ■ test |ios| e2e/onboarding.e2e.ts › onboarding steps through to sign-in passed 6.88s on 4115EA7D-…"
 		);
 	});
 
 	test("no clock under WARDEN_LOG_TIMESTAMPS=1", () => {
-		expect(formatConsoleLine({ type: "test-start", test: result }, plain)).toBe(
+		expect(consoleLines.format({ type: "test-start", test: result }, plain)).toBe(
 			"▶ test |ios| e2e/onboarding.e2e.ts › onboarding steps through to sign-in"
 		);
 	});
 
 	test("nested titles join with ›, device name wins", () => {
-		const line = formatConsoleLine(
+		const line = consoleLines.format(
 			{
 				type: "test-end",
 				result: {
@@ -80,8 +80,8 @@ describe("formatConsoleLine goldens", () => {
 			ms: 1251,
 		};
 		const opts = { clock: true, short: "onboarding", depth: 0 };
-		expect(formatConsoleLine(start, opts)).toBe("[00:54:25.942]   ▸ onboarding › app app.open");
-		expect(formatConsoleLine(end, opts)).toBe("[00:54:27.193]   ▪ onboarding › app app.open passed 1251ms");
+		expect(consoleLines.format(start, opts)).toBe("[00:54:25.942]   ▸ onboarding › app app.open");
+		expect(consoleLines.format(end, opts)).toBe("[00:54:27.193]   ▪ onboarding › app app.open passed 1251ms");
 	});
 
 	test("failed step carries the error; depth indents", () => {
@@ -94,30 +94,30 @@ describe("formatConsoleLine goldens", () => {
 			ms: 30000,
 			error: "TIMEOUT: no match",
 		};
-		expect(formatConsoleLine(end, { clock: false, short: "login", depth: 1 })).toBe(
+		expect(consoleLines.format(end, { clock: false, short: "login", depth: 1 })).toBe(
 			"    ▪ login › locator tap id=submit failed 30000ms — TIMEOUT: no match"
 		);
 	});
 
 	test("spans print nothing", () => {
-		expect(formatConsoleLine(span("driver.snapshot", TS), { clock: true })).toBeUndefined();
+		expect(consoleLines.format(span("driver.snapshot", TS), { clock: true })).toBeUndefined();
 	});
 
 	test("screenshots and notes print nothing", () => {
-		expect(formatConsoleLine({ type: "note", ts: TS, kind: "note", label: "x" }, plain)).toBeUndefined();
+		expect(consoleLines.format({ type: "note", ts: TS, kind: "note", label: "x" }, plain)).toBeUndefined();
 		expect(
-			formatConsoleLine({ type: "screenshot", ts: TS, kind: "screenshot", label: "x", path: "/a.png" }, plain)
+			consoleLines.format({ type: "screenshot", ts: TS, kind: "screenshot", label: "x", path: "/a.png" }, plain)
 		).toBeUndefined();
 	});
 });
 
 describe("helpers", () => {
 	test("clockOf pads to HH:MM:SS.mmm", () => {
-		expect(clockOf(new Date(2026, 0, 1, 3, 4, 5, 6).getTime())).toBe("03:04:05.006");
+		expect(consoleLines.clockOf(new Date(2026, 0, 1, 3, 4, 5, 6).getTime())).toBe("03:04:05.006");
 	});
 	test("shortName", () => {
-		expect(shortName("e2e/sign-in.e2e.ts")).toBe("sign-in");
-		expect(shortName("/a/b/flow.test.tsx")).toBe("flow.test");
+		expect(consoleLines.shortName("e2e/sign-in.e2e.ts")).toBe("sign-in");
+		expect(consoleLines.shortName("/a/b/flow.test.tsx")).toBe("flow.test");
 	});
 });
 
@@ -127,7 +127,7 @@ describe("trace.jsonl", () => {
 		dirs.push(dir);
 		const path = join(dir, "a", "trace.jsonl");
 		const mirrored: TraceEvent[] = [];
-		const trace = openTrace(path, (e) => mirrored.push(e));
+		const trace = traceFile.open(path, (e) => mirrored.push(e));
 		const events: TraceEvent[] = [
 			{ type: "step-start", ts: 1, kind: "app", label: "app.open" },
 			{ type: "screenshot", ts: 2, kind: "screenshot", label: "home", path: "/s/001-home.png" },
@@ -136,8 +136,8 @@ describe("trace.jsonl", () => {
 		for (const e of events) trace.write(e);
 		expect(mirrored).toEqual(events);
 		const text = readFileSync(path, "utf8");
-		expect(readTrace(text)).toEqual(events);
-		expect(readTrace(`${text}{"type":"note","ts"`)).toEqual(events);
+		expect(traceFile.read(text)).toEqual(events);
+		expect(traceFile.read(`${text}{"type":"note","ts"`)).toEqual(events);
 	});
 });
 
@@ -167,28 +167,28 @@ describe("trace spans", () => {
 			}),
 			span("device.settle", 30, { detail: { via: "stream", quiet: true } }),
 		];
-		expect(readTrace(events.map((e) => JSON.stringify(e)).join("\n"))).toEqual(events);
+		expect(traceFile.read(events.map((e) => JSON.stringify(e)).join("\n"))).toEqual(events);
 	});
 
 	test("a span with a non-scalar detail is not a valid event", () => {
 		const bad = JSON.stringify({ type: "span", ts: 1, op: "x", ms: 1, ok: true, detail: { nested: { a: 1 } } });
-		expect(readTrace(bad)).toEqual([]);
+		expect(traceFile.read(bad)).toEqual([]);
 	});
 
 	test("spans are buffered: nothing is appended per span", () => {
 		const { path, read } = open();
-		const trace = openTrace(path);
+		const trace = traceFile.open(path);
 		for (let i = 0; i < 5; i += 1) trace.write(span("driver.key", i));
 		expect(read()).toBe("");
 	});
 
 	test("the next step event appends the buffered spans before itself, in one write", () => {
 		const { path, read } = open();
-		const trace = openTrace(path);
+		const trace = traceFile.open(path);
 		trace.write(span("driver.snapshot", 1));
 		trace.write(span("driver.tap", 2));
 		trace.write({ type: "step-start", ts: 3, kind: "locator", label: "tap x" });
-		expect(readTrace(read()).map((e) => (e.type === "span" ? e.op : e.type))).toEqual([
+		expect(traceFile.read(read()).map((e) => (e.type === "span" ? e.op : e.type))).toEqual([
 			"driver.snapshot",
 			"driver.tap",
 			"step-start",
@@ -197,18 +197,18 @@ describe("trace spans", () => {
 
 	test("flush appends what is pending and is a no-op when nothing is", () => {
 		const { path, read } = open();
-		const trace = openTrace(path);
+		const trace = traceFile.open(path);
 		trace.flush();
 		expect(read()).toBe("");
 		trace.write(span("driver.snapshot", 1));
 		trace.flush();
 		trace.flush();
-		expect(readTrace(read())).toEqual([span("driver.snapshot", 1)]);
+		expect(traceFile.read(read())).toEqual([span("driver.snapshot", 1)]);
 	});
 
 	test("a full buffer is written out without waiting for a step", () => {
 		const { path, read } = open();
-		const trace = openTrace(path);
+		const trace = traceFile.open(path);
 		for (let i = 0; i < 1000; i += 1) trace.write(span("driver.key", i));
 		const lines = read()
 			.split("\n")
@@ -216,13 +216,13 @@ describe("trace spans", () => {
 		expect(lines.length).toBeGreaterThan(0);
 		expect(lines.length).toBeLessThanOrEqual(1000);
 		trace.flush();
-		expect(readTrace(read())).toHaveLength(1000);
+		expect(traceFile.read(read())).toHaveLength(1000);
 	});
 
 	test("the mirror sees spans as they are written, not when they are flushed", () => {
 		const { path } = open();
 		const mirrored: TraceEvent[] = [];
-		const trace = openTrace(path, (e) => mirrored.push(e));
+		const trace = traceFile.open(path, (e) => mirrored.push(e));
 		trace.write(span("driver.snapshot", 1));
 		expect(mirrored).toEqual([span("driver.snapshot", 1)]);
 	});

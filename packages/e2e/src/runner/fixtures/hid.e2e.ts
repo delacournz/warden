@@ -5,7 +5,7 @@ let runs = 0;
 
 test("tap after Device Hub quit", async () => {
 	runs += 1;
-	fixtureLog(`body run ${runs}`);
+	fixtureLog.write(`body run ${runs}`);
 	if (runs === 1) {
 		throw new E2eError(
 			"ACTION_FAILED",
@@ -16,6 +16,6 @@ test("tap after Device Hub quit", async () => {
 
 test("a second loss is not recovered", async () => {
 	runs += 1;
-	fixtureLog(`body run ${runs}`);
+	fixtureLog.write(`body run ${runs}`);
 	throw new E2eError("ACTION_FAILED", "tap failed: E_HID: The dtuhidd connection (x) has been invalidated");
 });
