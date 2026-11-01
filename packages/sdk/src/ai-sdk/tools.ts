@@ -2,7 +2,7 @@ import { type JSONValue, type Tool, tool } from "ai";
 import type { z } from "zod";
 import { createWardenClient } from "../client";
 import type { ClientSeams } from "../core";
-import { fromThrown, isWardenError } from "../errors";
+import { isWardenError, sdkErrors } from "../errors";
 import type {
 	DeviceRef,
 	ElementTarget,
@@ -80,51 +80,69 @@ const TARGET_HINT = "pass ref (from the latest snapshot) or selector";
 type ToolResultOutput = Awaited<ReturnType<NonNullable<Tool["toModelOutput"]>>>;
 type ModelContent = Extract<ToolResultOutput, { type: "content" }>["value"];
 
+/** Pure formatting helpers of the tool results. */
+class ToolFormat {
+	/**
+	 * What the model sees for a `screenshot` result: the path/size line plus the PNG as an image part. The base64 lives in
+	 * the result's `image` field (so a resumed history still carries it) and is stripped from the text part.
+	 */
+	screenshotModelOutput(output: ToolResult): ToolResultOutput {
+		if (!output.ok) return { type: "json", value: output as unknown as JSONValue };
+		const { image, ...rest } = output as Record<string, unknown> & { image?: { mediaType: string; data: string } };
+		const text: ModelContent[number] = { type: "text", text: JSON.stringify(rest) };
+		if (image === undefined) return { type: "content", value: [text] };
+		return {
+			type: "content",
+			value: [text, { type: "file", mediaType: image.mediaType, data: { type: "data", data: image.data } }],
+		};
+	}
+
+	/** A caught value as the failure payload; `stale_ref` always tells the model to re-snapshot. */
+	toolFailure(error: unknown, signal?: AbortSignal): ToolFailure {
+		const e = isWardenError(error) ? error : sdkErrors.fromThrown(error, signal);
+		const hint = e.code === "stale_ref" ? STALE_HINT : e.hint;
+		return { ok: false, error: { code: e.code, message: e.message, ...(hint !== undefined ? { hint } : {}) } };
+	}
+
+	usageFailure(message: string, hint: string): ToolFailure {
+		return { ok: false, error: { code: "usage", message, hint } };
+	}
+
+	elementTargetOf(input: TargetFields): ElementTarget | undefined {
+		if (input.ref !== undefined) return { ref: input.ref as `@e${number}` };
+		if (input.selector !== undefined) return { selector: input.selector };
+		return undefined;
+	}
+
+	brief(element: SnapshotElement): string {
+		const parts: string[] = [element.ref, element.role];
+		if (element.label !== undefined) parts.push(JSON.stringify(element.label));
+		if (element.identifier !== undefined) parts.push(`id=${element.identifier}`);
+		if (element.value !== undefined) parts.push(`value=${JSON.stringify(element.value)}`);
+		if (!element.enabled) parts.push("disabled");
+		return parts.join(" ");
+	}
+
+	deviceRefOf(session: Session): DeviceRef {
+		return session.platform === "ios" ? { udid: session.deviceId } : { serial: session.deviceId };
+	}
+}
+
+const toolFormat = new ToolFormat();
+
+type TargetFields = { ref?: string | undefined; selector?: string | undefined };
+
 /**
  * What the model sees for a `screenshot` result: the path/size line plus the PNG as an image part. The base64 lives in
  * the result's `image` field (so a resumed history still carries it) and is stripped from the text part.
  */
 export function screenshotModelOutput(output: ToolResult): ToolResultOutput {
-	if (!output.ok) return { type: "json", value: output as unknown as JSONValue };
-	const { image, ...rest } = output as Record<string, unknown> & { image?: { mediaType: string; data: string } };
-	const text: ModelContent[number] = { type: "text", text: JSON.stringify(rest) };
-	if (image === undefined) return { type: "content", value: [text] };
-	return {
-		type: "content",
-		value: [text, { type: "file", mediaType: image.mediaType, data: { type: "data", data: image.data } }],
-	};
+	return toolFormat.screenshotModelOutput(output);
 }
 
 /** A caught value as the failure payload; `stale_ref` always tells the model to re-snapshot. */
 export function toolFailure(error: unknown, signal?: AbortSignal): ToolFailure {
-	const e = isWardenError(error) ? error : fromThrown(error, signal);
-	const hint = e.code === "stale_ref" ? STALE_HINT : e.hint;
-	return { ok: false, error: { code: e.code, message: e.message, ...(hint !== undefined ? { hint } : {}) } };
-}
-
-function usageFailure(message: string, hint: string): ToolFailure {
-	return { ok: false, error: { code: "usage", message, hint } };
-}
-
-type TargetFields = { ref?: string | undefined; selector?: string | undefined };
-
-function elementTargetOf(input: TargetFields): ElementTarget | undefined {
-	if (input.ref !== undefined) return { ref: input.ref as `@e${number}` };
-	if (input.selector !== undefined) return { selector: input.selector };
-	return undefined;
-}
-
-function brief(element: SnapshotElement): string {
-	const parts: string[] = [element.ref, element.role];
-	if (element.label !== undefined) parts.push(JSON.stringify(element.label));
-	if (element.identifier !== undefined) parts.push(`id=${element.identifier}`);
-	if (element.value !== undefined) parts.push(`value=${JSON.stringify(element.value)}`);
-	if (!element.enabled) parts.push("disabled");
-	return parts.join(" ");
-}
-
-function deviceRefOf(session: Session): DeviceRef {
-	return session.platform === "ios" ? { udid: session.deviceId } : { serial: session.deviceId };
+	return toolFormat.toolFailure(error, signal);
 }
 
 /**
@@ -133,65 +151,99 @@ function deviceRefOf(session: Session): DeviceRef {
  * tool call, when no `session` is given. Approval is v7 `toolApproval`: spread the returned `toolApproval` into the
  * agent or `generateText` call.
  */
-export async function createWardenTools(options: CreateWardenToolsOptions): Promise<WardenTools> {
-	const ownsClient = options.client === undefined;
-	const maxImageBytes = options.screenshotImageMaxBytes ?? DEFAULT_SCREENSHOT_IMAGE_MAX_BYTES;
-	const client =
-		options.client ?? createWardenClient({ label: "ai-sdk", ...options.clientOptions }, options.clientSeams ?? {});
+class WardenToolsFactory {
+	private readonly ownsClient: boolean;
+	private readonly maxImageBytes: number;
+	private readonly client: WardenClient;
+	private current: Session | undefined;
+	private ownsSession = false;
+	private pending: Promise<Session> | undefined;
+	private readonly done: ToolResult = { ok: true };
 
-	let current: Session | undefined = options.session;
-	let ownsSession = false;
-	let pending: Promise<Session> | undefined;
+	constructor(private readonly options: CreateWardenToolsOptions) {
+		this.ownsClient = options.client === undefined;
+		this.maxImageBytes = options.screenshotImageMaxBytes ?? DEFAULT_SCREENSHOT_IMAGE_MAX_BYTES;
+		this.client =
+			options.client ?? createWardenClient({ label: "ai-sdk", ...options.clientOptions }, options.clientSeams ?? {});
+		this.current = options.session;
+	}
 
-	async function openOn(platform: Platform, claim?: { profile?: string; runtime?: string }): Promise<Session> {
-		const [lease]: Lease[] = await client.leases.claim({ platform, ...claim });
+	create(): WardenTools {
+		const { options } = this;
+		const names: readonly ToolName[] =
+			options.set === "all" ? [...CORE_TOOL_NAMES, ...EXTRA_TOOL_NAMES] : CORE_TOOL_NAMES;
+		const tools: WardenToolSet = {};
+		for (const name of names) tools[name] = this.define(name, this.build[name] as Run<typeof name>);
+
+		const toolApproval: Partial<Record<ToolName, "user-approval">> = {};
+		for (const name of names) {
+			const policy = options.approval?.[name];
+			if (policy) toolApproval[name] = policy;
+		}
+
+		const factory = this;
+		return {
+			tools,
+			toolApproval,
+			client: this.client,
+			get session() {
+				return factory.current;
+			},
+			getSession: () => this.getSession(),
+			close: async () => {
+				await this.dropSession();
+				if (this.ownsClient) await this.client.close();
+			},
+		};
+	}
+
+	private async openOn(platform: Platform, claim?: { profile?: string; runtime?: string }): Promise<Session> {
+		const [lease]: Lease[] = await this.client.leases.claim({ platform, ...claim });
 		if (!lease) throw new Error("no lease returned");
-		const session = await client.sessions.open({ lease, ...(options.app !== undefined ? { app: options.app } : {}) });
-		current = session;
-		ownsSession = true;
+		const session = await this.client.sessions.open({
+			lease,
+			...(this.options.app !== undefined ? { app: this.options.app } : {}),
+		});
+		this.current = session;
+		this.ownsSession = true;
 		return session;
 	}
 
-	function getSession(): Promise<Session> {
-		if (current) return Promise.resolve(current);
-		pending ??= openOn(options.platform).finally(() => {
-			pending = undefined;
+	private readonly getSession = (): Promise<Session> => {
+		if (this.current) return Promise.resolve(this.current);
+		this.pending ??= this.openOn(this.options.platform).finally(() => {
+			this.pending = undefined;
 		});
-		return pending;
+		return this.pending;
+	};
+
+	private async dropSession(): Promise<void> {
+		const session = this.current;
+		this.current = undefined;
+		if (session && this.ownsSession) await session.close();
+		this.ownsSession = false;
 	}
 
-	async function dropSession(): Promise<void> {
-		const session = current;
-		current = undefined;
-		if (session && ownsSession) await session.close();
-		ownsSession = false;
-	}
-
-	type Ctx = { use: () => Promise<Session>; signal: AbortSignal | undefined };
-	type Run<K extends ToolName> = (input: ToolInputs[K], ctx: Ctx) => Promise<ToolResult>;
-
-	function define<K extends ToolName>(name: K, run: Run<K>): Tool {
+	private define<K extends ToolName>(name: K, run: Run<K>): Tool {
 		const schema: z.ZodType<ToolInputs[K]> = toolInputSchemas[name] as unknown as z.ZodType<ToolInputs[K]>;
 		return tool({
 			description: toolDescriptions[name],
 			inputSchema: schema,
 			...(name === "screenshot"
-				? { toModelOutput: ({ output }: { output: ToolResult }) => screenshotModelOutput(output) }
+				? { toModelOutput: ({ output }: { output: ToolResult }) => toolFormat.screenshotModelOutput(output) }
 				: {}),
 			execute: async (input: ToolInputs[K], execOptions: { abortSignal?: AbortSignal }): Promise<ToolResult> => {
 				const signal = execOptions.abortSignal;
 				try {
-					return await run(input, { use: getSession, signal });
+					return await run(input, { use: this.getSession, signal });
 				} catch (error) {
-					return toolFailure(error, signal);
+					return toolFormat.toolFailure(error, signal);
 				}
 			},
 		}) as Tool;
 	}
 
-	const done: ToolResult = { ok: true };
-
-	const build: { [K in ToolName]: Run<K> } = {
+	private readonly build: { [K in ToolName]: Run<K> } = {
 		open: async (i, { use, signal }) => {
 			const session = await use();
 			await session.apps.open(
@@ -202,12 +254,12 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 				},
 				{ signal }
 			);
-			return done;
+			return this.done;
 		},
 		close: async (i, { use, signal }) => {
 			const session = await use();
 			await session.apps.close(i.app !== undefined ? { app: i.app } : {}, { signal });
-			return done;
+			return this.done;
 		},
 		snapshot: async (i, { use, signal }) => {
 			const session = await use();
@@ -222,65 +274,66 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 		},
 		press: async (i, { use, signal }) => {
 			const session = await use();
-			const target: Target | undefined = elementTargetOf(i) ?? (i.point ? { point: i.point } : undefined);
-			if (!target) return usageFailure("press needs a target", `${TARGET_HINT}, or point`);
+			const target: Target | undefined = toolFormat.elementTargetOf(i) ?? (i.point ? { point: i.point } : undefined);
+			if (!target) return toolFormat.usageFailure("press needs a target", `${TARGET_HINT}, or point`);
 			await session.interactions.press({ ...target, ...(i.count !== undefined ? { count: i.count } : {}) }, { signal });
-			return done;
+			return this.done;
 		},
 		fill: async (i, { use, signal }) => {
 			const session = await use();
-			const target = elementTargetOf(i);
-			if (!target) return usageFailure("fill needs a target", TARGET_HINT);
+			const target = toolFormat.elementTargetOf(i);
+			if (!target) return toolFormat.usageFailure("fill needs a target", TARGET_HINT);
 			await session.interactions.fill(
 				{ ...target, text: i.text, ...(i.clear !== undefined ? { clear: i.clear } : {}) },
 				{ signal }
 			);
-			return done;
+			return this.done;
 		},
 		type: async (i, { use, signal }) => {
 			const session = await use();
 			await session.interactions.type({ text: i.text }, { signal });
-			return done;
+			return this.done;
 		},
 		get: async (i, { use, signal }) => {
 			const session = await use();
-			const target = elementTargetOf(i);
-			if (!target) return usageFailure("get needs a target", TARGET_HINT);
+			const target = toolFormat.elementTargetOf(i);
+			if (!target) return toolFormat.usageFailure("get needs a target", TARGET_HINT);
 			const r = await session.query.get({ ...target, property: i.property }, { signal });
 			return { ok: true, property: r.property, value: r.value ?? null };
 		},
 		is: async (i, { use, signal }) => {
 			const session = await use();
-			const target = elementTargetOf(i);
-			if (!target) return usageFailure("is needs a target", TARGET_HINT);
+			const target = toolFormat.elementTargetOf(i);
+			if (!target) return toolFormat.usageFailure("is needs a target", TARGET_HINT);
 			return { ok: true, value: await session.query.is({ ...target, state: i.state }, { signal }) };
 		},
 		find: async (i, { use, signal }) => {
 			const session = await use();
 			const found = await session.query.find({ selector: i.selector, ...(i.all ? { all: true } : {}) }, { signal });
-			return { ok: true, count: found.length, elements: found.map(brief) };
+			return { ok: true, count: found.length, elements: found.map((e) => toolFormat.brief(e)) };
 		},
 		wait: async (i, { use, signal }) => {
 			const session = await use();
-			const target = elementTargetOf(i);
-			if (!target) return usageFailure("wait needs a target", TARGET_HINT);
-			if (i.for === "text" && i.text === undefined) return usageFailure("wait for=text needs text", "pass text");
+			const target = toolFormat.elementTargetOf(i);
+			if (!target) return toolFormat.usageFailure("wait needs a target", TARGET_HINT);
+			if (i.for === "text" && i.text === undefined)
+				return toolFormat.usageFailure("wait for=text needs text", "pass text");
 			const condition: WaitCondition = i.for === "text" ? { for: "text", text: i.text ?? "" } : { for: i.for };
 			const found = await session.query.wait(
 				{ ...target, ...condition, ...(i.timeoutMs !== undefined ? { timeoutMs: i.timeoutMs } : {}) },
 				{ signal }
 			);
-			return found ? { ok: true, element: brief(found) } : done;
+			return found ? { ok: true, element: toolFormat.brief(found) } : this.done;
 		},
 		back: async (_i, { use, signal }) => {
 			const session = await use();
 			await session.device.back({ signal });
-			return done;
+			return this.done;
 		},
 		scroll: async (i, { use, signal }) => {
 			const session = await use();
-			const target = elementTargetOf(i);
-			const until = elementTargetOf({ ref: i.untilRef, selector: i.untilSelector });
+			const target = toolFormat.elementTargetOf(i);
+			const until = toolFormat.elementTargetOf({ ref: i.untilRef, selector: i.untilSelector });
 			await session.interactions.scroll(
 				{
 					direction: i.direction,
@@ -290,7 +343,7 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 				},
 				{ signal }
 			);
-			return done;
+			return this.done;
 		},
 		swipe: async (i, { use, signal }) => {
 			const session = await use();
@@ -298,7 +351,7 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 				{ from: i.from, to: i.to, ...(i.durationMs !== undefined ? { durationMs: i.durationMs } : {}) },
 				{ signal }
 			);
-			return done;
+			return this.done;
 		},
 		alert: async (i, { use, signal }) => {
 			const session = await use();
@@ -318,10 +371,10 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 			);
 			const base = { ok: true as const, path: shot.path ?? null, width: shot.width, height: shot.height };
 			if (shot.bytes.length === 0) return base;
-			if (shot.bytes.length > maxImageBytes) {
+			if (shot.bytes.length > this.maxImageBytes) {
 				return {
 					...base,
-					imageOmitted: `${shot.bytes.length} bytes is over the ${maxImageBytes} byte cap; pass a smaller scale`,
+					imageOmitted: `${shot.bytes.length} bytes is over the ${this.maxImageBytes} byte cap; pass a smaller scale`,
 				};
 			}
 			return { ...base, image: { mediaType: "image/png", data: Buffer.from(shot.bytes).toString("base64") } };
@@ -339,16 +392,16 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 			return { ok: true, entries: entries.map((e) => `${e.level}: ${e.text}`) };
 		},
 		claim: async (i) => {
-			await dropSession();
-			const session = await openOn(i.platform, {
+			await this.dropSession();
+			const session = await this.openOn(i.platform, {
 				...(i.profile !== undefined ? { profile: i.profile } : {}),
 				...(i.runtime !== undefined ? { runtime: i.runtime } : {}),
 			});
 			return { ok: true, deviceId: session.deviceId, platform: session.platform };
 		},
 		release: async (i, { signal }) => {
-			await dropSession();
-			const r = await client.leases.release(
+			await this.dropSession();
+			const r = await this.client.leases.release(
 				{
 					...(i.leaseIds !== undefined ? { leaseIds: i.leaseIds } : {}),
 					...(i.shutdown !== undefined ? { shutdown: i.shutdown } : {}),
@@ -358,7 +411,7 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 			return { ok: true, released: r.released, shutdown: r.shutdown };
 		},
 		devices: async (i, { signal }) => {
-			const list = await client.devices.list(
+			const list = await this.client.devices.list(
 				{
 					...(i.platform !== undefined ? { platform: i.platform } : {}),
 					...(i.booted !== undefined ? { booted: i.booted } : {}),
@@ -372,23 +425,23 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 		},
 		install: async (i, { use, signal }) => {
 			const session = await use();
-			await client.apps.install({ ...deviceRefOf(session), path: i.path }, { signal });
-			return done;
+			await this.client.apps.install({ ...toolFormat.deviceRefOf(session), path: i.path }, { signal });
+			return this.done;
 		},
 		metro: async (i, { signal }) => {
 			const project = i.project !== undefined ? { project: i.project } : {};
 			if (i.action === "start") {
-				const m = await client.metro.start(
+				const m = await this.client.metro.start(
 					{ ...project, ...(i.port !== undefined ? { port: i.port } : {}) },
 					{ signal }
 				);
 				return { ok: true, running: true, url: m.url, port: m.port };
 			}
 			if (i.action === "stop") {
-				await client.metro.stop(project, { signal });
+				await this.client.metro.stop(project, { signal });
 				return { ok: true, running: false };
 			}
-			const status = await client.metro.status(project, { signal });
+			const status = await this.client.metro.status(project, { signal });
 			return { ok: true, ...status };
 		},
 		eval: async (i, { use, signal }) => {
@@ -540,29 +593,17 @@ export async function createWardenTools(options: CreateWardenToolsOptions): Prom
 			};
 		},
 	};
+}
 
-	const names: readonly ToolName[] =
-		options.set === "all" ? [...CORE_TOOL_NAMES, ...EXTRA_TOOL_NAMES] : CORE_TOOL_NAMES;
-	const tools: WardenToolSet = {};
-	for (const name of names) tools[name] = define(name, build[name] as Run<typeof name>);
+type Ctx = { use: () => Promise<Session>; signal: AbortSignal | undefined };
+type Run<K extends ToolName> = (input: ToolInputs[K], ctx: Ctx) => Promise<ToolResult>;
 
-	const toolApproval: Partial<Record<ToolName, "user-approval">> = {};
-	for (const name of names) {
-		const policy = options.approval?.[name];
-		if (policy) toolApproval[name] = policy;
-	}
-
-	return {
-		tools,
-		toolApproval,
-		client,
-		get session() {
-			return current;
-		},
-		getSession,
-		close: async () => {
-			await dropSession();
-			if (ownsClient) await client.close();
-		},
-	};
+/**
+ * Build the Vercel AI SDK tools that drive a warden session. Every tool returns `{ok: true, ...}` or
+ * `{ok: false, error: {code, message, hint}}`; none throws. The session is claimed and opened lazily, on the first
+ * tool call, when no `session` is given. Approval is v7 `toolApproval`: spread the returned `toolApproval` into the
+ * agent or `generateText` call.
+ */
+export async function createWardenTools(options: CreateWardenToolsOptions): Promise<WardenTools> {
+	return new WardenToolsFactory(options).create();
 }

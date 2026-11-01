@@ -1,4 +1,4 @@
-import { journalRecorder, routeAfterFor as routeAfter } from "@delacour/warden-sdk/ops/authoring/recorder";
+import { journalRecorders } from "@delacour/warden-sdk/ops/authoring/recorder";
 import type { RecordSink } from "@delacour/warden-sdk/ops/record";
 import type { RefStore } from "@delacour/warden-sdk/ops/ref-store";
 import type { StateStore } from "@delacour/warden-sdk/ops/state-store";
@@ -18,7 +18,7 @@ export function recorderFor(
 	deps: UiDeps,
 	stores: { state: StateStore; refs: RefStore }
 ): RecordSink {
-	const journal = journalRecorder({
+	const journal = journalRecorders.journalRecorder({
 		home: storeLocator.wardenHome(ctx.env),
 		env: ctx.env,
 		now: ctx.now,
@@ -45,7 +45,7 @@ export function routeAfterFor(
 	device: UiDevice,
 	state: StateStore
 ): (action: string) => Promise<string | undefined> {
-	return routeAfter(state, async () => {
+	return journalRecorders.routeAfterFor(state, async () => {
 		const [{ opSessionFor }, { extrasFor }] = await Promise.all([import("./session"), import("./devtools-cli")]);
 		return opSessionFor(ctx, deps, device, env, extrasFor(ctx, deps, device));
 	});

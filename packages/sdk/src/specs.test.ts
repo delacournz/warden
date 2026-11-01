@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fixtureRepos } from "@delacour/warden-core/affected/fixture.testing";
 import { createWardenClient } from "./client";
 import { isWardenError } from "./errors";
-import { e2eArgs, resolveCliCommand } from "./specs";
+import { specsCli } from "./specs";
 import type { CliOutput, SpecsDeps } from "./specs.types";
 
 let dir: string;
@@ -125,12 +125,13 @@ describe("specs.run", () => {
 });
 
 describe("helpers", () => {
-	test("e2eArgs all", () => expect(e2eArgs({ suite: "m", all: true })).toEqual(["e2e", "m", "--json", "--all"]));
+	test("e2eArgs all", () =>
+		expect(specsCli.e2eArgs({ suite: "m", all: true })).toEqual(["e2e", "m", "--json", "--all"]));
 	test("resolveCliCommand order", () => {
-		expect(resolveCliCommand(["x", "y"])).toEqual(["x", "y"]);
-		expect(resolveCliCommand(undefined, () => "/bin/warden")).toEqual(["/bin/warden"]);
+		expect(specsCli.resolveCliCommand(["x", "y"])).toEqual(["x", "y"]);
+		expect(specsCli.resolveCliCommand(undefined, () => "/bin/warden")).toEqual(["/bin/warden"]);
 		expect(
-			resolveCliCommand(
+			specsCli.resolveCliCommand(
 				undefined,
 				() => null,
 				() => true,
@@ -139,7 +140,7 @@ describe("helpers", () => {
 			)
 		).toEqual(["bun", "/m.ts"]);
 		expect(
-			resolveCliCommand(
+			specsCli.resolveCliCommand(
 				undefined,
 				() => null,
 				() => false

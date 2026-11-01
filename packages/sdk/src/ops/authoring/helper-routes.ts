@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { journalStore } from "@delacour/warden-e2e/authoring/journal";
 import { z } from "zod";
 import { uiPaths } from "../paths";
-import { functionSource } from "./spec-target";
+import { specTargets } from "./spec-target";
 
 /**
  * The routes a recorded helper visits, kept beside the device state (`$WARDEN_HOME/ui/helper-routes`), so a later
@@ -20,45 +20,57 @@ const sidecarSchema = z.object({
 	routes: z.array(z.string().min(1)),
 });
 
-/** `<home>/ui/helper-routes/<hash>.json`: one file per `module#fn`, kept out of the app repo. */
-export function helperRoutesFile(home: string, module: string, fn: string): string {
-	return join(
-		uiPaths.uiRoot(home),
-		"helper-routes",
-		`${createHash("sha1").update(`${module}#${fn}`).digest("hex").slice(0, 16)}.json`
-	);
-}
+/** Sidecar files for the routes a recorded helper visits. */
+export class HelperRoutes {
+	/** `<home>/ui/helper-routes/<hash>.json`: one file per `module#fn`, kept out of the app repo. */
+	helperRoutesFile(home: string, module: string, fn: string): string {
+		return join(
+			uiPaths.uiRoot(home),
+			"helper-routes",
+			`${createHash("sha1").update(`${module}#${fn}`).digest("hex").slice(0, 16)}.json`
+		);
+	}
 
-const hashOf = (source: string): string => createHash("sha1").update(source).digest("hex");
+	private hashOf(source: string): string {
+		return createHash("sha1").update(source).digest("hex");
+	}
 
-/** The hash a sidecar is valid for: the helper's function text, else the whole module. */
-export function helperSourceHash(moduleSource: string, fn: string): string {
-	return hashOf(functionSource(moduleSource, fn) ?? moduleSource);
-}
+	/** The hash a sidecar is valid for: the helper's function text, else the whole module. */
+	helperSourceHash(moduleSource: string, fn: string): string {
+		return this.hashOf(specTargets.functionSource(moduleSource, fn) ?? moduleSource);
+	}
 
-/** Remember the routes the helper recording visited; best effort (a read-only home just means no sidecar). */
-export function saveHelperRoutes(home: string, module: string, fn: string, routes: readonly string[]): void {
-	if (!existsSync(module)) return;
-	const file = helperRoutesFile(home, module, fn);
-	try {
-		mkdirSync(dirname(file), { recursive: true });
-		const body = { module, fn, sourceHash: helperSourceHash(readFileSync(module, "utf8"), fn), routes: [...routes] };
-		journalStore.writeFileAtomic(file, `${JSON.stringify(body, null, 2)}\n`);
-	} catch {
-		return;
+	/** Remember the routes the helper recording visited; best effort (a read-only home just means no sidecar). */
+	saveHelperRoutes(home: string, module: string, fn: string, routes: readonly string[]): void {
+		if (!existsSync(module)) return;
+		const file = this.helperRoutesFile(home, module, fn);
+		try {
+			mkdirSync(dirname(file), { recursive: true });
+			const body = {
+				module,
+				fn,
+				sourceHash: this.helperSourceHash(readFileSync(module, "utf8"), fn),
+				routes: [...routes],
+			};
+			journalStore.writeFileAtomic(file, `${JSON.stringify(body, null, 2)}\n`);
+		} catch {
+			return;
+		}
+	}
+
+	/** The saved routes of `module#fn`, or undefined when none were saved or the helper changed since. */
+	loadHelperRoutes(home: string, module: string, fn: string): string[] | undefined {
+		const file = this.helperRoutesFile(home, module, fn);
+		if (!existsSync(file) || !existsSync(module)) return undefined;
+		try {
+			const parsed = sidecarSchema.safeParse(JSON.parse(readFileSync(file, "utf8")));
+			if (!parsed.success) return undefined;
+			const fresh = parsed.data.sourceHash === this.helperSourceHash(readFileSync(module, "utf8"), fn);
+			return fresh ? parsed.data.routes : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 }
 
-/** The saved routes of `module#fn`, or undefined when none were saved or the helper changed since. */
-export function loadHelperRoutes(home: string, module: string, fn: string): string[] | undefined {
-	const file = helperRoutesFile(home, module, fn);
-	if (!existsSync(file) || !existsSync(module)) return undefined;
-	try {
-		const parsed = sidecarSchema.safeParse(JSON.parse(readFileSync(file, "utf8")));
-		if (!parsed.success) return undefined;
-		const fresh = parsed.data.sourceHash === helperSourceHash(readFileSync(module, "utf8"), fn);
-		return fresh ? parsed.data.routes : undefined;
-	} catch {
-		return undefined;
-	}
-}
+export const helperRoutes = new HelperRoutes();

@@ -15,14 +15,14 @@ import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Lease, Platform } from "@delacour/warden-store/types";
 import { type WardenError as EngineError, wardenErrors } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { abortableSleep, type Core, guard, guarded } from "./core";
-import { defaultDevtoolsDeps } from "./devtools-deps";
-import { fromThrown, interrupted, toWardenError, WardenError } from "./errors";
-import { hidLostIn, recoverSimHid } from "./hid-recovery";
-import { nativeLogsMethod } from "./native-logs-namespace";
+import { type Core, coreRuntime } from "./core";
+import { devtoolsDepsFactory } from "./devtools-deps";
+import { sdkErrors, WardenError } from "./errors";
+import { SimHidRecovery } from "./hid-recovery";
+import { nativeLogsNamespace } from "./native-logs-namespace";
 import { actionOps } from "./ops/actions";
-import { authoringFor } from "./ops/authoring/authoring-default";
-import { journalRecorder, routeAfterFor } from "./ops/authoring/recorder";
+import { authoringDefaults } from "./ops/authoring/authoring-default";
+import { journalRecorders } from "./ops/authoring/recorder";
 import { controlOps } from "./ops/controls";
 import { devtoolsOps } from "./ops/devtools";
 import { opErrors } from "./ops/errors";
@@ -38,7 +38,7 @@ import type { ElementJson } from "./ops/snapshot";
 import { snapshotOps } from "./ops/snapshot";
 import { stateStores } from "./ops/state-store";
 import { videoOps } from "./ops/video";
-import { buildSessionPerf } from "./perf";
+import { SessionPerfService } from "./perf";
 import type { SessionPerfNamespace } from "./perf.types";
 import type {
 	AppOpenParams,
@@ -119,63 +119,6 @@ const ROLES: ReadonlySet<string> = new Set<Role>([
 	"other",
 ]);
 
-const isRole = (value: string): value is Role => ROLES.has(value);
-const isRefText = (value: string): value is `@e${number}` => REF.test(value);
-
-/** A target as the words the ops parse: `@e3`, a selector, or `x y`. */
-export function targetText(target: Target): string {
-	if ("ref" in target) return target.ref;
-	if ("selector" in target) return target.selector;
-	return `${target.point.x} ${target.point.y}`;
-}
-
-function usage(message: string, hint?: string): WardenError {
-	return new WardenError({ code: "usage", message, ...(hint !== undefined ? { hint } : {}) });
-}
-
-/** The platform and id a {@link DeviceRef} names, from the lease, the store's records, or the id's shape. */
-export function deviceOf(core: Core, ref: DeviceRef): { platform: Platform; id: string; name?: string } {
-	if ("lease" in ref) {
-		const resource = ref.lease.resource;
-		if (resource.kind !== "device") throw usage(`lease ${ref.lease.id} is not a device lease`);
-		return { platform: resource.platform, id: resource.id, name: resource.name };
-	}
-	if ("serial" in ref) return { platform: "android", id: ref.serial };
-	const store = core.store();
-	const leased = store.listLeases().find((l) => l.resource.kind === "device" && l.resource.id === ref.udid);
-	if (leased?.resource.kind === "device") {
-		return { platform: leased.resource.platform, id: ref.udid, name: leased.resource.name };
-	}
-	const known = store.listDevices().find((d) => d.id === ref.udid);
-	if (known) return { platform: known.platform, id: ref.udid, name: known.name };
-	return { platform: IOS_UDID.test(ref.udid) ? "ios" : "android", id: ref.udid };
-}
-
-/**
- * Prove the client's owner may use the device: its own lease (heartbeat), else `device_foreign` /
- * `device_not_leased`. A device warden did not lease is never touched, and a free device is not leased here
- * (`leases.claim` does that).
- */
-export function requireLease(core: Core, device: { platform: Platform; id: string; name?: string }): CallerLease {
-	const checked = new CallerLeaseGate(core.store()).ensure(core.owner, device.platform, device.id, {
-		now: core.host.now(),
-		pidAlive: core.host.pidAlive,
-		claim: false,
-		label: core.options.label ?? "warden sdk",
-		...(device.name !== undefined ? { name: device.name } : {}),
-		pid: process.pid,
-	});
-	if (checked.success) return checked.data;
-	const { code, message } = checked.error;
-	throw new WardenError({
-		code,
-		message,
-		...(code === "device_not_leased"
-			? { hint: `lease it first: client.leases.claim({ platform: "${device.platform}" })` }
-			: {}),
-	});
-}
-
 type LiveSession = {
 	core: Core;
 	device: OpDevice;
@@ -183,45 +126,6 @@ type LiveSession = {
 	appId: string | undefined;
 	sessionId: string;
 };
-
-function pngSize(bytes: Uint8Array): { width: number; height: number } {
-	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	if (bytes.byteLength < 24 || view.getUint32(0) !== 0x89504e47) return { width: 0, height: 0 };
-	return { width: view.getUint32(16), height: view.getUint32(20) };
-}
-
-const kebab = (orientation: string): string => orientation.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
-const camel = (orientation: string): "portrait" | "portraitUpsideDown" | "landscapeLeft" | "landscapeRight" => {
-	switch (orientation) {
-		case "portrait-upside-down":
-			return "portraitUpsideDown";
-		case "landscape-left":
-			return "landscapeLeft";
-		case "landscape-right":
-			return "landscapeRight";
-		default:
-			return "portrait";
-	}
-};
-
-function snapshotElement(e: ElementJson): SnapshotElement | undefined {
-	if (e.ref === undefined || !isRefText(e.ref)) return undefined;
-	return {
-		ref: e.ref,
-		role: isRole(e.role) ? e.role : "other",
-		...(e.name !== undefined ? { label: e.name } : {}),
-		...(e.id !== undefined ? { identifier: e.id } : {}),
-		...(e.value !== undefined ? { value: e.value } : {}),
-		frame: [e.frame.x, e.frame.y, e.frame.width, e.frame.height],
-		enabled: e.enabled,
-		...(e.selected !== undefined ? { selected: e.selected } : {}),
-		...(e.checked !== undefined ? { checked: e.checked } : {}),
-	};
-}
-
-function elementsOf(list: readonly ElementJson[]): SnapshotElement[] {
-	return list.flatMap((e) => snapshotElement(e) ?? []);
-}
 
 type TreeComponent = {
 	id: number;
@@ -232,32 +136,6 @@ type TreeComponent = {
 	parent: number | null;
 	rect?: { x: number; y: number; width: number; height: number };
 };
-
-/** The props a component carries into a {@link TreeNode}: only the ones it has. */
-function treeProps(c: TreeComponent): Record<string, unknown> {
-	return {
-		...(c.testID !== undefined ? { testID: c.testID } : {}),
-		...(c.label !== undefined ? { label: c.label } : {}),
-		...(c.text !== undefined ? { text: c.text } : {}),
-		...(c.rect !== undefined ? { rect: c.rect } : {}),
-	};
-}
-
-function treeOf(components: readonly TreeComponent[]): TreeNode[] {
-	const nodes = new Map<number, TreeNode>();
-	for (const c of components) {
-		const props = treeProps(c);
-		nodes.set(c.id, { name: c.name, ...(Object.keys(props).length > 0 ? { props } : {}), children: [] });
-	}
-	const roots: TreeNode[] = [];
-	for (const c of components) {
-		const node = nodes.get(c.id);
-		if (!node) continue;
-		const parent = c.parent === null ? undefined : nodes.get(c.parent);
-		(parent ? parent.children : roots).push(node);
-	}
-	return roots;
-}
 
 /** The session: one driver on one leased device. Every method calls a typed op and throws a {@link WardenError}. */
 export class WardenSession implements Session {
@@ -301,12 +179,12 @@ export class WardenSession implements Session {
 		this.device = this.buildDevice();
 		this.devtools = this.buildDevtools();
 		this.record = this.buildRecord();
-		const perf = buildSessionPerf(init.core, {
+		const perf = new SessionPerfService(init.core, {
 			device: init.device,
 			lease: init.lease,
 			appId: init.appId,
 			closed: () => this.closed,
-		});
+		}).asSessionPerf();
 		this.perf = perf.namespace;
 		this.stopPerf = perf.stopOwn;
 	}
@@ -314,7 +192,7 @@ export class WardenSession implements Session {
 	/** Open the driver now, so a missing engine fails `sessions.open` rather than the first call. */
 	async connect(): Promise<void> {
 		const driver = await this.driver();
-		if (!driver.success) throw toWardenError(driver.error, "no");
+		if (!driver.success) throw sdkErrors.toWardenError(driver.error, "no");
 	}
 
 	locator(selector: string): SessionLocator {
@@ -324,12 +202,12 @@ export class WardenSession implements Session {
 			const screen = screenFactory.createScreen({
 				driver: async () => {
 					const driver = await this.driver();
-					if (!driver.success) throw toWardenError(driver.error, "no");
+					if (!driver.success) throw sdkErrors.toWardenError(driver.error, "no");
 					return driver.data;
 				},
 				env: { actionTimeoutMs: timeout, assertionTimeoutMs: timeout },
 				...(signal ? { signal } : {}),
-				clock: { now: host.now, sleep: (ms) => abortableSleep(ms, signal) },
+				clock: { now: host.now, sleep: (ms) => coreRuntime.abortableSleep(ms, signal) },
 			});
 			return screen.locator(selector);
 		};
@@ -338,7 +216,7 @@ export class WardenSession implements Session {
 			work: (l: ReturnType<typeof locatorFor>) => Promise<T>
 		): Promise<T> => {
 			const signal = this.core.signalFor(opts);
-			return guarded(signal, async () => {
+			return coreRuntime.guarded(signal, async () => {
 				try {
 					return await work(locatorFor(signal));
 				} catch (error) {
@@ -397,7 +275,7 @@ export class WardenSession implements Session {
 					return new WardenError({ code: "failed", message: error.message });
 			}
 		}
-		return fromThrown(error);
+		return sdkErrors.fromThrown(error);
 	}
 
 	private driver(): Promise<Result<Driver, EngineError>> {
@@ -467,10 +345,10 @@ export class WardenSession implements Session {
 		return (ms) =>
 			new Promise<void>((resolve, reject) => {
 				if (signal.aborted) {
-					reject(interrupted());
+					reject(sdkErrors.interrupted());
 					return;
 				}
-				const onAbort = () => reject(interrupted());
+				const onAbort = () => reject(sdkErrors.interrupted());
 				signal.addEventListener("abort", onAbort, { once: true });
 				this.core.host.sleep(ms).then(
 					() => {
@@ -512,10 +390,10 @@ export class WardenSession implements Session {
 						lease.resource.kind === "port" && lease.owner.kind === core.owner.kind ? [lease.resource.port] : []
 					),
 			...(core.seams.video ? { video: core.seams.video } : {}),
-			devtools: core.seams.devtools ?? defaultDevtoolsDeps(core.host.env),
-			authoring: authoringFor(core),
+			devtools: core.seams.devtools ?? devtoolsDepsFactory.create(core.host.env),
+			authoring: authoringDefaults.authoringFor(core),
 		};
-		session.recorder = journalRecorder({
+		session.recorder = journalRecorders.journalRecorder({
 			home: host.home,
 			env: host.env,
 			now: host.now,
@@ -523,7 +401,7 @@ export class WardenSession implements Session {
 			refs: this.refs,
 			warn: (message) => core.emit({ kind: "debug", message }),
 		});
-		session.routeAfter = routeAfterFor(this.state, () => session);
+		session.routeAfter = journalRecorders.routeAfterFor(this.state, () => session);
 		return session;
 	}
 
@@ -534,9 +412,9 @@ export class WardenSession implements Session {
 		op: (session: OpSession) => OpOutcome<R>,
 		timeoutMs?: number
 	): Promise<OpDone<R>> {
-		if (this.closed) throw usage("session is closed");
+		if (this.closed) throw sessionRuntime.usage("session is closed");
 		const signal = this.core.signalFor(opts);
-		guard(signal);
+		coreRuntime.guard(signal);
 		const started = this.core.host.now();
 		let done: Result<OpDone<R>, EngineError>;
 		try {
@@ -549,7 +427,7 @@ export class WardenSession implements Session {
 				ok: false,
 				ms: this.core.host.now() - started,
 			});
-			throw fromThrown(error, signal);
+			throw sdkErrors.fromThrown(error, signal);
 		}
 		this.core.emit({
 			kind: "action",
@@ -558,7 +436,7 @@ export class WardenSession implements Session {
 			ok: done.success,
 			ms: this.core.host.now() - started,
 		});
-		if (!done.success) throw toWardenError(done.error);
+		if (!done.success) throw sdkErrors.toWardenError(done.error);
 		return done.data;
 	}
 
@@ -571,18 +449,17 @@ export class WardenSession implements Session {
 		attempt: () => OpOutcome<R>
 	): Promise<Result<OpDone<R>, EngineError>> {
 		const first = await attempt();
-		if (this.platform !== "ios" || this.hidRecovered || !hidLostIn(first)) return first;
-		this.hidRecovered = true;
+		if (this.platform !== "ios" || this.hidRecovered) return first;
 		const { host } = this.core;
-		const recovered = await recoverSimHid(
-			{
-				exec: (cmd, options) => host.exec(cmd, signal ? { ...options, signal: options?.signal ?? signal } : options),
-				env: host.env,
-				log: (message) => this.core.emit({ kind: "warn", message }),
-				resetDriver: () => this.resetDriver(),
-			},
-			this.deviceId
-		);
+		const recovery = new SimHidRecovery({
+			exec: (cmd, options) => host.exec(cmd, signal ? { ...options, signal: options?.signal ?? signal } : options),
+			env: host.env,
+			log: (message) => this.core.emit({ kind: "warn", message }),
+			resetDriver: () => this.resetDriver(),
+		});
+		if (!recovery.isLost(first)) return first;
+		this.hidRecovered = true;
+		const recovered = await recovery.recover(this.deviceId);
 		return recovered ? attempt() : first;
 	}
 
@@ -630,12 +507,12 @@ export class WardenSession implements Session {
 			return selectorEngine.formatSelector({ id: { kind: "text", value: element.identifier } });
 		if (element.label !== undefined)
 			return selectorEngine.formatSelector({ label: { kind: "text", value: element.label } });
-		throw usage(`${target.ref} has neither an id nor a label to select it by`, "use a selector");
+		throw sessionRuntime.usage(`${target.ref} has neither an id nor a label to select it by`, "use a selector");
 	}
 
 	private appFor(app: string | undefined): string {
 		const id = app ?? this.appId;
-		if (id === undefined) throw usage("no app: pass `app` or open the session with one");
+		if (id === undefined) throw sessionRuntime.usage("no app: pass `app` or open the session with one");
 		return id;
 	}
 
@@ -719,14 +596,15 @@ export class WardenSession implements Session {
 					takenAt: stored?.takenAt ?? this.core.host.now(),
 					generation: r.generation,
 					screen: { width: r.screen.width, height: r.screen.height, scale: r.screen.scale },
-					elements: elementsOf(r.elements),
+					elements: sessionRuntime.elementsOf(r.elements),
 					text: done.text,
 					truncated: r.truncated,
 				};
 				return result;
 			},
 			screenshot: async (params: ScreenshotParams | undefined, opts): Promise<ScreenshotResult> => {
-				if (params?.format === "jpeg") throw usage("jpeg screenshots are not supported yet", "use format png");
+				if (params?.format === "jpeg")
+					throw sessionRuntime.usage("jpeg screenshots are not supported yet", "use format png");
 				let path: string;
 				if (params?.scale !== undefined) {
 					path = params.path ?? `${this.core.host.home}/ui/${this.dev.id}/shot-${this.core.host.now()}.png`;
@@ -738,7 +616,7 @@ export class WardenSession implements Session {
 					path = done.result.path;
 				}
 				const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
-				const size = pngSize(bytes);
+				const size = sessionRuntime.pngSize(bytes);
 				return { ...(params?.path !== undefined ? { path } : {}), ...size, bytes };
 			},
 			video: {
@@ -763,20 +641,22 @@ export class WardenSession implements Session {
 		return {
 			press: async (params: PressParams, opts) => {
 				for (let i = 0; i < (params.count ?? 1); i += 1) {
-					await this.run("interactions.press", opts, (s) => actionOps.press(s, { target: targetText(params) }));
+					await this.run("interactions.press", opts, (s) =>
+						actionOps.press(s, { target: sessionRuntime.targetText(params) })
+					);
 				}
 			},
 			longPress: async (params: LongPressParams, opts) => {
 				await this.run("interactions.longPress", opts, (s) =>
 					actionOps.longPress(s, {
-						target: targetText(params),
+						target: sessionRuntime.targetText(params),
 						...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
 					})
 				);
 			},
 			fill: async (params: FillParams, opts) => {
 				await this.run("interactions.fill", opts, (s) =>
-					actionOps.fill(s, { target: targetText(params), text: params.text })
+					actionOps.fill(s, { target: sessionRuntime.targetText(params), text: params.text })
 				);
 			},
 			type: async (params: TypeParams, opts) => {
@@ -787,7 +667,7 @@ export class WardenSession implements Session {
 				for (let i = 0; i < times; i += 1) {
 					if (params.modifiers && params.modifiers.length > 0) {
 						const name = actionOps.parseKey(params.key);
-						if (!name.success) throw toWardenError(name.error);
+						if (!name.success) throw sdkErrors.toWardenError(name.error);
 						await this.direct("interactions.key", opts, (d) => d.key(name.data, params.modifiers));
 					} else {
 						await this.run("interactions.key", opts, (s) => actionOps.key(s, { key: params.key }));
@@ -802,7 +682,7 @@ export class WardenSession implements Session {
 					scrollOps.scroll(s, {
 						direction: params.direction,
 						...(params.amount !== undefined ? { amount: params.amount } : {}),
-						...(params.target ? { within: targetText(params.target) } : {}),
+						...(params.target ? { within: sessionRuntime.targetText(params.target) } : {}),
 						...(params.until ? { until: this.selectorOf(params.until) } : {}),
 					})
 				);
@@ -811,7 +691,7 @@ export class WardenSession implements Session {
 				await this.run("interactions.pinch", opts, (s) =>
 					gestureOps.pinch(s, {
 						scale: params.scale,
-						target: targetText(params),
+						target: sessionRuntime.targetText(params),
 						...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
 					})
 				);
@@ -820,7 +700,7 @@ export class WardenSession implements Session {
 				await this.run("interactions.rotate", opts, (s) =>
 					gestureOps.rotate(s, {
 						degrees: params.degrees,
-						target: targetText(params),
+						target: sessionRuntime.targetText(params),
 						...(params.durationMs !== undefined ? { durationMs: params.durationMs } : {}),
 					})
 				);
@@ -841,7 +721,7 @@ export class WardenSession implements Session {
 		return {
 			find: async (params: FindParams, opts) => {
 				const done = await this.run("query.find", opts, (s) => snapshotOps.find(s, { selector: params.selector }));
-				const all = elementsOf(done.result.elements);
+				const all = sessionRuntime.elementsOf(done.result.elements);
 				return params.all === false ? all.slice(0, 1) : all;
 			},
 			wait: async (params: WaitParams, opts) => {
@@ -851,16 +731,16 @@ export class WardenSession implements Session {
 					const selector = this.selectorOf(params);
 					const locator = this.locator(selector);
 					const signal = this.core.signalFor(opts);
-					await guarded(signal, async () => {
+					await coreRuntime.guarded(signal, async () => {
 						const screen = screenFactory.createScreen({
 							driver: async () => {
 								const driver = await this.driver();
-								if (!driver.success) throw toWardenError(driver.error, "no");
+								if (!driver.success) throw sdkErrors.toWardenError(driver.error, "no");
 								return driver.data;
 							},
 							env: { actionTimeoutMs: timeoutMs ?? 10_000, assertionTimeoutMs: timeoutMs ?? 10_000 },
 							...(signal ? { signal } : {}),
-							clock: { now: this.core.host.now, sleep: (ms) => abortableSleep(ms, signal) },
+							clock: { now: this.core.host.now, sleep: (ms) => coreRuntime.abortableSleep(ms, signal) },
 						});
 						try {
 							await screen.locator(locator.selector).waitFor({ state: condition === "hidden" ? "hidden" : "attached" });
@@ -887,7 +767,7 @@ export class WardenSession implements Session {
 					},
 					timeoutMs
 				);
-				const found = done.result.element ? snapshotElement(done.result.element) : undefined;
+				const found = done.result.element ? sessionRuntime.snapshotElement(done.result.element) : undefined;
 				return found;
 			},
 			is: async (params: IsParams, opts) => {
@@ -911,7 +791,7 @@ export class WardenSession implements Session {
 							: { property: "text", value: text };
 					case "role": {
 						const role = String(r.value);
-						return { property: "role", value: isRole(role) ? role : "other" };
+						return { property: "role", value: sessionRuntime.isRole(role) ? role : "other" };
 					}
 					default:
 						return { property: params.property, value: text };
@@ -963,9 +843,9 @@ export class WardenSession implements Session {
 			},
 			orientation: async (params, opts) => {
 				const done = await this.run("device.orientation", opts, (s) =>
-					controlOps.screenRotate(s, params?.set !== undefined ? { orientation: kebab(params.set) } : {})
+					controlOps.screenRotate(s, params?.set !== undefined ? { orientation: sessionRuntime.kebab(params.set) } : {})
 				);
-				return camel(kebab(done.result.orientation));
+				return sessionRuntime.camel(sessionRuntime.kebab(done.result.orientation));
 			},
 			appearance: async (params, opts) => {
 				const done = await this.run("device.appearance", opts, (s) =>
@@ -990,32 +870,32 @@ export class WardenSession implements Session {
 	private buildRecord(): SessionRecordNamespace {
 		return {
 			start: async (params, opts) => {
-				const { recordStart } = await import("./ops/authoring/start");
-				return (await this.run("record.start", opts, (s) => recordStart(s, params))).result;
+				const { recordStartOp } = await import("./ops/authoring/start");
+				return (await this.run("record.start", opts, (s) => recordStartOp.run(s, params))).result;
 			},
 			note: async (text, opts) => {
-				const { recordNote } = await import("./ops/authoring/journal-ops");
-				return (await this.run("record.note", opts, (s) => recordNote(s, { text }))).result;
+				const { journalOps } = await import("./ops/authoring/journal-ops");
+				return (await this.run("record.note", opts, (s) => journalOps.recordNote(s, { text }))).result;
 			},
 			undo: async (params, opts) => {
-				const { recordUndo } = await import("./ops/authoring/journal-ops");
-				return (await this.run("record.undo", opts, (s) => recordUndo(s, params ?? {}))).result;
+				const { journalOps } = await import("./ops/authoring/journal-ops");
+				return (await this.run("record.undo", opts, (s) => journalOps.recordUndo(s, params ?? {}))).result;
 			},
 			use: async (params, opts) => {
-				const { recordUse } = await import("./ops/authoring/use");
-				return (await this.run("record.use", opts, (s) => recordUse(s, params))).result;
+				const { recordUseOp } = await import("./ops/authoring/use");
+				return (await this.run("record.use", opts, (s) => recordUseOp.run(s, params))).result;
 			},
 			status: async (opts) => {
-				const { recordStatus } = await import("./ops/authoring/journal-ops");
-				return (await this.run("record.status", opts, (s) => recordStatus(s))).result;
+				const { journalOps } = await import("./ops/authoring/journal-ops");
+				return (await this.run("record.status", opts, (s) => journalOps.recordStatus(s))).result;
 			},
 			cancel: async (opts) => {
-				const { recordCancel } = await import("./ops/authoring/journal-ops");
-				return (await this.run("record.cancel", opts, (s) => recordCancel(s))).result;
+				const { journalOps } = await import("./ops/authoring/journal-ops");
+				return (await this.run("record.cancel", opts, (s) => journalOps.recordCancel(s))).result;
 			},
 			stop: async (params, opts) => {
-				const { recordStop } = await import("./ops/authoring/stop");
-				const { result } = await this.run("record.stop", opts, (s) => recordStop(s, params ?? {}));
+				const { recordStopOp } = await import("./ops/authoring/stop");
+				const { result } = await this.run("record.stop", opts, (s) => recordStopOp.run(s, params ?? {}));
 				return { ...result, verified: result.outcome === "verified", configSnippet: result.config?.snippet ?? null };
 			},
 		};
@@ -1067,13 +947,13 @@ export class WardenSession implements Session {
 				const done = await this.run("devtools.tree", opts, (s) =>
 					devtoolsOps.tree(s, params?.maxDepth !== undefined ? { max: params.maxDepth } : {})
 				);
-				return treeOf(done.result.components);
+				return sessionRuntime.treeOf(done.result.components);
 			},
 			reload: async (opts) => {
 				await this.run("devtools.reload", opts, (s) => devtoolsOps.reload(s));
 			},
 			route: async (opts) => (await this.run("devtools.route", opts, (s) => routeOps.route(s))).result.route,
-			nativeLogs: nativeLogsMethod({
+			nativeLogs: nativeLogsNamespace.method({
 				read: async (params, opts) =>
 					(await this.run("devtools.nativeLogs", opts, (s) => nativeLogOps.nativeLogs(s, params ?? {}))).result.lines,
 				follow: (params, opts) => this.followNativeLogs(params, opts),
@@ -1086,39 +966,174 @@ export class WardenSession implements Session {
 		params: NativeLogsParams,
 		opts: CallOptions | undefined
 	): AsyncGenerator<NativeLogEntry, void, void> {
-		if (this.closed) throw usage("session is closed");
+		if (this.closed) throw sessionRuntime.usage("session is closed");
 		const signal = this.core.signalFor(opts);
 		for await (const batch of nativeLogOps.followNativeLogs(this.opSession(signal), params, signal)) {
-			if (!batch.success) throw toWardenError(batch.error);
+			if (!batch.success) throw sdkErrors.toWardenError(batch.error);
 			yield* batch.data;
 		}
 	}
 }
 
-/** Where a path the SDK wrote is (file size check used by tests and callers). */
-export function fileBytes(path: string): number {
-	return statSync(path).size;
+/** Pure shaping helpers of the session, and the flows that open one: device lookup, lease proof, `sessions.open`. */
+export class SessionRuntime {
+	isRole(value: string): value is Role {
+		return ROLES.has(value);
+	}
+
+	isRefText(value: string): value is `@e${number}` {
+		return REF.test(value);
+	}
+
+	/** A target as the words the ops parse: `@e3`, a selector, or `x y`. */
+	targetText(target: Target): string {
+		if ("ref" in target) return target.ref;
+		if ("selector" in target) return target.selector;
+		return `${target.point.x} ${target.point.y}`;
+	}
+
+	usage(message: string, hint?: string): WardenError {
+		return new WardenError({ code: "usage", message, ...(hint !== undefined ? { hint } : {}) });
+	}
+
+	/** The platform and id a {@link DeviceRef} names, from the lease, the store's records, or the id's shape. */
+	deviceOf(core: Core, ref: DeviceRef): { platform: Platform; id: string; name?: string } {
+		if ("lease" in ref) {
+			const resource = ref.lease.resource;
+			if (resource.kind !== "device") throw this.usage(`lease ${ref.lease.id} is not a device lease`);
+			return { platform: resource.platform, id: resource.id, name: resource.name };
+		}
+		if ("serial" in ref) return { platform: "android", id: ref.serial };
+		const store = core.store();
+		const leased = store.listLeases().find((l) => l.resource.kind === "device" && l.resource.id === ref.udid);
+		if (leased?.resource.kind === "device") {
+			return { platform: leased.resource.platform, id: ref.udid, name: leased.resource.name };
+		}
+		const known = store.listDevices().find((d) => d.id === ref.udid);
+		if (known) return { platform: known.platform, id: ref.udid, name: known.name };
+		return { platform: IOS_UDID.test(ref.udid) ? "ios" : "android", id: ref.udid };
+	}
+
+	/**
+	 * Prove the client's owner may use the device: its own lease (heartbeat), else `device_foreign` /
+	 * `device_not_leased`. A device warden did not lease is never touched, and a free device is not leased here
+	 * (`leases.claim` does that).
+	 */
+	requireLease(core: Core, device: { platform: Platform; id: string; name?: string }): CallerLease {
+		const checked = new CallerLeaseGate(core.store()).ensure(core.owner, device.platform, device.id, {
+			now: core.host.now(),
+			pidAlive: core.host.pidAlive,
+			claim: false,
+			label: core.options.label ?? "warden sdk",
+			...(device.name !== undefined ? { name: device.name } : {}),
+			pid: process.pid,
+		});
+		if (checked.success) return checked.data;
+		const { code, message } = checked.error;
+		throw new WardenError({
+			code,
+			message,
+			...(code === "device_not_leased"
+				? { hint: `lease it first: client.leases.claim({ platform: "${device.platform}" })` }
+				: {}),
+		});
+	}
+
+	pngSize(bytes: Uint8Array): { width: number; height: number } {
+		const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		if (bytes.byteLength < 24 || view.getUint32(0) !== 0x89504e47) return { width: 0, height: 0 };
+		return { width: view.getUint32(16), height: view.getUint32(20) };
+	}
+
+	kebab(orientation: string): string {
+		return orientation.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+	}
+
+	camel(orientation: string): "portrait" | "portraitUpsideDown" | "landscapeLeft" | "landscapeRight" {
+		switch (orientation) {
+			case "portrait-upside-down":
+				return "portraitUpsideDown";
+			case "landscape-left":
+				return "landscapeLeft";
+			case "landscape-right":
+				return "landscapeRight";
+			default:
+				return "portrait";
+		}
+	}
+
+	snapshotElement(e: ElementJson): SnapshotElement | undefined {
+		if (e.ref === undefined || !this.isRefText(e.ref)) return undefined;
+		return {
+			ref: e.ref,
+			role: this.isRole(e.role) ? e.role : "other",
+			...(e.name !== undefined ? { label: e.name } : {}),
+			...(e.id !== undefined ? { identifier: e.id } : {}),
+			...(e.value !== undefined ? { value: e.value } : {}),
+			frame: [e.frame.x, e.frame.y, e.frame.width, e.frame.height],
+			enabled: e.enabled,
+			...(e.selected !== undefined ? { selected: e.selected } : {}),
+			...(e.checked !== undefined ? { checked: e.checked } : {}),
+		};
+	}
+
+	elementsOf(list: readonly ElementJson[]): SnapshotElement[] {
+		return list.flatMap((e) => this.snapshotElement(e) ?? []);
+	}
+
+	/** The props a component carries into a {@link TreeNode}: only the ones it has. */
+	private treeProps(c: TreeComponent): Record<string, unknown> {
+		return {
+			...(c.testID !== undefined ? { testID: c.testID } : {}),
+			...(c.label !== undefined ? { label: c.label } : {}),
+			...(c.text !== undefined ? { text: c.text } : {}),
+			...(c.rect !== undefined ? { rect: c.rect } : {}),
+		};
+	}
+
+	treeOf(components: readonly TreeComponent[]): TreeNode[] {
+		const nodes = new Map<number, TreeNode>();
+		for (const c of components) {
+			const props = this.treeProps(c);
+			nodes.set(c.id, { name: c.name, ...(Object.keys(props).length > 0 ? { props } : {}), children: [] });
+		}
+		const roots: TreeNode[] = [];
+		for (const c of components) {
+			const node = nodes.get(c.id);
+			if (!node) continue;
+			const parent = c.parent === null ? undefined : nodes.get(c.parent);
+			(parent ? parent.children : roots).push(node);
+		}
+		return roots;
+	}
+
+	/** Where a path the SDK wrote is (file size check used by tests and callers). */
+	fileBytes(path: string): number {
+		return statSync(path).size;
+	}
+
+	/** The session for `params`: lease check, then driver. */
+	async open(core: Core, params: SessionOpenParams, opts?: CallOptions): Promise<WardenSession> {
+		const signal = core.signalFor(opts);
+		return coreRuntime.guarded(signal, async () => {
+			if (core.closed) throw this.usage("client is closed");
+			const device = this.deviceOf(core, params);
+			const { lease } = this.requireLease(core, device);
+			const name = lease.resource.kind === "device" ? lease.resource.name : device.name;
+			const sessionId = `ses-${device.id.slice(0, 8)}-${core.host.now().toString(36)}-${core.sessions.size}`;
+			const session = new WardenSession({
+				core,
+				device: { id: device.id, platform: device.platform, ...(name !== undefined ? { name } : {}) },
+				lease,
+				appId: params.app,
+				sessionId,
+			});
+			await session.connect();
+			core.sessions.set(sessionId, () => session.close());
+			core.emit({ kind: "session:opened", sessionId, deviceId: device.id });
+			return session;
+		});
+	}
 }
 
-/** The session for `params`: lease check, then driver. */
-export async function openSession(core: Core, params: SessionOpenParams, opts?: CallOptions): Promise<WardenSession> {
-	const signal = core.signalFor(opts);
-	return guarded(signal, async () => {
-		if (core.closed) throw usage("client is closed");
-		const device = deviceOf(core, params);
-		const { lease } = requireLease(core, device);
-		const name = lease.resource.kind === "device" ? lease.resource.name : device.name;
-		const sessionId = `ses-${device.id.slice(0, 8)}-${core.host.now().toString(36)}-${core.sessions.size}`;
-		const session = new WardenSession({
-			core,
-			device: { id: device.id, platform: device.platform, ...(name !== undefined ? { name } : {}) },
-			lease,
-			appId: params.app,
-			sessionId,
-		});
-		await session.connect();
-		core.sessions.set(sessionId, () => session.close());
-		core.emit({ kind: "session:opened", sessionId, deviceId: device.id });
-		return session;
-	});
-}
+export const sessionRuntime = new SessionRuntime();

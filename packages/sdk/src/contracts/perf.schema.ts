@@ -20,31 +20,36 @@ const findingBase = {
 	next: z.array(z.string()),
 };
 
-const finding = <K extends string, S extends z.ZodRawShape>(kind: K, extra: S) =>
-	z.object({ kind: z.literal(kind), ...findingBase, ...extra });
+class FindingSchemas {
+	of<K extends string, S extends z.ZodRawShape>(kind: K, extra: S) {
+		return z.object({ kind: z.literal(kind), ...findingBase, ...extra });
+	}
+}
+
+const findingSchemas = new FindingSchemas();
 
 const component = { component: z.string() };
 
 /** One thing a report found, discriminated on `kind`. */
 export const perfFindingSchema = z.discriminatedUnion("kind", [
-	finding("slow-commit", { commitIndex: z.number() }),
-	finding("slow-render", component),
-	finding("memo-defeated", component),
-	finding("context-cascade", component),
-	finding("parent-cascade", component),
-	finding("render-storm", { ...component, renders: z.number() }),
-	finding("eager-mount", component),
-	finding("effect-chain", component),
-	finding("startup", { method: z.enum(["am-start", "xctrace", "approx"]), runs: z.number() }),
-	finding("jank", { jankPct: z.number() }),
-	finding("hang", { atMs: z.number() }),
-	finding("cpu-hot", { thread: z.string(), cpuPct: z.number() }),
-	finding("memory-growth", { slopeKbPerSec: z.number() }),
-	finding("leak", { type: z.string(), count: z.number() }),
-	finding("crash", { process: z.string() }),
-	finding("anr", { process: z.string() }),
-	finding("js-hotspot", { file: z.string(), line: z.number() }),
-	finding("native-hotspot", { thread: z.string(), function: z.string(), selfPct: z.number() }),
+	findingSchemas.of("slow-commit", { commitIndex: z.number() }),
+	findingSchemas.of("slow-render", component),
+	findingSchemas.of("memo-defeated", component),
+	findingSchemas.of("context-cascade", component),
+	findingSchemas.of("parent-cascade", component),
+	findingSchemas.of("render-storm", { ...component, renders: z.number() }),
+	findingSchemas.of("eager-mount", component),
+	findingSchemas.of("effect-chain", component),
+	findingSchemas.of("startup", { method: z.enum(["am-start", "xctrace", "approx"]), runs: z.number() }),
+	findingSchemas.of("jank", { jankPct: z.number() }),
+	findingSchemas.of("hang", { atMs: z.number() }),
+	findingSchemas.of("cpu-hot", { thread: z.string(), cpuPct: z.number() }),
+	findingSchemas.of("memory-growth", { slopeKbPerSec: z.number() }),
+	findingSchemas.of("leak", { type: z.string(), count: z.number() }),
+	findingSchemas.of("crash", { process: z.string() }),
+	findingSchemas.of("anr", { process: z.string() }),
+	findingSchemas.of("js-hotspot", { file: z.string(), line: z.number() }),
+	findingSchemas.of("native-hotspot", { thread: z.string(), function: z.string(), selfPct: z.number() }),
 ]);
 export type PerfFindingJson = z.infer<typeof perfFindingSchema>;
 

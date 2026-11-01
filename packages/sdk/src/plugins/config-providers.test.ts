@@ -9,7 +9,7 @@ import { fakeFarm } from "../../examples/fake-provider";
 import { createWardenClient } from "../client";
 import { isWardenError } from "../errors";
 import type { WardenClientOptions } from "../sdk.types";
-import { configStopAt, loadConfigProviders } from "./config-providers";
+import { configProviders } from "./config-providers";
 import { runProviderConformance } from "./provider-conformance";
 
 const ENV = {
@@ -130,24 +130,24 @@ describe("config search bounds", () => {
 		mkdirSync(nested, { recursive: true });
 		Bun.spawnSync(["git", "init", "-q", repo]);
 		writeConfig([EXAMPLE]);
-		const stopAt = await configStopAt(processExec.run, nested, new GitFactsCache(), { HOME: "/nonexistent" });
+		const stopAt = await configProviders.stopAt(processExec.run, nested, new GitFactsCache(), { HOME: "/nonexistent" });
 		expect(realpathSync(stopAt)).toBe(realpathSync(repo));
-		expect(await loadConfigProviders(nested, ENV, stopAt)).toEqual([]);
+		expect(await configProviders.load(nested, ENV, stopAt)).toEqual([]);
 	});
 
 	test("without a repo it stops at the home directory when cwd is under it, else at cwd", async () => {
 		const project = join(home, "work", "app");
 		mkdirSync(project, { recursive: true });
 		const env = { HOME: home };
-		expect(await configStopAt(processExec.run, project, new GitFactsCache(), env)).toBe(resolve(home));
-		expect(await configStopAt(processExec.run, project, new GitFactsCache(), { HOME: "/nonexistent" })).toBe(
+		expect(await configProviders.stopAt(processExec.run, project, new GitFactsCache(), env)).toBe(resolve(home));
+		expect(await configProviders.stopAt(processExec.run, project, new GitFactsCache(), { HOME: "/nonexistent" })).toBe(
 			resolve(project)
 		);
 	});
 
 	test("a config at the stop directory itself is still found", async () => {
 		writeConfig([EXAMPLE]);
-		const plugins = await loadConfigProviders(dir, ENV, dir);
+		const plugins = await configProviders.load(dir, ENV, dir);
 		expect(plugins.map((p) => p.name)).toEqual(["fake-farm"]);
 	});
 });

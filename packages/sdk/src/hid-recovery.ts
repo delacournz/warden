@@ -19,32 +19,40 @@ export type HidRecoverySeams = {
 	resetDriver: () => Promise<void>;
 };
 
-/** Whether a failed result is "HID lost", by its error text. */
-export function hidLostIn(result: Result<unknown, { message: string }>): boolean {
-	return !result.success && hidRecovery.isHidLostMessage(result.error.message);
-}
+/** Reboots the sim and reopens the driver when an op loses the sim's HID connection. */
+export class SimHidRecovery {
+	constructor(private readonly seams: HidRecoverySeams) {}
 
-/** `WARDEN_AFTER_REBOOT` (a JSON argv array, `{udid}` replaced): reopen the sim's Device Hub window and tile again. */
-function afterRebootArgv(env: Record<string, string | undefined>): string[] | undefined {
-	const raw = env.WARDEN_AFTER_REBOOT;
-	if (raw === undefined || raw === "") return undefined;
-	try {
-		const parsed: unknown = JSON.parse(raw);
-		return Array.isArray(parsed) && parsed.every((arg): arg is string => typeof arg === "string") ? parsed : undefined;
-	} catch {
-		return undefined;
+	/** Whether a failed result is "HID lost", by its error text. */
+	isLost(result: Result<unknown, { message: string }>): boolean {
+		return !result.success && hidRecovery.isHidLostMessage(result.error.message);
 	}
-}
 
-/** Reboot the sim and drop the driver. `true` = the sim is back and the failed op may run again. */
-export async function recoverSimHid(seams: HidRecoverySeams, udid: string): Promise<boolean> {
-	await seams.resetDriver();
-	const rebooted = await hidRecovery.rebootSim({ exec: seams.exec, log: seams.log }, udid);
-	if (!rebooted.success) {
-		seams.log(`sim ${udid}: HID connection lost, reboot failed: ${rebooted.error}`);
-		return false;
+	/** Reboot the sim and drop the driver. `true` = the sim is back and the failed op may run again. */
+	async recover(udid: string): Promise<boolean> {
+		const { seams } = this;
+		await seams.resetDriver();
+		const rebooted = await hidRecovery.rebootSim({ exec: seams.exec, log: seams.log }, udid);
+		if (!rebooted.success) {
+			seams.log(`sim ${udid}: HID connection lost, reboot failed: ${rebooted.error}`);
+			return false;
+		}
+		await hidRecovery.runAfterReboot({ exec: seams.exec, log: seams.log }, this.afterRebootArgv(seams.env), udid);
+		seams.log(`sim ${udid}: HID connection lost (Device Hub quit?), rebooted; running the call again`);
+		return true;
 	}
-	await hidRecovery.runAfterReboot({ exec: seams.exec, log: seams.log }, afterRebootArgv(seams.env), udid);
-	seams.log(`sim ${udid}: HID connection lost (Device Hub quit?), rebooted; running the call again`);
-	return true;
+
+	/** `WARDEN_AFTER_REBOOT` (a JSON argv array, `{udid}` replaced): reopen the sim's Device Hub window and tile again. */
+	private afterRebootArgv(env: Record<string, string | undefined>): string[] | undefined {
+		const raw = env.WARDEN_AFTER_REBOOT;
+		if (raw === undefined || raw === "") return undefined;
+		try {
+			const parsed: unknown = JSON.parse(raw);
+			return Array.isArray(parsed) && parsed.every((arg): arg is string => typeof arg === "string")
+				? parsed
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	}
 }

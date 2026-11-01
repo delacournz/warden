@@ -64,18 +64,23 @@ export function defineProvider(plugin: ProviderPlugin): ProviderPlugin {
 	return plugin;
 }
 
-/** Validate `plugins` and index them by name; a repeated name is `duplicate_provider`. */
-export function registerProviders(plugins: readonly ProviderPlugin[] | undefined): Map<string, ProviderPlugin> {
-	const registry = new Map<string, ProviderPlugin>();
-	for (const plugin of plugins ?? []) {
-		defineProvider(plugin);
-		if (registry.has(plugin.name)) {
-			throw new WardenError({
-				code: "duplicate_provider",
-				message: `provider "${plugin.name}" is registered twice`,
-			});
+/** The set of provider plugins one client registered. */
+export class ProviderRegistry {
+	/** Validate `plugins` and index them by name; a repeated name is `duplicate_provider`. */
+	register(plugins: readonly ProviderPlugin[] | undefined): Map<string, ProviderPlugin> {
+		const registry = new Map<string, ProviderPlugin>();
+		for (const plugin of plugins ?? []) {
+			defineProvider(plugin);
+			if (registry.has(plugin.name)) {
+				throw new WardenError({
+					code: "duplicate_provider",
+					message: `provider "${plugin.name}" is registered twice`,
+				});
+			}
+			registry.set(plugin.name, plugin);
 		}
-		registry.set(plugin.name, plugin);
+		return registry;
 	}
-	return registry;
 }
+
+export const providerRegistry = new ProviderRegistry();

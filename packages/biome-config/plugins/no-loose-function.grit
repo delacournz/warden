@@ -17,7 +17,9 @@ predicate wcls_in_scope() {
 predicate wcls_public_wrapper($name) {
   $name <: or {
     "createWardenClient", "createWardenTools", "defineConfig", "defineProvider", "defineCommand",
-    "test", "describe", "expect", "beforeAll", "afterAll", "beforeEach", "afterEach"
+    "test", "describe", "expect", "beforeAll", "afterAll", "beforeEach", "afterEach",
+    "isWardenError", "screenshotModelOutput", "toolFailure",
+    "expectResultShape", "expectSnapshotInvariants", "runDriverConformance", "runProviderConformance"
   }
 }
 

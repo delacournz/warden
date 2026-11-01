@@ -247,6 +247,10 @@ export const uiResultSchemas = {
 export type UiResultCommand = keyof typeof uiResultSchemas;
 
 /** The schema for a `warden ui` command's `result`, or undefined for a command this version does not know. */
-export function uiResultSchemaFor(command: string): z.ZodType | undefined {
-	return Object.hasOwn(uiResultSchemas, command) ? uiResultSchemas[command as UiResultCommand] : undefined;
+export class UiResultLookup {
+	schemaFor(command: string): z.ZodType | undefined {
+		return Object.hasOwn(uiResultSchemas, command) ? uiResultSchemas[command as UiResultCommand] : undefined;
+	}
 }
+
+export const uiResultLookup = new UiResultLookup();

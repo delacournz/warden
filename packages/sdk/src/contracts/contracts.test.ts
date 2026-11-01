@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { claimJsonSchema } from "./claim.schema";
 import { e2eReportSchema } from "./e2e-report.schema";
-import { checkJsonSchema, lsJsonSchema, uiJsonSchema, uiResultSchemaFor, uiResultSchemas } from "./index";
+import { checkJsonSchema, lsJsonSchema, uiJsonSchema, uiResultLookup, uiResultSchemas } from "./index";
 
 test("uiJsonSchema discriminates success and failure", () => {
 	const ok = { ok: true, command: "snapshot", device: { udid: "U", platform: "ios" }, durationMs: 1, result: {} };
@@ -32,11 +32,11 @@ test("checkJsonSchema requires an owner when someone else holds the device", () 
 	expect(() => checkJsonSchema.parse({ udid: "U", free: false, mine: false, leaseId: "l" })).toThrow();
 });
 
-test("uiResultSchemaFor knows every ui command and rejects an unknown one", () => {
-	expect(uiResultSchemaFor("snapshot")).toBeDefined();
-	expect(uiResultSchemaFor("screen video")).toBeDefined();
-	expect(uiResultSchemaFor("toString")).toBeUndefined();
-	expect(uiResultSchemaFor("nope")).toBeUndefined();
+test("uiResultLookup knows every ui command and rejects an unknown one", () => {
+	expect(uiResultLookup.schemaFor("snapshot")).toBeDefined();
+	expect(uiResultLookup.schemaFor("screen video")).toBeDefined();
+	expect(uiResultLookup.schemaFor("toString")).toBeUndefined();
+	expect(uiResultLookup.schemaFor("nope")).toBeUndefined();
 });
 
 test("per-command ui result schemas accept the shapes the goldens do not reach", () => {

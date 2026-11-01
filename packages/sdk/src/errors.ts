@@ -57,17 +57,6 @@ const RETRYABLE: ReadonlySet<WardenErrorCode> = new Set<WardenErrorCode>([
 ]);
 
 /**
- * Whether a failure with `code` may have reached the device. Rule: `no` when the code is one the engine raises
- * before it calls the driver or runs a process (see {@link NOT_DISPATCHED}); `yes` when part of the work is known
- * to have run ({@link DISPATCHED}); `unknown` for everything else (`failed`, `timeout`, `interrupted`,
- * `probe_timeout`, `lease_*`): the call may have been in flight when it failed.
- */
-export function dispatchedFor(code: WardenErrorCode): Dispatched {
-	if (NOT_DISPATCHED.has(code)) return "no";
-	return DISPATCHED.has(code) ? "yes" : "unknown";
-}
-
-/**
  * The error every SDK call throws. Internals return `Result`s; the facade unwraps them once and throws this, so a
  * TypeScript caller can `catch` and branch on `code`, `retryable` and `dispatched`.
  */
@@ -85,7 +74,7 @@ export class WardenError extends Error implements WardenErrorShape {
 		this.hint = shape.hint;
 		this.details = shape.details;
 		this.retryable = shape.retryable ?? (RETRYABLE.has(shape.code) ? true : undefined);
-		this.dispatched = shape.dispatched ?? dispatchedFor(shape.code);
+		this.dispatched = shape.dispatched ?? sdkErrors.dispatchedFor(shape.code);
 	}
 
 	/** The plain JSON shape (what `JSON.stringify(error)` also yields). */
@@ -106,42 +95,58 @@ export function isWardenError(value: unknown): value is WardenError {
 	return value instanceof WardenError;
 }
 
-/** An engine error as the thrown class. */
-export function toWardenError(error: EngineError, dispatched?: Dispatched): WardenError {
-	return new WardenError({
-		code: error.code,
-		message: error.message,
-		...(error.hint !== undefined ? { hint: error.hint } : {}),
-		...(error.details !== undefined ? { details: error.details } : {}),
-		...(error.retryable !== undefined ? { retryable: error.retryable } : {}),
-		...(dispatched !== undefined ? { dispatched } : {}),
-	});
-}
+/** Builders for {@link WardenError}: classify a code, wrap an engine error or a thrown value. */
+export class SdkErrors {
+	/**
+	 * Whether a failure with `code` may have reached the device. Rule: `no` when the code is one the engine raises
+	 * before it calls the driver or runs a process (see {@link NOT_DISPATCHED}); `yes` when part of the work is known
+	 * to have run ({@link DISPATCHED}); `unknown` for everything else (`failed`, `timeout`, `interrupted`,
+	 * `probe_timeout`, `lease_*`): the call may have been in flight when it failed.
+	 */
+	dispatchedFor(code: WardenErrorCode): Dispatched {
+		if (NOT_DISPATCHED.has(code)) return "no";
+		return DISPATCHED.has(code) ? "yes" : "unknown";
+	}
 
-/** A thrown-for-any-reason value (a rejected sleep, a bug) as a {@link WardenError}: `interrupted` when `signal` aborted. */
-export function fromThrown(error: unknown, signal?: AbortSignal): WardenError {
-	if (isWardenError(error)) return error;
-	if (signal?.aborted) {
+	/** An engine error as the thrown class. */
+	toWardenError(error: EngineError, dispatched?: Dispatched): WardenError {
+		return new WardenError({
+			code: error.code,
+			message: error.message,
+			...(error.hint !== undefined ? { hint: error.hint } : {}),
+			...(error.details !== undefined ? { details: error.details } : {}),
+			...(error.retryable !== undefined ? { retryable: error.retryable } : {}),
+			...(dispatched !== undefined ? { dispatched } : {}),
+		});
+	}
+
+	/** A thrown-for-any-reason value (a rejected sleep, a bug) as a {@link WardenError}: `interrupted` when `signal` aborted. */
+	fromThrown(error: unknown, signal?: AbortSignal): WardenError {
+		if (isWardenError(error)) return error;
+		if (signal?.aborted) {
+			return new WardenError({
+				code: "interrupted",
+				message: "aborted",
+				cause: error,
+				hint: "the AbortSignal passed to this call fired",
+			});
+		}
+		return new WardenError({
+			code: "failed",
+			message: error instanceof Error ? error.message : String(error),
+			cause: error,
+		});
+	}
+
+	/** The error for a call that finds its signal already aborted. */
+	interrupted(): WardenError {
 		return new WardenError({
 			code: "interrupted",
 			message: "aborted",
-			cause: error,
 			hint: "the AbortSignal passed to this call fired",
+			dispatched: "no",
 		});
 	}
-	return new WardenError({
-		code: "failed",
-		message: error instanceof Error ? error.message : String(error),
-		cause: error,
-	});
 }
 
-/** The error for a call that finds its signal already aborted. */
-export function interrupted(): WardenError {
-	return new WardenError({
-		code: "interrupted",
-		message: "aborted",
-		hint: "the AbortSignal passed to this call fired",
-		dispatched: "no",
-	});
-}
+export const sdkErrors = new SdkErrors();

@@ -4,7 +4,7 @@ import { inventoryMarker } from "@delacour/warden-leasing/inventory";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Adb } from "@delacour/warden-providers/android";
 import type { DeviceRowJson } from "@delacour/warden-sdk/contracts/devices";
-import { aliveDeviceLeases } from "@delacour/warden-sdk/lease-view";
+import { leaseViews } from "@delacour/warden-sdk/lease-view";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type InventoryDevice, type Lease, leaseModel, type Platform } from "@delacour/warden-store/types";
 import type { ChalkInstance } from "chalk";
@@ -125,7 +125,7 @@ async function devices(
 		return 1;
 	}
 	const now = ctx.now();
-	const leases = aliveDeviceLeases(ctx.store().listLeases(), now, liveness.processAlive);
+	const leases = leaseViews.aliveDevice(ctx.store().listLeases(), now, liveness.processAlive);
 	const platforms: readonly Platform[] = filter ? [filter] : PLATFORMS;
 	const all: DeviceRow[] = [];
 	for (const platform of platforms) all.push(...(await platformRows(ctx, platform, leases)));

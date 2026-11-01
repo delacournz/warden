@@ -14,10 +14,10 @@ import type { OpSession } from "../session";
 import { snapshotOps } from "../snapshot";
 import { stateStores } from "../state-store";
 import type { AuthoringDeps, VerifyInput, VerifyReport } from "./deps";
-import { recordCancel, recordNote, recordStatus, recordUndo } from "./journal-ops";
-import { journalRecorder, routeAfterFor } from "./recorder";
-import { recordStart } from "./start";
-import { recordStop } from "./stop";
+import { journalOps } from "./journal-ops";
+import { journalRecorders } from "./recorder";
+import { recordStartOp } from "./start";
+import { recordStopOp } from "./stop";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
@@ -112,7 +112,7 @@ async function rig(options: { withVerify?: boolean } = {}): Promise<Rig> {
 		timeoutMs: 5000,
 		authoring,
 	};
-	session.recorder = journalRecorder({
+	session.recorder = journalRecorders.journalRecorder({
 		home,
 		env: session.host.env,
 		now: session.host.now,
@@ -120,7 +120,7 @@ async function rig(options: { withVerify?: boolean } = {}): Promise<Rig> {
 		refs,
 		warn: (message) => stderr.push(message),
 	});
-	session.routeAfter = routeAfterFor(state, () => session);
+	session.routeAfter = journalRecorders.routeAfterFor(state, () => session);
 	return { session, cwd: repo.dir, home, verified, verdict, stderr };
 }
 
@@ -132,7 +132,7 @@ function must<T>(done: { success: true; data: T } | { success: false; error: { c
 describe("session.record ops", () => {
 	test("start → journalled actions → note/undo/status → stop writes the spec and verifies it", async () => {
 		const r = await rig();
-		const started = must(await recordStart(r.session, { name: "Sign in", suite: "mobile" }));
+		const started = must(await recordStartOp.run(r.session, { name: "Sign in", suite: "mobile" }));
 		expect(recordResultSchema.parse(started.result)).toMatchObject({
 			outcome: "started",
 			kind: "spec",
@@ -142,20 +142,20 @@ describe("session.record ops", () => {
 		expect(r.session.state.read().recording).toMatchObject({ name: "Sign in", suite: "mobile" });
 
 		must(await snapshotOps.snapshot(r.session, {}));
-		must(await recordNote(r.session, { text: "press sign in" }));
+		must(await journalOps.recordNote(r.session, { text: "press sign in" }));
 		must(await actionOps.press(r.session, { target: "id=sign-in-submit" }));
 		must(await actionOps.press(r.session, { target: "id=sign-in-submit" }));
 
 		const journal = recordingSchema.parse(JSON.parse(readFileSync(uiPaths.recordingFile(r.home, UDID), "utf8")));
 		expect(journal.steps.map((step) => step.kind)).toEqual(["note", "press", "press"]);
 
-		const status = must(await recordStatus(r.session));
+		const status = must(await journalOps.recordStatus(r.session));
 		expect(recordResultSchema.parse(status.result)).toMatchObject({ outcome: "recording", recording: { steps: 3 } });
 
-		const undone = must(await recordUndo(r.session, { count: 1 }));
+		const undone = must(await journalOps.recordUndo(r.session, { count: 1 }));
 		expect(recordResultSchema.parse(undone.result)).toMatchObject({ outcome: "undone", steps: 2 });
 
-		const stopped = must(await recordStop(r.session, {}));
+		const stopped = must(await recordStopOp.run(r.session, {}));
 		const result = recordResultSchema.parse(stopped.result);
 		expect(result).toMatchObject({ outcome: "verified", kind: "spec", steps: 2, verify: { status: "passed" } });
 		const file = join(r.cwd, "specs", "sign-in.e2e.ts");
@@ -169,29 +169,29 @@ describe("session.record ops", () => {
 
 	test("a failing verify keeps the file and the journal; cancel leaves the written spec", async () => {
 		const r = await rig();
-		must(await recordStart(r.session, { name: "x", suite: "mobile" }));
+		must(await recordStartOp.run(r.session, { name: "x", suite: "mobile" }));
 		must(await actionOps.press(r.session, { target: "id=sign-in-submit" }));
 		r.verdict.passed = false;
-		const failed = await recordStop(r.session, {});
+		const failed = await recordStopOp.run(r.session, {});
 		expect(!failed.success && failed.error.code).toBe("verify_failed");
 		expect(existsSync(join(r.cwd, "specs", "x.e2e.ts"))).toBe(true);
 		expect(existsSync(uiPaths.recordingFile(r.home, UDID))).toBe(true);
 		expect(r.stderr.some((line) => line.includes("sign-in"))).toBe(true);
 
 		r.verdict.passed = true;
-		const again = must(await recordStop(r.session, {}));
+		const again = must(await recordStopOp.run(r.session, {}));
 		expect(recordResultSchema.parse(again.result)).toMatchObject({ outcome: "verified" });
 	});
 
 	test("without a spec runner stop reports verify_unavailable, and verify: false writes without running", async () => {
 		const r = await rig({ withVerify: false });
-		must(await recordStart(r.session, { name: "x", suite: "mobile" }));
+		must(await recordStartOp.run(r.session, { name: "x", suite: "mobile" }));
 		must(await actionOps.press(r.session, { target: "id=sign-in-submit" }));
-		const unavailable = await recordStop(r.session, {});
+		const unavailable = await recordStopOp.run(r.session, {});
 		expect(!unavailable.success && unavailable.error.code).toBe("verify_unavailable");
 		expect(existsSync(uiPaths.recordingFile(r.home, UDID))).toBe(true);
 
-		const written = must(await recordStop(r.session, { verify: false }));
+		const written = must(await recordStopOp.run(r.session, { verify: false }));
 		expect(recordResultSchema.parse(written.result)).toMatchObject({
 			outcome: "written",
 			verify: { status: "skipped", reason: "flag" },
@@ -202,12 +202,12 @@ describe("session.record ops", () => {
 		const r = await rig();
 		must(await actionOps.press(r.session, { target: "id=sign-in-submit" }));
 		expect(existsSync(uiPaths.recordingFile(r.home, UDID))).toBe(false);
-		expect(must(await recordStatus(r.session)).result).toEqual({ outcome: "idle", recording: null });
+		expect(must(await journalOps.recordStatus(r.session)).result).toEqual({ outcome: "idle", recording: null });
 		for (const done of [
-			await recordNote(r.session, { text: "x" }),
-			await recordUndo(r.session),
-			await recordCancel(r.session),
-			await recordStop(r.session),
+			await journalOps.recordNote(r.session, { text: "x" }),
+			await journalOps.recordUndo(r.session),
+			await journalOps.recordCancel(r.session),
+			await recordStopOp.run(r.session),
 		]) {
 			expect(!done.success && done.error.code).toBe("no_recording");
 		}
@@ -215,13 +215,15 @@ describe("session.record ops", () => {
 
 	test("start refuses a second recording and an existing target without overwrite", async () => {
 		const r = await rig();
-		must(await recordStart(r.session, { name: "x", suite: "mobile" }));
-		const second = await recordStart(r.session, { name: "y" });
+		must(await recordStartOp.run(r.session, { name: "x", suite: "mobile" }));
+		const second = await recordStartOp.run(r.session, { name: "y" });
 		expect(!second.success && second.error.code).toBe("recording_active");
-		must(await recordCancel(r.session));
-		must(await recordStart(r.session, { name: "chats", suite: "mobile", to: "specs/chats.e2e.ts", overwrite: true }));
-		must(await recordCancel(r.session));
-		const taken = await recordStart(r.session, { name: "chats", suite: "mobile", to: "specs/chats.e2e.ts" });
+		must(await journalOps.recordCancel(r.session));
+		must(
+			await recordStartOp.run(r.session, { name: "chats", suite: "mobile", to: "specs/chats.e2e.ts", overwrite: true })
+		);
+		must(await journalOps.recordCancel(r.session));
+		const taken = await recordStartOp.run(r.session, { name: "chats", suite: "mobile", to: "specs/chats.e2e.ts" });
 		expect(!taken.success && taken.error.code).toBe("target_exists");
 	});
 });

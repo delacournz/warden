@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { uiJsonSchema } from "@delacour/warden-sdk/contracts/ui";
-import { uiResultSchemaFor } from "@delacour/warden-sdk/contracts/ui-result";
+import { uiResultLookup } from "@delacour/warden-sdk/contracts/ui-result";
 import { cleanupHarnesses, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -76,7 +76,7 @@ const schemaProblems: string[] = [];
 function checkResultSchema(doc: unknown): void {
 	const envelope = uiJsonSchema.parse(doc);
 	if (!envelope.ok) return;
-	const schema = uiResultSchemaFor(envelope.command);
+	const schema = uiResultLookup.schemaFor(envelope.command);
 	if (schema === undefined) {
 		schemaProblems.push(`no result schema for "${envelope.command}"`);
 		return;

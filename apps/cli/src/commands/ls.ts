@@ -1,6 +1,6 @@
 import { durationParser } from "@delacour/warden-config/duration";
 import type { LsJson } from "@delacour/warden-sdk/contracts/leases";
-import { withLeaseState } from "@delacour/warden-sdk/lease-view";
+import { leaseViews } from "@delacour/warden-sdk/lease-view";
 import { liveness } from "@delacour/warden-store/liveness";
 import { leaseModel, type Resource } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
@@ -23,7 +23,7 @@ const HEADERS = ["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL"
 function list(ctx: CommandContext, json: boolean): number {
 	const { color } = ctx.ui;
 	const now = ctx.now();
-	const leases: LsJson["leases"] = withLeaseState(ctx.store().listLeases(), now, liveness.processAlive);
+	const leases: LsJson["leases"] = leaseViews.withState(ctx.store().listLeases(), now, liveness.processAlive);
 	const withProvider = leases.some((l) => l.provider !== undefined);
 	const rows = leases.map((l) => [
 		l.id,

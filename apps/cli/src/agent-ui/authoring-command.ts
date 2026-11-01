@@ -1,7 +1,7 @@
 import type { Suite, SuiteError } from "@delacour/warden-core/affected/affected";
-import { activeRecording } from "@delacour/warden-sdk/ops/authoring/common";
+import { authoringCommon } from "@delacour/warden-sdk/ops/authoring/common";
 import type { AuthoringDeps as SdkAuthoringDeps } from "@delacour/warden-sdk/ops/authoring/deps";
-import { recordCancel, recordNote, recordStatus, recordUndo } from "@delacour/warden-sdk/ops/authoring/journal-ops";
+import { journalOps } from "@delacour/warden-sdk/ops/authoring/journal-ops";
 import type { RecordStartParams } from "@delacour/warden-sdk/ops/authoring/start";
 import type { OpSession } from "@delacour/warden-sdk/ops/session";
 import type { AsyncResult } from "@delacour/warden-types/result";
@@ -91,9 +91,9 @@ export function uiRecordStart(
 	opts: RecordStartOptionValues
 ): Promise<number> {
 	return runUi(ctx, deps, "record start", opts, async (device, env) => {
-		const { recordStart } = await import("@delacour/warden-sdk/ops/authoring/start");
+		const { recordStartOp } = await import("@delacour/warden-sdk/ops/authoring/start");
 		const session = await recordSession(ctx, deps, device, env, opts, true);
-		return reply(device, await recordStart(session, { ...opts, name }));
+		return reply(device, await recordStartOp.run(session, { ...opts, name }));
 	});
 }
 
@@ -102,7 +102,7 @@ export function uiRecordStart(
 /** `warden ui record note "<text>"`: a user-visible step boundary; codegen writes it as a comment above the next step. */
 export function uiRecordNote(ctx: CommandContext, deps: UiDeps, text: string, opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "record note", opts, async (device, env) =>
-		reply(device, await recordNote(await recordSession(ctx, deps, device, env, opts, false), { text }))
+		reply(device, await journalOps.recordNote(await recordSession(ctx, deps, device, env, opts, false), { text }))
 	);
 }
 
@@ -115,25 +115,25 @@ export function uiRecordUndo(
 ): Promise<number> {
 	return runUi(ctx, deps, "record undo", opts, async (device, env) => {
 		const session = await recordSession(ctx, deps, device, env, opts, false);
-		const active = activeRecording(session);
+		const active = authoringCommon.activeRecording(session);
 		if (!active.success) return active;
 		const n = count === undefined ? undefined : positiveInt("undo count", count);
 		if (n !== undefined && !n.success) return n;
-		return reply(device, await recordUndo(session, n === undefined ? {} : { count: n.data }));
+		return reply(device, await journalOps.recordUndo(session, n === undefined ? {} : { count: n.data }));
 	});
 }
 
 /** `warden ui record status`: the target, the step count, the last five steps and the lints so far. */
 export function uiRecordStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "record status", opts, async (device, env) =>
-		reply(device, await recordStatus(await recordSession(ctx, deps, device, env, opts, false)))
+		reply(device, await journalOps.recordStatus(await recordSession(ctx, deps, device, env, opts, false)))
 	);
 }
 
 /** `warden ui record cancel`: throw the journal away. A spec already written by a failed `stop` is left in place. */
 export function uiRecordCancel(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
 	return runUi(ctx, deps, "record cancel", opts, async (device, env) =>
-		reply(device, await recordCancel(await recordSession(ctx, deps, device, env, opts, false)))
+		reply(device, await journalOps.recordCancel(await recordSession(ctx, deps, device, env, opts, false)))
 	);
 }
 
@@ -153,11 +153,11 @@ export type RecordStopOptionValues = UiOptionValues & {
  */
 export function uiRecordStop(ctx: CommandContext, deps: UiDeps, opts: RecordStopOptionValues): Promise<number> {
 	return runUi(ctx, deps, "record stop", opts, async (device, env) => {
-		const { recordStop } = await import("@delacour/warden-sdk/ops/authoring/stop");
+		const { recordStopOp } = await import("@delacour/warden-sdk/ops/authoring/stop");
 		const session = await recordSession(ctx, deps, device, env, opts, true);
 		return reply(
 			device,
-			await recordStop(session, {
+			await recordStopOp.run(session, {
 				verify: opts.verify,
 				...(opts.overwrite !== undefined ? { overwrite: opts.overwrite } : {}),
 				...(opts.suite !== undefined ? { suite: opts.suite } : {}),
@@ -183,11 +183,11 @@ export function uiRecordUse(
 	opts: RecordUseOptionValues
 ): Promise<number> {
 	return runUi(ctx, deps, "record use", opts, async (device, env) => {
-		const { recordUse } = await import("@delacour/warden-sdk/ops/authoring/use");
+		const { recordUseOp } = await import("@delacour/warden-sdk/ops/authoring/use");
 		const session = await recordSession(ctx, deps, device, env, opts, true);
 		return reply(
 			device,
-			await recordUse(session, { helper: ref, ...(opts.suite !== undefined ? { suite: opts.suite } : {}) })
+			await recordUseOp.run(session, { helper: ref, ...(opts.suite !== undefined ? { suite: opts.suite } : {}) })
 		);
 	});
 }
