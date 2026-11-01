@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
-import { type ClaimPortsDeps, claimPorts, classifyBindError, isPortFree, listPortLeases, releasePorts } from "./ports";
+import { type ClaimPortsDeps, PortAllocator, portProbe } from "./ports";
 
 let dir: string;
 let store: Store;
@@ -33,8 +33,7 @@ afterEach(() => {
 
 describe("claimPorts", () => {
 	test("leases the first free port with owner/label/pid/ttl", async () => {
-		const res = await claimPorts(
-			store,
+		const res = await new PortAllocator(store).claim(
 			{ owner: me, from: 8091, span: 20, ttlMs: 500, label: "metro", pid: 42 },
 			deps()
 		);
@@ -51,8 +50,7 @@ describe("claimPorts", () => {
 	});
 
 	test("skips ports that fail the bind probe", async () => {
-		const res = await claimPorts(
-			store,
+		const res = await new PortAllocator(store).claim(
 			{ owner: me, from: 8091, span: 20, ttlMs: 500 },
 			deps({ isPortFree: async (p) => p !== 8091 && p !== 8092 })
 		);
@@ -61,20 +59,19 @@ describe("claimPorts", () => {
 
 	test("skips live leases, even when the port probes free", async () => {
 		store.insertLease({ resource: { kind: "port", port: 8091 }, owner: other, ttlMs: 10_000 }, 1_000);
-		const res = await claimPorts(store, { owner: me, from: 8091, span: 20, ttlMs: 500 }, deps());
+		const res = await new PortAllocator(store).claim({ owner: me, from: 8091, span: 20, ttlMs: 500 }, deps());
 		expect(res.success && ports(res.data)).toEqual([8092]);
 	});
 
 	test("reclaims stale leases in range", async () => {
 		const stale = store.insertLease({ resource: { kind: "port", port: 8091 }, owner: other, ttlMs: 10 }, 0);
-		const res = await claimPorts(store, { owner: me, from: 8091, span: 20, ttlMs: 500 }, deps());
+		const res = await new PortAllocator(store).claim({ owner: me, from: 8091, span: 20, ttlMs: 500 }, deps());
 		expect(res.success && ports(res.data)).toEqual([8091]);
 		expect(store.getLease(stale.id)).toBeUndefined();
 	});
 
 	test("count + step", async () => {
-		const res = await claimPorts(
-			store,
+		const res = await new PortAllocator(store).claim(
 			{ owner: me, from: 5554, span: 32, count: 3, step: 2, ttlMs: 500 },
 			deps({ isPortFree: async (p) => p !== 5556 })
 		);
@@ -82,8 +79,7 @@ describe("claimPorts", () => {
 	});
 
 	test("not enough free ports → error, nothing leased", async () => {
-		const res = await claimPorts(
-			store,
+		const res = await new PortAllocator(store).claim(
 			{ owner: me, from: 8091, span: 3, count: 2, ttlMs: 500 },
 			deps({ isPortFree: async (p) => p === 8092 })
 		);
@@ -92,16 +88,25 @@ describe("claimPorts", () => {
 	});
 
 	test("rejects invalid requests", async () => {
-		expect((await claimPorts(store, { owner: me, from: 0, span: 1, ttlMs: 1 }, deps())).success).toBe(false);
-		expect((await claimPorts(store, { owner: me, from: 80, span: 0, ttlMs: 1 }, deps())).success).toBe(false);
-		expect((await claimPorts(store, { owner: me, from: 80, span: 5, count: 0, ttlMs: 1 }, deps())).success).toBe(false);
-		expect((await claimPorts(store, { owner: me, from: 80, span: 5, step: 0, ttlMs: 1 }, deps())).success).toBe(false);
-		expect((await claimPorts(store, { owner: me, from: 65535, span: 2, ttlMs: 1 }, deps())).success).toBe(false);
+		expect((await new PortAllocator(store).claim({ owner: me, from: 0, span: 1, ttlMs: 1 }, deps())).success).toBe(
+			false
+		);
+		expect((await new PortAllocator(store).claim({ owner: me, from: 80, span: 0, ttlMs: 1 }, deps())).success).toBe(
+			false
+		);
+		expect(
+			(await new PortAllocator(store).claim({ owner: me, from: 80, span: 5, count: 0, ttlMs: 1 }, deps())).success
+		).toBe(false);
+		expect(
+			(await new PortAllocator(store).claim({ owner: me, from: 80, span: 5, step: 0, ttlMs: 1 }, deps())).success
+		).toBe(false);
+		expect((await new PortAllocator(store).claim({ owner: me, from: 65535, span: 2, ttlMs: 1 }, deps())).success).toBe(
+			false
+		);
 	});
 
 	test("a lease taken by someone else between probe and txn is skipped", async () => {
-		const res = await claimPorts(
-			store,
+		const res = await new PortAllocator(store).claim(
 			{ owner: me, from: 8091, span: 5, ttlMs: 500 },
 			deps({
 				isPortFree: async (p) => {
@@ -118,8 +123,8 @@ describe("claimPorts", () => {
 
 describe("releasePorts / listPortLeases", () => {
 	async function seed(): Promise<{ mine: Lease; theirs: Lease }> {
-		const a = await claimPorts(store, { owner: me, from: 8091, span: 1, ttlMs: 500 }, deps());
-		const b = await claimPorts(store, { owner: other, from: 8092, span: 1, ttlMs: 500 }, deps());
+		const a = await new PortAllocator(store).claim({ owner: me, from: 8091, span: 1, ttlMs: 500 }, deps());
+		const b = await new PortAllocator(store).claim({ owner: other, from: 8092, span: 1, ttlMs: 500 }, deps());
 		store.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: "U1", name: "sim" }, owner: me, ttlMs: 500 },
 			1_000
@@ -130,20 +135,20 @@ describe("releasePorts / listPortLeases", () => {
 
 	test("listPortLeases returns only port leases, ordered by port", async () => {
 		await seed();
-		expect(ports(listPortLeases(store))).toEqual([8091, 8092]);
+		expect(ports(new PortAllocator(store).list())).toEqual([8091, 8092]);
 	});
 
 	test("release by port", async () => {
 		const { mine } = await seed();
-		const res = releasePorts(store, { by: "port", ports: [8091, 9999] });
+		const res = new PortAllocator(store).release({ by: "port", ports: [8091, 9999] });
 		expect(res).toEqual({ released: [mine], denied: [], missing: ["9999"] });
-		expect(ports(listPortLeases(store))).toEqual([8092]);
+		expect(ports(new PortAllocator(store).list())).toEqual([8092]);
 	});
 
 	test("release by lease id ignores non-port leases", async () => {
 		const { theirs } = await seed();
 		const device = store.listLeases().find((l) => l.resource.kind === "device");
-		const res = releasePorts(store, { by: "lease", ids: [theirs.id, device?.id ?? ""] });
+		const res = new PortAllocator(store).release({ by: "lease", ids: [theirs.id, device?.id ?? ""] });
 		expect(res.released).toEqual([theirs]);
 		expect(res.missing).toEqual([device?.id ?? ""]);
 		expect(store.listLeases().some((l) => l.resource.kind === "device")).toBe(true);
@@ -151,60 +156,59 @@ describe("releasePorts / listPortLeases", () => {
 
 	test("release by owner", async () => {
 		const { mine } = await seed();
-		expect(releasePorts(store, { by: "owner", owner: me }).released).toEqual([mine]);
-		expect(ports(listPortLeases(store))).toEqual([8092]);
+		expect(new PortAllocator(store).release({ by: "owner", owner: me }).released).toEqual([mine]);
+		expect(ports(new PortAllocator(store).list())).toEqual([8092]);
 	});
 
 	test("onlyOwner denies other owners' leases", async () => {
 		const { mine, theirs } = await seed();
-		const res = releasePorts(store, { by: "port", ports: [8091, 8092] }, { onlyOwner: me });
+		const res = new PortAllocator(store).release({ by: "port", ports: [8091, 8092] }, { onlyOwner: me });
 		expect(res.released).toEqual([mine]);
 		expect(res.denied).toEqual([theirs]);
-		expect(ports(listPortLeases(store))).toEqual([8092]);
+		expect(ports(new PortAllocator(store).list())).toEqual([8092]);
 	});
 });
 
 describe("classifyBindError", () => {
 	test("in use or forbidden is busy on any host", () => {
 		for (const host of ["127.0.0.1", "0.0.0.0", "::"]) {
-			expect(classifyBindError({ code: "EADDRINUSE" }, host)).toBe("busy");
-			expect(classifyBindError({ code: "EACCES" }, host)).toBe("busy");
+			expect(portProbe.classifyBindError({ code: "EADDRINUSE" }, host)).toBe("busy");
+			expect(portProbe.classifyBindError({ code: "EACCES" }, host)).toBe("busy");
 		}
 	});
 
 	test("no such address family / address is unsupported", () => {
-		expect(classifyBindError({ code: "EADDRNOTAVAIL" }, "::")).toBe("unsupported");
-		expect(classifyBindError({ code: "EAFNOSUPPORT" }, "::")).toBe("unsupported");
+		expect(portProbe.classifyBindError({ code: "EADDRNOTAVAIL" }, "::")).toBe("unsupported");
+		expect(portProbe.classifyBindError({ code: "EAFNOSUPPORT" }, "::")).toBe("unsupported");
 	});
 
 	test("a code-less error on the IPv6 wildcard (no IPv6 on the host) is unsupported, not busy", () => {
-		expect(classifyBindError({}, "::")).toBe("unsupported");
-		expect(classifyBindError({ code: "EINVAL" }, "::")).toBe("unsupported");
+		expect(portProbe.classifyBindError({}, "::")).toBe("unsupported");
+		expect(portProbe.classifyBindError({ code: "EINVAL" }, "::")).toBe("unsupported");
 	});
 
 	test("a code-less error on an IPv4 host stays busy", () => {
-		expect(classifyBindError({}, "127.0.0.1")).toBe("busy");
-		expect(classifyBindError({}, "0.0.0.0")).toBe("busy");
+		expect(portProbe.classifyBindError({}, "127.0.0.1")).toBe("busy");
+		expect(portProbe.classifyBindError({}, "0.0.0.0")).toBe("busy");
 	});
 });
 
-describe("isPortFree (real sockets)", () => {
+describe("portProbe.isFree(real sockets)", () => {
 	test("bound port is busy, free again after stop", async () => {
 		const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
 		const port = server.port;
-		expect(await isPortFree(port)).toBe(false);
-		expect(await isPortFree(port, "127.0.0.1")).toBe(false);
+		expect(await portProbe.isFree(port)).toBe(false);
+		expect(await portProbe.isFree(port, "127.0.0.1")).toBe(false);
 		server.stop(true);
-		expect(await isPortFree(port)).toBe(true);
+		expect(await portProbe.isFree(port)).toBe(true);
 	});
 
 	test("real claim skips a bound port", async () => {
 		const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
 		try {
-			const res = await claimPorts(
-				store,
+			const res = await new PortAllocator(store).claim(
 				{ owner: me, from: server.port, span: 5, ttlMs: 500 },
-				deps({ isPortFree: (p) => isPortFree(p) })
+				deps({ isPortFree: (p) => portProbe.isFree(p) })
 			);
 			expect(res.success && ports(res.data)[0]).not.toBe(server.port);
 		} finally {

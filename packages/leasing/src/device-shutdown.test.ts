@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { simctlFakes } from "@delacour/warden-providers/testing/simctl.testing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Lease, Owner } from "@delacour/warden-store/types";
-import { shutdownReleasedDevices } from "./device-shutdown";
-import { type TestLeaseHost, testLeaseHost } from "./testing/lease-host.testing";
+import { ReleasedDeviceShutdown } from "./device-shutdown";
+import { leaseHostFixture, type TestLeaseHost } from "./testing/lease-host.testing";
 
 let ctx: TestLeaseHost | undefined;
 afterEach(() => ctx?.cleanup());
@@ -32,10 +32,10 @@ function physicalLease(c: TestLeaseHost, id: string): Lease {
 describe("shutdownReleasedDevices", () => {
 	test("a physical device is never shut down, even booted by the owner and recorded; no provider call is made", async () => {
 		const calls: string[][] = [];
-		ctx = testLeaseHost({ exec: simctlFakes.build([], calls) });
+		ctx = leaseHostFixture.build({ exec: simctlFakes.build([], calls) });
 		ctx.db.recordDevice({ platform: "android", id: "P1", name: "Pixel" }, 0);
 		const guarded: string[] = [];
-		const result = await shutdownReleasedDevices(ctx, [physicalLease(ctx, "P1")], owner, async (l) => {
+		const result = await new ReleasedDeviceShutdown(ctx).run([physicalLease(ctx, "P1")], owner, async (l) => {
 			guarded.push(l.id);
 			return undefined;
 		});
@@ -50,7 +50,7 @@ describe("shutdownReleasedDevices", () => {
 		const calls: string[][] = [];
 		const undone: string[] = [];
 		const exec = simctlFakes.build([], calls);
-		ctx = testLeaseHost({
+		ctx = leaseHostFixture.build({
 			exec: async (cmd, opts) => {
 				calls.push(["exec", ...cmd]);
 				return exec(cmd, opts);
@@ -66,7 +66,7 @@ describe("shutdownReleasedDevices", () => {
 		});
 		ctx.db.recordDevice({ platform: "ios", id: "W", name: "warden-iphone-17-1" }, 0);
 		const w = lease(ctx, "W");
-		const result = await shutdownReleasedDevices(ctx, [w], owner);
+		const result = await new ReleasedDeviceShutdown(ctx).run([w], owner);
 		const order = calls.map((c) => (c[0] === "undo" ? "undo" : (c[3] ?? "")));
 		expect(order.indexOf("undo")).toBeGreaterThanOrEqual(0);
 		expect(order.indexOf("undo")).toBeLessThan(order.indexOf("shutdown"));
@@ -77,7 +77,7 @@ describe("shutdownReleasedDevices", () => {
 
 	test("a foreign device keeps its conditions untouched (never reset what warden doesn't shut down)", async () => {
 		const calls: string[][] = [];
-		ctx = testLeaseHost({ exec: simctlFakes.build([], calls) });
+		ctx = leaseHostFixture.build({ exec: simctlFakes.build([], calls) });
 		const undone: string[] = [];
 		ctx.conditions = {
 			has: () => true,
@@ -87,18 +87,18 @@ describe("shutdownReleasedDevices", () => {
 			},
 		};
 		const f = lease(ctx, "USERS");
-		await shutdownReleasedDevices(ctx, [f], owner);
+		await new ReleasedDeviceShutdown(ctx).run([f], owner);
 		expect(undone).toEqual([]);
 		expect(calls.filter((c) => c[2] === "shutdown")).toEqual([]);
 	});
 
 	test("shuts down warden-created + owner-booted devices; leaves already-running foreign ones", async () => {
 		const calls: string[][] = [];
-		ctx = testLeaseHost({ exec: simctlFakes.build([], calls) });
+		ctx = leaseHostFixture.build({ exec: simctlFakes.build([], calls) });
 		ctx.env = { ...ctx.env, WARDEN_GOLDEN: "0" };
 		ctx.db.recordDevice({ platform: "ios", id: "W", name: "warden-iphone-17-1" }, 0);
 		const leases = [lease(ctx, "W"), lease(ctx, "BOOTED-BY-ME", true), lease(ctx, "USERS")];
-		const result = await shutdownReleasedDevices(ctx, leases, owner);
+		const result = await new ReleasedDeviceShutdown(ctx).run(leases, owner);
 		expect(result.shutdown).toEqual(["W", "BOOTED-BY-ME"]);
 		expect(result.notes.join("\n")).toContain("USERS");
 		expect(calls.filter((c) => c[2] === "shutdown").map((c) => c[3])).toEqual(["W", "BOOTED-BY-ME"]);
@@ -106,7 +106,7 @@ describe("shutdownReleasedDevices", () => {
 
 	test("closes the viewer windows of the iOS sims it shut down, once, by name (Device Hub keeps a page open)", async () => {
 		const calls: string[][] = [];
-		ctx = testLeaseHost({
+		ctx = leaseHostFixture.build({
 			exec: simctlFakes.build([], calls, [
 				["pgrep -xq Simulator", { exitCode: 1 }],
 				["pgrep -xq DeviceHub", { exitCode: 0 }],
@@ -114,8 +114,7 @@ describe("shutdownReleasedDevices", () => {
 			]),
 		});
 		ctx.db.recordDevice({ platform: "ios", id: "W", name: "W" }, 0);
-		const result = await shutdownReleasedDevices(
-			ctx,
+		const result = await new ReleasedDeviceShutdown(ctx).run(
 			[lease(ctx, "W"), lease(ctx, "B", true), lease(ctx, "USERS")],
 			owner
 		);
@@ -127,7 +126,7 @@ describe("shutdownReleasedDevices", () => {
 	});
 
 	test("a window that won't close is a note; the shutdown still counts", async () => {
-		ctx = testLeaseHost({
+		ctx = leaseHostFixture.build({
 			exec: simctlFakes.build(
 				[],
 				[],
@@ -138,7 +137,7 @@ describe("shutdownReleasedDevices", () => {
 				]
 			),
 		});
-		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "A", true)], owner);
+		const result = await new ReleasedDeviceShutdown(ctx).run([lease(ctx, "A", true)], owner);
 		expect(result.shutdown).toEqual(["A"]);
 		expect(result.notes.join("\n")).toContain("couldn't close");
 	});
@@ -155,8 +154,8 @@ describe("shutdownReleasedDevices", () => {
 			await gate;
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		ctx = testLeaseHost({ exec });
-		const running = shutdownReleasedDevices(ctx, [lease(ctx, "A", true), lease(ctx, "B", true)], owner);
+		ctx = leaseHostFixture.build({ exec });
+		const running = new ReleasedDeviceShutdown(ctx).run([lease(ctx, "A", true), lease(ctx, "B", true)], owner);
 		await Bun.sleep(0);
 		expect(started.sort()).toEqual(["A", "B"]);
 		release();
@@ -164,9 +163,8 @@ describe("shutdownReleasedDevices", () => {
 	});
 
 	test("a throwing guard is a note and doesn't stop the other shutdowns", async () => {
-		ctx = testLeaseHost({ exec: simctlFakes.build([]) });
-		const result = await shutdownReleasedDevices(
-			ctx,
+		ctx = leaseHostFixture.build({ exec: simctlFakes.build([]) });
+		const result = await new ReleasedDeviceShutdown(ctx).run(
 			[lease(ctx, "A", true), lease(ctx, "B", true)],
 			owner,
 			async (l) => {
@@ -179,10 +177,10 @@ describe("shutdownReleasedDevices", () => {
 	});
 
 	test("shutdown failure is a note, not a throw", async () => {
-		ctx = testLeaseHost({
+		ctx = leaseHostFixture.build({
 			exec: simctlFakes.build([], [], [["xcrun simctl shutdown", { exitCode: 1, stderr: "boom" }]]),
 		});
-		const result = await shutdownReleasedDevices(ctx, [lease(ctx, "X", true)], owner);
+		const result = await new ReleasedDeviceShutdown(ctx).run([lease(ctx, "X", true)], owner);
 		expect(result.shutdown).toEqual([]);
 		expect(result.notes.join("\n")).toContain("boom");
 	});

@@ -1,17 +1,15 @@
-import { claimedJson } from "@delacour/warden-leasing/claim-request";
-import { resolveHeadless } from "@delacour/warden-leasing/headless";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { isPortFree } from "@delacour/warden-leasing/ports";
+import { claimRequestRules } from "@delacour/warden-leasing/claim-request";
+import { headlessResolver } from "@delacour/warden-leasing/headless";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
+import { portProbe } from "@delacour/warden-leasing/ports";
 import {
 	type ChildHandle,
-	claimAll,
-	exitCodeOf,
-	holdLeases,
-	intervalEvery,
 	type LeaseArgs,
+	LeaseHeartbeat,
 	type LeaseSessionDeps,
-	leasedText,
-	processOnSignal,
+	LeaseSessionRunner,
+	sessionRules,
+	sessionSignals,
 } from "@delacour/warden-leasing/session";
 import type { RunJson } from "@delacour/warden-sdk/contracts/claim";
 import type { Platform } from "@delacour/warden-store/types";
@@ -91,7 +89,7 @@ async function supervise(
 		reportError(ctx, "run", error instanceof Error ? error.message : String(error));
 		return 127;
 	}
-	const stop = holdLeases(appHostFromContext(ctx), deps, leaseIds, (signal) => child.kill(signal));
+	const stop = new LeaseHeartbeat(appHostFromContext(ctx), deps).hold(leaseIds, (signal) => child.kill(signal));
 	try {
 		return await child.exited;
 	} finally {
@@ -114,11 +112,11 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	const physical = isPhysicalClaim(withNamedPhysical(opts));
 	const args = parseRunArgs(platform.data, {
 		...opts,
-		headless: physical ? opts.headless : resolveHeadless({ flag: opts.headless, env: ctx.env }),
+		headless: physical ? opts.headless : headlessResolver.resolve({ flag: opts.headless, env: ctx.env }),
 	});
 	if (!args.success) return fail(args.error);
 	const { cmd } = target.data;
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	// before the spinner and any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
 	const picked = await pickPhysical(ctx, owner, [args.data.flags], {
 		prompt: canPrompt(ctx, { json: args.data.json }),
@@ -134,7 +132,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 			const app = args.data.app !== undefined;
 			const onLeased = leasedProgress(spinner, ctx.ui.color, app);
 			const onAppPhase = appPhaseProgress(spinner, app);
-			const result = await claimAll(leaseHostFromContext(sctx), deps, owner, {
+			const result = await new LeaseSessionRunner(leaseHostFromContext(sctx), deps).claimAll(owner, {
 				...args.data,
 				flags,
 				self: selfCommand(),
@@ -143,7 +141,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 			});
 			if (!result.success) spinner.fail(app ? "claim / app install failed" : "claim failed");
 			else if (app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
-			else spinner.succeed(leasedText(result.data.outcome));
+			else spinner.succeed(sessionRules.leasedText(result.data.outcome));
 			return result;
 		}
 	);
@@ -151,7 +149,7 @@ async function run(ctx: CommandContext, deps: RunDeps, operands: readonly string
 	maybeAutoGc(ctx);
 	if (!claimed.success) return reportClaimFailure(ctx, "run", claimed.error.message);
 	const { outcome, ports, env, release, leaseIds } = claimed.data;
-	const summary: RunJson = { leases: claimedJson(outcome), ports, cmd };
+	const summary: RunJson = { leases: claimRequestRules.claimedJson(outcome), ports, cmd };
 	// one line: the child runs on, so a reader takes the summary from the first stdout line
 	if (args.data.json) ctx.out(JSON.stringify(summary));
 	else note(ctx, `warden run: leased ${summary.leases.map((l) => `${l.udid} (${l.leaseId})`).join(", ")}`);
@@ -184,7 +182,7 @@ export function createRunCommand(deps: RunDeps): Command {
 
 export const defaultRunDeps: RunDeps = {
 	pid: process.pid,
-	isPortFree: (port) => isPortFree(port),
+	isPortFree: (port) => portProbe.isFree(port),
 	spawn(cmd, env, stdout) {
 		const proc = Bun.spawn(cmd, {
 			env,
@@ -193,12 +191,12 @@ export const defaultRunDeps: RunDeps = {
 			stderr: "inherit",
 		});
 		return {
-			exited: proc.exited.then((code) => exitCodeOf(proc, code)),
+			exited: proc.exited.then((code) => sessionRules.exitCodeOf(proc, code)),
 			kill: (signal) => proc.kill(signal),
 		};
 	},
-	onSignal: processOnSignal,
-	every: intervalEvery,
+	onSignal: sessionSignals.onSignal,
+	every: sessionSignals.every,
 };
 
 export const runCommand: Command = createRunCommand(defaultRunDeps);

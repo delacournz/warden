@@ -1,4 +1,4 @@
-import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
 import { type Lease, leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -37,7 +37,7 @@ async function endHelper(
 	release: boolean
 ): Promise<{ stopped: boolean; how: string; warning?: string }> {
 	if (!release) return stopperFor(device)(ctx, device.udid);
-	await releaseDevices(ctx, [device.lease.id], { after: releaseAfter(ctx, { helper: true }) });
+	await new DeviceReleaser(ctx).release([device.lease.id], { after: releaseAfter(ctx, { helper: true }) });
 	return { stopped: true, how: "release" };
 }
 

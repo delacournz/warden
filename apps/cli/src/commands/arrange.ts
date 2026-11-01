@@ -1,4 +1,4 @@
-import { type Arranged, arrangeSimWindows, reopenSimWindows } from "@delacour/warden-leasing/sim-windows";
+import { type Arranged, SimWindowArranger } from "@delacour/warden-leasing/sim-windows";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, reportError } from "../output";
@@ -15,11 +15,11 @@ async function arrange(ctx: CommandContext, json: boolean, open: readonly string
 		return 0;
 	}
 	if (open.length > 0) {
-		const opened = await reopenSimWindows(ctx, open);
+		const opened = await new SimWindowArranger(ctx).reopen(open);
 		emit(ctx, json, { opened }, opened.length === 0 ? "no windows opened" : `opened ${opened.join(", ")}`);
 		return 0;
 	}
-	const result = await arrangeSimWindows(ctx.exec);
+	const result = await new SimWindowArranger({ exec: ctx.exec }).arrange();
 	if (!result.success) {
 		reportError(ctx, "arrange", result.error);
 		return 1;

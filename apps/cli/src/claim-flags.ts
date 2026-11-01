@@ -4,14 +4,13 @@ import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-config/config.
 import { durationParser } from "@delacour/warden-config/duration";
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
 import { type SlimSetting, slimPolicy } from "@delacour/warden-config/slim-policy";
-import { defaultMax } from "@delacour/warden-leasing/allocate";
+import { allocator } from "@delacour/warden-leasing/allocate";
 import type { ClaimOutcome, ClaimResult } from "@delacour/warden-leasing/claim";
 import {
-	bootedByClaim,
 	type ClaimHideOptions,
 	type ClaimRequest,
-	claimWithRequest,
-	parsePriorityFlag,
+	ClaimRequestRunner,
+	claimRequestRules,
 	type SlimLayers,
 } from "@delacour/warden-leasing/claim-request";
 import { biometricProfiles } from "@delacour/warden-providers/biometrics";
@@ -152,7 +151,7 @@ function positiveInt(name: string, raw: string | undefined, fallback: number, mi
 }
 
 /**
- * Validate claim flags; defaults from `config.defaults` and `defaultMax(cores)`. `defaultTtlMs` is
+ * Validate claim flags; defaults from `config.defaults` and `allocator.defaultMax(cores)`. `defaultTtlMs` is
  * what `--ttl` falls back to: wrappers keep the 30 min default (they heartbeat); only bare `claim`
  * by an agent passes the short one. `defaultPriority` is the calling command's queue priority.
  */
@@ -168,11 +167,11 @@ export function parseClaimFlags(
 	if (isPhysicalClaim(values)) return parsePhysicalClaim(platform.data, values, defaultTtlMs, defaultPriority);
 	const count = positiveInt("count", values.count, 1);
 	if (!count.success) return count;
-	const max = positiveInt("max", values.max, Math.max(defaultMax(cores), count.data), 0);
+	const max = positiveInt("max", values.max, Math.max(allocator.defaultMax(cores), count.data), 0);
 	if (!max.success) return max;
 	const waitMs = values.wait === false ? resultFactory.ok(0) : durationParser.parse(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
-	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
+	const priority = values.priority === undefined ? undefined : claimRequestRules.parsePriorityFlag(values.priority);
 	if (priority && !priority.success) return wardenErrors.toText(priority);
 	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : durationParser.parse(values.ttl);
 	if (!ttlMs.success) return ttlMs;
@@ -211,7 +210,7 @@ function parseTiming(
 ): Result<{ flags: Pick<ClaimFlags, "waitMs" | "ttlMs" | "priority"> }> {
 	const waitMs = values.wait === false ? resultFactory.ok(0) : durationParser.parse(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
-	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
+	const priority = values.priority === undefined ? undefined : claimRequestRules.parsePriorityFlag(values.priority);
 	if (priority && !priority.success) return wardenErrors.toText(priority);
 	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : durationParser.parse(values.ttl);
 	if (!ttlMs.success) return ttlMs;
@@ -326,7 +325,12 @@ export async function claimWithFlags(
 		});
 		if (!unlocked.success) return wardenErrors.coded(unlocked, "failed");
 	}
-	const outcome = await claimWithRequest(leaseHostFromContext(ctx), owner, { ...flags, request }, pid, options);
+	const outcome = await new ClaimRequestRunner(leaseHostFromContext(ctx)).claim(
+		owner,
+		{ ...flags, request },
+		pid,
+		options
+	);
 	if (outcome.success && request.platform === "ios" && !request.physical) {
 		const slim = slimPolicy.resolveSlim({ ...flags.slim, env: ctx.env });
 		if (slim.success) await slimReusedBooted(ctx, outcome.data, slim.data);
@@ -340,7 +344,7 @@ export async function claimWithFlags(
  */
 async function slimReusedBooted(ctx: CommandContext, outcome: ClaimOutcome, slim: SlimProfile | false): Promise<void> {
 	if (slim === false) return;
-	const booted = new Set(bootedByClaim(outcome).map((c) => c.device.id));
+	const booted = new Set(claimRequestRules.bootedByClaim(outcome).map((c) => c.device.id));
 	const records = new Map(
 		ctx
 			.store()

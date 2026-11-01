@@ -3,7 +3,7 @@ import type { EnsureOptions } from "@delacour/warden-builds/prepare";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import type { ClaimOutcome } from "@delacour/warden-leasing/claim";
-import { type LeaseArgs, leasedText } from "@delacour/warden-leasing/session";
+import { type LeaseArgs, sessionRules } from "@delacour/warden-leasing/session";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { phaseTracker } from "./app-phase";
 import type { CommandContext } from "./context";
@@ -131,7 +131,7 @@ export function leasedProgress(
 ): ((outcome: ClaimOutcome) => void) | undefined {
 	if (!app) return undefined;
 	return (outcome) => {
-		spinner.log(`${color.green("✔")} ${leasedText(outcome)}`);
+		spinner.log(`${color.green("✔")} ${sessionRules.leasedText(outcome)}`);
 	};
 }
 

@@ -1,5 +1,5 @@
-import { ensureCallerLease } from "@delacour/warden-leasing/device-lease";
-import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
+import { CallerLeaseGate } from "@delacour/warden-leasing/device-lease";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type Lease, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -53,7 +53,7 @@ export const defaultPerfDeviceDeps: PerfDeviceDeps = {
 	booted: async (ctx) => {
 		const { providerFor } = await import("@delacour/warden-core/host-deps");
 		const { appHostFromContext } = await import("../context");
-		const owner = resolveOwner(ctx);
+		const owner = ownerResolver.resolve(ctx);
 		const inventories = await Promise.all(
 			(["ios", "android"] as const).map((platform) => providerFor(platform, appHostFromContext(ctx), owner).inventory())
 		);
@@ -160,7 +160,7 @@ export async function listPerfCandidates(
 	deps: PerfDeviceDeps,
 	platform?: Platform
 ): Promise<PerfCandidate[]> {
-	return candidatesOf(ctx, deps, resolveOwner(ctx), await bootedKnown(ctx, deps, platform));
+	return candidatesOf(ctx, deps, ownerResolver.resolve(ctx), await bootedKnown(ctx, deps, platform));
 }
 
 function ambiguous(what: string, candidates: readonly PerfCandidate[]): UiError {
@@ -216,8 +216,8 @@ function leaseForMutation(
 	flags: PerfDeviceFlags,
 	device: Known
 ): Result<{ lease?: Lease; ownedByCaller: boolean }, UiError> {
-	const pid = leasePidFor(owner);
-	const leased = ensureCallerLease(ctx.store(), owner, device.platform, device.id, {
+	const pid = ownerResolver.leasePidFor(owner);
+	const leased = new CallerLeaseGate(ctx.store()).ensure(owner, device.platform, device.id, {
 		now: ctx.now(),
 		pidAlive: deps.pidAlive,
 		claim: flags.claim === true,
@@ -249,7 +249,7 @@ function leaseForMutation(
 async function pickNamed(
 	ctx: CommandContext,
 	flags: PerfDeviceFlags,
-	owner: ReturnType<typeof resolveOwner>,
+	owner: ReturnType<typeof ownerResolver.resolve>,
 	deps: PerfDeviceDeps
 ): Promise<Result<Named, UiError>> {
 	const explicit = named(ctx, flags);
@@ -289,7 +289,7 @@ export async function resolvePerfDevice(
 	mode: PerfMode,
 	deps: PerfDeviceDeps = defaultPerfDeviceDeps
 ): Promise<Result<PerfTarget, UiError>> {
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const picked = await pickNamed(ctx, flags, owner, deps);
 	if (!picked.success) return picked;
 	const device = findKnownDevice(ctx, picked.data);

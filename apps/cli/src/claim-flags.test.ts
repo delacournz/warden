@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { DEVICECTL_LOCKSTATE_UNLOCKED, devicectlFixtures } from "@delacour/warden-providers/devicectl.fixtures";
 import { claimWithFlags, parseClaimFlags, withNamedPhysical } from "./claim-flags";
 import { OWNER_ENV, simctlFakes } from "./simctl.testing";
@@ -197,14 +197,14 @@ describe("physical allowlist", () => {
 	const claimIds = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string[]> => {
 		const flags = parseClaimFlags("ios", values, 16);
 		if (!flags.success) throw new Error(flags.error);
-		const outcome = await claimWithFlags(c, resolveOwner(c), flags.data, undefined, {});
+		const outcome = await claimWithFlags(c, ownerResolver.resolve(c), flags.data, undefined, {});
 		if (!outcome.success) throw new Error(outcome.error.message);
 		return outcome.data.claimed.map((d) => d.device.id);
 	};
 	const failure = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string> => {
 		const flags = parseClaimFlags("ios", values, 16);
 		if (!flags.success) throw new Error(flags.error);
-		const outcome = await claimWithFlags(c, resolveOwner(c), { ...flags.data, waitMs: 0 }, undefined, {});
+		const outcome = await claimWithFlags(c, ownerResolver.resolve(c), { ...flags.data, waitMs: 0 }, undefined, {});
 		return outcome.success ? "claimed" : outcome.error.message;
 	};
 

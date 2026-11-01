@@ -1,8 +1,8 @@
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { durationParser } from "@delacour/warden-config/duration";
-import { claimedJson } from "@delacour/warden-leasing/claim-request";
-import { resolveHeadless } from "@delacour/warden-leasing/headless";
-import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
+import { claimRequestRules } from "@delacour/warden-leasing/claim-request";
+import { headlessResolver } from "@delacour/warden-leasing/headless";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { ClaimedDeviceJson, ClaimJson } from "@delacour/warden-sdk/contracts/claim";
 import { maybeAutoGc } from "../autogc";
 import {
@@ -32,14 +32,16 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		reportError(ctx, "claim", platform.error);
 		return 1;
 	}
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const shortLived = owner.kind === "agent" && opts.ttl === undefined;
 	const named = {
 		...opts,
 		...(opts.serial ? { physicalSerial: opts.serial } : {}),
 		...(opts.udid ? { physicalUdid: opts.udid } : {}),
 	};
-	const headless = isPhysicalClaim(named) ? opts.headless : resolveHeadless({ flag: opts.headless, env: ctx.env });
+	const headless = isPhysicalClaim(named)
+		? opts.headless
+		: headlessResolver.resolve({ flag: opts.headless, env: ctx.env });
 	const flags = parseClaimFlags(
 		platform.data,
 		{ ...named, headless },
@@ -61,7 +63,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 		ctx,
 		`claiming ${count} ${kind} ${platform.data} device(s)…`,
 		async (sctx, spinner) => {
-			const result = await claimWithFlags(sctx, owner, claimFlags, leasePidFor(owner));
+			const result = await claimWithFlags(sctx, owner, claimFlags, ownerResolver.leasePidFor(owner));
 			if (result.success) spinner.succeed(`claimed ${result.data.claimed.map((c) => c.device.name).join(", ")}`);
 			else spinner.fail(`claim failed`);
 			return result;
@@ -77,7 +79,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 			`lease expires in ${durationParser.format(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
 		);
 	}
-	const leases: ClaimedDeviceJson[] = claimedJson(outcome.data);
+	const leases: ClaimedDeviceJson[] = claimRequestRules.claimedJson(outcome.data);
 	const doc: ClaimJson = { leases, udids: leases.map((l) => l.udid), reclaimed: outcome.data.reclaimed };
 	emit(
 		ctx,

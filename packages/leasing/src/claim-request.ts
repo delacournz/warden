@@ -6,20 +6,12 @@ import type { DeviceRequest, Owner } from "@delacour/warden-store/types";
 import { leaseModel } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
-import { maxConcurrent } from "./capacity";
-import { buildCapacityDeps } from "./capacity-deps";
-import { type ClaimedDevice, type ClaimOutcome, type ClaimResult, claimDevices } from "./claim";
+import { capacityMath } from "./capacity";
+import { CapacityDepsBuilder } from "./capacity-deps";
+import { type ClaimedDevice, type ClaimOutcome, type ClaimResult, ClaimService } from "./claim";
 import type { LeaseHost, ProviderOptions } from "./lease-host";
-import { PRIORITY, parsePriority } from "./queue";
-import {
-	autoArrangeSimWindows,
-	type DetachLock,
-	type HideDeps,
-	type HideStart,
-	hideSimWindows,
-	openDeviceHubWindows,
-	startHideSimWindows,
-} from "./sim-windows";
+import { PRIORITY, queueOrdering } from "./queue";
+import { type DetachLock, type HideDeps, type HideStart, SimWindowArranger, SimWindowHider } from "./sim-windows";
 
 /** Where a claim's `slim` can come from (see `resolveSlim`): `--slim` / `--no-slim`, the suite / preset, the top-level config. */
 export type SlimLayers = {
@@ -47,48 +39,68 @@ export type ClaimRequest = {
 	slim?: SlimLayers;
 };
 
-/** `interactive|high|normal|low` or a non-negative integer. */
-export function parsePriorityFlag(raw: string): Result<number, WardenError> {
-	const parsed = parsePriority(raw);
-	return parsed.success ? parsed : wardenErrors.err("usage", `--priority: ${parsed.error.message}`);
-}
-
-/** Priority of a claim: `--priority`, else `WARDEN_PRIORITY`, else the command's default, else normal. */
-export function resolvePriority(
-	flags: Pick<ClaimRequest, "priority" | "defaultPriority">,
-	env: Record<string, string | undefined>
-): Result<number, WardenError> {
-	if (flags.priority !== undefined) return resultFactory.ok(flags.priority);
-	const fromEnv = env.WARDEN_PRIORITY?.trim();
-	if (fromEnv) {
-		const parsed = parsePriorityFlag(fromEnv);
-		return parsed.success ? parsed : wardenErrors.err("usage", `WARDEN_PRIORITY=${fromEnv}: ${parsed.error.message}`);
+/** Pure rules and shapes of a claim request; the host is only read, never driven. */
+export class ClaimRequestRules {
+	/** `interactive|high|normal|low` or a non-negative integer. */
+	parsePriorityFlag(raw: string): Result<number, WardenError> {
+		const parsed = queueOrdering.parsePriority(raw);
+		return parsed.success ? parsed : wardenErrors.err("usage", `--priority: ${parsed.error.message}`);
 	}
-	return resultFactory.ok(flags.defaultPriority ?? PRIORITY.normal);
+
+	/** Priority of a claim: `--priority`, else `WARDEN_PRIORITY`, else the command's default, else normal. */
+	resolvePriority(
+		flags: Pick<ClaimRequest, "priority" | "defaultPriority">,
+		env: Record<string, string | undefined>
+	): Result<number, WardenError> {
+		if (flags.priority !== undefined) return resultFactory.ok(flags.priority);
+		const fromEnv = env.WARDEN_PRIORITY?.trim();
+		if (fromEnv) {
+			const parsed = this.parsePriorityFlag(fromEnv);
+			return parsed.success ? parsed : wardenErrors.err("usage", `WARDEN_PRIORITY=${fromEnv}: ${parsed.error.message}`);
+		}
+		return resultFactory.ok(flags.defaultPriority ?? PRIORITY.normal);
+	}
+
+	/** Android `auto` profile → slug of the first AVD. */
+	resolveAutoProfile(avds: readonly string[]): Result<string, WardenError> {
+		const first = avds[0];
+		return first
+			? resultFactory.ok(leaseModel.profileSlug(first))
+			: wardenErrors.err("not_found", "no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
+	}
+
+	/** Simulator's close setting, shared with every other warden process through the host's store. */
+	detachLockFor(host: Pick<LeaseHost, "store" | "pidAlive">): DetachLock {
+		return { store: host.store(), pid: process.pid, pidAlive: host.pidAlive };
+	}
+
+	/**
+	 * The claimed devices this claim had to boot or create: the only ones whose Simulator.app window can
+	 * still be on its way. A device that was already running (`reuse`, not booted by the claim) keeps
+	 * the window — or the lack of one, when it booted headless — it had.
+	 */
+	bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDevice[] {
+		return outcome.claimed.filter((c) => c.action !== "reuse" || c.lease.bootedByOwner === true);
+	}
+
+	/** JSON shape of claimed devices, shared by `claim` and `run`. */
+	claimedJson(outcome: ClaimOutcome) {
+		return outcome.claimed.map((c) => ({
+			leaseId: c.lease.id,
+			platform: c.device.platform,
+			udid: c.device.id,
+			name: c.device.name,
+			action: c.action,
+			ttlMs: c.lease.ttlMs,
+			...(c.lease.resource.kind === "device" && c.lease.resource.physical
+				? { physical: c.lease.resource.physical }
+				: {}),
+			...(c.lease.label !== undefined ? { label: c.lease.label } : {}),
+		}));
+	}
 }
 
-/** Android `auto` profile → slug of the first AVD. */
-export function resolveAutoProfile(avds: readonly string[]): Result<string, WardenError> {
-	const first = avds[0];
-	return first
-		? resultFactory.ok(leaseModel.profileSlug(first))
-		: wardenErrors.err("not_found", "no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
-}
-
-/** Simulator's close setting, shared with every other warden process through the host's store. */
-export function detachLockFor(host: Pick<LeaseHost, "store" | "pidAlive">): DetachLock {
-	return { store: host.store(), pid: process.pid, pidAlive: host.pidAlive };
-}
-
-/** `hideSimWindows` deps from a host: problems are `warn` events (scope `headless`); a device the close shut down loses its resident helper. */
-export function headlessDeps(host: LeaseHost): HideDeps {
-	return {
-		exec: host.exec,
-		warn: (line) => host.log?.({ kind: "warn", scope: "headless", message: line }),
-		onShutDown: host.stopHelper,
-		detachLock: detachLockFor(host),
-	};
-}
+export const claimRequestRules = new ClaimRequestRules();
 
 export type ClaimHideOptions = {
 	/**
@@ -109,121 +121,105 @@ export type ClaimHideOptions = {
 	unlockSleep?: (ms: number) => Promise<void>;
 };
 
-/**
- * The claimed devices this claim had to boot or create: the only ones whose Simulator.app window can
- * still be on its way. A device that was already running (`reuse`, not booted by the claim) keeps
- * the window — or the lack of one, when it booted headless — it had.
- */
-export function bootedByClaim(outcome: Pick<ClaimOutcome, "claimed">): ClaimedDevice[] {
-	return outcome.claimed.filter((c) => c.action !== "reuse" || c.lease.bootedByOwner === true);
-}
+/** Runs a device claim over a lease host: auto profile, priority, capacity, then the claim and the sim windows. */
+export class ClaimRequestRunner {
+	constructor(private readonly host: LeaseHost) {}
 
-/** The request with an Android `auto` profile resolved to the first installed AVD that fits. */
-async function withAutoProfile(
-	host: LeaseHost,
-	request: ClaimRequest["request"]
-): AsyncResult<ClaimRequest["request"], WardenError> {
-	const { profile: base, biometrics } = biometricProfiles.split(request.profile);
-	if (request.physical || request.platform !== "android" || base !== "auto") return resultFactory.ok(request);
-	const avds = await new Adb({ exec: host.exec, env: host.env }).listAvds();
-	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
-	if (!profile.success) return profile;
-	return resultFactory.ok({ ...request, profile: biometricProfiles.profile(profile.data, biometrics) });
-}
-
-/** The iOS provider options for a claim: its slim profile and whether (and which) physical phones are listed; none for Android. */
-function providerOptionsFor(request: ClaimRequest["request"], slim: SlimProfile | false): ProviderOptions {
-	if (request.platform !== "ios") return {};
-	return {
-		slim,
-		physical: request.physical !== undefined,
-		...(request.physical?.ids ? { namedPhysical: request.physical.ids } : {}),
-	};
-}
-
-/** Run a device claim with the host's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
-export async function claimWithRequest(
-	host: LeaseHost,
-	owner: Owner,
-	flags: ClaimRequest,
-	pid: number | undefined,
-	options: ClaimHideOptions = {}
-): Promise<ClaimResult> {
-	const named = await withAutoProfile(host, flags.request);
-	if (!named.success) return named;
-	const priority = resolvePriority(flags, host.env);
-	if (!priority.success) return priority;
-	const capacity = await buildCapacityDeps(host, owner);
-	let request = named.data;
-	if (capacity && flags.maxDefaulted) {
-		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
-		request = { ...request, max: Math.max(request.max, room) };
+	/** `SimWindowHider` deps from the host: problems are `warn` events (scope `headless`); a device the close shut down loses its resident helper. */
+	headlessDeps(): HideDeps {
+		const { host } = this;
+		return {
+			exec: host.exec,
+			warn: (line) => host.log?.({ kind: "warn", scope: "headless", message: line }),
+			onShutDown: host.stopHelper,
+			detachLock: claimRequestRules.detachLockFor(host),
+		};
 	}
-	const slim = slimPolicy.resolveSlim({ ...flags.slim, env: host.env });
-	if (!slim.success) return wardenErrors.err("usage", slim.error);
-	const providerOptions = providerOptionsFor(request, slim.data);
-	const outcome = await claimDevices({
-		store: host.store(),
-		provider: host.providerFor(request.platform, owner, providerOptions),
-		...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
-		...(host.orphans ? { orphans: host.orphans } : {}),
-		owner,
-		request,
-		ttlMs: flags.ttlMs,
-		...(flags.label !== undefined ? { label: flags.label } : {}),
-		...(pid !== undefined ? { pid } : {}),
-		now: host.now,
-		pidAlive: host.pidAlive,
-		waitMs: flags.waitMs,
-		priority: priority.data,
-		...(options.abort ? { abort: options.abort } : {}),
-		...(options.sleep ? { sleep: options.sleep } : {}),
-		...(options.onLeased ? { onLeased: options.onLeased } : {}),
-		...(capacity ? { capacity } : {}),
-		log: (line) => host.log?.({ kind: "progress", phase: "claim", message: line }),
-	});
-	if (outcome.success && request.platform === "ios") await settleIosWindows(host, outcome.data, flags, options);
-	return outcome;
-}
 
-/** After an iOS claim: headless closes the sims' windows (handing the rest to `onHide` when given); otherwise tile them. */
-async function settleIosWindows(
-	host: LeaseHost,
-	outcome: ClaimOutcome,
-	flags: ClaimRequest,
-	options: ClaimHideOptions
-): Promise<void> {
-	const sims = outcome.claimed.map((c) => ({ udid: c.device.id, name: c.device.name }));
-	const deps = options.os === undefined ? headlessDeps(host) : { ...headlessDeps(host), os: options.os };
-	if (flags.headless && options.onHide) options.onHide(await startHideSimWindows(deps, sims));
-	else if (flags.headless) await hideSimWindows(deps, sims);
-	else {
-		const booted = bootedByClaim(outcome).map((c) => ({ udid: c.device.id, name: c.device.name }));
-		const windowDeps = options.os === undefined ? host : { exec: host.exec, env: host.env, os: options.os };
-		const opened = await openDeviceHubWindows(windowDeps, booted);
-		await autoArrangeSimWindows(
-			windowDeps,
-			booted.map((s) => s.name),
-			opened,
-			(missing) =>
-				openDeviceHubWindows(
-					windowDeps,
-					booted.filter((s) => missing.includes(s.name))
-				)
-		);
+	/** Run a device claim with the host's store + provider; iOS claims then tile the sims' windows (headless: close them; see `options.onHide`). */
+	async claim(
+		owner: Owner,
+		flags: ClaimRequest,
+		pid: number | undefined,
+		options: ClaimHideOptions = {}
+	): Promise<ClaimResult> {
+		const { host } = this;
+		const named = await this.withAutoProfile(flags.request);
+		if (!named.success) return named;
+		const priority = claimRequestRules.resolvePriority(flags, host.env);
+		if (!priority.success) return priority;
+		const capacity = await new CapacityDepsBuilder(host).build(owner);
+		let request = named.data;
+		if (capacity && flags.maxDefaulted) {
+			const room = capacityMath.maxConcurrent(request.platform, capacity.budget, capacity.config);
+			request = { ...request, max: Math.max(request.max, room) };
+		}
+		const slim = slimPolicy.resolveSlim({ ...flags.slim, env: host.env });
+		if (!slim.success) return wardenErrors.err("usage", slim.error);
+		const providerOptions = this.providerOptionsFor(request, slim.data);
+		const outcome = await new ClaimService({
+			store: host.store(),
+			provider: host.providerFor(request.platform, owner, providerOptions),
+			...(request.platform === "ios" ? { slim: slim.data !== false } : {}),
+			...(host.orphans ? { orphans: host.orphans } : {}),
+			owner,
+			request,
+			ttlMs: flags.ttlMs,
+			...(flags.label !== undefined ? { label: flags.label } : {}),
+			...(pid !== undefined ? { pid } : {}),
+			now: host.now,
+			pidAlive: host.pidAlive,
+			waitMs: flags.waitMs,
+			priority: priority.data,
+			...(options.abort ? { abort: options.abort } : {}),
+			...(options.sleep ? { sleep: options.sleep } : {}),
+			...(options.onLeased ? { onLeased: options.onLeased } : {}),
+			...(capacity ? { capacity } : {}),
+			log: (line) => host.log?.({ kind: "progress", phase: "claim", message: line }),
+		}).claim();
+		if (outcome.success && request.platform === "ios") await this.settleIosWindows(outcome.data, flags, options);
+		return outcome;
 	}
-}
 
-/** JSON shape of claimed devices, shared by `claim` and `run`. */
-export function claimedJson(outcome: ClaimOutcome) {
-	return outcome.claimed.map((c) => ({
-		leaseId: c.lease.id,
-		platform: c.device.platform,
-		udid: c.device.id,
-		name: c.device.name,
-		action: c.action,
-		ttlMs: c.lease.ttlMs,
-		...(c.lease.resource.kind === "device" && c.lease.resource.physical ? { physical: c.lease.resource.physical } : {}),
-		...(c.lease.label !== undefined ? { label: c.lease.label } : {}),
-	}));
+	/** The request with an Android `auto` profile resolved to the first installed AVD that fits. */
+	private async withAutoProfile(request: ClaimRequest["request"]): AsyncResult<ClaimRequest["request"], WardenError> {
+		const { host } = this;
+		const { profile: base, biometrics } = biometricProfiles.split(request.profile);
+		if (request.physical || request.platform !== "android" || base !== "auto") return resultFactory.ok(request);
+		const avds = await new Adb({ exec: host.exec, env: host.env }).listAvds();
+		const profile = avds.success ? claimRequestRules.resolveAutoProfile(avds.data) : avds;
+		if (!profile.success) return profile;
+		return resultFactory.ok({ ...request, profile: biometricProfiles.profile(profile.data, biometrics) });
+	}
+
+	/** The iOS provider options for a claim: its slim profile and whether (and which) physical phones are listed; none for Android. */
+	private providerOptionsFor(request: ClaimRequest["request"], slim: SlimProfile | false): ProviderOptions {
+		if (request.platform !== "ios") return {};
+		return {
+			slim,
+			physical: request.physical !== undefined,
+			...(request.physical?.ids ? { namedPhysical: request.physical.ids } : {}),
+		};
+	}
+
+	/** After an iOS claim: headless closes the sims' windows (handing the rest to `onHide` when given); otherwise tile them. */
+	private async settleIosWindows(outcome: ClaimOutcome, flags: ClaimRequest, options: ClaimHideOptions): Promise<void> {
+		const { host } = this;
+		const sims = outcome.claimed.map((c) => ({ udid: c.device.id, name: c.device.name }));
+		const base = this.headlessDeps();
+		const deps = options.os === undefined ? base : { ...base, os: options.os };
+		if (flags.headless && options.onHide) options.onHide(await new SimWindowHider(deps).start(sims));
+		else if (flags.headless) await new SimWindowHider(deps).hide(sims);
+		else {
+			const booted = claimRequestRules.bootedByClaim(outcome).map((c) => ({ udid: c.device.id, name: c.device.name }));
+			const windowDeps = options.os === undefined ? host : { exec: host.exec, env: host.env, os: options.os };
+			const arranger = new SimWindowArranger(windowDeps);
+			const opened = await arranger.openDeviceHubWindows(booted);
+			await arranger.autoArrange(
+				booted.map((s) => s.name),
+				opened,
+				(missing) => arranger.openDeviceHubWindows(booted.filter((s) => missing.includes(s.name)))
+			);
+		}
+	}
 }

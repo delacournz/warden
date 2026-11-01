@@ -40,96 +40,109 @@ export type EnsureLeaseOptions = {
 	physical?: DeviceResource["physical"];
 };
 
-/** Message shown to the model/user when a device is held by someone else. */
-export function blockMessage(id: string, platform: Platform, owner: Owner): string {
-	const where = leaseModel.ownerLocation(owner);
-	const noun = platform === "ios" ? "udid" : "serial";
-	return `device ${id} leased by ${leaseModel.describeOwner(owner)}${where ? ` (${where})` : ""} — run \`warden claim ${platform}\` and use the returned ${noun}`;
+/** Texts shown to the model/user when a device is held by someone else. */
+export class DeviceLeaseMessages {
+	/** Message shown to the model/user when a device is held by someone else. */
+	block(id: string, platform: Platform, owner: Owner): string {
+		const where = leaseModel.ownerLocation(owner);
+		const noun = platform === "ios" ? "udid" : "serial";
+		return `device ${id} leased by ${leaseModel.describeOwner(owner)}${where ? ` (${where})` : ""} — run \`warden claim ${platform}\` and use the returned ${noun}`;
+	}
+
+	/** Message for `device_busy`: who holds the device, the holding pid and the lease label. */
+	busy(lease: Lease): string {
+		const name = lease.resource.kind === "device" ? lease.resource.name : undefined;
+		const id = lease.resource.kind === "device" ? lease.resource.id : lease.id;
+		const holder = [`pid ${lease.pid}`, lease.label].filter((part): part is string => Boolean(part)).join(", ");
+		const device = name && name !== id ? `${name} (${id})` : id;
+		return `device ${device} is in use by ${leaseModel.describeOwner(lease.owner)} (${holder}); re-run with --force to drive it anyway`;
+	}
 }
 
-/** Message for `device_busy`: who holds the device, the holding pid and the lease label. */
-export function busyMessage(lease: Lease): string {
-	const name = lease.resource.kind === "device" ? lease.resource.name : undefined;
-	const id = lease.resource.kind === "device" ? lease.resource.id : lease.id;
-	const holder = [`pid ${lease.pid}`, lease.label].filter((part): part is string => Boolean(part)).join(", ");
-	const device = name && name !== id ? `${name} (${id})` : id;
-	return `device ${device} is in use by ${leaseModel.describeOwner(lease.owner)} (${holder}); re-run with --force to drive it anyway`;
-}
-
-/** An own lease another live process holds: its pid is set, is not the caller's liveness pid, and is alive. */
-function heldByOtherProcess(lease: Lease, opts: EnsureLeaseOptions): boolean {
-	return lease.pid !== undefined && lease.pid !== opts.pid && opts.pidAlive(lease.pid);
-}
+export const deviceLeaseMessages = new DeviceLeaseMessages();
 
 /**
  * The one lease check for a caller using a device (`warden ui`), atomically:
  * own lease → heartbeat (with `exclusive`, one a live warden process holds → `device_busy`; a shared
  * `warden dev` lease → `attached`); another live owner → `device_foreign`; stale or missing → taken over when `claim`, else `device_not_leased`.
  */
-export function ensureCallerLease(
-	store: Store,
-	owner: Owner,
-	platform: Platform,
-	id: string,
-	opts: EnsureLeaseOptions
-): Result<CallerLease, DeviceLeaseError> {
-	const probe: DeviceResource = { kind: "device", platform, id, name: opts.name ?? id };
-	return store.transaction((): Result<CallerLease, DeviceLeaseError> => {
-		const existing = store.findLeaseByResource(probe);
-		if (existing && leaseModel.sameOwner(existing.owner, owner)) return ownLease(store, existing, opts);
-		if (existing && liveness.isLeaseAlive(existing, opts.now, opts.pidAlive)) {
-			return { success: false, error: { code: "device_foreign", message: blockMessage(id, platform, existing.owner) } };
-		}
-		if (!opts.claim) {
-			return {
-				success: false,
-				error: {
-					code: "device_not_leased",
-					message: existing
-						? `device ${id} has a stale lease (${leaseModel.describeOwner(existing.owner)})`
-						: `device ${id} is not leased`,
-				},
-			};
-		}
-		if (existing) store.deleteLeases([existing.id]);
-		return resultFactory.ok({
-			lease: insertCallerLease(store, owner, probe, opts),
-			action: existing ? "reclaimed" : "leased",
+export class CallerLeaseGate {
+	constructor(private readonly store: Store) {}
+
+	ensure(
+		owner: Owner,
+		platform: Platform,
+		id: string,
+		opts: EnsureLeaseOptions
+	): Result<CallerLease, DeviceLeaseError> {
+		const { store } = this;
+		const probe: DeviceResource = { kind: "device", platform, id, name: opts.name ?? id };
+		return store.transaction((): Result<CallerLease, DeviceLeaseError> => {
+			const existing = store.findLeaseByResource(probe);
+			if (existing && leaseModel.sameOwner(existing.owner, owner)) return this.ownLease(existing, opts);
+			if (existing && liveness.isLeaseAlive(existing, opts.now, opts.pidAlive)) {
+				return {
+					success: false,
+					error: { code: "device_foreign", message: deviceLeaseMessages.block(id, platform, existing.owner) },
+				};
+			}
+			if (!opts.claim) {
+				return {
+					success: false,
+					error: {
+						code: "device_not_leased",
+						message: existing
+							? `device ${id} has a stale lease (${leaseModel.describeOwner(existing.owner)})`
+							: `device ${id} is not leased`,
+					},
+				};
+			}
+			if (existing) store.deleteLeases([existing.id]);
+			return resultFactory.ok({
+				lease: this.insertCallerLease(owner, probe, opts),
+				action: existing ? "reclaimed" : "leased",
+			});
 		});
-	});
-}
-
-/**
- * The caller's own lease. Held by another live process: shared (`warden dev`) → `attached` (its holder keeps the
- * heartbeat), else with `exclusive` → `device_busy`. Otherwise heartbeat it.
- */
-function ownLease(store: Store, existing: Lease, opts: EnsureLeaseOptions): Result<CallerLease, DeviceLeaseError> {
-	const held = heldByOtherProcess(existing, opts);
-	if (held && existing.shared) return resultFactory.ok({ lease: existing, action: "attached" });
-	if (opts.exclusive && held) {
-		return { success: false, error: { code: "device_busy", message: busyMessage(existing) } };
 	}
-	store.heartbeat([existing.id], opts.now);
-	return resultFactory.ok({ lease: { ...existing, heartbeatAt: opts.now }, action: "own" });
-}
 
-function insertCallerLease(store: Store, owner: Owner, probe: DeviceResource, opts: EnsureLeaseOptions): Lease {
-	const known = store.listDevices(probe.platform).find((d) => d.id === probe.id);
-	return store.insertLease(
-		{
-			resource: {
-				...probe,
-				name: opts.name ?? known?.name ?? probe.id,
-				...(opts.physical !== undefined ? { physical: opts.physical } : {}),
+	/**
+	 * The caller's own lease. Held by another live process: shared (`warden dev`) → `attached` (its holder keeps the
+	 * heartbeat), else with `exclusive` → `device_busy`. Otherwise heartbeat it.
+	 */
+	private ownLease(existing: Lease, opts: EnsureLeaseOptions): Result<CallerLease, DeviceLeaseError> {
+		const held = this.heldByOtherProcess(existing, opts);
+		if (held && existing.shared) return resultFactory.ok({ lease: existing, action: "attached" });
+		if (opts.exclusive && held) {
+			return { success: false, error: { code: "device_busy", message: deviceLeaseMessages.busy(existing) } };
+		}
+		this.store.heartbeat([existing.id], opts.now);
+		return resultFactory.ok({ lease: { ...existing, heartbeatAt: opts.now }, action: "own" });
+	}
+
+	/** An own lease another live process holds: its pid is set, is not the caller's liveness pid, and is alive. */
+	private heldByOtherProcess(lease: Lease, opts: EnsureLeaseOptions): boolean {
+		return lease.pid !== undefined && lease.pid !== opts.pid && opts.pidAlive(lease.pid);
+	}
+
+	private insertCallerLease(owner: Owner, probe: DeviceResource, opts: EnsureLeaseOptions): Lease {
+		const { store } = this;
+		const known = store.listDevices(probe.platform).find((d) => d.id === probe.id);
+		return store.insertLease(
+			{
+				resource: {
+					...probe,
+					name: opts.name ?? known?.name ?? probe.id,
+					...(opts.physical !== undefined ? { physical: opts.physical } : {}),
+				},
+				owner,
+				ttlMs: opts.ttlMs ?? DEFAULT_TTL_MS,
+				label: opts.label,
+				...(opts.pid !== undefined ? { pid: opts.pid } : {}),
+				...(opts.bootedByOwner ? { bootedByOwner: true } : {}),
 			},
-			owner,
-			ttlMs: opts.ttlMs ?? DEFAULT_TTL_MS,
-			label: opts.label,
-			...(opts.pid !== undefined ? { pid: opts.pid } : {}),
-			...(opts.bootedByOwner ? { bootedByOwner: true } : {}),
-		},
-		opts.now
-	);
+			opts.now
+		);
+	}
 }
 
 /** What `releaseDevices` needs from a command/hook context. */
@@ -159,43 +172,44 @@ export type ReleaseOptions = {
  * synchronously, before the first await. `after` then runs per device lease. Unknown ids are skipped.
  * Returns the leases that existed.
  */
-export async function releaseDevices(
-	host: ReleaseHost,
-	leaseIds: readonly string[],
-	opts: ReleaseOptions = {}
-): Promise<Lease[]> {
-	const store = host.store();
-	const conditioned = leaseIds
-		.flatMap((id) => store.getLease(id) ?? [])
-		.filter((l) => (opts.only?.(l) ?? true) && (host.conditions?.has(l) ?? false));
-	if (conditioned.length > 0) {
-		const report = opts.onNote ?? ((note: string) => host.err?.(`warden: ${note}`));
-		const notes = await Promise.all(conditioned.map((l) => host.conditions?.undo(l) ?? []));
-		for (const note of notes.flat()) report(note);
-	}
-	const leases = store.transaction(() => {
-		const found = leaseIds.flatMap((id) => store.getLease(id) ?? []).filter((l) => opts.only?.(l) ?? true);
-		store.deleteLeases(found.map((l) => l.id));
-		if (opts.touch !== false) {
-			const now = host.now();
-			for (const l of found)
-				if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
+export class DeviceReleaser {
+	constructor(private readonly host: ReleaseHost) {}
+
+	async release(leaseIds: readonly string[], opts: ReleaseOptions = {}): Promise<Lease[]> {
+		const { host } = this;
+		const store = host.store();
+		const conditioned = leaseIds
+			.flatMap((id) => store.getLease(id) ?? [])
+			.filter((l) => (opts.only?.(l) ?? true) && (host.conditions?.has(l) ?? false));
+		if (conditioned.length > 0) {
+			const report = opts.onNote ?? ((note: string) => host.err?.(`warden: ${note}`));
+			const notes = await Promise.all(conditioned.map((l) => host.conditions?.undo(l) ?? []));
+			for (const note of notes.flat()) report(note);
 		}
-		return found;
-	});
-	const after = opts.after;
-	if (after) {
-		await Promise.all(
-			leases.flatMap((l) =>
-				l.resource.kind === "device"
-					? [
-							Promise.resolve(l.resource.id)
-								.then(after)
-								.catch(() => undefined),
-						]
-					: []
-			)
-		);
+		const leases = store.transaction(() => {
+			const found = leaseIds.flatMap((id) => store.getLease(id) ?? []).filter((l) => opts.only?.(l) ?? true);
+			store.deleteLeases(found.map((l) => l.id));
+			if (opts.touch !== false) {
+				const now = host.now();
+				for (const l of found)
+					if (l.resource.kind === "device") store.touchDevice(l.resource.platform, l.resource.id, now);
+			}
+			return found;
+		});
+		const after = opts.after;
+		if (after) {
+			await Promise.all(
+				leases.flatMap((l) =>
+					l.resource.kind === "device"
+						? [
+								Promise.resolve(l.resource.id)
+									.then(after)
+									.catch(() => undefined),
+							]
+						: []
+				)
+			);
+		}
+		return leases;
 	}
-	return leases;
 }

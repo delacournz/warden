@@ -1,9 +1,9 @@
 import { PENDING_PREFIX } from "@delacour/warden-leasing/claim";
-import { releaseDevices } from "@delacour/warden-leasing/device-lease";
-import { type ShutdownOutcome, shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
-import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
-import { isEmptySelector, NOTHING_SELECTED, selectLeases } from "@delacour/warden-leasing/lease-select";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
+import { ReleasedDeviceShutdown, type ShutdownOutcome } from "@delacour/warden-leasing/device-shutdown";
+import { inventoryMarker } from "@delacour/warden-leasing/inventory";
+import { LeaseSelection, leaseSelectorRules, NOTHING_SELECTED } from "@delacour/warden-leasing/lease-select";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { ReleaseJson } from "@delacour/warden-sdk/contracts/leases";
 import { type Lease, leaseModel } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
@@ -31,7 +31,7 @@ function quarantineReleased(ctx: CommandContext, leases: Lease[], reason: string
 		if (l.resource.kind !== "device" || l.resource.id.startsWith(PENDING_PREFIX)) continue;
 		const { platform, id, name } = l.resource;
 		const record = records.find((r) => r.platform === platform && r.id === id);
-		const profile = record?.profile ?? wardenNameProfile(name);
+		const profile = record?.profile ?? inventoryMarker.profileOf(name);
 		if (!record && profile === undefined) {
 			notes.push(`${name} (${id}) is not a warden device — released, not quarantined`);
 			continue;
@@ -55,7 +55,7 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 		reportError(ctx, "release", NOTHING_SELECTED);
 		return { kind: "exit", code: 1 };
 	}
-	const me = resolveOwner(ctx);
+	const me = ownerResolver.resolve(ctx);
 	const mineFirst = [...all].sort(
 		(a, b) => Number(leaseModel.sameOwner(b.owner, me)) - Number(leaseModel.sameOwner(a.owner, me))
 	);
@@ -86,14 +86,17 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): Promise<number> {
 	const { color } = ctx.ui;
 	const selector = selectorFrom(ids, opts);
-	const picked = isEmptySelector(selector) ? await pickLeases(ctx, opts) : { kind: "ids" as const, ids };
+	const picked = leaseSelectorRules.isEmpty(selector) ? await pickLeases(ctx, opts) : { kind: "ids" as const, ids };
 	if (picked.kind === "exit") return picked.code;
-	const { leases, unknown } = selectLeases(ctx, { ...selector, ids: picked.ids });
+	const { leases, unknown } = new LeaseSelection(ctx).select({ ...selector, ids: picked.ids });
 	const devices = leases.filter((l) => l.resource.kind === "device");
 	const { shutdown, notes }: ShutdownOutcome =
 		opts.shutdown && devices.length > 0
 			? await withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {
-					const outcome = await shutdownReleasedDevices(leaseHostFromContext(sctx), leases, resolveOwner(ctx));
+					const outcome = await new ReleasedDeviceShutdown(leaseHostFromContext(sctx)).run(
+						leases,
+						ownerResolver.resolve(ctx)
+					);
 					spinner.succeed(
 						outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down"
 					);
@@ -104,8 +107,7 @@ async function release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): P
 		opts.bad !== undefined
 			? quarantineReleased(ctx, leases, typeof opts.bad === "string" ? opts.bad : undefined)
 			: { quarantined: [], notes: [] };
-	await releaseDevices(
-		ctx,
+	await new DeviceReleaser(ctx).release(
 		leases.map((l) => l.id),
 		{ after: releaseAfter(ctx, { helper: opts.shutdown === true }) }
 	);

@@ -1,4 +1,4 @@
-import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { AgentOwner, Lease, Owner, Platform } from "@delacour/warden-store/types";
@@ -103,8 +103,7 @@ export async function handleSessionEnd(raw: unknown, deps: HookDeps): Promise<Ho
 				lines.push(`warden: shutdown failed (${errorMessage(error)}) — releasing anyway`);
 			}
 		}
-		await releaseDevices(
-			deps,
+		await new DeviceReleaser(deps).release(
 			leases.map((l) => l.id),
 			{ after: deps.stopHelper }
 		);

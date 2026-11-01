@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { blockMessage } from "@delacour/warden-leasing/device-lease";
+import { deviceLeaseMessages } from "@delacour/warden-leasing/device-lease";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
@@ -42,7 +42,7 @@ describe("warden ui status", () => {
 		const c = setup(["status", "--udid", UDID]);
 		lease(c, UDID, other);
 		expect(await uiCommand.run(c)).toBe(2);
-		expect(c.stderr.join("\n")).toContain(blockMessage(UDID, "ios", other));
+		expect(c.stderr.join("\n")).toContain(deviceLeaseMessages.block(UDID, "ios", other));
 		expect(c.stdout).toEqual([]);
 	});
 
@@ -53,7 +53,7 @@ describe("warden ui status", () => {
 		expect(json(c)).toEqual({
 			ok: false,
 			command: "status",
-			error: { code: "device_foreign", message: blockMessage(UDID, "ios", other) },
+			error: { code: "device_foreign", message: deviceLeaseMessages.block(UDID, "ios", other) },
 		});
 		expect(c.stderr).toEqual([]);
 	});
@@ -268,7 +268,7 @@ describe("warden ui on a device a live warden process holds (refuse unless --for
 		const c = setup(["snapshot", "--udid", UDID, "--force"]);
 		lease(c, UDID, other);
 		expect(await uiCommand.run(c)).toBe(2);
-		expect(c.stderr.join("\n")).toContain(blockMessage(UDID, "ios", other));
+		expect(c.stderr.join("\n")).toContain(deviceLeaseMessages.block(UDID, "ios", other));
 	});
 
 	const snap = () => snapshotOf(LOGIN);

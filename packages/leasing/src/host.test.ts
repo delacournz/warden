@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { memoryPressure, readHostFacts } from "./host";
+import { hostProbe } from "./host";
 
 const GB = 1024 ** 3;
 const osFacts = { totalMem: 8 * GB, cores: 4 };
@@ -17,7 +17,7 @@ function fakeExec(replies: Record<string, Partial<ExecResult>>): Exec {
 describe("readHostFacts", () => {
 	test("macOS Apple silicon reads memsize + perf/eff cores from sysctl", async () => {
 		const exec = fakeExec({ "sysctl -n hw.memsize": { stdout: `${48 * GB}\n10\n4\n` } });
-		expect(await readHostFacts(exec, "darwin", osFacts)).toEqual({
+		expect(await hostProbe.readFacts(exec, "darwin", osFacts)).toEqual({
 			totalMem: 48 * GB,
 			perfCores: 10,
 			effCores: 4,
@@ -27,7 +27,7 @@ describe("readHostFacts", () => {
 
 	test("macOS without perflevel keys falls back to os core count, eff 0", async () => {
 		const exec = fakeExec({ "sysctl -n hw.memsize": { exitCode: 1, stdout: `${16 * GB}\n` } });
-		expect(await readHostFacts(exec, "darwin", osFacts)).toEqual({
+		expect(await hostProbe.readFacts(exec, "darwin", osFacts)).toEqual({
 			totalMem: 16 * GB,
 			perfCores: 4,
 			effCores: 0,
@@ -36,7 +36,7 @@ describe("readHostFacts", () => {
 	});
 
 	test("sysctl missing falls back to os facts", async () => {
-		expect(await readHostFacts(fakeExec({}), "darwin", osFacts)).toEqual({
+		expect(await hostProbe.readFacts(fakeExec({}), "darwin", osFacts)).toEqual({
 			totalMem: 8 * GB,
 			perfCores: 4,
 			effCores: 0,
@@ -48,7 +48,7 @@ describe("readHostFacts", () => {
 		const exec: Exec = async () => {
 			throw new Error("should not run");
 		};
-		expect(await readHostFacts(exec, "linux", osFacts)).toEqual({
+		expect(await hostProbe.readFacts(exec, "linux", osFacts)).toEqual({
 			totalMem: 8 * GB,
 			perfCores: 4,
 			effCores: 0,
@@ -58,7 +58,7 @@ describe("readHostFacts", () => {
 
 	test("garbage sysctl output falls back", async () => {
 		const exec = fakeExec({ "sysctl -n hw.memsize": { stdout: "nope\n" } });
-		expect((await readHostFacts(exec, "darwin", osFacts)).totalMem).toBe(8 * GB);
+		expect((await hostProbe.readFacts(exec, "darwin", osFacts)).totalMem).toBe(8 * GB);
 	});
 });
 
@@ -69,7 +69,7 @@ describe("memoryPressure", () => {
 		["4", "critical"],
 	] as const)("macOS sysctl level %s is %s", async (level, expected) => {
 		const exec = fakeExec({ "sysctl -n kern.memorystatus_vm_pressure_level": { stdout: `${level}\n` } });
-		expect(await memoryPressure(exec, "darwin")).toEqual({ success: true, data: expected });
+		expect(await hostProbe.memoryPressure(exec, "darwin")).toEqual({ success: true, data: expected });
 	});
 
 	test.each([
@@ -81,7 +81,7 @@ describe("memoryPressure", () => {
 			"sysctl -n kern.memorystatus_vm_pressure_level": { stdout: "2\n" },
 			memory_pressure: { stdout: `System-wide memory free percentage: ${free}%\n` },
 		});
-		expect(await memoryPressure(exec, "darwin")).toEqual({ success: true, data: expected });
+		expect(await hostProbe.memoryPressure(exec, "darwin")).toEqual({ success: true, data: expected });
 	});
 
 	test("macOS sysctl critical holds whatever memory_pressure says", async () => {
@@ -89,7 +89,7 @@ describe("memoryPressure", () => {
 			"sysctl -n kern.memorystatus_vm_pressure_level": { stdout: "4\n" },
 			memory_pressure: { stdout: "System-wide memory free percentage: 60%\n" },
 		});
-		expect(await memoryPressure(exec, "darwin")).toEqual({ success: true, data: "critical" });
+		expect(await hostProbe.memoryPressure(exec, "darwin")).toEqual({ success: true, data: "critical" });
 	});
 
 	test.each([
@@ -100,11 +100,11 @@ describe("memoryPressure", () => {
 		const exec = fakeExec({
 			memory_pressure: { stdout: `The system has 1 pages.\nSystem-wide memory free percentage: ${free}%\n` },
 		});
-		expect(await memoryPressure(exec, "darwin")).toEqual({ success: true, data: expected });
+		expect(await hostProbe.memoryPressure(exec, "darwin")).toEqual({ success: true, data: expected });
 	});
 
 	test("macOS with nothing readable is an error", async () => {
-		const result = await memoryPressure(fakeExec({}), "darwin");
+		const result = await hostProbe.memoryPressure(fakeExec({}), "darwin");
 		expect(result.success).toBe(false);
 	});
 
@@ -116,15 +116,15 @@ describe("memoryPressure", () => {
 		const exec = fakeExec({
 			"cat /proc/meminfo": { stdout: `MemTotal:       10000000 kB\nMemFree: 1 kB\nMemAvailable:   ${avail} kB\n` },
 		});
-		expect(await memoryPressure(exec, "linux")).toEqual({ success: true, data: expected });
+		expect(await hostProbe.memoryPressure(exec, "linux")).toEqual({ success: true, data: expected });
 	});
 
 	test("linux without MemAvailable is an error", async () => {
 		const exec = fakeExec({ "cat /proc/meminfo": { stdout: "MemTotal: 1 kB\n" } });
-		expect((await memoryPressure(exec, "linux")).success).toBe(false);
+		expect((await hostProbe.memoryPressure(exec, "linux")).success).toBe(false);
 	});
 
 	test("other os is an error", async () => {
-		expect((await memoryPressure(fakeExec({}), "other")).success).toBe(false);
+		expect((await hostProbe.memoryPressure(fakeExec({}), "other")).success).toBe(false);
 	});
 });

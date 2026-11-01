@@ -93,8 +93,8 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		},
 
 		async reveal(info) {
-			const { revealSimWindow } = await import("@delacour/warden-leasing/sim-windows");
-			const shown = await revealSimWindow(ctx, info.deviceId);
+			const { SimWindowArranger } = await import("@delacour/warden-leasing/sim-windows");
+			const shown = await new SimWindowArranger(ctx).reveal(info.deviceId);
 			return shown.success ? resultFactory.ok(undefined) : failure(shown.error);
 		},
 

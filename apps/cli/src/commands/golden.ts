@@ -6,8 +6,8 @@ import {
 } from "@delacour/warden-core/golden/android-golden";
 import { ensureGolden, listGoldens, pruneGoldens } from "@delacour/warden-core/golden/ios-golden";
 import { androidGoldenDeps, goldenDeps, type Sleep } from "@delacour/warden-core/host-deps";
-import { resolveAutoProfile } from "@delacour/warden-leasing/claim-request";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { claimRequestRules } from "@delacour/warden-leasing/claim-request";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Adb } from "@delacour/warden-providers/android";
 import { biometricProfiles } from "@delacour/warden-providers/biometrics";
 import { leaseModel } from "@delacour/warden-store/types";
@@ -35,7 +35,8 @@ async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string>
 	const avds = await new Adb({ exec: ctx.exec, env: ctx.env }).listAvds();
 	if (!avds.success) return wardenErrors.toText(avds);
 	const { profile: base, biometrics } = biometricProfiles.split(profile);
-	const slug = base === "auto" ? wardenErrors.toText(resolveAutoProfile(avds.data)) : resultFactory.ok(base);
+	const slug =
+		base === "auto" ? wardenErrors.toText(claimRequestRules.resolveAutoProfile(avds.data)) : resultFactory.ok(base);
 	if (!slug.success) return slug;
 	const avd = avds.data.find((a) => leaseModel.profileSlug(a) === slug.data);
 	return avd !== undefined
@@ -51,7 +52,7 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 	if (!avd.success) return fail(ctx, avd.error);
 	const snapshot = await withSpinner(ctx, `ensuring quick-boot snapshot of ${avd.data}…`, async (sctx, spinner) => {
 		const result = await ensureAndroidSnapshot(
-			androidGoldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep),
+			androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep),
 			avd.data,
 			{
 				explicit: true,
@@ -78,7 +79,9 @@ async function ensureAndroid(ctx: CommandContext, sleep: Sleep | undefined, opts
 
 async function lsAndroid(ctx: CommandContext, sleep: Sleep | undefined, json: boolean): Promise<number> {
 	const { color } = ctx.ui;
-	const snapshots = await listAndroidSnapshots(androidGoldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep));
+	const snapshots = await listAndroidSnapshots(
+		androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep)
+	);
 	if (!snapshots.success) return fail(ctx, snapshots.error);
 	const text = table(
 		ctx,
@@ -102,7 +105,7 @@ async function ensure(ctx: CommandContext, sleep: Sleep | undefined, opts: Ensur
 	if (!opts.json) heading(ctx, "golden ensure", profile);
 	const golden = await withSpinner(ctx, `ensuring golden ${profile} image…`, async (sctx, spinner) => {
 		const result = await ensureGolden(
-			goldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep),
+			goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep),
 			profile,
 			opts.runtime
 		);
@@ -127,7 +130,7 @@ async function ls(ctx: CommandContext, sleep: Sleep | undefined, opts: PlatformO
 	const json = opts.json === true;
 	if (platform === "android") return lsAndroid(ctx, sleep, json);
 	const { color } = ctx.ui;
-	const goldens = await listGoldens(goldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep));
+	const goldens = await listGoldens(goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep));
 	if (!goldens.success) return fail(ctx, goldens.error);
 	const text = table(
 		ctx,
@@ -164,8 +167,8 @@ async function confirmPruneAll(ctx: CommandContext, sleep: Sleep | undefined, op
 	}
 	const goldens: Result<unknown[]> =
 		opts.platform === "android"
-			? await listAndroidSnapshots(androidGoldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep))
-			: await listGoldens(goldenDeps(appHostFromContext(ctx), resolveOwner(ctx), sleep));
+			? await listAndroidSnapshots(androidGoldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep))
+			: await listGoldens(goldenDeps(appHostFromContext(ctx), ownerResolver.resolve(ctx), sleep));
 	if (!goldens.success) return fail(ctx, goldens.error);
 	if (goldens.data.length === 0) return 0;
 	const answer = await ui.confirm(`Delete all ${goldens.data.length} golden image(s)?`, false);
@@ -188,8 +191,8 @@ async function prune(ctx: CommandContext, sleep: Sleep | undefined, opts: PruneO
 		all ? "deleting golden images…" : "pruning stale golden images…",
 		(sctx): AsyncResult<Array<{ name: string }>> =>
 			platform === "android"
-				? pruneAndroidSnapshots(androidGoldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep), { all })
-				: pruneGoldens(goldenDeps(appHostFromContext(sctx), resolveOwner(ctx), sleep), { all })
+				? pruneAndroidSnapshots(androidGoldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep), { all })
+				: pruneGoldens(goldenDeps(appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep), { all })
 	);
 	if (!pruned.success) return fail(ctx, pruned.error);
 	const text =

@@ -4,18 +4,10 @@ import { OWNER_ENV, simctlFakes } from "@delacour/warden-providers/testing/simct
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { InventoryDevice, Lease } from "@delacour/warden-store/types";
 import type { ClaimedDevice } from "./claim";
-import {
-	bootedByClaim,
-	type ClaimRequest,
-	claimedJson,
-	claimWithRequest,
-	headlessDeps,
-	resolveAutoProfile,
-	resolvePriority,
-} from "./claim-request";
-import { resolveOwner } from "./owner";
+import { type ClaimRequest, ClaimRequestRunner, claimRequestRules } from "./claim-request";
+import { ownerResolver } from "./owner";
 import type { HideStart } from "./sim-windows";
-import { type TestLeaseHost, testLeaseHost } from "./testing/lease-host.testing";
+import { leaseHostFixture, type TestLeaseHost } from "./testing/lease-host.testing";
 
 let ctx: TestLeaseHost | undefined;
 afterEach(() => ctx?.cleanup());
@@ -33,21 +25,27 @@ function flags(extra: Partial<ClaimRequest> = {}): ClaimRequest {
 describe("resolvePriority", () => {
 	test("flag beats WARDEN_PRIORITY beats the command default beats normal", () => {
 		const env = { WARDEN_PRIORITY: "low" };
-		expect(resolvePriority(flags({ priority: 20, defaultPriority: 0 }), env)).toEqual({ success: true, data: 20 });
-		expect(resolvePriority(flags({ defaultPriority: 20 }), env)).toEqual({ success: true, data: 0 });
-		expect(resolvePriority(flags({ defaultPriority: 20 }), {})).toEqual({ success: true, data: 20 });
-		expect(resolvePriority(flags(), {})).toEqual({ success: true, data: 10 });
-		expect(resolvePriority(flags(), { WARDEN_PRIORITY: "x" }).success).toBe(false);
+		expect(claimRequestRules.resolvePriority(flags({ priority: 20, defaultPriority: 0 }), env)).toEqual({
+			success: true,
+			data: 20,
+		});
+		expect(claimRequestRules.resolvePriority(flags({ defaultPriority: 20 }), env)).toEqual({ success: true, data: 0 });
+		expect(claimRequestRules.resolvePriority(flags({ defaultPriority: 20 }), {})).toEqual({ success: true, data: 20 });
+		expect(claimRequestRules.resolvePriority(flags(), {})).toEqual({ success: true, data: 10 });
+		expect(claimRequestRules.resolvePriority(flags(), { WARDEN_PRIORITY: "x" }).success).toBe(false);
 	});
 });
 
 describe("resolveAutoProfile", () => {
 	test("android auto → first AVD slug", () => {
-		expect(resolveAutoProfile(["Pixel_10", "Pixel_9_Pro_Store"])).toEqual({ success: true, data: "pixel-10" });
+		expect(claimRequestRules.resolveAutoProfile(["Pixel_10", "Pixel_9_Pro_Store"])).toEqual({
+			success: true,
+			data: "pixel-10",
+		});
 	});
 
 	test("no AVDs → error", () => {
-		expect(resolveAutoProfile([]).success).toBe(false);
+		expect(claimRequestRules.resolveAutoProfile([]).success).toBe(false);
 	});
 });
 
@@ -59,17 +57,17 @@ describe("bootedByClaim", () => {
 	});
 
 	test("a device that was already running is not one: its window (or lack of one) is already settled", () => {
-		expect(bootedByClaim({ claimed: [claimed("a", "reuse")] })).toEqual([]);
+		expect(claimRequestRules.bootedByClaim({ claimed: [claimed("a", "reuse")] })).toEqual([]);
 	});
 
 	test("booted or created by the claim → its window may still be on its way", () => {
 		const outcome = { claimed: [claimed("a", "boot"), claimed("b", "create"), claimed("c", "reuse")] };
-		expect(bootedByClaim(outcome).map((c) => c.device.name)).toEqual(["a", "b"]);
+		expect(claimRequestRules.bootedByClaim(outcome).map((c) => c.device.name)).toEqual(["a", "b"]);
 	});
 
 	test("a reused device the claim had to boot (it was shut down) counts: the lease says who booted it", () => {
 		const outcome = { claimed: [claimed("a", "reuse", { bootedByOwner: true })] };
-		expect(bootedByClaim(outcome).map((c) => c.device.name)).toEqual(["a"]);
+		expect(claimRequestRules.bootedByClaim(outcome).map((c) => c.device.name)).toEqual(["a"]);
 	});
 });
 
@@ -102,14 +100,14 @@ describe("headless hide wiring", () => {
 	let hctx: TestLeaseHost | undefined;
 	afterEach(() => hctx?.cleanup());
 	const make = () => {
-		hctx = testLeaseHost({ exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
+		hctx = leaseHostFixture.build({ exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
 		hctx.env = { ...hctx.env, ...OWNER_ENV };
 		return hctx;
 	};
 
 	test("headlessDeps arbitrates Simulator's close setting through the shared store, as this process", () => {
 		const c = make();
-		const lock = headlessDeps(c).detachLock;
+		const lock = new ClaimRequestRunner(c).headlessDeps().detachLock;
 		expect(lock?.store).toBe(c.db);
 		expect(lock?.pid).toBe(process.pid);
 		expect(lock?.pidAlive(process.pid)).toBe(true);
@@ -119,7 +117,7 @@ describe("headless hide wiring", () => {
 		const c = make();
 		const req = flags({ headless: true });
 		const starts: HideStart[] = [];
-		const outcome = await claimWithRequest(c, resolveOwner(c), req, undefined, {
+		const outcome = await new ClaimRequestRunner(c).claim(ownerResolver.resolve(c), req, undefined, {
 			onHide: (start) => starts.push(start),
 		});
 		expect(outcome.success).toBe(true);
@@ -136,11 +134,11 @@ describe("headless hide wiring", () => {
 			release = resolve;
 		});
 		const exec = macSimulator(simctl, calls, gate);
-		hctx = testLeaseHost({ exec });
+		hctx = leaseHostFixture.build({ exec });
 		hctx.env = { ...hctx.env, ...OWNER_ENV };
 		const req = flags({ headless: true });
 		const starts: HideStart[] = [];
-		const outcome = await claimWithRequest(hctx, resolveOwner(hctx), req, undefined, {
+		const outcome = await new ClaimRequestRunner(hctx).claim(ownerResolver.resolve(hctx), req, undefined, {
 			onHide: (start) => starts.push(start),
 			os: "darwin",
 		});
@@ -164,7 +162,7 @@ describe("headless hide wiring", () => {
 		const c = make();
 		const req = flags();
 		let called = false;
-		await claimWithRequest(c, resolveOwner(c), req, undefined, {
+		await new ClaimRequestRunner(c).claim(ownerResolver.resolve(c), req, undefined, {
 			onHide: () => {
 				called = true;
 			},
@@ -204,11 +202,10 @@ describe("Device Hub windows after a claim (Xcode 27)", () => {
 
 	async function claim(running: "DeviceHub" | "none", headless: boolean) {
 		const calls: string[][] = [];
-		dctx = testLeaseHost({ exec: viewer(running, calls) });
+		dctx = leaseHostFixture.build({ exec: viewer(running, calls) });
 		dctx.env = { ...dctx.env, ...OWNER_ENV, WARDEN_ARRANGE: "1" };
-		const outcome = await claimWithRequest(
-			dctx,
-			resolveOwner(dctx),
+		const outcome = await new ClaimRequestRunner(dctx).claim(
+			ownerResolver.resolve(dctx),
 			flags(headless ? { headless: true } : {}),
 			undefined,
 			{ os: "darwin" }
@@ -240,25 +237,29 @@ describe("claim options handed to the host", () => {
 	test("an iOS claim passes the resolved slim profile and physical options to providerFor", async () => {
 		const seen: unknown[] = [];
 		const simctl = simctlFakes.build([simctlFakes.wardenSim(1, "Booted")], []);
-		const c = testLeaseHost({ exec: simctl });
+		const c = leaseHostFixture.build({ exec: simctl });
 		ctx = c;
 		const inner = c.providerFor;
 		c.providerFor = (platform, owner, opts) => {
 			seen.push(opts);
 			return inner(platform, owner, opts);
 		};
-		await claimWithRequest(c, resolveOwner(c), flags({ slim: { flag: false }, headless: true }), undefined, {
-			os: "linux",
-		});
+		await new ClaimRequestRunner(c).claim(
+			ownerResolver.resolve(c),
+			flags({ slim: { flag: false }, headless: true }),
+			undefined,
+			{
+				os: "linux",
+			}
+		);
 		expect(seen[0]).toEqual({ slim: false, physical: false });
 	});
 
 	test("a bad slim setting fails the claim before any device is touched", async () => {
-		const c = testLeaseHost();
+		const c = leaseHostFixture.build();
 		ctx = c;
-		const outcome = await claimWithRequest(
-			c,
-			resolveOwner(c),
+		const outcome = await new ClaimRequestRunner(c).claim(
+			ownerResolver.resolve(c),
 			flags({ slim: { config: { keep: ["no-such-label"] } } }),
 			undefined
 		);
@@ -293,7 +294,7 @@ describe("claimedJson", () => {
 			physical: { transport: "usb" },
 		});
 		const virtual = lease({ kind: "device", platform: "android", id: "R5", name: "Pixel" });
-		const json = claimedJson({
+		const json = claimRequestRules.claimedJson({
 			reclaimed: [],
 			claimed: [
 				{ device, lease: phone, action: "reuse" },

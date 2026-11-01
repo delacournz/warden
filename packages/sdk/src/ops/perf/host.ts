@@ -1,6 +1,6 @@
 import { metroOwner } from "@delacour/warden-builds/metro";
 import { findMetro } from "@delacour/warden-devtools/metro";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { leaseModel } from "@delacour/warden-store/types";
 import { readMetroUrl } from "./device-state";
 import type { PerfHostDeps } from "./types";
@@ -9,7 +9,7 @@ import type { PerfHostDeps } from "./types";
 export const defaultPerfHostDeps: PerfHostDeps = {
 	platform: process.platform,
 	metro: async (env, udid) => {
-		const owner = resolveOwner(env);
+		const owner = ownerResolver.resolve(env);
 		const stateUrl = udid === undefined ? undefined : readMetroUrl(env, udid);
 		const portLeases = env
 			.store()

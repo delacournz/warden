@@ -1,4 +1,4 @@
-import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
+import { ReleasedDeviceShutdown } from "@delacour/warden-leasing/device-shutdown";
 import { liveness } from "@delacour/warden-store/liveness";
 import { backgroundAllowed, selfCommand, spawnDetached } from "../autogc";
 import { defineCommand } from "../command";
@@ -12,7 +12,7 @@ function hookDeps(ctx: CommandContext): HookDeps {
 		store: ctx.store,
 		now: ctx.now,
 		pidAlive: liveness.processAlive,
-		shutdown: (leases, owner) => shutdownReleasedDevices(leaseHostFromContext(ctx), leases, owner),
+		shutdown: (leases, owner) => new ReleasedDeviceShutdown(leaseHostFromContext(ctx)).run(leases, owner),
 		endInBackground: (sessionId) => {
 			if (!backgroundAllowed(ctx.env)) return false;
 			spawnDetached([...selfCommand(), "release", "--session", sessionId, "--shutdown"], {

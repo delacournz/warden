@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "@commander-js/extra-typings";
-import { isEmptySelector, type LeaseSelector } from "@delacour/warden-leasing/lease-select";
+import { type LeaseSelector, leaseSelectorRules } from "@delacour/warden-leasing/lease-select";
 import { selectorFrom, withSelectOptions } from "./lease-select";
 
 function parse(argv: string[]): LeaseSelector {
@@ -27,6 +27,6 @@ describe("lease selection options", () => {
 	test("nothing given → empty selector", () => {
 		const selector = parse([]);
 		expect(selector).toEqual({ ids: [], udids: [], mine: false });
-		expect(isEmptySelector(selector)).toBe(true);
+		expect(leaseSelectorRules.isEmpty(selector)).toBe(true);
 	});
 });

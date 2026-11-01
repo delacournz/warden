@@ -7,7 +7,7 @@ import type {
 	RunnerBuildError,
 } from "@delacour/warden-builds/ios-runner/runner-build.types";
 import type { BuildLockDeps } from "@delacour/warden-builds/lock";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { liveness } from "@delacour/warden-store/liveness";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -75,7 +75,7 @@ export function createRunnerBuild(ctx: CommandContext, deps: RunnerBuildDeps = {
 function defaultLock(ctx: CommandContext): BuildLockDeps {
 	return {
 		store: ctx.store(),
-		owner: resolveOwner(ctx),
+		owner: ownerResolver.resolve(ctx),
 		pid: process.pid,
 		now: Date.now,
 		pidAlive: liveness.processAlive,

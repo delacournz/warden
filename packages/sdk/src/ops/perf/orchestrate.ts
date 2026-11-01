@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { releaseDevices } from "@delacour/warden-leasing/device-lease";
+import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
 import { crashFindings } from "@delacour/warden-perf/logs/crash-findings";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
 import { clampMaxDuration } from "@delacour/warden-perf/shared/caps";
@@ -126,7 +126,7 @@ function failCapturer(ctx: PerfUiEnv, id: string, kind: PerfSession["capturers"]
 async function giveBackLease(ctx: PerfUiEnv, id: string): Promise<void> {
 	const plan = readPlan(ctx, id);
 	if (plan?.leaseId === undefined) return;
-	await releaseDevices(ctx, [plan.leaseId], { touch: false });
+	await new DeviceReleaser(ctx).release([plan.leaseId], { touch: false });
 	updatePlan(ctx, id, (p) => ({ ...p, leaseId: undefined }));
 }
 
@@ -275,7 +275,7 @@ async function openSession(
 		...(offset === undefined ? {} : { deviceWallMs: ctx.now() + offset }),
 	});
 	if (!created.success && input.tookLease && working.lease !== undefined)
-		await releaseDevices(ctx, [working.lease.id], { touch: false });
+		await new DeviceReleaser(ctx).release([working.lease.id], { touch: false });
 	return created;
 }
 

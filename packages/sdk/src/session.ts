@@ -8,7 +8,7 @@ import { assignRefs } from "@delacour/warden-driver/refs";
 import { traceDriver } from "@delacour/warden-driver/traced-driver";
 
 import { connectHelper } from "@delacour/warden-driver-ios/helper";
-import { type CallerLease, ensureCallerLease } from "@delacour/warden-leasing/device-lease";
+import { type CallerLease, CallerLeaseGate } from "@delacour/warden-leasing/device-lease";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { formatSelector } from "@delacour/warden-screen/selector";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
@@ -157,7 +157,7 @@ export function deviceOf(core: Core, ref: DeviceRef): { platform: Platform; id: 
  * (`leases.claim` does that).
  */
 export function requireLease(core: Core, device: { platform: Platform; id: string; name?: string }): CallerLease {
-	const checked = ensureCallerLease(core.store(), core.owner, device.platform, device.id, {
+	const checked = new CallerLeaseGate(core.store()).ensure(core.owner, device.platform, device.id, {
 		now: core.host.now(),
 		pidAlive: core.host.pidAlive,
 		claim: false,

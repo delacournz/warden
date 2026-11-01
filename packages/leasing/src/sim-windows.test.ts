@@ -6,35 +6,24 @@ import { IOS_TIMEOUTS } from "@delacour/warden-providers/ios";
 import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { storeLocator } from "@delacour/warden-store/store";
-import {
-	arrangeSimWindows,
-	autoArrangeSimWindows,
-	closeSimWindows,
-	DETACH_PREF_META,
-	detectSimViewer,
-	deviceName,
-	hideSimWindows,
-	layoutWindows,
-	openDeviceHubWindows,
-	reopenSimWindows,
-	revealSimWindow,
-	type SimWindow,
-	startHideSimWindows,
-} from "./sim-windows";
+import { DETACH_PREF_META, type SimWindow, SimWindowArranger, SimWindowHider, simWindowLayout } from "./sim-windows";
 
 const screen = { x: 0, y: 33, width: 1728, height: 1021 };
 const sim = (title: string, width = 456, height = 972): SimWindow => ({ title, width, height });
 
 describe("deviceName", () => {
 	test("strips the ` – <runtime>` suffix", () => {
-		expect(deviceName("warden-iphone-17-1 – iOS 26.5")).toBe("warden-iphone-17-1");
-		expect(deviceName("warden-ipad")).toBe("warden-ipad");
+		expect(simWindowLayout.deviceName("warden-iphone-17-1 – iOS 26.5")).toBe("warden-iphone-17-1");
+		expect(simWindowLayout.deviceName("warden-ipad")).toBe("warden-ipad");
 	});
 });
 
 describe("layoutWindows", () => {
 	test("natural name order, side by side when they fit", () => {
-		const plan = layoutWindows([sim("warden-iphone-17-10 – iOS 26.5"), sim("warden-iphone-17-2 – iOS 26.5")], screen);
+		const plan = simWindowLayout.layout(
+			[sim("warden-iphone-17-10 – iOS 26.5"), sim("warden-iphone-17-2 – iOS 26.5")],
+			screen
+		);
 		expect(plan).toEqual([
 			{ title: "warden-iphone-17-2 – iOS 26.5", x: 0, y: 33 },
 			{ title: "warden-iphone-17-10 – iOS 26.5", x: 464, y: 33 },
@@ -44,7 +33,7 @@ describe("layoutWindows", () => {
 	test("Device Hub's fixed 340x751 windows (not resizable) tile side by side, name order", () => {
 		const hub = { x: 0, y: 25, width: 1440, height: 875 };
 		const windows = [3, 1, 2].map((n) => sim(`warden-iphone-17-${n} – iOS 27.1`, 340, 751));
-		expect(layoutWindows(windows, hub).map((p) => [p.title.slice(14, 20), p.x, p.y])).toEqual([
+		expect(simWindowLayout.layout(windows, hub).map((p) => [p.title.slice(14, 20), p.x, p.y])).toEqual([
 			["17-1 –", 0, 25],
 			["17-2 –", 348, 25],
 			["17-3 –", 696, 25],
@@ -52,13 +41,16 @@ describe("layoutWindows", () => {
 	});
 
 	test("only warden sims", () => {
-		const plan = layoutWindows([sim("iPhone 17 Pro – iOS 26.5"), sim("warden-iphone-17-1 – iOS 26.5")], screen);
+		const plan = simWindowLayout.layout(
+			[sim("iPhone 17 Pro – iOS 26.5"), sim("warden-iphone-17-1 – iOS 26.5")],
+			screen
+		);
 		expect(plan.map((p) => p.title)).toEqual(["warden-iphone-17-1 – iOS 26.5"]);
 	});
 
 	test("overlaps evenly to fill the screen when the row is too wide; last one ends at the edge", () => {
 		const windows = [5, 3, 1, 4, 2].map((n) => sim(`warden-iphone-17-${n} – iOS 26.5`));
-		const plan = layoutWindows(windows, screen);
+		const plan = simWindowLayout.layout(windows, screen);
 		expect(plan.map((p) => p.title)).toEqual([1, 2, 3, 4, 5].map((n) => `warden-iphone-17-${n} – iOS 26.5`));
 		expect(plan.map((p) => p.x)).toEqual([0, 318, 636, 954, 1272]);
 		expect(plan.every((p) => p.y === 33)).toBe(true);
@@ -66,7 +58,7 @@ describe("layoutWindows", () => {
 
 	test("wraps to more rows when the screen is tall enough", () => {
 		const tall = { x: 0, y: 25, width: 1000, height: 2000 };
-		const plan = layoutWindows(
+		const plan = simWindowLayout.layout(
 			[1, 2, 3, 4].map((n) => sim(`warden-iphone-17-${n} – iOS 26.5`)),
 			tall
 		);
@@ -79,12 +71,12 @@ describe("layoutWindows", () => {
 	});
 
 	test("respects the screen origin", () => {
-		const plan = layoutWindows([sim("warden-a")], { x: 100, y: 50, width: 800, height: 1000 });
+		const plan = simWindowLayout.layout([sim("warden-a")], { x: 100, y: 50, width: 800, height: 1000 });
 		expect(plan).toEqual([{ title: "warden-a", x: 100, y: 50 }]);
 	});
 
 	test("nothing to arrange", () => {
-		expect(layoutWindows([], screen)).toEqual([]);
+		expect(simWindowLayout.layout([], screen)).toEqual([]);
 	});
 });
 
@@ -110,23 +102,27 @@ function viewerExec(running: "simulator" | "device-hub" | "none", calls: string[
 describe("detectSimViewer", () => {
 	test("Simulator.app (Xcode ≤ 26) running → simulator, one pgrep", async () => {
 		const calls: string[][] = [];
-		expect(await detectSimViewer(viewerExec("simulator", calls))).toEqual({ kind: "simulator" });
+		expect(await new SimWindowArranger({ exec: viewerExec("simulator", calls) }).detectViewer()).toEqual({
+			kind: "simulator",
+		});
 		expect(calls).toEqual([["pgrep", "-xq", "Simulator"]]);
 	});
 
 	test("Device Hub (Xcode 27) running → device-hub", async () => {
 		const calls: string[][] = [];
-		expect(await detectSimViewer(viewerExec("device-hub", calls))).toEqual({ kind: "device-hub" });
+		expect(await new SimWindowArranger({ exec: viewerExec("device-hub", calls) }).detectViewer()).toEqual({
+			kind: "device-hub",
+		});
 		expect(calls).toEqual(NO_VIEWER);
 	});
 
 	test("neither running → none", async () => {
-		expect(await detectSimViewer(viewerExec("none"))).toEqual({ kind: "none" });
+		expect(await new SimWindowArranger({ exec: viewerExec("none") }).detectViewer()).toEqual({ kind: "none" });
 	});
 
 	test("pgrep broken → unknown, assume Simulator.app so osascript still looks", async () => {
 		const exec: Exec = async () => ({ exitCode: 127, stdout: "", stderr: "" });
-		expect(await detectSimViewer(exec)).toEqual({ kind: "simulator" });
+		expect(await new SimWindowArranger({ exec: exec }).detectViewer()).toEqual({ kind: "simulator" });
 	});
 });
 
@@ -146,7 +142,7 @@ describe("arrangeSimWindows", () => {
 			screen,
 			windows: [sim("warden-iphone-17-2 – iOS 26.5"), sim("warden-iphone-17-1 – iOS 26.5")],
 		});
-		const result = await arrangeSimWindows(scripted(read, calls));
+		const result = await new SimWindowArranger({ exec: scripted(read, calls) }).arrange();
 		expect(result).toEqual({
 			success: true,
 			data: { arranged: ["warden-iphone-17-1", "warden-iphone-17-2"], viewer: "simulator" },
@@ -162,7 +158,9 @@ describe("arrangeSimWindows", () => {
 
 	test("no warden windows → no move call", async () => {
 		const calls: string[][] = [];
-		const result = await arrangeSimWindows(scripted(JSON.stringify({ screen, windows: [] }), calls));
+		const result = await new SimWindowArranger({
+			exec: scripted(JSON.stringify({ screen, windows: [] }), calls),
+		}).arrange();
 		expect(result).toEqual({ success: true, data: { arranged: [], viewer: "simulator" } });
 		expect(osascripts(calls)).toHaveLength(1);
 	});
@@ -173,7 +171,10 @@ describe("arrangeSimWindows", () => {
 			calls.push([...cmd]);
 			return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
 		};
-		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "none" } });
+		expect(await new SimWindowArranger({ exec: exec }).arrange()).toEqual({
+			success: true,
+			data: { arranged: [], viewer: "none" },
+		});
 		expect(calls).toEqual(NO_VIEWER);
 	});
 
@@ -191,7 +192,7 @@ describe("arrangeSimWindows", () => {
 			}
 			return inner(cmd);
 		};
-		const result = await arrangeSimWindows(exec);
+		const result = await new SimWindowArranger({ exec: exec }).arrange();
 		expect(result).toEqual({
 			success: true,
 			data: { arranged: ["warden-iphone-17-1", "warden-iphone-17-2"], viewer: "device-hub" },
@@ -220,7 +221,7 @@ describe("arrangeSimWindows", () => {
 				}
 				return inner(cmd);
 			};
-			await arrangeSimWindows(exec);
+			await new SimWindowArranger({ exec: exec }).arrange();
 		}
 		for (const script of scripts["device-hub"] ?? []) expect(script).toContain("deviceWindow-");
 		for (const script of scripts.simulator ?? []) {
@@ -239,7 +240,10 @@ describe("arrangeSimWindows", () => {
 			if (cmd[0] === "pgrep") return { exitCode, stdout: "", stderr: "" };
 			return { exitCode: 0, stdout: JSON.stringify({ screen, windows: [] }), stderr: "" };
 		};
-		expect(await arrangeSimWindows(exec)).toEqual({ success: true, data: { arranged: [], viewer: "simulator" } });
+		expect(await new SimWindowArranger({ exec: exec }).arrange()).toEqual({
+			success: true,
+			data: { arranged: [], viewer: "simulator" },
+		});
 		expect(osascripts(calls)).toHaveLength(1);
 	});
 
@@ -248,13 +252,13 @@ describe("arrangeSimWindows", () => {
 			cmd[0] === "pgrep"
 				? { exitCode: 0, stdout: "", stderr: "" }
 				: { exitCode: 1, stdout: "", stderr: "not allowed assistive access. (-1719)" };
-		const result = await arrangeSimWindows(exec);
+		const result = await new SimWindowArranger({ exec: exec }).arrange();
 		expect(result.success).toBe(false);
 		expect(!result.success && result.error).toContain("Accessibility");
 	});
 
 	test("garbage read output → error", async () => {
-		const result = await arrangeSimWindows(scripted("nope", []));
+		const result = await new SimWindowArranger({ exec: scripted("nope", []) }).arrange();
 		expect(result.success).toBe(false);
 	});
 });
@@ -279,13 +283,13 @@ describe("autoArrangeSimWindows", () => {
 
 	test("retries until the claimed sim's window shows up", async () => {
 		const fake = reads(["warden-iphone-17-1"], ["warden-iphone-17-1", "warden-iphone-17-2"]);
-		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "darwin", sleep }, ["warden-iphone-17-2"]);
+		await new SimWindowArranger({ exec: fake.exec, env: {}, os: "darwin", sleep }).autoArrange(["warden-iphone-17-2"]);
 		expect(fake.reads()).toBe(2);
 	});
 
 	test("Simulator.app not showing anything → one read, no wait", async () => {
 		const fake = reads([]);
-		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "darwin", sleep }, ["warden-iphone-17-2"]);
+		await new SimWindowArranger({ exec: fake.exec, env: {}, os: "darwin", sleep }).autoArrange(["warden-iphone-17-2"]);
 		expect(osascripts(fake.calls)).toHaveLength(1);
 	});
 
@@ -296,27 +300,29 @@ describe("autoArrangeSimWindows", () => {
 			calls.push([...cmd]);
 			return { exitCode: cmd[0] === "pgrep" ? 1 : 0, stdout: "", stderr: "" };
 		};
-		await autoArrangeSimWindows({ exec, env: {}, os: "darwin", sleep: async (ms) => void waits.push(ms) }, ["a"]);
+		await new SimWindowArranger({ exec, env: {}, os: "darwin", sleep: async (ms) => void waits.push(ms) }).autoArrange([
+			"a",
+		]);
 		expect(calls).toEqual(NO_VIEWER);
 		expect(waits).toEqual([]);
 	});
 
 	test("no device to wait for (all reused) → arranged once, never waits for a window that cannot appear", async () => {
 		const fake = reads(["warden-iphone-17-1"]);
-		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "darwin", sleep }, []);
+		await new SimWindowArranger({ exec: fake.exec, env: {}, os: "darwin", sleep }).autoArrange([]);
 		expect(fake.reads()).toBe(1);
 	});
 
 	test("gives up after a few tries", async () => {
 		const fake = reads(["warden-iphone-17-1"]);
-		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "darwin", sleep }, ["warden-iphone-17-9"]);
+		await new SimWindowArranger({ exec: fake.exec, env: {}, os: "darwin", sleep }).autoArrange(["warden-iphone-17-9"]);
 		expect(fake.reads()).toBe(6);
 	});
 
 	test("off with WARDEN_ARRANGE=0 or off macOS", async () => {
 		const fake = reads(["warden-iphone-17-1"]);
-		await autoArrangeSimWindows({ exec: fake.exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin", sleep }, []);
-		await autoArrangeSimWindows({ exec: fake.exec, env: {}, os: "linux", sleep }, []);
+		await new SimWindowArranger({ exec: fake.exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin", sleep }).autoArrange([]);
+		await new SimWindowArranger({ exec: fake.exec, env: {}, os: "linux", sleep }).autoArrange([]);
 		expect(fake.calls).toHaveLength(0);
 	});
 });
@@ -420,7 +426,7 @@ describe("hideSimWindows", () => {
 
 	test("closes only the windows of leased devices", async () => {
 		const f = fake(["warden-iphone-17-1 – iOS 26.5", "warden-iphone-17-3 – iOS 26.5", "iPhone 17 Pro – iOS 26.5"]);
-		const out = await hideSimWindows(f.deps, leased);
+		const out = await new SimWindowHider(f.deps).hide(leased);
 		expect(out).toEqual({ closed: ["warden-iphone-17-1"], rebooted: [] });
 		const close = closeCalls(f.calls);
 		expect(close).toHaveLength(1);
@@ -430,7 +436,7 @@ describe("hideSimWindows", () => {
 
 	test("no viewer running → no close, never launched, not even an osascript (the two `pgrep -xq` only)", async () => {
 		const f = fake(undefined);
-		expect(await hideSimWindows(f.deps, leased)).toEqual({ closed: [], rebooted: [] });
+		expect(await new SimWindowHider(f.deps).hide(leased)).toEqual({ closed: [], rebooted: [] });
 		expect(f.calls).toEqual(NO_VIEWER);
 		expect(closeCalls(f.calls)).toHaveLength(0);
 		expect(f.calls.some((c) => c.join(" ").includes("open -a"))).toBe(false);
@@ -445,7 +451,7 @@ describe("hideSimWindows", () => {
 			sleep: async () => {},
 			warn: (line: string) => warnings.push(line),
 		};
-		const start = await startHideSimWindows(deps, leased);
+		const start = await new SimWindowHider(deps).start(leased);
 		expect(start.closed).toEqual([]);
 		expect(await start.settled).toEqual({ closed: [], rebooted: [] });
 		expect(calls).toEqual(NO_VIEWER);
@@ -454,7 +460,7 @@ describe("hideSimWindows", () => {
 
 	test("a device the close shut down is booted again headless, with a warning", async () => {
 		const f = fake(["warden-iphone-17-1 – iOS 26.5", "warden-iphone-17-2 – iOS 26.5"], { U2: "Shutdown" });
-		const out = await hideSimWindows(f.deps, leased);
+		const out = await new SimWindowHider(f.deps).hide(leased);
 		expect(out).toEqual({ closed: ["warden-iphone-17-1", "warden-iphone-17-2"], rebooted: ["warden-iphone-17-2"] });
 		const simctl = f.calls.filter((c) => c[0] === "xcrun").map((c) => c.join(" "));
 		expect(simctl).toContain("xcrun simctl boot U2");
@@ -470,22 +476,19 @@ describe("hideSimWindows", () => {
 			if (cmd.join(" ").startsWith("xcrun simctl boot ")) events.push(`boot ${cmd[3]}`);
 			return f.deps.exec(cmd);
 		};
-		await hideSimWindows(
-			{
-				...f.deps,
-				exec,
-				onShutDown: async (udid) => {
-					events.push(`shut down ${udid}`);
-				},
+		await new SimWindowHider({
+			...f.deps,
+			exec,
+			onShutDown: async (udid) => {
+				events.push(`shut down ${udid}`);
 			},
-			leased
-		);
+		}).hide(leased);
 		expect(events).toEqual(["shut down U2", "boot U2"]);
 	});
 
 	test("closes with DetachOnWindowClose on (device keeps running), then deletes the unset preference again", async () => {
 		const f = fake(["warden-iphone-17-1 – iOS 26.5"]);
-		await hideSimWindows(f.deps, leased);
+		await new SimWindowHider(f.deps).hide(leased);
 		expect(defaultsCalls(f.calls)).toEqual([
 			`defaults read ${PREF}`,
 			`defaults write ${PREF} -bool true`,
@@ -500,22 +503,22 @@ describe("hideSimWindows", () => {
 
 	test("a user's DetachOnWindowClose = false is put back; true is left alone", async () => {
 		const off = fake(["warden-iphone-17-1 – iOS 26.5"], {}, "0");
-		await hideSimWindows(off.deps, leased);
+		await new SimWindowHider(off.deps).hide(leased);
 		expect(defaultsCalls(off.calls).at(-1)).toBe(`defaults write ${PREF} -bool false`);
 		const on = fake(["warden-iphone-17-1 – iOS 26.5"], {}, "1");
-		await hideSimWindows(on.deps, leased);
+		await new SimWindowHider(on.deps).hide(leased);
 		expect(defaultsCalls(on.calls)).toEqual([`defaults read ${PREF}`]);
 	});
 
 	test("nothing to close → the preference is never touched", async () => {
 		const f = fake(["iPhone 17 Pro – iOS 26.5"]);
-		await hideSimWindows(f.deps, leased);
+		await new SimWindowHider(f.deps).hide(leased);
 		expect(defaultsCalls(f.calls)).toEqual([]);
 	});
 
 	test("a device still Shutting Down is waited for before it is booted again; its reattached window is closed again", async () => {
 		const f = fake(["warden-iphone-17-2 – iOS 26.5"], { U2: ["Shutting Down", "Shutting Down", "Shutdown"] });
-		const out = await hideSimWindows(f.deps, leased);
+		const out = await new SimWindowHider(f.deps).hide(leased);
 		expect(out.rebooted).toEqual(["warden-iphone-17-2"]);
 		const lines = f.calls.map((c) => c.join(" "));
 		const lastList = lines.lastIndexOf("xcrun simctl list devices -j");
@@ -530,10 +533,12 @@ describe("hideSimWindows", () => {
 				? { exitCode: 0, stdout: "", stderr: "" }
 				: { exitCode: 1, stdout: "", stderr: "not allowed assistive access. (-1719)" };
 		const warnings: string[] = [];
-		const out = await hideSimWindows(
-			{ exec, os: "darwin", sleep: async () => {}, warn: (l) => warnings.push(l) },
-			leased
-		);
+		const out = await new SimWindowHider({
+			exec,
+			os: "darwin",
+			sleep: async () => {},
+			warn: (l) => warnings.push(l),
+		}).hide(leased);
 		expect(out).toEqual({ closed: [], rebooted: [] });
 		expect(warnings.join("\n")).toContain("Accessibility");
 	});
@@ -562,18 +567,20 @@ describe("hideSimWindows", () => {
 			if (cmd[2] === "bootstatus") return { exitCode: 1, stdout: "", stderr: "boom" };
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const out = await hideSimWindows(
-			{ exec, os: "darwin", sleep: async () => {}, warn: (l) => warnings.push(l) },
-			leased
-		);
+		const out = await new SimWindowHider({
+			exec,
+			os: "darwin",
+			sleep: async () => {},
+			warn: (l) => warnings.push(l),
+		}).hide(leased);
 		expect(out.rebooted).toEqual([]);
 		expect(warnings.join("\n")).toContain("boom");
 	});
 
 	test("off macOS or nothing leased → no calls", async () => {
 		const f = fake(["warden-iphone-17-1 – iOS 26.5"]);
-		await hideSimWindows({ ...f.deps, os: "linux" }, leased);
-		await hideSimWindows(f.deps, []);
+		await new SimWindowHider({ ...f.deps, os: "linux" }).hide(leased);
+		await new SimWindowHider(f.deps).hide([]);
 		expect(f.calls).toHaveLength(0);
 	});
 });
@@ -600,7 +607,7 @@ describe("hideSimWindows: reboots", () => {
 				return done();
 			},
 		});
-		const hide = hideSimWindows(f.deps, leased);
+		const hide = new SimWindowHider(f.deps).hide(leased);
 		// both boots are under way before either finishes booting
 		for (let i = 0; i < 50 && events.filter((e) => e.startsWith("bootstatus")).length < 2; i++) await Bun.sleep(1);
 		expect(events.slice(0, 4).sort()).toEqual(["boot U1", "boot U2", "bootstatus U1", "bootstatus U2"]);
@@ -616,7 +623,7 @@ describe("hideSimWindows: reboots", () => {
 		const f = fakeSimulator(leased, both, { U1: "Shutdown", U2: "Shutdown" }, undefined, {
 			boot: async (udid) => (udid === "U2" ? done("", 1, "Unable to boot: boom-boot") : done()),
 		});
-		const out = await hideSimWindows(f.deps, leased);
+		const out = await new SimWindowHider(f.deps).hide(leased);
 		expect(out.rebooted.sort()).toEqual(["warden-iphone-17-1", "warden-iphone-17-2"]);
 		expect(out.failed).toBeUndefined();
 		expect(f.warnings.join("\n")).toContain("boom-boot");
@@ -628,7 +635,7 @@ describe("hideSimWindows: reboots", () => {
 			boot: async (udid) => (udid === "U2" ? done("", 1, "Unable to boot: boom-boot") : done()),
 			bootstatus: async (udid) => (udid === "U2" ? done("", 1, "boom-status") : done()),
 		});
-		const out = await hideSimWindows(f.deps, leased);
+		const out = await new SimWindowHider(f.deps).hide(leased);
 		expect(out.rebooted).toEqual(["warden-iphone-17-1"]);
 		expect(out.failed).toEqual(["warden-iphone-17-2"]);
 		const warned = f.warnings.join("\n");
@@ -640,14 +647,14 @@ describe("hideSimWindows: reboots", () => {
 		const f = fakeSimulator(leased, both, { U1: "Shutdown" }, undefined, {
 			boot: async () => done("", 149, "Unable to boot device in current state: Booted"),
 		});
-		const out = await hideSimWindows(f.deps, leased);
+		const out = await new SimWindowHider(f.deps).hide(leased);
 		expect(out.rebooted).toEqual(["warden-iphone-17-1"]);
 		expect(out.failed).toBeUndefined();
 	});
 
 	test("a rebooted device that fails the warm probe is warned about and reported failed", async () => {
 		const f = fakeSimulator(leased, both, { U1: "Shutdown" }, undefined, { springboard: false });
-		const out = await hideSimWindows(f.deps, leased);
+		const out = await new SimWindowHider(f.deps).hide(leased);
 		expect(out.rebooted).toEqual([]);
 		expect(out.failed).toEqual(["warden-iphone-17-1"]);
 		expect(f.warnings.join("\n")).toContain("SpringBoard");
@@ -672,7 +679,7 @@ describe("startHideSimWindows", () => {
 				return done();
 			},
 		});
-		const start = await startHideSimWindows(f.deps, leased);
+		const start = await new SimWindowHider(f.deps).start(leased);
 		expect(start.closed).toEqual(["warden-iphone-17-1", "warden-iphone-17-2"]);
 		expect(f.calls.some((c) => c[2] === "boot")).toBe(false);
 		expect(await start.down).toEqual([{ udid: "U2", name: "warden-iphone-17-2" }]);
@@ -693,7 +700,7 @@ describe("startHideSimWindows", () => {
 
 	test("nothing shut down → `down` is empty and nothing boots", async () => {
 		const f = fakeSimulator(leased, both, {}, undefined);
-		const start = await startHideSimWindows(f.deps, leased);
+		const start = await new SimWindowHider(f.deps).start(leased);
 		expect(await start.down).toEqual([]);
 		expect(await start.settled).toEqual({ closed: ["warden-iphone-17-1", "warden-iphone-17-2"], rebooted: [] });
 		expect(f.calls.some((c) => c[2] === "boot")).toBe(false);
@@ -701,7 +708,7 @@ describe("startHideSimWindows", () => {
 
 	test("nothing to close → everything already resolved", async () => {
 		const f = fakeSimulator(leased, undefined, {}, undefined);
-		const start = await startHideSimWindows(f.deps, leased);
+		const start = await new SimWindowHider(f.deps).start(leased);
 		expect(start.closed).toEqual([]);
 		expect(await start.down).toEqual([]);
 		expect(await start.settled).toEqual({ closed: [], rebooted: [] });
@@ -740,9 +747,9 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		});
 		const b = fakeSimulator(two, ["warden-iphone-17-2 – iOS 26.5"], {}, undefined, { pref, closeMs: 40 });
 		const lock = (store: typeof storeA) => ({ store, pid: process.pid, pidAlive: () => true });
-		const hideA = hideSimWindows({ ...a.deps, sleep: tick, detachLock: lock(storeA) }, one);
+		const hideA = new SimWindowHider({ ...a.deps, sleep: tick, detachLock: lock(storeA) }).hide(one);
 		await bStarted;
-		const hideB = hideSimWindows({ ...b.deps, sleep: tick, detachLock: lock(storeB) }, two);
+		const hideB = new SimWindowHider({ ...b.deps, sleep: tick, detachLock: lock(storeB) }).hide(two);
 		await Promise.all([hideA, hideB]);
 		storeA.close();
 		storeB.close();
@@ -772,7 +779,9 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 				store.deleteMeta(DETACH_PREF_META);
 			}
 		};
-		await hideSimWindows({ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: () => true } }, one);
+		await new SimWindowHider({ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: () => true } }).hide(
+			one
+		);
 		expect(pref.atClose).toEqual(["1"]);
 		expect(pref.value).toBeUndefined();
 		const defaults = f.calls.filter((c) => c[0] === "defaults").map((c) => c[1]);
@@ -797,10 +806,11 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		);
 		const pref: PrefBox = { value: "1", atClose: [] };
 		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
-		await hideSimWindows(
-			{ ...f.deps, sleep: tick, detachLock: { store, pid: process.pid, pidAlive: (pid) => pid === process.pid } },
-			one
-		);
+		await new SimWindowHider({
+			...f.deps,
+			sleep: tick,
+			detachLock: { store, pid: process.pid, pidAlive: (pid) => pid === process.pid },
+		}).hide(one);
 		expect(pref.atClose).toEqual(["1"]);
 		expect(pref.value).toBe("0");
 		expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
@@ -835,7 +845,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			pref.value = "1";
 			store.setMeta(DETACH_PREF_META, JSON.stringify({ ...row(store), phase: "set", before: "off" }));
 		};
-		await hideSimWindows({ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: alive } }, one);
+		await new SimWindowHider({ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: alive } }).hide(one);
 		expect(waits).toBe(1);
 		expect(pref.atClose).toEqual(["1"]);
 		// joined, so never read nor wrote; the other process is still a holder, so nothing restored
@@ -855,10 +865,11 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		// it died before putting `off` back
 		const pref: PrefBox = { value: "1", atClose: [] };
 		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
-		await hideSimWindows(
-			{ ...f.deps, sleep: tick, detachLock: { store, pid: process.pid, pidAlive: (pid) => pid === process.pid } },
-			one
-		);
+		await new SimWindowHider({
+			...f.deps,
+			sleep: tick,
+			detachLock: { store, pid: process.pid, pidAlive: (pid) => pid === process.pid },
+		}).hide(one);
 		expect(pref.atClose).toEqual(["1"]);
 		expect(writes(f.calls)).toEqual(["read", "write"]);
 		expect(pref.value).toBe("0");
@@ -879,10 +890,11 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		const sleep = async (ms: number) => {
 			if (ms === 50) waits++;
 		};
-		const out = await hideSimWindows(
-			{ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: alive } },
-			one
-		);
+		const out = await new SimWindowHider({
+			...f.deps,
+			sleep,
+			detachLock: { store, pid: process.pid, pidAlive: alive },
+		}).hide(one);
 		expect(waits).toBe(200);
 		expect(out.closed).toEqual(["warden-iphone-17-1"]);
 		expect(f.warnings.join("\n")).toContain("closing anyway");
@@ -903,10 +915,11 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		const sleep = async (ms: number) => {
 			if (ms === 50) waits++;
 		};
-		const out = await hideSimWindows(
-			{ ...f.deps, sleep, detachLock: { store, pid: process.pid, pidAlive: alive } },
-			one
-		);
+		const out = await new SimWindowHider({
+			...f.deps,
+			sleep,
+			detachLock: { store, pid: process.pid, pidAlive: alive },
+		}).hide(one);
 		expect(waits).toBe(200);
 		expect(out.closed).toEqual(["warden-iphone-17-1"]);
 		expect(f.warnings.join("\n")).toContain("closing anyway");
@@ -920,10 +933,11 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 		const store = storeLocator.open(dbPath());
 		const pref: PrefBox = { value: undefined, atClose: [] };
 		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref, closeFails: true });
-		const out = await hideSimWindows(
-			{ ...f.deps, sleep: tick, detachLock: { store, pid: process.pid, pidAlive: alive } },
-			one
-		);
+		const out = await new SimWindowHider({
+			...f.deps,
+			sleep: tick,
+			detachLock: { store, pid: process.pid, pidAlive: alive },
+		}).hide(one);
 		expect(out).toEqual({ closed: [], rebooted: [] });
 		expect(f.warnings.join("\n")).toContain("close-boom");
 		expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
@@ -958,7 +972,11 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			);
 			const pref: PrefBox = { value: "1", atClose: [] };
 			const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
-			await hideSimWindows({ ...f.deps, sleep: tick, detachLock: lockAt(store, (pid) => pid === process.pid) }, one);
+			await new SimWindowHider({
+				...f.deps,
+				sleep: tick,
+				detachLock: lockAt(store, (pid) => pid === process.pid),
+			}).hide(one);
 			expect(writes(f.calls)).toEqual(["read"]);
 			expect(pref.value).toBe("1");
 			expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
@@ -981,7 +999,11 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			// the user deleted it since the crash
 			const pref: PrefBox = { value: undefined, atClose: [] };
 			const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
-			await hideSimWindows({ ...f.deps, sleep: tick, detachLock: lockAt(store, (pid) => pid === process.pid) }, one);
+			await new SimWindowHider({
+				...f.deps,
+				sleep: tick,
+				detachLock: lockAt(store, (pid) => pid === process.pid),
+			}).hide(one);
 			expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
 			expect(pref.value).toBeUndefined();
 			store.close();
@@ -1003,7 +1025,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			);
 			const pref: PrefBox = { value: undefined, atClose: [] };
 			const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref });
-			await hideSimWindows({ ...f.deps, sleep: tick, detachLock: lockAt(store, alive) }, one);
+			await new SimWindowHider({ ...f.deps, sleep: tick, detachLock: lockAt(store, alive) }).hide(one);
 			expect(pref.atClose).toEqual(["1"]);
 			expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
 			expect(store.getMeta(DETACH_PREF_META)).toBeUndefined();
@@ -1024,7 +1046,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			const sleep = async (ms: number) => {
 				if (ms === 50) waits++;
 			};
-			await hideSimWindows({ ...f.deps, sleep, detachLock: lockAt(store, alive) }, one);
+			await new SimWindowHider({ ...f.deps, sleep, detachLock: lockAt(store, alive) }).hide(one);
 			expect(waits).toBe(0);
 			expect(f.warnings).toEqual([]);
 			expect(writes(f.calls)).toEqual(["read", "write", "delete"]);
@@ -1071,9 +1093,9 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			// A joined at T; by B's arrival 400 s have passed, more than the 300 s TTL
 			const { pref, a } = longHold(clock, { bootSec: 200, statusSec: 200 }, async () => {
 				b = fakeSimulator(two, titleB, {}, undefined, { pref });
-				await hideSimWindows({ ...b.deps, sleep: tick, detachLock: lock(storeB) }, two);
+				await new SimWindowHider({ ...b.deps, sleep: tick, detachLock: lock(storeB) }).hide(two);
 			});
-			const out = await hideSimWindows({ ...a.deps, sleep: tick, detachLock: lock(storeA) }, one);
+			const out = await new SimWindowHider({ ...a.deps, sleep: tick, detachLock: lock(storeA) }).hide(one);
 			expect(out.rebooted).toEqual(["warden-iphone-17-1"]);
 			// B joined A's hold: it never read or wrote the setting, and A, last out, put the user's unset back
 			expect(b && writes(b.calls)).toEqual([]);
@@ -1096,9 +1118,9 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 			// one step (bootstatus) silent for 400 s
 			const { a } = longHold(clock, { bootSec: 0, statusSec: 400 }, async () => {
 				b = fakeSimulator(two, titleB, {}, undefined, { pref: { value: "1", atClose: [] } });
-				await hideSimWindows({ ...b.deps, sleep: tick, detachLock: lock(storeB) }, two);
+				await new SimWindowHider({ ...b.deps, sleep: tick, detachLock: lock(storeB) }).hide(two);
 			});
-			await hideSimWindows({ ...a.deps, sleep: tick, detachLock: lock(storeA) }, one);
+			await new SimWindowHider({ ...a.deps, sleep: tick, detachLock: lock(storeA) }).hide(one);
 			// B took the row over (it read the setting itself): A no longer counted
 			expect(b && writes(b.calls)).toEqual(["read"]);
 			storeA.close();
@@ -1112,7 +1134,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 				if (cmd[0] === "xcrun") timeouts.set(cmd.slice(0, 3).join(" "), opts?.timeoutMs);
 				return f.deps.exec(cmd, opts);
 			};
-			await hideSimWindows({ ...f.deps, exec }, one);
+			await new SimWindowHider({ ...f.deps, exec }).hide(one);
 			expect(timeouts.get("xcrun simctl boot")).toBe(IOS_TIMEOUTS.bootMs);
 			expect(timeouts.get("xcrun simctl list")).toBe(IOS_TIMEOUTS.listMs);
 		});
@@ -1128,7 +1150,11 @@ describe("openDeviceHubWindows", () => {
 
 	test("Device Hub running → one `open -g devices://device/open?id=<udid>` per sim, names returned", async () => {
 		const calls: string[][] = [];
-		const opened = await openDeviceHubWindows({ exec: viewerExec("device-hub", calls), env: {}, os: "darwin" }, sims);
+		const opened = await new SimWindowArranger({
+			exec: viewerExec("device-hub", calls),
+			env: {},
+			os: "darwin",
+		}).openDeviceHubWindows(sims);
 		expect(opened).toEqual(["warden-iphone-17-1", "warden-iphone-17-2"]);
 		expect(opens(calls)).toEqual([
 			["open", "-g", "devices://device/open?id=U1"],
@@ -1140,7 +1166,11 @@ describe("openDeviceHubWindows", () => {
 		"%s → nothing opened (the URL would launch Device Hub)",
 		async (running) => {
 			const calls: string[][] = [];
-			expect(await openDeviceHubWindows({ exec: viewerExec(running, calls), env: {}, os: "darwin" }, sims)).toEqual([]);
+			expect(
+				await new SimWindowArranger({ exec: viewerExec(running, calls), env: {}, os: "darwin" }).openDeviceHubWindows(
+					sims
+				)
+			).toEqual([]);
 			expect(opens(calls)).toHaveLength(0);
 		}
 	);
@@ -1148,9 +1178,11 @@ describe("openDeviceHubWindows", () => {
 	test("not macOS, WARDEN_ARRANGE=0 or no sims → nothing runs", async () => {
 		const calls: string[][] = [];
 		const exec = viewerExec("device-hub", calls);
-		expect(await openDeviceHubWindows({ exec, env: {}, os: "linux" }, sims)).toEqual([]);
-		expect(await openDeviceHubWindows({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }, sims)).toEqual([]);
-		expect(await openDeviceHubWindows({ exec, env: {}, os: "darwin" }, [])).toEqual([]);
+		expect(await new SimWindowArranger({ exec, env: {}, os: "linux" }).openDeviceHubWindows(sims)).toEqual([]);
+		expect(
+			await new SimWindowArranger({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }).openDeviceHubWindows(sims)
+		).toEqual([]);
+		expect(await new SimWindowArranger({ exec, env: {}, os: "darwin" }).openDeviceHubWindows([])).toEqual([]);
 		expect(calls).toEqual([]);
 	});
 
@@ -1159,7 +1191,9 @@ describe("openDeviceHubWindows", () => {
 		const inner = viewerExec("device-hub", calls);
 		const exec: Exec = async (cmd) =>
 			cmd[0] === "open" && cmd[2]?.endsWith("U1") ? { exitCode: 1, stdout: "", stderr: "boom" } : inner(cmd);
-		expect(await openDeviceHubWindows({ exec, env: {}, os: "darwin" }, sims)).toEqual(["warden-iphone-17-2"]);
+		expect(await new SimWindowArranger({ exec, env: {}, os: "darwin" }).openDeviceHubWindows(sims)).toEqual([
+			"warden-iphone-17-2",
+		]);
 	});
 });
 
@@ -1178,8 +1212,7 @@ describe("autoArrangeSimWindows after opening Device Hub windows", () => {
 				stderr: "",
 			};
 		};
-		await autoArrangeSimWindows(
-			{ exec, env: {}, os: "darwin", sleep: async (ms) => void waits.push(ms) },
+		await new SimWindowArranger({ exec, env: {}, os: "darwin", sleep: async (ms) => void waits.push(ms) }).autoArrange(
 			["warden-iphone-17-1"],
 			["warden-iphone-17-1"]
 		);
@@ -1202,8 +1235,7 @@ describe("autoArrangeSimWindows after opening Device Hub windows", () => {
 		};
 		const reopened: (readonly string[])[] = [];
 		const claimed = ["warden-iphone-17-1", "warden-iphone-17-2"];
-		await autoArrangeSimWindows(
-			{ exec, env: {}, os: "darwin", sleep: async () => {} },
+		await new SimWindowArranger({ exec, env: {}, os: "darwin", sleep: async () => {} }).autoArrange(
 			claimed,
 			claimed,
 			async (missing) => void reopened.push(missing)
@@ -1236,7 +1268,7 @@ describe("reopenSimWindows", () => {
 			}
 			return inner(cmd, opts);
 		};
-		const opened = await reopenSimWindows({ exec, env: {}, os: "darwin", sleep: async () => {} }, ["U2"]);
+		const opened = await new SimWindowArranger({ exec, env: {}, os: "darwin", sleep: async () => {} }).reopen(["U2"]);
 		expect(opened).toEqual(["warden-iphone-17-2"]);
 		expect(calls.filter((c) => c[0] === "open")).toEqual([["open", "-g", "devices://device/open?id=U2"]]);
 		expect(osascripts(calls).length).toBeGreaterThanOrEqual(2);
@@ -1245,9 +1277,11 @@ describe("reopenSimWindows", () => {
 	test("WARDEN_ARRANGE=0, not macOS or no udids → nothing runs", async () => {
 		const calls: string[][] = [];
 		const exec = viewerExec("device-hub", calls);
-		expect(await reopenSimWindows({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }, ["U1"])).toEqual([]);
-		expect(await reopenSimWindows({ exec, env: {}, os: "linux" }, ["U1"])).toEqual([]);
-		expect(await reopenSimWindows({ exec, env: {}, os: "darwin" }, [])).toEqual([]);
+		expect(await new SimWindowArranger({ exec, env: { WARDEN_ARRANGE: "0" }, os: "darwin" }).reopen(["U1"])).toEqual(
+			[]
+		);
+		expect(await new SimWindowArranger({ exec, env: {}, os: "linux" }).reopen(["U1"])).toEqual([]);
+		expect(await new SimWindowArranger({ exec, env: {}, os: "darwin" }).reopen([])).toEqual([]);
 		expect(calls).toEqual([]);
 	});
 });
@@ -1259,21 +1293,21 @@ describe("revealSimWindow", () => {
 
 	test("Device Hub running → its deep link without -g (the window comes to the front)", async () => {
 		const calls: string[][] = [];
-		const r = await revealSimWindow({ exec: viewerExec("device-hub", calls), os: "darwin" }, "U1");
+		const r = await new SimWindowArranger({ exec: viewerExec("device-hub", calls), os: "darwin" }).reveal("U1");
 		expect(r).toEqual({ success: true, data: { viewer: "device-hub" } });
 		expect(opens(calls)).toEqual([hubOpen]);
 	});
 
 	test("Simulator.app running → Simulator with the device current", async () => {
 		const calls: string[][] = [];
-		const r = await revealSimWindow({ exec: viewerExec("simulator", calls), os: "darwin" }, "U1");
+		const r = await new SimWindowArranger({ exec: viewerExec("simulator", calls), os: "darwin" }).reveal("U1");
 		expect(r).toEqual({ success: true, data: { viewer: "simulator" } });
 		expect(opens(calls)).toEqual([simulatorOpen]);
 	});
 
 	test("no viewer running → the deep link launches Device Hub (Xcode 27)", async () => {
 		const calls: string[][] = [];
-		const r = await revealSimWindow({ exec: viewerExec("none", calls), os: "darwin" }, "U1");
+		const r = await new SimWindowArranger({ exec: viewerExec("none", calls), os: "darwin" }).reveal("U1");
 		expect(r).toEqual({ success: true, data: { viewer: "device-hub" } });
 		expect(opens(calls)).toEqual([hubOpen]);
 	});
@@ -1287,7 +1321,7 @@ describe("revealSimWindow", () => {
 				return { exitCode: 1, stdout: "", stderr: "no application knows how to open URL" };
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const r = await revealSimWindow({ exec, os: "darwin" }, "U1");
+		const r = await new SimWindowArranger({ exec, os: "darwin" }).reveal("U1");
 		expect(r).toEqual({ success: true, data: { viewer: "simulator" } });
 		expect(opens(calls)).toEqual([hubOpen, simulatorOpen]);
 	});
@@ -1297,7 +1331,7 @@ describe("revealSimWindow", () => {
 			if (cmd[0] === "pgrep") return { exitCode: 1, stdout: "", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "nope" };
 		};
-		const r = await revealSimWindow({ exec, os: "darwin" }, "U1");
+		const r = await new SimWindowArranger({ exec, os: "darwin" }).reveal("U1");
 		expect(r.success).toBe(false);
 		if (!r.success) {
 			expect(r.error).toContain("Device Hub");
@@ -1307,7 +1341,7 @@ describe("revealSimWindow", () => {
 
 	test("not macOS → nothing runs", async () => {
 		const calls: string[][] = [];
-		const r = await revealSimWindow({ exec: viewerExec("device-hub", calls), os: "linux" }, "U1");
+		const r = await new SimWindowArranger({ exec: viewerExec("device-hub", calls), os: "linux" }).reveal("U1");
 		expect(r.success).toBe(false);
 		expect(calls).toEqual([]);
 	});
@@ -1326,7 +1360,7 @@ describe("closeSimWindows", () => {
 		["simulator", "Simulator"],
 	] as const)("%s running → one close script over its windows, named by device", async (running, proc) => {
 		const calls: string[][] = [];
-		const r = await closeSimWindows({ exec: viewerExec(running, calls), os: "darwin" }, sims);
+		const r = await new SimWindowArranger({ exec: viewerExec(running, calls), os: "darwin" }).close(sims);
 		expect(r).toEqual({ success: true, data: undefined });
 		const close = closes(calls);
 		expect(close).toHaveLength(1);
@@ -1336,7 +1370,7 @@ describe("closeSimWindows", () => {
 
 	test("no viewer running → nothing to close, no osascript", async () => {
 		const calls: string[][] = [];
-		expect(await closeSimWindows({ exec: viewerExec("none", calls), os: "darwin" }, sims)).toEqual({
+		expect(await new SimWindowArranger({ exec: viewerExec("none", calls), os: "darwin" }).close(sims)).toEqual({
 			success: true,
 			data: undefined,
 		});
@@ -1345,8 +1379,8 @@ describe("closeSimWindows", () => {
 
 	test("not macOS or no sims → nothing runs", async () => {
 		const calls: string[][] = [];
-		await closeSimWindows({ exec: viewerExec("device-hub", calls), os: "linux" }, sims);
-		await closeSimWindows({ exec: viewerExec("device-hub", calls), os: "darwin" }, []);
+		await new SimWindowArranger({ exec: viewerExec("device-hub", calls), os: "linux" }).close(sims);
+		await new SimWindowArranger({ exec: viewerExec("device-hub", calls), os: "darwin" }).close([]);
 		expect(calls).toEqual([]);
 	});
 
@@ -1355,7 +1389,7 @@ describe("closeSimWindows", () => {
 			if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "osascript is not allowed assistive access" };
 		};
-		const r = await closeSimWindows({ exec, os: "darwin" }, sims);
+		const r = await new SimWindowArranger({ exec, os: "darwin" }).close(sims);
 		expect(r.success).toBe(false);
 		if (!r.success) expect(r.error).toContain("Accessibility");
 	});

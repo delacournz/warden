@@ -1,5 +1,5 @@
 import type { CapacityDeps } from "@delacour/warden-leasing/claim";
-import { roomNow } from "@delacour/warden-leasing/room";
+import { RoomCalculator } from "@delacour/warden-leasing/room";
 import type { Platform } from "@delacour/warden-store/types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { BatchHandle, BatchWorker } from "./schedule";
@@ -18,7 +18,7 @@ export async function planElastic(
 	wanted: number
 ): Promise<ElasticPlan | undefined> {
 	if (!capacity || wanted < 2) return undefined;
-	const room = await roomNow(capacity, platform);
+	const room = await new RoomCalculator(capacity).roomNow(platform);
 	if (!room.success || room.data >= wanted) return undefined;
 	const first = Math.max(1, room.data);
 	return { first, extra: wanted - first };

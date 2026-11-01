@@ -8,10 +8,10 @@ import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, prepareApp } fro
 import { isAlias } from "@delacour/warden-builds/prune";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { DEFAULT_PORT_SPAN, portSpecParser } from "@delacour/warden-config/ports-spec";
-import { maxConcurrent } from "@delacour/warden-leasing/capacity";
-import { capacityEnabled, hostInventoryOf, readCapacityBasis } from "@delacour/warden-leasing/capacity-deps";
-import { markWardenDevices } from "@delacour/warden-leasing/inventory";
-import { claimPorts, isPortFree, releasePorts } from "@delacour/warden-leasing/ports";
+import { capacityMath } from "@delacour/warden-leasing/capacity";
+import { CapacityDepsBuilder, capacityEnv } from "@delacour/warden-leasing/capacity-deps";
+import { inventoryMarker } from "@delacour/warden-leasing/inventory";
+import { PortAllocator, portProbe } from "@delacour/warden-leasing/ports";
 import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -102,7 +102,7 @@ async function inventoryOf(core: Core, params: DevicesListParams | undefined): P
 			core.emit({ kind: "warn", message: `${platform}: skipped (${inventory.error.message})` });
 			continue;
 		}
-		const devices = markWardenDevices(inventory.data, store.listDevices(platform));
+		const devices = inventoryMarker.mark(inventory.data, store.listDevices(platform));
 		rows.push(...inventoryRows(devices, platform, leases, params?.booted === true));
 	}
 	rows.push(...(await pluginInventory(core, params)));
@@ -111,7 +111,7 @@ async function inventoryOf(core: Core, params: DevicesListParams | undefined): P
 
 /** One platform's rows: golden images are left out, `bootedOnly` keeps running devices, each row carries its lease. */
 function inventoryRows(
-	devices: ReturnType<typeof markWardenDevices>,
+	devices: ReturnType<typeof inventoryMarker.mark>,
 	platform: Platform,
 	leases: ReturnType<typeof aliveDeviceLeases>,
 	bootedOnly: boolean
@@ -135,8 +135,8 @@ function buildDevices(core: Core): DevicesNamespace {
 		capacity: (params, opts) =>
 			guarded(core.signalFor(opts), async (): Promise<CapacityInfo[]> => {
 				const lh = core.leaseHost();
-				const { budget, config } = await readCapacityBasis(lh);
-				const inventory = await hostInventoryOf(lh, core.owner)();
+				const { budget, config } = await new CapacityDepsBuilder(lh).basis();
+				const inventory = await new CapacityDepsBuilder(lh).hostInventoryOf(core.owner)();
 				const devices = inventory.success ? inventory.data : [];
 				const queue = core.store().listQueue();
 				const platforms = params?.platform ? [params.platform] : PLATFORMS;
@@ -144,8 +144,8 @@ function buildDevices(core: Core): DevicesNamespace {
 					const running = devices.filter(
 						(d) => d.platform === platform && (d.state === "booted" || d.state === "booting")
 					).length;
-					const max = capacityEnabled(core.host.env)
-						? maxConcurrent(platform, budget, config)
+					const max = capacityEnv.enabled(core.host.env)
+						? capacityMath.maxConcurrent(platform, budget, config)
 						: Number.MAX_SAFE_INTEGER;
 					return {
 						platform,
@@ -205,8 +205,7 @@ function buildPorts(core: Core): PortsNamespace {
 				const spec = portSpecParser.parse(params?.spec ?? `${DEFAULT_PORT_FROM}:${DEFAULT_PORT_SPAN}`);
 				if (!spec.success) throw new WardenError({ code: "usage", message: spec.error });
 				const leases = unwrap(
-					await claimPorts(
-						core.store(),
+					await new PortAllocator(core.store()).claim(
 						{
 							owner: core.owner,
 							from: spec.data.from,
@@ -216,7 +215,7 @@ function buildPorts(core: Core): PortsNamespace {
 							pid: process.pid,
 							...(core.options.label !== undefined ? { label: core.options.label } : {}),
 						},
-						{ now: core.host.now, pidAlive: core.host.pidAlive, isPortFree: (port) => isPortFree(port) }
+						{ now: core.host.now, pidAlive: core.host.pidAlive, isPortFree: (port) => portProbe.isFree(port) }
 					)
 				);
 				const [lease] = leases;
@@ -228,7 +227,10 @@ function buildPorts(core: Core): PortsNamespace {
 			}),
 		release: (lease, opts) =>
 			guarded(core.signalFor(opts), () => {
-				const result = releasePorts(core.store(), { by: "lease", ids: [leaseId(lease)] }, { onlyOwner: core.owner });
+				const result = new PortAllocator(core.store()).release(
+					{ by: "lease", ids: [leaseId(lease)] },
+					{ onlyOwner: core.owner }
+				);
 				if (result.denied.length > 0) {
 					throw new WardenError({
 						code: "lease_foreign",
@@ -383,8 +385,7 @@ async function claimMetroPort(core: Core, port: number | undefined): Promise<Lea
 	const range = portSpecParser.parse(spec);
 	if (!range.success) throw new WardenError({ code: "usage", message: range.error });
 	const leases = unwrap(
-		await claimPorts(
-			core.store(),
+		await new PortAllocator(core.store()).claim(
 			{
 				owner: core.owner,
 				from: range.data.from,
@@ -394,7 +395,7 @@ async function claimMetroPort(core: Core, port: number | undefined): Promise<Lea
 				pid: process.pid,
 				label: core.options.label ?? "warden sdk metro",
 			},
-			{ now: core.host.now, pidAlive: core.host.pidAlive, isPortFree: (port) => isPortFree(port) }
+			{ now: core.host.now, pidAlive: core.host.pidAlive, isPortFree: (port) => portProbe.isFree(port) }
 		)
 	);
 	const portLease = leases[0];
@@ -421,7 +422,7 @@ function buildMetro(core: Core): MetroNamespace {
 		if (!entry) return;
 		running.delete(root);
 		await entry.metro.stop();
-		releasePorts(core.store(), { by: "lease", ids: [entry.portLease.id] }, { onlyOwner: core.owner });
+		new PortAllocator(core.store()).release({ by: "lease", ids: [entry.portLease.id] }, { onlyOwner: core.owner });
 		core.claimed.delete(entry.portLease.id);
 		core.heartbeat();
 	};
@@ -441,7 +442,7 @@ function buildMetro(core: Core): MetroNamespace {
 					aborted: () => signal?.aborted === true,
 				});
 				if (!started.success) {
-					releasePorts(core.store(), { by: "lease", ids: [portLease.id] }, { onlyOwner: core.owner });
+					new PortAllocator(core.store()).release({ by: "lease", ids: [portLease.id] }, { onlyOwner: core.owner });
 					core.claimed.delete(portLease.id);
 					core.heartbeat();
 					throw new WardenError({ code: signal?.aborted ? "interrupted" : "failed", message: started.error });

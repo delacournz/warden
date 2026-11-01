@@ -11,7 +11,7 @@ import {
 } from "@delacour/warden-builds/prepare";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { AppEnsureJson } from "@delacour/warden-sdk/contracts/dev";
 import { leaseModel, type Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
@@ -91,7 +91,7 @@ async function ensureCmd(
 	const { color } = ctx.ui;
 	const platform = await resolvePlatform(ctx, platformArg);
 	if (!platform.success) return fail(ctx, "ensure", platform.error);
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const device = pickDevice(ctx, owner, platform.data, {
 		...(opts.udid !== undefined ? { udid: opts.udid } : {}),
 		...(opts.lease !== undefined ? { lease: opts.lease } : {}),

@@ -16,16 +16,15 @@ import type { Owner, Platform } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ClaimRequest } from "./claim-request";
-import { releaseDevices } from "./device-lease";
+import { DeviceReleaser } from "./device-lease";
 import type { LeaseHost } from "./lease-host";
 import {
-	childEnv,
-	claimAll,
-	claimRunPorts,
-	holdLeases,
+	LeaseHeartbeat,
 	type LeaseSessionDeps,
+	LeaseSessionRunner,
 	type RunEnsureApp,
-	setHeadlessEnv,
+	RunPortClaimer,
+	sessionRules,
 } from "./session";
 
 /** Side effects of a dev session, injectable for tests. */
@@ -101,85 +100,8 @@ export type DevSession = {
 	close: () => Promise<void>;
 };
 
-/** The dev-client deep link that points `scheme`'s app at the Metro on `port`. */
-export function devClientUrl(scheme: string, port: number): string {
-	return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`;
-}
-
-/** `value[key]` of a (non-array) object, else undefined. Hand-written checks keep zod off `dev`'s start path (15-2). */
-function field(value: unknown, key: string): unknown {
-	return typeof value === "object" && value !== null && !Array.isArray(value) && key in value
-		? (value as Record<string, unknown>)[key]
-		: undefined;
-}
-
-/** `value.slug` when it is a non-empty string. */
-function slugOf(value: unknown): string | undefined {
-	const slug = field(value, "slug");
-	return typeof slug === "string" && slug.length > 0 ? slug : undefined;
-}
-
-function parseJson(text: string): unknown {
-	try {
-		return JSON.parse(text);
-	} catch {
-		return undefined;
-	}
-}
-
-/** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json or `expo config`. */
-async function devScheme(
-	host: Pick<LeaseHost, "exec">,
-	project: Project,
-	override: string | undefined
-): AsyncResult<string> {
-	if (override !== undefined) return resultFactory.ok(override);
-	const appJson = join(project.root, "app.json");
-	if (existsSync(appJson)) {
-		const slug = slugOf(field(parseJson(readFileSync(appJson, "utf8")), "expo"));
-		if (slug !== undefined) return resultFactory.ok(`exp+${slug}`);
-	}
-	const argv = ["bunx", "expo", "config", "--json", "--type", "public"];
-	const res = await host.exec(argv, { cwd: project.root, env: { EXPO_NO_TELEMETRY: "1" } });
-	const slug = slugOf(parseJson(res.stdout));
-	return res.exitCode === 0 && slug !== undefined
-		? resultFactory.ok(`exp+${slug}`)
-		: resultFactory.err("could not read the app slug from `expo config` — pass --scheme <scheme>");
-}
-
 /** The dev-client scheme, resolved on first ask and then shared: `devScheme` can spend 1-3 s in `expo config`. */
 type SchemeOf = () => AsyncResult<string>;
-
-function lazyScheme(host: Pick<LeaseHost, "exec">, project: Project, override: string | undefined): SchemeOf {
-	let pending: AsyncResult<string> | undefined;
-	return () => {
-		pending ??= devScheme(host, project, override).catch((error: unknown) =>
-			resultFactory.err(error instanceof Error ? error.message : String(error))
-		);
-		return pending;
-	};
-}
-
-/** `udid` / `lease` / the caller's single device lease of `platform`; undefined = claim one. */
-export function heldDevice(
-	host: Pick<LeaseHost, "store">,
-	owner: Owner,
-	platform: Platform,
-	req: Pick<DevRequest, "udid" | "lease">
-): Result<string | undefined> {
-	if (req.udid !== undefined) return resultFactory.ok(req.udid);
-	const store = host.store();
-	if (req.lease !== undefined) {
-		const r = store.getLease(req.lease)?.resource;
-		return r?.kind === "device" && r.platform === platform
-			? resultFactory.ok(r.id)
-			: resultFactory.err(`no ${platform} device lease ${req.lease}`);
-	}
-	const mine = store
-		.listLeasesByOwner(owner)
-		.flatMap((l) => (l.resource.kind === "device" && l.resource.platform === platform ? [l.resource.id] : []));
-	return resultFactory.ok(mine.length === 1 ? mine[0] : undefined);
-}
 
 /** The leases of a dev session before Metro is up. */
 type DevLease = {
@@ -196,23 +118,192 @@ type EarlyMetro = {
 	aborted: () => boolean;
 };
 
-/** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
-async function leaseDev(
-	host: LeaseHost,
-	deps: DevSessionDeps,
-	req: DevRequest,
-	early: EarlyMetro
-): AsyncResult<DevLease, WardenError> {
-	const held = heldDevice(host, req.owner, req.platform, req);
-	if (!held.success) return wardenErrors.err("failed", held.error);
-	if (held.data === undefined) {
+/** Metro started early on the leased port, plus the flags the lease phase and the signals share with it. */
+type MetroRun = {
+	early: EarlyMetro;
+	/** set by a signal or a dying heartbeat: the run is being torn down */
+	aborted: { now: boolean };
+	/** the launch, once the port is known */
+	launch: () => MetroLaunchHandle | undefined;
+};
+
+/** Pure helpers of a dev session: the dev-client link and the hand-written JSON reads. */
+export class DevSessionRules {
+	/** The dev-client deep link that points `scheme`'s app at the Metro on `port`. */
+	devClientUrl(scheme: string, port: number): string {
+		return `${scheme}://expo-development-client/?url=${encodeURIComponent(`http://127.0.0.1:${port}`)}`;
+	}
+
+	/** `value.slug` when it is a non-empty string. */
+	slugOf(value: unknown): string | undefined {
+		const slug = this.field(value, "slug");
+		return typeof slug === "string" && slug.length > 0 ? slug : undefined;
+	}
+
+	/** `value[key]` of a (non-array) object, else undefined. Hand-written checks keep zod off `dev`'s start path (15-2). */
+	field(value: unknown, key: string): unknown {
+		return typeof value === "object" && value !== null && !Array.isArray(value) && key in value
+			? (value as Record<string, unknown>)[key]
+			: undefined;
+	}
+
+	parseJson(text: string): unknown {
+		try {
+			return JSON.parse(text);
+		} catch {
+			return undefined;
+		}
+	}
+}
+
+export const devSessionRules = new DevSessionRules();
+
+/**
+ * The worktree-friendly `expo run:*` as a library call: lease a Metro port (and a device unless one is
+ * held), install the dev build, start Metro early on the leased port, hold the leases with a heartbeat
+ * and open the dev client on it. Resolves once Metro is serving this project; the caller owns the rest
+ * (`exited`, `close`). On any failure nothing stays leased and Metro is stopped. Output is the caller's:
+ * progress goes out through `host.log` and `hooks`.
+ */
+export class DevSessionRunner {
+	private readonly releaser: DeviceReleaser;
+
+	constructor(
+		private readonly host: LeaseHost,
+		private readonly deps: DevSessionDeps
+	) {
+		this.releaser = new DeviceReleaser(host);
+	}
+
+	async start(req: DevRequest, hooks: DevHooks = {}): AsyncResult<DevSession, WardenError> {
+		const { host, deps } = this;
+		const scheme = this.lazyScheme(req.project, req.scheme);
+		// only Android's deep link needs it, so it is read next to the claim + install, and never for iOS or --no-open
+		const schemeNeeded = req.open && req.platform === "android";
+		if (schemeNeeded) void scheme();
+
+		const run = this.earlyMetro(req);
+		const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
+			deps.onSignal(signal, () => {
+				run.aborted.now = true;
+				void run.launch()?.stop();
+			})
+		);
+		const phase = hooks.leasePhase ?? ((work) => work(host));
+		const leased = await phase((phaseHost) => this.leaseDev(phaseHost, req, run.early));
+		hooks.afterLease?.();
+		for (const off of offSignals) off();
+		if (!leased.success) {
+			await run.launch()?.stop();
+			// a claim given up because Metro itself failed: Metro's error is the cause
+			const metro = leased.error.code === "interrupted" ? await run.launch()?.pending : undefined;
+			return metro !== undefined && !metro.success ? wardenErrors.err("failed", metro.error) : leased;
+		}
+		const launch = run.launch();
+		if (launch === undefined) {
+			await leased.data.release();
+			return wardenErrors.err("failed", "Metro was not started");
+		}
+		const resolved = schemeNeeded ? await scheme() : undefined;
+		if (resolved && !resolved.success) {
+			await launch.stop();
+			await leased.data.release();
+			return wardenErrors.err("failed", resolved.error);
+		}
+		return this.serveLease(req, hooks, leased.data, run, launch, scheme);
+	}
+
+	/** `udid` / `lease` / the caller's single device lease of `platform`; undefined = claim one. */
+	heldDevice(owner: Owner, platform: Platform, req: Pick<DevRequest, "udid" | "lease">): Result<string | undefined> {
+		if (req.udid !== undefined) return resultFactory.ok(req.udid);
+		const store = this.host.store();
+		if (req.lease !== undefined) {
+			const r = store.getLease(req.lease)?.resource;
+			return r?.kind === "device" && r.platform === platform
+				? resultFactory.ok(r.id)
+				: resultFactory.err(`no ${platform} device lease ${req.lease}`);
+		}
+		const mine = store
+			.listLeasesByOwner(owner)
+			.flatMap((l) => (l.resource.kind === "device" && l.resource.platform === platform ? [l.resource.id] : []));
+		return resultFactory.ok(mine.length === 1 ? mine[0] : undefined);
+	}
+
+	/** `--scheme`, else `exp+<slug>` (the scheme expo-dev-client registers) from app.json or `expo config`. */
+	private async devScheme(project: Project, override: string | undefined): AsyncResult<string> {
+		if (override !== undefined) return resultFactory.ok(override);
+		const appJson = join(project.root, "app.json");
+		if (existsSync(appJson)) {
+			const slug = devSessionRules.slugOf(
+				devSessionRules.field(devSessionRules.parseJson(readFileSync(appJson, "utf8")), "expo")
+			);
+			if (slug !== undefined) return resultFactory.ok(`exp+${slug}`);
+		}
+		const argv = ["bunx", "expo", "config", "--json", "--type", "public"];
+		const res = await this.host.exec(argv, { cwd: project.root, env: { EXPO_NO_TELEMETRY: "1" } });
+		const slug = devSessionRules.slugOf(devSessionRules.parseJson(res.stdout));
+		return res.exitCode === 0 && slug !== undefined
+			? resultFactory.ok(`exp+${slug}`)
+			: resultFactory.err("could not read the app slug from `expo config` — pass --scheme <scheme>");
+	}
+
+	private lazyScheme(project: Project, override: string | undefined): SchemeOf {
+		let pending: AsyncResult<string> | undefined;
+		return () => {
+			pending ??= this.devScheme(project, override).catch((error: unknown) =>
+				resultFactory.err(error instanceof Error ? error.message : String(error))
+			);
+			return pending;
+		};
+	}
+
+	/** Lease the Metro port (+ a device unless one is held) and ensure the app on the device. */
+	private async leaseDev(host: LeaseHost, req: DevRequest, early: EarlyMetro): AsyncResult<DevLease, WardenError> {
+		const held = this.heldDevice(req.owner, req.platform, req);
+		if (!held.success) return wardenErrors.err("failed", held.error);
+		if (held.data === undefined) return this.claimDevAndPort(host, req, early);
+		const { deps } = this;
+		const deviceId = held.data;
+		const ports = await new RunPortClaimer(host).claim(
+			req.owner,
+			[req.portSpec],
+			deps.pid,
+			deps.isPortFree,
+			"warden dev"
+		);
+		if (!ports.success) return ports;
+		const leaseIds = ports.data.map((p) => p.leaseId);
+		const release = () => this.releaser.release(leaseIds, { touch: false }).then(() => undefined);
+		const port = ports.data[0]?.port;
+		if (port === undefined) {
+			await release();
+			return wardenErrors.err("failed", "no Metro port leased");
+		}
+		early.start(port, deviceId);
+		const ensured = await deps.ensureApp(host, req.owner, req.platform, deviceId, req.app);
+		if (!ensured.success) {
+			await release();
+			return wardenErrors.err(ensured.error.code, `app on ${deviceId}: ${ensured.error.message}`);
+		}
+		host.log?.({
+			kind: "progress",
+			phase: "raw",
+			message: `warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`,
+		});
+		return resultFactory.ok({ deviceId, port, leaseIds, release });
+	}
+
+	/** No device held: claim one (and the port) through a lease session. */
+	private async claimDevAndPort(
+		host: LeaseHost,
+		req: DevRequest,
+		early: EarlyMetro
+	): AsyncResult<DevLease, WardenError> {
 		const flags = req.claim();
 		if (!flags.success) return wardenErrors.err("usage", flags.error);
 		if (flags.data.request.count !== 1)
 			return wardenErrors.err("usage", "warden dev runs on one device (drop --count)");
-		const session = await claimAll(
-			host,
-			deps,
+		const session = await new LeaseSessionRunner(host, this.deps).claimAll(
 			req.owner,
 			{
 				flags: flags.data,
@@ -238,216 +329,136 @@ async function leaseDev(
 		}
 		return resultFactory.ok({ deviceId, port, leaseIds, release });
 	}
-	const deviceId = held.data;
-	const ports = await claimRunPorts(host, req.owner, [req.portSpec], deps.pid, deps.isPortFree, "warden dev");
-	if (!ports.success) return ports;
-	const leaseIds = ports.data.map((p) => p.leaseId);
-	const release = () => releaseDevices(host, leaseIds, { touch: false }).then(() => undefined);
-	const port = ports.data[0]?.port;
-	if (port === undefined) {
-		await release();
-		return wardenErrors.err("failed", "no Metro port leased");
-	}
-	early.start(port, deviceId);
-	const ensured = await deps.ensureApp(host, req.owner, req.platform, deviceId, req.app);
-	if (!ensured.success) {
-		await release();
-		return wardenErrors.err(ensured.error.code, `app on ${deviceId}: ${ensured.error.message}`);
-	}
-	host.log?.({
-		kind: "progress",
-		phase: "raw",
-		message: `warden dev: app ${ensured.data.source} on ${deviceId} [${ensured.data.hash}]`,
-	});
-	return resultFactory.ok({ deviceId, port, leaseIds, release });
-}
 
-/**
- * Point the dev client on `deviceId` at Metro. iOS: relaunch it with `--initialUrl` (`simctl openurl`
- * raises an "Open in …?" alert), which needs no scheme; Android: `adb reverse` first, so 127.0.0.1
- * reaches the host, then the dev-client deep link (the only use of `scheme`).
- */
-async function openDevClient(
-	host: Pick<LeaseHost, "exec">,
-	platform: Platform,
-	deviceId: string,
-	project: Project,
-	scheme: SchemeOf,
-	port: number
-): AsyncResult<void> {
-	const run = async (argv: string[]): AsyncResult<void> => {
-		const res = await host.exec(argv);
+	/**
+	 * Point the dev client on `deviceId` at Metro. iOS: relaunch it with `--initialUrl` (`simctl openurl`
+	 * raises an "Open in …?" alert), which needs no scheme; Android: `adb reverse` first, so 127.0.0.1
+	 * reaches the host, then the dev-client deep link (the only use of `scheme`).
+	 */
+	private async openDevClient(
+		platform: Platform,
+		deviceId: string,
+		project: Project,
+		scheme: SchemeOf,
+		port: number
+	): AsyncResult<void> {
+		const bundle = bundleIdFor(project, platform);
+		if (!bundle.success) return wardenErrors.toText(bundle);
+		if (platform === "ios") return this.runArgv(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
+		const reverse = await this.runArgv(adbReverseArgv(deviceId, port));
+		if (!reverse.success) return reverse;
+		const resolved = await scheme();
+		if (!resolved.success) return resolved;
+		const url = devSessionRules.devClientUrl(resolved.data, port);
+		return this.runArgv([
+			"adb",
+			"-s",
+			deviceId,
+			"shell",
+			"am",
+			"start",
+			"-a",
+			"android.intent.action.VIEW",
+			"-d",
+			url,
+			bundle.data,
+		]);
+	}
+
+	private async runArgv(argv: string[]): AsyncResult<void> {
+		const res = await this.host.exec(argv);
 		return res.exitCode === 0
 			? resultFactory.ok(undefined)
 			: resultFactory.err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
-	};
-	const bundle = bundleIdFor(project, platform);
-	if (!bundle.success) return wardenErrors.toText(bundle);
-	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
-	const reverse = await run(adbReverseArgv(deviceId, port));
-	if (!reverse.success) return reverse;
-	const resolved = await scheme();
-	if (!resolved.success) return resolved;
-	const url = devClientUrl(resolved.data, port);
-	return run([
-		"adb",
-		"-s",
-		deviceId,
-		"shell",
-		"am",
-		"start",
-		"-a",
-		"android.intent.action.VIEW",
-		"-d",
-		url,
-		bundle.data,
-	]);
-}
-
-/** Metro started early on the leased port, plus the flags the lease phase and the signals share with it. */
-type MetroRun = {
-	early: EarlyMetro;
-	/** set by a signal or a dying heartbeat: the run is being torn down */
-	aborted: { now: boolean };
-	/** the launch, once the port is known */
-	launch: () => MetroLaunchHandle | undefined;
-};
-
-/** Start Metro as soon as `early.start` is told the port (the env a session child gets, minus what is not leased yet). */
-function earlyMetro(host: LeaseHost, deps: DevSessionDeps, req: DevRequest): MetroRun {
-	const aborted = { now: false };
-	let launch: MetroLaunchHandle | undefined;
-	let metroFailed = false;
-	const early: EarlyMetro = {
-		start: (port, deviceId) => {
-			const env = childEnv(host.env, { claimed: [], reclaimed: [] }, [{ leaseId: "", port }]);
-			delete env.WARDEN_LEASE_IDS;
-			if (deviceId !== undefined) {
-				env.WARDEN_UDIDS = deviceId;
-				env.WARDEN_UDID_0 = deviceId;
-			}
-			setHeadlessEnv(env, req.headless);
-			const handle = launchMetro(
-				{
-					probe: deps.probe,
-					now: host.now,
-					sleep: deps.sleep,
-					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, req.json ? "stderr" : "inherit"),
-					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
-					git: (root) => gitFactsReader.readSync(root, { cache: host.git }),
-				},
-				{
-					projectRoot: req.project.root,
-					port,
-					env,
-					args: req.expoArgs,
-					readyTimeoutMs: req.readyTimeoutMs,
-					aborted: () => aborted.now,
-				}
-			);
-			launch = handle;
-			void handle.pending.then((result) => {
-				if (!result.success) metroFailed = true;
-			});
-		},
-		aborted: () => aborted.now || metroFailed,
-	};
-	return { early, aborted, launch: () => launch };
-}
-
-/** Everything after the lease: hold it with a heartbeat, wait for Metro to serve the project, open the dev client. */
-async function serveLease(
-	host: LeaseHost,
-	deps: DevSessionDeps,
-	req: DevRequest,
-	hooks: DevHooks,
-	lease: DevLease,
-	run: MetroRun,
-	running: MetroLaunchHandle,
-	scheme: SchemeOf
-): AsyncResult<DevSession, WardenError> {
-	const stopHold = holdLeases(host, deps, lease.leaseIds, (signal) => {
-		run.aborted.now = true;
-		running.started?.proc.kill(signal);
-	});
-	let closed = false;
-	const close = async () => {
-		if (closed) return;
-		closed = true;
-		stopHold();
-		await lease.release();
-	};
-	const metro = await running.pending;
-	if (!metro.success) {
-		await close();
-		return wardenErrors.err("failed", metro.error);
 	}
-	if (req.open) {
-		const opened = await openDevClient(host, req.platform, lease.deviceId, req.project, scheme, lease.port);
-		const link = !opened.success ? await scheme() : undefined;
-		hooks.onOpened?.({
-			opened,
+
+	/** Start Metro as soon as `early.start` is told the port (the env a session child gets, minus what is not leased yet). */
+	private earlyMetro(req: DevRequest): MetroRun {
+		const { host, deps } = this;
+		const aborted = { now: false };
+		let launch: MetroLaunchHandle | undefined;
+		let metroFailed = false;
+		const early: EarlyMetro = {
+			start: (port, deviceId) => {
+				const env = sessionRules.childEnv(host.env, { claimed: [], reclaimed: [] }, [{ leaseId: "", port }]);
+				delete env.WARDEN_LEASE_IDS;
+				if (deviceId !== undefined) {
+					env.WARDEN_UDIDS = deviceId;
+					env.WARDEN_UDID_0 = deviceId;
+				}
+				sessionRules.setHeadlessEnv(env, req.headless);
+				const handle = launchMetro(
+					{
+						probe: deps.probe,
+						now: host.now,
+						sleep: deps.sleep,
+						spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, req.json ? "stderr" : "inherit"),
+						...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
+						git: (root) => gitFactsReader.readSync(root, { cache: host.git }),
+					},
+					{
+						projectRoot: req.project.root,
+						port,
+						env,
+						args: req.expoArgs,
+						readyTimeoutMs: req.readyTimeoutMs,
+						aborted: () => aborted.now,
+					}
+				);
+				launch = handle;
+				void handle.pending.then((result) => {
+					if (!result.success) metroFailed = true;
+				});
+			},
+			aborted: () => aborted.now || metroFailed,
+		};
+		return { early, aborted, launch: () => launch };
+	}
+
+	/** Everything after the lease: hold it with a heartbeat, wait for Metro to serve the project, open the dev client. */
+	private async serveLease(
+		req: DevRequest,
+		hooks: DevHooks,
+		lease: DevLease,
+		run: MetroRun,
+		running: MetroLaunchHandle,
+		scheme: SchemeOf
+	): AsyncResult<DevSession, WardenError> {
+		const { host, deps } = this;
+		const stopHold = new LeaseHeartbeat(host, deps).hold(lease.leaseIds, (signal) => {
+			run.aborted.now = true;
+			running.started?.proc.kill(signal);
+		});
+		let closed = false;
+		const close = async () => {
+			if (closed) return;
+			closed = true;
+			stopHold();
+			await lease.release();
+		};
+		const metro = await running.pending;
+		if (!metro.success) {
+			await close();
+			return wardenErrors.err("failed", metro.error);
+		}
+		if (req.open) {
+			const opened = await this.openDevClient(req.platform, lease.deviceId, req.project, scheme, lease.port);
+			const link = !opened.success ? await scheme() : undefined;
+			hooks.onOpened?.({
+				opened,
+				udid: lease.deviceId,
+				metroUrl: metro.data.url,
+				...(link?.success ? { link: devSessionRules.devClientUrl(link.data, lease.port) } : {}),
+			});
+		}
+		return resultFactory.ok({
 			udid: lease.deviceId,
+			port: lease.port,
 			metroUrl: metro.data.url,
-			...(link?.success ? { link: devClientUrl(link.data, lease.port) } : {}),
+			leaseIds: lease.leaseIds,
+			source: req.project.source,
+			exited: metro.data.proc.exited.finally(close),
+			close,
 		});
 	}
-	return resultFactory.ok({
-		udid: lease.deviceId,
-		port: lease.port,
-		metroUrl: metro.data.url,
-		leaseIds: lease.leaseIds,
-		source: req.project.source,
-		exited: metro.data.proc.exited.finally(close),
-		close,
-	});
-}
-
-/**
- * The worktree-friendly `expo run:*` as a library call: lease a Metro port (and a device unless one is
- * held), install the dev build, start Metro early on the leased port, hold the leases with a heartbeat
- * and open the dev client on it. Resolves once Metro is serving this project; the caller owns the rest
- * (`exited`, `close`). On any failure nothing stays leased and Metro is stopped. Output is the caller's:
- * progress goes out through `host.log` and `hooks`.
- */
-export async function devSession(
-	host: LeaseHost,
-	deps: DevSessionDeps,
-	req: DevRequest,
-	hooks: DevHooks = {}
-): AsyncResult<DevSession, WardenError> {
-	const scheme = lazyScheme(host, req.project, req.scheme);
-	// only Android's deep link needs it, so it is read next to the claim + install, and never for iOS or --no-open
-	const schemeNeeded = req.open && req.platform === "android";
-	if (schemeNeeded) void scheme();
-
-	const run = earlyMetro(host, deps, req);
-	const offSignals = (["SIGINT", "SIGTERM"] as const).map((signal) =>
-		deps.onSignal(signal, () => {
-			run.aborted.now = true;
-			void run.launch()?.stop();
-		})
-	);
-	const phase = hooks.leasePhase ?? ((work) => work(host));
-	const leased = await phase((phaseHost) => leaseDev(phaseHost, deps, req, run.early));
-	hooks.afterLease?.();
-	for (const off of offSignals) off();
-	if (!leased.success) {
-		await run.launch()?.stop();
-		// a claim given up because Metro itself failed: Metro's error is the cause
-		const metro = leased.error.code === "interrupted" ? await run.launch()?.pending : undefined;
-		return metro !== undefined && !metro.success ? wardenErrors.err("failed", metro.error) : leased;
-	}
-	const launch = run.launch();
-	if (launch === undefined) {
-		await leased.data.release();
-		return wardenErrors.err("failed", "Metro was not started");
-	}
-	const resolved = schemeNeeded ? await scheme() : undefined;
-	if (resolved && !resolved.success) {
-		await launch.stop();
-		await leased.data.release();
-		return wardenErrors.err("failed", resolved.error);
-	}
-	return serveLease(host, deps, req, hooks, leased.data, run, launch, scheme);
 }

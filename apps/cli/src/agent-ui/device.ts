@@ -1,5 +1,5 @@
-import { type CallerLease, ensureCallerLease } from "@delacour/warden-leasing/device-lease";
-import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
+import { type CallerLease, CallerLeaseGate } from "@delacour/warden-leasing/device-lease";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { PRIORITY } from "@delacour/warden-leasing/queue";
 import { adbParser } from "@delacour/warden-providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-providers/unlock-wait";
@@ -152,7 +152,7 @@ async function claimFresh(ctx: CommandContext, owner: Owner, flags: UiDeviceFlag
 	}
 	if (picked.kind !== "ok")
 		return fail(uiError("failed", `claim failed: ${picked.kind === "failed" ? picked.message : "cancelled"}`));
-	const outcome = await claimWithFlags(ctx, owner, picked.flags[0] ?? parsed.data, leasePidFor(owner));
+	const outcome = await claimWithFlags(ctx, owner, picked.flags[0] ?? parsed.data, ownerResolver.leasePidFor(owner));
 	if (!outcome.success) return fail(claimError(outcome.error.message));
 	const claimed = outcome.data.claimed[0];
 	if (!claimed) return fail(uiError("failed", "claim returned no device"));
@@ -222,8 +222,8 @@ async function leaseCandidate(
 		);
 		if (!unlocked.success) return fail(claimError(unlocked.error));
 	}
-	const pid = leasePidFor(owner);
-	const leased = ensureCallerLease(ctx.store(), owner, platform.data, candidate.id, {
+	const pid = ownerResolver.leasePidFor(owner);
+	const leased = new CallerLeaseGate(ctx.store()).ensure(owner, platform.data, candidate.id, {
 		now: ctx.now(),
 		pidAlive: check.pidAlive ?? liveness.processAlive,
 		claim,
@@ -276,7 +276,7 @@ export async function resolveUiDevice(
 	flags: UiDeviceFlags,
 	check: UiLeaseCheck = { exclusive: flags.force !== true }
 ): Promise<Result<UiDevice, UiError>> {
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const named = fromFlags(ctx, flags);
 	if (!named.success) return named;
 	const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);

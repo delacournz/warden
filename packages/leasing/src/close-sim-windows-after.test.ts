@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
-import { closeSimWindowsAfter, type SimWindowsLoader } from "./close-sim-windows-after";
+import { SimWindowCloser, type SimWindowsLoader } from "./close-sim-windows-after";
 
 function counting(): { load: SimWindowsLoader; loads: () => number } {
 	let n = 0;
@@ -26,7 +26,10 @@ describe("closeSimWindowsAfter", () => {
 			],
 			calls
 		);
-		const error = await closeSimWindowsAfter({ exec, os: "darwin" }, [SIM, { udid: "U2", name: "warden-iphone-17-2" }]);
+		const error = await new SimWindowCloser({ exec, os: "darwin" }).after([
+			SIM,
+			{ udid: "U2", name: "warden-iphone-17-2" },
+		]);
 		expect(error).toBeUndefined();
 		const closes = calls.filter((c) => c[0] === "osascript");
 		expect(closes).toHaveLength(1);
@@ -39,15 +42,15 @@ describe("closeSimWindowsAfter", () => {
 			["pgrep -xq DeviceHub", { exitCode: 0 }],
 			["osascript", { exitCode: 1, stderr: "not allowed assistive access" }],
 		]);
-		expect(await closeSimWindowsAfter({ exec, os: "darwin" }, [SIM])).toContain("Accessibility");
+		expect(await new SimWindowCloser({ exec, os: "darwin" }).after([SIM])).toContain("Accessibility");
 	});
 
 	test("nothing shut down, or not macOS → the window module is never loaded", async () => {
 		const calls: string[][] = [];
 		const exec = fakeExec.build([], calls);
 		const { load, loads } = counting();
-		expect(await closeSimWindowsAfter({ exec, os: "darwin" }, [], load)).toBeUndefined();
-		expect(await closeSimWindowsAfter({ exec, os: "linux" }, [SIM], load)).toBeUndefined();
+		expect(await new SimWindowCloser({ exec, os: "darwin" }, load).after([])).toBeUndefined();
+		expect(await new SimWindowCloser({ exec, os: "linux" }, load).after([SIM])).toBeUndefined();
 		expect(loads()).toBe(0);
 		expect(calls).toEqual([]);
 	});

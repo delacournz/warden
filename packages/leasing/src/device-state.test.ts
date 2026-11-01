@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
-import { deviceState } from "./device-state";
+import { DeviceStateProbe } from "./device-state";
 
 const exec = fakeExec.build([
 	[
@@ -20,13 +20,13 @@ const exec = fakeExec.build([
 
 describe("deviceState", () => {
 	test("ios from simctl", async () => {
-		expect(await deviceState(exec, {}, "ios", "ON")).toBe("booted");
-		expect(await deviceState(exec, {}, "ios", "OFF")).toBe("shutdown");
-		expect(await deviceState(exec, {}, "ios", "NOPE")).toBeUndefined();
+		expect(await new DeviceStateProbe({ exec: exec, env: {} }).state("ios", "ON")).toBe("booted");
+		expect(await new DeviceStateProbe({ exec: exec, env: {} }).state("ios", "OFF")).toBe("shutdown");
+		expect(await new DeviceStateProbe({ exec: exec, env: {} }).state("ios", "NOPE")).toBeUndefined();
 	});
 
 	test("android: listed by adb = booted, otherwise unknown", async () => {
-		expect(await deviceState(exec, {}, "android", "emulator-5554")).toBe("booted");
-		expect(await deviceState(exec, {}, "android", "emulator-5556")).toBeUndefined();
+		expect(await new DeviceStateProbe({ exec: exec, env: {} }).state("android", "emulator-5554")).toBe("booted");
+		expect(await new DeviceStateProbe({ exec: exec, env: {} }).state("android", "emulator-5556")).toBeUndefined();
 	});
 });

@@ -47,8 +47,8 @@ export function reactUiError(error: ReactError): WardenError {
 
 /** Who holds the profile: stable across the `start` and `stop` invocations of one agent or shell, distinct between two. */
 export async function reactOwner(ctx: PerfEnv): Promise<string> {
-	const { resolveOwner } = await import("@delacour/warden-leasing/owner");
-	const owner = resolveOwner(ctx);
+	const { ownerResolver } = await import("@delacour/warden-leasing/owner");
+	const owner = ownerResolver.resolve(ctx);
 	if (owner.kind === "agent") return `agent:${owner.sessionId}`;
 	if (owner.kind === "user") return `user:${owner.pid}`;
 	return `ci:${owner.runId}`;

@@ -1,20 +1,6 @@
-import {
-	type Cost,
-	deviceCost,
-	explain,
-	fits,
-	maxConcurrent,
-	totalCost,
-	ZERO_COST,
-} from "@delacour/warden-leasing/capacity";
-import {
-	CAPACITY_PLATFORMS,
-	capacityEnabled,
-	hostInventoryOf,
-	pressureOf,
-	readCapacityBasis,
-} from "@delacour/warden-leasing/capacity-deps";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { type Cost, capacityMath, ZERO_COST } from "@delacour/warden-leasing/capacity";
+import { CAPACITY_PLATFORMS, CapacityDepsBuilder, capacityEnv } from "@delacour/warden-leasing/capacity-deps";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { CapacityJson } from "@delacour/warden-sdk/contracts/capacity";
 import type { InventoryDevice, Platform } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
@@ -47,16 +33,19 @@ function usageOf(
 
 /** `warden capacity`: what the machine can run, what is running, and why a claim would queue. */
 async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
-	const enabled = capacityEnabled(ctx.env);
-	const basis = await readCapacityBasis(leaseHostFromContext(ctx));
+	const enabled = capacityEnv.enabled(ctx.env);
+	const basis = await new CapacityDepsBuilder(leaseHostFromContext(ctx)).basis();
 	const { host, budget, config } = basis;
-	const owner = resolveOwner(ctx);
-	const inventory = await hostInventoryOf(leaseHostFromContext(ctx), owner)();
+	const owner = ownerResolver.resolve(ctx);
+	const inventory = await new CapacityDepsBuilder(leaseHostFromContext(ctx)).hostInventoryOf(owner)();
 	const devices = inventory.success ? inventory.data : [];
-	const pressure = await pressureOf(ctx)();
-	const costs = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, deviceCost(p, config)])) as Record<Platform, Cost>;
+	const pressure = await new CapacityDepsBuilder(leaseHostFromContext(ctx)).pressure()();
+	const costs = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, capacityMath.deviceCost(p, config)])) as Record<
+		Platform,
+		Cost
+	>;
 	const slimCosts = Object.fromEntries(
-		CAPACITY_PLATFORMS.map((p) => [p, deviceCost(p, config, { slim: true })])
+		CAPACITY_PLATFORMS.map((p) => [p, capacityMath.deviceCost(p, config, { slim: true })])
 	) as Record<Platform, Cost>;
 	const slimmed = new Set(
 		ctx
@@ -69,17 +58,16 @@ async function capacity(ctx: CommandContext, json: boolean): Promise<number> {
 		CAPACITY_PLATFORMS.map((p) => [p, usageOf(devices, p, costs[p], slimCosts[p], slimmed)])
 	) as Record<Platform, PlatformUsage>;
 	const live = devices.filter((d) => d.state === "booted" || d.state === "booting");
-	const used = totalCost(
+	const used = capacityMath.totalCost(
 		live.map((d) => d.platform),
 		config,
 		live.map((d) => d.platform === "ios" && slimmed.has(d.id))
 	);
-	const concurrent = Object.fromEntries(CAPACITY_PLATFORMS.map((p) => [p, maxConcurrent(p, budget, config)])) as Record<
-		Platform,
-		number
-	>;
-	const verdict = fits(used, ZERO_COST, budget);
-	const why = explain(verdict, used, budget);
+	const concurrent = Object.fromEntries(
+		CAPACITY_PLATFORMS.map((p) => [p, capacityMath.maxConcurrent(p, budget, config)])
+	) as Record<Platform, number>;
+	const verdict = capacityMath.fits(used, ZERO_COST, budget);
+	const why = capacityMath.explain(verdict, used, budget);
 	const cpuLimit = Math.min(budget.cpu, budget.maxUnits);
 
 	const data: CapacityJson = {

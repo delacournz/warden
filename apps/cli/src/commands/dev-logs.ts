@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
 import { durationParser } from "@delacour/warden-config/duration";
-import { processOnSignal } from "@delacour/warden-leasing/session";
+import { sessionSignals } from "@delacour/warden-leasing/session";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { type DevSessionDeps, findDevSession } from "../dev-session";
@@ -45,8 +45,8 @@ const defaultDeps: DevLogsDeps = {
 	},
 	sleep: (ms) => Bun.sleep(ms),
 	interrupt: (abort) => {
-		const offInt = processOnSignal("SIGINT", abort);
-		const offTerm = processOnSignal("SIGTERM", abort);
+		const offInt = sessionSignals.onSignal("SIGINT", abort);
+		const offTerm = sessionSignals.onSignal("SIGTERM", abort);
 		return () => {
 			offInt();
 			offTerm();

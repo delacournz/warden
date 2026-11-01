@@ -9,7 +9,7 @@ import {
 	recordAndroidSnapshotLoadFailure,
 } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { fakeHost } from "@delacour/warden-core/testing/golden.testing";
-import { type TestLeaseHost, testLeaseHost } from "@delacour/warden-leasing/testing/lease-host.testing";
+import { leaseHostFixture, type TestLeaseHost } from "@delacour/warden-leasing/testing/lease-host.testing";
 import type { InventoryDevice } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { recordCondition } from "./conditions/conditions";
@@ -33,7 +33,7 @@ const owner = { kind: "agent", sessionId: "me", cwd: "/" } as const;
 describe("providerFor ios", () => {
 	test("new sims are cloned from the golden by default", async () => {
 		const host = fakeHost({ migrationPolls: 0 });
-		ctx = testLeaseHost({ exec: host.exec });
+		ctx = leaseHostFixture.build({ exec: host.exec });
 		const created = await providerFor("ios", ctx, owner, { sleep: async () => {} }).create(
 			"warden-iphone-17-1",
 			"iphone-17"
@@ -44,7 +44,7 @@ describe("providerFor ios", () => {
 
 	test("WARDEN_GOLDEN=0 → plain simctl create", async () => {
 		const host = fakeHost();
-		ctx = testLeaseHost({ exec: host.exec });
+		ctx = leaseHostFixture.build({ exec: host.exec });
 		ctx.env = { ...ctx.env, WARDEN_GOLDEN: "0" };
 		const created = await providerFor("ios", ctx, owner).create("warden-iphone-17-1", "iphone-17");
 		expect(created.success && created.data.id).toMatch(/^NEW-/);
@@ -69,7 +69,7 @@ describe("android snapshot hook (16-3)", () => {
 	}
 
 	test("on by default: names warden's current snapshot of the AVD", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		fakeSdk(ctx);
 		const deps = androidGoldenDeps(ctx, owner);
 		const read = await readSnapshotInputs(deps, "Pixel_10");
@@ -82,7 +82,7 @@ describe("android snapshot hook (16-3)", () => {
 
 	test("WARDEN_ANDROID_SNAPSHOT=0 → none, nothing run", async () => {
 		const calls: string[][] = [];
-		ctx = testLeaseHost({
+		ctx = leaseHostFixture.build({
 			exec: async (cmd) => {
 				calls.push([...cmd]);
 				return { exitCode: 0, stdout: "", stderr: "" };
@@ -96,7 +96,7 @@ describe("android snapshot hook (16-3)", () => {
 
 	test("no snapshot yet → none: the claim cold-boots, says so once, and nothing is built (R2)", async () => {
 		const calls: string[][] = [];
-		ctx = testLeaseHost({
+		ctx = leaseHostFixture.build({
 			exec: async (cmd) => {
 				calls.push([...cmd]);
 				return { exitCode: 1, stdout: "", stderr: "" };
@@ -111,7 +111,7 @@ describe("android snapshot hook (16-3)", () => {
 	});
 
 	test("an unrecognised WARDEN_ANDROID_SNAPSHOT warns and leaves the config's false in force (R7)", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		fakeSdk(ctx);
 		ctx.env = { ...ctx.env, WARDEN_ANDROID_SNAPSHOT: "nah" };
 		writeFileSync(
@@ -124,7 +124,7 @@ describe("android snapshot hook (16-3)", () => {
 	});
 
 	test("android.snapshot: false in warden.config.json → none", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		fakeSdk(ctx);
 		writeFileSync(
 			join(ctx.cwd, "warden.config.json"),
@@ -138,7 +138,7 @@ describe("gc's android snapshot step (R2)", () => {
 	const built = { avd: "Pixel_10", name: "warden-0123456789", key: "0123456789", built: true };
 
 	test("builds one pending AVD and reports it", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		markAndroidSnapshotPending(ctx.db, "Pixel_10");
 		let builds = 0;
 		const notes = await androidSnapshotPass(ctx, owner, async () => {
@@ -150,7 +150,7 @@ describe("gc's android snapshot step (R2)", () => {
 	});
 
 	test("nothing pending, or CI set: no build", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		const build = async () => {
 			throw new Error("must not build");
 		};
@@ -162,7 +162,7 @@ describe("gc's android snapshot step (R2)", () => {
 	});
 
 	test("an AVD a pass found busy is still tried by gc's own pass (S5)", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		markAndroidSnapshotPending(ctx.db, "Pixel_10");
 		markAndroidSnapshotBusy(ctx.db, "Pixel_10", ctx.now());
 		let builds = 0;
@@ -174,7 +174,7 @@ describe("gc's android snapshot step (R2)", () => {
 	});
 
 	test("an AVD whose snapshot failed to load three times is not built; the note says how to build it (S2)", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		for (let i = 0; i < 3; i++) recordAndroidSnapshotLoadFailure(ctx.db, "Pixel_10", ctx.now());
 		const notes = await androidSnapshotPass(ctx, owner, async () => {
 			throw new Error("must not build");
@@ -185,7 +185,7 @@ describe("gc's android snapshot step (R2)", () => {
 	});
 
 	test("snapshots off: the pending list is dropped, no build", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		markAndroidSnapshotPending(ctx.db, "Pixel_10");
 		ctx.env = { ...ctx.env, WARDEN_ANDROID_SNAPSHOT: "0" };
 		expect(
@@ -208,7 +208,7 @@ describe("leaseConditions / orphanUndo", () => {
 	}
 
 	test("has is false for a lease with nothing set and true once a condition is recorded", () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		const lease = ctx.db.insertLease({ resource: device, owner, ttlMs: 1000 }, 1);
 		const hook = leaseConditions(ctx);
 		expect(hook.has(lease)).toBe(false);
@@ -218,7 +218,7 @@ describe("leaseConditions / orphanUndo", () => {
 
 	test("undo resets the device and clears the record", async () => {
 		const cmds: string[][] = [];
-		ctx = testLeaseHost({ exec: recordingExec(cmds) });
+		ctx = leaseHostFixture.build({ exec: recordingExec(cmds) });
 		const lease = ctx.db.insertLease({ resource: device, owner, ttlMs: 1000 }, 1);
 		recordCondition(ctx.db, lease.id, "a11y", { contrast: "increased" }, 2);
 		const hook = leaseConditions(ctx);
@@ -228,7 +228,7 @@ describe("leaseConditions / orphanUndo", () => {
 	});
 
 	test("undo reports a failed reset and keeps the record", async () => {
-		ctx = testLeaseHost({ exec: async () => ({ exitCode: 1, stdout: "", stderr: "boom" }) });
+		ctx = leaseHostFixture.build({ exec: async () => ({ exitCode: 1, stdout: "", stderr: "boom" }) });
 		const lease = ctx.db.insertLease({ resource: device, owner, ttlMs: 1000 }, 1);
 		recordCondition(ctx.db, lease.id, "a11y", { contrast: "increased" }, 2);
 		const hook = leaseConditions(ctx);
@@ -240,7 +240,7 @@ describe("leaseConditions / orphanUndo", () => {
 
 	test("orphanUndo resets what a deleted lease left and empties the orphan table", async () => {
 		const cmds: string[][] = [];
-		ctx = testLeaseHost({ exec: recordingExec(cmds) });
+		ctx = leaseHostFixture.build({ exec: recordingExec(cmds) });
 		const stale = ctx.db.insertLease({ resource: device, owner, ttlMs: 1000 }, 1);
 		recordCondition(ctx.db, stale.id, "a11y", { contrast: "increased" }, 2);
 		ctx.db.deleteLeases([stale.id]);

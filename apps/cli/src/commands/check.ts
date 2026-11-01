@@ -1,4 +1,4 @@
-import { resolveOwner, sessionOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { CheckJson } from "@delacour/warden-sdk/contracts/leases";
 import { liveness } from "@delacour/warden-store/liveness";
 import { leaseModel } from "@delacour/warden-store/types";
@@ -12,7 +12,7 @@ type CheckOpts = { udid: string; session?: string; json?: true };
 function check(ctx: CommandContext, opts: CheckOpts): number {
 	const { color } = ctx.ui;
 	const { udid } = opts;
-	const me = opts.session !== undefined ? sessionOwner(opts.session) : resolveOwner(ctx);
+	const me = opts.session !== undefined ? ownerResolver.sessionOwner(opts.session) : ownerResolver.resolve(ctx);
 	const now = ctx.now();
 	const lease = ctx
 		.store()

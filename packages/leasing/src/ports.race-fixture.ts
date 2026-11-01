@@ -4,13 +4,12 @@
  */
 
 import { storeLocator } from "@delacour/warden-store/store";
-import { claimPorts } from "./ports";
+import { PortAllocator } from "./ports";
 
 const dbPath = process.argv[2];
 if (!dbPath) throw new Error("usage: ports.race-fixture.ts <db>");
 const store = storeLocator.open(dbPath);
-const res = await claimPorts(
-	store,
+const res = await new PortAllocator(store).claim(
 	{ owner: { kind: "ci", runId: `${process.pid}` }, from: 47_100, span: 20, ttlMs: 60_000 },
 	{
 		now: () => Date.now(),

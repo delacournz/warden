@@ -16,7 +16,7 @@ import {
 	type RuntimeVerdict,
 } from "@delacour/warden-core/sims/runtimes";
 import { DEFAULT_SIM_IDLE_MS, DEFAULT_SIM_STALE_MS } from "@delacour/warden-core/sims/sims.defaults";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
@@ -69,7 +69,7 @@ export function simsDeps(ctx: CommandContext): SimsDeps {
 	return {
 		exec: ctx.exec,
 		store: ctx.store(),
-		owner: resolveOwner(ctx),
+		owner: ownerResolver.resolve(ctx),
 		pid: process.pid,
 		now: ctx.now,
 		pidAlive: liveness.processAlive,

@@ -21,8 +21,8 @@ import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import { compiledBinary } from "@delacour/warden-core/affected/graph-process";
 import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
 import { readySpec } from "@delacour/warden-core/batch/preset";
-import { resolveHeadless } from "@delacour/warden-leasing/headless";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { headlessResolver } from "@delacour/warden-leasing/headless";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { E2eReportJson } from "@delacour/warden-sdk/contracts/e2e-report";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -375,7 +375,7 @@ function shutsDownOnPass(suite: Suite, opts: E2eOpts, physical: boolean): boolea
 
 /** `--headless` / `--no-headless` > the suite's (else top-level) `headless` > `WARDEN_HEADLESS`. */
 function suiteHeadless(ctx: CommandContext, suite: Suite, opts: E2eOpts, passed: ReadonlySet<string>): boolean {
-	return resolveHeadless({
+	return headlessResolver.resolve({
 		flag: passed.has("headless") ? opts.headless : undefined,
 		config: suite.headless,
 		env: ctx.env,
@@ -443,7 +443,7 @@ async function e2e(
 	const run = await preparedRun(ctx, deps, suite, selection.platform, specs, { ...opts, headless }, passed, kind.data);
 	if (!run.success) return fail(run.error);
 	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), run.data.args, {
+	const picked = await pickPhysicalArgs(ctx, ownerResolver.resolve(ctx), run.data.args, {
 		prompt: canPrompt(ctx, { json: opts.json }),
 	});
 	if (picked.kind !== "ok") return reportPick(ctx, "e2e", picked);

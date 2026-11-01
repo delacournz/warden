@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
 	DEVICECTL_LOCKSTATE_UNLOCKED,
@@ -54,12 +54,18 @@ describe("claimWithFlags on a locked iPhone", () => {
 		const { c } = setup(3);
 		const leasesWhileWaiting: number[] = [];
 		const slept: number[] = [];
-		const outcome = await claimWithFlags(c, resolveOwner(c), flags({ physicalUdid: [FAKE_IPHONE_UDID] }), undefined, {
-			unlockSleep: async (ms) => {
-				slept.push(ms);
-				leasesWhileWaiting.push(c.db.listLeases().length);
-			},
-		});
+		const outcome = await claimWithFlags(
+			c,
+			ownerResolver.resolve(c),
+			flags({ physicalUdid: [FAKE_IPHONE_UDID] }),
+			undefined,
+			{
+				unlockSleep: async (ms) => {
+					slept.push(ms);
+					leasesWhileWaiting.push(c.db.listLeases().length);
+				},
+			}
+		);
 		expect(outcome.success).toBe(true);
 		expect(slept).toEqual([UNLOCK_POLL_MS, UNLOCK_POLL_MS, UNLOCK_POLL_MS]);
 		expect(leasesWhileWaiting).toEqual([0, 0, 0]);
@@ -72,11 +78,17 @@ describe("claimWithFlags on a locked iPhone", () => {
 		const { c } = setup(Number.POSITIVE_INFINITY);
 		let at = 1_000_000;
 		c.now = () => at;
-		const outcome = await claimWithFlags(c, resolveOwner(c), flags({ physicalUdid: [FAKE_IPHONE_UDID] }), undefined, {
-			unlockSleep: async (ms) => {
-				at += ms;
-			},
-		});
+		const outcome = await claimWithFlags(
+			c,
+			ownerResolver.resolve(c),
+			flags({ physicalUdid: [FAKE_IPHONE_UDID] }),
+			undefined,
+			{
+				unlockSleep: async (ms) => {
+					at += ms;
+				},
+			}
+		);
 		expect(outcome.success).toBe(false);
 		if (outcome.success) return;
 		expect(isLockedClaimError(outcome.error.message)).toBe(true);
@@ -91,7 +103,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 		let slept = 0;
 		const outcome = await claimWithFlags(
 			c,
-			resolveOwner(c),
+			ownerResolver.resolve(c),
 			flags({ physicalUdid: [FAKE_IPHONE_UDID], wait: false }),
 			undefined,
 			{
@@ -109,7 +121,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 		const { c } = setup(0);
 		const outcome = await claimWithFlags(
 			c,
-			resolveOwner(c),
+			ownerResolver.resolve(c),
 			flags({ physicalUdid: [FAKE_IPHONE_UDID] }),
 			undefined,
 			{}
@@ -120,7 +132,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 
 	test("an id-less physical claim of the only ready phone waits for it too", async () => {
 		const { c } = setup(1);
-		const outcome = await claimWithFlags(c, resolveOwner(c), flags({ physical: true }), undefined, {
+		const outcome = await claimWithFlags(c, ownerResolver.resolve(c), flags({ physical: true }), undefined, {
 			unlockSleep: async () => {},
 		});
 		expect(outcome.success).toBe(true);
@@ -129,7 +141,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 
 	test("a simulator claim never asks devicectl", async () => {
 		const { c, reads } = setup(Number.POSITIVE_INFINITY);
-		await claimWithFlags(c, resolveOwner(c), { ...flags({}), waitMs: 0 }, undefined, {});
+		await claimWithFlags(c, ownerResolver.resolve(c), { ...flags({}), waitMs: 0 }, undefined, {});
 		expect(reads()).toBe(0);
 	});
 });

@@ -1,14 +1,8 @@
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { durationParser } from "@delacour/warden-config/duration";
 import { DEFAULT_PORT_SPAN, portSpecParser } from "@delacour/warden-config/ports-spec";
-import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-leasing/owner";
-import {
-	claimPorts,
-	isPortFree,
-	listPortLeases,
-	type PortReleaseSelector,
-	releasePorts,
-} from "@delacour/warden-leasing/ports";
+import { type OwnerContext, ownerResolver } from "@delacour/warden-leasing/owner";
+import { PortAllocator, type PortReleaseSelector, portProbe } from "@delacour/warden-leasing/ports";
 import type { PortLeasesJson, PortReleaseJson } from "@delacour/warden-sdk/contracts/leases";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Lease, leaseModel, type Owner } from "@delacour/warden-store/types";
@@ -22,9 +16,9 @@ const DEFAULT_FROM = 8091;
 /** The caller: agent session (WARDEN_SESSION_ID / CLAUDE_* env), CI, or the invoking shell. */
 function callerOwner(ctx: CommandContext): Owner {
 	const input: OwnerContext = { env: ctx.env, pid: process.pid, ppid: process.ppid, cwd: ctx.cwd };
-	const git = readGitInfo(ctx.cwd, { cache: ctx.git });
+	const git = ownerResolver.readGitInfo(ctx.cwd, { cache: ctx.git });
 	if (git) input.git = git;
-	return detectOwner(input);
+	return ownerResolver.detect(input);
 }
 
 function portOf(lease: Lease): number | undefined {
@@ -66,8 +60,7 @@ async function claim(ctx: CommandContext, opts: PortClaimOpts): Promise<number> 
 	const flags = parsePortClaim(opts);
 	if (!flags.success) return fail(ctx, "claim", flags.error);
 	const owner = callerOwner(ctx);
-	const res = await claimPorts(
-		ctx.store(),
+	const res = await new PortAllocator(ctx.store()).claim(
 		{
 			owner,
 			from: flags.data.from,
@@ -77,7 +70,7 @@ async function claim(ctx: CommandContext, opts: PortClaimOpts): Promise<number> 
 			...(flags.data.label !== undefined ? { label: flags.data.label } : {}),
 			...(owner.kind === "user" ? { pid: owner.pid } : {}),
 		},
-		{ now: ctx.now, pidAlive: liveness.processAlive, isPortFree: (port) => isPortFree(port) }
+		{ now: ctx.now, pidAlive: liveness.processAlive, isPortFree: (port) => portProbe.isFree(port) }
 	);
 	if (!res.success) return fail(ctx, "claim", res.error.message);
 	const claimed: PortLeasesJson = res.data;
@@ -110,7 +103,7 @@ async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOp
 	};
 	const selector = releaseSelector(ports, opts, me);
 	if (!selector.success) return fail(ctx, "release", selector.error);
-	const res = releasePorts(ctx.store(), selector.data, opts.force ? {} : { onlyOwner: me() });
+	const res = new PortAllocator(ctx.store()).release(selector.data, opts.force ? {} : { onlyOwner: me() });
 	const lines = res.released.map((l) => color.green(`released ${portOf(l)} (${l.id})`));
 	const doc: PortReleaseJson = res;
 	emit(ctx, opts.json === true, doc, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
@@ -138,7 +131,7 @@ function lsRow(ctx: CommandContext, lease: Lease, now: number): string[] {
 
 function ls(ctx: CommandContext, json: boolean): number {
 	const { color } = ctx.ui;
-	const leases = listPortLeases(ctx.store());
+	const leases = new PortAllocator(ctx.store()).list();
 	const now = ctx.now();
 	const text =
 		leases.length === 0

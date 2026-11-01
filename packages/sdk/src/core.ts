@@ -5,15 +5,15 @@ import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-config/config.
 import { providerFor } from "@delacour/warden-core/host-deps";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { stopHelper } from "@delacour/warden-driver-ios/helper";
-import { defaultMax } from "@delacour/warden-leasing/allocate";
-import { type ClaimRequest, claimWithRequest } from "@delacour/warden-leasing/claim-request";
-import { releaseDevices } from "@delacour/warden-leasing/device-lease";
-import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
-import { resolveHeadless } from "@delacour/warden-leasing/headless";
+import { allocator } from "@delacour/warden-leasing/allocate";
+import { type ClaimRequest, ClaimRequestRunner } from "@delacour/warden-leasing/claim-request";
+import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
+import { ReleasedDeviceShutdown } from "@delacour/warden-leasing/device-shutdown";
+import { headlessResolver } from "@delacour/warden-leasing/headless";
 import type { HostFacts } from "@delacour/warden-leasing/host";
 import type { LeaseHost } from "@delacour/warden-leasing/lease-host";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { holdLeases } from "@delacour/warden-leasing/session";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
+import { LeaseHeartbeat } from "@delacour/warden-leasing/session";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -233,7 +233,8 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 			if (mapped) emit(mapped);
 		},
 	};
-	const owner: Owner = options.owner === undefined ? resolveOwner({ env, cwd, git }) : ownerFrom(options.owner, cwd);
+	const owner: Owner =
+		options.owner === undefined ? ownerResolver.resolve({ env, cwd, git }) : ownerFrom(options.owner, cwd);
 	let store: Store | undefined = seams.store;
 	const openStoreOnce = (): Store => {
 		if (store !== undefined) return store;
@@ -353,7 +354,7 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 			stopBeating = undefined;
 			const ids = [...core.claimed.keys()];
 			if (ids.length === 0) return;
-			stopBeating = holdLeases(
+			stopBeating = new LeaseHeartbeat(
 				{ store: openStoreOnce, now: host.now, log: host.log },
 				{
 					every: (ms, fn) => {
@@ -362,10 +363,8 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 						return () => clearInterval(timer);
 					},
 					onSignal: () => () => undefined,
-				},
-				ids,
-				() => undefined
-			);
+				}
+			).hold(ids, () => undefined);
 		},
 	};
 	return core;
@@ -405,7 +404,7 @@ export function claimRequestFor(core: Core, params: ClaimParams): ClaimRequest {
 		platform: params.platform,
 		profile: params.profile ?? DEFAULT_PROFILE[params.platform],
 		count,
-		max: Math.max(defaultMax(availableParallelism()), count),
+		max: Math.max(allocator.defaultMax(availableParallelism()), count),
 	};
 	if (params.runtime !== undefined) request.runtime = params.runtime;
 	if (params.adopt) request.adopt = true;
@@ -418,7 +417,7 @@ export function claimRequestFor(core: Core, params: ClaimParams): ClaimRequest {
 	};
 	if (core.options.priority !== undefined) flags.priority = core.options.priority;
 	if (core.options.label !== undefined) flags.label = core.options.label;
-	if (resolveHeadless({ env: core.host.env })) flags.headless = true;
+	if (headlessResolver.resolve({ env: core.host.env })) flags.headless = true;
 	return flags;
 }
 
@@ -465,7 +464,7 @@ export async function claimDevices(core: Core, params: ClaimParams, opts?: CallO
 		}
 		const host = plugin ? core.leaseHostWith(plugin) : core.leaseHost();
 		const outcome = unwrap(
-			await claimWithRequest(host, core.owner, claimRequestFor(core, params), process.pid, {
+			await new ClaimRequestRunner(host).claim(core.owner, claimRequestFor(core, params), process.pid, {
 				abort: () => signal?.aborted === true,
 				sleep: (ms) => sleepUnlessAborted(core.host.sleep, ms, signal),
 				...onLeasedFor(core, params),
@@ -496,14 +495,13 @@ export async function releaseLeases(core: Core, leases: Lease[], shutdown: boole
 		}
 		for (const [name, group] of groups) {
 			const host = name === undefined ? core.leaseHost() : core.leaseHostWith(await core.pluginProvider(name));
-			const done = await shutdownReleasedDevices(host, group, core.owner);
+			const done = await new ReleasedDeviceShutdown(host).run(group, core.owner);
 			outcome.shutdown.push(...done.shutdown);
 			outcome.notes.push(...done.notes);
 		}
 	}
 	const lh = core.leaseHost();
-	const deleted = await releaseDevices(
-		{ store: core.store, now: core.host.now },
+	const deleted = await new DeviceReleaser({ store: core.store, now: core.host.now }).release(
 		leases.map((l) => l.id),
 		shutdown ? { after: lh.stopHelper } : {}
 	);

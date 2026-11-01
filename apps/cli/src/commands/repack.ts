@@ -1,6 +1,6 @@
 import { type AppDeps, defaultAppDeps, kindAppInput, projectStart } from "@delacour/warden-builds/prepare";
 import { type RepackResult, repackApp } from "@delacour/warden-builds/repack";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { resolvePlatform } from "../claim-flags";
@@ -53,7 +53,7 @@ async function repack(
 	const { kind: _kind, ...input } = kindAppInput(
 		appHostFromContext(ctx),
 		deps,
-		resolveOwner(ctx),
+		ownerResolver.resolve(ctx),
 		platform,
 		project.data,
 		"simulator",

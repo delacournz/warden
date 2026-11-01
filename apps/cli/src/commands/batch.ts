@@ -24,29 +24,27 @@ import {
 	runBatch,
 } from "@delacour/warden-core/batch/schedule";
 import { ENV_NAMES } from "@delacour/warden-e2e/env";
-import { buildCapacityDeps } from "@delacour/warden-leasing/capacity-deps";
+import { CapacityDepsBuilder } from "@delacour/warden-leasing/capacity-deps";
 import type { ClaimedDevice, ClaimOutcome } from "@delacour/warden-leasing/claim";
-import { bootedByClaim, detachLockFor } from "@delacour/warden-leasing/claim-request";
-import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
-import { resolveHeadless } from "@delacour/warden-leasing/headless";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { isPortFree } from "@delacour/warden-leasing/ports";
+import { claimRequestRules } from "@delacour/warden-leasing/claim-request";
+import { ReleasedDeviceShutdown } from "@delacour/warden-leasing/device-shutdown";
+import { headlessResolver } from "@delacour/warden-leasing/headless";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
+import { portProbe } from "@delacour/warden-leasing/ports";
 import { PRIORITY } from "@delacour/warden-leasing/queue";
 import {
-	claimAll,
-	exitCodeOf,
 	type ForwardedSignal,
-	holdLeases,
 	INTERRUPTED,
-	intervalEvery,
 	type LeaseArgs,
+	LeaseHeartbeat,
 	type LeaseSession,
 	type LeaseSessionDeps,
-	leasedText,
-	processOnSignal,
+	LeaseSessionRunner,
 	type RunPort,
+	sessionRules,
+	sessionSignals,
 } from "@delacour/warden-leasing/session";
-import { hideSimWindows } from "@delacour/warden-leasing/sim-windows";
+import { SimWindowHider } from "@delacour/warden-leasing/sim-windows";
 import { SimSlimmer } from "@delacour/warden-providers/slim";
 import { execErrors, processExec } from "@delacour/warden-runtime/exec";
 import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
@@ -1029,9 +1027,9 @@ async function shutdownDevices(
 	if (!hooks.shutdownIf?.(summary)) return;
 	const store = ctx.store();
 	const leases = session.leaseIds.flatMap((id) => store.getLease(id) ?? []);
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const { notes } = await withSpinner(ctx, "shutting down devices…", async (sctx, spinner) => {
-		const outcome = await shutdownReleasedDevices(leaseHostFromContext(sctx), leases, owner);
+		const outcome = await new ReleasedDeviceShutdown(leaseHostFromContext(sctx)).run(leases, owner);
 		spinner.succeed(outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down");
 		return outcome;
 	});
@@ -1691,19 +1689,17 @@ async function hideLateWindows(
 	session: LeaseSession,
 	live: readonly Device[]
 ): Promise<void> {
-	if (r.platform !== "ios" || !args.flags.headless || bootedByClaim(session.outcome).length === 0) return;
+	if (r.platform !== "ios" || !args.flags.headless || claimRequestRules.bootedByClaim(session.outcome).length === 0)
+		return;
 	const warn = (line: string) => ctx.err(ctx.ui.color.yellow(`warden ${r.name}: ${line}`));
 	// arbitrated with every other warden hide (16-8); a device the close shut down loses its resident helper
-	await hideSimWindows(
-		{
-			exec: ctx.exec,
-			sleep: deps.sleep,
-			warn,
-			detachLock: detachLockFor(appHostFromContext(ctx)),
-			onShutDown: stopHelperAfter(ctx),
-		},
-		live
-	);
+	await new SimWindowHider({
+		exec: ctx.exec,
+		sleep: deps.sleep,
+		warn,
+		detachLock: claimRequestRules.detachLockFor(appHostFromContext(ctx)),
+		onShutDown: stopHelperAfter(ctx),
+	}).hide(live);
 }
 
 /** What `runSession` sets up before the claim and `supervise` carries on with. */
@@ -1881,7 +1877,7 @@ async function supervise(
 	const logs = new Map<string, string>();
 	const resultFiles = new Map<string, string>();
 	const drains = new Map<string, number>();
-	const stopHold = holdLeases(appHostFromContext(ctx), deps, session.leaseIds, (signal) => {
+	const stopHold = new LeaseHeartbeat(appHostFromContext(ctx), deps).hold(session.leaseIds, (signal) => {
 		controller.abort();
 		for (const job of r.running) job.kill(signal);
 	});
@@ -2135,7 +2131,7 @@ async function batch(
 	// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
 	const headless = isPhysicalClaim(withNamedPhysical(merged.opts))
 		? explicit
-		: resolveHeadless({ flag: explicit, config: preset?.headless, env: ctx.env });
+		: headlessResolver.resolve({ flag: explicit, config: preset?.headless, env: ctx.env });
 	const args = parseBatchArgs(
 		platform,
 		{
@@ -2151,7 +2147,7 @@ async function batch(
 	const jobs = await loadJobs(ctx, deps, args.data);
 	if (!jobs.success) return fail(jobs.error);
 	// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-	const picked = await pickPhysicalArgs(ctx, resolveOwner(ctx), args.data, {
+	const picked = await pickPhysicalArgs(ctx, ownerResolver.resolve(ctx), args.data, {
 		prompt: canPrompt(ctx, { json: args.data.json }),
 	});
 	if (picked.kind !== "ok") return reportPick(ctx, "batch", picked);
@@ -2246,17 +2242,21 @@ function sessionOnPorts(
 }
 
 /** Settle the claim spinner for a finished claim: failed, app ready, or leased. */
-function settleClaimSpinner(spinner: Spinner, lease: BatchArgs, result: Awaited<ReturnType<typeof claimAll>>): void {
+function settleClaimSpinner(
+	spinner: Spinner,
+	lease: BatchArgs,
+	result: Awaited<ReturnType<typeof LeaseSessionRunner.prototype.claimAll>>
+): void {
 	if (!result.success) spinner.fail(lease.app ? "claim / app install failed" : "claim failed");
 	else if (lease.app) spinner.succeed(`app ready on ${result.data.outcome.claimed.length} device(s)`);
-	else spinner.succeed(leasedText(result.data.outcome));
+	else spinner.succeed(sessionRules.leasedText(result.data.outcome));
 }
 
 /** Report and clean up after a claim that failed or was interrupted; returns the exit code. */
 async function abortClaim(
 	ctx: CommandContext,
 	name: string,
-	claimed: Awaited<ReturnType<typeof claimAll>>,
+	claimed: Awaited<ReturnType<typeof LeaseSessionRunner.prototype.claimAll>>,
 	run: SessionRun,
 	interrupted: boolean,
 	quiesce: () => Promise<void>
@@ -2293,7 +2293,7 @@ export async function runSession(
 	const name = hooks.name ?? "batch";
 	const clamped = clampToJobs(args, jobs.length);
 	if (clamped !== args) note(ctx, `warden ${name}: ${jobs.length} job(s) → claiming ${jobs.length} device(s)`);
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const { platform } = clamped.flags.request;
 	// capacity on and the host fits fewer workers than wanted: start with what fits, the rest join later
 	const elastic = await elasticSplit(ctx, owner, clamped, name);
@@ -2347,7 +2347,7 @@ export async function runSession(
 			// a failed leg releases the others at once: their early slim and warm-up end first (R3)
 			...(warm || slim ? { beforeRelease: quiesce } : {}),
 		};
-		const result = await claimAll(leaseHostFromContext(sctx), deps, owner, claimArgs, name);
+		const result = await new LeaseSessionRunner(leaseHostFromContext(sctx), deps).claimAll(owner, claimArgs, name);
 		run.claimDone = true;
 		// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
 		maybeAutoGc(ctx);
@@ -2395,7 +2395,7 @@ async function elasticSplit(
 	// phones are not created: a physical request claims exactly the devices it names
 	if (args.legs || request.count < 2 || request.physical !== undefined) return whole;
 	const plan = await planElastic(
-		await buildCapacityDeps(leaseHostFromContext(ctx), owner),
+		await new CapacityDepsBuilder(leaseHostFromContext(ctx)).build(owner),
 		request.platform,
 		request.count
 	);
@@ -2475,7 +2475,7 @@ const LOG_QUIET_MS = 250;
 
 export const defaultBatchDeps: BatchDeps = {
 	pid: process.pid,
-	isPortFree: (port) => isPortFree(port),
+	isPortFree: (port) => portProbe.isFree(port),
 	spawn(cmd, opts) {
 		const log = openStampedLog(opts.log);
 		try {
@@ -2495,7 +2495,7 @@ export const defaultBatchDeps: BatchDeps = {
 				exited: proc.exited.then(async (code) => {
 					drainMs = await log.drained({ quietMs: LOG_QUIET_MS, maxMs: LOG_DRAIN_MS });
 					log.close();
-					return exitCodeOf(proc, code);
+					return sessionRules.exitCodeOf(proc, code);
 				}),
 				logDrainMs: () => drainMs,
 				kill: (signal) => {
@@ -2536,8 +2536,8 @@ export const defaultBatchDeps: BatchDeps = {
 			process.stderr.write(data);
 		},
 	},
-	onSignal: processOnSignal,
-	every: intervalEvery,
+	onSignal: sessionSignals.onSignal,
+	every: sessionSignals.every,
 	after: (ms, fn) => {
 		const timer = setTimeout(fn, ms);
 		return () => clearTimeout(timer);

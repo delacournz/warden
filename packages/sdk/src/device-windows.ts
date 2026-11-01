@@ -1,4 +1,4 @@
-import { arrangeSimWindows, detectSimViewer, reopenSimWindows } from "@delacour/warden-leasing/sim-windows";
+import { SimWindowArranger } from "@delacour/warden-leasing/sim-windows";
 import { type Core, guarded } from "./core";
 import { WardenError } from "./errors";
 import type { ArrangeParams, ArrangeResult, CallOptions, SimViewerKind } from "./sdk.types";
@@ -7,7 +7,9 @@ const isMac = (): boolean => process.platform === "darwin";
 
 /** `devices.viewer`: which app shows simulator windows right now (`"none"` off macOS or when neither runs). */
 export function viewerOf(core: Core, opts: CallOptions | undefined): Promise<SimViewerKind> {
-	return guarded(core.signalFor(opts), async () => (isMac() ? (await detectSimViewer(core.host.exec)).kind : "none"));
+	return guarded(core.signalFor(opts), async () =>
+		isMac() ? (await new SimWindowArranger({ exec: core.host.exec }).detectViewer()).kind : "none"
+	);
 }
 
 /**
@@ -25,10 +27,14 @@ export function arrangeWindows(
 		const open = params?.open ?? [];
 		if (open.length > 0) {
 			const deps = { exec: core.host.exec, env: core.host.env };
-			const opened = await reopenSimWindows(deps, open);
-			return { arranged: [], opened, viewer: (await detectSimViewer(core.host.exec)).kind };
+			const opened = await new SimWindowArranger(deps).reopen(open);
+			return {
+				arranged: [],
+				opened,
+				viewer: (await new SimWindowArranger({ exec: core.host.exec }).detectViewer()).kind,
+			};
 		}
-		const result = await arrangeSimWindows(core.host.exec);
+		const result = await new SimWindowArranger({ exec: core.host.exec }).arrange();
 		if (!result.success) throw new WardenError({ code: "failed", message: result.error });
 		return { arranged: result.data.arranged, opened: [], viewer: result.data.viewer };
 	});

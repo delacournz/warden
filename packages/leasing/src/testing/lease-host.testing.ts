@@ -24,48 +24,52 @@ export type TestLeaseHost = LeaseHost & {
 	cleanup: () => void;
 };
 
-/** A temp-store lease host with captured log events and plain (golden-free) providers. Call `cleanup()` in afterEach. */
-export function testLeaseHost(overrides: Partial<LeaseHost> = {}): TestLeaseHost {
-	const dir = mkdtempSync(join(tmpdir(), "warden-lease-host-"));
-	const db = storeLocator.open(join(dir, "warden.db"));
-	const events: WardenLogEvent[] = [];
-	const stopped: string[] = [];
-	const exec: Exec = async () => ({ exitCode: 0, stdout: "", stderr: "" });
-	const host: TestLeaseHost = {
-		env: { WARDEN_HOME: dir, HOME: dir, WARDEN_BACKGROUND: "0", WARDEN_ARRANGE: "0" },
-		cwd: dir,
-		home: dir,
-		now: () => 1_000_000,
-		exec,
-		sleep: async () => {},
-		pidAlive: liveness.processAlive,
-		log: (event) => events.push(event),
-		store: () => db,
-		git: new GitFactsCache(),
-		hostFacts: async () => TEST_HOST_FACTS,
-		providerFor: (platform, owner) => {
-			const deps = {
-				exec: host.exec,
-				store: db,
-				env: host.env,
-				now: host.now,
-				owner,
-				log: (line: string) => host.log?.({ kind: "progress", phase: "claim", message: line }),
-			};
-			return platform === "android" ? new AndroidProvider(deps) : new IosProvider(deps);
-		},
-		stopHelper: async (udid) => {
-			stopped.push(udid);
-		},
-		...overrides,
-		events,
-		stopped,
-		dir,
-		db,
-		cleanup: () => {
-			db.close();
-			rmSync(dir, { recursive: true, force: true });
-		},
-	};
-	return host;
+export class LeaseHostFixture {
+	/** A temp-store lease host with captured log events and plain (golden-free) providers. Call `cleanup()` in afterEach. */
+	build(overrides: Partial<LeaseHost> = {}): TestLeaseHost {
+		const dir = mkdtempSync(join(tmpdir(), "warden-lease-host-"));
+		const db = storeLocator.open(join(dir, "warden.db"));
+		const events: WardenLogEvent[] = [];
+		const stopped: string[] = [];
+		const exec: Exec = async () => ({ exitCode: 0, stdout: "", stderr: "" });
+		const host: TestLeaseHost = {
+			env: { WARDEN_HOME: dir, HOME: dir, WARDEN_BACKGROUND: "0", WARDEN_ARRANGE: "0" },
+			cwd: dir,
+			home: dir,
+			now: () => 1_000_000,
+			exec,
+			sleep: async () => {},
+			pidAlive: liveness.processAlive,
+			log: (event) => events.push(event),
+			store: () => db,
+			git: new GitFactsCache(),
+			hostFacts: async () => TEST_HOST_FACTS,
+			providerFor: (platform, owner) => {
+				const deps = {
+					exec: host.exec,
+					store: db,
+					env: host.env,
+					now: host.now,
+					owner,
+					log: (line: string) => host.log?.({ kind: "progress", phase: "claim", message: line }),
+				};
+				return platform === "android" ? new AndroidProvider(deps) : new IosProvider(deps);
+			},
+			stopHelper: async (udid) => {
+				stopped.push(udid);
+			},
+			...overrides,
+			events,
+			stopped,
+			dir,
+			db,
+			cleanup: () => {
+				db.close();
+				rmSync(dir, { recursive: true, force: true });
+			},
+		};
+		return host;
+	}
 }
+
+export const leaseHostFixture = new LeaseHostFixture();

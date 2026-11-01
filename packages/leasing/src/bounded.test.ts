@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mapBounded } from "./bounded";
+import { boundedRunner } from "./bounded";
 
 describe("mapBounded", () => {
 	test("never more than `limit` at once, every item once, results in item order", async () => {
 		let running = 0;
 		let peak = 0;
 		const seen: number[] = [];
-		const out = await mapBounded([5, 1, 4, 2, 3, 0, 6, 7], 3, async (n) => {
+		const out = await boundedRunner.map([5, 1, 4, 2, 3, 0, 6, 7], 3, async (n) => {
 			running++;
 			peak = Math.max(peak, running);
 			await Bun.sleep(n);
@@ -20,19 +20,19 @@ describe("mapBounded", () => {
 	});
 
 	test("fewer items than the limit, no items, a limit below one", async () => {
-		expect(await mapBounded([1, 2], 8, async (n) => n + 1)).toEqual([2, 3]);
-		expect(await mapBounded([], 4, async () => 1)).toEqual([]);
-		expect(await mapBounded([1, 2, 3], 0, async (n) => n)).toEqual([1, 2, 3]);
+		expect(await boundedRunner.map([1, 2], 8, async (n) => n + 1)).toEqual([2, 3]);
+		expect(await boundedRunner.map([], 4, async () => 1)).toEqual([]);
+		expect(await boundedRunner.map([1, 2, 3], 0, async (n) => n)).toEqual([1, 2, 3]);
 	});
 
 	test("the index is passed along", async () => {
-		expect(await mapBounded(["a", "b"], 2, async (item, i) => `${i}${item}`)).toEqual(["0a", "1b"]);
+		expect(await boundedRunner.map(["a", "b"], 2, async (item, i) => `${i}${item}`)).toEqual(["0a", "1b"]);
 	});
 
 	test("a rejection rejects the call and starts nothing more", async () => {
 		const started: number[] = [];
 		await expect(
-			mapBounded([1, 2, 3, 4, 5, 6], 2, async (n) => {
+			boundedRunner.map([1, 2, 3, 4, 5, 6], 2, async (n) => {
 				started.push(n);
 				await Bun.sleep(2);
 				if (n === 2) throw new Error("boom");

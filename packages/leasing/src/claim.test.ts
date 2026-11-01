@@ -10,7 +10,7 @@ import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { type DeviceRequest, type InventoryDevice, leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
-import { type ClaimInput, claimAborted, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
+import { type ClaimInput, ClaimService, claimMessages, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
 import type { MemoryPressure } from "./host";
 import { PRIORITY } from "./queue";
 
@@ -114,7 +114,7 @@ function input(provider: DeviceProvider, overrides: Partial<ClaimInput> = {}): C
 describe("claimDevices", () => {
 	test("reuses a booted free warden device without booting", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
-		const result = await claimDevices(input(provider, { label: "e2e" }));
+		const result = await new ClaimService(input(provider, { label: "e2e" })).claim();
 		expect(result.success).toBe(true);
 		if (!result.success) return;
 		expect(result.data.claimed).toHaveLength(1);
@@ -130,7 +130,7 @@ describe("claimDevices", () => {
 	test("onLeased stamps the lease rows inside the claim, before it returns", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
 		const seen: string[] = [];
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(provider, {
 				onLeased: (claimed) => {
 					const ids = claimed.map((c) => c.lease.id);
@@ -139,7 +139,7 @@ describe("claimDevices", () => {
 					store.markShared(ids);
 				},
 			})
-		);
+		).claim();
 		if (!result.success) throw new Error(result.error.message);
 		const lease = result.data.claimed[0]?.lease;
 		expect(seen).toEqual([lease?.id ?? ""]);
@@ -150,7 +150,7 @@ describe("claimDevices", () => {
 
 	test("boots a shutdown warden device", async () => {
 		const provider = fakeProvider([sim("1")]);
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 		expect(provider.calls).toEqual(["boot 1", "ready 1"]);
 		expect(result.success && result.data.claimed[0]?.device.state).toBe("booted");
@@ -161,14 +161,14 @@ describe("claimDevices", () => {
 	test("says what it is doing while a device boots: booting, then waiting until it is ready", async () => {
 		const provider = fakeProvider([sim("1")]);
 		const logs: string[] = [];
-		await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		await new ClaimService(input(provider, { log: (l) => logs.push(l) })).claim();
 		expect(logs).toEqual(["warden-iphone-17-1 (1): booting", "warden-iphone-17-1 (1): waiting until it is ready"]);
 	});
 
 	test("says it is creating a device before the create, then boots it", async () => {
 		const provider = fakeProvider([]);
 		const logs: string[] = [];
-		await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		await new ClaimService(input(provider, { log: (l) => logs.push(l) })).claim();
 		expect(logs[0]).toBe("creating warden-iphone-17-1 (iphone-17)");
 		expect(logs).toContain("warden-iphone-17-1 (NEW1): booting");
 	});
@@ -177,7 +177,7 @@ describe("claimDevices", () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
 		provider.verifyWarm = async () => resultFactory.ok(undefined);
 		const logs: string[] = [];
-		await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		await new ClaimService(input(provider, { log: (l) => logs.push(l) })).claim();
 		expect(logs).toEqual([]);
 	});
 
@@ -193,14 +193,14 @@ describe("claimDevices", () => {
 			inFlight--;
 			return boot(id);
 		};
-		const result = await claimDevices(input(provider, { request: request({ count: 3, max: 3 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ count: 3, max: 3 }) })).claim();
 		expect(result.success).toBe(true);
 		expect(peak).toBe(3);
 	});
 
 	test("creates when pool has room; lease is on the real udid, not the placeholder", async () => {
 		const provider = fakeProvider([]);
-		const result = await claimDevices(input(provider, { request: request({ runtime: "latest" }) }));
+		const result = await new ClaimService(input(provider, { request: request({ runtime: "latest" }) })).claim();
 		expect(result.success).toBe(true);
 		if (!result.success) return;
 		expect(result.data.claimed[0]?.action).toBe("create");
@@ -213,8 +213,8 @@ describe("claimDevices", () => {
 
 	test("never hands out a device leased by someone else", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
-		const first = await claimDevices(input(provider, { owner: other }));
-		const second = await claimDevices(input(provider));
+		const first = await new ClaimService(input(provider, { owner: other })).claim();
+		const second = await new ClaimService(input(provider)).claim();
 		expect(first.success && second.success).toBe(true);
 		if (!first.success || !second.success) return;
 		expect(first.data.claimed[0]?.device.id).not.toBe(second.data.claimed[0]?.device.id);
@@ -223,16 +223,16 @@ describe("claimDevices", () => {
 	test("foreign devices are skipped unless adopt", async () => {
 		const foreign = sim("F", { name: "iPhone 17", profile: "iphone-17", state: "booted" });
 		const provider = fakeProvider([foreign]);
-		const noAdopt = await claimDevices(input(provider, { request: request({ max: 0 }) }));
+		const noAdopt = await new ClaimService(input(provider, { request: request({ max: 0 }) })).claim();
 		expect(noAdopt.success).toBe(false);
-		const adopt = await claimDevices(input(provider, { request: request({ max: 0, adopt: true }) }));
+		const adopt = await new ClaimService(input(provider, { request: request({ max: 0, adopt: true }) })).claim();
 		expect(adopt.success && adopt.data.claimed[0]?.device.id).toBe("F");
 	});
 
 	test("pool full + no wait → clear err", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" })]);
-		await claimDevices(input(provider, { owner: other, request: request({ count: 2 }) }));
-		const result = await claimDevices(input(provider));
+		await new ClaimService(input(provider, { owner: other, request: request({ count: 2 }) })).claim();
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) {
 			expect(result.error.message).toBe("all 2 warden-iphone-17 devices leased; max 2 — use --wait or --max");
@@ -241,11 +241,11 @@ describe("claimDevices", () => {
 
 	test("waits (polling) until a lease is released", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
-		const held = await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		const held = await new ClaimService(input(provider, { owner: other, request: request({ max: 1 }) })).claim();
 		expect(held.success).toBe(true);
 		let clock = NOW;
 		const sleeps: number[] = [];
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(provider, {
 				request: request({ max: 1 }),
 				now: () => clock,
@@ -257,16 +257,16 @@ describe("claimDevices", () => {
 					if (sleeps.length === 3 && held.success) store.deleteLeases(held.data.claimed.map((c) => c.lease.id));
 				},
 			})
-		);
+		).claim();
 		expect(result.success).toBe(true);
 		expect(sleeps).toEqual([1_000, 1_000, 1_000]);
 	});
 
 	test("wait gives up after waitMs", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
-		await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		await new ClaimService(input(provider, { owner: other, request: request({ max: 1 }) })).claim();
 		let clock = NOW;
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(provider, {
 				request: request({ max: 1 }),
 				now: () => clock,
@@ -276,7 +276,7 @@ describe("claimDevices", () => {
 					clock += ms;
 				},
 			})
-		);
+		).claim();
 		expect(result.success).toBe(false);
 		expect(clock).toBe(NOW + 3_000);
 	});
@@ -287,14 +287,14 @@ describe("claimDevices", () => {
 			{ resource: { kind: "device", platform: "ios", id: "1", name: "warden-iphone-17-1" }, owner: other, ttlMs: 1 },
 			0
 		);
-		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ max: 1 }) })).claim();
 		expect(result.success).toBe(true);
 		if (result.success) expect(result.data.reclaimed).toHaveLength(1);
 	});
 
 	test("boot failure → all leases from this claim released, err returned", async () => {
 		const provider = fakeProvider([sim("1"), sim("2")], { boot: "2" });
-		const result = await claimDevices(input(provider, { request: request({ count: 2 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ count: 2 }) })).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("boot 2 failed");
 		expect(store.listLeases()).toEqual([]);
@@ -302,7 +302,7 @@ describe("claimDevices", () => {
 
 	test("create failure → placeholder removed", async () => {
 		const provider = fakeProvider([], { create: "no runtime" });
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success).toBe(false);
 		expect(store.listLeases()).toEqual([]);
 	});
@@ -323,9 +323,9 @@ describe("claimDevices", () => {
 			NOW
 		);
 		provider.devices.push(sim("2", { name: "warden-iphone-17-2" }));
-		const held = await claimDevices(input(provider, { owner: other }));
+		const held = await new ClaimService(input(provider, { owner: other })).claim();
 		expect(held.success && held.data.claimed[0]?.device.id).toBe("1");
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success).toBe(false);
 		expect(provider.calls.filter((c) => c.startsWith("create"))).toEqual([]);
 	});
@@ -333,7 +333,7 @@ describe("claimDevices", () => {
 	test("touches devices on success and sets lease pid", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
 		store.recordDevice({ platform: "ios", id: "1", name: "warden-iphone-17-1", profile: "iphone-17" }, 5);
-		const result = await claimDevices(input(provider, { pid: 4242 }));
+		const result = await new ClaimService(input(provider, { pid: 4242 })).claim();
 		expect(result.success && result.data.claimed[0]?.lease.pid).toBe(4242);
 		expect(store.listDevices("ios")[0]?.lastUsedAt).toBe(NOW);
 	});
@@ -346,7 +346,7 @@ describe("claimDevices", () => {
 			clock += 120_000;
 			return boot(id);
 		};
-		const result = await claimDevices(input(provider, { now: () => clock }));
+		const result = await new ClaimService(input(provider, { now: () => clock })).claim();
 		expect(result.success && result.data.claimed[0]?.lease.heartbeatAt).toBe(NOW + 120_000);
 		expect(store.listLeases()[0]?.heartbeatAt).toBe(NOW + 120_000);
 	});
@@ -354,7 +354,7 @@ describe("claimDevices", () => {
 	test("inventory failure → err", async () => {
 		const provider = fakeProvider([]);
 		provider.inventory = async () => wardenErrors.err("failed", "simctl missing");
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result).toEqual(wardenErrors.err("failed", "simctl missing"));
 	});
 });
@@ -371,7 +371,7 @@ describe("claim health probe", () => {
 	test("quarantines an unhealthy warden device, releases its lease and claims another", async () => {
 		const provider = withProbe(fakeProvider([sim("1", { state: "booted" }), sim("2")]), new Set(["1"]));
 		const logs: string[] = [];
-		const result = await claimDevices(input(provider, { log: (l) => logs.push(l) }));
+		const result = await new ClaimService(input(provider, { log: (l) => logs.push(l) })).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
 		expect(store.listDevices().find((d) => d.id === "1")).toMatchObject({ quarantineReason: "claim: 1: hung" });
 		expect(store.listLeases().map((l) => l.resource.kind === "device" && l.resource.id)).toEqual(["2"]);
@@ -380,7 +380,7 @@ describe("claim health probe", () => {
 
 	test("a quarantined device is not offered to the next claim", async () => {
 		const provider = withProbe(fakeProvider([sim("1", { state: "booted" })]), new Set(["1"]));
-		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ max: 1 }) })).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("create");
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("NEW1");
 	});
@@ -393,7 +393,7 @@ describe("claim health probe", () => {
 			]),
 			new Set(["F"])
 		);
-		const result = await claimDevices(input(provider, { request: request({ adopt: true }) }));
+		const result = await new ClaimService(input(provider, { request: request({ adopt: true }) })).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("2");
 		expect(store.listDevices().find((d) => d.id === "F")).toBeUndefined();
 		expect(provider.calls).not.toContain("shutdown F");
@@ -404,7 +404,7 @@ describe("claim health probe", () => {
 			fakeProvider([sim("1", { state: "booted" })]),
 			new Set(["1", "NEW1", "NEW2", "NEW3", "NEW4"])
 		);
-		const result = await claimDevices(input(provider, { request: request({ max: 9 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ max: 9 }) })).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("failed the health probe");
 		expect(store.listLeases()).toEqual([]);
@@ -413,7 +413,7 @@ describe("claim health probe", () => {
 
 	test("healthy devices are unaffected", async () => {
 		const provider = withProbe(fakeProvider([sim("1", { state: "booted" })]), new Set());
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
 		expect(store.listDevices()).toEqual([]);
 	});
@@ -433,7 +433,9 @@ describe("claim readiness timeout (16-2)", () => {
 	test("a warden device that never gets ready is quarantined, shut down, and another one claimed", async () => {
 		const provider = stuck(fakeProvider([sim("1", { state: "booted" }), sim("2")]), new Set(["1"]));
 		const logs: string[] = [];
-		const result = await claimDevices(input(provider, { readyTimeoutMs: 300_000, log: (l) => logs.push(l) }));
+		const result = await new ClaimService(
+			input(provider, { readyTimeoutMs: 300_000, log: (l) => logs.push(l) })
+		).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantineReason).toContain("not ready within 300s");
 		expect(provider.calls).toContain("shutdown 1");
@@ -443,10 +445,10 @@ describe("claim readiness timeout (16-2)", () => {
 
 	test("the stuck device is not offered to the next claim", async () => {
 		const provider = stuck(fakeProvider([sim("1", { state: "booted" })]), new Set(["1"]));
-		const first = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		const first = await new ClaimService(input(provider, { request: request({ max: 1 }) })).claim();
 		expect(first.success && first.data.claimed[0]?.device.id).toBe("NEW1");
 		provider.calls.length = 0;
-		const second = await claimDevices(input(provider, { owner: other, request: request({ max: 1 }) }));
+		const second = await new ClaimService(input(provider, { owner: other, request: request({ max: 1 }) })).claim();
 		expect(second.success).toBe(false);
 		expect(provider.calls).not.toContain("ready 1");
 	});
@@ -459,7 +461,7 @@ describe("claim readiness timeout (16-2)", () => {
 			]),
 			new Set(["F"])
 		);
-		const result = await claimDevices(input(provider, { request: request({ adopt: true }) }));
+		const result = await new ClaimService(input(provider, { request: request({ adopt: true }) })).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("2");
 		expect(store.listDevices().find((d) => d.id === "F")).toBeUndefined();
 		expect(provider.calls).not.toContain("shutdown F");
@@ -481,7 +483,7 @@ describe("claim warm path", () => {
 
 	test("an already-booted device passes the cheap check: no waitReady, no full probe", async () => {
 		const provider = withWarm(fakeProvider([sim("1", { state: "booted" })]), true);
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("reuse");
 		expect(result.success && result.data.claimed[0]?.device.state).toBe("booted");
 		expect(provider.calls).toEqual(["warm 1"]);
@@ -490,21 +492,21 @@ describe("claim warm path", () => {
 
 	test("a failed cheap check falls back to waitReady + the full probe", async () => {
 		const provider = withWarm(fakeProvider([sim("1", { state: "booted" })]), false);
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success).toBe(true);
 		expect(provider.calls).toEqual(["warm 1", "ready 1", "probe 1"]);
 	});
 
 	test("a device this claim boots still waits and probes in full", async () => {
 		const provider = withWarm(fakeProvider([sim("1")]), true);
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 		expect(provider.calls).toEqual(["boot 1", "ready 1", "probe 1"]);
 	});
 
 	test("a new device waits and probes in full", async () => {
 		const provider = withWarm(fakeProvider([]), true);
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("create");
 		expect(provider.calls).toEqual(["create warden-iphone-17-1 iphone-17 -", "boot NEW1", "ready NEW1", "probe NEW1"]);
 	});
@@ -538,14 +540,14 @@ describe("claim spawn counts (iOS provider)", () => {
 
 	test("a warm claim of an already-booted sim is two spawns: simctl list and launchctl list", async () => {
 		const { spawns, provider } = world("Booted");
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("reuse");
 		expect(spawns).toEqual(["xcrun simctl list devices available -j", "xcrun simctl spawn U1 launchctl list"]);
 	});
 
 	test("a sim this claim boots: bootstatus -b alone boots it, then the one-spawn probe (16-15)", async () => {
 		const { spawns, provider } = world("Shutdown");
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 		expect(spawns).toEqual([
 			"xcrun simctl list devices available -j",
@@ -557,7 +559,7 @@ describe("claim spawn counts (iOS provider)", () => {
 
 	test("a sim still Shutting Down is never a reuse step: bootstatus refuses it, simctl boot waits it out (16-1, 16-15)", async () => {
 		const { spawns, provider } = world("Shutting Down");
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 		expect(spawns).toEqual([
 			"xcrun simctl list devices available -j",
@@ -571,7 +573,7 @@ describe("claim spawn counts (iOS provider)", () => {
 
 	test("a booted sim whose SpringBoard is not up yet still gets bootstatus before the full probe", async () => {
 		const { spawns, provider } = world("Booted", false);
-		await claimDevices(input(provider));
+		await new ClaimService(input(provider)).claim();
 		expect(spawns.slice(0, 3)).toEqual([
 			"xcrun simctl list devices available -j",
 			"xcrun simctl spawn U1 launchctl list",
@@ -599,7 +601,7 @@ describe("claim bootReady path (16-15)", () => {
 
 	test("a device this claim boots: one bootReady and the post-boot probe, no boot/waitReady/full probe", async () => {
 		const provider = withBootReady(fakeProvider([sim("1")]), () => ({ kind: "ready" }));
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 		expect(provider.calls).toEqual(["bootReady 1", "probeBooted 1"]);
 		expect(store.listLeases()[0]?.bootedByOwner).toBe(true);
@@ -608,7 +610,7 @@ describe("claim bootReady path (16-15)", () => {
 
 	test("a reused booted device is untouched by bootReady", async () => {
 		const provider = withBootReady(fakeProvider([sim("1", { state: "booted" })]), () => ({ kind: "ready" }));
-		await claimDevices(input(provider));
+		await new ClaimService(input(provider)).claim();
 		expect(provider.calls).toEqual(["ready 1", "probe 1"]);
 	});
 
@@ -617,7 +619,7 @@ describe("claim bootReady path (16-15)", () => {
 			kind: "boot-failed",
 			error: { code: "failed", message: `${id}: Invalid device` },
 		}));
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result).toEqual(wardenErrors.err("failed", "1: Invalid device"));
 		expect(store.listLeases()).toEqual([]);
 		expect(store.listDevices()).toEqual([]);
@@ -629,7 +631,7 @@ describe("claim bootReady path (16-15)", () => {
 				? { kind: "not-ready", error: { code: "failed", message: "1 not ready within 300s: timed out" } }
 				: { kind: "ready" }
 		);
-		const result = await claimDevices(input(provider, { readyTimeoutMs: 300_000 }));
+		const result = await new ClaimService(input(provider, { readyTimeoutMs: 300_000 })).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantineReason).toContain("not ready within 300s");
 	});
@@ -652,7 +654,9 @@ describe("claim probe under host load (16-10)", () => {
 	test("a probe timeout on an overloaded host is re-probed once after 5 s; a healthy answer keeps the device", async () => {
 		const provider = probing(fakeProvider([sim("1", { state: "booted" })]), { "1": [TIMEOUT("1"), "ok"] });
 		const slept: number[] = [];
-		const result = await claimDevices(input(provider, { load: overloaded, sleep: async (ms) => void slept.push(ms) }));
+		const result = await new ClaimService(
+			input(provider, { load: overloaded, sleep: async (ms) => void slept.push(ms) })
+		).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
 		expect(provider.calls).toEqual(["ready 1", "probe 1", "probe 1"]);
 		expect(slept).toEqual([5_000]);
@@ -664,7 +668,7 @@ describe("claim probe under host load (16-10)", () => {
 			"1": [TIMEOUT("1"), TIMEOUT("1")],
 		});
 		const logs: string[] = [];
-		const result = await claimDevices(input(provider, { load: overloaded, log: (l) => logs.push(l) }));
+		const result = await new ClaimService(input(provider, { load: overloaded, log: (l) => logs.push(l) })).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
 		expect(provider.calls).not.toContain("shutdown 1");
@@ -673,7 +677,7 @@ describe("claim probe under host load (16-10)", () => {
 
 	test("a probe timeout on an idle host still quarantines (a hung sim, not a busy host)", async () => {
 		const provider = probing(fakeProvider([sim("1", { state: "booted" }), sim("2")]), { "1": [TIMEOUT("1")] });
-		const result = await claimDevices(input(provider, { load: idle }));
+		const result = await new ClaimService(input(provider, { load: idle })).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBe(NOW);
 		expect(provider.calls.filter((c) => c === "probe 1")).toHaveLength(1);
@@ -683,7 +687,7 @@ describe("claim probe under host load (16-10)", () => {
 		const provider = probing(fakeProvider([sim("1", { state: "booted" }), sim("2")]), {
 			"1": ["1: SpringBoard is not running"],
 		});
-		await claimDevices(input(provider, { load: overloaded }));
+		await new ClaimService(input(provider, { load: overloaded })).claim();
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBe(NOW);
 		expect(provider.calls.filter((c) => c === "probe 1")).toHaveLength(1);
 	});
@@ -699,7 +703,9 @@ describe("claim quarantine expiry (16-10)", () => {
 		quarantined("1", "claim: 1: launchctl list did not answer within 15s", NOW - QUARANTINE_TTL_MS);
 		const provider = fakeProvider([sim("1", { profile: "iphone-17" })]);
 		const logs: string[] = [];
-		const result = await claimDevices(input(provider, { request: request({ max: 1 }), log: (l) => logs.push(l) }));
+		const result = await new ClaimService(
+			input(provider, { request: request({ max: 1 }), log: (l) => logs.push(l) })
+		).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
 		expect(logs.join("\n")).toContain("quarantine expired");
@@ -709,7 +715,7 @@ describe("claim quarantine expiry (16-10)", () => {
 	test("a younger claim quarantine still holds", async () => {
 		quarantined("1", "claim: 1: hung", NOW - QUARANTINE_TTL_MS + 1);
 		const provider = fakeProvider([sim("1", { profile: "iphone-17" })]);
-		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ max: 1 }) })).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("NEW1");
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBe(NOW - QUARANTINE_TTL_MS + 1);
 	});
@@ -717,7 +723,7 @@ describe("claim quarantine expiry (16-10)", () => {
 	test("a quarantine a person set (release --bad) never expires", async () => {
 		quarantined("1", "flaky keyboard", NOW - 7 * QUARANTINE_TTL_MS);
 		const provider = fakeProvider([sim("1", { profile: "iphone-17" })]);
-		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ max: 1 }) })).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("NEW1");
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantineReason).toBe("flaky keyboard");
 	});
@@ -745,7 +751,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 
 	test("no wait: a specific host-overloaded error, not 'all leased'; nothing leased or quarantined", async () => {
 		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
-		const result = await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		const result = await new ClaimService(input(provider, { request: request({ max: 1 }), load: overloaded })).claim();
 		expect(result.success).toBe(false);
 		if (result.success) return;
 		expect(result.error.message).toContain("host overloaded (load 30.0 ≥ 8 cores); retry later");
@@ -756,7 +762,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 
 	test("a device this claim booted and then skipped is shut down again (not quarantined)", async () => {
 		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
-		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		await new ClaimService(input(provider, { request: request({ max: 1 }), load: overloaded })).claim();
 		expect(provider.calls).toContain("shutdown 1");
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBeUndefined();
 	});
@@ -769,7 +775,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 			leasedAtShutdown.push(store.listLeases().map((l) => leaseModel.resourceKey(l.resource)));
 			return resultFactory.ok(undefined);
 		};
-		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		await new ClaimService(input(provider, { request: request({ max: 1 }), load: overloaded })).claim();
 		expect(leasedAtShutdown).toEqual([["device:ios:1"]]);
 		expect(store.listLeases()).toEqual([]);
 	});
@@ -778,14 +784,14 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1")]);
 		provider.devices[0] = { ...(provider.devices[0] as InventoryDevice), state: "booted" };
 		provider.probe = provider.probeBooted;
-		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));
+		await new ClaimService(input(provider, { request: request({ max: 1 }), load: overloaded })).claim();
 		expect(provider.calls).not.toContain("shutdown 1");
 	});
 
 	test("with --wait the skipped device is offered again on the next round and claimed once it answers", async () => {
 		const provider = poolOfOne([TIMEOUT("1"), TIMEOUT("1"), "ok"]);
 		let t = NOW;
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(provider, {
 				request: request({ max: 1 }),
 				load: overloaded,
@@ -795,7 +801,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 					t += ms;
 				},
 			})
-		);
+		).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["1"]);
 		expect(provider.calls.filter((c) => c === "probe 1")).toHaveLength(3);
 	});
@@ -803,7 +809,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 	test("with --wait on a host that stays overloaded: bounded, ends with the host-overloaded error", async () => {
 		const provider = poolOfOne(Array.from({ length: 1_000 }, () => TIMEOUT("1")));
 		let t = NOW;
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(provider, {
 				request: request({ max: 1 }),
 				load: overloaded,
@@ -813,7 +819,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 					t += ms;
 				},
 			})
-		);
+		).claim();
 		expect(result.success).toBe(false);
 		if (result.success) return;
 		expect(result.error.message).toContain("host overloaded");
@@ -851,14 +857,14 @@ describe("claim under host load with --wait (ios-claim-path-S2)", () => {
 
 	test("overload skips do not spend the retry budget while wait remains: claimed once the host calms down", async () => {
 		const provider = poolOfOne([...Array.from({ length: 10 }, () => TIMEOUT("1")), "ok"]);
-		const result = await claimDevices(waiting(provider, 600_000));
+		const result = await new ClaimService(waiting(provider, 600_000)).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["1"]);
 		expect(provider.calls.filter((c) => c === "probe 1")).toHaveLength(11);
 	});
 
 	test("an overload that outlasts the wait ends at the deadline with the host-overloaded error", async () => {
 		const provider = poolOfOne(Array.from({ length: 1_000 }, () => TIMEOUT("1")));
-		const result = await claimDevices(waiting(provider, 60_000));
+		const result = await new ClaimService(waiting(provider, 60_000)).claim();
 		expect(result.success).toBe(false);
 		if (result.success) return;
 		expect(result.error.message).toContain("host overloaded (load 30.0 ≥ 8 cores); retry later");
@@ -885,7 +891,7 @@ describe("claim quarantine expiry respects max (ios-claim-path-R3)", () => {
 	test("max=1 with a replacement: the expired quarantine stays, the pool stays at max", async () => {
 		quarantined("1", NOW - QUARANTINE_TTL_MS);
 		const provider = fakeProvider([sim("1", { profile: "iphone-17" }), replacement("2")]);
-		const result = await claimDevices(input(provider, { request: request({ max: 1 }) }));
+		const result = await new ClaimService(input(provider, { request: request({ max: 1 }) })).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
 		expect(store.listDevices().find((d) => d.id === "1")?.quarantinedAt).toBe(NOW - QUARANTINE_TTL_MS);
 	});
@@ -898,7 +904,7 @@ describe("claim quarantine expiry respects max (ios-claim-path-R3)", () => {
 			replacement("2"),
 			sim("3", { profile: "iphone-17" }),
 		]);
-		await claimDevices(input(provider, { request: request({ max: 2 }) }));
+		await new ClaimService(input(provider, { request: request({ max: 2 }) })).claim();
 		const stillQuarantined = store.listDevices().filter((d) => d.quarantinedAt !== undefined);
 		expect(stillQuarantined).toHaveLength(1);
 	});
@@ -941,7 +947,7 @@ describe("claim capacity queue", () => {
 	/** Two booted devices leased by `other`, so the host (2 cpu units) is full. */
 	async function fullHost(extra: InventoryDevice[] = []): Promise<FakeProvider> {
 		const provider = fakeProvider([sim("1", { state: "booted" }), sim("2", { state: "booted" }), ...extra]);
-		const held = await claimDevices(input(provider, { owner: other, request: request({ count: 2 }) }));
+		const held = await new ClaimService(input(provider, { owner: other, request: request({ count: 2 }) })).claim();
 		expect(held.success).toBe(true);
 		return provider;
 	}
@@ -963,17 +969,17 @@ describe("claim capacity queue", () => {
 	test("abort ends a queued claim and leaves no queue row", async () => {
 		const provider = await fullHost();
 		let polls = 0;
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			capInput(provider, { waitMs: 10 * MIN, sleep: async () => void polls++, abort: () => polls >= 1 })
-		);
-		expect(result).toEqual(claimAborted());
+		).claim();
+		expect(result).toEqual(claimMessages.aborted());
 		expect(store.listQueue()).toEqual([]);
 	});
 
 	test("a full host queues the claim, then admits it once a slot frees", async () => {
 		const provider = await fullHost();
 		let polls = 0;
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			capInput(provider, {
 				waitMs: 10 * MIN,
 				sleep: async () => {
@@ -988,7 +994,7 @@ describe("claim capacity queue", () => {
 					if (d) d.state = "shutdown";
 				},
 			})
-		);
+		).claim();
 		expect(result.success).toBe(true);
 		expect(polls).toBe(1);
 		const queued = logs.filter((l) => l.startsWith("queued"));
@@ -1000,7 +1006,7 @@ describe("claim capacity queue", () => {
 
 	test("--no-wait on a full host fails naming the position and binding dimension, and leaves no row", async () => {
 		const provider = await fullHost();
-		const result = await claimDevices(capInput(provider));
+		const result = await new ClaimService(capInput(provider)).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toMatch(/#1 of 1.*cpu binds/);
 		expect(store.listQueue()).toEqual([]);
@@ -1009,7 +1015,7 @@ describe("claim capacity queue", () => {
 	test("a lower-priority claim waits behind a higher-priority row even when the host has room", async () => {
 		const provider = fakeProvider([]);
 		queueRow("rival", PRIORITY.high, NOW);
-		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		const result = await new ClaimService(capInput(provider, { cpu: 4 })).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("#2 of 2");
 		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
@@ -1018,7 +1024,7 @@ describe("claim capacity queue", () => {
 	test("a higher priority than the waiting row is admitted first", async () => {
 		const provider = fakeProvider([]);
 		queueRow("rival", PRIORITY.normal, NOW - MIN);
-		const result = await claimDevices(capInput(provider, { cpu: 4, priority: PRIORITY.interactive }));
+		const result = await new ClaimService(capInput(provider, { cpu: 4, priority: PRIORITY.interactive })).claim();
 		expect(result.success).toBe(true);
 		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
 	});
@@ -1026,7 +1032,7 @@ describe("claim capacity queue", () => {
 	test("aging lets an old low row overtake a fresh normal claim", async () => {
 		const provider = fakeProvider([]);
 		queueRow("old", PRIORITY.low, NOW - 120 * MIN);
-		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		const result = await new ClaimService(capInput(provider, { cpu: 4 })).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("#2 of 2");
 	});
@@ -1034,7 +1040,7 @@ describe("claim capacity queue", () => {
 	test("a pure reuse backfills past a waiting head", async () => {
 		const provider = fakeProvider([sim("1", { state: "booted" })]);
 		queueRow("rival", PRIORITY.interactive, NOW);
-		const result = await claimDevices(capInput(provider, { cpu: 1 }));
+		const result = await new ClaimService(capInput(provider, { cpu: 1 })).claim();
 		expect(result.success && result.data.claimed[0]?.action).toBe("reuse");
 		expect(store.listQueue().map((e) => e.id)).toEqual(["rival"]);
 	});
@@ -1042,7 +1048,7 @@ describe("claim capacity queue", () => {
 	test("the head shuts down an idle warden device of another profile to make room", async () => {
 		const idle = sim("A", { name: "warden-ipad-1", state: "booted" });
 		const provider = await fullHost([idle]);
-		const result = await claimDevices(capInput(provider, { cpu: 3 }));
+		const result = await new ClaimService(capInput(provider, { cpu: 3 })).claim();
 		expect(shutdownIdle).toEqual(["A"]);
 		expect(result.success && result.data.claimed[0]?.action).toBe("create");
 		expect(logs.some((l) => l.includes("idle, shut down"))).toBe(true);
@@ -1054,7 +1060,7 @@ describe("claim capacity queue", () => {
 			sim("F1", { name: "iPhone 17", state: "booted" }),
 			sim("F2", { name: "iPad", state: "booted" }),
 		]);
-		const result = await claimDevices(capInput(provider));
+		const result = await new ClaimService(capInput(provider)).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("cpu binds");
 		expect(shutdownIdle).toEqual([]);
@@ -1064,24 +1070,24 @@ describe("claim capacity queue", () => {
 	test("an idle device is not evicted when that would not make room", async () => {
 		const idle = sim("A", { name: "warden-ipad-1", state: "booted" });
 		const provider = fakeProvider([idle, sim("F1", { name: "iPhone 17", state: "booted" })]);
-		const result = await claimDevices(capInput(provider, { cpu: 1 }));
+		const result = await new ClaimService(capInput(provider, { cpu: 1 })).claim();
 		expect(result.success).toBe(false);
 		expect(shutdownIdle).toEqual([]);
 	});
 
 	test("memory pressure warn holds a claim that would fit; normal admits it", async () => {
 		const provider = fakeProvider([]);
-		const held = await claimDevices(capInput(provider, { cpu: 4, pressure: "warn" }));
+		const held = await new ClaimService(capInput(provider, { cpu: 4, pressure: "warn" })).claim();
 		expect(held.success).toBe(false);
 		if (!held.success) expect(held.error.message).toContain("memory pressure warn");
-		const admitted = await claimDevices(capInput(provider, { cpu: 4, pressure: "normal" }));
+		const admitted = await new ClaimService(capInput(provider, { cpu: 4, pressure: "normal" })).claim();
 		expect(admitted.success).toBe(true);
 	});
 
 	test("rows of dead waiters do not block", async () => {
 		const provider = fakeProvider([]);
 		queueRow("ghost", PRIORITY.interactive, NOW - MIN, 999_999);
-		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		const result = await new ClaimService(capInput(provider, { cpu: 4 })).claim();
 		expect(result.success).toBe(true);
 		expect(store.listQueue()).toEqual([]);
 	});
@@ -1097,7 +1103,7 @@ describe("claim capacity queue", () => {
 			return enqueue(entry);
 		};
 		let clock = NOW;
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			capInput(provider, {
 				waitMs: 10 * MIN,
 				now: () => clock,
@@ -1106,7 +1112,7 @@ describe("claim capacity queue", () => {
 					store.dequeue("rival");
 				},
 			})
-		);
+		).claim();
 		expect(result.success && result.data.claimed.map((c) => c.device.id)).toEqual(["2"]);
 		expect(stamps.length).toBeGreaterThanOrEqual(3);
 		expect(new Set(stamps)).toEqual(new Set([NOW]));
@@ -1114,7 +1120,7 @@ describe("claim capacity queue", () => {
 
 	test("the queue row is removed when the claim errors", async () => {
 		const provider = fakeProvider([sim("1")], { boot: "1" });
-		const result = await claimDevices(capInput(provider, { cpu: 4 }));
+		const result = await new ClaimService(capInput(provider, { cpu: 4 })).claim();
 		expect(result.success).toBe(false);
 		expect(store.listQueue()).toEqual([]);
 	});
@@ -1132,14 +1138,14 @@ describe("claim capacity queue", () => {
 			},
 		});
 		const provider = fakeProvider([phone("P1"), phone("P2"), phone("P3"), sim("1")]);
-		const result = await claimDevices(capInput(provider, { cpu: 1, request: request({ adopt: true }) }));
+		const result = await new ClaimService(capInput(provider, { cpu: 1, request: request({ adopt: true }) })).claim();
 		expect(result.success && result.data.claimed[0]?.device.id).toBe("1");
 		expect(result.success && result.data.claimed[0]?.action).toBe("boot");
 	});
 
 	test("without capacity a full host never queues", async () => {
 		const provider = fakeProvider([]);
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success).toBe(true);
 		expect(store.listQueue()).toEqual([]);
 	});
@@ -1171,7 +1177,7 @@ describe("claimDevices slim hooks (SLIM-2)", () => {
 
 	test("create: create -> prepareBoot -> bootReady -> afterReady -> probe", async () => {
 		const provider = hooked([], { bootReady: true });
-		const result = await claimDevices(input(provider));
+		const result = await new ClaimService(input(provider)).claim();
 		expect(result.success).toBe(true);
 		expect(provider.calls).toEqual([
 			"create warden-iphone-17-1 iphone-17 -",
@@ -1184,19 +1190,19 @@ describe("claimDevices slim hooks (SLIM-2)", () => {
 
 	test("shutdown reuse: prepareBoot -> bootReady -> afterReady -> probe", async () => {
 		const provider = hooked([sim("1")], { bootReady: true });
-		await claimDevices(input(provider));
+		await new ClaimService(input(provider)).claim();
 		expect(provider.calls).toEqual(["prepareBoot 1", "bootReady 1", "afterReady 1", "probe 1"]);
 	});
 
 	test("without bootReady: prepareBoot -> boot -> waitReady -> afterReady -> probe", async () => {
 		const provider = hooked([sim("1")]);
-		await claimDevices(input(provider));
+		await new ClaimService(input(provider)).claim();
 		expect(provider.calls).toEqual(["prepareBoot 1", "boot 1", "ready 1", "afterReady 1", "probe 1"]);
 	});
 
 	test("an already-booted device gets neither hook", async () => {
 		const provider = hooked([sim("1", { state: "booted" })], { bootReady: true });
-		await claimDevices(input(provider));
+		await new ClaimService(input(provider)).claim();
 		expect(provider.calls.filter((c) => c.startsWith("prepareBoot") || c.startsWith("afterReady"))).toEqual([]);
 	});
 });
@@ -1214,7 +1220,9 @@ describe("claimDevices physical", () => {
 
 	test("leases a ready phone with a physical resource, never boots or creates it and records no device", async () => {
 		const provider = fakeProvider([phone("P1")]);
-		const result = await claimDevices(input(provider, { request: request({ platform: "android", physical: {} }) }));
+		const result = await new ClaimService(
+			input(provider, { request: request({ platform: "android", physical: {} }) })
+		).claim();
 		expect(result.success).toBe(true);
 		if (!result.success) return;
 		expect(result.data.claimed[0]?.lease.resource).toEqual({
@@ -1231,7 +1239,9 @@ describe("claimDevices physical", () => {
 
 	test("with no ready phone it waits instead of creating", async () => {
 		const provider = fakeProvider([]);
-		const result = await claimDevices(input(provider, { request: request({ platform: "android", physical: {} }) }));
+		const result = await new ClaimService(
+			input(provider, { request: request({ platform: "android", physical: {} }) })
+		).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("physical");
 		expect(provider.calls).toEqual([]);
@@ -1239,9 +1249,9 @@ describe("claimDevices physical", () => {
 
 	test("naming an offline phone fails device_offline with the reason", async () => {
 		const offline = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "offline" } });
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(fakeProvider([offline]), { request: request({ platform: "android", physical: { ids: ["P1"] } }) })
-		);
+		).claim();
 		expect(result.success).toBe(false);
 		if (!result.success) {
 			expect(result.error.message).toContain("device_offline");
@@ -1254,7 +1264,7 @@ describe("claimDevices physical", () => {
 		const offline = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "offline" } });
 		let at = NOW;
 		const lines: string[] = [];
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(fakeProvider([offline]), {
 				request: request({ platform: "android", physical: { ids: ["P1"] } }),
 				waitMs: 70_000,
@@ -1265,7 +1275,7 @@ describe("claimDevices physical", () => {
 				},
 				log: (line) => lines.push(line),
 			})
-		);
+		).claim();
 		expect(result.success).toBe(false);
 		expect(lines).toHaveLength(3);
 		expect(lines[0]).toContain("waiting");
@@ -1278,7 +1288,7 @@ describe("claimDevices physical", () => {
 	test("waiting for any free device says so, never silently", async () => {
 		let at = NOW;
 		const lines: string[] = [];
-		await claimDevices(
+		await new ClaimService(
 			input(fakeProvider([]), {
 				request: request({ platform: "android", physical: {} }),
 				waitMs: 10_000,
@@ -1289,30 +1299,30 @@ describe("claimDevices physical", () => {
 				},
 				log: (line) => lines.push(line),
 			})
-		);
+		).claim();
 		expect(lines[0]).toContain("waiting");
 	});
 
 	test("an unauthorized phone is listed as skipped when nothing else is ready", async () => {
 		const unauthorized = phone("P1", { physical: { platform: "android", transport: "usb", adbState: "unauthorized" } });
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(fakeProvider([unauthorized]), { request: request({ platform: "android", physical: {} }) })
-		);
+		).claim();
 		expect(!result.success && result.error.message).toContain("USB debugging");
 	});
 
 	test("an allowlist that matches nothing says so", async () => {
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(fakeProvider([phone("P1")]), { request: request({ platform: "android", physical: { allow: ["P9"] } }) })
-		);
+		).claim();
 		expect(!result.success && result.error.message).toContain("allowlist");
 	});
 
 	test("two claims get two different phones", async () => {
 		const provider = fakeProvider([phone("P1"), phone("P2")]);
 		const req = request({ platform: "android", physical: {} });
-		const a = await claimDevices(input(provider, { request: req }));
-		const b = await claimDevices(input(provider, { request: req, owner: other }));
+		const a = await new ClaimService(input(provider, { request: req })).claim();
+		const b = await new ClaimService(input(provider, { request: req, owner: other })).claim();
 		expect(a.success && b.success && [a.data.claimed[0]?.device.id, b.data.claimed[0]?.device.id].sort()).toEqual([
 			"P1",
 			"P2",
@@ -1339,7 +1349,7 @@ describe("claimDevices: leftover conditions of a deleted lease", () => {
 			seen.push(`${device.platform}:${device.id}`);
 			return [];
 		};
-		const result = await claimDevices(input(fakeProvider([sim("1", { state: "booted" })]), { orphans }));
+		const result = await new ClaimService(input(fakeProvider([sim("1", { state: "booted" })]), { orphans })).claim();
 		expect(result.success && result.data.reclaimed).toEqual([stale.id]);
 		expect(seen).toEqual(["ios:1"]);
 	});
@@ -1347,12 +1357,12 @@ describe("claimDevices: leftover conditions of a deleted lease", () => {
 	test("a failed reset is logged and the claim still succeeds", async () => {
 		staleWithCondition();
 		const logs: string[] = [];
-		const result = await claimDevices(
+		const result = await new ClaimService(
 			input(fakeProvider([sim("1", { state: "booted" })]), {
 				orphans: async () => ["a11y: boom"],
 				log: (l) => logs.push(l),
 			})
-		);
+		).claim();
 		expect(result.success).toBe(true);
 		expect(logs.some((l) => l.includes("leftover condition not undone — a11y: boom"))).toBe(true);
 	});
@@ -1363,7 +1373,7 @@ describe("claimDevices: leftover conditions of a deleted lease", () => {
 			calls++;
 			return [];
 		};
-		await claimDevices(input(fakeProvider([sim("1", { state: "booted" })]), { orphans }));
+		await new ClaimService(input(fakeProvider([sim("1", { state: "booted" })]), { orphans })).claim();
 		expect(calls).toBe(0);
 	});
 });

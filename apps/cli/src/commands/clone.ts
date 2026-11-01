@@ -1,4 +1,4 @@
-import { wardenDeviceName } from "@delacour/warden-leasing/allocate";
+import { allocator } from "@delacour/warden-leasing/allocate";
 import { goldenNames } from "@delacour/warden-providers/golden-name";
 import { simctlParser } from "@delacour/warden-providers/ios";
 import { type SimctlSim, simctlListParser } from "@delacour/warden-providers/simctl-list";
@@ -34,8 +34,8 @@ function profileOf(sim: SimctlSim): string | undefined {
 function nextPoolName(sims: SimctlSim[], profile: string): string {
 	const taken = new Set(sims.map((s) => s.name));
 	let n = 1;
-	while (taken.has(wardenDeviceName(profile, n))) n++;
-	return wardenDeviceName(profile, n);
+	while (taken.has(allocator.wardenDeviceName(profile, n))) n++;
+	return allocator.wardenDeviceName(profile, n);
 }
 
 /**

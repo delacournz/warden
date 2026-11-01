@@ -9,7 +9,7 @@ import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
-import { claimDevices } from "./claim";
+import { ClaimService } from "./claim";
 
 const SDK = "/sdk";
 const ADB = `${SDK}/platform-tools/adb`;
@@ -48,7 +48,7 @@ describe("claimDevices with the android provider", () => {
 		const deps: ProviderDeps = { exec, store, env: { ANDROID_HOME: SDK, WARDEN_HOME: dir }, now: () => 1_000, owner };
 		const spawnDetached: SpawnDetached = async () => resultFactory.ok({ pid: 4242 });
 		const provider = new AndroidProvider(deps, { spawnDetached, sleep: async () => {}, pidAlive: () => true });
-		const result = await claimDevices({
+		const result = await new ClaimService({
 			store,
 			provider,
 			owner,
@@ -58,7 +58,7 @@ describe("claimDevices with the android provider", () => {
 			pidAlive: () => false,
 			waitMs: 0,
 			sleep: async () => {},
-		});
+		}).claim();
 		expect(result.success && result.data.claimed.map((c) => [c.action, c.device.id])).toEqual([
 			["create", "emulator-5554"],
 		]);

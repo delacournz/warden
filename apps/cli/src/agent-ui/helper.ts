@@ -1272,8 +1272,8 @@ function iosRunnerDeps(host: CommandContext): HelperDeps {
 			expected: async () => (await import("../ios-runner/identity")).expectedRunnerIdentity(host),
 			served: (socketPath) => readServedIdentity(socketPath),
 			caller: async () => {
-				const { resolveOwner } = await import("@delacour/warden-leasing/owner");
-				return ownerKey(resolveOwner(host));
+				const { ownerResolver } = await import("@delacour/warden-leasing/owner");
+				return ownerKey(ownerResolver.resolve(host));
 			},
 			note: (line) => host.err(line),
 		},

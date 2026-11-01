@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claimDevices } from "@delacour/warden-leasing/claim";
+import { ClaimService } from "@delacour/warden-leasing/claim";
 import {
 	AndroidProvider,
 	BOOT_WAIT_SCRIPT,
@@ -373,7 +373,7 @@ describe("opt-out", () => {
 });
 
 async function claim(host: Host, logs: string[] = [], hook?: (avd: string) => AsyncResult<string | undefined>) {
-	return claimDevices({
+	return new ClaimService({
 		store,
 		provider: provider(host, logs, hook),
 		owner,
@@ -383,7 +383,7 @@ async function claim(host: Host, logs: string[] = [], hook?: (avd: string) => As
 		pidAlive: () => false,
 		waitMs: 0,
 		sleep: async () => {},
-	});
+	}).claim();
 }
 
 /** Build what the first claim found missing, as `warden gc` does once the AVD is idle. */

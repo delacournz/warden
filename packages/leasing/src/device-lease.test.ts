@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { DeviceResource, Lease, Owner } from "@delacour/warden-store/types";
-import { blockMessage, busyMessage, ensureCallerLease, releaseDevices } from "./device-lease";
+import { CallerLeaseGate, DeviceReleaser, deviceLeaseMessages } from "./device-lease";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 const me: Owner = { kind: "agent", sessionId: "me", cwd: "/w" };
@@ -34,26 +34,26 @@ describe("ensureCallerLease", () => {
 	test("own lease: heartbeat", () => {
 		const lease = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
 		now += 5000;
-		const res = ensureCallerLease(store, me, "ios", UDID, opts(false));
+		const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(false));
 		expect(res.success && res.data.action).toBe("own");
 		expect(store.getLease(lease.id)?.heartbeatAt).toBe(now);
 	});
 
 	test("live foreign lease: device_foreign with the hook's block message, even with claim", () => {
 		store.insertLease({ resource, owner: other, ttlMs: DEFAULT_TTL_MS }, now);
-		const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(true));
 		expect(res).toEqual({
 			success: false,
-			error: { code: "device_foreign", message: blockMessage(UDID, "ios", other) },
+			error: { code: "device_foreign", message: deviceLeaseMessages.block(UDID, "ios", other) },
 		});
-		expect(blockMessage(UDID, "ios", other)).toContain("leased by agent other (r/wt)");
+		expect(deviceLeaseMessages.block(UDID, "ios", other)).toContain("leased by agent other (r/wt)");
 	});
 
 	test("none: device_not_leased without claim, leased with claim", () => {
-		const denied = ensureCallerLease(store, me, "ios", UDID, opts(false));
+		const denied = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(false));
 		expect(!denied.success && denied.error.code).toBe("device_not_leased");
 		expect(store.listLeases()).toHaveLength(0);
-		const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(true));
 		expect(res.success && res.data.action).toBe("leased");
 		const lease = store.findLeaseByResource(resource);
 		expect(lease?.label).toBe("warden ui");
@@ -63,10 +63,10 @@ describe("ensureCallerLease", () => {
 	test("stale foreign lease: reclaimed with claim, device_not_leased without", () => {
 		store.insertLease({ resource, owner: other, ttlMs: 1000 }, now);
 		now += 5000;
-		const denied = ensureCallerLease(store, me, "ios", UDID, opts(false));
+		const denied = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(false));
 		expect(!denied.success && denied.error.code).toBe("device_not_leased");
 		expect(store.listLeases()).toHaveLength(1);
-		const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(true));
 		expect(res.success && res.data.action).toBe("reclaimed");
 		expect(store.findLeaseByResource(resource)?.owner).toEqual(me);
 	});
@@ -75,7 +75,7 @@ describe("ensureCallerLease", () => {
 		store.insertLease({ resource, owner: other, ttlMs: 1000, pid: 42 }, now);
 		now += 5000;
 		alive = true;
-		const res = ensureCallerLease(store, me, "ios", UDID, opts(true));
+		const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(true));
 		expect(!res.success && res.error.code).toBe("device_foreign");
 	});
 
@@ -86,9 +86,9 @@ describe("ensureCallerLease", () => {
 			const lease = store.insertLease(run, now);
 			now += 5000;
 			alive = true;
-			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(true), exclusive: true });
-			expect(res).toEqual({ success: false, error: { code: "device_busy", message: busyMessage(lease) } });
-			expect(busyMessage(lease)).toBe(
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, { ...opts(true), exclusive: true });
+			expect(res).toEqual({ success: false, error: { code: "device_busy", message: deviceLeaseMessages.busy(lease) } });
+			expect(deviceLeaseMessages.busy(lease)).toBe(
 				`device sim (${UDID}) is in use by agent me (pid 4242, warden e2e); re-run with --force to drive it anyway`
 			);
 			expect(store.getLease(lease.id)?.heartbeatAt).toBe(lease.heartbeatAt);
@@ -97,7 +97,7 @@ describe("ensureCallerLease", () => {
 		test("dead run pid: own (heartbeat)", () => {
 			store.insertLease(run, now);
 			alive = false;
-			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(false), exclusive: true });
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, { ...opts(false), exclusive: true });
 			expect(res.success && res.data.action).toBe("own");
 		});
 
@@ -105,21 +105,21 @@ describe("ensureCallerLease", () => {
 			const user: Owner = { kind: "user", pid: 77, cwd: "/w" };
 			store.insertLease({ resource, owner: user, ttlMs: DEFAULT_TTL_MS, pid: 77 }, now);
 			alive = true;
-			const res = ensureCallerLease(store, user, "ios", UDID, { ...opts(false), exclusive: true, pid: 77 });
+			const res = new CallerLeaseGate(store).ensure(user, "ios", UDID, { ...opts(false), exclusive: true, pid: 77 });
 			expect(res.success && res.data.action).toBe("own");
 		});
 
 		test("own lease without a pid (a plain claim): own", () => {
 			store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
 			alive = true;
-			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(false), exclusive: true });
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, { ...opts(false), exclusive: true });
 			expect(res.success && res.data.action).toBe("own");
 		});
 
 		test("not exclusive (the hook, --force): own, as before", () => {
 			store.insertLease(run, now);
 			alive = true;
-			const res = ensureCallerLease(store, me, "ios", UDID, opts(false));
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(false));
 			expect(res.success && res.data.action).toBe("own");
 		});
 
@@ -127,7 +127,7 @@ describe("ensureCallerLease", () => {
 			const lease = store.insertLease({ ...run, label: "warden dev", shared: true }, now);
 			now += 5000;
 			alive = true;
-			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(true), exclusive: true });
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, { ...opts(true), exclusive: true });
 			expect(res.success && res.data.action).toBe("attached");
 			expect(res.success && res.data.lease.id).toBe(lease.id);
 			expect(store.getLease(lease.id)?.heartbeatAt).toBe(lease.heartbeatAt);
@@ -136,32 +136,32 @@ describe("ensureCallerLease", () => {
 		test("shared lease whose holder died: own (heartbeat), as any own lease", () => {
 			store.insertLease({ ...run, shared: true }, now);
 			alive = false;
-			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(false), exclusive: true });
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, { ...opts(false), exclusive: true });
 			expect(res.success && res.data.action).toBe("own");
 		});
 
 		test("shared lease, not exclusive (status, --force): still attached, never taken as the caller's own", () => {
 			store.insertLease({ ...run, shared: true }, now);
 			alive = true;
-			const res = ensureCallerLease(store, me, "ios", UDID, opts(false));
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, opts(false));
 			expect(res.success && res.data.action).toBe("attached");
 		});
 
 		test("another session's shared lease stays foreign", () => {
 			store.insertLease({ ...run, owner: other, shared: true }, now);
 			alive = true;
-			const res = ensureCallerLease(store, me, "ios", UDID, { ...opts(true), exclusive: true });
+			const res = new CallerLeaseGate(store).ensure(me, "ios", UDID, { ...opts(true), exclusive: true });
 			expect(!res.success && res.error.code).toBe("device_foreign");
 		});
 
 		test("no label: the message leaves it out", () => {
 			const lease = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS, pid: 4242 }, now);
-			expect(busyMessage(lease)).toContain("(pid 4242);");
+			expect(deviceLeaseMessages.busy(lease)).toContain("(pid 4242);");
 		});
 	});
 
 	test("bootedByOwner and pid land on a new lease", () => {
-		ensureCallerLease(store, me, "ios", UDID, { ...opts(true), bootedByOwner: true, pid: 7 });
+		new CallerLeaseGate(store).ensure(me, "ios", UDID, { ...opts(true), bootedByOwner: true, pid: 7 });
 		const lease = store.findLeaseByResource(resource);
 		expect(lease?.bootedByOwner).toBe(true);
 		expect(lease?.pid).toBe(7);
@@ -174,11 +174,14 @@ describe("releaseDevices", () => {
 		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
 		const port = store.insertLease({ resource: { kind: "port", port: 8081 }, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
 		const seen: string[] = [];
-		const released = await releaseDevices({ store: () => store, now: () => now }, [dev.id, port.id, "nope"], {
-			after: async (udid) => {
-				seen.push(udid);
-			},
-		});
+		const released = await new DeviceReleaser({ store: () => store, now: () => now }).release(
+			[dev.id, port.id, "nope"],
+			{
+				after: async (udid) => {
+					seen.push(udid);
+				},
+			}
+		);
 		expect(released.map((l) => l.id)).toEqual([dev.id, port.id]);
 		expect(store.listLeases()).toHaveLength(0);
 		expect(seen).toEqual([UDID]);
@@ -188,7 +191,7 @@ describe("releaseDevices", () => {
 	test("deletion is synchronous; touch: false leaves lastUsedAt; `after` errors never throw", async () => {
 		store.recordDevice({ platform: "ios", id: UDID, name: "sim" }, 1);
 		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
-		const pending = releaseDevices({ store: () => store, now: () => now }, [dev.id], {
+		const pending = new DeviceReleaser({ store: () => store, now: () => now }).release([dev.id], {
 			touch: false,
 			after: async () => {
 				throw new Error("boom");
@@ -211,9 +214,12 @@ describe("releaseDevices", () => {
 				return [`conditions on ${l.id}: location: boom`];
 			},
 		};
-		const released = await releaseDevices({ store: () => store, now: () => now, conditions }, [dev.id, port.id], {
-			onNote: (n) => notes.push(n),
-		});
+		const released = await new DeviceReleaser({ store: () => store, now: () => now, conditions }).release(
+			[dev.id, port.id],
+			{
+				onNote: (n) => notes.push(n),
+			}
+		);
 		expect(released.map((l) => l.id)).toEqual([dev.id, port.id]);
 		expect(seen).toEqual([{ id: dev.id, leased: true }]);
 		expect(notes).toEqual([`conditions on ${dev.id}: location: boom`]);
@@ -223,56 +229,46 @@ describe("releaseDevices", () => {
 	test("a failed condition reset goes to host.err when no onNote is given", async () => {
 		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
 		const lines: string[] = [];
-		await releaseDevices(
-			{
-				store: () => store,
-				now: () => now,
-				err: (line) => lines.push(line),
-				conditions: { has: () => true, undo: async () => ["conditions: boom"] },
-			},
-			[dev.id]
-		);
+		await new DeviceReleaser({
+			store: () => store,
+			now: () => now,
+			err: (line) => lines.push(line),
+			conditions: { has: () => true, undo: async () => ["conditions: boom"] },
+		}).release([dev.id]);
 		expect(lines).toEqual(["warden: conditions: boom"]);
 	});
 
 	test("a lease without conditions never runs undo", async () => {
 		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
 		let ran = false;
-		await releaseDevices(
-			{
-				store: () => store,
-				now: () => now,
-				conditions: {
-					has: () => false,
-					undo: async () => {
-						ran = true;
-						return [];
-					},
+		await new DeviceReleaser({
+			store: () => store,
+			now: () => now,
+			conditions: {
+				has: () => false,
+				undo: async () => {
+					ran = true;
+					return [];
 				},
 			},
-			[dev.id]
-		);
+		}).release([dev.id]);
 		expect(ran).toBe(false);
 	});
 
 	test("`only` rejects a lease: its conditions stay set", async () => {
 		const dev = store.insertLease({ resource, owner: me, ttlMs: DEFAULT_TTL_MS }, now);
 		let ran = false;
-		await releaseDevices(
-			{
-				store: () => store,
-				now: () => now,
-				conditions: {
-					has: () => true,
-					undo: async () => {
-						ran = true;
-						return [];
-					},
+		await new DeviceReleaser({
+			store: () => store,
+			now: () => now,
+			conditions: {
+				has: () => true,
+				undo: async () => {
+					ran = true;
+					return [];
 				},
 			},
-			[dev.id],
-			{ only: () => false }
-		);
+		}).release([dev.id], { only: () => false });
 		expect(ran).toBe(false);
 		expect(store.getLease(dev.id)).toBeDefined();
 	});

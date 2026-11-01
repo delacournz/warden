@@ -6,21 +6,19 @@ import type { Exec } from "@delacour/warden-runtime/exec";
 import type { InventoryDevice, Lease, Owner } from "@delacour/warden-store/types";
 import type { ClaimRequest } from "./claim-request";
 import {
-	childEnv,
-	claimAll,
 	type ForwardedSignal,
-	holdLeases,
 	INTERRUPTED,
-	installLegApp,
 	LEASES_LOST,
 	type LeaseArgs,
-	overlapHide,
+	LeaseHeartbeat,
+	LeaseSessionRunner,
+	LegAppInstaller,
 	type RunEnsureApp,
-	sessionEnsureApp,
-	setAfterRebootEnv,
+	SessionAppEnsurer,
+	sessionRules,
 } from "./session";
 import type { HideStart } from "./sim-windows";
-import { type TestLeaseHost, testLeaseHost } from "./testing/lease-host.testing";
+import { leaseHostFixture, type TestLeaseHost } from "./testing/lease-host.testing";
 
 let ctx: TestLeaseHost | undefined;
 afterEach(() => ctx?.cleanup());
@@ -31,11 +29,11 @@ const prepared = { project: { root: "/p" }, hash: "H" } as unknown as PreparedAp
 
 describe("sessionEnsureApp", () => {
 	test("warm() fingerprints once per platform; every device's ensure reuses it", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		const prepares: string[] = [];
 		const installs: string[] = [];
 		const gate = Promise.withResolvers<void>();
-		const session = sessionEnsureApp({
+		const session = new SessionAppEnsurer({
 			prepare: async (_ctx, _opts, platform) => {
 				prepares.push(platform);
 				await gate.promise;
@@ -62,9 +60,9 @@ describe("sessionEnsureApp", () => {
 	});
 
 	test("a fingerprint that fails during warm() is what every ensure reports; nothing is installed", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		const installs: string[] = [];
-		const session = sessionEnsureApp({
+		const session = new SessionAppEnsurer({
 			prepare: async () => ({ success: false, error: { code: "build_failed", message: "no fingerprint" } }),
 			install: async (_ctx, _owner, _platform, deviceId) => {
 				installs.push(deviceId);
@@ -110,7 +108,7 @@ describe("claimAll with device legs", () => {
 			}
 			return base(cmd, opts);
 		};
-		ctx = testLeaseHost({ exec });
+		ctx = leaseHostFixture.build({ exec });
 		return { ctx, events, open: (udid: string) => gates.get(udid)?.resolve() };
 	}
 
@@ -133,7 +131,7 @@ describe("claimAll with device legs", () => {
 
 	test("every leg is claimed at once: the second boot starts before the first has finished", async () => {
 		const s = legSetup(twoShutdown(), { gated: ["U1", "P1"] });
-		const running = claimAll(s.ctx, deps(), agent, args(), "e2e");
+		const running = new LeaseSessionRunner(s.ctx, deps()).claimAll(agent, args(), "e2e");
 		await waitFor(() => s.events.length === 2);
 		expect([...s.events].sort()).toEqual(["boot:P1", "boot:U1"]);
 		s.open("P1");
@@ -150,16 +148,13 @@ describe("claimAll with device legs", () => {
 			gated: ["P1"],
 			events,
 		});
-		const running = claimAll(
+		const running = new LeaseSessionRunner(
 			s.ctx,
 			deps(async (_c, _o, _p, deviceId) => {
 				events.push(`ensure:${deviceId}`);
 				return { success: true, data: installed };
-			}),
-			agent,
-			args({ app: opts }),
-			"e2e"
-		);
+			})
+		).claimAll(agent, args({ app: opts }), "e2e");
 		await waitFor(() => events.includes("ensure:U1"));
 		expect(events).toContain("ensure:U1");
 		expect(events).toContain("boot:P1");
@@ -173,17 +168,14 @@ describe("claimAll with device legs", () => {
 	test("WARDEN_APP_PATH / WARDEN_APP_HASH come from the last device in claim order, however the installs finish", async () => {
 		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Booted")]);
 		const gate = Promise.withResolvers<void>();
-		const session = await claimAll(
+		const session = await new LeaseSessionRunner(
 			s.ctx,
 			deps(async (_c, _o, _p, deviceId) => {
 				if (deviceId === "P1") await gate.promise;
 				else gate.resolve();
 				return { success: true, data: { ...installed, appPath: `/c/${deviceId}.app`, hash: `H-${deviceId}` } };
-			}),
-			agent,
-			args({ app: opts }),
-			"e2e"
-		);
+			})
+		).claimAll(agent, args({ app: opts }), "e2e");
 		if (!session.success) throw new Error(session.error.message);
 		expect(session.data.env.WARDEN_APP_PATH).toBe("/c/P1.app");
 		expect(session.data.env.WARDEN_APP_HASH).toBe("H-P1");
@@ -197,9 +189,7 @@ describe("claimAll with device legs", () => {
 	test("onLeased reports each leg, with its index, as it is held", async () => {
 		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Booted")]);
 		const leased: string[][] = [];
-		const session = await claimAll(
-			s.ctx,
-			deps(),
+		const session = await new LeaseSessionRunner(s.ctx, deps()).claimAll(
 			agent,
 			args({ onLeased: (o, leg) => leased.push([String(leg), ...o.claimed.map((d) => d.device.id)]) }),
 			"e2e"
@@ -211,7 +201,7 @@ describe("claimAll with device legs", () => {
 	test("one leg failing waits for the others to land, then releases every lease it took", async () => {
 		const s = legSetup(twoShutdown(), { gated: ["P1"], bootFails: ["U1"] });
 		let settled = false;
-		const running = claimAll(s.ctx, deps(), agent, args({ ports: [] }), "e2e").then((r) => {
+		const running = new LeaseSessionRunner(s.ctx, deps()).claimAll(agent, args({ ports: [] }), "e2e").then((r) => {
 			settled = true;
 			return r;
 		});
@@ -235,7 +225,7 @@ describe("claimAll with device legs", () => {
 			asked = true;
 			return quiet.promise;
 		};
-		const running = claimAll(s.ctx, deps(), agent, args({ beforeRelease }), "e2e");
+		const running = new LeaseSessionRunner(s.ctx, deps()).claimAll(agent, args({ beforeRelease }), "e2e");
 		await waitFor(() => asked);
 		expect(s.ctx.db.listLeases()).toHaveLength(1);
 		quiet.resolve();
@@ -245,24 +235,25 @@ describe("claimAll with device legs", () => {
 
 	test("an install failing on one leg releases every leg's devices and the ports", async () => {
 		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted"), sim("P1", "warden-ipad-1", "Booted")]);
-		const session = await claimAll(
+		const session = await new LeaseSessionRunner(
 			s.ctx,
 			deps(async (_c, _o, _p, deviceId) =>
 				deviceId === "P1"
 					? { success: false, error: { code: "build_failed", message: "no build" } }
 					: { success: true, data: installed }
-			),
-			agent,
-			args({ app: opts, ports: ["9000:5"] }),
-			"e2e"
-		);
+			)
+		).claimAll(agent, args({ app: opts, ports: ["9000:5"] }), "e2e");
 		expect(session).toEqual({ success: false, error: { code: "build_failed", message: "app on P1: no build" } });
 		expect(s.ctx.db.listLeases()).toEqual([]);
 	});
 
 	test("aborted before the claim: nothing is booted, interrupted, ports released", async () => {
 		const s = legSetup(twoShutdown());
-		const session = await claimAll(s.ctx, deps(), agent, args({ aborted: () => true, ports: ["9000:5"] }), "e2e");
+		const session = await new LeaseSessionRunner(s.ctx, deps()).claimAll(
+			agent,
+			args({ aborted: () => true, ports: ["9000:5"] }),
+			"e2e"
+		);
 		expect(session).toEqual({ success: false, error: { code: "interrupted", message: INTERRUPTED } });
 		expect(s.events).toEqual([]);
 		expect(s.ctx.db.listLeases()).toEqual([]);
@@ -272,16 +263,13 @@ describe("claimAll with device legs", () => {
 		const events: string[] = [];
 		const s = legSetup(twoShutdown(), { gated: ["U1", "P1"], events });
 		let abort = false;
-		const running = claimAll(
+		const running = new LeaseSessionRunner(
 			s.ctx,
 			deps(async (_c, _o, _p, deviceId) => {
 				events.push(`ensure:${deviceId}`);
 				return { success: true, data: installed };
-			}),
-			agent,
-			args({ app: opts, aborted: () => abort }),
-			"e2e"
-		);
+			})
+		).claimAll(agent, args({ app: opts, aborted: () => abort }), "e2e");
 		await waitFor(() => events.length === 2);
 		abort = true;
 		s.open("U1");
@@ -293,13 +281,10 @@ describe("claimAll with device legs", () => {
 
 	test("a single claim (no legs) behaves as before", async () => {
 		const s = legSetup([sim("U1", "warden-iphone-17-1", "Booted")]);
-		const session = await claimAll(
+		const session = await new LeaseSessionRunner(
 			s.ctx,
-			deps(async () => ({ success: true, data: installed })),
-			agent,
-			{ flags: legFlags[0] as ClaimRequest, ports: [], app: opts },
-			"e2e"
-		);
+			deps(async () => ({ success: true, data: installed }))
+		).claimAll(agent, { flags: legFlags[0] as ClaimRequest, ports: [], app: opts }, "e2e");
 		if (!session.success) throw new Error(session.error.message);
 		expect(session.data.claims).toHaveLength(1);
 		expect(session.data.env.WARDEN_APP_HASH).toBe("H");
@@ -309,7 +294,7 @@ describe("claimAll with device legs", () => {
 describe("holdLeases", () => {
 	/** A context holding port leases `ports` (as `warden run` leaves them): `every` ticks on demand, aborts are recorded. */
 	function hold(ports: number[]) {
-		const c = testLeaseHost();
+		const c = leaseHostFixture.build();
 		ctx = c;
 		const ids = ports.map(
 			(port) => c.db.insertLease({ resource: { kind: "port", port }, owner, ttlMs: 60_000, pid: 4242 }, 0).id
@@ -317,19 +302,14 @@ describe("holdLeases", () => {
 		const ticks: Array<() => void> = [];
 		const intervals: number[] = [];
 		const aborts: ForwardedSignal[] = [];
-		const stop = holdLeases(
-			c,
-			{
-				every: (ms, fn) => {
-					intervals.push(ms);
-					ticks.push(fn);
-					return () => {};
-				},
-				onSignal: () => () => {},
+		const stop = new LeaseHeartbeat(c, {
+			every: (ms, fn) => {
+				intervals.push(ms);
+				ticks.push(fn);
+				return () => {};
 			},
-			ids,
-			(signal) => aborts.push(signal)
-		);
+			onSignal: () => () => {},
+		}).hold(ids, (signal) => aborts.push(signal));
 		const tick = () => {
 			for (const fn of ticks) fn();
 		};
@@ -371,7 +351,7 @@ describe("holdLeases", () => {
 	});
 });
 
-describe("overlapHide (16-8)", () => {
+describe("sessionRules.overlapHide(16-8)", () => {
 	type Outcome = { closed: string[]; rebooted: string[]; failed?: string[] };
 	const hideOf = (down: string[]) => {
 		const settled = Promise.withResolvers<Outcome>();
@@ -386,7 +366,7 @@ describe("overlapHide (16-8)", () => {
 	test("nothing shut down: the leg is leased and installs before the hide has settled", async () => {
 		const { start, settle } = hideOf([]);
 		const events: string[] = [];
-		const done = overlapHide(start, {
+		const done = sessionRules.overlapHide(start, {
 			leased: () => events.push("leased"),
 			install: async (ready) => {
 				await Promise.all(["U1", "U2"].map((udid) => ready(udid).then(() => events.push(`install:${udid}`))));
@@ -402,7 +382,7 @@ describe("overlapHide (16-8)", () => {
 	test("a device the close shut down waits for its reboot; the others install at once", async () => {
 		const { start, settle } = hideOf(["U2"]);
 		const events: string[] = [];
-		const done = overlapHide(start, {
+		const done = sessionRules.overlapHide(start, {
 			leased: () => events.push("leased"),
 			install: async (ready) => {
 				await Promise.all(["U1", "U2"].map((udid) => ready(udid).then(() => events.push(`install:${udid}`))));
@@ -419,7 +399,7 @@ describe("overlapHide (16-8)", () => {
 	test("a device that did not come back is reported failed and the leg is never leased", async () => {
 		const { start, settle } = hideOf(["U2"]);
 		const events: string[] = [];
-		const done = overlapHide(start, {
+		const done = sessionRules.overlapHide(start, {
 			leased: () => events.push("leased"),
 			install: async () => "ok",
 		});
@@ -431,7 +411,7 @@ describe("overlapHide (16-8)", () => {
 	test("a device that did not come back is not installed on: its ready says it is down (batch-pipeline R5)", async () => {
 		const { start, settle } = hideOf(["U2"]);
 		const up: Array<[string, boolean]> = [];
-		const done = overlapHide(start, {
+		const done = sessionRules.overlapHide(start, {
 			leased: () => {},
 			install: async (ready) => {
 				for (const udid of ["U1", "U2"]) up.push([udid, await ready(udid)]);
@@ -448,7 +428,7 @@ describe("overlapHide (16-8)", () => {
 
 	test("no hide (not headless): leased and installed straight away", async () => {
 		const events: string[] = [];
-		const done = await overlapHide(undefined, {
+		const done = await sessionRules.overlapHide(undefined, {
 			leased: () => events.push("leased"),
 			install: async (ready) => {
 				await ready("U1");
@@ -466,16 +446,16 @@ describe("setAfterRebootEnv", () => {
 
 	test("non-headless on macOS → the argv that reopens a rebooted sim's window", () => {
 		const env: Record<string, string | undefined> = {};
-		setAfterRebootEnv(env, false, self, "darwin");
+		sessionRules.setAfterRebootEnv(env, false, self, "darwin");
 		expect(JSON.parse(env.WARDEN_AFTER_REBOOT ?? "[]")).toEqual(["/usr/bin/warden", "arrange", "--open", "{udid}"]);
 	});
 
 	test("headless or not macOS → removed, so children never inherit the parent's", () => {
 		const env: Record<string, string | undefined> = { WARDEN_AFTER_REBOOT: '["x"]' };
-		setAfterRebootEnv(env, true, self, "darwin");
+		sessionRules.setAfterRebootEnv(env, true, self, "darwin");
 		expect(env.WARDEN_AFTER_REBOOT).toBeUndefined();
 		env.WARDEN_AFTER_REBOOT = '["x"]';
-		setAfterRebootEnv(env, false, self, "linux");
+		sessionRules.setAfterRebootEnv(env, false, self, "linux");
 		expect(env.WARDEN_AFTER_REBOOT).toBeUndefined();
 	});
 });
@@ -505,7 +485,7 @@ describe("physical devices in a lease session", () => {
 	const IPHONE = "00008140-000A0B0C0D0E0F10";
 
 	test("childEnv: WARDEN_UDIDS carries the serial; WARDEN_DEVICE_KIND=physical only when every device is a phone", () => {
-		const only = childEnv(
+		const only = sessionRules.childEnv(
 			{ WARDEN_DEVICE_KIND: "stale" },
 			{ claimed: [phone("android", "R5CT1234ABC")], reclaimed: [] },
 			[]
@@ -513,7 +493,7 @@ describe("physical devices in a lease session", () => {
 		expect(only.WARDEN_UDIDS).toBe("R5CT1234ABC");
 		expect(only.WARDEN_UDID_0).toBe("R5CT1234ABC");
 		expect(only.WARDEN_DEVICE_KIND).toBe("physical");
-		const mixed = childEnv(
+		const mixed = sessionRules.childEnv(
 			{ WARDEN_DEVICE_KIND: "physical" },
 			{ claimed: [phone("android", "R5CT1234ABC"), emulator()], reclaimed: [] },
 			[]
@@ -522,14 +502,14 @@ describe("physical devices in a lease session", () => {
 	});
 
 	test("an Android phone's install is told it is physical (the ABI check runs); an emulator's is not", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		const seen: Array<[string, boolean | undefined]> = [];
 		const ensure: RunEnsureApp = async (_c, _o, _p, deviceId, o) => {
 			seen.push([deviceId, o.physical]);
 			return { success: true, data: { appPath: "/c/a.apk", hash: "H", source: "cache", installed: true } };
 		};
 		const claim = { claimed: [phone("android", "R5CT1234ABC"), emulator()], reclaimed: [] };
-		const res = await installLegApp(ctx, ensure, owner, claim, opts);
+		const res = await new LegAppInstaller(ctx).install(ensure, owner, claim, opts);
 		expect(res.success).toBe(true);
 		expect(seen).toEqual([
 			["R5CT1234ABC", true],
@@ -538,21 +518,26 @@ describe("physical devices in a lease session", () => {
 	});
 
 	test("an iPhone's install is told it is physical, like an Android phone's", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		const seen: Array<[string, boolean | undefined]> = [];
 		const ensure: RunEnsureApp = async (_c, _o, _p, deviceId, o) => {
 			seen.push([deviceId, o.physical]);
 			return { success: true, data: { appPath: "/c/a.app", hash: "H", source: "cache", installed: true } };
 		};
-		const res = await installLegApp(ctx, ensure, owner, { claimed: [phone("ios", IPHONE)], reclaimed: [] }, opts);
+		const res = await new LegAppInstaller(ctx).install(
+			ensure,
+			owner,
+			{ claimed: [phone("ios", IPHONE)], reclaimed: [] },
+			opts
+		);
 		expect(res.success).toBe(true);
 		expect(seen).toEqual([[IPHONE, true]]);
 	});
 
 	test("sessionEnsureApp prepares a platform's phones and simulators apart (an iPhone's build is signed for a device)", async () => {
-		ctx = testLeaseHost();
+		ctx = leaseHostFixture.build();
 		const seen: Array<boolean | undefined> = [];
-		const app = sessionEnsureApp({
+		const app = new SessionAppEnsurer({
 			prepare: async (_c, o) => {
 				seen.push(o.physical);
 				return { success: true, data: prepared };

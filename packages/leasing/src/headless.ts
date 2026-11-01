@@ -7,13 +7,17 @@ export type HeadlessInput = {
 	env: Record<string, string | undefined>;
 };
 
-/** `WARDEN_HEADLESS=1` (or `true`) turns headless on when nothing above it decides. */
-export function envHeadless(env: Record<string, string | undefined>): boolean {
-	const value = env.WARDEN_HEADLESS?.trim().toLowerCase();
-	return value === "1" || value === "true";
+export class HeadlessResolver {
+	/** `WARDEN_HEADLESS=1` (or `true`) turns headless on when nothing above it decides. */
+	fromEnv(env: Record<string, string | undefined>): boolean {
+		const value = env.WARDEN_HEADLESS?.trim().toLowerCase();
+		return value === "1" || value === "true";
+	}
+
+	/** Precedence: CLI flag > config (suite / preset > top-level) > `WARDEN_HEADLESS` > off. */
+	resolve(input: HeadlessInput): boolean {
+		return input.flag ?? input.config ?? this.fromEnv(input.env);
+	}
 }
 
-/** Precedence: CLI flag > config (suite / preset > top-level) > `WARDEN_HEADLESS` > off. */
-export function resolveHeadless(input: HeadlessInput): boolean {
-	return input.flag ?? input.config ?? envHeadless(input.env);
-}
+export const headlessResolver = new HeadlessResolver();

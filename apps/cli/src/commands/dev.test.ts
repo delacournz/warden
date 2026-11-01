@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEV_CLIENT_ARGS, devClientLaunchArgv, type MetroProc } from "@delacour/warden-builds/metro";
 import type { EnsureOptions } from "@delacour/warden-builds/prepare";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { devJsonSchema } from "@delacour/warden-sdk/contracts/dev";
 import { resultFactory } from "@delacour/warden-types/result";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
@@ -874,7 +874,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		c.store().insertLease(
 			{
 				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
-				owner: resolveOwner(c),
+				owner: ownerResolver.resolve(c),
 				ttlMs: 60_000,
 			},
 			c.now()

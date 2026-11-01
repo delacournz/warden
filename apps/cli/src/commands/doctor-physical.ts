@@ -4,7 +4,7 @@ import { PROFILE_MARGIN_MS, type RunnerMeta, readRunnerMeta } from "@delacour/wa
 import { resolveTeam } from "@delacour/warden-builds/ios-runner/signing";
 import { runnerRoot } from "@delacour/warden-builds/ios-runner/stage";
 import { providerFor } from "@delacour/warden-core/host-deps";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Devicectl } from "@delacour/warden-providers/devicectl";
 import { timers } from "@delacour/warden-providers/health";
 import { storeLocator } from "@delacour/warden-store/store";
@@ -164,7 +164,7 @@ async function adbServerCount(ctx: CommandContext): Promise<number> {
 
 async function androidRows(ctx: CommandContext): Promise<DoctorCheck[]> {
 	const [inventory, servers] = await Promise.all([
-		providerFor("android", appHostFromContext(ctx), resolveOwner(ctx)).inventory(),
+		providerFor("android", appHostFromContext(ctx), ownerResolver.resolve(ctx)).inventory(),
 		adbServerCount(ctx),
 	]);
 	const phones = (inventory.success ? inventory.data : []).filter((d) => d.physical?.platform === "android");

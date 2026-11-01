@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import type { NetworkCondition } from "@delacour/warden-config/conditions.types";
 import type { ProxyConditions } from "@delacour/warden-config/shaping";
-import { claimPorts, isPortFree, releasePorts } from "@delacour/warden-leasing/ports";
+import { PortAllocator, portProbe } from "@delacour/warden-leasing/ports";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
@@ -124,10 +124,9 @@ async function startFresh(
 	alive: PidAlive
 ): AsyncResult<LeaseProxy> {
 	const range = deps.ports ?? DEFAULT_PROXY_PORTS;
-	const claimed = await claimPorts(
-		deps.store,
+	const claimed = await new PortAllocator(deps.store).claim(
 		{ owner: lease.owner, from: range.from, span: range.span, ttlMs: lease.ttlMs, label: `netproxy:${lease.id}` },
-		{ now: deps.now, pidAlive: alive, isPortFree: deps.isPortFree ?? ((p) => isPortFree(p)) }
+		{ now: deps.now, pidAlive: alive, isPortFree: deps.isPortFree ?? ((p) => portProbe.isFree(p)) }
 	);
 	if (!claimed.success) return resultFactory.err(`netproxy: ${claimed.error}`);
 	const portLease = claimed.data[0];
@@ -146,7 +145,7 @@ async function startFresh(
 	const fail = (message: string) => {
 		if (pid !== undefined) killQuietly(deps.kill, pid);
 		removeHandleFile(path);
-		releasePorts(deps.store, { by: "lease", ids: [portLease.id] });
+		new PortAllocator(deps.store).release({ by: "lease", ids: [portLease.id] });
 		return resultFactory.err(`netproxy: ${message}`);
 	};
 	if (pid === undefined) return fail("could not start the proxy process");
@@ -176,6 +175,6 @@ export async function releaseLeaseProxy(
 	const stopped = await stopProxy(file);
 	if (!stopped.success && (deps.pidAlive ?? liveness.processAlive)(file.pid)) killQuietly(deps.kill, file.pid);
 	removeHandleFile(path);
-	if (file.portLeaseId) releasePorts(deps.store, { by: "lease", ids: [file.portLeaseId] });
+	if (file.portLeaseId) new PortAllocator(deps.store).release({ by: "lease", ids: [file.portLeaseId] });
 	return true;
 }

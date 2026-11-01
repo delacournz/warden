@@ -1,4 +1,4 @@
-import { detectSimViewer } from "@delacour/warden-leasing/sim-windows";
+import { SimWindowArranger } from "@delacour/warden-leasing/sim-windows";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { xcodeReader } from "@delacour/warden-runtime/xcode";
 import type { CheckStatus, DoctorCheck } from "./doctor";
@@ -62,7 +62,7 @@ export async function mcpStatusProbe(exec: Exec, major: number | undefined): Pro
 
 /** Which simulator viewer is up (Simulator.app: warden tiles/closes per-device windows; Device Hub: opens and tiles them, never closes). */
 export async function viewerProbe(exec: Exec): Promise<Probe> {
-	const viewer = await detectSimViewer(exec);
+	const viewer = await new SimWindowArranger({ exec: exec }).detectViewer();
 	switch (viewer.kind) {
 		case "simulator":
 			return { ok: true, detail: "Simulator.app: warden can tile and close per-device windows" };

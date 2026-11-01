@@ -1,5 +1,5 @@
 import { durationParser } from "@delacour/warden-config/duration";
-import { effectivePriority, priorityName, queueOrder } from "@delacour/warden-leasing/queue";
+import { queueOrdering } from "@delacour/warden-leasing/queue";
 import type { QueueRowJson } from "@delacour/warden-sdk/contracts/queue";
 import { liveness } from "@delacour/warden-store/liveness";
 import { leaseModel } from "@delacour/warden-store/types";
@@ -12,12 +12,12 @@ export type QueueRow = QueueRowJson;
 /** `warden queue`: claims waiting for host capacity, head first. */
 function queue(ctx: CommandContext, json: boolean): number {
 	const now = ctx.now();
-	const rows: QueueRow[] = queueOrder(ctx.store().listQueue(), now).map((e, i) => ({
+	const rows: QueueRow[] = queueOrdering.order(ctx.store().listQueue(), now).map((e, i) => ({
 		position: i + 1,
 		id: e.id,
-		priority: priorityName(e.priority),
-		effectivePriority: effectivePriority(e, now),
-		aged: effectivePriority(e, now) - e.priority,
+		priority: queueOrdering.priorityName(e.priority),
+		effectivePriority: queueOrdering.effectivePriority(e, now),
+		aged: queueOrdering.effectivePriority(e, now) - e.priority,
 		ageMs: Math.max(0, now - e.enqueuedAt),
 		platform: e.platform,
 		profile: e.profile,

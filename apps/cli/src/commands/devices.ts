@@ -1,7 +1,7 @@
 import { providerFor } from "@delacour/warden-core/host-deps";
 import { measureSims } from "@delacour/warden-core/sims/slim.measure";
-import { markWardenDevices } from "@delacour/warden-leasing/inventory";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
+import { inventoryMarker } from "@delacour/warden-leasing/inventory";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Adb } from "@delacour/warden-providers/android";
 import type { DeviceRowJson } from "@delacour/warden-sdk/contracts/devices";
 import { aliveDeviceLeases } from "@delacour/warden-sdk/lease-view";
@@ -32,7 +32,7 @@ function lockedHint(d: InventoryDevice): string | undefined {
 /** One platform's rows: every device (booted or not) plus, for Android, every AVD. */
 async function platformRows(ctx: CommandContext, platform: Platform, leases: Map<string, Lease>): Promise<DeviceRow[]> {
 	const store = ctx.store();
-	const inventory = await providerFor(platform, appHostFromContext(ctx), resolveOwner(ctx), {
+	const inventory = await providerFor(platform, appHostFromContext(ctx), ownerResolver.resolve(ctx), {
 		physical: true,
 	}).inventory();
 	if (!inventory.success) {
@@ -40,7 +40,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 		return [];
 	}
 	const records = new Map(store.listDevices(platform).map((r) => [r.id, r]));
-	const rows: DeviceRow[] = markWardenDevices(inventory.data, [...records.values()]).map((d) => {
+	const rows: DeviceRow[] = inventoryMarker.mark(inventory.data, [...records.values()]).map((d) => {
 		const lease = leases.get(`${platform}:${d.id}`);
 		const record = records.get(d.id);
 		const hint = leaseModel.physicalNotReadyReason(d) ?? lockedHint(d);

@@ -5,12 +5,12 @@ import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { durationParser } from "@delacour/warden-config/duration";
 import { androidSnapshotPass, providerFor } from "@delacour/warden-core/host-deps";
-import { mapBounded } from "@delacour/warden-leasing/bounded";
-import { closeSimWindowsAfter } from "@delacour/warden-leasing/close-sim-windows-after";
-import { releaseDevices } from "@delacour/warden-leasing/device-lease";
-import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { staleShutdownBlock } from "@delacour/warden-leasing/shutdown-policy";
+import { boundedRunner } from "@delacour/warden-leasing/bounded";
+import { SimWindowCloser } from "@delacour/warden-leasing/close-sim-windows-after";
+import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
+import { ReleasedDeviceShutdown } from "@delacour/warden-leasing/device-shutdown";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
+import { shutdownPolicy } from "@delacour/warden-leasing/shutdown-policy";
 import type { GcJson } from "@delacour/warden-sdk/contracts/gc";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type DeviceRecord, storeLocator } from "@delacour/warden-store/store";
@@ -77,10 +77,7 @@ function holdForShutdown(ctx: CommandContext, owner: Owner, record: DeviceRecord
 /** The viewer windows of the sims gc just shut down: a Device Hub page stays open otherwise, offering "Start". */
 async function closeShutDownWindows(ctx: CommandContext, platform: Platform, outcome: PlatformOutcome): Promise<void> {
 	if (platform !== "ios") return;
-	const unclosed = await closeSimWindowsAfter(
-		ctx,
-		outcome.shutdown.map((d) => ({ udid: d.id, name: d.name }))
-	);
+	const unclosed = await new SimWindowCloser(ctx).after(outcome.shutdown.map((d) => ({ udid: d.id, name: d.name })));
 	if (unclosed !== undefined) outcome.notes.push(`couldn't close the simulator window (${unclosed})`);
 }
 
@@ -118,7 +115,7 @@ async function gcPlatform(
 	const idle = records.filter(
 		(r) => booted.has(r.id) && !plan.leased.has(`${platform}:${r.id}`) && plan.now - r.lastUsedAt >= plan.idleMs
 	);
-	const results = await mapBounded(idle, SHUTDOWN_CONCURRENCY, async (record) => {
+	const results = await boundedRunner.map(idle, SHUTDOWN_CONCURRENCY, async (record) => {
 		const hold = holdForShutdown(ctx, owner, record);
 		if (!hold) return { record, result: undefined };
 		try {
@@ -253,18 +250,18 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	}
 	const store = ctx.store();
 	const now = ctx.now();
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const stale = store
 		.listLeases()
 		.filter((l) => l.resource.kind === "device" && !liveness.isLeaseAlive(l, now, liveness.processAlive));
 	const shutDownIdle = async (sctx: CommandContext): Promise<GcOutcome> => {
 		// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
-		const orphaned = await shutdownReleasedDevices(leaseHostFromContext(sctx), stale, owner, async (lease) => {
+		const orphaned = await new ReleasedDeviceShutdown(leaseHostFromContext(sctx)).run(stale, owner, async (lease) => {
 			const r = lease.resource;
 			if (r.kind !== "device") return undefined;
 			return (
-				staleShutdownBlock(lease, now, false) ??
-				staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
+				shutdownPolicy.staleShutdownBlock(lease, now, false) ??
+				shutdownPolicy.staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
 			);
 		});
 		const staleIds = store
@@ -272,7 +269,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive))
 			.map((l) => l.id);
 		const reclaimed = (
-			await releaseDevices(sctx, staleIds, {
+			await new DeviceReleaser(sctx).release(staleIds, {
 				touch: false,
 				only: (l) => !liveness.isLeaseAlive(l, now, liveness.processAlive),
 				after: stopHelperAfter(sctx),

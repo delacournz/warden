@@ -10,7 +10,7 @@
  * - goldens: never (that's `warden golden prune`, under the clone lock).
  */
 import { durationParser } from "@delacour/warden-config/duration";
-import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
+import { inventoryMarker } from "@delacour/warden-leasing/inventory";
 import { goldenNames } from "@delacour/warden-providers/golden-name";
 import { simctlParser } from "@delacour/warden-providers/ios";
 import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
@@ -172,7 +172,7 @@ function duplicateKeepers(sims: readonly SimctlSim[]): Map<string, SimctlSim> {
 
 function ownerOf(sim: SimctlSim, record: DeviceRecord | undefined): SimOwner {
 	if (goldenNames.isGolden(sim.name)) return "golden";
-	return record || wardenNameProfile(sim.name) !== undefined ? "warden" : "foreign";
+	return record || inventoryMarker.profileOf(sim.name) !== undefined ? "warden" : "foreign";
 }
 
 function latest(...times: Array<number | undefined>): number | undefined {

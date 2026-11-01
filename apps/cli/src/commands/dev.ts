@@ -34,26 +34,23 @@ import {
 } from "@delacour/warden-config/config.defaults";
 import { durationParser } from "@delacour/warden-config/duration";
 import { providerFor } from "@delacour/warden-core/host-deps";
-import { releaseDevices } from "@delacour/warden-leasing/device-lease";
-import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
-import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { isPortFree } from "@delacour/warden-leasing/ports";
+import { DeviceReleaser } from "@delacour/warden-leasing/device-lease";
+import { ReleasedDeviceShutdown } from "@delacour/warden-leasing/device-shutdown";
+import { ownerResolver } from "@delacour/warden-leasing/owner";
+import { portProbe } from "@delacour/warden-leasing/ports";
 import { PRIORITY } from "@delacour/warden-leasing/queue";
 import {
-	childEnv,
-	claimAll,
-	claimRunPorts,
-	exitCodeOf,
 	FORWARDED_SIGNALS,
-	holdLeases,
 	INTERRUPTED,
-	intervalEvery,
+	LeaseHeartbeat,
 	type LeaseSessionDeps,
-	processOnSignal,
+	LeaseSessionRunner,
 	type RunEnsureApp,
-	setHeadlessEnv,
+	RunPortClaimer,
+	sessionRules,
+	sessionSignals,
 } from "@delacour/warden-leasing/session";
-import { revealSimWindow } from "@delacour/warden-leasing/sim-windows";
+import { SimWindowArranger } from "@delacour/warden-leasing/sim-windows";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
@@ -324,7 +321,7 @@ async function showDevice(
 		task.ok(platform !== "ios" ? "not needed" : headless ? "headless" : "skipped");
 		return;
 	}
-	const shown = await revealSimWindow(ctx, deviceId);
+	const shown = await new SimWindowArranger(ctx).reveal(deviceId);
 	if (shown.success) {
 		const viewer = shown.data.viewer === "device-hub" ? "Device Hub" : "Simulator";
 		note(ctx, `warden dev: showing ${deviceId} in ${viewer}`);
@@ -341,7 +338,7 @@ async function showDevice(
  * Problems are warnings, never failures.
  */
 async function shutdownDevices(ctx: CommandContext, owner: Owner, leases: Lease[]): Promise<void> {
-	const outcome = await shutdownReleasedDevices(leaseHostFromContext(ctx), leases, owner);
+	const outcome = await new ReleasedDeviceShutdown(leaseHostFromContext(ctx)).run(leases, owner);
 	for (const id of outcome.shutdown) note(ctx, `warden dev: shut down ${id}`);
 	for (const line of outcome.notes) warn(ctx, `warden dev: ${line}`);
 }
@@ -390,9 +387,10 @@ async function openSession(
 		if (!flags.success) return flags;
 		if (flags.data.request.count !== 1) return resultFactory.err("warden dev runs on one device (drop --count)");
 		let showing: Promise<void> | undefined;
-		const session = await claimAll(
-			leaseHostFromContext(ctx),
-			{ ...deps, ensureApp: noteInstall },
+		const session = await new LeaseSessionRunner(leaseHostFromContext(ctx), {
+			...deps,
+			ensureApp: noteInstall,
+		}).claimAll(
 			owner,
 			{
 				flags: flags.data,
@@ -443,8 +441,7 @@ async function openSession(
 		});
 	}
 	const deviceId = held.data;
-	const ports = await claimRunPorts(
-		leaseHostFromContext(ctx),
+	const ports = await new RunPortClaimer(leaseHostFromContext(ctx)).claim(
 		owner,
 		[opts.port],
 		deps.pid,
@@ -453,7 +450,8 @@ async function openSession(
 	);
 	if (!ports.success) return wardenErrors.toText(ports);
 	const leaseIds = ports.data.map((p) => p.leaseId);
-	const release = () => releaseDevices(leaseHostFromContext(ctx), leaseIds, { touch: false }).then(() => undefined);
+	const release = () =>
+		new DeviceReleaser(leaseHostFromContext(ctx)).release(leaseIds, { touch: false }).then(() => undefined);
 	const port = ports.data[0]?.port;
 	if (port === undefined) {
 		await release();
@@ -820,7 +818,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 	const { deviceId, deviceName, app, port, leaseIds, release } = r.session;
 	const json = opts.json === true;
 	const swap: MetroSwap = { pending: undefined };
-	const stop = holdLeases(ctx, deps, leaseIds, (signal) => {
+	const stop = new LeaseHeartbeat(ctx, deps).hold(leaseIds, (signal) => {
 		r.aborted.now = true;
 		r.run.launch?.started?.proc.kill(signal);
 	});
@@ -879,13 +877,13 @@ type DevRun = { aborted: { now: boolean }; launch: MetroLaunchHandle | undefined
 
 /** The env an early Metro gets: a session child's, minus what is not leased yet (the device, while it is still being claimed). */
 function earlyMetroEnv(ctx: CommandContext, port: number, deviceId: string | undefined, headless: boolean) {
-	const env = childEnv(ctx.env, { claimed: [], reclaimed: [] }, [{ leaseId: "", port }]);
+	const env = sessionRules.childEnv(ctx.env, { claimed: [], reclaimed: [] }, [{ leaseId: "", port }]);
 	delete env.WARDEN_LEASE_IDS;
 	if (deviceId !== undefined) {
 		env.WARDEN_UDIDS = deviceId;
 		env.WARDEN_UDID_0 = deviceId;
 	}
-	setHeadlessEnv(env, headless);
+	sessionRules.setHeadlessEnv(env, headless);
 	return env;
 }
 
@@ -1098,7 +1096,7 @@ async function prepareDev(ctx: CommandContext, platformArg: string | undefined, 
 	if (!platform.success) return platform;
 	const timeout = durationParser.parse(opts.readyTimeout);
 	if (!timeout.success) return resultFactory.err(`--ready-timeout: ${timeout.error}`);
-	const owner = resolveOwner(ctx);
+	const owner = ownerResolver.resolve(ctx);
 	const start = projectStart(ctx, opts.project);
 	if (!start.success) return start;
 	const picked = opts.project === undefined ? await pickApp(ctx, start.data, opts) : resultFactory.ok(start.data);
@@ -1293,7 +1291,7 @@ export const defaultDevDeps: DevDeps = {
 		const started = await startBroker(options);
 		return started.success ? resultFactory.ok(withExtensions(started.data, options)) : started;
 	},
-	isPortFree: (port) => isPortFree(port),
+	isPortFree: (port) => portProbe.isFree(port),
 	spawn(cmd, env, cwd, stdout) {
 		if (typeof stdout === "object") {
 			const { cols, rows, onData } = stdout;
@@ -1310,7 +1308,7 @@ export const defaultDevDeps: DevDeps = {
 			});
 			const { terminal } = proc;
 			return {
-				exited: proc.exited.then((code) => exitCodeOf(proc, code)),
+				exited: proc.exited.then((code) => sessionRules.exitCodeOf(proc, code)),
 				kill: (signal) => proc.kill(signal),
 				...(terminal
 					? { terminal: { write: (data) => terminal.write(data), resize: (c, r) => terminal.resize(c, r) } }
@@ -1324,10 +1322,13 @@ export const defaultDevDeps: DevDeps = {
 			stdout: stdout === "stderr" ? 2 : "inherit",
 			stderr: "inherit",
 		});
-		return { exited: proc.exited.then((code) => exitCodeOf(proc, code)), kill: (signal) => proc.kill(signal) };
+		return {
+			exited: proc.exited.then((code) => sessionRules.exitCodeOf(proc, code)),
+			kill: (signal) => proc.kill(signal),
+		};
 	},
-	onSignal: processOnSignal,
-	every: intervalEvery,
+	onSignal: sessionSignals.onSignal,
+	every: sessionSignals.every,
 	probe: (port, projectRoot) => metroOwner(processExec.run, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (host, owner, platform, deviceId, opts) =>
