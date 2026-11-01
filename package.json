@@ -19,6 +19,7 @@
 		"version": "changeset version && bun install --lockfile-only",
 		"cli:link": "bun apps/cli/scripts/link.ts link",
 		"cli:unlink": "bun apps/cli/scripts/link.ts unlink",
+		"cli:link:viewer": "bun apps/cli/scripts/link.ts link --viewer",
 		"smoke:ui-bench": "bun scripts/smoke/ui-bench.ts",
 		"demo": "bun scripts/demo/demo.ts",
 		"demo:compose": "bun scripts/demo/compose.ts",
