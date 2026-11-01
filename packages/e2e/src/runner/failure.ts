@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import { NativeLogCapture, type NativeLogDeps, type NativeTarget } from "@delacour/warden-devtools/native-log";
 import type { Driver } from "@delacour/warden-driver/driver.types";
-import { renderHeader, renderSnapshot } from "@delacour/warden-screen/render";
+import { snapshotRenderer } from "@delacour/warden-screen/render";
 import type { E2eEnv } from "../env";
 
 export const FAILURE_PNG = "failure.png";
@@ -108,8 +108,8 @@ async function captureSnapshot(driver: Driver, dir: string, ms: number, capture:
 			capture.problems.push(`snapshot: ${result.error.code}: ${result.error.message}`);
 			return;
 		}
-		const rendered = renderSnapshot(result.data, { interactiveOnly: false, refs: new Map() });
-		const header = renderHeader({ snapshot: result.data, rendered, interactiveOnly: false });
+		const rendered = snapshotRenderer.renderSnapshot(result.data, { interactiveOnly: false, refs: new Map() });
+		const header = snapshotRenderer.renderHeader({ snapshot: result.data, rendered, interactiveOnly: false });
 		writeFileSync(join(dir, SCREEN_AT_FAILURE), `${[header, ...rendered.lines].join("\n")}\n`);
 		capture.files.push(SCREEN_AT_FAILURE);
 	} catch (cause) {

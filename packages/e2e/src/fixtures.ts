@@ -11,8 +11,8 @@ import type { DevtoolsFacet } from "@delacour/warden-devtools/devtools.types";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import type { ScreenHost } from "@delacour/warden-screen/context";
-import { setTextOptedIn } from "@delacour/warden-screen/field";
-import { createScreen } from "@delacour/warden-screen/screen";
+import { fieldEditor } from "@delacour/warden-screen/field";
+import { screenFactory } from "@delacour/warden-screen/screen";
 import type { E2eEnv } from "./env";
 import type { BaseFixtures, FixtureContext } from "./runner/fixtures.types";
 
@@ -56,7 +56,7 @@ export function screenHostFor(ctx: FixtureContext, device?: Pick<Device, "alert"
 		env: {
 			actionTimeoutMs: ctx.actionTimeoutMs,
 			assertionTimeoutMs: ctx.assertionTimeoutMs,
-			androidSetText: setTextOptedIn(process.env),
+			androidSetText: fieldEditor.setTextOptedIn(process.env),
 		},
 		get signal() {
 			return session.signal;
@@ -155,7 +155,7 @@ export async function defaultFixtureFactory(ctx: FixtureContext): Promise<BaseFi
 	return {
 		app: appFor({ session, driver, env: session.env, conditions }),
 		device,
-		screen: createScreen(screenHostFor(ctx, device)),
+		screen: screenFactory.createScreen(screenHostFor(ctx, device)),
 		platform: session.env.platform,
 	};
 }

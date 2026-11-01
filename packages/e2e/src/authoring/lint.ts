@@ -1,4 +1,4 @@
-import { parseSelector } from "@delacour/warden-screen/selector";
+import { selectorEngine } from "@delacour/warden-screen/selector";
 import type { RecordedStep, Recording, Target } from "./recording.schema";
 
 /**
@@ -60,7 +60,7 @@ function targetFindings(step: RecordedStep): LintFinding[] {
 			});
 			continue;
 		}
-		const parsed = parseSelector(target.selector);
+		const parsed = selectorEngine.parseSelector(target.selector);
 		if (!parsed.success || parsed.data.id === undefined) {
 			findings.push({
 				level: "warn",

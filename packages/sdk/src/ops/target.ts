@@ -1,14 +1,8 @@
 import type { Driver, Element, Point, Snapshot } from "@delacour/warden-driver/driver.types";
 import { refResolver } from "@delacour/warden-driver/refs";
-import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-screen/nodes";
-import { describeEntry } from "@delacour/warden-screen/render";
-import {
-	formatSelector,
-	matchesSelector,
-	type ParsedSelector,
-	parseSelector,
-	pickMostSpecific,
-} from "@delacour/warden-screen/selector";
+import { type NodeEntry, type NodeIndex, nodeIndexer } from "@delacour/warden-screen/nodes";
+import { snapshotRenderer } from "@delacour/warden-screen/render";
+import { type ParsedSelector, selectorEngine } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { driverError, opError } from "./errors";
@@ -42,7 +36,7 @@ export function parseTarget(text: string): Result<Target, WardenError> {
 	if (refResolver.isRef(trimmed)) return resultFactory.ok({ kind: "ref", ref: trimmed });
 	const point = POINT.exec(trimmed);
 	if (point) return resultFactory.ok({ kind: "point", point: { x: Number(point[1]), y: Number(point[2]) } });
-	const selector = parseSelector(trimmed);
+	const selector = selectorEngine.parseSelector(trimmed);
 	if (!selector.success) {
 		return {
 			success: false,
@@ -110,10 +104,10 @@ async function resolveRef(ref: string, rc: ResolveContext): Promise<Result<Resol
 
 	const fresh = await rc.driver.snapshot();
 	if (!fresh.success) return { success: false, error: driverError(fresh.error) };
-	const wanted = indexSnapshot(lastSnapshot.snapshot).byId.get(element.id);
-	const now = wanted ? findInFresh(wanted, indexSnapshot(fresh.data)) : undefined;
+	const wanted = nodeIndexer.indexSnapshot(lastSnapshot.snapshot).byId.get(element.id);
+	const now = wanted ? findInFresh(wanted, nodeIndexer.indexSnapshot(fresh.data)) : undefined;
 	if (!now) {
-		const seen = wanted ? describeEntry(wanted) : element.id;
+		const seen = wanted ? snapshotRenderer.describeEntry(wanted) : element.id;
 		return { success: false, error: staleRef(ref, `(${seen}) is no longer on screen`) };
 	}
 	return resultFactory.ok({
@@ -129,10 +123,10 @@ async function resolveRef(ref: string, rc: ResolveContext): Promise<Result<Resol
 /** Matches of a selector in a snapshot index: `nth=` picks one, else the most specific visible one wins. */
 export function pickBySelector(index: NodeIndex, selector: ParsedSelector): Result<NodeEntry, WardenError> {
 	const { nth, ...rest } = selector;
-	const matches = index.entries.filter((entry) => matchesSelector(entry, rest));
-	const picked = nth === undefined ? pickMostSpecific(matches, rest) : matches[nth];
+	const matches = index.entries.filter((entry) => selectorEngine.matchesSelector(entry, rest));
+	const picked = nth === undefined ? selectorEngine.pickMostSpecific(matches, rest) : matches[nth];
 	if (picked) return resultFactory.ok(picked);
-	const wanted = formatSelector(selector);
+	const wanted = selectorEngine.formatSelector(selector);
 	return {
 		success: false,
 		error: opError(
@@ -151,7 +145,7 @@ async function resolveSelector(
 ): Promise<Result<ResolvedTarget, WardenError>> {
 	const fresh = await rc.driver.snapshot();
 	if (!fresh.success) return { success: false, error: driverError(fresh.error) };
-	const picked = pickBySelector(indexSnapshot(fresh.data), selector);
+	const picked = pickBySelector(nodeIndexer.indexSnapshot(fresh.data), selector);
 	if (!picked.success) return picked;
 	return resultFactory.ok({
 		kind: "selector",

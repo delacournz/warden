@@ -9,8 +9,8 @@ import { conditionEvents } from "@delacour/warden-driver/conditions/condition-ev
 import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
 import type { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
-import { createScreen } from "@delacour/warden-screen/screen";
-import { testHost } from "@delacour/warden-screen/testing/screen";
+import { screenFactory } from "@delacour/warden-screen/screen";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
 import { deviceFor as createDevice } from "./fixtures";
 
@@ -720,7 +720,7 @@ describe("device.openLink until", () => {
 			frontmost: () => env.bundleId,
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env: { ...env, platform }, clock });
-		const screen = createScreen(testHost(driver));
+		const screen = screenFactory.createScreen(screenTesting.testHost(driver));
 		return { driver, device, clock, locator: screen.getByTestId("target") };
 	}
 
@@ -783,7 +783,7 @@ describe("device.openLink until", () => {
 			frontmost: () => env.bundleId,
 		});
 		const device = createDevice({ session: { out: "/tmp/out" }, driver, env, clock });
-		const locator = createScreen(testHost(driver)).getByTestId("dup");
+		const locator = screenFactory.createScreen(screenTesting.testHost(driver)).getByTestId("dup");
 		await expect(locator.isVisible()).rejects.toBeDefined();
 		await device.openLink("myapp://x", { until: locator, waitMs: 500 });
 		expect(clock.time()).toBeGreaterThanOrEqual(500);
@@ -831,9 +831,9 @@ describe('the "Open in …?" sheet under systemAlerts', () => {
 		});
 		const session: FixtureSession = { out: "/tmp/out" };
 		const device = createDevice({ session, driver, env, clock });
-		const host = testHost(driver);
+		const host = screenTesting.testHost(driver);
 		host.answerSystemAlert = () => device.alert("dismiss");
-		const screen = createScreen(host);
+		const screen = screenFactory.createScreen(host);
 		return { driver, device, session, screen, sheetState: () => sheet };
 	}
 

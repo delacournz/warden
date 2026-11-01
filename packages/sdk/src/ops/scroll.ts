@@ -1,14 +1,8 @@
 import type { Driver, Rect, ScreenInfo } from "@delacour/warden-driver/driver.types";
-import { contentPath, visibleRect } from "@delacour/warden-screen/actions";
-import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-screen/nodes";
-import { renderEntryLine } from "@delacour/warden-screen/render";
-import {
-	formatSelector,
-	matchesSelector,
-	type ParsedSelector,
-	parseSelector,
-	pickMostSpecific,
-} from "@delacour/warden-screen/selector";
+import { actionGeometry } from "@delacour/warden-screen/actions";
+import { type NodeEntry, type NodeIndex, nodeIndexer } from "@delacour/warden-screen/nodes";
+import { snapshotRenderer } from "@delacour/warden-screen/render";
+import { type ParsedSelector, selectorEngine } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction } from "./act";
@@ -22,11 +16,11 @@ import { storeSnapshot } from "./snapshot";
 export function visibleMatch(index: NodeIndex, selector: ParsedSelector, screen: ScreenInfo): NodeEntry | undefined {
 	const { nth, ...rest } = selector;
 	const shown = index.entries.filter((entry) => {
-		if (entry.states.hidden || !matchesSelector(entry, rest)) return false;
-		const seen = visibleRect(entry.element.frame, screen);
+		if (entry.states.hidden || !selectorEngine.matchesSelector(entry, rest)) return false;
+		const seen = actionGeometry.visibleRect(entry.element.frame, screen);
 		return seen.width > 0 && seen.height > 0;
 	});
-	return nth === undefined ? pickMostSpecific(shown, rest) : shown[nth];
+	return nth === undefined ? selectorEngine.pickMostSpecific(shown, rest) : shown[nth];
 }
 
 type ScrollPlan = { way: Way; amount: number; max: number; until?: ParsedSelector };
@@ -42,7 +36,7 @@ async function scrollLoop(
 	plan: ScrollPlan,
 	area: { rect: Rect; screen: ScreenInfo }
 ): Promise<Result<ScrollRun, WardenError>> {
-	const path = contentPath(plan.way, area.rect, plan.amount);
+	const path = actionGeometry.contentPath(plan.way, area.rect, plan.amount);
 	const swipe = async () =>
 		fromDriver(await driver.swipe(path.from, path.to, { durationMs: SWIPE_MS, momentum: false }));
 	if (plan.until === undefined) {
@@ -52,7 +46,7 @@ async function scrollLoop(
 	for (let swipes = 0; ; swipes += 1) {
 		const looked = await driver.snapshot();
 		if (!looked.success) return fail(driverError(looked.error));
-		const entry = visibleMatch(indexSnapshot(looked.data), plan.until, area.screen);
+		const entry = visibleMatch(nodeIndexer.indexSnapshot(looked.data), plan.until, area.screen);
 		if (entry) {
 			const stored = storeSnapshot(session, looked.data);
 			return resultFactory.ok({ swipes, found: { ref: stored.refs.byId.get(entry.element.id), entry } });
@@ -88,7 +82,7 @@ function foundTarget(found: Found | undefined, until: ParsedSelector | undefined
 	const { frame, tapPoint } = entry.element;
 	return {
 		...(ref !== undefined ? { ref } : {}),
-		selector: formatSelector(until),
+		selector: selectorEngine.formatSelector(until),
 		point: tapPoint ?? { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 },
 	};
 }
@@ -96,14 +90,14 @@ function foundTarget(found: Found | undefined, until: ParsedSelector | undefined
 /** What `scroll` prints: the plain direction, or where `until` found its element. */
 function scrollText(direction: Way, found: Found | undefined, swipes: number): string {
 	if (!found) return `scrolled ${direction}`;
-	const line = renderEntryLine(found.entry, found.ref === undefined ? {} : { ref: found.ref });
+	const line = snapshotRenderer.renderEntryLine(found.entry, found.ref === undefined ? {} : { ref: found.ref });
 	return `found after ${plural(swipes)}: ${line}`;
 }
 
 /** The parsed `until` selector, `undefined` without one, or a usage error for a bad one. */
 function parseUntil(raw: string | undefined): Result<ParsedSelector | undefined, WardenError> {
 	if (raw === undefined) return resultFactory.ok(undefined);
-	const parsed = parseSelector(raw);
+	const parsed = selectorEngine.parseSelector(raw);
 	return parsed.success
 		? resultFactory.ok(parsed.data)
 		: fail(opError("usage", `bad --until selector: ${parsed.error}`));
@@ -131,7 +125,7 @@ export async function scroll(session: OpSession, params: ScrollParams): OpOutcom
 	const { swipes, found } = ran.data;
 	if (until && !found) {
 		return fail(
-			opError("target_not_found", `${formatSelector(until)} not on screen after ${plural(swipes)}`, {
+			opError("target_not_found", `${selectorEngine.formatSelector(until)} not on screen after ${plural(swipes)}`, {
 				hint: "raise --max, scroll the other way, or check the selector with `warden ui find`",
 				details: { swipes },
 			})
@@ -142,7 +136,7 @@ export async function scroll(session: OpSession, params: ScrollParams): OpOutcom
 		action: "scroll",
 		text: scrollText(params.direction, found, swipes),
 		...(where ? { target: where } : {}),
-		args: { direction: params.direction, amount, ...(until ? { until: formatSelector(until) } : {}) },
+		args: { direction: params.direction, amount, ...(until ? { until: selectorEngine.formatSelector(until) } : {}) },
 		extra: { direction: params.direction, amount, swipes },
 	});
 }

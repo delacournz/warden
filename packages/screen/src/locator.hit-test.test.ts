@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
 import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { LocatorAssertions } from "./matchers";
-import { createScreen } from "./screen";
-import { testHost } from "./screen.testing";
+import { screenFactory } from "./screen";
+import { screenTesting } from "./screen.testing";
 
 /**
  * Assert-then-tap on a driver whose hit-test is cheap (iOS): the snapshot the assertion kept is checked by one
@@ -27,8 +27,8 @@ function setup(
 		capabilities: { cheapHitTest: options.cheap ?? true },
 		...(options.onCall === undefined ? {} : { onCall: options.onCall }),
 	});
-	const host = testHost(driver, { cache: true });
-	return { driver, host, screen: createScreen(host) };
+	const host = screenTesting.testHost(driver, { cache: true });
+	return { driver, host, screen: screenFactory.createScreen(host) };
 }
 
 const visible = (screen: ReturnType<typeof setup>["screen"]) =>
@@ -178,7 +178,7 @@ describe("assert-then-tap with a cheap hit-test", () => {
 				return undefined;
 			},
 		});
-		const screen = createScreen(testHost(driver, { cache: true }));
+		const screen = screenFactory.createScreen(screenTesting.testHost(driver, { cache: true }));
 		await visible(screen);
 		await screen.getByTestId("next").tap({ until: screen.getByTestId("done") });
 		expect(count(driver, "tap")).toBe(1);
@@ -200,8 +200,8 @@ describe("assert-then-tap with a cheap hit-test", () => {
 			platform: "android",
 			capabilities: { cheapHitTest: true },
 		});
-		const host = testHost(driver, { cache: true });
-		const screen = createScreen(host);
+		const host = screenTesting.testHost(driver, { cache: true });
+		const screen = screenFactory.createScreen(host);
 		await visible(screen);
 		host.clock.advance(500);
 		await screen.getByTestId("next").tap();

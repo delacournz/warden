@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
-import { createScreen } from "./screen";
-import { staticDriver, testHost } from "./screen.testing";
+import { screenFactory } from "./screen";
+import { screenTesting } from "./screen.testing";
 
-function setup(options: Parameters<typeof testHost>[1] = {}) {
-	const driver = staticDriver([
+function setup(options: Parameters<typeof screenTesting.testHost>[1] = {}) {
+	const driver = screenTesting.staticDriver([
 		driverFixtures.el("text", { id: "title", label: "Plan" }),
 		driverFixtures.el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
 		driverFixtures.el("switch", { id: "remember", label: "Remember me", value: "1" }),
@@ -14,8 +14,8 @@ function setup(options: Parameters<typeof testHost>[1] = {}) {
 		driverFixtures.el("button", { id: "dup", label: "Same" }),
 		driverFixtures.el("button", { id: "dup", label: "Same" }),
 	]);
-	const host = testHost(driver, options);
-	return { driver, host, screen: createScreen(host) };
+	const host = screenTesting.testHost(driver, options);
+	return { driver, host, screen: screenFactory.createScreen(host) };
 }
 
 describe("locator.read", () => {
@@ -89,7 +89,7 @@ describe("locator.read", () => {
 			spans.push({ op, detail: options?.detail?.(value) });
 			return value;
 		};
-		await createScreen(host).getByTestId("title").read();
+		await screenFactory.createScreen(host).getByTestId("title").read();
 		expect(spans).toEqual([{ op: "read.read", detail: { locator: 'getByTestId("title")' } }]);
 		expect(driver.callsOf("snapshot")).toHaveLength(1);
 	});

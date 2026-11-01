@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
-import { fieldFixture } from "@delacour/warden-screen/testing/screen";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import type { InventoryDevice } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { resultFactory } from "@delacour/warden-types/result";
@@ -58,7 +58,7 @@ async function rig(
 	approval?: Parameters<typeof createWardenTools>[0]["approval"],
 	extra: { screenshotImageMaxBytes?: number } = {}
 ) {
-	const { driver } = fieldFixture({ selectAll: true });
+	const { driver } = screenTesting.fieldFixture({ selectAll: true });
 	const provider = fakeProvider();
 	const seams: ClientSeams = {
 		providerFor: () => provider,

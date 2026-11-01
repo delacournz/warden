@@ -31,7 +31,7 @@ import {
 import type { TraceEvent } from "@delacour/warden-driver/trace/trace-event";
 import { driverCalls } from "@delacour/warden-driver/unwrap";
 import type { Locator } from "@delacour/warden-screen/locator";
-import { renderHeader, renderSnapshot } from "@delacour/warden-screen/render";
+import { snapshotRenderer } from "@delacour/warden-screen/render";
 import { createAlertReader } from "./alert-reader";
 import { screenshotPath } from "./artifacts";
 import {
@@ -515,8 +515,8 @@ export function createDevice({
 		async snapshot(options = {}) {
 			const interactiveOnly = options.interactiveOnly ?? false;
 			const snapshot = await readSnapshot({ interactiveOnly });
-			const rendered = renderSnapshot(snapshot, { interactiveOnly, refs: new Map() });
-			return [renderHeader({ snapshot, rendered, interactiveOnly }), ...rendered.lines].join("\n");
+			const rendered = snapshotRenderer.renderSnapshot(snapshot, { interactiveOnly, refs: new Map() });
+			return [snapshotRenderer.renderHeader({ snapshot, rendered, interactiveOnly }), ...rendered.lines].join("\n");
 		},
 
 		async settle(options = {}) {

@@ -1,11 +1,11 @@
 import type { Driver, Element, Rect, ScreenInfo, Snapshot } from "@delacour/warden-driver/driver.types";
 import { type RefTable, refResolver } from "@delacour/warden-driver/refs";
 import { DEFAULT_SETTLE_QUIET_MS, settler } from "@delacour/warden-driver/settle";
-import { indexSnapshot, type NodeEntry } from "@delacour/warden-screen/nodes";
-import { resolve } from "@delacour/warden-screen/query";
-import { isListed, renderEntryLine, renderHeader, renderSnapshot } from "@delacour/warden-screen/render";
-import { isInteractiveRole } from "@delacour/warden-screen/roles";
-import { type ParsedSelector, parseSelector, selectorToQuery } from "@delacour/warden-screen/selector";
+import { type NodeEntry, nodeIndexer } from "@delacour/warden-screen/nodes";
+import { queryResolver } from "@delacour/warden-screen/query";
+import { snapshotRenderer } from "@delacour/warden-screen/render";
+import { roleResolver } from "@delacour/warden-screen/roles";
+import { type ParsedSelector, selectorEngine } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { diffSnapshots, renderDiff, type SnapshotDiff } from "./diff";
@@ -146,17 +146,19 @@ export async function takeSnapshot(
 	const hash = settler.snapshotHash(snapshot);
 
 	const view = request.depth === undefined ? snapshot : pruneDepth(snapshot, request.depth);
-	const rendered = renderSnapshot(view, {
+	const rendered = snapshotRenderer.renderSnapshot(view, {
 		interactiveOnly: request.interactiveOnly,
 		refs: refs.byId,
 		...(request.all ? {} : { maxLines: DEFAULT_MAX_LINES }),
 	});
-	const entries = indexSnapshot(view).entries;
-	const listed = (request.interactiveOnly ? entries.filter(isListed) : entries).slice(0, rendered.shown);
+	const entries = nodeIndexer.indexSnapshot(view).entries;
+	const listed = (
+		request.interactiveOnly ? entries.filter((entry) => snapshotRenderer.isListed(entry)) : entries
+	).slice(0, rendered.shown);
 	const unmarked = (entry: NodeEntry): boolean =>
 		request.markMissingIds === true &&
 		request.interactiveOnly &&
-		isInteractiveRole(entry.role) &&
+		roleResolver.isInteractiveRole(entry.role) &&
 		(entry.element.identifier === undefined || entry.element.identifier === "");
 	const lines = rendered.lines.map((line, at) => {
 		const entry = listed[at];
@@ -167,7 +169,7 @@ export async function takeSnapshot(
 		refs,
 		hash,
 		generation,
-		header: renderHeader({
+		header: snapshotRenderer.renderHeader({
 			snapshot: view,
 			rendered,
 			interactiveOnly: request.interactiveOnly,
@@ -237,13 +239,13 @@ export async function findElements(
 	if (!taken.success) return fail(driverError(taken.error));
 	const snapshot = taken.data;
 	const { generation, refs } = storeSnapshot(session, snapshot);
-	const matches = resolve(selectorToQuery(selector), indexSnapshot(snapshot));
+	const matches = queryResolver.resolve(selectorEngine.selectorToQuery(selector), nodeIndexer.indexSnapshot(snapshot));
 	return resultFactory.ok({
 		generation,
 		header: `generation ${generation} · ${matches.length} ${matches.length === 1 ? "match" : "matches"}`,
 		lines: matches.map((entry) => {
 			const ref = refs.byId.get(entry.element.id);
-			return renderEntryLine(entry, ref === undefined ? {} : { ref });
+			return snapshotRenderer.renderEntryLine(entry, ref === undefined ? {} : { ref });
 		}),
 		elements: matches.map((entry) => elementJson(entry, refs.byId.get(entry.element.id))),
 		count: matches.length,
@@ -329,7 +331,7 @@ export type FindResult = { count: number; elements: ElementJson[] };
 
 /** `warden ui find`: elements matching a selector, with refs; bumps the generation. */
 export async function find(session: OpSession, params: FindParams): OpOutcome<FindResult> {
-	const selector = parseSelector(params.selector);
+	const selector = selectorEngine.parseSelector(params.selector);
 	if (!selector.success) return fail(opError("usage", `bad selector: ${selector.error}`));
 	const driver = await session.driver();
 	if (!driver.success) return driver;

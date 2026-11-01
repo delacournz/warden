@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
-import { createScreen, type ScreenSwipeOptions } from "./screen";
-import { staticDriver, testHost } from "./screen.testing";
+import { type ScreenSwipeOptions, screenFactory } from "./screen";
+import { screenTesting } from "./screen.testing";
 
 async function failure(promise: Promise<unknown>): Promise<E2eError> {
 	try {
@@ -15,10 +15,12 @@ async function failure(promise: Promise<unknown>): Promise<E2eError> {
 }
 
 function make(
-	driver = staticDriver([driverFixtures.el("button", { id: "ok", label: "OK", placeholder: "p", value: "v" })])
+	driver = screenTesting.staticDriver([
+		driverFixtures.el("button", { id: "ok", label: "OK", placeholder: "p", value: "v" }),
+	])
 ) {
-	const host = testHost(driver);
-	return { driver, host, screen: createScreen(host) };
+	const host = screenTesting.testHost(driver);
+	return { driver, host, screen: screenFactory.createScreen(host) };
 }
 
 describe("queries", () => {
@@ -170,7 +172,7 @@ describe("scrollUntilVisible", () => {
 	});
 
 	test("gives up after maxSwipes (default 10) with LOCATOR_NOT_FOUND when absent", async () => {
-		const driver = staticDriver([]);
+		const driver = screenTesting.staticDriver([]);
 		const { screen } = make(driver);
 		const error = await failure(screen.scrollUntilVisible(screen.getByTestId("target")));
 		expect(error.code).toBe("LOCATOR_NOT_FOUND");
@@ -203,7 +205,10 @@ describe("scrollUntilVisible", () => {
 
 	test("several matches are ambiguous", async () => {
 		const { screen } = make(
-			staticDriver([driverFixtures.el("button", { label: "A" }), driverFixtures.el("button", { label: "A" })])
+			screenTesting.staticDriver([
+				driverFixtures.el("button", { label: "A" }),
+				driverFixtures.el("button", { label: "A" }),
+			])
 		);
 		expect((await failure(screen.scrollUntilVisible(screen.getByText("A")))).code).toBe("LOCATOR_AMBIGUOUS");
 	});
@@ -218,8 +223,8 @@ describe("scrollUntilVisible", () => {
 
 	test("is reported as one step", async () => {
 		const { driver } = feed(2);
-		const host = testHost(driver);
-		const screen = createScreen(host);
+		const host = screenTesting.testHost(driver);
+		const screen = screenFactory.createScreen(host);
 		await screen.scrollUntilVisible(screen.getByTestId("target"));
 		expect(host.steps).toEqual(['scrollUntilVisible getByTestId("target")']);
 	});
@@ -227,8 +232,11 @@ describe("scrollUntilVisible", () => {
 
 describe("host without optional members", () => {
 	test("a bare session-like host works", async () => {
-		const driver = staticDriver([driverFixtures.el("button", { id: "ok" })]);
-		const screen = createScreen({ driver: async () => driver, env: { actionTimeoutMs: 50, assertionTimeoutMs: 50 } });
+		const driver = screenTesting.staticDriver([driverFixtures.el("button", { id: "ok" })]);
+		const screen = screenFactory.createScreen({
+			driver: async () => driver,
+			env: { actionTimeoutMs: 50, assertionTimeoutMs: 50 },
+		});
 		await screen.getByTestId("ok").tap();
 		expect(driver.callsOf("tap")).toHaveLength(1);
 		const error = await failure(screen.getByTestId("nope").tap());

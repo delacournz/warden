@@ -3,52 +3,16 @@ import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { OBSERVATION_MAX_AGE_MS, observations } from "@delacour/warden-driver/observation-cache";
 import { settler } from "@delacour/warden-driver/settle";
 import { deviceTyping } from "@delacour/warden-driver/typing";
-import {
-	assertDegrees,
-	assertScale,
-	centreOf,
-	fieldValue,
-	focusPoint,
-	isOnScreen,
-	type Momentum,
-	PINCH_MS,
-	pinchRadius,
-	ROTATE_MS,
-	requireGesture,
-	rotateRadius,
-	type SwipeDirection,
-	screenRect,
-	swipeVector,
-	tapPointOf,
-	visibleRect,
-} from "./actions";
+import { actionGeometry, type Momentum, PINCH_MS, ROTATE_MS, type SwipeDirection } from "./actions";
 import type { Earlier, Observed, Runtime } from "./context";
-import {
-	type ClearMethod,
-	confirmFieldValue,
-	confirmReadsFor,
-	type FillVia,
-	focusAndClear,
-	focusClearType,
-	hitTestField,
-	tapToFocus,
-} from "./field";
+import { type ClearMethod, type FillVia, fieldEditor } from "./field";
 import type { NodeEntry } from "./nodes";
 import type { PollStep } from "./poll";
-import {
-	type RoleOptions,
-	roleQuery,
-	selectorExpression,
-	type TestIdOptions,
-	type TextQueryOptions,
-	testIdQuery,
-	textQuery,
-	withScope,
-} from "./queries";
-import { describeExpression, exactlyOne, type LocatorExpression, type Query, resolve } from "./query";
-import { type ReactMatch, reactTapPoint } from "./react-locator";
+import { queryBuilder, type RoleOptions, type TestIdOptions, type TextQueryOptions } from "./queries";
+import { type LocatorExpression, type Query, queryResolver } from "./query";
+import { type ReactMatch, reactLocator } from "./react-locator";
 import type { QueryRole } from "./roles";
-import { normalizeText, type TextMatch } from "./text";
+import { type TextMatch, textMatcher } from "./text";
 
 export type ActionOptions = { timeout?: number };
 
@@ -105,16 +69,6 @@ const CONFIRM_FLOOR_MS = 500;
 /** Quiet time asked of the driver after each scroll step. */
 const SCROLL_SETTLE = { quietMs: 150, timeoutMs: 1000 };
 
-function assertOptions(verb: string, options: object, allowed: readonly string[]): void {
-	const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
-	if (unknown.length > 0) {
-		throw new E2eError(
-			"INVALID_ARGUMENT",
-			`${verb} does not take ${unknown.map((key) => `"${key}"`).join(", ")}; it takes ${allowed.join(", ")}`
-		);
-	}
-}
-
 /** What the last attempt of a wait saw, for the error when time runs out. */
 type Seen =
 	| { kind: "none"; snapshot: Observed["snapshot"] }
@@ -131,12 +85,6 @@ const REACT_ONLY =
 	"exists only in the React tree, not in the accessibility tree, so only tap() and boundingBox() work on it; " +
 	"expose it to accessibility (accessible, accessibilityLabel) to use anything else";
 
-/** The testID of a plain `getByTestId` (no scope), the only query the React tree can answer. */
-function plainTestId(expr: LocatorExpression): TextMatch | undefined {
-	if (expr.kind !== "query" || expr.scope !== undefined || expr.query.kind !== "testId") return undefined;
-	return expr.query.value;
-}
-
 type ActionSpec = {
 	/** refuse disabled elements */
 	enabled: boolean;
@@ -145,11 +93,6 @@ type ActionSpec = {
 };
 
 const LOCATOR_BRAND = Symbol.for("@delacour/warden-e2e/locator");
-
-/** Whether `value` is a `Locator` (also across duplicated copies of this module, e.g. the bundled entry and the preload). */
-export function isLocator(value: unknown): value is Locator {
-	return typeof value === "object" && value !== null && LOCATOR_BRAND in value;
-}
 
 export class Locator {
 	readonly [LOCATOR_BRAND] = true;
@@ -160,7 +103,7 @@ export class Locator {
 	) {}
 
 	toString(): string {
-		return describeExpression(this.expr);
+		return queryResolver.describeExpression(this.expr);
 	}
 
 	// ---- queries, scoped to this locator's subtree ----
@@ -170,31 +113,31 @@ export class Locator {
 	}
 
 	getByTestId(id: TextMatch, options?: TestIdOptions): Locator {
-		return this.scoped(testIdQuery(id, options));
+		return this.scoped(queryBuilder.testIdQuery(id, options));
 	}
 
 	getByText(text: TextMatch, options?: TextQueryOptions): Locator {
-		return this.scoped(textQuery("text", text, options));
+		return this.scoped(queryBuilder.textQuery("text", text, options));
 	}
 
 	getByLabel(text: TextMatch, options?: TextQueryOptions): Locator {
-		return this.scoped(textQuery("label", text, options));
+		return this.scoped(queryBuilder.textQuery("label", text, options));
 	}
 
 	getByPlaceholder(text: TextMatch, options?: TextQueryOptions): Locator {
-		return this.scoped(textQuery("placeholder", text, options));
+		return this.scoped(queryBuilder.textQuery("placeholder", text, options));
 	}
 
 	getByValue(value: TextMatch, options?: TextQueryOptions): Locator {
-		return this.scoped(textQuery("value", value, options));
+		return this.scoped(queryBuilder.textQuery("value", value, options));
 	}
 
 	getByRole(role: QueryRole, nameOrOptions?: TextMatch | RoleOptions, options?: Omit<RoleOptions, "name">): Locator {
-		return this.scoped(roleQuery(role, nameOrOptions, options));
+		return this.scoped(queryBuilder.roleQuery(role, nameOrOptions, options));
 	}
 
 	locator(selector: string): Locator {
-		return new Locator(withScope(selectorExpression(selector), this.expr), this.rt);
+		return new Locator(queryBuilder.withScope(queryBuilder.selectorExpression(selector), this.expr), this.rt);
 	}
 
 	// ---- refinement ----
@@ -250,7 +193,7 @@ export class Locator {
 	/** One look at the screen: every current match and the snapshot they came from. Never waits. */
 	async look(options: { reuse?: boolean } = {}): Promise<{ entries: NodeEntry[]; observed: Observed }> {
 		const observed = await this.rt.observe(options);
-		return { entries: resolve(this.expr, observed.index), observed };
+		return { entries: queryResolver.resolve(this.expr, observed.index), observed };
 	}
 
 	private matches(): Promise<{ entries: NodeEntry[]; observed: Observed }> {
@@ -267,12 +210,12 @@ export class Locator {
 
 	/** Components of the React tree that this locator names, when it is a plain `getByTestId` and the app has devtools. */
 	private async reactCandidates(observed: Observed): Promise<ReactMatch[]> {
-		const testId = plainTestId(this.expr);
+		const testId = locatorSupport.plainTestId(this.expr);
 		return testId === undefined ? [] : this.rt.reactMatches(testId, observed);
 	}
 
 	private exactlyOne(entries: readonly NodeEntry[], observed: Observed): NodeEntry {
-		return pickOne(this.rt, this.expr, entries, observed);
+		return locatorSupport.pickOne(this.rt, this.expr, entries, observed);
 	}
 
 	/** One read as a trace-only `read.<name>` span naming this locator; reads that call another read are not wrapped twice. */
@@ -290,15 +233,17 @@ export class Locator {
 	}
 
 	text(): Promise<string> {
-		return this.traced("text", async () => textOf((await this.single()).entry));
+		return this.traced("text", async () => locatorSupport.textOf((await this.single()).entry));
 	}
 
 	allTexts(): Promise<string[]> {
-		return this.traced("allTexts", async () => (await this.matches()).entries.map(textOf));
+		return this.traced("allTexts", async () =>
+			(await this.matches()).entries.map((entry) => locatorSupport.textOf(entry))
+		);
 	}
 
 	value(): Promise<string> {
-		return this.traced("value", async () => fieldValue((await this.single()).entry));
+		return this.traced("value", async () => actionGeometry.fieldValue((await this.single()).entry));
 	}
 
 	isVisible(): Promise<boolean> {
@@ -319,8 +264,8 @@ export class Locator {
 			const entry = this.exactlyOne(entries, observed);
 			return {
 				visible: entry.visible,
-				text: textOf(entry),
-				value: fieldValue(entry),
+				text: locatorSupport.textOf(entry),
+				value: actionGeometry.fieldValue(entry),
 				...(entry.states.checked === undefined ? {} : { checked: entry.states.checked }),
 			};
 		});
@@ -328,7 +273,7 @@ export class Locator {
 
 	/** Whether this locator's one match is visible in `observed`; no match is not visible, several matches throw. */
 	visibleIn(observed: Observed): boolean {
-		const entries = resolve(this.expr, observed.index);
+		const entries = queryResolver.resolve(this.expr, observed.index);
 		if (entries.length === 0) return false;
 		return this.exactlyOne(entries, observed).visible;
 	}
@@ -363,7 +308,7 @@ export class Locator {
 	}
 
 	private async waitForState(options: WaitForOptions): Promise<void> {
-		assertOptions("waitFor", options, ["state", "timeout"]);
+		locatorSupport.assertOptions("waitFor", options, ["state", "timeout"]);
 		const state = options.state ?? "visible";
 		if (!WAIT_STATES.includes(state)) {
 			throw new E2eError(
@@ -379,9 +324,11 @@ export class Locator {
 				return { done: false, state: undefined };
 			}
 			const { observed } = observation;
-			const entries = resolve(this.expr, observed.index);
+			const entries = queryResolver.resolve(this.expr, observed.index);
 			const entry = entries.length === 0 ? undefined : this.exactlyOne(entries, observed);
-			return reached(state, entry) ? { done: true, value: true } : { done: false, state: observed.snapshot };
+			return locatorSupport.reached(state, entry)
+				? { done: true, value: true }
+				: { done: false, state: observed.snapshot };
 		}, timeoutMs);
 		if (result.status === "done") return;
 		const message = `${this} did not become ${state} within ${timeoutMs} ms`;
@@ -460,10 +407,10 @@ export class Locator {
 			return { done: false, state: { kind: "driver", message: observation.error.message } };
 		}
 		const { observed } = observation;
-		const entries = resolve(this.expr, observed.index);
+		const entries = queryResolver.resolve(this.expr, observed.index);
 		if (entries.length === 0) return this.reactStep(spec, observed, allowReact);
 		const entry = this.exactlyOne(entries, observed);
-		const reason = blockedReason(entry, spec, observed);
+		const reason = locatorSupport.blockedReason(entry, spec, observed);
 		if (reason !== undefined) return { done: false, state: { kind: "blocked", reason, snapshot: observed.snapshot } };
 		if (!anyFrame && !this.heldStill(entry, observation.earlier)) {
 			const compared = observation.earlier?.previous !== undefined;
@@ -482,8 +429,8 @@ export class Locator {
 	private async stillByHitTest(entry: NodeEntry, observed: Observed): Promise<boolean> {
 		const { driver } = observed;
 		if (driver.capabilities.cheapHitTest !== true || this.rt.host.answerSystemAlert !== undefined) return false;
-		const hit = await driver.elementAtPoint(tapPointOf(entry));
-		return hit.success && hit.data !== null && sameElement(hit.data, entry.element);
+		const hit = await driver.elementAtPoint(actionGeometry.tapPointOf(entry));
+		return hit.success && hit.data !== null && locatorSupport.sameElement(hit.data, entry.element);
 	}
 
 	/**
@@ -494,8 +441,10 @@ export class Locator {
 		if (earlier === undefined) return true;
 		const { previous, sinceInputMs } = earlier;
 		if (previous === undefined) return sinceInputMs === undefined || sinceInputMs >= STABLE_INPUT_GAP_MS;
-		const [before, ...others] = resolve(this.expr, previous.index);
-		return before !== undefined && others.length === 0 && sameFrame(before.element.frame, entry.element.frame);
+		const [before, ...others] = queryResolver.resolve(this.expr, previous.index);
+		return (
+			before !== undefined && others.length === 0 && locatorSupport.sameFrame(before.element.frame, entry.element.frame)
+		);
 	}
 
 	/**
@@ -517,17 +466,17 @@ export class Locator {
 		if (
 			kept === undefined ||
 			kept.ageMs >= OBSERVATION_MAX_AGE_MS[driver.platform] ||
-			showsAlert(driver, kept.snapshot)
+			locatorSupport.showsAlert(driver, kept.snapshot)
 		)
 			return undefined;
 		const observation = await this.rt.tryObserve({ reuse: true, alerts: false });
 		if (!observation.ok || observation.observed.snapshot !== kept.snapshot) return undefined;
 		const { observed } = observation;
-		const [entry, ...others] = resolve(this.expr, observed.index);
-		if (entry === undefined || others.length > 0 || blockedReason(entry, spec, observed) !== undefined)
+		const [entry, ...others] = queryResolver.resolve(this.expr, observed.index);
+		if (entry === undefined || others.length > 0 || locatorSupport.blockedReason(entry, spec, observed) !== undefined)
 			return undefined;
-		const hit = await observed.driver.elementAtPoint(tapPointOf(entry, position));
-		if (!hit.success || hit.data === null || !sameElement(hit.data, entry.element)) return undefined;
+		const hit = await observed.driver.elementAtPoint(actionGeometry.tapPointOf(entry, position));
+		if (!hit.success || hit.data === null || !locatorSupport.sameElement(hit.data, entry.element)) return undefined;
 		return { entry, observed };
 	}
 
@@ -537,9 +486,9 @@ export class Locator {
 	 * within `windowMs` and presses again, up to `retries` more times.
 	 */
 	async tap(options: TapOptions = {}): Promise<void> {
-		assertOptions("tap", options, ["position", "timeout", "until", "retries", "windowMs", "pollMs"]);
-		const retry = retryPlan(options);
-		const suffix = retry === undefined ? "" : ` until ${describeUntil(retry.until)}`;
+		locatorSupport.assertOptions("tap", options, ["position", "timeout", "until", "retries", "windowMs", "pollMs"]);
+		const retry = locatorSupport.retryPlan(options);
+		const suffix = retry === undefined ? "" : ` until ${locatorSupport.describeUntil(retry.until)}`;
 		return this.act(
 			"tap",
 			async () => {
@@ -568,7 +517,9 @@ export class Locator {
 			(options.until === undefined ? await this.aimFromKept(spec, options.position) : undefined) ??
 			(await this.actionable(spec, options.timeout ?? this.rt.actionTimeout(), true));
 		const point =
-			"react" in found ? reactTapPoint(found.react, options.position) : tapPointOf(found.entry, options.position);
+			"react" in found
+				? reactLocator.reactTapPoint(found.react, options.position)
+				: actionGeometry.tapPointOf(found.entry, options.position);
 		this.rt.drive("tap", await found.observed.driver.tap(point));
 		return found.observed.snapshot;
 	}
@@ -628,14 +579,14 @@ export class Locator {
 	}
 
 	async longPress(options: LongPressOptions = {}): Promise<void> {
-		assertOptions("longPress", options, ["durationMs", "timeout"]);
+		locatorSupport.assertOptions("longPress", options, ["durationMs", "timeout"]);
 		return this.act("longPress", async () => {
 			const { entry, observed } = await this.actionable(
 				{ enabled: true, tapPointOnScreen: true },
 				options.timeout ?? this.rt.actionTimeout()
 			);
 			const opts = options.durationMs === undefined ? undefined : { durationMs: options.durationMs };
-			this.rt.drive("longPress", await observed.driver.longPress(tapPointOf(entry), opts));
+			this.rt.drive("longPress", await observed.driver.longPress(actionGeometry.tapPointOf(entry), opts));
 		});
 	}
 
@@ -650,25 +601,25 @@ export class Locator {
 	 * verified.
 	 */
 	async fill(text: string, options: FillOptions = {}): Promise<void> {
-		assertOptions("fill", options, ["via", "timeout"]);
-		const via = fillViaOf(this, options.via);
+		locatorSupport.assertOptions("fill", options, ["via", "timeout"]);
+		const via = locatorSupport.fillViaOf(this, options.via);
 		return this.act("fill", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			let firstHeld: string | undefined;
 			for (let attempt = 1; ; attempt += 1) {
-				const point = focusPoint(target.entry.element.frame);
+				const point = actionGeometry.focusPoint(target.entry.element.frame);
 				this.rt.drive(
 					"fill",
-					await focusClearType(
+					await fieldEditor.focusClearType(
 						target.observed.driver,
 						this.pause,
 						point,
 						target.entry,
 						text,
-						clearMethodFor(attempt),
+						locatorSupport.clearMethodFor(attempt),
 						this.rt.host.env.androidSetText === true,
-						viaFor(attempt, via)
+						locatorSupport.viaFor(attempt, via)
 					)
 				);
 				if (target.entry.secure) return;
@@ -690,12 +641,12 @@ export class Locator {
 
 	/** Empties a text field (select all and one Backspace when the driver can), then checks it is empty (one more pass of counted Backspaces when it is not). */
 	async clear(options: ActionOptions = {}): Promise<void> {
-		assertOptions("clear", options, ["timeout"]);
+		locatorSupport.assertOptions("clear", options, ["timeout"]);
 		return this.act("clear", async () => {
 			const budget = this.rt.budget(options.timeout);
 			let target = await this.actionable({ enabled: true, tapPointOnScreen: false }, budget.remaining());
 			for (let attempt = 1; ; attempt += 1) {
-				await this.focusAndClear(target, clearMethodFor(attempt));
+				await this.focusAndClear(target, locatorSupport.clearMethodFor(attempt));
 				if (target.entry.secure) return;
 				const outcome = await this.confirm(target, "", budget);
 				if (outcome.ok) return;
@@ -713,7 +664,7 @@ export class Locator {
 
 	/** Types at the caret; the field is tapped (caret to the end) first unless it already has focus. */
 	async type(text: string, options: ActionOptions = {}): Promise<void> {
-		assertOptions("type", options, ["timeout"]);
+		locatorSupport.assertOptions("type", options, ["timeout"]);
 		return this.act("type", async () => {
 			const target = await this.actionable(
 				{ enabled: true, tapPointOnScreen: false },
@@ -725,7 +676,7 @@ export class Locator {
 	}
 
 	async press(key: KeyName, options: PressOptions = {}): Promise<void> {
-		assertOptions("press", options, ["modifiers", "timeout"]);
+		locatorSupport.assertOptions("press", options, ["modifiers", "timeout"]);
 		return this.act("press", async () => {
 			const target = await this.actionable(
 				{ enabled: true, tapPointOnScreen: false },
@@ -738,7 +689,7 @@ export class Locator {
 
 	/** A scroll gesture on this one node, in the direction the content moves. */
 	async swipe(options: LocatorSwipeOptions): Promise<void> {
-		assertOptions("swipe", options, ["direction", "momentum", "timeout"]);
+		locatorSupport.assertOptions("swipe", options, ["direction", "momentum", "timeout"]);
 		if (options.direction === undefined) {
 			throw new E2eError("INVALID_ARGUMENT", "a locator swipe needs a direction; paths are only for screen.swipe");
 		}
@@ -747,9 +698,9 @@ export class Locator {
 				{ enabled: false, tapPointOnScreen: false },
 				options.timeout ?? this.rt.actionTimeout()
 			);
-			const vector = swipeVector(
+			const vector = actionGeometry.swipeVector(
 				options.direction,
-				visibleRect(entry.element.frame, observed.snapshot.screen),
+				actionGeometry.visibleRect(entry.element.frame, observed.snapshot.screen),
 				options.momentum
 			);
 			this.rt.drive("swipe", await observed.driver.swipe(vector.from, vector.to, vector.options));
@@ -761,8 +712,8 @@ export class Locator {
 	 * brings them together. `INVALID_ARGUMENT` for a scale outside 0.1-10 or exactly 1, or on a driver without pinch.
 	 */
 	async pinch(scale: number, options: PinchOptions = {}): Promise<void> {
-		assertOptions("pinch", options, ["durationMs", "radius", "timeout"]);
-		assertScale(scale);
+		locatorSupport.assertOptions("pinch", options, ["durationMs", "radius", "timeout"]);
+		actionGeometry.assertScale(scale);
 		return this.act(
 			"pinch",
 			async () => {
@@ -771,13 +722,13 @@ export class Locator {
 					options.timeout ?? this.rt.actionTimeout()
 				);
 				const screen = observed.snapshot.screen;
-				const rect = visibleRect(entry.element.frame, screen);
-				requireGesture(observed.driver, "pinch", "locator.pinch");
+				const rect = actionGeometry.visibleRect(entry.element.frame, screen);
+				actionGeometry.requireGesture(observed.driver, "pinch", "locator.pinch");
 				this.rt.drive(
 					"pinch",
-					await observed.driver.pinch(centreOf(rect), scale, {
+					await observed.driver.pinch(actionGeometry.centreOf(rect), scale, {
 						durationMs: options.durationMs ?? PINCH_MS,
-						radius: options.radius ?? pinchRadius(rect, scale, screen),
+						radius: options.radius ?? actionGeometry.pinchRadius(rect, scale, screen),
 					})
 				);
 			},
@@ -787,8 +738,8 @@ export class Locator {
 
 	/** A two-finger rotation about this node's visible centre; positive `degrees` turn clockwise. */
 	async rotate(degrees: number, options: RotateOptions = {}): Promise<void> {
-		assertOptions("rotate", options, ["durationMs", "radius", "timeout"]);
-		assertDegrees(degrees);
+		locatorSupport.assertOptions("rotate", options, ["durationMs", "radius", "timeout"]);
+		actionGeometry.assertDegrees(degrees);
 		return this.act(
 			"rotate",
 			async () => {
@@ -797,13 +748,13 @@ export class Locator {
 					options.timeout ?? this.rt.actionTimeout()
 				);
 				const screen = observed.snapshot.screen;
-				const rect = visibleRect(entry.element.frame, screen);
-				requireGesture(observed.driver, "pinch", "locator.rotate");
+				const rect = actionGeometry.visibleRect(entry.element.frame, screen);
+				actionGeometry.requireGesture(observed.driver, "pinch", "locator.rotate");
 				this.rt.drive(
 					"rotate",
-					await observed.driver.rotate(centreOf(rect), degrees, {
+					await observed.driver.rotate(actionGeometry.centreOf(rect), degrees, {
 						durationMs: options.durationMs ?? ROTATE_MS,
-						radius: options.radius ?? rotateRadius(rect, screen),
+						radius: options.radius ?? actionGeometry.rotateRadius(rect, screen),
 					})
 				);
 			},
@@ -813,7 +764,7 @@ export class Locator {
 
 	/** Scrolls the screen until this locator is on screen. */
 	scrollTo(options: ScrollOptions = {}): Promise<void> {
-		return scrollUntilVisible(this.rt, this, options);
+		return locatorSupport.scrollUntilVisible(this.rt, this, options);
 	}
 
 	/** One poll step when the accessibility tree has no match: ask the React tree (plain `getByTestId` only). */
@@ -835,7 +786,7 @@ export class Locator {
 				found.length
 			);
 		}
-		if (spec.tapPointOnScreen && !isOnScreen(match.tapPoint, observed.snapshot.screen)) {
+		if (spec.tapPointOnScreen && !actionGeometry.isOnScreen(match.tapPoint, observed.snapshot.screen)) {
 			const reason = "(React tree) has its tap point outside the screen";
 			return { done: false, state: { kind: "blocked", reason, snapshot: observed.snapshot } };
 		}
@@ -844,13 +795,22 @@ export class Locator {
 
 	private async focus({ entry, observed }: Actionable): Promise<void> {
 		if (entry.states.focused) return;
-		this.rt.drive("focus", await tapToFocus(observed.driver, this.pause, focusPoint(entry.element.frame), entry));
+		this.rt.drive(
+			"focus",
+			await fieldEditor.tapToFocus(observed.driver, this.pause, actionGeometry.focusPoint(entry.element.frame), entry)
+		);
 	}
 
 	private async focusAndClear({ entry, observed }: Actionable, method: ClearMethod): Promise<void> {
 		this.rt.drive(
 			"clear",
-			await focusAndClear(observed.driver, this.pause, focusPoint(entry.element.frame), entry, method)
+			await fieldEditor.focusAndClear(
+				observed.driver,
+				this.pause,
+				actionGeometry.focusPoint(entry.element.frame),
+				entry,
+				method
+			)
 		);
 	}
 
@@ -869,22 +829,23 @@ export class Locator {
 	): Promise<{ ok: true } | { ok: false; held: string; screen: string | undefined }> {
 		const span = Math.max(budget.remaining(), CONFIRM_FLOOR_MS);
 		let lastSeen: Observed["snapshot"] | undefined;
-		const readValue = (found: NodeEntry): string => (text === "" ? fieldValue(found) : rawValue(found));
-		const outcome = await confirmFieldValue<never>({
+		const readValue = (found: NodeEntry): string =>
+			text === "" ? actionGeometry.fieldValue(found) : locatorSupport.rawValue(found);
+		const outcome = await fieldEditor.confirmFieldValue<never>({
 			text,
 			now: this.rt.clock.now,
 			sleep: this.pause,
 			budgetMs: Math.min(VERIFY_MS, span),
-			reads: confirmReadsFor(entry, text),
+			reads: fieldEditor.confirmReadsFor(entry, text),
 			maxMs: span,
 			read: async () => {
-				const hit = await hitTestField(observed.driver, entry);
+				const hit = await fieldEditor.hitTestField(observed.driver, entry);
 				if (hit.ok && hit.entry !== undefined)
 					return { ok: true, reading: { kind: "value", value: readValue(hit.entry) } };
 				const observation = await this.rt.tryObserve({ reuse: false, alerts: false });
 				if (!observation.ok) return { ok: true, reading: { kind: "unreadable", note: "(unreadable)" } };
 				lastSeen = observation.observed.snapshot;
-				const found = resolve(this.expr, observation.observed.index);
+				const found = queryResolver.resolve(this.expr, observation.observed.index);
 				const [only] = found;
 				if (found.length !== 1 || only === undefined) {
 					return { ok: true, reading: { kind: "unreadable", note: `(${found.length} matches)` } };
@@ -898,53 +859,10 @@ export class Locator {
 	}
 }
 
-/** The strict one-match rule; the error carries the rendered screen, which is only built when there is an error. */
-export function pickOne(
-	rt: Runtime,
-	expr: LocatorExpression,
-	entries: readonly NodeEntry[],
-	observed: Observed
-): NodeEntry {
-	const [only] = entries;
-	if (only !== undefined && entries.length === 1) return only;
-	const result = exactlyOne(expr, entries, { screen: rt.excerpt(observed.snapshot) });
-	if (!result.success) throw result.error;
-	return result.data;
-}
-
-/** Display text: the accessible name, else the text of everything inside. */
-export function textOf(entry: NodeEntry): string {
-	return normalizeText(entry.name ?? "") || entry.subtreeText;
-}
-
 /** A look that starts this soon after an input, with no earlier look of the same screen, is checked by one more. */
 const STABLE_INPUT_GAP_MS = 300;
 /** At most this many extra looks wait for a frame to hold still; then the latest one is used. */
 const MAX_STABILITY_LOOKS = 2;
-
-/** Whether a hit-test answer is the element a snapshot had: same role, ids, enabled state and frame (to 1 pt). */
-function sameElement(hit: Element, seen: Element): boolean {
-	return (
-		hit.role === seen.role &&
-		hit.identifier === seen.identifier &&
-		hit.label === seen.label &&
-		hit.enabled === seen.enabled &&
-		sameFrame(hit.frame, seen.frame)
-	);
-}
-
-function showsAlert(driver: Driver, snapshot: Snapshot): boolean {
-	return snapshot.modal !== undefined || (observations.canDetectAlerts(driver) && driver.alertIn(snapshot) !== null);
-}
-
-function sameFrame(a: Rect, b: Rect): boolean {
-	return (
-		Math.round(a.x) === Math.round(b.x) &&
-		Math.round(a.y) === Math.round(b.y) &&
-		Math.round(a.width) === Math.round(b.width) &&
-		Math.round(a.height) === Math.round(b.height)
-	);
-}
 
 /** A tap with `until` is sent again this many times, each given this long to show its result, checked this often. */
 const TAP_RETRIES = 2;
@@ -974,127 +892,207 @@ type PressWatch = {
 	unchanged: number;
 };
 
-function wholeNumber(name: string, value: number, atLeast: number): void {
-	if (!Number.isInteger(value) || value < atLeast) {
-		throw new E2eError(
-			"INVALID_ARGUMENT",
-			`tap ${name} must be an integer of at least ${atLeast}, got ${String(value)}`
-		);
-	}
-}
-
-/** The retry settings of a `tap`, validated; undefined for a plain tap. `retries`, `windowMs` and `pollMs` mean nothing without `until`. */
-function retryPlan(options: TapOptions): RetryPlan | undefined {
-	const { until, retries, windowMs, pollMs } = options;
-	if (until === undefined) {
-		const orphan = (["retries", "windowMs", "pollMs"] as const).filter((key) => options[key] !== undefined);
-		if (orphan.length > 0) {
+export class LocatorSupport {
+	assertOptions(verb: string, options: object, allowed: readonly string[]): void {
+		const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
+		if (unknown.length > 0) {
 			throw new E2eError(
 				"INVALID_ARGUMENT",
-				`tap ${orphan.map((key) => `"${key}"`).join(", ")} only apply with "until"`
+				`${verb} does not take ${unknown.map((key) => `"${key}"`).join(", ")}; it takes ${allowed.join(", ")}`
 			);
+		}
+	}
+
+	/** The testID of a plain `getByTestId` (no scope), the only query the React tree can answer. */
+	plainTestId(expr: LocatorExpression): TextMatch | undefined {
+		if (expr.kind !== "query" || expr.scope !== undefined || expr.query.kind !== "testId") return undefined;
+		return expr.query.value;
+	}
+
+	/** Whether `value` is a `Locator` (also across duplicated copies of this module, e.g. the bundled entry and the preload). */
+	isLocator(value: unknown): value is Locator {
+		return typeof value === "object" && value !== null && LOCATOR_BRAND in value;
+	}
+
+	/** The strict one-match rule; the error carries the rendered screen, which is only built when there is an error. */
+	pickOne(rt: Runtime, expr: LocatorExpression, entries: readonly NodeEntry[], observed: Observed): NodeEntry {
+		const [only] = entries;
+		if (only !== undefined && entries.length === 1) return only;
+		const result = queryResolver.exactlyOne(expr, entries, { screen: rt.excerpt(observed.snapshot) });
+		if (!result.success) throw result.error;
+		return result.data;
+	}
+
+	/** Display text: the accessible name, else the text of everything inside. */
+	textOf(entry: NodeEntry): string {
+		return textMatcher.normalizeText(entry.name ?? "") || entry.subtreeText;
+	}
+
+	/** Whether a hit-test answer is the element a snapshot had: same role, ids, enabled state and frame (to 1 pt). */
+	sameElement(hit: Element, seen: Element): boolean {
+		return (
+			hit.role === seen.role &&
+			hit.identifier === seen.identifier &&
+			hit.label === seen.label &&
+			hit.enabled === seen.enabled &&
+			this.sameFrame(hit.frame, seen.frame)
+		);
+	}
+
+	showsAlert(driver: Driver, snapshot: Snapshot): boolean {
+		return snapshot.modal !== undefined || (observations.canDetectAlerts(driver) && driver.alertIn(snapshot) !== null);
+	}
+
+	sameFrame(a: Rect, b: Rect): boolean {
+		return (
+			Math.round(a.x) === Math.round(b.x) &&
+			Math.round(a.y) === Math.round(b.y) &&
+			Math.round(a.width) === Math.round(b.width) &&
+			Math.round(a.height) === Math.round(b.height)
+		);
+	}
+
+	private wholeNumber(name: string, value: number, atLeast: number): void {
+		if (!Number.isInteger(value) || value < atLeast) {
+			throw new E2eError(
+				"INVALID_ARGUMENT",
+				`tap ${name} must be an integer of at least ${atLeast}, got ${String(value)}`
+			);
+		}
+	}
+
+	/** The retry settings of a `tap`, validated; undefined for a plain tap. `retries`, `windowMs` and `pollMs` mean nothing without `until`. */
+	retryPlan(options: TapOptions): RetryPlan | undefined {
+		const { until, retries, windowMs, pollMs } = options;
+		if (until === undefined) {
+			const orphan = (["retries", "windowMs", "pollMs"] as const).filter((key) => options[key] !== undefined);
+			if (orphan.length > 0) {
+				throw new E2eError(
+					"INVALID_ARGUMENT",
+					`tap ${orphan.map((key) => `"${key}"`).join(", ")} only apply with "until"`
+				);
+			}
+			return undefined;
+		}
+		if (typeof until !== "function" && !this.isLocator(until)) {
+			throw new E2eError(
+				"INVALID_ARGUMENT",
+				'tap "until" must be a locator made by screen, or a function returning a promise of a boolean'
+			);
+		}
+		const plan: RetryPlan = {
+			until,
+			retries: retries ?? TAP_RETRIES,
+			windowMs: windowMs ?? TAP_WINDOW_MS,
+			pollMs: pollMs ?? TAP_CHECK_MS,
+		};
+		this.wholeNumber("retries", plan.retries, 0);
+		this.wholeNumber("windowMs", plan.windowMs, 1);
+		this.wholeNumber("pollMs", plan.pollMs, 1);
+		return plan;
+	}
+
+	describeUntil(until: TapUntil): string {
+		return typeof until === "function" ? "check" : String(until);
+	}
+
+	/** The `via` a `fill` asked for (default type); anything but `paste` / `type` is `INVALID_ARGUMENT`. */
+	fillViaOf(locator: Locator, via: FillVia | undefined): FillVia {
+		if (via === undefined || via === "paste" || via === "type") return via ?? "type";
+		throw new E2eError(
+			"INVALID_ARGUMENT",
+			`${locator}: fill via must be "paste" or "type", got ${JSON.stringify(via)}`
+		);
+	}
+
+	/** The first attempt puts the text in as asked; a retry means that did not work, so it types. */
+	viaFor(attempt: number, via: FillVia): FillVia {
+		return attempt === 1 ? via : "type";
+	}
+
+	/** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */
+	clearMethodFor(attempt: number): ClearMethod {
+		return attempt === 1 ? "auto" : "counted";
+	}
+
+	/** What the field shows, placeholder and all (used to compare against what was typed). */
+	rawValue(entry: NodeEntry): string {
+		return entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? (entry.element.text ?? "") : "");
+	}
+
+	reached(state: WaitState, entry: NodeEntry | undefined): boolean {
+		switch (state) {
+			case "attached":
+				return entry !== undefined;
+			case "detached":
+				return entry === undefined;
+			case "visible":
+				return entry?.visible === true;
+			case "hidden":
+				return entry === undefined || !entry.visible;
+		}
+	}
+
+	blockedReason(entry: NodeEntry, spec: ActionSpec, observed: Observed): string | undefined {
+		if (!entry.visible) return "is not visible";
+		if (spec.enabled && entry.states.disabled) return "is disabled";
+		if (
+			spec.tapPointOnScreen &&
+			!actionGeometry.isOnScreen(actionGeometry.tapPointOf(entry), observed.snapshot.screen)
+		) {
+			return "has its tap point outside the screen; use scrollTo() to bring it into view";
 		}
 		return undefined;
 	}
-	if (typeof until !== "function" && !isLocator(until)) {
-		throw new E2eError(
-			"INVALID_ARGUMENT",
-			'tap "until" must be a locator made by screen, or a function returning a promise of a boolean'
+
+	private isOnScreenEntry(entry: NodeEntry | undefined, observed: Observed): boolean {
+		return (
+			entry?.visible === true && actionGeometry.isOnScreen(actionGeometry.tapPointOf(entry), observed.snapshot.screen)
 		);
 	}
-	const plan: RetryPlan = {
-		until,
-		retries: retries ?? TAP_RETRIES,
-		windowMs: windowMs ?? TAP_WINDOW_MS,
-		pollMs: pollMs ?? TAP_CHECK_MS,
-	};
-	wholeNumber("retries", plan.retries, 0);
-	wholeNumber("windowMs", plan.windowMs, 1);
-	wholeNumber("pollMs", plan.pollMs, 1);
-	return plan;
-}
 
-function describeUntil(until: TapUntil): string {
-	return typeof until === "function" ? "check" : String(until);
-}
-
-/** The `via` a `fill` asked for (default type); anything but `paste` / `type` is `INVALID_ARGUMENT`. */
-function fillViaOf(locator: Locator, via: FillVia | undefined): FillVia {
-	if (via === undefined || via === "paste" || via === "type") return via ?? "type";
-	throw new E2eError("INVALID_ARGUMENT", `${locator}: fill via must be "paste" or "type", got ${JSON.stringify(via)}`);
-}
-
-/** The first attempt puts the text in as asked; a retry means that did not work, so it types. */
-function viaFor(attempt: number, via: FillVia): FillVia {
-	return attempt === 1 ? via : "type";
-}
-
-/** The first attempt empties a field the quick way; a retry means that did not work, so it presses one Backspace per character. */
-function clearMethodFor(attempt: number): ClearMethod {
-	return attempt === 1 ? "auto" : "counted";
-}
-
-/** What the field shows, placeholder and all (used to compare against what was typed). */
-function rawValue(entry: NodeEntry): string {
-	return entry.value ?? (entry.role === "textbox" || entry.role === "searchbox" ? (entry.element.text ?? "") : "");
-}
-
-function reached(state: WaitState, entry: NodeEntry | undefined): boolean {
-	switch (state) {
-		case "attached":
-			return entry !== undefined;
-		case "detached":
-			return entry === undefined;
-		case "visible":
-			return entry?.visible === true;
-		case "hidden":
-			return entry === undefined || !entry.visible;
+	private scrollGaveUp(target: Locator, absent: boolean, effort: string, screen: string): E2eError {
+		if (absent) return new E2eError("LOCATOR_NOT_FOUND", `${target} was not found after ${effort}`, screen);
+		return new E2eError("NOT_ACTIONABLE", `${target} is still not on screen after ${effort}`, screen);
 	}
-}
 
-function blockedReason(entry: NodeEntry, spec: ActionSpec, observed: Observed): string | undefined {
-	if (!entry.visible) return "is not visible";
-	if (spec.enabled && entry.states.disabled) return "is disabled";
-	if (spec.tapPointOnScreen && !isOnScreen(tapPointOf(entry), observed.snapshot.screen)) {
-		return "has its tap point outside the screen; use scrollTo() to bring it into view";
-	}
-	return undefined;
-}
-
-function isOnScreenEntry(entry: NodeEntry | undefined, observed: Observed): boolean {
-	return entry?.visible === true && isOnScreen(tapPointOf(entry), observed.snapshot.screen);
-}
-
-function scrollGaveUp(target: Locator, absent: boolean, effort: string, screen: string): E2eError {
-	if (absent) return new E2eError("LOCATOR_NOT_FOUND", `${target} was not found after ${effort}`, screen);
-	return new E2eError("NOT_ACTIONABLE", `${target} is still not on screen after ${effort}`, screen);
-}
-
-/**
- * Swipes the screen in `direction` (the way the content moves) until `target` has exactly one match that is on screen.
- * Gives up after `maxSwipes` swipes or the action timeout.
- */
-export async function scrollUntilVisible(rt: Runtime, target: Locator, options: ScrollOptions = {}): Promise<void> {
-	assertOptions("scrollUntilVisible", options, ["direction", "momentum", "maxSwipes", "timeout"]);
-	const direction = options.direction ?? "down";
-	const maxSwipes = options.maxSwipes ?? DEFAULT_MAX_SWIPES;
-	if (!Number.isInteger(maxSwipes) || maxSwipes < 0) {
-		throw new E2eError("INVALID_ARGUMENT", `maxSwipes must be a non-negative integer, got ${String(maxSwipes)}`);
-	}
-	return rt.step(`scrollUntilVisible ${target}`, async () => {
-		const budget = rt.budget(options.timeout);
-		for (let swipes = 0; ; swipes += 1) {
-			const observed = await rt.observe();
-			const entries = resolve(target.expr, observed.index);
-			if (entries.length > 1) pickOne(rt, target.expr, entries, observed);
-			const [entry] = entries;
-			if (isOnScreenEntry(entry, observed)) return;
-			if (swipes >= maxSwipes || budget.remaining() <= 0) {
-				throw scrollGaveUp(target, entry === undefined, `${swipes} swipes ${direction}`, rt.excerpt(observed.snapshot));
-			}
-			const vector = swipeVector(direction, screenRect(observed.snapshot.screen), options.momentum);
-			rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
-			await observed.driver.settle(SCROLL_SETTLE);
+	/**
+	 * Swipes the screen in `direction` (the way the content moves) until `target` has exactly one match that is on screen.
+	 * Gives up after `maxSwipes` swipes or the action timeout.
+	 */
+	async scrollUntilVisible(rt: Runtime, target: Locator, options: ScrollOptions = {}): Promise<void> {
+		this.assertOptions("scrollUntilVisible", options, ["direction", "momentum", "maxSwipes", "timeout"]);
+		const direction = options.direction ?? "down";
+		const maxSwipes = options.maxSwipes ?? DEFAULT_MAX_SWIPES;
+		if (!Number.isInteger(maxSwipes) || maxSwipes < 0) {
+			throw new E2eError("INVALID_ARGUMENT", `maxSwipes must be a non-negative integer, got ${String(maxSwipes)}`);
 		}
-	});
+		return rt.step(`scrollUntilVisible ${target}`, async () => {
+			const budget = rt.budget(options.timeout);
+			for (let swipes = 0; ; swipes += 1) {
+				const observed = await rt.observe();
+				const entries = queryResolver.resolve(target.expr, observed.index);
+				if (entries.length > 1) this.pickOne(rt, target.expr, entries, observed);
+				const [entry] = entries;
+				if (this.isOnScreenEntry(entry, observed)) return;
+				if (swipes >= maxSwipes || budget.remaining() <= 0) {
+					throw this.scrollGaveUp(
+						target,
+						entry === undefined,
+						`${swipes} swipes ${direction}`,
+						rt.excerpt(observed.snapshot)
+					);
+				}
+				const vector = actionGeometry.swipeVector(
+					direction,
+					actionGeometry.screenRect(observed.snapshot.screen),
+					options.momentum
+				);
+				rt.drive("scrollUntilVisible", await observed.driver.swipe(vector.from, vector.to, vector.options));
+				await observed.driver.settle(SCROLL_SETTLE);
+			}
+		});
+	}
 }
+
+export const locatorSupport = new LocatorSupport();

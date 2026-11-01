@@ -3,8 +3,8 @@ import type { ReactTree, TreeComponent, TreeOptions } from "@delacour/warden-dev
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
-import { createScreen } from "./screen";
-import { staticDriver, testHost } from "./screen.testing";
+import { screenFactory } from "./screen";
+import { screenTesting } from "./screen.testing";
 
 async function failure(promise: Promise<unknown>): Promise<E2eError> {
 	try {
@@ -40,11 +40,14 @@ function fakeFacet(components: () => TreeComponent[] = () => [PAY]) {
 }
 
 function setup(options: { platform?: "ios" | "android"; devtools?: boolean; components?: () => TreeComponent[] } = {}) {
-	const driver = staticDriver([driverFixtures.el("button", { id: "other", label: "Other" })], options.platform);
-	const host = testHost(driver);
+	const driver = screenTesting.staticDriver(
+		[driverFixtures.el("button", { id: "other", label: "Other" })],
+		options.platform
+	);
+	const host = screenTesting.testHost(driver);
 	const fake = fakeFacet(options.components);
 	if (options.devtools !== false) host.devtools = () => fake.facet;
-	return { driver, host, fake, screen: createScreen(host) };
+	return { driver, host, fake, screen: screenFactory.createScreen(host) };
 }
 
 describe("getByTestId falls back to the React tree", () => {

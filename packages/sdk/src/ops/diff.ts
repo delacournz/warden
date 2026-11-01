@@ -1,6 +1,6 @@
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
-import { indexSnapshot, type NodeEntry } from "@delacour/warden-screen/nodes";
-import { renderEntryLine } from "@delacour/warden-screen/render";
+import { type NodeEntry, nodeIndexer } from "@delacour/warden-screen/nodes";
+import { snapshotRenderer } from "@delacour/warden-screen/render";
 
 /** One element of a snapshot diff. `=` lines are counted, not listed (`unchanged`). */
 export type DiffEntry = { kind: "+" | "-"; line: string; ref?: string };
@@ -60,7 +60,7 @@ function matchEntries(before: readonly NodeEntry[], after: readonly NodeEntry[])
 
 /** An element's line without ref or indentation: equal lines = unchanged. */
 function content(entry: NodeEntry): string {
-	return renderEntryLine(entry);
+	return snapshotRenderer.renderEntryLine(entry);
 }
 
 /**
@@ -73,8 +73,8 @@ export function diffSnapshots(
 	after: Snapshot,
 	refs: ReadonlyMap<string, string> = new Map()
 ): SnapshotDiff {
-	const a = indexSnapshot(before).entries;
-	const b = indexSnapshot(after).entries;
+	const a = nodeIndexer.indexSnapshot(before).entries;
+	const b = nodeIndexer.indexSnapshot(after).entries;
 	const pairs = matchEntries(a, b);
 	const reverse = new Map([...pairs].map(([from, to]) => [to, from]));
 	const removed: DiffEntry[] = [];

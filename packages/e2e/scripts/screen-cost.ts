@@ -12,12 +12,12 @@
  */
 import { FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { Runtime } from "@delacour/warden-screen/context";
-import { indexSnapshot } from "@delacour/warden-screen/nodes";
-import { poll } from "@delacour/warden-screen/poll";
-import { createScreen } from "@delacour/warden-screen/screen";
-import { allFixtureSnapshots, type NamedSnapshot } from "@delacour/warden-screen/testing/fixtures";
-import { fakeClock } from "@delacour/warden-screen/testing/poll";
-import { testHost } from "@delacour/warden-screen/testing/screen";
+import { nodeIndexer } from "@delacour/warden-screen/nodes";
+import { poller } from "@delacour/warden-screen/poll";
+import { screenFactory } from "@delacour/warden-screen/screen";
+import { type NamedSnapshot, screenFixtures } from "@delacour/warden-screen/testing/fixtures";
+import { FakeClock } from "@delacour/warden-screen/testing/poll";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 
 const iterations = Number(process.argv[2] ?? 400);
 const rounds = Number(process.argv[3] ?? 5);
@@ -51,8 +51,8 @@ function uniqueTestId({ snapshot }: NamedSnapshot): string | undefined {
 }
 
 async function pollsInTenSeconds(): Promise<number> {
-	const clock = fakeClock();
-	const result = await poll(async () => ({ done: false, state: undefined }), { timeoutMs: 10_000, ...clock });
+	const clock = new FakeClock();
+	const result = await poller.poll(async () => ({ done: false, state: undefined }), { timeoutMs: 10_000, ...clock });
 	return result.attempts;
 }
 
@@ -60,7 +60,7 @@ function cell(value: number | undefined, width: number): string {
 	return (value === undefined ? "-" : value.toFixed(1)).padStart(width);
 }
 
-const fixtures = allFixtureSnapshots();
+const fixtures = screenFixtures.allFixtureSnapshots();
 console.log(`iterations ${iterations} x ${rounds} rounds; microseconds per call, median`);
 console.log(
 	`${"fixture".padEnd(36)}${"nodes".padStart(7)}${"index".padStart(10)}${"excerpt".padStart(10)}${"read".padStart(10)}`
@@ -68,11 +68,11 @@ console.log(
 for (const fixture of fixtures) {
 	const { snapshot } = fixture;
 	const driver = new FakeDriver({ screens: [snapshot] });
-	const host = testHost(driver);
+	const host = screenTesting.testHost(driver);
 	const runtime = new Runtime(host);
 	const testId = uniqueTestId(fixture);
-	const locator = testId === undefined ? undefined : createScreen(host).getByTestId(testId);
-	const index = await measure(() => indexSnapshot(snapshot));
+	const locator = testId === undefined ? undefined : screenFactory.createScreen(host).getByTestId(testId);
+	const index = await measure(() => nodeIndexer.indexSnapshot(snapshot));
 	const excerpt = await measure(() => runtime.excerpt(snapshot));
 	const read = locator === undefined ? undefined : await measure(() => locator.isVisible());
 	console.log(

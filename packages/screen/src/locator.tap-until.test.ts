@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { Locator } from "./locator";
-import { createScreen } from "./screen";
-import { testHost } from "./screen.testing";
+import { screenFactory } from "./screen";
+import { screenTesting } from "./screen.testing";
 
 const WINDOW = { windowMs: 40, pollMs: 5 };
 
@@ -28,8 +28,8 @@ function setup(landingTap: number, options: { cache?: boolean } = {}) {
 			return undefined;
 		},
 	});
-	const host = testHost(driver, { cache: options.cache ?? true });
-	return { driver, host, screen: createScreen(host) };
+	const host = screenTesting.testHost(driver, { cache: options.cache ?? true });
+	return { driver, host, screen: screenFactory.createScreen(host) };
 }
 
 /** What a suite's `nextStep` waits for: the title is visible and reads `title` (two reads per check). */
@@ -116,8 +116,8 @@ describe("tap({ until })", () => {
 				return undefined;
 			},
 		});
-		const host = testHost(driver, { cache: true });
-		const screen = createScreen(host);
+		const host = screenTesting.testHost(driver, { cache: true });
+		const screen = screenFactory.createScreen(host);
 		await screen.getByTestId("next").tap({
 			until: titleIs(screen.getByTestId("title"), "Plan"),
 			windowMs: 1000,
@@ -226,9 +226,9 @@ function reacting(options: { untilAt: number; hides?: boolean }) {
 			return undefined;
 		},
 	});
-	const host = testHost(driver, { cache: true });
+	const host = screenTesting.testHost(driver, { cache: true });
 	holder.now = host.clock.now;
-	return { driver, host, screen: createScreen(host), pressTimes };
+	return { driver, host, screen: screenFactory.createScreen(host), pressTimes };
 }
 
 describe("tap({ until }) watches the screen between presses", () => {
@@ -283,9 +283,9 @@ function setupTimed(landingTap: number) {
 			return undefined;
 		},
 	});
-	const host = testHost(driver, { cache: true });
+	const host = screenTesting.testHost(driver, { cache: true });
 	holder.now = host.clock.now;
-	return { driver, host, screen: createScreen(host), pressTimes };
+	return { driver, host, screen: screenFactory.createScreen(host), pressTimes };
 }
 
 describe("tap options", () => {

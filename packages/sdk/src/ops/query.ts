@@ -1,17 +1,11 @@
 import type { Driver, Rect, Snapshot } from "@delacour/warden-driver/driver.types";
 import { settler } from "@delacour/warden-driver/settle";
-import { fieldValue } from "@delacour/warden-screen/actions";
-import { textOf } from "@delacour/warden-screen/locator";
-import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-screen/nodes";
-import { poll } from "@delacour/warden-screen/poll";
-import { renderEntryLine } from "@delacour/warden-screen/render";
-import {
-	formatSelector,
-	matchesSelector,
-	type ParsedSelector,
-	parseSelector,
-	pickMostSpecific,
-} from "@delacour/warden-screen/selector";
+import { actionGeometry } from "@delacour/warden-screen/actions";
+import { locatorSupport } from "@delacour/warden-screen/locator";
+import { type NodeEntry, type NodeIndex, nodeIndexer } from "@delacour/warden-screen/nodes";
+import { poller } from "@delacour/warden-screen/poll";
+import { snapshotRenderer } from "@delacour/warden-screen/render";
+import { type ParsedSelector, selectorEngine } from "@delacour/warden-screen/selector";
 import type { WardenError, WardenErrorCode } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { recordTarget } from "./act";
@@ -33,13 +27,13 @@ export type GetProp = (typeof GET_PROPS)[number];
 /** The match of `selector` the query is about: `nth=` picks one, else the most specific (visible first) wins. */
 export function pickEntry(index: NodeIndex, selector: ParsedSelector): NodeEntry | undefined {
 	const { nth, ...rest } = selector;
-	const matches = index.entries.filter((entry) => matchesSelector(entry, rest));
-	return nth === undefined ? pickMostSpecific(matches, rest) : matches[nth];
+	const matches = index.entries.filter((entry) => selectorEngine.matchesSelector(entry, rest));
+	return nth === undefined ? selectorEngine.pickMostSpecific(matches, rest) : matches[nth];
 }
 
 function matchCount(index: NodeIndex, selector: ParsedSelector): number {
 	const { nth: _nth, ...rest } = selector;
-	return index.entries.filter((entry) => matchesSelector(entry, rest)).length;
+	return index.entries.filter((entry) => selectorEngine.matchesSelector(entry, rest)).length;
 }
 
 type Verdict<T> = { done: true; value: T } | { done: false; reason: WardenErrorCode };
@@ -60,11 +54,11 @@ async function pollScreen<T>(
 ): Promise<Result<Polled<T>, WardenError>> {
 	const start = session.host.now();
 	type Look = { failed: WardenError } | { value: T; snapshot: Snapshot };
-	const result = await poll<Look, WardenErrorCode>(
+	const result = await poller.poll<Look, WardenErrorCode>(
 		async () => {
 			const taken = await driver.snapshot();
 			if (!taken.success) return { done: true, value: { failed: driverError(taken.error) } };
-			const verdict = check(indexSnapshot(taken.data));
+			const verdict = check(nodeIndexer.indexSnapshot(taken.data));
 			return verdict.done
 				? { done: true, value: { value: verdict.value, snapshot: taken.data } }
 				: { done: false, state: verdict.reason };
@@ -117,7 +111,7 @@ function planOf(params: WaitParams): Result<WaitPlan, WardenError> {
 	if (params.mode === "stable")
 		return resultFactory.ok({ mode: "stable", quietMs: params.quietMs ?? DEFAULT_STABLE_MS });
 	if (params.mode === "text") return resultFactory.ok({ mode: "text", text: params.text });
-	const selector = parseSelector(params.selector);
+	const selector = selectorEngine.parseSelector(params.selector);
 	if (!selector.success) {
 		return fail(opError("usage", `bad selector: ${selector.error}`, { hint: WAIT_HINT }));
 	}
@@ -152,7 +146,7 @@ function waitFailure(plan: WaitPlan, reason: WardenErrorCode, waitedMs: number):
 			? `text ${JSON.stringify(plan.text)}`
 			: plan.mode === "stable"
 				? "a stable screen"
-				: formatSelector(plan.selector);
+				: selectorEngine.formatSelector(plan.selector);
 	const messages: Partial<Record<WardenErrorCode, string>> = {
 		wait_target_absent: `${what} did not appear within ${waitedMs} ms`,
 		wait_target_hidden: `${what} is on the tree but not visible after ${waitedMs} ms`,
@@ -237,7 +231,7 @@ export async function wait(session: OpSession, params: WaitParams): OpOutcome<Wa
 	const { entry, snapshot, waitedMs } = hit.data;
 	const { generation, refs } = storeSnapshot(session, snapshot);
 	const ref = entry ? refs.byId.get(entry.element.id) : undefined;
-	const line = entry ? renderEntryLine(entry, ref === undefined ? {} : { ref }) : undefined;
+	const line = entry ? snapshotRenderer.renderEntryLine(entry, ref === undefined ? {} : { ref }) : undefined;
 	const element: ElementJson | undefined = entry ? elementJson(entry, ref) : undefined;
 	if (plan.data.mode === "visible" && entry) {
 		await recordQuery(session, {
@@ -318,7 +312,7 @@ function isState(entry: NodeEntry, state: IsState): boolean {
 
 function parseQuerySelector(source: string, usage: string): Result<ParsedSelector, WardenError> {
 	if (source.trim() === "") return fail(opError("usage", usage));
-	const parsed = parseSelector(source);
+	const parsed = selectorEngine.parseSelector(source);
 	if (!parsed.success) return fail(opError("usage", `bad selector: ${parsed.error}`));
 	return resultFactory.ok(parsed.data);
 }
@@ -346,7 +340,7 @@ export async function is(session: OpSession, params: IsParams): OpOutcome<IsResu
 	const start = session.host.now();
 	const taken = await driver.data.snapshot();
 	if (!taken.success) return fail(driverError(taken.error));
-	const entry = pickEntry(indexSnapshot(taken.data), selector.data);
+	const entry = pickEntry(nodeIndexer.indexSnapshot(taken.data), selector.data);
 	const matched = entry !== undefined && isState(entry, state);
 	const reason = entry === undefined ? "target_absent" : matched ? undefined : `not_${state}`;
 	if (entry) {
@@ -379,9 +373,11 @@ function frameText(entry: NodeEntry): string {
 function propertyOf(entry: NodeEntry, prop: Exclude<GetProp, "count">): string | Rect {
 	switch (prop) {
 		case "text":
-			return textOf(entry);
+			return locatorSupport.textOf(entry);
 		case "value":
-			return entry.role === "textbox" || entry.role === "searchbox" ? fieldValue(entry) : (entry.value ?? "");
+			return entry.role === "textbox" || entry.role === "searchbox"
+				? actionGeometry.fieldValue(entry)
+				: (entry.value ?? "");
 		case "label":
 			return entry.element.label ?? "";
 		case "id":
@@ -418,7 +414,7 @@ export async function get(session: OpSession, params: GetParams): OpOutcome<GetR
 	const start = session.host.now();
 	const taken = await driver.data.snapshot();
 	if (!taken.success) return fail(driverError(taken.error));
-	const index = indexSnapshot(taken.data);
+	const index = nodeIndexer.indexSnapshot(taken.data);
 	const waitedMs = () => Math.max(0, session.host.now() - start);
 	if (prop === "count") {
 		const count = matchCount(index, selector.data);
@@ -430,7 +426,7 @@ export async function get(session: OpSession, params: GetParams): OpOutcome<GetR
 	const entry = pickEntry(index, selector.data);
 	if (!entry) {
 		return fail(
-			opError("target_not_found", `${formatSelector(selector.data)} matched nothing`, {
+			opError("target_not_found", `${selectorEngine.formatSelector(selector.data)} matched nothing`, {
 				hint: "run `warden ui snapshot -i` to see what is on screen",
 			})
 		);

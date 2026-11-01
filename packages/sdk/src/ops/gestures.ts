@@ -1,13 +1,5 @@
 import type { Driver, Point, Rect, ScreenInfo } from "@delacour/warden-driver/driver.types";
-import {
-	PATH_MS,
-	PINCH_MS,
-	pinchRadius,
-	ROTATE_MS,
-	rotateRadius,
-	screenRect,
-	visibleRect,
-} from "@delacour/warden-screen/actions";
+import { actionGeometry, PATH_MS, PINCH_MS, ROTATE_MS } from "@delacour/warden-screen/actions";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -73,7 +65,7 @@ export async function gestureRegion(
 ): Promise<Result<GestureRegion, WardenError>> {
 	const screen = await currentScreen(driver);
 	if (!screen.success) return screen;
-	const whole = screenRect(screen.data);
+	const whole = actionGeometry.screenRect(screen.data);
 	if (target === undefined || target.trim() === "") {
 		return resultFactory.ok({ rect: whole, screen: screen.data, center: { x: whole.width / 2, y: whole.height / 2 } });
 	}
@@ -85,7 +77,7 @@ export async function gestureRegion(
 	if (!resolved.data.element) {
 		return resultFactory.ok({ rect: whole, screen: screen.data, center: resolved.data.point, target: where });
 	}
-	const rect = visibleRect(resolved.data.element.frame, screen.data);
+	const rect = actionGeometry.visibleRect(resolved.data.element.frame, screen.data);
 	return resultFactory.ok({
 		rect,
 		screen: screen.data,
@@ -152,7 +144,9 @@ async function twoFinger(
 	if (!supported.success) return supported;
 	const { center, rect, screen, target } = region.data;
 	const durationMs = params.durationMs ?? (kind === "pinch" ? PINCH_MS : ROTATE_MS);
-	const radius = params.radius ?? (kind === "pinch" ? pinchRadius(rect, amount, screen) : rotateRadius(rect, screen));
+	const radius =
+		params.radius ??
+		(kind === "pinch" ? actionGeometry.pinchRadius(rect, amount, screen) : actionGeometry.rotateRadius(rect, screen));
 	const driven = fromDriver(
 		kind === "pinch"
 			? await driver.pinch(center, amount, { durationMs, radius })

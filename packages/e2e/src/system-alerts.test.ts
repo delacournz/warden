@@ -4,8 +4,8 @@ import type { AlertInfo, Snapshot } from "@delacour/warden-driver/driver.types";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { androidAlert } from "@delacour/warden-driver-android/android-alert";
 import { LocatorAssertions } from "@delacour/warden-screen/matchers";
-import { createScreen } from "@delacour/warden-screen/screen";
-import { testHost } from "@delacour/warden-screen/testing/screen";
+import { screenFactory } from "@delacour/warden-screen/screen";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
 import { answerAlertQuietly, deviceFor as createDevice } from "./fixtures";
 
@@ -52,7 +52,7 @@ function sheetOverApp(labels: string[] = ["Save Password", "Not Now"]) {
 }
 
 function wire(driver: FakeDriver, action: "accept" | "dismiss" | "off") {
-	const host = testHost(driver, { cache: true });
+	const host = screenTesting.testHost(driver, { cache: true });
 	const holder: { device?: Device } = {};
 	if (action !== "off") {
 		host.answerSystemAlert = async () => {
@@ -65,10 +65,10 @@ function wire(driver: FakeDriver, action: "accept" | "dismiss" | "off") {
 			return answerAlertQuietly(holder.device, action);
 		};
 	}
-	return { host, screen: createScreen(host) };
+	return { host, screen: screenFactory.createScreen(host) };
 }
 
-const that = (locator: ReturnType<ReturnType<typeof createScreen>["getByTestId"]>) =>
+const that = (locator: ReturnType<ReturnType<typeof screenFactory.createScreen>["getByTestId"]>) =>
 	new LocatorAssertions(locator, { negate: false });
 
 describe("systemAlerts on an iOS-style screen (snapshot.modal)", () => {

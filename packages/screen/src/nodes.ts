@@ -1,6 +1,6 @@
 import type { Element, Rect, ScreenInfo, Snapshot } from "@delacour/warden-driver/driver.types";
-import { type QueryRole, resolveRole, type SpelledValue } from "./roles";
-import { normalizeText } from "./text";
+import { type QueryRole, roleResolver, type SpelledValue } from "./roles";
+import { textMatcher } from "./text";
 
 export type NodeStates = {
 	/** undefined when the node is not checkable */
@@ -49,155 +49,160 @@ const CHECKABLE_ROLES: ReadonlySet<QueryRole> = new Set<QueryRole>(["switch", "c
 const CHECKED_WORDS: ReadonlySet<string> = new Set(["1", "on", "true", "checked"]);
 const UNCHECKED_WORDS: ReadonlySet<string> = new Set(["0", "off", "false", "unchecked"]);
 
-function nonEmpty(value: string | undefined): string | undefined {
-	return value === undefined || value === "" ? undefined : value;
-}
-
-function isSecure(element: Element, traits: ReadonlySet<string>): boolean {
-	return (
-		element.role === "securefield" ||
-		traits.has("password") ||
-		traits.has("secure") ||
-		element.rawType.toLowerCase().includes("secure")
-	);
-}
-
-function deriveChecked(
-	element: Element,
-	role: QueryRole,
-	spelled: SpelledValue | undefined,
-	traits: ReadonlySet<string>,
-	value: string | undefined
-): boolean | undefined {
-	if (spelled?.checked !== undefined) return spelled.checked;
-	if (element.checked !== undefined) return element.checked;
-	if (traits.has("checkable")) return traits.has("checked");
-	if (CHECKABLE_ROLES.has(role) && value !== undefined) {
-		const word = value.trim().toLowerCase();
-		if (CHECKED_WORDS.has(word)) return true;
-		if (UNCHECKED_WORDS.has(word)) return false;
+export class NodeIndexer {
+	private nonEmpty(value: string | undefined): string | undefined {
+		return value === undefined || value === "" ? undefined : value;
 	}
-	return undefined;
-}
 
-function intersectsScreen(frame: Rect, screen: ScreenInfo): boolean {
-	if (frame.width <= 0 || frame.height <= 0) return false;
-	if (screen.width <= 0 || screen.height <= 0) return true;
-	return frame.x < screen.width && frame.y < screen.height && frame.x + frame.width > 0 && frame.y + frame.height > 0;
-}
-
-function ownFragments(name: string | undefined, element: Element, value: string | undefined): string[] {
-	const seen = new Set<string>();
-	for (const raw of [element.label, element.text, value]) {
-		const text = raw === undefined ? "" : normalizeText(raw);
-		if (text !== "") seen.add(text);
+	private isSecure(element: Element, traits: ReadonlySet<string>): boolean {
+		return (
+			element.role === "securefield" ||
+			traits.has("password") ||
+			traits.has("secure") ||
+			element.rawType.toLowerCase().includes("secure")
+		);
 	}
-	if (name !== undefined && normalizeText(name) !== "") seen.add(normalizeText(name));
-	return [...seen];
-}
 
-/** What an entry's subtree says: its own texts that no descendant repeats, then the descendants' (memoised on each). */
-function subtreeFragments(entry: NodeEntry): string[] {
-	const below = entry.children.flatMap((child) => child.fragments);
-	const belowText = below.join(" ");
-	const own = ownFragments(entry.name, entry.element, entry.value).filter(
-		(text) => text !== belowText && !below.includes(text)
-	);
-	return [...own, ...below];
-}
+	private deriveChecked(
+		element: Element,
+		role: QueryRole,
+		spelled: SpelledValue | undefined,
+		traits: ReadonlySet<string>,
+		value: string | undefined
+	): boolean | undefined {
+		if (spelled?.checked !== undefined) return spelled.checked;
+		if (element.checked !== undefined) return element.checked;
+		if (traits.has("checkable")) return traits.has("checked");
+		if (CHECKABLE_ROLES.has(role) && value !== undefined) {
+			const word = value.trim().toLowerCase();
+			if (CHECKED_WORDS.has(word)) return true;
+			if (UNCHECKED_WORDS.has(word)) return false;
+		}
+		return undefined;
+	}
 
-/**
- * Flattens a snapshot into document-order entries with parent/child links and derived state. Subtree text is not built
- * here: `fragments` and `subtreeText` compute on first read.
- */
-export function indexSnapshot(snapshot: Snapshot): NodeIndex {
-	const entries: NodeEntry[] = [];
-	const byId = new Map<string, NodeEntry>();
+	private intersectsScreen(frame: Rect, screen: ScreenInfo): boolean {
+		if (frame.width <= 0 || frame.height <= 0) return false;
+		if (screen.width <= 0 || screen.height <= 0) return true;
+		return frame.x < screen.width && frame.y < screen.height && frame.x + frame.width > 0 && frame.y + frame.height > 0;
+	}
 
-	const build = (element: Element, depth: number, parent: NodeEntry | undefined): NodeEntry => {
-		const traits = new Set(element.traits.map((trait) => trait.toLowerCase()));
-		const { role, spelled } = resolveRole(element, parent?.element);
-		const secure = isSecure(element, traits);
-		const rawValue = spelled === undefined ? element.value : spelled.value;
-		const value = secure ? undefined : nonEmpty(rawValue);
-		const name = nonEmpty(element.label) ?? nonEmpty(element.text);
-		const hidden = element.hidden === true || parent?.states.hidden === true;
-		let fragments: readonly string[] | undefined;
-		let subtreeText: string | undefined;
-		const entry: NodeEntry = {
-			position: entries.length,
-			element,
-			depth,
-			parent,
-			children: [],
-			role,
-			name,
-			value,
-			states: {
-				checked: deriveChecked(element, role, spelled, traits, value),
-				expanded: spelled?.expanded,
-				disabled: !element.enabled,
-				selected: element.selected === true,
-				focused: element.focused === true,
-				hidden,
-			},
-			secure,
-			visible: !hidden && intersectsScreen(element.frame, snapshot.screen),
-			get fragments(): readonly string[] {
-				fragments ??= subtreeFragments(entry);
-				return fragments;
-			},
-			get subtreeText(): string {
-				subtreeText ??= entry.fragments.join(" ");
-				return subtreeText;
-			},
+	private ownFragments(name: string | undefined, element: Element, value: string | undefined): string[] {
+		const seen = new Set<string>();
+		for (const raw of [element.label, element.text, value]) {
+			const text = raw === undefined ? "" : textMatcher.normalizeText(raw);
+			if (text !== "") seen.add(text);
+		}
+		if (name !== undefined && textMatcher.normalizeText(name) !== "") seen.add(textMatcher.normalizeText(name));
+		return [...seen];
+	}
+
+	/** What an entry's subtree says: its own texts that no descendant repeats, then the descendants' (memoised on each). */
+	private subtreeFragments(entry: NodeEntry): string[] {
+		const below = entry.children.flatMap((child) => child.fragments);
+		const belowText = below.join(" ");
+		const own = this.ownFragments(entry.name, entry.element, entry.value).filter(
+			(text) => text !== belowText && !below.includes(text)
+		);
+		return [...own, ...below];
+	}
+
+	/**
+	 * Flattens a snapshot into document-order entries with parent/child links and derived state. Subtree text is not built
+	 * here: `fragments` and `subtreeText` compute on first read.
+	 */
+	indexSnapshot(snapshot: Snapshot): NodeIndex {
+		const entries: NodeEntry[] = [];
+		const byId = new Map<string, NodeEntry>();
+		const subtreeOf = (entry: NodeEntry): string[] => this.subtreeFragments(entry);
+
+		const build = (element: Element, depth: number, parent: NodeEntry | undefined): NodeEntry => {
+			const traits = new Set(element.traits.map((trait) => trait.toLowerCase()));
+			const { role, spelled } = roleResolver.resolveRole(element, parent?.element);
+			const secure = this.isSecure(element, traits);
+			const rawValue = spelled === undefined ? element.value : spelled.value;
+			const value = secure ? undefined : this.nonEmpty(rawValue);
+			const name = this.nonEmpty(element.label) ?? this.nonEmpty(element.text);
+			const hidden = element.hidden === true || parent?.states.hidden === true;
+			let fragments: readonly string[] | undefined;
+			let subtreeText: string | undefined;
+			const entry: NodeEntry = {
+				position: entries.length,
+				element,
+				depth,
+				parent,
+				children: [],
+				role,
+				name,
+				value,
+				states: {
+					checked: this.deriveChecked(element, role, spelled, traits, value),
+					expanded: spelled?.expanded,
+					disabled: !element.enabled,
+					selected: element.selected === true,
+					focused: element.focused === true,
+					hidden,
+				},
+				secure,
+				visible: !hidden && this.intersectsScreen(element.frame, snapshot.screen),
+				get fragments(): readonly string[] {
+					fragments ??= subtreeOf(entry);
+					return fragments;
+				},
+				get subtreeText(): string {
+					subtreeText ??= entry.fragments.join(" ");
+					return subtreeText;
+				},
+			};
+			entries.push(entry);
+			byId.set(element.id, entry);
+			for (const child of element.children) entry.children.push(build(child, depth + 1, entry));
+			return entry;
 		};
-		entries.push(entry);
-		byId.set(element.id, entry);
-		for (const child of element.children) entry.children.push(build(child, depth + 1, entry));
-		return entry;
-	};
 
-	for (const element of snapshot.elements) build(element, 0, undefined);
-	return { entries, byId, screen: snapshot.screen };
-}
-
-/** True when `entry` is a strict descendant of `ancestor`. */
-export function isWithin(entry: NodeEntry, ancestor: NodeEntry): boolean {
-	for (let current = entry.parent; current !== undefined; current = current.parent) {
-		if (current === ancestor) return true;
+		for (const element of snapshot.elements) build(element, 0, undefined);
+		return { entries, byId, screen: snapshot.screen };
 	}
-	return false;
-}
 
-/** Strict descendants of any of `ancestors` among `universe`, in the universe's order. */
-export function descendantsOf(universe: readonly NodeEntry[], ancestors: readonly NodeEntry[]): NodeEntry[] {
-	if (ancestors.length === 0) return [];
-	const wanted = new Set(ancestors);
-	return universe.filter((entry) => {
+	/** True when `entry` is a strict descendant of `ancestor`. */
+	isWithin(entry: NodeEntry, ancestor: NodeEntry): boolean {
 		for (let current = entry.parent; current !== undefined; current = current.parent) {
-			if (wanted.has(current)) return true;
+			if (current === ancestor) return true;
 		}
 		return false;
-	});
+	}
+
+	/** Strict descendants of any of `ancestors` among `universe`, in the universe's order. */
+	descendantsOf(universe: readonly NodeEntry[], ancestors: readonly NodeEntry[]): NodeEntry[] {
+		if (ancestors.length === 0) return [];
+		const wanted = new Set(ancestors);
+		return universe.filter((entry) => {
+			for (let current = entry.parent; current !== undefined; current = current.parent) {
+				if (wanted.has(current)) return true;
+			}
+			return false;
+		});
+	}
+
+	/** The snapshot entry of one element (its role, name, value and secure flag), for rules that need more than the `Element`. */
+	entryOfElement(element: Element, template: Pick<Snapshot, "platform">): NodeEntry | undefined {
+		const flat: Element[] = [];
+		const walk = (e: Element): void => {
+			flat.push(e);
+			for (const child of e.children) walk(child);
+		};
+		walk(element);
+		const index = this.indexSnapshot({
+			platform: template.platform,
+			backend: "axbridge",
+			takenAt: 0,
+			screen: { width: 0, height: 0, scale: 1 },
+			elements: [element],
+			flat,
+			truncated: false,
+		});
+		return index.entries[0];
+	}
 }
 
-/** The snapshot entry of one element (its role, name, value and secure flag), for rules that need more than the `Element`. */
-export function entryOfElement(element: Element, template: Pick<Snapshot, "platform">): NodeEntry | undefined {
-	const flat: Element[] = [];
-	const walk = (e: Element): void => {
-		flat.push(e);
-		for (const child of e.children) walk(child);
-	};
-	walk(element);
-	const index = indexSnapshot({
-		platform: template.platform,
-		backend: "axbridge",
-		takenAt: 0,
-		screen: { width: 0, height: 0, scale: 1 },
-		elements: [element],
-		flat,
-		truncated: false,
-	});
-	return index.entries[0];
-}
+export const nodeIndexer = new NodeIndexer();

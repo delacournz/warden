@@ -1,11 +1,11 @@
 import type { Driver, DriverError, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { observations } from "@delacour/warden-driver/observation-cache";
-import { fieldValue } from "./actions";
-import { type Locator, pickOne, textOf } from "./locator";
+import { actionGeometry } from "./actions";
+import { type Locator, locatorSupport } from "./locator";
 import type { NodeEntry } from "./nodes";
-import { resolve } from "./query";
-import { matchesText, normalizeText, type TextMatch } from "./text";
+import { queryResolver } from "./query";
+import { type TextMatch, textMatcher } from "./text";
 
 /**
  * A negated matcher passes only after its condition held this long without a break (or the whole timeout, if shorter).
@@ -56,54 +56,6 @@ type Spec = {
 
 const NOT_FOUND = "element not found";
 
-function missing(): Judgement {
-	return { kind: "missing" };
-}
-
-function judged(matches: boolean, received: string): Judgement {
-	return { kind: "judged", matches, received };
-}
-
-function show(match: TextMatch): string {
-	return typeof match === "string" ? JSON.stringify(match) : String(match);
-}
-
-function assertOptions(matcher: string, options: Readonly<Record<string, unknown>>, allowed: readonly string[]): void {
-	const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
-	if (unknown.length > 0) {
-		throw new E2eError(
-			"INVALID_ARGUMENT",
-			`${matcher} does not take ${unknown.map((key) => `"${key}"`).join(", ")}; it takes ${allowed.join(", ")}`
-		);
-	}
-	const bag = options;
-	for (const key of ["checked", "exact", "ignoreCase"]) {
-		if (bag[key] !== undefined && typeof bag[key] !== "boolean") {
-			throw new E2eError("INVALID_ARGUMENT", `${matcher}: "${key}" must be a boolean`);
-		}
-	}
-	const timeout = bag.timeout;
-	if (timeout !== undefined && (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout < 0)) {
-		throw new E2eError("INVALID_ARGUMENT", `${matcher}: "timeout" must be a non-negative number of milliseconds`);
-	}
-}
-
-function failUnlessRetryable(error: DriverError): void {
-	if (!error.retryable) throw new E2eError("DRIVER", `snapshot failed: ${error.code}: ${error.message}`);
-}
-
-function regexTest(pattern: RegExp, value: string, ignoreCase = false): boolean {
-	const flags = pattern.flags.replaceAll(/[gy]/g, "");
-	return new RegExp(pattern.source, ignoreCase && !flags.includes("i") ? `${flags}i` : flags).test(value);
-}
-
-function containsText(value: string, expected: TextMatch, ignoreCase: boolean): boolean {
-	if (typeof expected !== "string") return regexTest(expected, normalizeText(value), ignoreCase);
-	const haystack = normalizeText(value);
-	const needle = normalizeText(expected);
-	return ignoreCase ? haystack.toLowerCase().includes(needle.toLowerCase()) : haystack.includes(needle);
-}
-
 /**
  * The locator matchers of `expect(locator)`. Each one polls (100 ms apart for the first second, then 250 ms) until its
  * condition holds or the assertion timeout passes, then fails with `ASSERTION`. `.not` inverts the condition (and must
@@ -121,7 +73,7 @@ export class LocatorAssertions {
 	}
 
 	async toBeVisible(options: AssertionOptions = {}): Promise<void> {
-		assertOptions("toBeVisible", options, ["timeout"]);
+		matcherSupport.assertOptions("toBeVisible", options, ["timeout"]);
 		return this.assert(
 			{
 				call: "toBeVisible()",
@@ -129,15 +81,15 @@ export class LocatorAssertions {
 				strict: true,
 				judge: (entry) =>
 					entry === undefined
-						? judged(false, "not found")
-						: judged(entry.visible, entry.visible ? "visible" : "hidden"),
+						? matcherSupport.judged(false, "not found")
+						: matcherSupport.judged(entry.visible, entry.visible ? "visible" : "hidden"),
 			},
 			options
 		);
 	}
 
 	async toBeHidden(options: AssertionOptions = {}): Promise<void> {
-		assertOptions("toBeHidden", options, ["timeout"]);
+		matcherSupport.assertOptions("toBeHidden", options, ["timeout"]);
 		return this.assert(
 			{
 				call: "toBeHidden()",
@@ -145,8 +97,8 @@ export class LocatorAssertions {
 				strict: true,
 				judge: (entry) =>
 					entry === undefined
-						? judged(true, "not found")
-						: judged(!entry.visible, entry.visible ? "visible" : "hidden"),
+						? matcherSupport.judged(true, "not found")
+						: matcherSupport.judged(!entry.visible, entry.visible ? "visible" : "hidden"),
 			},
 			options
 		);
@@ -154,17 +106,17 @@ export class LocatorAssertions {
 
 	/** Whole-text after whitespace normalisation (`exact: false`: a case-insensitive substring); a RegExp as written. */
 	async toHaveText(expected: TextMatch, options: TextAssertionOptions = {}): Promise<void> {
-		assertOptions("toHaveText", options, ["exact", "timeout"]);
+		matcherSupport.assertOptions("toHaveText", options, ["exact", "timeout"]);
 		const exact = options.exact ?? true;
 		return this.assert(
 			{
-				call: `toHaveText(${show(expected)})`,
-				expected: exact ? show(expected) : `${show(expected)} (substring, ignoring case)`,
+				call: `toHaveText(${matcherSupport.show(expected)})`,
+				expected: exact ? matcherSupport.show(expected) : `${matcherSupport.show(expected)} (substring, ignoring case)`,
 				strict: true,
 				judge: (entry) => {
-					if (entry === undefined) return missing();
-					const value = textOf(entry);
-					return judged(matchesText(value, expected, { exact }), JSON.stringify(value));
+					if (entry === undefined) return matcherSupport.missing();
+					const value = locatorSupport.textOf(entry);
+					return matcherSupport.judged(textMatcher.matchesText(value, expected, { exact }), JSON.stringify(value));
 				},
 			},
 			options
@@ -173,17 +125,17 @@ export class LocatorAssertions {
 
 	/** The (normalised) text contains the string, case-sensitively unless `ignoreCase`; a RegExp is tested as written. */
 	async toContainText(expected: TextMatch, options: ContainAssertionOptions = {}): Promise<void> {
-		assertOptions("toContainText", options, ["ignoreCase", "timeout"]);
+		matcherSupport.assertOptions("toContainText", options, ["ignoreCase", "timeout"]);
 		const ignoreCase = options.ignoreCase ?? false;
 		return this.assert(
 			{
-				call: `toContainText(${show(expected)})`,
-				expected: `text containing ${show(expected)}`,
+				call: `toContainText(${matcherSupport.show(expected)})`,
+				expected: `text containing ${matcherSupport.show(expected)}`,
 				strict: true,
 				judge: (entry) => {
-					if (entry === undefined) return missing();
-					const value = textOf(entry);
-					return judged(containsText(value, expected, ignoreCase), JSON.stringify(value));
+					if (entry === undefined) return matcherSupport.missing();
+					const value = locatorSupport.textOf(entry);
+					return matcherSupport.judged(matcherSupport.containsText(value, expected, ignoreCase), JSON.stringify(value));
 				},
 			},
 			options
@@ -192,23 +144,23 @@ export class LocatorAssertions {
 
 	/** The field value as it is (no whitespace normalisation). Secure fields cannot be judged. */
 	async toHaveValue(expected: TextMatch, options: AssertionOptions = {}): Promise<void> {
-		assertOptions("toHaveValue", options, ["timeout"]);
+		matcherSupport.assertOptions("toHaveValue", options, ["timeout"]);
 		return this.assert(
 			{
-				call: `toHaveValue(${show(expected)})`,
-				expected: show(expected),
+				call: `toHaveValue(${matcherSupport.show(expected)})`,
+				expected: matcherSupport.show(expected),
 				strict: true,
 				judge: (entry) => {
-					if (entry === undefined) return missing();
+					if (entry === undefined) return matcherSupport.missing();
 					if (entry.secure) {
 						throw new E2eError(
 							"INVALID_ARGUMENT",
 							"toHaveValue cannot judge a secure field: its value is withheld. Assert the outcome of the fill instead."
 						);
 					}
-					const value = fieldValue(entry);
-					const matches = typeof expected === "string" ? value === expected : regexTest(expected, value);
-					return judged(matches, JSON.stringify(value));
+					const value = actionGeometry.fieldValue(entry);
+					const matches = typeof expected === "string" ? value === expected : matcherSupport.regexTest(expected, value);
+					return matcherSupport.judged(matches, JSON.stringify(value));
 				},
 			},
 			options
@@ -217,7 +169,7 @@ export class LocatorAssertions {
 
 	/** Checked by default; `{ checked: false }` expects unchecked. A node that is not checkable counts as unchecked. */
 	async toBeChecked(options: CheckedOptions = {}): Promise<void> {
-		assertOptions("toBeChecked", options, ["checked", "timeout"]);
+		matcherSupport.assertOptions("toBeChecked", options, ["checked", "timeout"]);
 		const want = options.checked ?? true;
 		return this.assert(
 			{
@@ -225,9 +177,9 @@ export class LocatorAssertions {
 				expected: want ? "checked" : "unchecked",
 				strict: true,
 				judge: (entry) => {
-					if (entry === undefined) return missing();
+					if (entry === undefined) return matcherSupport.missing();
 					const checked = entry.states.checked ?? false;
-					return judged(checked === want, checked ? "checked" : "unchecked");
+					return matcherSupport.judged(checked === want, checked ? "checked" : "unchecked");
 				},
 			},
 			options
@@ -235,7 +187,7 @@ export class LocatorAssertions {
 	}
 
 	async toBeEnabled(options: AssertionOptions = {}): Promise<void> {
-		assertOptions("toBeEnabled", options, ["timeout"]);
+		matcherSupport.assertOptions("toBeEnabled", options, ["timeout"]);
 		return this.assert(
 			{
 				call: "toBeEnabled()",
@@ -243,15 +195,15 @@ export class LocatorAssertions {
 				strict: true,
 				judge: (entry) =>
 					entry === undefined
-						? missing()
-						: judged(!entry.states.disabled, entry.states.disabled ? "disabled" : "enabled"),
+						? matcherSupport.missing()
+						: matcherSupport.judged(!entry.states.disabled, entry.states.disabled ? "disabled" : "enabled"),
 			},
 			options
 		);
 	}
 
 	async toBeDisabled(options: AssertionOptions = {}): Promise<void> {
-		assertOptions("toBeDisabled", options, ["timeout"]);
+		matcherSupport.assertOptions("toBeDisabled", options, ["timeout"]);
 		return this.assert(
 			{
 				call: "toBeDisabled()",
@@ -259,8 +211,8 @@ export class LocatorAssertions {
 				strict: true,
 				judge: (entry) =>
 					entry === undefined
-						? missing()
-						: judged(entry.states.disabled, entry.states.disabled ? "disabled" : "enabled"),
+						? matcherSupport.missing()
+						: matcherSupport.judged(entry.states.disabled, entry.states.disabled ? "disabled" : "enabled"),
 			},
 			options
 		);
@@ -268,7 +220,7 @@ export class LocatorAssertions {
 
 	/** Exactly `expected` current matches (zero included). */
 	async toHaveCount(expected: number, options: AssertionOptions = {}): Promise<void> {
-		assertOptions("toHaveCount", options, ["timeout"]);
+		matcherSupport.assertOptions("toHaveCount", options, ["timeout"]);
 		if (!Number.isInteger(expected) || expected < 0) {
 			throw new E2eError("INVALID_ARGUMENT", `toHaveCount takes a non-negative integer, got ${String(expected)}`);
 		}
@@ -277,7 +229,7 @@ export class LocatorAssertions {
 				call: `toHaveCount(${expected})`,
 				expected: String(expected),
 				strict: false,
-				judge: (_entry, count) => judged(count === expected, String(count)),
+				judge: (_entry, count) => matcherSupport.judged(count === expected, String(count)),
 			},
 			options
 		);
@@ -301,18 +253,18 @@ export class LocatorAssertions {
 	private async poll(spec: Spec, timeoutMs: number): Promise<void> {
 		const rt = this.locator.runtime;
 		const { negate } = this.context;
-		const hold = conditionHold(negate, Math.min(NEGATION_GRACE_MS, timeoutMs), rt.clock.now);
+		const hold = new ConditionHold(negate, Math.min(NEGATION_GRACE_MS, timeoutMs), rt.clock.now);
 		type Last = { received: string; snapshot?: Snapshot };
 		const result = await rt.poll<true, Last>(async (attempt) => {
 			const observation = await rt.tryObserve({ reuse: attempt === 1 });
 			if (!observation.ok) {
-				failUnlessRetryable(observation.error);
+				matcherSupport.failUnlessRetryable(observation.error);
 				hold.broken();
 				return { done: false, state: { received: "(screen unreadable)" } };
 			}
 			const { observed } = observation;
-			const entries = resolve(this.locator.expr, observed.index);
-			if (spec.strict && entries.length > 1) pickOne(rt, this.locator.expr, entries, observed);
+			const entries = queryResolver.resolve(this.locator.expr, observed.index);
+			if (spec.strict && entries.length > 1) locatorSupport.pickOne(rt, this.locator.expr, entries, observed);
 			const judgement = spec.judge(entries[0], entries.length);
 			const verdict = await hold.next(judgement.kind === "judged" && judgement.matches !== negate, observed.driver);
 			if (verdict === "pass") return { done: true, value: true };
@@ -352,47 +304,100 @@ type HoldVerdict = "pass" | { wakeMs: number | undefined };
  * after the one settle it asks for (at the first poll that held, with no input in the last `NEGATION_GRACE_MS`)
  * reported quiet.
  */
-function conditionHold(
-	negate: boolean,
-	holdMs: number,
-	now: () => number
-): { next(holds: boolean, driver: Driver): Promise<HoldVerdict>; broken(): void } {
-	let since: number | undefined;
-	let asked = false;
+class ConditionHold {
+	private since: number | undefined;
+	private asked = false;
 	/** the settle reported quiet during the current hold */
-	let quiet = false;
-	const broken = (): void => {
-		since = undefined;
-		quiet = false;
-	};
-	return {
-		broken,
-		async next(holds, driver) {
-			if (!holds) {
-				broken();
-				return { wakeMs: undefined };
-			}
-			since ??= now();
-			if (!negate || quiet || now() - since >= holdMs) return "pass";
-			if (!asked && driver.capabilities.nativeSettle && noRecentInput(driver)) {
-				asked = true;
-				quiet = await settledQuiet(driver, since + holdMs - now());
-			}
-			return { wakeMs: quiet ? 0 : since + holdMs - now() };
-		},
-	};
+	private quiet = false;
+
+	constructor(
+		private readonly negate: boolean,
+		private readonly holdMs: number,
+		private readonly now: () => number
+	) {}
+
+	broken(): void {
+		this.since = undefined;
+		this.quiet = false;
+	}
+
+	async next(holds: boolean, driver: Driver): Promise<HoldVerdict> {
+		if (!holds) {
+			this.broken();
+			return { wakeMs: undefined };
+		}
+		this.since ??= this.now();
+		if (!this.negate || this.quiet || this.now() - this.since >= this.holdMs) return "pass";
+		if (!this.asked && driver.capabilities.nativeSettle && matcherSupport.noRecentInput(driver)) {
+			this.asked = true;
+			this.quiet = await matcherSupport.settledQuiet(driver, this.since + this.holdMs - this.now());
+		}
+		return { wakeMs: this.quiet ? 0 : this.since + this.holdMs - this.now() };
+	}
 }
 
-/** Whether the observation cache in front of `driver` says no input came within the last `NEGATION_GRACE_MS`. */
-function noRecentInput(driver: Driver): boolean {
-	const previous = observations.canObserve(driver) ? driver.previous?.() : undefined;
-	if (previous === undefined) return false;
-	return previous.sinceInputMs === undefined || previous.sinceInputMs >= NEGATION_GRACE_MS;
+export class MatcherSupport {
+	missing(): Judgement {
+		return { kind: "missing" };
+	}
+
+	judged(matches: boolean, received: string): Judgement {
+		return { kind: "judged", matches, received };
+	}
+
+	show(match: TextMatch): string {
+		return typeof match === "string" ? JSON.stringify(match) : String(match);
+	}
+
+	assertOptions(matcher: string, options: Readonly<Record<string, unknown>>, allowed: readonly string[]): void {
+		const unknown = Object.keys(options).filter((key) => !allowed.includes(key));
+		if (unknown.length > 0) {
+			throw new E2eError(
+				"INVALID_ARGUMENT",
+				`${matcher} does not take ${unknown.map((key) => `"${key}"`).join(", ")}; it takes ${allowed.join(", ")}`
+			);
+		}
+		const bag = options;
+		for (const key of ["checked", "exact", "ignoreCase"]) {
+			if (bag[key] !== undefined && typeof bag[key] !== "boolean") {
+				throw new E2eError("INVALID_ARGUMENT", `${matcher}: "${key}" must be a boolean`);
+			}
+		}
+		const timeout = bag.timeout;
+		if (timeout !== undefined && (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout < 0)) {
+			throw new E2eError("INVALID_ARGUMENT", `${matcher}: "timeout" must be a non-negative number of milliseconds`);
+		}
+	}
+
+	failUnlessRetryable(error: DriverError): void {
+		if (!error.retryable) throw new E2eError("DRIVER", `snapshot failed: ${error.code}: ${error.message}`);
+	}
+
+	regexTest(pattern: RegExp, value: string, ignoreCase = false): boolean {
+		const flags = pattern.flags.replaceAll(/[gy]/g, "");
+		return new RegExp(pattern.source, ignoreCase && !flags.includes("i") ? `${flags}i` : flags).test(value);
+	}
+
+	containsText(value: string, expected: TextMatch, ignoreCase: boolean): boolean {
+		if (typeof expected !== "string") return this.regexTest(expected, textMatcher.normalizeText(value), ignoreCase);
+		const haystack = textMatcher.normalizeText(value);
+		const needle = textMatcher.normalizeText(expected);
+		return ignoreCase ? haystack.toLowerCase().includes(needle.toLowerCase()) : haystack.includes(needle);
+	}
+
+	/** Whether the observation cache in front of `driver` says no input came within the last `NEGATION_GRACE_MS`. */
+	noRecentInput(driver: Driver): boolean {
+		const previous = observations.canObserve(driver) ? driver.previous?.() : undefined;
+		if (previous === undefined) return false;
+		return previous.sinceInputMs === undefined || previous.sinceInputMs >= NEGATION_GRACE_MS;
+	}
+
+	/** Whether `driver` says the screen went quiet within `timeoutMs`; a failure or a deadline is "cannot tell". */
+	async settledQuiet(driver: Driver, timeoutMs: number): Promise<boolean> {
+		if (timeoutMs <= 0) return false;
+		const settled = await driver.settle({ quietMs: NEGATION_QUIET_MS, timeoutMs });
+		return settled.success && settled.data.quiet;
+	}
 }
 
-/** Whether `driver` says the screen went quiet within `timeoutMs`; a failure or a deadline is "cannot tell". */
-async function settledQuiet(driver: Driver, timeoutMs: number): Promise<boolean> {
-	if (timeoutMs <= 0) return false;
-	const settled = await driver.settle({ quietMs: NEGATION_QUIET_MS, timeoutMs });
-	return settled.success && settled.data.quiet;
-}
+export const matcherSupport = new MatcherSupport();

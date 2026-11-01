@@ -3,9 +3,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
-import { createScreen } from "@delacour/warden-screen/screen";
-import { fakeClock } from "@delacour/warden-screen/testing/poll";
-import { fieldFixture } from "@delacour/warden-screen/testing/screen";
+import { screenFactory } from "@delacour/warden-screen/screen";
+import { FakeClock } from "@delacour/warden-screen/testing/poll";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import { createApp } from "./app";
 import { createDevice } from "./device";
 
@@ -30,10 +30,10 @@ describe("driver, screen, device and app without the runner", () => {
 				]),
 			],
 		});
-		const screen = createScreen({
+		const screen = screenFactory.createScreen({
 			driver: async () => driver,
 			env: { actionTimeoutMs: 200, assertionTimeoutMs: 200 },
-			clock: fakeClock(),
+			clock: new FakeClock(),
 		});
 		await screen.getByTestId("go").tap();
 		expect(driver.callsOf("tap")).toHaveLength(1);
@@ -41,11 +41,11 @@ describe("driver, screen, device and app without the runner", () => {
 	});
 
 	test("screen fills a field", async () => {
-		const { driver, state } = fieldFixture({ value: "ab", selectAll: true });
-		const screen = createScreen({
+		const { driver, state } = screenTesting.fieldFixture({ value: "ab", selectAll: true });
+		const screen = screenFactory.createScreen({
 			driver: async () => driver,
 			env: { actionTimeoutMs: 500, assertionTimeoutMs: 500 },
-			clock: fakeClock(),
+			clock: new FakeClock(),
 		});
 		await screen.getByTestId("field").fill("grace");
 		expect(state.value).toBe("grace");
@@ -62,7 +62,7 @@ describe("driver, screen, device and app without the runner", () => {
 			artifactsDir: dir,
 			appId,
 			trace: () => ({ write: (event) => events.push(event) }),
-			clock: fakeClock(),
+			clock: new FakeClock(),
 		});
 		expect(device.devtools).toBeUndefined();
 		expect(await device.snapshot()).toContain("Go");
@@ -79,7 +79,7 @@ describe("driver, screen, device and app without the runner", () => {
 			driver,
 			appId,
 			launchArgs: ["--initialUrl", "http://localhost:8081"],
-			clock: fakeClock(),
+			clock: new FakeClock(),
 		});
 		await app.open({ args: ["--flag"] });
 		expect(driver.callsOf("app.launch")).toEqual([
@@ -104,7 +104,7 @@ describe("driver, screen, device and app without the runner", () => {
 			screens: [driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Next" })])],
 		});
 		const controller = new AbortController();
-		const app = createApp({ driver, appId, signal: () => controller.signal, clock: fakeClock() });
+		const app = createApp({ driver, appId, signal: () => controller.signal, clock: new FakeClock() });
 		await app.open();
 		expect(driver.callsOf("app.launch")).toHaveLength(1);
 	});

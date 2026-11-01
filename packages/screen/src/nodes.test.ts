@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { el, snap } from "./element.testing";
-import { allFixtureSnapshots } from "./fixtures.testing";
-import { descendantsOf, indexSnapshot, isWithin, type NodeEntry, type NodeIndex } from "./nodes";
-import { normalizeText } from "./text";
+import { elementFixtures } from "./element.testing";
+import { screenFixtures } from "./fixtures.testing";
+import { type NodeEntry, type NodeIndex, nodeIndexer } from "./nodes";
+import { textMatcher } from "./text";
 
 describe("indexSnapshot structure", () => {
-	const leafA = el("button", { label: "A", identifier: "a" });
-	const leafB = el("text", { label: "B" });
-	const group = el("other", { identifier: "group" }, [leafA, leafB]);
-	const root = el("window", {}, [group, el("button", { label: "C" })]);
-	const index = indexSnapshot(snap([root]));
+	const leafA = elementFixtures.el("button", { label: "A", identifier: "a" });
+	const leafB = elementFixtures.el("text", { label: "B" });
+	const group = elementFixtures.el("other", { identifier: "group" }, [leafA, leafB]);
+	const root = elementFixtures.el("window", {}, [group, elementFixtures.el("button", { label: "C" })]);
+	const index = nodeIndexer.indexSnapshot(elementFixtures.snap([root]));
 
 	test("entries are in document order with depth, parent and children", () => {
 		expect(index.entries.map((entry) => entry.element.label ?? entry.element.identifier ?? entry.element.role)).toEqual(
@@ -30,96 +30,125 @@ describe("indexSnapshot structure", () => {
 
 	test("isWithin and descendantsOf", () => {
 		const [windowEntry, groupEntry, a, , c] = index.entries;
-		expect(a && groupEntry && isWithin(a, groupEntry)).toBe(true);
-		expect(a && windowEntry && isWithin(a, windowEntry)).toBe(true);
-		expect(c && groupEntry && isWithin(c, groupEntry)).toBe(false);
-		expect(groupEntry && isWithin(groupEntry, groupEntry)).toBe(false);
-		expect(descendantsOf(index.entries, groupEntry ? [groupEntry] : []).length).toBe(2);
+		expect(a && groupEntry && nodeIndexer.isWithin(a, groupEntry)).toBe(true);
+		expect(a && windowEntry && nodeIndexer.isWithin(a, windowEntry)).toBe(true);
+		expect(c && groupEntry && nodeIndexer.isWithin(c, groupEntry)).toBe(false);
+		expect(groupEntry && nodeIndexer.isWithin(groupEntry, groupEntry)).toBe(false);
+		expect(nodeIndexer.descendantsOf(index.entries, groupEntry ? [groupEntry] : []).length).toBe(2);
 	});
 
 	test("an empty snapshot indexes to nothing", () => {
-		expect(indexSnapshot(snap([])).entries).toEqual([]);
+		expect(nodeIndexer.indexSnapshot(elementFixtures.snap([])).entries).toEqual([]);
 	});
 });
 
 describe("names, values, secure", () => {
 	test("name is label, else text; value is trimmed element value", () => {
-		const index = indexSnapshot(
-			snap([el("text", { label: "L", text: "T" }), el("text", { text: "T" }), el("textfield", { value: "v" })])
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("text", { label: "L", text: "T" }),
+				elementFixtures.el("text", { text: "T" }),
+				elementFixtures.el("textfield", { value: "v" }),
+			])
 		);
 		expect(index.entries.map((entry) => entry.name)).toEqual(["L", "T", undefined]);
 		expect(index.entries[2]?.value).toBe("v");
 	});
 
 	test("empty strings count as absent", () => {
-		const entry = indexSnapshot(snap([el("textfield", { label: "", value: "", identifier: "" })])).entries[0];
+		const entry = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("textfield", { label: "", value: "", identifier: "" })])
+		).entries[0];
 		expect(entry?.name).toBeUndefined();
 		expect(entry?.value).toBeUndefined();
 	});
 
 	test("secure fields never expose a value", () => {
-		const entry = indexSnapshot(snap([el("securefield", { value: "••••", label: "Password" })])).entries[0];
+		const entry = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("securefield", { value: "••••", label: "Password" })])
+		).entries[0];
 		expect(entry?.secure).toBe(true);
 		expect(entry?.value).toBeUndefined();
 		expect(entry?.name).toBe("Password");
 	});
 
 	test("Android password trait is secure", () => {
-		const entry = indexSnapshot(
-			snap([el("textfield", { rawType: "android.widget.EditText", traits: ["password"], value: "x" })], {
-				platform: "android",
-			})
+		const entry = nodeIndexer.indexSnapshot(
+			elementFixtures.snap(
+				[elementFixtures.el("textfield", { rawType: "android.widget.EditText", traits: ["password"], value: "x" })],
+				{
+					platform: "android",
+				}
+			)
 		).entries[0];
 		expect(entry?.secure).toBe(true);
 	});
 });
 
 describe("checked", () => {
-	const checkedOf = (element: ReturnType<typeof el>) => indexSnapshot(snap([element])).entries[0]?.states.checked;
+	const checkedOf = (element: ReturnType<typeof elementFixtures.el>) =>
+		nodeIndexer.indexSnapshot(elementFixtures.snap([element])).entries[0]?.states.checked;
 
 	test("switch values 1/0 and on/off", () => {
-		expect(checkedOf(el("switch", { value: "1" }))).toBe(true);
-		expect(checkedOf(el("switch", { value: "0" }))).toBe(false);
-		expect(checkedOf(el("switch", { value: "On" }))).toBe(true);
-		expect(checkedOf(el("switch", { value: "off" }))).toBe(false);
+		expect(checkedOf(elementFixtures.el("switch", { value: "1" }))).toBe(true);
+		expect(checkedOf(elementFixtures.el("switch", { value: "0" }))).toBe(false);
+		expect(checkedOf(elementFixtures.el("switch", { value: "On" }))).toBe(true);
+		expect(checkedOf(elementFixtures.el("switch", { value: "off" }))).toBe(false);
 	});
 
 	test("a value on a non-checkable role is not a checked state", () => {
-		expect(checkedOf(el("textfield", { value: "1" }))).toBeUndefined();
-		expect(checkedOf(el("slider", { value: "0" }))).toBeUndefined();
+		expect(checkedOf(elementFixtures.el("textfield", { value: "1" }))).toBeUndefined();
+		expect(checkedOf(elementFixtures.el("slider", { value: "0" }))).toBeUndefined();
 	});
 
 	test("driver `checked` wins", () => {
-		expect(checkedOf(el("checkbox", { checked: true }))).toBe(true);
-		expect(checkedOf(el("switch", { checked: false, value: "1" }))).toBe(false);
+		expect(checkedOf(elementFixtures.el("checkbox", { checked: true }))).toBe(true);
+		expect(checkedOf(elementFixtures.el("switch", { checked: false, value: "1" }))).toBe(false);
 	});
 
 	test("React Native iOS value prefixes", () => {
-		const unchecked = indexSnapshot(snap([el("other", { value: "checkbox, unchecked", label: "Agree" })])).entries[0];
+		const unchecked = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("other", { value: "checkbox, unchecked", label: "Agree" })])
+		).entries[0];
 		expect(unchecked?.role).toBe("checkbox");
 		expect(unchecked?.states.checked).toBe(false);
 		expect(unchecked?.value).toBeUndefined();
-		const checked = indexSnapshot(snap([el("other", { value: "radio button, checked, Pro" })])).entries[0];
+		const checked = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("other", { value: "radio button, checked, Pro" })])
+		).entries[0];
 		expect(checked?.role).toBe("radio");
 		expect(checked?.states.checked).toBe(true);
 		expect(checked?.value).toBe("Pro");
 	});
 
 	test("Android checkable / checked traits", () => {
-		const on = indexSnapshot(
-			snap([el("other", { rawType: "android.widget.CheckBox", traits: ["clickable", "checkable", "checked"] })], {
-				platform: "android",
-			})
+		const on = nodeIndexer.indexSnapshot(
+			elementFixtures.snap(
+				[
+					elementFixtures.el("other", {
+						rawType: "android.widget.CheckBox",
+						traits: ["clickable", "checkable", "checked"],
+					}),
+				],
+				{
+					platform: "android",
+				}
+			)
 		).entries[0];
 		expect(on?.states.checked).toBe(true);
-		const off = indexSnapshot(
-			snap([el("other", { rawType: "android.widget.CheckBox", traits: ["clickable", "checkable"] })], {
-				platform: "android",
-			})
+		const off = nodeIndexer.indexSnapshot(
+			elementFixtures.snap(
+				[elementFixtures.el("other", { rawType: "android.widget.CheckBox", traits: ["clickable", "checkable"] })],
+				{
+					platform: "android",
+				}
+			)
 		).entries[0];
 		expect(off?.states.checked).toBe(false);
-		const plain = indexSnapshot(
-			snap([el("other", { rawType: "android.widget.TextView", traits: ["checked"] })], { platform: "android" })
+		const plain = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("other", { rawType: "android.widget.TextView", traits: ["checked"] })], {
+				platform: "android",
+			})
 		).entries[0];
 		expect(plain?.states.checked).toBeUndefined();
 	});
@@ -127,37 +156,45 @@ describe("checked", () => {
 
 describe("states and visibility", () => {
 	test("disabled, selected, focused, expanded", () => {
-		const entry = indexSnapshot(snap([el("button", { enabled: false, selected: true, focused: true })])).entries[0];
+		const entry = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("button", { enabled: false, selected: true, focused: true })])
+		).entries[0];
 		expect(entry?.states).toMatchObject({ disabled: true, selected: true, focused: true, hidden: false });
 	});
 
 	test("hidden flag", () => {
-		const entry = indexSnapshot(snap([el("button", { hidden: true })])).entries[0];
+		const entry = nodeIndexer.indexSnapshot(elementFixtures.snap([elementFixtures.el("button", { hidden: true })]))
+			.entries[0];
 		expect(entry?.states.hidden).toBe(true);
 		expect(entry?.visible).toBe(false);
 	});
 
 	test("hidden is inherited by descendants", () => {
-		const index = indexSnapshot(snap([el("other", { hidden: true }, [el("button")]), el("button")]));
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("other", { hidden: true }, [elementFixtures.el("button")]),
+				elementFixtures.el("button"),
+			])
+		);
 		expect(index.entries.map((entry) => entry.states.hidden)).toEqual([true, true, false]);
 	});
 
 	test("visible needs a non-empty frame inside the screen", () => {
-		const index = indexSnapshot(
-			snap([
-				el("button", { frame: { x: 10, y: 10, width: 50, height: 20 } }),
-				el("button", { frame: { x: 10, y: 10, width: 0, height: 20 } }),
-				el("button", { frame: { x: 10, y: 900, width: 50, height: 20 } }),
-				el("button", { frame: { x: -100, y: 10, width: 50, height: 20 } }),
-				el("button", { frame: { x: 380, y: 10, width: 50, height: 20 } }),
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("button", { frame: { x: 10, y: 10, width: 50, height: 20 } }),
+				elementFixtures.el("button", { frame: { x: 10, y: 10, width: 0, height: 20 } }),
+				elementFixtures.el("button", { frame: { x: 10, y: 900, width: 50, height: 20 } }),
+				elementFixtures.el("button", { frame: { x: -100, y: 10, width: 50, height: 20 } }),
+				elementFixtures.el("button", { frame: { x: 380, y: 10, width: 50, height: 20 } }),
 			])
 		);
 		expect(index.entries.map((entry) => entry.visible)).toEqual([true, false, false, false, true]);
 	});
 
 	test("an unknown screen size skips the bounds check", () => {
-		const index = indexSnapshot(
-			snap([el("button", { frame: { x: 5000, y: 5000, width: 10, height: 10 } })], {
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("button", { frame: { x: 5000, y: 5000, width: 10, height: 10 } })], {
 				screen: { width: 0, height: 0, scale: 1 },
 			})
 		);
@@ -167,12 +204,12 @@ describe("states and visibility", () => {
 
 describe("subtreeText", () => {
 	test("collects label, text and value of the node and its descendants in order", () => {
-		const index = indexSnapshot(
-			snap([
-				el("other", {}, [
-					el("text", { label: "Invoice 42" }),
-					el("text", { label: "$10" }),
-					el("textfield", { value: "qty" }),
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("other", {}, [
+					elementFixtures.el("text", { label: "Invoice 42" }),
+					elementFixtures.el("text", { label: "$10" }),
+					elementFixtures.el("textfield", { value: "qty" }),
 				]),
 			])
 		);
@@ -181,10 +218,13 @@ describe("subtreeText", () => {
 	});
 
 	test("iOS echoes are dropped: a container labelled with its child's text counts once", () => {
-		const index = indexSnapshot(
-			snap([
-				el("other", { label: "Hello" }, [el("text", { label: "Hello" })]),
-				el("other", { label: "A B" }, [el("text", { label: "A" }), el("text", { label: "B" })]),
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("other", { label: "Hello" }, [elementFixtures.el("text", { label: "Hello" })]),
+				elementFixtures.el("other", { label: "A B" }, [
+					elementFixtures.el("text", { label: "A" }),
+					elementFixtures.el("text", { label: "B" }),
+				]),
 			])
 		);
 		expect(index.entries[0]?.subtreeText).toBe("Hello");
@@ -192,14 +232,26 @@ describe("subtreeText", () => {
 	});
 
 	test("whitespace is collapsed and secure values are left out", () => {
-		const index = indexSnapshot(
-			snap([el("other", {}, [el("text", { label: " a \n b " }), el("securefield", { value: "secret" })])])
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("other", {}, [
+					elementFixtures.el("text", { label: " a \n b " }),
+					elementFixtures.el("securefield", { value: "secret" }),
+				]),
+			])
 		);
 		expect(index.entries[0]?.subtreeText).toBe("a b");
 	});
 
 	test("fragments are exposed for per-fragment matching", () => {
-		const index = indexSnapshot(snap([el("other", {}, [el("text", { label: "x" }), el("text", { label: "y" })])]));
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("other", {}, [
+					elementFixtures.el("text", { label: "x" }),
+					elementFixtures.el("text", { label: "y" }),
+				]),
+			])
+		);
 		expect(index.entries[0]?.fragments).toEqual(["x", "y"]);
 	});
 });
@@ -215,10 +267,11 @@ function eagerSubtree(index: NodeIndex): { fragments: string[]; subtreeText: str
 		const belowText = below.join(" ");
 		const seen = new Set<string>();
 		for (const raw of [entry.element.label, entry.element.text, entry.value]) {
-			const text = raw === undefined ? "" : normalizeText(raw);
+			const text = raw === undefined ? "" : textMatcher.normalizeText(raw);
 			if (text !== "") seen.add(text);
 		}
-		if (entry.name !== undefined && normalizeText(entry.name) !== "") seen.add(normalizeText(entry.name));
+		if (entry.name !== undefined && textMatcher.normalizeText(entry.name) !== "")
+			seen.add(textMatcher.normalizeText(entry.name));
 		const own = [...seen].filter((text) => text !== belowText && !below.includes(text));
 		const fragments = [...own, ...below];
 		result[entry.position] = { fragments, subtreeText: fragments.join(" ") };
@@ -239,7 +292,14 @@ function scrambled<T>(items: readonly T[]): T[] {
 
 describe("lazy subtree text", () => {
 	test("is not built by indexing: the accessors compute on first read and then keep their answer", () => {
-		const index = indexSnapshot(snap([el("other", {}, [el("text", { label: "x" }), el("text", { label: "y" })])]));
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("other", {}, [
+					elementFixtures.el("text", { label: "x" }),
+					elementFixtures.el("text", { label: "y" }),
+				]),
+			])
+		);
 		const [root] = index.entries;
 		for (const key of ["fragments", "subtreeText"] as const) {
 			expect(typeof Object.getOwnPropertyDescriptor(root, key)?.get).toBe("function");
@@ -249,8 +309,11 @@ describe("lazy subtree text", () => {
 	});
 
 	test("reading a child first, then its parent, gives the parent the child's answer", () => {
-		const index = indexSnapshot(
-			snap([el("other", { label: "Hello" }, [el("text", { label: "Hello" })]), el("text", { label: "tail" })])
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("other", { label: "Hello" }, [elementFixtures.el("text", { label: "Hello" })]),
+				elementFixtures.el("text", { label: "tail" }),
+			])
 		);
 		const [parent, child] = index.entries;
 		expect(child?.subtreeText).toBe("Hello");
@@ -258,7 +321,7 @@ describe("lazy subtree text", () => {
 		expect(parent?.fragments).toEqual(["Hello"]);
 	});
 
-	for (const { name, snapshot } of allFixtureSnapshots()) {
+	for (const { name, snapshot } of screenFixtures.allFixtureSnapshots()) {
 		describe(name, () => {
 			const orders: Record<string, (entries: readonly NodeEntry[]) => NodeEntry[]> = {
 				"document order": (entries) => [...entries],
@@ -267,8 +330,8 @@ describe("lazy subtree text", () => {
 			};
 			for (const [label, order] of Object.entries(orders)) {
 				test(`equals the eager computation for every node, read in ${label}`, () => {
-					const index = indexSnapshot(snapshot);
-					const reference = eagerSubtree(indexSnapshot(snapshot));
+					const index = nodeIndexer.indexSnapshot(snapshot);
+					const reference = eagerSubtree(nodeIndexer.indexSnapshot(snapshot));
 					expect(index.entries.length).toBe(reference.length);
 					expect(reference.some((texts) => texts.subtreeText !== "")).toBe(true);
 					for (const entry of order(index.entries)) {
@@ -280,8 +343,8 @@ describe("lazy subtree text", () => {
 			}
 
 			test("reading only the root does not change what a node deep inside answers", () => {
-				const lazy = indexSnapshot(snapshot);
-				const eager = indexSnapshot(snapshot);
+				const lazy = nodeIndexer.indexSnapshot(snapshot);
+				const eager = nodeIndexer.indexSnapshot(snapshot);
 				void lazy.entries[0]?.subtreeText;
 				const deepest = [...lazy.entries].sort((a, b) => b.depth - a.depth)[0];
 				if (deepest === undefined) return;

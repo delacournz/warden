@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
-import { fieldFixture } from "@delacour/warden-screen/testing/screen";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { InventoryDevice } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
@@ -111,7 +111,7 @@ function rig(driver: () => FakeDriver, extra: Partial<WardenClientOptions> = {},
 
 describe("claim → open → drive → dispose", () => {
 	test("snapshot, press by ref, fill by selector, screenshot, then dispose releases the lease", async () => {
-		const { driver } = fieldFixture({ selectAll: true });
+		const { driver } = screenTesting.fieldFixture({ selectAll: true });
 		const r = rig(() => driver);
 		const shot = join(dir, "out", "shot.png");
 		mkdirSync(join(dir, "out"), { recursive: true });

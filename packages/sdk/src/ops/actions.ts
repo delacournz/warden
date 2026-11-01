@@ -1,23 +1,8 @@
 import type { Driver, KeyName, Point, Rect, ScreenInfo } from "@delacour/warden-driver/driver.types";
 import { deviceTyping } from "@delacour/warden-driver/typing";
-import {
-	contentPath,
-	fieldValue,
-	focusPoint,
-	type SwipeDirection,
-	screenRect,
-	visibleRect,
-} from "@delacour/warden-screen/actions";
-import {
-	type ClearMethod,
-	confirmFieldValue,
-	confirmReadsFor,
-	type FillVia,
-	focusClearType,
-	hitTestField,
-	setTextOptedIn,
-} from "@delacour/warden-screen/field";
-import { entryOfElement, indexSnapshot, type NodeEntry } from "@delacour/warden-screen/nodes";
+import { actionGeometry, type SwipeDirection } from "@delacour/warden-screen/actions";
+import { type ClearMethod, type FillVia, fieldEditor } from "@delacour/warden-screen/field";
+import { type NodeEntry, nodeIndexer } from "@delacour/warden-screen/nodes";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction, pointAt, recordTarget, targetLabel, targetOf } from "./act";
@@ -73,7 +58,7 @@ export const OPPOSITE: Record<Way, Way> = { up: "down", down: "up", left: "right
  * opposite.
  */
 export function fingerPath(way: Way, rect: Rect, distance: number): { from: Point; to: Point } {
-	return contentPath(OPPOSITE[way], rect, distance);
+	return actionGeometry.contentPath(OPPOSITE[way], rect, distance);
 }
 
 export async function currentScreen(driver: Driver): Promise<Result<ScreenInfo, WardenError>> {
@@ -89,7 +74,8 @@ export async function regionOf(
 ): Promise<Result<{ rect: Rect; screen: ScreenInfo }, WardenError>> {
 	const screen = await currentScreen(driver);
 	if (!screen.success) return screen;
-	if (from === undefined) return resultFactory.ok({ rect: screenRect(screen.data), screen: screen.data });
+	if (from === undefined)
+		return resultFactory.ok({ rect: actionGeometry.screenRect(screen.data), screen: screen.data });
 	const target = parseTarget(from);
 	if (!target.success) return target;
 	const resolved = await pointAt(session, driver, target.data, false);
@@ -97,7 +83,10 @@ export async function regionOf(
 	if (!resolved.data.element) {
 		return fail(opError("usage", "a region must be an element (@eN or a selector), not a point"));
 	}
-	return resultFactory.ok({ rect: visibleRect(resolved.data.element.frame, screen.data), screen: screen.data });
+	return resultFactory.ok({
+		rect: actionGeometry.visibleRect(resolved.data.element.frame, screen.data),
+		screen: screen.data,
+	});
 }
 
 // ---- press -------------------------------------------------------------------------------------------------------
@@ -171,7 +160,7 @@ type FillRun = { ok: true } | { ok: false; held: string };
 
 /** Where a tap puts the caret after the text: the field's right end, or the bare coordinate given. */
 export function caretPoint(resolved: Pick<ResolvedTarget, "element" | "point">): Point {
-	return resolved.element ? focusPoint(resolved.element.frame) : resolved.point;
+	return resolved.element ? actionGeometry.focusPoint(resolved.element.frame) : resolved.point;
 }
 
 /**
@@ -185,12 +174,12 @@ async function readBack(
 	text: string,
 	limits: { budgetMs: number; maxMs: number }
 ): Promise<Result<FillRun, WardenError>> {
-	const outcome = await confirmFieldValue<WardenError>({
+	const outcome = await fieldEditor.confirmFieldValue<WardenError>({
 		text,
 		now: session.host.now,
 		sleep: session.host.sleep,
 		...limits,
-		reads: confirmReadsFor(wanted, text),
+		reads: fieldEditor.confirmReadsFor(wanted, text),
 		read: async () => {
 			const read = await readField(driver, wanted);
 			if (!read.success) return { ok: false, error: read.error };
@@ -209,12 +198,12 @@ async function readBack(
  * snapshot takes 300-1000 ms and starves the app of the very key events being read back), then a snapshot.
  */
 async function readField(driver: Driver, wanted: NodeEntry): Promise<Result<string | undefined, WardenError>> {
-	const hit = await hitTestField(driver, wanted);
-	if (hit.ok && hit.entry) return resultFactory.ok(fieldValue(hit.entry));
+	const hit = await fieldEditor.hitTestField(driver, wanted);
+	if (hit.ok && hit.entry) return resultFactory.ok(actionGeometry.fieldValue(hit.entry));
 	const fresh = await driver.snapshot();
 	if (!fresh.success) return fail(driverError(fresh.error));
-	const found = findInFresh(wanted, indexSnapshot(fresh.data));
-	return resultFactory.ok(found ? fieldValue(found) : undefined);
+	const found = findInFresh(wanted, nodeIndexer.indexSnapshot(fresh.data));
+	return resultFactory.ok(found ? actionGeometry.fieldValue(found) : undefined);
 }
 
 type FillPlan = {
@@ -250,14 +239,14 @@ async function fillAttempt(
 	const { entry, text } = plan;
 	const method: ClearMethod = attempt === 1 ? "auto" : "counted";
 	const typed = fromDriver(
-		await focusClearType(
+		await fieldEditor.focusClearType(
 			driver,
 			session.host.sleep,
 			caretPoint(resolved),
 			entry,
 			text,
 			method,
-			setTextOptedIn(session.host.env),
+			fieldEditor.setTextOptedIn(session.host.env),
 			attempt === 1 ? plan.via : "type"
 		)
 	);
@@ -317,7 +306,7 @@ export async function fill(session: OpSession, params: FillParams): OpOutcome<Fi
 	const resolved = await pointAt(session, driver.data, target.data, false);
 	if (!resolved.success) return resolved;
 	const entry = resolved.data.element
-		? entryOfElement(resolved.data.element, { platform: session.device.platform })
+		? nodeIndexer.entryOfElement(resolved.data.element, { platform: session.device.platform })
 		: undefined;
 	const secure = params.secure === true || entry?.secure === true;
 	const via = params.via ?? "type";

@@ -20,9 +20,9 @@ import type { AlertInfo, Driver, DriverResult, Element, Point, Snapshot } from "
 import { deviceTyping } from "@delacour/warden-driver/typing";
 import { iosDriverOpener } from "@delacour/warden-driver-ios/ios-driver";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { focusPoint } from "@delacour/warden-screen/actions";
-import { focusClearType, tapToFocus } from "@delacour/warden-screen/field";
-import { entryOfElement, indexSnapshot, type NodeEntry } from "@delacour/warden-screen/nodes";
+import { actionGeometry } from "@delacour/warden-screen/actions";
+import { fieldEditor } from "@delacour/warden-screen/field";
+import { type NodeEntry, nodeIndexer } from "@delacour/warden-screen/nodes";
 import { ENV_NAMES } from "../src/env";
 
 const DEFAULT_BUNDLE = "nz.co.delacour.warden.example";
@@ -154,7 +154,7 @@ async function fillLoop(driver: Driver, identifier: string | undefined, fills: n
 		const text = FILL_TEXTS[fill % FILL_TEXTS.length] as string;
 		const snap = await driver.snapshot();
 		const entry = snap.success
-			? indexSnapshot(snap.data).entries.find((candidate) => candidate.element.identifier === identifier)
+			? nodeIndexer.indexSnapshot(snap.data).entries.find((candidate) => candidate.element.identifier === identifier)
 			: undefined;
 		if (!entry) {
 			lost += 1;
@@ -162,10 +162,10 @@ async function fillLoop(driver: Driver, identifier: string | undefined, fills: n
 			continue;
 		}
 		const started = performance.now();
-		const typed = await focusClearType(
+		const typed = await fieldEditor.focusClearType(
 			driver,
 			(ms) => Bun.sleep(ms),
-			focusPoint(entry.element.frame),
+			actionGeometry.focusPoint(entry.element.frame),
 			entry,
 			text,
 			"auto",
@@ -193,7 +193,9 @@ async function findField(driver: Driver, identifier: string, timeoutMs = 5000): 
 	while (performance.now() - started < timeoutMs) {
 		const snap = await driver.snapshot();
 		const entry = snap.success
-			? indexSnapshot(snap.data).entries.find((e) => e.element.identifier === identifier && usable(e.element))
+			? nodeIndexer
+					.indexSnapshot(snap.data)
+					.entries.find((e) => e.element.identifier === identifier && usable(e.element))
 			: undefined;
 		if (entry) return entry;
 		await Bun.sleep(100);
@@ -214,12 +216,12 @@ async function prepareFocusRun(driver: Driver, mode: FocusMode, identifier: stri
 	}
 	const field = await findField(driver, identifier);
 	if (field) {
-		await tapToFocus(driver, Bun.sleep, centre(field.element), field);
+		await fieldEditor.tapToFocus(driver, Bun.sleep, centre(field.element), field);
 		if (deviceTyping.canSelectAll(driver)) await driver.selectAll();
 		await driver.key("Backspace");
 	}
 	const away = mode === "switch" ? await findField(driver, other) : undefined;
-	if (away) await tapToFocus(driver, Bun.sleep, centre(away.element), away);
+	if (away) await fieldEditor.tapToFocus(driver, Bun.sleep, centre(away.element), away);
 	await driver.settle();
 }
 
@@ -234,7 +236,7 @@ async function focusTypeOnce(driver: Driver, identifier: string, raw: boolean, r
 	}
 	const tapStarted = performance.now();
 	const point = centre(field.element);
-	const tapped = raw ? await driver.tap(point) : await tapToFocus(driver, Bun.sleep, point, field);
+	const tapped = raw ? await driver.tap(point) : await fieldEditor.tapToFocus(driver, Bun.sleep, point, field);
 	const started = performance.now();
 	const focusMs = started - tapStarted;
 	const typed = tapped.success ? await driver.typeText(TYPED) : tapped;
@@ -284,8 +286,10 @@ function reportReadBack(label: string, ok: boolean, read: { value?: string; ms: 
 
 /** Types ASCII then unicode text into `field`, reads each back, then runs the optional fill and focus-type loops. */
 async function typeIntoField(driver: Driver, field: Element): Promise<void> {
-	const entry = entryOfElement(field, { platform: driver.platform });
-	await step(`focus ${field.identifier ?? "textfield"}`, () => tapToFocus(driver, Bun.sleep, centre(field), entry));
+	const entry = nodeIndexer.entryOfElement(field, { platform: driver.platform });
+	await step(`focus ${field.identifier ?? "textfield"}`, () =>
+		fieldEditor.tapToFocus(driver, Bun.sleep, centre(field), entry)
+	);
 	await step("typeText", () => driver.typeText(TYPED));
 	await step(
 		"settle",

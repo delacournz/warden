@@ -3,10 +3,10 @@ import type { Driver, DriverError, DriverResult, Snapshot } from "@delacour/ward
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { observations, type PreviousLook } from "@delacour/warden-driver/observation-cache";
 import type { SpanOptions, SpanRunner } from "@delacour/warden-driver/trace/span";
-import { indexSnapshot, type NodeIndex } from "./nodes";
-import { type Clock, type PollResult, type PollStep, poll, systemClock } from "./poll";
-import { locateByTestIdViaReact, type ReactMatch } from "./react-locator";
-import { renderHeader, renderSnapshot } from "./render";
+import { type NodeIndex, nodeIndexer } from "./nodes";
+import { type Clock, type PollResult, type PollStep, poller, systemClock } from "./poll";
+import { type ReactMatch, reactLocator } from "./react-locator";
+import { snapshotRenderer } from "./render";
 import type { TextMatch } from "./text";
 
 /**
@@ -119,7 +119,7 @@ export class Runtime {
 	private indexOf(snapshot: Snapshot): NodeIndex {
 		const known = this.indexed.get(snapshot);
 		if (known !== undefined) return known;
-		const index = indexSnapshot(snapshot);
+		const index = nodeIndexer.indexSnapshot(snapshot);
 		this.indexed.set(snapshot, index);
 		return index;
 	}
@@ -183,11 +183,14 @@ export class Runtime {
 		const result = await this.poll<Observed, DriverError>(async (attempt) => {
 			const observation = await this.tryObserve({ reuse: reuse && attempt === 1 });
 			if (observation.ok) return { done: true, value: observation.observed };
-			if (!observation.error.retryable) throw driverFailure("snapshot", observation.error);
+			if (!observation.error.retryable) throw driverFailures.driverFailure("snapshot", observation.error);
 			return { done: false, state: observation.error };
 		}, this.actionTimeout());
 		if (result.status === "done") return result.value;
-		throw driverFailure("snapshot", result.last ?? { code: "E_TIMEOUT", message: "no snapshot", retryable: true });
+		throw driverFailures.driverFailure(
+			"snapshot",
+			result.last ?? { code: "E_TIMEOUT", message: "no snapshot", retryable: true }
+		);
 	}
 
 	/**
@@ -203,7 +206,7 @@ export class Runtime {
 			return cached.matches;
 		}
 		const view = { platform: observed.snapshot.platform, screen: observed.snapshot.screen };
-		const matches = await locateByTestIdViaReact(facet, testId, view, { timeoutMs: REACT_TIMEOUT_MS });
+		const matches = await reactLocator.locateByTestIdViaReact(facet, testId, view, { timeoutMs: REACT_TIMEOUT_MS });
 		this.reactCache = { key, at: this.clock.now(), matches };
 		return matches;
 	}
@@ -213,8 +216,12 @@ export class Runtime {
 	 * `EXCERPT_LINES` lines, so call it only once an error is certain; keep the snapshot, not this text, while polling.
 	 */
 	excerpt(snapshot: Snapshot): string {
-		const rendered = renderSnapshot(snapshot, { interactiveOnly: true, refs: new Map(), maxLines: EXCERPT_LINES });
-		return [renderHeader({ snapshot, rendered, interactiveOnly: true }), ...rendered.lines].join("\n");
+		const rendered = snapshotRenderer.renderSnapshot(snapshot, {
+			interactiveOnly: true,
+			refs: new Map(),
+			maxLines: EXCERPT_LINES,
+		});
+		return [snapshotRenderer.renderHeader({ snapshot, rendered, interactiveOnly: true }), ...rendered.lines].join("\n");
 	}
 
 	/**
@@ -227,30 +234,34 @@ export class Runtime {
 		options: { intervalMs?: number } = {}
 	): Promise<Exclude<PollResult<T, S>, { status: "aborted" }>> {
 		const signal = this.host.signal;
-		const result = await poll(step, {
+		const result = await poller.poll(step, {
 			timeoutMs,
 			...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
 			...(signal === undefined ? {} : { signal }),
 			now: this.clock.now,
 			sleep: this.clock.sleep,
 		});
-		if (result.status === "aborted") throw abortError(signal);
+		if (result.status === "aborted") throw driverFailures.abortError(signal);
 		return result;
 	}
 
 	/** Unwraps a driver call made for an action; a failure becomes `ACTION_FAILED` naming the driver's code. */
 	drive<T>(verb: string, result: Awaited<DriverResult<T>>): T {
-		if (!result.success) throw driverFailure(verb, result.error, "ACTION_FAILED");
+		if (!result.success) throw driverFailures.driverFailure(verb, result.error, "ACTION_FAILED");
 		return result.data;
 	}
 }
 
-export function driverFailure(verb: string, error: DriverError, code: "DRIVER" | "ACTION_FAILED" = "DRIVER"): E2eError {
-	return new E2eError(code, `${verb} failed: ${error.code}: ${error.message}`);
+export class DriverFailures {
+	driverFailure(verb: string, error: DriverError, code: "DRIVER" | "ACTION_FAILED" = "DRIVER"): E2eError {
+		return new E2eError(code, `${verb} failed: ${error.code}: ${error.message}`);
+	}
+
+	abortError(signal: AbortSignal | undefined): E2eError {
+		const reason: unknown = signal?.reason;
+		if (reason instanceof E2eError) return reason;
+		return new E2eError("TIMEOUT", "the test was aborted before the action finished");
+	}
 }
 
-function abortError(signal: AbortSignal | undefined): E2eError {
-	const reason: unknown = signal?.reason;
-	if (reason instanceof E2eError) return reason;
-	return new E2eError("TIMEOUT", "the test was aborted before the action finished");
-}
+export const driverFailures = new DriverFailures();

@@ -3,8 +3,8 @@ import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { Runtime } from "./context";
 import { LocatorAssertions } from "./matchers";
-import { createScreen } from "./screen";
-import { fieldFixture, staticDriver, testHost } from "./screen.testing";
+import { screenFactory } from "./screen";
+import { screenTesting } from "./screen.testing";
 
 /**
  * The failure excerpt (the interactive tree rendered into an error) costs an index and up to 40 rendered lines. It is
@@ -44,7 +44,7 @@ async function failedWith(run: () => Promise<unknown>): Promise<{ built: number;
 }
 
 function login(): FakeDriver {
-	return staticDriver([
+	return screenTesting.staticDriver([
 		driverFixtures.el("text", { id: "title", label: "Welcome" }),
 		driverFixtures.el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
 		driverFixtures.el("button", { id: "submit", label: "Sign in", hittable: true }),
@@ -70,9 +70,9 @@ function appearing(after: number): FakeDriver {
 	});
 }
 
-function setup(driver: FakeDriver, options: Parameters<typeof testHost>[1] = {}) {
-	const host = testHost(driver, options);
-	return { driver, host, screen: createScreen(host) };
+function setup(driver: FakeDriver, options: Parameters<typeof screenTesting.testHost>[1] = {}) {
+	const host = screenTesting.testHost(driver, options);
+	return { driver, host, screen: screenFactory.createScreen(host) };
 }
 
 describe("a success never renders the screen", () => {
@@ -137,13 +137,13 @@ describe("a success never renders the screen", () => {
 	});
 
 	test("fill confirmed by a hit-test", async () => {
-		const { driver } = fieldFixture();
+		const { driver } = screenTesting.fieldFixture();
 		const { screen } = setup(driver);
 		expect(await excerptsBuiltBy(() => screen.getByTestId("field").fill("hi"))).toBe(0);
 	});
 
 	test("fill confirmed by the snapshot fallback", async () => {
-		const { driver } = fieldFixture();
+		const { driver } = screenTesting.fieldFixture();
 		const noHitTest = Object.assign(driver, { elementAtPoint: async () => ({ success: true as const, data: null }) });
 		const { screen } = setup(noHitTest);
 		expect(await excerptsBuiltBy(() => screen.getByTestId("field").fill("hi"))).toBe(0);
@@ -152,7 +152,7 @@ describe("a success never renders the screen", () => {
 
 describe("a failure renders the screen from the last read", () => {
 	test("an ambiguous match", async () => {
-		const driver = staticDriver([
+		const driver = screenTesting.staticDriver([
 			driverFixtures.el("button", { id: "a", label: "A" }),
 			driverFixtures.el("button", { id: "b", label: "B" }),
 		]);
@@ -210,7 +210,7 @@ describe("a failure renders the screen from the last read", () => {
 	});
 
 	test("a fill that did not take shows what the confirm read, not one render per read", async () => {
-		const { driver } = fieldFixture({ dropTypes: 2 });
+		const { driver } = screenTesting.fieldFixture({ dropTypes: 2 });
 		const noHitTest = Object.assign(driver, { elementAtPoint: async () => ({ success: true as const, data: null }) });
 		const { screen } = setup(noHitTest, { actionTimeoutMs: 5000 });
 		const { built, error } = await failedWith(() => screen.getByTestId("field").fill("hi"));

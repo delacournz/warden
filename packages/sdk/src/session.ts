@@ -9,8 +9,8 @@ import { driverTracer } from "@delacour/warden-driver/traced-driver";
 
 import { helperLifecycle } from "@delacour/warden-driver-ios/helper";
 import { type CallerLease, CallerLeaseGate } from "@delacour/warden-leasing/device-lease";
-import { createScreen } from "@delacour/warden-screen/screen";
-import { formatSelector } from "@delacour/warden-screen/selector";
+import { screenFactory } from "@delacour/warden-screen/screen";
+import { selectorEngine } from "@delacour/warden-screen/selector";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Lease, Platform } from "@delacour/warden-store/types";
 import { type WardenError as EngineError, wardenErrors } from "@delacour/warden-types/error";
@@ -321,7 +321,7 @@ export class WardenSession implements Session {
 		const host = this.core.host;
 		const timeout = 10_000;
 		const locatorFor = (signal: AbortSignal | undefined) => {
-			const screen = createScreen({
+			const screen = screenFactory.createScreen({
 				driver: async () => {
 					const driver = await this.driver();
 					if (!driver.success) throw toWardenError(driver.error, "no");
@@ -626,8 +626,10 @@ export class WardenSession implements Session {
 				hint: "take a snapshot again",
 			});
 		}
-		if (element.identifier !== undefined) return formatSelector({ id: { kind: "text", value: element.identifier } });
-		if (element.label !== undefined) return formatSelector({ label: { kind: "text", value: element.label } });
+		if (element.identifier !== undefined)
+			return selectorEngine.formatSelector({ id: { kind: "text", value: element.identifier } });
+		if (element.label !== undefined)
+			return selectorEngine.formatSelector({ label: { kind: "text", value: element.label } });
 		throw usage(`${target.ref} has neither an id nor a label to select it by`, "use a selector");
 	}
 
@@ -848,7 +850,7 @@ export class WardenSession implements Session {
 					const locator = this.locator(selector);
 					const signal = this.core.signalFor(opts);
 					await guarded(signal, async () => {
-						const screen = createScreen({
+						const screen = screenFactory.createScreen({
 							driver: async () => {
 								const driver = await this.driver();
 								if (!driver.success) throw toWardenError(driver.error, "no");

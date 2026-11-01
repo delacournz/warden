@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, relative } from "node:path";
-import { isQueryRole } from "@delacour/warden-screen/roles";
-import { type ParsedSelector, parseSelector, type SelectorValue } from "@delacour/warden-screen/selector";
+import { roleResolver } from "@delacour/warden-screen/roles";
+import { type ParsedSelector, type SelectorValue, selectorEngine } from "@delacour/warden-screen/selector";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { LaunchMode } from "../runner/fixtures.types";
 import type {
@@ -172,7 +172,7 @@ function idLocator(testId: string, gen: Gen): string {
 }
 
 function roleLocator(role: string | undefined, name: string | undefined): string | undefined {
-	if (role === undefined || !isQueryRole(role)) return undefined;
+	if (role === undefined || !roleResolver.isQueryRole(role)) return undefined;
 	return `screen.${call("getByRole", lit(role), name === undefined ? "" : lit(name))}`;
 }
 
@@ -209,7 +209,7 @@ function baseLocator(terms: Terms, gen: Gen): string | undefined {
 
 function locatorOf(target: SelectorTarget, gen: Gen): string {
 	gen.uses.screen = true;
-	const parsed = parseSelector(target.selector);
+	const parsed = selectorEngine.parseSelector(target.selector);
 	if (!parsed.success) return `screen.locator(${lit(target.selector)})`;
 	const { nth, ...terms } = parsed.data;
 	const base = baseLocator(terms, gen);

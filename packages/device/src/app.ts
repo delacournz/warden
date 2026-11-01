@@ -3,8 +3,8 @@ import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { observations } from "@delacour/warden-driver/observation-cache";
 import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-driver/settle";
 import { driverCalls } from "@delacour/warden-driver/unwrap";
-import { isLocator, type Locator } from "@delacour/warden-screen/locator";
-import { isInteractiveRole, resolveRole } from "@delacour/warden-screen/roles";
+import { type Locator, locatorSupport } from "@delacour/warden-screen/locator";
+import { roleResolver } from "@delacour/warden-screen/roles";
 import { type Clock, systemClock } from "./fixture-session";
 
 /** `app.open({ wait: { until } })`: the first screen, named by a locator. */
@@ -66,7 +66,7 @@ function isContent(element: Element, parent: Element | undefined, platform: Snap
 	if (element.hidden === true) return false;
 	const id = element.identifier;
 	if (id !== undefined && id !== "" && !(platform === "android" && DECOR_IDS.has(id))) return true;
-	return isInteractiveRole(resolveRole(element, parent).role);
+	return roleResolver.isInteractiveRole(roleResolver.resolveRole(element, parent).role);
 }
 
 function hasContent(snapshot: Snapshot): boolean {
@@ -80,7 +80,7 @@ type ParsedWait = { kind: "none" } | { kind: "quiet" } | { kind: "until"; until:
 function parseWait(wait: OpenOptions["wait"]): ParsedWait {
 	if (wait === undefined || wait === "none") return { kind: "none" };
 	if (wait === "quiet") return { kind: "quiet" };
-	if (typeof wait === "object" && wait !== null && isLocator(wait.until)) {
+	if (typeof wait === "object" && wait !== null && locatorSupport.isLocator(wait.until)) {
 		const { timeout } = wait;
 		if (timeout !== undefined && (!Number.isFinite(timeout) || timeout < 0)) {
 			throw new E2eError("INVALID_ARGUMENT", `app.open wait timeout must be a non-negative number, got ${timeout}`);

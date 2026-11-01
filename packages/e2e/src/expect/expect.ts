@@ -1,6 +1,6 @@
 import { type Expect as BunExpect, expect as bunExpect, type Matchers } from "bun:test";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { isLocator, type Locator } from "@delacour/warden-screen/locator";
+import { type Locator, locatorSupport } from "@delacour/warden-screen/locator";
 import { LocatorAssertions } from "@delacour/warden-screen/matchers";
 import { getSession, type Session } from "../session";
 
@@ -79,11 +79,11 @@ const NOT_STATIC = new Set<string | symbol>(["length", "name", "prototype"]);
 
 export function createExpect(deps: ExpectDeps): E2eExpect {
 	const call = (actual?: unknown, message?: string): unknown =>
-		isLocator(actual) ? new LocatorAssertions(actual, { negate: false }) : valueExpect(actual, message);
+		locatorSupport.isLocator(actual) ? new LocatorAssertions(actual, { negate: false }) : valueExpect(actual, message);
 
 	const soft = (actual?: unknown, message?: string): unknown => {
 		const sink = deps.softSink();
-		if (isLocator(actual))
+		if (locatorSupport.isLocator(actual))
 			return new LocatorAssertions(actual, { negate: false, ...(sink === undefined ? {} : { soft: sink }) });
 		const matchers = valueExpect(actual, message);
 		return sink === undefined ? matchers : softMatchers(matchers, sink);

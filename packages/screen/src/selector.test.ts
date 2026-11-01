@@ -1,17 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { el, snap } from "./element.testing";
-import { indexSnapshot } from "./nodes";
-import {
-	formatSelector,
-	matchesSelector,
-	type ParsedSelector,
-	parseSelector,
-	pickMostSpecific,
-	selectorToQuery,
-} from "./selector";
+import { elementFixtures } from "./element.testing";
+import { nodeIndexer } from "./nodes";
+import { type ParsedSelector, selectorEngine } from "./selector";
 
 function parsed(input: string): ParsedSelector {
-	const result = parseSelector(input);
+	const result = selectorEngine.parseSelector(input);
 	if (!result.success) throw new Error(`parse failed: ${result.error}`);
 	return result.data;
 }
@@ -74,7 +67,7 @@ describe("parseSelector", () => {
 	];
 	for (const [title, input, message] of rejections) {
 		test(`rejects ${title}`, () => {
-			const result = parseSelector(input);
+			const result = selectorEngine.parseSelector(input);
 			expect(result.success).toBe(false);
 			if (!result.success) expect(result.error).toMatch(message);
 		});
@@ -83,18 +76,18 @@ describe("parseSelector", () => {
 
 describe("formatSelector", () => {
 	test("canonical order and quoting", () => {
-		expect(formatSelector({ role: { kind: "text", value: "button" }, id: { kind: "text", value: "a b" } })).toBe(
-			'id="a b" role=button'
-		);
-		expect(formatSelector({ nth: 1, editable: true, text: { kind: "regex", source: "x+", flags: "i" } })).toBe(
-			"text=/x+/i editable=true nth=1"
-		);
+		expect(
+			selectorEngine.formatSelector({ role: { kind: "text", value: "button" }, id: { kind: "text", value: "a b" } })
+		).toBe('id="a b" role=button');
+		expect(
+			selectorEngine.formatSelector({ nth: 1, editable: true, text: { kind: "regex", source: "x+", flags: "i" } })
+		).toBe("text=/x+/i editable=true nth=1");
 	});
 
 	test("values that cannot be bare are quoted", () => {
-		expect(formatSelector({ text: { kind: "text", value: "" } })).toBe('text=""');
-		expect(formatSelector({ text: { kind: "text", value: "/path" } })).toBe('text="/path"');
-		expect(formatSelector({ text: { kind: "text", value: '"q"' } })).toBe('text="\\"q\\""');
+		expect(selectorEngine.formatSelector({ text: { kind: "text", value: "" } })).toBe('text=""');
+		expect(selectorEngine.formatSelector({ text: { kind: "text", value: "/path" } })).toBe('text="/path"');
+		expect(selectorEngine.formatSelector({ text: { kind: "text", value: '"q"' } })).toBe('text="\\"q\\""');
 	});
 
 	const roundTrips = [
@@ -111,29 +104,29 @@ describe("formatSelector", () => {
 	for (const input of roundTrips) {
 		test(`round-trips ${input}`, () => {
 			const first = parsed(input);
-			const text = formatSelector(first);
+			const text = selectorEngine.formatSelector(first);
 			expect(parsed(text)).toEqual(first);
-			expect(formatSelector(parsed(text))).toBe(text);
+			expect(selectorEngine.formatSelector(parsed(text))).toBe(text);
 		});
 	}
 
 	test("canonical text equals the (already canonical) input", () => {
-		expect(formatSelector(parsed('id=a label="b c" text=/d/ role=button value=e editable=true nth=0'))).toBe(
-			'id=a label="b c" text=/d/ role=button value=e editable=true nth=0'
-		);
+		expect(
+			selectorEngine.formatSelector(parsed('id=a label="b c" text=/d/ role=button value=e editable=true nth=0'))
+		).toBe('id=a label="b c" text=/d/ role=button value=e editable=true nth=0');
 	});
 });
 
 describe("selectorToQuery", () => {
 	test("without nth is one selector query", () => {
-		expect(selectorToQuery(parsed("id=a"))).toEqual({
+		expect(selectorEngine.selectorToQuery(parsed("id=a"))).toEqual({
 			kind: "query",
 			query: { kind: "selector", selector: { id: { kind: "text", value: "a" } } },
 		});
 	});
 
 	test("nth wraps in an index expression and leaves the selector clean", () => {
-		expect(selectorToQuery(parsed("role=button nth=2"))).toEqual({
+		expect(selectorEngine.selectorToQuery(parsed("role=button nth=2"))).toEqual({
 			kind: "index",
 			index: 2,
 			source: { kind: "query", query: { kind: "selector", selector: { role: { kind: "text", value: "button" } } } },
@@ -142,16 +135,22 @@ describe("selectorToQuery", () => {
 });
 
 describe("matchesSelector", () => {
-	const index = indexSnapshot(
-		snap([
-			el("button", { identifier: "sign-in-submit", label: "Sign in", value: "go" }),
-			el("textfield", { identifier: "email", label: "Email address", value: "me@x.co", placeholder: "you@x.co" }),
-			el("other", { value: "checkbox, unchecked", label: "Agree" }),
-			el("text", { label: "Sign in now" }),
+	const index = nodeIndexer.indexSnapshot(
+		elementFixtures.snap([
+			elementFixtures.el("button", { identifier: "sign-in-submit", label: "Sign in", value: "go" }),
+			elementFixtures.el("textfield", {
+				identifier: "email",
+				label: "Email address",
+				value: "me@x.co",
+				placeholder: "you@x.co",
+			}),
+			elementFixtures.el("other", { value: "checkbox, unchecked", label: "Agree" }),
+			elementFixtures.el("text", { label: "Sign in now" }),
 		])
 	);
 	const [button, field, agree, text] = index.entries;
-	const match = (input: string) => index.entries.filter((entry) => matchesSelector(entry, parsed(input)));
+	const match = (input: string) =>
+		index.entries.filter((entry) => selectorEngine.matchesSelector(entry, parsed(input)));
 
 	test("id is exact and case-sensitive", () => {
 		expect(match("id=sign-in-submit")).toEqual([button]);
@@ -195,26 +194,28 @@ describe("matchesSelector", () => {
 
 describe("pickMostSpecific", () => {
 	test("exact beats substring beats smaller frame beats reading order; visible preferred", () => {
-		const index = indexSnapshot(
-			snap([
-				el("button", { label: "Save changes", frame: { x: 0, y: 0, width: 50, height: 10 } }),
-				el("button", { label: "Save", frame: { x: 0, y: 20, width: 200, height: 40 } }),
-				el("button", { label: "Save as", frame: { x: 0, y: 70, width: 20, height: 10 } }),
-				el("button", { label: "Save", hidden: true, frame: { x: 0, y: 90, width: 5, height: 5 } }),
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([
+				elementFixtures.el("button", { label: "Save changes", frame: { x: 0, y: 0, width: 50, height: 10 } }),
+				elementFixtures.el("button", { label: "Save", frame: { x: 0, y: 20, width: 200, height: 40 } }),
+				elementFixtures.el("button", { label: "Save as", frame: { x: 0, y: 70, width: 20, height: 10 } }),
+				elementFixtures.el("button", { label: "Save", hidden: true, frame: { x: 0, y: 90, width: 5, height: 5 } }),
 			])
 		);
 		const sel = parsed("label=save");
-		const matches = index.entries.filter((entry) => matchesSelector(entry, sel));
-		expect(pickMostSpecific(matches, sel)?.element.label).toBe("Save");
-		expect(pickMostSpecific(matches, sel)?.element.hidden).toBeUndefined();
+		const matches = index.entries.filter((entry) => selectorEngine.matchesSelector(entry, sel));
+		expect(selectorEngine.pickMostSpecific(matches, sel)?.element.label).toBe("Save");
+		expect(selectorEngine.pickMostSpecific(matches, sel)?.element.hidden).toBeUndefined();
 		const substringOnly = parsed("label=sav");
-		expect(pickMostSpecific(matches, substringOnly)?.element.label).toBe("Save as");
+		expect(selectorEngine.pickMostSpecific(matches, substringOnly)?.element.label).toBe("Save as");
 	});
 
 	test("ties fall to reading order; empty is undefined", () => {
-		const index = indexSnapshot(snap([el("button", { label: "A" }), el("button", { label: "A" })]));
+		const index = nodeIndexer.indexSnapshot(
+			elementFixtures.snap([elementFixtures.el("button", { label: "A" }), elementFixtures.el("button", { label: "A" })])
+		);
 		const sel = parsed("label=A");
-		expect(pickMostSpecific(index.entries, sel)).toBe(index.entries[0]);
-		expect(pickMostSpecific([], sel)).toBeUndefined();
+		expect(selectorEngine.pickMostSpecific(index.entries, sel)).toBe(index.entries[0]);
+		expect(selectorEngine.pickMostSpecific([], sel)).toBeUndefined();
 	});
 });

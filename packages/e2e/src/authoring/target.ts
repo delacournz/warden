@@ -1,6 +1,6 @@
 import type { Element, Point, Snapshot } from "@delacour/warden-driver/driver.types";
-import { indexSnapshot, type NodeEntry, type NodeIndex } from "@delacour/warden-screen/nodes";
-import { formatSelector, matchesSelector, type ParsedSelector } from "@delacour/warden-screen/selector";
+import { type NodeEntry, type NodeIndex, nodeIndexer } from "@delacour/warden-screen/nodes";
+import { type ParsedSelector, selectorEngine } from "@delacour/warden-screen/selector";
 import type { ChainEntry, CoordsTarget, Target } from "./recording.schema";
 
 /** Turn an element the user pointed at into a durable target (never an `@ref`), degrading to coordinates. */
@@ -27,14 +27,14 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 /** Nodes matching `selector` (substring terms are loose, so this can be more than the one pointed at). */
 function matchCount(index: NodeIndex, selector: ParsedSelector): number {
-	return index.entries.filter((candidate) => matchesSelector(candidate, selector)).length;
+	return index.entries.filter((candidate) => selectorEngine.matchesSelector(candidate, selector)).length;
 }
 
 /** `formatSelector(selector)`, plus `nth=` when other nodes match too. */
 function pinned(index: NodeIndex, entry: NodeEntry, selector: ParsedSelector): string {
-	const matches = index.entries.filter((candidate) => matchesSelector(candidate, selector));
-	if (matches.length === 1 && matches[0] === entry) return formatSelector(selector);
-	return formatSelector({ ...selector, nth: Math.max(0, matches.indexOf(entry)) });
+	const matches = index.entries.filter((candidate) => selectorEngine.matchesSelector(candidate, selector));
+	if (matches.length === 1 && matches[0] === entry) return selectorEngine.formatSelector(selector);
+	return selectorEngine.formatSelector({ ...selector, nth: Math.max(0, matches.indexOf(entry)) });
 }
 
 type Candidate = { by: "id" | "role-label" | "role-text"; selector: ParsedSelector };
@@ -58,7 +58,7 @@ function selectorCandidates(element: Element, role: { kind: "text"; value: strin
  * Never an `@ref`. An element that is not in the snapshot degrades to a coordinate target.
  */
 export function targetFromElement(element: Element, snapshot: Snapshot): Target {
-	const index = indexSnapshot(snapshot);
+	const index = nodeIndexer.indexSnapshot(snapshot);
 	const entry = index.byId.get(element.id);
 	if (!entry) return coordsTarget(centre(element), "element was not in the snapshot; recorded by coordinates");
 
@@ -69,7 +69,9 @@ export function targetFromElement(element: Element, snapshot: Snapshot): Target 
 	const sameRole = index.entries.filter((candidate) => candidate.role === entry.role);
 	const primary = candidates[0];
 	const selector =
-		chain[0] && "selector" in chain[0] ? chain[0].selector : formatSelector({ role, nth: sameRole.indexOf(entry) });
+		chain[0] && "selector" in chain[0]
+			? chain[0].selector
+			: selectorEngine.formatSelector({ role, nth: sameRole.indexOf(entry) });
 	const matches = primary === undefined ? sameRole.length : matchCount(index, primary.selector);
 	chain.push({ by: "path", path: element.id, role: entry.role });
 

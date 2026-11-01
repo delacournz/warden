@@ -4,14 +4,14 @@ import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driv
 import { FIELD_POLL_MS, STALE_RISK_READS } from "./field";
 import type { Locator } from "./locator";
 import { LocatorAssertions } from "./matchers";
-import { createScreen } from "./screen";
-import { staticDriver, testHost } from "./screen.testing";
+import { screenFactory } from "./screen";
+import { screenTesting } from "./screen.testing";
 
 const expectLocator = (locator: Locator): LocatorAssertions => new LocatorAssertions(locator, { negate: false });
 
 /** Two nodes on a screen that never changes, behind the observation cache and a fake clock. */
 function setup(platform: "ios" | "android" = "ios") {
-	const driver = staticDriver(
+	const driver = screenTesting.staticDriver(
 		[
 			driverFixtures.el("text", { id: "title", label: "Plan" }),
 			driverFixtures.el("button", { id: "next", label: "Next", hittable: true }),
@@ -19,8 +19,8 @@ function setup(platform: "ios" | "android" = "ios") {
 		],
 		platform
 	);
-	const host = testHost(driver, { cache: true });
-	return { driver, host, screen: createScreen(host) };
+	const host = screenTesting.testHost(driver, { cache: true });
+	return { driver, host, screen: screenFactory.createScreen(host) };
 }
 
 const snapshots = (driver: ReturnType<typeof setup>["driver"]): number => driver.callsOf("snapshot").length;
@@ -101,8 +101,8 @@ describe("reads that follow each other", () => {
 	});
 
 	test("without the cache every read is its own snapshot, as before", async () => {
-		const driver = staticDriver([driverFixtures.el("text", { id: "title", label: "Plan" })]);
-		const screen = createScreen(testHost(driver));
+		const driver = screenTesting.staticDriver([driverFixtures.el("text", { id: "title", label: "Plan" })]);
+		const screen = screenFactory.createScreen(screenTesting.testHost(driver));
 		const title = screen.getByTestId("title");
 		await title.isVisible();
 		await title.text();
@@ -143,7 +143,7 @@ describe("assertions and actions", () => {
 				]);
 			},
 		});
-		return { driver, screen: createScreen(testHost(driver, { cache: true })) };
+		return { driver, screen: screenFactory.createScreen(screenTesting.testHost(driver, { cache: true })) };
 	}
 
 	test("so the tap lands where the screen has settled, not where an assertion saw it moving", async () => {
@@ -196,8 +196,8 @@ describe("a settle is a wait, not an input", () => {
 				driverFixtures.snapshotOf([driverFixtures.el("button", { id: "next", label: "Next", hittable: true })]),
 			onCall: (call) => (call.method === "settle" ? { data: { quiet: false, waitedMs: 3000 } } : undefined),
 		});
-		const host = testHost(driver, { cache: true });
-		const screen = createScreen(host);
+		const host = screenTesting.testHost(driver, { cache: true });
+		const screen = screenFactory.createScreen(host);
 		await screen.tapAt({ x: 1, y: 1 });
 		await (await host.driver()).settle();
 		await screen.getByTestId("next").tap();
@@ -238,8 +238,8 @@ describe("a frame that held still across two looks", () => {
 				]);
 			},
 		});
-		const host = testHost(driver, { cache: true });
-		return { driver, host, screen: createScreen(host) };
+		const host = screenTesting.testHost(driver, { cache: true });
+		return { driver, host, screen: screenFactory.createScreen(host) };
 	}
 
 	test("a three-position slide: the tap lands where the button settled, not where it was passing", async () => {
@@ -332,11 +332,11 @@ describe("only the first poll of a wait may reuse", () => {
 		const driver = new FakeDriver({
 			screens: () => driverFixtures.snapshotOf(shown ? [driverFixtures.el("text", { id: "late", label: "Late" })] : []),
 		});
-		const host = testHost(driver, { cache: true });
+		const host = screenTesting.testHost(driver, { cache: true });
 		const show = () => {
 			shown = true;
 		};
-		return { driver, host, screen: createScreen(host), show };
+		return { driver, host, screen: screenFactory.createScreen(host), show };
 	}
 
 	test("waitFor: the first poll takes the kept snapshot, the second reads the device", async () => {
@@ -366,8 +366,8 @@ describe("field confirm reads", () => {
 				]),
 			onCall: (call) => (call.method === "elementAtPoint" ? { data: null } : undefined),
 		});
-		const host = testHost(driver, { cache: true });
-		await createScreen(host).getByTestId("field").fill("a@b.co");
+		const host = screenTesting.testHost(driver, { cache: true });
+		await screenFactory.createScreen(host).getByTestId("field").fill("a@b.co");
 		const reads = driver.callsOf("elementAtPoint").length;
 		expect(reads).toBe(STALE_RISK_READS);
 		expect(driver.callsOf("snapshot")).toHaveLength(1 + STALE_RISK_READS);
@@ -379,8 +379,8 @@ describe("field confirm reads", () => {
 			screens: () =>
 				driverFixtures.snapshotOf([driverFixtures.el("textfield", { id: "field", label: "Email", value: "" })]),
 		});
-		const host = testHost(driver, { cache: true });
-		await createScreen(host).getByTestId("field").isVisible();
+		const host = screenTesting.testHost(driver, { cache: true });
+		await screenFactory.createScreen(host).getByTestId("field").isVisible();
 		const seen = await host.driver();
 		await seen.elementAtPoint({ x: 10, y: 10 });
 		await seen.elementAtPoint({ x: 10, y: 10 });
@@ -395,8 +395,8 @@ describe("a failed read", () => {
 			screens: () => driverFixtures.snapshotOf([driverFixtures.el("text", { id: "title", label: "Plan" })]),
 			onCall: (call) => (call.method === "snapshot" && fail ? driverFixtures.failWith("E_AX_UNAVAILABLE") : undefined),
 		});
-		const host = testHost(driver, { cache: true });
-		const screen = createScreen(host);
+		const host = screenTesting.testHost(driver, { cache: true });
+		const screen = screenFactory.createScreen(host);
 		await expect(screen.getByTestId("title").isVisible()).rejects.toThrow();
 		fail = false;
 		expect(await screen.getByTestId("title").isVisible()).toBe(true);

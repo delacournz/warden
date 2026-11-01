@@ -4,8 +4,8 @@ import type { Platform, Snapshot } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { observations } from "@delacour/warden-driver/observation-cache";
 import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
-import { createScreen } from "@delacour/warden-screen/screen";
-import { testHost } from "@delacour/warden-screen/testing/screen";
+import { screenFactory } from "@delacour/warden-screen/screen";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import type { E2eEnv } from "./env";
 import { appFor as createApp } from "./fixtures";
 
@@ -335,9 +335,9 @@ describe("app.open wait: { until }", () => {
 	test("waits for the locator to show through the screen poll, then settles once", async () => {
 		const time = { now: () => 0 };
 		const driver = launchingDriver({ now: () => time.now() }, { contentAt: 800 });
-		const host = testHost(driver, { cache: true });
+		const host = screenTesting.testHost(driver, { cache: true });
 		time.now = host.clock.now;
-		const screen = createScreen(host);
+		const screen = screenFactory.createScreen(host);
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv, clock: host.clock });
 		await app.open({ wait: { until: screen.getByTestId("welcome.screen") } });
 		expect(host.clock.now()).toBeGreaterThanOrEqual(800);
@@ -350,8 +350,8 @@ describe("app.open wait: { until }", () => {
 
 	test("a locator that never shows is a TIMEOUT after `timeout`, with no settle", async () => {
 		const driver = new FakeDriver({ screens: [driverFixtures.snapshotOf([driverFixtures.el("image")])] });
-		const host = testHost(driver);
-		const screen = createScreen(host);
+		const host = screenTesting.testHost(driver);
+		const screen = screenFactory.createScreen(host);
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		const error = await app
 			.open({ wait: { until: screen.getByTestId("welcome.screen"), timeout: 2000 } })
@@ -363,7 +363,7 @@ describe("app.open wait: { until }", () => {
 
 	test("with a url it waits after the link is opened", async () => {
 		const driver = new FakeDriver({ screens: [CONTENT] });
-		const screen = createScreen(testHost(driver));
+		const screen = screenFactory.createScreen(screenTesting.testHost(driver));
 		const app = createApp({ session: { out: "/tmp/out" }, driver, env: baseEnv });
 		await app.open({ url: "myapp://home", wait: { until: screen.getByRole("button", { name: "Next" }) } });
 		expect(driver.calls.map((c) => c.method)).toEqual(["app.launch", "app.openUrl", "snapshot", "settle"]);

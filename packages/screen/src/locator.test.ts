@@ -3,8 +3,8 @@ import { E2eError } from "@delacour/warden-driver/e2e-error";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { KEY_PACE_MS } from "@delacour/warden-driver/typing";
 import { CONFIRM_READS, FIELD_POLL_MS, STALE_RISK_READS } from "./field";
-import { createScreen } from "./screen";
-import { FIELD_FRAME, fieldFixture, staticDriver, testHost } from "./screen.testing";
+import { screenFactory } from "./screen";
+import { FIELD_FRAME, screenTesting } from "./screen.testing";
 
 async function failure(promise: Promise<unknown>): Promise<E2eError> {
 	try {
@@ -25,7 +25,7 @@ function typed(driver: FakeDriver): string {
 }
 
 function login() {
-	return staticDriver([
+	return screenTesting.staticDriver([
 		driverFixtures.el("text", { id: "title", label: "Welcome" }),
 		driverFixtures.el("textfield", { id: "email", label: "Email", value: "me@x.co" }),
 		driverFixtures.el("button", { id: "submit", label: "Sign in", hittable: true }),
@@ -42,9 +42,9 @@ function login() {
 /** The hit-test after the focusing tap that sees the field take focus (`tapToFocus`). */
 const FOCUS_CHECK = 1;
 
-function setup(driver = login(), options: Parameters<typeof testHost>[1] = {}) {
-	const host = testHost(driver, options);
-	return { driver, host, screen: createScreen(host) };
+function setup(driver = login(), options: Parameters<typeof screenTesting.testHost>[1] = {}) {
+	const host = screenTesting.testHost(driver, options);
+	return { driver, host, screen: screenFactory.createScreen(host) };
 }
 
 describe("tap", () => {
@@ -55,7 +55,9 @@ describe("tap", () => {
 	});
 
 	test("the driver's tap point wins and position is an offset from the corner", async () => {
-		const withPoint = setup(staticDriver([driverFixtures.el("button", { id: "b", tapPoint: { x: 7, y: 8 } })]));
+		const withPoint = setup(
+			screenTesting.staticDriver([driverFixtures.el("button", { id: "b", tapPoint: { x: 7, y: 8 } })])
+		);
 		await withPoint.screen.getByTestId("b").tap();
 		expect(withPoint.driver.callsOf("tap")[0]?.point).toEqual({ x: 7, y: 8 });
 		const { driver, screen } = setup();
@@ -123,17 +125,21 @@ describe("tap", () => {
 	});
 
 	test("a hidden element or one with no box on screen is NOT_ACTIONABLE (not visible)", async () => {
-		const hidden = setup(staticDriver([driverFixtures.el("button", { id: "x", hidden: true })]));
+		const hidden = setup(screenTesting.staticDriver([driverFixtures.el("button", { id: "x", hidden: true })]));
 		expect((await failure(hidden.screen.getByTestId("x").tap())).message).toContain("not visible");
 		const away = setup(
-			staticDriver([driverFixtures.el("button", { id: "x", frame: { x: 0, y: 900, width: 100, height: 40 } })])
+			screenTesting.staticDriver([
+				driverFixtures.el("button", { id: "x", frame: { x: 0, y: 900, width: 100, height: 40 } }),
+			])
 		);
 		expect((await failure(away.screen.getByTestId("x").tap())).code).toBe("NOT_ACTIONABLE");
 	});
 
 	test("a tap point outside the screen asks to scroll", async () => {
 		const edge = setup(
-			staticDriver([driverFixtures.el("button", { id: "x", frame: { x: 0, y: 800, width: 100, height: 100 } })])
+			screenTesting.staticDriver([
+				driverFixtures.el("button", { id: "x", frame: { x: 0, y: 800, width: 100, height: 100 } }),
+			])
 		);
 		const error = await failure(edge.screen.getByTestId("x").tap());
 		expect(error.code).toBe("NOT_ACTIONABLE");
@@ -142,7 +148,7 @@ describe("tap", () => {
 
 	test("several matches fail at once with LOCATOR_AMBIGUOUS and the count", async () => {
 		const { host, driver, screen } = setup(
-			staticDriver([
+			screenTesting.staticDriver([
 				driverFixtures.el("button", { label: "Void" }),
 				driverFixtures.el("button", { label: "Void" }),
 				driverFixtures.el("button", { label: "Keep" }),
@@ -221,7 +227,7 @@ describe("longPress", () => {
 
 describe("fill", () => {
 	test("focuses at the right end, types, then verifies the value", async () => {
-		const { driver, state } = fieldFixture();
+		const { driver, state } = screenTesting.fieldFixture();
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("field").fill("ada@example.test");
 		expect(state.value).toBe("ada@example.test");
@@ -240,7 +246,7 @@ describe("fill", () => {
 				.join("");
 
 		test("via paste pastes over a select-all and verifies the value", async () => {
-			const { driver, state } = fieldFixture({ value: "old", selectAll: true, pasteText: true });
+			const { driver, state } = screenTesting.fieldFixture({ value: "old", selectAll: true, pasteText: true });
 			const { screen } = setup(driver);
 			await screen.getByTestId("field").fill("ada@example.test", { via: "paste" });
 			expect(pasted(driver)).toBe("ada@example.test");
@@ -251,7 +257,7 @@ describe("fill", () => {
 		});
 
 		test("types by default even when the driver can paste", async () => {
-			const { driver, state } = fieldFixture({ pasteText: true });
+			const { driver, state } = screenTesting.fieldFixture({ pasteText: true });
 			const { screen } = setup(driver);
 			await screen.getByTestId("field").fill("hello");
 			expect(driver.callsOf("pasteText")).toEqual([]);
@@ -260,7 +266,7 @@ describe("fill", () => {
 		});
 
 		test("a failed paste is typed in the same attempt, no retry needed", async () => {
-			const { driver, state } = fieldFixture({ pasteText: "refused" });
+			const { driver, state } = screenTesting.fieldFixture({ pasteText: "refused" });
 			const { screen } = setup(driver);
 			await screen.getByTestId("field").fill("hello", { via: "paste" });
 			expect(driver.callsOf("tap")).toHaveLength(1);
@@ -269,7 +275,7 @@ describe("fill", () => {
 		});
 
 		test("a paste the field mangles is retried by typing after counted Backspaces", async () => {
-			const { driver, state } = fieldFixture({ pasteText: true, pasteKeeps: 3 });
+			const { driver, state } = screenTesting.fieldFixture({ pasteText: true, pasteKeeps: 3 });
 			const { screen } = setup(driver);
 			await screen.getByTestId("field").fill("hello", { via: "paste" });
 			expect(pasted(driver)).toBe("hello");
@@ -280,7 +286,7 @@ describe("fill", () => {
 		});
 
 		test("a secure field is pasted into and not read back", async () => {
-			const { driver } = fieldFixture({ secure: true, pasteText: true });
+			const { driver } = screenTesting.fieldFixture({ secure: true, pasteText: true });
 			const { screen } = setup(driver);
 			await screen.getByTestId("field").fill("password1", { via: "paste" });
 			expect(pasted(driver)).toBe("password1");
@@ -288,7 +294,7 @@ describe("fill", () => {
 		});
 
 		test("a driver without pasteText (Android) types even with via paste", async () => {
-			const { driver } = fieldFixture();
+			const { driver } = screenTesting.fieldFixture();
 			const { screen } = setup(driver);
 			await screen.getByTestId("field").fill("hello", { via: "paste" });
 			expect(driver.callsOf("pasteText")).toEqual([]);
@@ -296,7 +302,7 @@ describe("fill", () => {
 		});
 
 		test("an unknown via is INVALID_ARGUMENT", async () => {
-			const { driver } = fieldFixture({ pasteText: true });
+			const { driver } = screenTesting.fieldFixture({ pasteText: true });
 			const { screen } = setup(driver);
 			// @ts-expect-error deliberately outside FillVia
 			const error = await failure(screen.getByTestId("field").fill("x", { via: "clipboard" }));
@@ -305,7 +311,7 @@ describe("fill", () => {
 	});
 
 	test("empties existing content first: one backspace per character plus a spare", async () => {
-		const { driver, state } = fieldFixture({ value: "abc" });
+		const { driver, state } = screenTesting.fieldFixture({ value: "abc" });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("new");
 		expect(driver.callsOf("key")).toHaveLength(4);
@@ -314,7 +320,7 @@ describe("fill", () => {
 	});
 
 	test("retries once when the value did not take", async () => {
-		const { driver, state } = fieldFixture({ dropTypes: 1 });
+		const { driver, state } = screenTesting.fieldFixture({ dropTypes: 1 });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hello");
 		expect(typed(driver)).toBe("hellohello");
@@ -323,7 +329,7 @@ describe("fill", () => {
 	});
 
 	test("gives up after the retry with ACTION_FAILED saying what the field holds", async () => {
-		const { driver } = fieldFixture({ dropTypes: 10, value: "old" });
+		const { driver } = screenTesting.fieldFixture({ dropTypes: 10, value: "old" });
 		const { screen } = setup(driver);
 		const error = await failure(screen.getByTestId("field").fill("hello"));
 		expect(error.code).toBe("ACTION_FAILED");
@@ -333,7 +339,7 @@ describe("fill", () => {
 	});
 
 	test("a value that lags the keys is waited for, not retyped", async () => {
-		const { driver, state } = fieldFixture({ lagReads: 3 });
+		const { driver, state } = screenTesting.fieldFixture({ lagReads: 3 });
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("field").fill("hello");
 		expect(state.value).toBe("hello");
@@ -343,7 +349,7 @@ describe("fill", () => {
 	});
 
 	test("a dropped last character is retried once with a clear and a retype", async () => {
-		const { driver, state } = fieldFixture({ dropTail: 1 });
+		const { driver, state } = screenTesting.fieldFixture({ dropTail: 1 });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hello");
 		expect(state.value).toBe("hello");
@@ -353,7 +359,7 @@ describe("fill", () => {
 	});
 
 	test("both attempts failing is ACTION_FAILED naming the expected text and what each attempt held", async () => {
-		const { driver } = fieldFixture({ dropTail: 2, dropTailCalls: 2 });
+		const { driver } = screenTesting.fieldFixture({ dropTail: 2, dropTailCalls: 2 });
 		const { screen } = setup(driver);
 		const error = await failure(screen.getByTestId("field").fill("hello"));
 		expect(error.code).toBe("ACTION_FAILED");
@@ -364,7 +370,7 @@ describe("fill", () => {
 	});
 
 	test("a stale read of the old value is not trusted when it equals the wanted text", async () => {
-		const { driver, state } = fieldFixture({ value: "hello", lagReads: 2, dropTail: 1 });
+		const { driver, state } = screenTesting.fieldFixture({ value: "hello", lagReads: 2, dropTail: 1 });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hello");
 		expect(state.value).toBe("hello");
@@ -373,7 +379,7 @@ describe("fill", () => {
 	});
 
 	test("a filled field is replaced by typing over a select-all: no Backspace at all", async () => {
-		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("grace@example.test");
 		expect(
@@ -384,7 +390,7 @@ describe("fill", () => {
 	});
 
 	test("on a driver with setText a filled field is still selected and typed over without the opt-in", async () => {
-		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("grace@example.test");
 		expect(driver.callsOf("setText")).toEqual([]);
@@ -393,7 +399,7 @@ describe("fill", () => {
 	});
 
 	test("under WARDEN_ANDROID_SETTEXT=1 a filled field is replaced in one call and still read back", async () => {
-		const { driver, state } = fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ada@example.test", selectAll: true, setText: true });
 		const { screen } = setup(driver, { androidSetText: true });
 		await screen.getByTestId("field").fill("grace@example.test");
 		expect(driver.callsOf("setText").map((call) => call.text)).toEqual(["grace@example.test"]);
@@ -403,7 +409,7 @@ describe("fill", () => {
 	});
 
 	test("under the opt-in, a setText that did not take is caught by the read-back and retyped the counted way", async () => {
-		const { driver, state } = fieldFixture({ value: "ada", setText: true });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ada", setText: true });
 		driver.setText = async (text) => {
 			driver.calls.push({ method: "setText", text });
 			return { success: true, data: undefined };
@@ -416,7 +422,7 @@ describe("fill", () => {
 	});
 
 	test("an empty field that shows its placeholder as the value sends no clearing keys", async () => {
-		const { driver, state } = fieldFixture({ placeholder: "ada@example.test", selectAll: true });
+		const { driver, state } = screenTesting.fieldFixture({ placeholder: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("grace@example.test");
 		expect(driver.callsOf("key")).toEqual([]);
@@ -425,7 +431,11 @@ describe("fill", () => {
 	});
 
 	test("iOS reports no placeholder, so such a field is typed over a select-all, never backspaced per placeholder character", async () => {
-		const { driver, state } = fieldFixture({ placeholder: "ada@example.com", placeholderMeta: false, selectAll: true });
+		const { driver, state } = screenTesting.fieldFixture({
+			placeholder: "ada@example.com",
+			placeholderMeta: false,
+			selectAll: true,
+		});
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("grace@example.com");
 		expect(driver.callsOf("selectAll")).toHaveLength(1);
@@ -434,7 +444,11 @@ describe("fill", () => {
 	});
 
 	test("a secure field showing its placeholder is typed into with no clearing keys", async () => {
-		const { driver, state } = fieldFixture({ secure: true, placeholder: "At least 8 characters", selectAll: true });
+		const { driver, state } = screenTesting.fieldFixture({
+			secure: true,
+			placeholder: "At least 8 characters",
+			selectAll: true,
+		});
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("password1");
 		expect(driver.callsOf("key")).toEqual([]);
@@ -443,7 +457,7 @@ describe("fill", () => {
 	});
 
 	test("a field that refuses select-all is retried with counted Backspaces (one per character of what it now holds) and a retype", async () => {
-		const { driver, state } = fieldFixture({ value: "old", selectAllRefused: true });
+		const { driver, state } = screenTesting.fieldFixture({ value: "old", selectAllRefused: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("new");
 		expect(state.value).toBe("new");
@@ -456,7 +470,7 @@ describe("fill", () => {
 	});
 
 	test("a typeText lost after the select-all leaves the field empty and the retry types it again without clearing keys", async () => {
-		const { driver, state } = fieldFixture({ value: "old", selectAll: true, dropTypes: 1 });
+		const { driver, state } = screenTesting.fieldFixture({ value: "old", selectAll: true, dropTypes: 1 });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("new");
 		expect(state.value).toBe("new");
@@ -494,7 +508,7 @@ describe("fill", () => {
 	});
 
 	test("without select-all the counted Backspaces still empty the field", async () => {
-		const { driver, state } = fieldFixture({ value: "old" });
+		const { driver, state } = screenTesting.fieldFixture({ value: "old" });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("new");
 		expect(driver.callsOf("selectAll")).toEqual([]);
@@ -503,7 +517,7 @@ describe("fill", () => {
 	});
 
 	test("typed text equal to the placeholder is confirmed on two reads, not four", async () => {
-		const { driver, state } = fieldFixture({ placeholder: "ada@example.test", selectAll: true });
+		const { driver, state } = screenTesting.fieldFixture({ placeholder: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("ada@example.test");
 		expect(state.value).toBe("ada@example.test");
@@ -511,7 +525,7 @@ describe("fill", () => {
 	});
 
 	test("a field that already held the wanted text still needs the longer run of reads", async () => {
-		const { driver } = fieldFixture({ value: "ada@example.test", selectAll: true });
+		const { driver } = screenTesting.fieldFixture({ value: "ada@example.test", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("ada@example.test");
 		expect(driver.callsOf("elementAtPoint")).toHaveLength(FOCUS_CHECK + STALE_RISK_READS);
@@ -540,7 +554,7 @@ describe("fill", () => {
 	});
 
 	test("reads the field with a hit-test, not a snapshot, once the field is typed into", async () => {
-		const { driver } = fieldFixture();
+		const { driver } = screenTesting.fieldFixture();
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hi");
 		expect(driver.callsOf("snapshot")).toHaveLength(1);
@@ -551,7 +565,7 @@ describe("fill", () => {
 	});
 
 	test("iOS types the whole string in one request, with no client pacing", async () => {
-		const { driver } = fieldFixture();
+		const { driver } = screenTesting.fieldFixture();
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("field").fill("abc");
 		expect(driver.callsOf("typeText").map((call) => call.text)).toEqual(["abc"]);
@@ -559,7 +573,7 @@ describe("fill", () => {
 	});
 
 	test("secure fields are not verified", async () => {
-		const { driver } = fieldFixture({ secure: true, dropTypes: 5 });
+		const { driver } = screenTesting.fieldFixture({ secure: true, dropTypes: 5 });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("hunter2");
 		expect(typed(driver)).toBe("hunter2");
@@ -567,7 +581,7 @@ describe("fill", () => {
 	});
 
 	test("an empty string only clears", async () => {
-		const { driver, state } = fieldFixture({ value: "ab" });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ab" });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").fill("");
 		expect(driver.callsOf("typeText")).toEqual([]);
@@ -575,19 +589,21 @@ describe("fill", () => {
 	});
 
 	test("the typed text never appears in the step label", async () => {
-		const { driver } = fieldFixture();
+		const { driver } = screenTesting.fieldFixture();
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("field").fill("s3cret");
 		expect(host.steps.join("\n")).not.toContain("s3cret");
 	});
 
 	test("a field that is disabled is NOT_ACTIONABLE", async () => {
-		const { screen } = setup(staticDriver([driverFixtures.el("textfield", { id: "field", enabled: false })]));
+		const { screen } = setup(
+			screenTesting.staticDriver([driverFixtures.el("textfield", { id: "field", enabled: false })])
+		);
 		expect((await failure(screen.getByTestId("field").fill("x"))).code).toBe("NOT_ACTIONABLE");
 	});
 
 	test("the driver refusing the text is ACTION_FAILED", async () => {
-		const { driver } = fieldFixture();
+		const { driver } = screenTesting.fieldFixture();
 		const refusing = new FakeDriver({
 			screens: () => driver.screen,
 			onCall: (call) =>
@@ -603,7 +619,7 @@ describe("fill", () => {
 
 describe("type, clear and press", () => {
 	test("type focuses first when the field is not focused", async () => {
-		const { driver, state } = fieldFixture({ value: "ab" });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ab" });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").type("c");
 		expect(
@@ -613,7 +629,7 @@ describe("type, clear and press", () => {
 	});
 
 	test("type does not tap a focused field", async () => {
-		const { driver } = fieldFixture({ focused: true });
+		const { driver } = screenTesting.fieldFixture({ focused: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").type("x");
 		expect(driver.callsOf("tap")).toEqual([]);
@@ -621,7 +637,7 @@ describe("type, clear and press", () => {
 	});
 
 	test("clear empties the field", async () => {
-		const { driver, state } = fieldFixture({ value: "ab" });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ab" });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").clear();
 		expect(state.value).toBe("");
@@ -629,7 +645,7 @@ describe("type, clear and press", () => {
 	});
 
 	test("clear selects all and presses one Backspace when the driver can", async () => {
-		const { driver, state } = fieldFixture({ value: "abcdef", selectAll: true });
+		const { driver, state } = screenTesting.fieldFixture({ value: "abcdef", selectAll: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").clear();
 		expect(state.value).toBe("");
@@ -638,7 +654,7 @@ describe("type, clear and press", () => {
 	});
 
 	test("clear on a field that refuses select-all is run again with counted Backspaces", async () => {
-		const { driver, state } = fieldFixture({ value: "ab", selectAllRefused: true });
+		const { driver, state } = screenTesting.fieldFixture({ value: "ab", selectAllRefused: true });
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").clear();
 		expect(state.value).toBe("");
@@ -647,17 +663,17 @@ describe("type, clear and press", () => {
 	});
 
 	test("clear that leaves text behind is run once more, then fails with what the field holds", async () => {
-		const retried = fieldFixture({ value: "ab", dropKeys: 3 });
+		const retried = screenTesting.fieldFixture({ value: "ab", dropKeys: 3 });
 		await setup(retried.driver).screen.getByTestId("field").clear();
 		expect(retried.state.value).toBe("");
-		const stuck = fieldFixture({ value: "ab", dropKeys: 100 });
+		const stuck = screenTesting.fieldFixture({ value: "ab", dropKeys: 100 });
 		const error = await failure(setup(stuck.driver).screen.getByTestId("field").clear());
 		expect(error.code).toBe("ACTION_FAILED");
 		expect(error.message).toContain('clear did not empty the field: it holds "ab"');
 	});
 
 	test("type sends the whole string unpaced and does not verify", async () => {
-		const { driver, state } = fieldFixture({ focused: true });
+		const { driver, state } = screenTesting.fieldFixture({ focused: true });
 		const { host, screen } = setup(driver);
 		await screen.getByTestId("field").type("xy");
 		expect(state.value).toBe("xy");
@@ -666,7 +682,7 @@ describe("type, clear and press", () => {
 	});
 
 	test("press sends one key, with modifiers, after focusing (a field that took focus is not tapped again)", async () => {
-		const { driver } = fieldFixture();
+		const { driver } = screenTesting.fieldFixture();
 		const { screen } = setup(driver);
 		await screen.getByTestId("field").press("Enter");
 		await screen.getByTestId("field").press("Tab", { modifiers: ["shift"] });
@@ -681,7 +697,9 @@ describe("type, clear and press", () => {
 describe("swipe and scrollTo", () => {
 	test("swipes within the element in the direction the content scrolls", async () => {
 		const { driver, screen } = setup(
-			staticDriver([driverFixtures.el("list", { id: "feed", frame: { x: 0, y: 100, width: 390, height: 400 } })])
+			screenTesting.staticDriver([
+				driverFixtures.el("list", { id: "feed", frame: { x: 0, y: 100, width: 390, height: 400 } }),
+			])
 		);
 		await screen.getByTestId("feed").swipe({ direction: "down" });
 		expect(driver.callsOf("swipe")).toEqual([
@@ -745,7 +763,7 @@ describe("reads", () => {
 
 	test("isVisible / isHidden: absent is hidden, hidden flag is not visible, several is ambiguous", async () => {
 		const { screen } = setup(
-			staticDriver([
+			screenTesting.staticDriver([
 				driverFixtures.el("button", { id: "a" }),
 				driverFixtures.el("button", { id: "h", hidden: true }),
 				driverFixtures.el("text", { label: "x" }),
@@ -808,7 +826,7 @@ describe("waitFor", () => {
 	});
 
 	test("hidden accepts absent or hidden", async () => {
-		const { screen } = setup(staticDriver([driverFixtures.el("button", { id: "h", hidden: true })]));
+		const { screen } = setup(screenTesting.staticDriver([driverFixtures.el("button", { id: "h", hidden: true })]));
 		await screen.getByTestId("h").waitFor({ state: "hidden" });
 		await screen.getByTestId("nope").waitFor({ state: "hidden" });
 	});
@@ -889,7 +907,9 @@ describe("refinement and scoping", () => {
 
 describe("pinch and rotate", () => {
 	const feed = () =>
-		staticDriver([driverFixtures.el("other", { id: "canvas", frame: { x: 0, y: 100, width: 390, height: 400 } })]);
+		screenTesting.staticDriver([
+			driverFixtures.el("other", { id: "canvas", frame: { x: 0, y: 100, width: 390, height: 400 } }),
+		]);
 
 	test("pinch is centred on the frame with the computed radius and default duration", async () => {
 		const { driver, host, screen } = setup(feed());
@@ -918,7 +938,9 @@ describe("pinch and rotate", () => {
 
 	test("the off-screen part of the frame is clipped", async () => {
 		const { driver, screen } = setup(
-			staticDriver([driverFixtures.el("other", { id: "canvas", frame: { x: 0, y: 644, width: 390, height: 400 } })])
+			screenTesting.staticDriver([
+				driverFixtures.el("other", { id: "canvas", frame: { x: 0, y: 644, width: 390, height: 400 } }),
+			])
 		);
 		await screen.getByTestId("canvas").pinch(2);
 		expect(driver.callsOf("pinch")[0]?.center).toEqual({ x: 195, y: 744 });

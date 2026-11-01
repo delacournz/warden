@@ -1,6 +1,6 @@
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { formatSelector } from "@delacour/warden-screen/selector";
+import { selectorEngine } from "@delacour/warden-screen/selector";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { SnapshotDiff } from "./diff";
@@ -131,7 +131,7 @@ export async function pointAt(
 export function recordTarget(target: Target, resolved: ResolvedTarget): RecordTarget {
 	const where: RecordTarget = {
 		...(resolved.ref !== undefined ? { ref: resolved.ref } : {}),
-		...(target.kind === "selector" ? { selector: formatSelector(target.selector) } : {}),
+		...(target.kind === "selector" ? { selector: selectorEngine.formatSelector(target.selector) } : {}),
 		point: resolved.point,
 	};
 	return resolved.element && resolved.snapshot

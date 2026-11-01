@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import type { Device } from "@delacour/warden-e2e";
-import { createScreen } from "@delacour/warden-screen/screen";
-import { staticDriver, testHost } from "@delacour/warden-screen/testing/screen";
+import { screenFactory } from "@delacour/warden-screen/screen";
+import { screenTesting } from "@delacour/warden-screen/testing/screen";
 import { ids } from "./ids";
 import { expectTodosAfterSignIn, launch, nextStep, openDeepLink, SPEC_OPTIONS } from "./steps";
 
@@ -24,7 +24,7 @@ function welcome(title: string) {
 }
 
 /** A welcome screen whose title only changes on the `landingTap`-th press of Next (earlier presses are dropped). */
-function setup(landingTap: number): { driver: FakeDriver; screen: ReturnType<typeof createScreen> } {
+function setup(landingTap: number): { driver: FakeDriver; screen: ReturnType<typeof screenFactory.createScreen> } {
 	let title = "Welcome";
 	let taps = 0;
 	const driver = new FakeDriver({
@@ -37,7 +37,7 @@ function setup(landingTap: number): { driver: FakeDriver; screen: ReturnType<typ
 			return undefined;
 		},
 	});
-	return { driver, screen: createScreen(testHost(driver, { cache: true })) };
+	return { driver, screen: screenFactory.createScreen(screenTesting.testHost(driver, { cache: true })) };
 }
 
 describe("SPEC_OPTIONS", () => {
@@ -49,14 +49,16 @@ describe("SPEC_OPTIONS", () => {
 describe("launch", () => {
 	test("opens the app and waits for it to be in front and still, then for the welcome screen", async () => {
 		const opened: unknown[] = [];
-		const driver = staticDriver([driverFixtures.el("other", { id: ids.welcome.screen })]);
-		const screen = createScreen(testHost(driver));
+		const driver = screenTesting.staticDriver([driverFixtures.el("other", { id: ids.welcome.screen })]);
+		const screen = screenFactory.createScreen(screenTesting.testHost(driver));
 		await launch({ open: async (options) => void opened.push(options) }, screen);
 		expect(opened).toEqual([{ wait: "quiet" }]);
 	});
 
 	test("fails when the welcome screen never shows", async () => {
-		const screen = createScreen(testHost(staticDriver([]), { actionTimeoutMs: 100, assertionTimeoutMs: 100 }));
+		const screen = screenFactory.createScreen(
+			screenTesting.testHost(screenTesting.staticDriver([]), { actionTimeoutMs: 100, assertionTimeoutMs: 100 })
+		);
 		await expect(launch({ open: async () => undefined }, screen)).rejects.toThrow();
 	});
 });
@@ -89,7 +91,7 @@ describe("nextStep", () => {
 				return undefined;
 			},
 		});
-		const screen = createScreen(testHost(driver, { cache: true }));
+		const screen = screenFactory.createScreen(screenTesting.testHost(driver, { cache: true }));
 		await expect(nextStep(screen, "Plan", OPTIONS)).rejects.toThrow();
 		expect(taps).toBe(3);
 	});
@@ -104,18 +106,20 @@ describe("expectTodosAfterSignIn", () => {
 					? driverFixtures.snapshotOf([], { modal: { pid: 7 } })
 					: driverFixtures.snapshotOf([driverFixtures.el("other", { id: ids.todos.screen })]),
 		});
-		const host = testHost(driver, { cache: true });
+		const host = screenTesting.testHost(driver, { cache: true });
 		const answered: number[] = [];
 		host.answerSystemAlert = async () => {
 			answered.push(1);
 			sheetUp = false;
 			return true;
 		};
-		return { screen: createScreen(host), answered };
+		return { screen: screenFactory.createScreen(host), answered };
 	}
 
 	test("returns once the todos screen shows", async () => {
-		const screen = createScreen(testHost(staticDriver([driverFixtures.el("other", { id: ids.todos.screen })])));
+		const screen = screenFactory.createScreen(
+			screenTesting.testHost(screenTesting.staticDriver([driverFixtures.el("other", { id: ids.todos.screen })]))
+		);
 		await expectTodosAfterSignIn(screen);
 	});
 
@@ -126,7 +130,7 @@ describe("expectTodosAfterSignIn", () => {
 	});
 
 	test("fails when the todos screen never shows", async () => {
-		const screen = createScreen(testHost(staticDriver([])));
+		const screen = screenFactory.createScreen(screenTesting.testHost(screenTesting.staticDriver([])));
 		await expect(expectTodosAfterSignIn(screen)).rejects.toThrow();
 	});
 });
@@ -145,7 +149,7 @@ describe("openDeepLink", () => {
 				if (opens.length >= landingOpen) shown = true;
 			},
 		};
-		return { device, opens, screen: createScreen(testHost(driver)) };
+		return { device, opens, screen: screenFactory.createScreen(screenTesting.testHost(driver)) };
 	}
 
 	test("one link is enough when the screen shows", async () => {

@@ -64,34 +64,38 @@ export type PollOptions = {
 	sleep?: Clock["sleep"];
 };
 
-/**
- * Runs `step` until it is done, `timeoutMs` pass, or `signal` aborts. Always tries at least once (unless already
- * aborted); never sleeps past the deadline, so the last attempt is at the deadline. The gap follows `intervalMs`, else
- * `schedule` measured on the clock (a slow step reaches the slow gap sooner). Errors thrown by `step` end the poll.
- */
-export async function poll<T, S = undefined>(
-	step: (attempt: number) => Promise<PollStep<T, S>> | PollStep<T, S>,
-	options: PollOptions
-): Promise<PollResult<T, S>> {
-	const now = options.now ?? systemClock.now;
-	const sleep = options.sleep ?? systemClock.sleep;
-	const schedule = options.schedule ?? DEFAULT_POLL_SCHEDULE;
-	const startedAt = now();
-	const deadline = startedAt + options.timeoutMs;
-	const gap = (at: number): number =>
-		options.intervalMs ?? (at - startedAt < schedule.fastForMs ? schedule.fastMs : schedule.slowMs);
-	let attempts = 0;
-	let last: S | undefined;
-	for (;;) {
-		if (options.signal?.aborted) return { status: "aborted", attempts };
-		attempts += 1;
-		const outcome = await step(attempts);
-		if (outcome.done) return { status: "done", value: outcome.value, attempts };
-		last = outcome.state;
-		const at = now();
-		const remaining = deadline - at;
-		if (remaining <= 0) return { status: "timeout", last, attempts };
-		const wanted = Math.min(gap(at), outcome.maxWaitMs === undefined ? Number.POSITIVE_INFINITY : outcome.maxWaitMs);
-		await sleep(Math.max(0, Math.min(wanted, remaining)), options.signal);
+export class Poller {
+	/**
+	 * Runs `step` until it is done, `timeoutMs` pass, or `signal` aborts. Always tries at least once (unless already
+	 * aborted); never sleeps past the deadline, so the last attempt is at the deadline. The gap follows `intervalMs`, else
+	 * `schedule` measured on the clock (a slow step reaches the slow gap sooner). Errors thrown by `step` end the poll.
+	 */
+	async poll<T, S = undefined>(
+		step: (attempt: number) => Promise<PollStep<T, S>> | PollStep<T, S>,
+		options: PollOptions
+	): Promise<PollResult<T, S>> {
+		const now = options.now ?? systemClock.now;
+		const sleep = options.sleep ?? systemClock.sleep;
+		const schedule = options.schedule ?? DEFAULT_POLL_SCHEDULE;
+		const startedAt = now();
+		const deadline = startedAt + options.timeoutMs;
+		const gap = (at: number): number =>
+			options.intervalMs ?? (at - startedAt < schedule.fastForMs ? schedule.fastMs : schedule.slowMs);
+		let attempts = 0;
+		let last: S | undefined;
+		for (;;) {
+			if (options.signal?.aborted) return { status: "aborted", attempts };
+			attempts += 1;
+			const outcome = await step(attempts);
+			if (outcome.done) return { status: "done", value: outcome.value, attempts };
+			last = outcome.state;
+			const at = now();
+			const remaining = deadline - at;
+			if (remaining <= 0) return { status: "timeout", last, attempts };
+			const wanted = Math.min(gap(at), outcome.maxWaitMs === undefined ? Number.POSITIVE_INFINITY : outcome.maxWaitMs);
+			await sleep(Math.max(0, Math.min(wanted, remaining)), options.signal);
+		}
 	}
 }
+
+export const poller = new Poller();

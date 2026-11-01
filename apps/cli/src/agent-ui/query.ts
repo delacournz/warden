@@ -1,4 +1,4 @@
-import { parseSelector } from "@delacour/warden-screen/selector";
+import { selectorEngine } from "@delacour/warden-screen/selector";
 import {
 	DEFAULT_STABLE_MS,
 	GET_PROPS,
@@ -43,7 +43,7 @@ function parseWait(words: readonly string[]): Result<WaitParams, UiError> {
 	const mode = first === "absent" ? "absent" : "visible";
 	const source = (first === "absent" ? rest : words).join(" ");
 	if (source.trim() === "") return usage("wait needs a selector");
-	const selector = parseSelector(source);
+	const selector = selectorEngine.parseSelector(source);
 	if (!selector.success) return usage(`bad selector: ${selector.error}`);
 	return resultFactory.ok({ mode, selector: source });
 }
@@ -67,7 +67,7 @@ function splitLast(words: readonly string[]): { selector: string; last: string |
 
 function parseQuerySelector(source: string, usage: string): Result<string, UiError> {
 	if (source.trim() === "") return { success: false, error: uiError("usage", usage) };
-	const parsed = parseSelector(source);
+	const parsed = selectorEngine.parseSelector(source);
 	if (!parsed.success) return { success: false, error: uiError("usage", `bad selector: ${parsed.error}`) };
 	return resultFactory.ok(source);
 }

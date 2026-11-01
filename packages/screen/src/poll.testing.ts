@@ -1,27 +1,31 @@
 import type { Clock } from "./poll";
 
-export type FakeClock = Clock & {
-	/** ms since creation; advanced only by `sleep` and `advance` */
-	elapsed(): number;
+/**
+ * A clock that never waits: `sleep` just moves time forward, so polling tests run instantly and deterministically.
+ * `now` and `sleep` are arrow properties so they can be passed on detached, as `poll` does.
+ */
+export class FakeClock implements Clock {
 	/** every requested sleep, in order */
-	readonly sleeps: number[];
-	advance(ms: number): void;
-};
+	readonly sleeps: number[] = [];
+	private time: number;
 
-/** A clock that never waits: `sleep` just moves time forward, so polling tests run instantly and deterministically. */
-export function fakeClock(start = 0): FakeClock {
-	let time = start;
-	const sleeps: number[] = [];
-	return {
-		now: () => time,
-		async sleep(ms) {
-			sleeps.push(ms);
-			time += ms;
-		},
-		elapsed: () => time - start,
-		sleeps,
-		advance(ms) {
-			time += ms;
-		},
+	constructor(private readonly start = 0) {
+		this.time = start;
+	}
+
+	readonly now = (): number => this.time;
+
+	readonly sleep = async (ms: number): Promise<void> => {
+		this.sleeps.push(ms);
+		this.time += ms;
 	};
+
+	/** ms since creation; advanced only by `sleep` and `advance` */
+	elapsed(): number {
+		return this.time - this.start;
+	}
+
+	advance(ms: number): void {
+		this.time += ms;
+	}
 }
