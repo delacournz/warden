@@ -23,7 +23,7 @@ describe("hot commits", () => {
 	});
 
 	test("lists warm and hot commits slowest first with cbrt heat", () => {
-		const hot = hotCommits.hotCommits(file.commits);
+		const hot = hotCommits.find(file.commits);
 		expect(hot[0]).toMatchObject({ index: 0, durationMs: 140, tier: "hot", heat: 1 });
 		const warm = hot.find((h) => h.durationMs === 38);
 		expect(warm?.heat).toBeCloseTo(Math.cbrt(38 / 140), 5);
@@ -154,7 +154,7 @@ describe("findings", () => {
 
 describe("cpu correlation", () => {
 	test("lists the top self-time functions inside each hot commit's window", () => {
-		const hot0 = hotCommits.hotCommits(file.commits)[0];
+		const hot0 = hotCommits.find(file.commits)[0];
 		if (hot0 === undefined) throw new Error("no hot commit");
 		// 1ms samples: 60 in `layout` then 40 in `sortRows`, all inside commit #0's 140ms window
 		const samples: Array<[number, number]> = [[1, 0]];

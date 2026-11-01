@@ -638,6 +638,42 @@ export class UiDevtoolsCli {
 		return opts.since !== undefined || opts.grep !== undefined || opts.status !== undefined || opts.limit !== undefined;
 	}
 
+	private parseNetworkArgs(
+		ctx: CommandContext,
+		countArg: string | undefined,
+		opts: NetworkOptionValues
+	): Result<{ count: number; id: number | undefined; filter: NetworkFilter; includeParts: string[] }, UiError> {
+		const includeParts = (opts.include ?? "").split(",").filter((part) => part !== "");
+		const unknown = includeParts.filter((part) => !(NETWORK_INCLUDES as readonly string[]).includes(part));
+		if (unknown.length > 0) {
+			return {
+				success: false,
+				error: uiOutput.uiError("usage", `unknown --include ${unknown.join(",")}`, { hint: "headers,body" }),
+			};
+		}
+		const count = countArg === undefined ? resultFactory.ok(DEFAULT_TAIL) : uiArgs.positiveInt("n", countArg);
+		if (!count.success) return count;
+		const id = opts.id === undefined ? resultFactory.ok(undefined) : uiArgs.positiveInt("--id", opts.id);
+		if (!id.success) return id;
+		const filter = this.parseNetworkFilter(ctx, opts, count.data);
+		if (!filter.success) return filter;
+		return resultFactory.ok({ count: count.data, id: id.data, filter: filter.data, includeParts });
+	}
+
+	private networkFromFile(
+		ctx: CommandContext,
+		device: UiDevice,
+		filter: NetworkFilter,
+		include: ReadonlySet<string>
+	): Result<UiSuccess, UiError> {
+		const file = join(cliUiPaths.uiDir(ctx, device.udid), NETWORK_FILE);
+		if (!existsSync(file)) {
+			return { success: false, error: uiOutput.uiError("usage", "no network log yet", { hint: COLLECT_HINT }) };
+		}
+		const matched = this.readJsonl<NetworkEntry>(file).filter((entry) => this.networkMatches(entry, filter));
+		return this.networkPayload(device, { file, total: matched.length, entries: matched.slice(-filter.limit) }, include);
+	}
+
 	/** `warden ui network [n] [--include headers,body] [--id <id>] [--since --grep --status --limit]`: the app's `fetch` calls (broker, else the collector's file). */
 	uiNetwork(
 		ctx: CommandContext,
@@ -646,41 +682,21 @@ export class UiDevtoolsCli {
 		opts: NetworkOptionValues
 	): Promise<number> {
 		return uiRun.runUi(ctx, deps, "network", opts, async (device, env) => {
-			const includeParts = (opts.include ?? "").split(",").filter((part) => part !== "");
-			const unknown = includeParts.filter((part) => !(NETWORK_INCLUDES as readonly string[]).includes(part));
-			if (unknown.length > 0) {
-				return {
-					success: false,
-					error: uiOutput.uiError("usage", `unknown --include ${unknown.join(",")}`, { hint: "headers,body" }),
-				};
-			}
-			const count = countArg === undefined ? resultFactory.ok(DEFAULT_TAIL) : uiArgs.positiveInt("n", countArg);
-			if (!count.success) return count;
-			const id = opts.id === undefined ? resultFactory.ok(undefined) : uiArgs.positiveInt("--id", opts.id);
-			if (!id.success) return id;
-			const filter = this.parseNetworkFilter(ctx, opts, count.data);
-			if (!filter.success) return filter;
+			const parsed = this.parseNetworkArgs(ctx, countArg, opts);
+			if (!parsed.success) return parsed;
+			const { count, id, filter, includeParts } = parsed.data;
 			const include = new Set(includeParts);
-			const via = await this.networkViaBroker(deps, device, ctx, id.data, filter.data, include);
+			const via = await this.networkViaBroker(deps, device, ctx, id, filter, include);
 			if (via !== undefined) return via;
-			if (id.data === undefined && this.hasNetworkFilter(opts)) {
-				const file = join(cliUiPaths.uiDir(ctx, device.udid), NETWORK_FILE);
-				if (!existsSync(file)) {
-					return { success: false, error: uiOutput.uiError("usage", "no network log yet", { hint: COLLECT_HINT }) };
-				}
-				const matched = this.readJsonl<NetworkEntry>(file).filter((entry) => this.networkMatches(entry, filter.data));
-				return this.networkPayload(
-					device,
-					{ file, total: matched.length, entries: matched.slice(-filter.data.limit) },
-					include
-				);
+			if (id === undefined && this.hasNetworkFilter(opts)) {
+				return this.networkFromFile(ctx, device, filter, include);
 			}
 			return uiSession.reply(
 				device,
 				await devtoolsOps.network(uiSession.opSessionFor(ctx, deps, device, env), {
-					count: count.data,
+					count,
 					include: includeParts as NetworkInclude[],
-					...(id.data === undefined ? {} : { id: id.data }),
+					...(id === undefined ? {} : { id }),
 				})
 			);
 		});

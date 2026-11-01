@@ -493,9 +493,16 @@ export class DevCommand extends CliCommand {
 	): AsyncResult<Session> {
 		const held = this.heldDevice(ctx, owner, platform, opts);
 		if (!held.success) return held;
-		// the ui shows what was installed; claimAll runs the install, so its result is read off the way in
+		const tracker = this.installTracker(ui, deps);
+		if (held.data === undefined) {
+			return this.openClaimed(ctx, ui, deps, owner, platform, opts, app, early, tracker);
+		}
+		return this.openHeld(ctx, ui, deps, owner, platform, held.data, opts, app, early, tracker);
+	}
+
+	/** The ui shows what was installed; claimAll runs the install, so its result is read off the way in. */
+	private installTracker(ui: DevUi, deps: DevDeps): { noteInstall: RunEnsureApp; installed: () => Session["app"] } {
 		let installedApp: Session["app"];
-		const installed = () => installedApp;
 		const noteInstall: RunEnsureApp = async (...args) => {
 			const appTask = ui.task("app", "dev build");
 			args[4] = this.withBuildOutput(ui, args[4], appTask);
@@ -506,73 +513,102 @@ export class DevCommand extends CliCommand {
 			} else appTask.fail(result.error.message);
 			return result;
 		};
-		if (held.data === undefined) {
-			// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
-			// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
-			const flags = claimFlagsHelpers.parseClaimFlags(
-				platform,
-				{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
-				undefined,
-				undefined,
-				PRIORITY.high
-			);
-			if (!flags.success) return flags;
-			if (flags.data.request.count !== 1) return resultFactory.err("warden dev runs on one device (drop --count)");
-			let showing: Promise<void> | undefined;
-			const session = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(ctx), {
-				...deps,
-				ensureApp: noteInstall,
-			}).claimAll(
-				owner,
-				{
-					flags: flags.data,
-					ports: [opts.port],
-					app,
-					onPorts: (leased) => {
-						const first = leased[0]?.port;
-						if (first !== undefined) early.start(first, undefined);
-					},
-					// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
-					// and the person sees the sim come up
-					onLeased: (outcome) => {
-						ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
-						const first = outcome.claimed[0]?.device.id;
-						if (first !== undefined) showing = this.showDevice(ctx, ui, platform, first, opts.headless === true);
-					},
-					aborted: early.aborted,
+		return { noteInstall, installed: () => installedApp };
+	}
+
+	/** No device held: claim one (+ the Metro port) and run the install through `claimAll`. */
+	private async openClaimed(
+		ctx: CommandContext,
+		ui: DevUi,
+		deps: DevDeps,
+		owner: Owner,
+		platform: Platform,
+		opts: DevOpts,
+		app: EnsureOptions,
+		early: EarlyMetro,
+		tracker: { noteInstall: RunEnsureApp; installed: () => Session["app"] }
+	): AsyncResult<Session> {
+		const { noteInstall, installed } = tracker;
+		// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
+		// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
+		const flags = claimFlagsHelpers.parseClaimFlags(
+			platform,
+			{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
+			undefined,
+			undefined,
+			PRIORITY.high
+		);
+		if (!flags.success) return flags;
+		if (flags.data.request.count !== 1) return resultFactory.err("warden dev runs on one device (drop --count)");
+		let showing: Promise<void> | undefined;
+		const session = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(ctx), {
+			...deps,
+			ensureApp: noteInstall,
+		}).claimAll(
+			owner,
+			{
+				flags: flags.data,
+				ports: [opts.port],
+				app,
+				onPorts: (leased) => {
+					const first = leased[0]?.port;
+					if (first !== undefined) early.start(first, undefined);
 				},
-				"dev"
-			);
-			await showing;
-			if (!session.success) return wardenErrors.toText(session);
-			const { outcome, ports, leaseIds } = session.data;
-			// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
-			// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
-			const release = async () => {
-				if (opts.shutdown)
-					await this.shutdownDevices(
-						ctx,
-						owner,
-						outcome.claimed.map((c) => c.lease)
-					);
-				await session.data.release();
-			};
-			const deviceId = outcome.claimed[0]?.device.id;
-			const port = ports[0]?.port;
-			if (deviceId === undefined || port === undefined) {
-				await release();
-				return resultFactory.err("claim returned no device / port");
-			}
-			return resultFactory.ok({
-				deviceId,
-				deviceName: outcome.claimed[0]?.device.name,
-				app: installed(),
-				port,
-				leaseIds,
-				release,
-			});
+				// before the install (minutes): `warden ui` from this session attaches to the device instead of `device_busy`,
+				// and the person sees the sim come up
+				onLeased: (outcome) => {
+					ctx.store().markShared(outcome.claimed.map((c) => c.lease.id));
+					const first = outcome.claimed[0]?.device.id;
+					if (first !== undefined) showing = this.showDevice(ctx, ui, platform, first, opts.headless === true);
+				},
+				aborted: early.aborted,
+			},
+			"dev"
+		);
+		await showing;
+		if (!session.success) return wardenErrors.toText(session);
+		const { outcome, ports, leaseIds } = session.data;
+		// dev's own device goes down with the session (Ctrl-C, a killed terminal, Metro exiting) unless --no-shutdown;
+		// `shutdownReleasedDevices` leaves a sim that was already running when leased alone
+		const release = async () => {
+			if (opts.shutdown)
+				await this.shutdownDevices(
+					ctx,
+					owner,
+					outcome.claimed.map((c) => c.lease)
+				);
+			await session.data.release();
+		};
+		const deviceId = outcome.claimed[0]?.device.id;
+		const port = ports[0]?.port;
+		if (deviceId === undefined || port === undefined) {
+			await release();
+			return resultFactory.err("claim returned no device / port");
 		}
-		const deviceId = held.data;
+		return resultFactory.ok({
+			deviceId,
+			deviceName: outcome.claimed[0]?.device.name,
+			app: installed(),
+			port,
+			leaseIds,
+			release,
+		});
+	}
+
+	/** A device is already held: lease only the Metro port, boot the device if needed, and ensure the app. */
+	private async openHeld(
+		ctx: CommandContext,
+		ui: DevUi,
+		deps: DevDeps,
+		owner: Owner,
+		platform: Platform,
+		deviceId: string,
+		opts: DevOpts,
+		app: EnsureOptions,
+		early: EarlyMetro,
+		tracker: { noteInstall: RunEnsureApp; installed: () => Session["app"] }
+	): AsyncResult<Session> {
+		const { noteInstall, installed } = tracker;
 		const ports = await new RunPortClaimer(leaseHostBuilder.leaseHostFromContext(ctx)).claim(
 			owner,
 			[opts.port],

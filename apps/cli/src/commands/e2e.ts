@@ -492,16 +492,12 @@ export class E2eCommand extends CliCommand {
 			...(affected.base !== undefined ? { base: affected.base } : {}),
 		};
 		if (specs.length === 0 || opts.dryRun) {
-			if (specs.length === 0) output.success(ctx, "warden e2e: no affected specs — nothing to run");
-			const notRun = specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
-			await this.publish(ctx, deps, opts, {
-				...base,
-				isolate: this.runIsolation(suite.config, opts, passed),
-				ok: true,
+			return this.publishNotRun(ctx, deps, opts, {
+				base,
+				specs,
 				headless,
-				specs: notRun,
+				isolate: this.runIsolation(suite.config, opts, passed),
 			});
-			return 0;
 		}
 		const run = await this.preparedRun(
 			ctx,
@@ -543,13 +539,42 @@ export class E2eCommand extends CliCommand {
 		for (const warning of result.warnings) ctx.err(ctx.ui.color.yellow(`warden e2e: ${warning}`));
 		const report = this.buildReport(base, headless, shape.shardOf === undefined ? "spec" : "device", session, result);
 		await this.publish(ctx, deps, opts, report);
+		return this.exitCodeFor(ctx, session, report, result.ok);
+	}
+
+	/** A run with nothing to execute (no affected specs, or `--dry-run`): publish the not-run report, exit 0. */
+	private async publishNotRun(
+		ctx: CommandContext,
+		deps: BatchDeps,
+		opts: E2eOpts,
+		run: {
+			base: Pick<E2eReport, "suite" | "platform" | "base">;
+			specs: readonly SelectedSpec[];
+			headless: boolean;
+			isolate: E2eIsolation;
+		}
+	): Promise<number> {
+		if (run.specs.length === 0) output.success(ctx, "warden e2e: no affected specs — nothing to run");
+		const notRun = run.specs.map((f): SpecVerdict => ({ ...f, verdict: "not-run", attempts: 0 }));
+		await this.publish(ctx, deps, opts, {
+			...run.base,
+			isolate: run.isolate,
+			ok: true,
+			headless: run.headless,
+			specs: notRun,
+		});
+		return 0;
+	}
+
+	/** The process exit code of a finished session; prints the verdict when the specs actually ran. */
+	private exitCodeFor(ctx: CommandContext, session: SessionResult, report: E2eReport, ok: boolean): number {
 		if (session.code === 130) return 130;
 		// stopped before any spec (a phone's runner would not start): the session already said why, with its own exit code
 		if (session.error) return session.code;
 		// no device was claimed: a phone that stayed locked (`device_locked`, already reported) ends the run with exit 2
 		if (session.code === 2) return 2;
 		this.printVerdict(ctx, report);
-		return result.ok ? 0 : 1;
+		return ok ? 0 : 1;
 	}
 
 	/** `e2e-report.json` from the session and its verdicts. */

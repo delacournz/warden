@@ -37,7 +37,7 @@ export class HotCommits {
 	}
 
 	/** Warm and hot commits, slowest first, each with its heat and the components that filled it. */
-	hotCommits(commits: readonly Commit[]): HotCommit[] {
+	find(commits: readonly Commit[]): HotCommit[] {
 		const max = commits.reduce((m, c) => Math.max(m, c.durationMs), 0);
 		const hot: HotCommit[] = [];
 		for (const c of commits) {

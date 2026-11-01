@@ -3,7 +3,7 @@ import { crashFindings } from "./crash-findings";
 
 describe("crashFindings", () => {
 	test("crash and anr become critical findings", () => {
-		const [crash, anr] = crashFindings.crashFindings([
+		const [crash, anr] = crashFindings.find([
 			{
 				kind: "crash",
 				process: "ShopApp",

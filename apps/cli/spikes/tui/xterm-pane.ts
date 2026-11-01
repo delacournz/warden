@@ -1,6 +1,6 @@
 // Spike: draw an @xterm/headless viewport inside a box at an offset.
 import { SerializeAddon } from "@xterm/addon-serialize";
-import { Terminal } from "@xterm/headless";
+import { type IBufferCell, Terminal } from "@xterm/headless";
 
 export const FILLER = "·";
 
@@ -22,6 +22,51 @@ export function feed(term: Terminal, data: Uint8Array | string): Promise<void> {
 
 type Line = NonNullable<ReturnType<Terminal["buffer"]["active"]["getLine"]>>;
 
+type Cell = IBufferCell;
+
+function rgb(n: number): string {
+	return `${(n >> 16) & 255};${(n >> 8) & 255};${n & 255}`;
+}
+
+function attrCodes(c: Cell): string[] {
+	const flags: [boolean, string][] = [
+		[c.isBold() !== 0, "1"],
+		[c.isDim() !== 0, "2"],
+		[c.isItalic() !== 0, "3"],
+		[c.isUnderline() !== 0, "4"],
+		[c.isBlink() !== 0, "5"],
+		[c.isInverse() !== 0, "7"],
+		[c.isInvisible() !== 0, "8"],
+		[c.isStrikethrough() !== 0, "9"],
+		[c.isOverline() !== 0, "53"],
+	];
+	return flags.filter(([on]) => on).map(([, code]) => code);
+}
+
+/** Foreground (base 30/90, ext 38) or background (base 40/100, ext 48) colour code, if any. */
+function colourCode(
+	rgbMode: boolean,
+	paletteMode: boolean,
+	mode: number,
+	value: number,
+	lowBase: number,
+	ext: number
+): string | undefined {
+	if (rgbMode) return `${ext};2;${rgb(value)}`;
+	if (!paletteMode) return undefined;
+	if (mode !== 16777216) return `${ext};5;${value}`;
+	return String(value < 8 ? lowBase + value : lowBase + 52 + value);
+}
+
+function cellSgr(c: Cell): string[] {
+	const sgr = attrCodes(c);
+	const fg = colourCode(c.isFgRGB(), c.isFgPalette(), c.getFgColorMode(), c.getFgColor(), 30, 38);
+	const bg = colourCode(c.isBgRGB(), c.isBgPalette(), c.getBgColorMode(), c.getBgColor(), 40, 48);
+	if (fg) sgr.push(fg);
+	if (bg) sgr.push(bg);
+	return sgr;
+}
+
 /** Own row serialiser straight from cell attributes (the addon drops DIM when BOLD turns off). */
 export function serializeRow(line: Line, cols: number): string {
 	let out = "";
@@ -32,32 +77,7 @@ export function serializeRow(line: Line, cols: number): string {
 	for (let x = 0; x < cols; x++) {
 		const c = line.getCell(x, cell);
 		if (!c || c.getWidth() === 0) continue;
-		const sgr: string[] = [];
-		if (c.isBold()) sgr.push("1");
-		if (c.isDim()) sgr.push("2");
-		if (c.isItalic()) sgr.push("3");
-		if (c.isUnderline()) sgr.push("4");
-		if (c.isBlink()) sgr.push("5");
-		if (c.isInverse()) sgr.push("7");
-		if (c.isInvisible()) sgr.push("8");
-		if (c.isStrikethrough()) sgr.push("9");
-		if (c.isOverline()) sgr.push("53");
-		if (c.isFgRGB())
-			sgr.push(`38;2;${(c.getFgColor() >> 16) & 255};${(c.getFgColor() >> 8) & 255};${c.getFgColor() & 255}`);
-		else if (c.isFgPalette())
-			sgr.push(
-				c.getFgColorMode() === 16777216
-					? String(c.getFgColor() < 8 ? 30 + c.getFgColor() : 82 + c.getFgColor())
-					: `38;5;${c.getFgColor()}`
-			);
-		if (c.isBgRGB())
-			sgr.push(`48;2;${(c.getBgColor() >> 16) & 255};${(c.getBgColor() >> 8) & 255};${c.getBgColor() & 255}`);
-		else if (c.isBgPalette())
-			sgr.push(
-				c.getBgColorMode() === 16777216
-					? String(c.getBgColor() < 8 ? 40 + c.getBgColor() : 92 + c.getBgColor())
-					: `48;5;${c.getBgColor()}`
-			);
+		const sgr = cellSgr(c);
 		const next = sgr.length ? `\x1b[0;${sgr.join(";")}m` : "\x1b[0m";
 		const ch = c.getChars() || " ";
 		if (next !== cur) {

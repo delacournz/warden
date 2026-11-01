@@ -611,7 +611,7 @@ export class PerfOrchestrator {
 			mkdirSync(join(perfPaths.sessionDir(ctx, id), "crashes"), { recursive: true });
 			perfDeviceState.writeFileAtomic(
 				join(perfPaths.sessionDir(ctx, id), CRASH_SUMMARY),
-				`${JSON.stringify({ count: read.crashes.length, lines: read.crashes.map(this.crashLine), findings: crashFindings.crashFindings(read.crashes), notes: read.notes }, null, 2)}\n`
+				`${JSON.stringify({ count: read.crashes.length, lines: read.crashes.map(this.crashLine), findings: crashFindings.find(read.crashes), notes: read.notes }, null, 2)}\n`
 			);
 		} catch (error) {
 			warnings.push(`crashes: ${this.errorMessage(error)}`);

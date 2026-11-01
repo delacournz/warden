@@ -28,7 +28,7 @@ or {
     wcls_in_scope(),
     not wcls_public_wrapper($name),
     $fn <: not within JsFunctionBody(),
-    register_diagnostic(span=$fn, message="Top-level function: move it into a class (docs/plans/wcls-class-refactor.md).", severity="warn")
+    register_diagnostic(span=$fn, message="Top-level function: move it into a class (docs/plans/wcls-class-refactor.md).", severity="error")
   },
   JsVariableDeclarator(id=$name, initializer=$init) as $decl where {
     wcls_in_scope(),
@@ -36,6 +36,6 @@ or {
     $init <: JsInitializerClause(expression=or { JsArrowFunctionExpression(), JsFunctionExpression() }),
     $decl <: not within JsFunctionBody(),
     $decl <: not within JsArrowFunctionExpression(),
-    register_diagnostic(span=$decl, message="Top-level function: move it into a class (docs/plans/wcls-class-refactor.md).", severity="warn")
+    register_diagnostic(span=$decl, message="Top-level function: move it into a class (docs/plans/wcls-class-refactor.md).", severity="error")
   }
 }

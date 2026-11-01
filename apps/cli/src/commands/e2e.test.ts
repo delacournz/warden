@@ -2415,14 +2415,22 @@ describe("warden e2e on physical devices", () => {
 		const SECOND = "192.168.1.20:5555";
 		const ADB_TWO = `List of devices attached\n${PHONE}            device usb:1-1 product:a54xnaeea model:SM_A546E device:a54x transport_id:2\n${SECOND}      device product:husky model:Pixel_8_Pro device:husky transport_id:5\n\n`;
 
+		function twoPhoneReply(cmd: readonly string[]): { exitCode: number; stdout: string; stderr: string } {
+			if (cmd.slice(1).join(" ") === "devices -l") return { exitCode: 0, stdout: ADB_TWO, stderr: "" };
+			if (cmd.at(-1) === PHONE_PROBE_SCRIPT)
+				return { exitCode: 0, stdout: cmd.includes(SECOND) ? "\n\nHW2\nPixel 8 Pro\n35\n" : PHONE_PROPS, stderr: "" };
+			return androidPhoneReply(cmd);
+		}
+
+		function isHostCommand(cmd: readonly string[]): boolean {
+			return cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"));
+		}
+
 		function twoPhones(argv: string[], calls: string[][]): TestContext {
 			const exec: Exec = async (cmd, opts) => {
-				if (cmd[0] === "git" || cmd.some((arg) => arg.endsWith("graph-worker.ts"))) return processExec.run(cmd, opts);
+				if (isHostCommand(cmd)) return processExec.run(cmd, opts);
 				calls.push([...cmd]);
-				if (cmd.slice(1).join(" ") === "devices -l") return { exitCode: 0, stdout: ADB_TWO, stderr: "" };
-				if (cmd.at(-1) === PHONE_PROBE_SCRIPT)
-					return { exitCode: 0, stdout: cmd.includes(SECOND) ? "\n\nHW2\nPixel 8 Pro\n35\n" : PHONE_PROPS, stderr: "" };
-				return androidPhoneReply(cmd);
+				return twoPhoneReply(cmd);
 			};
 			ctx = cliTesting.testContext(argv, { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HEADLESS: "1" };

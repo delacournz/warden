@@ -6,6 +6,7 @@ import { Adb } from "@delacour/warden-providers/android";
 import type { DeviceRowJson } from "@delacour/warden-sdk/contracts/devices";
 import { leaseViews } from "@delacour/warden-sdk/lease-view";
 import { liveness } from "@delacour/warden-store/liveness";
+import type { DeviceRecord } from "@delacour/warden-store/store";
 import { type InventoryDevice, type Lease, leaseModel, type Platform } from "@delacour/warden-store/types";
 import type { ChalkInstance } from "chalk";
 import { CliCommand, type CommandNode } from "../command";
@@ -72,37 +73,49 @@ export class DevicesCommand extends CliCommand {
 			return [];
 		}
 		const records = new Map(store.listDevices(platform).map((r) => [r.id, r]));
-		const rows: DeviceRow[] = inventoryMarker.mark(inventory.data, [...records.values()]).map((d) => {
-			const lease = leases.get(`${platform}:${d.id}`);
-			const record = records.get(d.id);
-			const hint = leaseModel.physicalNotReadyReason(d) ?? this.lockedHint(d);
-			return {
-				platform,
-				kind: d.physical ? ("physical" as const) : ("virtual" as const),
-				name: d.name,
-				id: d.id,
-				state: d.state,
-				...(d.runtime !== undefined ? { runtime: d.runtime } : {}),
-				warden: d.wardenCreated,
-				...(d.golden ? { golden: true as const } : {}),
-				...(record?.quarantinedAt !== undefined
-					? { quarantined: record.quarantineReason !== undefined ? { reason: record.quarantineReason } : {} }
-					: {}),
-				...(record?.slimmedAt !== undefined ? { slimmed: true as const } : {}),
-				...(d.physical ? { physical: true as const, transport: d.physical.transport } : {}),
-				...(hint !== undefined ? { hint } : {}),
-				...(lease ? { lease: this.leaseInfo(lease) } : {}),
-			};
-		});
-		if (platform === "android") {
-			const avds = await new Adb({ exec: ctx.exec, env: ctx.env }).listAvds();
-			if (avds.success)
-				rows.push(
-					...avds.data.map((name): DeviceRow => ({ platform, kind: "virtual", name, state: "avd", warden: false }))
-				);
-			else output.warn(ctx, `android avds: skipped (${avds.error.message})`);
-		}
+		const rows: DeviceRow[] = inventoryMarker
+			.mark(inventory.data, [...records.values()])
+			.map((d) => this.deviceRow(platform, d, records.get(d.id), leases.get(`${platform}:${d.id}`)));
+		if (platform === "android") rows.push(...(await this.avdRows(ctx)));
 		return rows;
+	}
+
+	private deviceRow(
+		platform: Platform,
+		d: InventoryDevice,
+		record: DeviceRecord | undefined,
+		lease: Lease | undefined
+	): DeviceRow {
+		const hint = leaseModel.physicalNotReadyReason(d) ?? this.lockedHint(d);
+		return {
+			platform,
+			kind: d.physical ? ("physical" as const) : ("virtual" as const),
+			name: d.name,
+			id: d.id,
+			state: d.state,
+			...(d.runtime !== undefined ? { runtime: d.runtime } : {}),
+			warden: d.wardenCreated,
+			...(d.golden ? { golden: true as const } : {}),
+			...(record?.quarantinedAt !== undefined
+				? { quarantined: record.quarantineReason !== undefined ? { reason: record.quarantineReason } : {} }
+				: {}),
+			...(record?.slimmedAt !== undefined ? { slimmed: true as const } : {}),
+			...(d.physical ? { physical: true as const, transport: d.physical.transport } : {}),
+			...(hint !== undefined ? { hint } : {}),
+			...(lease ? { lease: this.leaseInfo(lease) } : {}),
+		};
+	}
+
+	/** Defined-but-unbooted Android AVDs, as rows in state `avd`. */
+	private async avdRows(ctx: CommandContext): Promise<DeviceRow[]> {
+		const avds = await new Adb({ exec: ctx.exec, env: ctx.env }).listAvds();
+		if (!avds.success) {
+			output.warn(ctx, `android avds: skipped (${avds.error.message})`);
+			return [];
+		}
+		return avds.data.map(
+			(name): DeviceRow => ({ platform: "android", kind: "virtual", name, state: "avd", warden: false })
+		);
 	}
 
 	private readonly compareRows = (a: DeviceRow, b: DeviceRow): number => {

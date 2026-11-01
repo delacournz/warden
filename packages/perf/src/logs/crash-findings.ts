@@ -38,7 +38,7 @@ export class CrashFindings {
 	}
 
 	/** One critical `crash` / `anr` finding per record. */
-	crashFindings(records: readonly CrashRecord[]): Finding[] {
+	find(records: readonly CrashRecord[]): Finding[] {
 		return records.map((r): Finding => {
 			const where = r.firstAppFrame === undefined ? "" : ` at ${r.firstAppFrame}`;
 			const common = {

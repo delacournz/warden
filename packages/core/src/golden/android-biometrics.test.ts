@@ -47,6 +47,18 @@ describe("wizard screens", () => {
 	});
 });
 
+/** The scripted adb answer for one command line: what the enrollment wizard would show at this point. */
+function reply(line: string, state: { enrolled: boolean; screens: number }) {
+	if (line.endsWith("dumpsys fingerprint")) return out(state.enrolled ? ENROLLED : EMPTY);
+	if (line.includes("emu finger touch")) return out("OK");
+	if (line.endsWith("shell cat /sdcard/warden-ui.xml")) {
+		return out(
+			state.screens === 1 ? screen(node("", "[0,0][1,1]", "id/password_entry")) : screen(node("Next", "[10,10][30,30]"))
+		);
+	}
+	return out("");
+}
+
 describe("enrollFingerprint", () => {
 	type Script = { enrolledAfterTouches: number };
 	function fake(script: Script) {
@@ -56,18 +68,9 @@ describe("enrollFingerprint", () => {
 		const exec: Exec = async (cmd) => {
 			calls.push([...cmd]);
 			const line = cmd.join(" ");
-			if (line.endsWith("dumpsys fingerprint")) return out(touches >= script.enrolledAfterTouches ? ENROLLED : EMPTY);
-			if (line.includes("emu finger touch")) {
-				touches++;
-				return out("OK");
-			}
-			if (line.endsWith("shell cat /sdcard/warden-ui.xml")) {
-				screens++;
-				return out(
-					screens === 1 ? screen(node("", "[0,0][1,1]", "id/password_entry")) : screen(node("Next", "[10,10][30,30]"))
-				);
-			}
-			return out("");
+			if (line.includes("emu finger touch")) touches++;
+			if (line.endsWith("shell cat /sdcard/warden-ui.xml")) screens++;
+			return reply(line, { enrolled: touches >= script.enrolledAfterTouches, screens });
 		};
 		return { exec, calls, touches: () => touches };
 	}

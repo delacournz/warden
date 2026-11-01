@@ -13,7 +13,7 @@ import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { uiConditions } from "./conditions";
-import type { ConditionsDeps } from "./conditions-types";
+import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import type { UiDevice } from "./device";
 import { opErrors, type UiDeps } from "./driver";
 import type { UiError, UiSuccess } from "./output";
@@ -138,14 +138,8 @@ export class UiSettings {
 			(b) => opts.app === undefined || b === opts.app
 		);
 		return uiConditions.withPort<UiSuccess>(ctx, deps, device, async (port) => {
-			for (const bundleId of bundles) {
-				const back: Partial<Record<PermissionName, PermissionState>> = {};
-				for (const g of record.value.grants) if (g.bundleId === bundleId) back[g.permission] = "unset";
-				const done = await port.permissions(back, { bundleId });
-				// an app that does not declare the permission has nothing to reset
-				if (!done.success && done.error.code !== "E_UNSUPPORTED")
-					return { success: false, error: opErrors.driverError(done.error) };
-			}
+			const failed = await this.resetBundles(port, record.value.grants, bundles);
+			if (failed !== undefined) return failed;
 			const rest = record.value.grants.filter((g) => !bundles.includes(g.bundleId));
 			if (rest.length === 0) this.forget(ctx, device, "permission");
 			else {
@@ -157,6 +151,23 @@ export class UiSettings {
 				bundles,
 			});
 		});
+	}
+
+	/** Reset every grant of each bundle to unset; the first real failure, or undefined. */
+	private async resetBundles(
+		port: ConditionsPort,
+		grants: PermissionCondition["grants"],
+		bundles: readonly string[]
+	): Promise<Result<never, UiError> | undefined> {
+		for (const bundleId of bundles) {
+			const back: Partial<Record<PermissionName, PermissionState>> = {};
+			for (const g of grants) if (g.bundleId === bundleId) back[g.permission] = "unset";
+			const done = await port.permissions(back, { bundleId });
+			// an app that does not declare the permission has nothing to reset
+			if (!done.success && done.error.code !== "E_UNSUPPORTED")
+				return { success: false, error: opErrors.driverError(done.error) };
+		}
+		return undefined;
 	}
 
 	/**
@@ -225,22 +236,32 @@ export class UiSettings {
 				)
 			);
 			if (!applied.success) return applied;
-			const { timezone: _drop, previousTimezone: before, ...rest } = record;
-			const previousTimezone = before ?? applied.data.previous;
-			const next: LocaleCondition = resetting
-				? rest
-				: { ...rest, timezone: arg, ...(previousTimezone === undefined ? {} : { previousTimezone }) };
-			const saved = this.saveLocale(ctx, device, next);
+			const saved = this.saveLocale(ctx, device, this.nextTimezone(record, arg, applied.data.previous));
 			if (!saved.success) return saved;
-			const staged = applied.data.appliesOnLaunch === true;
-			return this.success(
-				device,
-				resetting ? "timezone-reset" : "timezone-set",
-				resetting ? "timezone reset" : `timezone ${arg}${staged ? " (next launch)" : ""}`,
-				{ timezone: resetting ? null : arg, staged, previous: applied.data.previous ?? null },
-				staged ? ["staged: a simulator has no device timezone; the app launched next gets it (`open --relaunch`)"] : []
-			);
+			return this.timezoneSuccess(device, resetting ? null : arg, applied.data);
 		});
+	}
+
+	private timezoneSuccess(
+		device: UiDevice,
+		arg: string | null,
+		applied: { previous?: string | undefined; appliesOnLaunch?: boolean | undefined }
+	): Result<UiSuccess, UiError> {
+		const staged = applied.appliesOnLaunch === true;
+		return this.success(
+			device,
+			arg === null ? "timezone-reset" : "timezone-set",
+			arg === null ? "timezone reset" : `timezone ${arg}${staged ? " (next launch)" : ""}`,
+			{ timezone: arg, staged, previous: applied.previous ?? null },
+			staged ? ["staged: a simulator has no device timezone; the app launched next gets it (`open --relaunch`)"] : []
+		);
+	}
+
+	private nextTimezone(record: LocaleCondition, arg: string, previous: string | undefined): LocaleCondition {
+		const { timezone: _drop, previousTimezone: before, ...rest } = record;
+		if (arg === "reset") return rest;
+		const previousTimezone = before ?? previous;
+		return { ...rest, timezone: arg, ...(previousTimezone === undefined ? {} : { previousTimezone }) };
 	}
 
 	/** `warden ui timezone <tz|reset|status>`: Android `cmd alarm set-timezone` (device-wide, live); iOS staged for the next launch. */
@@ -270,22 +291,32 @@ export class UiSettings {
 				await port.locale(resetting ? null : arg, this.appOf(ctx, device, opts.app ?? record.bundleId))
 			);
 			if (!applied.success) return applied;
-			const { locale: _drop, bundleId: _app, ...rest } = record;
-			const bundleId = applied.data.bundleId;
-			const next: LocaleCondition = resetting
-				? rest
-				: { ...rest, locale: arg, ...(bundleId === undefined ? {} : { bundleId }) };
+			const next = this.nextLocale(record, arg, applied.data.bundleId);
 			const saved = this.saveLocale(ctx, device, next);
 			if (!saved.success) return saved;
-			const staged = applied.data.appliesOnLaunch === true;
-			return this.success(
-				device,
-				resetting ? "locale-reset" : "locale-set",
-				resetting ? "locale reset" : `locale ${arg}${staged ? " (next launch)" : ""}`,
-				{ locale: resetting ? null : arg, bundleId: bundleId ?? null, staged },
-				staged ? ["staged: the app launched next gets it (`open --relaunch`)"] : []
-			);
+			return this.localeSuccess(device, resetting ? null : arg, applied.data);
 		});
+	}
+
+	private localeSuccess(
+		device: UiDevice,
+		arg: string | null,
+		applied: { bundleId?: string | undefined; appliesOnLaunch?: boolean | undefined }
+	): Result<UiSuccess, UiError> {
+		const staged = applied.appliesOnLaunch === true;
+		return this.success(
+			device,
+			arg === null ? "locale-reset" : "locale-set",
+			arg === null ? "locale reset" : `locale ${arg}${staged ? " (next launch)" : ""}`,
+			{ locale: arg, bundleId: applied.bundleId ?? null, staged },
+			staged ? ["staged: the app launched next gets it (`open --relaunch`)"] : []
+		);
+	}
+
+	private nextLocale(record: LocaleCondition, arg: string, bundleId: string | undefined): LocaleCondition {
+		const { locale: _drop, bundleId: _app, ...rest } = record;
+		if (arg === "reset") return rest;
+		return { ...rest, locale: arg, ...(bundleId === undefined ? {} : { bundleId }) };
 	}
 
 	/** `warden ui locale <tag|reset|status> [--app <bundle>]`: Android 13+ per-app locale (live); iOS staged for the next launch. */

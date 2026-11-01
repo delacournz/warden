@@ -147,9 +147,31 @@ function fakeAndroidHost(opts: HostOptions = {}) {
 		return out("OK: killing emulator, bye bye\r\n");
 	}
 
-	function deviceCommand(serial: string, instance: Instance, rest: string): ExecResult | undefined {
+	/** The fingerprint sensor: touches count towards an enrolled print. */
+	function fingerprintCommand(instance: Instance, rest: string): ExecResult | undefined {
+		if (rest === "emu finger touch 1") {
+			instance.touches = (instance.touches ?? 0) + 1;
+			return out("OK\r\n");
+		}
+		if (rest !== "shell dumpsys fingerprint") return undefined;
+		const count = (instance.touches ?? 0) >= 2 && !opts.enrollNeverFinishes ? 1 : 0;
+		return out(`{"service":"Fingerprint Manager","prints":[{"id":0,"count":${count},"accept":0,"reject":0}]}`);
+	}
+
+	/** The keyguard: a wake keyevent unlocks, unless the fake is told it sticks. */
+	function keyguardCommand(instance: Instance, rest: string): ExecResult | undefined {
+		if (rest === "shell dumpsys window") {
+			const showing = !(instance.unlocked === true && opts.keyguardStuck !== true);
+			return out(`isKeyguardShowing=${showing}`);
+		}
+		if (rest.startsWith("shell input keyevent 224")) instance.unlocked = true;
+		return undefined;
+	}
+
+	/** Commands whose answer does not depend on the arguments. */
+	function fixedCommands(serial: string, instance: Instance): Record<string, () => ExecResult> {
 		const hangs = instance.writable && opts.buildNeverBoots === true;
-		const fixed: Record<string, () => ExecResult> = {
+		return {
 			"emu avd name": () => out(`${instance.avd}\r\nOK\r\n`),
 			[`wait-for-device shell ${BOOT_WAIT_SCRIPT}`]: () => (hangs ? fail("error: closed") : out("")),
 			"wait-for-device": () => out(""),
@@ -157,20 +179,14 @@ function fakeAndroidHost(opts: HostOptions = {}) {
 			"shell getprop ro.build.version.sdk": () => out("36\n"),
 			"emu kill": () => kill(serial),
 		};
-		if (rest === "emu finger touch 1") {
-			instance.touches = (instance.touches ?? 0) + 1;
-			return out("OK\r\n");
-		}
-		if (rest === "shell dumpsys fingerprint") {
-			const count = (instance.touches ?? 0) >= 2 && !opts.enrollNeverFinishes ? 1 : 0;
-			return out(`{"service":"Fingerprint Manager","prints":[{"id":0,"count":${count},"accept":0,"reject":0}]}`);
-		}
-		if (rest === "shell dumpsys window")
-			return out(`isKeyguardShowing=${instance.unlocked === true && opts.keyguardStuck !== true ? "false" : "true"}`);
-		if (rest.startsWith("shell input keyevent 224")) instance.unlocked = true;
+	}
+
+	function deviceCommand(serial: string, instance: Instance, rest: string): ExecResult | undefined {
+		const sensor = fingerprintCommand(instance, rest) ?? keyguardCommand(instance, rest);
+		if (sensor !== undefined) return sensor;
 		if (/^shell (locksettings|am|input|uiautomator|cat|svc|settings) /.test(rest)) return out("");
 		const name = /^emu avd snapshot save (\S+)$/.exec(rest)?.[1];
-		return name !== undefined ? save(instance, name) : fixed[rest]?.();
+		return name !== undefined ? save(instance, name) : fixedCommands(serial, instance)[rest]?.();
 	}
 
 	const spawnDetached: SpawnDetached = async (cmd) => {

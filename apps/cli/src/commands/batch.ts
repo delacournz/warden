@@ -474,6 +474,46 @@ type ElasticRun = {
 	settled: () => Promise<unknown>;
 };
 
+/** What `finishRun` needs once the grid has drained. */
+type FinishInput = {
+	r: RunContext;
+	run: RunSetup;
+	hooks: SessionHooks & { name: string };
+	session: LeaseSession;
+	jobs: { cmd: string[]; total: number; startedAt: number; endedAt: number };
+	outcome: {
+		summary: BatchSummary;
+		screen: { cast?: BatchRun["cast"] };
+		screenshots: Screenshots;
+		logs: Logs;
+		resultFiles: ResultFiles;
+		drains: Map<string, number>;
+		setups: DeviceSetup[] | undefined;
+	};
+};
+
+/** Lines said while a live grid owns the terminal wait here until it ends. */
+class HeldOutput {
+	private readonly held: string[] = [];
+	private holding = false;
+
+	constructor(private readonly ctx: CommandContext) {}
+
+	hold(on: boolean): void {
+		this.holding = on;
+	}
+
+	say(line: string): void {
+		if (this.holding) this.held.push(line);
+		else this.ctx.err(line);
+	}
+
+	flush(): void {
+		this.holding = false;
+		for (const line of this.held.splice(0)) this.ctx.err(line);
+	}
+}
+
 /** A run without elastic workers. */
 const NO_ELASTIC: ElasticRun = { start: () => {}, join: () => undefined, prepared: [], settled: async () => {} };
 
@@ -1988,6 +2028,69 @@ export class BatchCommand extends CliCommand {
 		};
 	}
 
+	/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
+	private async teardownServices(deps: BatchDeps, services: Services): Promise<void> {
+		const { serve, metro, recordings, warm } = services;
+		const helpers: WarmHelper[] = [];
+		services.serve = undefined;
+		services.metro = undefined;
+		services.recordings = [];
+		services.warm = undefined;
+		if (warm) {
+			// stop waiting for warm-ups still under way, close every helper that came up (bar those closed already)
+			warm.abort();
+			helpers.push(...(await warm.settled()).helpers.filter((h) => !services.closed.has(h)));
+		}
+		if (serve) await this.stopServe(deps, serve);
+		await Promise.all(recordings.map((rec) => rec.stop()));
+		await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
+		await metro?.stop();
+	}
+
+	/** Report the batch, shut the devices down unless interrupted, and shape the session result. */
+	private async finishRun(
+		ctx: CommandContext,
+		deps: BatchDeps,
+		args: BatchArgs,
+		fin: FinishInput
+	): Promise<SessionResult> {
+		const { r, run, hooks, session, jobs, outcome } = fin;
+		const { summary, screen, screenshots, logs, resultFiles, drains, setups } = outcome;
+		const { devices } = r;
+		const done: BatchRun = {
+			batchId: run.batchId,
+			batchDir: run.batchDir,
+			logDir: run.logDir,
+			cmd: jobs.cmd,
+			devices,
+			total: jobs.total,
+			startedAt: jobs.startedAt,
+			endedAt: jobs.endedAt,
+			summary,
+			screenshots,
+			drains,
+		};
+		await this.report(ctx, deps, args, screen.cast ? { ...done, cast: screen.cast } : done);
+		if (!r.interrupted()) await this.shutdownDevices(ctx, hooks, session, summary);
+		return {
+			code: this.exitFor(r.interrupted(), summary.ok),
+			batchDir: run.batchDir,
+			summary,
+			screenshots,
+			logs,
+			resultFiles,
+			devices,
+			setups,
+		};
+	}
+
+	/** A phone's jobs reach its runner only through the warm socket: no runner, no specs. */
+	private async phoneGate(run: RunSetup, r: RunContext): ReturnType<typeof warmGateHelpers.warmGate> {
+		if (!run.warm) return undefined;
+		const phones = r.devices.map((d) => d.udid).filter((id) => leaseModel.isPhysicalIosId(id));
+		return phones.length > 0 ? warmGateHelpers.warmGate(phones, run.warm) : undefined;
+	}
+
 	/** Everything after the claim: Metro → serve → recordings → setup → jobs → stop serve / recordings / Metro → batch.json → release. */
 	private async supervise(
 		ctx: CommandContext,
@@ -1999,7 +2102,7 @@ export class BatchCommand extends CliCommand {
 		hooks: SessionHooks & { name: string },
 		run: RunSetup
 	): Promise<SessionResult> {
-		const { batchId, batchDir, logDir, controller } = run;
+		const { batchDir, logDir, controller } = run;
 		const pools = this.buildPools(session, args);
 		const r: RunContext = {
 			name: hooks.name,
@@ -2030,36 +2133,15 @@ export class BatchCommand extends CliCommand {
 		/** elastic workers: the background claims (awaited before the release) and what they prepared */
 		let elastic = NO_ELASTIC;
 		// a live grid owns the terminal: what a pool still preparing (or a warm-up) says waits until it ends
-		const held: string[] = [];
-		let holding = false;
-		const say = (line: string) => (holding ? held.push(line) : ctx.err(line));
-		const flush = () => {
-			holding = false;
-			for (const line of held.splice(0)) ctx.err(line);
-		};
+		const held = new HeldOutput(ctx);
+		const say = (line: string) => held.say(line);
+		const flush = () => held.flush();
 		const pctx: CommandContext = { ...ctx, err: say };
 		const fail = (message: string, extra: Partial<SessionResult> = {}): SessionResult => {
 			output.reportError(ctx, r.name, message);
 			return { code: r.interrupted() ? 130 : 1, ...extra };
 		};
-		/** workers are done: serve first, then the recordings (the contract's stop order), Metro last */
-		const teardown = async () => {
-			const { serve, metro, recordings, warm } = services;
-			const helpers: WarmHelper[] = [];
-			services.serve = undefined;
-			services.metro = undefined;
-			services.recordings = [];
-			services.warm = undefined;
-			if (warm) {
-				// stop waiting for warm-ups still under way, close every helper that came up (bar those closed already)
-				warm.abort();
-				helpers.push(...(await warm.settled()).helpers.filter((h) => !services.closed.has(h)));
-			}
-			if (serve) await this.stopServe(deps, serve);
-			await Promise.all(recordings.map((rec) => rec.stop()));
-			await Promise.all(helpers.map((helper) => helper.close().catch(() => {})));
-			await metro?.stop();
-		};
+		const teardown = () => this.teardownServices(deps, services);
 		try {
 			await deps.mkdir(logDir);
 			const up = await this.startServices(
@@ -2082,8 +2164,7 @@ export class BatchCommand extends CliCommand {
 				return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 			}
 			// a phone's jobs reach its runner only through the warm socket: no runner, no specs
-			const phones = run.warm ? r.devices.map((d) => d.udid).filter((id) => leaseModel.isPhysicalIosId(id)) : [];
-			const stopped = run.warm && phones.length > 0 ? await warmGateHelpers.warmGate(phones, run.warm) : undefined;
+			const stopped = await this.phoneGate(run, r);
 			if (stopped) {
 				const failed = fail(`${stopped.udid}: ${stopped.code}: ${stopped.message}`, { batchDir, error: stopped });
 				return failed.code === 130 ? failed : { ...failed, code: this.warmStopExit(stopped.code) };
@@ -2102,7 +2183,7 @@ export class BatchCommand extends CliCommand {
 			});
 			const total = r.pools.length * jobs.length;
 			const startedAt = ctx.now();
-			holding = args.tui && deps.terminal.isTTY;
+			held.hold(args.tui && deps.terminal.isTTY);
 			if (run.elastic) elastic = this.elasticRun(pctx, deps, args, r, session, run, prepare, startedAt);
 			const { summary, screen } = await this.runGrid(
 				ctx,
@@ -2126,32 +2207,14 @@ export class BatchCommand extends CliCommand {
 			screen.end();
 			flush();
 			await teardown();
-			const { devices } = r;
-			const done: BatchRun = {
-				batchId,
-				batchDir,
-				logDir,
-				cmd,
-				devices,
-				total,
-				startedAt,
-				endedAt,
-				summary,
-				screenshots,
-				drains,
-			};
-			await this.report(ctx, deps, args, screen.cast ? { ...done, cast: screen.cast } : done);
-			if (!r.interrupted()) await this.shutdownDevices(ctx, hooks, session, summary);
-			return {
-				code: this.exitFor(r.interrupted(), summary.ok),
-				batchDir,
-				summary,
-				screenshots,
-				logs,
-				resultFiles,
-				devices,
-				setups,
-			};
+			return await this.finishRun(ctx, deps, args, {
+				r,
+				run,
+				hooks,
+				session,
+				jobs: { cmd, total, startedAt, endedAt },
+				outcome: { summary, screen, screenshots, logs, resultFiles, drains, setups },
+			});
 		} catch (error) {
 			return fail(error instanceof Error ? error.message : String(error));
 		} finally {

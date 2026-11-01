@@ -24,7 +24,7 @@ export class UiCommand extends CliCommand {
 			.withUiOptions(cmd.command("status").description("device, lease, helper and recording state"))
 			.action(async (opts) => {
 				const { uiStatus } = await import("../agent-ui/status");
-				done(await uiStatus.uiStatus(ctx, this.deps, opts));
+				done(await uiStatus.run(ctx, this.deps, opts));
 			});
 		uiOptionsHelper
 			.withUiOptions(
@@ -38,7 +38,7 @@ export class UiCommand extends CliCommand {
 			)
 			.action(async (opts: CloseOptionValues) => {
 				const { uiClose } = await import("../agent-ui/close");
-				done(await uiClose.uiClose(ctx, this.deps, opts));
+				done(await uiClose.run(ctx, this.deps, opts));
 			});
 		uiOptionsHelper
 			.withUiOptions(
@@ -83,7 +83,7 @@ export class UiCommand extends CliCommand {
 			)
 			.action(async (target, opts) => {
 				const { uiOpen } = await import("../agent-ui/open");
-				done(await uiOpen.uiOpen(ctx, this.deps, target, opts));
+				done(await uiOpen.run(ctx, this.deps, target, opts));
 			});
 		for (const name of ["press", "tap"] as const) {
 			uiOptionsHelper
@@ -159,7 +159,7 @@ export class UiCommand extends CliCommand {
 			)
 			.action(async (direction, amount, opts) => {
 				const { uiScroll } = await import("../agent-ui/scroll");
-				done(await uiScroll.uiScroll(ctx, this.deps, direction, amount, opts));
+				done(await uiScroll.run(ctx, this.deps, direction, amount, opts));
 			});
 		uiOptionsHelper
 			.withUiOptions(
@@ -244,7 +244,7 @@ export class UiCommand extends CliCommand {
 			)
 			.action(async (action, path, opts) => {
 				const { uiVideo } = await import("../agent-ui/video");
-				done(await uiVideo.uiVideo(ctx, this.deps, action, path, opts));
+				done(await uiVideo.run(ctx, this.deps, action, path, opts));
 			});
 		const gesture = cmd.command("gesture").description("touch gestures: swipe, longpress, pinch, rotate, raw paths");
 		uiOptionsHelper
@@ -368,7 +368,7 @@ export class UiCommand extends CliCommand {
 			)
 			.action(async (opts) => {
 				const { uiBench } = await import("../agent-ui/bench");
-				done(await uiBench.uiBench(ctx, this.deps, opts));
+				done(await uiBench.run(ctx, this.deps, opts));
 			});
 		uiAuthoringRegister.registerAuthoringCommands(cmd, ctx, done, this.deps);
 		uiDevtoolsRegister.registerDevtoolsCommands(cmd, ctx, done, this.deps);

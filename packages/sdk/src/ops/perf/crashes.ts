@@ -383,7 +383,7 @@ export class PerfCrashes {
 			this.readOptsFor(params, checked.data, crashDir, timeoutMs),
 			crashDeps
 		);
-		const findings: Finding[] = crashFindings.crashFindings(crashes);
+		const findings: Finding[] = crashFindings.find(crashes);
 		const text = crashes.length === 0 ? ctx.ui.color.dim(`no crashes for ${app.data.id}`) : this.renderCrashes(crashes);
 		const warnings = notes.filter((n) => n !== TOMBSTONE_NOTE);
 		return resultFactory.ok({

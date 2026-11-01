@@ -401,7 +401,7 @@ export class UiBench {
 	 * `BENCH_TARGETS`. The cold-start metric stops the device's helper first, so run it on a device nobody else
 	 * is using. It taps the screen centre (HID) and takes snapshots, so the generation counter moves.
 	 */
-	uiBench(ctx: CommandContext, deps: UiDeps, opts: BenchOptionValues): Promise<number> {
+	run(ctx: CommandContext, deps: UiDeps, opts: BenchOptionValues): Promise<number> {
 		return uiRun.runUi(ctx, deps, "bench", opts, async (device, env) => {
 			const runsParsed =
 				opts.runs === undefined ? resultFactory.ok(DEFAULT_BENCH_RUNS) : uiArgs.positiveInt("--runs", opts.runs);

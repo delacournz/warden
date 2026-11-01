@@ -163,7 +163,7 @@ export class DevLogs {
 	 * `warden dev logs`: the Metro output of a running `warden dev` session, classified. Prints the entries that match
 	 * the filters, then with `--follow` the new ones until interrupted. `--json` prints one JSON object per line.
 	 */
-	async devLogs(ctx: CommandContext, opts: DevLogsOpts, deps: DevLogsDeps = defaultDeps): Promise<number> {
+	async run(ctx: CommandContext, opts: DevLogsOpts, deps: DevLogsDeps = defaultDeps): Promise<number> {
 		const json = opts.json === true;
 		const parsed = this.parseLogsOpts(opts, ctx.now());
 		if (!parsed.success) return this.fail(ctx, json, parsed.error);
@@ -198,7 +198,7 @@ export class DevLogs {
 			.option("--kind <kinds>", "comma list of bundle_start,bundle_done,bundle_failed,hmr,error,warn,info")
 			.option("--follow", "keep printing new entries until interrupted")
 			.option("--json", "one JSON object per line")
-			.action(async (opts) => done(await this.devLogs(ctx, opts, deps)));
+			.action(async (opts) => done(await this.run(ctx, opts, deps)));
 	}
 }
 

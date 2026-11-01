@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type BuildDecision, type EasBuild, type EasDeps, EasResolver, eas, type PollPolicy } from "./eas";
 
-const resolveFromEas = (d: EasDeps) => new EasResolver(d).resolveFromEas();
+const resolveFromEas = (d: EasDeps) => new EasResolver(d).resolve();
 
 const build = (over: Partial<EasBuild> & Pick<EasBuild, "id" | "status">): EasBuild => ({
 	createdAt: "2026-09-01T00:00:00.000Z",

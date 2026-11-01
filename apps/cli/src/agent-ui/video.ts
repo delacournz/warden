@@ -6,7 +6,7 @@ import { uiSession } from "./session";
 
 export class UiVideo {
 	/** `warden ui screen video start [path]` / `video stop`: see the `video` op. */
-	uiVideo(
+	run(
 		ctx: CommandContext,
 		deps: UiDeps,
 		what: string,

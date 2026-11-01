@@ -11,7 +11,7 @@ import type { CommandContext } from "../context";
 import { hookClaudePretool } from "../hooks/claude-pretool";
 import { physicalLock } from "../physical-lock";
 import { AMBIGUOUS_HINT, physicalPickHelpers } from "../physical-pick";
-import { type UiDeviceInfo, type UiError, uiOutput } from "./output";
+import { type UiDeviceInfo, type UiError, type UiErrorCode, uiOutput } from "./output";
 import { type PhoneCheck, uiPhone } from "./phone";
 
 /** Label on leases `warden ui --claim` creates. */
@@ -212,6 +212,41 @@ export class UiDeviceResolver {
 		);
 	}
 
+	/** `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile). */
+	private async awaitUnlockedForClaim(
+		ctx: CommandContext,
+		owner: Owner,
+		candidate: Candidate,
+		platform: Platform,
+		claim: boolean
+	): Promise<Result<undefined, UiError>> {
+		if (!(claim && platform === "ios" && leaseModel.isPhysicalIosId(candidate.id))) return resultFactory.ok(undefined);
+		const unlocked = await physicalLock.awaitPhonesUnlocked(
+			ctx,
+			owner,
+			{ platform: "ios", profile: "iphone-17", count: 1, max: 1, physical: { ids: [candidate.id] } },
+			{ noWait: false }
+		);
+		return unlocked.success ? resultFactory.ok(undefined) : this.fail(this.claimError(unlocked.error));
+	}
+
+	private gateError(error: { code: UiErrorCode; message: string }, platform: Platform): UiError {
+		const { code, message } = error;
+		return code === "device_foreign" || code === "device_busy"
+			? uiOutput.uiError(code, message)
+			: uiOutput.uiError(code, message, { hint: `add --claim, or run warden claim ${platform} --json` });
+	}
+
+	private async undoLeftoverConditions(ctx: CommandContext, platform: Platform, id: string): Promise<void> {
+		const { hostDeps } = await import("@delacour/warden-core/host-deps");
+		const report = await hostDeps.undoOrphansWith(
+			ctx.store(),
+			{ exec: ctx.exec, env: ctx.env, now: ctx.now },
+			{ platform, id }
+		);
+		for (const e of report.errors) ctx.err(`warden: leftover condition on ${id} not undone — ${e}`);
+	}
+
 	/** Prove the caller may use `candidate` (heartbeat / refuse / take over with `--claim`). */
 	private async leaseCandidate(
 		ctx: CommandContext,
@@ -227,16 +262,8 @@ export class UiDeviceResolver {
 			platform.data === "android" && !adbParser.isEmulatorSerial(candidate.id)
 				? await uiPhone.checkPhone(ctx, candidate.id)
 				: { kind: "other" };
-		// `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile)
-		if (claim && platform.data === "ios" && leaseModel.isPhysicalIosId(candidate.id)) {
-			const unlocked = await physicalLock.awaitPhonesUnlocked(
-				ctx,
-				owner,
-				{ platform: "ios", profile: "iphone-17", count: 1, max: 1, physical: { ids: [candidate.id] } },
-				{ noWait: false }
-			);
-			if (!unlocked.success) return this.fail(this.claimError(unlocked.error));
-		}
+		const unlocked = await this.awaitUnlockedForClaim(ctx, owner, candidate, platform.data, claim);
+		if (!unlocked.success) return unlocked;
 		const pid = ownerResolver.leasePidFor(owner);
 		const leased = new CallerLeaseGate(ctx.store()).ensure(owner, platform.data, candidate.id, {
 			now: ctx.now(),
@@ -247,26 +274,13 @@ export class UiDeviceResolver {
 			exclusive: check.exclusive,
 			...(phone.kind === "phone" ? { physical: phone.physical } : {}),
 		});
-		if (!leased.success) {
-			const { code, message } = leased.error;
-			return this.fail(
-				code === "device_foreign" || code === "device_busy"
-					? uiOutput.uiError(code, message)
-					: uiOutput.uiError(code, message, { hint: `add --claim, or run warden claim ${platform.data} --json` })
-			);
-		}
+		if (!leased.success) return this.fail(this.gateError(leased.error, platform.data));
 		const { lease, action } = leased.data;
 		// the lease is kept: the user fixes the phone (accept the prompt, replug) and retries
 		const notReady = phone.kind === "phone" ? uiPhone.phoneStateError(candidate.id, phone.adbState) : undefined;
 		if (notReady) return this.fail(notReady);
 		if (claim && (action === "reclaimed" || action === "leased")) {
-			const { hostDeps } = await import("@delacour/warden-core/host-deps");
-			const report = await hostDeps.undoOrphansWith(
-				ctx.store(),
-				{ exec: ctx.exec, env: ctx.env, now: ctx.now },
-				{ platform: platform.data, id: candidate.id }
-			);
-			for (const e of report.errors) ctx.err(`warden: leftover condition on ${candidate.id} not undone — ${e}`);
+			await this.undoLeftoverConditions(ctx, platform.data, candidate.id);
 		}
 		return resultFactory.ok({
 			udid: candidate.id,

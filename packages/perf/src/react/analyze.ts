@@ -44,7 +44,7 @@ export class ReactAnalyzer {
 			...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
 			...(options.locate === undefined ? {} : { locate: (name) => this.whereOf(options.locate?.(name)) }),
 		};
-		const hot = hotCommits.hotCommits(commits);
+		const hot = hotCommits.find(commits);
 		const withCpu: HotCommitWithCpu[] =
 			options.cpu === undefined
 				? hot.map((h) => ({ ...h, cpu: [] }))
@@ -69,7 +69,7 @@ export class ReactAnalyzer {
 					const source = options.locate?.(s.name);
 					return { ...s, commits: seen.length, ...(source === undefined ? {} : { source }) };
 				}),
-			findings: reactFindings.reactFindings(commits, stats, totalMs, findingOptions),
+			findings: reactFindings.find(commits, stats, totalMs, findingOptions),
 			warnings: file.warnings,
 		};
 	}

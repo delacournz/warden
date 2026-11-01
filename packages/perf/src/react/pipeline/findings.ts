@@ -60,7 +60,7 @@ export class ReactFindings {
 	}
 
 	private slowCommits(ctx: Ctx): Finding[] {
-		const hot = hotCommits.hotCommits(ctx.commits);
+		const hot = hotCommits.find(ctx.commits);
 		const picked = [
 			...hot.filter((h) => h.tier === "hot").slice(0, 5),
 			...hot.filter((h) => h.tier === "warm").slice(0, 3),
@@ -346,7 +346,7 @@ export class ReactFindings {
 	}
 
 	/** Every finding the commits support, unranked (the report ranks by severity, then cost). */
-	reactFindings(
+	find(
 		commits: readonly Commit[],
 		stats: readonly ComponentStat[],
 		totalMs: number,

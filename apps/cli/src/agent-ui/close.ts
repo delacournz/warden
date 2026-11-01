@@ -80,7 +80,7 @@ export class UiClose {
 	 * release leaves to its idle timeout; `--app` terminates the app first; `--release` also releases the lease, unless
 	 * the call attached to the session's live `warden dev` lease: that one is `warden dev`'s to release (Ctrl-C it).
 	 */
-	uiClose(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValues): Promise<number> {
+	run(ctx: CommandContext, deps: UiDeps, opts: CloseOptionValues): Promise<number> {
 		return uiRun.runUi(ctx, deps, "close", opts, async (device, env) => {
 			const terminatedResult = await this.terminateApp(ctx, env, device, opts.app);
 			if (!terminatedResult.success) return terminatedResult;

@@ -125,7 +125,7 @@ export class ReactCapture {
 			.sort((a, b) => b.sumSelfMs - a.sumSelfMs)
 			.slice(0, NAMES_TO_LOCATE)
 			.map((s) => s.name);
-		const hot = hotCommits.hotCommits(file.commits).flatMap((h) => h.top.map((t) => t.name));
+		const hot = hotCommits.find(file.commits).flatMap((h) => h.top.map((t) => t.name));
 		return [...new Set([...byCost, ...hot])];
 	}
 

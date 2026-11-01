@@ -18,7 +18,7 @@ export class UiStatus {
 	}
 
 	/** `warden ui status`: the device, the caller's lease on it, the helper and the recording in progress. */
-	uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
+	run(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues): Promise<number> {
 		return uiRun.runUi(ctx, deps, "status", opts, async (device: UiDevice) => {
 			const { lease } = device;
 			const conditions = leaseConditions.active(ctx.store(), lease.id);

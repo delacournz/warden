@@ -159,7 +159,7 @@ export class UiOpen {
 	 * installs that build kind first). A URL is opened through the system; on iOS the "Open in …?" sheet is accepted.
 	 * The app and Metro URL are remembered in `state.json` (`close --app` terminates that app).
 	 */
-	uiOpen(ctx: CommandContext, deps: UiDeps, what: string, opts: OpenOptionValues): Promise<number> {
+	run(ctx: CommandContext, deps: UiDeps, what: string, opts: OpenOptionValues): Promise<number> {
 		return uiRun.runUi(ctx, deps, "open", opts, async (device, env) => {
 			const settle = uiArgs.parseSettle(opts.settle);
 			if (!settle.success) return settle;

@@ -18,7 +18,7 @@ export class UiScroll {
 	 * that way (`down` reveals what is below). `amount` is the share of the region one swipe travels (default 0.5).
 	 * `--until` swipes until the selector is on screen (at most `--max`, default 10) and prints its fresh `@eN`.
 	 */
-	uiScroll(
+	run(
 		ctx: CommandContext,
 		deps: UiDeps,
 		direction: string,

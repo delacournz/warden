@@ -28,7 +28,7 @@ export class DevControl {
 	 * broker on a running `warden dev` (both start off), over the session's control socket. Each feature is one request;
 	 * a refused one is reported and the rest still apply (exit 1).
 	 */
-	async devControl(
+	async run(
 		ctx: CommandContext,
 		verb: DevControlVerb,
 		names: string[],
@@ -112,14 +112,14 @@ export class DevControl {
 				.argument("<features...>", features)
 				.option("--udid <udid>", "the session on this device (default: the only running one)")
 				.option("--json", "print { udid, features } as JSON")
-				.action(async (names, opts) => done(await this.devControl(ctx, verb, names, opts, deps)));
+				.action(async (names, opts) => done(await this.run(ctx, verb, names, opts, deps)));
 		}
 		cmd
 			.command("status")
 			.description("which extras (perf HUD, devtools broker) a running `warden dev` has on")
 			.option("--udid <udid>", "the session on this device (default: the only running one)")
 			.option("--json", "print { udid, features } as JSON")
-			.action(async (opts) => done(await this.devControl(ctx, "status", [], opts, deps)));
+			.action(async (opts) => done(await this.run(ctx, "status", [], opts, deps)));
 	}
 }
 

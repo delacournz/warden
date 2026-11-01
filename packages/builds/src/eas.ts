@@ -183,14 +183,14 @@ export class Eas {
 export const eas = new Eas();
 
 /**
- * Poll EAS for a build of `deps.hash`: instance class over one `EasDeps` bag; `resolveFromEas()` downloads a finished
+ * Poll EAS for a build of `deps.hash`: instance class over one `EasDeps` bag; `resolve()` downloads a finished
  * build, waits for one in flight, or triggers the workflow when configured. Any EAS error is a miss (logged) so a
  * local build can still run.
  */
 export class EasResolver {
 	constructor(private readonly deps: EasDeps) {}
 
-	async resolveFromEas(): Promise<EasOutcome> {
+	async resolve(): Promise<EasOutcome> {
 		const { deps } = this;
 		const policy: PollPolicy = {
 			timeoutMs: deps.timeoutMs ?? EAS_TIMEOUT_MS,

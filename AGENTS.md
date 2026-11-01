@@ -45,6 +45,7 @@ scripts/              # repo scripts (pre-commit biome, signoff/ = local CI gate
 
 - Every package/app `biome.jsonc` uses `"extends": "//"`; rules only live in `packages/biome-config/root.jsonc`.
 - Packages extend `@delacour/warden-tsconfig/tsconfig.base.json` (composite); apps set `composite: false`.
+- Every function in `packages/*/src` and `apps/cli/src` lives in a class: constructor DI for side effects, class + exported singleton for pure helpers, an abstract base only for 2+ siblings. Enforced as an error by `packages/biome-config/plugins/no-loose-function.grit`, with the published function wrappers allowlisted there; see [docs/plans/wcls-class-refactor.md](docs/plans/wcls-class-refactor.md).
 - React code extends `tsconfig.react.json`.
 - Errors returned as `Result` / `AsyncResult` discriminated unions from `@delacour/warden-types/result`.
 - sqlite `BEGIN IMMEDIATE` (`store.transaction`) is the cross-process mutex — no lockfiles.

@@ -396,7 +396,7 @@ export class AppEnsurer {
 				log: input.log,
 				...(input.download ? { download: input.download } : {}),
 				...(input.easPollMs !== undefined ? { pollMs: input.easPollMs } : {}),
-			}).resolveFromEas();
+			}).resolve();
 			if (outcome.kind === "miss") return resultFactory.ok(outcome);
 			const stored = await this.cache(outcome.path, "eas", true);
 			return stored.success ? resultFactory.ok({ kind: "hit", path: stored.data.path }) : stored;

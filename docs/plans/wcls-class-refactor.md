@@ -2,7 +2,9 @@
 
 Plan ID **WCLS**. Every function in `packages/*/src` and `apps/cli/src` lives in a class.
 
-Enforced by `packages/biome-config/plugins/no-loose-function.grit`. Progress is tracked with `bun run check:classes`, a per-package count of top-level functions.
+**Status: done.** `bun run check:classes` reports 0, Biome reports no warnings, and the plugin runs at severity `error` (WCLS-9).
+
+Enforced by `packages/biome-config/plugins/no-loose-function.grit`. `bun run check:classes` prints a per-package count of top-level functions (`--strict` exits 1 while any remain).
 
 ## Scope
 
@@ -29,7 +31,7 @@ Enforced by `packages/biome-config/plugins/no-loose-function.grit`. Progress is 
 3. **Pure helpers** (parsers, formatters, argv builders, mappers) are an instance class plus one exported shared singleton: `export class AndroidParser { … }` and `export const androidParser = new AndroidParser();`. Callers use the singleton; tests may `new` it.
    - No static-only classes, because the recommended `complexity/noStaticOnlyClass` rule stays on.
 4. **Inheritance only where 2 or more siblings share shape**, one level deep unless the code already has more. Use an abstract base with the shared logic plus `protected abstract` hooks. Planned bases:
-   - provider: `DeviceProvider` → ios / android / plugin
+   - provider: `DeviceProvider` → ios / android / plugin (added as `BaseDeviceProvider`)
    - drivers: a shared base over ios, android and physical device
    - builds: `BuildStrategy` → eas / local / repack
    - SDK: `Op<P, R>` with `run(session, params): AsyncResult<OpDone<R>, WardenError>`
@@ -133,3 +135,20 @@ export function createWardenClient(options: WardenClientOptions = {}, seams: Cli
 - `bun run --cwd <pkg> typecheck` passes, and dependents typecheck.
 - `bun test` passes for the package and for the dependents whose call sites changed.
 - `bunx biome check <pkg>` reports 0 warnings.
+
+## Outcome: bases added and skipped
+
+Added (each has 2+ real siblings):
+- `BaseDriver` (`packages/driver`), with `IosEngineBase` (`packages/driver-ios`) under it.
+- `CliCommand` (`apps/cli/src/command.ts`), the base around `defineCommand`.
+- `CaptureTask` (`apps/cli/src/perf/collector.ts`).
+- `BaseDeviceProvider` (`packages/providers`).
+- `ConditionProcessCommand` (`apps/cli/src/commands/condition-processes.ts`).
+
+Planned but skipped:
+- SDK `Op<P, R>`: the ops share only a signature, not logic, so a base adds nothing over the type.
+- SDK perf `Collector`: no shared logic emerged, so a base would only be hooks.
+- builds `BuildStrategy`: no shared logic emerged; eas, local and repack stay separate classes, orchestrated by `ensure.ts`.
+- agent-ui `UiVerb`: the verb adapters differ in options, device handling and output, so a base would be all hooks.
+
+Method names do not repeat their class name (`EasResolver.resolve`, `UiStatus.run`, `DevLogs.run`, `HotCommits.find`).

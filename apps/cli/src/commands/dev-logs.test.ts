@@ -44,14 +44,14 @@ const deps = (overrides: Partial<DevLogsDeps> = {}): DevLogsDeps => ({
 describe("warden dev logs", () => {
 	test("prints each entry's text", async () => {
 		const c = withSession(BUNDLE_OK + BUNDLE_SYNTAX_ERROR);
-		expect(await devLogs.devLogs(c, {}, deps())).toBe(0);
+		expect(await devLogs.run(c, {}, deps())).toBe(0);
 		expect(c.stdout.join("\n")).toContain("Bundled 1432ms");
 		expect(c.stdout.join("\n")).toContain("Unexpected token");
 	});
 
 	test("--json prints one JSON object per line", async () => {
 		const c = withSession(BUNDLE_OK + BUNDLE_SYNTAX_ERROR);
-		expect(await devLogs.devLogs(c, { json: true, kind: "bundle_failed" }, deps())).toBe(0);
+		expect(await devLogs.run(c, { json: true, kind: "bundle_failed" }, deps())).toBe(0);
 		expect(c.stdout).toHaveLength(1);
 		const parsed = JSON.parse(c.stdout[0] ?? "");
 		expect(parsed).toMatchObject({ kind: "bundle_failed", line: 12, col: 20 });
@@ -59,44 +59,44 @@ describe("warden dev logs", () => {
 
 	test("--tail, --grep and --kind narrow", async () => {
 		const c = withSession(BUNDLE_OK + BUNDLE_SYNTAX_ERROR + RUNTIME_LOGS);
-		await devLogs.devLogs(c, { json: true, tail: "1" }, deps());
+		await devLogs.run(c, { json: true, tail: "1" }, deps());
 		expect(c.stdout).toHaveLength(1);
 		c.stdout.length = 0;
-		await devLogs.devLogs(c, { json: true, grep: "fast refresh" }, deps());
+		await devLogs.run(c, { json: true, grep: "fast refresh" }, deps());
 		expect(c.stdout.map((l) => JSON.parse(l).kind)).toEqual(["info"]);
 		c.stdout.length = 0;
-		await devLogs.devLogs(c, { json: true, kind: "error,warn" }, deps());
+		await devLogs.run(c, { json: true, kind: "error,warn" }, deps());
 		expect(c.stdout.map((l) => JSON.parse(l).kind)).toEqual(["warn", "error"]);
 	});
 
 	test("bad flags are reported, exit 1", async () => {
 		const c = withSession(BUNDLE_OK);
-		expect(await devLogs.devLogs(c, { since: "soon" }, deps())).toBe(1);
-		expect(await devLogs.devLogs(c, { tail: "-3" }, deps())).toBe(1);
-		expect(await devLogs.devLogs(c, { kind: "nope" }, deps())).toBe(1);
-		expect(await devLogs.devLogs(c, { grep: "(" }, deps())).toBe(1);
+		expect(await devLogs.run(c, { since: "soon" }, deps())).toBe(1);
+		expect(await devLogs.run(c, { tail: "-3" }, deps())).toBe(1);
+		expect(await devLogs.run(c, { kind: "nope" }, deps())).toBe(1);
+		expect(await devLogs.run(c, { grep: "(" }, deps())).toBe(1);
 		expect(c.stderr.join("\n")).toContain("invalid --since");
 	});
 
 	test("--since skips a log last written before it", async () => {
 		const c = withSession(BUNDLE_OK);
 		c.now = () => Date.now() + 3_600_000;
-		expect(await devLogs.devLogs(c, { since: "5m" }, deps())).toBe(0);
+		expect(await devLogs.run(c, { since: "5m" }, deps())).toBe(0);
 		expect(c.stdout).toEqual([]);
 	});
 
 	test("no dev session: code in --json, message otherwise, exit 1", async () => {
 		const c = cliTesting.testContext([]);
 		ctx = c;
-		expect(await devLogs.devLogs(c, { json: true }, deps())).toBe(1);
+		expect(await devLogs.run(c, { json: true }, deps())).toBe(1);
 		expect(JSON.parse(c.stdout[0] ?? "").error.code).toBe("no_dev_session");
-		expect(await devLogs.devLogs(c, {}, deps())).toBe(1);
+		expect(await devLogs.run(c, {}, deps())).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no running `warden dev` session");
 	});
 
 	test("no metro.log: metro_log_unavailable with the TUI hint", async () => {
 		const c = withSession(undefined);
-		expect(await devLogs.devLogs(c, { json: true }, deps())).toBe(1);
+		expect(await devLogs.run(c, { json: true }, deps())).toBe(1);
 		const { ok, command, error } = JSON.parse(c.stdout[0] ?? "");
 		expect({ ok, command }).toEqual({ ok: false, command: "dev logs" });
 		expect(error.code).toBe("metro_log_unavailable");
@@ -108,7 +108,7 @@ describe("warden dev logs", () => {
 		const path = join(home(c), "dev", "L1", "metro.log");
 		let abort: () => void = () => {};
 		let ticks = 0;
-		const code = await devLogs.devLogs(
+		const code = await devLogs.run(
 			c,
 			{ follow: true, json: true },
 			deps({
