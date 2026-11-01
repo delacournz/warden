@@ -1,15 +1,19 @@
 import { type RefObject, useEffect, useState } from "react";
-import { type StreamError, type StreamStatus, startWhepSession } from "./whep-session.ts";
+import { type SessionHooks, type StreamError, type StreamStatus, startWhepSession } from "./whep-session.ts";
+
+/** Starts a stream into a `<video>`; returns `stop`. */
+export type StartSession = (video: HTMLVideoElement, hooks: SessionHooks) => () => void;
 
 export type VideoSize = { width: number; height: number };
 
 /**
- * Run a WHEP session into `videoRef` while `enabled`, and report status, picture size and the last
- * error. Turning `enabled` off closes the stream.
+ * Run a stream session (WHEP by default) into `videoRef` while `enabled`, and report status,
+ * picture size and the last error. Turning `enabled` off closes the stream.
  */
 export function useWhep(
 	videoRef: RefObject<HTMLVideoElement | null>,
-	enabled: boolean
+	enabled: boolean,
+	start: StartSession = startWhepSession
 ): {
 	status: StreamStatus;
 	size: VideoSize | null;
@@ -29,13 +33,13 @@ export function useWhep(
 		};
 		video.addEventListener("loadedmetadata", onSize);
 		video.addEventListener("resize", onSize);
-		const stop = startWhepSession(video, { onStatus: setStatus, onError: setError });
+		const stop = start(video, { onStatus: setStatus, onError: setError });
 		return () => {
 			video.removeEventListener("loadedmetadata", onSize);
 			video.removeEventListener("resize", onSize);
 			stop();
 		};
-	}, [videoRef, enabled]);
+	}, [videoRef, enabled, start]);
 
 	return { status, size, error };
 }

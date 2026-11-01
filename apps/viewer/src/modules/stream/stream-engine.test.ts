@@ -6,15 +6,11 @@ const WEBVIEW2 =
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 
 describe("streamEngine", () => {
-	test("WebKit (macOS WKWebView) decodes natively", () => {
-		expect(streamEngine(WKWEBVIEW, true)).toBe("native");
+	test("WebKit (macOS WKWebView) receives through Rust's loopback re-publish", () => {
+		expect(streamEngine(WKWEBVIEW)).toBe("native");
 	});
 
 	test("Chromium (Windows WebView2) keeps its own WebRTC receiver", () => {
-		expect(streamEngine(WEBVIEW2, true)).toBe("webview");
-	});
-
-	test("without WebCodecs there is no native path", () => {
-		expect(streamEngine(WKWEBVIEW, false)).toBe("webview");
+		expect(streamEngine(WEBVIEW2)).toBe("webview");
 	});
 });

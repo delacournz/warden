@@ -9,6 +9,7 @@ mod h264;
 mod host;
 mod input_ws;
 mod ipc;
+mod local_publish;
 mod native_stream;
 mod registry;
 mod relay;
@@ -300,6 +301,7 @@ fn run_host() {
             device::screenshot,
             native_stream::native_stream_start,
             native_stream::native_stream_stop,
+            native_stream::local_stream_answer,
             device::stream_ice_servers,
             input_ws::input_connect,
             input_ws::input_send,

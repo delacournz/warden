@@ -32,6 +32,7 @@ pub struct Assembler {
     /// Drop access units until a keyframe: at start, and after loss.
     waiting_for_key: bool,
     started: bool,
+    dropped: u64,
 }
 
 struct Pending {
@@ -122,6 +123,11 @@ impl Assembler {
         }
     }
 
+    /// Access units discarded because a packet was lost or a fragment was left open.
+    pub fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
     /// Feed one RTP packet's sequence number, timestamp and payload.
     pub fn push(&mut self, seq: u16, timestamp: u32, payload: &[u8]) -> Pushed {
         let mut out = Pushed::default();
@@ -159,6 +165,7 @@ impl Assembler {
             return;
         };
         if done.broken || done.in_fragment {
+            self.dropped += 1;
             self.waiting_for_key = true;
             out.request_keyframe = true;
             return;
@@ -283,5 +290,16 @@ mod tests {
         a.push(u16::MAX, 100, &[0x65, 1]);
         let out = a.push(0, 200, &[0x41, 1]);
         assert_eq!(out.units.len(), 1);
+    }
+
+    #[test]
+    fn counts_access_units_dropped_to_loss() {
+        let mut a = Assembler::new();
+        assert_eq!(a.dropped(), 0);
+        a.push(1, 100, &[0x65, 1]);
+        a.push(2, 200, &[0x41, 2]);
+        a.push(4, 300, &[0x41, 3]);
+        a.push(5, 400, &[0x41, 4]);
+        assert_eq!(a.dropped(), 1);
     }
 }

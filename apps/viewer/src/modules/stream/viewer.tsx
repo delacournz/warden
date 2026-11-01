@@ -58,7 +58,7 @@ function message(e: unknown): string {
 export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: boolean }) {
 	const billing = useBilling();
 	const overlay = overlayFor(expired, billing);
-	const { native, demo, videoRef, canvasRef, status: streamStatus, size, error } = useDeviceStream(overlay === null);
+	const { demo, videoRef, canvasRef, status: streamStatus, size, error } = useDeviceStream(overlay === null);
 	const status: StreamStatus = overlay === "expired" ? "expired" : overlay ? "stopped" : streamStatus;
 	const [driving, setDriving] = useState(info.scope === "drive");
 	const [pinned, setPinned] = useState(false);
@@ -170,7 +170,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 					className={`relative h-full overflow-hidden bg-black ${SCREEN_RADIUS[info.platform]} ${ring}`}
 					style={{ ...PICTURE_CONTAINER_STYLE, cursor: canDrive ? "pointer" : "default" }}
 				>
-					{native ? (
+					{demo ? (
 						<canvas
 							ref={canvasRef}
 							className="h-full w-full touch-none select-none object-contain"

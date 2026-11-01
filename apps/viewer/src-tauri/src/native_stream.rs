@@ -1,11 +1,13 @@
 //! The native stream path: WebRTC received in Rust (webrtc-rs), H264 reassembled per RTP
-//! timestamp (`h264.rs`), and each access unit handed to the webview over a Tauri `Channel` for
-//! WebCodecs to decode. WebKit's own receiver never assembles a frame of Revyl's stream (it splits
-//! SPS/PPS into a separate same-timestamp frame), so on WebKit the webview's RTCPeerConnection is
-//! not used at all. Signalling is the same non-trickle WHEP POST as the webview path.
+//! timestamp (`h264.rs`), and each access unit re-published to the webview over a loopback peer
+//! connection (`local_publish.rs`) that plays in a `<video>`. WebKit's own receiver never assembles
+//! a frame of Revyl's stream (it splits SPS/PPS into a separate same-timestamp frame), so WebKit
+//! never talks to Revyl directly. Signalling is the same non-trickle WHEP POST as the webview path;
+//! connection state goes to the webview on a Tauri `Channel`.
 
 use crate::device::{close_resource, fetch_ice_servers, post_offer, ApiError, IceServer};
 use crate::h264::Assembler;
+use crate::local_publish::{self, Outlet};
 use crate::registry::Registry;
 use crate::reorder::{Packet, Reorder};
 use rtc::interceptor::Registry as InterceptorRegistry;
@@ -19,10 +21,11 @@ use rtc::rtp_transceiver::rtp_sender::{
     RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RtpCodecKind,
 };
 use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::ipc::{Channel, Response};
+use tauri::ipc::Channel;
 use tauri::State;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
@@ -36,8 +39,11 @@ type CmdResult<T> = Result<T, ApiError>;
 const GATHER_TIMEOUT: Duration = Duration::from_secs(2);
 const PLI_EVERY: Duration = Duration::from_millis(500);
 const STATS_EVERY: Duration = Duration::from_secs(5);
-/// How long a sequence gap may wait for its packet (a retransmission) before it counts as loss.
+/// The longest a sequence gap may wait for its packet (a retransmission) before it counts as loss;
+/// `reorder.rs` adapts the actual wait below this to the reordering it sees.
 const REORDER_WAIT_MS: u64 = 200;
+/// How often stale gaps are given up on when no packet arrives to trigger it.
+const REORDER_TICK: Duration = Duration::from_millis(10);
 /// The default 64-packet SRTP replay window throws away the late half of a reordered ~400-packet
 /// keyframe as "duplicated", so no keyframe ever completes. Wide enough for a whole keyframe.
 const SRTP_REPLAY_WINDOW: usize = 4096;
@@ -49,29 +55,22 @@ struct Stats {
     units: u64,
     keys: u64,
     plis: u64,
+    bytes: u64,
 }
 
-/// Message kinds on the channel: the first byte of every message.
-pub const KIND_DELTA: u8 = 0;
-pub const KIND_KEY: u8 = 1;
-pub const KIND_STATE: u8 = 2;
-
-/// `[kind u8][rtp timestamp u32 BE][body]`: an Annex-B access unit, or a UTF-8 state name.
-pub fn frame_message(kind: u8, timestamp: u32, body: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(5 + body.len());
-    out.push(kind);
-    out.extend_from_slice(&timestamp.to_be_bytes());
-    out.extend_from_slice(body);
-    out
-}
-
-/// The live native peer connection of each window, by label.
+/// The live native peer connection of each window, and where its access units go, by label.
 #[derive(Default)]
 pub struct NativeStreams {
     peers: Mutex<HashMap<String, Arc<dyn PeerConnection>>>,
+    outlets: Mutex<HashMap<String, Arc<Outlet>>>,
 }
 
 impl NativeStreams {
+    fn outlet(&self, label: &str) -> Arc<Outlet> {
+        let mut outlets = self.outlets.lock().unwrap_or_else(|e| e.into_inner());
+        outlets.entry(label.to_owned()).or_default().clone()
+    }
+
     fn replace(
         &self,
         label: &str,
@@ -102,17 +101,14 @@ fn rtc_error(e: impl std::fmt::Display) -> ApiError {
 }
 
 struct Handler {
-    channel: Channel<Response>,
+    channel: Channel<String>,
     gathered: Sender<()>,
+    outlet: Arc<Outlet>,
 }
 
 impl Handler {
-    fn send(&self, message: Vec<u8>) -> bool {
-        self.channel.send(Response::new(message)).is_ok()
-    }
-
     fn state(&self, name: &str) {
-        self.send(frame_message(KIND_STATE, 0, name.as_bytes()));
+        let _ = self.channel.send(name.to_owned());
     }
 }
 
@@ -133,7 +129,7 @@ impl PeerConnectionEventHandler for Handler {
         let Some(&media_ssrc) = track.ssrcs().await.first() else {
             return;
         };
-        let channel = self.channel.clone();
+        let outlet = self.outlet.clone();
         tauri::async_runtime::spawn(async move {
             let started = Instant::now();
             let mut reorder = Reorder::new(REORDER_WAIT_MS, REORDER_CAPACITY);
@@ -141,34 +137,42 @@ impl PeerConnectionEventHandler for Handler {
             let mut last_pli: Option<Instant> = None;
             let mut stats = Stats::default();
             let mut last_report = Instant::now();
-            while let Some(event) = track.poll().await {
-                let TrackRemoteEvent::OnRtpPacket(packet) = event else {
-                    continue;
-                };
-                let now_ms = started.elapsed().as_millis() as u64;
-                let ordered = reorder.push(
-                    Packet {
-                        seq: packet.header.sequence_number,
-                        timestamp: packet.header.timestamp,
-                        payload: packet.payload.to_vec(),
+            let mut dropped_before = 0;
+            let mut tick = tokio::time::interval(REORDER_TICK);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                let now_ms = || started.elapsed().as_millis() as u64;
+                let ordered = tokio::select! {
+                    event = track.poll() => match event {
+                        Some(TrackRemoteEvent::OnRtpPacket(packet)) => reorder.push(
+                            Packet {
+                                seq: packet.header.sequence_number,
+                                timestamp: packet.header.timestamp,
+                                payload: packet.payload.to_vec(),
+                            },
+                            now_ms(),
+                        ),
+                        Some(_) => continue,
+                        None => break,
                     },
-                    now_ms,
-                );
+                    _ = tick.tick() => reorder.poll(now_ms()),
+                };
                 let mut want_key = false;
+                let force_key = outlet.take_keyframe_request();
+                let publisher = outlet.publisher();
                 for p in ordered {
                     let pushed = assembler.push(p.seq, p.timestamp, &p.payload);
                     want_key |= pushed.request_keyframe;
                     for unit in pushed.units {
                         stats.units += 1;
                         stats.keys += u64::from(unit.key);
-                        let kind = if unit.key { KIND_KEY } else { KIND_DELTA };
-                        let message = frame_message(kind, unit.timestamp, &unit.data);
-                        if channel.send(Response::new(message)).is_err() {
-                            return; // the window is gone
+                        stats.bytes += unit.data.len() as u64;
+                        if let Some(publisher) = &publisher {
+                            publisher.write(unit.timestamp, &unit.data).await;
                         }
                     }
                 }
-                if want_key && last_pli.is_none_or(|t| t.elapsed() >= PLI_EVERY) {
+                if force_key || (want_key && last_pli.is_none_or(|t| t.elapsed() >= PLI_EVERY)) {
                     last_pli = Some(Instant::now());
                     stats.plis += 1;
                     let pli = PictureLossIndication {
@@ -180,13 +184,18 @@ impl PeerConnectionEventHandler for Handler {
                     }
                 }
                 if last_report.elapsed() >= STATS_EVERY {
+                    let secs = STATS_EVERY.as_secs();
                     log::info!(
-                        "native stream: {} frames ({} key), {} PLIs in the last {}s",
+                        "native stream: {} frames ({} key, {} fps, {} KB/s), {} dropped, {} PLIs, gap wait {} ms in the last {secs}s",
                         stats.units,
                         stats.keys,
+                        stats.units / secs,
+                        stats.bytes / 1024 / secs,
+                        assembler.dropped() - dropped_before,
                         stats.plis,
-                        STATS_EVERY.as_secs()
+                        reorder.effective_wait_ms(),
                     );
+                    dropped_before = assembler.dropped();
                     stats = Stats::default();
                     last_report = Instant::now();
                 }
@@ -221,7 +230,7 @@ fn media_engine() -> CmdResult<MediaEngine> {
 /// Start (or restart) this window's native stream; frames and state arrive on `channel`.
 #[tauri::command]
 pub async fn native_stream_start(
-    channel: Channel<Response>,
+    channel: Channel<String>,
     window: tauri::WebviewWindow,
     registry: State<'_, Arc<Registry>>,
     streams: State<'_, Arc<NativeStreams>>,
@@ -236,7 +245,11 @@ pub async fn native_stream_start(
     let interceptors = register_default_interceptors(InterceptorRegistry::new(), &mut engine)
         .map_err(rtc_error)?;
     let (gathered, mut gathered_rx) = rt_channel::<()>(1);
-    let handler = Arc::new(Handler { channel, gathered });
+    let handler = Arc::new(Handler {
+        channel,
+        gathered,
+        outlet: streams.outlet(&label),
+    });
     let pc = PeerConnectionBuilder::new()
         .with_configuration(
             RTCConfigurationBuilder::new()
@@ -283,7 +296,29 @@ pub async fn native_stream_start(
     Ok(())
 }
 
-/// Close this window's native stream and its WHEP resource.
+#[derive(Serialize)]
+pub struct LocalAnswer {
+    sdp: String,
+}
+
+/// Answer the webview's recvonly offer for the loopback re-publish of this window's stream.
+/// Replaces (and closes) any earlier one; the next upstream keyframe starts its picture.
+#[tauri::command]
+pub async fn local_stream_answer(
+    offer: String,
+    window: tauri::WebviewWindow,
+    streams: State<'_, Arc<NativeStreams>>,
+) -> CmdResult<LocalAnswer> {
+    let outlet = streams.outlet(window.label());
+    if let Some(old) = outlet.replace(None) {
+        old.close().await;
+    }
+    let (sdp, publisher) = local_publish::answer(outlet.clone(), offer).await?;
+    outlet.replace(Some(publisher));
+    Ok(LocalAnswer { sdp })
+}
+
+/// Close this window's native stream, its loopback publisher and its WHEP resource.
 #[tauri::command]
 pub async fn native_stream_stop(
     window: tauri::WebviewWindow,
@@ -292,6 +327,9 @@ pub async fn native_stream_stop(
 ) -> CmdResult<()> {
     if let Some(pc) = streams.replace(window.label(), None) {
         let _ = pc.close().await;
+    }
+    if let Some(publisher) = streams.outlet(window.label()).replace(None) {
+        publisher.close().await;
     }
     close_resource(&registry, window.label()).await
 }
@@ -317,17 +355,5 @@ mod tests {
         assert_eq!(mapped[0].username, "");
         assert_eq!(mapped[1].credential, "c");
         assert!(rtc_ice_servers(vec![]).is_empty());
-    }
-
-    #[test]
-    fn frames_kind_timestamp_then_body() {
-        assert_eq!(
-            frame_message(KIND_KEY, 0x0102_0304, &[9, 8]),
-            vec![1, 1, 2, 3, 4, 9, 8]
-        );
-        assert_eq!(
-            frame_message(KIND_STATE, 0, b"ok"),
-            vec![2, 0, 0, 0, 0, b'o', b'k']
-        );
     }
 }

@@ -49,7 +49,9 @@ export const fitWindow = (aspect: number, chromeHeight: number, padX: number) =>
 
 export const whepOffer = (sdp: string) => call<{ sdp: string }>("whep_offer", { sdp });
 export const whepClose = () => call<void>("whep_close");
-export const nativeStreamStart = (channel: Channel<ArrayBuffer>) => call<void>("native_stream_start", { channel });
+export const nativeStreamStart = (channel: Channel<string>) => call<void>("native_stream_start", { channel });
+/** Answer the webview's recvonly offer for the loopback re-publish of the native stream. */
+export const localStreamAnswer = (offer: string) => call<{ sdp: string }>("local_stream_answer", { offer });
 export const nativeStreamStop = () => call<void>("native_stream_stop");
 
 export const tap = (x: number, y: number) => call<void>("tap", { x, y });

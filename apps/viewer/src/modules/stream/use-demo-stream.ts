@@ -62,7 +62,7 @@ function draw(ctx: CanvasRenderingContext2D, size: VideoSize, t: number) {
 /**
  * Dev-only stand-in for a device stream: paints an animated test pattern at `device` pixels into
  * `canvasRef`, with a red edge so any letterboxing shows. R toggles portrait/landscape, so the
- * rotation refit can be tried too. Same shape as `useNativeStream`.
+ * rotation refit can be tried too. Same shape as `useWhep`.
  */
 export function useDemoStream(
 	canvasRef: RefObject<HTMLCanvasElement | null>,

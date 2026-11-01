@@ -29,7 +29,7 @@ async function negotiate(conn: RTCPeerConnection, stale: () => boolean): Promise
 	await conn.setRemoteDescription({ type: "answer", sdp: answer.sdp });
 }
 
-type SessionHooks = {
+export type SessionHooks = {
 	onStatus: (status: StreamStatus) => void;
 	onError: (error: StreamError | null) => void;
 };

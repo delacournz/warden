@@ -54,3 +54,8 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Dependencies (webrtc/SRTP above all) optimized in dev builds too: unoptimized, SRTP and the
+# reorder path fall behind Revyl's keyframe bursts and drop frames (11-35 fps vs ~60 in release).
+[profile.dev.package."*"]
+opt-level = 3
