@@ -1,0 +1,39 @@
+language js
+
+// WCLS: every function lives in a class (constructor DI, inheritance where siblings share shape).
+// See docs/plans/wcls-class-refactor.md. Scope: packages/*/src + apps/cli/src, minus the exceptions below.
+predicate wcls_in_scope() {
+  $filename <: or { r".*/packages/[^/]+/src/.*", r".*/apps/cli/src/.*" },
+  $filename <: not or {
+    r".*[.]test[.]tsx?",
+    r".*[.]script[.]ts",
+    r".*[.]d[.]ts",
+    r".*/packages/e2e-bench/.*",
+    r".*/native/.*"
+  }
+}
+
+// Published entry points stay plain functions (thin wrappers over a class): the public API is unchanged.
+predicate wcls_public_wrapper($name) {
+  $name <: or {
+    "createWardenClient", "createWardenTools", "defineConfig", "defineProvider", "defineCommand",
+    "test", "describe", "expect", "beforeAll", "afterAll", "beforeEach", "afterEach"
+  }
+}
+
+or {
+  JsFunctionDeclaration(id=$name) as $fn where {
+    wcls_in_scope(),
+    not wcls_public_wrapper($name),
+    $fn <: not within JsFunctionBody(),
+    register_diagnostic(span=$fn, message="Top-level function: move it into a class (docs/plans/wcls-class-refactor.md).", severity="warn")
+  },
+  JsVariableDeclarator(id=$name, initializer=$init) as $decl where {
+    wcls_in_scope(),
+    not wcls_public_wrapper($name),
+    $init <: JsInitializerClause(expression=or { JsArrowFunctionExpression(), JsFunctionExpression() }),
+    $decl <: not within JsFunctionBody(),
+    $decl <: not within JsArrowFunctionExpression(),
+    register_diagnostic(span=$decl, message="Top-level function: move it into a class (docs/plans/wcls-class-refactor.md).", severity="warn")
+  }
+}

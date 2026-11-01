@@ -54,6 +54,7 @@
 			}
 		}
 	},
+	"plugins": ["./packages/biome-config/plugins/no-loose-function.grit"],
 	"javascript": {
 		"formatter": {
 			"quoteStyle": "double",

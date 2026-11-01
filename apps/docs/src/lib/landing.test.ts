@@ -116,14 +116,22 @@ const NUMBERS: readonly { copy: string; source: string; code: RegExp }[] = [
 		code: /HEARTBEAT_INTERVAL_MS = 30_000/,
 	},
 	{ copy: "within about 90 s", source: "packages/store/src/liveness.ts", code: /LOST_HEARTBEATS = 3\b/ },
-	{ copy: "leased for 20 min", source: "packages/config/src/config.defaults.ts", code: /DEFAULT_IDLE_MS = 20 \* 60_000/ },
+	{
+		copy: "leased for 20 min",
+		source: "packages/config/src/config.defaults.ts",
+		code: /DEFAULT_IDLE_MS = 20 \* 60_000/,
+	},
 	{ copy: "--wait 30m", source: "apps/cli/src/claim-flags.ts", code: /DEFAULT_WAIT = "30m"/ },
 	{
 		copy: "3.7 s clone plus 11.9 s boot",
 		source: "packages/core/src/golden/golden.ts",
 		code: /146–239 s vs clone 3\.7 s \+ boot 11\.9 s/,
 	},
-	{ copy: "set aside for 24 h", source: "packages/leasing/src/claim.ts", code: /QUARANTINE_TTL_MS = 24 \* 60 \* 60_000/ },
+	{
+		copy: "set aside for 24 h",
+		source: "packages/leasing/src/claim.ts",
+		code: /QUARANTINE_TTL_MS = 24 \* 60 \* 60_000/,
+	},
 	{ copy: "binds loopback", source: "packages/core/src/netproxy/proxy.ts", code: /const LOOPBACK = "127\.0\.0\.1"/ },
 ];
 
