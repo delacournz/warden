@@ -4,7 +4,7 @@
 
 ## Stack
 
-Tauri v2, Vite, React 19, TanStack Router (file routes, `__root` + `index`), Tailwind v4, `@delacournz/apogee` (optionalDependency, needs `NPM_TOKEN`; without it typecheck and build fail here only), Phosphor icons, Rust (`reqwest` with rustls, `tauri-plugin-opener`). Tests: `bun test` (TS), `cargo test` (Rust).
+Tauri v2, Vite, React 19, TanStack Router (file routes, `__root` + `index`), Tailwind v4, `@delacournz/apogee` (optionalDependency, needs `NPM_TOKEN`; without it typecheck and build fail here only), Phosphor icons, Rust (`reqwest` with rustls, `tauri-plugin-opener`, `webrtc`/`rtc` 0.21 for the native stream). Tests: `bun test` (TS), `cargo test` (Rust).
 
 ## Process contract (the CLI implements the other side; keep it exact)
 
@@ -52,7 +52,10 @@ Rust owns the token. The webview makes no network requests (CSP has no remote `c
 - `src-tauri/src/device.rs`: `#[tauri::command]`s, each resolving its session by the calling window's label (`NO_SESSION` when there is none). `viewer_info` (no token), `whep_offer`/`whep_close` (Location kept in Rust; refused if on another origin), `tap`/`swipe`/`input`/`open_url` (refused locally for `view` scope), `close_viewer` (`release: boolean`; sends the close event to this window's relay when attached, refuses `release` when detached with `DETACHED`, then destroys only this window), `open_billing` (no argument: opens the launch-time `billingUrl` through the opener plugin from Rust; `NO_BILLING_URL` when absent), `screenshot` (save panel, PNG written in Rust), `viewer_streaming`, `fit_window`. `viewer_info` carries `hasBillingUrl`, never the URL. Errors serialise as `{code, message}`.
 - Capabilities (`capabilities/default.json`, windows `dev-*`): `core:default`, `dialog:default`, `log:default`, `core:window:allow-set-always-on-top`. The opener plugin is registered in Rust only and grants JS no permission.
 - `src/core/api/device.api.ts`: `invoke` wrappers (`DeviceError` carries `code`).
-- `src/modules/stream/`: `whep.ts` (pure: backoff, trickle-ICE fragment), `whep-session.ts` (RTCPeerConnection recvonly, reconnect on failed/disconnected), `use-whep.ts`, `viewer.tsx` (window layout).
+- Two stream receivers, picked once per webview by `stream-engine.ts`. Both use non-trickle WHEP (`device::post_offer`; Revyl's bridge answers trickle PATCH with 400):
+  - **native** (WebKit, i.e. macOS): Revyl's sender splits SPS/PPS into its own same-timestamp frame, and WebKit's receiver never assembles a frame of it. So Rust receives the WebRTC stream (`src-tauri/src/native_stream.rs`, webrtc-rs, H264 PT 98 only, SRTP replay window 4096 because the SFU reorders whole keyframes past the default 64), `reorder.rs` releases packets in sequence (200 ms wait per gap), `h264.rs` builds Annex-B access units per RTP timestamp (drops to the next keyframe on loss, PLI every 500 ms while waiting) and `native_stream_start` streams them over a Tauri `Channel` as `[kind u8][rtp ts u32 BE][body]` (kind 0 delta, 1 key, 2 state name). `native-session.ts` decodes with WebCodecs `VideoDecoder` onto a `<canvas>`; `native-frames.ts` is the pure parsing. The host log prints `native stream: N frames (K key), P PLIs` every 5 s.
+  - **webview** (Chromium, i.e. WebView2 on Windows): `whep-session.ts` (RTCPeerConnection recvonly, offer after ICE gathering, reconnect on failed/disconnected) into a `<video>`; `whep-diagnostics.ts` logs `[whep]` state and stats to the console.
+  - `use-device-stream.ts` runs the right one; `whep.ts` holds the shared backoff and `iceGatheringComplete`; `viewer.tsx` is the window layout.
 - `src/modules/stream/billing-state.ts` (pure reducer and `overlayFor` precedence: expired, then out-of-credits, then stopped), `use-billing.ts` (event listeners), `stopped-state.tsx` (the overlays). A stop drops the stream like expiry. The titlebar shows a quiet "Low balance · top up" badge only when `hasBillingUrl`.
 - `src/modules/input/`: `input.ts` pure mapping (letterbox-aware `toDevicePoint`, tap/swipe classifier, wheel accumulator, key batcher), `use-device-input.ts` wires it to the DOM. No input at all in `view` scope or watch mode.
 - `src/modules/toolbar/`: apogee toolbar (open URL, screenshot, watch/drive toggle for `drive` scope, always-on-top, status badge).
@@ -96,7 +99,7 @@ Secrets (repo, or the `release` environment the job runs in). All signing ones a
 | `WINDOWS_CERTIFICATE` | optional, base64 of an Authenticode `.pfx` |
 | `WINDOWS_CERTIFICATE_PASSWORD` | optional, the `.pfx` password |
 
-All six `APPLE_*` must be set for macOS signing; otherwise none is used. Signed builds use the hardened runtime and are notarized and stapled by Tauri. There is no entitlements file on purpose: the viewer only receives WebRTC video in WKWebView, needs no camera or microphone, and is not sandboxed. Do not enable the App Sandbox. Windows builds a bare exe (`--no-bundle`); the `windows_subsystem = "windows"` GUI process still reads the parent's piped stdin/stdout.
+All six `APPLE_*` must be set for macOS signing; otherwise none is used. Signed builds use the hardened runtime and are notarized and stapled by Tauri. There is no entitlements file on purpose: the viewer only receives WebRTC video (UDP from Rust on macOS, WebView2 on Windows), needs no camera or microphone, and is not sandboxed. Do not enable the App Sandbox. Windows builds a bare exe (`--no-bundle`); the `windows_subsystem = "windows"` GUI process still reads the parent's piped stdin/stdout.
 
 Local pack: `bun run tauri:build -- --bundles app && bun run pack:asset darwin-arm64` (add `--profile debug` after a debug build).
 

@@ -1,9 +1,12 @@
 mod billing;
 mod device;
+mod h264;
 mod host;
 mod ipc;
+mod native_stream;
 mod registry;
 mod relay;
+mod reorder;
 mod session;
 
 use host::{Host, WindowOps};
@@ -224,6 +227,8 @@ fn run_host() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                // Retransmitted video packets the SRTP layer already saw: expected, and thousands a minute.
+                .level_for("rtc::peer_connection::handler", log::LevelFilter::Error)
                 .clear_targets()
                 .target(Target::new(TargetKind::Stderr))
                 .build(),
@@ -231,6 +236,7 @@ fn run_host() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(registry.clone())
+        .manage(std::sync::Arc::new(native_stream::NativeStreams::default()))
         .setup(move |app| {
             let windows = TauriWindows {
                 handle: app.handle().clone(),
@@ -275,6 +281,8 @@ fn run_host() {
             device::open_billing,
             device::close_viewer,
             device::screenshot,
+            native_stream::native_stream_start,
+            native_stream::native_stream_stop,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

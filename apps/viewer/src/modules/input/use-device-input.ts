@@ -14,15 +14,25 @@ import {
 
 const KEY_DEBOUNCE_MS = 150;
 
+/** The element showing the device: `<video>` (webview WebRTC) or `<canvas>` (native stream). */
+export type Screen = HTMLVideoElement | HTMLCanvasElement;
+
 export type DeviceInputHandlers = {
-	onPointerDown: (event: PointerEvent<HTMLVideoElement>) => void;
-	onPointerUp: (event: PointerEvent<HTMLVideoElement>) => void;
-	onWheel: (event: WheelEvent<HTMLVideoElement>) => void;
+	onPointerDown: (event: PointerEvent<Screen>) => void;
+	onPointerUp: (event: PointerEvent<Screen>) => void;
+	onWheel: (event: WheelEvent<Screen>) => void;
 };
 
-function boxOf(video: HTMLVideoElement): Rect {
-	const r = video.getBoundingClientRect();
+function boxOf(screen: Screen): Rect {
+	const r = screen.getBoundingClientRect();
 	return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+/** The picture's pixel size: the video's intrinsic size, or the canvas backing store. */
+function pictureOf(screen: Screen): { width: number; height: number } {
+	return screen instanceof HTMLVideoElement
+		? { width: screen.videoWidth, height: screen.videoHeight }
+		: { width: screen.width, height: screen.height };
 }
 
 function isTextField(target: EventTarget | null): boolean {
@@ -78,7 +88,7 @@ export function useDeviceInput(enabled: boolean, onError: (message: string) => v
 	}, [enabled, report]);
 
 	const onPointerDown = useCallback(
-		(event: PointerEvent<HTMLVideoElement>) => {
+		(event: PointerEvent<Screen>) => {
 			if (!enabled) return;
 			event.currentTarget.setPointerCapture(event.pointerId);
 			down.current = { clientX: event.clientX, clientY: event.clientY, t: event.timeStamp };
@@ -87,17 +97,18 @@ export function useDeviceInput(enabled: boolean, onError: (message: string) => v
 	);
 
 	const onPointerUp = useCallback(
-		(event: PointerEvent<HTMLVideoElement>) => {
+		(event: PointerEvent<Screen>) => {
 			const start = down.current;
 			down.current = null;
 			if (!enabled || !start) return;
-			const video = event.currentTarget;
+			const screen = event.currentTarget;
+			const picture = pictureOf(screen);
 			const gesture = classifyGesture(
 				start,
 				{ clientX: event.clientX, clientY: event.clientY, t: event.timeStamp },
-				boxOf(video),
-				video.videoWidth,
-				video.videoHeight
+				boxOf(screen),
+				picture.width,
+				picture.height
 			);
 			if (gesture) send(gesture).catch(report);
 		},
@@ -105,9 +116,10 @@ export function useDeviceInput(enabled: boolean, onError: (message: string) => v
 	);
 
 	const onWheel = useCallback(
-		(event: WheelEvent<HTMLVideoElement>) => {
+		(event: WheelEvent<Screen>) => {
 			if (!enabled) return;
-			const video = event.currentTarget;
+			const screen = event.currentTarget;
+			const picture = pictureOf(screen);
 			const result = accumulateWheel(
 				wheel.current,
 				{
@@ -117,9 +129,9 @@ export function useDeviceInput(enabled: boolean, onError: (message: string) => v
 					deltaY: event.deltaY,
 					t: event.timeStamp,
 				},
-				boxOf(video),
-				video.videoWidth,
-				video.videoHeight
+				boxOf(screen),
+				picture.width,
+				picture.height
 			);
 			wheel.current = result.state;
 			if (result.swipe) send(result.swipe).catch(report);

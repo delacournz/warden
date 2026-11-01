@@ -29,6 +29,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # Local socket transport (src/ipc.rs): unix sockets, Windows named pipes, timers, spawn_blocking.
 tokio = { version = "1", features = ["net", "io-util", "rt", "time", "sync", "macros"] }
+webrtc = "0.21"
+bytes = "1.12.1"
+rtc = "0.21"
+async-trait = "0.1.92"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import * as device from "../../core/api/device.api.ts";
-import { useDeviceInput } from "../input/use-device-input.ts";
+import { type Screen, useDeviceInput } from "../input/use-device-input.ts";
 import { actionAvailability } from "../toolbar/availability.ts";
 import { CHROME_HEIGHT, CHROME_WIDTH, SCREEN_INSET } from "../toolbar/layout.ts";
 import { Titlebar } from "../toolbar/titlebar.tsx";
@@ -12,7 +12,7 @@ import { StoppedState } from "./stopped-state.tsx";
 import { StreamState } from "./stream-state.tsx";
 import { type Ripple, TapRipples } from "./tap-ripples.tsx";
 import { useBilling } from "./use-billing.ts";
-import { useWhep } from "./use-whep.ts";
+import { useDeviceStream } from "./use-device-stream.ts";
 import type { StreamStatus } from "./whep-session.ts";
 
 const NOTICE_VISIBLE_MS = 4000;
@@ -63,10 +63,9 @@ function message(e: unknown): string {
  * viewer on a live device asks first: keep the device running, or shut it down and release the lease.
  */
 export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: boolean }) {
-	const videoRef = useRef<HTMLVideoElement>(null);
 	const billing = useBilling();
 	const overlay = overlayFor(expired, billing);
-	const { status: streamStatus, size, error } = useWhep(videoRef, overlay === null);
+	const { native, videoRef, canvasRef, status: streamStatus, size, error } = useDeviceStream(overlay === null);
 	const status: StreamStatus = overlay === "expired" ? "expired" : overlay ? "stopped" : streamStatus;
 	const [driving, setDriving] = useState(info.scope === "drive");
 	const [pinned, setPinned] = useState(false);
@@ -116,7 +115,7 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 		void run(getCurrentWindow().setAlwaysOnTop(next));
 	};
 
-	const onPointerDown = (event: PointerEvent<HTMLVideoElement>) => {
+	const onPointerDown = (event: PointerEvent<Screen>) => {
 		handlers.onPointerDown(event);
 		if (canDrive) addRipple(event);
 	};
@@ -150,16 +149,26 @@ export function Viewer({ info, expired }: { info: device.ViewerInfo; expired: bo
 					className={`relative h-full overflow-hidden bg-black ${SCREEN_RADIUS[info.platform]} ${ring}`}
 					style={{ cursor: canDrive ? "pointer" : "default" }}
 				>
-					<video
-						ref={videoRef}
-						className="h-full w-full touch-none select-none object-contain"
-						autoPlay
-						muted
-						playsInline
-						onPointerDown={onPointerDown}
-						onPointerUp={handlers.onPointerUp}
-						onWheel={handlers.onWheel}
-					/>
+					{native ? (
+						<canvas
+							ref={canvasRef}
+							className="h-full w-full touch-none select-none object-contain"
+							onPointerDown={onPointerDown}
+							onPointerUp={handlers.onPointerUp}
+							onWheel={handlers.onWheel}
+						/>
+					) : (
+						<video
+							ref={videoRef}
+							className="h-full w-full touch-none select-none object-contain"
+							autoPlay
+							muted
+							playsInline
+							onPointerDown={onPointerDown}
+							onPointerUp={handlers.onPointerUp}
+							onWheel={handlers.onWheel}
+						/>
+					)}
 					<TapRipples ripples={ripples} onDone={removeRipple} />
 					<StreamState status={status} unreachable={unreachable} />
 					{(overlay === "out-of-credits" || overlay === "stopped") && (

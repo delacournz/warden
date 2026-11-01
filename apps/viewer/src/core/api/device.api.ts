@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { type Channel, invoke } from "@tauri-apps/api/core";
 
 export type Scope = "view" | "drive";
 export type Platform = "ios" | "android";
@@ -49,6 +49,8 @@ export const fitWindow = (aspect: number, chromeHeight: number, padX: number) =>
 
 export const whepOffer = (sdp: string) => call<{ sdp: string }>("whep_offer", { sdp });
 export const whepClose = () => call<void>("whep_close");
+export const nativeStreamStart = (channel: Channel<ArrayBuffer>) => call<void>("native_stream_start", { channel });
+export const nativeStreamStop = () => call<void>("native_stream_stop");
 
 export const tap = (x: number, y: number) => call<void>("tap", { x, y });
 export const swipe = (fromX: number, fromY: number, toX: number, toY: number, durationMs?: number) =>

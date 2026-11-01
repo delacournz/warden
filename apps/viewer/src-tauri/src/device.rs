@@ -21,7 +21,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn new(code: &str, message: impl Into<String>) -> Self {
+    pub fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
@@ -239,7 +239,14 @@ pub async fn whep_offer(
     window: tauri::WebviewWindow,
     registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<WhepAnswer> {
-    let viewer = viewer_for(&registry, window.label())?;
+    let sdp = post_offer(&registry, window.label(), sdp).await?;
+    Ok(WhepAnswer { sdp })
+}
+
+/// POST an SDP offer to the device's WHEP endpoint, keep the `Location` resource on the window's
+/// viewer and return the SDP answer. Shared by the webview and the native stream paths.
+pub async fn post_offer(registry: &Registry, label: &str, sdp: String) -> CmdResult<String> {
+    let viewer = viewer_for(registry, label)?;
     let c = viewer.session.credentials();
     let response = registry
         .client()
@@ -259,7 +266,7 @@ pub async fn whep_offer(
     let resource = resolve_location(&c.api_url, &location)?;
     let answer = response.text().await?;
     viewer.set_resource(Some(resource));
-    Ok(WhepAnswer { sdp: answer })
+    Ok(answer)
 }
 
 /// DELETE a WHEP resource. Best effort: the server expires it on its own, so a failure is logged.
@@ -276,7 +283,12 @@ pub async fn whep_close(
     window: tauri::WebviewWindow,
     registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
-    let viewer = viewer_for(&registry, window.label())?;
+    close_resource(&registry, window.label()).await
+}
+
+/// DELETE the window's WHEP resource, if it has one.
+pub async fn close_resource(registry: &Registry, label: &str) -> CmdResult<()> {
+    let viewer = viewer_for(registry, label)?;
     let c = viewer.session.credentials();
     if let Some(resource) = viewer.take_resource() {
         delete_resource(registry.client(), &c, resource).await;
