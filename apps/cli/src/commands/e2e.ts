@@ -26,38 +26,22 @@ import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { E2eReportJson } from "@delacour/warden-sdk/contracts/e2e-report";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
-import { selfCommand } from "../autogc";
+import { autoGc } from "../autogc";
 import type { DeviceSetupSpec } from "../batch/setup";
-import { realPath, type TrackedSpec } from "../batch/spec-progress";
+import { specProgress, type TrackedSpec } from "../batch/spec-progress";
 import type { WarmConnect } from "../batch/warm-drivers";
-import {
-	type ClaimFlags,
-	type ClaimFlagValues,
-	isPhysicalClaim,
-	type PhysicalOptionValues,
-	parseClaimFlags,
-	withClaimOptions,
-	withNamedPhysical,
-	withPhysicalOptions,
-} from "../claim-flags";
+import { type ClaimFlags, type ClaimFlagValues, claimFlagsHelpers, type PhysicalOptionValues } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import {
-	findBun,
-	NETPROXY_SUBCOMMAND,
-	parsePerfFlag,
-	runnerArgv,
-	type SpecEnvOptions,
-	specEnv,
-} from "../e2e/bun-runner";
-import { selectPreload } from "../e2e/e2e-runtime";
-import { attemptOut, type JobPlan, jobPlan, type ShardRuns, shardRuns } from "../e2e/jobs";
-import { type LaunchPlan, specBundleId, specLaunchArgs } from "../e2e/launch";
-import { exitGate, type RunShape, type SpecVerdict, type Verdicts, verdicts } from "../e2e/verdicts";
-import { type AppFlagValues, withLeaseOptions } from "../lease-options";
+import { bunRunner, NETPROXY_SUBCOMMAND, type SpecEnvOptions } from "../e2e/bun-runner";
+import { e2eRuntime } from "../e2e/e2e-runtime";
+import { e2eJobs, type JobPlan, type ShardRuns } from "../e2e/jobs";
+import { e2eLaunch, type LaunchPlan } from "../e2e/launch";
+import { e2eVerdicts, type RunShape, type SpecVerdict, type Verdicts } from "../e2e/verdicts";
+import { type AppFlagValues, leaseOptions } from "../lease-options";
 import { output } from "../output";
-import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
-import { currentBuild } from "../update/build-info";
+import { physicalPickHelpers } from "../physical-pick";
+import { buildInfoHelpers } from "../update/build-info";
 import { type AffectedOpts, affectedCli } from "./affected";
 import {
 	type BatchArgs,
@@ -157,9 +141,11 @@ export class E2eCommand extends CliCommand {
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
 		batch
 			.withBatchOptions(
-				withLeaseOptions(
-					withPhysicalOptions(
-						withClaimOptions(cmd.argument("[suite]", "e2e.<suite> in warden.config.ts (optional with one suite)"))
+				leaseOptions.withLeaseOptions(
+					claimFlagsHelpers.withPhysicalOptions(
+						claimFlagsHelpers.withClaimOptions(
+							cmd.argument("[suite]", "e2e.<suite> in warden.config.ts (optional with one suite)")
+						)
 					)
 				)
 			)
@@ -261,7 +247,8 @@ export class E2eCommand extends CliCommand {
 		const physical = this.cliPhysical(run.passed)
 			? {}
 			: this.physicalOpts(run.platform, leg?.physical ?? run.config.physical);
-		if (!isPhysicalClaim(withNamedPhysical({ ...run.base, ...physical }))) return physical;
+		if (!claimFlagsHelpers.isPhysicalClaim(claimFlagsHelpers.withNamedPhysical({ ...run.base, ...physical })))
+			return physical;
 		// the suite's count and headless size a simulator run: only flags given here can conflict with a phone
 		return {
 			...physical,
@@ -528,13 +515,13 @@ export class E2eCommand extends CliCommand {
 		);
 		if (!run.success) return fail(run.error);
 		// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-		const picked = await pickPhysicalArgs(ctx, ownerResolver.resolve(ctx), run.data.args, {
-			prompt: canPrompt(ctx, { json: opts.json }),
+		const picked = await physicalPickHelpers.pickPhysicalArgs(ctx, ownerResolver.resolve(ctx), run.data.args, {
+			prompt: physicalPickHelpers.canPrompt(ctx, { json: opts.json }),
 		});
-		if (picked.kind !== "ok") return reportPick(ctx, "e2e", picked);
+		if (picked.kind !== "ok") return physicalPickHelpers.reportPick(ctx, "e2e", picked);
 		const { shape, plan: jobs, argvOf, spec, physical } = run.data;
 		const { args } = picked;
-		const runs = shardRuns(jobs, { argvOf, readFile: deps.readFile });
+		const runs = e2eJobs.shardRuns(jobs, { argvOf, readFile: deps.readFile });
 		const session = await batch.runSession(
 			ctx,
 			deps,
@@ -548,7 +535,7 @@ export class E2eCommand extends CliCommand {
 				...this.warmHooks(ctx, deps, suite, opts, physical && selection.platform === "ios"),
 			})
 		);
-		const result = await verdicts(specs, session, shape, {
+		const result = await e2eVerdicts.verdicts(specs, session, shape, {
 			readFile: deps.readFile,
 			ci: this.inCi(ctx.env),
 			attempts: runs.attempts,
@@ -651,13 +638,13 @@ export class E2eCommand extends CliCommand {
 			residentSocket: o.resident,
 			specs: this.trackedSpecs(specs, shape),
 			// a passed gate frees the sims when asked to; a failed one always leaves them up to inspect
-			...(o.shutdown ? { shutdownIf: (summary) => exitGate(specs, summary, shape) } : {}),
+			...(o.shutdown ? { shutdownIf: (summary) => e2eVerdicts.exitGate(specs, summary, shape) } : {}),
 			argvFor: (_job, run) => runs.argv(run),
 			jobEnv: (job) =>
-				specEnv({
+				bunRunner.specEnv({
 					...spec.env,
-					launchArgs: specLaunchArgs(spec.launch, job.metroUrl),
-					out: attemptOut(job.batchDir, job.worker, job.seq, job.pass),
+					launchArgs: e2eLaunch.specLaunchArgs(spec.launch, job.metroUrl),
+					out: e2eJobs.attemptOut(job.batchDir, job.worker, job.seq, job.pass),
 				}),
 		};
 	}
@@ -666,7 +653,7 @@ export class E2eCommand extends CliCommand {
 	private trackedSpecs(specs: readonly SelectedSpec[], shape: RunShape): TrackedSpec[] {
 		return specs.map((f) => {
 			const job = shape.shardOf?.get(f.id);
-			return { id: f.id, path: realPath(f.file), ...(job !== undefined ? { job } : {}) };
+			return { id: f.id, path: specProgress.realPath(f.file), ...(job !== undefined ? { job } : {}) };
 		});
 	}
 
@@ -717,13 +704,22 @@ export class E2eCommand extends CliCommand {
 		if (!legs.success) return legs;
 		const claims = this.claimedFlags(args.data, legs.data);
 		const argvOf = (files: readonly string[]) =>
-			runnerArgv({ bun: spec.bun, preload: spec.preload, specPaths: files, timeoutMs: spec.env.timeouts.timeoutMs });
+			bunRunner.runnerArgv({
+				bun: spec.bun,
+				preload: spec.preload,
+				specPaths: files,
+				timeoutMs: spec.env.timeouts.timeoutMs,
+			});
 		const isolation = this.runIsolation(config, opts, passed);
 		if (isolation === "device" && args.data.passes > 1)
 			return resultFactory.err(
 				`--passes ${args.data.passes} needs isolate "spec": suite "${suite.name}" sets isolate "device" (one process per device reruns its whole shard)`
 			);
-		const plan = jobPlan(specs, isolation === "device" ? this.shardCount(args.data, legs.data) : undefined, argvOf);
+		const plan = e2eJobs.jobPlan(
+			specs,
+			isolation === "device" ? this.shardCount(args.data, legs.data) : undefined,
+			argvOf
+		);
 		const planned = this.planOf(
 			{ ...args.data, jobs: { kind: "list", jobs: plan.jobs } },
 			legs.data,
@@ -797,9 +793,9 @@ export class E2eCommand extends CliCommand {
 		/** the run is on phones: an iPhone's app has the device bundle id (`projects[].ios.device.bundleIdentifier`) */
 		physical = false
 	): AsyncResult<SpecPlan> {
-		const bun = findBun(ctx.env, deps.execPath());
-		const version = currentBuild().version;
-		const preload = await selectPreload({
+		const bun = bunRunner.findBun(ctx.env, deps.execPath());
+		const version = buildInfoHelpers.currentBuild().version;
+		const preload = await e2eRuntime.selectPreload({
 			cwd: suite.cwd,
 			version,
 			resolve: deps.resolveModule,
@@ -807,9 +803,9 @@ export class E2eCommand extends CliCommand {
 			stage: () => deps.bundledE2e(ctx),
 		});
 		if (!preload.success) return preload;
-		const bundleId = await specBundleId(ctx, suite, platform, physical);
+		const bundleId = await e2eLaunch.specBundleId(ctx, suite, platform, physical);
 		if (!bundleId.success) return bundleId;
-		const perf = parsePerfFlag(opts.perf);
+		const perf = bunRunner.parsePerfFlag(opts.perf);
 		if (!perf.success) return perf;
 		const { spec } = suite.config;
 		const timeoutMs = this.specDuration("timeout", spec?.timeout, DEFAULT_SPEC_TIMEOUT);
@@ -840,9 +836,9 @@ export class E2eCommand extends CliCommand {
 				specsDir: resolve(suite.configDir, suite.config.specsDir),
 				helperDir: ctx.env.WARDEN_HELPER_DIR ?? deps.helperDir(),
 				version,
-				bin: selfCommand(),
+				bin: autoGc.selfCommand(),
 				...(platform === "ios"
-					? { iosRunnerRestart: [...selfCommand(), "__ios-runner-restart", "--udid", "{udid}"] }
+					? { iosRunnerRestart: [...autoGc.selfCommand(), "__ios-runner-restart", "--udid", "{udid}"] }
 					: {}),
 				...this.netproxyEnv(),
 				...(perf.data === undefined ? {} : { perf: perf.data }),
@@ -861,7 +857,7 @@ export class E2eCommand extends CliCommand {
 	): Result<BatchLeg[]> {
 		const legs: BatchLeg[] = [];
 		for (const leg of picked) {
-			const flags = parseClaimFlags(platform, withNamedPhysical(legOpts(leg)));
+			const flags = claimFlagsHelpers.parseClaimFlags(platform, claimFlagsHelpers.withNamedPhysical(legOpts(leg)));
 			if (!flags.success) return flags;
 			legs.push({ name: leg.profile, flags: flags.data, env: leg.env ?? {} });
 		}

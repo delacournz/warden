@@ -5,22 +5,17 @@ import { join } from "node:path";
 import { type AsyncResult, type ErrorResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import { NPM_PACKAGE, platformPackageName, releaseTarget } from "../npm/platforms";
+import { NPM_PACKAGE, npmPlatforms } from "../npm/platforms";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
-import { type BuildInfo, currentBuild, describeBuild } from "../update/build-info";
-import { installBinary } from "../update/install-binary";
-import { installOrigin, recordInstallOrigin } from "../update/install-origin";
-import { downloadNpmBinary, type Fetch, latestNpmVersion, npmRegistry, platformDist } from "../update/npm-registry";
-import {
-	describePackageInstall,
-	detectPackageInstall,
-	type PackageInstall,
-	upgradeCommand,
-} from "../update/package-install";
-import { assetName, downloadRelease, latestRelease, parseChecksums, pickAsset, releaseRepo } from "../update/release";
-import { buildFromSource, cliDir } from "../update/source-build";
-import { compareVersions } from "../update/version";
+import { spinnerContext } from "../spinner-context";
+import { type BuildInfo, buildInfoHelpers } from "../update/build-info";
+import { installBinaryHelpers } from "../update/install-binary";
+import { installOriginHelpers } from "../update/install-origin";
+import { type Fetch, npmRegistryHelpers } from "../update/npm-registry";
+import { type PackageInstall, packageInstallHelpers } from "../update/package-install";
+import { updateRelease } from "../update/release";
+import { sourceBuild } from "../update/source-build";
+import { updateVersion } from "../update/version";
 
 /** Outside world for `warden update`, injectable for tests. */
 export type UpdateDeps = {
@@ -68,7 +63,7 @@ export class UpdateCommand extends CliCommand {
 	}
 
 	private readonly sourceVersion = (sourceDir: string): string => {
-		const pkg: unknown = JSON.parse(readFileSync(join(cliDir(sourceDir), "package.json"), "utf8"));
+		const pkg: unknown = JSON.parse(readFileSync(join(sourceBuild.cliDir(sourceDir), "package.json"), "utf8"));
 		return typeof pkg === "object" && pkg !== null && "version" in pkg && typeof pkg.version === "string"
 			? pkg.version
 			: "0.0.0";
@@ -85,7 +80,7 @@ export class UpdateCommand extends CliCommand {
 		work: (ctx: CommandContext) => AsyncResult<T>,
 		succeeded: (data: T) => string
 	): AsyncResult<T> {
-		return withSpinner(ctx, text, async (sctx, spinner) => {
+		return spinnerContext.withSpinner(ctx, text, async (sctx, spinner) => {
 			const result = await work(sctx);
 			if (result.success) spinner.succeed(succeeded(result.data));
 			else spinner.fail();
@@ -98,7 +93,7 @@ export class UpdateCommand extends CliCommand {
 		return this.step(
 			ctx,
 			`installing ${target}…`,
-			(sctx) => installBinary(sctx.exec, binary, target, version),
+			(sctx) => installBinaryHelpers.installBinary(sctx.exec, binary, target, version),
 			() => `installed ${version} (self-check ok)`
 		);
 	}
@@ -110,7 +105,7 @@ export class UpdateCommand extends CliCommand {
 	/** `up-to-date` / `available` when there's nothing to install (or `--check`); `undefined` = go ahead. */
 	private skipInstall(deps: UpdateDeps, flags: Flags, latest: string): UpdateReport | undefined {
 		const base = { current: deps.build.version, latest, channel: deps.build.channel };
-		const newer = compareVersions(latest, deps.build.version) > 0;
+		const newer = updateVersion.compareVersions(latest, deps.build.version) > 0;
 		const switching = deps.build.channel !== "release";
 		if (!newer && !switching && !flags.force) return { status: "up-to-date", ...base };
 		if (flags.check) return { status: newer ? "available" : "up-to-date", ...base };
@@ -127,7 +122,8 @@ export class UpdateCommand extends CliCommand {
 		flags: Flags,
 		target: string
 	): AsyncResult<UpdateReport> {
-		if (installOrigin(ctx.env, deps.execPath) === "npm") return this.updateFromNpm(ctx, deps, flags, target);
+		if (installOriginHelpers.installOrigin(ctx.env, deps.execPath) === "npm")
+			return this.updateFromNpm(ctx, deps, flags, target);
 		const github = await this.updateFromRelease(ctx, deps, flags, target);
 		if (github.success || github.error.kind !== "unreachable") {
 			return github.success ? github : resultFactory.err(github.error.message);
@@ -144,20 +140,20 @@ export class UpdateCommand extends CliCommand {
 		flags: Flags,
 		target: string
 	): AsyncResult<UpdateReport> {
-		const platform = releaseTarget(deps.platform, deps.arch);
+		const platform = npmPlatforms.releaseTarget(deps.platform, deps.arch);
 		if (!platform.success) return platform;
-		const registry = npmRegistry(ctx.env);
+		const registry = npmRegistryHelpers.npmRegistry(ctx.env);
 		const latest = await this.step(
 			ctx,
 			`checking the latest ${NPM_PACKAGE} on npm…`,
-			() => latestNpmVersion(deps.fetch, registry),
+			() => npmRegistryHelpers.latestNpmVersion(deps.fetch, registry),
 			(version) => `latest ${NPM_PACKAGE} ${version}`
 		);
 		if (!latest.success) return latest;
 		const version = latest.data;
 		const skipped = this.skipInstall(deps, flags, version);
 		if (skipped) return resultFactory.ok(skipped);
-		const name = `${platformPackageName(platform.data)}@${version}`;
+		const name = `${npmPlatforms.platformPackageName(platform.data)}@${version}`;
 
 		const dir = mkdtempSync(join(tmpdir(), "warden-update-"));
 		try {
@@ -166,9 +162,9 @@ export class UpdateCommand extends CliCommand {
 				ctx,
 				`downloading ${name}…`,
 				async (): AsyncResult<void> => {
-					const dist = await platformDist(deps.fetch, registry, platform.data, version);
+					const dist = await npmRegistryHelpers.platformDist(deps.fetch, registry, platform.data, version);
 					if (!dist.success) return dist;
-					const bytes = await downloadNpmBinary(deps.fetch, dist.data);
+					const bytes = await npmRegistryHelpers.downloadNpmBinary(deps.fetch, dist.data);
 					if (!bytes.success) return bytes;
 					writeFileSync(binary, bytes.data);
 					return resultFactory.ok(undefined);
@@ -178,7 +174,7 @@ export class UpdateCommand extends CliCommand {
 			if (!downloaded.success) return downloaded;
 			const installed = await this.install(ctx, binary, target, version);
 			if (!installed.success) return installed;
-			recordInstallOrigin(ctx.env, target, "npm");
+			installOriginHelpers.recordInstallOrigin(ctx.env, target, "npm");
 			return resultFactory.ok({
 				status: "updated",
 				current: deps.build.version,
@@ -204,20 +200,20 @@ export class UpdateCommand extends CliCommand {
 		target: string
 	): Promise<Result<UpdateReport, ReleaseError>> {
 		const failed = (message: string) => this.releaseError("failed", message);
-		const repo = releaseRepo(ctx.env);
-		const asset = assetName(deps.platform, deps.arch);
+		const repo = updateRelease.releaseRepo(ctx.env);
+		const asset = updateRelease.assetName(deps.platform, deps.arch);
 		if (!asset.success) return failed(asset.error);
 		const latest = await this.step(
 			ctx,
 			`checking the latest release on ${repo}…`,
-			(sctx) => latestRelease(sctx.exec, repo),
+			(sctx) => updateRelease.latestRelease(sctx.exec, repo),
 			(release) => `latest release ${release.tag}`
 		);
 		if (!latest.success) return this.releaseError("unreachable", latest.error);
 		const base = { current: deps.build.version, latest: latest.data.version, channel: deps.build.channel };
 		const skipped = this.skipInstall(deps, flags, latest.data.version);
 		if (skipped) return resultFactory.ok(skipped);
-		const picked = pickAsset(latest.data, asset.data);
+		const picked = updateRelease.pickAsset(latest.data, asset.data);
 		if (!picked.success) return failed(picked.error);
 		const name = picked.data;
 
@@ -228,9 +224,9 @@ export class UpdateCommand extends CliCommand {
 				ctx,
 				`downloading ${name} ${latest.data.tag}…`,
 				async (sctx): AsyncResult<void> => {
-					const fetched = await downloadRelease(sctx.exec, repo, latest.data, name, dir);
+					const fetched = await updateRelease.downloadRelease(sctx.exec, repo, latest.data, name, dir);
 					if (!fetched.success) return fetched;
-					const expected = parseChecksums(readFileSync(join(dir, "checksums.txt"), "utf8")).get(name);
+					const expected = updateRelease.parseChecksums(readFileSync(join(dir, "checksums.txt"), "utf8")).get(name);
 					const actual = this.sha256File(binary);
 					return expected === actual
 						? resultFactory.ok(undefined)
@@ -269,13 +265,18 @@ export class UpdateCommand extends CliCommand {
 			const built = await this.step(
 				ctx,
 				`building ${sourceDir}…`,
-				(sctx) => buildFromSource(sctx.exec, sourceDir, version, outfile, sctx.now),
-				(build) => `built ${describeBuild(build)}`
+				(sctx) => sourceBuild.buildFromSource(sctx.exec, sourceDir, version, outfile, sctx.now),
+				(build) => `built ${buildInfoHelpers.describeBuild(build)}`
 			);
 			if (!built.success) return built;
 			const installed = await this.install(ctx, outfile, target, version);
 			if (!installed.success) return installed;
-			return resultFactory.ok({ status: "updated", ...base, path: target, build: describeBuild(built.data) });
+			return resultFactory.ok({
+				status: "updated",
+				...base,
+				path: target,
+				build: buildInfoHelpers.describeBuild(built.data),
+			});
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -283,7 +284,7 @@ export class UpdateCommand extends CliCommand {
 
 	private plan(ctx: CommandContext, deps: UpdateDeps, flags: Flags, target: string): AsyncResult<UpdateReport> {
 		const build = deps.build;
-		const managed = flags.to === undefined ? detectPackageInstall(deps.execPath) : undefined;
+		const managed = flags.to === undefined ? packageInstallHelpers.detectPackageInstall(deps.execPath) : undefined;
 		if (managed) {
 			return Promise.resolve(
 				resultFactory.ok({
@@ -291,7 +292,7 @@ export class UpdateCommand extends CliCommand {
 					current: build.version,
 					channel: build.channel,
 					install: managed,
-					command: upgradeCommand(managed),
+					command: packageInstallHelpers.upgradeCommand(managed),
 				})
 			);
 		}
@@ -314,7 +315,7 @@ export class UpdateCommand extends CliCommand {
 			case "available":
 				return `${color.yellow(`update available: ${report.current} → ${report.latest}`)} ${color.dim("(run `warden update`)")}`;
 			case "managed":
-				return `${color.yellow(`warden ${report.current} (${describePackageInstall(report.install)}) — upgrade it with:`)}\n  ${report.command}`;
+				return `${color.yellow(`warden ${report.current} (${packageInstallHelpers.describePackageInstall(report.install)}) — upgrade it with:`)}\n  ${report.command}`;
 			case "updated": {
 				const headline =
 					report.current === report.latest ? "warden rebuilt" : `warden updated ${report.current} → ${report.latest}`;
@@ -325,7 +326,7 @@ export class UpdateCommand extends CliCommand {
 
 	private async update(ctx: CommandContext, deps: UpdateDeps, flags: Flags): Promise<number> {
 		const target = flags.to ?? this.defaultTarget(ctx, deps);
-		if (!flags.json) output.heading(ctx, "update", describeBuild(deps.build));
+		if (!flags.json) output.heading(ctx, "update", buildInfoHelpers.describeBuild(deps.build));
 		const report = await this.plan(ctx, deps, flags, target);
 		if (!report.success) {
 			output.reportError(ctx, "update", report.error);
@@ -346,7 +347,7 @@ export class UpdateCommand extends CliCommand {
 }
 
 export const updateCommand = new UpdateCommand({
-	build: currentBuild(),
+	build: buildInfoHelpers.currentBuild(),
 	platform: process.platform,
 	arch: process.arch,
 	execPath: process.execPath,

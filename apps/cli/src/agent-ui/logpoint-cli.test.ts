@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Command } from "@commander-js/extra-typings";
 import type { ConsoleLine } from "@delacour/warden-devtools/devtools.types";
 import { type BrokerResult, devBrokerBrokerTypes } from "../dev-broker/broker.types";
-import { type DevSessionRecord, writeDevSession } from "../dev-session";
-import { type TestContext, testContext } from "../testing";
+import { type DevSessionRecord, devSession } from "../dev-session";
+import { cliTesting, type TestContext } from "../testing";
 import type { BrokerCall, BrokerClientDeps } from "./broker-client";
 import { uiLogpointCli } from "./logpoint-cli";
 
@@ -26,7 +26,7 @@ const line = (ts: number, text: string, args?: string[]): ConsoleLine => ({
 type Handler = (method: string, params: unknown) => Promise<BrokerResult<unknown> | undefined> | undefined;
 
 function rig(handle: Handler = () => undefined) {
-	const ctx = testContext([]);
+	const ctx = cliTesting.testContext([]);
 	contexts.push(ctx);
 	const record: DevSessionRecord = {
 		version: 1,
@@ -41,7 +41,7 @@ function rig(handle: Handler = () => undefined) {
 		startedAt: "2026-10-27T00:00:00.000Z",
 		brokerSocket: "/tmp/b.sock",
 	};
-	writeDevSession(ctx.env, record);
+	devSession.writeDevSession(ctx.env, record);
 	const sent: Sent[] = [];
 	const answer = async (method: string, params: unknown): Promise<BrokerResult<unknown>> => {
 		sent.push({ method, params });
@@ -93,7 +93,7 @@ describe("work functions", () => {
 	});
 
 	test("no dev session is devtools_unavailable with the start hint", async () => {
-		const ctx = testContext([]);
+		const ctx = cliTesting.testContext([]);
 		contexts.push(ctx);
 		const added = await uiLogpointCli.addLogpoint(
 			{ env: ctx.env },

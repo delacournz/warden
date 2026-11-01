@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { capacityJsonSchema } from "@delacour/warden-sdk/contracts/capacity";
 import { simctlFakes } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { capacityCommand } from "./capacity";
 
 let ctx: TestContext | undefined;
@@ -9,7 +9,7 @@ afterEach(() => ctx?.cleanup());
 
 describe("warden capacity", () => {
 	test("--json: budget, usage by platform (warden vs foreign), costs, max concurrent", async () => {
-		ctx = testContext(["--json"], {
+		ctx = cliTesting.testContext(["--json"], {
 			exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2)]),
 		});
 		ctx.env = { ...ctx.env, WARDEN_CAPACITY_HEADROOM_GB: "8", WARDEN_CAPACITY_MAX: "4" };
@@ -28,7 +28,7 @@ describe("warden capacity", () => {
 	});
 
 	test("text output names host, budget and pressure; off is flagged", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		ctx.env = { ...ctx.env, WARDEN_CAPACITY: "off" };
 		expect(await capacityCommand.run(ctx)).toBe(0);
 		const text = ctx.stdout.join("\n");
@@ -38,7 +38,7 @@ describe("warden capacity", () => {
 	});
 
 	test("a bad override is warned about on stderr and ignored", async () => {
-		ctx = testContext(["--json"]);
+		ctx = cliTesting.testContext(["--json"]);
 		ctx.env = { ...ctx.env, WARDEN_CAPACITY_MAX: "lots" };
 		expect(await capacityCommand.run(ctx)).toBe(0);
 		expect(ctx.stderr.join("\n")).toContain("WARDEN_CAPACITY_MAX=lots");

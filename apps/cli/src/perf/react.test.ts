@@ -6,7 +6,7 @@ import { reactFixtures } from "@delacour/warden-perf/react/react.testing";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfReactCli } from "./react";
 import { perfTestingCli } from "./testing";
 
@@ -18,7 +18,7 @@ const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 const METRO = "http://127.0.0.1:8081";
 
 function setup(globalOver: Record<string, unknown> = {}) {
-	const c = testContext([], { now: () => T0 });
+	const c = cliTesting.testContext([], { now: () => T0 });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);

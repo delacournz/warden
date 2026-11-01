@@ -50,64 +50,35 @@ import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-t
 import { uiHelperSweep } from "../agent-ui/helper-sweep";
 import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
 import { uiStopHelperAfter } from "../agent-ui/stop-helper-after";
-import { maybeAutoGc, selfCommand } from "../autogc";
-import { type Cast, createCast } from "../batch/cast";
-import { type EarlyWarm, startEarlyWarm } from "../batch/early-warm";
-import { type Recording, startSimRecording, videoName } from "../batch/record";
-import { type ReadFrom, readFileFrom } from "../batch/results-tail";
-import { type RunnerReport, resultsReport } from "../batch/runner-report";
-import { captureScreenshot, runnerFailureShot } from "../batch/screenshot";
-import { parseReadySpec, probeReady, type ReadySpec } from "../batch/serve";
-import { type DeviceSetup, type DeviceSetupSpec, type EarlySlim, setupDevices, startEarlySlim } from "../batch/setup";
-import { specPoller } from "../batch/spec-poller";
+import { autoGc } from "../autogc";
+import { type Cast, castHelpers } from "../batch/cast";
+import { type EarlyWarm, earlyWarmHelpers } from "../batch/early-warm";
+import { batchRecord, type Recording } from "../batch/record";
+import { type ReadFrom, resultsTailHelpers } from "../batch/results-tail";
+import { type RunnerReport, runnerReportHelpers } from "../batch/runner-report";
+import { screenshotHelpers } from "../batch/screenshot";
+import { batchServe, type ReadySpec } from "../batch/serve";
+import { batchSetup, type DeviceSetup, type DeviceSetupSpec, type EarlySlim } from "../batch/setup";
+import { specPollerHelpers } from "../batch/spec-poller";
 import type { SpecMark, TrackedSpec } from "../batch/spec-progress";
-import { openStampedLog } from "../batch/stamped-log";
-import {
-	addRunnerSpecs,
-	applyEvent,
-	applyRunnerReport,
-	applySpecMarks,
-	type BatchView,
-	initialView,
-	type LiveScreen,
-	liveScreen,
-	plainLine,
-	render,
-	withRunners,
-} from "../batch/tui";
+import { stampedLogHelpers } from "../batch/stamped-log";
+import { type BatchView, type LiveScreen, tuiHelpers } from "../batch/tui";
 import type { WarmConnect, WarmHelper } from "../batch/warm-drivers";
-import { warmGate } from "../batch/warm-gate";
-import {
-	type ClaimFlags,
-	type ClaimFlagValues,
-	isPhysicalClaim,
-	type PhysicalOptionValues,
-	parseClaimFlags,
-	resolvePlatform,
-	withClaimOptions,
-	withNamedPhysical,
-	withPhysicalOptions,
-} from "../claim-flags";
+import { warmGateHelpers } from "../batch/warm-gate";
+import { type ClaimFlags, type ClaimFlagValues, claimFlagsHelpers, type PhysicalOptionValues } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
-import { helperDir } from "../e2e/bun-runner";
-import { readE2ePackageVersion, stageBundledRuntime } from "../e2e/e2e-runtime";
-import { residentSocket, warmConnect } from "../e2e/warm-connect";
+import { bunRunner } from "../e2e/bun-runner";
+import { e2eRuntime } from "../e2e/e2e-runtime";
+import { warmConnectHelpers } from "../e2e/warm-connect";
 import { leaseHostBuilder } from "../lease-host";
-import {
-	type AppFlagValues,
-	appPhaseProgress,
-	leasedProgress,
-	parseAppFlags,
-	splitCommand,
-	withLeaseOptions,
-} from "../lease-options";
+import { type AppFlagValues, leaseOptions } from "../lease-options";
 import { output } from "../output";
-import { isLockedClaimError, reportClaimFailure } from "../physical-lock";
-import { canPrompt, pickPhysicalArgs, reportPick } from "../physical-pick";
-import { withSpinner } from "../spinner-context";
+import { physicalLock } from "../physical-lock";
+import { physicalPickHelpers } from "../physical-pick";
+import { spinnerContext } from "../spinner-context";
 import type { Spinner } from "../ui";
-import { currentBuild } from "../update/build-info";
+import { buildInfoHelpers } from "../update/build-info";
 
 export type KillSignal = ForwardedSignal | "SIGKILL";
 
@@ -518,7 +489,7 @@ export const defaultBatchDeps: BatchDeps = {
 	pid: process.pid,
 	isPortFree: (port) => portProbe.isFree(port),
 	spawn(cmd, opts) {
-		const log = openStampedLog(opts.log);
+		const log = stampedLogHelpers.openStampedLog(opts.log);
 		try {
 			const proc = Bun.spawn(cmd, {
 				env: { ...opts.env, WARDEN_LOG_TIMESTAMPS: "1" },
@@ -553,17 +524,17 @@ export const defaultBatchDeps: BatchDeps = {
 			throw e;
 		}
 	},
-	probe: probeReady,
+	probe: batchServe.probeReady.bind(batchServe),
 	sleep: (ms) => Bun.sleep(ms),
-	record: (udid, path) => startSimRecording(udid, path, Date.now),
-	screenshot: captureScreenshot,
+	record: (udid, path) => batchRecord.startSimRecording(udid, path, Date.now),
+	screenshot: screenshotHelpers.captureScreenshot.bind(screenshotHelpers),
 	slim: (udid, profile) => new SimSlimmer(processExec.run).slim(udid, profile ? { profile } : {}),
 	writeFile: async (path, data) => {
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, data);
 	},
 	readFile: (path) => readFile(path, "utf8"),
-	readFrom: readFileFrom,
+	readFrom: resultsTailHelpers.readFileFrom.bind(resultsTailHelpers),
 	mkdir: async (dir) => {
 		await mkdir(dir, { recursive: true });
 	},
@@ -585,14 +556,14 @@ export const defaultBatchDeps: BatchDeps = {
 	},
 	metroProbe: (port, projectRoot) => metroTools.owner(processExec.run, port, projectRoot),
 	prewarm: (url, platform, signal) => metroTools.prewarm(url, platform, signal),
-	warmConnect,
-	residentSocket,
+	warmConnect: (ctx) => warmConnectHelpers.warmConnect(ctx),
+	residentSocket: (ctx) => warmConnectHelpers.residentSocket(ctx),
 	which: (cmd) => Bun.which(cmd),
 	execPath: () => process.execPath,
 	resolveModule: (specifier, from) => Bun.resolveSync(specifier, from),
-	e2eVersion: readE2ePackageVersion,
-	bundledE2e: (ctx) => stageBundledRuntime(ctx.env, currentBuild()),
-	helperDir: () => helperDir(Bun.main, process.execPath),
+	e2eVersion: e2eRuntime.readE2ePackageVersion.bind(e2eRuntime),
+	bundledE2e: (ctx) => e2eRuntime.stageBundledRuntime(ctx.env, buildInfoHelpers.currentBuild()),
+	helperDir: () => bunRunner.helperDir(Bun.main, process.execPath),
 };
 
 export class BatchCommand extends CliCommand {
@@ -607,9 +578,9 @@ export class BatchCommand extends CliCommand {
 
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
 		this.withBatchOptions(
-			withLeaseOptions(
-				withPhysicalOptions(
-					withClaimOptions(
+			leaseOptions.withLeaseOptions(
+				claimFlagsHelpers.withPhysicalOptions(
+					claimFlagsHelpers.withClaimOptions(
 						cmd
 							.argument(
 								"[platform]",
@@ -664,7 +635,10 @@ export class BatchCommand extends CliCommand {
 		if (!timeoutMs.success) return resultFactory.err(`--serve-timeout: ${timeoutMs.error}`);
 		if (opts.serveReady === undefined) return resultFactory.ok({ cmd: opts.serve, timeoutMs: timeoutMs.data });
 		// validated now with stand-in values; parsed for real once the port is leased
-		const ready = parseReadySpec(batchJobs.expand(opts.serveReady, { port: 1, metroUrl: "http://127.0.0.1:1" }), cwd);
+		const ready = batchServe.parseReadySpec(
+			batchJobs.expand(opts.serveReady, { port: 1, metroUrl: "http://127.0.0.1:1" }),
+			cwd
+		);
 		if (!ready.success) return ready;
 		return resultFactory.ok({ cmd: opts.serve, timeoutMs: timeoutMs.data, ready: { spec: opts.serveReady, cwd } });
 	}
@@ -689,9 +663,15 @@ export class BatchCommand extends CliCommand {
 	 * Relative option paths resolve against `cwd` (the invoking dir); serve / jobs run in `base.cwd ?? cwd`.
 	 */
 	parseBatchArgs(platform: Platform, opts: BatchOpts, cwd: string, base: BatchBase = {}): Result<BatchArgs> {
-		const flags = parseClaimFlags(platform, withNamedPhysical(opts), undefined, undefined, PRIORITY.low);
+		const flags = claimFlagsHelpers.parseClaimFlags(
+			platform,
+			claimFlagsHelpers.withNamedPhysical(opts),
+			undefined,
+			undefined,
+			PRIORITY.low
+		);
 		if (!flags.success) return flags;
-		const app = parseAppFlags(opts);
+		const app = leaseOptions.parseAppFlags(opts);
 		if (!app.success) return app;
 		const jobs = this.parseJobsSource(opts, cwd, base.jobs);
 		if (!jobs.success) return jobs;
@@ -837,15 +817,15 @@ export class BatchCommand extends CliCommand {
 		const live = args.tui && terminal.isTTY;
 		const width = live ? terminal.columns : 100;
 		// the grid (header, device rows, spec lines) + the cursor row its trailing newline leaves
-		const height = render(sized, { width, color: false }).split("\n").length + 1;
-		const cast = args.record ? createCast({ width, height, startedAt: ctx.now() }) : undefined;
+		const height = tuiHelpers.render(sized, { width, color: false }).split("\n").length + 1;
+		const cast = args.record ? castHelpers.createCast({ width, height, startedAt: ctx.now() }) : undefined;
 		const sinks: Array<{ screen: LiveScreen; color: boolean; last?: string }> = [];
-		if (live) sinks.push({ screen: liveScreen(terminal.write), color: ctx.ui.color.level > 0 });
-		if (cast) sinks.push({ screen: liveScreen((data) => cast.write(ctx.now(), data)), color: true });
+		if (live) sinks.push({ screen: tuiHelpers.liveScreen(terminal.write), color: ctx.ui.color.level > 0 });
+		if (cast) sinks.push({ screen: tuiHelpers.liveScreen((data) => cast.write(ctx.now(), data)), color: true });
 		const frame = (final: boolean) => {
 			view.current = { ...view.current, now: ctx.now() };
 			for (const sink of sinks) {
-				const text = render(view.current, { width, color: sink.color });
+				const text = tuiHelpers.render(view.current, { width, color: sink.color });
 				if (final) sink.screen.end(text);
 				else if (text !== sink.last) sink.screen.draw(text);
 				sink.last = text;
@@ -856,27 +836,27 @@ export class BatchCommand extends CliCommand {
 		return {
 			cast,
 			event: (e) => {
-				view.current = applyEvent(view.current, e);
+				view.current = tuiHelpers.applyEvent(view.current, e);
 				if (e.type === "job-start") {
 					const ids = this.shardSpecIds(specs, e.job);
-					if (ids.length > 0) view.current = addRunnerSpecs(view.current, e.worker, ids);
+					if (ids.length > 0) view.current = tuiHelpers.addRunnerSpecs(view.current, e.worker, ids);
 				}
 				if (!live) {
-					const text = plainLine(view.current, e);
+					const text = tuiHelpers.plainLine(view.current, e);
 					if (text !== undefined) ctx.err(text);
 				}
 				frame(false);
 			},
 			specs: (worker, marks) => {
 				if (!live) this.announceSpecs(ctx, view.current, worker, marks);
-				view.current = applySpecMarks(view.current, worker, marks);
+				view.current = tuiHelpers.applySpecMarks(view.current, worker, marks);
 				frame(false);
 			},
 			tests: (lines) => {
 				if (!live) for (const line of lines) ctx.err(line);
 			},
 			report: (report) => {
-				view.current = applyRunnerReport(view.current, report);
+				view.current = tuiHelpers.applyRunnerReport(view.current, report);
 				if (!live) this.announceDevices(ctx, view.current);
 				frame(false);
 			},
@@ -885,7 +865,7 @@ export class BatchCommand extends CliCommand {
 				frame(true);
 			},
 			rows: (rows) => {
-				const added = initialView(rows, 0, 0).devices;
+				const added = tuiHelpers.initialView(rows, 0, 0).devices;
 				const { runners } = view.current;
 				// a sharded grid tracks specs per runner: the late pool's workers need theirs (R1)
 				const fresh = [...new Set(added.map((d) => d.worker))].filter((w) => !runners?.some((r) => r.worker === w));
@@ -946,7 +926,7 @@ export class BatchCommand extends CliCommand {
 			sized
 		);
 		const ended = new Set<string>();
-		const poller = specs ? specPoller(deps, specs, o.resultFiles, ended, screen) : undefined;
+		const poller = specs ? specPollerHelpers.specPoller(deps, specs, o.resultFiles, ended, screen) : undefined;
 		const shown = new Set(o.ready);
 		try {
 			const summary = await this.runPools(pending, {
@@ -988,7 +968,7 @@ export class BatchCommand extends CliCommand {
 		screen: Display
 	): Promise<void> {
 		const texts = await Promise.all([...resultFiles.values()].map((path) => deps.readFile(path).catch(() => "")));
-		const report = resultsReport(texts, specs, since);
+		const report = runnerReportHelpers.resultsReport(texts, specs, since);
 		if (report) screen.report(report);
 	}
 
@@ -999,8 +979,8 @@ export class BatchCommand extends CliCommand {
 		startedAt: number,
 		specs: readonly TrackedSpec[] | undefined
 	): BatchView {
-		const view = initialView(rows, total, startedAt);
-		return specs?.some((f) => f.job !== undefined) ? withRunners(view, []) : view;
+		const view = tuiHelpers.initialView(rows, total, startedAt);
+		return specs?.some((f) => f.job !== undefined) ? tuiHelpers.withRunners(view, []) : view;
 	}
 
 	private tick(mark: SpecMark) {
@@ -1040,7 +1020,9 @@ export class BatchCommand extends CliCommand {
 		lost: readonly string[] = []
 	): AsyncResult<Recording[]> {
 		const devices = all.filter((d) => !lost.includes(d.udid));
-		const started = await Promise.allSettled(devices.map((d) => deps.record(d.udid, join(dir, videoName(d.worker)))));
+		const started = await Promise.allSettled(
+			devices.map((d) => deps.record(d.udid, join(dir, batchRecord.videoName(d.worker))))
+		);
 		const recordings = started.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
 		const failed = started.find((s) => s.status === "rejected");
 		if (failed) {
@@ -1050,7 +1032,7 @@ export class BatchCommand extends CliCommand {
 			);
 		}
 		devices.forEach((d, i) => {
-			d.video = videoName(d.worker);
+			d.video = batchRecord.videoName(d.worker);
 			d.videoStartedAt = recordings[i]?.startedAt;
 		});
 		return resultFactory.ok(recordings);
@@ -1136,7 +1118,10 @@ export class BatchCommand extends CliCommand {
 			if (!out) return false;
 			try {
 				const { resultsFiles } = await import("@delacour/warden-e2e/runner/results");
-				return runnerFailureShot(resultsFiles.read(await deps.readFile(join(out, "results.jsonl")))) !== undefined;
+				return (
+					screenshotHelpers.runnerFailureShot(resultsFiles.read(await deps.readFile(join(out, "results.jsonl")))) !==
+					undefined
+				);
 			} catch {
 				return false;
 			}
@@ -1262,7 +1247,7 @@ export class BatchCommand extends CliCommand {
 		const store = ctx.store();
 		const leases = session.leaseIds.flatMap((id) => store.getLease(id) ?? []);
 		const owner = ownerResolver.resolve(ctx);
-		const { notes } = await withSpinner(ctx, "shutting down devices…", async (sctx, spinner) => {
+		const { notes } = await spinnerContext.withSpinner(ctx, "shutting down devices…", async (sctx, spinner) => {
 			const outcome = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(sctx)).run(leases, owner);
 			spinner.succeed(outcome.shutdown.length > 0 ? `shut down ${outcome.shutdown.join(" ")}` : "nothing to shut down");
 			return outcome;
@@ -1285,7 +1270,7 @@ export class BatchCommand extends CliCommand {
 		slim: (udid: string, profile?: SlimProfile) => AsyncResult<string[]>
 	): Promise<{ live: Device[]; setups?: DeviceSetup[] }> {
 		if (!spec) return { live: devices };
-		const setups = await setupDevices({
+		const setups = await batchSetup.setupDevices({
 			devices,
 			spec,
 			env,
@@ -1460,7 +1445,7 @@ export class BatchCommand extends CliCommand {
 		const settled = launch.state === "up" || launch.state === "failed";
 		const metro = settled
 			? await launch.pending
-			: await withSpinner(ctx, `starting Metro on :${launch.port}…`, async (_sctx, spinner) => {
+			: await spinnerContext.withSpinner(ctx, `starting Metro on :${launch.port}…`, async (_sctx, spinner) => {
 					if (launch.state === "bundling")
 						spinner.update(`Metro on :${launch.port}: building the ${launch.platform} bundle…`);
 					const result = await launch.pending;
@@ -1641,7 +1626,7 @@ export class BatchCommand extends CliCommand {
 	): AsyncResult<void> {
 		const log = join(o.r.logDir, "serve.log");
 		const ready = serve.ready
-			? parseReadySpec(batchJobs.expand(serve.ready.spec, o.vars), serve.ready.cwd)
+			? batchServe.parseReadySpec(batchJobs.expand(serve.ready.spec, o.vars), serve.ready.cwd)
 			: resultFactory.ok(undefined);
 		if (!ready.success) return ready;
 		const proc = deps.spawn(["sh", "-c", batchJobs.expand(serve.cmd, o.vars)], {
@@ -2098,7 +2083,7 @@ export class BatchCommand extends CliCommand {
 			}
 			// a phone's jobs reach its runner only through the warm socket: no runner, no specs
 			const phones = run.warm ? r.devices.map((d) => d.udid).filter((id) => leaseModel.isPhysicalIosId(id)) : [];
-			const stopped = run.warm && phones.length > 0 ? await warmGate(phones, run.warm) : undefined;
+			const stopped = run.warm && phones.length > 0 ? await warmGateHelpers.warmGate(phones, run.warm) : undefined;
 			if (stopped) {
 				const failed = fail(`${stopped.udid}: ${stopped.code}: ${stopped.message}`, { batchDir, error: stopped });
 				return failed.code === 130 ? failed : { ...failed, code: this.warmStopExit(stopped.code) };
@@ -2186,7 +2171,7 @@ export class BatchCommand extends CliCommand {
 		argv: readonly string[],
 		operands: readonly string[]
 	): Result<{ target?: string; cmd: string[] }> {
-		const { cmd } = splitCommand(argv);
+		const { cmd } = leaseOptions.splitCommand(argv);
 		const before = operands.slice(0, Math.max(0, operands.length - cmd.length));
 		if (before.length > 1) return resultFactory.err(`unexpected arguments before --: ${before.slice(1).join(" ")}`);
 		const [target] = before;
@@ -2199,7 +2184,7 @@ export class BatchCommand extends CliCommand {
 		target: string | undefined
 	): AsyncResult<{ platform: Platform; preset?: BatchPreset }> {
 		if (target === undefined || target === "ios" || target === "android") {
-			const platform = await resolvePlatform(ctx, target);
+			const platform = await claimFlagsHelpers.resolvePlatform(ctx, target);
 			return platform.success ? resultFactory.ok({ platform: platform.data }) : platform;
 		}
 		const stopAt = (await gitFactsReader.read(ctx.exec, ctx.cwd, ctx.git))?.toplevel;
@@ -2296,7 +2281,7 @@ export class BatchCommand extends CliCommand {
 		const merged = preset ? this.mergePreset(preset, opts, passed) : { opts, base: {} };
 		const explicit = passed.has("headless") ? opts.headless : undefined;
 		// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
-		const headless = isPhysicalClaim(withNamedPhysical(merged.opts))
+		const headless = claimFlagsHelpers.isPhysicalClaim(claimFlagsHelpers.withNamedPhysical(merged.opts))
 			? explicit
 			: headlessResolver.resolve({ flag: explicit, config: preset?.headless, env: ctx.env });
 		const args = this.parseBatchArgs(
@@ -2314,10 +2299,10 @@ export class BatchCommand extends CliCommand {
 		const jobs = await this.loadJobs(ctx, deps, args.data);
 		if (!jobs.success) return fail(jobs.error);
 		// before any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-		const picked = await pickPhysicalArgs(ctx, ownerResolver.resolve(ctx), args.data, {
-			prompt: canPrompt(ctx, { json: args.data.json }),
+		const picked = await physicalPickHelpers.pickPhysicalArgs(ctx, ownerResolver.resolve(ctx), args.data, {
+			prompt: physicalPickHelpers.canPrompt(ctx, { json: args.data.json }),
 		});
-		if (picked.kind !== "ok") return reportPick(ctx, "batch", picked);
+		if (picked.kind !== "ok") return physicalPickHelpers.reportPick(ctx, "batch", picked);
 		return (await this.runSession(ctx, deps, picked.args, jobs.data, cmd)).code;
 	}
 
@@ -2345,7 +2330,7 @@ export class BatchCommand extends CliCommand {
 		signal: AbortSignal
 	): EarlyWarm | undefined {
 		if (!hooks.warmDrivers || lease.flags.request.platform !== "ios") return undefined;
-		return startEarlyWarm({
+		return earlyWarmHelpers.startEarlyWarm({
 			connect: hooks.warmDrivers,
 			legCounts: [
 				...(lease.legs?.map((leg) => leg.flags) ?? [lease.flags]).map((flags) => flags.request.count),
@@ -2433,8 +2418,8 @@ export class BatchCommand extends CliCommand {
 		const claimError = claimed.success || claimed.error.code === "interrupted" ? undefined : claimed.error.message;
 		const metroError = launch && metro && !metro.success ? `${metro.error} (log: ${launch.log})` : undefined;
 		const reason = claimError ?? (interrupted ? INTERRUPTED : (metroError ?? INTERRUPTED));
-		if (!interrupted && claimError !== undefined && isLockedClaimError(claimError)) {
-			return { code: reportClaimFailure(ctx, name, claimError) };
+		if (!interrupted && claimError !== undefined && physicalLock.isLockedClaimError(claimError)) {
+			return { code: physicalLock.reportClaimFailure(ctx, name, claimError) };
 		}
 		output.reportError(ctx, name, reason);
 		return { code: interrupted ? 130 : 1 };
@@ -2475,7 +2460,7 @@ export class BatchCommand extends CliCommand {
 		// each device is slimmed the moment it is leased, alongside its app install and warm-up (12-4)
 		const slim =
 			hooks.setup?.slim && platform === "ios"
-				? startEarlySlim<ClaimedDevice>({
+				? batchSetup.startEarlySlim<ClaimedDevice>({
 						slim: this.recordedSlim(ctx, deps, typeof hooks.setup.slim === "object" ? hooks.setup.slim : undefined),
 						skip: (c) => leaseModel.isPhysicalDevice(c.device) || this.alreadySlimmed(ctx, c),
 					})
@@ -2492,36 +2477,40 @@ export class BatchCommand extends CliCommand {
 				void run.launch?.stop();
 			})
 		);
-		const claimed = await withSpinner(ctx, `claiming ${wanted} ${platform} device(s)…`, async (sctx, spinner) => {
-			const legFlags = lease.legs?.map((leg) => leg.flags);
-			const progress = leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
-			const onLeased = this.sessionOnLeased(progress, warm, slim);
-			const onAppPhase = appPhaseProgress(spinner, lease.app !== undefined);
-			const onPorts = this.sessionOnPorts(ctx, sctx, deps, lease, run, batchDir, controller);
-			const claimArgs = {
-				...lease,
-				self: selfCommand(),
-				...(legFlags ? { legFlags } : {}),
-				...(onLeased ? { onLeased } : {}),
-				...(onAppPhase ? { onAppPhase } : {}),
-				...(onPorts ? { onPorts } : {}),
-				aborted: () => interrupted() || run.launch?.state === "failed",
-				// a device the headless hide could not boot again is dropped, as one that cannot reach Metro is (12-7, R5)
-				dropLost: true,
-				// a failed leg releases the others at once: their early slim and warm-up end first (R3)
-				...(warm || slim ? { beforeRelease: quiesce } : {}),
-			};
-			const result = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(sctx), deps).claimAll(
-				owner,
-				claimArgs,
-				name
-			);
-			run.claimDone = true;
-			// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
-			maybeAutoGc(ctx);
-			this.settleClaimSpinner(spinner, lease, result);
-			return result;
-		});
+		const claimed = await spinnerContext.withSpinner(
+			ctx,
+			`claiming ${wanted} ${platform} device(s)…`,
+			async (sctx, spinner) => {
+				const legFlags = lease.legs?.map((leg) => leg.flags);
+				const progress = leaseOptions.leasedProgress(spinner, ctx.ui.color, lease.app !== undefined);
+				const onLeased = this.sessionOnLeased(progress, warm, slim);
+				const onAppPhase = leaseOptions.appPhaseProgress(spinner, lease.app !== undefined);
+				const onPorts = this.sessionOnPorts(ctx, sctx, deps, lease, run, batchDir, controller);
+				const claimArgs = {
+					...lease,
+					self: autoGc.selfCommand(),
+					...(legFlags ? { legFlags } : {}),
+					...(onLeased ? { onLeased } : {}),
+					...(onAppPhase ? { onAppPhase } : {}),
+					...(onPorts ? { onPorts } : {}),
+					aborted: () => interrupted() || run.launch?.state === "failed",
+					// a device the headless hide could not boot again is dropped, as one that cannot reach Metro is (12-7, R5)
+					dropLost: true,
+					// a failed leg releases the others at once: their early slim and warm-up end first (R3)
+					...(warm || slim ? { beforeRelease: quiesce } : {}),
+				};
+				const result = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(sctx), deps).claimAll(
+					owner,
+					claimArgs,
+					name
+				);
+				run.claimDone = true;
+				// after claimAll: the run's own leases keep the background gc off its devices (12-2, 16-1)
+				autoGc.maybeAutoGc(ctx);
+				this.settleClaimSpinner(spinner, lease, result);
+				return result;
+			}
+		);
 		// before supervise re-subscribes (holdLeases), so the two never share a handler slot
 		for (const off of offSignals) off();
 		if (!claimed.success || interrupted()) return this.abortClaim(ctx, name, claimed, run, interrupted(), quiesce);

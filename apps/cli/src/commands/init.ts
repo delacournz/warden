@@ -6,9 +6,9 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import { expoInstallCommand, missingPackages } from "../expo-app";
+import { expoApp } from "../expo-app";
 import { output } from "../output";
-import { currentBuild } from "../update/build-info";
+import { buildInfoHelpers } from "../update/build-info";
 import { type InitApp, initData, SMOKE_SPEC_SOURCE } from "./init.data";
 
 type InitOpts = { project?: string; bundleId?: string; force?: true; dryRun?: true; json?: true };
@@ -125,11 +125,13 @@ export class Init extends CliCommand {
 	 * `@delacour/warden-e2e` is pinned to this warden's version: the spec preload refuses any other.
 	 */
 	private installCommands(root: string): string[] {
-		const dev = missingPackages(root, ["expo-dev-client"]);
-		const e2e = missingPackages(root, ["@delacour/warden-e2e"]);
+		const dev = expoApp.missingPackages(root, ["expo-dev-client"]);
+		const e2e = expoApp.missingPackages(root, ["@delacour/warden-e2e"]);
 		return [
-			...(dev.length > 0 ? [expoInstallCommand(root, dev).join(" ")] : []),
-			...(e2e.length > 0 ? [`bun add -d ${e2e.map((name) => `${name}@${currentBuild().version}`).join(" ")}`] : []),
+			...(dev.length > 0 ? [expoApp.expoInstallCommand(root, dev).join(" ")] : []),
+			...(e2e.length > 0
+				? [`bun add -d ${e2e.map((name) => `${name}@${buildInfoHelpers.currentBuild().version}`).join(" ")}`]
+				: []),
 		];
 	}
 

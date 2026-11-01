@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfMarkCli } from "./mark";
 import { perfTestingCli } from "./testing";
 
@@ -12,7 +12,7 @@ const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 
 function setup() {
 	const clock = { now: T0 };
-	const c = testContext([], { now: () => clock.now });
+	const c = cliTesting.testContext([], { now: () => clock.now });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);

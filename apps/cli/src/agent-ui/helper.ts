@@ -26,8 +26,8 @@ import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { readServedIdentity } from "../ios-runner/served-identity";
-import { selfCommand } from "../self-command";
+import { servedIdentity } from "../ios-runner/served-identity";
+import { selfCommandHelpers } from "../self-command";
 import { DEVICE_LOCKED_HINT, opErrors } from "./driver";
 import { uiHelperSweep } from "./helper-sweep";
 import { type UiError, uiOutput } from "./output";
@@ -592,7 +592,7 @@ export class UiHelper {
 		if (!idle.success) return idle;
 		const located = kind.locate(host, udid, opts, deps);
 		if (!located.success) return { success: false, error: opErrors.driverError(located.error) };
-		const self = (deps.self ?? selfCommand)();
+		const self = (deps.self ?? selfCommandHelpers.selfCommand.bind(selfCommandHelpers))();
 		const cmd = kind.command({ binary: located.data, id: udid, socket: socketPath, idleSeconds: idle.data, self });
 		this.unlinkQuietly(socketPath);
 		const spawned = deps.spawnDetached({ cmd, logPath, signalMs: kind.startupMs ?? SIGNAL_WAIT_MS });
@@ -1128,8 +1128,8 @@ export class UiHelper {
 		return {
 			...defaultHelperDeps,
 			runner: {
-				expected: async () => (await import("../ios-runner/identity")).expectedRunnerIdentity(host),
-				served: (socketPath) => readServedIdentity(socketPath),
+				expected: async () => (await import("../ios-runner/identity")).runnerIdentity.expectedRunnerIdentity(host),
+				served: (socketPath) => servedIdentity.readServedIdentity(socketPath),
 				caller: async () => {
 					const { ownerResolver } = await import("@delacour/warden-leasing/owner");
 					return this.ownerKey(ownerResolver.resolve(host));
@@ -1267,7 +1267,7 @@ export const ANDROID_HOST_KIND: HelperKind = {
 	idleEnv: ANDROID_HOST_IDLE_TIMEOUT_ENV,
 	marks: (serial, socket) => [`--serial ${serial}`, `--socket ${socket}`],
 	locate: (_host, _serial, _opts, deps) => {
-		const self = (deps.self ?? selfCommand)();
+		const self = (deps.self ?? selfCommandHelpers.selfCommand.bind(selfCommandHelpers))();
 		const binary = self[self.length - 1];
 		return binary === undefined
 			? {
@@ -1300,7 +1300,7 @@ export const IOS_RUNNER_KIND: HelperKind = {
 	idleEnv: IOS_RUNNER_IDLE_TIMEOUT_ENV,
 	marks: (udid, socket) => [`--udid ${udid}`, `--socket ${socket}`],
 	locate: (_host, _udid, _opts, deps) => {
-		const self = (deps.self ?? selfCommand)();
+		const self = (deps.self ?? selfCommandHelpers.selfCommand.bind(selfCommandHelpers))();
 		const binary = self[self.length - 1];
 		return binary === undefined
 			? {

@@ -3,14 +3,6 @@ import { basename } from "node:path";
 export const COMPLETION_SHELLS = ["zsh", "bash", "fish"] as const;
 export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
-const isShell = (name: string): name is CompletionShell => (COMPLETION_SHELLS as readonly string[]).includes(name);
-
-/** The user's login shell (`$SHELL`), when warden ships completion for it. */
-export function shellFromEnv(env: Record<string, string | undefined>): CompletionShell | undefined {
-	const name = env.SHELL ? basename(env.SHELL) : "";
-	return isShell(name) ? name : undefined;
-}
-
 /**
  * zsh: `_describe` groups commands / options / values with their descriptions. With zsh's default
  * AUTO_MENU, tab once lists, tab again picks the first, further tabs cycle; `menu select` (only when the
@@ -92,6 +84,20 @@ complete -c warden -f -a '(__warden_complete)'
 
 const SCRIPTS: Record<CompletionShell, string> = { zsh: ZSH, bash: BASH, fish: FISH };
 
-export function completionScript(shell: CompletionShell): string {
-	return SCRIPTS[shell];
+export class CompletionScripts {
+	private isShell(name: string): name is CompletionShell {
+		return (COMPLETION_SHELLS as readonly string[]).includes(name);
+	}
+
+	/** The user's login shell (`$SHELL`), when warden ships completion for it. */
+	shellFromEnv(env: Record<string, string | undefined>): CompletionShell | undefined {
+		const name = env.SHELL ? basename(env.SHELL) : "";
+		return this.isShell(name) ? name : undefined;
+	}
+
+	completionScript(shell: CompletionShell): string {
+		return SCRIPTS[shell];
+	}
 }
+
+export const completionScripts = new CompletionScripts();

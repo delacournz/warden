@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectConfig } from "@delacour/warden-builds/config";
 import type { ProjectContext } from "@delacour/warden-builds/ensure";
-import { fakeExec, type ScriptedUi, scriptedUi, testContext } from "../testing";
+import { cliTesting, type ScriptedUi } from "../testing";
 import { devSetup } from "./dev-setup";
 
 let dir: string | undefined;
@@ -63,7 +63,7 @@ describe("diagnoseDev", () => {
 describe("offerDevSetup", () => {
 	test("without a terminal the blocking issue is the error, named with its command", async () => {
 		const root = app({ dependencies: {} });
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} })), {
 			interactive: false,
 		});
@@ -75,14 +75,14 @@ describe("offerDevSetup", () => {
 		const root = app({ dependencies: {} });
 		const calls: string[][] = [];
 		const cwds: Array<string | undefined> = [];
-		const c = testContext([], {
+		const c = cliTesting.testContext([], {
 			exec: async (cmd, opts) => {
 				calls.push([...cmd]);
 				cwds.push(opts?.cwd);
 				return { exitCode: 0, stdout: "", stderr: "" };
 			},
 		});
-		c.ui = scriptedUi({ interactive: true, confirm: [true] });
+		c.ui = cliTesting.scriptedUi({ interactive: true, confirm: [true] });
 		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root)), { interactive: true });
 		expect(res).toEqual({ success: true, data: "changed" });
 		expect(calls).toEqual([["yarn", "expo", "install", "expo-dev-client"]]);
@@ -92,12 +92,14 @@ describe("offerDevSetup", () => {
 
 	test("declining the install is the error; a failing install reports its exit and output", async () => {
 		const root = app({ dependencies: {} });
-		const declined = testContext([]);
-		declined.ui = scriptedUi({ interactive: true, confirm: [false] });
+		const declined = cliTesting.testContext([]);
+		declined.ui = cliTesting.scriptedUi({ interactive: true, confirm: [false] });
 		const no = await devSetup.offerDevSetup(declined, devSetup.diagnoseDev(context(root)), { interactive: true });
 		expect(no.success).toBe(false);
-		const failing = testContext([], { exec: fakeExec([["yarn expo install", { exitCode: 1, stderr: "ECONNRESET" }]]) });
-		failing.ui = scriptedUi({ interactive: true, confirm: [true] });
+		const failing = cliTesting.testContext([], {
+			exec: cliTesting.fakeExec([["yarn expo install", { exitCode: 1, stderr: "ECONNRESET" }]]),
+		});
+		failing.ui = cliTesting.scriptedUi({ interactive: true, confirm: [true] });
 		const res = await devSetup.offerDevSetup(failing, devSetup.diagnoseDev(context(root)), { interactive: true });
 		expect(res).toEqual({ success: false, error: expect.stringContaining("ECONNRESET") });
 	});
@@ -105,8 +107,8 @@ describe("offerDevSetup", () => {
 	test("accepting the config offer writes a warden.config.ts with the project and no e2e block", async () => {
 		const root = app({ dependencies: { "expo-dev-client": "1" } });
 		const calls: string[][] = [];
-		const c = testContext([], { exec: fakeExec([], calls) });
-		c.ui = scriptedUi({ interactive: true, confirm: [true] });
+		const c = cliTesting.testContext([], { exec: cliTesting.fakeExec([], calls) });
+		c.ui = cliTesting.scriptedUi({ interactive: true, confirm: [true] });
 		const res = await devSetup.offerDevSetup(
 			c,
 			devSetup.diagnoseDev(context(root, { appConfig: { slug: "wallet" } })),
@@ -120,8 +122,8 @@ describe("offerDevSetup", () => {
 		expect(written).toContain('ios: "com.x.dev"');
 		expect(written).not.toContain("e2e:");
 		expect(calls.filter((cmd) => cmd[1] === "prettier")).toEqual([]);
-		const again = testContext([]);
-		again.ui = scriptedUi({ interactive: true, confirm: [false] });
+		const again = cliTesting.testContext([]);
+		again.ui = cliTesting.scriptedUi({ interactive: true, confirm: [false] });
 		expect(
 			await devSetup.offerDevSetup(again, devSetup.diagnoseDev(context(root, { appConfig: {} })), { interactive: true })
 		).toEqual({
@@ -156,8 +158,8 @@ describe("declining the config offer", () => {
 		const root = app({ dependencies: { "expo-dev-client": "1" } });
 		const checkout = join(root, "..", "..");
 		const where = overlayOf(checkout);
-		const c = testContext([]);
-		c.ui = scriptedUi({ interactive: true, confirm: [false] });
+		const c = cliTesting.testContext([]);
+		c.ui = cliTesting.scriptedUi({ interactive: true, confirm: [false] });
 		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} }), where), {
 			interactive: true,
 		});
@@ -173,8 +175,8 @@ describe("declining the config offer", () => {
 		const root = app({ dependencies: { "expo-dev-client": "1" } });
 		const checkout = join(root, "..", "..");
 		const where = overlayOf(checkout);
-		const c = testContext([]);
-		c.ui = scriptedUi({ interactive: true, confirm: [false] });
+		const c = cliTesting.testContext([]);
+		c.ui = cliTesting.scriptedUi({ interactive: true, confirm: [false] });
 		await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} }), where), {
 			interactive: true,
 		});
@@ -200,15 +202,15 @@ describe("declining the config offer", () => {
 	test("an app at the checkout root gets no root key; no overlay (or a cancel) writes nothing", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-dev-setup-"));
 		const where = overlayOf(dir);
-		const c = testContext([]);
-		c.ui = scriptedUi({ interactive: true, confirm: [false] });
+		const c = cliTesting.testContext([]);
+		c.ui = cliTesting.scriptedUi({ interactive: true, confirm: [false] });
 		await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(dir, { appConfig: {} }), where), {
 			interactive: true,
 		});
 		expect(readFileSync(join(where.overlayDir, "warden.config.ts"), "utf8")).not.toContain("root:");
 		const bare = mkdtempSync(join(dir, "bare-"));
-		const none = testContext([]);
-		none.ui = scriptedUi({ interactive: true, confirm: [false] });
+		const none = cliTesting.testContext([]);
+		none.ui = cliTesting.scriptedUi({ interactive: true, confirm: [false] });
 		expect(
 			await devSetup.offerDevSetup(none, devSetup.diagnoseDev(context(bare, { appConfig: {} })), { interactive: true })
 		).toEqual({
@@ -216,8 +218,8 @@ describe("declining the config offer", () => {
 			data: "unchanged",
 		});
 		const cancelWhere = overlayOf(bare);
-		const cancel = testContext([]);
-		cancel.ui = scriptedUi({ interactive: true, confirm: [undefined] });
+		const cancel = cliTesting.testContext([]);
+		cancel.ui = cliTesting.scriptedUi({ interactive: true, confirm: [undefined] });
 		expect(
 			await devSetup.offerDevSetup(cancel, devSetup.diagnoseDev(context(bare, { appConfig: {} }), cancelWhere), {
 				interactive: true,
@@ -233,14 +235,14 @@ describe("formatting the written config", () => {
 		writeFileSync(join(root, "..", "..", ".prettierrc.json"), "{}");
 		const calls: string[][] = [];
 		const cwds: Array<string | undefined> = [];
-		const c = testContext([], {
+		const c = cliTesting.testContext([], {
 			exec: async (cmd, opts) => {
 				calls.push([...cmd]);
 				cwds.push(opts?.cwd);
 				return { exitCode: 2, stdout: "", stderr: "boom" };
 			},
 		});
-		c.ui = scriptedUi({ interactive: true, confirm: [true] });
+		c.ui = cliTesting.scriptedUi({ interactive: true, confirm: [true] });
 		const res = await devSetup.offerDevSetup(c, devSetup.diagnoseDev(context(root, { appConfig: {} })), {
 			interactive: true,
 		});

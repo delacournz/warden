@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { MetricsSampler, MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiOutput } from "../agent-ui/output";
-import { testContext } from "../testing";
+import { cliTesting } from "../testing";
 import { devTuiHud, HUD_MIN_INTERVAL_MS } from "./hud";
 import { HUD_HISTORY, type HudFps, type HudSample } from "./model";
 
@@ -27,7 +27,7 @@ function rig(opts: {
 	let cancelled = 0;
 	let reads = 0;
 	const hud = devTuiHud.startHud({
-		ctx: testContext([]),
+		ctx: cliTesting.testContext([]),
 		target: opts.target,
 		intervalMs: opts.intervalMs ?? 1000,
 		onSample: (sample, fps) => samples.push({ sample, fps }),
@@ -218,7 +218,7 @@ describe("startHud", () => {
 		const samples: HudSample[] = [];
 		let first = true;
 		const hud = devTuiHud.startHud({
-			ctx: testContext([]),
+			ctx: cliTesting.testContext([]),
 			target: () => IOS,
 			intervalMs: 1000,
 			onSample: (sample) => samples.push(sample),

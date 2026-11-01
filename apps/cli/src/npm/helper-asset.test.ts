@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { fakeHelperDist } from "./helper.testing";
-import { packHelper } from "./helper-asset";
+import { helperTesting } from "./helper.testing";
+import { helperAsset } from "./helper-asset";
 
 let root: string;
 beforeEach(() => {
@@ -17,8 +17,8 @@ describe("packHelper", () => {
 	test("tars the dist dir at its root and writes SHA256SUMS for it", async () => {
 		const dist = join(root, "dist");
 		const out = join(root, "out");
-		fakeHelperDist(dist);
-		const packed = await packHelper({ distDir: dist, outDir: out, exec: processExec.run });
+		helperTesting.fakeHelperDist(dist);
+		const packed = await helperAsset.packHelper({ distDir: dist, outDir: out, exec: processExec.run });
 		if (!packed.success) throw new Error(packed.error);
 		const bytes = readFileSync(join(out, "warden-simd-darwin-arm64.tgz"));
 		const sha = createHash("sha256").update(bytes).digest("hex");
@@ -35,16 +35,16 @@ describe("packHelper", () => {
 
 	test("incomplete dist → error, nothing written", async () => {
 		const dist = join(root, "dist");
-		fakeHelperDist(dist, { guest: false });
-		const packed = await packHelper({ distDir: dist, outDir: join(root, "out"), exec: processExec.run });
+		helperTesting.fakeHelperDist(dist, { guest: false });
+		const packed = await helperAsset.packHelper({ distDir: dist, outDir: join(root, "out"), exec: processExec.run });
 		expect(packed.success).toBe(false);
 		expect(existsSync(join(root, "out"))).toBe(false);
 	});
 
 	test("tar failing is reported", async () => {
 		const dist = join(root, "dist");
-		fakeHelperDist(dist);
-		const packed = await packHelper({
+		helperTesting.fakeHelperDist(dist);
+		const packed = await helperAsset.packHelper({
 			distDir: dist,
 			outDir: join(root, "out"),
 			exec: async () => ({ exitCode: 2, stdout: "", stderr: "tar: boom" }),

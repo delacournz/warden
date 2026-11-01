@@ -17,8 +17,8 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
-import { E2E_PACKAGE, NPM_PACKAGE, platformPackageName, RELEASE_TARGETS, SDK_PACKAGE } from "../src/npm/platforms";
-import { parseVersion } from "../src/update/version";
+import { E2E_PACKAGE, NPM_PACKAGE, npmPlatforms, RELEASE_TARGETS, SDK_PACKAGE } from "../src/npm/platforms";
+import { updateVersion } from "../src/update/version";
 
 /** Source manifests whose `version` is the published lock-step version. Generated npm manifests copy the cli one. */
 export const VERSION_FILES = [
@@ -43,7 +43,7 @@ export function isNpmOtpError(text: string): boolean {
 
 /** `v1.2.3` and `1.2.3` → `1.2.3`; anything else → undefined. */
 export function releaseVersion(input: string): string | undefined {
-	const parsed = parseVersion(input);
+	const parsed = updateVersion.parseVersion(input);
 	if (!parsed) return undefined;
 	const pre = parsed.pre.length > 0 ? `-${parsed.pre.join(".")}` : "";
 	return `${parsed.major}.${parsed.minor}.${parsed.patch}${pre}`;
@@ -81,7 +81,12 @@ export function publishPackageDirs(npmDir: string): string[] {
 
 /** Every published package name, in publish order (see `publishPackageDirs`). */
 export function releasePackageNames(): string[] {
-	return [...RELEASE_TARGETS.map((target) => platformPackageName(target)), NPM_PACKAGE, E2E_PACKAGE, SDK_PACKAGE];
+	return [
+		...RELEASE_TARGETS.map((target) => npmPlatforms.platformPackageName(target)),
+		NPM_PACKAGE,
+		E2E_PACKAGE,
+		SDK_PACKAGE,
+	];
 }
 
 export type ReleasePlan = { kind: "done" } | { kind: "publish"; pending: string[]; skipped: string[] };

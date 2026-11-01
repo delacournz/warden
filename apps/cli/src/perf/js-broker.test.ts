@@ -7,8 +7,8 @@ import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { resultFactory } from "@delacour/warden-types/result";
 import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
 import { type BrokerServer, devBrokerIpc } from "../dev-broker/ipc";
-import { writeDevSession } from "../dev-session";
-import { type TestContext, testContext } from "../testing";
+import { devSession } from "../dev-session";
+import { cliTesting, type TestContext } from "../testing";
 import { perfJsCli } from "./js";
 import { perfTestingCli } from "./testing";
 
@@ -52,7 +52,7 @@ const hotspots: Hotspots = {
 
 describe("warden perf js with a dev-session broker", () => {
 	test("profiles through profile.start/stop and reports from hotspots.json; opens no Hermes socket", async () => {
-		const c = testContext([], { now: () => T0 });
+		const c = cliTesting.testContext([], { now: () => T0 });
 		ctx = c;
 		perfTestingCli.asMe(c);
 		c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
@@ -82,7 +82,7 @@ describe("warden perf js with a dev-session broker", () => {
 		if (!served.success) throw new Error(served.error.message);
 		const server: BrokerServer = served.data;
 		cleanup.push(() => server.close());
-		writeDevSession(c.env, {
+		devSession.writeDevSession(c.env, {
 			version: 1,
 			leaseId: "lease-1",
 			pid: process.pid,

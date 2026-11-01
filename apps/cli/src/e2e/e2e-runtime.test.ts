@@ -3,15 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { resultFactory } from "@delacour/warden-types/result";
-import {
-	loadEmbeddedRuntime,
-	parseRuntime,
-	RUNTIME_FALLBACK_PRELOAD,
-	readE2ePackageVersion,
-	runtimeDir,
-	selectPreload,
-	stageRuntime,
-} from "./e2e-runtime";
+import { e2eRuntime, RUNTIME_FALLBACK_PRELOAD } from "./e2e-runtime";
 
 const FILES = { "index.mjs": "export const hello = 1;\n", "preload.mjs": "globalThis.__pre = 1;\n" };
 
@@ -23,27 +15,27 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 describe("parseRuntime", () => {
 	test("a JSON object of name → text", () => {
-		expect(parseRuntime(JSON.stringify(FILES))).toEqual({ success: true, data: FILES });
+		expect(e2eRuntime.parseRuntime(JSON.stringify(FILES))).toEqual({ success: true, data: FILES });
 	});
 
 	test("rejects non-objects, non-string values and paths that leave the directory", () => {
-		expect(parseRuntime("[]").success).toBe(false);
-		expect(parseRuntime(JSON.stringify({ "index.mjs": 1 })).success).toBe(false);
-		expect(parseRuntime(JSON.stringify({ "../x.mjs": "" })).success).toBe(false);
-		expect(parseRuntime(JSON.stringify({ "a/b.mjs": "" })).success).toBe(false);
-		expect(parseRuntime("not json").success).toBe(false);
+		expect(e2eRuntime.parseRuntime("[]").success).toBe(false);
+		expect(e2eRuntime.parseRuntime(JSON.stringify({ "index.mjs": 1 })).success).toBe(false);
+		expect(e2eRuntime.parseRuntime(JSON.stringify({ "../x.mjs": "" })).success).toBe(false);
+		expect(e2eRuntime.parseRuntime(JSON.stringify({ "a/b.mjs": "" })).success).toBe(false);
+		expect(e2eRuntime.parseRuntime("not json").success).toBe(false);
 	});
 });
 
 describe("stageRuntime", () => {
 	test("writes the files, the fallback preload and the marker under <home>/e2e-runtime/<version>", async () => {
-		const staged = await stageRuntime({
+		const staged = await e2eRuntime.stageRuntime({
 			home,
 			version: "1.2.3",
 			keyed: "release",
 			load: async () => resultFactory.ok(FILES),
 		});
-		const dir = runtimeDir(home, "1.2.3");
+		const dir = e2eRuntime.runtimeDir(home, "1.2.3");
 		expect(staged).toEqual({ success: true, data: join(dir, RUNTIME_FALLBACK_PRELOAD) });
 		expect(readFileSync(join(dir, "index.mjs"), "utf8")).toBe(FILES["index.mjs"]);
 		expect(existsSync(join(dir, RUNTIME_FALLBACK_PRELOAD))).toBe(true);
@@ -56,26 +48,26 @@ describe("stageRuntime", () => {
 			loads += 1;
 			return resultFactory.ok(FILES);
 		};
-		await stageRuntime({ home, version: "1.2.3", keyed: "release", load });
-		await stageRuntime({ home, version: "1.2.3", keyed: "release", load });
+		await e2eRuntime.stageRuntime({ home, version: "1.2.3", keyed: "release", load });
+		await e2eRuntime.stageRuntime({ home, version: "1.2.3", keyed: "release", load });
 		expect(loads).toBe(1);
 	});
 
 	test("content-keyed (local / dev builds): changed files land in a new dir, the old one stays intact", async () => {
-		const first = await stageRuntime({
+		const first = await e2eRuntime.stageRuntime({
 			home,
 			version: "1.2.3",
 			keyed: "content",
 			load: async () => resultFactory.ok(FILES),
 		});
 		const changed = { "index.mjs": "export const hello = 2;\n", "preload.mjs": "" };
-		const second = await stageRuntime({
+		const second = await e2eRuntime.stageRuntime({
 			home,
 			version: "1.2.3",
 			keyed: "content",
 			load: async () => resultFactory.ok(changed),
 		});
-		const again = await stageRuntime({
+		const again = await e2eRuntime.stageRuntime({
 			home,
 			version: "1.2.3",
 			keyed: "content",
@@ -90,10 +82,10 @@ describe("stageRuntime", () => {
 	});
 
 	test("a half-written copy (no marker) is replaced", async () => {
-		const dir = runtimeDir(home, "1.2.3");
+		const dir = e2eRuntime.runtimeDir(home, "1.2.3");
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(join(dir, "index.mjs"), "stale");
-		const staged = await stageRuntime({
+		const staged = await e2eRuntime.stageRuntime({
 			home,
 			version: "1.2.3",
 			keyed: "release",
@@ -104,18 +96,18 @@ describe("stageRuntime", () => {
 	});
 
 	test("a load failure is the error and leaves no copy behind", async () => {
-		const staged = await stageRuntime({
+		const staged = await e2eRuntime.stageRuntime({
 			home,
 			version: "1.2.3",
 			keyed: "release",
 			load: async () => resultFactory.err("no bundle"),
 		});
 		expect(staged).toEqual({ success: false, error: "no bundle" });
-		expect(existsSync(runtimeDir(home, "1.2.3"))).toBe(false);
+		expect(existsSync(e2eRuntime.runtimeDir(home, "1.2.3"))).toBe(false);
 	});
 
 	test("a bundle without index.mjs + preload.mjs is refused", async () => {
-		const staged = await stageRuntime({
+		const staged = await e2eRuntime.stageRuntime({
 			home,
 			version: "1.2.3",
 			keyed: "release",
@@ -125,8 +117,13 @@ describe("stageRuntime", () => {
 	});
 
 	test("the fallback preload maps @delacour/warden-e2e to the copy's index.mjs, then loads its preload.mjs", async () => {
-		await stageRuntime({ home, version: "1.2.3", keyed: "release", load: async () => resultFactory.ok(FILES) });
-		const text = readFileSync(join(runtimeDir(home, "1.2.3"), RUNTIME_FALLBACK_PRELOAD), "utf8");
+		await e2eRuntime.stageRuntime({
+			home,
+			version: "1.2.3",
+			keyed: "release",
+			load: async () => resultFactory.ok(FILES),
+		});
+		const text = readFileSync(join(e2eRuntime.runtimeDir(home, "1.2.3"), RUNTIME_FALLBACK_PRELOAD), "utf8");
 		expect(text).toContain('"@delacour/warden-e2e"');
 		expect(text).toContain("index.mjs");
 		expect(text).toContain("preload.mjs");
@@ -136,11 +133,14 @@ describe("stageRuntime", () => {
 describe("loadEmbeddedRuntime", () => {
 	test("reads the embedded blob by its hashed name", async () => {
 		const blob = new File([JSON.stringify(FILES)], "e2e-runtime-dwdzq42g.bin");
-		expect(await loadEmbeddedRuntime([new File(["x"], "other.bin"), blob])).toEqual({ success: true, data: FILES });
+		expect(await e2eRuntime.loadEmbeddedRuntime([new File(["x"], "other.bin"), blob])).toEqual({
+			success: true,
+			data: FILES,
+		});
 	});
 
 	test("no blob (a build without the runtime): an error saying how to get the package", async () => {
-		const loaded = await loadEmbeddedRuntime([]);
+		const loaded = await e2eRuntime.loadEmbeddedRuntime([]);
 		expect(loaded.success).toBe(false);
 		if (!loaded.success) expect(loaded.error).toContain("bun add -d @delacour/warden-e2e");
 	});
@@ -154,7 +154,7 @@ describe("selectPreload", () => {
 	};
 
 	test("no repo dep: the bundled copy", async () => {
-		const picked = await selectPreload({
+		const picked = await e2eRuntime.selectPreload({
 			...base,
 			resolve: () => {
 				throw new Error("Cannot find package");
@@ -169,7 +169,7 @@ describe("selectPreload", () => {
 
 	test("repo dep at warden's version wins; nothing is staged", async () => {
 		let staged = 0;
-		const picked = await selectPreload({
+		const picked = await e2eRuntime.selectPreload({
 			...base,
 			stage: async () => {
 				staged += 1;
@@ -186,7 +186,7 @@ describe("selectPreload", () => {
 	});
 
 	test("repo dep from the workspace sources (no published version): repo wins", async () => {
-		const picked = await selectPreload({
+		const picked = await e2eRuntime.selectPreload({
 			...base,
 			resolve: () => "/ws/packages/e2e/src/preload.ts",
 			readVersion: () => undefined,
@@ -195,7 +195,7 @@ describe("selectPreload", () => {
 	});
 
 	test("repo dep at another version: a clear error naming both and both ways out", async () => {
-		const picked = await selectPreload({
+		const picked = await e2eRuntime.selectPreload({
 			...base,
 			resolve: () => "/repo/node_modules/@delacour/warden-e2e/preload.mjs",
 			readVersion: () => "1.0.0",
@@ -209,7 +209,7 @@ describe("selectPreload", () => {
 	});
 
 	test("a staging failure is the error", async () => {
-		const picked = await selectPreload({
+		const picked = await e2eRuntime.selectPreload({
 			...base,
 			stage: async () => resultFactory.err("disk full"),
 			resolve: () => {
@@ -235,17 +235,17 @@ describe("readE2ePackageVersion", () => {
 			name: "@delacour/warden-e2e",
 			version: "1.2.3",
 		});
-		expect(readE2ePackageVersion(preload)).toBe("1.2.3");
+		expect(e2eRuntime.readE2ePackageVersion(preload)).toBe("1.2.3");
 	});
 
 	test("the private workspace package has no published version", () => {
 		const preload = pkg(join(home, "packages/e2e"), { name: "@delacour/warden-e2e", version: "0.1.1", private: true });
-		expect(readE2ePackageVersion(preload)).toBeUndefined();
+		expect(e2eRuntime.readE2ePackageVersion(preload)).toBeUndefined();
 	});
 
 	test("unreadable or another package: undefined", () => {
-		expect(readE2ePackageVersion(join(home, "missing/preload.mjs"))).toBeUndefined();
+		expect(e2eRuntime.readE2ePackageVersion(join(home, "missing/preload.mjs"))).toBeUndefined();
 		const other = pkg(join(home, "other"), { name: "something-else", version: "9.9.9" });
-		expect(readE2ePackageVersion(other)).toBeUndefined();
+		expect(e2eRuntime.readE2ePackageVersion(other)).toBeUndefined();
 	});
 });

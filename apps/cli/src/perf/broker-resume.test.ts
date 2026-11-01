@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeDevSession } from "../dev-session";
-import { testContext } from "../testing";
+import { devSession } from "../dev-session";
+import { cliTesting } from "../testing";
 import { perfBrokerResumeCli } from "./broker-resume";
 
 const dirs: string[] = [];
@@ -15,7 +15,7 @@ describe("resumeBrokerOnClose", () => {
 	test("closing the capture session with no dev session closes once and resumes nothing", async () => {
 		const home = mkdtempSync(join(tmpdir(), "wbr-"));
 		dirs.push(home);
-		const ctx = testContext([], { env: { WARDEN_HOME: home } });
+		const ctx = cliTesting.testContext([], { env: { WARDEN_HOME: home } });
 		let closed = 0;
 		const session = perfBrokerResumeCli.resumeBrokerOnClose(ctx, "U1", { close: () => closed++ });
 		session.close();
@@ -28,7 +28,7 @@ describe("resumeBrokerOnClose", () => {
 		const home = mkdtempSync(join(tmpdir(), "wbr-"));
 		dirs.push(home);
 		const env = { WARDEN_HOME: home };
-		writeDevSession(env, {
+		devSession.writeDevSession(env, {
 			version: 1,
 			leaseId: "L1",
 			pid: process.pid,
@@ -41,7 +41,7 @@ describe("resumeBrokerOnClose", () => {
 			startedAt: "2026-10-27T10:00:00Z",
 			brokerSocket: join(home, "gone.sock"),
 		});
-		const ctx = testContext([], { env });
+		const ctx = cliTesting.testContext([], { env });
 		let closed = 0;
 		perfBrokerResumeCli.resumeBrokerOnClose(ctx, "U1", { close: () => closed++ }).close();
 		await perfBrokerResumeCli.settleBrokerResumes();

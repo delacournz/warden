@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type WarmConnect, type WarmHelper, type WarmRun, warmDrivers } from "./warm-drivers";
+import { type WarmConnect, type WarmHelper, type WarmRun, warmDriversHelpers } from "./warm-drivers";
 
 const devices = [
 	{ worker: 0, udid: "U0" },
@@ -79,7 +79,7 @@ describe("warmDrivers", () => {
 			made.set(udid, one);
 			return resultFactory.ok(one.helper);
 		};
-		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		const out = await warmDriversHelpers.warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices.map((d) => [d.udid, d.ok, d.socketPath])).toEqual([
 			["U0", true, "/s/U0.sock"],
 			["U1", true, "/s/U1.sock"],
@@ -101,7 +101,7 @@ describe("warmDrivers", () => {
 			order.push(`end ${udid}`);
 			return resultFactory.ok(fake(udid).helper);
 		};
-		await warmDrivers(f.run, { connect });
+		await warmDriversHelpers.warmDrivers(f.run, { connect });
 		expect(order.slice(0, 2)).toEqual(["start U0", "start U1"]);
 	});
 
@@ -109,7 +109,7 @@ describe("warmDrivers", () => {
 		const f = fixture();
 		const connect: WarmConnect = async (udid) =>
 			udid === "U0" ? resultFactory.err("no helper binary") : resultFactory.ok(fake(udid).helper);
-		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		const out = await warmDriversHelpers.warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices.map((d) => d.ok)).toEqual([false, true]);
 		expect(out.devices[0]?.error).toBe("no helper binary");
 		expect(out.helpers).toHaveLength(1);
@@ -123,7 +123,7 @@ describe("warmDrivers", () => {
 		const connect: WarmConnect = async () => {
 			throw new Error("spawn ENOENT");
 		};
-		const out = await warmDrivers(f.run, { connect });
+		const out = await warmDriversHelpers.warmDrivers(f.run, { connect });
 		expect(out.devices.every((d) => !d.ok && d.error === "spawn ENOENT")).toBe(true);
 	});
 
@@ -131,7 +131,7 @@ describe("warmDrivers", () => {
 		const f = fixture();
 		const one = fake("U0", async () => resultFactory.err("AX denied"));
 		const connect: WarmConnect = async (udid) => resultFactory.ok(udid === "U0" ? one.helper : fake(udid).helper);
-		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		const out = await warmDriversHelpers.warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: AX denied" });
 		expect(out.devices[0]?.socketPath).toBeUndefined();
 		expect(one.closed()).toBe(true);
@@ -142,7 +142,7 @@ describe("warmDrivers", () => {
 		const f = fixture();
 		const one = fake("U0", async () => resultFactory.err("AX denied"), { stoppable: true });
 		const connect: WarmConnect = async (udid) => resultFactory.ok(udid === "U0" ? one.helper : fake(udid).helper);
-		const out = await warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
+		const out = await warmDriversHelpers.warmDrivers(f.run, { connect, warn: (l) => f.warnings.push(l) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: AX denied" });
 		expect(one.stopped()).toBe(true);
 		expect(f.files.get("/logs/warm-0.log")).toContain("stopped the helper");
@@ -157,7 +157,7 @@ describe("warmDrivers", () => {
 			},
 			{ stoppable: true }
 		);
-		const out = await warmDrivers(f.run, { connect: async () => resultFactory.ok(one.helper) });
+		const out = await warmDriversHelpers.warmDrivers(f.run, { connect: async () => resultFactory.ok(one.helper) });
 		expect(out.devices[0]).toMatchObject({ ok: false, error: "snapshot failed: socket reset" });
 		expect(one.stopped()).toBe(true);
 	});
@@ -173,7 +173,7 @@ describe("warmDrivers", () => {
 			});
 			return resultFactory.ok(one.helper);
 		};
-		const running = warmDrivers(f.run, { connect, timeoutMs: 5_000 });
+		const running = warmDriversHelpers.warmDrivers(f.run, { connect, timeoutMs: 5_000 });
 		await Bun.sleep(1);
 		f.timers.find((t) => !t.cancelled)?.fire();
 		await running;
@@ -194,7 +194,7 @@ describe("warmDrivers", () => {
 			});
 			return resultFactory.ok(one.helper);
 		};
-		const running = warmDrivers(f.run, { connect });
+		const running = warmDriversHelpers.warmDrivers(f.run, { connect });
 		await Bun.sleep(1);
 		controller.abort();
 		await running;
@@ -215,7 +215,11 @@ describe("warmDrivers", () => {
 			});
 			return resultFactory.ok(one.helper);
 		};
-		const running = warmDrivers(f.run, { connect, timeoutMs: 5_000, warn: (l) => f.warnings.push(l) });
+		const running = warmDriversHelpers.warmDrivers(f.run, {
+			connect,
+			timeoutMs: 5_000,
+			warn: (l) => f.warnings.push(l),
+		});
 		await Bun.sleep(1);
 		const stuck = f.timers.find((t) => !t.cancelled);
 		expect(stuck?.ms).toBe(5_000);
@@ -232,7 +236,7 @@ describe("warmDrivers", () => {
 		const controller = new AbortController();
 		const f = fixture(controller.signal);
 		const connect: WarmConnect = () => new Promise(() => {});
-		const running = warmDrivers(f.run, { connect });
+		const running = warmDriversHelpers.warmDrivers(f.run, { connect });
 		await Bun.sleep(1);
 		controller.abort();
 		const out = await running;

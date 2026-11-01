@@ -14,7 +14,7 @@ import {
 } from "@delacour/warden-core/testing/golden.testing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { contextBuilder } from "../context";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { GoldenCommand } from "./golden";
 
 let ctx: TestContext | undefined;
@@ -30,7 +30,7 @@ const GOLDEN = goldenImages.name("iphone-17", KEY);
 const instant = { sleep: async () => {} };
 
 function setup(argv: string[], host: FakeHost): TestContext {
-	ctx = testContext(argv, { exec: host.exec });
+	ctx = cliTesting.testContext(argv, { exec: host.exec });
 	ctx.env = { ...ctx.env, WARDEN_SESSION_ID: "me" };
 	return ctx;
 }
@@ -63,7 +63,7 @@ describe("warden golden", () => {
 	test("ensure runs under a spinner; build progress is logged above it", async () => {
 		const host = goldenTesting.fakeHost({ migrationPolls: 0 });
 		const c = setup(["ensure"], host);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(ui.events[0]).toBe("spin: ensuring golden iphone-17 image…");
@@ -100,7 +100,7 @@ describe("warden golden", () => {
 	test("prune --all in a terminal asks first", async () => {
 		const host = goldenHost();
 		const c = setup(["prune", "--all"], host);
-		const ui = scriptedUi({ interactive: true, confirm: [true] });
+		const ui = cliTesting.scriptedUi({ interactive: true, confirm: [true] });
 		c.ui = ui;
 		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(ui.events[0]).toBe("confirm: Delete all 1 golden image(s)?");
@@ -112,7 +112,7 @@ describe("warden golden", () => {
 		for (const answer of [false, undefined]) {
 			const host = goldenHost();
 			const c = setup(["prune", "--all"], host);
-			const ui = scriptedUi({ interactive: true, confirm: [answer] });
+			const ui = cliTesting.scriptedUi({ interactive: true, confirm: [answer] });
 			c.ui = ui;
 			expect(await new GoldenCommand(instant).definition().run(c)).toBe(1);
 			expect(ui.events).toContain("cancelled: Aborted.");
@@ -125,7 +125,7 @@ describe("warden golden", () => {
 	test("prune (stale only) never asks", async () => {
 		const host = goldenHost();
 		const c = setup(["prune"], host);
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		c.ui = ui;
 		expect(await new GoldenCommand(instant).definition().run(c)).toBe(0);
 		expect(ui.events.some((e) => e.startsWith("confirm"))).toBe(false);
@@ -151,7 +151,7 @@ describe("warden golden --platform android (16-3)", () => {
 			if (joined.endsWith("adb devices -l")) return { exitCode: 0, stdout: "List of devices attached\n\n", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: `unexpected ${joined}` };
 		};
-		const c = testContext(argv, { exec });
+		const c = cliTesting.testContext(argv, { exec });
 		const sdk = join(c.cwd, "sdk");
 		const avd = join(c.cwd, "avd", "Pixel_10.avd");
 		mkdirSync(join(sdk, "emulator"), { recursive: true });

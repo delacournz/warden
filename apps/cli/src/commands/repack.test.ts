@@ -5,7 +5,7 @@ import type { AppDeps } from "@delacour/warden-builds/prepare";
 import type { RepackInput } from "@delacour/warden-builds/repack";
 import { resultFactory } from "@delacour/warden-types/result";
 import { OWNER_ENV } from "../simctl.testing";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { RepackCommand, type RepackRun } from "./repack";
 
 let ctx: TestContext | undefined;
@@ -14,13 +14,13 @@ afterEach(() => ctx?.cleanup());
 const deps: AppDeps = { pid: 1, sleep: async () => {}, pidAlive: () => false };
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv);
+	ctx = cliTesting.testContext(argv);
 	mkdirSync(join(ctx.cwd, "app"), { recursive: true });
 	writeFileSync(
 		join(ctx.cwd, "warden.config.json"),
 		JSON.stringify({ projects: [{ name: "demo", root: "app", bundleId: { ios: "com.demo", android: "com.demo" } }] })
 	);
-	ctx.exec = fakeExec([["git", { exitCode: 128 }]]);
+	ctx.exec = cliTesting.fakeExec([["git", { exitCode: 128 }]]);
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }

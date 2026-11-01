@@ -8,23 +8,27 @@ export const FAKE_HELPER_MANIFEST = {
 	builtAt: "2026-10-16T00:00:00Z",
 };
 
-/** A tree shaped like `packages/driver-ios/native/dist` (what `native:build` stages), with placeholder contents. */
-export function fakeHelperDist(
-	dir: string,
-	opts: { frameworks?: string[]; guest?: boolean; manifest?: boolean; binary?: boolean; inject?: boolean } = {}
-): void {
-	const { frameworks = ["CoreSimulatorStub.framework", "AccessibilityPlatformTranslationStub.framework"] } = opts;
-	mkdirSync(dir, { recursive: true });
-	if (opts.binary !== false)
-		writeFileSync(join(dir, "warden-simd"), "#!/bin/sh\necho warden-simd 0.1.0\n", { mode: 0o755 });
-	if (opts.guest !== false) {
-		mkdirSync(join(dir, "Resources"), { recursive: true });
-		writeFileSync(join(dir, "Resources", "SimulatorFrameworkBridge-iOS"), "guest");
+export class HelperTesting {
+	/** A tree shaped like `packages/driver-ios/native/dist` (what `native:build` stages), with placeholder contents. */
+	fakeHelperDist(
+		dir: string,
+		opts: { frameworks?: string[]; guest?: boolean; manifest?: boolean; binary?: boolean; inject?: boolean } = {}
+	): void {
+		const { frameworks = ["CoreSimulatorStub.framework", "AccessibilityPlatformTranslationStub.framework"] } = opts;
+		mkdirSync(dir, { recursive: true });
+		if (opts.binary !== false)
+			writeFileSync(join(dir, "warden-simd"), "#!/bin/sh\necho warden-simd 0.1.0\n", { mode: 0o755 });
+		if (opts.guest !== false) {
+			mkdirSync(join(dir, "Resources"), { recursive: true });
+			writeFileSync(join(dir, "Resources", "SimulatorFrameworkBridge-iOS"), "guest");
+		}
+		for (const framework of frameworks) {
+			mkdirSync(join(dir, framework), { recursive: true });
+			writeFileSync(join(dir, framework, "Info.plist"), "plist");
+		}
+		if (opts.inject) writeFileSync(join(dir, "libwarden-inject.dylib"), "dylib");
+		if (opts.manifest !== false) writeFileSync(join(dir, "manifest.json"), `${JSON.stringify(FAKE_HELPER_MANIFEST)}\n`);
 	}
-	for (const framework of frameworks) {
-		mkdirSync(join(dir, framework), { recursive: true });
-		writeFileSync(join(dir, framework, "Info.plist"), "plist");
-	}
-	if (opts.inject) writeFileSync(join(dir, "libwarden-inject.dylib"), "dylib");
-	if (opts.manifest !== false) writeFileSync(join(dir, "manifest.json"), `${JSON.stringify(FAKE_HELPER_MANIFEST)}\n`);
 }
+
+export const helperTesting = new HelperTesting();

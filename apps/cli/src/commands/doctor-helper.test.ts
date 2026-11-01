@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { doctorHelper, type HelperDeps } from "./doctor-helper";
 
 let ctx: TestContext | undefined;
@@ -32,14 +32,16 @@ function deps(files: Record<string, string>, overrides: Partial<HelperDeps> = {}
 	};
 }
 
-function setup(exec = fakeExec([])): TestContext {
-	ctx = testContext(["--json"], { exec });
+function setup(exec = cliTesting.fakeExec([])): TestContext {
+	ctx = cliTesting.testContext(["--json"], { exec });
 	return ctx;
 }
 
 describe("helperChecks", () => {
 	test("found next to the binary: path, source and manifest build info; no booted sim → nothing to probe", async () => {
-		const c = setup(fakeExec([["xcrun simctl list", { stdout: simctlList({ udid: UDID, state: "Shutdown" }) }]]));
+		const c = setup(
+			cliTesting.fakeExec([["xcrun simctl list", { stdout: simctlList({ udid: UDID, state: "Shutdown" }) }]])
+		);
 		const rows = await doctorHelper.helperChecks(c, deps({ [HELPER]: "", "/opt/warden/bin/manifest.json": MANIFEST }));
 		expect(rows).toEqual([
 			{
@@ -93,7 +95,7 @@ describe("helperChecks", () => {
 			data: { hid: { transport: "indigo" }, ax: { default: "axbridge", bridge: "available" } },
 		});
 		const bootedExec = () =>
-			fakeExec([
+			cliTesting.fakeExec([
 				["xcrun simctl list", { stdout: simctlList({ udid: UDID, state: "Booted" }) }],
 				[HELPER, { stdout: standalone }],
 			]);
@@ -174,7 +176,7 @@ describe("helperChecks", () => {
 			data: { hid: { transport: "dtuhid" }, ax: { default: "axbridge", bridge: "failed", error: "guest crashed" } },
 		});
 		const c = setup(
-			fakeExec([
+			cliTesting.fakeExec([
 				["xcrun simctl list", { stdout: simctlList({ udid: UDID, state: "Booted" }) }],
 				[HELPER, { stdout: health }],
 			])
@@ -194,12 +196,12 @@ describe("helperChecks", () => {
 			"xcrun simctl list",
 			{ stdout: simctlList({ udid: UDID, state: "Booted" }) },
 		];
-		const withFatal = setup(fakeExec([list, [HELPER, { exitCode: 3, stdout: fatal }]]));
+		const withFatal = setup(cliTesting.fakeExec([list, [HELPER, { exitCode: 3, stdout: fatal }]]));
 		const fatalRow = (await doctorHelper.helperChecks(withFatal, deps({ [HELPER]: "" }))).at(-1);
 		expect(fatalRow?.status).toBe("warn");
 		expect(fatalRow?.detail).toContain("simulator is not booted");
 
-		const timedOut = setup(fakeExec([list, [HELPER, { exitCode: 143 }]]));
+		const timedOut = setup(cliTesting.fakeExec([list, [HELPER, { exitCode: 143 }]]));
 		const timeoutRow = (await doctorHelper.helperChecks(timedOut, deps({ [HELPER]: "" }))).at(-1);
 		expect(timeoutRow?.status).toBe("warn");
 		expect(timeoutRow?.detail).toContain("exit 143");
@@ -207,7 +209,7 @@ describe("helperChecks", () => {
 
 	test("helper missing → warn with the lookup hint and the fetch command; no probe", async () => {
 		const calls: string[][] = [];
-		const c = setup(fakeExec([], calls));
+		const c = setup(cliTesting.fakeExec([], calls));
 		const rows = await doctorHelper.helperChecks(c, deps({}));
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({ name: "sim-helper", status: "warn" });

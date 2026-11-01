@@ -9,7 +9,7 @@ import { perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import type { PerfTarget } from "./device";
 import { perfRecordCli } from "./record";
 import { perfSessionKitCli } from "./session-kit";
@@ -51,7 +51,7 @@ function setup(rules: Rule[] = []) {
 		["logcat -b crash", { stdout: "" }],
 		["dumpsys dropbox", { stdout: "" }],
 	];
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => clock.now,
 		exec: async (cmd) => {
 			const line = cmd.join(" ");

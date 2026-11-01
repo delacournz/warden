@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { AppPhase } from "@delacour/warden-builds/resolve";
-import { appPhaseText, phaseTracker } from "./app-phase";
+import { appPhaseHelpers } from "./app-phase";
 
-const text = (...entries: Array<[string, AppPhase]>) => appPhaseText(new Map(entries));
+const text = (...entries: Array<[string, AppPhase]>) => appPhaseHelpers.appPhaseText(new Map(entries));
 const building: AppPhase = { phase: "building", platform: "ios", hash: "b1fee19abcdef:base" };
 
 describe("appPhaseText", () => {
@@ -43,7 +43,7 @@ describe("appPhaseText", () => {
 describe("phaseTracker", () => {
 	test("updates the spinner on each change, not on repeats; build → install reads in order", () => {
 		const lines: string[] = [];
-		const on = phaseTracker((line) => lines.push(line));
+		const on = appPhaseHelpers.phaseTracker((line) => lines.push(line));
 		on("prepare:ios", building);
 		on("prepare:ios", building);
 		on("d1", { phase: "waiting" });

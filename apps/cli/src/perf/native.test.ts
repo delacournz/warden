@@ -7,7 +7,7 @@ import type { NativeAnalysis, NativeIo, NativeProfiler } from "@delacour/warden-
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfNativeCli } from "./native";
 import { perfTestingCli } from "./testing";
 
@@ -59,7 +59,7 @@ function fakeProfiler(log: string[]): NativeProfiler {
 }
 
 function setup(device: typeof sim | typeof droid = sim) {
-	const c = testContext([], { now: () => T0 });
+	const c = cliTesting.testContext([], { now: () => T0 });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: device.platform, id: device.id, name: device.name }, T0);

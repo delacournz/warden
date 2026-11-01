@@ -5,7 +5,7 @@ import type { DriverError } from "@delacour/warden-driver/driver.types";
 import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
 import type { Owner } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type HelperDeps, IOS_RUNNER_KIND, IOS_RUNNER_STARTUP_MS, type SpawnSpec, uiHelper } from "./helper";
 import { uiHelperSweep } from "./helper-sweep";
 import { uiStatePersistence } from "./state";
@@ -61,7 +61,7 @@ function setup(upAfterMs = 0) {
 		mtime: (path) => (path === SELF[0] ? 42 : undefined),
 		self: () => SELF,
 	};
-	const c = testContext([], { now: () => clock.t });
+	const c = cliTesting.testContext([], { now: () => clock.t });
 	ctx = c;
 	return { c, deps, spawns, requests, kills, alive };
 }

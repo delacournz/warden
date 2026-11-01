@@ -4,13 +4,13 @@ import { join } from "node:path";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { DEVICECTL_LOCKSTATE_UNLOCKED, devicectlFixtures } from "@delacour/warden-providers/devicectl.fixtures";
-import { claimWithFlags, parseClaimFlags, withNamedPhysical } from "./claim-flags";
+import { claimFlagsHelpers } from "./claim-flags";
 import { OWNER_ENV, simctlFakes } from "./simctl.testing";
-import { type TestContext, testContext } from "./testing";
+import { cliTesting, type TestContext } from "./testing";
 
 describe("parseClaimFlags", () => {
 	test("defaults", () => {
-		const result = parseClaimFlags("ios", {}, 16);
+		const result = claimFlagsHelpers.parseClaimFlags("ios", {}, 16);
 		expect(result).toEqual({
 			success: true,
 			data: {
@@ -23,31 +23,31 @@ describe("parseClaimFlags", () => {
 	});
 
 	test("--no-wait is fail-fast; --wait overrides the 30m default", () => {
-		const none = parseClaimFlags("ios", { wait: false });
+		const none = claimFlagsHelpers.parseClaimFlags("ios", { wait: false });
 		expect(none.success && none.data.waitMs).toBe(0);
-		const some = parseClaimFlags("ios", { wait: "2m" });
+		const some = claimFlagsHelpers.parseClaimFlags("ios", { wait: "2m" });
 		expect(some.success && some.data.waitMs).toBe(120_000);
 	});
 
 	test("--priority takes names or numbers; the command default is carried, bad input rejected", () => {
-		const named = parseClaimFlags("ios", { priority: "high" });
+		const named = claimFlagsHelpers.parseClaimFlags("ios", { priority: "high" });
 		expect(named.success && named.data.priority).toBe(20);
-		const numeric = parseClaimFlags("ios", { priority: "25" });
+		const numeric = claimFlagsHelpers.parseClaimFlags("ios", { priority: "25" });
 		expect(numeric.success && numeric.data.priority).toBe(25);
-		const fallback = parseClaimFlags("ios", {}, 16, undefined, 0);
+		const fallback = claimFlagsHelpers.parseClaimFlags("ios", {}, 16, undefined, 0);
 		expect(fallback.success && fallback.data.defaultPriority).toBe(0);
-		expect(parseClaimFlags("ios", { priority: "urgent" }).success).toBe(false);
+		expect(claimFlagsHelpers.parseClaimFlags("ios", { priority: "urgent" }).success).toBe(false);
 	});
 
 	test("default ttl is overridable by the caller; --ttl still wins", () => {
-		const short = parseClaimFlags("ios", {}, 16, BARE_CLAIM_AGENT_TTL_MS);
+		const short = claimFlagsHelpers.parseClaimFlags("ios", {}, 16, BARE_CLAIM_AGENT_TTL_MS);
 		expect(short.success && short.data.ttlMs).toBe(5 * 60_000);
-		const explicit = parseClaimFlags("ios", { ttl: "1h" }, 16, BARE_CLAIM_AGENT_TTL_MS);
+		const explicit = claimFlagsHelpers.parseClaimFlags("ios", { ttl: "1h" }, 16, BARE_CLAIM_AGENT_TTL_MS);
 		expect(explicit.success && explicit.data.ttlMs).toBe(60 * 60_000);
 	});
 
 	test("all flags", () => {
-		const result = parseClaimFlags(
+		const result = claimFlagsHelpers.parseClaimFlags(
 			"android",
 			{ profile: "pixel-9", runtime: "35", count: "2", max: "3", wait: "10m", ttl: "1h", label: "e2e", adopt: true },
 			8
@@ -64,35 +64,35 @@ describe("parseClaimFlags", () => {
 	});
 
 	test("headless: set only when true", () => {
-		const on = parseClaimFlags("ios", { headless: true }, 16);
+		const on = claimFlagsHelpers.parseClaimFlags("ios", { headless: true }, 16);
 		expect(on.success && on.data.headless).toBe(true);
-		const off = parseClaimFlags("ios", { headless: false }, 16);
+		const off = claimFlagsHelpers.parseClaimFlags("ios", { headless: false }, 16);
 		expect(off.success && "headless" in off.data).toBe(false);
 	});
 
 	test("max defaults to at least count", () => {
-		const result = parseClaimFlags("ios", { count: "3" }, 4);
+		const result = claimFlagsHelpers.parseClaimFlags("ios", { count: "3" }, 4);
 		expect(result.success && result.data.request.max).toBe(3);
 	});
 
 	test("rejects bad input", () => {
-		expect(parseClaimFlags(undefined, {}).success).toBe(false);
-		expect(parseClaimFlags("windows", {}).success).toBe(false);
-		expect(parseClaimFlags("ios", { count: "0" }).success).toBe(false);
-		expect(parseClaimFlags("ios", { count: "x" }).success).toBe(false);
-		expect(parseClaimFlags("ios", { wait: "soon" }).success).toBe(false);
+		expect(claimFlagsHelpers.parseClaimFlags(undefined, {}).success).toBe(false);
+		expect(claimFlagsHelpers.parseClaimFlags("windows", {}).success).toBe(false);
+		expect(claimFlagsHelpers.parseClaimFlags("ios", { count: "0" }).success).toBe(false);
+		expect(claimFlagsHelpers.parseClaimFlags("ios", { count: "x" }).success).toBe(false);
+		expect(claimFlagsHelpers.parseClaimFlags("ios", { wait: "soon" }).success).toBe(false);
 	});
 });
 
 describe("parseClaimFlags physical", () => {
 	const UDID = "00008140-001234567890001C";
-	const ok = (platform: string, values: Parameters<typeof parseClaimFlags>[1]) => {
-		const r = parseClaimFlags(platform, values, 16);
+	const ok = (platform: string, values: Parameters<typeof claimFlagsHelpers.parseClaimFlags>[1]) => {
+		const r = claimFlagsHelpers.parseClaimFlags(platform, values, 16);
 		if (!r.success) throw new Error(r.error);
 		return r.data;
 	};
-	const fail = (platform: string, values: Parameters<typeof parseClaimFlags>[1]) => {
-		const r = parseClaimFlags(platform, values, 16);
+	const fail = (platform: string, values: Parameters<typeof claimFlagsHelpers.parseClaimFlags>[1]) => {
+		const r = claimFlagsHelpers.parseClaimFlags(platform, values, 16);
 		return r.success ? undefined : r.error;
 	};
 
@@ -151,7 +151,7 @@ describe("parseClaimFlags physical", () => {
 describe("withNamedPhysical", () => {
 	test("--serial / --udid become physicalSerial / physicalUdid; other values stay", () => {
 		type Values = { physical?: boolean; serial?: string[]; udid?: string[]; count?: string };
-		const named = (values: Values) => withNamedPhysical<Values>(values);
+		const named = (values: Values) => claimFlagsHelpers.withNamedPhysical<Values>(values);
 		expect(named({ physical: true, serial: ["S1"], count: "1" })).toEqual({
 			physical: true,
 			count: "1",
@@ -189,22 +189,34 @@ describe("physical allowlist", () => {
 				["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }],
 			]
 		);
-		actx = testContext([], { exec });
+		actx = cliTesting.testContext([], { exec });
 		actx.env = { ...actx.env, ...OWNER_ENV, ...env };
 		if (config !== undefined) writeFileSync(join(actx.cwd, "warden.config.json"), JSON.stringify(config));
 		return actx;
 	};
-	const claimIds = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string[]> => {
-		const flags = parseClaimFlags("ios", values, 16);
+	const claimIds = async (
+		c: TestContext,
+		values: Parameters<typeof claimFlagsHelpers.parseClaimFlags>[1]
+	): Promise<string[]> => {
+		const flags = claimFlagsHelpers.parseClaimFlags("ios", values, 16);
 		if (!flags.success) throw new Error(flags.error);
-		const outcome = await claimWithFlags(c, ownerResolver.resolve(c), flags.data, undefined, {});
+		const outcome = await claimFlagsHelpers.claimWithFlags(c, ownerResolver.resolve(c), flags.data, undefined, {});
 		if (!outcome.success) throw new Error(outcome.error.message);
 		return outcome.data.claimed.map((d) => d.device.id);
 	};
-	const failure = async (c: TestContext, values: Parameters<typeof parseClaimFlags>[1]): Promise<string> => {
-		const flags = parseClaimFlags("ios", values, 16);
+	const failure = async (
+		c: TestContext,
+		values: Parameters<typeof claimFlagsHelpers.parseClaimFlags>[1]
+	): Promise<string> => {
+		const flags = claimFlagsHelpers.parseClaimFlags("ios", values, 16);
 		if (!flags.success) throw new Error(flags.error);
-		const outcome = await claimWithFlags(c, ownerResolver.resolve(c), { ...flags.data, waitMs: 0 }, undefined, {});
+		const outcome = await claimFlagsHelpers.claimWithFlags(
+			c,
+			ownerResolver.resolve(c),
+			{ ...flags.data, waitMs: 0 },
+			undefined,
+			{}
+		);
 		return outcome.success ? "claimed" : outcome.error.message;
 	};
 
@@ -251,13 +263,13 @@ describe("physical allowlist", () => {
 
 describe("parseClaimFlags biometrics", () => {
 	test("biometrics: true puts the +bio identity on the requested profile", () => {
-		const flags = parseClaimFlags("android", { profile: "pixel-10", biometrics: true });
+		const flags = claimFlagsHelpers.parseClaimFlags("android", { profile: "pixel-10", biometrics: true });
 		expect(flags.success && flags.data.request.profile).toBe("pixel-10+bio");
 	});
 
 	test("unset or false leaves the profile alone, default profile included", () => {
-		const plain = parseClaimFlags("ios", {});
-		const off = parseClaimFlags("ios", { biometrics: false });
+		const plain = claimFlagsHelpers.parseClaimFlags("ios", {});
+		const off = claimFlagsHelpers.parseClaimFlags("ios", { biometrics: false });
 		expect(plain.success && off.success && plain.data.request.profile).toBe(
 			off.success ? off.data.request.profile : ""
 		);

@@ -12,12 +12,12 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { parsePlatform } from "../claim-flags";
+import { claimFlagsHelpers } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
-import { projectContextFor } from "../project-context";
-import { withSpinner } from "../spinner-context";
+import { projectContextHelpers } from "../project-context";
+import { spinnerContext } from "../spinner-context";
 
 /** What a cached build is, flattened for `builds ls`: its kind, the native fingerprint it is keyed on, and a repack's / release's JS key and origin. */
 export type BuildFacts = { kind: string; base?: string; jsKey?: string; worktree?: string; branch?: string };
@@ -207,7 +207,7 @@ export class BuildsCommand extends CliCommand {
 		if (!dryRun && ui.interactive && !opts.yes && !(await this.confirmPrune(ctx, preview.remove))) return 1;
 		const plan = dryRun
 			? preview
-			: await withSpinner(ctx, `pruning ${preview.remove.length} build(s)…`, async () => prune(false));
+			: await spinnerContext.withSpinner(ctx, `pruning ${preview.remove.length} build(s)…`, async () => prune(false));
 		if (!dryRun) await compilerCache.ccacheCleanup(ctx.exec, storeLocator.wardenHome(ctx.env));
 		const verb = dryRun ? "would remove" : "removed";
 		const text = [
@@ -231,7 +231,7 @@ export class BuildsCommand extends CliCommand {
 		const { color } = ctx.ui;
 		let platform: Platform | undefined;
 		if (opts.platform !== undefined) {
-			const parsed = parsePlatform(opts.platform);
+			const parsed = claimFlagsHelpers.parsePlatform(opts.platform);
 			if (!parsed.success) return this.fail(ctx, "rm", parsed.error);
 			platform = parsed.data;
 		}
@@ -271,7 +271,7 @@ export class BuildsCommand extends CliCommand {
 
 	/** `.app` → ios, `.apk` → android, unless `--platform` says otherwise. */
 	inferPlatform(path: string, flag: string | undefined): Result<Platform> {
-		if (flag !== undefined) return parsePlatform(flag);
+		if (flag !== undefined) return claimFlagsHelpers.parsePlatform(flag);
 		const clean = path.replace(/\/+$/, "");
 		if (clean.endsWith(".app")) return resultFactory.ok("ios");
 		if (clean.endsWith(".apk")) return resultFactory.ok("android");
@@ -285,12 +285,12 @@ export class BuildsCommand extends CliCommand {
 		const start = appLookup.projectStart(ctx, opts.project);
 		if (!start.success) return this.fail(ctx, "import", start.error);
 		const bundle = opts.bundleId;
-		const project = await projectContextFor(ctx, {
+		const project = await projectContextHelpers.projectContextFor(ctx, {
 			start: start.data,
 			...(bundle !== undefined ? { bundleId: { [platform.data]: bundle } } : {}),
 		});
 		if (!project.success) return this.fail(ctx, "import", project.error);
-		const stored = await withSpinner(ctx, `importing ${raw} into the build cache…`, () =>
+		const stored = await spinnerContext.withSpinner(ctx, `importing ${raw} into the build cache…`, () =>
 			buildCache.storeArtifact({
 				store: ctx.store(),
 				env: ctx.env,

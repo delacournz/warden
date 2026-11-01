@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { projectConfig } from "@delacour/warden-builds/config";
 import { DEV_MENU_OFF_ARGS } from "@delacour/warden-core/affected/affected.defaults";
-import { type TestContext, testContext } from "../testing";
-import { currentBuild } from "../update/build-info";
+import { cliTesting, type TestContext } from "../testing";
+import { buildInfoHelpers } from "../update/build-info";
 import { initCommand } from "./init";
 
 let ctx: TestContext | undefined;
@@ -12,7 +12,7 @@ afterEach(() => ctx?.cleanup());
 
 /** A context whose cwd is an Expo app with this `app.json` (`expo` key) and `package.json` dependencies. */
 function setup(argv: string[], expo: Record<string, unknown>, dependencies: Record<string, string> = {}): TestContext {
-	ctx = testContext(argv);
+	ctx = cliTesting.testContext(argv);
 	const app = join(ctx.cwd, "fresh-app");
 	mkdirSync(app);
 	writeFileSync(join(app, "app.json"), JSON.stringify({ expo }));
@@ -57,7 +57,7 @@ describe("warden init", () => {
 
 		const log = c.stderr.join("\n");
 		expect(log).toContain("bunx expo install expo-dev-client");
-		expect(log).toContain(`bun add -d @delacour/warden-e2e@${currentBuild().version}`);
+		expect(log).toContain(`bun add -d @delacour/warden-e2e@${buildInfoHelpers.currentBuild().version}`);
 		expect(log).toContain("warden dev");
 	});
 
@@ -115,7 +115,7 @@ describe("warden init", () => {
 	});
 
 	test("not an Expo app → exit 1", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		expect(await initCommand.run(ctx)).toBe(1);
 		expect(ctx.stderr.join("\n")).toContain("app.json");
 	});

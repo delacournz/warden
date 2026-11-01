@@ -3,7 +3,7 @@ import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { arrangeJsonSchema } from "@delacour/warden-sdk/contracts/arrange";
 import { simctlFakes } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { arrangeCommand } from "./arrange";
 
 let ctx: TestContext | undefined;
@@ -22,7 +22,7 @@ const windowsExec = (titles: string[], calls: string[][] = []): Exec => {
 describe("warden arrange", () => {
 	test("tiles warden sim windows and lists them in order", async () => {
 		const calls: string[][] = [];
-		ctx = testContext([], {
+		ctx = cliTesting.testContext([], {
 			os: "darwin",
 			exec: windowsExec(["warden-iphone-17-2 – iOS 26.5", "warden-iphone-17-1 – iOS 26.5"], calls),
 		});
@@ -32,7 +32,7 @@ describe("warden arrange", () => {
 	});
 
 	test("--json", async () => {
-		ctx = testContext(["--json"], { os: "darwin", exec: windowsExec(["warden-iphone-17-1 – iOS 26.5"]) });
+		ctx = cliTesting.testContext(["--json"], { os: "darwin", exec: windowsExec(["warden-iphone-17-1 – iOS 26.5"]) });
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		const json: unknown = JSON.parse(ctx.stdout.join("\n"));
 		expect(json).toEqual({ arranged: ["warden-iphone-17-1"], viewer: "simulator" });
@@ -40,13 +40,13 @@ describe("warden arrange", () => {
 	});
 
 	test("no windows → says so, exit 0", async () => {
-		ctx = testContext([], { os: "darwin", exec: windowsExec([]) });
+		ctx = cliTesting.testContext([], { os: "darwin", exec: windowsExec([]) });
 		expect(await arrangeCommand.run(ctx)).toBe(0);
 		expect(ctx.stdout.join("\n")).toContain("no warden simulator windows open");
 	});
 
 	test("osascript failure → exit 1", async () => {
-		ctx = testContext([], {
+		ctx = cliTesting.testContext([], {
 			os: "darwin",
 			exec: async (cmd) =>
 				cmd[0] === "pgrep" ? { exitCode: 0, stdout: "", stderr: "" } : { exitCode: 1, stdout: "", stderr: "boom" },
@@ -57,7 +57,7 @@ describe("warden arrange", () => {
 
 	/** Device Hub running, its windows read as `windows` (screen 1440x900) */
 	const deviceHub = (windows: { title: string; width: number; height: number }[], calls: string[][] = []) =>
-		testContext(["--json"], {
+		cliTesting.testContext(["--json"], {
 			os: "darwin",
 			exec: async (cmd) => {
 				calls.push([...cmd]);
@@ -94,7 +94,7 @@ describe("warden arrange", () => {
 
 	test("no viewer running → nothing to arrange without starting osascript", async () => {
 		const calls: string[][] = [];
-		ctx = testContext([], {
+		ctx = cliTesting.testContext([], {
 			os: "darwin",
 			exec: async (cmd) => {
 				calls.push([...cmd]);
@@ -111,7 +111,7 @@ describe("warden arrange", () => {
 
 	test("--open <udid> → asks Device Hub for that sim's window, then tiles; --json lists what it opened", async () => {
 		const calls: string[][] = [];
-		ctx = testContext(["--open", "U1", "--json"], {
+		ctx = cliTesting.testContext(["--open", "U1", "--json"], {
 			os: "darwin",
 			exec: async (cmd) => {
 				calls.push([...cmd]);
@@ -138,7 +138,7 @@ describe("warden arrange", () => {
 
 	test.each([[[]], [["--open", "U1"]]])("not macOS (%j) → nothing runs, exit 0", async (argv) => {
 		const calls: string[][] = [];
-		ctx = testContext([...argv, "--json"], {
+		ctx = cliTesting.testContext([...argv, "--json"], {
 			os: "linux",
 			exec: async (cmd) => {
 				calls.push([...cmd]);

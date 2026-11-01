@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "nod
 import { dirname } from "node:path";
 import { type TraceProcessorPin, traceProcessorPins } from "@delacour/warden-perf/android/trace-processor.data";
 import { type TraceProcessorDeps, traceProcessorService } from "@delacour/warden-sdk/ops/perf/trace-processor";
-import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type ScriptedUi, type TestContext } from "../testing";
 
 const PAYLOAD = new TextEncoder().encode("#!fake trace_processor_shell\n".repeat(50));
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -55,8 +55,8 @@ function setup(
 	interactive = false,
 	opts: { rich?: boolean; confirm?: Array<boolean | undefined> } = {}
 ): TestContext {
-	ui = scriptedUi({ interactive, rich: opts.rich ?? false, confirm: opts.confirm ?? [] });
-	c = testContext(["perf"], { ui });
+	ui = cliTesting.scriptedUi({ interactive, rich: opts.rich ?? false, confirm: opts.confirm ?? [] });
+	c = cliTesting.testContext(["perf"], { ui });
 	c.env = { ...c.env, ...env };
 	return c;
 }

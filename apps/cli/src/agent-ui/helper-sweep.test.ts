@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { uiHelperSweep } from "./helper-sweep";
 import { cliUiPaths } from "./paths";
 
@@ -10,7 +10,7 @@ afterEach(() => ctx?.cleanup());
 
 function host(): TestContext {
 	ctx?.cleanup();
-	ctx = testContext([]);
+	ctx = cliTesting.testContext([]);
 	return ctx;
 }
 

@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
-import { readServedIdentity } from "../ios-runner/served-identity";
-import { type FakeProc, fakeProc, fakeRoute, manualTimers, UDID } from "../ios-runner/session.testing";
+import { servedIdentity } from "../ios-runner/served-identity";
+import { type FakeProc, sessionTesting, UDID } from "../ios-runner/session.testing";
 import type { RunnerBuildPort } from "../ios-runner/types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { IosRunnerHostCommand } from "./ios-runner-host";
 
 let ctx: TestContext | undefined;
@@ -45,21 +45,21 @@ async function tcpRunner(): Promise<number> {
 }
 
 function run(opts: { build?: RunnerBuildPort; extra?: string[]; script?: (p: FakeProc) => void; tunnelIp?: string }) {
-	const c = testContext([]);
+	const c = cliTesting.testContext([]);
 	ctx = c;
 	const socket = join(c.cwd, "r.sock");
 	c.argv.splice(0, c.argv.length, "--udid", UDID, "--socket", socket, ...(opts.extra ?? []));
 	const procs: FakeProc[] = [];
-	const timers = manualTimers();
+	const timers = sessionTesting.manualTimers();
 	const done = new IosRunnerHostCommand({
 		build: opts.build ?? build,
 		spawn: (cmd, env) => {
-			const p = fakeProc(cmd, env);
+			const p = sessionTesting.fakeProc(cmd, env);
 			procs.push(p);
 			setTimeout(() => opts.script?.(p), 0);
 			return p;
 		},
-		route: fakeRoute([["connected", opts.tunnelIp ?? "127.0.0.1"]]).deps,
+		route: sessionTesting.fakeRoute([["connected", opts.tunnelIp ?? "127.0.0.1"]]).deps,
 		after: timers.after,
 		pollMs: 10,
 	})
@@ -97,10 +97,10 @@ describe("warden __ios-runner-host", () => {
 			script: (p) => p.emit(`WARDEN_RUNNER_READY {"event":"ready","port":${port}}`),
 		});
 		await waitFor(() => c.stdout[0]);
-		expect(readServedIdentity(socket)).toBe("/c/dd");
+		expect(servedIdentity.readServedIdentity(socket)).toBe("/c/dd");
 		procs[0]?.exit(0);
 		expect(await done).toBe(0);
-		expect(readServedIdentity(socket)).toBeUndefined();
+		expect(servedIdentity.readServedIdentity(socket)).toBeUndefined();
 		expect(existsSync(`${socket}.build.json`)).toBe(false);
 	});
 
@@ -110,7 +110,7 @@ describe("warden __ios-runner-host", () => {
 		};
 		const { socket, done } = run({ build: failing });
 		expect(await done).toBe(3);
-		expect(readServedIdentity(socket)).toBeUndefined();
+		expect(servedIdentity.readServedIdentity(socket)).toBeUndefined();
 	});
 
 	test("a locked phone prints one fatal event E_DEVICE_LOCKED and exits 3", async () => {
@@ -163,7 +163,7 @@ describe("warden __ios-runner-host", () => {
 	});
 
 	test("rejects a missing udid or socket, and a bad idle timeout", async () => {
-		const bad = testContext(["--udid", UDID]);
+		const bad = cliTesting.testContext(["--udid", UDID]);
 		ctx = bad;
 		expect(await new IosRunnerHostCommand({ build }).definition().run(bad)).toBe(1);
 		const { done } = run({ extra: ["--idle-timeout", "soon"] });

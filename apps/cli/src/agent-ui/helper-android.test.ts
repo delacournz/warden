@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { RemoteClient } from "@delacour/warden-device/remote/remote-client";
 import type { DriverError } from "@delacour/warden-driver/driver.types";
 import type { Result } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { ANDROID_HOST_KIND, type HelperDeps, type SpawnSpec, uiHelper } from "./helper";
 import { uiHelperSweep } from "./helper-sweep";
 import { uiStatePersistence } from "./state";
@@ -65,7 +65,7 @@ function setup() {
 		mtime: (path) => (path === SELF[0] ? 42 : undefined),
 		self: () => SELF,
 	};
-	const c = testContext([], { now: () => clock.t });
+	const c = cliTesting.testContext([], { now: () => clock.t });
 	ctx = c;
 	return { c, deps, spawns, requests, kills, alive, up };
 }

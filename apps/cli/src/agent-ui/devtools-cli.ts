@@ -19,7 +19,7 @@ import { processCommand } from "@delacour/warden-store/process-identity";
 import { leaseModel } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { selfCommand } from "../autogc";
+import { autoGc } from "../autogc";
 import type { CommandContext } from "../context";
 import { uiArgs } from "./args";
 import { type BrokerClientDeps, type BrokerTarget, uiBrokerClient } from "./broker-client";
@@ -45,7 +45,7 @@ export const defaultDevtoolsDeps: CliDevtoolsDeps = {
 		return owner.kind === "foreign" ? "foreign" : "none";
 	},
 	collector: {
-		self: selfCommand,
+		self: autoGc.selfCommand.bind(autoGc),
 		spawnDetached: ({ cmd, logPath }) => {
 			const log = openSync(logPath, "a");
 			try {

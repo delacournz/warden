@@ -14,9 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { resultsFiles, type TestResult } from "@delacour/warden-e2e/runner/results";
-import { readFileFrom } from "../src/batch/results-tail";
-import { specPoller } from "../src/batch/spec-poller";
-import { failing, realPath, type SpecMark, specOf, type TrackedSpec, testLine } from "../src/batch/spec-progress";
+import { resultsTailHelpers } from "../src/batch/results-tail";
+import { specPollerHelpers } from "../src/batch/spec-poller";
+import { type SpecMark, specProgress, type TrackedSpec } from "../src/batch/spec-progress";
 
 const { values } = parseArgs({
 	options: {
@@ -60,14 +60,14 @@ function resultLine(specs: readonly TrackedSpec[], n: number): string {
 /** `resultsMarks` before PERF-5.1: parse the text, resolve every result's file against every spec */
 function legacyMarks(jsonl: string, specs: readonly TrackedSpec[], final: boolean): Record<string, SpecMark> {
 	const results = resultsFiles.read(jsonl);
-	const owners = results.map((r) => specOf(r, specs, realPath)?.id);
+	const owners = results.map((r) => specProgress.specOf(r, specs, specProgress.realPath.bind(specProgress))?.id);
 	const marks: Record<string, SpecMark> = {};
 	const last = new Map<string, number>();
 	results.forEach((result, i) => {
 		const id = owners[i];
 		if (id === undefined) return;
 		last.set(id, i);
-		if (failing(result)) marks[id] = "failed";
+		if (specProgress.failing(result)) marks[id] = "failed";
 	});
 	for (const [id, at] of last) {
 		if (marks[id]) continue;
@@ -95,8 +95,8 @@ async function runLegacy(path: string, specs: readonly TrackedSpec[]): Promise<R
 		const fresh = results.slice(printed);
 		printed = results.length;
 		for (const result of fresh) {
-			const spec = specOf(result, specs);
-			if (spec) lines += testLine(spec.id, result).length > 0 ? 1 : 0;
+			const spec = specProgress.specOf(result, specs);
+			if (spec) lines += specProgress.testLine(spec.id, result).length > 0 ? 1 : 0;
 		}
 		cpu += cpuMs(since);
 		polls++;
@@ -109,10 +109,16 @@ async function runIncremental(path: string, specs: readonly TrackedSpec[]): Prom
 	let polls = 0;
 	let cpu = 0;
 	const ended = new Set<string>();
-	const poller = specPoller({ every: () => () => {}, readFrom: readFileFrom }, specs, new Map([["1:0", path]]), ended, {
-		specs: () => {},
-		tests: (l) => (lines += l.length),
-	});
+	const poller = specPollerHelpers.specPoller(
+		{ every: () => () => {}, readFrom: resultsTailHelpers.readFileFrom.bind(resultsTailHelpers) },
+		specs,
+		new Map([["1:0", path]]),
+		ended,
+		{
+			specs: () => {},
+			tests: (l) => (lines += l.length),
+		}
+	);
 	for (let tick = 0; tick < TICKS; tick++) {
 		appendTick(path, specs, tick);
 		if (tick === TICKS - 1) ended.add("1:0");

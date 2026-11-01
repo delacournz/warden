@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore, type SessionDeps } from "@delacour/warden-sdk/ops/perf/session";
 import { uiStatePersistence } from "../agent-ui/state";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -34,7 +34,7 @@ function fakeDeps(): Fake {
 
 function setup(): { c: TestContext; clock: { now: number } } {
 	const clock = { now: T0 };
-	ctx = testContext([], { now: () => clock.now });
+	ctx = cliTesting.testContext([], { now: () => clock.now });
 	return { c: ctx, clock };
 }
 

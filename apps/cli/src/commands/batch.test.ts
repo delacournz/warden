@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { JSON_CONFIG_FILE } from "@delacour/warden-builds/config";
 import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-runtime/exec";
-import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
+import { autogcTesting } from "../autogc.testing";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { BatchCommand, batch, defaultBatchDeps } from "./batch";
 import { batchTesting } from "./batch.testing";
 
@@ -14,7 +14,7 @@ let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv, {
+	ctx = cliTesting.testContext(argv, {
 		exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2, "Booted")]),
 	});
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -527,7 +527,7 @@ describe("warden batch", () => {
 		});
 
 		test("--headless: a sim the claim booted can show its window late, so windows are closed again before the first job", async () => {
-			ctx = testContext(["ios", "--headless", "--jobs", "a", "--", "x"], {
+			ctx = cliTesting.testContext(["ios", "--headless", "--jobs", "a", "--", "x"], {
 				exec: simctlFakes.build([simctlFakes.wardenSim(1, "Shutdown"), simctlFakes.wardenSim(2, "Shutdown")]),
 			});
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -588,7 +588,7 @@ describe("warden batch", () => {
 
 	test("--app: the lease is reported as soon as it is held, before any install", async () => {
 		const c = setup(["ios", "--count", "2", "--jobs", "a,b", "--app", "--", "x"]);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		const h = batchTesting.harness();
 		let asked = 0;
@@ -1121,12 +1121,12 @@ describe("warden batch", () => {
 describe("warden batch auto-gc (12-2)", () => {
 	test("auto-gc is considered only after claimAll has leased the devices", async () => {
 		const c = setup(["ios", "--count", "2", "--jobs", "a,b", "--", "run", "{job}"]);
-		const order = autoGcOrder(c.exec, () => c.db);
+		const order = autogcTesting.autoGcOrder(c.exec, () => c.db);
 		c.exec = order.exec;
-		c.env = allowAutoGc(c.env);
+		c.env = autogcTesting.allowAutoGc(c.env);
 		expect(await new BatchCommand(batchTesting.harness().deps).definition().run(c)).toBe(0);
 		expect(order.gcBeforeClaim()).toBe(false);
-		expect(autoGcConsidered(c.db)).toBe(true);
+		expect(autogcTesting.autoGcConsidered(c.db)).toBe(true);
 	});
 });
 
@@ -1141,7 +1141,7 @@ describe("openOnDevices", () => {
 			const bad = cmd[2] === "emulator-5556" && cmd[3] === "reverse";
 			return { exitCode: bad ? 1 : 0, stdout: "", stderr: bad ? "error: device offline" : "" };
 		};
-		ctx = testContext([], { exec });
+		ctx = cliTesting.testContext([], { exec });
 		const devices = [{ udid: "emulator-5554" }, { udid: "emulator-5556" }];
 		const unreachable = await batch.openOnDevices(ctx, "e2e", "android", plan, metro, devices);
 		expect(unreachable.map((u) => u.udid)).toEqual(["emulator-5556"]);
@@ -1155,7 +1155,7 @@ describe("openOnDevices", () => {
 	});
 
 	test("iOS: a failed launch only warns; no device is dropped", async () => {
-		ctx = testContext([], { exec: async () => ({ exitCode: 143, stdout: "", stderr: "" }) });
+		ctx = cliTesting.testContext([], { exec: async () => ({ exitCode: 143, stdout: "", stderr: "" }) });
 		const unreachable = await batch.openOnDevices(ctx, "e2e", "ios", { ...plan, bundleId: "com.x" }, metro, [
 			{ udid: "U1" },
 		]);

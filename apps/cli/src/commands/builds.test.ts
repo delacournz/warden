@@ -5,15 +5,15 @@ import { buildCache } from "@delacour/warden-builds/cache";
 import { buildLock } from "@delacour/warden-builds/lock";
 import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
-import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { buildsCli, buildsCommand } from "./builds";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv);
-	ctx.exec = fakeExec([
+	ctx = cliTesting.testContext(argv);
+	ctx.exec = cliTesting.fakeExec([
 		[
 			"git rev-parse --show-toplevel --git-common-dir",
 			{ stdout: `${realpathSync(ctx.cwd)}\n${realpathSync(ctx.cwd)}/.git\nrefs/heads/main\n` },
@@ -178,7 +178,7 @@ describe("warden builds", () => {
 
 	test("prune in a terminal: shows what goes, confirm yes → removed under a spinner", async () => {
 		const c = setup(["prune", "--max-size", "12"]);
-		const ui = scriptedUi({ interactive: true, confirm: [true] });
+		const ui = cliTesting.scriptedUi({ interactive: true, confirm: [true] });
 		c.ui = ui;
 		const oldest = await seed(c, "a", 1);
 		await seed(c, "b", 2);
@@ -193,7 +193,7 @@ describe("warden builds", () => {
 	test("prune in a terminal: confirm no / cancel → exit 1, nothing removed", async () => {
 		for (const answer of [false, undefined]) {
 			const c = setup(["prune", "--max-size", "1"]);
-			const ui = scriptedUi({ interactive: true, confirm: [answer] });
+			const ui = cliTesting.scriptedUi({ interactive: true, confirm: [answer] });
 			c.ui = ui;
 			await seed(c, "a", 1);
 			expect(await buildsCommand.run(c)).toBe(1);
@@ -206,7 +206,7 @@ describe("warden builds", () => {
 
 	test("prune --yes / nothing to remove → no prompt", async () => {
 		const c = setup(["prune", "--max-size", "1", "--yes"]);
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		c.ui = ui;
 		await seed(c, "a", 1);
 		expect(await buildsCommand.run(c)).toBe(0);
@@ -218,7 +218,7 @@ describe("warden builds", () => {
 
 	test("import runs under a spinner", async () => {
 		const c = setup(["import", "src/App.app", "--hash", "H1"]);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		buildsTesting.fakeApp(join(c.cwd, "src"));
 		expect(await buildsCommand.run(c)).toBe(0);
@@ -260,7 +260,7 @@ describe("warden builds", () => {
 
 	test("rm in a terminal asks first; no → exit 1, nothing removed; --yes skips the prompt", async () => {
 		const c = setup(["rm", "cd8e2d"]);
-		const ui = scriptedUi({ interactive: true, confirm: [false] });
+		const ui = cliTesting.scriptedUi({ interactive: true, confirm: [false] });
 		c.ui = ui;
 		await seed(c, "cd8e2dbeae5b", 1);
 		expect(await buildsCommand.run(c)).toBe(1);

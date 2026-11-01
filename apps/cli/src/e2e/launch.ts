@@ -5,7 +5,7 @@ import type { Suite } from "@delacour/warden-core/affected/affected";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { projectContextFor } from "../project-context";
+import { projectContextHelpers } from "../project-context";
 
 /** What decides how a spec's app is launched, known before any device is leased. */
 export type LaunchPlan = {
@@ -15,39 +15,38 @@ export type LaunchPlan = {
 	launchArgs: readonly string[];
 };
 
-/**
- * The app the specs drive: `spec.bundleId`, else the suite project's bundle id for the platform
- * (the project is found from the suite's project root, as for Metro). `physical`: on an iPhone the project's
- * `ios.device.bundleIdentifier` wins over both.
- */
-export async function specBundleId(
-	ctx: CommandContext,
-	suite: Suite,
-	platform: Platform,
-	physical = false
-): AsyncResult<string> {
-	const explicit = suite.config.spec?.bundleId;
-	const phone = physical && platform === "ios";
-	if (explicit !== undefined && !phone) return resultFactory.ok(explicit);
-	const { variant } = appOptionReader.appSwitches(suite.config.app);
-	const project = await projectContextFor(ctx, {
-		start: suite.projectRoot ?? suite.cwd,
-		...(variant !== undefined ? { variant, variantOptional: true } : {}),
-	});
-	// on an iPhone the app is installed under the project's device bundle id (`ios.device.bundleIdentifier`), when it sets one
-	const deviceId = phone && project.success ? project.data.project.iosDeviceBundleId : undefined;
-	if (deviceId !== undefined) return resultFactory.ok(deviceId);
-	if (explicit !== undefined) return resultFactory.ok(explicit);
-	const bundleId = project.success ? projectConfig.bundleIdFor(project.data.project, platform) : undefined;
-	if (bundleId?.success) return bundleId;
-	return resultFactory.err(`e2e.${suite.name}: no bundle id — set spec.bundleId or projects[].bundleId.${platform}`);
+export class E2eLaunch {
+	/**
+	 * The app the specs drive: `spec.bundleId`, else the suite project's bundle id for the platform
+	 * (the project is found from the suite's project root, as for Metro). `physical`: on an iPhone the project's
+	 * `ios.device.bundleIdentifier` wins over both.
+	 */
+	async specBundleId(ctx: CommandContext, suite: Suite, platform: Platform, physical = false): AsyncResult<string> {
+		const explicit = suite.config.spec?.bundleId;
+		const phone = physical && platform === "ios";
+		if (explicit !== undefined && !phone) return resultFactory.ok(explicit);
+		const { variant } = appOptionReader.appSwitches(suite.config.app);
+		const project = await projectContextHelpers.projectContextFor(ctx, {
+			start: suite.projectRoot ?? suite.cwd,
+			...(variant !== undefined ? { variant, variantOptional: true } : {}),
+		});
+		// on an iPhone the app is installed under the project's device bundle id (`ios.device.bundleIdentifier`), when it sets one
+		const deviceId = phone && project.success ? project.data.project.iosDeviceBundleId : undefined;
+		if (deviceId !== undefined) return resultFactory.ok(deviceId);
+		if (explicit !== undefined) return resultFactory.ok(explicit);
+		const bundleId = project.success ? projectConfig.bundleIdFor(project.data.project, platform) : undefined;
+		if (bundleId?.success) return bundleId;
+		return resultFactory.err(`e2e.${suite.name}: no bundle id — set spec.bundleId or projects[].bundleId.${platform}`);
+	}
+
+	/**
+	 * `WARDEN_LAUNCH_ARGS`: what `app.open()` passes the app. With Metro (`metroUrl` known once it is
+	 * up) `--initialUrl <metroUrl>` comes first, then `metro.launchArgs`, then `spec.launchArgs`.
+	 */
+	specLaunchArgs(plan: LaunchPlan, metroUrl: string | undefined): string[] {
+		const extra = [...plan.metroLaunchArgs, ...plan.launchArgs];
+		return metroUrl === undefined ? extra : metroTools.devClientLaunchArgs(metroUrl, extra);
+	}
 }
 
-/**
- * `WARDEN_LAUNCH_ARGS`: what `app.open()` passes the app. With Metro (`metroUrl` known once it is
- * up) `--initialUrl <metroUrl>` comes first, then `metro.launchArgs`, then `spec.launchArgs`.
- */
-export function specLaunchArgs(plan: LaunchPlan, metroUrl: string | undefined): string[] {
-	const extra = [...plan.metroLaunchArgs, ...plan.launchArgs];
-	return metroUrl === undefined ? extra : metroTools.devClientLaunchArgs(metroUrl, extra);
-}
+export const e2eLaunch = new E2eLaunch();

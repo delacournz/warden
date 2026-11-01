@@ -4,8 +4,8 @@ import { DOCTOR_HINT, helperLocator } from "@delacour/warden-driver-ios/locate-h
 import { simctlParser } from "@delacour/warden-providers/ios";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
-import { HELPER_MANIFEST, HELPER_TARGET, type HelperInfo, parseHelperManifest } from "../npm/helper";
-import { type BuildInfo, currentBuild } from "../update/build-info";
+import { HELPER_MANIFEST, HELPER_TARGET, type HelperInfo, npmHelper } from "../npm/helper";
+import { type BuildInfo, buildInfoHelpers } from "../update/build-info";
 import type { DoctorCheck } from "./doctor";
 
 /** `--health` is a one-shot: it must answer well inside this, or the check says so. */
@@ -79,7 +79,7 @@ export class DoctorHelper {
 	}
 
 	realHelperDeps(): HelperDeps {
-		const build = currentBuild();
+		const build = buildInfoHelpers.currentBuild();
 		return {
 			platform: process.platform,
 			arch: process.arch,
@@ -110,7 +110,7 @@ export class DoctorHelper {
 		const dir = dirname(helperPath);
 		const manifest = deps.readFile(join(dir, HELPER_MANIFEST));
 		if (manifest !== undefined) {
-			const parsed = parseHelperManifest(manifest);
+			const parsed = npmHelper.parseHelperManifest(manifest);
 			if (parsed.success) return parsed.data;
 		}
 		const pkg = deps.readFile(join(dir, "..", "package.json"));

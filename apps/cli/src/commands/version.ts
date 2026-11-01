@@ -1,7 +1,7 @@
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
-import { currentBuild, describeBuild } from "../update/build-info";
+import { buildInfoHelpers } from "../update/build-info";
 
 export class VersionCommand extends CliCommand {
 	override readonly name = "version";
@@ -10,8 +10,8 @@ export class VersionCommand extends CliCommand {
 
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
 		cmd.option("--json", "machine-readable output").action((opts) => {
-			const build = currentBuild();
-			output.emit(ctx, opts.json === true, build, `warden ${ctx.ui.color.bold(describeBuild(build))}`);
+			const build = buildInfoHelpers.currentBuild();
+			output.emit(ctx, opts.json === true, build, `warden ${ctx.ui.color.bold(buildInfoHelpers.describeBuild(build))}`);
 			done(0);
 		});
 	}

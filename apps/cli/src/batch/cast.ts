@@ -8,26 +8,30 @@ export type Cast = {
 	text: () => string;
 };
 
-export function createCast(opts: { width: number; height: number; startedAt: number }): Cast {
-	let height = opts.height;
-	const events: string[] = [];
-	return {
-		write: (at, data) => {
-			const t = Math.max(0, Math.round(at - opts.startedAt)) / 1000;
-			events.push(JSON.stringify([t, "o", data.replace(/\r?\n/g, "\r\n")]));
-		},
-		resizeTo: (lines) => {
-			height = Math.max(height, lines);
-		},
-		text: () => {
-			const header = {
-				version: 2,
-				width: opts.width,
-				height,
-				timestamp: Math.floor(opts.startedAt / 1000),
-				env: { TERM: "xterm-256color", SHELL: "/bin/zsh" },
-			};
-			return `${[JSON.stringify(header), ...events].join("\n")}\n`;
-		},
-	};
+export class CastHelpers {
+	createCast(opts: { width: number; height: number; startedAt: number }): Cast {
+		let height = opts.height;
+		const events: string[] = [];
+		return {
+			write: (at, data) => {
+				const t = Math.max(0, Math.round(at - opts.startedAt)) / 1000;
+				events.push(JSON.stringify([t, "o", data.replace(/\r?\n/g, "\r\n")]));
+			},
+			resizeTo: (lines) => {
+				height = Math.max(height, lines);
+			},
+			text: () => {
+				const header = {
+					version: 2,
+					width: opts.width,
+					height,
+					timestamp: Math.floor(opts.startedAt / 1000),
+					env: { TERM: "xterm-256color", SHELL: "/bin/zsh" },
+				};
+				return `${[JSON.stringify(header), ...events].join("\n")}\n`;
+			},
+		};
+	}
 }
+
+export const castHelpers = new CastHelpers();

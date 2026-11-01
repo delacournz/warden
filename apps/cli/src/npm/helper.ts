@@ -24,33 +24,37 @@ export type HelperInfo = { version: string; idb: string; xcode: string };
 /** The helper as staged: its build info and the stub framework directory names (`X.framework`). */
 export type StagedHelper = HelperInfo & { frameworks: string[]; inject: boolean };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+export class NpmHelper {
+	private isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === "object" && value !== null && !Array.isArray(value);
+	}
+
+	/** `manifest.json` → `{ version, idb, xcode }`. `builtAt` is dropped so package manifests stay reproducible. */
+	parseHelperManifest(text: string): Result<HelperInfo> {
+		let data: unknown;
+		try {
+			data = JSON.parse(text);
+		} catch {
+			return resultFactory.err("helper manifest.json is not valid JSON");
+		}
+		if (!this.isRecord(data)) return resultFactory.err("helper manifest.json is not an object");
+		const { version, idb, xcode } = data;
+		if (typeof version !== "string" || typeof idb !== "string" || typeof xcode !== "string") {
+			return resultFactory.err("helper manifest.json needs string version, idb and xcode");
+		}
+		return resultFactory.ok({ version, idb, xcode });
+	}
+
+	/** Paths (relative to the platform package root) the helper adds to its `files`. */
+	helperFiles(binDir: string, frameworks: readonly string[], inject = false): string[] {
+		return [
+			`${binDir}/${HELPER_BINARY}`,
+			`${binDir}/${HELPER_RESOURCES}`,
+			`${binDir}/${HELPER_MANIFEST}`,
+			...frameworks.map((framework) => `${binDir}/${framework}`),
+			...(inject ? [`${binDir}/${HELPER_INJECT}`] : []),
+		];
+	}
 }
 
-/** `manifest.json` → `{ version, idb, xcode }`. `builtAt` is dropped so package manifests stay reproducible. */
-export function parseHelperManifest(text: string): Result<HelperInfo> {
-	let data: unknown;
-	try {
-		data = JSON.parse(text);
-	} catch {
-		return resultFactory.err("helper manifest.json is not valid JSON");
-	}
-	if (!isRecord(data)) return resultFactory.err("helper manifest.json is not an object");
-	const { version, idb, xcode } = data;
-	if (typeof version !== "string" || typeof idb !== "string" || typeof xcode !== "string") {
-		return resultFactory.err("helper manifest.json needs string version, idb and xcode");
-	}
-	return resultFactory.ok({ version, idb, xcode });
-}
-
-/** Paths (relative to the platform package root) the helper adds to its `files`. */
-export function helperFiles(binDir: string, frameworks: readonly string[], inject = false): string[] {
-	return [
-		`${binDir}/${HELPER_BINARY}`,
-		`${binDir}/${HELPER_RESOURCES}`,
-		`${binDir}/${HELPER_MANIFEST}`,
-		...frameworks.map((framework) => `${binDir}/${framework}`),
-		...(inject ? [`${binDir}/${HELPER_INJECT}`] : []),
-	];
-}
+export const npmHelper = new NpmHelper();

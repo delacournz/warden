@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { type FakeHost, goldenTesting } from "@delacour/warden-core/testing/golden.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { cloneCommand } from "./clone";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function setup(argv: string[], host: FakeHost): TestContext {
-	ctx = testContext(argv, { exec: host.exec });
+	ctx = cliTesting.testContext(argv, { exec: host.exec });
 	return ctx;
 }
 
@@ -36,7 +36,7 @@ describe("warden clone", () => {
 	test("--name picks the clone's name; source by udid", async () => {
 		const host = goldenTesting.fakeHost({ sims: [{ udid: "SRC", name: "base", state: "Shutdown" }] });
 		const c = setup(["SRC", "--name", "feature-x"], host);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await cloneCommand.run(c)).toBe(0);
 		expect(ui.events).toEqual(["spin: cloning base → feature-x…", "ok: cloned feature-x", "stop"]);

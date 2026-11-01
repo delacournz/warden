@@ -3,8 +3,8 @@ import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } 
 import { join } from "node:path";
 import { Chalk } from "chalk";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
-import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
-import { installOrigin } from "../update/install-origin";
+import { cliTesting, type ScriptedUi, type TestContext } from "../testing";
+import { installOriginHelpers } from "../update/install-origin";
 import { InstallCommand, type InstallDeps, install, type Runtime } from "./install";
 
 let ctx: TestContext | undefined;
@@ -34,14 +34,17 @@ type SetupOpts = {
 };
 
 function setup(argv: string[], opts: SetupOpts = {}): Setup {
-	const c = testContext(argv);
+	const c = cliTesting.testContext(argv);
 	ctx = c;
 	const home = join(c.cwd, "home");
 	mkdirSync(home);
 	c.env = { ...c.env, HOME: home };
 	const binary = join(c.cwd, "warden-built");
 	writeFileSync(binary, "#!/bin/sh\necho warden\n");
-	const ui = scriptedUi({ interactive: opts.interactive ?? true, confirm: opts.confirm ?? Array(8).fill(true) });
+	const ui = cliTesting.scriptedUi({
+		interactive: opts.interactive ?? true,
+		confirm: opts.confirm ?? Array(8).fill(true),
+	});
 	const questions: string[] = [];
 	const ask = ui.confirm;
 	ui.confirm = async (question, initial) => {
@@ -143,11 +146,11 @@ describe("warden install", () => {
 		const step = JSON.parse(c.stdout.join("\n")).steps[0];
 		expect(step.detail).toContain("npx @delacour/warden@latest install");
 		const target = join(home, ".local", "bin", "warden");
-		expect(installOrigin(c.env, target)).toBe("npm");
+		expect(installOriginHelpers.installOrigin(c.env, target)).toBe("npm");
 		deps.runtime = { kind: "compiled", execPath: join(c.cwd, "warden-built") };
 		c.stdout.length = 0;
 		expect(await runInstall(c, deps)).toBe(0);
-		expect(installOrigin(c.env, target)).toBeUndefined();
+		expect(installOriginHelpers.installOrigin(c.env, target)).toBeUndefined();
 	});
 
 	test("--claude writes skill and merges the SessionEnd hook after confirming", async () => {

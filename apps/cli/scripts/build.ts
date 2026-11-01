@@ -13,14 +13,7 @@ import { processExec } from "@delacour/warden-runtime/exec";
 import cliPackage from "../package.json" with { type: "json" };
 import { RUNTIME_BLOB } from "../src/e2e/e2e-runtime";
 import { RELEASE_TARGETS } from "../src/npm/platforms";
-import {
-	buildFromSource,
-	compileArgs,
-	runnerBlobArgs,
-	runtimeBlobArgs,
-	STRAY_SOURCE_MAP,
-	sourceCommit,
-} from "../src/update/source-build";
+import { STRAY_SOURCE_MAP, sourceBuild } from "../src/update/source-build";
 
 const cliRoot = resolve(import.meta.dir, "..");
 const sourceDir = resolve(cliRoot, "..", "..");
@@ -37,12 +30,18 @@ const dropStraySourceMap = () => rmSync(join(dist, STRAY_SOURCE_MAP), { force: t
 
 mkdirSync(dist, { recursive: true });
 if (values.channel === "local") {
-	const built = await buildFromSource(processExec.run, sourceDir, cliPackage.version, join(dist, "warden"), Date.now);
+	const built = await sourceBuild.buildFromSource(
+		processExec.run,
+		sourceDir,
+		cliPackage.version,
+		join(dist, "warden"),
+		Date.now
+	);
 	if (!built.success) throw new Error(built.error);
 	dropStraySourceMap();
 	console.log(`built dist/warden ${built.data.version} (local ${built.data.commit ?? "?"})`);
 } else if (values.channel === "release") {
-	const commit = process.env.GITHUB_SHA?.slice(0, 7) ?? (await sourceCommit(processExec.run, sourceDir));
+	const commit = process.env.GITHUB_SHA?.slice(0, 7) ?? (await sourceBuild.sourceCommit(processExec.run, sourceDir));
 	const info = {
 		channel: "release" as const,
 		version: cliPackage.version,
@@ -52,13 +51,13 @@ if (values.channel === "local") {
 	const sums: string[] = [];
 	const blob = join(dist, RUNTIME_BLOB);
 	const runnerBlob = join(dist, RUNNER_BLOB);
-	await run(runtimeBlobArgs(sourceDir, blob, cliPackage.version));
-	await run(runnerBlobArgs(sourceDir, runnerBlob));
+	await run(sourceBuild.runtimeBlobArgs(sourceDir, blob, cliPackage.version));
+	await run(sourceBuild.runnerBlobArgs(sourceDir, runnerBlob));
 	for (const target of RELEASE_TARGETS) {
 		const name = `warden-${target}`;
 		const outfile = join(dist, name);
 		await run(
-			compileArgs({
+			sourceBuild.compileArgs({
 				entry: join(cliRoot, "src", "cli.ts"),
 				outfile,
 				info,

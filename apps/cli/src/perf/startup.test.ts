@@ -6,7 +6,7 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { StartupMark } from "@delacour/warden-sdk/ops/perf/startup";
 import { storeLocator } from "@delacour/warden-store/store";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfStartupCli, type StartupIo, type StartupOptions } from "./startup";
 import { perfTestingCli } from "./testing";
 
@@ -29,7 +29,7 @@ function setup(
 	host: Parameters<typeof perfTestingCli.fakePerfDeps>[2] = {}
 ) {
 	const calls: string[] = [];
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => T0,
 		exec: async (cmd) => {
 			const line = cmd.join(" ");

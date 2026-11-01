@@ -5,7 +5,7 @@ import type { CrashDeps } from "@delacour/warden-sdk/ops/perf/crashes";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { PerfCommand } from "../commands/perf";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfCrashesCli } from "./crashes";
 import { perfTestingCli } from "./testing";
 
@@ -24,7 +24,7 @@ type Handlers = Array<[string, { stdout?: string; exitCode?: number }]>;
 function setup(platform: "ios" | "android", handlers: Handlers) {
 	const calls: string[][] = [];
 	const id = platform === "ios" ? SIM1 : EMU;
-	const c = testContext([], { exec: fakeExec(handlers, calls), now: () => NOW });
+	const c = cliTesting.testContext([], { exec: cliTesting.fakeExec(handlers, calls), now: () => NOW });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform, id, name: "dev" }, 1);
@@ -228,7 +228,9 @@ describe("perf crashes android", () => {
 
 test("crashes is wired onto warden perf with its flags", async () => {
 	const { deps } = setup("ios", iosHandlers());
-	const c = testContext(["crashes", "--json", "--app", "com.acme.shop", "--symbolicate"], { exec: fakeExec([]) });
+	const c = cliTesting.testContext(["crashes", "--json", "--app", "com.acme.shop", "--symbolicate"], {
+		exec: cliTesting.fakeExec([]),
+	});
 	ctx?.cleanup();
 	ctx = c;
 	c.db.recordDevice({ platform: "ios", id: SIM1, name: "dev" }, 1);

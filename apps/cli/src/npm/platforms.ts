@@ -13,19 +13,23 @@ export const SDK_PACKAGE = "@delacour/warden-sdk";
 export const RELEASE_TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] as const;
 export type ReleaseTarget = (typeof RELEASE_TARGETS)[number];
 
-function isReleaseTarget(value: string): value is ReleaseTarget {
-	return RELEASE_TARGETS.some((target) => target === value);
+export class NpmPlatforms {
+	private isReleaseTarget(value: string): value is ReleaseTarget {
+		return RELEASE_TARGETS.some((target) => target === value);
+	}
+
+	/** `process.platform` + `process.arch` → release target, e.g. `darwin` + `arm64` → `darwin-arm64`. */
+	releaseTarget(platform: string, arch: string): Result<ReleaseTarget> {
+		const target = `${platform}-${arch}`;
+		return this.isReleaseTarget(target)
+			? resultFactory.ok(target)
+			: resultFactory.err(`no warden build for ${target} (supported: ${RELEASE_TARGETS.join(", ")})`);
+	}
+
+	/** `darwin-arm64` → `@delacour/warden-darwin-arm64`. */
+	platformPackageName(target: ReleaseTarget): string {
+		return `${NPM_PACKAGE}-${target}`;
+	}
 }
 
-/** `process.platform` + `process.arch` → release target, e.g. `darwin` + `arm64` → `darwin-arm64`. */
-export function releaseTarget(platform: string, arch: string): Result<ReleaseTarget> {
-	const target = `${platform}-${arch}`;
-	return isReleaseTarget(target)
-		? resultFactory.ok(target)
-		: resultFactory.err(`no warden build for ${target} (supported: ${RELEASE_TARGETS.join(", ")})`);
-}
-
-/** `darwin-arm64` → `@delacour/warden-darwin-arm64`. */
-export function platformPackageName(target: ReleaseTarget): string {
-	return `${NPM_PACKAGE}-${target}`;
-}
+export const npmPlatforms = new NpmPlatforms();

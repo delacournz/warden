@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cliUiPaths } from "../agent-ui/paths";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfReleaseAfterCli } from "./release-after";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function setup(state?: string) {
-	const c = testContext([]);
+	const c = cliTesting.testContext([]);
 	ctx = c;
 	if (state !== undefined) {
 		mkdirSync(cliUiPaths.uiDir(c, "U1"), { recursive: true });

@@ -5,7 +5,7 @@ import { type Lease, leaseModel, type Owner, type Platform } from "@delacour/war
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { UiDeviceFlags, UiDeviceSource } from "../agent-ui/device";
 import { type UiDeviceInfo, type UiError, uiOutput } from "../agent-ui/output";
-import { parsePlatform } from "../claim-flags";
+import { claimFlagsHelpers } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { hookClaudePretool } from "../hooks/claude-pretool";
 
@@ -260,7 +260,7 @@ export class PerfDeviceCli {
 	): Promise<Result<Named, UiError>> {
 		const explicit = this.named(ctx, flags);
 		if (!explicit.success) return explicit;
-		const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);
+		const platformFlag = flags.platform === undefined ? undefined : claimFlagsHelpers.parsePlatform(flags.platform);
 		if (platformFlag && !platformFlag.success) return this.fail(uiOutput.uiError("usage", platformFlag.error));
 		if (explicit.data !== undefined) return resultFactory.ok(explicit.data);
 		return this.pick(ctx, deps, owner, flags, platformFlag?.data);

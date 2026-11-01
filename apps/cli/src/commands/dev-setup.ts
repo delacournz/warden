@@ -3,9 +3,9 @@ import { dirname, join, relative } from "node:path";
 import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { expoInstallCommand, missingPackages } from "../expo-app";
+import { expoApp } from "../expo-app";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 import { initData } from "./init.data";
 
 /** What `warden dev` found missing or costly in the app, each with the fix it can apply. */
@@ -54,13 +54,13 @@ export class DevSetup {
 		const { project } = context;
 		const issues: DevIssue[] = [];
 		// a bare React Native app runs itself against Metro: no dev client to install
-		const missing = project.framework === "expo" ? missingPackages(project.root, ["expo-dev-client"]) : [];
+		const missing = project.framework === "expo" ? expoApp.missingPackages(project.root, ["expo-dev-client"]) : [];
 		if (missing.length > 0)
 			issues.push({
 				kind: "package",
 				root: project.root,
 				packages: missing,
-				command: expoInstallCommand(project.root, missing),
+				command: expoApp.expoInstallCommand(project.root, missing),
 			});
 		if (
 			context.appConfig !== undefined &&
@@ -111,7 +111,7 @@ export class DevSetup {
 	 */
 	private async formatWithPrettier(ctx: CommandContext, root: string, file: string): Promise<void> {
 		if (!this.usesPrettier(root)) return;
-		const [runner] = expoInstallCommand(root, []);
+		const [runner] = expoApp.expoInstallCommand(root, []);
 		const command = [runner ?? "bunx", "prettier", "--write", file];
 		try {
 			const res = await ctx.exec(command, { cwd: root, timeoutMs: 60_000 });
@@ -172,7 +172,7 @@ export class DevSetup {
 					return resultFactory.err(this.describeIssue(issue));
 				}
 				if (!answer) return resultFactory.err(this.describeIssue(issue));
-				const res = await withSpinner(ctx, `installing ${what}`, (sctx) =>
+				const res = await spinnerContext.withSpinner(ctx, `installing ${what}`, (sctx) =>
 					sctx.exec(issue.command, { cwd: issue.root, timeoutMs: DEV_SETUP_INSTALL_TIMEOUT_MS })
 				);
 				if (res.exitCode !== 0) {

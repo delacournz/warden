@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DevReady } from "../commands/dev-ui";
-import { testContext } from "../testing";
+import { cliTesting } from "../testing";
 import { devTuiFakesTesting } from "./fakes.testing";
 import { devTuiRender } from "./render";
 import { devTuiTui, FRAME_MS } from "./tui";
@@ -24,7 +24,7 @@ function setup(cols = 80, rows = 24) {
 	const process = devTuiFakesTesting.fakeProcess();
 	let clock = 1000;
 	const ui = devTuiTui.createDevTui({
-		ctx: testContext([]),
+		ctx: cliTesting.testContext([]),
 		stdin: stdin.input,
 		stdout: stdout.output,
 		proc: process.proc,
@@ -501,7 +501,7 @@ describe("Metro pane and key passthrough", () => {
 
 describe("createDevTui: failures reach the terminal after the dashboard closes", () => {
 	function setupWithCtx(cols = 80, rows = 24) {
-		const ctx = testContext([]);
+		const ctx = cliTesting.testContext([]);
 		const stdin = devTuiFakesTesting.fakeStdin();
 		const stdout = devTuiFakesTesting.fakeStdout(cols, rows);
 		const process = devTuiFakesTesting.fakeProcess();

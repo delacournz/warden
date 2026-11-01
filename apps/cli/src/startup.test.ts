@@ -330,13 +330,13 @@ describe("terminal ui", () => {
 		const script = join(scratch, "ui-steps.ts");
 		writeFileSync(
 			script,
-			`import { terminalUi } from ${JSON.stringify(resolve(SRC, "ui.ts"))};
+			`import { uiKit } from ${JSON.stringify(resolve(SRC, "ui.ts"))};
 const seen = () => {
 	const files = Object.keys(require.cache);
 	return { ora: files.some((f) => f.includes("/node_modules/ora/")), clack: files.some((f) => f.includes("/node_modules/@clack/")) };
 };
 const out: Record<string, { ora: boolean; clack: boolean }> = {};
-const ui = terminalUi({ CI: "1", NO_COLOR: "1" });
+const ui = uiKit.terminalUi({ CI: "1", NO_COLOR: "1" });
 out.built = seen();
 ui.spinner("working").stop();
 out.spinner = seen();

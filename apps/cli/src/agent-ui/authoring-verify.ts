@@ -6,8 +6,8 @@ import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BatchDeps } from "../commands/batch";
 import { e2e, type SpecPlanDeps } from "../commands/e2e";
 import type { CommandContext } from "../context";
-import { runnerArgv, specEnv } from "../e2e/bun-runner";
-import { specLaunchArgs } from "../e2e/launch";
+import { bunRunner } from "../e2e/bun-runner";
+import { e2eLaunch } from "../e2e/launch";
 
 export type { VerifyInput, VerifyReport, VerifyTest };
 
@@ -37,7 +37,7 @@ export class UiAuthoringVerify {
 		await deps.mkdir(input.outDir);
 		const log = join(input.outDir, "spec.log");
 		const resultsFile = join(input.outDir, "results.jsonl");
-		const argv = runnerArgv({
+		const argv = bunRunner.runnerArgv({
 			bun: plan.data.bun,
 			preload: plan.data.preload,
 			specPaths: [input.specPath],
@@ -49,9 +49,9 @@ export class UiAuthoringVerify {
 			.find((l) => l.resource.kind === "device" && l.resource.id === input.udid);
 		const env: Record<string, string | undefined> = {
 			...ctx.env,
-			...specEnv({
+			...bunRunner.specEnv({
 				...plan.data.env,
-				launchArgs: specLaunchArgs(plan.data.launch, input.metroUrl),
+				launchArgs: e2eLaunch.specLaunchArgs(plan.data.launch, input.metroUrl),
 				out: input.outDir,
 			}),
 			[ENV_NAMES.udid]: input.udid,

@@ -8,7 +8,7 @@ import { uiSettingsRegister } from "../agent-ui/settings-register";
 import { uiOptionsHelper } from "../agent-ui/ui-options";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import { kindOption } from "../install-flags";
+import { installFlags } from "../install-flags";
 
 export class UiCommand extends CliCommand {
 	override readonly name = "ui";
@@ -77,7 +77,7 @@ export class UiCommand extends CliCommand {
 					.option("--relaunch", "terminate a running app first")
 					.option("--metro <url>", "Metro URL: launch with --initialUrl and remember it")
 					.option("--args <args...>", "extra launch arguments")
-					.addOption(kindOption())
+					.addOption(installFlags.kindOption())
 					.option("--project <dir>", "--kind: the app's project directory (default: cwd)")
 					.option("--settle [ms]", SETTLE)
 			)

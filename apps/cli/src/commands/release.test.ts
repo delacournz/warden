@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { releaseJsonSchema } from "@delacour/warden-sdk/contracts/leases";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { releaseCommand } from "./release";
 
 let ctx: TestContext | undefined;
@@ -12,7 +12,7 @@ const me: Owner = { kind: "agent", sessionId: "me", cwd: "/" };
 const other: Owner = { kind: "agent", sessionId: "other", cwd: "/" };
 
 function setup(argv: string[], calls: string[][] = []): TestContext {
-	ctx = testContext(argv, { exec: simctlFakes.build([], calls) });
+	ctx = cliTesting.testContext(argv, { exec: simctlFakes.build([], calls) });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }
@@ -80,7 +80,7 @@ describe("warden release", () => {
 		lease(c, "U1");
 		lease(c, "FOREIGN");
 		c.argv = ["--mine", "--shutdown", "--json"];
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await releaseCommand.run(c)).toBe(0);
 		expect(ui.events).toEqual(["spin: shutting down 2 device(s)…", "ok: shut down U1", "stop"]);
@@ -98,7 +98,7 @@ describe("warden release", () => {
 		lease(c, "U1");
 		lease(c, "U2");
 		lease(c, "U3");
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		c.argv = ["--udid", "U1", "--udid", "U3", "--json"];
 		expect(await releaseCommand.run(c)).toBe(0);
@@ -150,7 +150,7 @@ describe("warden release", () => {
 		const c = setup([]);
 		const mine = lease(c, "U1");
 		const theirs = lease(c, "U2", other);
-		const ui = scriptedUi({ interactive: true, multiselect: [[mine.id]] });
+		const ui = cliTesting.scriptedUi({ interactive: true, multiselect: [[mine.id]] });
 		c.ui = ui;
 		expect(await releaseCommand.run(c)).toBe(0);
 		expect(ui.events).toContain(`multiselect: Release which leases? [*${mine.id} +${theirs.id}]`);
@@ -160,7 +160,7 @@ describe("warden release", () => {
 	test("menu cancelled or empty: nothing released, exit 1 / 0", async () => {
 		const c = setup([]);
 		const mine = lease(c, "U1");
-		const ui = scriptedUi({ interactive: true, multiselect: [undefined, []] });
+		const ui = cliTesting.scriptedUi({ interactive: true, multiselect: [undefined, []] });
 		c.ui = ui;
 		expect(await releaseCommand.run(c)).toBe(1);
 		expect(ui.events).toContain("cancelled: Aborted.");
@@ -170,7 +170,7 @@ describe("warden release", () => {
 
 	test("nothing selected with --json or no leases: still a usage error", async () => {
 		const c = setup(["--json"]);
-		c.ui = scriptedUi({ interactive: true });
+		c.ui = cliTesting.scriptedUi({ interactive: true });
 		expect(await releaseCommand.run(c)).toBe(1);
 		lease(c, "U1");
 		expect(await releaseCommand.run(c)).toBe(1);

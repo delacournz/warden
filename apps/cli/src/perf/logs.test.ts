@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { LogStream } from "@delacour/warden-perf/logs/pid-follow";
 import { defaultLogDeps, type LogDeps, perfLogsOps } from "@delacour/warden-sdk/ops/perf/logs";
 import { PerfCommand } from "../commands/perf";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfLogsCli } from "./logs";
 import { perfTestingCli } from "./testing";
 
@@ -23,7 +23,7 @@ type Handlers = Array<[string, { stdout: string; exitCode?: number }]>;
 function setup(platform: "ios" | "android", handlers: Handlers) {
 	const calls: string[][] = [];
 	const id = platform === "ios" ? "U1" : EMU;
-	const c = testContext([], { exec: fakeExec(handlers, calls) });
+	const c = cliTesting.testContext([], { exec: cliTesting.fakeExec(handlers, calls) });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform, id, name: "dev" }, 1);
@@ -220,7 +220,9 @@ test("default deps spawn survives a missing binary", async () => {
 
 test("logs is wired onto warden perf with its flags", async () => {
 	const { deps } = setup("android", androidHandlers());
-	const c = testContext(["logs", "--json", "--app", "com.acme.shop", "--lines", "0", "-f"], { exec: fakeExec([]) });
+	const c = cliTesting.testContext(["logs", "--json", "--app", "com.acme.shop", "--lines", "0", "-f"], {
+		exec: cliTesting.fakeExec([]),
+	});
 	ctx?.cleanup();
 	ctx = c;
 	c.db.recordDevice({ platform: "android", id: EMU, name: "dev" }, 1);

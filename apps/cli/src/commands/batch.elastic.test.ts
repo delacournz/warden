@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { BatchCommand } from "./batch";
 import { batchTesting } from "./batch.testing";
 
@@ -44,9 +44,12 @@ function setup(env: Record<string, string> = {}) {
 		simctlFakes.wardenSim(3),
 		simctlFakes.wardenSim(4, "Booted"),
 	];
-	const c = testContext(["ios", "--count", "3", "--max", "4", "--jobs", "a,b,c,d,e", "--no-tui", "--", "x", "{job}"], {
-		exec: statefulSimctl(sims),
-	});
+	const c = cliTesting.testContext(
+		["ios", "--count", "3", "--max", "4", "--jobs", "a,b,c,d,e", "--no-tui", "--", "x", "{job}"],
+		{
+			exec: statefulSimctl(sims),
+		}
+	);
 	c.env = { ...c.env, ...OWNER_ENV, WARDEN_CAPACITY_MAX: "3", WARDEN_CAPACITY_HEADROOM_GB: "0", ...env };
 	c.db.insertLease(
 		{

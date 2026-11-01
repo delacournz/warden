@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import type { MemoryIo } from "@delacour/warden-sdk/ops/perf/memory";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfMemoryCli } from "./memory";
 import { ME, perfTestingCli } from "./testing";
 
@@ -22,7 +22,7 @@ type Script = (cmd: string) => Partial<ExecResult> | undefined;
 
 function setup(device: typeof sim | typeof droid, script: Script, leased: boolean) {
 	const calls: string[] = [];
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => T0,
 		exec: async (cmd) => {
 			const joined = cmd.join(" ");

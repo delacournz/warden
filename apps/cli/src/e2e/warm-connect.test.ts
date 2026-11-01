@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { uiStatePersistence } from "../agent-ui/state";
-import { residentSocket, runnerWarmError } from "./warm-connect";
+import { warmConnectHelpers } from "./warm-connect";
 
 let home: string | undefined;
 afterEach(() => {
@@ -25,7 +25,7 @@ describe("residentSocket", () => {
 		const helper = Bun.spawn(["sh", "-c", "sleep 30; :", "sh", "--udid", "U1", "--socket", socket]);
 		try {
 			uiStatePersistence.writeState(ctx, "U1", { generation: 0, helper: { pid: helper.pid, socket }, updatedAt: 1 });
-			expect(await residentSocket(ctx)("U1")).toBe(socket);
+			expect(await warmConnectHelpers.residentSocket(ctx)("U1")).toBe(socket);
 		} finally {
 			helper.kill("SIGKILL");
 			await helper.exited;
@@ -37,29 +37,29 @@ describe("residentSocket", () => {
 		const socket = join(home ?? "", "U1.sock");
 		writeFileSync(socket, "");
 		uiStatePersistence.writeState(ctx, "U1", { generation: 0, helper: { pid: process.pid, socket }, updatedAt: 1 });
-		expect(await residentSocket(ctx)("U1")).toBeUndefined();
+		expect(await warmConnectHelpers.residentSocket(ctx)("U1")).toBeUndefined();
 	});
 
 	test("no record, a dead pid or a missing socket file: none", async () => {
 		const ctx = host();
-		expect(await residentSocket(ctx)("U1")).toBeUndefined();
+		expect(await warmConnectHelpers.residentSocket(ctx)("U1")).toBeUndefined();
 		const socket = join(home ?? "", "U2.sock");
 		writeFileSync(socket, "");
 		uiStatePersistence.writeState(ctx, "U2", { generation: 0, helper: { pid: 2 ** 22 + 17, socket }, updatedAt: 1 });
-		expect(await residentSocket(ctx)("U2")).toBeUndefined();
+		expect(await warmConnectHelpers.residentSocket(ctx)("U2")).toBeUndefined();
 		uiStatePersistence.writeState(ctx, "U3", {
 			generation: 0,
 			helper: { pid: process.pid, socket: join(home ?? "", "gone.sock") },
 			updatedAt: 1,
 		});
-		expect(await residentSocket(ctx)("U3")).toBeUndefined();
+		expect(await warmConnectHelpers.residentSocket(ctx)("U3")).toBeUndefined();
 	});
 });
 
 describe("runnerWarmError", () => {
 	test("a locked phone: the ui code first, then the message and the unlock hint", () => {
 		expect(
-			runnerWarmError({
+			warmConnectHelpers.runnerWarmError({
 				code: "device_locked",
 				message: "E_DEVICE_LOCKED: Unlock the phone to Continue",
 				hint: "unlock the phone, then retry",
@@ -68,6 +68,8 @@ describe("runnerWarmError", () => {
 	});
 
 	test("no hint: no parentheses", () => {
-		expect(runnerWarmError({ code: "engine_unavailable", message: "no runner" })).toBe("engine_unavailable: no runner");
+		expect(warmConnectHelpers.runnerWarmError({ code: "engine_unavailable", message: "no runner" })).toBe(
+			"engine_unavailable: no runner"
+		);
 	});
 });

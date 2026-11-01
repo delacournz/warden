@@ -6,11 +6,11 @@ import { DEVICE_LOCKED_HINT } from "@delacour/warden-providers/unlock-wait";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type Lease, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { claimWithFlags, parseClaimFlags, parsePlatform } from "../claim-flags";
+import { claimFlagsHelpers } from "../claim-flags";
 import type { CommandContext } from "../context";
 import { hookClaudePretool } from "../hooks/claude-pretool";
-import { awaitPhonesUnlocked, isLockedClaimError, lockedClaimMessage } from "../physical-lock";
-import { AMBIGUOUS_HINT, ambiguousMessage, pickPhysical } from "../physical-pick";
+import { physicalLock } from "../physical-lock";
+import { AMBIGUOUS_HINT, physicalPickHelpers } from "../physical-pick";
 import { type UiDeviceInfo, type UiError, uiOutput } from "./output";
 import { type PhoneCheck, uiPhone } from "./phone";
 
@@ -120,8 +120,8 @@ export class UiDeviceResolver {
 
 	/** A failed claim as a `warden ui` error: a phone that stayed locked is `device_locked` (exit 2), anything else `failed`. */
 	private claimError(error: string): UiError {
-		return isLockedClaimError(error)
-			? uiOutput.uiError("device_locked", lockedClaimMessage(error), { hint: DEVICE_LOCKED_HINT })
+		return physicalLock.isLockedClaimError(error)
+			? uiOutput.uiError("device_locked", physicalLock.lockedClaimMessage(error), { hint: DEVICE_LOCKED_HINT })
 			: uiOutput.uiError("failed", `claim failed: ${error}`);
 	}
 
@@ -131,9 +131,9 @@ export class UiDeviceResolver {
 		owner: Owner,
 		flags: UiDeviceFlags
 	): Promise<Result<UiDevice, UiError>> {
-		const platform = parsePlatform(flags.platform ?? "ios");
+		const platform = claimFlagsHelpers.parsePlatform(flags.platform ?? "ios");
 		if (!platform.success) return this.fail(uiOutput.uiError("usage", platform.error));
-		const parsed = parseClaimFlags(
+		const parsed = claimFlagsHelpers.parseClaimFlags(
 			platform.data,
 			{
 				...(flags.profile !== undefined ? { profile: flags.profile } : {}),
@@ -147,10 +147,10 @@ export class UiDeviceResolver {
 		);
 		if (!parsed.success) return this.fail(uiOutput.uiError("usage", parsed.error));
 		// `warden ui` is for agents: never a prompt, several usable phones are the caller's to choose between
-		const picked = await pickPhysical(ctx, owner, [parsed.data], { prompt: false });
+		const picked = await physicalPickHelpers.pickPhysical(ctx, owner, [parsed.data], { prompt: false });
 		if (picked.kind === "ambiguous") {
 			return this.fail(
-				uiOutput.uiError("ambiguous_device", ambiguousMessage(picked.platform, picked.candidates), {
+				uiOutput.uiError("ambiguous_device", physicalPickHelpers.ambiguousMessage(picked.platform, picked.candidates), {
 					hint: AMBIGUOUS_HINT,
 					details: { candidates: picked.candidates },
 				})
@@ -160,7 +160,12 @@ export class UiDeviceResolver {
 			return this.fail(
 				uiOutput.uiError("failed", `claim failed: ${picked.kind === "failed" ? picked.message : "cancelled"}`)
 			);
-		const outcome = await claimWithFlags(ctx, owner, picked.flags[0] ?? parsed.data, ownerResolver.leasePidFor(owner));
+		const outcome = await claimFlagsHelpers.claimWithFlags(
+			ctx,
+			owner,
+			picked.flags[0] ?? parsed.data,
+			ownerResolver.leasePidFor(owner)
+		);
 		if (!outcome.success) return this.fail(this.claimError(outcome.error.message));
 		const claimed = outcome.data.claimed[0];
 		if (!claimed) return this.fail(uiOutput.uiError("failed", "claim returned no device"));
@@ -224,7 +229,7 @@ export class UiDeviceResolver {
 				: { kind: "other" };
 		// `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile)
 		if (claim && platform.data === "ios" && leaseModel.isPhysicalIosId(candidate.id)) {
-			const unlocked = await awaitPhonesUnlocked(
+			const unlocked = await physicalLock.awaitPhonesUnlocked(
 				ctx,
 				owner,
 				{ platform: "ios", profile: "iphone-17", count: 1, max: 1, physical: { ids: [candidate.id] } },
@@ -289,7 +294,7 @@ export class UiDeviceResolver {
 		const owner = ownerResolver.resolve(ctx);
 		const named = this.fromFlags(ctx, flags);
 		if (!named.success) return named;
-		const platformFlag = flags.platform === undefined ? undefined : parsePlatform(flags.platform);
+		const platformFlag = flags.platform === undefined ? undefined : claimFlagsHelpers.parsePlatform(flags.platform);
 		if (platformFlag && !platformFlag.success) return this.fail(uiOutput.uiError("usage", platformFlag.error));
 		let candidate: Candidate | "claim" | undefined = named.data ?? this.fromEnv(ctx.env);
 		if (candidate === undefined) {

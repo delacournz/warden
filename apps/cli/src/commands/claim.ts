@@ -4,23 +4,14 @@ import { claimRequestRules } from "@delacour/warden-leasing/claim-request";
 import { headlessResolver } from "@delacour/warden-leasing/headless";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { ClaimedDeviceJson, ClaimJson } from "@delacour/warden-sdk/contracts/claim";
-import { maybeAutoGc } from "../autogc";
-import {
-	type ClaimFlagValues,
-	claimWithFlags,
-	hintSlimmed,
-	isPhysicalClaim,
-	parseClaimFlags,
-	resolvePlatform,
-	withClaimOptions,
-	withPhysicalOptions,
-} from "../claim-flags";
+import { autoGc } from "../autogc";
+import { type ClaimFlagValues, claimFlagsHelpers } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
-import { reportClaimFailure } from "../physical-lock";
-import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
-import { withSpinner } from "../spinner-context";
+import { physicalLock } from "../physical-lock";
+import { physicalPickHelpers } from "../physical-pick";
+import { spinnerContext } from "../spinner-context";
 
 type ClaimOpts = ClaimFlagValues & { serial?: string[]; udid?: string[]; json?: true };
 
@@ -30,15 +21,19 @@ export class ClaimCommand extends CliCommand {
 	override readonly summary = "lease iOS sims / Android emulators (reuse, boot or create), booted and ready";
 
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
-		withPhysicalOptions(
-			withClaimOptions(cmd.argument("[platform]", "ios | android (asked for when omitted in a terminal)"))
-		).action(async (platform, opts) => done(await this.claim(ctx, platform, opts)));
+		claimFlagsHelpers
+			.withPhysicalOptions(
+				claimFlagsHelpers.withClaimOptions(
+					cmd.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
+				)
+			)
+			.action(async (platform, opts) => done(await this.claim(ctx, platform, opts)));
 	}
 
 	/** Lease, then boot / create as needed; a spinner covers the (possibly minutes-long) boot. */
 	private async claim(ctx: CommandContext, platformArg: string | undefined, opts: ClaimOpts): Promise<number> {
 		const { color } = ctx.ui;
-		const platform = await resolvePlatform(ctx, platformArg);
+		const platform = await claimFlagsHelpers.resolvePlatform(ctx, platformArg);
 		if (!platform.success) {
 			output.reportError(ctx, "claim", platform.error);
 			return 1;
@@ -50,10 +45,10 @@ export class ClaimCommand extends CliCommand {
 			...(opts.serial ? { physicalSerial: opts.serial } : {}),
 			...(opts.udid ? { physicalUdid: opts.udid } : {}),
 		};
-		const headless = isPhysicalClaim(named)
+		const headless = claimFlagsHelpers.isPhysicalClaim(named)
 			? opts.headless
 			: headlessResolver.resolve({ flag: opts.headless, env: ctx.env });
-		const flags = parseClaimFlags(
+		const flags = claimFlagsHelpers.parseClaimFlags(
 			platform.data,
 			{ ...named, headless },
 			undefined,
@@ -64,26 +59,33 @@ export class ClaimCommand extends CliCommand {
 			return 1;
 		}
 		// before the spinner and any lease: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-		const picked = await pickPhysical(ctx, owner, [flags.data], { prompt: canPrompt(ctx, { json: opts.json }) });
-		if (picked.kind !== "ok") return reportPick(ctx, "claim", picked);
+		const picked = await physicalPickHelpers.pickPhysical(ctx, owner, [flags.data], {
+			prompt: physicalPickHelpers.canPrompt(ctx, { json: opts.json }),
+		});
+		if (picked.kind !== "ok") return physicalPickHelpers.reportPick(ctx, "claim", picked);
 		const claimFlags = picked.flags[0] ?? flags.data;
 		const { count, profile, physical } = claimFlags.request;
 		const kind = physical ? "physical" : profile;
 		if (!opts.json) output.heading(ctx, "claim", `${platform.data} · ${kind} ×${count}`);
-		const outcome = await withSpinner(
+		const outcome = await spinnerContext.withSpinner(
 			ctx,
 			`claiming ${count} ${kind} ${platform.data} device(s)…`,
 			async (sctx, spinner) => {
-				const result = await claimWithFlags(sctx, owner, claimFlags, ownerResolver.leasePidFor(owner));
+				const result = await claimFlagsHelpers.claimWithFlags(
+					sctx,
+					owner,
+					claimFlags,
+					ownerResolver.leasePidFor(owner)
+				);
 				if (result.success) spinner.succeed(`claimed ${result.data.claimed.map((c) => c.device.name).join(", ")}`);
 				else spinner.fail(`claim failed`);
 				return result;
 			}
 		);
 		// after the claim: its own leases keep the background gc off the devices it just took (16-1)
-		maybeAutoGc(ctx);
-		if (!outcome.success) return reportClaimFailure(ctx, "claim", outcome.error.message);
-		if (opts.slim === false) hintSlimmed(ctx, outcome.data);
+		autoGc.maybeAutoGc(ctx);
+		if (!outcome.success) return physicalLock.reportClaimFailure(ctx, "claim", outcome.error.message);
+		if (opts.slim === false) claimFlagsHelpers.hintSlimmed(ctx, outcome.data);
 		if (shortLived) {
 			output.warn(
 				ctx,

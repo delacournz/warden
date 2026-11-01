@@ -6,7 +6,7 @@ import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
 import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfHeapCli } from "./heap";
 import { perfTestingCli } from "./testing";
 
@@ -29,7 +29,7 @@ const SNAPSHOT = jsFixtures.buildHeapSnapshot([
 ]);
 
 function setup(chunks: string[] = [SNAPSHOT.slice(0, 40), SNAPSHOT.slice(40)]) {
-	const c = testContext([], { now: () => T0 });
+	const c = cliTesting.testContext([], { now: () => T0 });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);
@@ -121,7 +121,7 @@ describe("warden perf heap diff", () => {
 				["string", "x", 10],
 			])
 		);
-		const c = testContext([], { cwd: dir });
+		const c = cliTesting.testContext([], { cwd: dir });
 		ctx = c;
 		expect(perfHeapCli.perfHeapDiff(c, "a.heapsnapshot", "b.heapsnapshot", { json: true })).toBe(0);
 		const doc = JSON.parse(c.stdout.join("\n"));
@@ -133,7 +133,7 @@ describe("warden perf heap diff", () => {
 
 	test("text mode", () => {
 		const dir = files(SNAPSHOT, SNAPSHOT);
-		const c = testContext([], { cwd: dir });
+		const c = cliTesting.testContext([], { cwd: dir });
 		ctx = c;
 		expect(perfHeapCli.perfHeapDiff(c, "a.heapsnapshot", "b.heapsnapshot", {})).toBe(0);
 		expect(c.stdout.join("\n")).toContain("Heap diff");
@@ -141,7 +141,7 @@ describe("warden perf heap diff", () => {
 
 	test("a missing or non-snapshot file is a usage error", () => {
 		const dir = files(SNAPSHOT, "nope");
-		const c = testContext([], { cwd: dir });
+		const c = cliTesting.testContext([], { cwd: dir });
 		ctx = c;
 		expect(perfHeapCli.perfHeapDiff(c, "a.heapsnapshot", "missing.heapsnapshot", { json: true })).toBe(1);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ ok: false, error: { code: "usage" } });
@@ -156,13 +156,13 @@ describe("registration", () => {
 		const { perfJsCli } = await import("./js");
 		const { perfHeapCli } = await import("./heap");
 		const s = setup();
-		const c = testContext(["heap", "--help"]);
+		const c = cliTesting.testContext(["heap", "--help"]);
 		ctx = c;
 		expect(await new PerfCommand(s.deps, [perfJsCli.registerJs, perfHeapCli.registerHeap]).definition().run(c)).toBe(0);
 		const help = c.stdout.join("\n");
 		expect(help).toContain("snapshot");
 		expect(help).toContain("diff");
-		const c2 = testContext(["js", "--help"]);
+		const c2 = cliTesting.testContext(["js", "--help"]);
 		expect(await new PerfCommand(s.deps, [perfJsCli.registerJs, perfHeapCli.registerHeap]).definition().run(c2)).toBe(
 			0
 		);

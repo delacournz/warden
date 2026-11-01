@@ -47,27 +47,21 @@ import type { Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { uiStopHelperAfter } from "../agent-ui/stop-helper-after";
-import { maybeAutoGc } from "../autogc";
-import { type ClaimFlagValues, parseClaimFlags, parsePlatform, withClaimOptions } from "../claim-flags";
+import { autoGc } from "../autogc";
+import { type ClaimFlagValues, claimFlagsHelpers } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
 import type { Broker, BrokerOptions } from "../dev-broker/broker";
 import type { BrokerResult } from "../dev-broker/broker.types";
-import {
-	controlSocketPath,
-	type DevControlResponse,
-	type DevFeature,
-	type DevFeatures,
-	serveDevControl,
-} from "../dev-control";
-import { removeDevSession, updateDevSession, writeDevSession } from "../dev-session";
+import { type DevControlResponse, type DevFeature, type DevFeatures, devControlOps } from "../dev-control";
+import { devSession } from "../dev-session";
 import { devTuiHud } from "../dev-tui/hud";
-import { missingPackages } from "../expo-app";
-import { installModeOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
+import { expoApp } from "../expo-app";
+import { installFlags } from "../install-flags";
 import { leaseHostBuilder } from "../lease-host";
-import { splitCommand } from "../lease-options";
+import { leaseOptions } from "../lease-options";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 import type { Spinner } from "../ui";
 import { devControl } from "./dev-control";
 import { devLogs } from "./dev-logs";
@@ -275,7 +269,7 @@ export class DevCommand extends CliCommand {
 	}
 
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
-		const claimed = withClaimOptions(
+		const claimed = claimFlagsHelpers.withClaimOptions(
 			cmd
 				.argument("[platform]", "ios | android (default: ios)")
 				.argument("[expoArgs...]", "extra `expo start` args, after --")
@@ -293,9 +287,9 @@ export class DevCommand extends CliCommand {
 			.option("--ready-timeout <duration>", "wait this long for Metro", DEV_READY_TIMEOUT)
 			.option("--no-eas", "don't download EAS builds")
 			.option("--no-build", "don't build locally on a cache miss")
-			.addOption(installModeOption())
+			.addOption(installFlags.installModeOption())
 			.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
-			.addOption(legacyCleanOption())
+			.addOption(installFlags.legacyCleanOption())
 			.option("--hud", "start the perf HUD sampler with the dashboard (default off: h or `warden dev enable hud`)")
 			.addOption(new Option("--no-hud", "the HUD is off by default; kept for old scripts").hideHelp())
 			.option("--hud-interval <duration>", "HUD sampling interval, at least 200ms", "1s")
@@ -515,7 +509,7 @@ export class DevCommand extends CliCommand {
 		if (held.data === undefined) {
 			// only an explicit --headless: dev ignores config `headless` and WARDEN_HEADLESS
 			// the device lease names its holder in `warden ls` and `warden ui`'s busy / sharing messages
-			const flags = parseClaimFlags(
+			const flags = claimFlagsHelpers.parseClaimFlags(
 				platform,
 				{ ...opts, headless: opts.headless === true, label: opts.label ?? DEV_LEASE_LABEL },
 				undefined,
@@ -675,7 +669,7 @@ export class DevCommand extends CliCommand {
 	private preflight(project: Project, platform: Platform): Result<void> {
 		const bundle = projectConfig.bundleIdFor(project, platform);
 		if (!bundle.success) return wardenErrors.toText(bundle);
-		if (project.framework === "expo" && missingPackages(project.root, ["expo-dev-client"]).length > 0)
+		if (project.framework === "expo" && expoApp.missingPackages(project.root, ["expo-dev-client"]).length > 0)
 			return resultFactory.err(
 				`expo-dev-client isn't installed in ${project.root} — run: bunx expo install expo-dev-client`
 			);
@@ -684,7 +678,7 @@ export class DevCommand extends CliCommand {
 
 	/** What `warden dev` asks `ensureApp` for: a missing `dev` variant falls back, an explicit `--variant` must exist. */
 	private ensureOptions(start: string, variant: string, opts: DevOpts): Result<EnsureOptions> {
-		const install = parseInstallFlags(opts);
+		const install = installFlags.parseInstallFlags(opts);
 		if (!install.success) return install;
 		return resultFactory.ok({
 			project: start,
@@ -802,7 +796,7 @@ export class DevCommand extends CliCommand {
 	private registerDevSession(ctx: CommandContext, deps: DevDeps, r: Running, metroUrl: string): () => void {
 		const leaseId = r.session.leaseIds[0];
 		if (leaseId === undefined) return () => undefined;
-		writeDevSession(ctx.env, {
+		devSession.writeDevSession(ctx.env, {
 			version: 1,
 			leaseId,
 			pid: deps.pid,
@@ -814,7 +808,7 @@ export class DevCommand extends CliCommand {
 			projectRoot: r.project.root,
 			startedAt: new Date(ctx.now()).toISOString(),
 		});
-		return () => removeDevSession(ctx.env, leaseId);
+		return () => devSession.removeDevSession(ctx.env, leaseId);
 	}
 
 	/**
@@ -853,9 +847,9 @@ export class DevCommand extends CliCommand {
 			task.fail(started.error.message);
 			return resultFactory.err(started.error.message);
 		}
-		updateDevSession(ui.ctx.env, leaseId, { brokerSocket: started.data.socketPath });
+		devSession.updateDevSession(ui.ctx.env, leaseId, { brokerSocket: started.data.socketPath });
 		return resultFactory.ok(async () => {
-			updateDevSession(ui.ctx.env, leaseId, { brokerSocket: undefined });
+			devSession.updateDevSession(ui.ctx.env, leaseId, { brokerSocket: undefined });
 			await started.data.close();
 		});
 	}
@@ -899,8 +893,8 @@ export class DevCommand extends CliCommand {
 	private async serveDevExtras(ctx: CommandContext, r: Running, extras: DevExtras): Promise<() => Promise<void>> {
 		const leaseId = r.session.leaseIds[0];
 		if (leaseId === undefined) return async () => undefined;
-		const served = await serveDevControl(
-			controlSocketPath(join(storeLocator.wardenHome(ctx.env), "dev", leaseId)),
+		const served = await devControlOps.serveDevControl(
+			devControlOps.controlSocketPath(join(storeLocator.wardenHome(ctx.env), "dev", leaseId)),
 			(request) =>
 				request.op === "status"
 					? Promise.resolve({ ok: true, features: extras.features() })
@@ -913,7 +907,7 @@ export class DevCommand extends CliCommand {
 			);
 			return async () => undefined;
 		}
-		updateDevSession(ctx.env, leaseId, { controlSocket: served.data.socketPath });
+		devSession.updateDevSession(ctx.env, leaseId, { controlSocket: served.data.socketPath });
 		return () => served.data.close();
 	}
 
@@ -1051,7 +1045,7 @@ export class DevCommand extends CliCommand {
 		const json = opts.json === true;
 		return {
 			start: (port, deviceId, extraArgs = []) => {
-				const base = splitCommand(ctx.argv).cmd;
+				const base = leaseOptions.splitCommand(ctx.argv).cmd;
 				const metroTask = ui.task("metro", "Metro");
 				const handle = new MetroRunner({
 					probe: deps.probe,
@@ -1207,7 +1201,7 @@ export class DevCommand extends CliCommand {
 	 * project is read again once one was applied; otherwise the missing pieces are the error, with their commands.
 	 */
 	private async prepareDev(ctx: CommandContext, platformArg: string | undefined, opts: DevOpts): AsyncResult<Prepared> {
-		const platform = parsePlatform(platformArg ?? "ios");
+		const platform = claimFlagsHelpers.parsePlatform(platformArg ?? "ios");
 		if (!platform.success) return platform;
 		const timeout = durationParser.parse(opts.readyTimeout);
 		if (!timeout.success) return resultFactory.err(`--ready-timeout: ${timeout.error}`);
@@ -1290,7 +1284,7 @@ export class DevCommand extends CliCommand {
 		// the dashboard's claim row is the progress: an ora spinner would be a second line for the same step, and the
 		// claim's stderr lines (`queued #1 of 1 — memory pressure warn`) go under that row, or nobody sees why it waits
 		if (ui.metro.kind === "pty") return claim(this.scopedCtx(ui.ctx, (line) => claimTask.log(line)));
-		return withSpinner(ui.ctx, `preparing the ${a.platform} dev build…`, claim);
+		return spinnerContext.withSpinner(ui.ctx, `preparing the ${a.platform} dev build…`, claim);
 	}
 
 	/** `dev`'s session logic, talking to a `DevUi`; everything the person sees goes through `ui`. */
@@ -1324,7 +1318,7 @@ export class DevCommand extends CliCommand {
 		if (!opts.json) output.heading(ctx, "dev", `${platform.data} · ${project.project.name}`);
 		const session = await this.claimDevice(ui, deps, { owner, platform: platform.data, opts, app, early });
 		// after the claim: its own lease keeps the background gc off the device it just took (16-1)
-		maybeAutoGc(ctx);
+		autoGc.maybeAutoGc(ctx);
 		for (const off of offSignals) off();
 		if (!session.success) return fail(await this.sessionFailureMessage(session.error, run.launch));
 		const { launch } = run;

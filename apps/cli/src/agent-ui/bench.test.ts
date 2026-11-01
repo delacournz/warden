@@ -7,7 +7,7 @@ import type { Platform } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { UiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { BENCH_TARGETS, BENCH_TOLERANCE, type BenchMetric, type BenchResult, uiBench } from "./bench";
 import type { UiDeps } from "./driver";
 
@@ -163,7 +163,7 @@ function harness(options: { platform?: Platform; withMetro?: boolean } = {}): Ha
 			},
 		},
 	};
-	const c = testContext([], { now: () => clock.t });
+	const c = cliTesting.testContext([], { now: () => clock.t });
 	ctx = c;
 	c.env = {
 		...c.env,

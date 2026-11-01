@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeHelperDist } from "./helper.testing";
-import { stageHelper } from "./helper-stage";
+import { helperTesting } from "./helper.testing";
+import { helperStage } from "./helper-stage";
 
 let root: string;
 let dist: string;
@@ -17,8 +17,8 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("stageHelper", () => {
 	test("copies binary, resources, manifest and every framework into bin/", () => {
-		fakeHelperDist(dist);
-		const staged = stageHelper({ distDir: dist, binDir: bin, required: false });
+		helperTesting.fakeHelperDist(dist);
+		const staged = helperStage.stageHelper({ distDir: dist, binDir: bin, required: false });
 		expect(staged).toEqual({
 			success: true,
 			data: {
@@ -42,22 +42,27 @@ describe("stageHelper", () => {
 	});
 
 	test("the injected dylib is staged when built, and a release build requires it", () => {
-		fakeHelperDist(dist, { inject: true });
-		const staged = stageHelper({ distDir: dist, binDir: bin, required: true });
+		helperTesting.fakeHelperDist(dist, { inject: true });
+		const staged = helperStage.stageHelper({ distDir: dist, binDir: bin, required: true });
 		expect(staged.success && staged.data?.inject).toBe(true);
 		expect(existsSync(join(bin, "libwarden-inject.dylib"))).toBe(true);
 
 		const bare = join(root, "bare");
-		fakeHelperDist(bare);
-		const missing = stageHelper({ distDir: bare, binDir: join(root, "pkg2", "bin"), required: true });
+		helperTesting.fakeHelperDist(bare);
+		const missing = helperStage.stageHelper({ distDir: bare, binDir: join(root, "pkg2", "bin"), required: true });
 		expect(missing.success).toBe(false);
 		if (!missing.success) expect(missing.error).toContain("libwarden-inject.dylib");
-		expect(stageHelper({ distDir: bare, binDir: join(root, "pkg3", "bin"), required: false }).success).toBe(true);
+		expect(helperStage.stageHelper({ distDir: bare, binDir: join(root, "pkg3", "bin"), required: false }).success).toBe(
+			true
+		);
 	});
 
 	test("no helper built: skipped, unless required", () => {
-		expect(stageHelper({ distDir: dist, binDir: bin, required: false })).toEqual({ success: true, data: undefined });
-		const required = stageHelper({ distDir: dist, binDir: bin, required: true });
+		expect(helperStage.stageHelper({ distDir: dist, binDir: bin, required: false })).toEqual({
+			success: true,
+			data: undefined,
+		});
+		const required = helperStage.stageHelper({ distDir: dist, binDir: bin, required: true });
 		expect(required.success).toBe(false);
 		if (!required.success) expect(required.error).toContain("--require-helper");
 		expect(existsSync(bin)).toBe(false);
@@ -68,8 +73,8 @@ describe("stageHelper", () => {
 		["manifest", { manifest: false }, "manifest.json"],
 		["frameworks", { frameworks: [] }, "*.framework"],
 	])("incomplete dist (missing %s) is an error even when not required", (_name, opts, message) => {
-		fakeHelperDist(dist, opts);
-		const staged = stageHelper({ distDir: dist, binDir: bin, required: false });
+		helperTesting.fakeHelperDist(dist, opts);
+		const staged = helperStage.stageHelper({ distDir: dist, binDir: bin, required: false });
 		expect(staged.success).toBe(false);
 		if (!staged.success) expect(staged.error).toContain(message);
 		expect(existsSync(bin)).toBe(false);

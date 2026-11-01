@@ -5,7 +5,7 @@ import { jsResultFactory } from "@delacour/warden-perf/js/js.types";
 import type { JsDeps } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfJsCli } from "./js";
 import { perfTestingCli } from "./testing";
 
@@ -32,7 +32,7 @@ const profile = jsFixtures.buildProfile(
 );
 
 function setup(metro: string | null = METRO) {
-	const c = testContext([], { now: () => T0 });
+	const c = cliTesting.testContext([], { now: () => T0 });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, T0);

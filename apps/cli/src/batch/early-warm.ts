@@ -1,4 +1,4 @@
-import { type WarmConnect, type WarmHelper, type WarmOutcome, type WarmRun, warmDrivers } from "./warm-drivers";
+import { type WarmConnect, type WarmHelper, type WarmOutcome, type WarmRun, warmDriversHelpers } from "./warm-drivers";
 
 /** What the early warm-up needs: the `warmDrivers` effects plus the run's shape. */
 export type EarlyWarmDeps = Pick<WarmRun, "logDir" | "now" | "after" | "writeFile"> & {
@@ -34,57 +34,61 @@ export type EarlyWarm = {
 	abort: () => void;
 };
 
-/** Start the warm-up of the run's devices as they are leased; never throws. */
-export function startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
-	const own = new AbortController();
-	const signal = deps.signal ? AbortSignal.any([deps.signal, own.signal]) : own.signal;
-	const warnings: string[] = [];
-	const pending: Promise<WarmOutcome>[] = [];
-	const firstWorker = (leg: number) => deps.legCounts.slice(0, leg).reduce((sum, n) => sum + n, 0);
-	const byDevice = new Map<string, ReturnType<typeof Promise.withResolvers<DeviceWarm>>>();
-	const done = new Map<string, DeviceWarm>();
-	return {
-		leased: (outcome, leg) => {
-			const first = firstWorker(leg);
-			for (const c of outcome.claimed) byDevice.set(c.device.id, Promise.withResolvers<DeviceWarm>());
-			pending.push(
-				warmDrivers(
-					{
-						devices: outcome.claimed.map((c, i) => ({ worker: first + i, udid: c.device.id })),
-						logDir: deps.logDir,
-						now: deps.now,
-						after: deps.after,
-						writeFile: deps.writeFile,
-						signal,
-					},
-					{
-						connect: deps.connect,
-						warn: (line) => warnings.push(line),
-						onDevice: (warmed, helper, warning) => {
-							const outcome: DeviceWarm = {
-								...(warmed.socketPath !== undefined ? { socketPath: warmed.socketPath } : {}),
-								...(helper ? { helper } : {}),
-								...(warning !== undefined ? { warning } : {}),
-								...(warmed.error !== undefined ? { error: warmed.error } : {}),
-							};
-							done.set(warmed.udid, outcome);
-							byDevice.get(warmed.udid)?.resolve(outcome);
+export class EarlyWarmHelpers {
+	/** Start the warm-up of the run's devices as they are leased; never throws. */
+	startEarlyWarm(deps: EarlyWarmDeps): EarlyWarm {
+		const own = new AbortController();
+		const signal = deps.signal ? AbortSignal.any([deps.signal, own.signal]) : own.signal;
+		const warnings: string[] = [];
+		const pending: Promise<WarmOutcome>[] = [];
+		const firstWorker = (leg: number) => deps.legCounts.slice(0, leg).reduce((sum, n) => sum + n, 0);
+		const byDevice = new Map<string, ReturnType<typeof Promise.withResolvers<DeviceWarm>>>();
+		const done = new Map<string, DeviceWarm>();
+		return {
+			leased: (outcome, leg) => {
+				const first = firstWorker(leg);
+				for (const c of outcome.claimed) byDevice.set(c.device.id, Promise.withResolvers<DeviceWarm>());
+				pending.push(
+					warmDriversHelpers.warmDrivers(
+						{
+							devices: outcome.claimed.map((c, i) => ({ worker: first + i, udid: c.device.id })),
+							logDir: deps.logDir,
+							now: deps.now,
+							after: deps.after,
+							writeFile: deps.writeFile,
+							signal,
 						},
-						...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
-					}
-				)
-			);
-		},
-		settled: async () => {
-			const outcomes = await Promise.all(pending);
-			return {
-				devices: outcomes.flatMap((o) => o.devices).sort((a, b) => a.worker - b.worker),
-				helpers: outcomes.flatMap((o) => o.helpers),
-				warnings,
-			};
-		},
-		device: (udid) => byDevice.get(udid)?.promise ?? Promise.resolve({}),
-		peek: (udid) => done.get(udid),
-		abort: () => own.abort(),
-	};
+						{
+							connect: deps.connect,
+							warn: (line) => warnings.push(line),
+							onDevice: (warmed, helper, warning) => {
+								const outcome: DeviceWarm = {
+									...(warmed.socketPath !== undefined ? { socketPath: warmed.socketPath } : {}),
+									...(helper ? { helper } : {}),
+									...(warning !== undefined ? { warning } : {}),
+									...(warmed.error !== undefined ? { error: warmed.error } : {}),
+								};
+								done.set(warmed.udid, outcome);
+								byDevice.get(warmed.udid)?.resolve(outcome);
+							},
+							...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
+						}
+					)
+				);
+			},
+			settled: async () => {
+				const outcomes = await Promise.all(pending);
+				return {
+					devices: outcomes.flatMap((o) => o.devices).sort((a, b) => a.worker - b.worker),
+					helpers: outcomes.flatMap((o) => o.helpers),
+					warnings,
+				};
+			},
+			device: (udid) => byDevice.get(udid)?.promise ?? Promise.resolve({}),
+			peek: (udid) => done.get(udid),
+			abort: () => own.abort(),
+		};
+	}
 }
+
+export const earlyWarmHelpers = new EarlyWarmHelpers();

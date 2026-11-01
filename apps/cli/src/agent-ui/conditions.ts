@@ -18,7 +18,7 @@ import type { Lease } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
-import { compiledSubcommand } from "../self-command";
+import { selfCommandHelpers } from "../self-command";
 import { uiConditionText } from "./condition-text";
 import { type FlapFlags, type FlapSpec, type ShapingFlags, uiConditionsParse } from "./conditions-parse";
 import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
@@ -256,7 +256,7 @@ export class UiConditions {
 	): SchedulerConfig {
 		const { lease } = device;
 		const bundleId = uiStatePersistence.readState(ctx, device.udid).app;
-		const proxyCommand = compiledSubcommand(NETPROXY_SUBCOMMAND);
+		const proxyCommand = selfCommandHelpers.compiledSubcommand(NETPROXY_SUBCOMMAND);
 		return {
 			platform: device.platform,
 			id: device.udid,

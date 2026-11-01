@@ -3,46 +3,45 @@ import { dirname } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
-/**
- * Put `source` at `target` atomically: copy next to the target, chmod 755, drop the macOS
- * quarantine flag, check it runs and reports `expectedVersion`, then rename over the target.
- * The running process keeps its old inode; the next `warden` call gets the new binary.
- */
-export async function installBinary(
-	exec: Exec,
-	source: string,
-	target: string,
-	expectedVersion: string
-): AsyncResult<void> {
-	mkdirSync(dirname(target), { recursive: true });
-	const staged = `${target}.new-${process.pid}`;
-	try {
-		copyFileSync(source, staged);
-		chmodSync(staged, 0o755);
-		await exec(["xattr", "-d", "com.apple.quarantine", staged]);
-		const check = await exec([staged, "version", "--json"]);
-		const reported = parseReportedVersion(check.stdout);
-		if (check.exitCode !== 0 || reported !== expectedVersion) {
+export class InstallBinaryHelpers {
+	/**
+	 * Put `source` at `target` atomically: copy next to the target, chmod 755, drop the macOS
+	 * quarantine flag, check it runs and reports `expectedVersion`, then rename over the target.
+	 * The running process keeps its old inode; the next `warden` call gets the new binary.
+	 */
+	async installBinary(exec: Exec, source: string, target: string, expectedVersion: string): AsyncResult<void> {
+		mkdirSync(dirname(target), { recursive: true });
+		const staged = `${target}.new-${process.pid}`;
+		try {
+			copyFileSync(source, staged);
+			chmodSync(staged, 0o755);
+			await exec(["xattr", "-d", "com.apple.quarantine", staged]);
+			const check = await exec([staged, "version", "--json"]);
+			const reported = this.parseReportedVersion(check.stdout);
+			if (check.exitCode !== 0 || reported !== expectedVersion) {
+				rmSync(staged, { force: true });
+				return resultFactory.err(
+					`new binary failed its self-check (expected ${expectedVersion}, got ${reported ?? `exit ${check.exitCode}`})`
+				);
+			}
+			renameSync(staged, target);
+			return resultFactory.ok(undefined);
+		} catch (error) {
 			rmSync(staged, { force: true });
-			return resultFactory.err(
-				`new binary failed its self-check (expected ${expectedVersion}, got ${reported ?? `exit ${check.exitCode}`})`
-			);
+			return resultFactory.err(error);
 		}
-		renameSync(staged, target);
-		return resultFactory.ok(undefined);
-	} catch (error) {
-		rmSync(staged, { force: true });
-		return resultFactory.err(error);
+	}
+
+	private parseReportedVersion(stdout: string): string | undefined {
+		try {
+			const data: unknown = JSON.parse(stdout);
+			return typeof data === "object" && data !== null && "version" in data && typeof data.version === "string"
+				? data.version
+				: undefined;
+		} catch {
+			return undefined;
+		}
 	}
 }
 
-function parseReportedVersion(stdout: string): string | undefined {
-	try {
-		const data: unknown = JSON.parse(stdout);
-		return typeof data === "object" && data !== null && "version" in data && typeof data.version === "string"
-			? data.version
-			: undefined;
-	} catch {
-		return undefined;
-	}
-}
+export const installBinaryHelpers = new InstallBinaryHelpers();

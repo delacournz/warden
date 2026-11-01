@@ -8,7 +8,7 @@ import { perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
 import { perfTestingCli } from "../perf/testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { PerfCollectCommand } from "./perf-collect";
 
 let ctx: TestContext | undefined;
@@ -19,7 +19,7 @@ const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 
 function setup(maxDurationMs: number) {
 	const clock = { now: T0 };
-	const c = testContext([], { now: () => clock.now });
+	const c = cliTesting.testContext([], { now: () => clock.now });
 	ctx = c;
 	const deps = perfTestingCli.fakePerfDeps([sim]);
 	const made = perfSessionStore.createSession(c, deps.session, {
@@ -80,7 +80,7 @@ describe("warden perf-collect with a plan", () => {
 
 	function planned(maxDurationMs: number) {
 		const clock = { now: T0 };
-		const c = testContext([], {
+		const c = cliTesting.testContext([], {
 			now: () => clock.now,
 			exec: async (cmd) => {
 				const line = cmd.join(" ");

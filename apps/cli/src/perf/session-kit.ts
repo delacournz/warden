@@ -3,13 +3,13 @@ import { defaultNativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
 import type { SessionIo, SessionKit, StartHooks } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiOutput } from "../agent-ui/output";
-import { selfCommand } from "../autogc";
+import { autoGc } from "../autogc";
 import type { CommandContext } from "../context";
 import { perfAppCli } from "./app";
 import { perfDeviceCli } from "./device";
 import type { PerfDeps, PerfOptionValues } from "./run";
 
-export const defaultSessionIo: SessionIo = { ...defaultNativeIo, self: selfCommand };
+export const defaultSessionIo: SessionIo = { ...defaultNativeIo, self: autoGc.selfCommand.bind(autoGc) };
 
 export const defaultSessionKit: SessionKit = { io: defaultSessionIo, profilers: defaultNativeProfilers };
 

@@ -10,7 +10,7 @@ import { appEnsureJsonSchema, appFingerprintJsonSchema } from "@delacour/warden-
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { contextBuilder } from "../context";
 import { OWNER_ENV } from "../simctl.testing";
-import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { AppCommand } from "./app";
 
 let ctx: TestContext | undefined;
@@ -31,7 +31,7 @@ const HASH = "abc123def456";
 const deps: AppDeps = { pid: 1, sleep: async () => {}, pidAlive: () => false };
 
 function setup(argv: string[], extra: Array<[string, Partial<ExecResult>]> = [], calls: string[][] = []): TestContext {
-	ctx = testContext(argv);
+	ctx = cliTesting.testContext(argv);
 	const root = join(ctx.cwd, "app");
 	mkdirSync(root, { recursive: true });
 	writeFileSync(
@@ -47,7 +47,7 @@ function setup(argv: string[], extra: Array<[string, Partial<ExecResult>]> = [],
 			],
 		})
 	);
-	ctx.exec = fakeExec(
+	ctx.exec = cliTesting.fakeExec(
 		[
 			...extra,
 			["sh -c fp ios", { stdout: JSON.stringify({ hash: HASH }) }],
@@ -112,7 +112,7 @@ describe("warden app fingerprint (native+js)", () => {
 describe("warden app fingerprint", () => {
 	test("both platforms by default, --json, hash logged loudly to stderr", async () => {
 		const c = setup(["fingerprint", "--json"]);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
@@ -339,7 +339,7 @@ describe("warden app ensure", () => {
 			]
 		);
 		await seed(c);
-		const ui = scriptedUi({ interactive: true, select: ["ios"] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: ["ios"] });
 		c.ui = ui;
 		expect(await new AppCommand(deps).definition().run(c)).toBe(0);
 		expect(ui.events[0]).toBe("select: Which platform?");
@@ -398,7 +398,7 @@ describe("warden app ensure on a physical iPhone", () => {
 	test("kindAppInput carries the team from warden.config.ts only for an iPhone", () => {
 		const base = { project: buildsTesting.project(), projectKey: "k" };
 		const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
-		const c = testContext([], { env: { HOME: "/h" } });
+		const c = cliTesting.testContext([], { env: { HOME: "/h" } });
 		writeFileSync(join(c.cwd, "warden.config.json"), JSON.stringify({ ios: { teamId: "ABCDE12345" }, e2e: {} }));
 		const phone = new AppPreparer(contextBuilder.appHostFromContext(c), deps).kindAppInput(
 			owner,
@@ -433,7 +433,7 @@ describe("kindAppInput bundle env", () => {
 	const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
 	const bundleEnv = { EXPO_PUBLIC_API: "http://fake" };
 	const input = (kind: "dev" | "simulator" | "release") => {
-		const c = testContext([], { env: { HOME: "/h", EXPO_PUBLIC_API: "http://real" } });
+		const c = cliTesting.testContext([], { env: { HOME: "/h", EXPO_PUBLIC_API: "http://real" } });
 		return new AppPreparer(contextBuilder.appHostFromContext(c), deps).kindAppInput(owner, "ios", project, kind, {
 			eas: false,
 			build: true,

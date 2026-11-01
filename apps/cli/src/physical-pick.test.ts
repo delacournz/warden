@@ -8,10 +8,10 @@ import {
 } from "@delacour/warden-providers/devicectl.fixtures";
 import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
 import type { Owner } from "@delacour/warden-store/types";
-import { type ClaimFlags, parseClaimFlags } from "./claim-flags";
-import { pickPhysical } from "./physical-pick";
+import { type ClaimFlags, claimFlagsHelpers } from "./claim-flags";
+import { physicalPickHelpers } from "./physical-pick";
 import { OWNER_ENV } from "./simctl.testing";
-import { fakeExec, type ScriptedUi, scriptedUi, type TestContext, testContext } from "./testing";
+import { cliTesting, type ScriptedUi, type TestContext } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -28,9 +28,9 @@ const owner: Owner = { kind: "agent", sessionId: "me", cwd: "/" };
 const other: Owner = { kind: "agent", sessionId: "someone-else", cwd: "/" };
 
 function androidSetup(ui: ScriptedUi, env: Record<string, string> = {}): TestContext {
-	ctx = testContext([], {
+	ctx = cliTesting.testContext([], {
 		ui,
-		exec: fakeExec([
+		exec: cliTesting.fakeExec([
 			["adb devices -l", { stdout: ADB_TWO }],
 			[`adb -s ${USB} shell ${PHONE_PROBE_SCRIPT}`, { stdout: PHONE_PROPS }],
 			[`adb -s ${WIFI} shell ${PHONE_PROBE_SCRIPT}`, { stdout: PIXEL_PROPS }],
@@ -40,8 +40,11 @@ function androidSetup(ui: ScriptedUi, env: Record<string, string> = {}): TestCon
 	return ctx;
 }
 
-function flagsOf(platform: "android" | "ios", values: Parameters<typeof parseClaimFlags>[1] = { physical: true }) {
-	const parsed = parseClaimFlags(platform, values);
+function flagsOf(
+	platform: "android" | "ios",
+	values: Parameters<typeof claimFlagsHelpers.parseClaimFlags>[1] = { physical: true }
+) {
+	const parsed = claimFlagsHelpers.parseClaimFlags(platform, values);
 	if (!parsed.success) throw new Error(parsed.error);
 	return parsed.data;
 }
@@ -50,9 +53,9 @@ const idsOf = (flags: ClaimFlags) => flags.request.physical?.ids;
 
 describe("pickPhysical", () => {
 	test("two candidates in a terminal: asks, labelled by name / model / OS / transport, and names the chosen one", async () => {
-		const ui = scriptedUi({ interactive: true, select: [WIFI] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: [WIFI] });
 		const c = androidSetup(ui);
-		const picked = await pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
+		const picked = await physicalPickHelpers.pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
 		expect(picked.kind).toBe("ok");
 		if (picked.kind === "ok") expect(picked.flags.map(idsOf)).toEqual([[WIFI]]);
 		expect(ui.events.filter((e) => e.startsWith("select:"))).toHaveLength(1);
@@ -61,13 +64,13 @@ describe("pickPhysical", () => {
 
 	test("the picker labels carry name, model, OS version and transport", async () => {
 		const labels: string[] = [];
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		ui.select = async (_message, choices) => {
 			labels.push(...choices.map((choice) => choice.label ?? ""));
 			return choices[0]?.value;
 		};
 		const c = androidSetup(ui);
-		await pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
+		await physicalPickHelpers.pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
 		expect(labels).toHaveLength(2);
 		expect(labels[0]).toContain("SM-A546E");
 		expect(labels[0]).toContain("API 34");
@@ -77,17 +80,17 @@ describe("pickPhysical", () => {
 	});
 
 	test("cancelling the picker is cancelled, with the usual Aborted.", async () => {
-		const ui = scriptedUi({ interactive: true, select: [undefined] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: [undefined] });
 		const c = androidSetup(ui);
-		const picked = await pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
+		const picked = await physicalPickHelpers.pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
 		expect(picked.kind).toBe("cancelled");
 		expect(ui.events).toContain("cancelled: Aborted.");
 	});
 
 	test("two candidates and no prompt: ambiguous, listing both with the fields the JSON error carries", async () => {
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		const c = androidSetup(ui);
-		const picked = await pickPhysical(c, owner, [flagsOf("android")], { prompt: false });
+		const picked = await physicalPickHelpers.pickPhysical(c, owner, [flagsOf("android")], { prompt: false });
 		expect(picked).toMatchObject({ kind: "ambiguous", platform: "android" });
 		if (picked.kind !== "ambiguous") return;
 		expect(picked.candidates).toEqual([
@@ -112,59 +115,67 @@ describe("pickPhysical", () => {
 	});
 
 	test("one candidate is used as today: no prompt, request untouched", async () => {
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		const c = androidSetup(ui);
 		c.db.insertLease(
 			{ resource: { kind: "device", platform: "android", id: WIFI, name: "Pixel 8 Pro" }, owner: other, ttlMs: 60_000 },
 			c.now()
 		);
 		const flags = flagsOf("android");
-		const picked = await pickPhysical(c, owner, [flags], { prompt: true });
+		const picked = await physicalPickHelpers.pickPhysical(c, owner, [flags], { prompt: true });
 		expect(picked).toEqual({ kind: "ok", flags: [flags] });
 		expect(ui.events).toEqual([]);
 	});
 
 	test("the allowlist narrows two to one and never prompts", async () => {
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		const c = androidSetup(ui, { WARDEN_PHYSICAL_IDS: USB });
-		const picked = await pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
+		const picked = await physicalPickHelpers.pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
 		expect(picked.kind).toBe("ok");
 		if (picked.kind === "ok") expect(picked.flags[0]?.request.physical).toEqual({ allow: [USB] });
 		expect(ui.events).toEqual([]);
 	});
 
 	test("a device that is not ready is no candidate", async () => {
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		const c = androidSetup(ui);
-		c.exec = fakeExec([
+		c.exec = cliTesting.fakeExec([
 			["adb devices -l", { stdout: ADB_TWO.replace(`${WIFI}      device`, `${WIFI}      offline`) }],
 			[`adb -s ${USB} shell ${PHONE_PROBE_SCRIPT}`, { stdout: PHONE_PROPS }],
 		]);
-		const picked = await pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
+		const picked = await physicalPickHelpers.pickPhysical(c, owner, [flagsOf("android")], { prompt: true });
 		expect(picked.kind).toBe("ok");
 		expect(ui.events).toEqual([]);
 	});
 
 	test("naming devices skips the choice (and never lists the inventory)", async () => {
 		const calls: string[][] = [];
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		const c = androidSetup(ui);
-		c.exec = fakeExec([], calls);
+		c.exec = cliTesting.fakeExec([], calls);
 		const flags = flagsOf("android", { physicalSerial: [USB] });
-		expect(await pickPhysical(c, owner, [flags], { prompt: true })).toEqual({ kind: "ok", flags: [flags] });
+		expect(await physicalPickHelpers.pickPhysical(c, owner, [flags], { prompt: true })).toEqual({
+			kind: "ok",
+			flags: [flags],
+		});
 		expect(calls).toEqual([]);
 	});
 
 	test("a claim that is not physical is passed through", async () => {
-		const c = androidSetup(scriptedUi({ interactive: true }));
+		const c = androidSetup(cliTesting.scriptedUi({ interactive: true }));
 		const flags = flagsOf("android", {});
-		expect(await pickPhysical(c, owner, [flags], { prompt: true })).toEqual({ kind: "ok", flags: [flags] });
+		expect(await physicalPickHelpers.pickPhysical(c, owner, [flags], { prompt: true })).toEqual({
+			kind: "ok",
+			flags: [flags],
+		});
 	});
 
 	test("several id-less legs: each takes its own device, the last one is named too", async () => {
-		const ui = scriptedUi({ interactive: true, select: [WIFI] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: [WIFI] });
 		const c = androidSetup(ui);
-		const picked = await pickPhysical(c, owner, [flagsOf("android"), flagsOf("android")], { prompt: true });
+		const picked = await physicalPickHelpers.pickPhysical(c, owner, [flagsOf("android"), flagsOf("android")], {
+			prompt: true,
+		});
 		expect(picked.kind).toBe("ok");
 		if (picked.kind === "ok") expect(picked.flags.map(idsOf)).toEqual([[WIFI], [USB]]);
 		expect(ui.events.filter((e) => e.startsWith("select:"))).toHaveLength(1);
@@ -188,15 +199,15 @@ describe("pickPhysical", () => {
 				tunnelState: "connected",
 			}),
 		]);
-		ctx = testContext([], {
-			ui: scriptedUi({ interactive: true }),
-			exec: fakeExec([
+		ctx = cliTesting.testContext([], {
+			ui: cliTesting.scriptedUi({ interactive: true }),
+			exec: cliTesting.fakeExec([
 				["xcrun simctl list devices available -j", { stdout: '{"devices":{}}' }],
 				["xcrun devicectl list devices", { stdout: list }],
 				["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }],
 			]),
 		});
-		const picked = await pickPhysical(ctx, owner, [flagsOf("ios")], { prompt: false });
+		const picked = await physicalPickHelpers.pickPhysical(ctx, owner, [flagsOf("ios")], { prompt: false });
 		expect(picked.kind).toBe("ambiguous");
 		if (picked.kind !== "ambiguous") return;
 		expect(picked.candidates).toEqual([

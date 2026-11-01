@@ -1,5 +1,5 @@
 import { CliCommand, type CommandNode, programRunner } from "../command";
-import { complete, formatCompletion } from "../completion";
+import { completionHelpers } from "../completion";
 import type { CommandContext } from "../context";
 import { COMMANDS } from "./registry";
 
@@ -21,7 +21,10 @@ export class CompleteCommand extends CliCommand {
 	private async runComplete(ctx: CommandContext, words: string[]): Promise<number> {
 		const commands = await Promise.all(COMMANDS.map((entry) => entry.load()));
 		const program = programRunner.build(commands, [], ctx);
-		for (const line of formatCompletion(complete(program, words.length > 0 ? words : [""]))) ctx.out(line);
+		for (const line of completionHelpers.formatCompletion(
+			completionHelpers.complete(program, words.length > 0 ? words : [""])
+		))
+			ctx.out(line);
 		return 0;
 	}
 }

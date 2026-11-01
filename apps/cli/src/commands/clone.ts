@@ -8,7 +8,7 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 
 const DEVICE_TYPE_PREFIX = "com.apple.CoreSimulator.SimDeviceType.";
 
@@ -77,12 +77,16 @@ export class CloneCommand extends CliCommand {
 		const name = opts.name ?? this.nextPoolName(sims.data, profile);
 		const cloneCmd = ["xcrun", "simctl", "clone", source.data.udid, name];
 		if (!opts.json) output.heading(ctx, "clone", `${source.data.name} → ${name}`);
-		const cloned = await withSpinner(ctx, `cloning ${source.data.name} → ${name}…`, async (_, spinner) => {
-			const result = await ctx.exec(cloneCmd);
-			if (result.exitCode === 0) spinner.succeed(`cloned ${name}`);
-			else spinner.fail("clone failed");
-			return result;
-		});
+		const cloned = await spinnerContext.withSpinner(
+			ctx,
+			`cloning ${source.data.name} → ${name}…`,
+			async (_, spinner) => {
+				const result = await ctx.exec(cloneCmd);
+				if (result.exitCode === 0) spinner.succeed(`cloned ${name}`);
+				else spinner.fail("clone failed");
+				return result;
+			}
+		);
 		if (cloned.exitCode !== 0) return this.fail(ctx, execErrors.format(cloneCmd, cloned));
 		const udid = cloned.stdout.trim();
 		const runtime = simctlParser.shortRuntime(source.data.runtimeId);

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { perfFramesResultSchema, perfLsResultSchema, perfMarkResultSchema } from "@delacour/warden-sdk/contracts/perf";
 import { uiJsonSchema } from "@delacour/warden-sdk/contracts/ui";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfFramesCli } from "./frames";
 import { perfLsCli } from "./ls";
 import { perfMarkCli } from "./mark";
@@ -20,8 +20,8 @@ const T0 = 5_000_000;
 const emu = { platform: "android", id: "emulator-5554", name: "Pixel_8" } as const;
 
 function setup() {
-	const c = testContext([], {
-		exec: fakeExec([
+	const c = cliTesting.testContext([], {
+		exec: cliTesting.fakeExec([
 			["adb -s emulator-5554 shell dumpsys gfxinfo com.example.app framestats", { stdout: fx("gfxinfo-90hz.txt") }],
 		]),
 		now: () => T0,

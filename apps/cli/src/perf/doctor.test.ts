@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { instrumentChecker } from "@delacour/warden-perf/ios/instruments";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type DoctorCheck, perfDoctorCli } from "./doctor";
 import { perfTestingCli } from "./testing";
 
@@ -32,7 +32,7 @@ function setup(
 	handlers: Handler,
 	host: Parameters<typeof perfTestingCli.fakePerfDeps>[2] = {}
 ) {
-	const c = testContext([], { exec: fakeExec(handlers) });
+	const c = cliTesting.testContext([], { exec: cliTesting.fakeExec(handlers) });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	if (device) c.db.recordDevice({ platform: device.platform, id: device.id, name: device.name }, c.now());

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PerfCommand } from "../commands/perf";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfMemoryCli } from "./memory";
 import { perfMetricsCli } from "./metrics";
 import { perfTestingCli } from "./testing";
@@ -11,7 +11,7 @@ afterEach(() => ctx?.cleanup());
 const droid = { platform: "android", id: "emulator-5554", name: "warden-pixel-1" } as const;
 
 function setup(argv: string[]) {
-	const c = testContext(argv, { exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }) });
+	const c = cliTesting.testContext(argv, { exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }) });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice(droid, c.now());

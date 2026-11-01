@@ -9,9 +9,9 @@ import {
 import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
 import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { claimJsonSchema } from "@delacour/warden-sdk/contracts/claim";
-import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
+import { autogcTesting } from "../autogc.testing";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { fakeExec, type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type ScriptedUi, type TestContext } from "../testing";
 import { claimCommand } from "./claim";
 
 let ctx: TestContext | undefined;
@@ -21,7 +21,7 @@ function setup(
 	argv: string[],
 	exec = simctlFakes.build([simctlFakes.wardenSim(1), simctlFakes.wardenSim(2, "Booted")])
 ): TestContext {
-	ctx = testContext(argv, { exec });
+	ctx = cliTesting.testContext(argv, { exec });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }
@@ -68,14 +68,14 @@ describe("warden claim", () => {
 	});
 
 	test("user owner → 30m ttl, no hint", async () => {
-		ctx = testContext(["ios"], { exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
+		ctx = cliTesting.testContext(["ios"], { exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
 		expect(await claimCommand.run(ctx)).toBe(0);
 		expect(ctx.db.listLeases()[0]?.ttlMs).toBe(30 * 60_000);
 		expect(ctx.stderr.join("\n")).not.toContain("lease expires");
 	});
 
 	test("user owner → lease pid = parent shell", async () => {
-		ctx = testContext(["ios"], { exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
+		ctx = cliTesting.testContext(["ios"], { exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
 		expect(await claimCommand.run(ctx)).toBe(0);
 		expect(ctx.db.listLeases()[0]?.pid).toBe(process.ppid);
 	});
@@ -144,7 +144,7 @@ describe("warden claim", () => {
 
 	test("no platform in a terminal → asks; spinner covers the claim", async () => {
 		const c = setup(["--json"]);
-		const ui = scriptedUi({ interactive: true, select: ["ios"] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: ["ios"] });
 		c.ui = ui;
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(ui.events[0]).toBe("select: Which platform?");
@@ -154,7 +154,7 @@ describe("warden claim", () => {
 
 	test("picker cancelled → exit 1, nothing claimed", async () => {
 		const c = setup([]);
-		c.ui = scriptedUi({ interactive: true, select: [undefined] });
+		c.ui = cliTesting.scriptedUi({ interactive: true, select: [undefined] });
 		expect(await claimCommand.run(c)).toBe(1);
 		expect(c.db.listLeases()).toEqual([]);
 	});
@@ -289,12 +289,12 @@ describe("warden claim → arrange", () => {
 
 describe("warden claim auto-gc (16-1)", () => {
 	test("auto-gc is considered only after the claim has leased its device", async () => {
-		const order = autoGcOrder(simctlFakes.build([simctlFakes.wardenSim(2, "Booted")]), () => c.db);
+		const order = autogcTesting.autoGcOrder(simctlFakes.build([simctlFakes.wardenSim(2, "Booted")]), () => c.db);
 		const c = setup(["ios"], order.exec);
-		c.env = allowAutoGc(c.env);
+		c.env = autogcTesting.allowAutoGc(c.env);
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(order.gcBeforeClaim()).toBe(false);
-		expect(autoGcConsidered(c.db)).toBe(true);
+		expect(autogcTesting.autoGcConsidered(c.db)).toBe(true);
 	});
 });
 
@@ -342,10 +342,10 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 
 `;
 
-	function twoPhones(argv: string[], ui: ScriptedUi = scriptedUi(), calls: string[][] = []): TestContext {
-		ctx = testContext(argv, {
+	function twoPhones(argv: string[], ui: ScriptedUi = cliTesting.scriptedUi(), calls: string[][] = []): TestContext {
+		ctx = cliTesting.testContext(argv, {
 			ui,
-			exec: fakeExec(
+			exec: cliTesting.fakeExec(
 				[
 					["adb devices -l", { stdout: ADB_TWO }],
 					[`adb -s ${USB} shell ${PHONE_PROBE_SCRIPT}`, { stdout: PHONE_PROPS }],
@@ -360,7 +360,7 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 	}
 
 	test("--json: ambiguous_device, exit 2, candidates in the error, no lease", async () => {
-		const c = twoPhones(["android", "--physical", "--no-wait", "--json"], scriptedUi({ interactive: true }));
+		const c = twoPhones(["android", "--physical", "--no-wait", "--json"], cliTesting.scriptedUi({ interactive: true }));
 		expect(await claimCommand.run(c)).toBe(2);
 		const doc = JSON.parse(c.stdout.join("\n"));
 		expect(doc).toMatchObject({
@@ -397,7 +397,7 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 	});
 
 	test("a terminal: the picker's second choice is the one claimed", async () => {
-		const ui = scriptedUi({ interactive: true, select: [WIFI] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: [WIFI] });
 		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
 		expect(await claimCommand.run(c)).toBe(0);
 		const resource = c.db.listLeases()[0]?.resource;
@@ -405,7 +405,7 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 	});
 
 	test("cancelling the picker exits 1 with Aborted. and takes nothing", async () => {
-		const ui = scriptedUi({ interactive: true, select: [undefined] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: [undefined] });
 		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
 		expect(await claimCommand.run(c)).toBe(1);
 		expect(ui.events).toContain("cancelled: Aborted.");
@@ -413,14 +413,14 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 	});
 
 	test("--serial names one: no question even with two phones", async () => {
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		const c = twoPhones(["android", "--serial", USB, "--no-wait"], ui);
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(ui.events.filter((e) => e.startsWith("select:"))).toEqual([]);
 	});
 
 	test("WARDEN_PHYSICAL_IDS narrowing to one claims it without asking", async () => {
-		const ui = scriptedUi({ interactive: true });
+		const ui = cliTesting.scriptedUi({ interactive: true });
 		const c = twoPhones(["android", "--physical", "--no-wait"], ui);
 		c.env = { ...c.env, WARDEN_PHYSICAL_IDS: WIFI };
 		expect(await claimCommand.run(c)).toBe(0);

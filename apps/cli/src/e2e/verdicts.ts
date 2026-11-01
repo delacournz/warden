@@ -2,8 +2,8 @@ import { join } from "node:path";
 import type { SelectedSpec } from "@delacour/warden-core/affected/select";
 import type { BatchSummary, JobResult } from "@delacour/warden-core/batch/schedule";
 import { resultsFiles, type TestResult, type TestStatus } from "@delacour/warden-e2e/runner/results";
-import { runnerFailureShot } from "../batch/screenshot";
-import { failing, realPath, specOf } from "../batch/spec-progress";
+import { screenshotHelpers } from "../batch/screenshot";
+import { specProgress } from "../batch/spec-progress";
 import { batch, type SessionResult } from "../commands/batch";
 
 /** One test of a spec, as `e2e-report.json` carries it. */
@@ -67,57 +67,8 @@ export type Verdicts = {
 	only: string[];
 };
 
-/**
- * device / log / screenshot of a spec's failed attempts (the last one's device and log; the latest
- * screenshot there is, per attempt the runner's own `failure.png` of this spec before the batch shot).
- */
-function lastFailure(
-	session: SessionResult,
-	failed: readonly JobResult[],
-	runnerShots: ReadonlyMap<JobResult, string> = new Map()
-): Partial<SpecVerdict> {
-	const last = failed.at(-1);
-	if (!last) return {};
-	const screenshot = failed
-		.map((r) => runnerShots.get(r) ?? session.screenshots?.get(batch.attemptKey(r)))
-		.reverse()
-		.find((path) => path !== undefined);
-	const log = session.logs?.get(batch.attemptKey(last));
-	const name = session.devices?.find((d) => d.worker === last.worker)?.name ?? last.udid;
-	return {
-		device: { udid: last.udid, name },
-		...(log !== undefined ? { log } : {}),
-		...(screenshot !== undefined ? { screenshot } : {}),
-	};
-}
-
 export const PERF_ARTIFACT_DIR = "perf";
 const PERF_REPORT_FILE = `${PERF_ARTIFACT_DIR}/report.json`;
-
-const testVerdict = (t: TestResult): TestVerdict => ({
-	title: t.title,
-	status: t.status,
-	durationMs: t.durationMs,
-	...(t.error ? { error: t.error.message } : {}),
-	...(t.error?.code === "PERF_BUDGET" ? { kind: "perf_budget" as const } : {}),
-	...(t.artifacts ? { artifacts: t.artifacts.dir } : {}),
-	...(t.artifacts?.files.includes(PERF_REPORT_FILE) ? { perf: join(t.artifacts.dir, PERF_ARTIFACT_DIR) } : {}),
-});
-
-/** Reads and parses each `results.jsonl` once (several specs of a shard share one). */
-function resultsLoader(io: VerdictIO) {
-	const cache = new Map<string, Promise<TestResult[] | undefined>>();
-	return (path: string): Promise<TestResult[] | undefined> => {
-		const hit = cache.get(path);
-		if (hit) return hit;
-		const read = io.readFile(path).then(
-			(text) => resultsFiles.read(text),
-			() => undefined
-		);
-		cache.set(path, read);
-		return read;
-	};
-}
 
 export type Judged = {
 	verdict: "passed" | "failed";
@@ -126,55 +77,6 @@ export type Judged = {
 	/** the runner's `failure.png` of this spec's failed test in the attempt */
 	shot?: string;
 };
-
-/** Without any usable result the exit code decides every spec. */
-function exitCodeVerdicts(jobSpecs: readonly SelectedSpec[], exitCode: number): Map<string, Judged> {
-	const judged = new Map<string, Judged>();
-	for (const spec of jobSpecs) judged.set(spec.id, { verdict: exitCode === 0 ? "passed" : "failed", fellBack: true });
-	return judged;
-}
-
-/**
- * Each spec's verdict from one attempt of its job (a spec process over `jobSpecs`: one spec, or a
- * device's shard). A failed or timed-out test fails its spec. Without any usable result the exit
- * code decides every spec. After that, a non-zero exit means:
- * - a spec with no result of its own failed (the process never got to it);
- * - if the process stopped before every spec had a result (a crash, a kill, a timeout), the spec
- *   whose result came last was running when it died, so it fails, and the specs before it passed;
- * - if every spec has a result, a failed test elsewhere is to blame and the specs whose tests passed
- *   pass; with no failed test anywhere the process itself failed and so does every spec.
- */
-export function judgeJob(
-	jobSpecs: readonly SelectedSpec[],
-	all: readonly TestResult[] | undefined,
-	exitCode: number,
-	real: (path: string) => string
-): Map<string, Judged> {
-	const judged = new Map<string, Judged>();
-	if (all === undefined || all.length === 0) return exitCodeVerdicts(jobSpecs, exitCode);
-	const tracked = jobSpecs.map((f) => ({ id: f.id, path: f.file }));
-	const bySpec = resultsBySpec(all, tracked, real);
-	const lastResult = all.at(-1);
-	const lastSpec = lastResult ? specOf(lastResult, tracked, real)?.id : undefined;
-	const blame: Blame = {
-		exitCode,
-		lastSpec,
-		blamed: all.some(failing),
-		stoppedEarly: jobSpecs.some((f) => !bySpec.has(f.id)),
-	};
-	for (const spec of jobSpecs) {
-		const mine = bySpec.get(spec.id) ?? [];
-		const failed = specFailed(spec.id, mine, blame);
-		const shot = failed ? runnerFailureShot(mine) : undefined;
-		judged.set(spec.id, {
-			verdict: failed ? "failed" : "passed",
-			tests: mine.map(testVerdict),
-			fellBack: false,
-			...(shot !== undefined ? { shot } : {}),
-		});
-	}
-	return judged;
-}
 
 /** Facts about a whole job's results that decide which of its specs a non-zero exit is blamed on. */
 type Blame = {
@@ -186,28 +88,6 @@ type Blame = {
 	/** some spec has no result at all */
 	stoppedEarly: boolean;
 };
-
-/** Each result under the spec it belongs to (results of no tracked spec are dropped). */
-function resultsBySpec(
-	all: readonly TestResult[],
-	tracked: Parameters<typeof specOf>[1],
-	real: (path: string) => string
-): Map<string, TestResult[]> {
-	const bySpec = new Map<string, TestResult[]>();
-	for (const r of all) {
-		const owner = specOf(r, tracked, real);
-		if (owner) bySpec.set(owner.id, [...(bySpec.get(owner.id) ?? []), r]);
-	}
-	return bySpec;
-}
-
-/** Whether one spec fails: a failing test of its own, or a non-zero exit blamed on it. */
-function specFailed(id: string, mine: readonly TestResult[], blame: Blame): boolean {
-	if (mine.some(failing)) return true;
-	if (blame.exitCode === 0) return false;
-	if (mine.length === 0) return true;
-	return blame.stoppedEarly ? id === blame.lastSpec : !blame.blamed;
-}
 
 type Run = {
 	session: SessionResult;
@@ -222,106 +102,232 @@ type Run = {
 	onlyFiles: Set<string>;
 };
 
-/** One attempt of `job` judged for every spec it ran (once per attempt). */
-function judgeAttempt(run: Run, job: string, attempt: JobResult): Promise<Map<string, Judged>> {
-	const key = batch.attemptKey(attempt);
-	const known = run.judgements.get(key);
-	if (known) return known;
-	const ranIds = run.attempts.get(key);
-	const specs = (run.jobSpecs.get(job) ?? []).filter((f) => ranIds === undefined || ranIds.has(f.id));
-	const path = run.session.resultFiles?.get(key);
-	const judged = (path === undefined ? Promise.resolve(undefined) : run.load(path)).then((all) => {
-		for (const r of all ?? []) if (r.only) run.onlyFiles.add(r.file);
-		const out = judgeJob(specs, all, attempt.exitCode, run.real);
-		if ([...out.values()].some((j) => j.fellBack))
-			run.warnings.add(`${job}: no results.jsonl — verdict from exit code ${attempt.exitCode}`);
-		return out;
-	});
-	run.judgements.set(key, judged);
-	return judged;
-}
-
-/** The attempts that failed `spec` (a non-zero exit it did not pass), with the runner's own failure shot of each. */
-async function failedAttempts(run: Run, job: string, spec: SelectedSpec, ran: readonly JobResult[]) {
-	const failedRuns: JobResult[] = [];
-	const runnerShots = new Map<JobResult, string>();
-	for (const r of ran) {
-		if (r.exitCode === 0) continue;
-		const mine = (await judgeAttempt(run, job, r)).get(spec.id);
-		if (mine?.verdict === "passed") continue;
-		failedRuns.push(r);
-		if (mine?.shot !== undefined) runnerShots.set(r, mine.shot);
+export class E2eVerdicts {
+	/**
+	 * device / log / screenshot of a spec's failed attempts (the last one's device and log; the latest
+	 * screenshot there is, per attempt the runner's own `failure.png` of this spec before the batch shot).
+	 */
+	private lastFailure(
+		session: SessionResult,
+		failed: readonly JobResult[],
+		runnerShots: ReadonlyMap<JobResult, string> = new Map()
+	): Partial<SpecVerdict> {
+		const last = failed.at(-1);
+		if (!last) return {};
+		const screenshot = failed
+			.map((r) => runnerShots.get(r) ?? session.screenshots?.get(batch.attemptKey(r)))
+			.reverse()
+			.find((path) => path !== undefined);
+		const log = session.logs?.get(batch.attemptKey(last));
+		const name = session.devices?.find((d) => d.worker === last.worker)?.name ?? last.udid;
+		return {
+			device: { udid: last.udid, name },
+			...(log !== undefined ? { log } : {}),
+			...(screenshot !== undefined ? { screenshot } : {}),
+		};
 	}
-	return { failedRuns, runnerShots };
-}
 
-/** One spec on one leg: the attempts of its job that ran it, then the verdict of the last of them. */
-async function specVerdict(run: Run, spec: SelectedSpec, leg: string | undefined): Promise<SpecVerdict> {
-	const { session, shape } = run;
-	const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
-	const ran = (session.summary?.results ?? [])
-		.filter((r) => r.job === job)
-		.filter((r) => run.attempts.get(batch.attemptKey(r))?.has(spec.id) ?? true);
-	const last = ran.at(-1);
-	const base = { ...spec, ...(leg !== undefined ? { leg } : {}), attempts: ran.length };
-	if (!last) return { ...base, verdict: "not-run" };
-	const judged = (await judgeAttempt(run, job, last)).get(spec.id);
-	const { failedRuns, runnerShots } = await failedAttempts(run, job, spec, ran);
-	return {
-		...base,
-		verdict: judged?.verdict ?? "failed",
-		...(judged?.tests && !judged.fellBack ? { tests: judged.tests } : {}),
-		...lastFailure(session, failedRuns, runnerShots),
-	};
-}
+	private testVerdict(t: TestResult): TestVerdict {
+		return {
+			title: t.title,
+			status: t.status,
+			durationMs: t.durationMs,
+			...(t.error ? { error: t.error.message } : {}),
+			...(t.error?.code === "PERF_BUDGET" ? { kind: "perf_budget" as const } : {}),
+			...(t.artifacts ? { artifacts: t.artifacts.dir } : {}),
+			...(t.artifacts?.files.includes(PERF_REPORT_FILE) ? { perf: join(t.artifacts.dir, PERF_ARTIFACT_DIR) } : {}),
+		};
+	}
 
-/**
- * Batch outcome → per-spec verdicts (one per leg that ran) from every job's `results.jsonl`; `ok` =
- * every required spec passed on every leg and, under CI, no spec left a `test.only`. A job without
- * a usable results file falls back to its exit code (and is listed in `warnings`).
- */
-export async function verdicts(
-	specs: readonly SelectedSpec[],
-	session: SessionResult,
-	shape: RunShape,
-	io: VerdictIO
-): Promise<Verdicts> {
-	const jobSpecs = new Map<string, SelectedSpec[]>();
-	for (const leg of shape.legs) {
-		for (const spec of specs) {
-			const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
-			jobSpecs.set(job, [...(jobSpecs.get(job) ?? []), spec]);
+	/** Reads and parses each `results.jsonl` once (several specs of a shard share one). */
+	private resultsLoader(io: VerdictIO) {
+		const cache = new Map<string, Promise<TestResult[] | undefined>>();
+		return (path: string): Promise<TestResult[] | undefined> => {
+			const hit = cache.get(path);
+			if (hit) return hit;
+			const read = io.readFile(path).then(
+				(text) => resultsFiles.read(text),
+				() => undefined
+			);
+			cache.set(path, read);
+			return read;
+		};
+	}
+
+	/** Without any usable result the exit code decides every spec. */
+	private exitCodeVerdicts(jobSpecs: readonly SelectedSpec[], exitCode: number): Map<string, Judged> {
+		const judged = new Map<string, Judged>();
+		for (const spec of jobSpecs) judged.set(spec.id, { verdict: exitCode === 0 ? "passed" : "failed", fellBack: true });
+		return judged;
+	}
+
+	/**
+	 * Each spec's verdict from one attempt of its job (a spec process over `jobSpecs`: one spec, or a
+	 * device's shard). A failed or timed-out test fails its spec. Without any usable result the exit
+	 * code decides every spec. After that, a non-zero exit means:
+	 * - a spec with no result of its own failed (the process never got to it);
+	 * - if the process stopped before every spec had a result (a crash, a kill, a timeout), the spec
+	 *   whose result came last was running when it died, so it fails, and the specs before it passed;
+	 * - if every spec has a result, a failed test elsewhere is to blame and the specs whose tests passed
+	 *   pass; with no failed test anywhere the process itself failed and so does every spec.
+	 */
+	judgeJob(
+		jobSpecs: readonly SelectedSpec[],
+		all: readonly TestResult[] | undefined,
+		exitCode: number,
+		real: (path: string) => string
+	): Map<string, Judged> {
+		const judged = new Map<string, Judged>();
+		if (all === undefined || all.length === 0) return this.exitCodeVerdicts(jobSpecs, exitCode);
+		const tracked = jobSpecs.map((f) => ({ id: f.id, path: f.file }));
+		const bySpec = this.resultsBySpec(all, tracked, real);
+		const lastResult = all.at(-1);
+		const lastSpec = lastResult ? specProgress.specOf(lastResult, tracked, real)?.id : undefined;
+		const blame: Blame = {
+			exitCode,
+			lastSpec,
+			blamed: all.some(specProgress.failing.bind(specProgress)),
+			stoppedEarly: jobSpecs.some((f) => !bySpec.has(f.id)),
+		};
+		for (const spec of jobSpecs) {
+			const mine = bySpec.get(spec.id) ?? [];
+			const failed = this.specFailed(spec.id, mine, blame);
+			const shot = failed ? screenshotHelpers.runnerFailureShot(mine) : undefined;
+			judged.set(spec.id, {
+				verdict: failed ? "failed" : "passed",
+				tests: mine.map(this.testVerdict.bind(this)),
+				fellBack: false,
+				...(shot !== undefined ? { shot } : {}),
+			});
 		}
+		return judged;
 	}
-	const run: Run = {
-		session,
-		shape,
-		real: io.real ?? realPath,
-		load: resultsLoader(io),
-		attempts: io.attempts ?? new Map(),
-		jobSpecs,
-		judgements: new Map(),
-		warnings: new Set(),
-		onlyFiles: new Set(),
-	};
-	const out: SpecVerdict[] = [];
-	for (const leg of shape.legs) for (const spec of specs) out.push(await specVerdict(run, spec, leg));
-	const only = io.ci ? [...run.onlyFiles] : [];
-	const ok =
-		session.summary !== undefined && only.length === 0 && out.every((f) => !f.required || f.verdict === "passed");
-	return { ok, specs: out, warnings: [...run.warnings], only };
+
+	/** Each result under the spec it belongs to (results of no tracked spec are dropped). */
+	private resultsBySpec(
+		all: readonly TestResult[],
+		tracked: Parameters<typeof specProgress.specOf>[1],
+		real: (path: string) => string
+	): Map<string, TestResult[]> {
+		const bySpec = new Map<string, TestResult[]>();
+		for (const r of all) {
+			const owner = specProgress.specOf(r, tracked, real);
+			if (owner) bySpec.set(owner.id, [...(bySpec.get(owner.id) ?? []), r]);
+		}
+		return bySpec;
+	}
+
+	/** Whether one spec fails: a failing test of its own, or a non-zero exit blamed on it. */
+	private specFailed(id: string, mine: readonly TestResult[], blame: Blame): boolean {
+		if (mine.some(specProgress.failing.bind(specProgress))) return true;
+		if (blame.exitCode === 0) return false;
+		if (mine.length === 0) return true;
+		return blame.stoppedEarly ? id === blame.lastSpec : !blame.blamed;
+	}
+
+	/** One attempt of `job` judged for every spec it ran (once per attempt). */
+	private judgeAttempt(run: Run, job: string, attempt: JobResult): Promise<Map<string, Judged>> {
+		const key = batch.attemptKey(attempt);
+		const known = run.judgements.get(key);
+		if (known) return known;
+		const ranIds = run.attempts.get(key);
+		const specs = (run.jobSpecs.get(job) ?? []).filter((f) => ranIds === undefined || ranIds.has(f.id));
+		const path = run.session.resultFiles?.get(key);
+		const judged = (path === undefined ? Promise.resolve(undefined) : run.load(path)).then((all) => {
+			for (const r of all ?? []) if (r.only) run.onlyFiles.add(r.file);
+			const out = this.judgeJob(specs, all, attempt.exitCode, run.real);
+			if ([...out.values()].some((j) => j.fellBack))
+				run.warnings.add(`${job}: no results.jsonl — verdict from exit code ${attempt.exitCode}`);
+			return out;
+		});
+		run.judgements.set(key, judged);
+		return judged;
+	}
+
+	/** The attempts that failed `spec` (a non-zero exit it did not pass), with the runner's own failure shot of each. */
+	private async failedAttempts(run: Run, job: string, spec: SelectedSpec, ran: readonly JobResult[]) {
+		const failedRuns: JobResult[] = [];
+		const runnerShots = new Map<JobResult, string>();
+		for (const r of ran) {
+			if (r.exitCode === 0) continue;
+			const mine = (await this.judgeAttempt(run, job, r)).get(spec.id);
+			if (mine?.verdict === "passed") continue;
+			failedRuns.push(r);
+			if (mine?.shot !== undefined) runnerShots.set(r, mine.shot);
+		}
+		return { failedRuns, runnerShots };
+	}
+
+	/** One spec on one leg: the attempts of its job that ran it, then the verdict of the last of them. */
+	private async specVerdict(run: Run, spec: SelectedSpec, leg: string | undefined): Promise<SpecVerdict> {
+		const { session, shape } = run;
+		const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
+		const ran = (session.summary?.results ?? [])
+			.filter((r) => r.job === job)
+			.filter((r) => run.attempts.get(batch.attemptKey(r))?.has(spec.id) ?? true);
+		const last = ran.at(-1);
+		const base = { ...spec, ...(leg !== undefined ? { leg } : {}), attempts: ran.length };
+		if (!last) return { ...base, verdict: "not-run" };
+		const judged = (await this.judgeAttempt(run, job, last)).get(spec.id);
+		const { failedRuns, runnerShots } = await this.failedAttempts(run, job, spec, ran);
+		return {
+			...base,
+			verdict: judged?.verdict ?? "failed",
+			...(judged?.tests && !judged.fellBack ? { tests: judged.tests } : {}),
+			...this.lastFailure(session, failedRuns, runnerShots),
+		};
+	}
+
+	/**
+	 * Batch outcome → per-spec verdicts (one per leg that ran) from every job's `results.jsonl`; `ok` =
+	 * every required spec passed on every leg and, under CI, no spec left a `test.only`. A job without
+	 * a usable results file falls back to its exit code (and is listed in `warnings`).
+	 */
+	async verdicts(
+		specs: readonly SelectedSpec[],
+		session: SessionResult,
+		shape: RunShape,
+		io: VerdictIO
+	): Promise<Verdicts> {
+		const jobSpecs = new Map<string, SelectedSpec[]>();
+		for (const leg of shape.legs) {
+			for (const spec of specs) {
+				const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, shape.legs.length > 1 ? leg : undefined);
+				jobSpecs.set(job, [...(jobSpecs.get(job) ?? []), spec]);
+			}
+		}
+		const run: Run = {
+			session,
+			shape,
+			real: io.real ?? specProgress.realPath.bind(specProgress),
+			load: this.resultsLoader(io),
+			attempts: io.attempts ?? new Map(),
+			jobSpecs,
+			judgements: new Map(),
+			warnings: new Set(),
+			onlyFiles: new Set(),
+		};
+		const out: SpecVerdict[] = [];
+		for (const leg of shape.legs) for (const spec of specs) out.push(await this.specVerdict(run, spec, leg));
+		const only = io.ci ? [...run.onlyFiles] : [];
+		const ok =
+			session.summary !== undefined && only.length === 0 && out.every((f) => !f.required || f.verdict === "passed");
+		return { ok, specs: out, warnings: [...run.warnings], only };
+	}
+
+	/** Exit-code-only gate (no files read): every required spec's job passed. Decides whether the sims are shut down. */
+	exitGate(specs: readonly SelectedSpec[], summary: BatchSummary, shape: RunShape): boolean {
+		const failed = new Set(summary.failed);
+		const qualified = shape.legs.length > 1;
+		return specs.every(
+			(spec) =>
+				!spec.required ||
+				shape.legs.every((leg) => {
+					const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, qualified ? leg : undefined);
+					return summary.results.some((r) => r.job === job) && !failed.has(job);
+				})
+		);
+	}
 }
 
-/** Exit-code-only gate (no files read): every required spec's job passed. Decides whether the sims are shut down. */
-export function exitGate(specs: readonly SelectedSpec[], summary: BatchSummary, shape: RunShape): boolean {
-	const failed = new Set(summary.failed);
-	const qualified = shape.legs.length > 1;
-	return specs.every(
-		(spec) =>
-			!spec.required ||
-			shape.legs.every((leg) => {
-				const job = batch.legJob(shape.shardOf?.get(spec.id) ?? spec.id, qualified ? leg : undefined);
-				return summary.results.some((r) => r.job === job) && !failed.has(job);
-			})
-	);
-}
+export const e2eVerdicts = new E2eVerdicts();

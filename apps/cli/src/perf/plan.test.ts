@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { type PerfPlan, perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -22,7 +22,7 @@ const plan: PerfPlan = {
 
 describe("plan.json", () => {
 	test("round-trips and updates", () => {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
 		perfPlans.writePlan(c, "s1", plan);
 		expect(perfPlans.readPlan(c, "s1")).toEqual(plan);
@@ -31,7 +31,7 @@ describe("plan.json", () => {
 	});
 
 	test("missing, malformed or wrong-shape files read as undefined", () => {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
 		expect(perfPlans.readPlan(c, "none")).toBeUndefined();
 		expect(perfPlans.updatePlan(c, "none", (p) => p)).toBeUndefined();

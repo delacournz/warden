@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { TraceProcessorPin } from "@delacour/warden-perf/android/trace-processor.data";
 import { type TraceProcessorDeps, traceProcessorService } from "@delacour/warden-sdk/ops/perf/trace-processor";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfToolsCli } from "./tools";
 
 const PAYLOAD = new TextEncoder().encode("fake-binary".repeat(100));
@@ -32,7 +32,7 @@ afterEach(() => c?.cleanup());
 
 describe("perf tools install", () => {
 	test("--yes installs; --json is a single clean document", async () => {
-		c = testContext(["perf"]);
+		c = cliTesting.testContext(["perf"]);
 		const urls: string[] = [];
 		const code = await perfToolsCli.perfToolsInstall(c, deps(urls), "trace-processor", { yes: true, json: true });
 		expect(code).toBe(0);
@@ -47,7 +47,7 @@ describe("perf tools install", () => {
 	});
 
 	test("second run reports already installed without fetching", async () => {
-		c = testContext(["perf"]);
+		c = cliTesting.testContext(["perf"]);
 		const urls: string[] = [];
 		await perfToolsCli.perfToolsInstall(c, deps(urls), "trace-processor", { yes: true });
 		urls.length = 0;
@@ -58,7 +58,7 @@ describe("perf tools install", () => {
 	});
 
 	test("non-interactive without --yes exits 3 with the install hint", async () => {
-		c = testContext(["perf"]);
+		c = cliTesting.testContext(["perf"]);
 		const urls: string[] = [];
 		expect(await perfToolsCli.perfToolsInstall(c, deps(urls), "trace-processor", { json: true })).toBe(3);
 		expect(JSON.parse(c.stdout[0] ?? "")).toMatchObject({
@@ -69,12 +69,12 @@ describe("perf tools install", () => {
 	});
 
 	test("interactive decline exits 3", async () => {
-		c = testContext(["perf"], { ui: scriptedUi({ interactive: true, confirm: [false] }) });
+		c = cliTesting.testContext(["perf"], { ui: cliTesting.scriptedUi({ interactive: true, confirm: [false] }) });
 		expect(await perfToolsCli.perfToolsInstall(c, deps([]), "trace-processor", {})).toBe(3);
 	});
 
 	test("unknown tool is a usage error", async () => {
-		c = testContext(["perf"]);
+		c = cliTesting.testContext(["perf"]);
 		expect(await perfToolsCli.perfToolsInstall(c, deps([]), "frida", { json: true })).toBe(1);
 	});
 });

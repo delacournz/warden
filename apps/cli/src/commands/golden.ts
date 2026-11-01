@@ -12,7 +12,7 @@ import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-t
 import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 
 type PlatformOpt = { platform?: string };
 type EnsureOpts = PlatformOpt & { profile?: string; runtime?: string; json?: true };
@@ -56,17 +56,21 @@ export class GoldenCommand extends CliCommand {
 		if (!opts.json) output.heading(ctx, "golden ensure", `android ${profile}`);
 		const avd = await this.avdFor(ctx, profile);
 		if (!avd.success) return this.fail(ctx, avd.error);
-		const snapshot = await withSpinner(ctx, `ensuring quick-boot snapshot of ${avd.data}…`, async (sctx, spinner) => {
-			const result = await new AndroidGolden(
-				hostDeps.androidGoldenDeps(contextBuilder.appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
-			).ensure(avd.data, {
-				explicit: true,
-			});
-			if (result.success && result.data)
-				spinner.succeed(`snapshot ${result.data.name} ${result.data.built ? "built" : "reused"}`);
-			else spinner.fail("snapshot failed");
-			return result;
-		});
+		const snapshot = await spinnerContext.withSpinner(
+			ctx,
+			`ensuring quick-boot snapshot of ${avd.data}…`,
+			async (sctx, spinner) => {
+				const result = await new AndroidGolden(
+					hostDeps.androidGoldenDeps(contextBuilder.appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
+				).ensure(avd.data, {
+					explicit: true,
+				});
+				if (result.success && result.data)
+					spinner.succeed(`snapshot ${result.data.name} ${result.data.built ? "built" : "reused"}`);
+				else spinner.fail("snapshot failed");
+				return result;
+			}
+		);
 		if (!snapshot.success) return this.fail(ctx, snapshot.error);
 		if (snapshot.data === undefined) {
 			return this.fail(ctx, `no snapshot of ${avd.data}: set ANDROID_HOME, and stop its running emulators first`);
@@ -107,7 +111,7 @@ export class GoldenCommand extends CliCommand {
 		const { color } = ctx.ui;
 		const profile = opts.profile ?? DEFAULT_PROFILE.ios;
 		if (!opts.json) output.heading(ctx, "golden ensure", profile);
-		const golden = await withSpinner(ctx, `ensuring golden ${profile} image…`, async (sctx, spinner) => {
+		const golden = await spinnerContext.withSpinner(ctx, `ensuring golden ${profile} image…`, async (sctx, spinner) => {
 			const result = await new IosGolden(
 				hostDeps.goldenDeps(contextBuilder.appHostFromContext(sctx), ownerResolver.resolve(ctx), sleep)
 			).ensure(profile, opts.runtime);
@@ -198,7 +202,7 @@ export class GoldenCommand extends CliCommand {
 			const confirmed = await this.confirmPruneAll(ctx, sleep, opts);
 			if (confirmed !== 0) return confirmed;
 		}
-		const pruned = await withSpinner(
+		const pruned = await spinnerContext.withSpinner(
 			ctx,
 			all ? "deleting golden images…" : "pruning stale golden images…",
 			(sctx): AsyncResult<Array<{ name: string }>> =>

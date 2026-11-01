@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { SelectedSpec } from "@delacour/warden-core/affected/select";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
-import { jsonl, result } from "../batch/results.testing";
-import { attemptOut, jobPlan, shardRuns } from "./jobs";
+import { resultsTesting } from "../batch/results.testing";
+import { e2eJobs } from "./jobs";
 
 const spec = (id: string): SelectedSpec => ({ id, file: `/specs/${id}.e2e.ts`, required: true, reasons: [] });
 const argvOf = (files: readonly string[]) => ["bun", "test", ...files];
@@ -12,7 +12,7 @@ describe("jobPlan", () => {
 	const specs = ["d", "a", "c", "b", "e"].map(spec);
 
 	test("spec isolation: one job per spec, each with its own bun test", () => {
-		const plan = jobPlan(specs, undefined, argvOf);
+		const plan = e2eJobs.jobPlan(specs, undefined, argvOf);
 		expect(plan.jobs).toEqual(["d", "a", "c", "b", "e"]);
 		expect(plan.argvs.get("c")).toEqual(["bun", "test", file("c")]);
 		expect(plan.shardOf).toBeUndefined();
@@ -20,7 +20,7 @@ describe("jobPlan", () => {
 	});
 
 	test("device isolation: one shard job per device, specs round-robin by sorted id", () => {
-		const plan = jobPlan(specs, 2, argvOf);
+		const plan = e2eJobs.jobPlan(specs, 2, argvOf);
 		expect(plan.jobs).toEqual(["shard-0", "shard-1"]);
 		expect(plan.argvs.get("shard-0")).toEqual(["bun", "test", file("a"), file("c"), file("e")]);
 		expect(plan.argvs.get("shard-1")).toEqual(["bun", "test", file("b"), file("d")]);
@@ -35,35 +35,38 @@ describe("jobPlan", () => {
 	});
 
 	test("one device runs every spec in one process; shards never outnumber specs", () => {
-		expect(jobPlan(specs, 1, argvOf).jobs).toEqual(["shard-0"]);
-		expect(jobPlan(specs, 1, argvOf).argvs.get("shard-0")).toEqual([
+		expect(e2eJobs.jobPlan(specs, 1, argvOf).jobs).toEqual(["shard-0"]);
+		expect(e2eJobs.jobPlan(specs, 1, argvOf).argvs.get("shard-0")).toEqual([
 			"bun",
 			"test",
 			...["a", "b", "c", "d", "e"].map(file),
 		]);
-		expect(jobPlan(specs, 9, argvOf).jobs).toHaveLength(5);
-		expect(jobPlan(specs, 0, argvOf).jobs).toEqual(["shard-0"]);
+		expect(e2eJobs.jobPlan(specs, 9, argvOf).jobs).toHaveLength(5);
+		expect(e2eJobs.jobPlan(specs, 0, argvOf).jobs).toEqual(["shard-0"]);
 	});
 
 	test("the same specs land together whatever order they were selected in", () => {
 		const shuffled = [...specs].reverse();
-		expect(jobPlan(shuffled, 2, argvOf).argvs).toEqual(jobPlan(specs, 2, argvOf).argvs);
+		expect(e2eJobs.jobPlan(shuffled, 2, argvOf).argvs).toEqual(e2eJobs.jobPlan(specs, 2, argvOf).argvs);
 	});
 
 	test("no specs, no jobs", () => {
-		expect(jobPlan([], 3, argvOf).jobs).toEqual([]);
-		expect(jobPlan([], undefined, argvOf).jobs).toEqual([]);
+		expect(e2eJobs.jobPlan([], 3, argvOf).jobs).toEqual([]);
+		expect(e2eJobs.jobPlan([], undefined, argvOf).jobs).toEqual([]);
 	});
 });
 
-const res = (id: string, title: string, status: TestResult["status"] = "passed") => result(file(id), title, status);
+const res = (id: string, title: string, status: TestResult["status"] = "passed") =>
+	resultsTesting.result(file(id), title, status);
 
 /** shard runs over `a b c d` as one shard, with the results each attempt's directory holds */
 function shard(files: Record<string, TestResult[]> = {}) {
-	const plan = jobPlan(["a", "b", "c", "d"].map(spec), 1, argvOf);
+	const plan = e2eJobs.jobPlan(["a", "b", "c", "d"].map(spec), 1, argvOf);
 	const reads: string[] = [];
-	const store = new Map(Object.entries(files).map(([dir, results]) => [`${dir}/results.jsonl`, jsonl(...results)]));
-	const runs = shardRuns(plan, {
+	const store = new Map(
+		Object.entries(files).map(([dir, results]) => [`${dir}/results.jsonl`, resultsTesting.jsonl(...results)])
+	);
+	const runs = e2eJobs.shardRuns(plan, {
 		argvOf,
 		readFile: async (path) => {
 			reads.push(path);
@@ -80,7 +83,7 @@ function shard(files: Record<string, TestResult[]> = {}) {
 		attempt,
 		batchDir: "/batch",
 	});
-	const out = (worker: number, seq: number) => attemptOut("/batch", worker, seq);
+	const out = (worker: number, seq: number) => e2eJobs.attemptOut("/batch", worker, seq);
 	return { runs, reads, run, out, store };
 }
 
@@ -96,7 +99,7 @@ describe("shardRuns: retries run only the specs that did not pass", () => {
 
 	test("a retry runs only the specs with a failed test", async () => {
 		const s = shard({
-			[attemptOut("/batch", 0, 0)]: [res("a", "t"), res("b", "t", "failed"), res("c", "t"), res("d", "t")],
+			[e2eJobs.attemptOut("/batch", 0, 0)]: [res("a", "t"), res("b", "t", "failed"), res("c", "t"), res("d", "t")],
 		});
 		await s.runs.argv(s.run(0, 0, 0));
 		expect(tests(await s.runs.argv(s.run(0, 1, 1)))).toEqual(["b"]);
@@ -106,15 +109,20 @@ describe("shardRuns: retries run only the specs that did not pass", () => {
 	});
 
 	test("after a crash the retry runs the spec that was running and every spec that never started", async () => {
-		const s = shard({ [attemptOut("/batch", 0, 0)]: [res("a", "t"), res("b", "t"), res("c", "first")] });
+		const s = shard({ [e2eJobs.attemptOut("/batch", 0, 0)]: [res("a", "t"), res("b", "t"), res("c", "first")] });
 		await s.runs.argv(s.run(0, 0, 0));
 		expect(tests(await s.runs.argv(s.run(0, 1, 1)))).toEqual(["c", "d"]);
 	});
 
 	test("each retry narrows the previous attempt's specs, not the whole shard", async () => {
 		const s = shard({
-			[attemptOut("/batch", 0, 0)]: [res("a", "t"), res("b", "t", "failed"), res("c", "t", "failed"), res("d", "t")],
-			[attemptOut("/batch", 0, 1)]: [res("b", "t"), res("c", "t", "failed")],
+			[e2eJobs.attemptOut("/batch", 0, 0)]: [
+				res("a", "t"),
+				res("b", "t", "failed"),
+				res("c", "t", "failed"),
+				res("d", "t"),
+			],
+			[e2eJobs.attemptOut("/batch", 0, 1)]: [res("b", "t"), res("c", "t", "failed")],
 		});
 		await s.runs.argv(s.run(0, 0, 0));
 		expect(tests(await s.runs.argv(s.run(0, 1, 1)))).toEqual(["b", "c"]);
@@ -123,7 +131,7 @@ describe("shardRuns: retries run only the specs that did not pass", () => {
 
 	test("seq counts every run on the worker: the retry reads the attempt it follows", async () => {
 		const s = shard({
-			[attemptOut("/batch", 0, 3)]: [res("a", "t"), res("b", "t", "failed"), res("c", "t"), res("d", "t")],
+			[e2eJobs.attemptOut("/batch", 0, 3)]: [res("a", "t"), res("b", "t", "failed"), res("c", "t"), res("d", "t")],
 		});
 		await s.runs.argv(s.run(0, 3, 0));
 		expect(tests(await s.runs.argv(s.run(0, 4, 1)))).toEqual(["b"]);
@@ -138,14 +146,14 @@ describe("shardRuns: retries run only the specs that did not pass", () => {
 
 	test("a failure nobody can be blamed for (every test passed, the process failed) reruns the lot", async () => {
 		const s = shard({
-			[attemptOut("/batch", 0, 0)]: ["a", "b", "c", "d"].map((id) => res(id, "t")),
+			[e2eJobs.attemptOut("/batch", 0, 0)]: ["a", "b", "c", "d"].map((id) => res(id, "t")),
 		});
 		await s.runs.argv(s.run(0, 0, 0));
 		expect(tests(await s.runs.argv(s.run(0, 1, 1)))).toEqual(["a", "b", "c", "d"]);
 	});
 
 	test("the same attempt asked again (per pass) gets the same argv without reading anything", async () => {
-		const s = shard({ [attemptOut("/batch", 0, 0)]: [res("a", "t"), res("b", "t", "failed")] });
+		const s = shard({ [e2eJobs.attemptOut("/batch", 0, 0)]: [res("a", "t"), res("b", "t", "failed")] });
 		await s.runs.argv(s.run(0, 0, 0));
 		const first = await s.runs.argv(s.run(0, 1, 1));
 		expect(await s.runs.argv(s.run(0, 1, 1))).toEqual(first);
@@ -154,8 +162,8 @@ describe("shardRuns: retries run only the specs that did not pass", () => {
 
 	test("two workers running the same shard job (device legs) retry on their own", async () => {
 		const s = shard({
-			[attemptOut("/batch", 0, 0)]: [res("a", "t", "failed"), res("b", "t"), res("c", "t"), res("d", "t")],
-			[attemptOut("/batch", 1, 0)]: [res("a", "t"), res("b", "t"), res("c", "t"), res("d", "t", "failed")],
+			[e2eJobs.attemptOut("/batch", 0, 0)]: [res("a", "t", "failed"), res("b", "t"), res("c", "t"), res("d", "t")],
+			[e2eJobs.attemptOut("/batch", 1, 0)]: [res("a", "t"), res("b", "t"), res("c", "t"), res("d", "t", "failed")],
 		});
 		await s.runs.argv(s.run(0, 0, 0));
 		await s.runs.argv(s.run(1, 0, 0));
@@ -164,8 +172,8 @@ describe("shardRuns: retries run only the specs that did not pass", () => {
 	});
 
 	test("a spec-isolated job is just its own argv", async () => {
-		const plan = jobPlan(["a", "b"].map(spec), undefined, argvOf);
-		const runs = shardRuns(plan, {
+		const plan = e2eJobs.jobPlan(["a", "b"].map(spec), undefined, argvOf);
+		const runs = e2eJobs.shardRuns(plan, {
 			argvOf,
 			readFile: async () => {
 				throw new Error("never read");
@@ -180,11 +188,11 @@ describe("shardRuns: retries run only the specs that did not pass", () => {
 
 describe("attemptOut", () => {
 	test("one directory per attempt under the batch dir", () => {
-		expect(attemptOut("/batch", 2, 5)).toBe("/batch/e2e/2-5");
+		expect(e2eJobs.attemptOut("/batch", 2, 5)).toBe("/batch/e2e/2-5");
 	});
 
 	test("a later pass of the same attempt gets its own directory (12-10)", () => {
-		expect(attemptOut("/batch", 2, 5, 0)).toBe("/batch/e2e/2-5");
-		expect(attemptOut("/batch", 2, 5, 1)).toBe("/batch/e2e/2-5-p1");
+		expect(e2eJobs.attemptOut("/batch", 2, 5, 0)).toBe("/batch/e2e/2-5");
+		expect(e2eJobs.attemptOut("/batch", 2, 5, 1)).toBe("/batch/e2e/2-5-p1");
 	});
 });

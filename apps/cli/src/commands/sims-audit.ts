@@ -17,7 +17,7 @@ import type { ChalkInstance } from "chalk";
 import type { Register } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 
 type OwnerFilter = SimOwner | "all";
 type CommonOpts = { idle?: string; maxSize?: string; json?: true };
@@ -208,7 +208,7 @@ export class SimsAudit {
 		if (!owner.success) return this.fail(ctx, "audit", owner.error);
 		if (!opts.json)
 			output.heading(ctx, "sims audit", opts.owner && opts.owner !== "all" ? `owner ${opts.owner}` : undefined);
-		const audit = await withSpinner(ctx, "auditing simulators…", (sctx) =>
+		const audit = await spinnerContext.withSpinner(ctx, "auditing simulators…", (sctx) =>
 			new SimsPruner(this.simsDeps(sctx)).audit(parsed.data)
 		);
 		if (!audit.success) return this.fail(ctx, "audit", audit.error);
@@ -271,7 +271,7 @@ export class SimsAudit {
 		if (ask && !ctx.ui.interactive) return this.fail(ctx, "prune", "refusing to delete without --yes (or --dry-run)");
 		if (!opts.json) output.heading(ctx, "sims prune", dryRun ? "dry run" : undefined);
 		const deps = this.simsDeps(ctx);
-		const preview = await withSpinner(ctx, "auditing simulators…", () =>
+		const preview = await spinnerContext.withSpinner(ctx, "auditing simulators…", () =>
 			new SimsPruner(deps).prune({ ...parsed.data, dryRun: true })
 		);
 		if (!preview.success) return this.fail(ctx, "prune", preview.error);
@@ -280,7 +280,7 @@ export class SimsAudit {
 		const result =
 			dryRun || nothing
 				? preview
-				: await withSpinner(ctx, `deleting ${preview.data.removed.length} simulator(s)…`, () =>
+				: await spinnerContext.withSpinner(ctx, `deleting ${preview.data.removed.length} simulator(s)…`, () =>
 						new SimsPruner(deps).prune({ ...parsed.data, dryRun: false })
 					);
 		if (!result.success) return this.fail(ctx, "prune", result.error);

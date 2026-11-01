@@ -5,7 +5,7 @@ import { resultFactory } from "@delacour/warden-types/result";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
 import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { UiCommand, uiCommand } from "./ui";
 
 let ctx: TestContext | undefined;
@@ -41,7 +41,7 @@ function harness(screens: Snapshot[] | (() => Snapshot)): Harness {
 			clock.t += ms;
 		},
 	};
-	const c = testContext([], { now: () => clock.t });
+	const c = cliTesting.testContext([], { now: () => clock.t });
 	ctx = c;
 	c.env = { ...c.env, ...OWNER_ENV };
 	c.db.insertLease(

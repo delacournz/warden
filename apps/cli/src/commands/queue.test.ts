@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PRIORITY } from "@delacour/warden-leasing/queue";
 import { queueJsonSchema } from "@delacour/warden-sdk/contracts/queue";
 import type { Owner } from "@delacour/warden-store/types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { queueCommand } from "./queue";
 
 let ctx: TestContext | undefined;
@@ -27,13 +27,13 @@ function row(c: TestContext, id: string, priority: number, enqueuedAt: number, l
 
 describe("warden queue", () => {
 	test("empty", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		expect(await queueCommand.run(ctx)).toBe(0);
 		expect(ctx.stdout.join("\n")).toContain("queue empty");
 	});
 
 	test("--json lists rows in queue order with names and aging", async () => {
-		ctx = testContext(["--json"], { now: () => 30 * 60_000 });
+		ctx = cliTesting.testContext(["--json"], { now: () => 30 * 60_000 });
 		row(ctx, "q_old_low", PRIORITY.low, 0, "batch");
 		row(ctx, "q_new_high", PRIORITY.high, 29 * 60_000);
 		expect(await queueCommand.run(ctx)).toBe(0);
@@ -53,7 +53,7 @@ describe("warden queue", () => {
 	});
 
 	test("table shows position, priority and age", async () => {
-		ctx = testContext([], { now: () => 20 * 60_000 });
+		ctx = cliTesting.testContext([], { now: () => 20 * 60_000 });
 		row(ctx, "q1", PRIORITY.low, 0);
 		expect(await queueCommand.run(ctx)).toBe(0);
 		const text = ctx.stdout.join("\n");

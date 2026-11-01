@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import type { DevReady } from "./dev-ui";
 import { devUiPlain } from "./dev-ui.plain";
 
@@ -19,14 +19,14 @@ const READY: DevReady = {
 
 describe("plainDevUi", () => {
 	test("Metro inherits the terminal; the ui's ctx is the caller's", () => {
-		ctx = testContext(["dev"]);
+		ctx = cliTesting.testContext(["dev"]);
 		const ui = devUiPlain.plainDevUi(ctx);
 		expect(ui.metro).toEqual({ kind: "inherit" });
 		expect(ui.ctx).toBe(ctx);
 	});
 
 	test("task log is a ctx.err line; ok / fail print nothing", () => {
-		ctx = testContext(["dev"]);
+		ctx = cliTesting.testContext(["dev"]);
 		const lines: string[] = [];
 		ctx.err = (line) => void lines.push(line);
 		const task = devUiPlain.plainDevUi(ctx).task("claim", "claiming");
@@ -37,7 +37,7 @@ describe("plainDevUi", () => {
 	});
 
 	test("ready prints the holding note", () => {
-		ctx = testContext(["dev"]);
+		ctx = cliTesting.testContext(["dev"]);
 		devUiPlain.plainDevUi(ctx).ready(READY);
 		expect(
 			ctx.stderr.some((e) => e.includes("warden dev: holding U1 + :8082 until Metro exits (WARDEN_UDID=U1)"))
@@ -45,7 +45,7 @@ describe("plainDevUi", () => {
 	});
 
 	test("onQuit is a no-op and close resolves (twice)", async () => {
-		ctx = testContext(["dev"]);
+		ctx = cliTesting.testContext(["dev"]);
 		const ui = devUiPlain.plainDevUi(ctx);
 		ui.onQuit(() => {
 			throw new Error("never called");

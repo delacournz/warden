@@ -17,35 +17,40 @@ declare const __WARDEN_BUILD__: BuildInfo | undefined;
 
 export const DEFINE_KEY = "__WARDEN_BUILD__";
 
-/** `<root>/apps/cli/src/cli.ts` → `<root>`. */
-export function sourceDirFromCliPath(cliPath: string): string {
-	return dirname(dirname(dirname(dirname(cliPath))));
-}
+export class BuildInfoHelpers {
+	/** `<root>/apps/cli/src/cli.ts` → `<root>`. */
+	sourceDirFromCliPath(cliPath: string): string {
+		return dirname(dirname(dirname(dirname(cliPath))));
+	}
 
-function isCompiled(main: string): boolean {
-	return main.startsWith("/$bunfs/") || main.startsWith("B:/~BUN/");
-}
+	private isCompiled(main: string): boolean {
+		return main.startsWith("/$bunfs/") || main.startsWith("B:/~BUN/");
+	}
 
-export function resolveBuildInfo(embedded: BuildInfo | undefined, main: string, packageVersion: string): BuildInfo {
-	if (!isCompiled(main)) return { channel: "dev", version: packageVersion, sourceDir: sourceDirFromCliPath(main) };
-	return embedded ?? { channel: "local", version: packageVersion };
-}
+	resolveBuildInfo(embedded: BuildInfo | undefined, main: string, packageVersion: string): BuildInfo {
+		if (!this.isCompiled(main))
+			return { channel: "dev", version: packageVersion, sourceDir: this.sourceDirFromCliPath(main) };
+		return embedded ?? { channel: "local", version: packageVersion };
+	}
 
-export function currentBuild(): BuildInfo {
-	const embedded = typeof __WARDEN_BUILD__ === "undefined" ? undefined : __WARDEN_BUILD__;
-	return resolveBuildInfo(embedded, Bun.main, cliPackage.version);
-}
+	currentBuild(): BuildInfo {
+		const embedded = typeof __WARDEN_BUILD__ === "undefined" ? undefined : __WARDEN_BUILD__;
+		return this.resolveBuildInfo(embedded, Bun.main, cliPackage.version);
+	}
 
-/** `0.2.0 (local abc1234, /repo)`. */
-export function describeBuild(build: BuildInfo): string {
-	switch (build.channel) {
-		case "dev":
-			return `${build.version} (dev, ${build.sourceDir})`;
-		case "local": {
-			const parts = [build.commit ? `local ${build.commit}` : "local", build.sourceDir].filter(Boolean);
-			return `${build.version} (${parts.join(", ")})`;
+	/** `0.2.0 (local abc1234, /repo)`. */
+	describeBuild(build: BuildInfo): string {
+		switch (build.channel) {
+			case "dev":
+				return `${build.version} (dev, ${build.sourceDir})`;
+			case "local": {
+				const parts = [build.commit ? `local ${build.commit}` : "local", build.sourceDir].filter(Boolean);
+				return `${build.version} (${parts.join(", ")})`;
+			}
+			case "release":
+				return `${build.version} (release${build.commit ? ` ${build.commit}` : ""})`;
 		}
-		case "release":
-			return `${build.version} (release${build.commit ? ` ${build.commit}` : ""})`;
 	}
 }
+
+export const buildInfoHelpers = new BuildInfoHelpers();

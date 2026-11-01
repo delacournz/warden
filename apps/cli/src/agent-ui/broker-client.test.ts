@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
 import { type BrokerServer, devBrokerIpc } from "../dev-broker/ipc";
-import { type DevSessionRecord, writeDevSession } from "../dev-session";
+import { type DevSessionRecord, devSession } from "../dev-session";
 import { uiBrokerClient } from "./broker-client";
 
 const dirs: string[] = [];
@@ -39,7 +39,7 @@ async function session(udid: string, stub: Stub, env?: Record<string, string>) {
 		startedAt: "2026-10-27T00:00:00.000Z",
 		brokerSocket: served.data.socketPath,
 	};
-	writeDevSession({ WARDEN_HOME: home }, record);
+	devSession.writeDevSession({ WARDEN_HOME: home }, record);
 	return { env: { WARDEN_HOME: home }, record };
 }
 
@@ -54,10 +54,10 @@ describe("brokerFor", () => {
 	test("undefined for another udid, no socket, or a dead socket", async () => {
 		const { env, record } = await session("U1", async () => ({ success: true, data: statusData }));
 		expect(await uiBrokerClient.brokerFor(env, "OTHER", alive)).toBeUndefined();
-		writeDevSession(env, { ...record, brokerSocket: "/nonexistent/b.sock" });
+		devSession.writeDevSession(env, { ...record, brokerSocket: "/nonexistent/b.sock" });
 		expect(await uiBrokerClient.brokerFor(env, "U1", alive)).toBeUndefined();
 		const { brokerSocket: _gone, ...bare } = record;
-		writeDevSession(env, bare);
+		devSession.writeDevSession(env, bare);
 		expect(await uiBrokerClient.brokerFor(env, "U1", alive)).toBeUndefined();
 	});
 });

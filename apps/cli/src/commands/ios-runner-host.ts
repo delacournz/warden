@@ -1,11 +1,11 @@
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import { createRunnerBuild } from "../ios-runner/build-port";
-import { startProxy } from "../ios-runner/proxy";
-import { devicectlList, type RouteDeps } from "../ios-runner/route";
-import { removeServedIdentity, writeServedIdentity } from "../ios-runner/served-identity";
-import { type SessionDeps, type SessionEnd, startSession } from "../ios-runner/session";
+import { buildPort } from "../ios-runner/build-port";
+import { runnerProxyService } from "../ios-runner/proxy";
+import { type RouteDeps, runnerRoute } from "../ios-runner/route";
+import { servedIdentity } from "../ios-runner/served-identity";
+import { runnerSession, type SessionDeps, type SessionEnd } from "../ios-runner/session";
 import type { RunnerBuildPort, RunnerFault, SpawnRunner } from "../ios-runner/types";
 import { output } from "../output";
 
@@ -95,12 +95,12 @@ export class IosRunnerHostCommand extends CliCommand {
 			return EXIT_ENGINE;
 		};
 		// a leftover file from an earlier host must never vouch for this one
-		removeServedIdentity(socket);
-		const built = await (deps.build ?? createRunnerBuild(ctx)).ensure({ udid, env: ctx.env });
+		servedIdentity.removeServedIdentity(socket);
+		const built = await (deps.build ?? buildPort.createRunnerBuild(ctx)).ensure({ udid, env: ctx.env });
 		if (!built.success) return die(built.error.code, built.error.message);
 
 		const route: RouteDeps = deps.route ?? {
-			list: devicectlList({ exec: ctx.exec }),
+			list: runnerRoute.devicectlList({ exec: ctx.exec }),
 			sleep: (ms) => Bun.sleep(ms),
 			now: () => Date.now(),
 		};
@@ -112,11 +112,15 @@ export class IosRunnerHostCommand extends CliCommand {
 			log: (line) => ctx.err(line),
 		};
 		const runnerIdle = idle.data === 0 ? 0 : Math.round(idle.data / 1000) + RUNNER_IDLE_MARGIN_SECONDS;
-		const started = await startSession(sessionDeps, { udid, artifacts: built.data, runnerIdleSeconds: runnerIdle });
+		const started = await runnerSession.startSession(sessionDeps, {
+			udid,
+			artifacts: built.data,
+			runnerIdleSeconds: runnerIdle,
+		});
 		if (!started.success) return die(this.faultCode(started.error), started.error.message);
 		const session = started.data;
 
-		const proxy = await startProxy({
+		const proxy = await runnerProxyService.startProxy({
 			socketPath: socket,
 			target: () => session.address,
 			now: () => Date.now(),
@@ -144,7 +148,7 @@ export class IosRunnerHostCommand extends CliCommand {
 		}, deps.pollMs ?? 1000);
 
 		// which build this host serves: clients replace a host whose runner differs from the current sources
-		writeServedIdentity(socket, built.data.derivedData);
+		servedIdentity.writeServedIdentity(socket, built.data.derivedData);
 		// the one stdout line of a healthy host: the spawner (`helper.ts` `watchStart`) connects the moment it reads it
 		ctx.out(JSON.stringify({ event: "ready", socket, pid: process.pid }));
 		const end = await finished;
@@ -157,7 +161,7 @@ export class IosRunnerHostCommand extends CliCommand {
 		}
 		await session.stop();
 		await proxy.data.close();
-		removeServedIdentity(socket);
+		servedIdentity.removeServedIdentity(socket);
 		return end.kind === "fault" ? EXIT_ENGINE : 0;
 	}
 }

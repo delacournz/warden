@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { SimEntry, SimReason } from "@delacour/warden-core/sims/rules";
 import { MIXED_SIMS_RECORDS, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { OWNER_ENV } from "../simctl.testing";
-import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { simsCommand } from "./sims";
 
 const DAY = 86_400_000;
@@ -11,14 +11,14 @@ const NOW = 100 * DAY;
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-function setup(argv: string[], ui: Parameters<typeof scriptedUi>[0] = {}): TestContext {
-	const c = testContext(argv, {
+function setup(argv: string[], ui: Parameters<typeof cliTesting.scriptedUi>[0] = {}): TestContext {
+	const c = cliTesting.testContext(argv, {
 		now: () => NOW,
-		exec: fakeExec([
+		exec: cliTesting.fakeExec([
 			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson(simctlFixtures.mixedSims(NOW)) }],
 			["xcrun simctl runtime list -j", { stdout: "{}" }],
 		]),
-		ui: scriptedUi(ui),
+		ui: cliTesting.scriptedUi(ui),
 	});
 	c.env = { ...c.env, ...OWNER_ENV };
 	for (const [id, days] of Object.entries(MIXED_SIMS_RECORDS))
@@ -77,7 +77,7 @@ describe("audit, prune and delete agree on one machine", () => {
 
 		const c = setup(["delete"], { interactive: true, multiselect: [[]] });
 		expect(await simsCommand.run(c)).toBe(0);
-		const menu = (c.ui as ReturnType<typeof scriptedUi>).events[0] ?? "";
+		const menu = (c.ui as ReturnType<typeof cliTesting.scriptedUi>).events[0] ?? "";
 		const offered = (/\[(.*)\]$/.exec(menu)?.[1] ?? "").split(" ");
 		const marked = (mark: string) =>
 			offered

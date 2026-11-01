@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { metricsSamplers } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -19,7 +19,7 @@ type Script = (cmd: string) => Partial<ExecResult> | undefined;
 function setup(script: Script) {
 	const clock = { now: 10_000 };
 	const calls: string[] = [];
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => clock.now,
 		exec: async (cmd) => {
 			const joined = cmd.join(" ");

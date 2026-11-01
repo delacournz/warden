@@ -6,7 +6,7 @@ import { fixtureRepos } from "@delacour/warden-core/affected/fixture.testing";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { ProcHandle, SpawnOptions } from "../commands/batch";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { uiAuthoringVerify, type VerifyDeps } from "./authoring-verify";
 
 let cleanup: (() => void)[] = [];
@@ -31,7 +31,7 @@ const RESULT = (file: string, status: string) =>
 async function setup(code: number, results: string | undefined) {
 	const repo = await fixtureRepos.createSuite();
 	cleanup.push(() => rmSync(repo.dir, { recursive: true, force: true }));
-	const ctx: TestContext = testContext([], { exec: processExec.run });
+	const ctx: TestContext = cliTesting.testContext([], { exec: processExec.run });
 	cleanup.push(ctx.cleanup);
 	ctx.cwd = repo.dir;
 	const suite = await affectedService.findSuite(ctx.exec, repo.dir, undefined, ctx.git, ctx.env);

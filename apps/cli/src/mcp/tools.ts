@@ -4,9 +4,9 @@ import { uiBrokerClient } from "../agent-ui/broker-client";
 import { uiLogpointCli } from "../agent-ui/logpoint-cli";
 import { devLogs } from "../commands/dev-logs";
 import { devBrokerProfileClient } from "../dev-broker/profile-client";
-import { listDevSessions } from "../dev-session";
+import { devSession } from "../dev-session";
 import { METRO_LOG_KINDS } from "../dev-tui/metro-log";
-import { parseMetroLogKinds, readMetroLogs } from "../metro-logs";
+import { metroLogs } from "../metro-logs";
 
 type Env = Record<string, string | undefined>;
 
@@ -66,7 +66,7 @@ export class McpTools {
 				name: "dev_sessions",
 				description: "List live `warden dev` sessions (device, Metro URL, log dir, devtools broker).",
 				input: {},
-				run: async (env) => listDevSessions(env),
+				run: async (env) => devSession.listDevSessions(env),
 			}),
 			this.tool({
 				name: "metro_logs",
@@ -85,9 +85,9 @@ export class McpTools {
 				run: async (env, args) => {
 					const from = this.since(args.since, deps.now());
 					if (!from.success) return from;
-					const kinds = args.kinds === undefined ? undefined : parseMetroLogKinds(args.kinds.join(","));
+					const kinds = args.kinds === undefined ? undefined : metroLogs.parseMetroLogKinds(args.kinds.join(","));
 					if (kinds !== undefined && !kinds.success) return kinds;
-					return readMetroLogs(
+					return metroLogs.readMetroLogs(
 						env,
 						this.defined({ udid: args.udid, sinceMs: from.data, tail: args.tail, grep: args.grep, kinds: kinds?.data })
 					);

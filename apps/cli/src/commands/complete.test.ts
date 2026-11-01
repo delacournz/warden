@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { main } from "../cli";
-import { type TestContext, testContext } from "../testing";
+import { cliEntry } from "../cli";
+import { cliTesting, type TestContext } from "../testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 async function completeLine(words: string[]): Promise<string[]> {
-	const code = await main(["__complete", "--", ...words], (rest) => {
-		ctx = testContext(rest);
+	const code = await cliEntry.main(["__complete", "--", ...words], (rest) => {
+		ctx = cliTesting.testContext(rest);
 		return ctx;
 	});
 	expect(code).toBe(0);

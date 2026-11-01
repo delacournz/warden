@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
-import { jsonl, memoryReadFrom, result } from "./results.testing";
-import { createResultsTail, parseResultLine } from "./results-tail";
+import { resultsTesting } from "./results.testing";
+import { resultsTailHelpers } from "./results-tail";
 
 const file = "/app/e2e/todos.e2e.ts";
 const encoder = new TextEncoder();
@@ -10,8 +10,8 @@ const encoder = new TextEncoder();
 function tailOf(files: Map<string, string | Uint8Array>) {
 	const parsed: string[] = [];
 	const offsets: number[] = [];
-	const read = memoryReadFrom(files);
-	const tail = createResultsTail(
+	const read = resultsTesting.memoryReadFrom(files);
+	const tail = resultsTailHelpers.createResultsTail(
 		"/out/results.jsonl",
 		async (path, offset) => {
 			offsets.push(offset);
@@ -19,7 +19,7 @@ function tailOf(files: Map<string, string | Uint8Array>) {
 		},
 		(line) => {
 			parsed.push(line);
-			return parseResultLine(line);
+			return resultsTailHelpers.parseResultLine(line);
 		}
 	);
 	return { tail, parsed, offsets };
@@ -29,12 +29,12 @@ const titles = (results: readonly TestResult[]) => results.map((r) => r.title.jo
 
 describe("parseResultLine", () => {
 	test("a valid result; blank, truncated and invalid lines are skipped", () => {
-		const line = JSON.stringify(result(file, "add"));
-		expect(parseResultLine(line)?.title).toEqual(["add"]);
-		expect(parseResultLine("")).toBeUndefined();
-		expect(parseResultLine("   ")).toBeUndefined();
-		expect(parseResultLine(line.slice(0, 20))).toBeUndefined();
-		expect(parseResultLine('{"file":1}')).toBeUndefined();
+		const line = JSON.stringify(resultsTesting.result(file, "add"));
+		expect(resultsTailHelpers.parseResultLine(line)?.title).toEqual(["add"]);
+		expect(resultsTailHelpers.parseResultLine("")).toBeUndefined();
+		expect(resultsTailHelpers.parseResultLine("   ")).toBeUndefined();
+		expect(resultsTailHelpers.parseResultLine(line.slice(0, 20))).toBeUndefined();
+		expect(resultsTailHelpers.parseResultLine('{"file":1}')).toBeUndefined();
 	});
 });
 
@@ -45,7 +45,7 @@ describe("createResultsTail", () => {
 		let text = "";
 		const seen: string[] = [];
 		for (let i = 0; i < 50; i++) {
-			text += jsonl(result(file, `t${i}`), result(file, `u${i}`));
+			text += resultsTesting.jsonl(resultsTesting.result(file, `t${i}`), resultsTesting.result(file, `u${i}`));
 			files.set("/out/results.jsonl", text);
 			const polled = await tail.poll();
 			seen.push(...titles(polled.results));
@@ -59,7 +59,9 @@ describe("createResultsTail", () => {
 	});
 
 	test("an unchanged file is not re-read past the offset", async () => {
-		const files = new Map([["/out/results.jsonl", jsonl(result(file, "a"), result(file, "b"))]]);
+		const files = new Map([
+			["/out/results.jsonl", resultsTesting.jsonl(resultsTesting.result(file, "a"), resultsTesting.result(file, "b"))],
+		]);
 		const { tail, offsets } = tailOf(files);
 		await tail.poll();
 		await tail.poll();
@@ -71,8 +73,8 @@ describe("createResultsTail", () => {
 	test("a partial trailing line waits for its newline, then parses once", async () => {
 		const files = new Map<string, string>();
 		const { tail, parsed, offsets } = tailOf(files);
-		const first = jsonl(result(file, "whole"));
-		const second = jsonl(result(file, "split"));
+		const first = resultsTesting.jsonl(resultsTesting.result(file, "whole"));
+		const second = resultsTesting.jsonl(resultsTesting.result(file, "split"));
 		files.set("/out/results.jsonl", first + second.slice(0, 30));
 		expect(titles((await tail.poll()).results)).toEqual(["whole"]);
 		expect(parsed).toHaveLength(1);
@@ -87,7 +89,7 @@ describe("createResultsTail", () => {
 	test("a multi-byte character cut by the read end is decoded whole once its line completes", async () => {
 		const files = new Map<string, string | Uint8Array>();
 		const { tail } = tailOf(files);
-		const bytes = encoder.encode(jsonl(result(file, "✓ sign-in → ok")));
+		const bytes = encoder.encode(resultsTesting.jsonl(resultsTesting.result(file, "✓ sign-in → ok")));
 		files.set("/out/results.jsonl", bytes.subarray(0, bytes.indexOf(0xe2) + 1));
 		expect((await tail.poll()).results).toEqual([]);
 		files.set("/out/results.jsonl", bytes);
@@ -95,7 +97,9 @@ describe("createResultsTail", () => {
 	});
 
 	test("invalid and blank lines are consumed once and skipped", async () => {
-		const files = new Map([["/out/results.jsonl", `not json\n\n${jsonl(result(file, "ok"))}`]]);
+		const files = new Map([
+			["/out/results.jsonl", `not json\n\n${resultsTesting.jsonl(resultsTesting.result(file, "ok"))}`],
+		]);
 		const { tail, parsed } = tailOf(files);
 		expect(titles((await tail.poll()).results)).toEqual(["ok"]);
 		expect((await tail.poll()).results).toEqual([]);
@@ -106,30 +110,40 @@ describe("createResultsTail", () => {
 		const files = new Map<string, string>();
 		const { tail } = tailOf(files);
 		expect(await tail.poll()).toEqual({ results: [], reset: false });
-		files.set("/out/results.jsonl", jsonl(result(file, "late")));
+		files.set("/out/results.jsonl", resultsTesting.jsonl(resultsTesting.result(file, "late")));
 		expect(titles((await tail.poll()).results)).toEqual(["late"]);
 	});
 
 	test("a file that shrinks (truncated or replaced) is read again from the start and flagged", async () => {
 		const files = new Map<string, string>();
 		const { tail } = tailOf(files);
-		files.set("/out/results.jsonl", jsonl(result(file, "a"), result(file, "b"), result(file, "c")));
+		files.set(
+			"/out/results.jsonl",
+			resultsTesting.jsonl(
+				resultsTesting.result(file, "a"),
+				resultsTesting.result(file, "b"),
+				resultsTesting.result(file, "c")
+			)
+		);
 		expect(titles((await tail.poll()).results)).toEqual(["a", "b", "c"]);
-		files.set("/out/results.jsonl", jsonl(result(file, "x")));
+		files.set("/out/results.jsonl", resultsTesting.jsonl(resultsTesting.result(file, "x")));
 		const again = await tail.poll();
 		expect(again.reset).toBe(true);
 		expect(titles(again.results)).toEqual(["x"]);
-		files.set("/out/results.jsonl", jsonl(result(file, "x"), result(file, "y")));
+		files.set(
+			"/out/results.jsonl",
+			resultsTesting.jsonl(resultsTesting.result(file, "x"), resultsTesting.result(file, "y"))
+		);
 		const next = await tail.poll();
 		expect(next.reset).toBe(false);
 		expect(titles(next.results)).toEqual(["y"]);
 	});
 
 	test("a read that fails reads as nothing new and keeps the offset", async () => {
-		const files = new Map([["/out/results.jsonl", jsonl(result(file, "a"))]]);
+		const files = new Map([["/out/results.jsonl", resultsTesting.jsonl(resultsTesting.result(file, "a"))]]);
 		let broken = false;
-		const read = memoryReadFrom(files);
-		const tail = createResultsTail("/out/results.jsonl", async (path, offset) => {
+		const read = resultsTesting.memoryReadFrom(files);
+		const tail = resultsTailHelpers.createResultsTail("/out/results.jsonl", async (path, offset) => {
 			if (broken) throw new Error("EIO");
 			return read(path, offset);
 		});
@@ -137,7 +151,10 @@ describe("createResultsTail", () => {
 		broken = true;
 		expect((await tail.poll()).results).toEqual([]);
 		broken = false;
-		files.set("/out/results.jsonl", jsonl(result(file, "a"), result(file, "b")));
+		files.set(
+			"/out/results.jsonl",
+			resultsTesting.jsonl(resultsTesting.result(file, "a"), resultsTesting.result(file, "b"))
+		);
 		expect(titles((await tail.poll()).results)).toEqual(["b"]);
 	});
 });

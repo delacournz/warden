@@ -14,14 +14,6 @@ export type SkillDeps = {
 /** `stdout: "stderr"` keeps the child's stdout off ours (a `--json` command prints exactly one JSON document). */
 export type RunOpts = { stdout: "inherit" | "stderr" };
 
-export function realSkillDeps(): SkillDeps {
-	return {
-		which: (cmd) => Bun.which(cmd),
-		runInteractive: (cmd, opts) =>
-			Bun.spawn(cmd, { stdin: "inherit", stdout: opts?.stdout === "stderr" ? 2 : "inherit", stderr: "inherit" }).exited,
-	};
-}
-
 /** The skills CLI's agent key for Claude Code (`skills add -a claude-code`; installs under `~/.claude/skills`). */
 export const CLAUDE_AGENT = "claude-code";
 
@@ -32,44 +24,57 @@ export type SkillsAddOpts = {
 	yes?: true;
 };
 
-/** `bunx` when bun is installed, else `npx --yes`. */
-export function runner(deps: SkillDeps): string[] | undefined {
-	if (deps.which("bunx")) return ["bunx"];
-	if (deps.which("npx")) return ["npx", "--yes"];
-	return undefined;
-}
-
-export function skillsAddArgs(source: string, opts: SkillsAddOpts): string[] {
-	return [
-		"skills",
-		"add",
-		source,
-		"--skill",
-		SKILL_NAME,
-		...(opts.project ? [] : ["-g"]),
-		...(opts.agent ?? []).flatMap((a) => ["-a", a]),
-		...(opts.copy ? ["--copy"] : []),
-		...(opts.yes ? ["-y"] : []),
-	];
-}
-
-/** Stable dir holding this binary's skill copy — the skills CLI may symlink to it, so it must outlive the call. */
-export function localSkillRoot(ctx: CommandContext): string {
-	return join(storeLocator.wardenHome(ctx.env), "skill");
-}
-
-/**
- * Stage the embedded skill folder at `<root>/warden`. warden owns this dir: it is recreated from scratch
- * so files dropped from the skill vanish. Returns the root to pass to `skills add`.
- */
-export function stageSkillFolder(ctx: CommandContext): string {
-	const root = localSkillRoot(ctx);
-	const dir = join(root, SKILL_NAME);
-	rmSync(dir, { recursive: true, force: true });
-	for (const path of SKILL_PATHS) {
-		const file = join(dir, path);
-		mkdirSync(dirname(file), { recursive: true });
-		writeFileSync(file, SKILL_FILES[path]);
+export class SkillCli {
+	realSkillDeps(): SkillDeps {
+		return {
+			which: (cmd) => Bun.which(cmd),
+			runInteractive: (cmd, opts) =>
+				Bun.spawn(cmd, { stdin: "inherit", stdout: opts?.stdout === "stderr" ? 2 : "inherit", stderr: "inherit" })
+					.exited,
+		};
 	}
-	return root;
+
+	/** `bunx` when bun is installed, else `npx --yes`. */
+	runner(deps: SkillDeps): string[] | undefined {
+		if (deps.which("bunx")) return ["bunx"];
+		if (deps.which("npx")) return ["npx", "--yes"];
+		return undefined;
+	}
+
+	skillsAddArgs(source: string, opts: SkillsAddOpts): string[] {
+		return [
+			"skills",
+			"add",
+			source,
+			"--skill",
+			SKILL_NAME,
+			...(opts.project ? [] : ["-g"]),
+			...(opts.agent ?? []).flatMap((a) => ["-a", a]),
+			...(opts.copy ? ["--copy"] : []),
+			...(opts.yes ? ["-y"] : []),
+		];
+	}
+
+	/** Stable dir holding this binary's skill copy — the skills CLI may symlink to it, so it must outlive the call. */
+	localSkillRoot(ctx: CommandContext): string {
+		return join(storeLocator.wardenHome(ctx.env), "skill");
+	}
+
+	/**
+	 * Stage the embedded skill folder at `<root>/warden`. warden owns this dir: it is recreated from scratch
+	 * so files dropped from the skill vanish. Returns the root to pass to `skills add`.
+	 */
+	stageSkillFolder(ctx: CommandContext): string {
+		const root = this.localSkillRoot(ctx);
+		const dir = join(root, SKILL_NAME);
+		rmSync(dir, { recursive: true, force: true });
+		for (const path of SKILL_PATHS) {
+			const file = join(dir, path);
+			mkdirSync(dirname(file), { recursive: true });
+			writeFileSync(file, SKILL_FILES[path]);
+		}
+		return root;
+	}
 }
+
+export const skillCli = new SkillCli();

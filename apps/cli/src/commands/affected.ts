@@ -6,7 +6,7 @@ import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
-import { parsePlatform } from "../claim-flags";
+import { claimFlagsHelpers } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
@@ -54,7 +54,7 @@ export class AffectedCommand extends CliCommand {
 			return resultFactory.err("--all / --specs select without a diff — drop --files");
 		let platform: Platform | undefined;
 		if (opts.platform !== undefined) {
-			const parsed = parsePlatform(opts.platform);
+			const parsed = claimFlagsHelpers.parsePlatform(opts.platform);
 			if (!parsed.success) return parsed;
 			platform = parsed.data;
 		}

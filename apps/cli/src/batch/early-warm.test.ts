@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type EarlyWarmDeps, startEarlyWarm } from "./early-warm";
+import { type EarlyWarmDeps, earlyWarmHelpers } from "./early-warm";
 import type { WarmConnect, WarmHelper } from "./warm-drivers";
 
 type Fake = {
@@ -61,7 +61,7 @@ describe("startEarlyWarm", () => {
 	test("a leg's devices are warmed the moment they are leased, before anything settles", async () => {
 		const f = fake();
 		f.deps.legCounts = [2];
-		const warm = startEarlyWarm(f.deps);
+		const warm = earlyWarmHelpers.startEarlyWarm(f.deps);
 		expect(f.started).toEqual([]);
 		warm.leased(held("U1", "U2"), 0);
 		await Bun.sleep(0);
@@ -79,7 +79,7 @@ describe("startEarlyWarm", () => {
 	test("worker numbers follow the leg order, whichever leg is leased first", async () => {
 		const f = fake();
 		f.deps.legCounts = [2, 1, 1];
-		const warm = startEarlyWarm(f.deps);
+		const warm = earlyWarmHelpers.startEarlyWarm(f.deps);
 		warm.leased(held("C1"), 2);
 		warm.leased(held("B1"), 1);
 		warm.leased(held("A1", "A2"), 0);
@@ -102,7 +102,7 @@ describe("startEarlyWarm", () => {
 	test("a failed warm-up is a warning in the outcome, not a printed line", async () => {
 		const f = fake();
 		f.deps.legCounts = [1];
-		const warm = startEarlyWarm(f.deps);
+		const warm = earlyWarmHelpers.startEarlyWarm(f.deps);
 		warm.leased(held("U1"), 0);
 		f.release("U1", "fail");
 		const done = await warm.settled();
@@ -114,7 +114,7 @@ describe("startEarlyWarm", () => {
 	test("abort: settled returns at once, and a helper that comes up late is closed", async () => {
 		const f = fake();
 		f.deps.legCounts = [1];
-		const warm = startEarlyWarm(f.deps);
+		const warm = earlyWarmHelpers.startEarlyWarm(f.deps);
 		warm.leased(held("U1"), 0);
 		await Bun.sleep(0);
 		warm.abort();
@@ -129,7 +129,7 @@ describe("startEarlyWarm", () => {
 		const f = fake();
 		f.deps.legCounts = [1];
 		const outer = new AbortController();
-		const warm = startEarlyWarm({ ...f.deps, signal: outer.signal });
+		const warm = earlyWarmHelpers.startEarlyWarm({ ...f.deps, signal: outer.signal });
 		warm.leased(held("U1"), 0);
 		await Bun.sleep(0);
 		outer.abort();
@@ -139,7 +139,7 @@ describe("startEarlyWarm", () => {
 	test("device(udid): one device's warm-up, as soon as it is done, whatever the others do (12-3)", async () => {
 		const f = fake();
 		f.deps.legCounts = [2];
-		const warm = startEarlyWarm(f.deps);
+		const warm = earlyWarmHelpers.startEarlyWarm(f.deps);
 		warm.leased(held("U1", "U2"), 0);
 		expect(warm.peek("U1")).toBeUndefined();
 		f.release("U1");
@@ -157,13 +157,13 @@ describe("startEarlyWarm", () => {
 	});
 
 	test("device(udid) of a device never leased is cold at once", async () => {
-		const warm = startEarlyWarm(fake().deps);
+		const warm = earlyWarmHelpers.startEarlyWarm(fake().deps);
 		expect(await warm.device("X")).toEqual({});
 	});
 
 	test("nothing leased: settled is an empty outcome", async () => {
 		const f = fake();
-		const warm = startEarlyWarm(f.deps);
+		const warm = earlyWarmHelpers.startEarlyWarm(f.deps);
 		expect(await warm.settled()).toEqual({ devices: [], helpers: [], warnings: [] });
 	});
 });

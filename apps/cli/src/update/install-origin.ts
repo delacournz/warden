@@ -9,39 +9,43 @@ import { storeLocator } from "@delacour/warden-store/store";
  */
 export type InstallOrigin = "npm";
 
-function originFile(env: Record<string, string | undefined>): string {
-	return join(storeLocator.wardenHome(env), "install-origin.json");
-}
+export class InstallOriginHelpers {
+	private originFile(env: Record<string, string | undefined>): string {
+		return join(storeLocator.wardenHome(env), "install-origin.json");
+	}
 
-function readOrigins(env: Record<string, string | undefined>): Record<string, InstallOrigin> {
-	const path = originFile(env);
-	if (!existsSync(path)) return {};
-	try {
-		const data: unknown = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof data !== "object" || data === null || Array.isArray(data)) return {};
-		return Object.fromEntries(Object.entries(data).filter((entry) => entry[1] === "npm"));
-	} catch {
-		return {};
+	private readOrigins(env: Record<string, string | undefined>): Record<string, InstallOrigin> {
+		const path = this.originFile(env);
+		if (!existsSync(path)) return {};
+		try {
+			const data: unknown = JSON.parse(readFileSync(path, "utf8"));
+			if (typeof data !== "object" || data === null || Array.isArray(data)) return {};
+			return Object.fromEntries(Object.entries(data).filter((entry) => entry[1] === "npm"));
+		} catch {
+			return {};
+		}
+	}
+
+	installOrigin(env: Record<string, string | undefined>, binary: string): InstallOrigin | undefined {
+		return this.readOrigins(env)[binary];
+	}
+
+	/** Record (or with `undefined`, forget) where the binary at `binary` came from. */
+	recordInstallOrigin(
+		env: Record<string, string | undefined>,
+		binary: string,
+		origin: InstallOrigin | undefined
+	): void {
+		const origins = this.readOrigins(env);
+		if (origins[binary] === origin) return;
+		if (origin) origins[binary] = origin;
+		else delete origins[binary];
+		const path = this.originFile(env);
+		mkdirSync(storeLocator.wardenHome(env), { recursive: true });
+		const tmp = `${path}.tmp-${process.pid}`;
+		writeFileSync(tmp, `${JSON.stringify(origins, null, 2)}\n`);
+		renameSync(tmp, path);
 	}
 }
 
-export function installOrigin(env: Record<string, string | undefined>, binary: string): InstallOrigin | undefined {
-	return readOrigins(env)[binary];
-}
-
-/** Record (or with `undefined`, forget) where the binary at `binary` came from. */
-export function recordInstallOrigin(
-	env: Record<string, string | undefined>,
-	binary: string,
-	origin: InstallOrigin | undefined
-): void {
-	const origins = readOrigins(env);
-	if (origins[binary] === origin) return;
-	if (origin) origins[binary] = origin;
-	else delete origins[binary];
-	const path = originFile(env);
-	mkdirSync(storeLocator.wardenHome(env), { recursive: true });
-	const tmp = `${path}.tmp-${process.pid}`;
-	writeFileSync(tmp, `${JSON.stringify(origins, null, 2)}\n`);
-	renameSync(tmp, path);
-}
+export const installOriginHelpers = new InstallOriginHelpers();

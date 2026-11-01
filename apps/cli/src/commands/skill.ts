@@ -2,17 +2,9 @@ import { Option } from "@commander-js/extra-typings";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
-import { embeddedFile, RULE_PATH, SKILL_FILES, SKILL_MD, SKILL_NAME, SKILL_PATHS } from "../skill";
-import {
-	localSkillRoot,
-	realSkillDeps,
-	runner,
-	type SkillDeps,
-	type SkillsAddOpts,
-	skillsAddArgs,
-	stageSkillFolder,
-} from "../skill-cli";
-import { releaseRepo } from "../update/release";
+import { RULE_PATH, SKILL_FILES, SKILL_MD, SKILL_NAME, SKILL_PATHS, skillInstaller } from "../skill";
+import { type SkillDeps, type SkillsAddOpts, skillCli } from "../skill-cli";
+import { updateRelease } from "../update/release";
 
 export type { SkillDeps };
 
@@ -60,7 +52,7 @@ export class SkillCommand extends CliCommand {
 			output.emit(ctx, json, { name: SKILL_NAME, content: SKILL_MD, files: SKILL_FILES }, SKILL_MD.trimEnd());
 			return 0;
 		}
-		const content = embeddedFile(file);
+		const content = skillInstaller.embeddedFile(file);
 		if (content === undefined) {
 			ctx.err(
 				ctx.ui.color.red(`warden skill: no embedded file ${file} — one of: ${[...SKILL_PATHS, RULE_PATH].join(", ")}`)
@@ -72,7 +64,7 @@ export class SkillCommand extends CliCommand {
 	}
 
 	private async install(ctx: CommandContext, deps: SkillDeps, opts: SkillInstallOpts): Promise<number> {
-		const prefix = runner(deps);
+		const prefix = skillCli.runner(deps);
 		if (!prefix) {
 			output.reportError(
 				ctx,
@@ -81,18 +73,21 @@ export class SkillCommand extends CliCommand {
 			);
 			return 1;
 		}
-		const source: Record<Source, string> = { local: localSkillRoot(ctx), github: releaseRepo(ctx.env) };
-		const cmd = [...prefix, ...skillsAddArgs(source[opts.from], opts)];
+		const source: Record<Source, string> = {
+			local: skillCli.localSkillRoot(ctx),
+			github: updateRelease.releaseRepo(ctx.env),
+		};
+		const cmd = [...prefix, ...skillCli.skillsAddArgs(source[opts.from], opts)];
 		if (opts.dryRun) {
 			output.emit(ctx, opts.json === true, { command: cmd }, cmd.join(" "));
 			return 0;
 		}
 		if (opts.from === "local") {
-			stageSkillFolder(ctx);
+			skillCli.stageSkillFolder(ctx);
 		}
 		output.note(ctx, `warden skill: ${cmd.join(" ")}`);
 		return deps.runInteractive(cmd, { stdout: opts.json ? "stderr" : "inherit" });
 	}
 }
 
-export const skillCommand = new SkillCommand(realSkillDeps()).definition();
+export const skillCommand = new SkillCommand(skillCli.realSkillDeps()).definition();

@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "@commander-js/extra-typings";
 import { type LeaseSelector, leaseSelectorRules } from "@delacour/warden-leasing/lease-select";
-import { selectorFrom, withSelectOptions } from "./lease-select";
+import { leaseSelect } from "./lease-select";
 
 function parse(argv: string[]): LeaseSelector {
 	let selector: LeaseSelector | undefined;
-	withSelectOptions(new Command("x").exitOverride().argument("[leaseIds...]"))
+	leaseSelect
+		.withSelectOptions(new Command("x").exitOverride().argument("[leaseIds...]"))
 		.action((ids, opts) => {
-			selector = selectorFrom(ids, opts);
+			selector = leaseSelect.selectorFrom(ids, opts);
 		})
 		.parse(argv, { from: "user" });
 	if (!selector) throw new Error("action not run");

@@ -1,7 +1,7 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
 import type { CommandContext } from "../context";
-import { callDevControl, type DevFeature, type DevFeatures, parseDevFeatures } from "../dev-control";
-import { type DevSessionDeps, findDevSession } from "../dev-session";
+import { type DevFeature, type DevFeatures, devControlOps } from "../dev-control";
+import { type DevSessionDeps, devSession } from "../dev-session";
 import { output } from "../output";
 
 export type DevControlOpts = { udid?: string; json?: boolean };
@@ -36,12 +36,12 @@ export class DevControl {
 		deps: DevSessionDeps = defaultDeps
 	): Promise<number> {
 		const scope = `dev ${verb}`;
-		const parsed = verb === "status" ? undefined : parseDevFeatures(names);
+		const parsed = verb === "status" ? undefined : devControlOps.parseDevFeatures(names);
 		if (parsed !== undefined && !parsed.success) {
 			output.reportError(ctx, scope, parsed.error);
 			return 1;
 		}
-		const session = findDevSession(ctx.env, opts.udid === undefined ? {} : { udid: opts.udid }, deps);
+		const session = devSession.findDevSession(ctx.env, opts.udid === undefined ? {} : { udid: opts.udid }, deps);
 		if (!session.success) {
 			const { message, hint } = session.error;
 			output.reportError(ctx, scope, hint === undefined ? message : `${message} (${hint})`);
@@ -78,7 +78,7 @@ export class DevControl {
 		let state: DevFeatures | undefined;
 		let failed = false;
 		for (const feature of features ?? [undefined]) {
-			const called = await callDevControl(
+			const called = await devControlOps.callDevControl(
 				socket,
 				feature === undefined ? { op: "status" } : { op: "set", feature, on: verb === "enable" }
 			);

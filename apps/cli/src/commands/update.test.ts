@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import type { BuildInfo } from "../update/build-info";
-import { installOrigin, recordInstallOrigin } from "../update/install-origin";
+import { installOriginHelpers } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
-import { makeTgz } from "../update/tar.testing";
+import { tarTesting } from "../update/tar.testing";
 import { UpdateCommand, type UpdateDeps } from "./update";
 
 let ctx: TestContext | undefined;
@@ -97,7 +97,7 @@ type RegistryOpts = { latest?: string; binary?: string; integrity?: string; down
 /** Fake npm registry: `latest` dist-tag, the darwin-arm64 platform version, and its tarball. */
 function registryFetch(opts: RegistryOpts = {}, calls: string[] = []): Fetch {
 	const latest = opts.latest ?? "0.3.0";
-	const tgz = makeTgz([
+	const tgz = tarTesting.makeTgz([
 		{ name: "package/package.json", content: "{}" },
 		{ name: "package/bin/warden", content: opts.binary ?? "NPM-BINARY" },
 	]);
@@ -127,7 +127,7 @@ function ghDownExec(opts: FakeOpts, calls: string[][]): Exec {
 
 function setup(argv: string[], build: BuildInfo, fake: FakeOpts = {}) {
 	const calls: string[][] = [];
-	ctx = testContext(argv);
+	ctx = cliTesting.testContext(argv);
 	ctx.exec = fakeExec(fake, calls);
 	const binDir = join(ctx.cwd, "bin");
 	mkdirSync(binDir, { recursive: true });
@@ -243,7 +243,7 @@ describe("warden update (npm registry)", () => {
 
 	test("a copy installed via npx updates from npm: latest → platform tarball → sha512 → swap in place", async () => {
 		const { c, calls, deps, execPath, fetches } = npmSetup([]);
-		recordInstallOrigin(c.env, execPath, "npm");
+		installOriginHelpers.recordInstallOrigin(c.env, execPath, "npm");
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(0);
 		expect(readFileSync(execPath, "utf8")).toBe("NPM-BINARY");
 		expect(fetches).toEqual([
@@ -257,7 +257,7 @@ describe("warden update (npm registry)", () => {
 
 	test("--check only reports; no tarball download", async () => {
 		const { c, deps, execPath, fetches } = npmSetup(["--check", "--json"]);
-		recordInstallOrigin(c.env, execPath, "npm");
+		installOriginHelpers.recordInstallOrigin(c.env, execPath, "npm");
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n"))).toMatchObject({ status: "available", current: "0.2.0", latest: "0.3.0" });
 		expect(fetches).toEqual([`${REGISTRY}/@delacour/warden/latest`]);
@@ -266,7 +266,7 @@ describe("warden update (npm registry)", () => {
 
 	test("up to date → nothing downloaded; --force reinstalls", async () => {
 		const { c, deps, execPath, fetches } = npmSetup([], release("0.3.0"));
-		recordInstallOrigin(c.env, execPath, "npm");
+		installOriginHelpers.recordInstallOrigin(c.env, execPath, "npm");
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toContain("up to date");
 		expect(fetches).toHaveLength(1);
@@ -285,12 +285,12 @@ describe("warden update (npm registry)", () => {
 		expect(calls[0]?.[0]).toBe("gh");
 		expect(readFileSync(execPath, "utf8")).toBe("NPM-BINARY");
 		expect(c.stderr.join("\n")).toContain("trying npm");
-		expect(installOrigin(c.env, execPath)).toBe("npm");
+		expect(installOriginHelpers.installOrigin(c.env, execPath)).toBe("npm");
 	});
 
 	test("integrity mismatch → exit 1, binary untouched", async () => {
 		const { c, deps, execPath } = npmSetup([], release(), { integrity: "sha512-AAAA" });
-		recordInstallOrigin(c.env, execPath, "npm");
+		installOriginHelpers.recordInstallOrigin(c.env, execPath, "npm");
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("integrity mismatch");
 		expect(readFileSync(execPath, "utf8")).toBe("OLD-BINARY");
@@ -298,7 +298,7 @@ describe("warden update (npm registry)", () => {
 
 	test("new binary fails its self-check → exit 1, binary untouched", async () => {
 		const { c, deps, execPath } = npmSetup([], release(), {}, { reports: "0.2.0" });
-		recordInstallOrigin(c.env, execPath, "npm");
+		installOriginHelpers.recordInstallOrigin(c.env, execPath, "npm");
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(1);
 		expect(readFileSync(execPath, "utf8")).toBe("OLD-BINARY");
 	});
@@ -314,8 +314,8 @@ describe("warden update (npm registry)", () => {
 
 	test("spinners cover the npm lookup, download + integrity and install self-check", async () => {
 		const { c, deps, execPath } = npmSetup([]);
-		recordInstallOrigin(c.env, execPath, "npm");
-		const ui = scriptedUi();
+		installOriginHelpers.recordInstallOrigin(c.env, execPath, "npm");
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(0);
 		expect(ui.events.filter((e) => e.startsWith("spin:") || e.startsWith("ok:"))).toEqual([
@@ -391,7 +391,7 @@ describe("warden update (from source)", () => {
 describe("warden update (ui)", () => {
 	test("spinners cover the release lookup, download + checksum and install self-check", async () => {
 		const { c, deps } = setup([], release());
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(0);
 		expect(ui.events.filter((e) => e.startsWith("spin:") || e.startsWith("ok:"))).toEqual([
@@ -407,7 +407,7 @@ describe("warden update (ui)", () => {
 	test("source build runs under a spinner", async () => {
 		const { c, deps } = setup([], { channel: "local", version: "0.2.0", sourceDir: "/repo" }, { reports: "0.2.1" });
 		deps.readSourceVersion = () => "0.2.1";
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(0);
 		expect(ui.events).toContain("spin: building /repo…");
@@ -416,7 +416,7 @@ describe("warden update (ui)", () => {
 
 	test("failed step → spinner fails, error on stderr", async () => {
 		const { c, deps } = setup([], release(), { checksum: "deadbeef" });
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await new UpdateCommand(deps).definition().run(c)).toBe(1);
 		expect(ui.events).toContain("fail: downloading warden-darwin-arm64 v0.3.0…");

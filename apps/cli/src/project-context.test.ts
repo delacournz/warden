@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { projectContextFor } from "./project-context";
-import { fakeExec, type TestContext, testContext } from "./testing";
+import { projectContextHelpers } from "./project-context";
+import { cliTesting, type TestContext } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -11,7 +11,7 @@ const FACTS = "git rev-parse --show-toplevel --git-common-dir --symbolic-full-na
 
 /** A context whose cwd is a checkout holding `app/` (project `demo`); `calls` records every spawn. */
 function setup(calls: string[][]): { c: TestContext; app: string } {
-	const c = testContext([]);
+	const c = cliTesting.testContext([]);
 	ctx = c;
 	const app = join(c.cwd, "app");
 	mkdirSync(app, { recursive: true });
@@ -19,7 +19,7 @@ function setup(calls: string[][]): { c: TestContext; app: string } {
 		join(c.cwd, "warden.config.json"),
 		JSON.stringify({ projects: [{ name: "demo", root: "app", bundleId: { ios: "com.demo" } }] })
 	);
-	c.exec = fakeExec(
+	c.exec = cliTesting.fakeExec(
 		[
 			[FACTS, { stdout: `${c.cwd}\n${c.cwd}/.git\nrefs/heads/main\n` }],
 			["git config --get remote.origin.url", { stdout: "git@github.com:o/r.git" }],
@@ -34,7 +34,7 @@ describe("projectContextFor", () => {
 		const calls: string[][] = [];
 		const { c } = setup(calls);
 		for (let i = 0; i < 2; i++) {
-			const res = await projectContextFor(c, { start: c.cwd });
+			const res = await projectContextHelpers.projectContextFor(c, { start: c.cwd });
 			if (!res.success) throw new Error(res.error);
 			expect(res.data.projectKey).toBe("github.com/o/r:app");
 		}
@@ -48,16 +48,20 @@ describe("projectContextFor", () => {
 		const facts = { toplevel: c.cwd, commonDir: join(c.cwd, ".git"), branch: "main" };
 		c.git.store(c.cwd, facts);
 		c.git.store(realpathSync(app), facts);
-		const res = await projectContextFor(c, { start: c.cwd });
+		const res = await projectContextHelpers.projectContextFor(c, { start: c.cwd });
 		expect(res.success).toBe(true);
 		expect(calls.map((call) => call.join(" ")).filter((line) => line.startsWith("git rev-parse"))).toEqual([]);
 	});
 
 	test("the caller's options reach projectContext (variant, bundle id)", async () => {
 		const { c } = setup([]);
-		const res = await projectContextFor(c, { start: c.cwd, variant: "dev" });
+		const res = await projectContextHelpers.projectContextFor(c, { start: c.cwd, variant: "dev" });
 		expect(res.success).toBe(false);
-		const optional = await projectContextFor(c, { start: c.cwd, variant: "dev", variantOptional: true });
+		const optional = await projectContextHelpers.projectContextFor(c, {
+			start: c.cwd,
+			variant: "dev",
+			variantOptional: true,
+		});
 		expect(optional.success).toBe(true);
 	});
 });

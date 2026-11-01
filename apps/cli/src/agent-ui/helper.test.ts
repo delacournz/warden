@@ -5,7 +5,7 @@ import type { DriverError } from "@delacour/warden-driver/driver.types";
 import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
 import type { Owner } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import {
 	type ConnectOptions,
 	type HelperDeps,
@@ -103,7 +103,7 @@ function sim(): Sim {
 
 function setup(): { c: TestContext; s: Sim; socketPath: string; host: Parameters<typeof uiHelper.ensureHelper>[0] } {
 	const s = sim();
-	const c = testContext([], { now: () => s.clock.t });
+	const c = cliTesting.testContext([], { now: () => s.clock.t });
 	ctx = c;
 	const socketPath = join(c.cwd, "simd", `${UDID}.sock`);
 	return { c, s, socketPath, host: c };
@@ -1099,7 +1099,7 @@ describe("watchStart (the child's stdout)", () => {
 	}
 
 	function logFile(): string {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
 		return join(c.cwd, "child.log");
 	}

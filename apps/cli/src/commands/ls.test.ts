@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { lsJsonSchema } from "@delacour/warden-sdk/contracts/leases";
 import type { Owner } from "@delacour/warden-store/types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { lsCommand } from "./ls";
 
 let ctx: TestContext | undefined;
@@ -11,7 +11,7 @@ const agent: Owner = { kind: "agent", sessionId: "abc", cwd: "/w", repo: "salien
 
 describe("warden ls", () => {
 	test("table with alive/stale state", async () => {
-		ctx = testContext([], { now: () => 600_000 });
+		ctx = cliTesting.testContext([], { now: () => 600_000 });
 		ctx.db.insertLease(
 			{
 				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
@@ -34,7 +34,7 @@ describe("warden ls", () => {
 	});
 
 	test("a lease on a physical phone is tagged", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		ctx.db.insertLease(
 			{
 				resource: { kind: "device", platform: "android", id: "R5CT", name: "Pixel", physical: { transport: "usb" } },
@@ -48,7 +48,7 @@ describe("warden ls", () => {
 	});
 
 	test("--json", async () => {
-		ctx = testContext(["--json"]);
+		ctx = cliTesting.testContext(["--json"]);
 		ctx.db.insertLease({ resource: { kind: "port", port: 1 }, owner: agent, ttlMs: 60_000 }, ctx.now());
 		expect(await lsCommand.run(ctx)).toBe(0);
 		const out = JSON.parse(ctx.stdout.join("\n"));
@@ -69,7 +69,7 @@ describe("warden ls", () => {
 	}
 
 	test("a plugin lease adds a provider column", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		pluginLease(ctx);
 		expect(await lsCommand.run(ctx)).toBe(0);
 		expect(ctx.stdout.join("\n")).toContain("PROVIDER");
@@ -77,7 +77,7 @@ describe("warden ls", () => {
 	});
 
 	test("a plugin lease keeps its provider in --json", async () => {
-		ctx = testContext(["--json"]);
+		ctx = cliTesting.testContext(["--json"]);
 		pluginLease(ctx);
 		expect(await lsCommand.run(ctx)).toBe(0);
 		const out = lsJsonSchema.parse(JSON.parse(ctx.stdout.join("\n")));
@@ -85,7 +85,7 @@ describe("warden ls", () => {
 	});
 
 	test("empty", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		expect(await lsCommand.run(ctx)).toBe(0);
 		expect(ctx.stdout.join("\n")).toContain("no leases");
 	});

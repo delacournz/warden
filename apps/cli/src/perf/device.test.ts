@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type BootedDevice, PERF_LEASE_LABEL, type PerfDeviceDeps, perfDeviceCli } from "./device";
 
 let ctx: TestContext | undefined;
@@ -10,7 +10,7 @@ afterEach(() => ctx?.cleanup());
 const other: Owner = { kind: "agent", sessionId: "other", cwd: "/" };
 
 function setup(booted: BootedDevice[], apps: Record<string, string> = {}): { c: TestContext; deps: PerfDeviceDeps } {
-	const c = testContext([]);
+	const c = cliTesting.testContext([]);
 	ctx = c;
 	c.env = { ...c.env, ...OWNER_ENV };
 	const deps: PerfDeviceDeps = {

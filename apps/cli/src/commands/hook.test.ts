@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@delacour/warden-store/types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { hookCommand } from "./hook";
 
 let ctx: TestContext | undefined;
@@ -9,7 +9,9 @@ afterEach(() => ctx?.cleanup());
 const other: Owner = { kind: "agent", sessionId: "s2", cwd: "/x" };
 
 function setup(argv: string[], stdin: unknown): TestContext {
-	ctx = testContext(argv, { readStdin: async () => (typeof stdin === "string" ? stdin : JSON.stringify(stdin)) });
+	ctx = cliTesting.testContext(argv, {
+		readStdin: async () => (typeof stdin === "string" ? stdin : JSON.stringify(stdin)),
+	});
 	return ctx;
 }
 

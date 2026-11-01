@@ -1,12 +1,5 @@
-import { HELPER_BINARY, HELPER_TARGET, type HelperInfo, helperFiles, type StagedHelper } from "./helper";
-import {
-	E2E_PACKAGE,
-	NPM_PACKAGE,
-	platformPackageName,
-	RELEASE_TARGETS,
-	type ReleaseTarget,
-	SDK_PACKAGE,
-} from "./platforms";
+import { HELPER_BINARY, HELPER_TARGET, type HelperInfo, npmHelper, type StagedHelper } from "./helper";
+import { E2E_PACKAGE, NPM_PACKAGE, npmPlatforms, RELEASE_TARGETS, type ReleaseTarget, SDK_PACKAGE } from "./platforms";
 
 /**
  * Fields every published package shares, taken from `apps/cli/package.json`. `repository`
@@ -123,135 +116,143 @@ export const BINARY_PATH = `${BIN_DIR}/warden`;
 /** Copied from the repo root into every package. */
 export const LICENSE_FILE = "LICENSE";
 
-function repoLinks(repo: string | undefined): RepoLinks {
-	if (!repo) return {};
-	return {
-		repository: { type: "git", url: `git+https://github.com/${repo}.git` },
-		homepage: `https://github.com/${repo}#readme`,
-		bugs: { url: `https://github.com/${repo}/issues` },
-	};
-}
+export class NpmManifests {
+	private repoLinks(repo: string | undefined): RepoLinks {
+		if (!repo) return {};
+		return {
+			repository: { type: "git", url: `git+https://github.com/${repo}.git` },
+			homepage: `https://github.com/${repo}#readme`,
+			bugs: { url: `https://github.com/${repo}/issues` },
+		};
+	}
 
-/**
- * `@delacour/warden-<os>-<cpu>`: the binary, installable only on its os/cpu. darwin-arm64 with a staged
- * `helper` also ships `warden-simd` + its resources next to the binary (other targets ignore `helper`).
- */
-export function platformManifest(target: ReleaseTarget, meta: PackageMeta, helper?: StagedHelper): PlatformManifest {
-	const [os = "", cpu = ""] = target.split("-");
-	const shipped = target === HELPER_TARGET ? helper : undefined;
-	return {
-		name: platformPackageName(target),
-		version: meta.version,
-		description: `The ${target} binary for ${NPM_PACKAGE}`,
-		license: meta.license,
-		...repoLinks(meta.repository),
-		os: [os],
-		cpu: [cpu],
-		files: [BINARY_PATH, ...(shipped ? helperFiles(BIN_DIR, shipped.frameworks, shipped.inject) : []), LICENSE_FILE],
-		...(shipped
-			? {
-					bin: { [HELPER_BINARY]: `${BIN_DIR}/${HELPER_BINARY}` },
-					warden: { helper: { version: shipped.version, idb: shipped.idb, xcode: shipped.xcode } },
-				}
-			: {}),
-		preferUnplugged: true,
-		publishConfig: { access: "public" },
-	};
-}
+	/**
+	 * `@delacour/warden-<os>-<cpu>`: the binary, installable only on its os/cpu. darwin-arm64 with a staged
+	 * `helper` also ships `warden-simd` + its resources next to the binary (other targets ignore `helper`).
+	 */
+	platformManifest(target: ReleaseTarget, meta: PackageMeta, helper?: StagedHelper): PlatformManifest {
+		const [os = "", cpu = ""] = target.split("-");
+		const shipped = target === HELPER_TARGET ? helper : undefined;
+		return {
+			name: npmPlatforms.platformPackageName(target),
+			version: meta.version,
+			description: `The ${target} binary for ${NPM_PACKAGE}`,
+			license: meta.license,
+			...this.repoLinks(meta.repository),
+			os: [os],
+			cpu: [cpu],
+			files: [
+				BINARY_PATH,
+				...(shipped ? npmHelper.helperFiles(BIN_DIR, shipped.frameworks, shipped.inject) : []),
+				LICENSE_FILE,
+			],
+			...(shipped
+				? {
+						bin: { [HELPER_BINARY]: `${BIN_DIR}/${HELPER_BINARY}` },
+						warden: { helper: { version: shipped.version, idb: shipped.idb, xcode: shipped.xcode } },
+					}
+				: {}),
+			preferUnplugged: true,
+			publishConfig: { access: "public" },
+		};
+	}
 
-/**
- * `@delacour/warden`: a JS shim bin, the `./config` entry (`defineConfig` + types) and every platform
- * package as an exact-version optional dependency. The package manager installs only the one matching this machine's os/cpu.
- */
-export function mainManifest(meta: PackageMeta): MainManifest {
-	return {
-		name: NPM_PACKAGE,
-		version: meta.version,
-		description: meta.description,
-		license: meta.license,
-		...repoLinks(meta.repository),
-		keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "e2e", "cli"],
-		bin: { warden: SHIM_PATH },
-		exports: {
-			"./config": { types: `./${CONFIG_ENTRY_DTS}`, default: `./${CONFIG_ENTRY_JS}` },
-			"./package.json": "./package.json",
-		},
-		files: [SHIM_PATH, CONFIG_ENTRY_JS, CONFIG_ENTRY_DTS, "README.md", LICENSE_FILE],
-		engines: { node: ">=18" },
-		optionalDependencies: Object.fromEntries(
-			RELEASE_TARGETS.map((target) => [platformPackageName(target), meta.version])
-		),
-		publishConfig: { access: "public" },
-	};
-}
-
-/**
- * `@delacour/warden-e2e`: the spec API (`import { test, expect } from "@delacour/warden-e2e"`) and the
- * `bun test --preload @delacour/warden-e2e/preload` entry. Public surface is `.` and `./preload` only: the
- * workspace-private `driver/*`, `env`, `runner/results` etc. are bundled in, and `apps/cli` (compiled separately)
- * imports them from the workspace. `zod` is the one third-party runtime import and stays a dependency;
- * `@delacour/warden` is a peer at the exact same version (lock-step).
- */
-export function e2eManifest(meta: PackageMeta, dependencies: Record<string, string>): E2eManifest {
-	return {
-		name: E2E_PACKAGE,
-		version: meta.version,
-		description: "TypeScript spec API for `warden e2e`: test, expect, screen, device, app",
-		license: meta.license,
-		...repoLinks(meta.repository),
-		type: "module",
-		keywords: ["e2e", "ios-simulator", "android-emulator", "bun", "testing"],
-		exports: {
-			...Object.fromEntries(
-				Object.entries(E2E_ENTRIES).map(([key, entry]) => [
-					key,
-					{ types: `./${entry.types}`, default: `./${entry.js}` },
-				])
+	/**
+	 * `@delacour/warden`: a JS shim bin, the `./config` entry (`defineConfig` + types) and every platform
+	 * package as an exact-version optional dependency. The package manager installs only the one matching this machine's os/cpu.
+	 */
+	mainManifest(meta: PackageMeta): MainManifest {
+		return {
+			name: NPM_PACKAGE,
+			version: meta.version,
+			description: meta.description,
+			license: meta.license,
+			...this.repoLinks(meta.repository),
+			keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "e2e", "cli"],
+			bin: { warden: SHIM_PATH },
+			exports: {
+				"./config": { types: `./${CONFIG_ENTRY_DTS}`, default: `./${CONFIG_ENTRY_JS}` },
+				"./package.json": "./package.json",
+			},
+			files: [SHIM_PATH, CONFIG_ENTRY_JS, CONFIG_ENTRY_DTS, "README.md", LICENSE_FILE],
+			engines: { node: ">=18" },
+			optionalDependencies: Object.fromEntries(
+				RELEASE_TARGETS.map((target) => [npmPlatforms.platformPackageName(target), meta.version])
 			),
-			"./package.json": "./package.json",
-		},
-		files: ["*.mjs", "*.d.ts", E2E_TYPES_DIR, LICENSE_FILE],
-		peerDependencies: { [NPM_PACKAGE]: meta.version },
-		dependencies,
-		engines: { bun: ">=1.3" },
-		publishConfig: { access: "public" },
-	};
+			publishConfig: { access: "public" },
+		};
+	}
+
+	/**
+	 * `@delacour/warden-e2e`: the spec API (`import { test, expect } from "@delacour/warden-e2e"`) and the
+	 * `bun test --preload @delacour/warden-e2e/preload` entry. Public surface is `.` and `./preload` only: the
+	 * workspace-private `driver/*`, `env`, `runner/results` etc. are bundled in, and `apps/cli` (compiled separately)
+	 * imports them from the workspace. `zod` is the one third-party runtime import and stays a dependency;
+	 * `@delacour/warden` is a peer at the exact same version (lock-step).
+	 */
+	e2eManifest(meta: PackageMeta, dependencies: Record<string, string>): E2eManifest {
+		return {
+			name: E2E_PACKAGE,
+			version: meta.version,
+			description: "TypeScript spec API for `warden e2e`: test, expect, screen, device, app",
+			license: meta.license,
+			...this.repoLinks(meta.repository),
+			type: "module",
+			keywords: ["e2e", "ios-simulator", "android-emulator", "bun", "testing"],
+			exports: {
+				...Object.fromEntries(
+					Object.entries(E2E_ENTRIES).map(([key, entry]) => [
+						key,
+						{ types: `./${entry.types}`, default: `./${entry.js}` },
+					])
+				),
+				"./package.json": "./package.json",
+			},
+			files: ["*.mjs", "*.d.ts", E2E_TYPES_DIR, LICENSE_FILE],
+			peerDependencies: { [NPM_PACKAGE]: meta.version },
+			dependencies,
+			engines: { bun: ">=1.3" },
+			publishConfig: { access: "public" },
+		};
+	}
+
+	/**
+	 * `@delacour/warden-sdk`: `createWardenClient` (`.`), the Vercel AI SDK tools (`./ai-sdk`), provider plugins
+	 * (`./plugins`) and the zod `--json` contracts (`./contracts`), bundled from `packages/sdk`: the workspace-private
+	 * packages are inlined, `zod` stays a dependency and `ai` an optional peer. `optionalDependencies` pin every platform
+	 * package at the exact version so the iOS helper (`warden-simd`, shipped by `@delacour/warden-darwin-arm64`) resolves
+	 * from the SDK's own install location. Bun only (`bun:sqlite`, `Bun.spawn`), like `@delacour/warden-e2e`.
+	 */
+	sdkManifest(meta: PackageMeta, dependencies: Record<string, string>, aiRange: string): SdkManifest {
+		return {
+			name: SDK_PACKAGE,
+			version: meta.version,
+			description:
+				"TypeScript SDK for warden: lease iOS simulators and Android emulators and drive apps from code or an AI agent",
+			license: meta.license,
+			...this.repoLinks(meta.repository),
+			type: "module",
+			keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "ai-sdk", "bun", "sdk"],
+			exports: {
+				...Object.fromEntries(
+					Object.entries(SDK_ENTRIES).map(([key, entry]) => [
+						key,
+						{ types: `./${entry.types}`, default: `./${entry.js}` },
+					])
+				),
+				"./package.json": "./package.json",
+			},
+			files: ["*.mjs", "*.d.ts", "ai-sdk", "plugins", "contracts", SDK_TYPES_DIR, LICENSE_FILE],
+			dependencies,
+			peerDependencies: { ai: aiRange },
+			peerDependenciesMeta: { ai: { optional: true } },
+			optionalDependencies: Object.fromEntries(
+				RELEASE_TARGETS.map((target) => [npmPlatforms.platformPackageName(target), meta.version])
+			),
+			engines: { bun: ">=1.3" },
+			publishConfig: { access: "public" },
+		};
+	}
 }
 
-/**
- * `@delacour/warden-sdk`: `createWardenClient` (`.`), the Vercel AI SDK tools (`./ai-sdk`), provider plugins
- * (`./plugins`) and the zod `--json` contracts (`./contracts`), bundled from `packages/sdk`: the workspace-private
- * packages are inlined, `zod` stays a dependency and `ai` an optional peer. `optionalDependencies` pin every platform
- * package at the exact version so the iOS helper (`warden-simd`, shipped by `@delacour/warden-darwin-arm64`) resolves
- * from the SDK's own install location. Bun only (`bun:sqlite`, `Bun.spawn`), like `@delacour/warden-e2e`.
- */
-export function sdkManifest(meta: PackageMeta, dependencies: Record<string, string>, aiRange: string): SdkManifest {
-	return {
-		name: SDK_PACKAGE,
-		version: meta.version,
-		description:
-			"TypeScript SDK for warden: lease iOS simulators and Android emulators and drive apps from code or an AI agent",
-		license: meta.license,
-		...repoLinks(meta.repository),
-		type: "module",
-		keywords: ["ios-simulator", "android-emulator", "leasing", "agents", "ai-sdk", "bun", "sdk"],
-		exports: {
-			...Object.fromEntries(
-				Object.entries(SDK_ENTRIES).map(([key, entry]) => [
-					key,
-					{ types: `./${entry.types}`, default: `./${entry.js}` },
-				])
-			),
-			"./package.json": "./package.json",
-		},
-		files: ["*.mjs", "*.d.ts", "ai-sdk", "plugins", "contracts", SDK_TYPES_DIR, LICENSE_FILE],
-		dependencies,
-		peerDependencies: { ai: aiRange },
-		peerDependenciesMeta: { ai: { optional: true } },
-		optionalDependencies: Object.fromEntries(
-			RELEASE_TARGETS.map((target) => [platformPackageName(target), meta.version])
-		),
-		engines: { bun: ">=1.3" },
-		publishConfig: { access: "public" },
-	};
-}
+export const npmManifests = new NpmManifests();

@@ -8,17 +8,17 @@ import { MIGRATIONS } from "@delacour/warden-store/store";
 import { Chalk } from "chalk";
 import { hookClaudeSettings } from "../hooks/claude-settings";
 import { hookCodexHooks } from "../hooks/codex-hooks";
-import { fakeHelperDist } from "../npm/helper.testing";
-import { packHelper } from "../npm/helper-asset";
+import { helperTesting } from "../npm/helper.testing";
+import { helperAsset } from "../npm/helper-asset";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "../skill";
-import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type DoctorCheck, DoctorCommand, doctor, doctorCommand } from "./doctor";
 import type { HelperDeps } from "./doctor-helper";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-const ALL_TOOLS = fakeExec([
+const ALL_TOOLS = cliTesting.fakeExec([
 	["xcrun simctl help", {}],
 	["adb version", { stdout: "Android Debug Bridge version 1.0.41" }],
 	["emulator -version", { stdout: "Android emulator version 35.1" }],
@@ -26,7 +26,7 @@ const ALL_TOOLS = fakeExec([
 ]);
 
 function setup(argv: string[], exec = ALL_TOOLS): TestContext {
-	ctx = testContext(argv, { exec });
+	ctx = cliTesting.testContext(argv, { exec });
 	ctx.env = { ...ctx.env, PATH: "/usr/bin" };
 	return ctx;
 }
@@ -156,7 +156,7 @@ describe("warden doctor", () => {
 	});
 
 	test("ccache: missing → warn; Podfile.properties checks", async () => {
-		const c = setup(["--json"], fakeExec([]));
+		const c = setup(["--json"], cliTesting.fakeExec([]));
 		await doctorCommand.run(c);
 		expect(byName(c).ccache?.status).toBe("warn");
 		expect(byName(c).ccache?.detail).toContain("brew install ccache");
@@ -180,7 +180,7 @@ describe("warden doctor", () => {
 	});
 
 	test("missing device tools only warn", async () => {
-		const c = setup(["--json"], fakeExec([]));
+		const c = setup(["--json"], cliTesting.fakeExec([]));
 		expect(await doctorCommand.run(c)).toBe(0);
 		const r = byName(c);
 		expect(r.simctl?.status).toBe("warn");
@@ -189,7 +189,7 @@ describe("warden doctor", () => {
 
 	test("android tools resolve via ANDROID_HOME", async () => {
 		const calls: string[][] = [];
-		const c = setup(["--json"], fakeExec([["", {}]], calls));
+		const c = setup(["--json"], cliTesting.fakeExec([["", {}]], calls));
 		c.env = { ...c.env, ANDROID_HOME: "/sdk" };
 		await doctorCommand.run(c);
 		expect(calls.map((x) => x[0])).toContain("/sdk/platform-tools/adb");
@@ -226,7 +226,7 @@ describe("warden doctor", () => {
 
 	test("colour: ✓ green, ! yellow, ✗ red; --json stays plain", async () => {
 		const c = setup([]);
-		c.ui = { ...scriptedUi(), color: new Chalk({ level: 1 }) };
+		c.ui = { ...cliTesting.scriptedUi(), color: new Chalk({ level: 1 }) };
 		const file = join(c.cwd, "not-a-dir");
 		writeFileSync(file, "");
 		c.env = { ...c.env, WARDEN_HOME: join(file, "sub") };
@@ -237,7 +237,7 @@ describe("warden doctor", () => {
 		expect(out).toContain("\u001b[31m✗\u001b[39m home");
 		c.cleanup();
 		const d = setup(["--json"]);
-		d.ui = { ...scriptedUi(), color: new Chalk({ level: 1 }) };
+		d.ui = { ...cliTesting.scriptedUi(), color: new Chalk({ level: 1 }) };
 		await doctorCommand.run(d);
 		expect(d.stdout.join("\n")).not.toContain("\u001b[");
 	});
@@ -334,8 +334,8 @@ describe("warden doctor --fetch-helper", () => {
 		const dist = join(tmpdir(), `warden-doctor-dist-${process.pid}`);
 		const out = join(tmpdir(), `warden-doctor-out-${process.pid}`);
 		try {
-			fakeHelperDist(dist);
-			const packed = await packHelper({ distDir: dist, outDir: out, exec: processExec.run });
+			helperTesting.fakeHelperDist(dist);
+			const packed = await helperAsset.packHelper({ distDir: dist, outDir: out, exec: processExec.run });
 			if (!packed.success) throw new Error(packed.error);
 			const bytes = readFileSync(packed.data.tgz);
 			const sums = `${packed.data.sha256}  warden-simd-darwin-arm64.tgz\n`;

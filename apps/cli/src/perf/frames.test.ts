@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { FRAMES_FILE, perfFramesOps } from "@delacour/warden-sdk/ops/perf/frames";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfFramesCli } from "./frames";
 import { perfTestingCli } from "./testing";
 
@@ -23,7 +23,7 @@ const RESET = "adb -s emulator-5554 shell dumpsys gfxinfo com.example.app reset"
 function setup(device: typeof sim | typeof emu, handlers: Array<[string, { stdout?: string; exitCode?: number }]>) {
 	const calls: string[][] = [];
 	const clock = { now: T0 };
-	const c = testContext([], { exec: fakeExec(handlers, calls), now: () => clock.now });
+	const c = cliTesting.testContext([], { exec: cliTesting.fakeExec(handlers, calls), now: () => clock.now });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	c.db.recordDevice({ platform: device.platform, id: device.id, name: device.name }, T0);

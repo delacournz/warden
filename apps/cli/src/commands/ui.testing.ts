@@ -12,7 +12,7 @@ import type { PidAlive } from "@delacour/warden-store/liveness";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { UiCommand } from "./ui";
 
 /** Test harness shared by the `warden ui` command tests: a leased device, fake driver, fake clock. */
@@ -115,7 +115,7 @@ export class UiTesting {
 			...(options.ensureApp ? { ensureApp: options.ensureApp } : {}),
 			...(options.conditions ? { conditions: options.conditions } : {}),
 		};
-		const c = testContext([], { now: () => clock.t });
+		const c = cliTesting.testContext([], { now: () => clock.t });
 		live.push(c);
 		c.env = { ...c.env, ...OWNER_ENV };
 		c.db.insertLease(

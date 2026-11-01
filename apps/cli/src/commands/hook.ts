@@ -1,6 +1,6 @@
 import { ReleasedDeviceShutdown } from "@delacour/warden-leasing/device-shutdown";
 import { liveness } from "@delacour/warden-store/liveness";
-import { backgroundAllowed, selfCommand, spawnDetached } from "../autogc";
+import { autoGc } from "../autogc";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { type HookDeps, type HookResult, hookClaudePretool } from "../hooks/claude-pretool";
@@ -32,8 +32,8 @@ export class HookCommand extends CliCommand {
 			shutdown: (leases, owner) =>
 				new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(ctx)).run(leases, owner),
 			endInBackground: (sessionId) => {
-				if (!backgroundAllowed(ctx.env)) return false;
-				spawnDetached([...selfCommand(), "release", "--session", sessionId, "--shutdown"], {
+				if (!autoGc.backgroundAllowed(ctx.env)) return false;
+				autoGc.spawnDetached([...autoGc.selfCommand(), "release", "--session", sessionId, "--shutdown"], {
 					...process.env,
 					...ctx.env,
 				});

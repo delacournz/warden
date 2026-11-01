@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { heartbeatCommand } from "./heartbeat";
 
 let ctx: TestContext | undefined;
@@ -13,7 +13,7 @@ const other: Owner = { kind: "agent", sessionId: "other", cwd: "/" };
 describe("warden heartbeat", () => {
 	test("by id, --mine, --session", async () => {
 		let clock = 1_000;
-		ctx = testContext([], { now: () => clock });
+		ctx = cliTesting.testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, ...OWNER_ENV };
 		const a = ctx.db.insertLease({ resource: { kind: "port", port: 1 }, owner: me, ttlMs: 10 }, 0);
 		const b = ctx.db.insertLease({ resource: { kind: "port", port: 2 }, owner: other, ttlMs: 10 }, 0);
@@ -35,7 +35,7 @@ describe("warden heartbeat", () => {
 	});
 
 	test("--udid selects device leases", async () => {
-		ctx = testContext([], { now: () => 5_000 });
+		ctx = cliTesting.testContext([], { now: () => 5_000 });
 		const a = ctx.db.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: "U1", name: "u1" }, owner: me, ttlMs: 10 },
 			0
@@ -46,7 +46,7 @@ describe("warden heartbeat", () => {
 	});
 
 	test("unknown id / nothing selected → exit 1", async () => {
-		ctx = testContext(["l_gone"]);
+		ctx = cliTesting.testContext(["l_gone"]);
 		expect(await heartbeatCommand.run(ctx)).toBe(1);
 		expect(ctx.stderr.join("\n")).toContain("no lease for l_gone");
 		ctx.argv = [];

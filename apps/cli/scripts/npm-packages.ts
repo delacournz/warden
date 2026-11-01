@@ -22,21 +22,13 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync }
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import cliPackage from "../package.json" with { type: "json" };
-import { buildConfigEntry } from "../src/npm/config-entry";
-import { stageE2e } from "../src/npm/e2e-stage";
+import { npmConfigEntry } from "../src/npm/config-entry";
+import { e2eStage } from "../src/npm/e2e-stage";
 import { HELPER_TARGET, type StagedHelper } from "../src/npm/helper";
-import { stageHelper } from "../src/npm/helper-stage";
-import {
-	BIN_DIR,
-	BINARY_PATH,
-	LICENSE_FILE,
-	mainManifest,
-	type PackageMeta,
-	platformManifest,
-	SHIM_PATH,
-} from "../src/npm/manifests";
+import { helperStage } from "../src/npm/helper-stage";
+import { BIN_DIR, BINARY_PATH, LICENSE_FILE, npmManifests, type PackageMeta, SHIM_PATH } from "../src/npm/manifests";
 import { RELEASE_TARGETS } from "../src/npm/platforms";
-import { stageSdk } from "../src/npm/sdk-stage";
+import { sdkStage } from "../src/npm/sdk-stage";
 import { DEFAULT_RELEASE_REPO } from "../src/update/release";
 
 const cliRoot = resolve(import.meta.dir, "..");
@@ -67,7 +59,7 @@ function writeJson(path: string, value: unknown): void {
 }
 
 if (values["sdk-only"]) {
-	const only = await stageSdk({ repoRoot, outDir: join(out, "warden-sdk"), meta });
+	const only = await sdkStage.stageSdk({ repoRoot, outDir: join(out, "warden-sdk"), meta });
 	if (!only.success) throw new Error(only.error);
 	console.log(`staged ${join(out, "warden-sdk")}`);
 	process.exit(0);
@@ -83,11 +75,15 @@ for (const target of RELEASE_TARGETS) {
 	const dir = join(out, `warden-${target}`);
 	let helper: StagedHelper | undefined;
 	if (target === HELPER_TARGET) {
-		const staged = stageHelper({ distDir: helperDist, binDir: join(dir, BIN_DIR), required: values["require-helper"] });
+		const staged = helperStage.stageHelper({
+			distDir: helperDist,
+			binDir: join(dir, BIN_DIR),
+			required: values["require-helper"],
+		});
 		if (!staged.success) throw new Error(staged.error);
 		helper = staged.data;
 	}
-	writeJson(join(dir, "package.json"), platformManifest(target, meta, helper));
+	writeJson(join(dir, "package.json"), npmManifests.platformManifest(target, meta, helper));
 	const binary = join(dir, BINARY_PATH);
 	mkdirSync(dirname(binary), { recursive: true });
 	copyFileSync(join(dist, `warden-${target}`), binary);
@@ -97,7 +93,7 @@ for (const target of RELEASE_TARGETS) {
 }
 
 const main = join(out, "warden");
-writeJson(join(main, "package.json"), mainManifest(meta));
+writeJson(join(main, "package.json"), npmManifests.mainManifest(meta));
 const shim = await Bun.build({
 	entrypoints: [join(cliRoot, "src", "npm", "shim-main.ts")],
 	target: "node",
@@ -110,17 +106,17 @@ const shimPath = join(main, SHIM_PATH);
 mkdirSync(dirname(shimPath), { recursive: true });
 writeFileSync(shimPath, code.startsWith("#!") ? code : `#!/usr/bin/env node\n${code}`);
 chmodSync(shimPath, 0o755);
-const configEntry = await buildConfigEntry(main);
+const configEntry = await npmConfigEntry.buildConfigEntry(main);
 if (!configEntry.success) throw new Error(configEntry.error);
 copyFileSync(join(repoRoot, "README.md"), join(main, "README.md"));
 copyFileSync(join(repoRoot, LICENSE_FILE), join(main, LICENSE_FILE));
 console.log("staged dist/npm/warden");
 
-const e2e = await stageE2e({ repoRoot, outDir: join(out, "warden-e2e"), meta });
+const e2e = await e2eStage.stageE2e({ repoRoot, outDir: join(out, "warden-e2e"), meta });
 if (!e2e.success) throw new Error(e2e.error);
 console.log("staged dist/npm/warden-e2e");
 
-const sdk = await stageSdk({ repoRoot, outDir: join(out, "warden-sdk"), meta });
+const sdk = await sdkStage.stageSdk({ repoRoot, outDir: join(out, "warden-sdk"), meta });
 if (!sdk.success) throw new Error(sdk.error);
 console.log("staged dist/npm/warden-sdk");
 

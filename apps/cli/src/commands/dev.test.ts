@@ -6,14 +6,14 @@ import type { EnsureOptions } from "@delacour/warden-builds/prepare";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { devJsonSchema } from "@delacour/warden-sdk/contracts/dev";
 import { resultFactory } from "@delacour/warden-types/result";
-import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
-import { main } from "../cli";
+import { autogcTesting } from "../autogc.testing";
+import { cliEntry } from "../cli";
 import type { CommandContext } from "../context";
 import type { Broker } from "../dev-broker/broker";
-import { callDevControl } from "../dev-control";
-import { listDevSessions } from "../dev-session";
+import { devControlOps } from "../dev-control";
+import { devSession } from "../dev-session";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type ScriptedUi, type TestContext } from "../testing";
 import { DevCommand, type DevDeps, type DevSpawnOutput, type DevUiOpts, defaultDevDeps, dev } from "./dev";
 import type { DevMetroMode, DevReady, DevUi, MetroTerminal } from "./dev-ui";
 import { devUiPlain } from "./dev-ui.plain";
@@ -66,7 +66,7 @@ function setup(
 	extra: Array<[string, { stdout?: string; stderr?: string; exitCode?: number }]> = [],
 	state: "Booted" | "Shutdown" = "Booted"
 ): TestContext {
-	ctx = testContext(argv, {
+	ctx = cliTesting.testContext(argv, {
 		exec: simctlFakes.build([simctlFakes.wardenSim(1, state)], calls, [
 			["git rev-parse --show-toplevel", { stdout: "" }],
 			["git config --get remote.origin.url", { stdout: "git@github.com:o/r.git" }],
@@ -109,7 +109,7 @@ describe("warden dev: showing the simulator", () => {
 	test("the leased sim's window is brought to the front once it is held, before the dev client opens", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls, hubRunning);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		const h = harness();
 		const running = new DevCommand(h.deps).definition().run(c);
@@ -664,14 +664,14 @@ describe("warden dev auto-gc (16-1)", () => {
 	test("auto-gc is considered only after the device has been claimed", async () => {
 		const calls: string[][] = [];
 		const c = setup(["ios"], calls);
-		const order = autoGcOrder(c.exec, () => c.db);
+		const order = autogcTesting.autoGcOrder(c.exec, () => c.db);
 		c.exec = order.exec;
-		c.env = allowAutoGc(c.env);
+		c.env = autogcTesting.allowAutoGc(c.env);
 		const h = harness();
 		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		expect(order.gcBeforeClaim()).toBe(false);
-		expect(autoGcConsidered(c.db)).toBe(true);
+		expect(autogcTesting.autoGcConsidered(c.db)).toBe(true);
 		h.finish(0);
 		expect(await running).toBe(0);
 	});
@@ -940,7 +940,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		h.deps.selectUi = () => fake.ui;
 		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => readies.length > 0);
-		const live = listDevSessions(c.env, { isAlive: () => true });
+		const live = devSession.listDevSessions(c.env, { isAlive: () => true });
 		expect(live.success && live.data).toHaveLength(1);
 		expect(live.success && live.data[0]).toMatchObject({
 			platform: "ios",
@@ -952,7 +952,7 @@ describe("warden dev: a ui that runs Metro in a PTY", () => {
 		});
 		h.finish(0);
 		await running;
-		expect(listDevSessions(c.env, { isAlive: () => true })).toEqual({ success: true, data: [] });
+		expect(devSession.listDevSessions(c.env, { isAlive: () => true })).toEqual({ success: true, data: [] });
 	});
 
 	test("every row gets a real outcome: claim, show, app, metro and client end ok, then ready", async () => {
@@ -1247,7 +1247,7 @@ describe("warden dev: opt-in extras", () => {
 		const running = new DevCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0 && calls.some((cmd) => cmd.includes("launch")));
 		const socket = (): string | undefined => {
-			const listed = listDevSessions(c.env, { isAlive: () => true });
+			const listed = devSession.listDevSessions(c.env, { isAlive: () => true });
 			return listed.success ? listed.data[0]?.controlSocket : undefined;
 		};
 		for (let i = 0; i < 500 && socket() === undefined; i++) await Bun.sleep(2);
@@ -1272,11 +1272,11 @@ describe("warden dev: opt-in extras", () => {
 	test("the control socket turns devtools on and off while the session runs", async () => {
 		const { code, brokers } = await runWith(["ios"], async (socket) => {
 			expect(socket).toBeDefined();
-			const on = await callDevControl(socket ?? "", { op: "set", feature: "devtools", on: true });
+			const on = await devControlOps.callDevControl(socket ?? "", { op: "set", feature: "devtools", on: true });
 			expect(on).toEqual(resultFactory.ok({ ok: true, features: { hud: false, devtools: true } }));
-			const off = await callDevControl(socket ?? "", { op: "set", feature: "devtools", on: false });
+			const off = await devControlOps.callDevControl(socket ?? "", { op: "set", feature: "devtools", on: false });
 			expect(off).toEqual(resultFactory.ok({ ok: true, features: { hud: false, devtools: false } }));
-			const hud = await callDevControl(socket ?? "", { op: "set", feature: "hud", on: true });
+			const hud = await devControlOps.callDevControl(socket ?? "", { op: "set", feature: "hud", on: true });
 			expect(hud.success && hud.data.ok).toBe(false);
 		});
 		expect(code).toBe(0);
@@ -1291,7 +1291,7 @@ describe("selectDevUi", () => {
 		const created: CommandContext[] = [];
 		const huds: Array<DevUiOpts["hud"]> = [];
 		const fake: DevUi = {
-			ctx: testContext([]),
+			ctx: cliTesting.testContext([]),
 			task: () => ({ ok: () => {}, fail: () => {}, log: () => {} }),
 			metro: { kind: "inherit" },
 			ready: () => {},
@@ -1313,8 +1313,8 @@ describe("selectDevUi", () => {
 	const HUD = { enabled: true, intervalMs: 1000 };
 	const opts = (o: Partial<DevUiOpts> = {}): DevUiOpts => ({ hud: HUD, ...o });
 
-	function context(env: Record<string, string> = {}, ui = scriptedUi({ interactive: true, rich: true })) {
-		ctx = testContext([], { ui, env: { ...testContext([]).env, ...env } });
+	function context(env: Record<string, string> = {}, ui = cliTesting.scriptedUi({ interactive: true, rich: true })) {
+		ctx = cliTesting.testContext([], { ui, env: { ...cliTesting.testContext([]).env, ...env } });
 		return ctx;
 	}
 
@@ -1337,8 +1337,8 @@ describe("selectDevUi", () => {
 			["--json", context(), opts({ json: true })],
 			["--no-tui", context(), opts({ tui: false })],
 			["WARDEN_TUI=0", context({ WARDEN_TUI: "0" }), opts()],
-			["not interactive", context({}, scriptedUi({ interactive: false, rich: true })), opts()],
-			["not rich", context({}, scriptedUi({ interactive: true, rich: false })), opts()],
+			["not interactive", context({}, cliTesting.scriptedUi({ interactive: false, rich: true })), opts()],
+			["not rich", context({}, cliTesting.scriptedUi({ interactive: true, rich: false })), opts()],
 		];
 		for (const [name, c, opts] of cases) {
 			let loaded = false;
@@ -1353,14 +1353,14 @@ describe("selectDevUi", () => {
 
 	test("WARDEN_TUI=1 does not switch the dashboard on for a pipe", async () => {
 		const l = loader();
-		const ui = await dev.selectDevUi(context({ WARDEN_TUI: "1" }, scriptedUi()), opts(), l.load);
+		const ui = await dev.selectDevUi(context({ WARDEN_TUI: "1" }, cliTesting.scriptedUi()), opts(), l.load);
 		expect(ui.metro.kind).toBe("inherit");
 	});
 
 	test("--no-tui is documented in dev's help", async () => {
 		let run: TestContext | undefined;
-		const code = await main(["dev", "--help"], (rest) => {
-			run = testContext(rest);
+		const code = await cliEntry.main(["dev", "--help"], (rest) => {
+			run = cliTesting.testContext(rest);
 			return run;
 		});
 		const text = (run?.stdout ?? []).join("\n");
@@ -1468,7 +1468,7 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 
 		const asked = setup(["ios"], calls);
 		asked.cwd = root;
-		asked.ui = scriptedUi({ interactive: true, select: [join(root, "apps", "admin")] });
+		asked.ui = cliTesting.scriptedUi({ interactive: true, select: [join(root, "apps", "admin")] });
 		const readies2: DevReady[] = [];
 		const h2 = harness();
 		h2.deps.selectUi = () => ({ ...devUiPlain.plainDevUi(asked), ready: (info) => void readies2.push(info) });
@@ -1527,7 +1527,7 @@ describe("warden dev: what is checked before the dashboard opens", () => {
 			JSON.stringify({ expo: { slug: "demo", ios: { bundleIdentifier: "com.demo" } } })
 		);
 		writeFileSync(join(app2, "yarn.lock"), "");
-		asked.ui = scriptedUi({ interactive: true, confirm: [true] });
+		asked.ui = cliTesting.scriptedUi({ interactive: true, confirm: [true] });
 		// the fake installer "adds" the package the way the real one would
 		const exec = asked.exec;
 		asked.exec = async (cmd, opts) => {

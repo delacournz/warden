@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { appRelauncher, type RelaunchIo } from "@delacour/warden-sdk/ops/perf/relaunch";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -16,7 +16,7 @@ type Rule = [needle: string, result: Partial<ExecResult>];
 /** exec that answers the first rule whose needle appears in the joined command; every call is recorded. */
 function setup(rules: Rule[]): { c: TestContext; calls: string[] } {
 	const calls: string[] = [];
-	ctx = testContext([], {
+	ctx = cliTesting.testContext([], {
 		exec: async (cmd) => {
 			const line = cmd.join(" ");
 			calls.push(line);

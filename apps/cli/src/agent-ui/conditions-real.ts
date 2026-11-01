@@ -13,7 +13,7 @@ import { processCommand } from "@delacour/warden-store/process-identity";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { NETPROXY_SUBCOMMAND } from "../e2e/bun-runner";
-import { compiledSubcommand } from "../self-command";
+import { selfCommandHelpers } from "../self-command";
 import type { ConditionsDeps, ConditionsPort } from "./conditions-types";
 import type { UiDevice } from "./device";
 import { opErrors } from "./driver";
@@ -25,13 +25,13 @@ type Spawn = Parameters<typeof routeTickerSpawner.via>[2];
 
 export class UiConditionsReal {
 	proxyDeps(ctx: CommandContext) {
-		const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
+		const command = selfCommandHelpers.compiledSubcommand(NETPROXY_SUBCOMMAND);
 		return { store: ctx.store(), env: ctx.env, now: ctx.now, ...(command ? { command } : {}) };
 	}
 
 	/** What a `warden ui` driver gets for the caller's lease: its shaping proxy (touched only when a condition needs it) and the clock recorder. */
 	leaseDriverExtras(ctx: CommandContext, device: UiDevice) {
-		const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
+		const command = selfCommandHelpers.compiledSubcommand(NETPROXY_SUBCOMMAND);
 		return {
 			networkProxy: new LazyLeaseNetworkProxy({
 				leaseId: device.lease.id,
@@ -107,11 +107,11 @@ export class UiConditionsReal {
 	conditionSpawners(main: string = Bun.main, execPath: string = process.execPath, spawn?: Spawn) {
 		return {
 			spawnScheduler: (config: Parameters<typeof schedulerSpawner.detached>[0]) => {
-				const via = compiledSubcommand("__scheduler", main, execPath);
+				const via = selfCommandHelpers.compiledSubcommand("__scheduler", main, execPath);
 				return via ? schedulerSpawner.via(config, via, spawn) : schedulerSpawner.detached(config, spawn);
 			},
 			spawnTicker: (config: Parameters<typeof routeTickerSpawner.detached>[0]) => {
-				const via = compiledSubcommand("__route-ticker", main, execPath);
+				const via = selfCommandHelpers.compiledSubcommand("__route-ticker", main, execPath);
 				return via ? routeTickerSpawner.via(config, via, spawn) : routeTickerSpawner.detached(config, spawn);
 			},
 		};

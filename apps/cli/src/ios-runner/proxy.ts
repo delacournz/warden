@@ -28,95 +28,99 @@ export type ProxyOptions = {
 	log?: (line: string) => void;
 };
 
-/** Copy `from` to `to`, pausing `from` while `to` is full. */
-function forward(from: net.Socket, to: net.Socket, touch: () => void): void {
-	from.on("data", (chunk: Buffer) => {
-		touch();
-		if (!to.write(chunk)) {
-			from.pause();
-			to.once("drain", () => from.resume());
-		}
-	});
-	from.on("end", () => to.end());
-}
+export class RunnerProxyService {
+	/** Copy `from` to `to`, pausing `from` while `to` is full. */
+	private forward(from: net.Socket, to: net.Socket, touch: () => void): void {
+		from.on("data", (chunk: Buffer) => {
+			touch();
+			if (!to.write(chunk)) {
+				from.pause();
+				to.once("drain", () => from.resume());
+			}
+		});
+		from.on("end", () => to.end());
+	}
 
-function unlinkQuietly(path: string): void {
-	try {
-		if (existsSync(path)) unlinkSync(path);
-	} catch {
-		// already gone
+	private unlinkQuietly(path: string): void {
+		try {
+			if (existsSync(path)) unlinkSync(path);
+		} catch {
+			// already gone
+		}
+	}
+
+	startProxy(opts: ProxyOptions): Promise<Result<RunnerProxy, string>> {
+		const log = opts.log ?? (() => undefined);
+		const clients = new Set<net.Socket>();
+		let activity = opts.now();
+		const touch = (): void => {
+			activity = opts.now();
+		};
+
+		const server = net.createServer((client) => {
+			touch();
+			clients.add(client);
+			client.pause();
+			const address = opts.target();
+			if (address === undefined) {
+				log("proxy: no runner address, closing a client");
+				client.destroy();
+				return;
+			}
+			const upstream = net.connect({ host: address.host, port: address.port });
+			upstream.setNoDelay(true);
+			const end = (): void => {
+				client.destroy();
+				upstream.destroy();
+			};
+			upstream.once("connect", () => {
+				this.forward(client, upstream, touch);
+				this.forward(upstream, client, touch);
+				client.resume();
+			});
+			upstream.on("error", (error) => {
+				log(`proxy: runner [${address.host}]:${address.port}: ${error.message}`);
+				end();
+			});
+			client.on("error", end);
+			upstream.on("close", end);
+			client.on("close", () => {
+				clients.delete(client);
+				touch();
+				upstream.destroy();
+			});
+		});
+
+		return new Promise((resolve) => {
+			server.once("error", (error) =>
+				resolve({ success: false, error: `cannot listen on ${opts.socketPath}: ${error.message}` })
+			);
+			this.unlinkQuietly(opts.socketPath);
+			server.listen(opts.socketPath, () => {
+				resolve({
+					success: true,
+					data: {
+						socketPath: opts.socketPath,
+						connections: () => clients.size,
+						lastActivity: () => activity,
+						broadcast: async (line) => {
+							await Promise.all(
+								[...clients].map((client) => new Promise<void>((done) => client.write(`${line}\n`, () => done())))
+							);
+						},
+						close: () =>
+							new Promise<void>((done) => {
+								for (const client of clients) client.destroy();
+								server.close(() => {
+									this.unlinkQuietly(opts.socketPath);
+									done();
+								});
+							}),
+					},
+				});
+			});
+		});
 	}
 }
 
-export function startProxy(opts: ProxyOptions): Promise<Result<RunnerProxy, string>> {
-	const log = opts.log ?? (() => undefined);
-	const clients = new Set<net.Socket>();
-	let activity = opts.now();
-	const touch = (): void => {
-		activity = opts.now();
-	};
-
-	const server = net.createServer((client) => {
-		touch();
-		clients.add(client);
-		client.pause();
-		const address = opts.target();
-		if (address === undefined) {
-			log("proxy: no runner address, closing a client");
-			client.destroy();
-			return;
-		}
-		const upstream = net.connect({ host: address.host, port: address.port });
-		upstream.setNoDelay(true);
-		const end = (): void => {
-			client.destroy();
-			upstream.destroy();
-		};
-		upstream.once("connect", () => {
-			forward(client, upstream, touch);
-			forward(upstream, client, touch);
-			client.resume();
-		});
-		upstream.on("error", (error) => {
-			log(`proxy: runner [${address.host}]:${address.port}: ${error.message}`);
-			end();
-		});
-		client.on("error", end);
-		upstream.on("close", end);
-		client.on("close", () => {
-			clients.delete(client);
-			touch();
-			upstream.destroy();
-		});
-	});
-
-	return new Promise((resolve) => {
-		server.once("error", (error) =>
-			resolve({ success: false, error: `cannot listen on ${opts.socketPath}: ${error.message}` })
-		);
-		unlinkQuietly(opts.socketPath);
-		server.listen(opts.socketPath, () => {
-			resolve({
-				success: true,
-				data: {
-					socketPath: opts.socketPath,
-					connections: () => clients.size,
-					lastActivity: () => activity,
-					broadcast: async (line) => {
-						await Promise.all(
-							[...clients].map((client) => new Promise<void>((done) => client.write(`${line}\n`, () => done())))
-						);
-					},
-					close: () =>
-						new Promise<void>((done) => {
-							for (const client of clients) client.destroy();
-							server.close(() => {
-								unlinkQuietly(opts.socketPath);
-								done();
-							});
-						}),
-				},
-			});
-		});
-	});
-}
+export const runnerProxyService = new RunnerProxyService();

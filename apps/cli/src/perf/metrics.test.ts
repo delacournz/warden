@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sampleSeries } from "@delacour/warden-perf/metrics/series";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfMetricsCli } from "./metrics";
 import type { MetricsIo } from "./metrics-watch";
 import { perfTestingCli } from "./testing";
@@ -25,9 +25,9 @@ function setup(opts: Opts = {}) {
 	const clock = { now: T0 };
 	let tick = 0;
 	const calls: string[] = [];
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => clock.now,
-		ui: scriptedUi({ rich: opts.rich ?? false }),
+		ui: cliTesting.scriptedUi({ rich: opts.rich ?? false }),
 		exec: async (cmd) => {
 			const joined = cmd.join(" ");
 			calls.push(joined);

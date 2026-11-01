@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type RunnerProxy, startProxy } from "./proxy";
+import { type RunnerProxy, runnerProxyService } from "./proxy";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -42,7 +42,7 @@ async function fakeRunner() {
 async function proxyTo(port: number | undefined): Promise<RunnerProxy> {
 	const dir = mkdtempSync(join(tmpdir(), "wdn-proxy-"));
 	cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-	const started = await startProxy({
+	const started = await runnerProxyService.startProxy({
 		socketPath: join(dir, "r.sock"),
 		target: () => (port === undefined ? undefined : { host: "127.0.0.1", port }),
 		now: Date.now,
@@ -153,7 +153,7 @@ describe("proxy", () => {
 		const logs: string[] = [];
 		const dir = mkdtempSync(join(tmpdir(), "wdn-proxy-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-		const started = await startProxy({
+		const started = await runnerProxyService.startProxy({
 			socketPath: join(dir, "r.sock"),
 			target: () => ({ host: "127.0.0.1", port }),
 			now: Date.now,
@@ -183,7 +183,7 @@ describe("proxy", () => {
 		let t = 100;
 		const dir = mkdtempSync(join(tmpdir(), "wdn-proxy-"));
 		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-		const started = await startProxy({
+		const started = await runnerProxyService.startProxy({
 			socketPath: join(dir, "r.sock"),
 			target: () => ({ host: "127.0.0.1", port: runner.port }),
 			now: () => t,

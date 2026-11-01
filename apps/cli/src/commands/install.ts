@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { storeLocator } from "@delacour/warden-store/store";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { CliCommand, type CommandNode } from "../command";
-import { type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";
+import { type CompletionShell, completionScripts } from "../completion-scripts";
 import type { CommandContext } from "../context";
 import { type Agent, hookAgents } from "../hooks/agents";
 import { hookClaudeSettings } from "../hooks/claude-settings";
@@ -11,23 +11,10 @@ import { hookCodexHooks } from "../hooks/codex-hooks";
 import { hookJson } from "../hooks/json";
 import { hookTextDiff } from "../hooks/text-diff";
 import { output } from "../output";
-import { RULE_MD, SKILL_NAME, staleSkillFiles } from "../skill";
-import {
-	CLAUDE_AGENT,
-	localSkillRoot,
-	realSkillDeps,
-	runner,
-	type SkillDeps,
-	skillsAddArgs,
-	stageSkillFolder,
-} from "../skill-cli";
-import { type InstallOrigin, recordInstallOrigin } from "../update/install-origin";
-import {
-	describePackageInstall,
-	detectPackageInstall,
-	isStableInstall,
-	upgradeCommand,
-} from "../update/package-install";
+import { RULE_MD, SKILL_NAME, skillInstaller } from "../skill";
+import { CLAUDE_AGENT, type SkillDeps, skillCli } from "../skill-cli";
+import { type InstallOrigin, installOriginHelpers } from "../update/install-origin";
+import { packageInstallHelpers } from "../update/package-install";
 
 /** Hook commands reference the installed binary via `$HOME` so they work whatever PATH the agent runs with. */
 export const HOOK_BINARY = "$HOME/.local/bin/warden";
@@ -129,12 +116,12 @@ export class InstallCommand extends CliCommand {
 		const source = this.binarySource(runtime);
 		const current = existsSync(target) ? readFileSync(target) : undefined;
 		if (current && Buffer.from(source.content).equals(current)) {
-			recordInstallOrigin(ctx.env, target, source.origin);
+			installOriginHelpers.recordInstallOrigin(ctx.env, target, source.origin);
 			return this.report("binary", "unchanged", target);
 		}
 		if (flags.dryRun) return this.report("binary", "dry-run", target, `would write ${source.kind}`);
 		this.atomicWrite(target, source.content, 0o755);
-		recordInstallOrigin(ctx.env, target, source.origin);
+		installOriginHelpers.recordInstallOrigin(ctx.env, target, source.origin);
 		return this.report("binary", "written", target, source.detail);
 	}
 
@@ -155,12 +142,12 @@ export class InstallCommand extends CliCommand {
 				detail: `shim → ${runtime.cliPath}`,
 			};
 		}
-		const managed = detectPackageInstall(runtime.execPath);
-		if (managed && isStableInstall(managed)) {
+		const managed = packageInstallHelpers.detectPackageInstall(runtime.execPath);
+		if (managed && packageInstallHelpers.isStableInstall(managed)) {
 			return {
 				kind: "shim",
 				content: `#!/bin/sh\nexec "${runtime.execPath}" "$@"\n`,
-				detail: `shim → ${describePackageInstall(managed)}; \`${upgradeCommand(managed)}\` upgrades it`,
+				detail: `shim → ${packageInstallHelpers.describePackageInstall(managed)}; \`${packageInstallHelpers.upgradeCommand(managed)}\` upgrades it`,
 			};
 		}
 		const content = readFileSync(runtime.execPath);
@@ -168,7 +155,7 @@ export class InstallCommand extends CliCommand {
 		return {
 			kind: "binary",
 			content,
-			detail: `copied from ${describePackageInstall(managed)}; \`warden update\` or \`${upgradeCommand(managed)}\` refreshes it`,
+			detail: `copied from ${packageInstallHelpers.describePackageInstall(managed)}; \`warden update\` or \`${packageInstallHelpers.upgradeCommand(managed)}\` refreshes it`,
 			origin: "npm",
 		};
 	}
@@ -178,9 +165,9 @@ export class InstallCommand extends CliCommand {
 	 * (`skills add … -a claude-code`) place it in `~/.claude/skills/warden`. Already-current on disk → unchanged.
 	 */
 	private async installSkill(ctx: CommandContext, deps: SkillDeps, dir: string, flags: Flags): Promise<StepReport> {
-		const { missing, outdated } = staleSkillFiles(dir);
+		const { missing, outdated } = skillInstaller.staleSkillFiles(dir);
 		if (missing.length === 0 && outdated.length === 0) return this.report("skill", "unchanged", dir);
-		const prefix = runner(deps);
+		const prefix = skillCli.runner(deps);
 		if (!prefix)
 			return this.report(
 				"skill",
@@ -188,11 +175,11 @@ export class InstallCommand extends CliCommand {
 				dir,
 				"neither bunx nor npx found — install bun or node, or `warden skill show`"
 			);
-		const root = localSkillRoot(ctx);
-		const cmd = [...prefix, ...skillsAddArgs(root, { agent: [CLAUDE_AGENT], yes: flags.yes })];
+		const root = skillCli.localSkillRoot(ctx);
+		const cmd = [...prefix, ...skillCli.skillsAddArgs(root, { agent: [CLAUDE_AGENT], yes: flags.yes })];
 		if (flags.dryRun)
 			return this.report("skill", "dry-run", dir, `would stage ${join(root, SKILL_NAME)} and run ${cmd.join(" ")}`);
-		stageSkillFolder(ctx);
+		skillCli.stageSkillFolder(ctx);
 		ctx.err(flags.json ? `warden install: ${cmd.join(" ")}` : ctx.ui.color.dim(`warden install: ${cmd.join(" ")}`));
 		const code = await deps.runInteractive(cmd, { stdout: flags.json ? "stderr" : "inherit" });
 		return code === 0
@@ -348,7 +335,7 @@ export class InstallCommand extends CliCommand {
 		home: string,
 		shell: CompletionShell
 	): Promise<StepReport> {
-		const content = completionScript(shell);
+		const content = completionScripts.completionScript(shell);
 		const { script, rc } = this.completionPaths(ctx.env, home, shell);
 		const scriptChanged = this.readIfExists(script) !== content;
 		if (scriptChanged && !flags.dryRun) this.atomicWrite(script, content);
@@ -405,7 +392,7 @@ export class InstallCommand extends CliCommand {
 				await this.step("codex-hooks", hooksPath, () => this.installCodexHooks(ctx, flags, hooksPath, configPath))
 			);
 		}
-		const shell = flags.completion === false ? undefined : shellFromEnv(ctx.env);
+		const shell = flags.completion === false ? undefined : completionScripts.shellFromEnv(ctx.env);
 		if (shell) steps.push(await this.step("completion", shell, () => this.installCompletion(ctx, flags, home, shell)));
 		return steps;
 	}
@@ -495,6 +482,6 @@ export class InstallCommand extends CliCommand {
 
 export const install: InstallCommand = new InstallCommand(() => ({
 	runtime: install.detectRuntime(),
-	skill: realSkillDeps(),
+	skill: skillCli.realSkillDeps(),
 }));
 export const installCommand = install.definition();

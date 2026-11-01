@@ -1,6 +1,6 @@
 import { Argument } from "@commander-js/extra-typings";
 import { CliCommand, type CommandNode } from "../command";
-import { COMPLETION_SHELLS, type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";
+import { COMPLETION_SHELLS, type CompletionShell, completionScripts } from "../completion-scripts";
 import type { CommandContext } from "../context";
 import { output } from "../output";
 
@@ -20,7 +20,7 @@ export class CompletionCommand extends CliCommand {
 	}
 
 	private runCompletion(ctx: CommandContext, shell: CompletionShell | undefined): number {
-		const target = shell ?? shellFromEnv(ctx.env);
+		const target = shell ?? completionScripts.shellFromEnv(ctx.env);
 		if (!target) {
 			output.reportError(
 				ctx,
@@ -29,7 +29,7 @@ export class CompletionCommand extends CliCommand {
 			);
 			return 1;
 		}
-		ctx.out(completionScript(target).replace(/\n$/, ""));
+		ctx.out(completionScripts.completionScript(target).replace(/\n$/, ""));
 		return 0;
 	}
 }

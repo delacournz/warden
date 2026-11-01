@@ -7,9 +7,9 @@ import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { e2eReportSchema } from "@delacour/warden-sdk/contracts/e2e-report";
-import { jsonl, result } from "../batch/results.testing";
+import { resultsTesting } from "../batch/results.testing";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { batchTesting, type Harness, type Spawned } from "./batch.testing";
 import { E2eCommand, type E2eReport } from "./e2e";
 
@@ -44,7 +44,7 @@ async function resuiteDefault(overrides: Record<string, unknown> = {}): Promise<
 function setup(argv: string[], calls: string[][] = []): TestContext {
 	const sim = simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2, "Booted")], calls);
 	const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-	ctx = testContext(argv, { exec });
+	ctx = cliTesting.testContext(argv, { exec });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	ctx.cwd = dir;
 	return ctx;
@@ -65,7 +65,7 @@ const resultsPath = (env: Record<string, string | undefined>) => join(env.WARDEN
 
 /** `result()` for a spec file of the suite's specs dir. */
 const spec = (spec: string, title: string, status: TestResult["status"] = "passed", extra: Partial<TestResult> = {}) =>
-	result(join(dir, `specs/${spec}.e2e.ts`), title, status, extra);
+	resultsTesting.result(join(dir, `specs/${spec}.e2e.ts`), title, status, extra);
 
 const reportOf = (files: Map<string, string>, c: TestContext): E2eReport =>
 	JSON.parse(files.get(join(c.env.WARDEN_HOME ?? "", "batches", "b1", "e2e-report.json")) ?? "{}");
@@ -316,7 +316,7 @@ describe("warden e2e", () => {
 			write("src/chat/lazy.tsx", "export const x = 2;\n");
 			const sim = simctlFakes.build([bioSim, simctlFakes.wardenSim(1, "Booted")], []);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
+			ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const h = batchTesting.harness();
@@ -407,7 +407,7 @@ describe("warden e2e", () => {
 			const launch = Promise.withResolvers<void>();
 			const reads: string[] = [];
 			const exec = lateWindowExec(sim, launch.promise, reads);
-			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
+			ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const h = batchTesting.harness();
@@ -435,7 +435,7 @@ describe("warden e2e", () => {
 				}
 				return sim(cmd, opts);
 			};
-			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
+			ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const h = batchTesting.harness();
@@ -521,7 +521,7 @@ describe("warden e2e", () => {
 			// no warden sim exists and none may be created: the device claim fails after the port lease
 			const sim = simctlFakes.build([]);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(["--files", "src/chat/lazy.tsx", "--max", "0", "--no-wait"], { exec });
+			ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx", "--max", "0", "--no-wait"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const c = ctx;
@@ -613,7 +613,7 @@ describe("warden e2e", () => {
 		test("Metro's readiness is announced once, under the claim spinner when it is up before the app", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
-			const ui = scriptedUi();
+			const ui = cliTesting.scriptedUi();
 			c.ui = ui;
 			const h = batchTesting.harness();
 			h.deps.ensureApp = async () => {
@@ -866,7 +866,7 @@ describe("warden e2e", () => {
 			const job = h.jobs()[0];
 			h.files.set(
 				resultsPath(job?.opts.env ?? {}),
-				jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed"))
+				resultsTesting.jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed"))
 			);
 			job?.finish(1);
 			expect(await running).toBe(0);
@@ -903,7 +903,7 @@ describe("warden e2e", () => {
 				exitCodeFor: (env) => {
 					h.files.set(
 						resultsPath(env),
-						jsonl(
+						resultsTesting.jsonl(
 							spec("chats", "open", "passed"),
 							spec("settings", "toggle", "failed", { error: { message: "no such element" } })
 						)
@@ -932,7 +932,7 @@ describe("warden e2e", () => {
 				exitCodeFor: (env) => {
 					h.files.set(
 						resultsPath(env),
-						jsonl(
+						resultsTesting.jsonl(
 							spec("chats", "open", "passed"),
 							spec("settings", "toggle", "failed", {
 								artifacts: { dir: "/art/settings-1", files: ["failure.png", "screen-at-failure.txt"] },
@@ -954,7 +954,10 @@ describe("warden e2e", () => {
 			const c = setup(["--all"]);
 			const h: Harness = batchTesting.harness({
 				exitCodeFor: (env) => {
-					h.files.set(resultsPath(env), jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed")));
+					h.files.set(
+						resultsPath(env),
+						resultsTesting.jsonl(spec("chats", "open", "passed"), spec("settings", "toggle", "failed"))
+					);
 					return 1;
 				},
 			});
@@ -978,7 +981,7 @@ describe("warden e2e", () => {
 		test("e2e-report.json carries each spec's tests (title path, status, duration, error, artifacts) and headless", async () => {
 			const h = writing(
 				() =>
-					jsonl(
+					resultsTesting.jsonl(
 						spec("chats", "opens", "passed", { title: ["list", "opens"], durationMs: 2100 }),
 						spec("chats", "sends", "failed", {
 							error: { message: "LOCATOR_NOT_FOUND\nid=send" },
@@ -1008,7 +1011,7 @@ describe("warden e2e", () => {
 		});
 
 		test("passed: tests recorded, no warning", async () => {
-			const h = writing(() => jsonl(spec("chats", "opens")));
+			const h = writing(() => resultsTesting.jsonl(spec("chats", "opens")));
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(reportOf(h.files, c).specs[0]?.tests).toHaveLength(1);
@@ -1016,7 +1019,7 @@ describe("warden e2e", () => {
 		});
 
 		test("a timed-out test fails the spec even when the process exited 0", async () => {
-			const h = writing(() => jsonl(spec("chats", "slow", "timed-out")));
+			const h = writing(() => resultsTesting.jsonl(spec("chats", "slow", "timed-out")));
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(1);
 			expect(reportOf(h.files, c).specs[0]).toMatchObject({ verdict: "failed", tests: [{ status: "timed-out" }] });
@@ -1038,13 +1041,15 @@ describe("warden e2e", () => {
 			expect(await new E2eCommand(junk.deps).definition().run(c)).toBe(1);
 			expect(c.stderr.join("\n")).toContain("chats: no results.jsonl — verdict from exit code 1");
 
-			const cut = writing(() => `${jsonl(spec("chats", "opens"))}{"file":"${join(dir, "specs/chats.e2e.ts")}","ti`);
+			const cut = writing(
+				() => `${resultsTesting.jsonl(spec("chats", "opens"))}{"file":"${join(dir, "specs/chats.e2e.ts")}","ti`
+			);
 			expect(await new E2eCommand(cut.deps).definition().run(c)).toBe(0);
 			expect(reportOf(cut.files, c).specs[0]?.tests).toHaveLength(1);
 		});
 
 		test("test.only left in a spec fails the run under CI, even when everything passed; locally it does not", async () => {
-			const build = () => jsonl(spec("chats", "opens", "passed", { only: true }));
+			const build = () => resultsTesting.jsonl(spec("chats", "opens", "passed", { only: true }));
 			const c = setup(["--files", "src/chat/lazy.tsx"]);
 			c.env = { ...c.env, CI: "true" };
 			const h = writing(build);
@@ -1066,7 +1071,10 @@ describe("warden e2e", () => {
 			const job = h.jobs()[0];
 			h.files.set(
 				resultsPath(job?.opts.env ?? {}),
-				jsonl(spec("chats", "opens", "passed", { title: ["list", "opens"] }), spec("settings", "toggle", "failed"))
+				resultsTesting.jsonl(
+					spec("chats", "opens", "passed", { title: ["list", "opens"] }),
+					spec("settings", "toggle", "failed")
+				)
 			);
 			job?.finish(1);
 			await running;
@@ -1077,7 +1085,7 @@ describe("warden e2e", () => {
 		});
 
 		test("per-spec mode prints the same test lines", async () => {
-			const h = writing(() => jsonl(spec("chats", "opens")));
+			const h = writing(() => resultsTesting.jsonl(spec("chats", "opens")));
 			const c = setup(["--files", "src/chat/lazy.tsx", "--no-tui"]);
 			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(c.stderr.join("\n")).toContain("✓ chats › opens (1.25s)");
@@ -1096,7 +1104,7 @@ describe("warden e2e", () => {
 		const legSetup = (argv: string[]) => {
 			const sim = simctlFakes.build(sims(), []);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(argv, { exec });
+			ctx = cliTesting.testContext(argv, { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			return ctx;
@@ -1260,7 +1268,7 @@ describe("warden e2e", () => {
 			];
 			const sim = simctlFakes.build(sims);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const h = batchTesting.harness();
@@ -1282,7 +1290,7 @@ describe("warden e2e", () => {
 			];
 			const sim = simctlFakes.build(sims);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all", ...extra], { exec });
+			ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx", "--devices", "all", ...extra], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			return ctx;
@@ -1382,7 +1390,7 @@ describe("warden e2e", () => {
 				if (cmd[0] === "xcrun" && cmd[2] === "launch" && cmd.includes("P1")) throw new Error("launch blew up");
 				return sim(cmd, opts);
 			};
-			const c = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			const c = cliTesting.testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx = c;
 			c.env = { ...c.env, ...OWNER_ENV };
 			c.cwd = dir;
@@ -1422,7 +1430,7 @@ describe("warden e2e", () => {
 				isTTY,
 				exitCodeFor: (env) => {
 					const status = env.WARDEN_UDID === failing ? "failed" : "passed";
-					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), jsonl(spec("chats", "opens", status)));
+					if (env.WARDEN_E2E_OUT) h.files.set(resultsPath(env), resultsTesting.jsonl(spec("chats", "opens", status)));
 					return 0;
 				},
 			});
@@ -1675,8 +1683,8 @@ describe("warden e2e", () => {
 						h.files.set(
 							resultsPath(env),
 							first
-								? jsonl(spec("chats", "open"), spec("settings", "toggle", "failed"))
-								: jsonl(spec("settings", "toggle"))
+								? resultsTesting.jsonl(spec("chats", "open"), spec("settings", "toggle", "failed"))
+								: resultsTesting.jsonl(spec("settings", "toggle"))
 						);
 						return first ? 1 : 0;
 					},
@@ -1702,8 +1710,8 @@ describe("warden e2e", () => {
 						h.files.set(
 							resultsPath(env),
 							first
-								? jsonl(spec("chats", "open"), spec("profile", "first test"))
-								: jsonl(spec("profile", "first test"), spec("settings", "toggle"))
+								? resultsTesting.jsonl(spec("chats", "open"), spec("profile", "first test"))
+								: resultsTesting.jsonl(spec("profile", "first test"), spec("settings", "toggle"))
 						);
 						return first ? 137 : 0;
 					},
@@ -1732,8 +1740,11 @@ describe("warden e2e", () => {
 						h.files.set(
 							resultsPath(env),
 							first
-								? jsonl(spec("chats", "open", "passed", fresh), spec("settings", "toggle", "failed", fresh))
-								: jsonl(spec("settings", "toggle", "passed", fresh))
+								? resultsTesting.jsonl(
+										spec("chats", "open", "passed", fresh),
+										spec("settings", "toggle", "failed", fresh)
+									)
+								: resultsTesting.jsonl(spec("settings", "toggle", "passed", fresh))
 						);
 						return first ? 1 : 0;
 					},
@@ -1752,8 +1763,8 @@ describe("warden e2e", () => {
 						h.files.set(
 							resultsPath(env),
 							attempt(env) === 0
-								? jsonl(spec("chats", "open"), spec("settings", "toggle", "failed"))
-								: jsonl(spec("settings", "toggle", "failed"))
+								? resultsTesting.jsonl(spec("chats", "open"), spec("settings", "toggle", "failed"))
+								: resultsTesting.jsonl(spec("settings", "toggle", "failed"))
 						);
 						return 1;
 					},
@@ -1794,7 +1805,7 @@ describe("warden e2e", () => {
 			];
 			const sim = simctlFakes.build(sims);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
+			ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			ctx.cwd = dir;
 			const h = batchTesting.harness();
@@ -1975,7 +1986,7 @@ describe("warden e2e", () => {
 		await resuite({ slim: true });
 		const sim = simctlFakes.build([simctlFakes.wardenSim(1, "Shutdown")]);
 		const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
-		ctx = testContext(["--files", "src/chat/lazy.tsx", "--no-shutdown"], { exec });
+		ctx = cliTesting.testContext(["--files", "src/chat/lazy.tsx", "--no-shutdown"], { exec });
 		ctx.env = { ...ctx.env, ...OWNER_ENV };
 		ctx.cwd = dir;
 		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1", profile: "iphone-17" }, 0);
@@ -2303,7 +2314,7 @@ describe("warden e2e on physical devices", () => {
 			calls.push([...cmd]);
 			return androidPhoneReply(cmd);
 		};
-		ctx = testContext(argv, { exec });
+		ctx = cliTesting.testContext(argv, { exec });
 		ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HEADLESS: "1" };
 		ctx.cwd = dir;
 		return ctx;
@@ -2413,7 +2424,7 @@ describe("warden e2e on physical devices", () => {
 					return { exitCode: 0, stdout: cmd.includes(SECOND) ? "\n\nHW2\nPixel 8 Pro\n35\n" : PHONE_PROPS, stderr: "" };
 				return androidPhoneReply(cmd);
 			};
-			ctx = testContext(argv, { exec });
+			ctx = cliTesting.testContext(argv, { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HEADLESS: "1" };
 			ctx.cwd = dir;
 			return ctx;
@@ -2444,7 +2455,7 @@ describe("warden e2e on physical devices", () => {
 
 		test("in a terminal the picker chooses the device the run uses", async () => {
 			const c = twoPhones(["--files", "src/chat/lazy.tsx", "--platform", "android", "--physical"], []);
-			c.ui = scriptedUi({ interactive: true, select: [SECOND] });
+			c.ui = cliTesting.scriptedUi({ interactive: true, select: [SECOND] });
 			const h = batchTesting.harness();
 			expect(await new E2eCommand(h.deps).definition().run(c)).toBe(0);
 			expect(h.jobs()[0]?.opts.env.WARDEN_UDIDS).toBe(SECOND);

@@ -8,7 +8,7 @@ import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { devicesJsonSchema } from "@delacour/warden-sdk/contracts/devices";
 import type { Owner } from "@delacour/warden-store/types";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { devicesCommand } from "./devices";
 
 let ctx: TestContext | undefined;
@@ -25,8 +25,8 @@ const IOS = simctlFixtures.devicesJson({
 
 function setup(argv: string[], opts: { adb?: boolean } = {}): TestContext {
 	const adb = opts.adb ?? true;
-	ctx = testContext(argv, {
-		exec: fakeExec([
+	ctx = cliTesting.testContext(argv, {
+		exec: cliTesting.fakeExec([
 			["xcrun simctl list devices available -j", { stdout: IOS }],
 			...(adb
 				? ([
@@ -93,8 +93,8 @@ describe("warden devices", () => {
 	});
 
 	test("golden images are labelled, not counted as warden pool devices", async () => {
-		ctx = testContext(["ios", "--json"], {
-			exec: fakeExec([
+		ctx = cliTesting.testContext(["ios", "--json"], {
+			exec: cliTesting.fakeExec([
 				[
 					"xcrun simctl list devices available -j",
 					{
@@ -198,8 +198,8 @@ describe("warden devices", () => {
 
 	test("--mem measures booted iOS sims with one ps/top snapshot and adds footprintMb / an MB column", async () => {
 		const calls: string[][] = [];
-		ctx = testContext(["ios", "--mem", "--json"], {
-			exec: fakeExec(
+		ctx = cliTesting.testContext(["ios", "--mem", "--json"], {
+			exec: cliTesting.fakeExec(
 				[
 					["xcrun simctl list devices available -j", { stdout: IOS }],
 					["pgrep -f U1/data", { stdout: "100\n" }],
@@ -216,8 +216,8 @@ describe("warden devices", () => {
 		expect(calls.filter((c) => c[0] === "ps" || c[0] === "top").length).toBe(2);
 		ctx.cleanup();
 
-		ctx = testContext(["ios", "--mem"], {
-			exec: fakeExec([
+		ctx = cliTesting.testContext(["ios", "--mem"], {
+			exec: cliTesting.fakeExec([
 				["xcrun simctl list devices available -j", { stdout: IOS }],
 				["pgrep -f U1/data", { stdout: "100\n" }],
 				["ps", { stdout: "  PID  PPID COMM\n 100 1 /x/launchd_sim\n" }],
@@ -230,8 +230,8 @@ describe("warden devices", () => {
 
 	test("without --mem nothing is measured", async () => {
 		const calls: string[][] = [];
-		ctx = testContext(["ios", "--json"], {
-			exec: fakeExec([["xcrun simctl list devices available -j", { stdout: IOS }]], calls),
+		ctx = cliTesting.testContext(["ios", "--json"], {
+			exec: cliTesting.fakeExec([["xcrun simctl list devices available -j", { stdout: IOS }]], calls),
 		});
 		await devicesCommand.run(ctx);
 		expect(calls.some((c) => c[0] === "pgrep")).toBe(false);
@@ -240,8 +240,8 @@ describe("warden devices", () => {
 
 describe("warden devices (physical phones)", () => {
 	test("a phone is listed with physical: true and a physical WARDEN cell", async () => {
-		ctx = testContext(["android", "--json"], {
-			exec: fakeExec([
+		ctx = cliTesting.testContext(["android", "--json"], {
+			exec: cliTesting.fakeExec([
 				["adb devices -l", { stdout: "List of devices attached\nR5CT1234ABC device usb:1-1 model:SM_A546E\n\n" }],
 				["adb -s R5CT1234ABC shell getprop ro.boot.qemu", { stdout: "\n\nR5CT1234ABC\nSM-A546E\n34\n" }],
 				["emulator -list-avds", { stdout: "" }],
@@ -265,17 +265,17 @@ describe("warden devices (physical phones)", () => {
 	const ADB_UNAUTHORIZED = "List of devices attached\nR5CT1234ABC unauthorized usb:1-1 transport_id:1\n\n";
 
 	test("an unauthorized phone is listed with a hint, in the table too", async () => {
-		const exec = fakeExec([
+		const exec = cliTesting.fakeExec([
 			["adb devices -l", { stdout: ADB_UNAUTHORIZED }],
 			["emulator -list-avds", { stdout: "" }],
 		]);
-		ctx = testContext(["android", "--json"], { exec });
+		ctx = cliTesting.testContext(["android", "--json"], { exec });
 		await devicesCommand.run(ctx);
 		const rows: Array<{ hint?: string; kind: string }> = JSON.parse(ctx.stdout.join("\n"));
 		expect(rows[0]).toMatchObject({ kind: "physical", physical: true });
 		expect(rows[0]?.hint).toContain("unauthorized: accept the USB debugging prompt");
 		ctx.cleanup();
-		ctx = testContext(["android"], { exec });
+		ctx = cliTesting.testContext(["android"], { exec });
 		await devicesCommand.run(ctx);
 		const text = ctx.stdout.join("\n");
 		expect(text).toMatch(/KIND/);
@@ -294,8 +294,8 @@ describe("warden devices (physical phones)", () => {
 				tunnelState: "disconnected",
 			}),
 		]);
-		ctx = testContext(["ios", "--json"], {
-			exec: fakeExec([
+		ctx = cliTesting.testContext(["ios", "--json"], {
+			exec: cliTesting.fakeExec([
 				["xcrun simctl list devices available -j", { stdout: IOS }],
 				["xcrun devicectl list devices", { stdout: list }],
 				["xcrun devicectl device info lockState", { exitCode: 1, stderr: "The device is not connected\n" }],
@@ -321,8 +321,8 @@ describe("warden devices (physical phones)", () => {
 				tunnelState: "disconnected",
 			}),
 		]);
-		ctx = testContext(["ios", "--json"], {
-			exec: fakeExec([
+		ctx = cliTesting.testContext(["ios", "--json"], {
+			exec: cliTesting.fakeExec([
 				["xcrun simctl list devices available -j", { stdout: IOS }],
 				["xcrun devicectl list devices", { stdout: list }],
 				["xcrun devicectl device info lockState", { stdout: DEVICECTL_LOCKSTATE_LOCKED }],
@@ -336,8 +336,8 @@ describe("warden devices (physical phones)", () => {
 	});
 
 	test("--physical lists only phones and tablets", async () => {
-		ctx = testContext(["--physical", "--json"], {
-			exec: fakeExec([
+		ctx = cliTesting.testContext(["--physical", "--json"], {
+			exec: cliTesting.fakeExec([
 				["xcrun simctl list devices available -j", { stdout: IOS }],
 				["adb devices -l", { stdout: ADB_UNAUTHORIZED }],
 				["emulator -list-avds", { stdout: "Pixel_10\n" }],

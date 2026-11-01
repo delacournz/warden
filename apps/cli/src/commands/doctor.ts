@@ -11,13 +11,13 @@ import { hookCodexHooks } from "../hooks/codex-hooks";
 import { hookJson } from "../hooks/json";
 import { NPM_PACKAGE } from "../npm/platforms";
 import { output } from "../output";
-import { RULE_MD, staleSkillFiles } from "../skill";
+import { RULE_MD, skillInstaller } from "../skill";
 import { SYMBOLS } from "../ui";
-import { type BuildInfo, currentBuild } from "../update/build-info";
-import { fetchHelper, tarExtractHelper } from "../update/fetch-helper";
-import { type InstallOrigin, installOrigin } from "../update/install-origin";
+import { type BuildInfo, buildInfoHelpers } from "../update/build-info";
+import { fetchHelperHelpers } from "../update/fetch-helper";
+import { type InstallOrigin, installOriginHelpers } from "../update/install-origin";
 import type { Fetch } from "../update/npm-registry";
-import { describePackageInstall, detectPackageInstall, upgradeCommand } from "../update/package-install";
+import { packageInstallHelpers } from "../update/package-install";
 import { doctorHelper, type HelperDeps } from "./doctor-helper";
 import { doctorPhysical } from "./doctor-physical";
 import { doctorXcode } from "./doctor-xcode";
@@ -139,9 +139,12 @@ export class DoctorCommand extends CliCommand {
 				detail: `running from source ${build.sourceDir} — \`warden update\` builds ~/.local/bin/warden`,
 			};
 		}
-		const managed = detectPackageInstall(execPath);
+		const managed = packageInstallHelpers.detectPackageInstall(execPath);
 		if (managed)
-			return { ok: true, detail: `${describePackageInstall(managed)} — upgrade: ${upgradeCommand(managed)}` };
+			return {
+				ok: true,
+				detail: `${packageInstallHelpers.describePackageInstall(managed)} — upgrade: ${packageInstallHelpers.upgradeCommand(managed)}`,
+			};
 		if (origin === "npm") {
 			return {
 				ok: true,
@@ -184,7 +187,7 @@ export class DoctorCommand extends CliCommand {
 	private skillProbe(home: string): Probe {
 		const dir = join(home, ".claude", "skills", "warden");
 		if (!existsSync(join(dir, "SKILL.md"))) return { ok: false, detail: INSTALL_HINT };
-		const { missing, outdated } = staleSkillFiles(dir);
+		const { missing, outdated } = skillInstaller.staleSkillFiles(dir);
 		if (missing.length === 0 && outdated.length === 0) return { ok: true, detail: dir };
 		const parts = [
 			...(missing.length > 0 ? [`missing ${missing.join(", ")}`] : []),
@@ -260,7 +263,11 @@ export class DoctorCommand extends CliCommand {
 			this.check(
 				"install",
 				"optional",
-				this.installProbe(currentBuild(), process.execPath, installOrigin(ctx.env, process.execPath))
+				this.installProbe(
+					buildInfoHelpers.currentBuild(),
+					process.execPath,
+					installOriginHelpers.installOrigin(ctx.env, process.execPath)
+				)
 			),
 			this.check("ccache", "optional", ccache),
 			this.check("ccache-project", "optional", this.ccacheProject(ctx.cwd)),
@@ -295,9 +302,9 @@ export class DoctorCommand extends CliCommand {
 		const { color } = ctx.ui;
 		let fetched: FetchedHelperReport | undefined;
 		if (opts.fetchHelper) {
-			const result = await fetchHelper({
+			const result = await fetchHelperHelpers.fetchHelper({
 				fetch: deps.fetch,
-				extract: tarExtractHelper(ctx.exec),
+				extract: fetchHelperHelpers.tarExtractHelper(ctx.exec),
 				env: ctx.env,
 				platform: deps.helper.platform,
 				arch: deps.helper.arch,

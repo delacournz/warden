@@ -3,7 +3,7 @@ import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { deviceLeaseMessages } from "@delacour/warden-leasing/device-lease";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { uiCommand } from "./ui";
 import { UDID as HARNESS_UDID, LOGIN, uiTesting } from "./ui.testing";
 
@@ -16,7 +16,7 @@ const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 const UDID2 = "1A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
 function setup(argv: string[], env: Record<string, string> = {}, over: Partial<TestContext> = {}): TestContext {
-	ctx = testContext(argv, over);
+	ctx = cliTesting.testContext(argv, over);
 	ctx.env = { ...ctx.env, ...OWNER_ENV, ...env };
 	return ctx;
 }

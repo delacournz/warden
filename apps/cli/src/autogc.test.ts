@@ -4,8 +4,8 @@ import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { AndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { Owner } from "@delacour/warden-store/types";
-import { AUTO_GC_INTERVAL_MS, maybeAutoGc, niceCommand } from "./autogc";
-import { type TestContext, testContext } from "./testing";
+import { AUTO_GC_INTERVAL_MS, autoGc } from "./autogc";
+import { cliTesting, type TestContext } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -15,7 +15,7 @@ const NICE = ["nice", "-n", "10"];
 
 /** A context at `clock` whose store holds a lease nobody will ever heartbeat again. */
 function withStaleLease(clock: () => number): TestContext {
-	const c = testContext([], { now: clock });
+	const c = cliTesting.testContext([], { now: clock });
 	c.env = { ...c.env, WARDEN_BACKGROUND: "1" };
 	c.db.insertLease(
 		{ resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" }, owner: agent, ttlMs: 1 },
@@ -30,10 +30,10 @@ describe("maybeAutoGc", () => {
 		ctx = withStaleLease(() => clock);
 		const spawned: string[][] = [];
 		const spawn = (cmd: string[]) => spawned.push(cmd);
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
 		clock += AUTO_GC_INTERVAL_MS;
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
 		expect(spawned).toEqual([
 			[...NICE, "warden", "gc", "--quiet"],
 			[...NICE, "warden", "gc", "--quiet"],
@@ -42,7 +42,7 @@ describe("maybeAutoGc", () => {
 
 	test("no stale lease and no idle device: nothing is spawned, and the check is still throttled", () => {
 		let clock = 5 * AUTO_GC_INTERVAL_MS;
-		ctx = testContext([], { now: () => clock });
+		ctx = cliTesting.testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
 		ctx.db.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: "U1", name: "n" }, owner: agent, ttlMs: 60_000 },
@@ -50,49 +50,49 @@ describe("maybeAutoGc", () => {
 		);
 		ctx.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2" }, clock - 60_000);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([]);
 		expect(ctx.db.getMeta("auto_gc_checked_at")).toBe(String(clock));
 		ctx.db.insertLease({ resource: { kind: "port", port: 9 }, owner: agent, ttlMs: 1 }, 0);
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([]);
 		clock += AUTO_GC_INTERVAL_MS;
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toHaveLength(1);
 	});
 
 	test("a lease whose process is still alive is not stale", () => {
 		const clock = 5 * AUTO_GC_INTERVAL_MS;
-		ctx = testContext([], { now: () => clock });
+		ctx = cliTesting.testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
 		ctx.db.insertLease({ resource: { kind: "port", port: 9 }, owner: agent, ttlMs: 1, pid: 4242 }, 0);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, pidAlive: (pid) => pid === 4242 });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE, pidAlive: (pid) => pid === 4242 });
 		expect(spawned).toEqual([]);
 	});
 
 	test("a device that went idle since the last gc is work; once gc has run it is not, until it is used again", () => {
 		let clock = 100 * 60_000;
-		ctx = testContext([], { now: () => clock });
+		ctx = cliTesting.testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
 		ctx.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, clock - DEFAULT_IDLE_MS);
 		const spawned: string[][] = [];
 		const spawn = (cmd: string[]) => spawned.push(cmd);
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
 		expect(spawned).toHaveLength(1);
 		ctx.db.setMeta("last_gc_at", String(clock));
 		clock += AUTO_GC_INTERVAL_MS;
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
 		expect(spawned).toHaveLength(1);
 		ctx.db.touchDevice("ios", "U1", clock);
 		clock += DEFAULT_IDLE_MS;
-		maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], spawn, { nice: NICE });
 		expect(spawned).toHaveLength(2);
 	});
 
 	test("a build cache over its cap is work too, even with no stale lease or idle device (R4)", async () => {
 		const clock = 5 * AUTO_GC_INTERVAL_MS;
-		ctx = testContext([], { now: () => clock });
+		ctx = cliTesting.testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", WARDEN_MAX_CACHE_SIZE: "10" };
 		const stored = await buildCache.storeArtifact({
 			store: ctx.db,
@@ -107,13 +107,13 @@ describe("maybeAutoGc", () => {
 		});
 		expect(stored.success).toBe(true);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
 
 	test("a cache under its cap (or a bad WARDEN_MAX_CACHE_SIZE, which gc would not prune with) is no work (R4)", async () => {
 		let clock = 5 * AUTO_GC_INTERVAL_MS;
-		ctx = testContext([], { now: () => clock });
+		ctx = cliTesting.testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
 		await buildCache.storeArtifact({
 			store: ctx.db,
@@ -127,24 +127,24 @@ describe("maybeAutoGc", () => {
 			now: clock,
 		});
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		clock += AUTO_GC_INTERVAL_MS;
 		ctx.env = { ...ctx.env, WARDEN_MAX_CACHE_SIZE: "tiny" };
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([]);
 	});
 
 	test("an AVD a claim cold-booted for want of a snapshot is work, except under CI (R2)", () => {
 		const clock = 5 * AUTO_GC_INTERVAL_MS;
-		ctx = testContext([], { now: () => clock });
+		ctx = cliTesting.testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", CI: "1" };
 		new AndroidSnapshotPending(ctx.db).markPending("Pixel_10");
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([]);
 		ctx.db.deleteMeta("auto_gc_checked_at");
 		ctx.env = { ...ctx.env, CI: undefined };
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([[...NICE, "warden", "gc", "--quiet"]]);
 	});
 
@@ -152,9 +152,9 @@ describe("maybeAutoGc", () => {
 		ctx = withStaleLease(() => 5 * AUTO_GC_INTERVAL_MS);
 		ctx.env = { ...ctx.env, WARDEN_AUTO_GC: "0" };
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		ctx.env = { ...ctx.env, WARDEN_AUTO_GC: "1", WARDEN_BACKGROUND: "0" };
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: NICE });
 		expect(spawned).toEqual([]);
 		expect(ctx.db.getMeta("auto_gc_checked_at")).toBeUndefined();
 	});
@@ -162,15 +162,15 @@ describe("maybeAutoGc", () => {
 	test("no `nice` on this machine: the pass is spawned as it was", () => {
 		ctx = withStaleLease(() => 5 * AUTO_GC_INTERVAL_MS);
 		const spawned: string[][] = [];
-		maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: [] });
+		autoGc.maybeAutoGc(ctx, ["warden"], (cmd) => spawned.push(cmd), { nice: [] });
 		expect(spawned).toEqual([["warden", "gc", "--quiet"]]);
 	});
 });
 
 describe("niceCommand", () => {
 	test("`nice -n 10` where `nice` exists, nothing where it does not", () => {
-		expect(niceCommand(() => "/usr/bin/nice")).toEqual(NICE);
-		expect(niceCommand(() => null)).toEqual([]);
-		expect(niceCommand(() => undefined)).toEqual([]);
+		expect(autoGc.niceCommand(() => "/usr/bin/nice")).toEqual(NICE);
+		expect(autoGc.niceCommand(() => null)).toEqual([]);
+		expect(autoGc.niceCommand(() => undefined)).toEqual([]);
 	});
 });

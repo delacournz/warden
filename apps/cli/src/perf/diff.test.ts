@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfDiffCli } from "./diff";
 import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
 
@@ -13,7 +13,7 @@ const A = "20261024-100000-aaaaaa";
 const B = "20261024-100100-bbbbbb";
 
 function setup(a: { cold: number; cpu: number[] }, b: { cold: number; cpu: number[] }) {
-	const c = testContext([], { now: () => SEED_T0 + 60_000 });
+	const c = cliTesting.testContext([], { now: () => SEED_T0 + 60_000 });
 	ctx = c;
 	const files = (s: { cold: number; cpu: number[] }) => ({
 		"metrics/startup.json": perfSessionFixtureTestingCli.startupJson(s.cold),

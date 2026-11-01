@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
-import { buildConfigEntry } from "./config-entry";
-import { CONFIG_ENTRY_DTS, CONFIG_ENTRY_JS, mainManifest } from "./manifests";
+import { npmConfigEntry } from "./config-entry";
+import { CONFIG_ENTRY_DTS, CONFIG_ENTRY_JS, npmManifests } from "./manifests";
 
 let dir: string;
 let pkg: string;
@@ -15,9 +15,9 @@ beforeAll(async () => {
 	mkdirSync(pkg, { recursive: true });
 	writeFileSync(
 		join(pkg, "package.json"),
-		JSON.stringify(mainManifest({ version: "0.0.0", description: "", license: "MIT" }))
+		JSON.stringify(npmManifests.mainManifest({ version: "0.0.0", description: "", license: "MIT" }))
 	);
-	const res = await buildConfigEntry(pkg);
+	const res = await npmConfigEntry.buildConfigEntry(pkg);
 	if (!res.success) throw new Error(res.error);
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

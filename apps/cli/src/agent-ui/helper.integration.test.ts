@@ -8,7 +8,7 @@ import { hookCommand } from "../commands/hook";
 import { releaseCommand } from "../commands/release";
 import { UiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { defaultUiDeps } from "./driver";
 import { defaultHelperDeps, type HelperDeps, uiHelper } from "./helper";
 import { uiStatePersistence } from "./state";
@@ -69,7 +69,7 @@ function fakeDeps(scriptPath: string): HelperDeps {
 }
 
 function setup(argv: string[] = []): TestContext {
-	ctx = testContext(argv);
+	ctx = cliTesting.testContext(argv);
 	ctx.env = { ...ctx.env, ...OWNER_ENV, WARDEN_HOME: dir };
 	return ctx;
 }

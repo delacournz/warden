@@ -4,7 +4,7 @@ import { remoteDriverConnector } from "@delacour/warden-device/remote/remote-cli
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { AndroidHostCommand } from "./android-host";
 
 let ctx: TestContext | undefined;
@@ -26,7 +26,7 @@ async function waitFor<T>(read: () => T | undefined, ms = 2000): Promise<T> {
 }
 
 function run(open: () => Promise<Result<Driver, string>>, extra: string[] = []) {
-	const c = testContext([]);
+	const c = cliTesting.testContext([]);
 	ctx = c;
 	const socket = join(c.cwd, "h.sock");
 	c.argv.splice(0, c.argv.length, "--serial", SERIAL, "--socket", socket, ...extra);

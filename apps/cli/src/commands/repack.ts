@@ -3,12 +3,12 @@ import { Repacker, type RepackInput, type RepackResult } from "@delacour/warden-
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
-import { resolvePlatform } from "../claim-flags";
+import { claimFlagsHelpers } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
 import { output } from "../output";
-import { projectContextFor } from "../project-context";
-import { withSpinner } from "../spinner-context";
+import { projectContextHelpers } from "../project-context";
+import { spinnerContext } from "../spinner-context";
 
 /** Runs one repack; the real one is `new Repacker(input).run()`. */
 export type RepackRun = (input: RepackInput) => AsyncResult<RepackResult>;
@@ -78,7 +78,7 @@ export class RepackCommand extends CliCommand {
 	): AsyncResult<RepackReport> {
 		const start = appLookup.projectStart(ctx, opts.project);
 		if (!start.success) return start;
-		const project = await projectContextFor(ctx, { start: start.data });
+		const project = await projectContextHelpers.projectContextFor(ctx, { start: start.data });
 		if (!project.success) return project;
 		const { kind: _kind, ...input } = new AppPreparer(contextBuilder.appHostFromContext(ctx), deps).kindAppInput(
 			ownerResolver.resolve(ctx),
@@ -115,13 +115,13 @@ export class RepackCommand extends CliCommand {
 		platformArg: string | undefined,
 		opts: RepackOpts
 	): Promise<number> {
-		const platform = await resolvePlatform(ctx, platformArg);
+		const platform = await claimFlagsHelpers.resolvePlatform(ctx, platformArg);
 		if (!platform.success) {
 			output.reportError(ctx, "repack", platform.error);
 			return 1;
 		}
 		if (!opts.json) output.heading(ctx, "repack", platform.data);
-		const res = await withSpinner(ctx, `repacking the ${platform.data} JS…`, async (sctx, spinner) => {
+		const res = await spinnerContext.withSpinner(ctx, `repacking the ${platform.data} JS…`, async (sctx, spinner) => {
 			const done = await this.repack(sctx, deps, run, platform.data, opts);
 			if (!done.success) spinner.fail(`${platform.data} repack failed`);
 			else if (done.data.result === "fallback") spinner.fail(`${platform.data} repack not possible`);

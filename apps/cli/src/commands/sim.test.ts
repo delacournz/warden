@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { SimCommand } from "./sim";
 
 let ctx: TestContext | undefined;
@@ -72,7 +72,7 @@ function statefulExec(calls: string[][]): Exec {
 }
 
 function setup(argv: string[], calls: string[][] = []): TestContext {
-	ctx = testContext(argv, { exec: statefulExec(calls) });
+	ctx = cliTesting.testContext(argv, { exec: statefulExec(calls) });
 	return ctx;
 }
 

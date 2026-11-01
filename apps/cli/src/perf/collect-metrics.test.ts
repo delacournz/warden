@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sampleSeries } from "@delacour/warden-perf/metrics/series";
 import { COLLECT_METRICS_INTERVAL_MS, metricsTickers } from "@delacour/warden-sdk/ops/perf/collect-metrics";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 
 let ctx: TestContext | undefined;
 let dir: string | undefined;
@@ -18,7 +18,7 @@ const topOut = " 4321 u0_a123      10 -10  14G 250M 120M S  25.0   6.5   0:30.11
 function setup(opts: { running: () => boolean }) {
 	const clock = { now: 50_000 };
 	dir = mkdtempSync(join(tmpdir(), "warden-collect-"));
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => clock.now,
 		exec: async (cmd) => {
 			const joined = cmd.join(" ");

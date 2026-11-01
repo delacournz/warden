@@ -13,7 +13,7 @@ import type { UiDeps } from "../agent-ui/driver";
 import { cliUiPaths } from "../agent-ui/paths";
 import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { UiCommand } from "./ui";
 
 let cleanups: (() => void)[] = [];
@@ -124,7 +124,7 @@ function harness(
 			},
 		},
 	};
-	const c = testContext([], { now: () => clock.t, ...(options.exec ? { exec: processExec.run } : {}) });
+	const c = cliTesting.testContext([], { now: () => clock.t, ...(options.exec ? { exec: processExec.run } : {}) });
 	cleanups.push(c.cleanup);
 	if (options.cwd !== undefined) c.cwd = options.cwd;
 	c.env = { ...c.env, ...OWNER_ENV, WARDEN_UI_SECRET_PASSWORD: "hunter22" };

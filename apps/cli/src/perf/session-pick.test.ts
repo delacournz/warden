@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { perfSessionRefs } from "@delacour/warden-sdk/ops/perf/session-ref";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfSessionPickCli } from "./session-pick";
 import { perfTestingCli } from "./testing";
 
@@ -12,7 +12,7 @@ const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 
 function setup() {
 	const clock = { now: Date.UTC(2026, 9, 24, 10, 0, 0) };
-	const c = testContext([], { now: () => clock.now });
+	const c = cliTesting.testContext([], { now: () => clock.now });
 	ctx = c;
 	const deps = perfTestingCli.fakePerfDeps([sim]);
 	const ids: string[] = [];
@@ -53,7 +53,7 @@ describe("sessionByRef", () => {
 	});
 
 	test("no sessions: latest is session_not_found", () => {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
 		expect(perfSessionRefs.sessionByRef(c, "latest")).toMatchObject({ success: false });
 	});

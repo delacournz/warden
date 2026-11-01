@@ -9,7 +9,7 @@ import {
 	FAKE_IPAD_UDID,
 	FAKE_IPHONE_UDID,
 } from "@delacour/warden-providers/devicectl.fixtures";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { doctorPhysical } from "./doctor-physical";
 
 let ctx: TestContext | undefined;
@@ -39,7 +39,7 @@ const LIST = devicectlFixtures.json([
 type Handlers = Array<[string, { stdout?: string; exitCode?: number; stderr?: string }]>;
 
 function setup(handlers: Handlers, env: Record<string, string> = {}): TestContext {
-	ctx = testContext([], { exec: fakeExec(handlers) });
+	ctx = cliTesting.testContext([], { exec: cliTesting.fakeExec(handlers) });
 	ctx.env = { ...ctx.env, ...env };
 	return ctx;
 }

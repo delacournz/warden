@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { hookCommand } from "../commands/hook";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { hookClaudeSettings } from "./claude-settings";
 import { CODEX_HOOKS, hookCodexHooks } from "./codex-hooks";
 
@@ -91,7 +91,7 @@ describe("warden hook with Codex payloads", () => {
 	const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 
 	function run(argv: string[], stdin: unknown): TestContext {
-		ctx = testContext(argv, { readStdin: async () => JSON.stringify(stdin) });
+		ctx = cliTesting.testContext(argv, { readStdin: async () => JSON.stringify(stdin) });
 		return ctx;
 	}
 

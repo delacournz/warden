@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { refResolver } from "@delacour/warden-driver/refs";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { uiStatePersistence } from "./state";
 import { uiStateStores } from "./state-stores";
 
@@ -16,7 +16,7 @@ const screen = () =>
 
 describe("createFileRefStore", () => {
 	test("a second store over the same home (another process) sees the snapshot and the next generation", () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		const first = uiStateStores.createFileRefStore(ctx, UDID);
 		const second = uiStateStores.createFileRefStore(ctx, UDID);
 		expect(first.last()).toBeUndefined();
@@ -30,7 +30,7 @@ describe("createFileRefStore", () => {
 	});
 
 	test("generations are per device", () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		uiStateStores.createFileRefStore(ctx, "A").commit({ takenAt: 1, hash: "h", snapshot: screen() });
 		expect(
 			uiStateStores.createFileRefStore(ctx, "B").commit({ takenAt: 1, hash: "h", snapshot: screen() }).generation
@@ -40,7 +40,7 @@ describe("createFileRefStore", () => {
 
 describe("createFileStateStore", () => {
 	test("updates the ops' fields and leaves the generation and helper record alone", () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		uiStatePersistence.writeState(ctx, UDID, {
 			generation: 7,
 			helper: { pid: 42, socket: "/s" },
@@ -60,7 +60,7 @@ describe("createFileStateStore", () => {
 	});
 
 	test("a key left out of the next state is removed from the file", () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		uiStatePersistence.writeState(ctx, UDID, {
 			generation: 0,
 			app: "a",
@@ -74,7 +74,7 @@ describe("createFileStateStore", () => {
 	});
 
 	test("returning the state it was given writes nothing", () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		const store = uiStateStores.createFileStateStore(ctx, UDID);
 		store.update((state) => state);
 		expect(uiStatePersistence.readState(ctx, UDID).updatedAt).toBe(0);

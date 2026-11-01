@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeMetros, fakePages } from "@delacour/warden-devtools/testing/devtools";
 import { programRunner } from "../command";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { COMMANDS } from "./registry";
 import { UiCollectCommand } from "./ui-collect";
 
@@ -27,7 +27,7 @@ describe("warden ui-collect", () => {
 		const fake = fakeMetros.start({ respond: (request, connection) => page.respond(request, connection) });
 		cleanup.push(() => fake.stop());
 		const dir = out();
-		ctx = testContext(["--metro", fake.url, "--out", dir, "--idle-ms", "60"]);
+		ctx = cliTesting.testContext(["--metro", fake.url, "--out", dir, "--idle-ms", "60"]);
 		const code = await new UiCollectCommand().definition().run(ctx);
 		expect(code).toBe(0);
 		expect(existsSync(join(dir, "console.jsonl"))).toBe(true);
@@ -39,7 +39,7 @@ describe("warden ui-collect", () => {
 		const fake = fakeMetros.start();
 		cleanup.push(() => fake.stop());
 		const controller = new AbortController();
-		ctx = testContext(["--metro", fake.url, "--out", out(), "--idle-ms", "60000"]);
+		ctx = cliTesting.testContext(["--metro", fake.url, "--out", out(), "--idle-ms", "60000"]);
 		const running = new UiCollectCommand({ signal: controller.signal }).definition().run(ctx);
 		await Bun.sleep(100);
 		controller.abort();
@@ -48,18 +48,18 @@ describe("warden ui-collect", () => {
 	});
 
 	test("no dev client is exit 3", async () => {
-		ctx = testContext(["--metro", "http://127.0.0.1:1", "--out", out()]);
+		ctx = cliTesting.testContext(["--metro", "http://127.0.0.1:1", "--out", out()]);
 		expect(await new UiCollectCommand().definition().run(ctx)).toBe(3);
 	});
 
 	test("missing arguments are exit 1", async () => {
-		ctx = testContext(["--out", out()]);
+		ctx = cliTesting.testContext(["--out", out()]);
 		expect(await new UiCollectCommand().definition().run(ctx)).toBe(1);
 		expect(ctx.stderr.join("\n")).toContain("--metro");
 	});
 
 	test("it is registered but hidden from --help", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		expect(COMMANDS.map((c) => c.name)).toContain("ui-collect");
 		await programRunner.runLazy(COMMANDS, ["--help"], ctx);
 		const help = ctx.stdout.join("\n");

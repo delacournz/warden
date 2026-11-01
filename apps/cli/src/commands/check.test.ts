@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { checkJsonSchema } from "@delacour/warden-sdk/contracts/leases";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { checkCommand } from "./check";
 
 let ctx: TestContext | undefined;
@@ -11,7 +11,7 @@ afterEach(() => ctx?.cleanup());
 const other: Owner = { kind: "agent", sessionId: "other", cwd: "/w", repo: "salient", worktree: "cowrie@main" };
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv);
+	ctx = cliTesting.testContext(argv);
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	ctx.db.insertLease(
 		{

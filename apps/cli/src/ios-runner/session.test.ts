@@ -1,33 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import {
-	classifyXcodebuildLine,
-	isInstallRace,
-	readyPort,
-	runnerEnv,
-	startSession,
-	TEST_FILTER,
-	xcodebuildCommand,
-} from "./session";
-import {
-	ARTIFACTS,
-	type FakeProc,
-	fakeProc,
-	fakeRoute,
-	flush,
-	manualTimers,
-	READY_LINE,
-	UDID,
-} from "./session.testing";
+import { runnerSession, TEST_FILTER } from "./session";
+import { ARTIFACTS, type FakeProc, READY_LINE, sessionTesting, UDID } from "./session.testing";
 
-function harness(route: Parameters<typeof fakeRoute>[0], opts: { ignoreTerm?: boolean } = {}) {
+function harness(route: Parameters<typeof sessionTesting.fakeRoute>[0], opts: { ignoreTerm?: boolean } = {}) {
 	const procs: FakeProc[] = [];
 	const spawned: Array<(p: FakeProc) => void> = [];
-	const timers = manualTimers();
+	const timers = sessionTesting.manualTimers();
 	const logs: string[] = [];
-	const r = fakeRoute(route);
+	const r = sessionTesting.fakeRoute(route);
 	const deps = {
 		spawn: (cmd: readonly string[], env: Readonly<Record<string, string>>) => {
-			const p = fakeProc(cmd, env, opts.ignoreTerm);
+			const p = sessionTesting.fakeProc(cmd, env, opts.ignoreTerm);
 			procs.push(p);
 			spawned.shift()?.(p);
 			return p;
@@ -43,7 +26,7 @@ const input = { udid: UDID, artifacts: ARTIFACTS, runnerIdleSeconds: 660 };
 
 describe("xcodebuild line parsing", () => {
 	test("the command line runs testServe from the patched xctestrun on the device", () => {
-		expect(xcodebuildCommand(ARTIFACTS, UDID)).toEqual([
+		expect(runnerSession.xcodebuildCommand(ARTIFACTS, UDID)).toEqual([
 			"xcodebuild",
 			"test-without-building",
 			"-xctestrun",
@@ -53,36 +36,40 @@ describe("xcodebuild line parsing", () => {
 			"-only-testing:WardenRunnerUITests/RunnerTests/testServe",
 		]);
 		expect(TEST_FILTER).toContain("testServe");
-		expect(runnerEnv(input)).toEqual({
+		expect(runnerSession.runnerEnv(input)).toEqual({
 			TEST_RUNNER_WARDEN_RUNNER_UDID: UDID,
 			TEST_RUNNER_WARDEN_RUNNER_IDLE_SECONDS: "660",
 		});
 	});
 
 	test("classifies the lines that mean the runner cannot start", () => {
-		expect(classifyXcodebuildLine("Unlock Chris's iPhone to Continue")?.kind).toBe("device_locked");
-		expect(classifyXcodebuildLine("Developer Mode is disabled on this device")?.kind).toBe("developer_mode_off");
-		expect(classifyXcodebuildLine("The profile has not been explicitly trusted by the user")?.kind).toBe(
+		expect(runnerSession.classifyXcodebuildLine("Unlock Chris's iPhone to Continue")?.kind).toBe("device_locked");
+		expect(runnerSession.classifyXcodebuildLine("Developer Mode is disabled on this device")?.kind).toBe(
+			"developer_mode_off"
+		);
+		expect(runnerSession.classifyXcodebuildLine("The profile has not been explicitly trusted by the user")?.kind).toBe(
 			"runner_untrusted"
 		);
-		expect(classifyXcodebuildLine("Failed to establish communication with the test runner")?.kind).toBe("device_busy");
-		expect(classifyXcodebuildLine("WARDEN_RUNNER_FAILED address in use")?.kind).toBe("runner_failed");
-		expect(classifyXcodebuildLine("Test Suite 'All tests' started")).toBeUndefined();
+		expect(runnerSession.classifyXcodebuildLine("Failed to establish communication with the test runner")?.kind).toBe(
+			"device_busy"
+		);
+		expect(runnerSession.classifyXcodebuildLine("WARDEN_RUNNER_FAILED address in use")?.kind).toBe("runner_failed");
+		expect(runnerSession.classifyXcodebuildLine("Test Suite 'All tests' started")).toBeUndefined();
 	});
 
 	test("the install race is IXRemoteErrorDomain code 6 and nothing else", () => {
-		expect(isInstallRace('Error Domain=IXRemoteErrorDomain Code=6 "Failed to install"')).toBe(true);
-		expect(isInstallRace("IXRemoteErrorDomain (code 6)")).toBe(true);
-		expect(isInstallRace('Error Domain=IXRemoteErrorDomain Code=2 "other"')).toBe(false);
-		expect(isInstallRace("Code=6 something else")).toBe(false);
-		expect(isInstallRace("IXRemoteErrorDomain Code=60")).toBe(false);
+		expect(runnerSession.isInstallRace('Error Domain=IXRemoteErrorDomain Code=6 "Failed to install"')).toBe(true);
+		expect(runnerSession.isInstallRace("IXRemoteErrorDomain (code 6)")).toBe(true);
+		expect(runnerSession.isInstallRace('Error Domain=IXRemoteErrorDomain Code=2 "other"')).toBe(false);
+		expect(runnerSession.isInstallRace("Code=6 something else")).toBe(false);
+		expect(runnerSession.isInstallRace("IXRemoteErrorDomain Code=60")).toBe(false);
 	});
 
 	test("readyPort reads the port from the ready line", () => {
-		expect(readyPort(READY_LINE)).toBe(50123);
-		expect(readyPort("WARDEN_RUNNER_READY not json")).toBeUndefined();
-		expect(readyPort('WARDEN_RUNNER_READY {"event":"ready"}')).toBeUndefined();
-		expect(readyPort("unrelated")).toBeUndefined();
+		expect(runnerSession.readyPort(READY_LINE)).toBe(50123);
+		expect(runnerSession.readyPort("WARDEN_RUNNER_READY not json")).toBeUndefined();
+		expect(runnerSession.readyPort('WARDEN_RUNNER_READY {"event":"ready"}')).toBeUndefined();
+		expect(runnerSession.readyPort("unrelated")).toBeUndefined();
 	});
 });
 
@@ -95,10 +82,10 @@ describe("startSession", () => {
 				p.emit(READY_LINE);
 			}, 0);
 		});
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (!started.success) throw new Error(started.error.message);
 		expect(h.procs).toHaveLength(1);
-		expect(h.procs[0]?.env).toEqual(runnerEnv(input));
+		expect(h.procs[0]?.env).toEqual(runnerSession.runnerEnv(input));
 		expect(h.procs[0]?.cmd[0]).toBe("xcodebuild");
 		expect(h.route.reads()).toBe(3);
 		expect(started.data.address).toEqual({ host: "fd00::1", port: 50123 });
@@ -110,14 +97,14 @@ describe("startSession", () => {
 			["connected", "fd5c::2"],
 		]);
 		h.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (!started.success) throw new Error(started.error.message);
 		expect(started.data.address.host).toBe("fd5c::2");
 	});
 
 	test("a tunnel that never connects is tunnel_down, and nothing is spawned", async () => {
 		const h = harness([["disconnected"]]);
-		const started = await startSession({ ...h.deps, tunnelWaitMs: 1500 }, input);
+		const started = await runnerSession.startSession({ ...h.deps, tunnelWaitMs: 1500 }, input);
 		if (started.success) throw new Error("expected failure");
 		expect(started.error.kind).toBe("tunnel_down");
 		expect(h.procs).toHaveLength(0);
@@ -126,7 +113,7 @@ describe("startSession", () => {
 	test("a locked phone is device_locked and xcodebuild is stopped", async () => {
 		const h = harness([["connected", "fd00::1"]]);
 		h.spawned.push((p) => setTimeout(() => p.emit("Unlock Chris's iPhone to Continue", "stderr"), 0));
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (started.success) throw new Error("expected failure");
 		expect(started.error).toEqual({ kind: "device_locked", message: "Unlock Chris's iPhone to Continue" });
 		expect(h.procs[0]?.signals).toEqual(["SIGTERM"]);
@@ -136,7 +123,7 @@ describe("startSession", () => {
 		const h = harness([["connected", "fd00::1"]]);
 		h.spawned.push((p) => setTimeout(() => p.emit('Error Domain=IXRemoteErrorDomain Code=6 "install"'), 0));
 		h.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (!started.success) throw new Error(started.error.message);
 		expect(h.procs).toHaveLength(2);
 		expect(h.procs[0]?.signals).toEqual(["SIGTERM"]);
@@ -147,7 +134,7 @@ describe("startSession", () => {
 		const h = harness([["connected", "a::1"], ["disconnected"], ["connected", "b::1"], ["connected", "b::1"]]);
 		h.spawned.push((p) => setTimeout(() => p.emit("IXRemoteErrorDomain Code=6"), 0));
 		h.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (!started.success) throw new Error(started.error.message);
 		expect(started.data.address.host).toBe("b::1");
 	});
@@ -156,7 +143,7 @@ describe("startSession", () => {
 		const h = harness([["connected", "fd00::1"]]);
 		h.spawned.push((p) => setTimeout(() => p.emit("IXRemoteErrorDomain Code=6"), 0));
 		h.spawned.push((p) => setTimeout(() => p.emit("IXRemoteErrorDomain Code=6"), 0));
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (started.success) throw new Error("expected failure");
 		expect(started.error.kind).toBe("install_failed");
 		expect(h.procs).toHaveLength(2);
@@ -170,7 +157,7 @@ describe("startSession", () => {
 				p.exit(65);
 			}, 0)
 		);
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (started.success) throw new Error("expected failure");
 		expect(started.error.kind).toBe("xcodebuild_exited");
 		if (started.error.kind === "xcodebuild_exited") expect(started.error.exitCode).toBe(65);
@@ -185,15 +172,15 @@ describe("startSession", () => {
 				p.exit(1);
 			}, 0)
 		);
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (started.success) throw new Error("expected failure");
 		expect(started.error.kind).toBe("device_locked");
 	});
 
 	test("never ready: the timeout is ready_timeout and xcodebuild is stopped", async () => {
 		const h = harness([["connected", "fd00::1"]]);
-		const pending = startSession({ ...h.deps, readyTimeoutMs: 1234 }, input);
-		await flush();
+		const pending = runnerSession.startSession({ ...h.deps, readyTimeoutMs: 1234 }, input);
+		await sessionTesting.flush();
 		h.timers.fire(1234);
 		const started = await pending;
 		if (started.success) throw new Error("expected failure");
@@ -204,7 +191,7 @@ describe("startSession", () => {
 	test("an xcodebuild that ignores SIGTERM is SIGKILLed after the grace period", async () => {
 		const h = harness([["connected", "fd00::1"]], { ignoreTerm: true });
 		h.spawned.push((p) => setTimeout(() => p.emit("Unlock x to Continue"), 0));
-		const pending = startSession(h.deps, input);
+		const pending = runnerSession.startSession(h.deps, input);
 		await Bun.sleep(20);
 		h.timers.fire(5000);
 		const started = await pending;
@@ -215,14 +202,14 @@ describe("startSession", () => {
 	test("after ready: a clean exit (runner shutdown) ends clean; stop() is clean too", async () => {
 		const h = harness([["connected", "fd00::1"]]);
 		h.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (!started.success) throw new Error(started.error.message);
 		h.procs[0]?.exit(0);
 		expect(await started.data.ended).toEqual({ kind: "clean" });
 
 		const h2 = harness([["connected", "fd00::1"]]);
 		h2.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
-		const second = await startSession(h2.deps, input);
+		const second = await runnerSession.startSession(h2.deps, input);
 		if (!second.success) throw new Error(second.error.message);
 		await second.data.stop();
 		expect(await second.data.ended).toEqual({ kind: "clean" });
@@ -232,7 +219,7 @@ describe("startSession", () => {
 	test("after ready: a crash is a fault carrying the late fault line, else the exit code", async () => {
 		const h = harness([["connected", "fd00::1"]]);
 		h.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
-		const started = await startSession(h.deps, input);
+		const started = await runnerSession.startSession(h.deps, input);
 		if (!started.success) throw new Error(started.error.message);
 		h.procs[0]?.emit("WARDEN_RUNNER_FAILED listener died");
 		h.procs[0]?.exit(1);
@@ -241,7 +228,7 @@ describe("startSession", () => {
 
 		const h2 = harness([["connected", "fd00::1"]]);
 		h2.spawned.push((p) => setTimeout(() => p.emit(READY_LINE), 0));
-		const second = await startSession(h2.deps, input);
+		const second = await runnerSession.startSession(h2.deps, input);
 		if (!second.success) throw new Error(second.error.message);
 		h2.procs[0]?.exit(66);
 		const end2 = await second.data.ended;

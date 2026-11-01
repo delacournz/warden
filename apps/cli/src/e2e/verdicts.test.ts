@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { SelectedSpec } from "@delacour/warden-core/affected/select";
 import type { JobResult } from "@delacour/warden-core/batch/schedule";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
-import { jsonl, result } from "../batch/results.testing";
+import { resultsTesting } from "../batch/results.testing";
 import type { SessionResult } from "../commands/batch";
-import { judgeJob, type RunShape, verdicts } from "./verdicts";
+import { e2eVerdicts, type RunShape } from "./verdicts";
 
 const real = (path: string) => path;
 const spec = (id: string, required = true): SelectedSpec => ({
@@ -14,37 +14,49 @@ const spec = (id: string, required = true): SelectedSpec => ({
 	reasons: [],
 });
 const res = (id: string, title: string, status: TestResult["status"] = "passed") =>
-	result(`/specs/${id}.e2e.ts`, title, status);
+	resultsTesting.result(`/specs/${id}.e2e.ts`, title, status);
 
 const [A, B, C] = [spec("a"), spec("b"), spec("c")];
-const verdictsOf = (judged: ReturnType<typeof judgeJob>) =>
+const verdictsOf = (judged: ReturnType<typeof e2eVerdicts.judgeJob>) =>
 	Object.fromEntries([...judged].map(([id, j]) => [id, j.verdict]));
 
 describe("judgeJob (one spec process over its specs)", () => {
 	test("exit 0: a failed test fails its spec, the rest pass", () => {
 		const all = [res("a", "t"), res("b", "t", "failed"), res("c", "t")];
-		expect(verdictsOf(judgeJob([A, B, C], all, 0, real))).toEqual({ a: "passed", b: "failed", c: "passed" });
+		expect(verdictsOf(e2eVerdicts.judgeJob([A, B, C], all, 0, real))).toEqual({
+			a: "passed",
+			b: "failed",
+			c: "passed",
+		});
 	});
 
 	test("a non-zero exit with a failed test elsewhere blames that test, not the specs that passed", () => {
 		const all = [res("a", "t"), res("b", "t", "failed"), res("c", "t")];
-		expect(verdictsOf(judgeJob([A, B, C], all, 1, real))).toEqual({ a: "passed", b: "failed", c: "passed" });
+		expect(verdictsOf(e2eVerdicts.judgeJob([A, B, C], all, 1, real))).toEqual({
+			a: "passed",
+			b: "failed",
+			c: "passed",
+		});
 	});
 
 	test("a non-zero exit nobody can be blamed for, every spec finished: all of them fail", () => {
 		const all = [res("a", "t"), res("b", "t")];
-		expect(verdictsOf(judgeJob([A, B], all, 1, real))).toEqual({ a: "failed", b: "failed" });
+		expect(verdictsOf(e2eVerdicts.judgeJob([A, B], all, 1, real))).toEqual({ a: "failed", b: "failed" });
 	});
 
 	test("a crash: the spec running when the process died and every spec after it fail, those before it pass", () => {
 		const all = [res("a", "t"), res("b", "first test")];
-		expect(verdictsOf(judgeJob([A, B, C], all, 1, real))).toEqual({ a: "passed", b: "failed", c: "failed" });
+		expect(verdictsOf(e2eVerdicts.judgeJob([A, B, C], all, 1, real))).toEqual({
+			a: "passed",
+			b: "failed",
+			c: "failed",
+		});
 	});
 
 	test("a crash after a failed test: that spec stays failed, the one running at the crash fails too", () => {
 		const all = [res("a", "t"), res("b", "t", "failed"), res("c", "first test")];
 		const d = spec("d");
-		expect(verdictsOf(judgeJob([A, B, C, d], all, 137, real))).toEqual({
+		expect(verdictsOf(e2eVerdicts.judgeJob([A, B, C, d], all, 137, real))).toEqual({
 			a: "passed",
 			b: "failed",
 			c: "failed",
@@ -54,19 +66,29 @@ describe("judgeJob (one spec process over its specs)", () => {
 
 	test("a spec with no result of its own passes on exit 0 (a spec with no tests) and fails on a non-zero exit", () => {
 		const all = [res("a", "t"), res("c", "t")];
-		expect(verdictsOf(judgeJob([A, B, C], all, 0, real))).toEqual({ a: "passed", b: "passed", c: "passed" });
-		expect(verdictsOf(judgeJob([A, B, C], [res("a", "t"), res("b", "t"), res("c", "t", "failed")], 1, real))).toEqual({
+		expect(verdictsOf(e2eVerdicts.judgeJob([A, B, C], all, 0, real))).toEqual({
+			a: "passed",
+			b: "passed",
+			c: "passed",
+		});
+		expect(
+			verdictsOf(e2eVerdicts.judgeJob([A, B, C], [res("a", "t"), res("b", "t"), res("c", "t", "failed")], 1, real))
+		).toEqual({
 			a: "passed",
 			b: "passed",
 			c: "failed",
 		});
-		expect(verdictsOf(judgeJob([A, B, C], all, 1, real))).toEqual({ a: "passed", b: "failed", c: "failed" });
+		expect(verdictsOf(e2eVerdicts.judgeJob([A, B, C], all, 1, real))).toEqual({
+			a: "passed",
+			b: "failed",
+			c: "failed",
+		});
 	});
 
 	test("no usable results.jsonl: the exit code decides every spec, and the verdict says so", () => {
 		for (const results of [undefined, []]) {
-			const ok = judgeJob([A, B], results, 0, real);
-			const bad = judgeJob([A, B], results, 1, real);
+			const ok = e2eVerdicts.judgeJob([A, B], results, 0, real);
+			const bad = e2eVerdicts.judgeJob([A, B], results, 1, real);
 			expect(verdictsOf(ok)).toEqual({ a: "passed", b: "passed" });
 			expect(verdictsOf(bad)).toEqual({ a: "failed", b: "failed" });
 			expect([...bad.values()].every((j) => j.fellBack)).toBe(true);
@@ -75,12 +97,12 @@ describe("judgeJob (one spec process over its specs)", () => {
 
 	test("results of files that are not this job's specs are ignored", () => {
 		const all = [res("other", "t", "failed"), res("a", "t")];
-		expect(verdictsOf(judgeJob([A], all, 0, real))).toEqual({ a: "passed" });
+		expect(verdictsOf(e2eVerdicts.judgeJob([A], all, 0, real))).toEqual({ a: "passed" });
 	});
 
 	test("a spec carries its own tests", () => {
 		const all = [res("a", "one"), res("a", "two", "failed")];
-		const judged = judgeJob([A], all, 1, real).get("a");
+		const judged = e2eVerdicts.judgeJob([A], all, 1, real).get("a");
 		expect(judged?.tests?.map((t) => [t.title, t.status])).toEqual([
 			[["one"], "passed"],
 			[["two"], "failed"],
@@ -112,7 +134,7 @@ function session(
 	const logs = new Map<string, string>();
 	const results = attempts.map((a, i) => {
 		const path = `/out/0-${i}/results.jsonl`;
-		if (a.results) files.set(path, jsonl(...a.results));
+		if (a.results) files.set(path, resultsTesting.jsonl(...a.results));
 		resultFiles.set(`0:${i}`, path);
 		logs.set(`0:${i}`, `/logs/0-${i}-${job}.log`);
 		return jobResult(job, 0, i, i, a.exitCode);
@@ -152,7 +174,7 @@ const io = (files: Map<string, string>, extra: { attempts?: Map<string, Set<stri
 describe("verdicts over device shards", () => {
 	test("a crash fails the spec it hit and the specs it never reached, and says where the process died", async () => {
 		const s = session([{ exitCode: 1, results: [res("a", "t"), res("b", "first")] }]);
-		const out = await verdicts([A, B, C], s.session, shape, io(s.files));
+		const out = await e2eVerdicts.verdicts([A, B, C], s.session, shape, io(s.files));
 		expect(out.specs.map((f) => [f.id, f.verdict])).toEqual([
 			["a", "passed"],
 			["b", "failed"],
@@ -173,7 +195,7 @@ describe("verdicts over device shards", () => {
 			["0:0", new Set(["a", "b", "c"])],
 			["0:1", new Set(["b"])],
 		]);
-		const out = await verdicts([A, B, C], s.session, shape, io(s.files, { attempts }));
+		const out = await e2eVerdicts.verdicts([A, B, C], s.session, shape, io(s.files, { attempts }));
 		expect(out.specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 			["a", "passed", 1],
 			["b", "passed", 2],
@@ -192,7 +214,7 @@ describe("verdicts over device shards", () => {
 			["0:0", new Set(["a", "b"])],
 			["0:1", new Set(["b"])],
 		]);
-		const out = await verdicts([A, B], s.session, shape, io(s.files, { attempts }));
+		const out = await e2eVerdicts.verdicts([A, B], s.session, shape, io(s.files, { attempts }));
 		expect(out.specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 			["a", "passed", 1],
 			["b", "failed", 2],
@@ -206,7 +228,7 @@ describe("verdicts over device shards", () => {
 			{ exitCode: 1, results: [res("a", "t", "failed"), res("b", "t")] },
 			{ exitCode: 0, results: [res("a", "t"), res("b", "t")] },
 		]);
-		const out = await verdicts([A, B], s.session, shape, io(s.files));
+		const out = await e2eVerdicts.verdicts([A, B], s.session, shape, io(s.files));
 		expect(out.specs.map((f) => [f.id, f.verdict, f.attempts])).toEqual([
 			["a", "passed", 2],
 			["b", "passed", 2],
@@ -214,7 +236,7 @@ describe("verdicts over device shards", () => {
 	});
 
 	test("a shard that never ran its specs: not-run", async () => {
-		const out = await verdicts(
+		const out = await e2eVerdicts.verdicts(
 			[A, B],
 			{ code: 1, summary: { ok: false, stopped: true, results: [], failed: [] } },
 			shape,
@@ -237,7 +259,7 @@ describe("verdicts: the failure screenshot", () => {
 				results: [res("a", "t"), { ...res("b", "t", "failed"), ...shot("/art/b-1") }, res("c", "t")],
 			},
 		]);
-		const out = await verdicts([A, B, C], s.session, shape, io(s.files));
+		const out = await e2eVerdicts.verdicts([A, B, C], s.session, shape, io(s.files));
 		const byId = Object.fromEntries(out.specs.map((f) => [f.id, f]));
 		expect(byId.b?.verdict).toBe("failed");
 		expect(byId.b?.screenshot).toBe("/art/b-1/failure.png");
@@ -248,7 +270,7 @@ describe("verdicts: the failure screenshot", () => {
 	test("the runner's shot wins over a batch shot of the same attempt (taken after the whole shard ran)", async () => {
 		const s = session([{ exitCode: 1, results: [{ ...res("a", "t", "failed"), ...shot("/art/a-1") }] }]);
 		const withBatch = { ...s.session, screenshots: new Map([["0:0", "/logs/0-0-shard-0.png"]]) };
-		const out = await verdicts([A], withBatch, ONE_SHARD, io(s.files));
+		const out = await e2eVerdicts.verdicts([A], withBatch, ONE_SHARD, io(s.files));
 		expect(out.specs[0]?.screenshot).toBe("/art/a-1/failure.png");
 	});
 
@@ -259,7 +281,7 @@ describe("verdicts: the failure screenshot", () => {
 		const crashed = session([{ exitCode: 137 }]);
 		for (const s of [noPng, crashed]) {
 			const withBatch = { ...s.session, screenshots: new Map([["0:0", "/logs/0-0-shard-0.png"]]) };
-			const out = await verdicts([A], withBatch, ONE_SHARD, io(s.files));
+			const out = await e2eVerdicts.verdicts([A], withBatch, ONE_SHARD, io(s.files));
 			expect(out.specs[0]?.screenshot).toBe("/logs/0-0-shard-0.png");
 		}
 	});
@@ -269,7 +291,7 @@ describe("verdicts: the failure screenshot", () => {
 			{ exitCode: 1, results: [{ ...res("a", "t", "failed"), ...shot("/art/a-1") }] },
 			{ exitCode: 1, results: [{ ...res("a", "t", "failed"), ...shot("/art/a-2") }] },
 		]);
-		const out = await verdicts([A], s.session, ONE_SHARD, io(s.files));
+		const out = await e2eVerdicts.verdicts([A], s.session, ONE_SHARD, io(s.files));
 		expect(out.specs[0]).toMatchObject({ attempts: 2, screenshot: "/art/a-2/failure.png" });
 	});
 });
@@ -281,7 +303,7 @@ describe("perf artifacts and budgets", () => {
 
 	test("a test with a perf/report.json links its perf dir", () => {
 		const t = { ...base, artifacts: { dir: "/o/a/t-1", files: ["perf/report.json", "perf/report.md"] } };
-		const tests = judgeJob([A], [t], 1, real).get("a")?.tests;
+		const tests = e2eVerdicts.judgeJob([A], [t], 1, real).get("a")?.tests;
 		expect(tests?.[0]).toMatchObject({ perf: "/o/a/t-1/perf" });
 		expect(tests?.[0]?.kind).toBeUndefined();
 	});
@@ -291,11 +313,14 @@ describe("perf artifacts and budgets", () => {
 			...base,
 			error: { message: "perf_budget: 1 metric over budget\n  jankPct: 12 > budget 5", code: "PERF_BUDGET" },
 		};
-		expect(judgeJob([A], [t], 1, real).get("a")?.tests?.[0]).toMatchObject({ kind: "perf_budget", status: "failed" });
+		expect(e2eVerdicts.judgeJob([A], [t], 1, real).get("a")?.tests?.[0]).toMatchObject({
+			kind: "perf_budget",
+			status: "failed",
+		});
 	});
 
 	test("no perf files, no link", () => {
 		const t = { ...base, artifacts: { dir: "/o", files: ["trace.jsonl"] } };
-		expect(judgeJob([A], [t], 1, real).get("a")?.tests?.[0]?.perf).toBeUndefined();
+		expect(e2eVerdicts.judgeJob([A], [t], 1, real).get("a")?.tests?.[0]?.perf).toBeUndefined();
 	});
 });

@@ -10,7 +10,7 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { type PerfPlan, perfPlans } from "@delacour/warden-sdk/ops/perf/plan";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type CollectorDeps, perfCollectorCli } from "./collector";
 import { perfTestingCli } from "./testing";
 
@@ -67,7 +67,7 @@ type Harness = ReturnType<typeof setup>;
 
 function setup(opts: { maxDurationMs?: number; plan?: Partial<PerfPlan>; logSpawnThrows?: boolean } = {}) {
 	const clock = { now: T0 };
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => clock.now,
 		exec: async (cmd) => {
 			const line = cmd.join(" ");

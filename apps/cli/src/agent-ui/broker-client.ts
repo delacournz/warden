@@ -15,7 +15,7 @@ import type {
 	ResponseOf,
 } from "../dev-broker/broker.types";
 import type { CallOptions } from "../dev-broker/ipc";
-import { type DevSessionRecord, findDevSession, listDevSessions } from "../dev-session";
+import { type DevSessionRecord, devSession } from "../dev-session";
 import { type UiError, uiOutput } from "./output";
 
 /**
@@ -127,7 +127,7 @@ export class UiBrokerClient {
 	 * socket answers `status`. Undefined = no broker; callers fall back to their direct connection.
 	 */
 	async brokerFor(env: Env, udid: string, deps: BrokerClientDeps = {}): Promise<BrokerHandle | undefined> {
-		const found = findDevSession(env, { udid }, this.sessionDeps(deps));
+		const found = devSession.findDevSession(env, { udid }, this.sessionDeps(deps));
 		return found.success ? this.probe(found.data, deps) : undefined;
 	}
 
@@ -156,7 +156,7 @@ export class UiBrokerClient {
 	/** The broker for `target`: its handle, the session of `udid`, or the only live one (several: an error listing them). */
 	async resolveBroker(target: BrokerTarget, deps: BrokerClientDeps = {}): Promise<Result<BrokerHandle, UiError>> {
 		if (target.handle !== undefined) return resultFactory.ok(target.handle);
-		const found = findDevSession(
+		const found = devSession.findDevSession(
 			target.env,
 			target.udid === undefined ? {} : { udid: target.udid },
 			this.sessionDeps(deps)
@@ -357,7 +357,7 @@ export class UiBrokerClient {
 
 	/** Every live dev session that has a broker socket (for "which one?" messages). */
 	brokerSessions(env: Env, deps: BrokerClientDeps = {}): DevSessionRecord[] {
-		const listed = listDevSessions(env, this.sessionDeps(deps));
+		const listed = devSession.listDevSessions(env, this.sessionDeps(deps));
 		return listed.success ? listed.data.filter((s) => s.brokerSocket !== undefined) : [];
 	}
 

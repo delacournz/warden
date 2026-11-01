@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { simsCommand } from "./sims";
 
 let ctx: TestContext | undefined;
@@ -31,13 +31,13 @@ type SetupOpts = {
 
 function setup(argv: string[], opts: SetupOpts = {}): { c: TestContext; calls: string[][] } {
 	const calls: string[][] = [];
-	const c = testContext(["delete", ...argv], {
+	const c = cliTesting.testContext(["delete", ...argv], {
 		now: () => NOW,
 		exec: simctlFakes.build(SIMS, calls, [
 			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson(opts.sims ?? { "iOS-26-5": SIMS }) }],
 			["xcrun simctl delete", {}],
 		]),
-		ui: scriptedUi({
+		ui: cliTesting.scriptedUi({
 			interactive: opts.interactive ?? false,
 			...(opts.multiselect ? { multiselect: opts.multiselect } : {}),
 			...(opts.confirm ? { confirm: opts.confirm } : {}),
@@ -60,7 +60,7 @@ function setup(argv: string[], opts: SetupOpts = {}): { c: TestContext; calls: s
 const deletes = (calls: string[][]) =>
 	calls.filter((cmd) => cmd[2] === "delete" || cmd[2] === "shutdown").map((cmd) => cmd.join(" "));
 
-const events = (c: TestContext) => (c.ui as ReturnType<typeof scriptedUi>).events;
+const events = (c: TestContext) => (c.ui as ReturnType<typeof cliTesting.scriptedUi>).events;
 
 describe("warden sims delete", () => {
 	test("menu offers every sim; leased + golden ones are shown but disabled", async () => {

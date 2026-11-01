@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { main } from "./cli";
+import { cliEntry } from "./cli";
 import { COMMANDS } from "./commands/registry";
-import { type TestContext, testContext } from "./testing";
+import { cliTesting, type TestContext } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function run(argv: string[]): Promise<number> {
-	return main(argv, (rest) => {
-		ctx = testContext(rest);
+	return cliEntry.main(argv, (rest) => {
+		ctx = cliTesting.testContext(rest);
 		return ctx;
 	});
 }

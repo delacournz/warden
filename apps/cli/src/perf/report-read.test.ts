@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
 
 let ctx: TestContext | undefined;
@@ -13,7 +13,7 @@ afterEach(() => ctx?.cleanup());
 const ID = "20261024-100000-aaaaaa";
 
 function setup() {
-	const c = testContext([], { now: () => SEED_T0 + 20_000 });
+	const c = cliTesting.testContext([], { now: () => SEED_T0 + 20_000 });
 	ctx = c;
 	return c;
 }

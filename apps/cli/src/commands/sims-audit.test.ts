@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
-import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { simsCommand } from "./sims";
 
 const DAY = 86_400_000;
@@ -40,8 +40,8 @@ const RUNTIMES_JSON = JSON.stringify({
 
 function setup(argv: string[], opts: { interactive?: boolean; confirm?: boolean[] } = {}): TestContext {
 	const calls: string[][] = [];
-	ctx = testContext(argv, { now: () => NOW, ui: scriptedUi(opts) });
-	ctx.exec = fakeExec(
+	ctx = cliTesting.testContext(argv, { now: () => NOW, ui: cliTesting.scriptedUi(opts) });
+	ctx.exec = cliTesting.fakeExec(
 		[
 			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson({ "iOS-26-5": SIMS }) }],
 			["xcrun simctl shutdown", {}],
@@ -95,7 +95,7 @@ describe("warden sims audit", () => {
 		expect(out).toContain("RUNTIME");
 		expect(out).toContain("xcrun simctl runtime delete <identifier>");
 		const old = setup(["--json"]);
-		old.exec = fakeExec([
+		old.exec = cliTesting.fakeExec([
 			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson({ "iOS-26-5": SIMS }) }],
 		]);
 		expect(await simsCommand.run(old)).toBe(0);
@@ -139,7 +139,7 @@ describe("warden sims audit", () => {
 	test("--stale moves the foreign hint threshold, like `sims delete`", async () => {
 		const foreign = (stale: string) => {
 			const c = setup(["audit", "--json", "--stale", stale]);
-			c.exec = fakeExec([
+			c.exec = cliTesting.fakeExec([
 				[
 					"xcrun simctl list devices -j",
 					{

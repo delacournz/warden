@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { autoStop } from "@delacour/warden-sdk/ops/perf/auto-stop";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -12,7 +12,7 @@ const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 
 function setup(maxDurationMs: number) {
 	const clock = { now: T0 };
-	const c = testContext([], { now: () => clock.now });
+	const c = cliTesting.testContext([], { now: () => clock.now });
 	ctx = c;
 	const deps = perfTestingCli.fakePerfDeps([sim]);
 	const made = perfSessionStore.createSession(c, deps.session, {

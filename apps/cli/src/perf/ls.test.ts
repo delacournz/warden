@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { Owner } from "@delacour/warden-store/types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfLsCli } from "./ls";
 import { perfTestingCli } from "./testing";
 
@@ -14,7 +14,7 @@ const other: Owner = { kind: "agent", sessionId: "other", cwd: "/" };
 
 function setup() {
 	const clock = { now: T0 };
-	const c = testContext([], { now: () => clock.now });
+	const c = cliTesting.testContext([], { now: () => clock.now });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	for (const n of [1, 2]) c.db.recordDevice({ platform: "ios", id: `U${n}`, name: sim(n).name }, T0);

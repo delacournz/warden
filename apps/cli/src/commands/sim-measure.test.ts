@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { defineCommand } from "../command";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { simMeasure } from "./sim-measure";
 
 let ctx: TestContext | undefined;
@@ -27,8 +27,8 @@ const PS = "  PID  PPID COMM\n 100 1 /x/launchd_sim\n 101 100 /x/backboardd\n 20
 const TOP = "PID MEM\n100 2M\n101 168M+\n200 10M\n";
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv, {
-		exec: fakeExec([
+	ctx = cliTesting.testContext(argv, {
+		exec: cliTesting.fakeExec([
 			["xcrun simctl list devices booted", { stdout: BOOTED }],
 			["pgrep -f U1/data", { stdout: "100\n" }],
 			["pgrep -f U2/data", { stdout: "200\n" }],

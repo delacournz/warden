@@ -4,24 +4,24 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { SDK_ENTRIES } from "./manifests";
-import { sdkDependencies } from "./sdk-stage";
+import { sdkStage } from "./sdk-stage";
 
 describe("sdkDependencies", () => {
 	const json = (value: unknown) => JSON.stringify(value);
 
 	test("zod keeps the range packages/sdk declares; ai is the peer range", () => {
 		expect(
-			sdkDependencies(
+			sdkStage.sdkDependencies(
 				json({ dependencies: { zod: "^4.4.3", typescript: "^5.9.3" }, peerDependencies: { ai: ">=7 <8" } })
 			)
 		).toEqual({ success: true, data: { dependencies: { zod: "^4.4.3" }, aiRange: ">=7 <8" } });
 	});
 
 	test("an external the package does not declare is an error", () => {
-		const noZod = sdkDependencies(json({ dependencies: {}, peerDependencies: { ai: ">=7 <8" } }));
+		const noZod = sdkStage.sdkDependencies(json({ dependencies: {}, peerDependencies: { ai: ">=7 <8" } }));
 		expect(noZod.success).toBe(false);
 		if (!noZod.success) expect(noZod.error).toContain("no dependency zod");
-		const noAi = sdkDependencies(json({ dependencies: { zod: "^4.4.3" } }));
+		const noAi = sdkStage.sdkDependencies(json({ dependencies: { zod: "^4.4.3" } }));
 		expect(noAi.success).toBe(false);
 		if (!noAi.success) expect(noAi.error).toContain("peerDependencies.ai");
 	});

@@ -206,11 +206,11 @@ describe("profile.* methods", () => {
 describe("profile client", () => {
 	test("startProfile and stopProfile find the session's broker socket and forward the call", async () => {
 		const calls: Array<{ socket: string; method: string; params: unknown }> = [];
-		const { writeDevSession } = await import("../dev-session");
+		const { devSession } = await import("../dev-session");
 		const home = mkdtempSync(join(tmpdir(), "wbh-"));
 		dirs.push(home);
 		const env = { WARDEN_HOME: home };
-		writeDevSession(env, {
+		devSession.writeDevSession(env, {
 			version: 1,
 			leaseId: "L1",
 			pid: process.pid,

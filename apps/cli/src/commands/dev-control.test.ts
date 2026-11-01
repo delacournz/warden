@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { type DevFeatures, serveDevControl } from "../dev-control";
-import { writeDevSession } from "../dev-session";
-import { type TestContext, testContext } from "../testing";
+import { type DevFeatures, devControlOps } from "../dev-control";
+import { devSession } from "../dev-session";
+import { cliTesting, type TestContext } from "../testing";
 import { devControl } from "./dev-control";
 
 let ctx: TestContext | undefined;
@@ -18,14 +18,14 @@ const alive = { isAlive: () => true };
 
 /** A dev session in a temp WARDEN_HOME, with a control socket that flips `features` (or none: `serve: false`). */
 async function withSession(options: { serve: boolean; failHud?: boolean }) {
-	const c = testContext([]);
+	const c = cliTesting.testContext([]);
 	ctx = c;
 	const logDir = join(c.env.WARDEN_HOME ?? "", "dev", "L1");
 	mkdirSync(logDir, { recursive: true });
 	const features: DevFeatures = { hud: false, devtools: false };
 	const socket = join(logDir, "control.sock");
 	if (options.serve) {
-		const served = await serveDevControl(socket, async (request) => {
+		const served = await devControlOps.serveDevControl(socket, async (request) => {
 			if (request.op === "status") return { ok: true, features: { ...features } };
 			if (request.feature === "hud" && options.failHud)
 				return { ok: false, error: "no dashboard", features: { ...features } };
@@ -35,7 +35,7 @@ async function withSession(options: { serve: boolean; failHud?: boolean }) {
 		if (!served.success) throw new Error(served.error);
 		closeServer = served.data.close;
 	}
-	writeDevSession(c.env, {
+	devSession.writeDevSession(c.env, {
 		version: 1,
 		leaseId: "L1",
 		pid: process.pid,
@@ -95,7 +95,7 @@ describe("warden dev enable|disable|status", () => {
 	});
 
 	test("no session", async () => {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
 		expect(await devControl.devControl(c, "status", [], {}, alive)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no running `warden dev` session");

@@ -8,7 +8,7 @@ import { gcJsonSchema } from "@delacour/warden-sdk/contracts/gc";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Owner } from "@delacour/warden-store/types";
 import { simctlFakes } from "../simctl.testing";
-import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { gcCommand } from "./gc";
 
 let ctx: TestContext | undefined;
@@ -18,7 +18,7 @@ const NOW = 100 * 60_000;
 const agent: Owner = { kind: "agent", sessionId: "a", cwd: "/" };
 
 function setup(argv: string[], calls: string[][]): TestContext {
-	ctx = testContext(argv, {
+	ctx = cliTesting.testContext(argv, {
 		now: () => NOW,
 		exec: simctlFakes.build(
 			[
@@ -86,7 +86,7 @@ describe("warden gc", () => {
 
 	test("an idle sim it shut down loses its viewer window too (Device Hub keeps a page open)", async () => {
 		const calls: string[][] = [];
-		ctx = testContext(["--json"], {
+		ctx = cliTesting.testContext(["--json"], {
 			now: () => NOW,
 			exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")], calls, [
 				["pgrep -xq Simulator", { exitCode: 1 }],
@@ -103,7 +103,7 @@ describe("warden gc", () => {
 
 	test("a long-stale physical lease is released but its device is never shut down or probed", async () => {
 		const calls: string[][] = [];
-		ctx = testContext(["--json"], { now: () => NOW, exec: simctlFakes.build([], calls) });
+		ctx = cliTesting.testContext(["--json"], { now: () => NOW, exec: simctlFakes.build([], calls) });
 		ctx.db.insertLease(
 			{
 				resource: { kind: "device", platform: "android", id: "P1", name: "Pixel", physical: { transport: "usb" } },
@@ -137,7 +137,7 @@ describe("warden gc", () => {
 
 	test("spinner covers the shutdowns; simctl progress would print above it", async () => {
 		const c = setup([], []);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(ui.events).toEqual(["spin: shutting down idle devices…", "stop"]);
@@ -145,9 +145,9 @@ describe("warden gc", () => {
 	});
 
 	test("forgets android records whose emulator is gone (unleased); keeps leased ones", async () => {
-		ctx = testContext(["--json"], {
+		ctx = cliTesting.testContext(["--json"], {
 			now: () => NOW,
-			exec: fakeExec([["adb devices -l", { stdout: "List of devices attached\n\n" }]]),
+			exec: cliTesting.fakeExec([["adb devices -l", { stdout: "List of devices attached\n\n" }]]),
 		});
 		ctx.db.recordDevice({ platform: "android", id: "emulator-5554", name: "warden-pixel-10-1" }, 0);
 		ctx.db.recordDevice({ platform: "android", id: "emulator-5556", name: "warden-pixel-10-2" }, 0);
@@ -214,7 +214,7 @@ describe("warden gc", () => {
 		const calls: string[][] = [];
 		const c = setup(["--json"], calls);
 		staleF(c, NOW - 30 * 60_000);
-		c.exec = fakeExec(
+		c.exec = cliTesting.fakeExec(
 			[
 				["xcrun simctl spawn F launchctl list", { stdout: "9\t0\tUIKitApplication:com.acme.app[0x1]" }],
 				["xcrun simctl", {}],
@@ -228,7 +228,7 @@ describe("warden gc", () => {
 
 	test("--quiet prints nothing; last run recorded", async () => {
 		const c = setup(["--quiet"], []);
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		c.ui = ui;
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(c.stdout).toEqual([]);
@@ -352,7 +352,7 @@ describe("warden gc: parallel shutdown", () => {
 			simctlFakes.wardenSim(3, "Shutdown"),
 			{ udid: "FOREIGN", name: "iPhone 17", state: "Booted" as const },
 		];
-		const c = testContext(["--json"], { now: () => NOW, exec: simctlFakes.build(sims, calls, extra) });
+		const c = cliTesting.testContext(["--json"], { now: () => NOW, exec: simctlFakes.build(sims, calls, extra) });
 		ctx = c;
 		for (const sim of idle) c.db.recordDevice({ platform: "ios", id: sim.udid, name: sim.name }, 0);
 		c.db.recordDevice({ platform: "ios", id: "U1", name: "warden-iphone-17-1" }, 0);
@@ -417,7 +417,7 @@ describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
 	/** one idle booted warden sim; `during` runs when gc lists devices, i.e. after gc read its leases */
 	function racing(during: (c: TestContext) => void, calls: string[][] = []): TestContext {
 		const base = simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(5, "Booted")], calls);
-		const c = testContext(["--json"], {
+		const c = cliTesting.testContext(["--json"], {
 			now: () => NOW,
 			exec: async (cmd, opts) => {
 				if (cmd.join(" ").startsWith("xcrun simctl list devices")) during(c);
@@ -453,7 +453,7 @@ describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
 	test("gc holds a gc-shutdown lease on the device while shutting it down, and drops it after", async () => {
 		const held: Array<string | undefined> = [];
 		const base = simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]);
-		const c = testContext(["--json"], {
+		const c = cliTesting.testContext(["--json"], {
 			now: () => NOW,
 			exec: async (cmd, opts) => {
 				if (cmd[2] === "shutdown") held.push(c.db.findLeaseByResource(U1)?.label);
@@ -468,7 +468,7 @@ describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
 	});
 
 	test("the gc-shutdown lease is dropped when the shutdown fails too", async () => {
-		const c = testContext(["--json"], {
+		const c = cliTesting.testContext(["--json"], {
 			now: () => NOW,
 			exec: simctlFakes.build(
 				[simctlFakes.wardenSim(1, "Booted")],
@@ -500,7 +500,7 @@ describe("warden gc: a device claimed while the pass runs (16-1, 12-2)", () => {
 		}
 
 		function run(): TestContext {
-			ctx = testContext(["--json"], { now: () => NOW_DEV, exec: fakeExec([]) });
+			ctx = cliTesting.testContext(["--json"], { now: () => NOW_DEV, exec: cliTesting.fakeExec([]) });
 			return ctx;
 		}
 

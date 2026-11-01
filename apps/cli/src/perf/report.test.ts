@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type PerfReportOptions, perfReportCli } from "./report";
 import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
 import { perfTestingCli } from "./testing";
@@ -16,7 +16,7 @@ const NEW = "20261024-100200-cccccc";
 const dev = (n: number) => ({ platform: "android", id: `emulator-${n}`, name: `pixel-${n}` }) as const;
 
 function setup(booted: Array<ReturnType<typeof dev>> = [dev(5554)]) {
-	const c = testContext([], { now: () => SEED_T0 + 60_000 });
+	const c = cliTesting.testContext([], { now: () => SEED_T0 + 60_000 });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	for (const d of [dev(5554), dev(5556)]) c.db.recordDevice(d, SEED_T0);
@@ -105,7 +105,7 @@ describe("warden perf report", () => {
 	});
 
 	test("no sessions at all is session_not_found", async () => {
-		const c = testContext([], {});
+		const c = cliTesting.testContext([], {});
 		ctx = c;
 		perfTestingCli.asMe(c);
 		expect(await perfReport(c, perfTestingCli.fakePerfDeps([]), undefined, { json: true })).toBe(1);

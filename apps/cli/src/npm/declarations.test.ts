@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { addEsmExtensions, emitDeclarations, entryDeclaration, rewriteWorkspaceSpecifiers } from "./declarations";
+import { declarationsHelpers } from "./declarations";
 
 const TYPES = "/out/types";
 
@@ -11,16 +11,18 @@ describe("rewriteWorkspaceSpecifiers", () => {
 		const file = `${TYPES}/e2e/src/driver/open.d.ts`;
 		const text =
 			'import type { Result } from "@delacour/warden-types/result";\nimport { x } from "@delacour/warden-providers/ios";\n';
-		expect(rewriteWorkspaceSpecifiers(text, file, TYPES)).toBe(
+		expect(declarationsHelpers.rewriteWorkspaceSpecifiers(text, file, TYPES)).toBe(
 			'import type { Result } from "../../../types/src/result";\nimport { x } from "../../../providers/src/ios";\n'
 		);
 	});
 
 	test("same-directory targets get ./, `import()` types and single quotes are handled, others untouched", () => {
 		const file = `${TYPES}/e2e/src/a.d.ts`;
-		expect(rewriteWorkspaceSpecifiers("import('@delacour/warden-e2e/b').B", file, TYPES)).toBe("import('./b').B");
+		expect(declarationsHelpers.rewriteWorkspaceSpecifiers("import('@delacour/warden-e2e/b').B", file, TYPES)).toBe(
+			"import('./b').B"
+		);
 		const untouched = 'import { z } from "zod";\nimport "bun:test";\nimport "@delacour/warden-other/x";\n';
-		expect(rewriteWorkspaceSpecifiers(untouched, file, TYPES)).toBe(untouched);
+		expect(declarationsHelpers.rewriteWorkspaceSpecifiers(untouched, file, TYPES)).toBe(untouched);
 	});
 });
 
@@ -32,20 +34,22 @@ describe("addEsmExtensions", () => {
 	test("a file becomes ./b.js, a directory ./dir/index.js, a dotted name keeps its dot", () => {
 		const text =
 			'import { B } from "./b";\nexport * from "./dir";\nexport type { X } from "../c/x.schema";\nlet y: import("./b").B;\n';
-		expect(addEsmExtensions(text, file, exists)).toBe(
+		expect(declarationsHelpers.addEsmExtensions(text, file, exists)).toBe(
 			'import { B } from "./b.js";\nexport * from "./dir/index.js";\nexport type { X } from "../c/x.schema.js";\nlet y: import("./b.js").B;\n'
 		);
 	});
 
 	test("extensions, bare specifiers and unresolvable paths are left alone", () => {
 		const text = 'import "./b.js";\nimport "zod";\nimport "./missing";\nimport d from "./d.json";\n';
-		expect(addEsmExtensions(text, file, exists)).toBe(text);
+		expect(declarationsHelpers.addEsmExtensions(text, file, exists)).toBe(text);
 	});
 });
 
 describe("entryDeclaration", () => {
 	test("re-exports the emitted module", () => {
-		expect(entryDeclaration("types", "e2e/src/index.ts")).toBe('export * from "./types/e2e/src/index";\n');
+		expect(declarationsHelpers.entryDeclaration("types", "e2e/src/index.ts")).toBe(
+			'export * from "./types/e2e/src/index";\n'
+		);
 	});
 });
 
@@ -65,7 +69,7 @@ describe("emitDeclarations (the real packages/e2e)", () => {
 	}
 
 	test("index + preload declarations, no bare workspace specifier left", () => {
-		const written = emitDeclarations({
+		const written = declarationsHelpers.emitDeclarations({
 			tsconfigPath: join(packages, "e2e", "tsconfig.json"),
 			entries: [join(packages, "e2e/src/index.ts"), join(packages, "e2e/src/preload.ts")],
 			packagesDir: packages,
@@ -81,7 +85,7 @@ describe("emitDeclarations (the real packages/e2e)", () => {
 	}, 60_000);
 
 	test("every relative import in the emitted tree points at an emitted declaration (workspace packages included)", () => {
-		const written = emitDeclarations({
+		const written = declarationsHelpers.emitDeclarations({
 			tsconfigPath: join(packages, "e2e", "tsconfig.json"),
 			entries: [join(packages, "e2e/src/index.ts"), join(packages, "e2e/src/preload.ts")],
 			packagesDir: packages,

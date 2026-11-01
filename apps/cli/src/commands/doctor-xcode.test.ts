@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { fakeExec } from "../testing";
+import { cliTesting } from "../testing";
 
 type Handler = [prefix: string, result: Partial<ExecResult>];
 
@@ -56,7 +56,7 @@ describe("parseMcpStatus", () => {
 
 describe("mcpStatusProbe", () => {
 	test("Xcode 27.1: ok, states enabled / running / grants", async () => {
-		const exec = fakeExec([
+		const exec = cliTesting.fakeExec([
 			["xcrun --find mcpbridge", { stdout: "/x/mcpbridge\n" }],
 			["xcrun mcp-server status --format json", { stdout: STATUS_27_1 }],
 		]);
@@ -67,7 +67,7 @@ describe("mcpStatusProbe", () => {
 		expect(probe.detail).toContain("not running");
 	});
 	test("allow-all warns", async () => {
-		const exec = fakeExec([
+		const exec = cliTesting.fakeExec([
 			["xcrun --find mcpbridge", { stdout: "/x/mcpbridge\n" }],
 			[
 				"xcrun mcp-server status",
@@ -85,13 +85,13 @@ describe("mcpStatusProbe", () => {
 		expect(probe.detail).toContain("unsafeAlwaysAllowAllAgents");
 	});
 	test("Xcode 26: no mcp-server, still ok", async () => {
-		const exec = fakeExec([["xcrun --find mcpbridge", { stdout: "/x/mcpbridge\n" }]]);
+		const exec = cliTesting.fakeExec([["xcrun --find mcpbridge", { stdout: "/x/mcpbridge\n" }]]);
 		const probe = await doctorXcode.mcpStatusProbe(exec, 26);
 		expect(probe).toMatchObject({ ok: true });
 		expect(probe.detail).toContain("Xcode 27");
 	});
 	test("no mcpbridge at all is ok and says so", async () => {
-		const probe = await doctorXcode.mcpStatusProbe(fakeExec([]), 27);
+		const probe = await doctorXcode.mcpStatusProbe(cliTesting.fakeExec([]), 27);
 		expect(probe).toMatchObject({ ok: true });
 		expect(probe.detail).toContain("not available");
 	});
@@ -99,7 +99,7 @@ describe("mcpStatusProbe", () => {
 
 describe("viewerProbe", () => {
 	test("device hub", async () => {
-		const exec = fakeExec([
+		const exec = cliTesting.fakeExec([
 			["pgrep -xq Simulator", { exitCode: 1 }],
 			["pgrep -xq DeviceHub", { exitCode: 0 }],
 		]);
@@ -110,7 +110,7 @@ describe("viewerProbe", () => {
 		});
 	});
 	test("none", async () => {
-		const exec = fakeExec([
+		const exec = cliTesting.fakeExec([
 			["pgrep -xq Simulator", { exitCode: 1 }],
 			["pgrep -xq DeviceHub", { exitCode: 1 }],
 		]);
@@ -120,7 +120,7 @@ describe("viewerProbe", () => {
 
 describe("xcodeChecks", () => {
 	test("27.1 host: three info checks, none fail", async () => {
-		const exec = fakeExec([
+		const exec = cliTesting.fakeExec([
 			...xcode27,
 			["xcrun --find mcpbridge", { stdout: "/x/mcpbridge\n" }],
 			["xcrun mcp-server status", { stdout: STATUS_27_1 }],
@@ -133,13 +133,13 @@ describe("xcodeChecks", () => {
 		expect(checks.every((c) => c.status === "ok")).toBe(true);
 	});
 	test("26.6 host degrades gracefully", async () => {
-		const exec = fakeExec([...xcode26, ["pgrep -xq Simulator", { exitCode: 0 }]]);
+		const exec = cliTesting.fakeExec([...xcode26, ["pgrep -xq Simulator", { exitCode: 0 }]]);
 		const checks = await doctorXcode.xcodeChecks(exec, {});
 		expect(checks.every((c) => c.status === "ok")).toBe(true);
 		expect(checks[1]?.detail).toContain("not available");
 	});
 	test("no Xcode selected: ok with a note (iOS is reported by the simctl check)", async () => {
-		const checks = await doctorXcode.xcodeChecks(fakeExec([]), {});
+		const checks = await doctorXcode.xcodeChecks(cliTesting.fakeExec([]), {});
 		expect(checks[0]).toMatchObject({ name: "xcode", status: "ok" });
 		expect(checks[0]?.detail).toContain("no Xcode");
 	});

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { testContext } from "../testing";
+import { cliTesting } from "../testing";
 import { RouteTickerCommand, SchedulerCommand } from "./condition-processes";
 import { COMMANDS } from "./registry";
 
@@ -11,7 +11,7 @@ describe("hidden condition processes", () => {
 	});
 
 	test("__scheduler passes its JSON argument through and returns the run's exit code", async () => {
-		const c = testContext(['{"a":1}']);
+		const c = cliTesting.testContext(['{"a":1}']);
 		const seen: string[] = [];
 		const code = await new SchedulerCommand({
 			scheduler: async (raw) => {
@@ -27,7 +27,7 @@ describe("hidden condition processes", () => {
 	});
 
 	test("__route-ticker reports a throw as exit 1", async () => {
-		const c = testContext(["{}"]);
+		const c = cliTesting.testContext(["{}"]);
 		const code = await new RouteTickerCommand({
 			routeTicker: async () => {
 				throw new Error("boom");

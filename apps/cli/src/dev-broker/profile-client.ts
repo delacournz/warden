@@ -1,4 +1,4 @@
-import { type DevSessionDeps, type DevSessionError, findDevSession } from "../dev-session";
+import { type DevSessionDeps, type DevSessionError, devSession } from "../dev-session";
 import type { BrokerError, BrokerResult } from "./broker.types";
 
 export type ProfileKind = "cpu" | "heap" | "react";
@@ -71,7 +71,7 @@ export class DevBrokerProfileClient {
 
 	/** The broker socket of the dev session for `udid` (the only live one when omitted). */
 	brokerSocketFor(env: Env, query: ProfileClientQuery, deps: ProfileClientDeps = defaultDeps): BrokerResult<string> {
-		const found = findDevSession(env, query.udid === undefined ? {} : { udid: query.udid }, deps.sessions);
+		const found = devSession.findDevSession(env, query.udid === undefined ? {} : { udid: query.udid }, deps.sessions);
 		if (!found.success) return { success: false, error: this.lookupError(found.error) };
 		const socket = found.data.brokerSocket;
 		if (socket === undefined) {

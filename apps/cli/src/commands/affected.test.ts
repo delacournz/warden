@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { fixtureRepos } from "@delacour/warden-core/testing/fixture.testing";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { affectedCommand } from "./affected";
 
 let dir: string;
@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 async function run(argv: string[]): Promise<{ code: number; ctx: TestContext }> {
-	ctx = testContext(argv, { exec: processExec.run });
+	ctx = cliTesting.testContext(argv, { exec: processExec.run });
 	ctx.cwd = dir;
 	return { code: await affectedCommand.run(ctx), ctx };
 }
@@ -34,7 +34,7 @@ describe("warden affected", () => {
 
 	test("git is asked for the toplevel once per command: the suite lookup and the diff share the command's git cache", async () => {
 		write("src/chat/lazy.tsx", "export const x = 2;\n");
-		ctx = testContext([], { exec: processExec.run });
+		ctx = cliTesting.testContext([], { exec: processExec.run });
 		ctx.cwd = dir;
 		const spawns: string[] = [];
 		ctx.exec = (cmd, opts) => {

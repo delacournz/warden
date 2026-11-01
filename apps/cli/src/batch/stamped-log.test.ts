@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStampedLog } from "./stamped-log";
+import { stampedLogHelpers } from "./stamped-log";
 
 const AT = new Date(2026, 9, 15, 9, 5, 3, 7);
 const T = "[09:05:03.007] ";
@@ -25,7 +25,7 @@ describe("openStampedLog", () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
 		const path = join(dir, "job.log");
 		writeFileSync(path, "earlier\n");
-		const log = openStampedLog(path, () => AT);
+		const log = stampedLogHelpers.openStampedLog(path, () => AT);
 		await log.pump(streamOf("a\nb", "c\n"));
 		await log.pump(streamOf("err\n"));
 		log.close();
@@ -36,7 +36,7 @@ describe("openStampedLog", () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
 		const path = join(dir, "job.log");
 		const bytes = new TextEncoder().encode(" ✓ ok\n");
-		const log = openStampedLog(path, () => AT);
+		const log = stampedLogHelpers.openStampedLog(path, () => AT);
 		await log.pump(
 			new ReadableStream({
 				start(c) {
@@ -53,7 +53,7 @@ describe("openStampedLog", () => {
 	test("writes after close are dropped, not thrown", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
 		const path = join(dir, "job.log");
-		const log = openStampedLog(path, () => AT);
+		const log = stampedLogHelpers.openStampedLog(path, () => AT);
 		log.close();
 		await log.pump(streamOf("late\n"));
 		log.close();
@@ -63,7 +63,7 @@ describe("openStampedLog", () => {
 	test("a real child's stdout + stderr land stamped", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
 		const path = join(dir, "job.log");
-		const log = openStampedLog(path, () => AT);
+		const log = stampedLogHelpers.openStampedLog(path, () => AT);
 		const proc = Bun.spawn(["sh", "-c", "echo out; echo err >&2"], { stdout: "pipe", stderr: "pipe" });
 		await Promise.all([log.pump(proc.stdout), log.pump(proc.stderr), proc.exited]);
 		log.close();
@@ -91,7 +91,7 @@ describe("StampedLog.drained", () => {
 
 	test("is done at once when every stream has ended", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
-		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		const log = stampedLogHelpers.openStampedLog(join(dir, "job.log"), () => AT);
 		const pumped = Promise.all([log.pump(streamOf("a\n")), log.pump(streamOf("b\n"))]);
 		await pumped;
 		const started = performance.now();
@@ -103,7 +103,7 @@ describe("StampedLog.drained", () => {
 	test("a stream a grandchild keeps open stops holding the exit once it has been silent for quietMs", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
 		const path = join(dir, "job.log");
-		const log = openStampedLog(path, () => AT);
+		const log = stampedLogHelpers.openStampedLog(path, () => AT);
 		const held = heldOpen();
 		void log.pump(held.stream);
 		held.push("last words\n");
@@ -119,7 +119,7 @@ describe("StampedLog.drained", () => {
 
 	test("settles the moment the last stream ends, without a polling timer, and says how long it waited (13-6)", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
-		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		const log = stampedLogHelpers.openStampedLog(join(dir, "job.log"), () => AT);
 		const held = heldOpen();
 		void log.pump(held.stream);
 		void log.pump(streamOf("done\n"));
@@ -137,7 +137,7 @@ describe("StampedLog.drained", () => {
 
 	test("reports 0 when nothing was left to drain, and the quiet window it sat out for a held pipe", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
-		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		const log = stampedLogHelpers.openStampedLog(join(dir, "job.log"), () => AT);
 		await log.pump(streamOf("a\n"));
 		expect(await log.drained(windowMs)).toBe(0);
 		const held = heldOpen();
@@ -151,7 +151,7 @@ describe("StampedLog.drained", () => {
 
 	test("output still arriving keeps the wait going, up to maxMs", async () => {
 		dir = mkdtempSync(join(tmpdir(), "warden-stamped-"));
-		const log = openStampedLog(join(dir, "job.log"), () => AT);
+		const log = stampedLogHelpers.openStampedLog(join(dir, "job.log"), () => AT);
 		const held = heldOpen();
 		void log.pump(held.stream);
 		const chatter = setInterval(() => held.push("x\n"), 10);

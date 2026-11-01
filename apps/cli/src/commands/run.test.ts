@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-config/config.defaults";
 import type { ChildHandle } from "@delacour/warden-leasing/session";
 import { runJsonSchema } from "@delacour/warden-sdk/contracts/claim";
-import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
-import { splitCommand, splitOperands } from "../lease-options";
+import { autogcTesting } from "../autogc.testing";
+import { leaseOptions } from "../lease-options";
 import { OWNER_ENV, simctlFakes } from "../simctl.testing";
-import { scriptedUi, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type RunChildStdout, RunCommand, type RunDeps } from "./run";
 
 let ctx: TestContext | undefined;
@@ -63,7 +63,7 @@ function harness(opts: { spawnThrows?: boolean } = {}): Harness {
 }
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv, {
+	ctx = cliTesting.testContext(argv, {
 		exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2, "Booted")]),
 	});
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -76,23 +76,23 @@ async function waitFor(cond: () => boolean): Promise<void> {
 
 describe("splitCommand", () => {
 	test("splits at the first --", () => {
-		expect(splitCommand(["ios", "--count", "2", "--", "bun", "test", "--", "x"])).toEqual({
+		expect(leaseOptions.splitCommand(["ios", "--count", "2", "--", "bun", "test", "--", "x"])).toEqual({
 			flags: ["ios", "--count", "2"],
 			cmd: ["bun", "test", "--", "x"],
 		});
-		expect(splitCommand(["ios"])).toEqual({ flags: ["ios"], cmd: [] });
+		expect(leaseOptions.splitCommand(["ios"])).toEqual({ flags: ["ios"], cmd: [] });
 	});
 });
 
 describe("splitOperands", () => {
 	test("platform = the operand before --; the rest is the command", () => {
-		expect(splitOperands(["ios", "--", "a", "b"], ["ios", "a", "b"])).toEqual({
+		expect(leaseOptions.splitOperands(["ios", "--", "a", "b"], ["ios", "a", "b"])).toEqual({
 			success: true,
 			data: { platformArg: "ios", cmd: ["a", "b"] },
 		});
-		expect(splitOperands(["--", "a"], ["a"])).toEqual({ success: true, data: { cmd: ["a"] } });
-		expect(splitOperands(["ios", "x", "--", "a"], ["ios", "x", "a"]).success).toBe(false);
-		expect(splitOperands(["ios", "a"], ["ios", "a"]).success).toBe(false);
+		expect(leaseOptions.splitOperands(["--", "a"], ["a"])).toEqual({ success: true, data: { cmd: ["a"] } });
+		expect(leaseOptions.splitOperands(["ios", "x", "--", "a"], ["ios", "x", "a"]).success).toBe(false);
+		expect(leaseOptions.splitOperands(["ios", "a"], ["ios", "a"]).success).toBe(false);
 	});
 });
 
@@ -322,7 +322,7 @@ describe("warden run", () => {
 
 	test("no platform in a terminal → asks; spinner covers the claim and stops before the child spawns", async () => {
 		const c = setup(["--", "true"]);
-		const ui = scriptedUi({ interactive: true, select: ["ios"] });
+		const ui = cliTesting.scriptedUi({ interactive: true, select: ["ios"] });
 		c.ui = ui;
 		const h = harness();
 		const spawn = h.deps.spawn;
@@ -372,15 +372,15 @@ describe("warden run", () => {
 
 describe("warden run auto-gc (16-1)", () => {
 	test("auto-gc is considered only after the claim has leased its devices", async () => {
-		const order = autoGcOrder(simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]), () => c.db);
-		ctx = testContext(["ios", "--", "bun", "test"], { exec: order.exec });
+		const order = autogcTesting.autoGcOrder(simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]), () => c.db);
+		ctx = cliTesting.testContext(["ios", "--", "bun", "test"], { exec: order.exec });
 		const c = ctx;
-		c.env = allowAutoGc({ ...c.env, ...OWNER_ENV });
+		c.env = autogcTesting.allowAutoGc({ ...c.env, ...OWNER_ENV });
 		const h = harness();
 		const running = new RunCommand(h.deps).definition().run(c);
 		await waitFor(() => h.spawned.length > 0);
 		expect(order.gcBeforeClaim()).toBe(false);
-		expect(autoGcConsidered(c.db)).toBe(true);
+		expect(autogcTesting.autoGcConsidered(c.db)).toBe(true);
 		h.finish(0);
 		expect(await running).toBe(0);
 	});

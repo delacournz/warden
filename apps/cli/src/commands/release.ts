@@ -9,10 +9,10 @@ import { type Lease, leaseModel } from "@delacour/warden-store/types";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { leaseHostBuilder } from "../lease-host";
-import { type SelectOptionValues, selectorFrom, withSelectOptions } from "../lease-select";
+import { leaseSelect, type SelectOptionValues } from "../lease-select";
 import { output } from "../output";
 import { perfReleaseAfterCli } from "../perf/release-after";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 import { lsCli } from "./ls";
 
 type ReleaseOpts = SelectOptionValues & { shutdown?: true; bad?: true | string; json?: true };
@@ -25,7 +25,8 @@ export class ReleaseCommand extends CliCommand {
 	override readonly summary = "release leases (optionally shut down devices warden created)";
 
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
-		withSelectOptions(cmd.argument("[leaseIds...]", "lease ids to release"))
+		leaseSelect
+			.withSelectOptions(cmd.argument("[leaseIds...]", "lease ids to release"))
 			.option("--shutdown", "also shut down devices warden created (or the lease owner booted)")
 			.option("--bad [reason]", "also quarantine the released devices (warden devices only) so claims skip them")
 			.option("--json", "machine-readable output")
@@ -98,7 +99,7 @@ export class ReleaseCommand extends CliCommand {
 	 */
 	private async release(ctx: CommandContext, ids: string[], opts: ReleaseOpts): Promise<number> {
 		const { color } = ctx.ui;
-		const selector = selectorFrom(ids, opts);
+		const selector = leaseSelect.selectorFrom(ids, opts);
 		const picked = leaseSelectorRules.isEmpty(selector)
 			? await this.pickLeases(ctx, opts)
 			: { kind: "ids" as const, ids };
@@ -107,7 +108,7 @@ export class ReleaseCommand extends CliCommand {
 		const devices = leases.filter((l) => l.resource.kind === "device");
 		const { shutdown, notes }: ShutdownOutcome =
 			opts.shutdown && devices.length > 0
-				? await withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {
+				? await spinnerContext.withSpinner(ctx, `shutting down ${devices.length} device(s)…`, async (sctx, spinner) => {
 						const outcome = await new ReleasedDeviceShutdown(leaseHostBuilder.leaseHostFromContext(sctx)).run(
 							leases,
 							ownerResolver.resolve(ctx)

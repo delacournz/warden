@@ -1,6 +1,6 @@
 import type { MetroOwner } from "@delacour/warden-builds/metro";
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
-import { memoryReadFrom } from "../batch/results.testing";
+import { resultsTesting } from "../batch/results.testing";
 import type { ReadySpec } from "../batch/serve";
 import type { BatchDeps, KillSignal, ProcHandle, SpawnOptions } from "./batch";
 
@@ -168,7 +168,7 @@ export class BatchTesting {
 					if (data === undefined) throw new Error(`ENOENT: ${path}`);
 					return data;
 				},
-				readFrom: (path, offset) => memoryReadFrom(h.files)(path, offset),
+				readFrom: (path, offset) => resultsTesting.memoryReadFrom(h.files)(path, offset),
 				mkdir: async (dir) => {
 					h.dirs.push(dir);
 				},

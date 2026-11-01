@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfAppCli } from "./app";
 
 let ctx: TestContext | undefined;
@@ -12,7 +12,7 @@ const fx = (name: string) =>
 
 function setup(handlers: Array<[string, { stdout: string }]>): { c: TestContext; calls: string[][] } {
 	const calls: string[][] = [];
-	ctx = testContext([], { exec: fakeExec(handlers, calls) });
+	ctx = cliTesting.testContext([], { exec: cliTesting.fakeExec(handlers, calls) });
 	return { c: ctx, calls };
 }
 

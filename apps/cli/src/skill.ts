@@ -45,21 +45,25 @@ export const SKILL_MD: string = SKILL_FILES["SKILL.md"];
 export const RULE_PATH = "rules/warden.md";
 export const RULE_MD: string = ruleMd;
 
-/** An embedded file by its path inside `skills/warden/` (`SKILL.md`, `references/ui.md`, `rules/warden.md`). */
-export function embeddedFile(name: string): string | undefined {
-	if (name === RULE_PATH) return RULE_MD;
-	for (const path of SKILL_PATHS) if (path === name) return SKILL_FILES[path];
-	return undefined;
+export class SkillInstaller {
+	/** An embedded file by its path inside `skills/warden/` (`SKILL.md`, `references/ui.md`, `rules/warden.md`). */
+	embeddedFile(name: string): string | undefined {
+		if (name === RULE_PATH) return RULE_MD;
+		for (const path of SKILL_PATHS) if (path === name) return SKILL_FILES[path];
+		return undefined;
+	}
+
+	/** Skill files under `dir` that are absent or differ from the embedded copy (shared by install + doctor). */
+	staleSkillFiles(dir: string): { missing: SkillPath[]; outdated: SkillPath[] } {
+		const missing: SkillPath[] = [];
+		const outdated: SkillPath[] = [];
+		for (const path of SKILL_PATHS) {
+			const file = join(dir, path);
+			if (!existsSync(file)) missing.push(path);
+			else if (readFileSync(file, "utf8") !== SKILL_FILES[path]) outdated.push(path);
+		}
+		return { missing, outdated };
+	}
 }
 
-/** Skill files under `dir` that are absent or differ from the embedded copy (shared by install + doctor). */
-export function staleSkillFiles(dir: string): { missing: SkillPath[]; outdated: SkillPath[] } {
-	const missing: SkillPath[] = [];
-	const outdated: SkillPath[] = [];
-	for (const path of SKILL_PATHS) {
-		const file = join(dir, path);
-		if (!existsSync(file)) missing.push(path);
-		else if (readFileSync(file, "utf8") !== SKILL_FILES[path]) outdated.push(path);
-	}
-	return { missing, outdated };
-}
+export const skillInstaller = new SkillInstaller();

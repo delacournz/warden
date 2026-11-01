@@ -16,9 +16,9 @@ export class PerfAppCli {
 
 	/** The bundle id / package `warden.config.ts` (or the app config) names for this platform. */
 	private async configApp(ctx: CommandContext, platform: Platform): Promise<string | undefined> {
-		const { projectContextFor } = await import("../project-context");
+		const { projectContextHelpers } = await import("../project-context");
 		const { projectConfig } = await import("@delacour/warden-builds/config");
-		const project = await projectContextFor(ctx, { start: ctx.cwd, variantOptional: true });
+		const project = await projectContextHelpers.projectContextFor(ctx, { start: ctx.cwd, variantOptional: true });
 		if (!project.success) return undefined;
 		const id = projectConfig.bundleIdFor(project.data.project, platform);
 		return id.success ? id.data : undefined;

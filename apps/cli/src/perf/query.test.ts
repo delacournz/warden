@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { jsFixtures } from "@delacour/warden-perf/js/js.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { type PerfQueryOptions, perfQueryCli } from "./query";
 import { perfSessionFixtureTestingCli, SEED_T0 } from "./session-fixture.testing";
 import { perfTestingCli } from "./testing";
@@ -91,7 +91,7 @@ const frames = {
 };
 
 function setup() {
-	const c = testContext([], { now: () => SEED_T0 + 60_000 });
+	const c = cliTesting.testContext([], { now: () => SEED_T0 + 60_000 });
 	ctx = c;
 	perfTestingCli.asMe(c);
 	const deps = perfTestingCli.fakePerfDeps([]);

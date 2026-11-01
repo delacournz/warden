@@ -8,9 +8,9 @@ import type { UiDeps } from "../agent-ui/driver";
 import { cliUiPaths } from "../agent-ui/paths";
 import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
 import { type BrokerServer, devBrokerIpc } from "../dev-broker/ipc";
-import { writeDevSession } from "../dev-session";
+import { devSession } from "../dev-session";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { UiCommand } from "./ui";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
@@ -91,7 +91,7 @@ type Harness = {
 /** A leased device; with `broker`, a live dev session whose broker stub answers. */
 async function harness(options: { broker: boolean }): Promise<Harness> {
 	const calls: { method: string; params: unknown }[] = [];
-	const c = testContext([], { now: () => NOW });
+	const c = cliTesting.testContext([], { now: () => NOW });
 	ctx = c;
 	c.env = { ...c.env, ...OWNER_ENV };
 	c.db.insertLease(
@@ -114,7 +114,7 @@ async function harness(options: { broker: boolean }): Promise<Harness> {
 		if (!served.success) throw new Error(served.error.message);
 		const server: BrokerServer = served.data;
 		cleanup.push(() => server.close());
-		writeDevSession(c.env, {
+		devSession.writeDevSession(c.env, {
 			version: 1,
 			leaseId: "lease-1",
 			pid: process.pid,

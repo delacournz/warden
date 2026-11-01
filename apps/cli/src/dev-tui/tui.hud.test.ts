@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { DevReady } from "../commands/dev-ui";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { devTuiFakesTesting } from "./fakes.testing";
 import { devTuiTui, FRAME_MS } from "./tui";
 
@@ -25,7 +25,7 @@ const READY: DevReady = {
 const settle = () => Bun.sleep(FRAME_MS * 4);
 
 function setup(hud: { enabled: boolean; intervalMs: number } | undefined) {
-	ctx = testContext([]);
+	ctx = cliTesting.testContext([]);
 	const stdout = devTuiFakesTesting.fakeStdout(120, 40);
 	const process = devTuiFakesTesting.fakeProcess();
 	const stdin = devTuiFakesTesting.fakeStdin();

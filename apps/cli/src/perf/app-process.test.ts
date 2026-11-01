@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { appProcess } from "@delacour/warden-sdk/ops/perf/app-process";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -9,7 +9,7 @@ type Handler = [string, { stdout: string; exitCode?: number }];
 
 function setup(handlers: Handler[]): { c: TestContext; calls: string[][] } {
 	const calls: string[][] = [];
-	ctx = testContext([], { exec: fakeExec(handlers, calls) });
+	ctx = cliTesting.testContext([], { exec: cliTesting.fakeExec(handlers, calls) });
 	return { c: ctx, calls };
 }
 

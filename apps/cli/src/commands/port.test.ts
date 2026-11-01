@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { portLeasesJsonSchema, portReleaseJsonSchema } from "@delacour/warden-sdk/contracts/leases";
 import type { Lease, Owner } from "@delacour/warden-store/types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { portCommand } from "./port";
 
 let ctx: TestContext | undefined;
@@ -12,7 +12,7 @@ const other: Owner = { kind: "agent", sessionId: "someone-else", cwd: "/x" };
 
 function make(argv: string[], session: string = SESSION): TestContext {
 	ctx?.cleanup();
-	const c = testContext(argv);
+	const c = cliTesting.testContext(argv);
 	c.env.WARDEN_SESSION_ID = session;
 	ctx = c;
 	return c;
@@ -74,7 +74,7 @@ describe("warden port claim", () => {
 	});
 
 	test("user owner (no session) leases with pid = owner pid", async () => {
-		const c = testContext(["claim", "--from", FROM]);
+		const c = cliTesting.testContext(["claim", "--from", FROM]);
 		ctx = c;
 		expect(await portCommand.run(c)).toBe(0);
 		const [lease] = c.db.listLeases();

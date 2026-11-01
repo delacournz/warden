@@ -4,17 +4,9 @@ import { durationParser } from "@delacour/warden-config/duration";
 import { sessionSignals } from "@delacour/warden-leasing/session";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
-import { type DevSessionDeps, findDevSession } from "../dev-session";
+import { type DevSessionDeps, devSession } from "../dev-session";
 import { devTuiMetroLog, type MetroLogEntry, type MetroLogKind } from "../dev-tui/metro-log";
-import {
-	filterMetroLogs,
-	followMetroLog,
-	type MetroLogQuery,
-	type MetroLogsError,
-	metroLogUnavailable,
-	parseMetroLogKinds,
-	readMetroLogText,
-} from "../metro-logs";
+import { type MetroLogQuery, type MetroLogsError, metroLogs } from "../metro-logs";
 import { output } from "../output";
 
 export type DevLogsOpts = {
@@ -115,7 +107,7 @@ export class DevLogs {
 		}
 		let kinds: MetroLogKind[] | undefined;
 		if (opts.kind !== undefined) {
-			const parsed = parseMetroLogKinds(opts.kind);
+			const parsed = metroLogs.parseMetroLogKinds(opts.kind);
 			if (!parsed.success) return parsed;
 			kinds = parsed.data;
 		}
@@ -136,7 +128,7 @@ export class DevLogs {
 	): Result<MetroLogEntry[], MetroLogsError> {
 		const { filters, tail } = parsed;
 		if (filters.sinceMs !== undefined && log.mtimeMs < filters.sinceMs) return resultFactory.ok([]);
-		return filterMetroLogs(devTuiMetroLog.parseMetroLog(log.text), {
+		return metroLogs.filterMetroLogs(devTuiMetroLog.parseMetroLog(log.text), {
 			...filters,
 			...(tail === undefined ? {} : { tail }),
 		});
@@ -153,7 +145,7 @@ export class DevLogs {
 		const controller = new AbortController();
 		const release = deps.interrupt(() => controller.abort());
 		try {
-			const followed = await followMetroLog(
+			const followed = await metroLogs.followMetroLog(
 				logDir,
 				filters,
 				{ now: ctx.now, sleep: deps.sleep, signal: controller.signal },
@@ -175,11 +167,11 @@ export class DevLogs {
 		const json = opts.json === true;
 		const parsed = this.parseLogsOpts(opts, ctx.now());
 		if (!parsed.success) return this.fail(ctx, json, parsed.error);
-		const session = findDevSession(ctx.env, opts.udid === undefined ? {} : { udid: opts.udid }, deps);
+		const session = devSession.findDevSession(ctx.env, opts.udid === undefined ? {} : { udid: opts.udid }, deps);
 		if (!session.success) return this.fail(ctx, json, session.error);
 		const { logDir } = session.data;
-		const log = readMetroLogText(join(logDir, "metro.log"));
-		if (log === undefined) return this.fail(ctx, json, metroLogUnavailable(logDir));
+		const log = metroLogs.readMetroLogText(join(logDir, "metro.log"));
+		if (log === undefined) return this.fail(ctx, json, metroLogs.metroLogUnavailable(logDir));
 		const initial = this.initialEntries(log, parsed.data);
 		if (!initial.success) return this.fail(ctx, json, initial.error);
 		for (const entry of initial.data) ctx.out(this.render(ctx, json, entry));

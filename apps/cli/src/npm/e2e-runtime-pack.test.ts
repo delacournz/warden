@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { parseRuntime } from "../e2e/e2e-runtime";
+import { e2eRuntime } from "../e2e/e2e-runtime";
 
 const SCRIPT = resolve(import.meta.dir, "../../scripts/e2e-runtime.ts");
 const REPO = resolve(import.meta.dir, "../../../..");
@@ -20,7 +20,7 @@ describe("scripts/e2e-runtime.ts (the real packages/e2e)", () => {
 		const blob = join(out, "e2e-runtime.bin");
 		const result = await processExec.run(["bun", SCRIPT, REPO, blob, "9.8.7"]);
 		if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout);
-		const parsed = parseRuntime(readFileSync(blob, "utf8"));
+		const parsed = e2eRuntime.parseRuntime(readFileSync(blob, "utf8"));
 		expect(parsed.success).toBe(true);
 		if (!parsed.success) return;
 		const files = parsed.data;

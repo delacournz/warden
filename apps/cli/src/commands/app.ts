@@ -13,12 +13,12 @@ import type { AppEnsureJson } from "@delacour/warden-sdk/contracts/dev";
 import { leaseModel, type Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { parsePlatform, resolvePlatform } from "../claim-flags";
+import { claimFlagsHelpers } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
-import { installModeOption, kindOption, legacyCleanOption, parseInstallFlags } from "../install-flags";
+import { installFlags } from "../install-flags";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 
 type ProjectOpts = { project?: string; bundleId?: string; variant?: string; kind?: string; json?: true };
 
@@ -54,12 +54,12 @@ export class AppCommand extends CliCommand {
 			.option("--no-install", "only resolve the build into the cache")
 			.option("--no-eas", "don't download EAS builds")
 			.option("--no-build", "don't build locally on a cache miss")
-			.addOption(installModeOption())
+			.addOption(installFlags.installModeOption())
 			.option("--reset-keychain", "--install-mode: also reset the iOS simulator's keychain")
-			.addOption(legacyCleanOption())
+			.addOption(installFlags.legacyCleanOption())
 			.option("--bundle-id <id>", "override the bundle id / package")
 			.option("--variant <name>", "use this projects[].variants build (dev, e2e…)")
-			.addOption(kindOption())
+			.addOption(installFlags.kindOption())
 			.option("--json", "machine-readable output")
 			.action(async (platform, opts) => done(await this.ensureCmd(ctx, this.deps, platform, opts)));
 		cmd
@@ -108,7 +108,7 @@ export class AppCommand extends CliCommand {
 		opts: EnsureOpts,
 		device: string | undefined
 	): Result<{ install: { installMode?: InstallMode; resetKeychain?: true }; kind?: BuildKind }> {
-		const install = parseInstallFlags(opts);
+		const install = installFlags.parseInstallFlags(opts);
 		if (!install.success) return install;
 		const kind = opts.kind === undefined ? undefined : appLookup.parseKind(opts.kind);
 		if (kind && !kind.success) return wardenErrors.toText(kind);
@@ -126,7 +126,7 @@ export class AppCommand extends CliCommand {
 		opts: EnsureOpts
 	): Promise<number> {
 		const { color } = ctx.ui;
-		const platform = await resolvePlatform(ctx, platformArg);
+		const platform = await claimFlagsHelpers.resolvePlatform(ctx, platformArg);
 		if (!platform.success) return this.fail(ctx, "ensure", platform.error);
 		const owner = ownerResolver.resolve(ctx);
 		const device = appLookup.pickDevice(ctx, owner, platform.data, {
@@ -140,7 +140,7 @@ export class AppCommand extends CliCommand {
 		const phone = platform.data === "ios" && device.data !== undefined && leaseModel.isPhysicalIosId(device.data);
 		const { install, kind } = flags.data;
 		if (!opts.json) output.heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
-		const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
+		const res = await spinnerContext.withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
 			const result = await new AppPreparer(contextBuilder.appHostFromContext(sctx), deps).ensureFor(
 				owner,
 				platform.data,
@@ -179,7 +179,7 @@ export class AppCommand extends CliCommand {
 		const platforms: Platform[] = [];
 		if (platformArg === undefined) platforms.push("ios", "android");
 		else {
-			const p = parsePlatform(platformArg);
+			const p = claimFlagsHelpers.parsePlatform(platformArg);
 			if (!p.success) return this.fail(ctx, "fingerprint", p.error);
 			platforms.push(p.data);
 		}
@@ -190,7 +190,7 @@ export class AppCommand extends CliCommand {
 		if (!project.success) return this.fail(ctx, "fingerprint", project.error);
 		const fingerprints: Partial<Record<Platform, string>> = {};
 		const native: Partial<Record<Platform, string>> = {};
-		const failed = await withSpinner(ctx, `fingerprinting ${platforms.join(" + ")}…`, async (sctx) => {
+		const failed = await spinnerContext.withSpinner(ctx, `fingerprinting ${platforms.join(" + ")}…`, async (sctx) => {
 			for (const platform of platforms) {
 				const hash = await new AppPreparer(contextBuilder.appHostFromContext(sctx)).fingerprint(project.data, platform);
 				if (!hash.success) return hash.error;

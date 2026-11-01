@@ -6,7 +6,7 @@ import { instrumentChecker } from "@delacour/warden-perf/ios/instruments";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { type IosNativeFs, iosNativeCapture } from "@delacour/warden-sdk/ops/perf/native-ios";
 import type { NativeIo, NativeStartInput } from "@delacour/warden-sdk/ops/perf/native-types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { perfTestingCli } from "./testing";
 
 let ctx: TestContext | undefined;
@@ -39,7 +39,7 @@ function rules(xcode: string, extra: Rule[] = []): Rule[] {
 function setup(rs: Rule[], opts: { traceExists?: boolean; recorderDies?: boolean } = {}) {
 	const calls: string[] = [];
 	const envs: Array<Record<string, string | undefined> | undefined> = [];
-	const c = testContext([], {
+	const c = cliTesting.testContext([], {
 		now: () => 1_000,
 		exec: async (cmd, o) => {
 			const line = cmd.join(" ");

@@ -6,8 +6,8 @@ import { type GraphRequest, graphSnapshots } from "@delacour/warden-core/affecte
 import { graphWorker } from "@delacour/warden-core/affected/graph-worker";
 import { fixtureRepos } from "@delacour/warden-core/testing/fixture.testing";
 import { resultFactory } from "@delacour/warden-types/result";
-import { main } from "../cli";
-import { type TestContext, testContext } from "../testing";
+import { cliEntry } from "../cli";
+import { cliTesting, type TestContext } from "../testing";
 import { affectedGraphCli, affectedGraphCommand } from "./affected-graph";
 import { COMMANDS } from "./registry";
 
@@ -32,7 +32,7 @@ async function built() {
 }
 
 async function run(argv: string[]): Promise<{ code: number; ctx: TestContext }> {
-	ctx = testContext(argv);
+	ctx = cliTesting.testContext(argv);
 	return { code: await affectedGraphCommand.run(ctx), ctx };
 }
 
@@ -57,7 +57,7 @@ describe("warden __affected-graph", () => {
 	});
 
 	test("no usable typescript: the reason on stderr, its own exit code, no stdout, no throw (cli-size-R5)", async () => {
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		const why = "needs typescript in the analysed project: add it as a devDependency";
 		const code = await affectedGraphCli.walk(ctx, JSON.stringify(request()), async () => resultFactory.err(why));
 		expect(code).toBe(TYPESCRIPT_UNUSABLE_EXIT);
@@ -73,8 +73,8 @@ describe("warden __affected-graph", () => {
 		expect(COMMANDS.find((c) => c.name === "__affected-graph")?.hidden).toBe(true);
 		let help: TestContext | undefined;
 		expect(
-			await main(["--help"], (argv) => {
-				help = testContext(argv);
+			await cliEntry.main(["--help"], (argv) => {
+				help = cliTesting.testContext(argv);
 				return help;
 			})
 		).toBe(0);

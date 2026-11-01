@@ -11,7 +11,7 @@ import type { UiDeps } from "../agent-ui/driver";
 import { cliUiPaths } from "../agent-ui/paths";
 import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { UiCommand } from "./ui";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
@@ -128,7 +128,7 @@ function harness(options: { metro?: boolean; platform?: "ios" | "android" } = {}
 	});
 	const deps: UiDeps = { driver: async () => resultFactory.ok(driver), sleep: async () => undefined, devtools };
 
-	const c = testContext([], { now: () => 1_700_000_000_000 });
+	const c = cliTesting.testContext([], { now: () => 1_700_000_000_000 });
 	ctx = c;
 	c.env = { ...c.env, ...OWNER_ENV };
 	c.db.insertLease(

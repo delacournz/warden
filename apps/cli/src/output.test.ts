@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Chalk } from "chalk";
 import { output } from "./output";
-import { scriptedUi, type TestContext, testContext } from "./testing";
+import { cliTesting, type TestContext } from "./testing";
 
 describe("formatTable", () => {
 	test("pads columns", () => {
@@ -35,7 +35,7 @@ describe("formatTable width", () => {
 
 describe("say", () => {
 	const lines = (rich: boolean, fn: (ctx: TestContext) => void): { out: string[]; err: string[] } => {
-		const ctx = testContext([], { ui: scriptedUi({ rich }) });
+		const ctx = cliTesting.testContext([], { ui: cliTesting.scriptedUi({ rich }) });
 		try {
 			fn(ctx);
 			return { out: ctx.stdout, err: ctx.stderr };
@@ -92,8 +92,8 @@ describe("formatTable never wraps", () => {
 
 	test("table(ctx) fits a terminal even without a flex column; piped output is untouched", () => {
 		const rows = [["a", "y".repeat(100)]];
-		const rich = testContext([], { ui: scriptedUi({ rich: true, columns: 20 }) });
-		const piped = testContext([], { ui: scriptedUi({ columns: 20 }) });
+		const rich = cliTesting.testContext([], { ui: cliTesting.scriptedUi({ rich: true, columns: 20 }) });
+		const piped = cliTesting.testContext([], { ui: cliTesting.scriptedUi({ columns: 20 }) });
 		try {
 			for (const line of output.table(rich, ["K", "V"], rows).split("\n")) expect(line.length).toBeLessThanOrEqual(20);
 			expect(output.table(piped, ["K", "V"], rows)).toContain("y".repeat(100));

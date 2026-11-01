@@ -1,7 +1,7 @@
 import { LeaseSelection, leaseSelectorRules, NOTHING_SELECTED } from "@delacour/warden-leasing/lease-select";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
-import { type SelectOptionValues, selectorFrom, withSelectOptions } from "../lease-select";
+import { leaseSelect, type SelectOptionValues } from "../lease-select";
 import { output } from "../output";
 
 type HeartbeatOpts = SelectOptionValues & { json?: true };
@@ -12,14 +12,15 @@ export class HeartbeatCommand extends CliCommand {
 	override readonly summary = "refresh lease heartbeats so they don't go stale";
 
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
-		withSelectOptions(cmd.argument("[leaseIds...]", "lease ids to refresh"))
+		leaseSelect
+			.withSelectOptions(cmd.argument("[leaseIds...]", "lease ids to refresh"))
 			.option("--json", "machine-readable output")
 			.action(async (ids, opts) => done(await this.heartbeat(ctx, ids, opts)));
 	}
 
 	private async heartbeat(ctx: CommandContext, leaseIds: string[], opts: HeartbeatOpts): Promise<number> {
 		const { color } = ctx.ui;
-		const selector = selectorFrom(leaseIds, opts);
+		const selector = leaseSelect.selectorFrom(leaseIds, opts);
 		if (leaseSelectorRules.isEmpty(selector)) {
 			output.reportError(ctx, "heartbeat", NOTHING_SELECTED);
 			return 1;

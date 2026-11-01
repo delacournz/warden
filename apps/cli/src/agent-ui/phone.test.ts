@@ -2,15 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { uiPhone } from "./phone";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function setup(calls: string[][] = []): TestContext {
-	ctx = testContext([], {
-		exec: fakeExec(
+	ctx = cliTesting.testContext([], {
+		exec: cliTesting.fakeExec(
 			[
 				["adb devices -l", { stdout: ADB_DEVICES_STATES }],
 				[`adb -s R5CT1234ABC shell ${PHONE_PROBE_SCRIPT}`, { stdout: PHONE_PROPS }],
@@ -47,7 +47,7 @@ describe("checkPhone", () => {
 	});
 
 	test("adb missing is not a phone, not a crash", async () => {
-		ctx = testContext([], { exec: fakeExec([]) });
+		ctx = cliTesting.testContext([], { exec: cliTesting.fakeExec([]) });
 		expect(await uiPhone.checkPhone(ctx, "R5CT1234ABC")).toEqual({ kind: "other" });
 	});
 });

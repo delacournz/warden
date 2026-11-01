@@ -7,7 +7,7 @@ import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { CliCommand, type CommandNode } from "../command";
 import type { CommandContext } from "../context";
 import { output } from "../output";
-import { withSpinner } from "../spinner-context";
+import { spinnerContext } from "../spinner-context";
 import type { Choice } from "../ui";
 import { IDLE_HELP, STALE_HELP, simsAudit } from "./sims-audit";
 
@@ -212,7 +212,7 @@ export class SimsCommand extends CliCommand {
 		if (opts.dryRun) return this.dryRun(ctx, picked, opts.json === true);
 		if (!opts.yes && !(await this.confirmDelete(ctx, picked))) return 1;
 
-		const result = await withSpinner(ctx, `deleting ${picked.length} simulator(s)…`, (sctx) =>
+		const result = await spinnerContext.withSpinner(ctx, `deleting ${picked.length} simulator(s)…`, (sctx) =>
 			this.deleteAll(sctx, picked)
 		);
 		for (const f of result.failed) output.reportError(ctx, "sims delete", `skipped ${f.name} (${f.id}): ${f.error}`);

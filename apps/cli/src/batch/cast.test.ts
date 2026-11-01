@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createCast } from "./cast";
+import { castHelpers } from "./cast";
 
 describe("asciicast v2 writer", () => {
 	test("header line + [seconds, 'o', data] events with CRLF newlines", () => {
-		const cast = createCast({ width: 80, height: 5, startedAt: 1_700_000_000_000 });
+		const cast = castHelpers.createCast({ width: 80, height: 5, startedAt: 1_700_000_000_000 });
 		cast.write(1_700_000_000_000, "hello\n");
 		cast.write(1_700_000_001_500, "\u001b[1Aworld\r\n");
 		const [header, ...events] = cast.text().trimEnd().split("\n");
@@ -21,7 +21,7 @@ describe("asciicast v2 writer", () => {
 	});
 
 	test("height grows to the tallest frame seen", () => {
-		const cast = createCast({ width: 80, height: 2, startedAt: 0 });
+		const cast = castHelpers.createCast({ width: 80, height: 2, startedAt: 0 });
 		cast.resizeTo(7);
 		cast.resizeTo(4);
 		expect(JSON.parse(cast.text().split("\n")[0] ?? "").height).toBe(7);

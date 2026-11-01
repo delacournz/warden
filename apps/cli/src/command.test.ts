@@ -3,8 +3,8 @@ import { Chalk } from "chalk";
 import { CliCommand, type Command, type CommandEntry, type CommandNode, defineCommand, programRunner } from "./command";
 import type { CommandContext } from "./context";
 import { output } from "./output";
-import { withSpinner } from "./spinner-context";
-import { scriptedUi, type TestContext, testContext } from "./testing";
+import { spinnerContext } from "./spinner-context";
+import { cliTesting, type TestContext } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -24,8 +24,8 @@ const alpha = defineCommand({
 const beta = defineCommand({ name: "beta", group: "Setup", summary: "second thing", register: () => {} });
 const gamma = defineCommand({ name: "gamma", group: "Lease", summary: "third thing", register: () => {} });
 
-function run(argv: string[], ui = scriptedUi()): Promise<number> {
-	ctx = testContext(argv, { ui });
+function run(argv: string[], ui = cliTesting.scriptedUi()): Promise<number> {
+	ctx = cliTesting.testContext(argv, { ui });
 	return programRunner.run([alpha, beta, gamma], argv, ctx);
 }
 
@@ -40,7 +40,7 @@ describe("runProgram help", () => {
 	});
 
 	test("colour: bold titles, cyan command + option names", async () => {
-		const ui = scriptedUi();
+		const ui = cliTesting.scriptedUi();
 		ui.color = new Chalk({ level: 1 });
 		expect(await run(["alpha", "--help"], ui)).toBe(0);
 		const text = ctx?.stdout.join("\n") ?? "";
@@ -55,7 +55,7 @@ describe("runProgram help", () => {
 	});
 
 	test("help wraps to the terminal width", async () => {
-		expect(await run(["--help"], scriptedUi({ columns: 50 }))).toBe(0);
+		expect(await run(["--help"], cliTesting.scriptedUi({ columns: 50 }))).toBe(0);
 		for (const line of (ctx?.stdout.join("\n") ?? "").split("\n")) expect(line.length).toBeLessThanOrEqual(50);
 	});
 
@@ -64,7 +64,7 @@ describe("runProgram help", () => {
 	});
 
 	test("usage error: red on stderr, exit 1, with the glyph at a terminal", async () => {
-		expect(await run(["alpha", "--nope"], scriptedUi({ rich: true }))).toBe(1);
+		expect(await run(["alpha", "--nope"], cliTesting.scriptedUi({ rich: true }))).toBe(1);
 		expect(ctx?.stderr.join("\n")).toContain("✗ warden alpha: unknown option '--nope'");
 		expect(await run(["alpha", "--nope"])).toBe(1);
 		expect(ctx?.stderr.join("\n")).toContain("error: unknown option '--nope'");
@@ -91,9 +91,9 @@ function lazyEntries(commands: readonly Command[], loaded: string[]): CommandEnt
 describe("runLazyProgram", () => {
 	const all = [alpha, beta, gamma];
 
-	async function lazy(argv: string[], ui = scriptedUi()): Promise<{ code: number; loaded: string[] }> {
+	async function lazy(argv: string[], ui = cliTesting.scriptedUi()): Promise<{ code: number; loaded: string[] }> {
 		const loaded: string[] = [];
-		ctx = testContext(argv, { ui });
+		ctx = cliTesting.testContext(argv, { ui });
 		const code = await programRunner.runLazy(lazyEntries(all, loaded), argv, ctx);
 		return { code, loaded };
 	}
@@ -126,9 +126,9 @@ describe("runLazyProgram", () => {
 
 	test("output matches the eager program byte for byte", async () => {
 		for (const argv of [["--help"], ["alpha", "--help"], ["nope"], ["alpha", "--nope"], ["help", "alpha"], []]) {
-			const eager = testContext(argv);
+			const eager = cliTesting.testContext(argv);
 			const eagerCode = await programRunner.run(all, argv, eager);
-			const lazyRun = testContext(argv);
+			const lazyRun = cliTesting.testContext(argv);
 			const lazyCode = await programRunner.runLazy(lazyEntries(all, []), argv, lazyRun);
 			expect({ argv, code: lazyCode, out: lazyRun.stdout, err: lazyRun.stderr }).toEqual({
 				argv,
@@ -142,7 +142,7 @@ describe("runLazyProgram", () => {
 	});
 
 	test("a usage error in a lazily loaded command still names its scope", async () => {
-		const { code } = await lazy(["alpha", "--nope"], scriptedUi({ rich: true }));
+		const { code } = await lazy(["alpha", "--nope"], cliTesting.scriptedUi({ rich: true }));
 		expect(code).toBe(1);
 		expect(ctx?.stderr.join("\n")).toContain("✗ warden alpha: unknown option '--nope'");
 	});
@@ -162,7 +162,7 @@ describe("runProgram --json failures", () => {
 				.action(async (_rest, opts) => {
 					if (opts.wrote) ctx.out(JSON.stringify({ unknown: ["x"] }));
 					else if (opts.spin)
-						await withSpinner(ctx, "working", async (sctx) => output.reportError(sctx, "delta", "boom"));
+						await spinnerContext.withSpinner(ctx, "working", async (sctx) => output.reportError(sctx, "delta", "boom"));
 					else if (!opts.silent) {
 						output.reportError(ctx, "delta", "boom");
 						output.reportError(ctx, "delta", "and then this");
@@ -186,7 +186,7 @@ describe("runProgram --json failures", () => {
 	});
 
 	function runJson(argv: string[]): Promise<number> {
-		ctx = testContext(argv);
+		ctx = cliTesting.testContext(argv);
 		return programRunner.run([alpha, failing, nested], argv, ctx);
 	}
 	const doc = () => JSON.parse(ctx?.stdout.join("\n") ?? "");
@@ -246,7 +246,7 @@ describe("runProgram --json failures", () => {
 				cmd.option("--json", "machine-readable output").action(() => done(0));
 			},
 		});
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		expect(await programRunner.run([ok], ["zeta", "--json"], ctx)).toBe(0);
 		expect(ctx.stdout).toEqual([]);
 	});
@@ -284,7 +284,7 @@ describe("CliCommand", () => {
 
 	test("register runs on the instance and its exit code comes back through run()", async () => {
 		const probe = new Probe();
-		ctx = testContext([]);
+		ctx = cliTesting.testContext([]);
 		expect(await probe.definition().run(ctx)).toBe(7);
 		expect(probe.registered).toBe(1);
 	});

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { writeDevSession } from "../dev-session";
+import { devSession } from "../dev-session";
 import { BUNDLE_OK, BUNDLE_SYNTAX_ERROR, RUNTIME_LOGS } from "../dev-tui/metro-log.testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { DevCommand, defaultDevDeps } from "./dev";
 import { type DevLogsDeps, devLogs } from "./dev-logs";
 
@@ -14,12 +14,12 @@ const home = (c: TestContext) => c.env.WARDEN_HOME ?? "";
 
 /** A context whose WARDEN_HOME holds one dev session (this process's pid, so it is alive) and a metro.log. */
 function withSession(log: string | undefined, argv: string[] = []): TestContext {
-	const c = testContext(argv);
+	const c = cliTesting.testContext(argv);
 	ctx = c;
 	const logDir = join(home(c), "dev", "L1");
 	mkdirSync(logDir, { recursive: true });
 	if (log !== undefined) writeFileSync(join(logDir, "metro.log"), log);
-	writeDevSession(c.env, {
+	devSession.writeDevSession(c.env, {
 		version: 1,
 		leaseId: "L1",
 		pid: process.pid,
@@ -86,7 +86,7 @@ describe("warden dev logs", () => {
 	});
 
 	test("no dev session: code in --json, message otherwise, exit 1", async () => {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
 		expect(await devLogs.devLogs(c, { json: true }, deps())).toBe(1);
 		expect(JSON.parse(c.stdout[0] ?? "").error.code).toBe("no_dev_session");

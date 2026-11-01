@@ -14,32 +14,16 @@ import {
 import type { RunJson } from "@delacour/warden-sdk/contracts/claim";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { maybeAutoGc, selfCommand } from "../autogc";
-import {
-	type ClaimFlagValues,
-	isPhysicalClaim,
-	type PhysicalOptionValues,
-	parseClaimFlags,
-	resolvePlatform,
-	withClaimOptions,
-	withNamedPhysical,
-	withPhysicalOptions,
-} from "../claim-flags";
+import { autoGc } from "../autogc";
+import { type ClaimFlagValues, claimFlagsHelpers, type PhysicalOptionValues } from "../claim-flags";
 import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
 import { leaseHostBuilder } from "../lease-host";
-import {
-	type AppFlagValues,
-	appPhaseProgress,
-	leasedProgress,
-	parseAppFlags,
-	splitOperands,
-	withLeaseOptions,
-} from "../lease-options";
+import { type AppFlagValues, leaseOptions } from "../lease-options";
 import { output } from "../output";
-import { reportClaimFailure } from "../physical-lock";
-import { canPrompt, pickPhysical, reportPick } from "../physical-pick";
-import { withSpinner } from "../spinner-context";
+import { physicalLock } from "../physical-lock";
+import { physicalPickHelpers } from "../physical-pick";
+import { spinnerContext } from "../spinner-context";
 
 /** Where the child's stdout goes: the terminal, or stderr under `--json` so stdout stays the one JSON line. */
 export type RunChildStdout = "inherit" | "stderr";
@@ -88,15 +72,16 @@ export class RunCommand extends CliCommand {
 	}
 
 	protected register(cmd: CommandNode, ctx: CommandContext, done: (code: number) => void): void {
-		withLeaseOptions(
-			withPhysicalOptions(
-				withClaimOptions(
-					cmd
-						.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
-						.argument("[cmd...]", "the command to run, after --")
+		leaseOptions
+			.withLeaseOptions(
+				claimFlagsHelpers.withPhysicalOptions(
+					claimFlagsHelpers.withClaimOptions(
+						cmd
+							.argument("[platform]", "ios | android (asked for when omitted in a terminal)")
+							.argument("[cmd...]", "the command to run, after --")
+					)
 				)
 			)
-		)
 			.addHelpText("after", "\nExample:\n  warden run ios --count 2 --port 8091:20 -- bun e2e")
 			.action(async (platform, rest, opts) =>
 				done(await this.run(ctx, this.deps, platform === undefined ? rest : [platform, ...rest], opts))
@@ -105,10 +90,10 @@ export class RunCommand extends CliCommand {
 
 	/** Validated run args from the resolved platform + option values. */
 	parseRunArgs(platform: Platform, opts: RunOpts): Result<RunArgs> {
-		const named = withNamedPhysical(opts);
-		const flags = parseClaimFlags(platform, named);
+		const named = claimFlagsHelpers.withNamedPhysical(opts);
+		const flags = claimFlagsHelpers.parseClaimFlags(platform, named);
 		if (!flags.success) return flags;
-		const app = parseAppFlags(opts);
+		const app = leaseOptions.parseAppFlags(opts);
 		if (!app.success) return app;
 		const args: RunArgs = { flags: flags.data, ports: opts.port, json: opts.json === true };
 		if (app.data) args.app = app.data;
@@ -150,12 +135,12 @@ export class RunCommand extends CliCommand {
 			output.reportError(ctx, "run", message);
 			return 1;
 		};
-		const target = splitOperands(ctx.argv, operands);
+		const target = leaseOptions.splitOperands(ctx.argv, operands);
 		if (!target.success) return fail(target.error);
-		const platform = await resolvePlatform(ctx, target.data.platformArg);
+		const platform = await claimFlagsHelpers.resolvePlatform(ctx, target.data.platformArg);
 		if (!platform.success) return fail(platform.error);
 		// a physical device is never headless-hidden: only an explicit --headless reaches the claim (which refuses it)
-		const physical = isPhysicalClaim(withNamedPhysical(opts));
+		const physical = claimFlagsHelpers.isPhysicalClaim(claimFlagsHelpers.withNamedPhysical(opts));
 		const args = this.parseRunArgs(platform.data, {
 			...opts,
 			headless: physical ? opts.headless : headlessResolver.resolve({ flag: opts.headless, env: ctx.env }),
@@ -164,24 +149,24 @@ export class RunCommand extends CliCommand {
 		const { cmd } = target.data;
 		const owner = ownerResolver.resolve(ctx);
 		// before the spinner and any lease or build: several usable phones are asked about, or refused (ambiguous_device, exit 2)
-		const picked = await pickPhysical(ctx, owner, [args.data.flags], {
-			prompt: canPrompt(ctx, { json: args.data.json }),
+		const picked = await physicalPickHelpers.pickPhysical(ctx, owner, [args.data.flags], {
+			prompt: physicalPickHelpers.canPrompt(ctx, { json: args.data.json }),
 		});
-		if (picked.kind !== "ok") return reportPick(ctx, "run", picked);
+		if (picked.kind !== "ok") return physicalPickHelpers.reportPick(ctx, "run", picked);
 		const flags = picked.flags[0] ?? args.data.flags;
 		const { count, profile } = flags.request;
 		if (!args.data.json) output.heading(ctx, "run", `${platform.data} · ${profile} ×${count} · ${cmd.join(" ")}`);
-		const claimed = await withSpinner(
+		const claimed = await spinnerContext.withSpinner(
 			ctx,
 			`claiming ${count} ${profile} ${platform.data} device(s)…`,
 			async (sctx, spinner) => {
 				const app = args.data.app !== undefined;
-				const onLeased = leasedProgress(spinner, ctx.ui.color, app);
-				const onAppPhase = appPhaseProgress(spinner, app);
+				const onLeased = leaseOptions.leasedProgress(spinner, ctx.ui.color, app);
+				const onAppPhase = leaseOptions.appPhaseProgress(spinner, app);
 				const result = await new LeaseSessionRunner(leaseHostBuilder.leaseHostFromContext(sctx), deps).claimAll(owner, {
 					...args.data,
 					flags,
-					self: selfCommand(),
+					self: autoGc.selfCommand(),
 					...(onLeased ? { onLeased } : {}),
 					...(onAppPhase ? { onAppPhase } : {}),
 				});
@@ -192,8 +177,8 @@ export class RunCommand extends CliCommand {
 			}
 		);
 		// after the claim: its own leases keep the background gc off the devices it just took (16-1)
-		maybeAutoGc(ctx);
-		if (!claimed.success) return reportClaimFailure(ctx, "run", claimed.error.message);
+		autoGc.maybeAutoGc(ctx);
+		if (!claimed.success) return physicalLock.reportClaimFailure(ctx, "run", claimed.error.message);
 		const { outcome, ports, env, release, leaseIds } = claimed.data;
 		const summary: RunJson = { leases: claimRequestRules.claimedJson(outcome), ports, cmd };
 		// one line: the child runs on, so a reader takes the summary from the first stdout line

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { main } from "./cli";
+import { cliEntry } from "./cli";
 import { COMMANDS } from "./commands/registry";
-import { type TestContext, testContext } from "./testing";
+import { cliTesting, type TestContext } from "./testing";
 
 async function help(path: string[]): Promise<string> {
 	let run: TestContext | undefined;
-	const code = await main([...path, "--help"], (rest) => {
-		run = testContext(rest);
+	const code = await cliEntry.main([...path, "--help"], (rest) => {
+		run = cliTesting.testContext(rest);
 		return run;
 	});
 	const text = (run?.stdout ?? []).join("\n");
@@ -55,8 +55,8 @@ describe("help output", () => {
 
 	test("warden help <command> matches <command> --help", async () => {
 		let run: TestContext | undefined;
-		const code = await main(["help", "claim"], (rest) => {
-			run = testContext(rest);
+		const code = await cliEntry.main(["help", "claim"], (rest) => {
+			run = cliTesting.testContext(rest);
 			return run;
 		});
 		expect(code).toBe(0);
@@ -66,8 +66,8 @@ describe("help output", () => {
 
 	test("unknown command suggests the closest registered one", async () => {
 		let run: TestContext | undefined;
-		const code = await main(["claime"], (rest) => {
-			run = testContext(rest);
+		const code = await cliEntry.main(["claime"], (rest) => {
+			run = cliTesting.testContext(rest);
 			return run;
 		});
 		expect(code).toBe(1);

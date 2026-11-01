@@ -5,7 +5,7 @@ import { traceProcessorPins } from "@delacour/warden-perf/android/trace-processo
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { type AndroidNativeDeps, androidNativeCapture } from "@delacour/warden-sdk/ops/perf/native-android";
 import type { NativeHandle, NativeIo } from "@delacour/warden-sdk/ops/perf/native-types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import type { PerfTarget } from "./device";
 import { perfTestingCli } from "./testing";
 
@@ -53,7 +53,7 @@ function setup(
 	const stdinCalls: Env["stdinCalls"] = [];
 	const aliveFor = { n: 1 };
 	let tick = 0;
-	const c = testContext(["perf", "native"], { now: () => (tick += 500) });
+	const c = cliTesting.testContext(["perf", "native"], { now: () => (tick += 500) });
 	c.env = { ...c.env, ...opts.extraEnv };
 	const dir = join(c.env.WARDEN_HOME ?? "", "native");
 	c.exec = async (cmd) => {

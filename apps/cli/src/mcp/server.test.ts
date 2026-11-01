@@ -8,7 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
 import { devBrokerBrokerTypes } from "../dev-broker/broker.types";
 import { devBrokerIpc } from "../dev-broker/ipc";
-import { writeDevSession } from "../dev-session";
+import { devSession } from "../dev-session";
 import { wardenMcpServer } from "./server";
 import { mcpTools, type ToolDef } from "./tools";
 
@@ -85,7 +85,7 @@ describe("warden mcp", () => {
 			join(logDir, "metro.log"),
 			"Starting Metro Bundler\r\nERROR  SyntaxError: /app/src/App.tsx: Unexpected token (3:4)\r\n"
 		);
-		writeDevSession(env, {
+		devSession.writeDevSession(env, {
 			version: 1,
 			leaseId: "lease-1",
 			pid: process.pid,
@@ -139,7 +139,7 @@ describe("warden mcp over the dev session's broker", () => {
 		if (!served.success) throw new Error(served.error.message);
 		const server = served.data;
 		closers.push(() => server.close());
-		writeDevSession(env, {
+		devSession.writeDevSession(env, {
 			version: 1,
 			leaseId: "lease-1",
 			pid: process.pid,

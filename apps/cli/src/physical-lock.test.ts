@@ -8,10 +8,10 @@ import {
 } from "@delacour/warden-providers/devicectl.fixtures";
 import { UNLOCK_POLL_MS, UNLOCK_WAIT_MS } from "@delacour/warden-providers/unlock-wait";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { claimWithFlags, parseClaimFlags } from "./claim-flags";
-import { isLockedClaimError, reportClaimFailure } from "./physical-lock";
+import { claimFlagsHelpers } from "./claim-flags";
+import { physicalLock } from "./physical-lock";
 import { OWNER_ENV, simctlFakes } from "./simctl.testing";
-import { type TestContext, testContext } from "./testing";
+import { cliTesting, type TestContext } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -38,13 +38,13 @@ function setup(lockedReads: number) {
 		}
 		return base(cmd, opts);
 	};
-	ctx = testContext([], { exec });
+	ctx = cliTesting.testContext([], { exec });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return { c: ctx, reads: () => reads };
 }
 
-function flags(values: Parameters<typeof parseClaimFlags>[1]) {
-	const parsed = parseClaimFlags("ios", values, 16);
+function flags(values: Parameters<typeof claimFlagsHelpers.parseClaimFlags>[1]) {
+	const parsed = claimFlagsHelpers.parseClaimFlags("ios", values, 16);
 	if (!parsed.success) throw new Error(parsed.error);
 	return parsed.data;
 }
@@ -54,7 +54,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 		const { c } = setup(3);
 		const leasesWhileWaiting: number[] = [];
 		const slept: number[] = [];
-		const outcome = await claimWithFlags(
+		const outcome = await claimFlagsHelpers.claimWithFlags(
 			c,
 			ownerResolver.resolve(c),
 			flags({ physicalUdid: [FAKE_IPHONE_UDID] }),
@@ -78,7 +78,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 		const { c } = setup(Number.POSITIVE_INFINITY);
 		let at = 1_000_000;
 		c.now = () => at;
-		const outcome = await claimWithFlags(
+		const outcome = await claimFlagsHelpers.claimWithFlags(
 			c,
 			ownerResolver.resolve(c),
 			flags({ physicalUdid: [FAKE_IPHONE_UDID] }),
@@ -91,7 +91,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 		);
 		expect(outcome.success).toBe(false);
 		if (outcome.success) return;
-		expect(isLockedClaimError(outcome.error.message)).toBe(true);
+		expect(physicalLock.isLockedClaimError(outcome.error.message)).toBe(true);
 		expect(outcome.error.message).toContain("Test iPhone is locked");
 		expect(at - 1_000_000).toBe(UNLOCK_WAIT_MS);
 		expect(c.stderr.filter((l) => l.includes("still locked"))).toHaveLength(3);
@@ -101,7 +101,7 @@ describe("claimWithFlags on a locked iPhone", () => {
 	test("--no-wait fails at once, without sleeping or printing", async () => {
 		const { c } = setup(Number.POSITIVE_INFINITY);
 		let slept = 0;
-		const outcome = await claimWithFlags(
+		const outcome = await claimFlagsHelpers.claimWithFlags(
 			c,
 			ownerResolver.resolve(c),
 			flags({ physicalUdid: [FAKE_IPHONE_UDID], wait: false }),
@@ -112,14 +112,14 @@ describe("claimWithFlags on a locked iPhone", () => {
 				},
 			}
 		);
-		expect(!outcome.success && isLockedClaimError(outcome.error.message)).toBe(true);
+		expect(!outcome.success && physicalLock.isLockedClaimError(outcome.error.message)).toBe(true);
 		expect(slept).toBe(0);
 		expect(c.stderr).toEqual([]);
 	});
 
 	test("an unlocked phone prints nothing about locks and claims", async () => {
 		const { c } = setup(0);
-		const outcome = await claimWithFlags(
+		const outcome = await claimFlagsHelpers.claimWithFlags(
 			c,
 			ownerResolver.resolve(c),
 			flags({ physicalUdid: [FAKE_IPHONE_UDID] }),
@@ -132,27 +132,33 @@ describe("claimWithFlags on a locked iPhone", () => {
 
 	test("an id-less physical claim of the only ready phone waits for it too", async () => {
 		const { c } = setup(1);
-		const outcome = await claimWithFlags(c, ownerResolver.resolve(c), flags({ physical: true }), undefined, {
-			unlockSleep: async () => {},
-		});
+		const outcome = await claimFlagsHelpers.claimWithFlags(
+			c,
+			ownerResolver.resolve(c),
+			flags({ physical: true }),
+			undefined,
+			{
+				unlockSleep: async () => {},
+			}
+		);
 		expect(outcome.success).toBe(true);
 		expect(c.stderr.join("\n")).toContain("Test iPhone is locked");
 	});
 
 	test("a simulator claim never asks devicectl", async () => {
 		const { c, reads } = setup(Number.POSITIVE_INFINITY);
-		await claimWithFlags(c, ownerResolver.resolve(c), { ...flags({}), waitMs: 0 }, undefined, {});
+		await claimFlagsHelpers.claimWithFlags(c, ownerResolver.resolve(c), { ...flags({}), waitMs: 0 }, undefined, {});
 		expect(reads()).toBe(0);
 	});
 });
 
 describe("reportClaimFailure", () => {
 	test("a locked phone is exit 2 with the device_locked code and hint on the failure sink", () => {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
 		const recorded: unknown[] = [];
 		c.failure = { record: (message, extra) => recorded.push([message, extra]) };
-		expect(reportClaimFailure(c, "claim", "device_locked: Test iPhone is locked")).toBe(2);
+		expect(physicalLock.reportClaimFailure(c, "claim", "device_locked: Test iPhone is locked")).toBe(2);
 		expect(recorded).toEqual([
 			["Test iPhone is locked", { code: "device_locked", hint: "unlock the phone, then retry" }],
 		]);
@@ -160,8 +166,8 @@ describe("reportClaimFailure", () => {
 	});
 
 	test("any other failure is exit 1", () => {
-		const c = testContext([]);
+		const c = cliTesting.testContext([]);
 		ctx = c;
-		expect(reportClaimFailure(c, "claim", "no free device")).toBe(1);
+		expect(physicalLock.reportClaimFailure(c, "claim", "no free device")).toBe(1);
 	});
 });

@@ -5,14 +5,14 @@ import { ADB_DEVICES_STATES, EMULATOR_PROPS, PHONE_PROPS } from "@delacour/warde
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
-import { fakeExec, type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { uiDeviceResolver } from "./device";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function setup(): TestContext {
-	ctx = testContext([]);
+	ctx = cliTesting.testContext([]);
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }
@@ -51,8 +51,8 @@ describe("resolveUiDevice on Android phones", () => {
 	const probe = (serial: string) => `adb -s ${serial} shell ${PHONE_PROBE_SCRIPT}`;
 
 	function phoneSetup(calls: string[][] = []): TestContext {
-		ctx = testContext([], {
-			exec: fakeExec(
+		ctx = cliTesting.testContext([], {
+			exec: cliTesting.fakeExec(
 				[
 					["adb devices -l", { stdout: ADB_DEVICES_STATES }],
 					[probe(PHONE), { stdout: PHONE_PROPS }],
@@ -139,7 +139,7 @@ describe("resolveUiDevice --claim: leftover conditions", () => {
 			calls.push([...cmd]);
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		ctx = testContext([], { exec, env: { WARDEN_HOME: "", WARDEN_SESSION_ID: "me" } });
+		ctx = cliTesting.testContext([], { exec, env: { WARDEN_HOME: "", WARDEN_SESSION_ID: "me" } });
 		ctx.env.WARDEN_HOME = ctx.cwd;
 		const stale = ctx.db.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: other, ttlMs: 1 },
@@ -158,7 +158,7 @@ describe("resolveUiDevice --claim: leftover conditions", () => {
 
 	test("a plain lease-less call with nothing orphaned runs no resets", async () => {
 		const calls: string[][] = [];
-		ctx = testContext([], {
+		ctx = cliTesting.testContext([], {
 			exec: async (cmd) => {
 				calls.push([...cmd]);
 				return { exitCode: 0, stdout: "", stderr: "" };

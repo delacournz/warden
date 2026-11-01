@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PERF_SUBCOMMANDS, type PerfRegister } from "../perf/register";
 import { perfTestingCli } from "../perf/testing";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import { PerfCommand } from "./perf";
 
 let ctx: TestContext | undefined;
@@ -10,7 +10,7 @@ afterEach(() => ctx?.cleanup());
 const sim = { platform: "ios", id: "U1", name: "warden-iphone-17-1" } as const;
 
 function setup(argv: string[]) {
-	const c = testContext(argv);
+	const c = cliTesting.testContext(argv);
 	ctx = c;
 	c.db.recordDevice({ platform: "ios", id: "U1", name: sim.name }, c.now());
 	return { c, deps: perfTestingCli.fakePerfDeps([sim]) };

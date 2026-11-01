@@ -22,8 +22,8 @@ import { CliCommand, type CommandNode } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
 import { leaseHostBuilder } from "../lease-host";
 import { output } from "../output";
-import { hasForegroundApp } from "../running-apps";
-import { withSpinner } from "../spinner-context";
+import { runningApps } from "../running-apps";
+import { spinnerContext } from "../spinner-context";
 
 const PLATFORMS: readonly Platform[] = ["ios", "android"];
 
@@ -290,7 +290,11 @@ export class GcCommand extends CliCommand {
 					if (r.kind !== "device") return undefined;
 					return (
 						shutdownPolicy.staleShutdownBlock(lease, now, false) ??
-						shutdownPolicy.staleShutdownBlock(lease, now, await hasForegroundApp(sctx.exec, r.platform, r.id))
+						shutdownPolicy.staleShutdownBlock(
+							lease,
+							now,
+							await runningApps.hasForegroundApp(sctx.exec, r.platform, r.id)
+						)
 					);
 				}
 			);
@@ -346,7 +350,7 @@ export class GcCommand extends CliCommand {
 		// `--quiet` is the detached auto-gc: no terminal, so no spinner.
 		const { reclaimed, shutdown, forgotten, notes } = opts.quiet
 			? await shutDownIdle(ctx)
-			: await withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
+			: await spinnerContext.withSpinner(ctx, "shutting down idle devices…", shutDownIdle);
 		notes.push(
 			...(cap.bytes.success
 				? this.pruneCache(ctx, cap.bytes.data, now)

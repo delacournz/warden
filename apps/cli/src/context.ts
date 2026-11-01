@@ -5,8 +5,8 @@ import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { WardenHost } from "@delacour/warden-types/host";
-import { renderLogEvent } from "./log-events";
-import { terminalUi, type Ui } from "./ui";
+import { logEvents } from "./log-events";
+import { type Ui, uiKit } from "./ui";
 
 /** Everything a command touches from the outside world — injectable for tests. */
 export type CommandContext = {
@@ -89,7 +89,7 @@ export class ContextBuilder {
 			exec: ctx.exec,
 			sleep: (ms) => Bun.sleep(ms),
 			pidAlive: liveness.processAlive,
-			log: (event) => renderLogEvent(ctx, event),
+			log: (event) => logEvents.renderLogEvent(ctx, event),
 		};
 	}
 
@@ -115,7 +115,7 @@ export class ContextBuilder {
 			exec: processExec.run,
 			git: new GitFactsCache(),
 			readStdin: () => Bun.stdin.text(),
-			ui: terminalUi(process.env),
+			ui: uiKit.terminalUi(process.env),
 		};
 	}
 }

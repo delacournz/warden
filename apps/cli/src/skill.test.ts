@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { embeddedFile, RULE_MD, RULE_PATH, SKILL_FILES, SKILL_MD, SKILL_PATHS, staleSkillFiles } from "./skill";
+import { RULE_MD, RULE_PATH, SKILL_FILES, SKILL_MD, SKILL_PATHS, skillInstaller } from "./skill";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -61,22 +61,22 @@ describe("embedded skill folder", () => {
 
 	test("embeddedFile resolves skill files and the rule, else undefined", () => {
 		expect(RULE_PATH).toBe("rules/warden.md");
-		expect(embeddedFile("references/ui.md")).toBe(SKILL_FILES["references/ui.md"]);
-		expect(embeddedFile("rules/warden.md")).toBe(RULE_MD);
-		expect(embeddedFile("nope")).toBeUndefined();
+		expect(skillInstaller.embeddedFile("references/ui.md")).toBe(SKILL_FILES["references/ui.md"]);
+		expect(skillInstaller.embeddedFile("rules/warden.md")).toBe(RULE_MD);
+		expect(skillInstaller.embeddedFile("nope")).toBeUndefined();
 	});
 });
 
 describe("staleSkillFiles", () => {
 	test("empty dir → everything missing", () => {
-		expect(staleSkillFiles(tmp())).toEqual({ missing: [...SKILL_PATHS], outdated: [] });
+		expect(skillInstaller.staleSkillFiles(tmp())).toEqual({ missing: [...SKILL_PATHS], outdated: [] });
 	});
 
 	test("all written → nothing stale; altered file → outdated", () => {
 		const dir = tmp();
 		writeAll(dir);
-		expect(staleSkillFiles(dir)).toEqual({ missing: [], outdated: [] });
+		expect(skillInstaller.staleSkillFiles(dir)).toEqual({ missing: [], outdated: [] });
 		writeFileSync(join(dir, "references/ui.md"), "old");
-		expect(staleSkillFiles(dir)).toEqual({ missing: [], outdated: ["references/ui.md"] });
+		expect(skillInstaller.staleSkillFiles(dir)).toEqual({ missing: [], outdated: ["references/ui.md"] });
 	});
 });

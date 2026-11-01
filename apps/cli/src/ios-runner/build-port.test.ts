@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { RunnerBuild, RunnerBuildError } from "@delacour/warden-builds/ios-runner/runner-build.types";
-import { type TestContext, testContext } from "../testing";
+import { cliTesting, type TestContext } from "../testing";
 import type { BuildInfo } from "../update/build-info";
-import { createRunnerBuild, describeBuildError, type EnsureRunnerBuild } from "./build-port";
+import { buildPort, type EnsureRunnerBuild } from "./build-port";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -17,8 +17,8 @@ const BUILT: RunnerBuild = {
 };
 
 function port(ensure: EnsureRunnerBuild, build: BuildInfo, seen: Parameters<EnsureRunnerBuild>[0][] = []) {
-	ctx = testContext([]);
-	return createRunnerBuild(ctx, {
+	ctx = cliTesting.testContext([]);
+	return buildPort.createRunnerBuild(ctx, {
 		ensure: async (input) => {
 			seen.push(input);
 			return ensure(input);
@@ -77,7 +77,7 @@ describe("createRunnerBuild", () => {
 
 describe("describeBuildError", () => {
 	test("team ambiguity lists the teams", () => {
-		const described = describeBuildError({
+		const described = buildPort.describeBuildError({
 			code: "ios_team_ambiguous",
 			message: "two teams",
 			hint: "pick one",

@@ -5,7 +5,7 @@ import { COMMANDS } from "./commands/registry";
 import { mcpTools } from "./mcp/tools";
 import { RULE_MD, SKILL_FILES, SKILL_PATHS } from "./skill";
 import { SKILL_OMITTED_COMMANDS, SKILL_OMITTED_OPTIONS } from "./skill-coverage.data";
-import { testContext } from "./testing";
+import { cliTesting } from "./testing";
 
 /** The skill as shipped (embedded copies), file by file. */
 const FILES: ReadonlyArray<{ path: string; text: string }> = [
@@ -44,7 +44,7 @@ function walk(cmd: CommandUnknownOpts, prefix: string[]): Node[] {
 	});
 }
 
-const ctx = testContext([]);
+const ctx = cliTesting.testContext([]);
 afterAll(() => ctx.cleanup());
 const program = programRunner.build(await Promise.all(COMMANDS.map((entry) => entry.load())), [], ctx);
 const NODES = walk(program, []);
