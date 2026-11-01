@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { findWardenConfig } from "@delacour/warden-builds/config";
-import { appSwitches, type InstallMode } from "@delacour/warden-config/app-option.schema";
+import { appOptionReader, type InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BatchPresetConfig } from "@delacour/warden-config/preset.schema";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -91,7 +91,7 @@ function resolvePreset(
 		label,
 		...rest
 	} = preset;
-	const { app, installMode, resetKeychain, variant } = appSwitches(appOption);
+	const { app, installMode, resetKeychain, variant } = appOptionReader.appSwitches(appOption);
 	const jobs = jobsSource(preset, cwd);
 	const headless = ownHeadless ?? defaultHeadless;
 	const slim = preset.slim ?? defaultSlim;

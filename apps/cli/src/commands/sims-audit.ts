@@ -1,5 +1,5 @@
 import { formatSize, parseSize } from "@delacour/warden-builds/prune";
-import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { SimAudit } from "@delacour/warden-core/sims/audit";
 import { auditMachineSims, pruneSims, type SimsDeps, type SimsPruneResult } from "@delacour/warden-core/sims/prune";
 import {
@@ -37,7 +37,7 @@ function fail(ctx: CommandContext, sub: string, message: string): number {
 
 function parseFlag(flag: string, raw: string | undefined, fallback: number): Result<number> {
 	if (raw === undefined) return resultFactory.ok(fallback);
-	const parsed = parseDuration(raw);
+	const parsed = durationParser.parse(raw);
 	return parsed.success ? parsed : resultFactory.err(`${flag}: ${parsed.error}`);
 }
 
@@ -90,7 +90,7 @@ function describeVerdict(entry: SimEntry, color: ChalkInstance): string {
 }
 
 function lastUsed(entry: SimEntry, now: number): string {
-	return entry.lastUsedAt === undefined ? "never" : `${formatDuration(Math.max(0, now - entry.lastUsedAt))} ago`;
+	return entry.lastUsedAt === undefined ? "never" : `${durationParser.format(Math.max(0, now - entry.lastUsedAt))} ago`;
 }
 
 function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimEntry[]): string {
@@ -158,7 +158,7 @@ function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
 		r.build,
 		color.dim(r.identifier),
 		String(r.sims),
-		r.lastUsedAt === undefined ? "never" : `${formatDuration(Math.max(0, now - r.lastUsedAt))} ago`,
+		r.lastUsedAt === undefined ? "never" : `${durationParser.format(Math.max(0, now - r.lastUsedAt))} ago`,
 		formatSize(r.sizeBytes),
 		describeRuntimeVerdict(r.verdict, color),
 	]);

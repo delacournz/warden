@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import type { ConditionsUpdate } from "@delacour/warden-config/shaping";
-import { delayMs, faultFor, NO_CONDITIONS, type ProxyConditions, type Rng } from "@delacour/warden-config/shaping";
+import { NO_CONDITIONS, type ProxyConditions, proxyShaping, type Rng } from "@delacour/warden-config/shaping";
 import { type ProxyHandle, type ProxyStats, type ProxyStatus, serveControl } from "./control";
 import { decide } from "./decide";
 import { Pipe } from "./pipe";
@@ -141,7 +141,7 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 		const p = () => conditions.params;
 		const up = new Pipe(client, upstream, {
 			kbps: () => p().upKbps,
-			delay: () => delayMs(p(), rng, 0.5),
+			delay: () => proxyShaping.delayMs(p(), rng, 0.5),
 			now,
 			onBytes: (n) => {
 				stats.bytesUp += n;
@@ -149,7 +149,7 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 		});
 		const down = new Pipe(upstream, client, {
 			kbps: () => p().downKbps,
-			delay: () => delayMs(p(), rng, 0.5),
+			delay: () => proxyShaping.delayMs(p(), rng, 0.5),
 			now,
 			onBytes: (n) => {
 				stats.bytesDown += n;
@@ -258,9 +258,9 @@ export async function startProxy(options: StartProxyOptions = {}): Promise<Runni
 	/** Cut established connections whose host is now governed by a fault it was not governed by before. */
 	function cutChangedFaults(previous: ProxyConditions["faults"]): void {
 		for (const [socket, host] of [...hosts]) {
-			const now = faultFor(conditions.faults, host);
+			const now = proxyShaping.faultFor(conditions.faults, host);
 			if (!now) continue;
-			const was = faultFor(previous, host);
+			const was = proxyShaping.faultFor(previous, host);
 			if (was && JSON.stringify(was) === JSON.stringify(now)) continue;
 			socket.destroy();
 		}

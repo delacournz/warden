@@ -1,12 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	conditionsConfigSchema,
-	mergeConditionsConfig,
-	type NetworkInput,
-	normalizeConditions,
-	parseConditionsEnv,
-	toNetworkCondition,
-} from "./conditions.config";
+import { conditionsConfigSchema, conditionsConfigs, type NetworkInput } from "./conditions.config";
 
 const parse = (value: unknown) => conditionsConfigSchema.safeParse(value);
 
@@ -44,18 +37,27 @@ describe("conditionsConfigSchema", () => {
 
 describe("toNetworkCondition", () => {
 	test("words and presets", () => {
-		expect(toNetworkCondition("online")).toEqual({ success: true, data: { kind: "online" } });
-		expect(toNetworkCondition("offline")).toEqual({ success: true, data: { kind: "offline" } });
-		expect(toNetworkCondition("3g")).toEqual({ success: true, data: { kind: "preset", preset: "3g" } });
+		expect(conditionsConfigs.toNetworkCondition("online")).toEqual({ success: true, data: { kind: "online" } });
+		expect(conditionsConfigs.toNetworkCondition("offline")).toEqual({ success: true, data: { kind: "offline" } });
+		expect(conditionsConfigs.toNetworkCondition("3g")).toEqual({
+			success: true,
+			data: { kind: "preset", preset: "3g" },
+		});
 	});
 
 	test("a condition passes through, a custom shape gets its kind", () => {
-		expect(toNetworkCondition({ kind: "offline" })).toEqual({ success: true, data: { kind: "offline" } });
-		expect(toNetworkCondition({ latencyMs: 5 })).toEqual({ success: true, data: { kind: "custom", latencyMs: 5 } });
+		expect(conditionsConfigs.toNetworkCondition({ kind: "offline" })).toEqual({
+			success: true,
+			data: { kind: "offline" },
+		});
+		expect(conditionsConfigs.toNetworkCondition({ latencyMs: 5 })).toEqual({
+			success: true,
+			data: { kind: "custom", latencyMs: 5 },
+		});
 	});
 
 	test("an unknown word names the choices", () => {
-		const res = toNetworkCondition("5g" as NetworkInput);
+		const res = conditionsConfigs.toNetworkCondition("5g" as NetworkInput);
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("3g");
 	});
@@ -63,7 +65,7 @@ describe("toNetworkCondition", () => {
 
 describe("normalizeConditions", () => {
 	test("network, location and clock become conditions", () => {
-		const res = normalizeConditions({
+		const res = conditionsConfigs.normalizeConditions({
 			network: "lte",
 			location: { lat: -36.8, lon: 174.7, altM: 10 },
 			clock: "2026-03-01T00:00:00Z",
@@ -81,17 +83,20 @@ describe("normalizeConditions", () => {
 	});
 
 	test("a location scenario name, a frozen clock and a clock offset", () => {
-		const a = normalizeConditions({ location: "city-run", clock: { at: "2026-03-01T00:00:00Z", frozen: true } });
+		const a = conditionsConfigs.normalizeConditions({
+			location: "city-run",
+			clock: { at: "2026-03-01T00:00:00Z", frozen: true },
+		});
 		expect(a.success && a.data.conditions).toEqual({
 			location: { kind: "scenario", name: "city-run" },
 			clock: { kind: "frozen", at: "2026-03-01T00:00:00.000Z" },
 		});
-		const b = normalizeConditions({ clock: { offset: "2d" } });
+		const b = conditionsConfigs.normalizeConditions({ clock: { offset: "2d" } });
 		expect(b.success && b.data.conditions.clock).toEqual({ kind: "offset", ms: 172_800_000 });
 	});
 
 	test("permissions, locale, timezone and a11y become conditions, a text size resolved", () => {
-		const res = normalizeConditions({
+		const res = conditionsConfigs.normalizeConditions({
 			permissions: { camera: "denied", location: "granted" },
 			locale: "fr-FR",
 			timezone: "Asia/Tokyo",
@@ -112,13 +117,15 @@ describe("normalizeConditions", () => {
 	});
 
 	test("nothing declared", () => {
-		expect(normalizeConditions({})).toEqual({ success: true, data: { conditions: {} } });
+		expect(conditionsConfigs.normalizeConditions({})).toEqual({ success: true, data: { conditions: {} } });
 	});
 });
 
 describe("mergeConditionsConfig", () => {
 	test("the suite replaces the top-level value per area", () => {
-		expect(mergeConditionsConfig({ network: "3g", locale: "fr" }, { network: "offline", timezone: "UTC" })).toEqual({
+		expect(
+			conditionsConfigs.mergeConditionsConfig({ network: "3g", locale: "fr" }, { network: "offline", timezone: "UTC" })
+		).toEqual({
 			network: "offline",
 			locale: "fr",
 			timezone: "UTC",
@@ -126,20 +133,20 @@ describe("mergeConditionsConfig", () => {
 	});
 
 	test("undefined when neither sets anything", () => {
-		expect(mergeConditionsConfig(undefined, undefined)).toBeUndefined();
-		expect(mergeConditionsConfig({}, undefined)).toBeUndefined();
-		expect(mergeConditionsConfig(undefined, { network: "wifi" })).toEqual({ network: "wifi" });
+		expect(conditionsConfigs.mergeConditionsConfig(undefined, undefined)).toBeUndefined();
+		expect(conditionsConfigs.mergeConditionsConfig({}, undefined)).toBeUndefined();
+		expect(conditionsConfigs.mergeConditionsConfig(undefined, { network: "wifi" })).toEqual({ network: "wifi" });
 	});
 });
 
 describe("parseConditionsEnv", () => {
 	test("JSON of the config round-trips", () => {
 		const config = { network: "3g", location: { lat: 1, lon: 2 } } as const;
-		expect(parseConditionsEnv(JSON.stringify(config))).toEqual({ success: true, data: config });
+		expect(conditionsConfigs.parseConditionsEnv(JSON.stringify(config))).toEqual({ success: true, data: config });
 	});
 
 	test("bad JSON and bad shape are errors", () => {
-		expect(parseConditionsEnv("{").success).toBe(false);
-		expect(parseConditionsEnv('{"network":"5g"}').success).toBe(false);
+		expect(conditionsConfigs.parseConditionsEnv("{").success).toBe(false);
+		expect(conditionsConfigs.parseConditionsEnv('{"network":"5g"}').success).toBe(false);
 	});
 });

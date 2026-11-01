@@ -1,9 +1,4 @@
-import {
-	DEFAULT_SLIM_PROFILE,
-	describeCategories,
-	type SlimProfile,
-	validateProfile,
-} from "@delacour/warden-config/slim.profile";
+import { DEFAULT_SLIM_PROFILE, type SlimProfile, slimProfiles } from "@delacour/warden-config/slim.profile";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { parseSimctlDevices } from "@delacour/warden-providers/ios";
 import { slimSimulator } from "@delacour/warden-providers/slim";
@@ -74,7 +69,7 @@ async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpt
 		return 1;
 	};
 	if ((udid === undefined) === (opts.booted !== true)) return fail("pass <udid> or --booted");
-	const profile = validateProfile({
+	const profile = slimProfiles.validateProfile({
 		...DEFAULT_SLIM_PROFILE,
 		except: splitList(opts.except),
 		keep: splitList(opts.keep),
@@ -96,7 +91,7 @@ async function slim(ctx: CommandContext, udid: string | undefined, opts: SlimOpt
 
 /** `warden sim profiles [--json]`: the slim categories `--except` / `slim: { except }` take. */
 function profiles(ctx: CommandContext, opts: { json?: true }): number {
-	const rows = describeCategories();
+	const rows = slimProfiles.describeCategories();
 	const width = Math.max(...rows.map((row) => row.id.length));
 	const text = rows
 		.map((row) => `${row.id.padEnd(width)}  ${String(row.labelCount).padStart(2)} labels  ${row.name}`)

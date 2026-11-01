@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { sessionRows } from "@delacour/warden-sdk/ops/perf/ls";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
@@ -38,8 +38,8 @@ export async function perfLs(ctx: CommandContext, deps: PerfDeps, opts: PerfLsOp
 						r.device,
 						r.app ?? "",
 						r.status === "running" ? color.green(r.status) : r.status === "stopped" ? r.status : color.yellow(r.status),
-						formatDuration(now - r.startedAt),
-						formatDuration(r.maxDurationMs),
+						durationParser.format(now - r.startedAt),
+						durationParser.format(r.maxDurationMs),
 						String(r.marks),
 					]),
 					{ column: 2, keep: "end" }

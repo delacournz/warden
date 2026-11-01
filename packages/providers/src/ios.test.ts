@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-config/slim.profile";
+import { DEFAULT_SLIM_PROFILE, slimProfiles } from "@delacour/warden-config/slim.profile";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import {
@@ -706,7 +706,7 @@ describe("createIosProvider slim (SLIM-2)", () => {
 				[
 					[
 						"xcrun simctl spawn CLONED launchctl print-disabled system",
-						{ stdout: printed(desiredLabels(DEFAULT_SLIM_PROFILE)) },
+						{ stdout: printed(slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)) },
 					],
 				],
 				calls
@@ -720,7 +720,7 @@ describe("createIosProvider slim (SLIM-2)", () => {
 	});
 
 	test("afterReady with missing overrides logs and slims live, then records slimmedAt", async () => {
-		const desired = [...desiredLabels(DEFAULT_SLIM_PROFILE)].sort();
+		const desired = [...slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)].sort();
 		const calls: string[] = [];
 		let enabledAll = false;
 		const exec: Exec = async (cmd) => {

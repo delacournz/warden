@@ -11,7 +11,7 @@ import {
 	reverseMetroPort,
 	startMetro,
 } from "@delacour/warden-builds/metro";
-import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
 import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "@delacour/warden-core/batch/elastic";
 import { expandArgv, expandText, jobSlug, parseJobLines, parseJobList } from "@delacour/warden-core/batch/expand";
@@ -285,7 +285,7 @@ function parseServe(opts: BatchOpts, cwd: string): Result<Serve | undefined> {
 		return opts.serveReady === undefined
 			? resultFactory.ok(undefined)
 			: resultFactory.err("--serve-ready needs --serve");
-	const timeoutMs = parseDuration(opts.serveTimeout);
+	const timeoutMs = durationParser.parse(opts.serveTimeout);
 	if (!timeoutMs.success) return resultFactory.err(`--serve-timeout: ${timeoutMs.error}`);
 	if (opts.serveReady === undefined) return resultFactory.ok({ cmd: opts.serve, timeoutMs: timeoutMs.data });
 	// validated now with stand-in values; parsed for real once the port is leased
@@ -299,7 +299,8 @@ function parseLimits(opts: BatchOpts): Result<Pick<BatchArgs, "retry" | "passes"
 	if (!/^\d+$/.test(opts.retry)) return resultFactory.err(`--retry must be an integer >= 0, got "${opts.retry}"`);
 	if (!/^\d+$/.test(opts.passes) || Number(opts.passes) < 1)
 		return resultFactory.err(`--passes must be an integer >= 1, got "${opts.passes}"`);
-	const jobTimeout = opts.jobTimeout === undefined ? resultFactory.ok(undefined) : parseDuration(opts.jobTimeout);
+	const jobTimeout =
+		opts.jobTimeout === undefined ? resultFactory.ok(undefined) : durationParser.parse(opts.jobTimeout);
 	if (!jobTimeout.success) return resultFactory.err(`--job-timeout: ${jobTimeout.error}`);
 	return resultFactory.ok({
 		retry: Number(opts.retry),
@@ -1633,7 +1634,7 @@ function poolQueue(
 ): Queue {
 	const qualified = r.pools.length > 1;
 	const onTimeout = (job: string, w: BatchWorker) => {
-		const after = formatDuration(args.jobTimeoutMs ?? 0);
+		const after = durationParser.format(args.jobTimeoutMs ?? 0);
 		reportError(ctx, r.name, `${job} still running on ${w.udid} after ${after} — killing it`);
 	};
 	return {

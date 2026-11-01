@@ -1,9 +1,9 @@
 import { availableParallelism } from "node:os";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
 import { DEFAULT_PROFILE, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
-import { resolveSlim, type SlimSetting } from "@delacour/warden-config/slim-policy";
+import { type SlimSetting, slimPolicy } from "@delacour/warden-config/slim-policy";
 import { defaultMax } from "@delacour/warden-leasing/allocate";
 import type { ClaimOutcome, ClaimResult } from "@delacour/warden-leasing/claim";
 import {
@@ -170,11 +170,11 @@ export function parseClaimFlags(
 	if (!count.success) return count;
 	const max = positiveInt("max", values.max, Math.max(defaultMax(cores), count.data), 0);
 	if (!max.success) return max;
-	const waitMs = values.wait === false ? resultFactory.ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
+	const waitMs = values.wait === false ? resultFactory.ok(0) : durationParser.parse(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
 	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
 	if (priority && !priority.success) return wardenErrors.toText(priority);
-	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : parseDuration(values.ttl);
+	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : durationParser.parse(values.ttl);
 	if (!ttlMs.success) return ttlMs;
 
 	const request = deviceRequest(values, platform.data, count.data, max.data);
@@ -209,11 +209,11 @@ function parseTiming(
 	values: ClaimFlagValues,
 	defaultTtlMs: number
 ): Result<{ flags: Pick<ClaimFlags, "waitMs" | "ttlMs" | "priority"> }> {
-	const waitMs = values.wait === false ? resultFactory.ok(0) : parseDuration(values.wait ?? DEFAULT_WAIT);
+	const waitMs = values.wait === false ? resultFactory.ok(0) : durationParser.parse(values.wait ?? DEFAULT_WAIT);
 	if (!waitMs.success) return waitMs;
 	const priority = values.priority === undefined ? undefined : parsePriorityFlag(values.priority);
 	if (priority && !priority.success) return wardenErrors.toText(priority);
-	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : parseDuration(values.ttl);
+	const ttlMs = values.ttl === undefined ? resultFactory.ok(defaultTtlMs) : durationParser.parse(values.ttl);
 	if (!ttlMs.success) return ttlMs;
 	return resultFactory.ok({
 		flags: { waitMs: waitMs.data, ttlMs: ttlMs.data, ...(priority ? { priority: priority.data } : {}) },
@@ -328,7 +328,7 @@ export async function claimWithFlags(
 	}
 	const outcome = await claimWithRequest(leaseHostFromContext(ctx), owner, { ...flags, request }, pid, options);
 	if (outcome.success && request.platform === "ios" && !request.physical) {
-		const slim = resolveSlim({ ...flags.slim, env: ctx.env });
+		const slim = slimPolicy.resolveSlim({ ...flags.slim, env: ctx.env });
 		if (slim.success) await slimReusedBooted(ctx, outcome.data, slim.data);
 	}
 	return outcome;

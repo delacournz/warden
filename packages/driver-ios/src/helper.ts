@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { Driver, DriverError } from "@delacour/warden-driver/driver.types";
 import { wardenErrorFromDriver } from "@delacour/warden-driver/warden-error";
 import type { Exec } from "@delacour/warden-runtime/exec";
@@ -342,13 +342,13 @@ function releaseSpawnRow(host: Required<Pick<HelperHost, "store">> & HelperHost,
 /** `undefined` leaves the client's default; the value is a duration, and a bad one is a usage error up front. */
 function requestTimeoutMs(value: string | undefined): Result<number | undefined, WardenError> {
 	if (value === undefined || value === "") return resultFactory.ok(undefined);
-	const ms = parseDuration(value);
+	const ms = durationParser.parse(value);
 	if (!ms.success) return { success: false, error: uiErr("usage", `${REQUEST_TIMEOUT_ENV}: ${ms.error}`) };
 	return resultFactory.ok(Math.max(1, ms.data));
 }
 
 function idleSeconds(idleTimeout: string): Result<number, WardenError> {
-	const ms = parseDuration(idleTimeout);
+	const ms = durationParser.parse(idleTimeout);
 	if (!ms.success) return { success: false, error: uiErr("usage", `idle timeout: ${ms.error}`) };
 	return resultFactory.ok(Math.max(1, Math.round(ms.data / 1000)));
 }

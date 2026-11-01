@@ -1,5 +1,5 @@
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "./slim.profile";
+import { DEFAULT_SLIM_PROFILE, type SlimProfile, slimProfiles } from "./slim.profile";
 
 /** A `slim` setting as written in config: on/off, or the categories / labels to leave running. */
 export type SlimSetting = boolean | { except?: readonly string[] | undefined; keep?: readonly string[] | undefined };
@@ -15,32 +15,39 @@ export type SlimInput = {
 	env: Record<string, string | undefined>;
 };
 
-/** `WARDEN_SLIM=0` (or `false`, `off`) turns slim off when nothing above it decides. */
-export function envSlimOff(env: Record<string, string | undefined>): boolean {
-	const value = env.WARDEN_SLIM?.trim().toLowerCase();
-	return value === "0" || value === "false" || value === "off";
-}
-
-function fromSetting(setting: SlimSetting): Result<SlimProfile | false> {
-	if (setting === false) return resultFactory.ok(false);
-	if (setting === true) return resultFactory.ok(DEFAULT_SLIM_PROFILE);
-	const checked = validateProfile({ except: setting.except ?? [], keep: setting.keep ?? [] });
-	return checked.success ? checked : resultFactory.err(`slim: ${checked.error}`);
-}
-
-/**
- * Precedence: CLI `--slim` / `--no-slim` > suite / preset `slim` > top-level config `slim` >
- * `WARDEN_SLIM` (`0` / `false` = off) > the default profile. `true` is the default profile; an object
- * is validated (a bad category id or label is an error naming it).
- */
-export function resolveSlim(input: SlimInput): Result<SlimProfile | false> {
-	if (input.flag !== undefined) {
-		if (input.flag === false) return resultFactory.ok(false);
-		// `--slim` keeps a profile the config chose, else the default
-		const layered = input.config ?? input.topLevel;
-		return layered === undefined || layered === false ? resultFactory.ok(DEFAULT_SLIM_PROFILE) : fromSetting(layered);
+/** Decides whether and how a run slims its simulators. */
+export class SlimPolicy {
+	/** `WARDEN_SLIM=0` (or `false`, `off`) turns slim off when nothing above it decides. */
+	envSlimOff(env: Record<string, string | undefined>): boolean {
+		const value = env.WARDEN_SLIM?.trim().toLowerCase();
+		return value === "0" || value === "false" || value === "off";
 	}
-	const setting = input.config ?? input.topLevel;
-	if (setting !== undefined) return fromSetting(setting);
-	return resultFactory.ok(envSlimOff(input.env) ? false : DEFAULT_SLIM_PROFILE);
+
+	/**
+	 * Precedence: CLI `--slim` / `--no-slim` > suite / preset `slim` > top-level config `slim` >
+	 * `WARDEN_SLIM` (`0` / `false` = off) > the default profile. `true` is the default profile; an object
+	 * is validated (a bad category id or label is an error naming it).
+	 */
+	resolveSlim(input: SlimInput): Result<SlimProfile | false> {
+		if (input.flag !== undefined) {
+			if (input.flag === false) return resultFactory.ok(false);
+			// `--slim` keeps a profile the config chose, else the default
+			const layered = input.config ?? input.topLevel;
+			return layered === undefined || layered === false
+				? resultFactory.ok(DEFAULT_SLIM_PROFILE)
+				: this.fromSetting(layered);
+		}
+		const setting = input.config ?? input.topLevel;
+		if (setting !== undefined) return this.fromSetting(setting);
+		return resultFactory.ok(this.envSlimOff(input.env) ? false : DEFAULT_SLIM_PROFILE);
+	}
+
+	private fromSetting(setting: SlimSetting): Result<SlimProfile | false> {
+		if (setting === false) return resultFactory.ok(false);
+		if (setting === true) return resultFactory.ok(DEFAULT_SLIM_PROFILE);
+		const checked = slimProfiles.validateProfile({ except: setting.except ?? [], keep: setting.keep ?? [] });
+		return checked.success ? checked : resultFactory.err(`slim: ${checked.error}`);
+	}
 }
+
+export const slimPolicy = new SlimPolicy();

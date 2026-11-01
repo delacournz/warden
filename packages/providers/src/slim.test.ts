@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-config/slim.profile";
+import { DEFAULT_SLIM_PROFILE, slimProfiles } from "@delacour/warden-config/slim.profile";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import {
 	NEVER_DISABLE,
@@ -15,7 +15,7 @@ import {
 	slimSimulatorReport,
 } from "./slim";
 
-const DENYLIST = [...desiredLabels(DEFAULT_SLIM_PROFILE)];
+const DENYLIST = [...slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)];
 
 const LIST = [
 	"PID\tStatus\tLabel",
@@ -396,7 +396,7 @@ describe("hardening", () => {
 
 	test("a persistently failing disable is retried 3 more times then reported", async () => {
 		const clock = sleeps();
-		const first = [...desiredLabels(DEFAULT_SLIM_PROFILE)][0] as string;
+		const first = [...slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)][0] as string;
 		const h = host();
 		const exec: Exec = async (cmd) =>
 			cmd[5] === "disable" && cmd[6] === `system/${first}` ? { exitCode: 1, stdout: "", stderr: "boom" } : h.exec(cmd);

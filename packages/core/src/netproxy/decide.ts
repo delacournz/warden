@@ -1,5 +1,5 @@
 import type { HostFault } from "@delacour/warden-config/conditions.types";
-import { delayMs, faultFor, type ProxyConditions, type Rng } from "@delacour/warden-config/shaping";
+import { type ProxyConditions, proxyShaping, type Rng } from "@delacour/warden-config/shaping";
 import type { ProxyEvent } from "./proxy";
 
 /** What to do with one request once its target host is known. */
@@ -37,8 +37,8 @@ function faultVerdict(fault: HostFault, host: string, isConnect: boolean, waitMs
 /** Faults first (first glob match wins), then connection loss, then plain latency. */
 export function decide(conditions: ProxyConditions, host: string, isConnect: boolean, rng: Rng): Verdict {
 	const { params, faults } = conditions;
-	const waitMs = delayMs(params, rng);
-	const fault = faultFor(faults, host);
+	const waitMs = proxyShaping.delayMs(params, rng);
+	const fault = proxyShaping.faultFor(faults, host);
 	if (fault) {
 		const verdict = faultVerdict(fault, host, isConnect, waitMs);
 		if (verdict.act.kind !== "go") return verdict;

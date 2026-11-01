@@ -8,7 +8,7 @@ import type {
 	PermissionName,
 	PermissionState,
 } from "@delacour/warden-config/conditions.types";
-import { appliedA11y, resolveTextSize } from "@delacour/warden-config/text-size";
+import { textSizes } from "@delacour/warden-config/text-size";
 import { clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -332,11 +332,11 @@ async function a11ySet(
 	return withPort<UiSuccess>(ctx, deps, device, async (port) => {
 		const applied = fromDriver(await port.a11y(op.data));
 		if (!applied.success) return applied;
-		const resolved = op.data.textSize === undefined ? undefined : resolveTextSize(op.data.textSize);
+		const resolved = op.data.textSize === undefined ? undefined : textSizes.resolveTextSize(op.data.textSize);
 		const previous = recordOf(ctx, device.lease.id, "a11y")?.value ?? {};
 		const next: A11yCondition = {
 			...previous,
-			...appliedA11y(op.data, applied.data.applied),
+			...textSizes.appliedA11y(op.data, applied.data.applied),
 			...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
 		};
 		const saved = save(ctx, device, "a11y", next);

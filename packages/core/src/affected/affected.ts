@@ -9,7 +9,7 @@ import {
 } from "@delacour/warden-builds/config";
 import { overlayDirUnlessRepoConfig } from "@delacour/warden-builds/overlay";
 import { type E2eSuiteConfig, e2eSuiteSchema } from "@delacour/warden-config/affected.schema";
-import { type ConditionsConfig, mergeConditionsConfig } from "@delacour/warden-config/conditions.config";
+import { type ConditionsConfig, conditionsConfigs } from "@delacour/warden-config/conditions.config";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import type { Platform } from "@delacour/warden-store/types";
@@ -189,7 +189,7 @@ function toSuite(name: string, config: E2eSuiteConfig, found: FoundConfig): Suit
 	const slim = config.slim ?? top.slim;
 	const biometrics = config.biometrics ?? top.biometrics;
 	const budgets = { ...top.perf?.budgets, ...config.perf?.budgets };
-	const conditions = mergeConditionsConfig(top.conditions, config.conditions);
+	const conditions = conditionsConfigs.mergeConditionsConfig(top.conditions, config.conditions);
 	return {
 		name,
 		config,

@@ -3,7 +3,7 @@ import { appOptionSchema } from "./app-option.schema";
 import { conditionsConfigSchema } from "./conditions.config";
 import { DEFAULT_JOB_TIMEOUT_MS, DEFAULT_METRO_PORT_SPEC, DEFAULT_METRO_READY_TIMEOUT } from "./config.defaults";
 import { duration, portSpec, slimConfigSchema } from "./preset.schema";
-import { validateProfile } from "./slim.profile";
+import { slimProfiles } from "./slim.profile";
 
 const path = z.string().min(1);
 const platform = z.enum(["ios", "android"]);
@@ -34,64 +34,6 @@ type RunSettings = {
 	profile?: string | undefined;
 	devices?: Array<{ profile: string; default: boolean }> | undefined;
 };
-
-/**
- * The isolation a suite runs with: what it asked for (`isolate`), else one
- * process per device, except that `passes` > 1 needs a process per spec (a spec's passes are
- * re-runs of that spec).
- */
-export function suiteIsolation(suite: Pick<RunSettings, "isolate" | "passes">): E2eIsolation {
-	return suite.isolate ?? (suite.passes > 1 ? "spec" : "device");
-}
-
-/** What `isolate` and `devices` rule out. */
-function runIssues(suite: RunSettings): Array<{ message: string; path: string[] }> {
-	const issues: Array<{ message: string; path: string[] }> = [];
-	if (suite.isolate === "device" && suite.passes > 1)
-		issues.push({
-			message: 'passes > 1 needs isolate "spec" (one process cannot be re-run per spec)',
-			path: ["passes"],
-		});
-	const { devices } = suite;
-	if (!devices) return issues;
-	if (suite.count !== undefined || suite.profile !== undefined)
-		issues.push({ message: "devices replaces profile / count", path: ["devices"] });
-	const seen = new Set<string>();
-	for (const leg of devices) {
-		if (seen.has(leg.profile)) issues.push({ message: `duplicate profile "${leg.profile}"`, path: ["devices"] });
-		seen.add(leg.profile);
-	}
-	if (!devices.some((leg) => leg.default))
-		issues.push({ message: "at least one device leg must be a default one", path: ["devices"] });
-	return issues;
-}
-
-/** What `physical` rules out: simulator daemon slimming, closing Simulator.app windows and simulated biometrics mean nothing on a real device. */
-function physicalIssues(suite: {
-	physical?: unknown;
-	slim?: unknown;
-	headless?: boolean | undefined;
-	biometrics?: boolean | undefined;
-	conditions?: unknown;
-}): Array<{ message: string; path: string[] }> {
-	if (suite.physical === undefined) return [];
-	const issues: Array<{ message: string; path: string[] }> = [];
-	if (suite.slim !== undefined && suite.slim !== false)
-		issues.push({ message: "slim cannot be used with physical devices", path: ["slim"] });
-	if (suite.headless === true)
-		issues.push({ message: "headless cannot be used with physical devices", path: ["headless"] });
-	if (suite.biometrics === true)
-		issues.push({
-			message: "biometrics cannot be used with physical devices (use a simulator or emulator suite)",
-			path: ["biometrics"],
-		});
-	if (suite.conditions !== undefined)
-		issues.push({
-			message: "conditions cannot be used with physical devices (use a simulator or emulator suite)",
-			path: ["conditions"],
-		});
-	return issues;
-}
 
 /** `e2e.<suite>.metro`: warden starts one Metro for the run and points the dev client at it. */
 export const e2eMetroSchema = z
@@ -167,9 +109,73 @@ export const e2eSpecSchema = z
 	})
 	.strict();
 
-/** A key the suite no longer takes: any value fails with a message naming the key's path and its replacement. */
-const removedKey = (key: string, hint: string) =>
-	z.undefined({ error: (iss) => `e2e.${String(iss.path?.[1])}.${key} was removed: ${hint}` }).optional();
+/** Cross-field rules of an `e2e.<suite>`: its isolation, what `isolate` / `devices` / `physical` rule out, and keys it no longer takes. */
+export class SuiteRules {
+	/**
+	 * The isolation a suite runs with: what it asked for (`isolate`), else one
+	 * process per device, except that `passes` > 1 needs a process per spec (a spec's passes are
+	 * re-runs of that spec).
+	 */
+	suiteIsolation(suite: Pick<RunSettings, "isolate" | "passes">): E2eIsolation {
+		return suite.isolate ?? (suite.passes > 1 ? "spec" : "device");
+	}
+
+	/** What `isolate` and `devices` rule out. */
+	runIssues(suite: RunSettings): Array<{ message: string; path: string[] }> {
+		const issues: Array<{ message: string; path: string[] }> = [];
+		if (suite.isolate === "device" && suite.passes > 1)
+			issues.push({
+				message: 'passes > 1 needs isolate "spec" (one process cannot be re-run per spec)',
+				path: ["passes"],
+			});
+		const { devices } = suite;
+		if (!devices) return issues;
+		if (suite.count !== undefined || suite.profile !== undefined)
+			issues.push({ message: "devices replaces profile / count", path: ["devices"] });
+		const seen = new Set<string>();
+		for (const leg of devices) {
+			if (seen.has(leg.profile)) issues.push({ message: `duplicate profile "${leg.profile}"`, path: ["devices"] });
+			seen.add(leg.profile);
+		}
+		if (!devices.some((leg) => leg.default))
+			issues.push({ message: "at least one device leg must be a default one", path: ["devices"] });
+		return issues;
+	}
+
+	/** What `physical` rules out: simulator daemon slimming, closing Simulator.app windows and simulated biometrics mean nothing on a real device. */
+	physicalIssues(suite: {
+		physical?: unknown;
+		slim?: unknown;
+		headless?: boolean | undefined;
+		biometrics?: boolean | undefined;
+		conditions?: unknown;
+	}): Array<{ message: string; path: string[] }> {
+		if (suite.physical === undefined) return [];
+		const issues: Array<{ message: string; path: string[] }> = [];
+		if (suite.slim !== undefined && suite.slim !== false)
+			issues.push({ message: "slim cannot be used with physical devices", path: ["slim"] });
+		if (suite.headless === true)
+			issues.push({ message: "headless cannot be used with physical devices", path: ["headless"] });
+		if (suite.biometrics === true)
+			issues.push({
+				message: "biometrics cannot be used with physical devices (use a simulator or emulator suite)",
+				path: ["biometrics"],
+			});
+		if (suite.conditions !== undefined)
+			issues.push({
+				message: "conditions cannot be used with physical devices (use a simulator or emulator suite)",
+				path: ["conditions"],
+			});
+		return issues;
+	}
+
+	/** A key the suite no longer takes: any value fails with a message naming the key's path and its replacement. */
+	removedKey(key: string, hint: string) {
+		return z.undefined({ error: (iss) => `e2e.${String(iss.path?.[1])}.${key} was removed: ${hint}` }).optional();
+	}
+}
+
+export const suiteRules = new SuiteRules();
 
 /**
  * `e2e.<suite>` in `warden.config.ts`: specs under `specsDir`, how they map to source, how to run one.
@@ -242,7 +248,7 @@ export const e2eSuiteSchema = z
 		/** devices of this suite have a fingerprint / Face ID enrolled (own golden, own pool); overrides the top-level `biometrics` */
 		biometrics: z.boolean().optional(),
 		/** removed: renamed `warmDrivers` */
-		warmRunners: removedKey("warmRunners", "renamed to warmDrivers"),
+		warmRunners: suiteRules.removedKey("warmRunners", "renamed to warmDrivers"),
 		/** iOS: start every device's automation helper in parallel before the specs (default on; `false` = off) */
 		warmDrivers: z.boolean().optional(),
 		/** keep Simulator.app windows closed for this suite's run; `--headless` / `--no-headless` win */
@@ -264,10 +270,10 @@ export const e2eSuiteSchema = z
 		if (suite.slim !== undefined && suite.slim !== false && suite.platform === "android")
 			issue.addIssue({ code: "custom", message: "slim is iOS-only", path: ["slim"] });
 		if (typeof suite.slim === "object") {
-			const checked = validateProfile({ except: suite.slim.except ?? [], keep: suite.slim.keep ?? [] });
+			const checked = slimProfiles.validateProfile({ except: suite.slim.except ?? [], keep: suite.slim.keep ?? [] });
 			if (!checked.success) issue.addIssue({ code: "custom", message: checked.error, path: ["slim"] });
 		}
-		for (const message of [...runIssues(suite), ...physicalIssues(suite)])
+		for (const message of [...suiteRules.runIssues(suite), ...suiteRules.physicalIssues(suite)])
 			issue.addIssue({ code: "custom", ...message });
 	});
 

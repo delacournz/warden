@@ -1,6 +1,6 @@
 import { bundleIdFor } from "@delacour/warden-builds/config";
 import { devClientLaunchArgs } from "@delacour/warden-builds/metro";
-import { appSwitches } from "@delacour/warden-config/app-option.schema";
+import { appOptionReader } from "@delacour/warden-config/app-option.schema";
 import type { Suite } from "@delacour/warden-core/affected/affected";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -29,7 +29,7 @@ export async function specBundleId(
 	const explicit = suite.config.spec?.bundleId;
 	const phone = physical && platform === "ios";
 	if (explicit !== undefined && !phone) return resultFactory.ok(explicit);
-	const { variant } = appSwitches(suite.config.app);
+	const { variant } = appOptionReader.appSwitches(suite.config.app);
 	const project = await projectContextFor(ctx, {
 		start: suite.projectRoot ?? suite.cwd,
 		...(variant !== undefined ? { variant, variantOptional: true } : {}),

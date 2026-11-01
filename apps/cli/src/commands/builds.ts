@@ -6,7 +6,7 @@ import { LOCAL_PROFILE } from "@delacour/warden-builds/ensure";
 import { projectStart } from "@delacour/warden-builds/prepare";
 import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-builds/prune";
 import { removeBuilds } from "@delacour/warden-builds/remove";
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { type BuildRecord, BuildsTable } from "@delacour/warden-store/builds-table";
 import { liveness } from "@delacour/warden-store/liveness";
 import { storeLocator } from "@delacour/warden-store/store";
@@ -66,7 +66,7 @@ function lsCmd(ctx: CommandContext, json: boolean): number {
 			facts.worktree === undefined ? "-" : basename(facts.worktree),
 			facts.branch ?? "-",
 			formatSize(b.size),
-			`${formatDuration(Math.max(0, now - b.lastUsedAt))} ago`,
+			`${durationParser.format(Math.max(0, now - b.lastUsedAt))} ago`,
 			color.dim(b.path),
 		];
 	});

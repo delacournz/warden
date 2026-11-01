@@ -1,5 +1,5 @@
 import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-config/conditions.types";
-import { androidFontScale, resolveTextSize } from "@delacour/warden-config/text-size";
+import { textSizes } from "@delacour/warden-config/text-size";
 import { badRequest, batteryProblem, localeProblem, timezoneProblem } from "@delacour/warden-driver/device-settings";
 import type {
 	A11yOp,
@@ -235,9 +235,9 @@ function localeOp(c: Ctx): Driver["locale"] {
 /** The font scale an a11y text size means on Android, with a note when it was clamped. */
 function fontScaleOf(size: TextSize | undefined): { scale: number; notes: string[] } | ReturnType<typeof driverErr> {
 	if (size === undefined) return { scale: 1, notes: [] };
-	const resolved = resolveTextSize(size);
+	const resolved = textSizes.resolveTextSize(size);
 	if (!resolved.success) return driverErr("E_BAD_REQUEST", resolved.error);
-	const scale = androidFontScale(resolved.data.scale);
+	const scale = textSizes.androidFontScale(resolved.data.scale);
 	return {
 		scale,
 		notes:

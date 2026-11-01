@@ -7,7 +7,7 @@ import { type Metro, metroOwner, metroUrl, resolveExpoBin, startMetro } from "@d
 import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, prepareApp } from "@delacour/warden-builds/prepare";
 import { isAlias } from "@delacour/warden-builds/prune";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { DEFAULT_PORT_SPAN, parsePortSpec } from "@delacour/warden-config/ports-spec";
+import { DEFAULT_PORT_SPAN, portSpecParser } from "@delacour/warden-config/ports-spec";
 import { maxConcurrent } from "@delacour/warden-leasing/capacity";
 import { capacityEnabled, hostInventoryOf, readCapacityBasis } from "@delacour/warden-leasing/capacity-deps";
 import { markWardenDevices } from "@delacour/warden-leasing/inventory";
@@ -202,7 +202,7 @@ function buildPorts(core: Core): PortsNamespace {
 	return {
 		claim: (params: PortClaimParams | undefined, opts) =>
 			guarded(core.signalFor(opts), async () => {
-				const spec = parsePortSpec(params?.spec ?? `${DEFAULT_PORT_FROM}:${DEFAULT_PORT_SPAN}`);
+				const spec = portSpecParser.parse(params?.spec ?? `${DEFAULT_PORT_FROM}:${DEFAULT_PORT_SPAN}`);
 				if (!spec.success) throw new WardenError({ code: "usage", message: spec.error });
 				const leases = unwrap(
 					await claimPorts(
@@ -380,7 +380,7 @@ function metroStatusOf(port: number, url: string, project: string) {
 /** Lease one port for Metro (the one asked for, else the first free in the default range) and keep it heartbeated. */
 async function claimMetroPort(core: Core, port: number | undefined): Promise<Lease> {
 	const spec = port !== undefined ? `${port}:1` : `${METRO_FROM}:${DEFAULT_PORT_SPAN}`;
-	const range = parsePortSpec(spec);
+	const range = portSpecParser.parse(spec);
 	if (!range.success) throw new WardenError({ code: "usage", message: range.error });
 	const leases = unwrap(
 		await claimPorts(

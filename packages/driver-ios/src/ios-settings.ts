@@ -1,5 +1,5 @@
 import type { PermissionName, PermissionState, TextSize } from "@delacour/warden-config/conditions.types";
-import { resolveTextSize } from "@delacour/warden-config/text-size";
+import { textSizes } from "@delacour/warden-config/text-size";
 import type { LaunchSettings } from "@delacour/warden-core/conditions/launch-settings";
 import {
 	badRequest,
@@ -225,7 +225,7 @@ export function createIosSettings(deps: IosSettingsDeps): IosSettings {
 			const skipped: { setting: string; reason: string }[] = [];
 			const size = op === null ? undefined : op.textSize;
 			if (op === null || size !== undefined) {
-				const resolved = op === null ? undefined : resolveTextSize(size as TextSize);
+				const resolved = op === null ? undefined : textSizes.resolveTextSize(size as TextSize);
 				if (resolved && !resolved.success) return driverErr("E_BAD_REQUEST", resolved.error);
 				const done = await simctl(contentSizeArgv(udid, resolved ? resolved.data.category : DEFAULT_CONTENT_SIZE));
 				if (!done.success) return done;

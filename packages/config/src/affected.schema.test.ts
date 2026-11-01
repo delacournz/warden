@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { e2eSuiteSchema, suiteIsolation } from "./affected.schema";
+import { e2eSuiteSchema, suiteRules } from "./affected.schema";
 
 const parse = (extra: Record<string, unknown> = {}) => e2eSuiteSchema.safeParse({ specsDir: "specs", ...extra });
 
@@ -16,16 +16,16 @@ const issues = (extra: Record<string, unknown>): string[] => {
 
 describe("suiteIsolation", () => {
 	test("a suite that says nothing runs one spec process per device", () => {
-		expect(suiteIsolation(suite())).toBe("device");
+		expect(suiteRules.suiteIsolation(suite())).toBe("device");
 	});
 
 	test("isolate: spec keeps one process per spec; isolate: device is the default spelled out", () => {
-		expect(suiteIsolation(suite({ isolate: "spec" }))).toBe("spec");
-		expect(suiteIsolation(suite({ isolate: "device" }))).toBe("device");
+		expect(suiteRules.suiteIsolation(suite({ isolate: "spec" }))).toBe("spec");
+		expect(suiteRules.suiteIsolation(suite({ isolate: "device" }))).toBe("device");
 	});
 
 	test("passes > 1 can't re-run a spec inside a shared process: the default falls back to spec", () => {
-		expect(suiteIsolation(suite({ passes: 3 }))).toBe("spec");
+		expect(suiteRules.suiteIsolation(suite({ passes: 3 }))).toBe("spec");
 	});
 
 	test("asking for a process per device with passes > 1 is refused", () => {

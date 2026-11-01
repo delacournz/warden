@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-config/slim.profile";
+import { DEFAULT_SLIM_PROFILE, slimProfiles } from "@delacour/warden-config/slim.profile";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
@@ -215,7 +215,10 @@ describe("warden claim → arrange", () => {
 	test("a recorded, already-booted sim that was never slimmed is slimmed live and recorded", async () => {
 		const calls: string[][] = [];
 		const exec = fakeSimctl([wardenSim(2, "Booted")], calls, [
-			["xcrun simctl spawn U2 launchctl print-disabled", { stdout: printed(desiredLabels(DEFAULT_SLIM_PROFILE)) }],
+			[
+				"xcrun simctl spawn U2 launchctl print-disabled",
+				{ stdout: printed(slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)) },
+			],
 		]);
 		const c = setup(["ios"], exec);
 		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);

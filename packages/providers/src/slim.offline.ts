@@ -1,4 +1,4 @@
-import { delta, desiredLabels, managedSet, type SlimProfile } from "@delacour/warden-config/slim.profile";
+import { type SlimProfile, slimProfiles } from "@delacour/warden-config/slim.profile";
 import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { disabledLabels, readDisabledStore, writeDisabledStore } from "./disabled-store";
@@ -36,7 +36,11 @@ export async function prepareOfflineSlim(
 ): AsyncResult<OfflineSlim> {
 	const current = await readDisabledStore(udid, opts.root);
 	if (!current.success) return current;
-	const { toDisable, toEnable } = delta(disabledLabels(current.data), desiredLabels(profile), managedSet());
+	const { toDisable, toEnable } = slimProfiles.delta(
+		disabledLabels(current.data),
+		slimProfiles.desiredLabels(profile),
+		slimProfiles.managedSet()
+	);
 	if (toDisable.length === 0 && toEnable.length === 0) return resultFactory.ok({ written: 0, skipped: "already-slim" });
 	const written = await writeDisabledStore(udid, { disable: toDisable, enable: toEnable }, opts.root);
 	if (!written.success) return written;
@@ -65,7 +69,7 @@ export async function verifyOfflineSlim(
 		const res = await exec(cmd);
 		if (res.exitCode === 0 && !isTransient(res)) {
 			const disabled = parsePrintDisabled(res.stdout);
-			const missing = [...desiredLabels(profile)].filter((l) => disabled.get(l) !== true).sort();
+			const missing = [...slimProfiles.desiredLabels(profile)].filter((l) => disabled.get(l) !== true).sort();
 			return resultFactory.ok({ missing });
 		}
 		const wait = VERIFY_BACKOFF_MS[attempt];

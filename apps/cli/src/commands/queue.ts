@@ -1,4 +1,4 @@
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { effectivePriority, priorityName, queueOrder } from "@delacour/warden-leasing/queue";
 import type { QueueRowJson } from "@delacour/warden-sdk/contracts/queue";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -38,7 +38,7 @@ function queue(ctx: CommandContext, json: boolean): number {
 					rows.map((r) => [
 						String(r.position),
 						r.aged > 0 ? `${r.priority} +${r.aged}` : r.priority,
-						formatDuration(r.ageMs),
+						durationParser.format(r.ageMs),
 						r.platform,
 						r.profile,
 						String(r.units),

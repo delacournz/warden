@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { appOptionSchema } from "./app-option.schema";
-import { parseDuration } from "./duration";
-import { parsePortSpec } from "./ports-spec";
+import { durationParser } from "./duration";
+import { portSpecParser } from "./ports-spec";
 
 /** `slim`: on/off, or the categories (`except`, ids) and single labels (`keep`) to leave running. */
 export const slimConfigSchema = z.union([
@@ -12,12 +12,12 @@ export const slimConfigSchema = z.union([
 export const duration = z
 	.string()
 	.min(1)
-	.refine((v) => parseDuration(v).success, { message: "invalid duration (use e.g. 30s, 10m, 2h)" });
+	.refine((v) => durationParser.parse(v).success, { message: "invalid duration (use e.g. 30s, 10m, 2h)" });
 
 export const portSpec = z
 	.string()
 	.min(1)
-	.refine((v) => parsePortSpec(v).success, { message: "invalid port spec (use <from>[:<span>], e.g. 8091:20)" });
+	.refine((v) => portSpecParser.parse(v).success, { message: "invalid port spec (use <from>[:<span>], e.g. 8091:20)" });
 
 /** `jobsFrom`: a file (relative to the preset's cwd), `-` for stdin, or `{ command }` whose stdout lines are the jobs. */
 const jobsFromSchema = z.union([z.string().min(1), z.object({ command: z.string().min(1) }).strict()]);

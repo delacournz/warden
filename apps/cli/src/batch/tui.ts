@@ -1,4 +1,4 @@
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { BatchEvent } from "@delacour/warden-core/batch/schedule";
 import { SYMBOLS } from "../ui";
 import type { RunnerReport } from "./runner-report";
@@ -258,7 +258,7 @@ function header(view: BatchView, max: number, color: boolean): string {
 			{ text: `${SYMBOLS.ok}${passed}`, style: "green" },
 			{ text: " " },
 			{ text: `${SYMBOLS.fail}${failed}`, style: failed > 0 ? "red" : "dim" },
-			{ text: `  ${formatDuration(view.now - view.startedAt)}`, style: "dim" },
+			{ text: `  ${durationParser.format(view.now - view.startedAt)}`, style: "dim" },
 			state,
 		],
 		max,
@@ -283,7 +283,7 @@ function deviceCells(view: BatchView, d: DeviceView): Cell[] {
 }
 
 function deviceRow(view: BatchView, d: DeviceView, cols: Columns, max: number, color: boolean): string {
-	const elapsed = d.current ? formatDuration(view.now - d.current.startedAt) : "";
+	const elapsed = d.current ? durationParser.format(view.now - d.current.startedAt) : "";
 	const passed = d.ran ? d.ran.filter((f) => f.mark === "passed").length : d.passed;
 	const failed = d.ran ? d.ran.filter((f) => f.mark === "failed").length : d.failed;
 	return line(
@@ -376,7 +376,7 @@ export function liveScreen(write: (data: string) => void): LiveScreen {
 
 /** `12.4 s` under a minute, `1m5s` above: what a log line says a job took. */
 function took(ms: number): string {
-	return ms < 60_000 ? `${(Math.max(0, ms) / 1_000).toFixed(1)} s` : formatDuration(ms);
+	return ms < 60_000 ? `${(Math.max(0, ms) / 1_000).toFixed(1)} s` : durationParser.format(ms);
 }
 
 /**
@@ -402,7 +402,7 @@ export function plainLine(view: BatchView, event: BatchEvent): string | undefine
 		case "worker-idle":
 			return undefined;
 		case "worker-join":
-			return `warden batch: worker ${event.worker + 1} joined after ${formatDuration(Math.max(0, event.at - view.startedAt))} (queued)`;
+			return `warden batch: worker ${event.worker + 1} joined after ${durationParser.format(Math.max(0, event.at - view.startedAt))} (queued)`;
 		case "done": {
 			const { passed, failed } = totals(view);
 			return `warden batch: ${passed}/${view.total} passed, ${failed} failed${event.stopped ? " (stopped)" : ""}`;

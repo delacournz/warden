@@ -1,7 +1,7 @@
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { type AndroidCrash, parseCrashBuffer, parseDropbox } from "@delacour/warden-perf/logs/android-crash";
 import {
 	androidCrashRecord,
@@ -320,7 +320,7 @@ export function checkCrashFlags(
 ): CrashFlagError | { success: true; data: number | undefined } {
 	let sinceMs: number | undefined;
 	if (opts.since !== undefined) {
-		const since = parseDuration(opts.since);
+		const since = durationParser.parse(opts.since);
 		if (!since.success) return crashUsage(`--since: ${since.error}`);
 		sinceMs = since.data;
 	}

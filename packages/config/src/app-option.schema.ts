@@ -52,16 +52,21 @@ export type AppSwitches = {
 	kind?: BuildKind;
 };
 
-/** The switches `app` stands for. An object means install (`app: {}` = `app: true`). */
-export function appSwitches(app: AppOption | undefined): AppSwitches {
-	if (app === undefined) return { app: false };
-	if (typeof app === "boolean") return { app };
-	const installMode = app.installMode ?? (app.clean === true ? "reinstall" : undefined);
-	return {
-		app: true,
-		...(installMode !== undefined ? { installMode } : {}),
-		...(installMode !== undefined && app.resetKeychain === true ? { resetKeychain: true as const } : {}),
-		...(app.variant !== undefined ? { variant: app.variant } : {}),
-		...(app.kind !== undefined ? { kind: app.kind } : {}),
-	};
+/** Reads an `app` option. */
+export class AppOptionReader {
+	/** The switches `app` stands for. An object means install (`app: {}` = `app: true`). */
+	appSwitches(app: AppOption | undefined): AppSwitches {
+		if (app === undefined) return { app: false };
+		if (typeof app === "boolean") return { app };
+		const installMode = app.installMode ?? (app.clean === true ? "reinstall" : undefined);
+		return {
+			app: true,
+			...(installMode !== undefined ? { installMode } : {}),
+			...(installMode !== undefined && app.resetKeychain === true ? { resetKeychain: true as const } : {}),
+			...(app.variant !== undefined ? { variant: app.variant } : {}),
+			...(app.kind !== undefined ? { kind: app.kind } : {}),
+		};
+	}
 }
+
+export const appOptionReader = new AppOptionReader();

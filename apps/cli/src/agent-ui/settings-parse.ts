@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-	isPermissionName,
 	PERMISSION_NAMES,
 	type PermissionName,
 	type PermissionState,
+	permissionNames,
 	TEXT_SIZE_NAMES,
 	type TextSize,
 } from "@delacour/warden-config/conditions.types";
@@ -24,7 +24,7 @@ export function parsePermissionPairs(
 		if (name === undefined || state === undefined || extra.length > 0) {
 			return resultFactory.err(`"${arg}" is not <name>=<state> (e.g. location=denied)`);
 		}
-		if (!isPermissionName(name))
+		if (!permissionNames.has(name))
 			return resultFactory.err(`unknown permission "${name}" (use ${PERMISSION_NAMES.join(", ")})`);
 		if (!isState(state)) return resultFactory.err(`"${state}" is not a state for ${name} (use ${STATES.join(", ")})`);
 		if (grants[name] !== undefined) return resultFactory.err(`permission "${name}" is given twice`);

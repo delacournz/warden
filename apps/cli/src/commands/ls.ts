@@ -1,4 +1,4 @@
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { LsJson } from "@delacour/warden-sdk/contracts/leases";
 import { withLeaseState } from "@delacour/warden-sdk/lease-view";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -33,8 +33,8 @@ function list(ctx: CommandContext, json: boolean): number {
 		leaseModel.describeOwner(l.owner),
 		leaseModel.ownerLocation(l.owner) ?? "",
 		l.label ?? "",
-		formatDuration(now - l.acquiredAt),
-		`${formatDuration(now - l.heartbeatAt)} ago`,
+		durationParser.format(now - l.acquiredAt),
+		`${durationParser.format(now - l.heartbeatAt)} ago`,
 	]);
 	const text =
 		leases.length === 0

@@ -1,5 +1,5 @@
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import {
 	type SessionKit,
 	type StartOptions,
@@ -37,7 +37,7 @@ export function startedSuccess(
 	const lines = [
 		`${ctx.ui.color.green("started")} ${session.id} on ${target.name ?? target.udid} (${session.app?.id ?? plan.app})`,
 		`armed: ${armed.join(", ") || "none yet"}${failed.length > 0 ? `   failed: ${failed.join(", ")}` : ""}`,
-		`stops itself after ${formatDuration(session.maxDurationMs)}`,
+		`stops itself after ${durationParser.format(session.maxDurationMs)}`,
 	];
 	if (out.launch?.kind === "launched")
 		lines.push(`relaunched: ${out.launch.am?.totalMs ?? out.launch.wallMs}ms to start`);

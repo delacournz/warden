@@ -6,17 +6,17 @@ import {
 	type E2ePhysical,
 	type E2eSuiteConfig,
 	e2eMetroSchema,
-	suiteIsolation,
+	suiteRules,
 } from "@delacour/warden-config/affected.schema";
-import { appSwitches } from "@delacour/warden-config/app-option.schema";
+import { appOptionReader } from "@delacour/warden-config/app-option.schema";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import {
 	DEFAULT_SPEC_ACTION_TIMEOUT,
 	DEFAULT_SPEC_ASSERTION_TIMEOUT,
 	DEFAULT_SPEC_TIMEOUT,
 } from "@delacour/warden-config/config.defaults";
-import { parseDuration } from "@delacour/warden-config/duration";
-import { DEFAULT_SLIM_PROFILE, type SlimProfile, validateProfile } from "@delacour/warden-config/slim.profile";
+import { durationParser } from "@delacour/warden-config/duration";
+import { DEFAULT_SLIM_PROFILE, type SlimProfile, slimProfiles } from "@delacour/warden-config/slim.profile";
 import type { Affected, Suite } from "@delacour/warden-core/affected/affected";
 import { compiledBinary } from "@delacour/warden-core/affected/graph-process";
 import type { SelectedSpec, Selection } from "@delacour/warden-core/affected/select";
@@ -111,7 +111,7 @@ function suiteOpts(
 	passed: ReadonlySet<string>,
 	run: RunKind
 ): E2eOpts {
-	const app = appSwitches(suite.app);
+	const app = appOptionReader.appSwitches(suite.app);
 	const fromSuite: Partial<E2eOpts> = {
 		retry: String(suite.retry),
 		passes: String(suite.passes),
@@ -211,7 +211,7 @@ export function resolveRunKind(
 	const passedKind = passed.has("kind") ? opts.kind : undefined;
 	if (opts.dev && passedKind !== undefined) return resultFactory.err("--dev and --kind can't be combined");
 	const cliKind = opts.dev ? "dev" : passedKind;
-	const app = appSwitches(suite.config.app);
+	const app = appOptionReader.appSwitches(suite.config.app);
 	if (cliKind !== undefined) {
 		if (passed.has("variant")) return resultFactory.err("--kind / --dev and --variant can't be combined");
 		return resultFactory.ok(kindRun(suite, cliKind));
@@ -291,7 +291,7 @@ function selectLegs(
 async function metroPlan(suite: Suite, bundleId: string): Promise<Result<MetroPlan | undefined>> {
 	const metro = suite.config.metro;
 	if (!metro?.enabled) return resultFactory.ok(undefined);
-	const readyTimeoutMs = parseDuration(metro.readyTimeout);
+	const readyTimeoutMs = durationParser.parse(metro.readyTimeout);
 	if (!readyTimeoutMs.success) return resultFactory.err(`metro.readyTimeout: ${readyTimeoutMs.error}`);
 	return resultFactory.ok({
 		projectRoot: suite.projectRoot ?? suite.cwd,
@@ -514,7 +514,7 @@ async function preparedRun(
 ): AsyncResult<RunPlan & { spec: SpecPlan }> {
 	if (suite.config.slim && platform !== "ios") note(ctx, `warden e2e: slim is iOS-only; skipped on ${platform}`);
 	if (slimsDevices(suite.config, platform) && suite.config.slim !== undefined) {
-		const slim = validateProfile(slimProfile(suite.config.slim));
+		const slim = slimProfiles.validateProfile(slimProfile(suite.config.slim));
 		if (!slim.success) return resultFactory.err(`suite "${suite.name}": slim: ${slim.error}`);
 	}
 	const spec = await specPlan(ctx, deps, suite, platform, opts, wantsPhysical(suite.config, opts, passed));
@@ -676,7 +676,7 @@ function appFlagsWithoutApp(suite: Suite, opts: E2eOpts): string | undefined {
 /** The run's isolation from the suite and the `passes` it runs with: a CLI `--passes` counts too (12-10). */
 function runIsolation(config: E2eSuiteConfig, opts: E2eOpts, passed: ReadonlySet<string>): E2eIsolation {
 	const passes = passed.has("passes") && /^\d+$/.test(opts.passes) ? Number(opts.passes) : config.passes;
-	return suiteIsolation({ ...config, passes });
+	return suiteRules.suiteIsolation({ ...config, passes });
 }
 
 /** Specs in the biggest shard (1 when every spec is its own job). */
@@ -709,7 +709,7 @@ export type SpecPlan = {
 };
 
 const specDuration = (field: string, value: string | undefined, fallback: string): Result<number> => {
-	const ms = parseDuration(value ?? fallback);
+	const ms = durationParser.parse(value ?? fallback);
 	return ms.success ? ms : resultFactory.err(`e2e.spec.${field}: ${ms.error}`);
 };
 

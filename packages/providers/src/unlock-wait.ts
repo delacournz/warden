@@ -1,4 +1,4 @@
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 
 /**
@@ -65,19 +65,20 @@ export async function waitUnlocked(input: UnlockWaitInput): AsyncResult<void> {
 	const first = await input.read();
 	if (!first.success || !first.data.locked) return resultFactory.ok(undefined);
 	if (input.noWait) return resultFactory.err(deviceLockedMessage(input.name));
-	input.log(`${input.name} is locked: unlock it to continue (waiting up to ${formatDuration(waitMs)})`);
+	input.log(`${input.name} is locked: unlock it to continue (waiting up to ${durationParser.format(waitMs)})`);
 	const startedAt = input.now();
 	let nextProgress = startedAt + progressMs;
 	for (;;) {
 		const remaining = startedAt + waitMs - input.now();
-		if (remaining <= 0) return resultFactory.err(`${deviceLockedMessage(input.name)} after ${formatDuration(waitMs)}`);
+		if (remaining <= 0)
+			return resultFactory.err(`${deviceLockedMessage(input.name)} after ${durationParser.format(waitMs)}`);
 		await input.sleep(Math.min(pollMs, remaining));
 		if (input.abort?.()) return resultFactory.err(UNLOCK_WAIT_ABORTED);
 		const state = await input.read();
 		if (!state.success || !state.data.locked) return resultFactory.ok(undefined);
 		if (input.now() >= nextProgress && input.now() < startedAt + waitMs) {
 			input.log(
-				`${input.name} still locked: waiting for unlock (${formatDuration(input.now() - startedAt)} of ${formatDuration(waitMs)})`
+				`${input.name} still locked: waiting for unlock (${durationParser.format(input.now() - startedAt)} of ${durationParser.format(waitMs)})`
 			);
 			nextProgress += progressMs;
 		}

@@ -1,5 +1,5 @@
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { claimedJson } from "@delacour/warden-leasing/claim-request";
 import { resolveHeadless } from "@delacour/warden-leasing/headless";
 import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
@@ -74,7 +74,7 @@ async function claim(ctx: CommandContext, platformArg: string | undefined, opts:
 	if (shortLived) {
 		warn(
 			ctx,
-			`lease expires in ${formatDuration(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
+			`lease expires in ${durationParser.format(flags.data.ttlMs)}; hold it with: warden dev … / warden run … / warden heartbeat`
 		);
 	}
 	const leases: ClaimedDeviceJson[] = claimedJson(outcome.data);

@@ -1,5 +1,5 @@
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { DEV_BUILD_BANNER, renderMarkdown, SIMULATOR_BANNER } from "@delacour/warden-perf/shared/render-md";
@@ -191,7 +191,7 @@ export function registerReact(cmd: Commander, ctx: CommandContext, done: (code: 
 		cmd
 			.command("react")
 			.description("React render profile of the dev client: hot commits, costly components, ranked findings")
-			.option("--duration <time>", `how long to record (default ${formatDuration(DEFAULT_DURATION_MS)}, max 5m)`)
+			.option("--duration <time>", `how long to record (default ${durationParser.format(DEFAULT_DURATION_MS)}, max 5m)`)
 			.option("--metro <url>", "Metro to attach through (default: the one serving the device)")
 			.option("--take-over", "take over a React profile another agent started")
 	);

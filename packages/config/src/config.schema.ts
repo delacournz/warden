@@ -9,7 +9,7 @@ import type { AppOption } from "./app-option.schema";
 import { conditionsConfigSchema } from "./conditions.config";
 import { DEFAULT_EAS_PROFILE } from "./config.defaults";
 import { batchPresetSchema, RESERVED_PRESET_NAMES, slimConfigSchema } from "./preset.schema";
-import { validateProfile } from "./slim.profile";
+import { slimProfiles } from "./slim.profile";
 
 const perPlatform = z.object({ ios: z.string().min(1).optional(), android: z.string().min(1).optional() }).strict();
 
@@ -108,48 +108,53 @@ export const projectConfigSchema = z
 	})
 	.strict();
 
-/** Why an e2e suite's `app.variant` is unknown on its project (the only one when it names none), if it is. */
-function unknownSuiteVariant(
-	projects: readonly z.infer<typeof projectConfigSchema>[],
-	suite: { project?: string | undefined; app?: AppOption | undefined }
-): string | undefined {
-	const variant = typeof suite.app === "object" ? suite.app.variant : undefined;
-	if (variant === undefined) return undefined;
-	const name = suite.project;
-	const project = name === undefined && projects.length === 1 ? projects[0] : projects.find((p) => p.name === name);
-	if (!project || project.variants?.[variant] !== undefined) return undefined;
-	return `no variant "${variant}" on project ${project.name}`;
-}
-
 type ConfigIssues = { addIssue: (issue: { code: "custom"; message: string; path: Array<string | number> }) => void };
 
-/** e2e suites: `project` must exist, and so must `app.variant` on it. */
-function refineSuites(
-	config: {
-		projects?: z.infer<typeof projectConfigSchema>[] | undefined;
-		e2e?: Record<string, { project?: string | undefined; app?: AppOption | undefined }> | undefined;
-	},
-	issue: ConfigIssues
-): void {
-	const names = new Set((config.projects ?? []).map((p) => p.name));
-	for (const [name, suite] of Object.entries(config.e2e ?? {})) {
-		if (suite.project !== undefined && !names.has(suite.project)) {
-			issue.addIssue({
-				code: "custom",
-				message: `no project "${suite.project}" in projects[]`,
-				path: ["e2e", name, "project"],
-			});
+/** Cross-field rules of a whole config. */
+export class ConfigRules {
+	/** Why an e2e suite's `app.variant` is unknown on its project (the only one when it names none), if it is. */
+	private unknownSuiteVariant(
+		projects: readonly z.infer<typeof projectConfigSchema>[],
+		suite: { project?: string | undefined; app?: AppOption | undefined }
+	): string | undefined {
+		const variant = typeof suite.app === "object" ? suite.app.variant : undefined;
+		if (variant === undefined) return undefined;
+		const name = suite.project;
+		const project = name === undefined && projects.length === 1 ? projects[0] : projects.find((p) => p.name === name);
+		if (!project || project.variants?.[variant] !== undefined) return undefined;
+		return `no variant "${variant}" on project ${project.name}`;
+	}
+
+	/** e2e suites: `project` must exist, and so must `app.variant` on it. */
+	refineSuites(
+		config: {
+			projects?: z.infer<typeof projectConfigSchema>[] | undefined;
+			e2e?: Record<string, { project?: string | undefined; app?: AppOption | undefined }> | undefined;
+		},
+		issue: ConfigIssues
+	): void {
+		const names = new Set((config.projects ?? []).map((p) => p.name));
+		for (const [name, suite] of Object.entries(config.e2e ?? {})) {
+			if (suite.project !== undefined && !names.has(suite.project)) {
+				issue.addIssue({
+					code: "custom",
+					message: `no project "${suite.project}" in projects[]`,
+					path: ["e2e", name, "project"],
+				});
+			}
+			const variant = this.unknownSuiteVariant(config.projects ?? [], suite);
+			if (variant !== undefined)
+				issue.addIssue({ code: "custom", message: variant, path: ["e2e", name, "app", "variant"] });
 		}
-		const variant = unknownSuiteVariant(config.projects ?? [], suite);
-		if (variant !== undefined)
-			issue.addIssue({ code: "custom", message: variant, path: ["e2e", name, "app", "variant"] });
 	}
 }
+
+export const configRules = new ConfigRules();
 
 /** top-level `slim`: the suite's schema plus a category / label check, since there is no suite refine to do it */
 const topLevelSlimSchema = slimConfigSchema.superRefine((slim, issue) => {
 	if (typeof slim !== "object") return;
-	const checked = validateProfile({ except: slim.except ?? [], keep: slim.keep ?? [] });
+	const checked = slimProfiles.validateProfile({ except: slim.except ?? [], keep: slim.keep ?? [] });
 	if (!checked.success) issue.addIssue({ code: "custom", message: checked.error });
 });
 
@@ -232,7 +237,7 @@ export const wardenConfigSchema = z
 				});
 			}
 		}
-		refineSuites(config, issue);
+		configRules.refineSuites(config, issue);
 	});
 
 /** The slice of an Expo `app.json` warden reads (name, bundle ids). */

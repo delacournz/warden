@@ -1,5 +1,5 @@
 import type { Socket } from "node:net";
-import { sliceSize, TokenBucket } from "@delacour/warden-config/shaping";
+import { proxyShaping, TokenBucket } from "@delacour/warden-config/shaping";
 
 /** Bytes queued in a pipe before its source is paused (backpressure keeps shaping honest and memory flat). */
 const HIGH_WATER = 64 * 1024;
@@ -78,7 +78,7 @@ export class Pipe {
 		const kbps = this.opts.kbps();
 		const wait = kbps !== undefined && kbps > 0 ? this.bucket.waitMs(t) : 0;
 		if (wait > 0) return { kind: "wait", ms: wait };
-		return { kind: "send", head, size: Math.min(sliceSize(kbps), head.data.length - head.offset) };
+		return { kind: "send", head, size: Math.min(proxyShaping.sliceSize(kbps), head.data.length - head.offset) };
 	}
 
 	private send(head: Queued, size: number): boolean {

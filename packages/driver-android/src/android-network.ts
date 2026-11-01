@@ -1,5 +1,5 @@
 import type { HostFault, NetworkCondition } from "@delacour/warden-config/conditions.types";
-import { type EmuNetwork, resolveNetwork } from "@delacour/warden-config/network.presets";
+import { type EmuNetwork, networkPresets } from "@delacour/warden-config/network.presets";
 import type {
 	Driver,
 	DriverError,
@@ -165,7 +165,7 @@ export async function applyAndroidNetwork(
 			"flap is started through the driver's network op (conditions/scheduler.ts), not applied directly"
 		);
 	}
-	const plan = resolveNetwork(condition);
+	const plan = networkPresets.resolveNetwork(condition);
 	if (!plan.online) {
 		const done = await goOffline(deps);
 		if (!done.ok) return { success: false, error: done.error };
@@ -228,7 +228,7 @@ export function createAndroidNetwork(deps: AndroidNetworkDeps & { proxy?: Networ
 				"E_UNSUPPORTED",
 				"per-host faults need a device lease for the shaping proxy: run the spec with `warden e2e` (it sets WARDEN_LEASE_ID); a bare `bun test` has no lease"
 			);
-		const plan = resolveNetwork(condition);
+		const plan = networkPresets.resolveNetwork(condition);
 		const lossPct = plan.online ? plan.shaping.lossPct : 0;
 		const started = await proxy.ensure(condition, { params: lossPct > 0 ? { lossPct } : {}, faults });
 		if (!started.success) return driverErr("E_IO", started.error);
@@ -255,7 +255,7 @@ export function createAndroidNetwork(deps: AndroidNetworkDeps & { proxy?: Networ
 		async networkFaults(next) {
 			const previous = faults;
 			faults = next;
-			const plan = resolveNetwork(condition);
+			const plan = networkPresets.resolveNetwork(condition);
 			const lossPct = plan.online ? plan.shaping.lossPct : 0;
 			const result = next.length > 0 || lossPct > 0 ? await route() : await unroute();
 			if (!result.success) {

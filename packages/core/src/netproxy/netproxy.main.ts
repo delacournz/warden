@@ -1,4 +1,4 @@
-import { seededRng } from "@delacour/warden-config/shaping";
+import { rngFactory } from "@delacour/warden-config/shaping";
 import { z } from "zod";
 import { conditionsUpdateSchema } from "./control";
 import { type HandleFile, removeHandleFile, writeHandleFile } from "./handle-file";
@@ -25,7 +25,7 @@ export async function runNetproxy(raw: string): Promise<void> {
 		port: args.port,
 		onShutdown: () => void stop(),
 		...(args.conditions ? { conditions: args.conditions } : {}),
-		...(args.seed !== undefined ? { rng: seededRng(args.seed) } : {}),
+		...(args.seed !== undefined ? { rng: rngFactory.seeded(args.seed) } : {}),
 	});
 	const file: HandleFile = {
 		...proxy.handle,

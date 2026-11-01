@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { connect, createServer, type Server, type Socket } from "node:net";
-import { seededRng, shapingFromCondition } from "@delacour/warden-config/shaping";
+import { proxyShaping, rngFactory } from "@delacour/warden-config/shaping";
 import { getProxyStatus, setProxyConditions } from "./control";
 import { type ProxyEvent, type RunningProxy, startProxy } from "./proxy";
 
@@ -152,7 +152,7 @@ describe("shaping", () => {
 	});
 
 	test("jitter stays within latency ± jitter and is seed-reproducible", async () => {
-		const p = await start({ conditions: { params: { latencyMs: 100, jitterMs: 60 } }, rng: seededRng(7) });
+		const p = await start({ conditions: { params: { latencyMs: 100, jitterMs: 60 } }, rng: rngFactory.seeded(7) });
 		const reply = ok(await request(p, "/"));
 		expect(reply.ms).toBeGreaterThanOrEqual(2 * 40 - 20);
 		expect(reply.ms).toBeLessThan(2 * 160 + 500);
@@ -197,7 +197,7 @@ describe("shaping", () => {
 		const events: ProxyEvent[] = [];
 		const p = await start({
 			conditions: { params: { lossPct: 100 } },
-			rng: seededRng(1),
+			rng: rngFactory.seeded(1),
 			onEvent: (e) => events.push(e),
 		});
 		const replies = await Promise.all([1, 2, 3, 4, 5, 6].map(() => request(p, "/", { timeoutMs: 400 })));
@@ -212,7 +212,7 @@ describe("shaping", () => {
 			const events: ProxyEvent[] = [];
 			const p = await startProxy({
 				conditions: { params: { lossPct: 100 } },
-				rng: seededRng(seed),
+				rng: rngFactory.seeded(seed),
 				onEvent: (e) => events.push(e),
 			});
 			for (let i = 0; i < 8; i++) await request(p, "/", { timeoutMs: 60 });
@@ -435,18 +435,18 @@ describe("control channel", () => {
 
 describe("shapingFromCondition", () => {
 	test("maps presets, custom and offline through the shared table", () => {
-		expect(shapingFromCondition({ kind: "preset", preset: "3g" })).toMatchObject({
+		expect(proxyShaping.fromCondition({ kind: "preset", preset: "3g" })).toMatchObject({
 			downKbps: 780,
 			upKbps: 330,
 			latencyMs: 100,
 		});
-		expect(shapingFromCondition({ kind: "online" })).toMatchObject({ latencyMs: 0, downKbps: 0, lossPct: 0 });
-		expect(shapingFromCondition({ kind: "custom", lossPct: 5 }).lossPct).toBe(5);
-		expect(shapingFromCondition({ kind: "offline" })).toEqual({ offline: "refuse" });
+		expect(proxyShaping.fromCondition({ kind: "online" })).toMatchObject({ latencyMs: 0, downKbps: 0, lossPct: 0 });
+		expect(proxyShaping.fromCondition({ kind: "custom", lossPct: 5 }).lossPct).toBe(5);
+		expect(proxyShaping.fromCondition({ kind: "offline" })).toEqual({ offline: "refuse" });
 	});
 
 	test("0 kbps means unlimited", async () => {
-		const p = await start({ conditions: { params: shapingFromCondition({ kind: "online" }) } });
+		const p = await start({ conditions: { params: proxyShaping.fromCondition({ kind: "online" }) } });
 		expect(ok(await request(p, "/big/20000")).ms).toBeLessThan(300);
 	});
 });

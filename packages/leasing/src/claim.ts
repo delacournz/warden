@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { availableParallelism, loadavg } from "node:os";
 import { DEFAULT_READY_TIMEOUT_MS } from "@delacour/warden-config/config.defaults";
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { DeviceRecord, Store } from "@delacour/warden-store/store";
@@ -805,7 +805,7 @@ function logWaiting(
 	if (round.waitLoggedAt !== undefined && now - round.waitLoggedAt < WAIT_PROGRESS_MS) return;
 	const first = round.waitLoggedAt === undefined;
 	round.waitLoggedAt = now;
-	const left = formatDuration(remainingMs);
+	const left = durationParser.format(remainingMs);
 	input.log?.(
 		first
 			? `waiting for ${waitingFor(input.request, reservation)} (up to ${left}; --no-wait fails at once)`

@@ -1,5 +1,5 @@
 import type { ClockCondition, HostFault, NetworkCondition } from "@delacour/warden-config/conditions.types";
-import { resolveNetwork } from "@delacour/warden-config/network.presets";
+import { networkPresets } from "@delacour/warden-config/network.presets";
 import type {
 	ClockState,
 	DriverError,
@@ -168,7 +168,7 @@ export function createIosNetwork(deps: IosNetworkDeps): IosNetwork {
 				if (applied.error.code !== "E_NETWORK_RELAUNCH") condition = previous;
 				return applied;
 			}
-			const plan = resolveNetwork(op);
+			const plan = networkPresets.resolveNetwork(op);
 			return {
 				success: true,
 				data: {

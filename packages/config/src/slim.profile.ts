@@ -17,18 +17,25 @@ export type SlimCategory = {
 	alwaysEnabled?: readonly AlwaysEnabled[];
 };
 
-const apple = (...ids: string[]): readonly string[] => ids.map((id) => `com.apple.${id}`);
+/** Builds `com.apple.*` launchd labels from their bare ids. */
+export class AppleLabels {
+	of(...ids: string[]): readonly string[] {
+		return ids.map((id) => `com.apple.${id}`);
+	}
+}
+
+export const appleLabels = new AppleLabels();
 
 export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "widgets",
 		name: "Widgets, posters and live activities",
-		labels: apple("PosterBoard", "chronod", "liveactivitiesd", "navd"),
+		labels: appleLabels.of("PosterBoard", "chronod", "liveactivitiesd", "navd"),
 	},
 	{
 		id: "siri",
 		name: "Siri, speech and Apple Intelligence",
-		labels: apple(
+		labels: appleLabels.of(
 			"assistant_cdmd",
 			"assistant_service",
 			"siriactionsd",
@@ -62,12 +69,12 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "search",
 		name: "Spotlight search",
-		labels: apple("searchtoold", "spotlightknowledged", "spotlightknowledged.updater", "corespotlightservice"),
+		labels: appleLabels.of("searchtoold", "spotlightknowledged", "spotlightknowledged.updater", "corespotlightservice"),
 	},
 	{
 		id: "icloud",
 		name: "iCloud, accounts and sync",
-		labels: apple(
+		labels: appleLabels.of(
 			"appleaccountd",
 			"appleaccounttransparencyd",
 			"appleidsetupd",
@@ -94,7 +101,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "store",
 		name: "App Store, push and media services",
-		labels: apple(
+		labels: appleLabels.of(
 			"appstored",
 			"appstorecomponentsd",
 			"apsd",
@@ -114,7 +121,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "pim",
 		name: "Mail, calendar, reminders and contacts",
-		labels: apple(
+		labels: appleLabels.of(
 			"email.maild",
 			"exchangesyncd",
 			"dataaccess.dataaccessd",
@@ -128,7 +135,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "web",
 		name: "Safari sync, web push and universal links",
-		labels: apple(
+		labels: appleLabels.of(
 			"SafariBookmarksSyncAgent",
 			"Safari.History",
 			"Safari.passwordbreachd",
@@ -144,7 +151,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "family",
 		name: "Family sharing and Screen Time",
-		labels: apple(
+		labels: appleLabels.of(
 			"familycircled",
 			"FamilyControlsAgent",
 			"familynotification",
@@ -158,7 +165,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "health",
 		name: "Health, fitness and Home",
-		labels: apple(
+		labels: appleLabels.of(
 			"healthd",
 			"healthappd",
 			"healthcontentd",
@@ -178,7 +185,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "photos",
 		name: "Photos and media analysis",
-		labels: apple(
+		labels: appleLabels.of(
 			"photoanalysisd",
 			"photosface",
 			"mediaanalysisd",
@@ -192,7 +199,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "apps",
 		name: "News, Weather, Maps, Tips and games",
-		labels: apple(
+		labels: appleLabels.of(
 			"newsd",
 			"weatherd",
 			"Maps.mapssyncd",
@@ -210,7 +217,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "messaging",
 		name: "iMessage, FaceTime and telephony",
-		labels: apple(
+		labels: appleLabels.of(
 			"identityservicesd",
 			"ids_simd",
 			"imautomatichistorydeletionagent",
@@ -223,7 +230,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "connectivity",
 		name: "Nearby devices, CarPlay and sharing",
-		labels: apple(
+		labels: appleLabels.of(
 			"rapportd",
 			"companiond",
 			"carkitd",
@@ -241,7 +248,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "telemetry",
 		name: "Analytics, ads and diagnostics",
-		labels: apple(
+		labels: appleLabels.of(
 			"ap.adprivacyd",
 			"ap.promotedcontentd",
 			"diagnosticextensionsd",
@@ -258,7 +265,7 @@ export const SLIM_CATEGORIES: readonly SlimCategory[] = [
 	{
 		id: "other",
 		name: "Wallet, identity and miscellaneous",
-		labels: apple(
+		labels: appleLabels.of(
 			"financed",
 			"passd",
 			"merchantd",
@@ -303,71 +310,76 @@ export type SlimProfile = { except: readonly string[]; keep: readonly string[] }
 
 export const DEFAULT_SLIM_PROFILE: SlimProfile = { except: [], keep: [] };
 
-/** Every label some category may switch off. */
-export function slimmableSet(): Set<string> {
-	return new Set(SLIM_CATEGORIES.flatMap((category) => category.labels));
-}
-
-/** Slimmable labels plus the `alwaysEnabled` ones: the labels warden is allowed to write an override for. */
-export function managedSet(): Set<string> {
-	const managed = slimmableSet();
-	for (const category of SLIM_CATEGORIES) {
-		for (const entry of category.alwaysEnabled ?? []) managed.add(entry.label);
+/** The slim category table: which launchd labels warden may switch off, and the deltas to reach a profile. */
+export class SlimProfiles {
+	/** Every label some category may switch off. */
+	slimmableSet(): Set<string> {
+		return new Set(SLIM_CATEGORIES.flatMap((category) => category.labels));
 	}
-	return managed;
-}
 
-/** The labels to have disabled under `profile`, in category order. */
-export function desiredLabels(profile: SlimProfile): Set<string> {
-	const kept = new Set<string>(profile.keep);
-	for (const category of SLIM_CATEGORIES) {
-		if (profile.except.includes(category.id)) for (const label of category.labels) kept.add(label);
+	/** Slimmable labels plus the `alwaysEnabled` ones: the labels warden is allowed to write an override for. */
+	managedSet(): Set<string> {
+		const managed = this.slimmableSet();
+		for (const category of SLIM_CATEGORIES) {
+			for (const entry of category.alwaysEnabled ?? []) managed.add(entry.label);
+		}
+		return managed;
 	}
-	const desired = new Set<string>();
-	for (const category of SLIM_CATEGORIES) {
-		for (const label of category.labels) if (!kept.has(label)) desired.add(label);
+
+	/** The labels to have disabled under `profile`, in category order. */
+	desiredLabels(profile: SlimProfile): Set<string> {
+		const kept = new Set<string>(profile.keep);
+		for (const category of SLIM_CATEGORIES) {
+			if (profile.except.includes(category.id)) for (const label of category.labels) kept.add(label);
+		}
+		const desired = new Set<string>();
+		for (const category of SLIM_CATEGORIES) {
+			for (const label of category.labels) if (!kept.has(label)) desired.add(label);
+		}
+		return desired;
 	}
-	return desired;
+
+	/**
+	 * What to change to reach `desired`: disable the wanted labels not yet disabled, enable the managed
+	 * labels that are disabled but not wanted. A disabled label outside `managed` is not ours, so it is
+	 * never re-enabled. `current` is `print-disabled` (label → disabled) or just the disabled labels.
+	 */
+	delta(
+		current: ReadonlyMap<string, boolean> | ReadonlySet<string>,
+		desired: ReadonlySet<string>,
+		managed: ReadonlySet<string>
+	): { toDisable: string[]; toEnable: string[] } {
+		const isDisabled = (label: string): boolean =>
+			current instanceof Map ? current.get(label) === true : (current as ReadonlySet<string>).has(label);
+		const toDisable = [...desired].filter((label) => !isDisabled(label));
+		const toEnable = [...managed].filter((label) => !desired.has(label) && isDisabled(label));
+		return { toDisable: toDisable.sort(), toEnable: toEnable.sort() };
+	}
+
+	/** Reject category ids that do not exist and `keep` labels warden does not manage; messages name the culprit. */
+	validateProfile(profile: SlimProfile): Result<SlimProfile> {
+		const ids = new Set(SLIM_CATEGORIES.map((category) => category.id));
+		const badIds = profile.except.filter((id) => !ids.has(id));
+		if (badIds.length > 0)
+			return resultFactory.err(
+				`unknown slim categor${badIds.length === 1 ? "y" : "ies"}: ${badIds.join(", ")} (known: ${[...ids].join(", ")})`
+			);
+		const managed = this.managedSet();
+		const badLabels = profile.keep.filter((label) => !managed.has(label));
+		if (badLabels.length > 0)
+			return resultFactory.err(`not a slimmable label: ${badLabels.join(", ")} (see \`warden sim profiles --json\`)`);
+		return resultFactory.ok({ except: [...profile.except], keep: [...profile.keep] });
+	}
+
+	/** The categories for `warden sim profiles`. */
+	describeCategories(): { id: string; name: string; labelCount: number; labels: readonly string[] }[] {
+		return SLIM_CATEGORIES.map((category) => ({
+			id: category.id,
+			name: category.name,
+			labelCount: category.labels.length,
+			labels: category.labels,
+		}));
+	}
 }
 
-/**
- * What to change to reach `desired`: disable the wanted labels not yet disabled, enable the managed
- * labels that are disabled but not wanted. A disabled label outside `managed` is not ours, so it is
- * never re-enabled. `current` is `print-disabled` (label → disabled) or just the disabled labels.
- */
-export function delta(
-	current: ReadonlyMap<string, boolean> | ReadonlySet<string>,
-	desired: ReadonlySet<string>,
-	managed: ReadonlySet<string>
-): { toDisable: string[]; toEnable: string[] } {
-	const isDisabled = (label: string): boolean =>
-		current instanceof Map ? current.get(label) === true : (current as ReadonlySet<string>).has(label);
-	const toDisable = [...desired].filter((label) => !isDisabled(label));
-	const toEnable = [...managed].filter((label) => !desired.has(label) && isDisabled(label));
-	return { toDisable: toDisable.sort(), toEnable: toEnable.sort() };
-}
-
-/** Reject category ids that do not exist and `keep` labels warden does not manage; messages name the culprit. */
-export function validateProfile(profile: SlimProfile): Result<SlimProfile> {
-	const ids = new Set(SLIM_CATEGORIES.map((category) => category.id));
-	const badIds = profile.except.filter((id) => !ids.has(id));
-	if (badIds.length > 0)
-		return resultFactory.err(
-			`unknown slim categor${badIds.length === 1 ? "y" : "ies"}: ${badIds.join(", ")} (known: ${[...ids].join(", ")})`
-		);
-	const managed = managedSet();
-	const badLabels = profile.keep.filter((label) => !managed.has(label));
-	if (badLabels.length > 0)
-		return resultFactory.err(`not a slimmable label: ${badLabels.join(", ")} (see \`warden sim profiles --json\`)`);
-	return resultFactory.ok({ except: [...profile.except], keep: [...profile.keep] });
-}
-
-/** The categories for `warden sim profiles`. */
-export function describeCategories(): { id: string; name: string; labelCount: number; labels: readonly string[] }[] {
-	return SLIM_CATEGORIES.map((category) => ({
-		id: category.id,
-		name: category.name,
-		labelCount: category.labels.length,
-		labels: category.labels,
-	}));
-}
+export const slimProfiles = new SlimProfiles();

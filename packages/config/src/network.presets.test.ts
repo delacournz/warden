@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { NetworkPreset } from "./conditions.types";
-import { NETWORK_PRESET_NAMES, NETWORK_PRESETS, resolveNetwork } from "./network.presets";
+import { NETWORK_PRESET_NAMES, NETWORK_PRESETS, networkPresets } from "./network.presets";
 
 const EMU_NAMED_SPEEDS = ["gsm", "hscsd", "gprs", "edge", "umts", "hsdpa", "lte", "evdo", "full"];
 const EMU_NAMED_DELAYS = ["gprs", "edge", "umts", "none"];
@@ -62,7 +62,7 @@ describe("NETWORK_PRESETS", () => {
 
 describe("resolveNetwork", () => {
 	test("online is unshaped with the emulator's full/none", () => {
-		expect(resolveNetwork({ kind: "online" })).toEqual({
+		expect(networkPresets.resolveNetwork({ kind: "online" })).toEqual({
 			online: true,
 			shaping: { latencyMs: 0, jitterMs: 0, downKbps: 0, upKbps: 0, lossPct: 0 },
 			emu: { speed: "full", delay: "none" },
@@ -70,57 +70,61 @@ describe("resolveNetwork", () => {
 	});
 
 	test("offline has no shaping", () => {
-		expect(resolveNetwork({ kind: "offline" })).toEqual({ online: false });
+		expect(networkPresets.resolveNetwork({ kind: "offline" })).toEqual({ online: false });
 	});
 
 	test("a preset resolves to its table row", () => {
-		const plan = resolveNetwork({ kind: "preset", preset: "3g" });
+		const plan = networkPresets.resolveNetwork({ kind: "preset", preset: "3g" });
 		expect(plan).toEqual({ online: true, ...NETWORK_PRESETS["3g"] });
 	});
 
 	test("custom with nothing set is the unshaped network", () => {
-		expect(resolveNetwork({ kind: "custom" })).toEqual(resolveNetwork({ kind: "online" }));
+		expect(networkPresets.resolveNetwork({ kind: "custom" })).toEqual(
+			networkPresets.resolveNetwork({ kind: "online" })
+		);
 	});
 
 	test("custom sets only what it names (0 = unlimited / none)", () => {
-		const plan = resolveNetwork({ kind: "custom", latencyMs: 300, downKbps: 500 });
+		const plan = networkPresets.resolveNetwork({ kind: "custom", latencyMs: 300, downKbps: 500 });
 		if (!plan.online) throw new Error("expected online");
 		expect(plan.shaping).toEqual({ latencyMs: 300, jitterMs: 0, downKbps: 500, upKbps: 0, lossPct: 0 });
 	});
 
 	test("custom emulator speed fills a missing direction with the other", () => {
-		const plan = resolveNetwork({ kind: "custom", downKbps: 500 });
+		const plan = networkPresets.resolveNetwork({ kind: "custom", downKbps: 500 });
 		if (!plan.online) throw new Error("expected online");
 		expect(plan.emu.speed).toBe("500:500");
-		const both = resolveNetwork({ kind: "custom", downKbps: 800, upKbps: 100 });
+		const both = networkPresets.resolveNetwork({ kind: "custom", downKbps: 800, upKbps: 100 });
 		if (!both.online) throw new Error("expected online");
 		expect(both.emu.speed).toBe("100:800");
 	});
 
 	test("custom emulator delay is half the round trip, widened by jitter, never negative", () => {
-		const plan = resolveNetwork({ kind: "custom", latencyMs: 200, jitterMs: 30 });
+		const plan = networkPresets.resolveNetwork({ kind: "custom", latencyMs: 200, jitterMs: 30 });
 		if (!plan.online) throw new Error("expected online");
 		expect(plan.emu.delay).toBe("70:130");
-		const small = resolveNetwork({ kind: "custom", latencyMs: 10, jitterMs: 50 });
+		const small = networkPresets.resolveNetwork({ kind: "custom", latencyMs: 10, jitterMs: 50 });
 		if (!small.online) throw new Error("expected online");
 		expect(small.emu.delay).toBe("0:55");
 	});
 
 	test("custom keeps loss in shaping", () => {
-		const plan = resolveNetwork({ kind: "custom", lossPct: 12 });
+		const plan = networkPresets.resolveNetwork({ kind: "custom", lossPct: 12 });
 		if (!plan.online) throw new Error("expected online");
 		expect(plan.shaping.lossPct).toBe(12);
 	});
 
 	test("flap resolves to its up phase: the base, else online", () => {
-		expect(resolveNetwork({ kind: "flap", upMs: 1, downMs: 1 })).toEqual(resolveNetwork({ kind: "online" }));
-		expect(resolveNetwork({ kind: "flap", upMs: 1, downMs: 1, base: { kind: "preset", preset: "edge" } })).toEqual(
-			resolveNetwork({ kind: "preset", preset: "edge" })
+		expect(networkPresets.resolveNetwork({ kind: "flap", upMs: 1, downMs: 1 })).toEqual(
+			networkPresets.resolveNetwork({ kind: "online" })
 		);
+		expect(
+			networkPresets.resolveNetwork({ kind: "flap", upMs: 1, downMs: 1, base: { kind: "preset", preset: "edge" } })
+		).toEqual(networkPresets.resolveNetwork({ kind: "preset", preset: "edge" }));
 	});
 
 	test("clamps absurd custom numbers instead of passing them on", () => {
-		const plan = resolveNetwork({ kind: "custom", lossPct: 250, latencyMs: -5, downKbps: -1 });
+		const plan = networkPresets.resolveNetwork({ kind: "custom", lossPct: 250, latencyMs: -5, downKbps: -1 });
 		if (!plan.online) throw new Error("expected online");
 		expect(plan.shaping.lossPct).toBe(100);
 		expect(plan.shaping.latencyMs).toBe(0);

@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { compileGrep, formatEntry, type LogFilter, matchesFilter } from "@delacour/warden-perf/logs/filter";
 import { iosPredicate, iosShowArgv, iosStreamArgv, parseCompactLine } from "@delacour/warden-perf/logs/ios-log";
 import { LOG_LEVELS, type LogEntry, parseLevel } from "@delacour/warden-perf/logs/levels";
@@ -110,7 +110,7 @@ export function parseFlags(flags: LogFlags): Result<ParsedFlags, WardenError> {
 	}
 	let sinceDurationMs: number | undefined;
 	if (flags.since !== undefined) {
-		const since = parseDuration(flags.since);
+		const since = durationParser.parse(flags.since);
 		if (!since.success) return usage(`--since: ${since.error}`);
 		sinceDurationMs = since.data;
 	}

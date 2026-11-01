@@ -9,7 +9,7 @@
  *   for its device type, same name + runtime duplicate. Only the user deletes these (`sims delete`).
  * - goldens: never (that's `warden golden prune`, under the clone lock).
  */
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
 import { isGoldenName } from "@delacour/warden-providers/golden-name";
 import { shortRuntime } from "@delacour/warden-providers/ios";
@@ -95,7 +95,7 @@ export function compareRuntimes(a: string, b: string): number {
 
 const DAY_MS = 86_400_000;
 /** `45d`, or `1h30m` under a day. */
-export const formatAge = (ms: number) => (ms >= DAY_MS ? `${Math.floor(ms / DAY_MS)}d` : formatDuration(ms));
+export const formatAge = (ms: number) => (ms >= DAY_MS ? `${Math.floor(ms / DAY_MS)}d` : durationParser.format(ms));
 
 function reasonText(r: SimReason): string {
 	switch (r.kind) {

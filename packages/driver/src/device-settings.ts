@@ -1,4 +1,4 @@
-import { resolveTextSize } from "@delacour/warden-config/text-size";
+import { textSizes } from "@delacour/warden-config/text-size";
 import { driverErr } from "./errors";
 
 /** Checks shared by both platforms' device-setting ops; each returns a message, or undefined when fine. */
@@ -42,4 +42,4 @@ export function pushProblem(payload: unknown): string | undefined {
 export const badRequest = (problem: string | undefined) =>
 	problem === undefined ? undefined : driverErr("E_BAD_REQUEST", problem);
 
-export { resolveTextSize };
+export { textSizes };

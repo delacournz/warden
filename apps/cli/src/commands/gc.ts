@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-builds/builds.defaults";
 import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
-import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { androidSnapshotPass, providerFor } from "@delacour/warden-core/host-deps";
 import { mapBounded } from "@delacour/warden-leasing/bounded";
 import { closeSimWindowsAfter } from "@delacour/warden-leasing/close-sim-windows-after";
@@ -139,7 +139,7 @@ async function gcPlatform(
 }
 
 function parseIdle(raw: string | undefined): Result<number> {
-	return raw === undefined ? resultFactory.ok(DEFAULT_IDLE_MS) : parseDuration(raw);
+	return raw === undefined ? resultFactory.ok(DEFAULT_IDLE_MS) : durationParser.parse(raw);
 }
 
 /**
@@ -311,7 +311,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		};
 	};
 	if (!opts.quiet && !opts.json)
-		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${formatDuration(idle.data)}`);
+		heading(ctx, "gc", `${plural(stale.length, "stale lease")} · idle > ${durationParser.format(idle.data)}`);
 	// `--quiet` is the detached auto-gc: no terminal, so no spinner.
 	const { reclaimed, shutdown, forgotten, notes } = opts.quiet
 		? await shutDownIdle(ctx)
@@ -327,7 +327,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const text = [
 		`reclaimed ${reclaimed.length} stale lease${reclaimed.length === 1 ? "" : "s"}`,
 		shutdown.length > 0
-			? color.green(`shut down ${shutdown.map((d) => d.name).join(" ")} (idle > ${formatDuration(idle.data)})`)
+			? color.green(`shut down ${shutdown.map((d) => d.name).join(" ")} (idle > ${durationParser.format(idle.data)})`)
 			: color.dim("no idle devices"),
 		...(forgotten.length > 0
 			? [color.yellow(`forgot exited emulators ${forgotten.map((d) => d.name).join(" ")}`)]
@@ -347,7 +347,7 @@ export const gcCommand = defineCommand({
 		cmd
 			.option(
 				"--idle <duration>",
-				`shut down unleased warden devices idle this long (default: ${formatDuration(DEFAULT_IDLE_MS)})`
+				`shut down unleased warden devices idle this long (default: ${durationParser.format(DEFAULT_IDLE_MS)})`
 			)
 			.option(
 				"--max-cache-size <size>",

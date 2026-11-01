@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_SLIM_PROFILE, desiredLabels, managedSet } from "@delacour/warden-config/slim.profile";
+import { DEFAULT_SLIM_PROFILE, slimProfiles } from "@delacour/warden-config/slim.profile";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { disabledLabels, readDisabledStore, writeDisabledStore } from "./disabled-store";
 import { prepareOfflineSlim, runtimeSupportsPersistentOverrides, verifyOfflineSlim } from "./slim.offline";
@@ -34,9 +34,9 @@ describe("prepareOfflineSlim", () => {
 		const res = await prepareOfflineSlim("U1", DEFAULT_SLIM_PROFILE, { root });
 		expect(res.success).toBe(true);
 		if (!res.success || !("path" in res.data)) throw new Error("expected a write");
-		expect(res.data.written).toBe(desiredLabels(DEFAULT_SLIM_PROFILE).size);
+		expect(res.data.written).toBe(slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE).size);
 		const store = await readDisabledStore("U1", root);
-		expect(store.success && disabledLabels(store.data)).toEqual(desiredLabels(DEFAULT_SLIM_PROFILE));
+		expect(store.success && disabledLabels(store.data)).toEqual(slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE));
 	});
 
 	test("second run is already-slim and writes nothing", async () => {
@@ -46,8 +46,8 @@ describe("prepareOfflineSlim", () => {
 	});
 
 	test("re-enables managed labels disabled beyond the profile", async () => {
-		const desired = desiredLabels(DEFAULT_SLIM_PROFILE);
-		const extra = [...managedSet()].find((l) => !desired.has(l)) ?? "com.apple.gamed";
+		const desired = slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE);
+		const extra = [...slimProfiles.managedSet()].find((l) => !desired.has(l)) ?? "com.apple.gamed";
 		await writeDisabledStore("U1", { disable: [...desired, extra], enable: [] }, root);
 		const res = await prepareOfflineSlim("U1", DEFAULT_SLIM_PROFILE, { root });
 		expect(res.success && "path" in res.data && res.data.written).toBe(1);
@@ -79,7 +79,7 @@ describe("verifyOfflineSlim", () => {
 	test("reports no missing labels when all desired are disabled", async () => {
 		const calls: string[][] = [];
 		const res = await verifyOfflineSlim(
-			execOf([{ stdout: printed(desiredLabels(DEFAULT_SLIM_PROFILE)) }], calls),
+			execOf([{ stdout: printed(slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)) }], calls),
 			"U1",
 			DEFAULT_SLIM_PROFILE
 		);
@@ -88,7 +88,7 @@ describe("verifyOfflineSlim", () => {
 	});
 
 	test("lists desired labels that are not disabled", async () => {
-		const desired = [...desiredLabels(DEFAULT_SLIM_PROFILE)].sort();
+		const desired = [...slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)].sort();
 		const res = await verifyOfflineSlim(execOf([{ stdout: printed(desired.slice(2)) }]), "U1", DEFAULT_SLIM_PROFILE);
 		expect(res.success && res.data.missing).toEqual(desired.slice(0, 2));
 	});
@@ -102,7 +102,7 @@ describe("verifyOfflineSlim", () => {
 					{ exitCode: 124, stderr: "" },
 					{ exitCode: 1, stderr: "Domain is tearing down" },
 					{ exitCode: 1, stdout: "code=124" },
-					{ stdout: printed(desiredLabels(DEFAULT_SLIM_PROFILE)) },
+					{ stdout: printed(slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)) },
 				],
 				calls
 			),

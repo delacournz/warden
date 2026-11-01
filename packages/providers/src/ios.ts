@@ -1,4 +1,4 @@
-import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "@delacour/warden-config/slim.profile";
+import { DEFAULT_SLIM_PROFILE, type SlimProfile, slimProfiles } from "@delacour/warden-config/slim.profile";
 import { type Exec, type ExecResult, execErrors } from "@delacour/warden-runtime/exec";
 import { type DeviceState, type InventoryDevice, leaseModel } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
@@ -488,7 +488,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		}
 		const { missing } = verified.data;
 		if (missing.length > 0) {
-			const total = desiredLabels(slim).size;
+			const total = slimProfiles.desiredLabels(slim).size;
 			note(`${id} came up with ${total - missing.length}/${total} overrides, fixing live`);
 			const fixed = await slimSimulator(exec, id, { profile: slim });
 			if (!fixed.success) {

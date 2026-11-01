@@ -7,7 +7,7 @@ import type {
 	NetworkCondition,
 	OwnedProcess,
 } from "@delacour/warden-config/conditions.types";
-import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
 import type { ClockState, NetworkState } from "@delacour/warden-driver/driver.types";
@@ -154,7 +154,8 @@ function seedFailure(
 
 function faultText(fault: HostFault): string {
 	const a = fault.action;
-	const what = a.kind === "status" ? `status ${a.code}` : a.kind === "delay" ? `delay ${formatDuration(a.ms)}` : a.kind;
+	const what =
+		a.kind === "status" ? `status ${a.code}` : a.kind === "delay" ? `delay ${durationParser.format(a.ms)}` : a.kind;
 	return `${fault.match} → ${what}`;
 }
 
@@ -739,7 +740,7 @@ function recordedClock(record: Extract<ConditionRecord, { area: "clock" }> | und
 function describeClock(state: ReturnType<typeof recordedClock>): string {
 	const at = new Date(state.nowMs).toISOString();
 	if (state.condition.kind === "real") return "clock real";
-	return `clock ${state.frozen ? "frozen at" : "now"} ${at}${state.frozen ? "" : ` (offset ${state.offsetMs >= 0 ? "+" : "-"}${formatDuration(Math.abs(state.offsetMs))})`}`;
+	return `clock ${state.frozen ? "frozen at" : "now"} ${at}${state.frozen ? "" : ` (offset ${state.offsetMs >= 0 ? "+" : "-"}${durationParser.format(Math.abs(state.offsetMs))})`}`;
 }
 
 function clockWarnings(offsetMs: number, state?: ClockState): string[] {
@@ -867,7 +868,7 @@ export function uiClock(
 			case "set":
 				return clockSet(ctx, real, device, arg, opts);
 			case "advance": {
-				const by = parseDuration(arg ?? "");
+				const by = durationParser.parse(arg ?? "");
 				if (!by.success) return fail("usage", `clock advance needs a duration: ${by.error}`, "2d, 3h, 90m");
 				return applyClock(ctx, real, device, "clock-advance", advancedClock(ctx, record, by.data), opts);
 			}

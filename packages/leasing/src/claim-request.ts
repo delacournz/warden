@@ -1,5 +1,5 @@
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
-import { resolveSlim, type SlimSetting } from "@delacour/warden-config/slim-policy";
+import { type SlimSetting, slimPolicy } from "@delacour/warden-config/slim-policy";
 import { listAvds } from "@delacour/warden-providers/android";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
 import type { DeviceRequest, Owner } from "@delacour/warden-store/types";
@@ -159,7 +159,7 @@ export async function claimWithRequest(
 		const room = maxConcurrent(request.platform, capacity.budget, capacity.config);
 		request = { ...request, max: Math.max(request.max, room) };
 	}
-	const slim = resolveSlim({ ...flags.slim, env: host.env });
+	const slim = slimPolicy.resolveSlim({ ...flags.slim, env: host.env });
 	if (!slim.success) return wardenErrors.err("usage", slim.error);
 	const providerOptions = providerOptionsFor(request, slim.data);
 	const outcome = await claimDevices({

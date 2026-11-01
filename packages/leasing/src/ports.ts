@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { checkRange } from "@delacour/warden-config/ports-spec";
+import { portSpecParser } from "@delacour/warden-config/ports-spec";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import { storeLocator } from "@delacour/warden-store/store";
@@ -89,7 +89,7 @@ type TxnOutcome = { kind: "leased"; leases: Lease[] } | { kind: "short" };
 type ClaimPlan = { all: number[]; count: number; exhausted: string };
 
 function planClaim(req: ClaimPortsRequest): Result<ClaimPlan, WardenError> {
-	const range = wardenErrors.coded(checkRange(req.from, req.span), "usage");
+	const range = wardenErrors.coded(portSpecParser.check(req.from, req.span), "usage");
 	if (!range.success) return range;
 	const count = req.count ?? 1;
 	const step = req.step ?? 1;

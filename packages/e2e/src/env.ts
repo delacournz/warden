@@ -1,4 +1,4 @@
-import { type ConditionsConfig, parseConditionsEnv } from "@delacour/warden-config/conditions.config";
+import { type ConditionsConfig, conditionsConfigs } from "@delacour/warden-config/conditions.config";
 import type { Result } from "@delacour/warden-types/result";
 import { z } from "zod";
 
@@ -81,7 +81,7 @@ const launchArgs = z.string().transform((raw, ctx): string[] => {
 });
 
 const conditions = z.string().transform((raw, ctx): ConditionsConfig => {
-	const parsed = parseConditionsEnv(raw);
+	const parsed = conditionsConfigs.parseConditionsEnv(raw);
 	if (parsed.success) return parsed.data;
 	ctx.addIssue({ code: "custom", message: parsed.error });
 	return z.NEVER;

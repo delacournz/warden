@@ -11,9 +11,9 @@ import {
 	type PermissionState,
 	TEXT_SIZE_NAMES,
 } from "./conditions.types";
-import { parseDuration } from "./duration";
+import { durationParser } from "./duration";
 import { NETWORK_PRESET_NAMES } from "./network.presets";
-import { resolveTextSize } from "./text-size";
+import { textSizes } from "./text-size";
 
 const NETWORK_WORDS = ["online", "offline", ...NETWORK_PRESET_NAMES] as const;
 
@@ -33,7 +33,7 @@ const customNetworkSchema = z
 const isoDate = z.string().refine((v) => !Number.isNaN(Date.parse(v)), { message: "invalid date (use ISO 8601)" });
 const offsetDuration = z
 	.string()
-	.refine((v) => parseDuration(v).success, { message: "invalid duration (use e.g. 2d)" });
+	.refine((v) => durationParser.parse(v).success, { message: "invalid duration (use e.g. 2d)" });
 
 const textSize = z.union([z.enum(TEXT_SIZE_NAMES), z.number().positive().finite()]);
 
@@ -92,37 +92,6 @@ export type ConditionsConfig = z.input<typeof conditionsConfigSchema>;
 /** What a spec's `device.network.set` takes: a condition, or its word. */
 export type NetworkInput = NetworkCondition | "online" | "offline" | NetworkPreset;
 
-const isWord = (v: string): v is "online" | "offline" | NetworkPreset =>
-	(NETWORK_WORDS as readonly string[]).includes(v);
-
-/** A word, a custom shape (config) or a ready condition, as a `NetworkCondition`. */
-export function toNetworkCondition(
-	input: NetworkInput | z.infer<typeof customNetworkSchema>
-): Result<NetworkCondition> {
-	if (typeof input === "string") {
-		if (!isWord(input)) return resultFactory.err(`unknown network "${input}" (use ${NETWORK_WORDS.join(", ")})`);
-		if (input === "online" || input === "offline") return resultFactory.ok({ kind: input });
-		return resultFactory.ok({ kind: "preset", preset: input });
-	}
-	if ("kind" in input) return resultFactory.ok(input);
-	return resultFactory.ok({ kind: "custom", ...input });
-}
-
-function toLocation(input: NonNullable<ConditionsConfig["location"]>): LocationCondition {
-	if (typeof input === "string") return { kind: "scenario", name: input };
-	return { kind: "point", lat: input.lat, lon: input.lon, ...(input.altM === undefined ? {} : { altM: input.altM }) };
-}
-
-function toClock(input: NonNullable<ConditionsConfig["clock"]>): ClockCondition {
-	if (typeof input === "string") return { kind: "fixed", at: new Date(input).toISOString() };
-	if ("offset" in input) {
-		const ms = parseDuration(input.offset);
-		return { kind: "offset", ms: ms.success ? ms.data : 0 };
-	}
-	const at = new Date(input.at).toISOString();
-	return input.frozen === true ? { kind: "frozen", at } : { kind: "fixed", at };
-}
-
 export type SuiteConditions = {
 	network?: NetworkCondition;
 	location?: LocationCondition;
@@ -133,50 +102,85 @@ export type SuiteConditions = {
 	a11y?: A11yCondition;
 };
 
-/** A config as conditions: shaped values, with a text size resolved. */
-export function normalizeConditions(config: ConditionsConfig): Result<{ conditions: SuiteConditions }> {
-	const conditions: SuiteConditions = {};
-	if (config.network !== undefined) {
-		const network = toNetworkCondition(config.network);
-		if (!network.success) return network;
-		conditions.network = network.data;
+/** Reads a `conditions` config into the conditions a run applies. */
+export class ConditionsConfigs {
+	private isWord(v: string): v is "online" | "offline" | NetworkPreset {
+		return (NETWORK_WORDS as readonly string[]).includes(v);
 	}
-	if (config.location !== undefined) conditions.location = toLocation(config.location);
-	if (config.clock !== undefined) conditions.clock = toClock(config.clock);
-	if (config.permissions !== undefined) conditions.permissions = config.permissions;
-	if (config.locale !== undefined) conditions.locale = config.locale;
-	if (config.timezone !== undefined) conditions.timezone = config.timezone;
-	if (config.a11y !== undefined) {
-		const a11y: A11yCondition = { ...config.a11y };
-		if (config.a11y.textSize !== undefined) {
-			const size = resolveTextSize(config.a11y.textSize);
-			if (!size.success) return size;
-			a11y.fontScale = size.data.scale;
+
+	/** A word, a custom shape (config) or a ready condition, as a `NetworkCondition`. */
+	toNetworkCondition(input: NetworkInput | z.infer<typeof customNetworkSchema>): Result<NetworkCondition> {
+		if (typeof input === "string") {
+			if (!this.isWord(input)) return resultFactory.err(`unknown network "${input}" (use ${NETWORK_WORDS.join(", ")})`);
+			if (input === "online" || input === "offline") return resultFactory.ok({ kind: input });
+			return resultFactory.ok({ kind: "preset", preset: input });
 		}
-		conditions.a11y = a11y;
+		if ("kind" in input) return resultFactory.ok(input);
+		return resultFactory.ok({ kind: "custom", ...input });
 	}
-	return resultFactory.ok({ conditions });
+
+	private toLocation(input: NonNullable<ConditionsConfig["location"]>): LocationCondition {
+		if (typeof input === "string") return { kind: "scenario", name: input };
+		return { kind: "point", lat: input.lat, lon: input.lon, ...(input.altM === undefined ? {} : { altM: input.altM }) };
+	}
+
+	private toClock(input: NonNullable<ConditionsConfig["clock"]>): ClockCondition {
+		if (typeof input === "string") return { kind: "fixed", at: new Date(input).toISOString() };
+		if ("offset" in input) {
+			const ms = durationParser.parse(input.offset);
+			return { kind: "offset", ms: ms.success ? ms.data : 0 };
+		}
+		const at = new Date(input.at).toISOString();
+		return input.frozen === true ? { kind: "frozen", at } : { kind: "fixed", at };
+	}
+
+	/** A config as conditions: shaped values, with a text size resolved. */
+	normalizeConditions(config: ConditionsConfig): Result<{ conditions: SuiteConditions }> {
+		const conditions: SuiteConditions = {};
+		if (config.network !== undefined) {
+			const network = this.toNetworkCondition(config.network);
+			if (!network.success) return network;
+			conditions.network = network.data;
+		}
+		if (config.location !== undefined) conditions.location = this.toLocation(config.location);
+		if (config.clock !== undefined) conditions.clock = this.toClock(config.clock);
+		if (config.permissions !== undefined) conditions.permissions = config.permissions;
+		if (config.locale !== undefined) conditions.locale = config.locale;
+		if (config.timezone !== undefined) conditions.timezone = config.timezone;
+		if (config.a11y !== undefined) {
+			const a11y: A11yCondition = { ...config.a11y };
+			if (config.a11y.textSize !== undefined) {
+				const size = textSizes.resolveTextSize(config.a11y.textSize);
+				if (!size.success) return size;
+				a11y.fontScale = size.data.scale;
+			}
+			conditions.a11y = a11y;
+		}
+		return resultFactory.ok({ conditions });
+	}
+
+	/** The suite's `conditions` over the top-level ones, per area; undefined when neither sets any. */
+	mergeConditionsConfig(
+		top: ConditionsConfig | undefined,
+		own: ConditionsConfig | undefined
+	): ConditionsConfig | undefined {
+		const merged: ConditionsConfig = { ...top, ...own };
+		return Object.keys(merged).length > 0 ? merged : undefined;
+	}
+
+	/** `WARDEN_CONDITIONS`: the JSON of a suite's config, checked again on the spec side. */
+	parseConditionsEnv(raw: string): Result<ConditionsConfig> {
+		let json: unknown;
+		try {
+			json = JSON.parse(raw);
+		} catch {
+			return resultFactory.err("must be JSON");
+		}
+		const parsed = conditionsConfigSchema.safeParse(json);
+		return parsed.success
+			? resultFactory.ok(parsed.data)
+			: resultFactory.err(parsed.error.issues.map((i) => i.message).join("; "));
+	}
 }
 
-/** The suite's `conditions` over the top-level ones, per area; undefined when neither sets any. */
-export function mergeConditionsConfig(
-	top: ConditionsConfig | undefined,
-	own: ConditionsConfig | undefined
-): ConditionsConfig | undefined {
-	const merged: ConditionsConfig = { ...top, ...own };
-	return Object.keys(merged).length > 0 ? merged : undefined;
-}
-
-/** `WARDEN_CONDITIONS`: the JSON of a suite's config, checked again on the spec side. */
-export function parseConditionsEnv(raw: string): Result<ConditionsConfig> {
-	let json: unknown;
-	try {
-		json = JSON.parse(raw);
-	} catch {
-		return resultFactory.err("must be JSON");
-	}
-	const parsed = conditionsConfigSchema.safeParse(json);
-	return parsed.success
-		? resultFactory.ok(parsed.data)
-		: resultFactory.err(parsed.error.issues.map((i) => i.message).join("; "));
-}
+export const conditionsConfigs = new ConditionsConfigs();

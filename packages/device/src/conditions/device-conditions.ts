@@ -1,10 +1,9 @@
 import { resolve } from "node:path";
 import {
 	type ConditionsConfig,
+	conditionsConfigs,
 	type NetworkInput,
-	normalizeConditions,
 	type SuiteConditions,
-	toNetworkCondition,
 } from "@delacour/warden-config/conditions.config";
 import type {
 	A11yCondition,
@@ -20,8 +19,8 @@ import type {
 	PermissionName,
 	PermissionState,
 } from "@delacour/warden-config/conditions.types";
-import { parseDuration } from "@delacour/warden-config/duration";
-import { appliedA11y, resolveTextSize } from "@delacour/warden-config/text-size";
+import { durationParser } from "@delacour/warden-config/duration";
+import { textSizes } from "@delacour/warden-config/text-size";
 import {
 	type ConditionEvent,
 	type ConditionSink,
@@ -241,13 +240,13 @@ function durationMs(value: Duration, what: string): number {
 		if (!Number.isFinite(value) || value < 0) throw invalid(`${what} must be 0 or more, got ${String(value)}`);
 		return value;
 	}
-	const parsed = parseDuration(value);
+	const parsed = durationParser.parse(value);
 	if (!parsed.success) throw invalid(`${what}: ${parsed.error}`);
 	return parsed.data;
 }
 
 function network(input: NetworkInput): NetworkCondition {
-	const condition = toNetworkCondition(input);
+	const condition = conditionsConfigs.toNetworkCondition(input);
 	if (!condition.success) throw invalid(condition.error);
 	return condition.data;
 }
@@ -294,7 +293,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	const { driver, env } = deps;
 	const ticker = deps.tickerClock ?? realTickerClock;
 	const log = deps.log ?? stderrLog;
-	const normalized = normalizeConditions(env.conditions ?? {});
+	const normalized = conditionsConfigs.normalizeConditions(env.conditions ?? {});
 	if (!normalized.success) throw new E2eError("SESSION", `invalid conditions: ${normalized.error}`);
 	const baseline: SuiteConditions = normalized.data.conditions;
 
@@ -683,7 +682,7 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 	function checkedA11y(op: A11yOp | null): void {
 		if (op === null) return;
 		if (op.textSize !== undefined) {
-			const size = resolveTextSize(op.textSize);
+			const size = textSizes.resolveTextSize(op.textSize);
 			if (!size.success) throw invalid(size.error);
 		}
 		if (Object.keys(op).length === 0)
@@ -695,13 +694,13 @@ export function createDeviceConditions(deps: DeviceConditionsDeps): DeviceCondit
 		a11yDirty = true;
 		const run = settingOp("a11y");
 		const state = await call("a11y", () => run(op));
-		const resolved = op?.textSize === undefined ? undefined : resolveTextSize(op.textSize);
+		const resolved = op?.textSize === undefined ? undefined : textSizes.resolveTextSize(op.textSize);
 		currentA11y =
 			op === null
 				? {}
 				: {
 						...currentA11y,
-						...appliedA11y(op, state.applied),
+						...textSizes.appliedA11y(op, state.applied),
 						...(resolved?.success ? { fontScale: resolved.data.scale } : {}),
 					};
 		if (Object.keys(currentA11y).length === 0) recorder?.settle("a11y", currentA11y, true);

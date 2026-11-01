@@ -64,43 +64,49 @@ export type NetworkPlan = { online: false } | ({ online: true } & NetworkPresetS
 const UNSHAPED: NetworkShaping = { latencyMs: 0, jitterMs: 0, downKbps: 0, upKbps: 0, lossPct: 0 };
 const UNSHAPED_EMU: EmuNetwork = { speed: "full", delay: "none" };
 
-const nonNegative = (value: number | undefined): number =>
-	value === undefined || !Number.isFinite(value) ? 0 : Math.max(0, value);
+/** Resolves a network condition to the plan a device applies. */
+export class NetworkPresets {
+	private nonNegative(value: number | undefined): number {
+		return value === undefined || !Number.isFinite(value) ? 0 : Math.max(0, value);
+	}
 
-function customEmu(shaping: NetworkShaping): EmuNetwork {
-	const { downKbps, upKbps, latencyMs, jitterMs } = shaping;
-	const speed = downKbps === 0 && upKbps === 0 ? UNSHAPED_EMU.speed : `${upKbps || downKbps}:${downKbps || upKbps}`;
-	const half = latencyMs / 2;
-	const min = Math.max(0, Math.round(half - jitterMs));
-	const max = Math.round(half + jitterMs);
-	const delay = max === 0 ? UNSHAPED_EMU.delay : `${min}:${max}`;
-	return { speed, delay };
-}
+	private customEmu(shaping: NetworkShaping): EmuNetwork {
+		const { downKbps, upKbps, latencyMs, jitterMs } = shaping;
+		const speed = downKbps === 0 && upKbps === 0 ? UNSHAPED_EMU.speed : `${upKbps || downKbps}:${downKbps || upKbps}`;
+		const half = latencyMs / 2;
+		const min = Math.max(0, Math.round(half - jitterMs));
+		const max = Math.round(half + jitterMs);
+		const delay = max === 0 ? UNSHAPED_EMU.delay : `${min}:${max}`;
+		return { speed, delay };
+	}
 
-/**
- * The effective parameters of a condition. `custom` names only what it changes (the rest is unshaped, a
- * direction left out takes the other's rate for the emulator); `flap` resolves to its up phase, because the
- * scheduler (COND-6) drives the transitions as plain online/offline conditions.
- */
-export function resolveNetwork(condition: NetworkCondition): NetworkPlan {
-	switch (condition.kind) {
-		case "offline":
-			return { online: false };
-		case "online":
-			return { online: true, shaping: UNSHAPED, emu: UNSHAPED_EMU };
-		case "preset":
-			return { online: true, ...NETWORK_PRESETS[condition.preset] };
-		case "flap":
-			return resolveNetwork(condition.base ?? { kind: "online" });
-		case "custom": {
-			const shaping: NetworkShaping = {
-				latencyMs: nonNegative(condition.latencyMs),
-				jitterMs: nonNegative(condition.jitterMs),
-				downKbps: nonNegative(condition.downKbps),
-				upKbps: nonNegative(condition.upKbps),
-				lossPct: Math.min(100, nonNegative(condition.lossPct)),
-			};
-			return { online: true, shaping, emu: customEmu(shaping) };
+	/**
+	 * The effective parameters of a condition. `custom` names only what it changes (the rest is unshaped, a
+	 * direction left out takes the other's rate for the emulator); `flap` resolves to its up phase, because the
+	 * scheduler (COND-6) drives the transitions as plain online/offline conditions.
+	 */
+	resolveNetwork(condition: NetworkCondition): NetworkPlan {
+		switch (condition.kind) {
+			case "offline":
+				return { online: false };
+			case "online":
+				return { online: true, shaping: UNSHAPED, emu: UNSHAPED_EMU };
+			case "preset":
+				return { online: true, ...NETWORK_PRESETS[condition.preset] };
+			case "flap":
+				return this.resolveNetwork(condition.base ?? { kind: "online" });
+			case "custom": {
+				const shaping: NetworkShaping = {
+					latencyMs: this.nonNegative(condition.latencyMs),
+					jitterMs: this.nonNegative(condition.jitterMs),
+					downKbps: this.nonNegative(condition.downKbps),
+					upKbps: this.nonNegative(condition.upKbps),
+					lossPct: Math.min(100, this.nonNegative(condition.lossPct)),
+				};
+				return { online: true, shaping, emu: this.customEmu(shaping) };
+			}
 		}
 	}
 }
+
+export const networkPresets = new NetworkPresets();

@@ -1,4 +1,4 @@
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import type { MetricsSampler, MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -14,7 +14,7 @@ export const HUD_TICK_TIMEOUT_MS = 15_000;
 
 /** `--hud-interval 750ms` → 750; under the 200 ms floor is an error rather than a silent raise. */
 export function parseHudInterval(raw: string): Result<number> {
-	const parsed = parseDuration(raw);
+	const parsed = durationParser.parse(raw);
 	if (!parsed.success) return parsed;
 	if (parsed.data < HUD_MIN_INTERVAL_MS)
 		return resultFactory.err(`${raw} is under the ${HUD_MIN_INTERVAL_MS}ms minimum`);

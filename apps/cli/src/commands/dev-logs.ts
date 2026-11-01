@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Command as Commander } from "@commander-js/extra-typings";
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { processOnSignal } from "@delacour/warden-leasing/session";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -56,7 +56,7 @@ const defaultDeps: DevLogsDeps = {
 
 /** `30s` / `5m` ago, or an ISO time, as epoch ms. */
 export function parseSince(input: string, now: number): { ok: true; ms: number } | { ok: false; message: string } {
-	const duration = parseDuration(input);
+	const duration = durationParser.parse(input);
 	if (duration.success) return { ok: true, ms: now - duration.data };
 	const iso = Date.parse(input);
 	if (Number.isNaN(iso)) return { ok: false, message: `invalid --since "${input}" (use 30s, 5m, 2h or an ISO time)` };

@@ -9,7 +9,7 @@ import {
 } from "@delacour/warden-builds/prepare";
 import type { AppPhase, EnsureResult } from "@delacour/warden-builds/resolve";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-config/config.defaults";
-import { parsePortSpec } from "@delacour/warden-config/ports-spec";
+import { portSpecParser } from "@delacour/warden-config/ports-spec";
 import { leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -65,7 +65,7 @@ export async function claimRunPorts(
 	const store = host.store();
 	const ports: RunPort[] = [];
 	for (const spec of specs) {
-		const range = wardenErrors.coded(parsePortSpec(spec), "usage");
+		const range = wardenErrors.coded(portSpecParser.parse(spec), "usage");
 		const claimed = range.success
 			? await claimPorts(
 					store,

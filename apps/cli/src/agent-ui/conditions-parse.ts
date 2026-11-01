@@ -5,7 +5,7 @@ import type {
 	NetworkCondition,
 	NetworkPreset,
 } from "@delacour/warden-config/conditions.types";
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { NETWORK_PRESET_NAMES, NETWORK_PRESETS } from "@delacour/warden-config/network.presets";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type UiError, uiError } from "./output";
@@ -68,9 +68,9 @@ export function parseFlap(flags: FlapFlags): Result<FlapSpec, UiError> {
 	if (flags.up === undefined || flags.down === undefined) {
 		return usage("flap needs --up and --down", "warden ui net flap --up 10s --down 3s");
 	}
-	const upMs = parseDuration(flags.up);
+	const upMs = durationParser.parse(flags.up);
 	if (!upMs.success) return usage(`--up: ${upMs.error}`);
-	const downMs = parseDuration(flags.down);
+	const downMs = durationParser.parse(flags.down);
 	if (!downMs.success) return usage(`--down: ${downMs.error}`);
 	if (!(upMs.data > 0 && downMs.data > 0)) return usage("flap needs --up and --down above 0");
 	const jitterPct = number(flags.jitter, "--jitter", 100);
@@ -105,7 +105,7 @@ export function parseFault(match: string, rule: string): Result<HostFault, UiErr
 		return resultFactory.ok({ match, action: { kind: "status", code } });
 	}
 	if (kind === "delay") {
-		const ms = arg === undefined ? undefined : parseDuration(arg);
+		const ms = arg === undefined ? undefined : durationParser.parse(arg);
 		if (ms === undefined || !ms.success) return usage(`delay needs a duration, got "${rule}"`, "delay:2s");
 		return resultFactory.ok({ match, action: { kind: "delay", ms: ms.data } });
 	}

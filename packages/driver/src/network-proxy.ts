@@ -1,5 +1,5 @@
 import type { HostFault, NetworkCondition } from "@delacour/warden-config/conditions.types";
-import { type ConditionsUpdate, type ProxyConditions, shapingFromCondition } from "@delacour/warden-config/shaping";
+import { type ConditionsUpdate, type ProxyConditions, proxyShaping } from "@delacour/warden-config/shaping";
 import type { AsyncResult } from "@delacour/warden-types/result";
 
 /** Where a lease's shaping proxy listens (always loopback on the host). */
@@ -22,7 +22,7 @@ export type NetworkProxyPort = {
 
 /** The proxy parameters for `condition` plus the faults to keep. Offline is `refuse`: connections close at accept. */
 export function proxyConditionsFor(condition: NetworkCondition, faults: readonly HostFault[]): ProxyConditions {
-	return { params: shapingFromCondition(condition), faults };
+	return { params: proxyShaping.fromCondition(condition), faults };
 }
 
 /**

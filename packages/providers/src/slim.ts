@@ -1,11 +1,4 @@
-import {
-	DEFAULT_SLIM_PROFILE,
-	delta,
-	desiredLabels,
-	managedSet,
-	type SlimProfile,
-	slimmableSet,
-} from "@delacour/warden-config/slim.profile";
+import { DEFAULT_SLIM_PROFILE, type SlimProfile, slimProfiles } from "@delacour/warden-config/slim.profile";
 import { type Exec, type ExecResult, execErrors } from "@delacour/warden-runtime/exec";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { execWithin, realTimer, type Timer } from "./health";
@@ -76,7 +69,7 @@ export function parsePrintDisabled(stdout: string): Map<string, boolean> {
 export function planSlim(
 	jobs: LaunchJob[],
 	disabled: Map<string, boolean>,
-	desired: ReadonlySet<string> = desiredLabels(DEFAULT_SLIM_PROFILE)
+	desired: ReadonlySet<string> = slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)
 ): string[] {
 	const running = new Set(jobs.filter((job) => job.pid !== null).map((job) => job.label));
 	return [...desired].filter((label) => disabled.get(label) !== true || running.has(label));
@@ -101,7 +94,7 @@ export function planHeal(disabled: Map<string, boolean>): string[] {
 
 /** Managed (and retired) labels currently disabled — what `--restore` re-enables. */
 export function planRestore(disabled: Map<string, boolean>): string[] {
-	const everything = new Set([...slimmableSet(), ...managedSet(), ...SLIM_RETIRED]);
+	const everything = new Set([...slimProfiles.slimmableSet(), ...slimProfiles.managedSet(), ...SLIM_RETIRED]);
 	return [...everything].filter((label) => disabled.get(label) === true);
 }
 
@@ -265,12 +258,12 @@ async function slimLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimReport>
 	if (!listed.success) return listed;
 	const disabled = read.data;
 	const loaded = loadedLabels(listed.data);
-	const desired = desiredLabels(options.profile ?? DEFAULT_SLIM_PROFILE);
-	const managed = new Set([...managedSet(), ...SLIM_RETIRED]);
+	const desired = slimProfiles.desiredLabels(options.profile ?? DEFAULT_SLIM_PROFILE);
+	const managed = new Set([...slimProfiles.managedSet(), ...SLIM_RETIRED]);
 	const pending = [...desired].filter((label) => stillWanted(label, disabled, loaded));
 	if (options.dryRun) return resultFactory.ok({ labels: pending, batched: 0, perLabel: 0, verified: false });
 
-	await enableQuietly(ctx, delta(disabled, desired, managed).toEnable);
+	await enableQuietly(ctx, slimProfiles.delta(disabled, desired, managed).toEnable);
 
 	const batch = await batchUnloadPending(ctx, pending, loaded);
 	if (!batch.success) return batch;
@@ -320,8 +313,8 @@ async function verifyDisabled(
 async function restoreLive(ctx: Ctx, options: SlimOptions): AsyncResult<SlimReport> {
 	const read = await readDisabled(ctx);
 	if (!read.success) return read;
-	const managed = new Set([...slimmableSet(), ...managedSet(), ...SLIM_RETIRED]);
-	const labels = delta(read.data, new Set<string>(), managed).toEnable;
+	const managed = new Set([...slimProfiles.slimmableSet(), ...slimProfiles.managedSet(), ...SLIM_RETIRED]);
+	const labels = slimProfiles.delta(read.data, new Set<string>(), managed).toEnable;
 	if (options.dryRun || labels.length === 0)
 		return resultFactory.ok({ labels, batched: 0, perLabel: 0, verified: !options.dryRun });
 

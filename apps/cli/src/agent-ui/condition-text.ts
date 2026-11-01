@@ -1,5 +1,5 @@
 import type { ConditionRecord, LocationCondition, NetworkCondition } from "@delacour/warden-config/conditions.types";
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 
 /** One condition as a short human phrase: `3g`, `custom 800 ms / 780 kbps down`, `flap 10s up / 3s down`. */
 export function describeNetwork(condition: NetworkCondition): string {
@@ -22,7 +22,7 @@ export function describeNetwork(condition: NetworkCondition): string {
 		case "flap": {
 			const jitter = condition.jitterPct === undefined ? "" : ` ±${condition.jitterPct}%`;
 			const base = condition.base === undefined ? "" : ` over ${describeNetwork(condition.base)}`;
-			return `flap ${formatDuration(condition.upMs)} up / ${formatDuration(condition.downMs)} down${jitter}${base}`;
+			return `flap ${durationParser.format(condition.upMs)} up / ${durationParser.format(condition.downMs)} down${jitter}${base}`;
 		}
 	}
 }

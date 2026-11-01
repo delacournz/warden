@@ -32,7 +32,7 @@ import {
 	DEFAULT_METRO_READY_TIMEOUT,
 	DEFAULT_READY_TIMEOUT_MS,
 } from "@delacour/warden-config/config.defaults";
-import { parseDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { providerFor } from "@delacour/warden-core/host-deps";
 import { releaseDevices } from "@delacour/warden-leasing/device-lease";
 import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdown";
@@ -1096,7 +1096,7 @@ async function devOverlay(ctx: CommandContext, start: string): Promise<DevOverla
 async function prepareDev(ctx: CommandContext, platformArg: string | undefined, opts: DevOpts): AsyncResult<Prepared> {
 	const platform = parsePlatform(platformArg ?? "ios");
 	if (!platform.success) return platform;
-	const timeout = parseDuration(opts.readyTimeout);
+	const timeout = durationParser.parse(opts.readyTimeout);
 	if (!timeout.success) return resultFactory.err(`--ready-timeout: ${timeout.error}`);
 	const owner = resolveOwner(ctx);
 	const start = projectStart(ctx, opts.project);

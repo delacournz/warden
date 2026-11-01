@@ -1,5 +1,5 @@
 import type { HostFault, NetworkCondition } from "./conditions.types";
-import { type NetworkShaping, resolveNetwork } from "./network.presets";
+import { type NetworkShaping, networkPresets } from "./network.presets";
 
 /** How an `offline` proxy treats connections: close at accept, or accept and never answer. */
 export type OfflineMode = "refuse" | "blackhole";
@@ -12,12 +12,6 @@ export type OfflineMode = "refuse" | "blackhole";
  */
 export type ShapingParams = Partial<NetworkShaping> & { offline?: OfflineMode };
 
-/** Proxy params for a condition (presets table); `offline` refuses connections. Faults are separate. */
-export function shapingFromCondition(condition: NetworkCondition): ShapingParams {
-	const plan = resolveNetwork(condition);
-	return plan.online ? { ...plan.shaping } : { offline: "refuse" };
-}
-
 /** The live state of a proxy: what `setProxyConditions` replaces. */
 export type ProxyConditions = { params: ShapingParams; faults: readonly HostFault[] };
 
@@ -29,40 +23,62 @@ export const NO_CONDITIONS: ProxyConditions = { params: {}, faults: [] };
 /** Uniform [0, 1); injectable so loss and jitter are reproducible in tests. */
 export type Rng = () => number;
 
-/** mulberry32: tiny seeded PRNG. */
-export function seededRng(seed: number): Rng {
-	let state = seed >>> 0;
-	return () => {
-		state = (state + 0x6d2b79f5) >>> 0;
-		let t = state;
-		t = Math.imul(t ^ (t >>> 15), t | 1);
-		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-		return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
-	};
+/** Makes reproducible random sources. */
+export class RngFactory {
+	/** mulberry32: tiny seeded PRNG. */
+	seeded(seed: number): Rng {
+		let state = seed >>> 0;
+		return () => {
+			state = (state + 0x6d2b79f5) >>> 0;
+			let t = state;
+			t = Math.imul(t ^ (t >>> 15), t | 1);
+			t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+			return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+		};
+	}
 }
 
-/** `(latencyMs ± jitterMs) * scale`, floored at 0. */
-export function delayMs(params: ShapingParams, rng: Rng, scale = 1): number {
-	const base = (params.latencyMs ?? 0) * scale;
-	const jitter = (params.jitterMs ?? 0) * scale;
-	if (jitter <= 0) return Math.max(0, base);
-	return Math.max(0, base + (rng() * 2 - 1) * jitter);
+export const rngFactory = new RngFactory();
+
+/** Pure helpers behind the network proxy: params for a condition, delays, host globs, slice sizes. */
+export class ProxyShaping {
+	/** Proxy params for a condition (presets table); `offline` refuses connections. Faults are separate. */
+	fromCondition(condition: NetworkCondition): ShapingParams {
+		const plan = networkPresets.resolveNetwork(condition);
+		return plan.online ? { ...plan.shaping } : { offline: "refuse" };
+	}
+
+	/** `(latencyMs ± jitterMs) * scale`, floored at 0. */
+	delayMs(params: ShapingParams, rng: Rng, scale = 1): number {
+		const base = (params.latencyMs ?? 0) * scale;
+		const jitter = (params.jitterMs ?? 0) * scale;
+		if (jitter <= 0) return Math.max(0, base);
+		return Math.max(0, base + (rng() * 2 - 1) * jitter);
+	}
+
+	/** `*` matches any run of characters; case-insensitive; the whole host must match. */
+	hostMatches(glob: string, host: string): boolean {
+		const pattern = glob
+			.toLowerCase()
+			.split("*")
+			.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+			.join(".*");
+		return new RegExp(`^${pattern}$`).test(host.toLowerCase());
+	}
+
+	/** First fault whose glob matches `host`. */
+	faultFor(faults: readonly HostFault[], host: string): HostFault | undefined {
+		return faults.find((f) => this.hostMatches(f.match, host));
+	}
+
+	/** Slice size giving ~50 ms granularity at `kbps`, within 256 B – 64 KB. */
+	sliceSize(kbps: number | undefined): number {
+		if (kbps === undefined || kbps <= 0) return 65_536;
+		return Math.min(65_536, Math.max(256, Math.floor((kbps * 1000) / 8 / 20)));
+	}
 }
 
-/** `*` matches any run of characters; case-insensitive; the whole host must match. */
-export function hostMatches(glob: string, host: string): boolean {
-	const pattern = glob
-		.toLowerCase()
-		.split("*")
-		.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-		.join(".*");
-	return new RegExp(`^${pattern}$`).test(host.toLowerCase());
-}
-
-/** First fault whose glob matches `host`. */
-export function faultFor(faults: readonly HostFault[], host: string): HostFault | undefined {
-	return faults.find((f) => hostMatches(f.match, host));
-}
+export const proxyShaping = new ProxyShaping();
 
 /**
  * Serialises sends at a fixed rate: `waitMs` says how long until the next `bytes` may go out, and
@@ -84,10 +100,4 @@ export class TokenBucket {
 		const start = Math.max(now, this.nextFree);
 		this.nextFree = start + (bytes * 8) / kbps;
 	}
-}
-
-/** Slice size giving ~50 ms granularity at `kbps`, within 256 B – 64 KB. */
-export function sliceSize(kbps: number | undefined): number {
-	if (kbps === undefined || kbps <= 0) return 65_536;
-	return Math.min(65_536, Math.max(256, Math.floor((kbps * 1000) / 8 / 20)));
 }

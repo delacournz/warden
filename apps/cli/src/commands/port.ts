@@ -1,6 +1,6 @@
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { formatDuration, parseDuration } from "@delacour/warden-config/duration";
-import { DEFAULT_PORT_SPAN, parsePortSpec } from "@delacour/warden-config/ports-spec";
+import { durationParser } from "@delacour/warden-config/duration";
+import { DEFAULT_PORT_SPAN, portSpecParser } from "@delacour/warden-config/ports-spec";
 import { detectOwner, type OwnerContext, readGitInfo } from "@delacour/warden-leasing/owner";
 import {
 	claimPorts,
@@ -50,11 +50,11 @@ type PortClaim = { from: number; span: number; count: number; ttlMs: number; lab
 
 function parsePortClaim(opts: PortClaimOpts): Result<PortClaim> {
 	const from = opts.from ?? String(DEFAULT_FROM);
-	const range = parsePortSpec(opts.span === undefined ? from : `${from}:${opts.span}`);
+	const range = portSpecParser.parse(opts.span === undefined ? from : `${from}:${opts.span}`);
 	if (!range.success) return range;
 	const count = parseCount(opts.count, "count", 1);
 	if (!count.success) return count;
-	const ttl = opts.ttl === undefined ? resultFactory.ok(DEFAULT_TTL_MS) : parseDuration(opts.ttl);
+	const ttl = opts.ttl === undefined ? resultFactory.ok(DEFAULT_TTL_MS) : durationParser.parse(opts.ttl);
 	if (!ttl.success) return ttl;
 	const flags: PortClaim = { ...range.data, count: count.data, ttlMs: ttl.data };
 	if (opts.label !== undefined) flags.label = opts.label;
@@ -130,8 +130,8 @@ function lsRow(ctx: CommandContext, lease: Lease, now: number): string[] {
 		leaseModel.describeOwner(lease.owner),
 		leaseModel.ownerLocation(lease.owner) ?? "",
 		lease.label ?? "",
-		formatDuration(now - lease.acquiredAt),
-		`${formatDuration(now - lease.heartbeatAt)} ago`,
+		durationParser.format(now - lease.acquiredAt),
+		`${durationParser.format(now - lease.heartbeatAt)} ago`,
 		color.dim(lease.id),
 	];
 }

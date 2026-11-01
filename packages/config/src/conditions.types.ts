@@ -51,7 +51,14 @@ export const PERMISSION_NAMES = [
 ] as const;
 export type PermissionName = (typeof PERMISSION_NAMES)[number];
 
-export const isPermissionName = (v: string): v is PermissionName => (PERMISSION_NAMES as readonly string[]).includes(v);
+/** Checks strings against the permission names. */
+export class PermissionNames {
+	has(v: string): v is PermissionName {
+		return (PERMISSION_NAMES as readonly string[]).includes(v);
+	}
+}
+
+export const permissionNames = new PermissionNames();
 
 /** Runtime permission grants applied to apps on the device. */
 export type PermissionCondition = {

@@ -1,4 +1,4 @@
-import { formatDuration } from "@delacour/warden-config/duration";
+import { durationParser } from "@delacour/warden-config/duration";
 import { DEFAULT_SAMPLING_INTERVAL_US } from "@delacour/warden-perf/js/cpu-profile";
 import { parseDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS, MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
@@ -76,7 +76,7 @@ export function jsSuccess(
 ): PerfDone<JsResult> {
 	const h = result.hotspots;
 	const next = [
-		`warden perf js --duration ${formatDuration(durationMs * 3)}`,
+		`warden perf js --duration ${durationParser.format(durationMs * 3)}`,
 		"warden perf mark <label>   (then compare hotspots across runs)",
 	];
 	const text = renderMarkdown(

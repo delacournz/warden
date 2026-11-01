@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appOptionSchema, appSwitches } from "./app-option.schema";
+import { appOptionReader, appOptionSchema } from "./app-option.schema";
 
 describe("appOptionSchema", () => {
 	test("boolean or { installMode, resetKeychain, variant }, nothing else", () => {
@@ -37,29 +37,32 @@ describe("appOptionSchema", () => {
 		const both = appOptionSchema.safeParse({ kind: "simulator", variant: "e2e" });
 		expect(both.success).toBe(false);
 		expect(JSON.stringify(both.error?.issues)).toContain("kind or variant");
-		expect(appSwitches({ kind: "release", installMode: "clean" })).toEqual({
+		expect(appOptionReader.appSwitches({ kind: "release", installMode: "clean" })).toEqual({
 			app: true,
 			installMode: "clean",
 			kind: "release",
 		});
-		expect(appSwitches(true)).not.toHaveProperty("kind");
+		expect(appOptionReader.appSwitches(true)).not.toHaveProperty("kind");
 	});
 
 	test("appSwitches", () => {
-		expect(appSwitches(undefined)).toEqual({ app: false });
-		expect(appSwitches(false)).toEqual({ app: false });
-		expect(appSwitches(true)).toEqual({ app: true });
-		expect(appSwitches({})).toEqual({ app: true });
-		expect(appSwitches({ installMode: "clean" })).toEqual({ app: true, installMode: "clean" });
-		expect(appSwitches({ installMode: "reinstall", resetKeychain: true })).toEqual({
+		expect(appOptionReader.appSwitches(undefined)).toEqual({ app: false });
+		expect(appOptionReader.appSwitches(false)).toEqual({ app: false });
+		expect(appOptionReader.appSwitches(true)).toEqual({ app: true });
+		expect(appOptionReader.appSwitches({})).toEqual({ app: true });
+		expect(appOptionReader.appSwitches({ installMode: "clean" })).toEqual({ app: true, installMode: "clean" });
+		expect(appOptionReader.appSwitches({ installMode: "reinstall", resetKeychain: true })).toEqual({
 			app: true,
 			installMode: "reinstall",
 			resetKeychain: true,
 		});
-		expect(appSwitches({ installMode: "clean", resetKeychain: false })).toEqual({ app: true, installMode: "clean" });
-		expect(appSwitches({ clean: true })).toEqual({ app: true, installMode: "reinstall" });
-		expect(appSwitches({ clean: false })).toEqual({ app: true });
-		expect(appSwitches({ variant: "e2e", installMode: "reinstall" })).toEqual({
+		expect(appOptionReader.appSwitches({ installMode: "clean", resetKeychain: false })).toEqual({
+			app: true,
+			installMode: "clean",
+		});
+		expect(appOptionReader.appSwitches({ clean: true })).toEqual({ app: true, installMode: "reinstall" });
+		expect(appOptionReader.appSwitches({ clean: false })).toEqual({ app: true });
+		expect(appOptionReader.appSwitches({ variant: "e2e", installMode: "reinstall" })).toEqual({
 			app: true,
 			installMode: "reinstall",
 			variant: "e2e",
