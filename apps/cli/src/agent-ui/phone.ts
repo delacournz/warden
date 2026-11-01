@@ -1,4 +1,4 @@
-import { classifyOther, isEmulatorSerial, listAdbDevices } from "@delacour/warden-providers/android";
+import { Adb, adbParser } from "@delacour/warden-providers/android";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { DeviceResource } from "@delacour/warden-store/types";
 import type { CommandContext } from "../context";
@@ -15,14 +15,14 @@ export type PhoneCheck =
  * cannot be run, or a serial adb does not list, is `other`: the driver then fails with its own error.
  */
 export async function checkPhone(ctx: Pick<CommandContext, "exec" | "env">, serial: string): Promise<PhoneCheck> {
-	if (isEmulatorSerial(serial)) return { kind: "other" };
-	const listed = await listAdbDevices(ctx);
+	if (adbParser.isEmulatorSerial(serial)) return { kind: "other" };
+	const listed = await new Adb(ctx).listDevices();
 	if (!listed.success) return { kind: "other" };
 	const row = listed.data.find((e) => e.serial === serial);
 	if (row?.kind !== "other") return { kind: "other" };
 	let hwSerial: string | undefined;
 	if (row.state === "device") {
-		const classified = await classifyOther(ctx, serial);
+		const classified = await new Adb(ctx).classifyOther(serial);
 		if (classified.success && classified.data.emulator) return { kind: "other" };
 		hwSerial = classified.success ? classified.data.hwSerial : undefined;
 	}

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { releaseJsonSchema } from "@delacour/warden-sdk/contracts/leases";
 import type { Owner } from "@delacour/warden-store/types";
-import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { releaseCommand } from "./release";
 
@@ -12,7 +12,7 @@ const me: Owner = { kind: "agent", sessionId: "me", cwd: "/" };
 const other: Owner = { kind: "agent", sessionId: "other", cwd: "/" };
 
 function setup(argv: string[], calls: string[][] = []): TestContext {
-	ctx = testContext(argv, { exec: fakeSimctl([], calls) });
+	ctx = testContext(argv, { exec: simctlFakes.build([], calls) });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }

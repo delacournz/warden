@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { liveness } from "@delacour/warden-store/liveness";
 import { MIGRATIONS, storeLocator } from "@delacour/warden-store/store";
 import { type Command, defineCommand } from "../command";
@@ -204,7 +204,7 @@ export function ccacheProject(cwd: string): Probe {
 
 export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHelperDeps()): Promise<DoctorCheck[]> {
 	const home = ctx.env.HOME ?? "";
-	const { adb, emulator } = androidTools(ctx.env);
+	const { adb, emulator } = androidToolsLocator.locate(ctx.env);
 	const [simctl, adbProbe, emulatorProbe, ccache, simHelper, xcode, physical] = await Promise.all([
 		tool(ctx, ["xcrun", "simctl", "help"], "xcrun simctl not available (install Xcode) — iOS disabled"),
 		tool(ctx, [adb, "version"], `${adb} not found (set ANDROID_HOME) — Android disabled`),

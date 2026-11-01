@@ -4,7 +4,7 @@
  * (`canPrune`) through the shared `deleteSims` path. A sim leased since the audit is skipped.
  */
 
-import { listAllSims } from "@delacour/warden-providers/simctl-list";
+import { SimctlLister } from "@delacour/warden-providers/simctl-list";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { auditSims, type SimAudit } from "./audit";
@@ -26,7 +26,7 @@ export type SimsPruneResult = {
 };
 
 async function rulesInput(deps: SimsDeps, opts: SimRuleOpts): AsyncResult<RulesInput> {
-	const sims = await listAllSims(deps.exec);
+	const sims = await new SimctlLister(deps.exec).listAll();
 	if (!sims.success) return sims;
 	return resultFactory.ok({
 		...opts,

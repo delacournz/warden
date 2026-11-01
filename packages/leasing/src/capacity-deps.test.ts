@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "@delacour/warden-providers/testing/simctl.testing";
+import { OWNER_ENV, simctlFakes } from "@delacour/warden-providers/testing/simctl.testing";
 import { buildCapacityDeps, capacityConfigFromEnv, capacityEnabled, readCapacityBasis } from "./capacity-deps";
 import { resolveOwner } from "./owner";
 import { TEST_HOST_FACTS, type TestLeaseHost, testLeaseHost } from "./testing/lease-host.testing";
@@ -43,7 +43,7 @@ describe("buildCapacityDeps", () => {
 	});
 
 	test("host inventory merges both platforms; a missing toolchain is an empty list", async () => {
-		ctx = testLeaseHost({ exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		ctx = testLeaseHost({ exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
 		ctx.env = { ...ctx.env, ...OWNER_ENV };
 		const deps = await buildCapacityDeps(ctx, resolveOwner(ctx));
 		const inventory = await deps?.hostInventory();

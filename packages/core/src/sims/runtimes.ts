@@ -4,7 +4,7 @@
  * report-only — the user deletes one with `xcrun simctl runtime delete <identifier>`.
  */
 
-import { shortRuntime } from "@delacour/warden-providers/ios";
+import { simctlParser } from "@delacour/warden-providers/ios";
 import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -58,7 +58,7 @@ function toRuntime(entry: unknown): DiskRuntime | undefined {
 	const runtime: DiskRuntime = {
 		identifier,
 		runtimeIdentifier,
-		runtime: shortRuntime(runtimeIdentifier),
+		runtime: simctlParser.shortRuntime(runtimeIdentifier),
 		version: typeof entry.version === "string" ? entry.version : "",
 		build: typeof entry.build === "string" ? entry.build : "",
 		sizeBytes,

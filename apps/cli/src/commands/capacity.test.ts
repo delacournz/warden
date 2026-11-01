@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { capacityJsonSchema } from "@delacour/warden-sdk/contracts/capacity";
-import { fakeSimctl, wardenSim } from "../simctl.testing";
+import { simctlFakes } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { capacityCommand } from "./capacity";
 
@@ -10,7 +10,7 @@ afterEach(() => ctx?.cleanup());
 describe("warden capacity", () => {
 	test("--json: budget, usage by platform (warden vs foreign), costs, max concurrent", async () => {
 		ctx = testContext(["--json"], {
-			exec: fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)]),
+			exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2)]),
 		});
 		ctx.env = { ...ctx.env, WARDEN_CAPACITY_HEADROOM_GB: "8", WARDEN_CAPACITY_MAX: "4" };
 		expect(await capacityCommand.run(ctx)).toBe(0);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
 import { deviceState } from "./device-state";
 
@@ -7,7 +7,7 @@ const exec = fakeExec.build([
 	[
 		"xcrun simctl list devices -j",
 		{
-			stdout: simctlDevicesJson({
+			stdout: simctlFixtures.devicesJson({
 				"iOS-26-5": [
 					{ udid: "ON", name: "a", state: "Booted" },
 					{ udid: "OFF", name: "b", state: "Shutdown" },

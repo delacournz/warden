@@ -6,7 +6,7 @@ import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { E2eEnv } from "./env";
 import type { DriverFactory } from "./session";
@@ -102,7 +102,7 @@ export async function openDriverFromEnv(env: E2eEnv, options: OpenDriverFromEnvO
 			...rest.iosDevice,
 		},
 		android: {
-			adb: androidTools(processEnv).adb,
+			adb: androidToolsLocator.locate(processEnv).adb,
 			uiad: uiadFromEnv(processEnv) ?? false,
 			...rest.android,
 		},

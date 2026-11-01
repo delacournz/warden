@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -77,14 +77,14 @@ const phoneDeps = (deps: InstallerDeps) => ({ exec: deps.exec, ...(deps.deviceIo
 export function installArgv(target: InstallTarget, appPath: string, env: InstallerDeps["env"]): string[] {
 	return target.platform === "ios"
 		? ["xcrun", "simctl", "install", target.deviceId, appPath]
-		: [androidTools(env).adb, "-s", target.deviceId, "install", "-r", appPath];
+		: [androidToolsLocator.locate(env).adb, "-s", target.deviceId, "install", "-r", appPath];
 }
 
 /** `xcrun simctl get_app_container <udid> <bundleId>` / `adb -s <serial> shell pm path <bundleId>`. */
 export function probeArgv(target: InstallTarget, bundleId: string, env: InstallerDeps["env"]): string[] {
 	return target.platform === "ios"
 		? ["xcrun", "simctl", "get_app_container", target.deviceId, bundleId]
-		: [androidTools(env).adb, "-s", target.deviceId, "shell", "pm", "path", bundleId];
+		: [androidToolsLocator.locate(env).adb, "-s", target.deviceId, "shell", "pm", "path", bundleId];
 }
 
 /**
@@ -181,7 +181,7 @@ async function androidMatchesArtifact(
 		.find((line) => line.endsWith(".apk"));
 	if (!apk) return resultFactory.ok(false);
 	const [onDevice, cached] = await Promise.all([
-		out(deps, [androidTools(deps.env).adb, "-s", target.deviceId, "shell", "sha256sum", apk]),
+		out(deps, [androidToolsLocator.locate(deps.env).adb, "-s", target.deviceId, "shell", "sha256sum", apk]),
 		(deps.fileDigest ?? nodeFileDigest)(artifactPath),
 	]);
 	const installed = onDevice?.split(/\s+/)[0];
@@ -192,7 +192,7 @@ async function androidMatchesArtifact(
 export function uninstallArgv(target: InstallTarget, bundleId: string, env: InstallerDeps["env"]): string[] {
 	return target.platform === "ios"
 		? ["xcrun", "simctl", "uninstall", target.deviceId, bundleId]
-		: [androidTools(env).adb, "-s", target.deviceId, "uninstall", bundleId];
+		: [androidToolsLocator.locate(env).adb, "-s", target.deviceId, "uninstall", bundleId];
 }
 
 /**
@@ -252,7 +252,14 @@ export function apkAbis(entries: string): string[] {
 async function abiMismatch(deps: InstallerDeps, target: InstallTarget, appPath: string): Promise<string | undefined> {
 	const [listing, props] = await Promise.all([
 		deps.exec(["unzip", "-Z1", appPath]),
-		deps.exec([androidTools(deps.env).adb, "-s", target.deviceId, "shell", "getprop", "ro.product.cpu.abilist"]),
+		deps.exec([
+			androidToolsLocator.locate(deps.env).adb,
+			"-s",
+			target.deviceId,
+			"shell",
+			"getprop",
+			"ro.product.cpu.abilist",
+		]),
 	]);
 	if (listing.exitCode !== 0 || props.exitCode !== 0) return undefined;
 	const wanted = apkAbis(listing.stdout);
@@ -346,7 +353,7 @@ const DATA_SUBDIRS = ["Documents", "Library/Caches", "Library/Preferences", "tmp
 export function resetArgv(target: InstallTarget, bundleId: string, env: InstallerDeps["env"]): string[] {
 	return target.platform === "ios"
 		? ["xcrun", "simctl", "privacy", target.deviceId, "reset", "all", bundleId]
-		: [androidTools(env).adb, "-s", target.deviceId, "shell", "pm", "clear", bundleId];
+		: [androidToolsLocator.locate(env).adb, "-s", target.deviceId, "shell", "pm", "clear", bundleId];
 }
 
 /** Remove every entry of `dir` except the container metadata plist. */

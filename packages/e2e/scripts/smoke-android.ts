@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult, Element, Point } from "@delacour/warden-driver/driver.types";
 import { openAndroidDriver } from "@delacour/warden-driver-android/android-driver";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { processExec } from "@delacour/warden-runtime/exec";
 
 function arg(name: string): string | undefined {
@@ -53,7 +53,7 @@ const centre = (e: Element): Point =>
 
 const opened = await openAndroidDriver({
 	serial,
-	adb: androidTools(process.env).adb,
+	adb: androidToolsLocator.locate(process.env).adb,
 	exec: processExec.run,
 	uiad: true,
 	log: (line) => console.log(`      ${line}`),

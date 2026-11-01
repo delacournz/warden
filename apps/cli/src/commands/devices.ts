@@ -2,7 +2,7 @@ import { providerFor } from "@delacour/warden-core/host-deps";
 import { measureSims } from "@delacour/warden-core/sims/slim.measure";
 import { markWardenDevices } from "@delacour/warden-leasing/inventory";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { listAvds } from "@delacour/warden-providers/android";
+import { Adb } from "@delacour/warden-providers/android";
 import type { DeviceRowJson } from "@delacour/warden-sdk/contracts/devices";
 import { aliveDeviceLeases } from "@delacour/warden-sdk/lease-view";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -63,7 +63,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 		};
 	});
 	if (platform === "android") {
-		const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
+		const avds = await new Adb({ exec: ctx.exec, env: ctx.env }).listAvds();
 		if (avds.success)
 			rows.push(
 				...avds.data.map((name): DeviceRow => ({ platform, kind: "virtual", name, state: "avd", warden: false }))

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { SimEntry, SimReason } from "@delacour/warden-core/sims/rules";
-import { MIXED_SIMS_RECORDS, mixedSims, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { MIXED_SIMS_RECORDS, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { simsCommand } from "./sims";
@@ -15,7 +15,7 @@ function setup(argv: string[], ui: Parameters<typeof scriptedUi>[0] = {}): TestC
 	const c = testContext(argv, {
 		now: () => NOW,
 		exec: fakeExec([
-			["xcrun simctl list devices -j", { stdout: simctlDevicesJson(mixedSims(NOW)) }],
+			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson(simctlFixtures.mixedSims(NOW)) }],
 			["xcrun simctl runtime list -j", { stdout: "{}" }],
 		]),
 		ui: scriptedUi(ui),

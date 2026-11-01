@@ -14,7 +14,7 @@ import {
 	pendingAndroidSnapshots,
 } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { GoldenDeps } from "@delacour/warden-core/golden/ios-golden";
-import { splitBiometricProfile } from "@delacour/warden-providers/biometrics";
+import { biometricProfiles } from "@delacour/warden-providers/biometrics";
 import { liveness } from "@delacour/warden-store/liveness";
 import { leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -84,7 +84,7 @@ export function androidSnapshotHook(
 	return async (avd) => {
 		if (!(await androidSnapshotOn(ctx))) return resultFactory.ok(undefined);
 		const deps = androidGoldenDeps(ctx, owner, sleep);
-		if (!splitBiometricProfile(avd).biometrics) return snapshotForClaim(deps, avd);
+		if (!biometricProfiles.split(avd).biometrics) return snapshotForClaim(deps, avd);
 		// a biometrics claim must start enrolled: build the snapshot now (once, under the AVD's lock) rather than cold-boot plain
 		const ensured = await ensureAndroidSnapshot({ ...deps, prewarmHint: true }, avd);
 		return ensured.success ? resultFactory.ok(ensured.data?.name) : ensured;

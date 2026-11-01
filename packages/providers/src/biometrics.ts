@@ -11,13 +11,18 @@ export const BIOMETRIC_PIN = "1111";
 /** Finger id `emu finger touch` presents once enrolled; `99` matches nothing. */
 export const BIOMETRIC_FINGER_ID = 1;
 
-export function biometricProfile(profile: string, biometrics: boolean): string {
-	if (!biometrics || profile.endsWith(BIOMETRIC_PROFILE_SUFFIX)) return profile;
-	return `${profile}${BIOMETRIC_PROFILE_SUFFIX}`;
+/** Reads and writes the `+bio` marker of a profile string. */
+export class BiometricProfiles {
+	profile(profile: string, biometrics: boolean): string {
+		if (!biometrics || profile.endsWith(BIOMETRIC_PROFILE_SUFFIX)) return profile;
+		return `${profile}${BIOMETRIC_PROFILE_SUFFIX}`;
+	}
+
+	split(profile: string): { profile: string; biometrics: boolean } {
+		return profile.endsWith(BIOMETRIC_PROFILE_SUFFIX)
+			? { profile: profile.slice(0, -BIOMETRIC_PROFILE_SUFFIX.length), biometrics: true }
+			: { profile, biometrics: false };
+	}
 }
 
-export function splitBiometricProfile(profile: string): { profile: string; biometrics: boolean } {
-	return profile.endsWith(BIOMETRIC_PROFILE_SUFFIX)
-		? { profile: profile.slice(0, -BIOMETRIC_PROFILE_SUFFIX.length), biometrics: true }
-		: { profile, biometrics: false };
-}
+export const biometricProfiles = new BiometricProfiles();

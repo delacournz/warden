@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
-	devicectlEntry,
-	devicectlJson,
+	devicectlFixtures,
 	FAKE_IPAD_UDID,
 } from "@delacour/warden-providers/devicectl.fixtures";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { devicesJsonSchema } from "@delacour/warden-sdk/contracts/devices";
 import type { Owner } from "@delacour/warden-store/types";
@@ -17,7 +16,7 @@ afterEach(() => ctx?.cleanup());
 
 const other: Owner = { kind: "agent", sessionId: "s2", cwd: "/", repo: "warden", worktree: "cowrie@main" };
 
-const IOS = simctlDevicesJson({
+const IOS = simctlFixtures.devicesJson({
 	"iOS-26-5": [
 		{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" },
 		{ udid: "U2", name: "iPhone 17 Pro", state: "Shutdown" },
@@ -99,7 +98,7 @@ describe("warden devices", () => {
 				[
 					"xcrun simctl list devices available -j",
 					{
-						stdout: simctlDevicesJson({
+						stdout: simctlFixtures.devicesJson({
 							"iOS-26-5": [{ udid: "G", name: "warden-golden-iphone-17-abc123def0", state: "Shutdown" }],
 						}),
 					},
@@ -285,8 +284,8 @@ describe("warden devices (physical phones)", () => {
 	});
 
 	test("an iPad devicectl lists but cannot reach is offline with a hint, never ready", async () => {
-		const list = devicectlJson([
-			devicectlEntry({
+		const list = devicectlFixtures.json([
+			devicectlFixtures.entry({
 				udid: FAKE_IPAD_UDID,
 				name: "Test iPad",
 				deviceType: "iPad",
@@ -312,8 +311,8 @@ describe("warden devices (physical phones)", () => {
 	});
 
 	test("a disconnected phone whose probe answers locked: reachable (booted) with a locked hint", async () => {
-		const list = devicectlJson([
-			devicectlEntry({
+		const list = devicectlFixtures.json([
+			devicectlFixtures.entry({
 				udid: FAKE_IPAD_UDID,
 				name: "Test iPad",
 				deviceType: "iPad",

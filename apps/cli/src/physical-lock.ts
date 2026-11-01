@@ -1,11 +1,11 @@
 import { providerFor } from "@delacour/warden-core/host-deps";
-import { readLockState } from "@delacour/warden-providers/devicectl";
-import { realTimer } from "@delacour/warden-providers/health";
+import { Devicectl } from "@delacour/warden-providers/devicectl";
+import { timers } from "@delacour/warden-providers/health";
 import {
 	DEVICE_LOCKED_CODE,
 	DEVICE_LOCKED_HINT,
-	isDeviceLockedError,
-	waitUnlocked,
+	deviceLockedErrors,
+	UnlockWaiter,
 } from "@delacour/warden-providers/unlock-wait";
 import { liveness } from "@delacour/warden-store/liveness";
 import { type DeviceRequest, leaseModel, type Owner } from "@delacour/warden-store/types";
@@ -68,15 +68,15 @@ export async function awaitPhonesUnlocked(
 ): AsyncResult<void> {
 	if (request.platform !== "ios" || request.physical === undefined) return resultFactory.ok(undefined);
 	for (const phone of await phonesToClaim(ctx, owner, request)) {
-		const waited = await waitUnlocked({
+		const waited = await new UnlockWaiter({
 			name: phone.name,
 			noWait: options.noWait,
-			read: () => readLockState({ exec: ctx.exec, timer: realTimer }, phone.id),
+			read: () => new Devicectl({ exec: ctx.exec, timer: timers.real }).readLockState(phone.id),
 			now: ctx.now,
 			sleep: options.sleep ?? Bun.sleep,
 			log: (line) => ctx.err(`warden: ${line}`),
 			...(options.abort ? { abort: options.abort } : {}),
-		});
+		}).wait();
 		if (!waited.success) return waited;
 	}
 	return resultFactory.ok(undefined);
@@ -85,7 +85,8 @@ export async function awaitPhonesUnlocked(
 const PREFIX = `${DEVICE_LOCKED_CODE}: `;
 
 /** Is `error` the claim's own locked-phone failure (it starts with `device_locked: `)? */
-export const isLockedClaimError = (error: string): boolean => error.startsWith(PREFIX) && isDeviceLockedError(error);
+export const isLockedClaimError = (error: string): boolean =>
+	error.startsWith(PREFIX) && deviceLockedErrors.isLocked(error);
 
 /** The message of a locked-phone claim error, without its code. */
 export const lockedClaimMessage = (error: string): string => error.slice(PREFIX.length);

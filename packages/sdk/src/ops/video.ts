@@ -1,6 +1,6 @@
 import { closeSync, mkdirSync, openSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type ProcessCommand, processCommand, processIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
@@ -198,7 +198,7 @@ export async function video(session: OpSession, params: VideoParams): OpOutcome<
 	const run: VideoRun = {
 		session,
 		deps: session.video ?? defaultVideoDeps,
-		adb: androidTools(session.host.env).adb,
+		adb: androidToolsLocator.locate(session.host.env).adb,
 		state: session.state.read(),
 	};
 	if (params.action === "start") return startVideo(run, params.path);

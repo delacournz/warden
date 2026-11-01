@@ -1,7 +1,7 @@
 import { type CallerLease, ensureCallerLease } from "@delacour/warden-leasing/device-lease";
 import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
 import { PRIORITY } from "@delacour/warden-leasing/queue";
-import { isEmulatorSerial } from "@delacour/warden-providers/android";
+import { adbParser } from "@delacour/warden-providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-providers/unlock-wait";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type Lease, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
@@ -209,7 +209,7 @@ async function leaseCandidate(
 		candidate.platform !== undefined ? resultFactory.ok(candidate.platform) : platformOf(ctx, candidate.id);
 	if (!platform.success) return fail(uiError("usage", platform.error));
 	const phone: PhoneCheck =
-		platform.data === "android" && !isEmulatorSerial(candidate.id)
+		platform.data === "android" && !adbParser.isEmulatorSerial(candidate.id)
 			? await checkPhone(ctx, candidate.id)
 			: { kind: "other" };
 	// `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile)

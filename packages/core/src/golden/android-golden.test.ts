@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claimDevices } from "@delacour/warden-leasing/claim";
 import {
+	AndroidProvider,
 	BOOT_WAIT_SCRIPT,
-	createAndroidProvider,
 	GOLDEN_PORT_LABEL,
 	type SpawnDetached,
 } from "@delacour/warden-providers/android";
@@ -252,7 +252,7 @@ function provider(
 	now: () => number = () => 1_000
 ) {
 	const golden = goldenDeps(host, logs, { now });
-	return createAndroidProvider(
+	return new AndroidProvider(
 		{ exec: host.exec, store, env: env(), now: () => 1_000, owner, log: (line) => logs.push(line) },
 		{
 			spawnDetached: host.spawnDetached,
@@ -477,7 +477,7 @@ describe("claims launch from warden's snapshot; the build runs outside any claim
 
 	test("opted out (no snapshot hook): never builds", async () => {
 		const host = fakeAndroidHost();
-		const plain = createAndroidProvider(
+		const plain = new AndroidProvider(
 			{ exec: host.exec, store, env: env(), now: () => 1_000, owner },
 			{ spawnDetached: host.spawnDetached, pidAlive: host.pidAlive, sleep: async () => {} }
 		);
@@ -683,7 +683,7 @@ describe("build failure paths and concurrency (R3, R9)", () => {
 	test("the build records its emulator pid on the golden port lease, and inventory marks it golden mid-build", async () => {
 		const host = fakeAndroidHost();
 		const seen: Array<{ pid?: number; golden?: boolean }> = [];
-		const inventory = createAndroidProvider({ exec: host.exec, store, env: env(), now: () => 1_000, owner });
+		const inventory = new AndroidProvider({ exec: host.exec, store, env: env(), now: () => 1_000, owner });
 		let looked = false;
 		const ensured = await ensureAndroidSnapshot(
 			goldenDeps(host, [], {

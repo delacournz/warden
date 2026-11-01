@@ -7,7 +7,7 @@ import { LOG_LEVELS, type LogEntry, parseLevel } from "@delacour/warden-perf/log
 import { logcatArgv, parseDeviceDate, parseThreadtime } from "@delacour/warden-perf/logs/logcat";
 import { followPid, type LogStream, type SpawnLines } from "@delacour/warden-perf/logs/pid-follow";
 import { redact } from "@delacour/warden-perf/logs/redact";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -66,7 +66,7 @@ export const defaultLogDeps: LogDeps = {
 
 export type DeviceRef = { udid: string; platform: "ios" | "android" };
 
-const adb = (ctx: PerfEnv, serial: string): string[] => [androidTools(ctx.env).adb, "-s", serial];
+const adb = (ctx: PerfEnv, serial: string): string[] => [androidToolsLocator.locate(ctx.env).adb, "-s", serial];
 
 /** Wall clock of `ms` read as UTC, in the host's zone: what iOS stamps look like. */
 const hostNaive = (ms: number): number => ms - new Date(ms).getTimezoneOffset() * 60_000;

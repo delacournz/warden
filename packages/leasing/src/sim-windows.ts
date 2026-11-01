@@ -1,6 +1,6 @@
-import { probeIosWarm, realTimer, type Timer } from "@delacour/warden-providers/health";
+import { IosHealth, type Timer, timers } from "@delacour/warden-providers/health";
 import { IOS_TIMEOUTS } from "@delacour/warden-providers/ios";
-import { parseAllSims } from "@delacour/warden-providers/simctl-list";
+import { simctlListParser } from "@delacour/warden-providers/simctl-list";
 import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { Store } from "@delacour/warden-store/store";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -326,7 +326,7 @@ export async function openDeviceHubWindows(
 export async function reopenSimWindows(deps: AutoArrangeDeps, udids: readonly string[]): Promise<string[]> {
 	if (arrangeDisabled(deps) || udids.length === 0) return [];
 	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"], { timeoutMs: IOS_TIMEOUTS.listMs });
-	const all = list.exitCode === 0 ? parseAllSims(list.stdout) : undefined;
+	const all = list.exitCode === 0 ? simctlListParser.parseAll(list.stdout) : undefined;
 	if (!all?.success) return [];
 	const sims = all.data.filter((d) => udids.includes(d.udid)).map((d) => ({ udid: d.udid, name: d.name }));
 	const opened = await openDeviceHubWindows(deps, sims);
@@ -764,7 +764,7 @@ export async function startHideSimWindows(deps: HideDeps, sims: readonly LeasedS
 /** `simctl list` states by udid; undefined after a warned error. */
 async function simStates(deps: HideDeps): Promise<Map<string, string> | undefined> {
 	const list = await deps.exec(["xcrun", "simctl", "list", "devices", "-j"], { timeoutMs: IOS_TIMEOUTS.listMs });
-	const all = list.exitCode === 0 ? parseAllSims(list.stdout) : undefined;
+	const all = list.exitCode === 0 ? simctlListParser.parseAll(list.stdout) : undefined;
 	if (all?.success) return new Map(all.data.map((d) => [d.udid, d.state]));
 	deps.warn(`headless: couldn't check device states after closing windows: ${all ? all.error : list.stderr.trim()}`);
 	return undefined;
@@ -806,7 +806,7 @@ async function rebootOne(deps: HideDeps, sim: LeasedSim, beat: () => void): Prom
 		deps.warn(`headless: ${sim.name}: ${execErrors.format(statusArgv, ready)}`);
 		return false;
 	}
-	const probe = await probeIosWarm({ exec: deps.exec, timer: deps.timer ?? realTimer }, sim.udid);
+	const probe = await new IosHealth({ exec: deps.exec, timer: deps.timer ?? timers.real }).probeWarm(sim.udid);
 	if (!probe.success) {
 		deps.warn(`headless: ${sim.name} booted again but is not healthy: ${probe.error.message}`);
 		return false;

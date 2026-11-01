@@ -1,19 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_SLIM_PROFILE, slimProfiles } from "@delacour/warden-config/slim.profile";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import {
-	NEVER_DISABLE,
-	parseLaunchctlList,
-	parsePrintDisabled,
-	planHeal,
-	planRestore,
-	planSlim,
-	SLIM_BATCH_SIZE,
-	SLIM_CONCURRENCY,
-	SLIM_RETIRED,
-	slimSimulator,
-	slimSimulatorReport,
-} from "./slim";
+import { NEVER_DISABLE, SimSlimmer, SLIM_BATCH_SIZE, SLIM_CONCURRENCY, SLIM_RETIRED, slimPlanner } from "./slim";
 
 const DENYLIST = [...slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)];
 
@@ -80,8 +68,8 @@ describe("dictation daemons (the keyboard hangs the app without them)", () => {
 			["com.apple.corespeechd", false],
 			["com.apple.newsd", true],
 		]);
-		expect(planHeal(disabled)).toEqual(["com.apple.assistantd"]);
-		expect(planRestore(disabled)).toEqual(["com.apple.newsd", "com.apple.assistantd"]);
+		expect(slimPlanner.planHeal(disabled)).toEqual(["com.apple.assistantd"]);
+		expect(slimPlanner.planRestore(disabled)).toEqual(["com.apple.newsd", "com.apple.assistantd"]);
 	});
 });
 
@@ -95,8 +83,8 @@ describe("retired labels", () => {
 			["com.apple.gamed", true],
 			["com.apple.nanotimekitcompaniond", true],
 		]);
-		expect(planHeal(disabled)).toEqual(["com.apple.gamed", "com.apple.nanotimekitcompaniond"]);
-		expect(planRestore(disabled)).toEqual(["com.apple.gamed", "com.apple.nanotimekitcompaniond"]);
+		expect(slimPlanner.planHeal(disabled)).toEqual(["com.apple.gamed", "com.apple.nanotimekitcompaniond"]);
+		expect(slimPlanner.planRestore(disabled)).toEqual(["com.apple.gamed", "com.apple.nanotimekitcompaniond"]);
 	});
 
 	test("chronod is no longer protected", () => {
@@ -107,7 +95,7 @@ describe("retired labels", () => {
 
 describe("parsers + plans", () => {
 	test("parseLaunchctlList: pid, - for not running, blank lines dropped", () => {
-		expect(parseLaunchctlList(LIST).slice(0, 3)).toEqual([
+		expect(slimPlanner.parseLaunchctlList(LIST).slice(0, 3)).toEqual([
 			{ label: "com.apple.progressd", pid: null },
 			{ label: "com.apple.healthd", pid: 14222 },
 			{ label: "com.apple.newsd", pid: null },
@@ -115,7 +103,7 @@ describe("parsers + plans", () => {
 	});
 
 	test("parsePrintDisabled: label → disabled", () => {
-		expect(parsePrintDisabled(DISABLED)).toEqual(
+		expect(slimPlanner.parsePrintDisabled(DISABLED)).toEqual(
 			new Map([
 				["com.apple.nanonewscd", false],
 				["com.apple.newsd", true],
@@ -124,10 +112,10 @@ describe("parsers + plans", () => {
 	});
 
 	test("planSlim skips disabled-and-stopped jobs; planRestore lists the disabled ones", () => {
-		const plan = planSlim(parseLaunchctlList(LIST), parsePrintDisabled(DISABLED));
+		const plan = slimPlanner.planSlim(slimPlanner.parseLaunchctlList(LIST), slimPlanner.parsePrintDisabled(DISABLED));
 		expect(plan).toContain("com.apple.healthd");
 		expect(plan).not.toContain("com.apple.newsd");
-		expect(planRestore(parsePrintDisabled(DISABLED))).toEqual(["com.apple.newsd"]);
+		expect(slimPlanner.planRestore(slimPlanner.parsePrintDisabled(DISABLED))).toEqual(["com.apple.newsd"]);
 	});
 });
 
@@ -216,7 +204,7 @@ const sleeps = () => {
 describe("slimSimulator", () => {
 	test("disables + boots out what is left; a loaded-but-disabled job is unloaded too; a dry run only reads", async () => {
 		const h = host({ disabled: ["com.apple.newsd"], loaded: ["com.apple.healthd", "com.apple.newsd"] });
-		const res = await slimSimulator(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).slim("U1", fast);
 		expect(res.success && res.data).toContain("com.apple.healthd");
 		expect(res.success && res.data).toContain("com.apple.newsd");
 		const cmds = h.spawned().map((c) => c.join(" "));
@@ -226,7 +214,7 @@ describe("slimSimulator", () => {
 		expect(h.loaded.size).toBe(0);
 
 		const dry = host({ loaded: ["com.apple.healthd"] });
-		const planned = await slimSimulator(dry.exec, "U1", { ...fast, dryRun: true });
+		const planned = await new SimSlimmer(dry.exec).slim("U1", { ...fast, dryRun: true });
 		expect(planned.success && planned.data.length).toBeGreaterThan(0);
 		expect(
 			dry
@@ -238,7 +226,7 @@ describe("slimSimulator", () => {
 
 	test("a profile's excepted category is left alone", async () => {
 		const h = host();
-		const res = await slimSimulator(h.exec, "U1", {
+		const res = await new SimSlimmer(h.exec).slim("U1", {
 			...fast,
 			profile: { except: ["health"], keep: ["com.apple.remindd"] },
 		});
@@ -251,7 +239,7 @@ describe("slimSimulator", () => {
 
 	test("restore re-enables only the disabled denylisted jobs", async () => {
 		const h = host({ disabled: ["com.apple.newsd", "com.apple.notmine"] });
-		const res = await slimSimulator(h.exec, "U1", { ...fast, restore: true });
+		const res = await new SimSlimmer(h.exec).slim("U1", { ...fast, restore: true });
 		expect(res).toEqual({ success: true, data: ["com.apple.newsd"] });
 		expect(h.verbs("enable")).toEqual([["enable", "system/com.apple.newsd"]]);
 		expect(h.disabled.has("com.apple.notmine")).toBe(true);
@@ -259,14 +247,14 @@ describe("slimSimulator", () => {
 
 	test("a failing launchctl is an error result, never a throw", async () => {
 		const h = host({ script: { "print-disabled": [{ exitCode: 1, stdout: "", stderr: "not booted" }] } });
-		const res = await slimSimulator(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).slim("U1", fast);
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("not booted");
 	});
 
 	test("slim re-enables a retired label an older denylist disabled, without reporting it", async () => {
 		const h = host({ disabled: ["com.apple.gamed"] });
-		const res = await slimSimulator(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).slim("U1", fast);
 		expect(h.verbs("enable")).toEqual([["enable", "system/com.apple.gamed"]]);
 		expect(res.success && res.data).not.toContain("com.apple.gamed");
 	});
@@ -277,7 +265,7 @@ describe("batch unload", () => {
 
 	test("a fresh sim: every plist goes in chunks of 64, no per-label spawn, read back verified", async () => {
 		const h = host({ loaded: all, plists: all });
-		const res = await slimSimulatorReport(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).report("U1", fast);
 		expect(res.success && res.data).toMatchObject({ batched: all.length, perLabel: 0, verified: true });
 		const unloads = h.verbs("unload");
 		expect(unloads).toHaveLength(Math.ceil(all.length / SLIM_BATCH_SIZE));
@@ -291,7 +279,7 @@ describe("batch unload", () => {
 	test("65 plists make 2 unload spawns", async () => {
 		const sixtyFive = all.slice(0, 65);
 		const h = host({ plists: sixtyFive });
-		await slimSimulator(h.exec, "U1", { ...fast, profile: { except: [], keep: all.slice(65) } });
+		await new SimSlimmer(h.exec).slim("U1", { ...fast, profile: { except: [], keep: all.slice(65) } });
 		const sizes = h.verbs("unload").map((c) => c.length - 2);
 		expect(sizes).toEqual([64, 1]);
 	});
@@ -299,7 +287,7 @@ describe("batch unload", () => {
 	test("a plist whose Label differs is never unloaded; its label goes per-label", async () => {
 		const [odd, ...rest] = all as [string, ...string[]];
 		const h = host({ loaded: all, plists: all, plistLabel: { [plistOf(odd)]: "com.apple.something.else" } });
-		const res = await slimSimulatorReport(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).report("U1", fast);
 		expect(res.success && res.data).toMatchObject({ batched: rest.length, perLabel: 1 });
 		const unloaded = h.verbs("unload").flatMap((c) => c.slice(2));
 		expect(unloaded).not.toContain(plistOf(odd));
@@ -315,7 +303,7 @@ describe("batch unload", () => {
 			if (cmd[5] === "unload") h.loaded.add(first);
 			return res;
 		};
-		const res = await slimSimulatorReport(exec, "U1", fast);
+		const res = await new SimSlimmer(exec).report("U1", fast);
 		expect(res.success && res.data.perLabel).toBe(1);
 		expect(h.verbs("bootout")).toEqual([["bootout", `system/${first}`]]);
 		expect(h.loaded.size).toBe(0);
@@ -323,7 +311,7 @@ describe("batch unload", () => {
 
 	test("without a runtime root everything goes per-label (2 spawns each at worst)", async () => {
 		const h = host({ loaded: all, noRuntime: true });
-		const res = await slimSimulatorReport(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).report("U1", fast);
 		expect(res.success && res.data).toMatchObject({ batched: 0, perLabel: all.length, verified: true });
 		expect(h.verbs("unload")).toHaveLength(0);
 		expect(h.verbs("disable")).toHaveLength(all.length);
@@ -342,7 +330,7 @@ describe("hardening", () => {
 				],
 			},
 		});
-		const res = await slimSimulator(h.exec, "U1", { ...clock, fileExists: () => true });
+		const res = await new SimSlimmer(h.exec).slim("U1", { ...clock, fileExists: () => true });
 		expect(res.success).toBe(true);
 		expect(clock.waited.slice(0, 2)).toEqual([1000, 2000]);
 	});
@@ -351,7 +339,7 @@ describe("hardening", () => {
 		const stuck = { exitCode: 124, stdout: "", stderr: "code=124" };
 		const h = host({ script: { "print-disabled": [stuck, stuck, stuck, stuck] } });
 		const clock = sleeps();
-		const res = await slimSimulator(h.exec, "U1", { ...clock });
+		const res = await new SimSlimmer(h.exec).slim("U1", { ...clock });
 		expect(res.success).toBe(false);
 		expect(clock.waited).toEqual([1000, 2000, 4000]);
 	});
@@ -368,7 +356,7 @@ describe("hardening", () => {
 			}
 			return h.exec(cmd);
 		};
-		const res = await slimSimulator(exec, "U1", { ...clock });
+		const res = await new SimSlimmer(exec).slim("U1", { ...clock });
 		expect(res.success).toBe(true);
 		expect(timedOutOnce).toBe(true);
 		expect(clock.waited).toEqual([1000]);
@@ -381,14 +369,14 @@ describe("hardening", () => {
 			loaded: [label],
 			script: { [`bootout system/${label}`]: [{ exitCode: 3, stdout: "", stderr: "No such process" }] },
 		});
-		const res = await slimSimulator(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).slim("U1", fast);
 		expect(res.success).toBe(true);
 	});
 
 	test("labels that never take: error counts and names them after the read-back", async () => {
 		const stuck = ["com.apple.healthd", "com.apple.newsd"];
 		const h = host({ stuck });
-		const res = await slimSimulator(h.exec, "U1", fast);
+		const res = await new SimSlimmer(h.exec).slim("U1", fast);
 		expect(res.success).toBe(false);
 		if (!res.success)
 			expect(res.error).toMatch(/2 of \d+ disable overrides did not take: .*com\.apple\.(healthd|newsd)/);
@@ -400,7 +388,7 @@ describe("hardening", () => {
 		const h = host();
 		const exec: Exec = async (cmd) =>
 			cmd[5] === "disable" && cmd[6] === `system/${first}` ? { exitCode: 1, stdout: "", stderr: "boom" } : h.exec(cmd);
-		const res = await slimSimulator(exec, "U1", { ...clock });
+		const res = await new SimSlimmer(exec).slim("U1", { ...clock });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("boom");
 		expect(clock.waited).toEqual([1000, 2000, 4000]);
@@ -422,7 +410,7 @@ describe("restore", () => {
 			}
 			return res;
 		};
-		const res = await slimSimulatorReport(exec, "U1", { ...fast, restore: true });
+		const res = await new SimSlimmer(exec).report("U1", { ...fast, restore: true });
 		expect(res.success && res.data.labels).toEqual([a, c, b].sort());
 		const verbs = h.spawned().map((s) => s[0]);
 		expect(verbs.indexOf("load")).toBeLessThan(verbs.indexOf("enable"));
@@ -451,13 +439,13 @@ describe("restore", () => {
 			if (cmd[5] === "load") h.loaded.clear();
 			return res;
 		};
-		const res = await slimSimulator(exec, "U1", { ...fast, restore: true });
+		const res = await new SimSlimmer(exec).slim("U1", { ...fast, restore: true });
 		expect(res.success).toBe(true);
 	});
 
 	test("a dry run lists but spawns no change", async () => {
 		const h = host({ disabled: ["com.apple.newsd"] });
-		const res = await slimSimulator(h.exec, "U1", { ...fast, restore: true, dryRun: true });
+		const res = await new SimSlimmer(h.exec).slim("U1", { ...fast, restore: true, dryRun: true });
 		expect(res).toEqual({ success: true, data: ["com.apple.newsd"] });
 		expect(h.spawned().map((s) => s[0])).toEqual(["print-disabled"]);
 	});
@@ -487,7 +475,7 @@ describe("concurrency", () => {
 
 	test("slimming runs per-label spawns in parallel, never more than SLIM_CONCURRENCY at once", async () => {
 		const { exec, stats } = gauge({ loaded: all });
-		const res = await slimSimulator(exec, "U1", fast);
+		const res = await new SimSlimmer(exec).slim("U1", fast);
 		expect(res.success && res.data).toEqual(all);
 		expect(stats.started).toHaveLength(all.length * 2);
 		expect(stats.peak).toBeGreaterThan(1);
@@ -496,7 +484,7 @@ describe("concurrency", () => {
 
 	test("restoring is bounded the same way and re-enables everything", async () => {
 		const { exec, stats } = gauge({ disabled: all });
-		const res = await slimSimulator(exec, "U1", { ...fast, restore: true });
+		const res = await new SimSlimmer(exec).slim("U1", { ...fast, restore: true });
 		expect(res.success && res.data).toEqual([...all].sort());
 		expect(stats.started).toHaveLength(all.length);
 		expect(stats.peak).toBeGreaterThan(1);
@@ -506,7 +494,7 @@ describe("concurrency", () => {
 	test("a failing disable is the error returned once retries are spent", async () => {
 		const first = all[0] as string;
 		const { exec } = gauge({}, `disable system/${first}`);
-		const res = await slimSimulator(exec, "U1", fast);
+		const res = await new SimSlimmer(exec).slim("U1", fast);
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("boom");
 	});
@@ -514,7 +502,7 @@ describe("concurrency", () => {
 	test("a fresh sim, no plists: 3 reads + N disables + L bootouts + 1 read-back", async () => {
 		const loaded = all.slice(0, 10);
 		const { exec, h } = gauge({ loaded, noRuntime: true });
-		const res = await slimSimulator(exec, "U1", fast);
+		const res = await new SimSlimmer(exec).slim("U1", fast);
 		expect(res.success && res.data).toEqual(all);
 		expect(h.spawned()).toHaveLength(2 + all.length + loaded.length + 1);
 		expect(
@@ -527,7 +515,7 @@ describe("concurrency", () => {
 
 	test("each job is disabled before it is booted out", async () => {
 		const { exec, stats } = gauge({ loaded: all });
-		await slimSimulator(exec, "U1", fast);
+		await new SimSlimmer(exec).slim("U1", fast);
 		for (const label of all) {
 			expect(stats.started.indexOf(`disable system/${label}`)).toBeLessThan(
 				stats.started.indexOf(`bootout system/${label}`)

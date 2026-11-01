@@ -4,6 +4,11 @@
  */
 export const GOLDEN_PREFIX = "warden-golden";
 
-export function isGoldenName(name: string): boolean {
-	return name.startsWith(`${GOLDEN_PREFIX}-`);
+/** Recognises golden simulator names. */
+export class GoldenNames {
+	isGolden(name: string): boolean {
+		return name.startsWith(`${GOLDEN_PREFIX}-`);
+	}
 }
+
+export const goldenNames = new GoldenNames();

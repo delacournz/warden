@@ -5,7 +5,7 @@ import { openAndroidDriver } from "@delacour/warden-driver-android/android-drive
 import type { DumpRoute } from "@delacour/warden-driver-android/android-dump";
 import { androidStateDir, createAndroidStateStore } from "@delacour/warden-driver-android/android-state";
 import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { storeLocator } from "@delacour/warden-store/store";
 import { leaseModel } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
@@ -69,7 +69,7 @@ export async function openAndroidInProcess(
 	return fromDriver(
 		await openAndroidDriver({
 			serial,
-			adb: androidTools(ctx.env).adb,
+			adb: androidToolsLocator.locate(ctx.env).adb,
 			exec: ctx.exec,
 			state: createAndroidStateStore({ dir: androidStateDir(storeLocator.wardenHome(ctx.env)) }),
 			ownedPackages: ownedPackages(ctx, serial),

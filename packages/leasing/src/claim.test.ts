@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createIosProvider } from "@delacour/warden-providers/ios";
+import { IosProvider } from "@delacour/warden-providers/ios";
 import type { BootReady, DeviceProvider } from "@delacour/warden-providers/provider.types";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { type DeviceRequest, type InventoryDevice, leaseModel, type Owner } from "@delacour/warden-store/types";
@@ -525,14 +525,14 @@ describe("claim spawn counts (iOS provider)", () => {
 				return { exitCode: 149, stdout: "", stderr: "Unable to boot device in current state: Shutting Down" };
 			}
 			if (joined === "xcrun simctl list devices available -j") {
-				return ok_(simctlDevicesJson({ "iOS-26-5": [{ udid: "U1", name: "warden-iphone-17-1", state }] }));
+				return ok_(simctlFixtures.devicesJson({ "iOS-26-5": [{ udid: "U1", name: "warden-iphone-17-1", state }] }));
 			}
 			if (joined === "xcrun simctl spawn U1 launchctl list") {
 				return ok_(springboard ? LAUNCHCTL_LIST : "PID\tStatus\tLabel");
 			}
 			return ok_();
 		};
-		const provider = createIosProvider({ exec, store, env: {}, now: () => NOW, owner }, { slim: false });
+		const provider = new IosProvider({ exec, store, env: {}, now: () => NOW, owner }, { slim: false });
 		return { spawns, provider };
 	}
 

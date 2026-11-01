@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DOCTOR_HINT, locateHelper } from "@delacour/warden-driver-ios/locate-helper";
-import { parseSimctlDevices } from "@delacour/warden-providers/ios";
+import { simctlParser } from "@delacour/warden-providers/ios";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
 import { HELPER_MANIFEST, HELPER_TARGET, type HelperInfo, parseHelperManifest } from "../npm/helper";
@@ -125,7 +125,7 @@ export function helperInfo(deps: HelperDeps, helperPath: string): HelperInfo | u
 async function firstBootedSim(ctx: CommandContext): Promise<string | undefined> {
 	const result = await ctx.exec(["xcrun", "simctl", "list", "devices", "available", "-j"], { timeoutMs: 10_000 });
 	if (result.exitCode !== 0) return undefined;
-	const devices = parseSimctlDevices(result.stdout);
+	const devices = simctlParser.parseDevices(result.stdout);
 	return devices.success ? devices.data.find((device) => device.state === "booted")?.id : undefined;
 }
 

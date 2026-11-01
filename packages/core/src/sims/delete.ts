@@ -5,7 +5,7 @@
  * holds it), shut down if its runtime is still there, `simctl delete`d, forgotten, and released.
  */
 
-import { deleteSim } from "@delacour/warden-providers/ios";
+import { Simctl } from "@delacour/warden-providers/ios";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Store } from "@delacour/warden-store/store";
 import type { DeviceResource, Lease, Owner } from "@delacour/warden-store/types";
@@ -60,7 +60,7 @@ export async function deleteSims<T extends DeleteTarget>(
 			continue;
 		}
 		try {
-			const deleted = await deleteSim(deps.exec, entry.udid, { shutdown: entry.isAvailable });
+			const deleted = await new Simctl(deps.exec).deleteSim(entry.udid, { shutdown: entry.isAvailable });
 			if (!deleted.success) {
 				result.failed.push({ entry, error: deleted.error.message });
 				continue;

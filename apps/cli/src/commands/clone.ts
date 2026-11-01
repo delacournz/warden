@@ -1,7 +1,7 @@
 import { wardenDeviceName } from "@delacour/warden-leasing/allocate";
-import { isGoldenName } from "@delacour/warden-providers/golden-name";
-import { shortRuntime } from "@delacour/warden-providers/ios";
-import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
+import { goldenNames } from "@delacour/warden-providers/golden-name";
+import { simctlParser } from "@delacour/warden-providers/ios";
+import { type SimctlSim, simctlListParser } from "@delacour/warden-providers/simctl-list";
 import { execErrors } from "@delacour/warden-runtime/exec";
 import { leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -50,7 +50,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 	const listCmd = ["xcrun", "simctl", "list", "devices", "-j"];
 	const listed = await ctx.exec(listCmd);
 	if (listed.exitCode !== 0) return fail(ctx, execErrors.format(listCmd, listed));
-	const sims = parseAllSims(listed.stdout);
+	const sims = simctlListParser.parseAll(listed.stdout);
 	if (!sims.success) return fail(ctx, sims.error.message);
 	const source = findSource(sims.data, ref);
 	if (!source.success) return fail(ctx, source.error);
@@ -72,9 +72,16 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 	});
 	if (cloned.exitCode !== 0) return fail(ctx, execErrors.format(cloneCmd, cloned));
 	const udid = cloned.stdout.trim();
-	const runtime = shortRuntime(source.data.runtimeId);
+	const runtime = simctlParser.shortRuntime(source.data.runtimeId);
 	ctx.store().recordDevice({ platform: "ios", id: udid, name, profile, runtime }, ctx.now());
-	const result = { udid, name, source: source.data.udid, profile, runtime, fromGolden: isGoldenName(source.data.name) };
+	const result = {
+		udid,
+		name,
+		source: source.data.udid,
+		profile,
+		runtime,
+		fromGolden: goldenNames.isGolden(source.data.name),
+	};
 	emit(
 		ctx,
 		opts.json === true,

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { snapshotOf } from "@delacour/warden-driver/testing/driver";
 import { blockMessage } from "@delacour/warden-leasing/device-lease";
 import type { Owner } from "@delacour/warden-store/types";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { uiCommand } from "./ui";
 import { cleanupHarnesses, doc, UDID as HARNESS_UDID, harness, LOGIN } from "./ui.testing";
@@ -162,7 +162,7 @@ describe("warden ui status", () => {
 			["status", "--claim", "--profile", "iphone-17", "--runtime", "latest", "--json"],
 			{},
 			{
-				exec: fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls),
+				exec: simctlFakes.build([simctlFakes.wardenSim(1), simctlFakes.wardenSim(2, "Booted")], calls),
 			}
 		);
 		expect(await uiCommand.run(c)).toBe(0);

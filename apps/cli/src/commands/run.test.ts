@@ -4,7 +4,7 @@ import type { ChildHandle } from "@delacour/warden-leasing/session";
 import { runJsonSchema } from "@delacour/warden-sdk/contracts/claim";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
 import { splitCommand, splitOperands } from "../lease-options";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createRunCommand, type RunChildStdout, type RunDeps } from "./run";
 
@@ -63,7 +63,9 @@ function harness(opts: { spawnThrows?: boolean } = {}): Harness {
 }
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv, { exec: fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]) });
+	ctx = testContext(argv, {
+		exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2, "Booted")]),
+	});
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }
@@ -370,7 +372,7 @@ describe("warden run", () => {
 
 describe("warden run auto-gc (16-1)", () => {
 	test("auto-gc is considered only after the claim has leased its devices", async () => {
-		const order = autoGcOrder(fakeSimctl([wardenSim(1, "Booted")]), () => c.db);
+		const order = autoGcOrder(simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]), () => c.db);
 		ctx = testContext(["ios", "--", "bun", "test"], { exec: order.exec });
 		const c = ctx;
 		c.env = allowAutoGc({ ...c.env, ...OWNER_ENV });

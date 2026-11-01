@@ -1,7 +1,7 @@
 import { DEFAULT_SLIM_PROFILE, type SlimProfile, slimProfiles } from "@delacour/warden-config/slim.profile";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { parseSimctlDevices } from "@delacour/warden-providers/ios";
-import { slimSimulator } from "@delacour/warden-providers/slim";
+import { simctlParser } from "@delacour/warden-providers/ios";
+import { SimSlimmer } from "@delacour/warden-providers/slim";
 import { leaseModel } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -26,7 +26,7 @@ async function bootedUdids(ctx: CommandContext): AsyncResult<string[]> {
 	const res = await ctx.exec(["xcrun", "simctl", "list", "devices", "booted", "-j"]);
 	if (res.exitCode !== 0)
 		return resultFactory.err(`simctl list devices: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
-	const devices = parseSimctlDevices(res.stdout);
+	const devices = simctlParser.parseDevices(res.stdout);
 	if (!devices.success) return wardenErrors.toText(devices);
 	return resultFactory.ok(devices.data.filter((d) => d.state === "booted").map((d) => d.id));
 }
@@ -42,7 +42,7 @@ function heldByOther(ctx: CommandContext, udid: string): string | undefined {
 async function slimOne(ctx: CommandContext, udid: string, opts: SlimOpts, profile: SlimProfile): Promise<SlimReport> {
 	const blocked = heldByOther(ctx, udid);
 	if (blocked) return { udid, error: blocked };
-	const res = await slimSimulator(ctx.exec, udid, {
+	const res = await new SimSlimmer(ctx.exec).slim(udid, {
 		...(opts.dryRun ? { dryRun: true } : {}),
 		...(opts.restore ? { restore: true } : {}),
 		profile,

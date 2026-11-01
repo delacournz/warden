@@ -9,7 +9,7 @@ import {
 	xctraceTableArgv,
 	xctraceTocArgv,
 } from "@delacour/warden-perf/startup/ios-app-launch";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -132,7 +132,7 @@ async function androidRun(
 export async function measureAndroid(c: MeasureCtx): Promise<Result<Measured, WardenError>> {
 	const component = await resolveLauncher(c.ctx, c.device, c.appId);
 	if (!component.success) return component;
-	const adb = androidTools(c.ctx.env).adb;
+	const adb = androidToolsLocator.locate(c.ctx.env).adb;
 	await c.ctx.exec([adb, "-s", c.device.id, "logcat", "-c"], { timeoutMs: 10_000 });
 	const state: AndroidState = { adb, component: component.data, drawnSeen: 0 };
 	const out: Measured = { runs: [], notes: [] };

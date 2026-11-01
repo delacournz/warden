@@ -6,9 +6,9 @@
 import { join } from "node:path";
 import { withBuildLock } from "@delacour/warden-builds/lock";
 import { GOLDEN_PREFIX } from "@delacour/warden-providers/golden-name";
-import { execWithin, realTimer, type Timer } from "@delacour/warden-providers/health";
-import { IOS_TIMEOUTS, lookupCreateTarget, timedOutError } from "@delacour/warden-providers/ios";
-import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
+import { BoundedExec, type Timer, timers } from "@delacour/warden-providers/health";
+import { IOS_TIMEOUTS, Simctl } from "@delacour/warden-providers/ios";
+import { type SimctlSim, simctlListParser } from "@delacour/warden-providers/simctl-list";
 import { type Exec, type ExecOptions, execErrors } from "@delacour/warden-runtime/exec";
 import { xcodeReader } from "@delacour/warden-runtime/xcode";
 import type { PidAlive } from "@delacour/warden-store/liveness";
@@ -87,8 +87,9 @@ async function run(deps: GoldenDeps, cmd: string[], timeoutMs?: number): AsyncRe
 	const result =
 		timeoutMs === undefined
 			? await deps.exec(cmd)
-			: await execWithin({ exec: deps.exec, timer: deps.timer ?? realTimer }, cmd, timeoutMs);
-	if (result === undefined) return resultFactory.err(timedOutError(cmd, timeoutMs ?? 0));
+			: await new BoundedExec({ exec: deps.exec, timer: deps.timer ?? timers.real }).within(cmd, timeoutMs);
+	if (result === undefined)
+		return resultFactory.err(new Simctl(deps.exec, deps.timer).timedOutError(cmd, timeoutMs ?? 0));
 	return result.exitCode === 0 ? resultFactory.ok(result.stdout) : resultFactory.err(execErrors.format(cmd, result));
 }
 
@@ -109,9 +110,9 @@ async function readXcodeBuild(deps: GoldenDeps): AsyncResult<string> {
 	const timed: Exec = async (cmd, opts) => {
 		const within = {
 			exec: (c: readonly string[], o?: ExecOptions) => deps.exec(c, { ...opts, ...o }),
-			timer: deps.timer ?? realTimer,
+			timer: deps.timer ?? timers.real,
 		};
-		const result = await execWithin(within, cmd, XCODE_READ_TIMEOUT_MS);
+		const result = await new BoundedExec(within).within(cmd, XCODE_READ_TIMEOUT_MS);
 		return result ?? { exitCode: 124, stdout: "", stderr: `timed out after ${XCODE_READ_TIMEOUT_MS} ms` };
 	};
 	const xcode = await xcodeReader.read(timed, deps.env);
@@ -144,7 +145,7 @@ export function readGoldenTarget(deps: GoldenDeps, profile: string, runtime?: st
 
 async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): AsyncResult<GoldenTarget> {
 	const [target, xcodeBuild] = await Promise.all([
-		lookupCreateTarget(deps.exec, profile, runtime, deps.timer),
+		new Simctl(deps.exec, deps.timer).lookupCreateTarget(profile, runtime),
 		readXcodeBuild(deps),
 	]);
 	if (!target.success) return wardenErrors.toText(target);
@@ -161,7 +162,7 @@ async function readTarget(deps: GoldenDeps, profile: string, runtime?: string): 
 async function allSims(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
 	const out = await simctl(deps, ["list", "devices", "-j"], IOS_TIMEOUTS.listMs);
 	if (!out.success) return out;
-	const sims = parseAllSims(out.data);
+	const sims = simctlListParser.parseAll(out.data);
 	return sims.success ? sims : resultFactory.err(sims.error.message);
 }
 

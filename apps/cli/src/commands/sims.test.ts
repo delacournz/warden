@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Owner } from "@delacour/warden-store/types";
-import { fakeSimctl, OWNER_ENV } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { simsCommand } from "./sims";
 
@@ -33,8 +33,8 @@ function setup(argv: string[], opts: SetupOpts = {}): { c: TestContext; calls: s
 	const calls: string[][] = [];
 	const c = testContext(["delete", ...argv], {
 		now: () => NOW,
-		exec: fakeSimctl(SIMS, calls, [
-			["xcrun simctl list devices -j", { stdout: simctlDevicesJson(opts.sims ?? { "iOS-26-5": SIMS }) }],
+		exec: simctlFakes.build(SIMS, calls, [
+			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson(opts.sims ?? { "iOS-26-5": SIMS }) }],
 			["xcrun simctl delete", {}],
 		]),
 		ui: scriptedUi({

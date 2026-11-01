@@ -1,7 +1,7 @@
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
 import { type SlimSetting, slimPolicy } from "@delacour/warden-config/slim-policy";
-import { listAvds } from "@delacour/warden-providers/android";
-import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
+import { Adb } from "@delacour/warden-providers/android";
+import { biometricProfiles } from "@delacour/warden-providers/biometrics";
 import type { DeviceRequest, Owner } from "@delacour/warden-store/types";
 import { leaseModel } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
@@ -123,12 +123,12 @@ async function withAutoProfile(
 	host: LeaseHost,
 	request: ClaimRequest["request"]
 ): AsyncResult<ClaimRequest["request"], WardenError> {
-	const { profile: base, biometrics } = splitBiometricProfile(request.profile);
+	const { profile: base, biometrics } = biometricProfiles.split(request.profile);
 	if (request.physical || request.platform !== "android" || base !== "auto") return resultFactory.ok(request);
-	const avds = await listAvds({ exec: host.exec, env: host.env });
+	const avds = await new Adb({ exec: host.exec, env: host.env }).listAvds();
 	const profile = avds.success ? resolveAutoProfile(avds.data) : avds;
 	if (!profile.success) return profile;
-	return resultFactory.ok({ ...request, profile: biometricProfile(profile.data, biometrics) });
+	return resultFactory.ok({ ...request, profile: biometricProfiles.profile(profile.data, biometrics) });
 }
 
 /** The iOS provider options for a claim: its slim profile and whether (and which) physical phones are listed; none for Android. */

@@ -1,4 +1,4 @@
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { PerfEnv } from "./env";
 
@@ -14,7 +14,7 @@ export async function readClockOffsetMs(
 ): Promise<number | undefined> {
 	if (device.platform === "ios") return 0;
 	const before = ctx.now();
-	const res = await ctx.exec([androidTools(ctx.env).adb, "-s", device.id, "shell", "date", "+%s%N"], {
+	const res = await ctx.exec([androidToolsLocator.locate(ctx.env).adb, "-s", device.id, "shell", "date", "+%s%N"], {
 		timeoutMs: 10_000,
 	});
 	const after = ctx.now();

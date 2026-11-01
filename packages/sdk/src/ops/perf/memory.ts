@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { type LeaksSummary, parseLeaks, parseVmmap, type VmmapSummary } from "@delacour/warden-perf/metrics/ios-memory";
 import { type Meminfo, parseMeminfo } from "@delacour/warden-perf/metrics/meminfo";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -43,9 +43,12 @@ function infoFor(target: PerfTarget): PerfDone["device"] {
 // ---------------------------------------------------------------------------------------------- Android
 
 async function androidMeminfo({ ctx, target, app }: Ctx): Promise<Result<Meminfo, WardenError>> {
-	const res = await ctx.exec([androidTools(ctx.env).adb, "-s", target.udid, "shell", "dumpsys", "meminfo", app], {
-		timeoutMs: 15_000,
-	});
+	const res = await ctx.exec(
+		[androidToolsLocator.locate(ctx.env).adb, "-s", target.udid, "shell", "dumpsys", "meminfo", app],
+		{
+			timeoutMs: 15_000,
+		}
+	);
 	const info = res.exitCode === 0 ? parseMeminfo(res.stdout) : undefined;
 	return info === undefined ? fail(notRunning(target, app)) : resultFactory.ok(info);
 }
@@ -58,7 +61,7 @@ async function dumpHeap(
 	outDir: string,
 	io: MemoryIo
 ): Promise<Result<{ path: string; bytes: number }, WardenError>> {
-	const adb = androidTools(ctx.env).adb;
+	const adb = androidToolsLocator.locate(ctx.env).adb;
 	const shell = (...args: string[]) => ctx.exec([adb, "-s", target.udid, "shell", ...args], { timeoutMs: 15_000 });
 	const remote = `/data/local/tmp/warden-${app}-${ctx.now()}.hprof`;
 	const local = join(outDir, "native", `${app}-${ctx.now()}.hprof`);

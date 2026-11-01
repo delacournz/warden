@@ -1,6 +1,6 @@
-import { parseAdbDevices } from "@delacour/warden-providers/android";
-import { androidTools } from "@delacour/warden-providers/android-tools";
-import { parseAllSims } from "@delacour/warden-providers/simctl-list";
+import { adbParser } from "@delacour/warden-providers/android";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
+import { simctlListParser } from "@delacour/warden-providers/simctl-list";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Platform } from "@delacour/warden-store/types";
 
@@ -14,13 +14,13 @@ export async function deviceState(
 	id: string
 ): Promise<DeviceStateValue | undefined> {
 	if (platform === "android") {
-		const out = await exec([androidTools(env).adb, "devices"]);
+		const out = await exec([androidToolsLocator.locate(env).adb, "devices"]);
 		if (out.exitCode !== 0) return undefined;
-		return parseAdbDevices(out.stdout).some((d) => d.serial === id) ? "booted" : undefined;
+		return adbParser.parseEmulators(out.stdout).some((d) => d.serial === id) ? "booted" : undefined;
 	}
 	const out = await exec(["xcrun", "simctl", "list", "devices", "-j"]);
 	if (out.exitCode !== 0) return undefined;
-	const sims = parseAllSims(out.stdout);
+	const sims = simctlListParser.parseAll(out.stdout);
 	const sim = sims.success ? sims.data.find((s) => s.udid === id) : undefined;
 	if (sim?.state === "Booted") return "booted";
 	if (sim?.state === "Shutdown") return "shutdown";

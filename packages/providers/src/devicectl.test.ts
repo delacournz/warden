@@ -2,27 +2,23 @@ import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import {
 	DEVICECTL_TIMEOUTS,
-	listDevicesArgv,
-	listPhysicalIos,
-	lockStateArgv,
+	Devicectl,
+	devicectlArgv,
+	devicectlParser,
 	NAMED_PROBE_MS,
-	parseDevicectlDevices,
-	probePhysicalIos,
 	REACHABLE_PROBE_MS,
-	readLockState,
 } from "./devicectl";
 import {
 	DEVICECTL_LIST_EMPTY,
 	DEVICECTL_LIST_MIXED,
 	DEVICECTL_LOCKSTATE_LOCKED,
 	DEVICECTL_LOCKSTATE_UNLOCKED,
-	devicectlEntry,
-	devicectlJson,
+	devicectlFixtures,
 	FAKE_IPAD_UDID,
 	FAKE_IPHONE_UDID,
 	FAKE_UNPAIRED_UDID,
 } from "./devicectl.fixtures";
-import { realTimer, type TimedExec } from "./health";
+import { type TimedExec, timers } from "./health";
 
 function runner(result: Partial<ExecResult> | (() => Promise<ExecResult>), calls: string[][] = []): TimedExec {
 	const exec: Exec = async (cmd) => {
@@ -30,11 +26,11 @@ function runner(result: Partial<ExecResult> | (() => Promise<ExecResult>), calls
 		if (typeof result === "function") return result();
 		return { exitCode: 0, stdout: "", stderr: "", ...result };
 	};
-	return { exec, timer: realTimer };
+	return { exec, timer: timers.real };
 }
 
 describe("parseDevicectlDevices", () => {
-	const parsed = parseDevicectlDevices(DEVICECTL_LIST_MIXED);
+	const parsed = devicectlParser.parseDevices(DEVICECTL_LIST_MIXED);
 	const devices = parsed.success ? parsed.data : [];
 
 	test("keeps only physical iOS / iPadOS devices", () => {
@@ -75,9 +71,9 @@ describe("parseDevicectlDevices", () => {
 	});
 
 	test("an iPadOS platform string counts", () => {
-		const out = parseDevicectlDevices(
-			devicectlJson([
-				devicectlEntry({
+		const out = devicectlParser.parseDevices(
+			devicectlFixtures.json([
+				devicectlFixtures.entry({
 					udid: FAKE_IPAD_UDID,
 					name: "Test iPad",
 					deviceType: "iPad",
@@ -90,20 +86,20 @@ describe("parseDevicectlDevices", () => {
 	});
 
 	test("an empty list parses to nothing", () => {
-		const out = parseDevicectlDevices(DEVICECTL_LIST_EMPTY);
+		const out = devicectlParser.parseDevices(DEVICECTL_LIST_EMPTY);
 		expect(out).toEqual({ success: true, data: [] });
 	});
 
 	test("falls back to the `properties` block when the deprecated keys are gone", () => {
-		const entry = devicectlEntry({
+		const entry = devicectlFixtures.entry({
 			udid: FAKE_IPHONE_UDID,
 			name: "Test iPhone",
 			deviceType: "iPhone",
 			osVersion: "27.2",
 		});
 		const { hardwareProperties: _h, deviceProperties: _d, connectionProperties: _c, ...rest } = entry;
-		const out = parseDevicectlDevices(
-			devicectlJson([
+		const out = devicectlParser.parseDevices(
+			devicectlFixtures.json([
 				{
 					...rest,
 					properties: {
@@ -119,13 +115,13 @@ describe("parseDevicectlDevices", () => {
 	});
 
 	test("rejects malformed json and a missing result", () => {
-		expect(parseDevicectlDevices("nope").success).toBe(false);
-		expect(parseDevicectlDevices("{}").success).toBe(false);
+		expect(devicectlParser.parseDevices("nope").success).toBe(false);
+		expect(devicectlParser.parseDevices("{}").success).toBe(false);
 	});
 
 	test("skips an entry with no udid instead of failing the list", () => {
-		const out = parseDevicectlDevices(
-			devicectlJson([{ hardwareProperties: { reality: "physical", platform: "iOS" } }])
+		const out = devicectlParser.parseDevices(
+			devicectlFixtures.json([{ hardwareProperties: { reality: "physical", platform: "iOS" } }])
 		);
 		expect(out).toEqual({ success: true, data: [] });
 	});
@@ -134,19 +130,21 @@ describe("parseDevicectlDevices", () => {
 describe("listPhysicalIos", () => {
 	test("asks devicectl for JSON on stdout, bounded", async () => {
 		const calls: string[][] = [];
-		const out = await listPhysicalIos(runner({ stdout: DEVICECTL_LIST_MIXED }, calls));
-		expect(calls[0]).toEqual(listDevicesArgv());
-		expect(listDevicesArgv()).toContain("--json-output");
+		const out = await new Devicectl(runner({ stdout: DEVICECTL_LIST_MIXED }, calls)).listPhysical();
+		expect(calls[0]).toEqual(devicectlArgv.listDevices());
+		expect(devicectlArgv.listDevices()).toContain("--json-output");
 		expect(out.success && out.data).toHaveLength(3);
 	});
 
 	test("a failing devicectl is an error, never a throw", async () => {
-		const out = await listPhysicalIos(runner({ exitCode: 1, stderr: "boom" }));
+		const out = await new Devicectl(runner({ exitCode: 1, stderr: "boom" })).listPhysical();
 		expect(out.success).toBe(false);
 	});
 
 	test("a missing binary is an error", async () => {
-		const out = await listPhysicalIos(runner({ exitCode: 127, stderr: "xcrun: error: unable to find utility" }));
+		const out = await new Devicectl(
+			runner({ exitCode: 127, stderr: "xcrun: error: unable to find utility" })
+		).listPhysical();
 		expect(out.success).toBe(false);
 	});
 
@@ -159,7 +157,7 @@ describe("listPhysicalIos", () => {
 				return { promise: Promise.resolve(), cancel: () => {} };
 			},
 		};
-		const out = await listPhysicalIos(timed);
+		const out = await new Devicectl(timed).listPhysical();
 		expect(out.success).toBe(false);
 		expect(!out.success && out.error).toContain("did not finish");
 	});
@@ -167,31 +165,32 @@ describe("listPhysicalIos", () => {
 
 describe("lock state", () => {
 	test("lockStateArgv targets the device", () => {
-		expect(lockStateArgv(FAKE_IPHONE_UDID)).toEqual(
+		expect(devicectlArgv.lockState(FAKE_IPHONE_UDID)).toEqual(
 			expect.arrayContaining(["xcrun", "devicectl", "device", "info", "lockState", "--device", FAKE_IPHONE_UDID])
 		);
 	});
 
 	test("readLockState tells locked from unlocked", async () => {
-		const unlocked = await readLockState(runner({ stdout: DEVICECTL_LOCKSTATE_UNLOCKED }), FAKE_IPHONE_UDID);
+		const unlocked = await new Devicectl(runner({ stdout: DEVICECTL_LOCKSTATE_UNLOCKED })).readLockState(
+			FAKE_IPHONE_UDID
+		);
 		expect(unlocked).toEqual({ success: true, data: { locked: false } });
-		const locked = await readLockState(runner({ stdout: DEVICECTL_LOCKSTATE_LOCKED }), FAKE_IPHONE_UDID);
+		const locked = await new Devicectl(runner({ stdout: DEVICECTL_LOCKSTATE_LOCKED })).readLockState(FAKE_IPHONE_UDID);
 		expect(locked).toEqual({ success: true, data: { locked: true } });
 	});
 
 	test("probe passes when devicectl answers, locked or not", async () => {
 		const calls: string[][] = [];
 		expect(
-			(await probePhysicalIos(runner({ stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, calls), FAKE_IPHONE_UDID)).success
+			(await new Devicectl(runner({ stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, calls)).probe(FAKE_IPHONE_UDID)).success
 		).toBe(true);
-		expect((await probePhysicalIos(runner({ stdout: DEVICECTL_LOCKSTATE_LOCKED }), FAKE_IPHONE_UDID)).success).toBe(
+		expect((await new Devicectl(runner({ stdout: DEVICECTL_LOCKSTATE_LOCKED })).probe(FAKE_IPHONE_UDID)).success).toBe(
 			true
 		);
 	});
 
 	test("probe fails when devicectl cannot reach the phone", async () => {
-		const out = await probePhysicalIos(
-			runner({ exitCode: 1, stderr: "The device is not connected" }),
+		const out = await new Devicectl(runner({ exitCode: 1, stderr: "The device is not connected" })).probe(
 			FAKE_IPHONE_UDID
 		);
 		expect(out.success).toBe(false);
@@ -199,14 +198,14 @@ describe("lock state", () => {
 	});
 
 	test("probe fails on unreadable output", async () => {
-		expect((await probePhysicalIos(runner({ stdout: "garbage" }), FAKE_IPHONE_UDID)).success).toBe(false);
+		expect((await new Devicectl(runner({ stdout: "garbage" })).probe(FAKE_IPHONE_UDID)).success).toBe(false);
 	});
 });
 
 describe("reachability of listed phones", () => {
 	const phone = (over: { transportType?: string; tunnelState?: string; udid?: string }) =>
-		devicectlJson([
-			devicectlEntry({
+		devicectlFixtures.json([
+			devicectlFixtures.entry({
 				udid: over.udid ?? FAKE_IPAD_UDID,
 				name: "Test iPad",
 				deviceType: "iPad",
@@ -223,32 +222,34 @@ describe("reachability of listed phones", () => {
 			const body = cmd.includes("lockState") ? lock : { stdout: listJson };
 			return { exitCode: 0, stdout: "", stderr: "", ...body };
 		};
-		return { exec, timer: realTimer };
+		return { exec, timer: timers.real };
 	}
 
 	test("a connected tunnel is reachable without a probe", async () => {
 		const calls: string[][] = [];
-		const out = await listPhysicalIos(both(phone({ tunnelState: "connected" }), { exitCode: 1 }, calls));
+		const out = await new Devicectl(both(phone({ tunnelState: "connected" }), { exitCode: 1 }, calls)).listPhysical();
 		expect(out.success && out.data[0]?.state).toBe("booted");
 		expect(calls.some((c) => c.includes("lockState"))).toBe(false);
 	});
 
 	test("a wired phone is reachable without a probe", async () => {
 		const calls: string[][] = [];
-		const out = await listPhysicalIos(both(phone({ transportType: "wired" }), { exitCode: 1 }, calls));
+		const out = await new Devicectl(both(phone({ transportType: "wired" }), { exitCode: 1 }, calls)).listPhysical();
 		expect(out.success && out.data[0]?.state).toBe("booted");
 		expect(calls.some((c) => c.includes("lockState"))).toBe(false);
 	});
 
 	test("a disconnected network phone that answers lockState is ready", async () => {
-		const out = await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_LOCKED }));
+		const out = await new Devicectl(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_LOCKED })).listPhysical();
 		expect(out.success && out.data[0]?.state).toBe("booted");
 		expect(out.success && out.data[0]?.physical).not.toHaveProperty("unreachable");
 	});
 
 	test("a disconnected network phone that does not answer is unreachable and never ready", async () => {
 		const calls: string[][] = [];
-		const out = await listPhysicalIos(both(phone({}), { exitCode: 1, stderr: "The device is not connected" }, calls));
+		const out = await new Devicectl(
+			both(phone({}), { exitCode: 1, stderr: "The device is not connected" }, calls)
+		).listPhysical();
 		const device = out.success ? out.data[0] : undefined;
 		expect(device?.state).toBe("shutdown");
 		expect(device?.physical?.platform === "ios" && device.physical.unreachable).toContain("not connected");
@@ -260,14 +261,14 @@ describe("reachability of listed phones", () => {
 		const exec: Exec = async (cmd) =>
 			cmd.includes("lockState") ? new Promise<ExecResult>(() => {}) : { exitCode: 0, stdout: phone({}), stderr: "" };
 		const timer = (ms: number) =>
-			ms === REACHABLE_PROBE_MS ? { promise: Promise.resolve(), cancel: () => {} } : realTimer(ms);
-		const out = await listPhysicalIos({ exec, timer });
+			ms === REACHABLE_PROBE_MS ? { promise: Promise.resolve(), cancel: () => {} } : timers.real(ms);
+		const out = await new Devicectl({ exec, timer }).listPhysical();
 		expect(out.success && out.data[0]?.state).toBe("shutdown");
 	});
 
 	test("a phone that is not ready for another reason is not probed", async () => {
 		const calls: string[][] = [];
-		await listPhysicalIos(both(DEVICECTL_LIST_MIXED, { stdout: DEVICECTL_LOCKSTATE_LOCKED }, calls));
+		await new Devicectl(both(DEVICECTL_LIST_MIXED, { stdout: DEVICECTL_LOCKSTATE_LOCKED }, calls)).listPhysical();
 		expect(calls.filter((c) => c.includes("lockState"))).toHaveLength(0);
 	});
 	const probeTimeout = (calls: string[][]) => {
@@ -277,12 +278,14 @@ describe("reachability of listed phones", () => {
 
 	test("a phone named by the caller gets the longer bounded wait; an auto-picked one the short probe", async () => {
 		const named: string[][] = [];
-		await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, named), {
+		await new Devicectl(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, named)).listPhysical({
 			named: [FAKE_IPAD_UDID],
 		});
 		expect(probeTimeout(named)).toBe(String(NAMED_PROBE_MS / 1000));
 		const auto: string[][] = [];
-		await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, auto), { named: ["someone-else"] });
+		await new Devicectl(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }, auto)).listPhysical({
+			named: ["someone-else"],
+		});
 		expect(probeTimeout(auto)).toBe(String(REACHABLE_PROBE_MS / 1000));
 		expect(NAMED_PROBE_MS).toBeGreaterThan(REACHABLE_PROBE_MS);
 	});
@@ -291,16 +294,16 @@ describe("reachability of listed phones", () => {
 		const exec: Exec = async (cmd) =>
 			cmd.includes("lockState") ? new Promise<ExecResult>(() => {}) : { exitCode: 0, stdout: phone({}), stderr: "" };
 		const timer = (ms: number) =>
-			ms === NAMED_PROBE_MS ? { promise: Promise.resolve(), cancel: () => {} } : realTimer(ms);
-		const out = await listPhysicalIos({ exec, timer }, { named: [FAKE_IPAD_UDID] });
+			ms === NAMED_PROBE_MS ? { promise: Promise.resolve(), cancel: () => {} } : timers.real(ms);
+		const out = await new Devicectl({ exec, timer }).listPhysical({ named: [FAKE_IPAD_UDID] });
 		expect(out.success && out.data[0]?.state).toBe("shutdown");
 		const why = out.success && out.data[0]?.physical?.platform === "ios" && out.data[0].physical.unreachable;
 		expect(why).toContain(`${NAMED_PROBE_MS / 1000}s`);
 	});
 
 	test("several unreachable-looking phones are probed in parallel, not one after another", async () => {
-		const two = devicectlJson([
-			devicectlEntry({
+		const two = devicectlFixtures.json([
+			devicectlFixtures.entry({
 				udid: FAKE_IPAD_UDID,
 				name: "A",
 				deviceType: "iPad",
@@ -308,7 +311,7 @@ describe("reachability of listed phones", () => {
 				transportType: "localNetwork",
 				tunnelState: "disconnected",
 			}),
-			devicectlEntry({
+			devicectlFixtures.entry({
 				udid: FAKE_IPHONE_UDID,
 				name: "B",
 				deviceType: "iPhone",
@@ -327,13 +330,13 @@ describe("reachability of listed phones", () => {
 			inFlight--;
 			return { exitCode: 0, stdout: DEVICECTL_LOCKSTATE_UNLOCKED, stderr: "" };
 		};
-		await listPhysicalIos({ exec, timer: realTimer });
+		await new Devicectl({ exec, timer: timers.real }).listPhysical();
 		expect(peak).toBe(2);
 	});
 
 	test("a probe that answers records whether the phone is locked (reachable either way)", async () => {
-		const locked = await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_LOCKED }));
-		const unlocked = await listPhysicalIos(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED }));
+		const locked = await new Devicectl(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_LOCKED })).listPhysical();
+		const unlocked = await new Devicectl(both(phone({}), { stdout: DEVICECTL_LOCKSTATE_UNLOCKED })).listPhysical();
 		const lockedOf = (o: typeof locked) =>
 			o.success && o.data[0]?.physical?.platform === "ios" ? o.data[0].physical.locked : "?";
 		expect(lockedOf(locked)).toBe(true);

@@ -1,6 +1,6 @@
 import type { ConditionArea, ConditionRecord } from "@delacour/warden-config/conditions.types";
 import { PENDING_PREFIX } from "@delacour/warden-leasing/claim";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { type Exec, execErrors } from "@delacour/warden-runtime/exec";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
@@ -53,7 +53,7 @@ function resetCommands(
 				return [];
 		}
 	}
-	const { adb } = androidTools(deps.env);
+	const { adb } = androidToolsLocator.locate(deps.env);
 	const base = [adb, "-s", serial];
 	switch (record.area) {
 		case "network":

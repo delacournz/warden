@@ -2,8 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import {
 	DEVICECTL_LOCKSTATE_UNLOCKED,
-	devicectlEntry,
-	devicectlJson,
+	devicectlFixtures,
 	FAKE_IPAD_UDID,
 	FAKE_IPHONE_UDID,
 } from "@delacour/warden-providers/devicectl.fixtures";
@@ -172,15 +171,15 @@ describe("pickPhysical", () => {
 	});
 
 	test("iOS: names the iPhone and iPad with model, OS and transport", async () => {
-		const list = devicectlJson([
-			devicectlEntry({
+		const list = devicectlFixtures.json([
+			devicectlFixtures.entry({
 				udid: FAKE_IPHONE_UDID,
 				name: "Test iPhone",
 				deviceType: "iPhone",
 				osVersion: "27.2",
 				transportType: "wired",
 			}),
-			devicectlEntry({
+			devicectlFixtures.entry({
 				udid: FAKE_IPAD_UDID,
 				name: "Test iPad",
 				deviceType: "iPad",

@@ -3,22 +3,21 @@ import { resolveOwner } from "@delacour/warden-leasing/owner";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
 	DEVICECTL_LOCKSTATE_UNLOCKED,
-	devicectlEntry,
-	devicectlJson,
+	devicectlFixtures,
 	FAKE_IPHONE_UDID,
 } from "@delacour/warden-providers/devicectl.fixtures";
 import { UNLOCK_POLL_MS, UNLOCK_WAIT_MS } from "@delacour/warden-providers/unlock-wait";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { claimWithFlags, parseClaimFlags } from "./claim-flags";
 import { isLockedClaimError, reportClaimFailure } from "./physical-lock";
-import { fakeSimctl, OWNER_ENV } from "./simctl.testing";
+import { OWNER_ENV, simctlFakes } from "./simctl.testing";
 import { type TestContext, testContext } from "./testing";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-const LIST = devicectlJson([
-	devicectlEntry({
+const LIST = devicectlFixtures.json([
+	devicectlFixtures.entry({
 		udid: FAKE_IPHONE_UDID,
 		name: "Test iPhone",
 		deviceType: "iPhone",
@@ -30,7 +29,7 @@ const LIST = devicectlJson([
 /** A wired, ready phone whose lockState answers `locked` for the first `lockedReads` reads, then unlocked. */
 function setup(lockedReads: number) {
 	let reads = 0;
-	const base = fakeSimctl([], [], [["xcrun devicectl list devices", { stdout: LIST }]]);
+	const base = simctlFakes.build([], [], [["xcrun devicectl list devices", { stdout: LIST }]]);
 	const exec: Exec = async (cmd, opts) => {
 		if (cmd.join(" ").startsWith("xcrun devicectl device info lockState")) {
 			reads++;

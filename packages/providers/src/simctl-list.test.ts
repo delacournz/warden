@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { listAllSims, parseAllSims } from "./simctl-list";
+import { SimctlLister, simctlListParser } from "./simctl-list";
 
 const IOS = "com.apple.CoreSimulator.SimRuntime.iOS-26-5";
 const IPHONE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17";
@@ -25,7 +25,7 @@ describe("parseAllSims", () => {
 	});
 
 	test("keeps unavailable sims + runtime/device type/last boot/size; iOS only by default", () => {
-		expect(parseAllSims(json)).toEqual({
+		expect(simctlListParser.parseAll(json)).toEqual({
 			success: true,
 			data: [
 				{
@@ -43,13 +43,13 @@ describe("parseAllSims", () => {
 	});
 
 	test("allPlatforms keeps watchOS/tvOS/visionOS sims", () => {
-		const sims = parseAllSims(json, { allPlatforms: true });
+		const sims = simctlListParser.parseAll(json, { allPlatforms: true });
 		expect(sims.success && sims.data.map((s) => s.udid)).toEqual(["U1", "W"]);
 	});
 
 	test("bad JSON is an error", () => {
-		expect(parseAllSims("nope").success).toBe(false);
-		expect(parseAllSims("{}").success).toBe(false);
+		expect(simctlListParser.parseAll("nope").success).toBe(false);
+		expect(simctlListParser.parseAll("{}").success).toBe(false);
 	});
 });
 
@@ -64,13 +64,13 @@ describe("listAllSims", () => {
 			if (cmd[0] === "du") return { exitCode: 0, stdout: "2048\t/d/W/data\n", stderr: "" };
 			return { exitCode: 0, stdout: json, stderr: "" };
 		};
-		const sims = await listAllSims(exec);
+		const sims = await new SimctlLister(exec).listAll();
 		expect(sims.success && sims.data.map((s) => [s.udid, s.dataPathSize])).toEqual([["W", 2048 * 1024]]);
 		expect(calls).toContainEqual(["du", "-sk", "/d/W/data"]);
 	});
 
 	test("a failing simctl is an error", async () => {
 		const exec: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "no xcode" });
-		expect((await listAllSims(exec)).success).toBe(false);
+		expect((await new SimctlLister(exec).listAll()).success).toBe(false);
 	});
 });

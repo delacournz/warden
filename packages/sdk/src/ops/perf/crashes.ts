@@ -14,7 +14,7 @@ import { parseDeviceDate } from "@delacour/warden-perf/logs/logcat";
 import { redact } from "@delacour/warden-perf/logs/redact";
 import { atosArgv, parseAtos, parseDwarfdumpUuid } from "@delacour/warden-perf/logs/symbolicate";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -171,7 +171,7 @@ async function androidCrashes(
 	sinceMs: number | undefined,
 	timeoutMs: number
 ): Promise<{ crashes: AndroidCrash[]; raw: Array<[string, string]>; notes: string[] }> {
-	const adb = [androidTools(ctx.env).adb, "-s", serial];
+	const adb = [androidToolsLocator.locate(ctx.env).adb, "-s", serial];
 	const notes = [TOMBSTONE_NOTE];
 	const date = await ctx.exec([...adb, "shell", "date", "+%Y-%m-%d %H:%M:%S"], { timeoutMs: 5_000 });
 	const naiveNow = (date.exitCode === 0 ? parseDeviceDate(date.stdout) : undefined) ?? ctx.now();

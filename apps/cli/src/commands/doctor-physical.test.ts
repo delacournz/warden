@@ -5,8 +5,7 @@ import { certificatesFromPem, sha1Hex } from "@delacour/warden-builds/ios-runner
 import { CERT_TEAM_A, CERT_TEAM_B } from "@delacour/warden-builds/ios-runner/signing.testing";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
-	devicectlEntry,
-	devicectlJson,
+	devicectlFixtures,
 	FAKE_IPAD_UDID,
 	FAKE_IPHONE_UDID,
 } from "@delacour/warden-providers/devicectl.fixtures";
@@ -19,15 +18,15 @@ afterEach(() => ctx?.cleanup());
 const TEAM = "ABCDE12345";
 const NOW = 1_000_000;
 
-const LIST = devicectlJson([
-	devicectlEntry({
+const LIST = devicectlFixtures.json([
+	devicectlFixtures.entry({
 		udid: FAKE_IPHONE_UDID,
 		name: "Test iPhone",
 		deviceType: "iPhone",
 		osVersion: "27.2",
 		transportType: "wired",
 	}),
-	devicectlEntry({
+	devicectlFixtures.entry({
 		udid: FAKE_IPAD_UDID,
 		name: "Test iPad",
 		deviceType: "iPad",
@@ -102,8 +101,8 @@ describe("physicalChecks", () => {
 	});
 
 	test("ios-devices warns when no phone is usable", async () => {
-		const only = devicectlJson([
-			devicectlEntry({
+		const only = devicectlFixtures.json([
+			devicectlFixtures.entry({
 				udid: FAKE_IPAD_UDID,
 				name: "Test iPad",
 				deviceType: "iPad",

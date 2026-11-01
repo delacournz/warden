@@ -11,8 +11,8 @@
  */
 import { durationParser } from "@delacour/warden-config/duration";
 import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
-import { isGoldenName } from "@delacour/warden-providers/golden-name";
-import { shortRuntime } from "@delacour/warden-providers/ios";
+import { goldenNames } from "@delacour/warden-providers/golden-name";
+import { simctlParser } from "@delacour/warden-providers/ios";
 import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { DeviceRecord } from "@delacour/warden-store/store";
@@ -139,7 +139,7 @@ type Context = {
 /** device type + runtime platform (`iOS`, `watchOS`, …): only runtimes of one platform compare. */
 function typeKey(sim: SimctlSim): string | undefined {
 	if (sim.deviceTypeIdentifier === undefined) return undefined;
-	return `${sim.deviceTypeIdentifier}\u0000${shortRuntime(sim.runtimeId).split("-")[0]}`;
+	return `${sim.deviceTypeIdentifier}\u0000${simctlParser.shortRuntime(sim.runtimeId).split("-")[0]}`;
 }
 
 function newestRuntimeByType(sims: readonly SimctlSim[]): Map<string, string> {
@@ -147,7 +147,7 @@ function newestRuntimeByType(sims: readonly SimctlSim[]): Map<string, string> {
 	for (const s of sims) {
 		const key = typeKey(s);
 		if (key === undefined) continue;
-		const runtime = shortRuntime(s.runtimeId);
+		const runtime = simctlParser.shortRuntime(s.runtimeId);
 		const current = newest.get(key);
 		if (current === undefined || compareRuntimes(runtime, current) > 0) newest.set(key, runtime);
 	}
@@ -171,7 +171,7 @@ function duplicateKeepers(sims: readonly SimctlSim[]): Map<string, SimctlSim> {
 }
 
 function ownerOf(sim: SimctlSim, record: DeviceRecord | undefined): SimOwner {
-	if (isGoldenName(sim.name)) return "golden";
+	if (goldenNames.isGolden(sim.name)) return "golden";
 	return record || wardenNameProfile(sim.name) !== undefined ? "warden" : "foreign";
 }
 
@@ -206,7 +206,7 @@ function foreignReasons(sim: SimctlSim, ctx: Context): SimReason[] {
 		reasons.push({ kind: "stale", sinceMs: now - sim.lastBootedAt });
 	const key = typeKey(sim);
 	const newest = key !== undefined ? ctx.newest.get(key) : undefined;
-	if (newest !== undefined && compareRuntimes(shortRuntime(sim.runtimeId), newest) < 0)
+	if (newest !== undefined && compareRuntimes(simctlParser.shortRuntime(sim.runtimeId), newest) < 0)
 		reasons.push({ kind: "old-runtime", newest });
 	const keeper = ctx.keeperOf.get(sim.udid);
 	if (keeper) reasons.push({ kind: "duplicate", of: { udid: keeper.udid, name: keeper.name } });
@@ -255,7 +255,7 @@ export function judgeSims(input: RulesInput): SimEntry[] {
 			l.resource.kind === "device" && l.resource.platform === "ios" ? [[l.resource.id, l] as const] : []
 		)
 	);
-	const live = input.sims.filter((s) => s.isAvailable && !isGoldenName(s.name));
+	const live = input.sims.filter((s) => s.isAvailable && !goldenNames.isGolden(s.name));
 	const ctx: Context = { input, newest: newestRuntimeByType(live), keeperOf: duplicateKeepers(live) };
 	const entries = input.sims.map((sim): SimEntry => {
 		const record = records.get(sim.udid);
@@ -266,7 +266,7 @@ export function judgeSims(input: RulesInput): SimEntry[] {
 			udid: sim.udid,
 			name: sim.name,
 			runtimeId: sim.runtimeId,
-			runtime: shortRuntime(sim.runtimeId),
+			runtime: simctlParser.shortRuntime(sim.runtimeId),
 			...(sim.deviceTypeIdentifier !== undefined ? { deviceType: sim.deviceTypeIdentifier } : {}),
 			state: sim.state,
 			isAvailable: sim.isAvailable,

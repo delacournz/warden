@@ -12,13 +12,13 @@ import {
 	FAKE_IPHONE_UDID,
 	FAKE_UNPAIRED_UDID,
 } from "./devicectl.fixtures";
-import { createIosProvider, deleteSim, parseSimctlDevices, parseSimctlDeviceTypes, parseSimctlRuntimes } from "./ios";
+import { IosProvider, type IosProviderOptions, Simctl, simctlParser } from "./ios";
 import type { DeviceProvider } from "./provider.types";
 import {
 	SIMCTL_DEVICES_JSON,
 	SIMCTL_DEVICETYPES_JSON,
 	SIMCTL_RUNTIMES_JSON,
-	simctlDevicesJson,
+	simctlFixtures,
 } from "./testing/ios.fixture";
 
 let dir: string;
@@ -49,7 +49,7 @@ function fake(handlers: Array<[prefix: string, result: Partial<ExecResult>]>, ca
 }
 
 function provider(exec: Exec): DeviceProvider {
-	return createIosProvider({
+	return new IosProvider({
 		exec,
 		store,
 		env: { WARDEN_SIM_LAUNCHD_STORE_ROOT: dir },
@@ -60,7 +60,7 @@ function provider(exec: Exec): DeviceProvider {
 
 describe("parseSimctlDevices", () => {
 	test("flattens iOS runtimes, maps state, skips unavailable + non-iOS", () => {
-		const result = parseSimctlDevices(SIMCTL_DEVICES_JSON);
+		const result = simctlParser.parseDevices(SIMCTL_DEVICES_JSON);
 		expect(result.success).toBe(true);
 		if (!result.success) return;
 		const byName = new Map(result.data.map((d) => [d.name, d]));
@@ -87,36 +87,37 @@ describe("parseSimctlDevices", () => {
 	});
 
 	test("a sim still Shutting Down is reported shut down, so a claim boots it instead of reusing it (16-1)", () => {
-		const json = simctlDevicesJson({
+		const json = simctlFixtures.devicesJson({
 			"iOS-26-5": [{ udid: "S", name: "warden-iphone-17-1", state: "Shutting Down" }],
 		});
-		const result = parseSimctlDevices(json);
+		const result = simctlParser.parseDevices(json);
 		expect(result.success && result.data.map((d) => d.state)).toEqual(["shutdown"]);
 	});
 
 	test("marks golden devices", () => {
-		const json = simctlDevicesJson({
+		const json = simctlFixtures.devicesJson({
 			"iOS-26-5": [
 				{ udid: "G", name: "warden-golden-iphone-17-abc123def0", state: "Shutdown" },
 				{ udid: "P", name: "warden-iphone-17-1", state: "Shutdown" },
 			],
 		});
-		const result = parseSimctlDevices(json);
+		const result = simctlParser.parseDevices(json);
 		expect(result.success && result.data.map((d) => d.golden)).toEqual([true, undefined]);
 	});
 
 	test("invalid JSON or shape → err", () => {
-		expect(parseSimctlDevices("nope").success).toBe(false);
+		expect(simctlParser.parseDevices("nope").success).toBe(false);
 		expect(
-			parseSimctlDevices(JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ name: 1 }] } }))
-				.success
+			simctlParser.parseDevices(
+				JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ name: 1 }] } })
+			).success
 		).toBe(false);
 	});
 });
 
 describe("parseSimctlRuntimes / DeviceTypes", () => {
 	test("runtimes: iOS + available only, newest first", () => {
-		const result = parseSimctlRuntimes(SIMCTL_RUNTIMES_JSON);
+		const result = simctlParser.parseRuntimes(SIMCTL_RUNTIMES_JSON);
 		expect(result.success).toBe(true);
 		if (!result.success) return;
 		expect(result.data.map((r) => r.identifier)).toEqual([
@@ -128,7 +129,7 @@ describe("parseSimctlRuntimes / DeviceTypes", () => {
 	});
 
 	test("device types parsed", () => {
-		const result = parseSimctlDeviceTypes(SIMCTL_DEVICETYPES_JSON);
+		const result = simctlParser.parseDeviceTypes(SIMCTL_DEVICETYPES_JSON);
 		expect(result.success && result.data.map((t) => t.name)).toEqual([
 			"iPhone 17 Pro",
 			"iPhone 17",
@@ -202,7 +203,7 @@ describe("createIosProvider", () => {
 	test("create clones via the clone strategy when given, records the device", async () => {
 		const calls: Call[] = [];
 		const clones: string[][] = [];
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec: fake([], calls),
 				store,
@@ -237,7 +238,7 @@ describe("createIosProvider", () => {
 
 	test("clone failure falls back to simctl create and logs why", async () => {
 		const logs: string[] = [];
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec: fake([
 					["xcrun simctl list devicetypes -j", { stdout: SIMCTL_DEVICETYPES_JSON }],
@@ -340,7 +341,7 @@ describe("createIosProvider", () => {
 				: { exitCode: 0, stdout: "", stderr: "" };
 		};
 		const slept: number[] = [];
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec,
 				store,
@@ -362,7 +363,7 @@ describe("createIosProvider", () => {
 			stderr: "Unable to boot device in current state: Shutting Down",
 		});
 		let slept = 0;
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec,
 				store,
@@ -446,7 +447,7 @@ describe("createIosProvider timeouts (16-11)", () => {
 	test("a simctl that never returns is an error once its timeout fires, not a hung claim", async () => {
 		const hung: Exec = () => new Promise<ExecResult>(() => {});
 		const fired: number[] = [];
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec: hung,
 				store,
@@ -476,7 +477,7 @@ describe("createIosProvider timeouts (16-11)", () => {
 
 describe("createIosProvider bootReady (16-15)", () => {
 	function bootProvider(exec: Exec) {
-		return createIosProvider(
+		return new IosProvider(
 			{
 				exec,
 				store,
@@ -546,7 +547,7 @@ describe("createIosProvider bootReady (16-15)", () => {
 			if (cmd[2] === "boot") clock += 4_000;
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec,
 				store,
@@ -572,7 +573,7 @@ describe("createIosProvider bootReady (16-15)", () => {
 			}
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec,
 				store,
@@ -610,14 +611,14 @@ describe("deleteSim", () => {
 			],
 			calls
 		);
-		expect(await deleteSim(exec, "U1")).toEqual({ success: true, data: undefined });
+		expect(await new Simctl(exec).deleteSim("U1")).toEqual({ success: true, data: undefined });
 		expect(calls.map((c) => c.cmd.join(" "))).toEqual(["xcrun simctl shutdown U1", "xcrun simctl delete U1"]);
 	});
 
 	test("skips the shutdown when told to (an unavailable sim can't be shut down)", async () => {
 		const calls: Call[] = [];
 		const exec = fake([["xcrun simctl delete", {}]], calls);
-		expect((await deleteSim(exec, "U1", { shutdown: false })).success).toBe(true);
+		expect((await new Simctl(exec).deleteSim("U1", { shutdown: false })).success).toBe(true);
 		expect(calls.map((c) => c.cmd.join(" "))).toEqual(["xcrun simctl delete U1"]);
 	});
 
@@ -626,7 +627,7 @@ describe("deleteSim", () => {
 			["xcrun simctl shutdown", {}],
 			["xcrun simctl delete", { exitCode: 1, stderr: "Invalid device: U1" }],
 		]);
-		const result = await deleteSim(exec, "U1");
+		const result = await new Simctl(exec).deleteSim("U1");
 		expect(result.success).toBe(false);
 	});
 });
@@ -636,8 +637,8 @@ describe("createIosProvider slim (SLIM-2)", () => {
 	const printed = (labels: Iterable<string>): string =>
 		`disabled services = {\n${[...labels].map((l) => `\t"${l}" => disabled`).join("\n")}\n}\n`;
 
-	function slimProvider(exec: Exec, options: Parameters<typeof createIosProvider>[1] = {}): DeviceProvider {
-		return createIosProvider(
+	function slimProvider(exec: Exec, options: IosProviderOptions = {}): DeviceProvider {
+		return new IosProvider(
 			{
 				exec,
 				store,
@@ -757,7 +758,7 @@ describe("createIosProvider slim (SLIM-2)", () => {
 	test("biometrics profile: the clone is made for the plain profile, recorded +bio, and enrolled after every boot", async () => {
 		const cloned: string[] = [];
 		const calls: Call[] = [];
-		const p = createIosProvider(
+		const p = new IosProvider(
 			{
 				exec: fake(
 					[["xcrun simctl spawn CLONED notifyutil", { stdout: "com.apple.BiometricKit.enrollmentChanged 1\n" }]],
@@ -855,7 +856,7 @@ describe("createIosProvider slim (SLIM-2)", () => {
 
 describe("createIosProvider physical iPhones (PHY-6.5)", () => {
 	const physicalProvider = (exec: Exec): DeviceProvider =>
-		createIosProvider(
+		new IosProvider(
 			{
 				exec,
 				store,

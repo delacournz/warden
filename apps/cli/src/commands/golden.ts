@@ -8,8 +8,8 @@ import { ensureGolden, listGoldens, pruneGoldens } from "@delacour/warden-core/g
 import { androidGoldenDeps, goldenDeps, type Sleep } from "@delacour/warden-core/host-deps";
 import { resolveAutoProfile } from "@delacour/warden-leasing/claim-request";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { listAvds } from "@delacour/warden-providers/android";
-import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
+import { Adb } from "@delacour/warden-providers/android";
+import { biometricProfiles } from "@delacour/warden-providers/biometrics";
 import { leaseModel } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -32,14 +32,14 @@ function platformOf(ctx: CommandContext, opts: PlatformOpt): "ios" | "android" |
 
 /** The snapshot target a profile names: its AVD (`auto` = the first AVD), plus `+bio` for a biometrics profile. */
 async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string> {
-	const avds = await listAvds({ exec: ctx.exec, env: ctx.env });
+	const avds = await new Adb({ exec: ctx.exec, env: ctx.env }).listAvds();
 	if (!avds.success) return wardenErrors.toText(avds);
-	const { profile: base, biometrics } = splitBiometricProfile(profile);
+	const { profile: base, biometrics } = biometricProfiles.split(profile);
 	const slug = base === "auto" ? wardenErrors.toText(resolveAutoProfile(avds.data)) : resultFactory.ok(base);
 	if (!slug.success) return slug;
 	const avd = avds.data.find((a) => leaseModel.profileSlug(a) === slug.data);
 	return avd !== undefined
-		? resultFactory.ok(biometricProfile(avd, biometrics))
+		? resultFactory.ok(biometricProfiles.profile(avd, biometrics))
 		: resultFactory.err(`no AVD matches profile "${slug.data}"`);
 }
 

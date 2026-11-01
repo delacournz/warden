@@ -7,7 +7,7 @@ import { spawnDetachedTicker, spawnDetachedTickerVia } from "@delacour/warden-de
 import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/warden-device/conditions/scheduler.spawn";
 import { driverErr } from "@delacour/warden-driver/errors";
 import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -68,7 +68,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		import("@delacour/warden-driver-android/android-settings"),
 	]);
 	const serial = device.udid;
-	const { adb } = androidTools(ctx.env);
+	const { adb } = androidToolsLocator.locate(ctx.env);
 	const session = openAdbSession({ adb, serial });
 	const net = createAndroidNetwork({
 		session,
@@ -143,7 +143,7 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 		return handle && liveness.processAlive(handle.pid) ? handle.pid : undefined;
 	},
 	command: processCommand,
-	adb: (ctx) => androidTools(ctx.env).adb,
+	adb: (ctx) => androidToolsLocator.locate(ctx.env).adb,
 	ensureProxy: async (ctx, lease) => {
 		const started = await ensureLeaseProxy(proxyDeps(ctx), lease, {
 			condition: { kind: "online" },

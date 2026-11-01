@@ -1,7 +1,7 @@
 import { afterAll, setDefaultTimeout } from "bun:test";
 import { realNativeLogDeps } from "@delacour/warden-devtools/native-log";
 import { E2eError } from "@delacour/warden-driver/e2e-error";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { readEnv } from "./env";
 import { defaultFixtureFactory } from "./fixtures";
@@ -91,7 +91,7 @@ scrubRunnerEnv(process.env);
 if (!hasDefaultDriverFactory()) {
 	// a test-installed fake device has no simulator to read a native log from
 	setDefaultDriverFactory(defaultDriverFactory);
-	setDefaultNativeLog(realNativeLogDeps(processExec.run, androidTools(process.env).adb));
+	setDefaultNativeLog(realNativeLogDeps(processExec.run, androidToolsLocator.locate(process.env).adb));
 	setDefaultHidRecovery({ exec: processExec.run });
 }
 if (!hasDefaultFixtureFactory()) setDefaultFixtureFactory(defaultFixtureFactory);

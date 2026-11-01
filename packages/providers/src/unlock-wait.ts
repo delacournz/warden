@@ -21,12 +21,6 @@ export const UNLOCK_PROGRESS_MS = 30_000;
 export const DEVICE_LOCKED_CODE = "device_locked";
 export const DEVICE_LOCKED_HINT = "unlock the phone, then retry";
 
-/** The claim error for a phone that is locked: `device_locked: <name> is locked`. */
-export const deviceLockedMessage = (name: string): string => `${DEVICE_LOCKED_CODE}: ${name} is locked`;
-
-/** Is `error` a locked-phone failure of this module (or the install path's `device_locked:`)? */
-export const isDeviceLockedError = (error: string): boolean => /(^|\b)device_locked: /.test(error);
-
 export type UnlockWaitInput = {
 	name: string;
 	/** `devicectl device info lockState` */
@@ -46,41 +40,62 @@ export type UnlockWaitInput = {
 
 const UNLOCK_TIMING = { waitMs: UNLOCK_WAIT_MS, pollMs: UNLOCK_POLL_MS, progressMs: UNLOCK_PROGRESS_MS };
 
-/** The timings `input` overrides (tests), nothing for the rest. */
-function definedTiming(input: UnlockWaitInput): Partial<typeof UNLOCK_TIMING> {
-	const { waitMs, pollMs, progressMs } = input;
-	return {
-		...(waitMs === undefined ? {} : { waitMs }),
-		...(pollMs === undefined ? {} : { pollMs }),
-		...(progressMs === undefined ? {} : { progressMs }),
-	};
+/** The text of a locked-phone failure. */
+export class DeviceLockedErrors {
+	/** The claim error for a phone that is locked: `device_locked: <name> is locked`. */
+	message(name: string): string {
+		return `${DEVICE_LOCKED_CODE}: ${name} is locked`;
+	}
+
+	/** Is `error` a locked-phone failure of this module (or the install path's `device_locked:`)? */
+	isLocked(error: string): boolean {
+		return /(^|\b)device_locked: /.test(error);
+	}
 }
 
-/**
- * Ok once the phone is unlocked (or when it gives no answer: offline is the claim's to report). A phone still
- * locked after the wait, or at once with `noWait`, is `device_locked: <name> is locked`.
- */
-export async function waitUnlocked(input: UnlockWaitInput): AsyncResult<void> {
-	const { waitMs, pollMs, progressMs } = { ...UNLOCK_TIMING, ...definedTiming(input) };
-	const first = await input.read();
-	if (!first.success || !first.data.locked) return resultFactory.ok(undefined);
-	if (input.noWait) return resultFactory.err(deviceLockedMessage(input.name));
-	input.log(`${input.name} is locked: unlock it to continue (waiting up to ${durationParser.format(waitMs)})`);
-	const startedAt = input.now();
-	let nextProgress = startedAt + progressMs;
-	for (;;) {
-		const remaining = startedAt + waitMs - input.now();
-		if (remaining <= 0)
-			return resultFactory.err(`${deviceLockedMessage(input.name)} after ${durationParser.format(waitMs)}`);
-		await input.sleep(Math.min(pollMs, remaining));
-		if (input.abort?.()) return resultFactory.err(UNLOCK_WAIT_ABORTED);
-		const state = await input.read();
-		if (!state.success || !state.data.locked) return resultFactory.ok(undefined);
-		if (input.now() >= nextProgress && input.now() < startedAt + waitMs) {
-			input.log(
-				`${input.name} still locked: waiting for unlock (${durationParser.format(input.now() - startedAt)} of ${durationParser.format(waitMs)})`
-			);
-			nextProgress += progressMs;
+export const deviceLockedErrors = new DeviceLockedErrors();
+
+/** One wait for a locked phone to be unlocked. */
+export class UnlockWaiter {
+	constructor(private readonly input: UnlockWaitInput) {}
+
+	/**
+	 * Ok once the phone is unlocked (or when it gives no answer: offline is the claim's to report). A phone still
+	 * locked after the wait, or at once with `noWait`, is `device_locked: <name> is locked`.
+	 */
+	async wait(): AsyncResult<void> {
+		const { input } = this;
+		const { waitMs, pollMs, progressMs } = { ...UNLOCK_TIMING, ...this.definedTiming() };
+		const first = await input.read();
+		if (!first.success || !first.data.locked) return resultFactory.ok(undefined);
+		if (input.noWait) return resultFactory.err(deviceLockedErrors.message(input.name));
+		input.log(`${input.name} is locked: unlock it to continue (waiting up to ${durationParser.format(waitMs)})`);
+		const startedAt = input.now();
+		let nextProgress = startedAt + progressMs;
+		for (;;) {
+			const remaining = startedAt + waitMs - input.now();
+			if (remaining <= 0)
+				return resultFactory.err(`${deviceLockedErrors.message(input.name)} after ${durationParser.format(waitMs)}`);
+			await input.sleep(Math.min(pollMs, remaining));
+			if (input.abort?.()) return resultFactory.err(UNLOCK_WAIT_ABORTED);
+			const state = await input.read();
+			if (!state.success || !state.data.locked) return resultFactory.ok(undefined);
+			if (input.now() >= nextProgress && input.now() < startedAt + waitMs) {
+				input.log(
+					`${input.name} still locked: waiting for unlock (${durationParser.format(input.now() - startedAt)} of ${durationParser.format(waitMs)})`
+				);
+				nextProgress += progressMs;
+			}
 		}
+	}
+
+	/** The timings `input` overrides (tests), nothing for the rest. */
+	private definedTiming(): Partial<typeof UNLOCK_TIMING> {
+		const { waitMs, pollMs, progressMs } = this.input;
+		return {
+			...(waitMs === undefined ? {} : { waitMs }),
+			...(pollMs === undefined ? {} : { pollMs }),
+			...(progressMs === undefined ? {} : { progressMs }),
+		};
 	}
 }

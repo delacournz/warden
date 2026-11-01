@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { chunk, launchdJobPlists, parseDeviceRuntime, parseRuntimeRoot, runtimeRootFor } from "./slim.launchd";
+import { LaunchdPlists, launchdParser } from "./slim.launchd";
 
 const RT = "com.apple.CoreSimulator.SimRuntime.iOS-27-1";
 
@@ -12,18 +12,18 @@ describe("parseRuntimeRoot", () => {
 				{ identifier: "other", bundlePath: "/y/iOS.simruntime" },
 			],
 		});
-		expect(parseRuntimeRoot(json, RT)).toBe("/x/RuntimeRoot");
-		expect(parseRuntimeRoot(json, "other")).toBe("/y/iOS.simruntime/Contents/Resources/RuntimeRoot");
-		expect(parseRuntimeRoot(json, "missing")).toBeUndefined();
-		expect(parseRuntimeRoot("not json", RT)).toBeUndefined();
+		expect(launchdParser.parseRuntimeRoot(json, RT)).toBe("/x/RuntimeRoot");
+		expect(launchdParser.parseRuntimeRoot(json, "other")).toBe("/y/iOS.simruntime/Contents/Resources/RuntimeRoot");
+		expect(launchdParser.parseRuntimeRoot(json, "missing")).toBeUndefined();
+		expect(launchdParser.parseRuntimeRoot("not json", RT)).toBeUndefined();
 	});
 });
 
 describe("parseDeviceRuntime", () => {
 	test("finds the runtime key a udid is listed under", () => {
 		const json = JSON.stringify({ devices: { a: [{ udid: "1" }], [RT]: [{ udid: "2" }] } });
-		expect(parseDeviceRuntime(json, "2")).toBe(RT);
-		expect(parseDeviceRuntime(json, "3")).toBeUndefined();
+		expect(launchdParser.parseDeviceRuntime(json, "2")).toBe(RT);
+		expect(launchdParser.parseDeviceRuntime(json, "3")).toBeUndefined();
 	});
 });
 
@@ -34,7 +34,7 @@ describe("runtimeRootFor", () => {
 			calls.push([...cmd]);
 			return { exitCode: 0, stdout: JSON.stringify({ runtimes: [{ identifier: RT, runtimeRoot: "/r" }] }), stderr: "" };
 		};
-		expect(await runtimeRootFor(exec, RT)).toBe("/r");
+		expect(await new LaunchdPlists(exec).runtimeRootFor(RT)).toBe("/r");
 		expect(calls).toEqual([["xcrun", "simctl", "list", "runtimes", "-j"]]);
 	});
 });
@@ -51,7 +51,7 @@ describe("launchdJobPlists", () => {
 			stdout: files.get(cmd[cmd.length - 1] as string) ?? "",
 			stderr: "",
 		});
-		const found = await launchdJobPlists(exec, "/r", ["a", "b", "c", "d"], (path) => files.has(path));
+		const found = await new LaunchdPlists(exec, (path) => files.has(path)).jobPlists("/r", ["a", "b", "c", "d"]);
 		expect([...found]).toEqual([
 			["a", "/r/System/Library/LaunchDaemons/a.plist"],
 			["b", "/r/System/Library/LaunchAgents/b.plist"],
@@ -61,7 +61,7 @@ describe("launchdJobPlists", () => {
 
 describe("chunk", () => {
 	test("slices", () => {
-		expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
-		expect(chunk([], 2)).toEqual([]);
+		expect(launchdParser.chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+		expect(launchdParser.chunk([], 2)).toEqual([]);
 	});
 });

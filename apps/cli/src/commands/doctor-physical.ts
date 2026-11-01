@@ -5,8 +5,8 @@ import { resolveTeam } from "@delacour/warden-builds/ios-runner/signing";
 import { runnerRoot } from "@delacour/warden-builds/ios-runner/stage";
 import { providerFor } from "@delacour/warden-core/host-deps";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
-import { listPhysicalIos, readLockState } from "@delacour/warden-providers/devicectl";
-import { realTimer } from "@delacour/warden-providers/health";
+import { Devicectl } from "@delacour/warden-providers/devicectl";
+import { timers } from "@delacour/warden-providers/health";
 import { storeLocator } from "@delacour/warden-store/store";
 import { type InventoryDevice, leaseModel } from "@delacour/warden-store/types";
 import { appHostFromContext, type CommandContext } from "../context";
@@ -47,7 +47,7 @@ async function describeIos(ctx: CommandContext, d: InventoryDevice, facts: IosFa
 	if (facts.unreachable !== undefined) parts.push(`offline (${facts.unreachable})`);
 	else if (isReady(d) && facts.locked !== undefined) parts.push(`reachable, ${facts.locked ? "locked" : "unlocked"}`);
 	else if (isReady(d)) {
-		const lock = await readLockState({ exec: ctx.exec, timer: realTimer }, d.id);
+		const lock = await new Devicectl({ exec: ctx.exec, timer: timers.real }).readLockState(d.id);
 		parts.push(lock.success ? `reachable, ${lock.data.locked ? "locked" : "unlocked"}` : "reachable");
 	}
 	return `${d.id} ${facts.deviceType} ${facts.osVersion}: ${parts.join(", ")}`;
@@ -137,7 +137,7 @@ function runnerRow(ctx: CommandContext, team: string | undefined, phones: Invent
 }
 
 async function iosRows(ctx: CommandContext): Promise<DoctorCheck[]> {
-	const listed = await listPhysicalIos({ exec: ctx.exec, timer: realTimer });
+	const listed = await new Devicectl({ exec: ctx.exec, timer: timers.real }).listPhysical();
 	const phones = listed.success ? listed.data : [];
 	const team = await teamRow(ctx, phones.length > 0);
 	const rows: DoctorCheck[] = team.row ? [team.row] : [];

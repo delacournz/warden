@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAndroidProvider } from "@delacour/warden-providers/android";
-import { createIosProvider } from "@delacour/warden-providers/ios";
+import { AndroidProvider } from "@delacour/warden-providers/android";
+import { IosProvider } from "@delacour/warden-providers/ios";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -52,7 +52,7 @@ export function testLeaseHost(overrides: Partial<LeaseHost> = {}): TestLeaseHost
 				owner,
 				log: (line: string) => host.log?.({ kind: "progress", phase: "claim", message: line }),
 			};
-			return platform === "android" ? createAndroidProvider(deps) : createIosProvider(deps);
+			return platform === "android" ? new AndroidProvider(deps) : new IosProvider(deps);
 		},
 		stopHelper: async (udid) => {
 			stopped.push(udid);

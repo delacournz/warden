@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IOS_TIMEOUTS } from "@delacour/warden-providers/ios";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { storeLocator } from "@delacour/warden-store/store";
 import {
@@ -367,7 +367,7 @@ function fakeSimulator(
 	const list = () => {
 		lists++;
 		const sims = leased.map((d) => ({ udid: d.udid, name: d.name, state: stateAt(afterClose, d.udid, lists) }));
-		return done(simctlDevicesJson({ "iOS-26-5": sims }));
+		return done(simctlFixtures.devicesJson({ "iOS-26-5": sims }));
 	};
 	const readPref = () => (pref.value === undefined ? done("", 1, "does not exist") : done(`${pref.value}\n`));
 	const osascript = async (script: string) => {
@@ -553,7 +553,9 @@ describe("hideSimWindows", () => {
 			if (cmd.join(" ") === "xcrun simctl list devices -j") {
 				return {
 					exitCode: 0,
-					stdout: simctlDevicesJson({ "iOS-26-5": [{ udid: "U1", name: "warden-iphone-17-1", state: "Shutdown" }] }),
+					stdout: simctlFixtures.devicesJson({
+						"iOS-26-5": [{ udid: "U1", name: "warden-iphone-17-1", state: "Shutdown" }],
+					}),
 					stderr: "",
 				};
 			}
@@ -1212,7 +1214,7 @@ describe("autoArrangeSimWindows after opening Device Hub windows", () => {
 });
 
 describe("reopenSimWindows", () => {
-	const list = simctlDevicesJson({
+	const list = simctlFixtures.devicesJson({
 		"iOS-27-1": [
 			{ udid: "U1", name: "warden-iphone-17-1", state: "Booted" },
 			{ udid: "U2", name: "warden-iphone-17-2", state: "Booted" },

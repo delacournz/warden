@@ -4,7 +4,7 @@ import { type Anchor, analyzeFrames, type FramesReport, jankFinding } from "@del
 import { type GfxInfo, parseGfxinfo } from "@delacour/warden-perf/frames/gfxinfo";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { PerfSession } from "@delacour/warden-perf/shared/session.schema";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -20,7 +20,7 @@ const IOS_UNSUPPORTED_HINT =
 	"the iOS simulator has no frame API; hitches and hangs come from the native trace: warden perf start --native";
 
 const adb = (ctx: PerfEnv, serial: string, ...args: string[]): string[] => [
-	androidTools(ctx.env).adb,
+	androidToolsLocator.locate(ctx.env).adb,
 	"-s",
 	serial,
 	"shell",

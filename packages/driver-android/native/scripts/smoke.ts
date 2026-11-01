@@ -13,7 +13,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Element } from "@delacour/warden-driver/driver.types";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { parseUiautomatorXml } from "../../src/uiautomator";
 import { main as buildMain, DEX_NAME } from "./build";
@@ -34,7 +34,7 @@ if (!serial) {
 }
 const pkg = arg("package") ?? "nz.co.delacour.warden.example";
 const samples = Number(arg("samples") ?? 20);
-const adb = androidTools(process.env).adb;
+const adb = androidToolsLocator.locate(process.env).adb;
 
 // ---------- JSON narrowing (no `any`) ----------
 

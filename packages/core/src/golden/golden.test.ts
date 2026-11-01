@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GOLDEN_PREFIX, isGoldenName } from "@delacour/warden-providers/golden-name";
+import { GOLDEN_PREFIX, goldenNames } from "@delacour/warden-providers/golden-name";
 import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
 import {
 	GOLDEN_RECIPE,
@@ -43,13 +43,13 @@ describe("names", () => {
 		const recipe1Pattern = /^warden-golden-iphone-17-[0-9a-f]{10}(-wip)?$/;
 		expect(recipe1Pattern.test(goldenName("iphone-17", "abc123def0"))).toBe(false);
 		expect(recipe1Pattern.test(wipName("iphone-17", "abc123def0"))).toBe(false);
-		expect(isGoldenName(goldenName("iphone-17", "abc123def0"))).toBe(true);
+		expect(goldenNames.isGolden(goldenName("iphone-17", "abc123def0"))).toBe(true);
 	});
 
 	test("isGoldenName", () => {
-		expect(isGoldenName("warden-golden-iphone-17-abc123def0")).toBe(true);
-		expect(isGoldenName("warden-golden-iphone-17-abc123def0-wip")).toBe(true);
-		expect(isGoldenName("warden-iphone-17-1")).toBe(false);
+		expect(goldenNames.isGolden("warden-golden-iphone-17-abc123def0")).toBe(true);
+		expect(goldenNames.isGolden("warden-golden-iphone-17-abc123def0-wip")).toBe(true);
+		expect(goldenNames.isGolden("warden-iphone-17-1")).toBe(false);
 	});
 });
 

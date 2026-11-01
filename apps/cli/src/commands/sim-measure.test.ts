@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { defineCommand } from "../command";
 import { fakeExec, type TestContext, testContext } from "../testing";
 import { registerSimMeasure } from "./sim-measure";
@@ -12,7 +12,7 @@ afterEach(() => {
 
 const simCommand = defineCommand({ name: "sim", group: "Devices", summary: "x", register: registerSimMeasure });
 
-const BOOTED = simctlDevicesJson({
+const BOOTED = simctlFixtures.devicesJson({
 	"iOS-26-5": [
 		{ udid: "U1", name: "a", state: "Booted" },
 		{ udid: "U2", name: "b", state: "Booted" },

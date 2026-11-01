@@ -12,7 +12,7 @@ import type { CommandContext } from "../context";
 import type { Broker } from "../dev-broker/broker";
 import { callDevControl } from "../dev-control";
 import { listDevSessions } from "../dev-session";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import {
 	createDevCommand,
@@ -75,7 +75,7 @@ function setup(
 	state: "Booted" | "Shutdown" = "Booted"
 ): TestContext {
 	ctx = testContext(argv, {
-		exec: fakeSimctl([wardenSim(1, state)], calls, [
+		exec: simctlFakes.build([simctlFakes.wardenSim(1, state)], calls, [
 			["git rev-parse --show-toplevel", { stdout: "" }],
 			["git config --get remote.origin.url", { stdout: "git@github.com:o/r.git" }],
 			["xcrun simctl launch", {}],

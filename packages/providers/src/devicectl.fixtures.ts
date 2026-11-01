@@ -23,51 +23,56 @@ type FakeDevice = {
 	ddi?: boolean;
 };
 
-/** One `result.devices[]` entry shaped like devicectl's. */
-export function devicectlEntry(d: FakeDevice): Record<string, unknown> {
-	const developerMode = d.developerMode ?? "enabled";
-	return {
-		identifier: `AAAAAAAA-BBBB-CCCC-DDDD-${d.udid.slice(-12).padStart(12, "0")}`,
-		visibilityClass: "default",
-		connectionProperties: {
-			pairingState: d.pairingState ?? "paired",
-			transportType: d.transportType ?? "wired",
-			tunnelState: d.tunnelState ?? "disconnected",
-			...(d.tunnelIPAddress === undefined ? {} : { tunnelIPAddress: d.tunnelIPAddress }),
-		},
-		deviceProperties: {
-			bootState: "booted",
-			ddiServicesAvailable: d.ddi ?? true,
-			developerModeStatus: developerMode,
-			name: d.name,
-			osVersionNumber: d.osVersion,
-		},
-		hardwareProperties: {
-			deviceType: d.deviceType,
-			platform: d.platform ?? "iOS",
-			reality: d.reality ?? "physical",
-			udid: d.udid,
-		},
-		properties: {
-			state: {
-				bootState: "booted",
-				developerModeStatus: developerMode === "enabled" ? { enabled: { mode: 1 } } : "disabled",
-				name: d.name,
+/** Builders for devicectl documents. */
+export class DevicectlFixtures {
+	/** One `result.devices[]` entry shaped like devicectl's. */
+	entry(d: FakeDevice): Record<string, unknown> {
+		const developerMode = d.developerMode ?? "enabled";
+		return {
+			identifier: `AAAAAAAA-BBBB-CCCC-DDDD-${d.udid.slice(-12).padStart(12, "0")}`,
+			visibilityClass: "default",
+			connectionProperties: {
+				pairingState: d.pairingState ?? "paired",
+				transportType: d.transportType ?? "wired",
+				tunnelState: d.tunnelState ?? "disconnected",
+				...(d.tunnelIPAddress === undefined ? {} : { tunnelIPAddress: d.tunnelIPAddress }),
 			},
-		},
-	};
+			deviceProperties: {
+				bootState: "booted",
+				ddiServicesAvailable: d.ddi ?? true,
+				developerModeStatus: developerMode,
+				name: d.name,
+				osVersionNumber: d.osVersion,
+			},
+			hardwareProperties: {
+				deviceType: d.deviceType,
+				platform: d.platform ?? "iOS",
+				reality: d.reality ?? "physical",
+				udid: d.udid,
+			},
+			properties: {
+				state: {
+					bootState: "booted",
+					developerModeStatus: developerMode === "enabled" ? { enabled: { mode: 1 } } : "disabled",
+					name: d.name,
+				},
+			},
+		};
+	}
+
+	json(devices: Array<Record<string, unknown>>): string {
+		return JSON.stringify({
+			info: { commandType: "devicectl.list.devices", jsonVersion: 5, outcome: "success", version: "651.13.5" },
+			result: { devices },
+		});
+	}
 }
 
-export function devicectlJson(devices: Array<Record<string, unknown>>): string {
-	return JSON.stringify({
-		info: { commandType: "devicectl.list.devices", jsonVersion: 5, outcome: "success", version: "651.13.5" },
-		result: { devices },
-	});
-}
+export const devicectlFixtures = new DevicectlFixtures();
 
 /** A ready iPhone on the local network, a wired iPad with Developer Mode off, an unpaired phone, a simulator and a watch. */
-export const DEVICECTL_LIST_MIXED = devicectlJson([
-	devicectlEntry({
+export const DEVICECTL_LIST_MIXED = devicectlFixtures.json([
+	devicectlFixtures.entry({
 		udid: FAKE_IPHONE_UDID,
 		name: "Test iPhone",
 		deviceType: "iPhone",
@@ -76,7 +81,7 @@ export const DEVICECTL_LIST_MIXED = devicectlJson([
 		tunnelState: "connected",
 		tunnelIPAddress: "fd00:1234:5678::1",
 	}),
-	devicectlEntry({
+	devicectlFixtures.entry({
 		udid: FAKE_IPAD_UDID,
 		name: "Test iPad",
 		deviceType: "iPad",
@@ -84,14 +89,14 @@ export const DEVICECTL_LIST_MIXED = devicectlJson([
 		developerMode: "disabled",
 		ddi: false,
 	}),
-	devicectlEntry({
+	devicectlFixtures.entry({
 		udid: FAKE_UNPAIRED_UDID,
 		name: "Unpaired iPhone",
 		deviceType: "iPhone",
 		osVersion: "26.6",
 		pairingState: "unpaired",
 	}),
-	devicectlEntry({
+	devicectlFixtures.entry({
 		udid: "5E5E5E5E-0000-4000-8000-000000000001",
 		name: "iPhone 17",
 		deviceType: "iPhone",
@@ -99,7 +104,7 @@ export const DEVICECTL_LIST_MIXED = devicectlJson([
 		reality: "simulated",
 		transportType: "sameMachine",
 	}),
-	devicectlEntry({
+	devicectlFixtures.entry({
 		udid: "00008301-000A0B0C0D0E0F13",
 		name: "Test Watch",
 		deviceType: "appleWatch",
@@ -108,7 +113,7 @@ export const DEVICECTL_LIST_MIXED = devicectlJson([
 	}),
 ]);
 
-export const DEVICECTL_LIST_EMPTY = devicectlJson([]);
+export const DEVICECTL_LIST_EMPTY = devicectlFixtures.json([]);
 
 /** `devicectl device info lockState --json-output -`: unlocked, then behind a passcode. */
 export const DEVICECTL_LOCKSTATE_UNLOCKED = JSON.stringify({

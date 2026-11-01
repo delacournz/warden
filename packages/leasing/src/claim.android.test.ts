@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BOOT_WAIT_SCRIPT, createAndroidProvider, type SpawnDetached } from "@delacour/warden-providers/android";
+import { AndroidProvider, BOOT_WAIT_SCRIPT, type SpawnDetached } from "@delacour/warden-providers/android";
 import type { ProviderDeps } from "@delacour/warden-providers/provider.types";
 import { ADB_DEVICES_EMPTY, EMULATOR_LIST_AVDS } from "@delacour/warden-providers/testing/android.fixtures";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
@@ -47,7 +47,7 @@ describe("claimDevices with the android provider", () => {
 		};
 		const deps: ProviderDeps = { exec, store, env: { ANDROID_HOME: SDK, WARDEN_HOME: dir }, now: () => 1_000, owner };
 		const spawnDetached: SpawnDetached = async () => resultFactory.ok({ pid: 4242 });
-		const provider = createAndroidProvider(deps, { spawnDetached, sleep: async () => {}, pidAlive: () => true });
+		const provider = new AndroidProvider(deps, { spawnDetached, sleep: async () => {}, pidAlive: () => true });
 		const result = await claimDevices({
 			store,
 			provider,

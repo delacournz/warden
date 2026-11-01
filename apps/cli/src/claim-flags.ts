@@ -14,9 +14,9 @@ import {
 	parsePriorityFlag,
 	type SlimLayers,
 } from "@delacour/warden-leasing/claim-request";
-import { biometricProfile } from "@delacour/warden-providers/biometrics";
-import { isGoldenName } from "@delacour/warden-providers/golden-name";
-import { slimSimulator } from "@delacour/warden-providers/slim";
+import { biometricProfiles } from "@delacour/warden-providers/biometrics";
+import { goldenNames } from "@delacour/warden-providers/golden-name";
+import { SimSlimmer } from "@delacour/warden-providers/slim";
 import { type DeviceRequest, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -265,7 +265,7 @@ function parsePhysicalClaim(
 }
 
 function deviceRequest(values: ClaimFlagValues, platform: Platform, count: number, max: number): DeviceRequest {
-	const profile = biometricProfile(values.profile ?? DEFAULT_PROFILE[platform], values.biometrics === true);
+	const profile = biometricProfiles.profile(values.profile ?? DEFAULT_PROFILE[platform], values.biometrics === true);
 	const request: DeviceRequest = { platform, profile, count, max };
 	if (values.runtime !== undefined) request.runtime = values.runtime;
 	if (values.adopt) request.adopt = true;
@@ -349,8 +349,9 @@ async function slimReusedBooted(ctx: CommandContext, outcome: ClaimOutcome, slim
 	);
 	for (const { device } of outcome.claimed) {
 		const record = records.get(device.id);
-		if (booted.has(device.id) || !record || record.slimmedAt !== undefined || isGoldenName(record.name)) continue;
-		const res = await slimSimulator(ctx.exec, device.id, { profile: slim });
+		if (booted.has(device.id) || !record || record.slimmedAt !== undefined || goldenNames.isGolden(record.name))
+			continue;
+		const res = await new SimSlimmer(ctx.exec).slim(device.id, { profile: slim });
 		if (res.success) ctx.store().setSlimmed("ios", device.id, ctx.now());
 		else ctx.err(ctx.ui.color.yellow(`warden: ${device.name} could not be slimmed: ${res.error}`));
 	}

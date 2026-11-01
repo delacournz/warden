@@ -47,7 +47,7 @@ import {
 	type RunPort,
 } from "@delacour/warden-leasing/session";
 import { hideSimWindows } from "@delacour/warden-leasing/sim-windows";
-import { slimSimulator } from "@delacour/warden-providers/slim";
+import { SimSlimmer } from "@delacour/warden-providers/slim";
 import { execErrors, processExec } from "@delacour/warden-runtime/exec";
 import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { storeLocator } from "@delacour/warden-store/store";
@@ -2516,7 +2516,7 @@ export const defaultBatchDeps: BatchDeps = {
 	sleep: (ms) => Bun.sleep(ms),
 	record: (udid, path) => startSimRecording(udid, path, Date.now),
 	screenshot: captureScreenshot,
-	slim: (udid, profile) => slimSimulator(processExec.run, udid, profile ? { profile } : {}),
+	slim: (udid, profile) => new SimSlimmer(processExec.run).slim(udid, profile ? { profile } : {}),
 	writeFile: async (path, data) => {
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, data);

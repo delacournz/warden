@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { TestResult } from "@delacour/warden-e2e/runner/results";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 
 /** A failed job's screenshot is best effort: it never delays the batch past this. */
@@ -42,7 +42,7 @@ export function screenshotArgv(
 ): string[] {
 	return platform === "ios"
 		? ["xcrun", "simctl", "io", udid, "screenshot", path]
-		: [androidTools(env).adb, "-s", udid, "exec-out", "screencap", "-p"];
+		: [androidToolsLocator.locate(env).adb, "-s", udid, "exec-out", "screencap", "-p"];
 }
 
 /** Capture one screenshot into `path`; false (never a throw) when anything goes wrong. */

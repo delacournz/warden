@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { LeaseConditions, LeaseHost, ProviderOptions } from "@delacour/warden-leasing/lease-host";
-import { createAndroidProvider } from "@delacour/warden-providers/android";
-import { createIosProvider, shortRuntime } from "@delacour/warden-providers/ios";
+import { AndroidProvider } from "@delacour/warden-providers/android";
+import { IosProvider, simctlParser } from "@delacour/warden-providers/ios";
 import type { DeviceProvider, ProviderDeps } from "@delacour/warden-providers/provider.types";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
@@ -171,7 +171,7 @@ export function providerFor(
 		log: (line) => host.log?.({ kind: "progress", phase: "provider", message: line }),
 	};
 	if (platform === "android")
-		return createAndroidProvider(deps, {
+		return new AndroidProvider(deps, {
 			snapshot: androidSnapshotHook(host, owner, opts.sleep),
 			snapshotFailed: androidSnapshotFailedHook(host, owner, opts.sleep),
 			snapshotLoaded: (avd) => androidSnapshotLoaded(host.store(), avd),
@@ -181,14 +181,14 @@ export function providerFor(
 		...(opts.physical === true ? { physical: true } : {}),
 		...(opts.namedPhysical !== undefined ? { namedPhysical: opts.namedPhysical } : {}),
 	};
-	if (!goldenEnabled(host.env)) return createIosProvider(deps, base);
+	if (!goldenEnabled(host.env)) return new IosProvider(deps, base);
 	const golden = { ...goldenDeps(host, owner, opts.sleep), prewarmHint: true };
-	return createIosProvider(deps, {
+	return new IosProvider(deps, {
 		...base,
 		clone: async (name, profile, runtime) => {
 			const cloned = await cloneFromGolden(golden, profile, runtime, name);
 			return cloned.success
-				? { success: true, data: { udid: cloned.data.udid, runtime: shortRuntime(cloned.data.runtimeId) } }
+				? { success: true, data: { udid: cloned.data.udid, runtime: simctlParser.shortRuntime(cloned.data.runtimeId) } }
 				: wardenErrors.err("failed", cloned.error);
 		},
 	});

@@ -3,13 +3,9 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BARE_CLAIM_AGENT_TTL_MS, DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
-import {
-	DEVICECTL_LOCKSTATE_UNLOCKED,
-	devicectlEntry,
-	devicectlJson,
-} from "@delacour/warden-providers/devicectl.fixtures";
+import { DEVICECTL_LOCKSTATE_UNLOCKED, devicectlFixtures } from "@delacour/warden-providers/devicectl.fixtures";
 import { claimWithFlags, parseClaimFlags, withNamedPhysical } from "./claim-flags";
-import { fakeSimctl, OWNER_ENV } from "./simctl.testing";
+import { OWNER_ENV, simctlFakes } from "./simctl.testing";
 import { type TestContext, testContext } from "./testing";
 
 describe("parseClaimFlags", () => {
@@ -174,9 +170,9 @@ describe("physical allowlist", () => {
 
 	/** two ready, connected iPads/iPhones; every id is made up */
 	const make = (env: Record<string, string> = {}, config?: unknown): TestContext => {
-		const list = devicectlJson(
+		const list = devicectlFixtures.json(
 			[A, B].map((udid, i) =>
-				devicectlEntry({
+				devicectlFixtures.entry({
 					udid,
 					name: `Test device ${i}`,
 					deviceType: "iPhone",
@@ -185,7 +181,7 @@ describe("physical allowlist", () => {
 				})
 			)
 		);
-		const exec = fakeSimctl(
+		const exec = simctlFakes.build(
 			[],
 			[],
 			[

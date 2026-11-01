@@ -8,7 +8,7 @@ import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
 import { e2eReportSchema } from "@delacour/warden-sdk/contracts/e2e-report";
 import { jsonl, result } from "../batch/results.testing";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { type Harness, harness, type Spawned } from "./batch.testing";
 import { createE2eCommand, type E2eReport } from "./e2e";
@@ -42,7 +42,7 @@ async function resuiteDefault(overrides: Record<string, unknown> = {}): Promise<
 }
 
 function setup(argv: string[], calls: string[][] = []): TestContext {
-	const sim = fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")], calls);
+	const sim = simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2, "Booted")], calls);
 	const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 	ctx = testContext(argv, { exec });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -314,7 +314,7 @@ describe("warden e2e", () => {
 		const claimed = async (suite: Record<string, unknown>): Promise<string[]> => {
 			await resuite(suite);
 			write("src/chat/lazy.tsx", "export const x = 2;\n");
-			const sim = fakeSimctl([bioSim, wardenSim(1, "Booted")], []);
+			const sim = simctlFakes.build([bioSim, simctlFakes.wardenSim(1, "Booted")], []);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -403,7 +403,7 @@ describe("warden e2e", () => {
 		test("iOS: opening the dev client and closing a late simulator window run side by side", async () => {
 			if (process.platform !== "darwin") return;
 			await resuite({ ...suite, headless: true }, projects);
-			const sim = fakeSimctl([wardenSim(1, "Shutdown")]);
+			const sim = simctlFakes.build([simctlFakes.wardenSim(1, "Shutdown")]);
 			const launch = Promise.withResolvers<void>();
 			const reads: string[] = [];
 			const exec = lateWindowExec(sim, launch.promise, reads);
@@ -423,7 +423,7 @@ describe("warden e2e", () => {
 
 		test("iOS: warden's own dev-client launch is bounded at 30 s; a launch past it only warns (12-6)", async () => {
 			await resuite(suite, projects);
-			const sim = fakeSimctl([wardenSim(1, "Booted")]);
+			const sim = simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]);
 			const timeouts: Array<number | undefined> = [];
 			const exec: Exec = async (cmd, opts) => {
 				if (cmd[0] === "git") return processExec.run(cmd, opts);
@@ -519,7 +519,7 @@ describe("warden e2e", () => {
 		test("the device claim fails → the early Metro is stopped and the port lease released", async () => {
 			await resuite({ ...suite, app: { kind: "dev" } }, projects);
 			// no warden sim exists and none may be created: the device claim fails after the port lease
-			const sim = fakeSimctl([]);
+			const sim = simctlFakes.build([]);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--max", "0", "--no-wait"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -1089,9 +1089,12 @@ describe("warden e2e", () => {
 			{ profile: "iphone-17", count: 1 },
 			{ profile: "ipad", count: 1, env: { E2E_LAYOUT: "regular" }, default: false },
 		];
-		const sims = () => [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
+		const sims = () => [
+			simctlFakes.wardenSim(1, "Booted"),
+			{ udid: "P1", name: "warden-ipad-1", state: "Booted" as const },
+		];
 		const legSetup = (argv: string[]) => {
-			const sim = fakeSimctl(sims(), []);
+			const sim = simctlFakes.build(sims(), []);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(argv, { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -1251,8 +1254,11 @@ describe("warden e2e", () => {
 					{ profile: "ipad", count: 1, default: false },
 				],
 			});
-			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
-			const sim = fakeSimctl(sims);
+			const sims = [
+				simctlFakes.wardenSim(1, "Booted"),
+				{ udid: "P1", name: "warden-ipad-1", state: "Booted" as const },
+			];
+			const sim = simctlFakes.build(sims);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -1270,8 +1276,11 @@ describe("warden e2e", () => {
 		});
 
 		const twoLegs = (...extra: string[]) => {
-			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
-			const sim = fakeSimctl(sims);
+			const sims = [
+				simctlFakes.wardenSim(1, "Booted"),
+				{ udid: "P1", name: "warden-ipad-1", state: "Booted" as const },
+			];
+			const sim = simctlFakes.build(sims);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all", ...extra], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -1364,7 +1373,10 @@ describe("warden e2e", () => {
 		test("legs: a pool whose preparation throws fails only itself; the other pool's job runs on to its end (batch-pipeline R4)", async () => {
 			const projects = { projects: [{ name: "app", root: "packages/ui", bundleId: { ios: "com.x" } }] };
 			await resuite({ devices: legs, slim: true, project: "app", metro: {} }, projects);
-			const sim = fakeSimctl([wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }]);
+			const sim = simctlFakes.build([
+				simctlFakes.wardenSim(1, "Booted"),
+				{ udid: "P1", name: "warden-ipad-1", state: "Booted" as const },
+			]);
 			const exec: Exec = async (cmd, opts) => {
 				if (cmd[0] === "git") return processExec.run(cmd, opts);
 				if (cmd[0] === "xcrun" && cmd[2] === "launch" && cmd.includes("P1")) throw new Error("launch blew up");
@@ -1773,8 +1785,11 @@ describe("warden e2e", () => {
 					{ profile: "ipad", count: 1, default: false },
 				],
 			});
-			const sims = [wardenSim(1, "Booted"), { udid: "P1", name: "warden-ipad-1", state: "Booted" as const }];
-			const sim = fakeSimctl(sims);
+			const sims = [
+				simctlFakes.wardenSim(1, "Booted"),
+				{ udid: "P1", name: "warden-ipad-1", state: "Booted" as const },
+			];
+			const sim = simctlFakes.build(sims);
 			const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 			ctx = testContext(["--files", "src/chat/lazy.tsx", "--devices", "all"], { exec });
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
@@ -1955,7 +1970,7 @@ describe("warden e2e", () => {
 
 	test("a device recorded as slimmed is not slimmed again even when the claim booted it (the provider did it)", async () => {
 		await resuite({ slim: true });
-		const sim = fakeSimctl([wardenSim(1, "Shutdown")]);
+		const sim = simctlFakes.build([simctlFakes.wardenSim(1, "Shutdown")]);
 		const exec: Exec = (cmd, opts) => (cmd[0] === "git" ? processExec.run(cmd, opts) : sim(cmd, opts));
 		ctx = testContext(["--files", "src/chat/lazy.tsx", "--no-shutdown"], { exec });
 		ctx.env = { ...ctx.env, ...OWNER_ENV };

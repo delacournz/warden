@@ -33,7 +33,7 @@ import { parseSimpleperfReport, simpleperfFindings } from "@delacour/warden-perf
 import { parseTpOutput, type TpRow } from "@delacour/warden-perf/android/tp-output";
 import { parsePackageFlags } from "@delacour/warden-perf/shared/app-detect";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -174,7 +174,7 @@ async function startAndroid(
 	deps: AndroidNativeDeps,
 	input: NativeStartInput
 ): Promise<Result<NativeHandle, WardenError>> {
-	const a: Adb = { adb: androidTools(ctx.env).adb, serial: input.target.udid };
+	const a: Adb = { adb: androidToolsLocator.locate(ctx.env).adb, serial: input.target.udid };
 	const simpleperf = input.flavor === "simpleperf";
 	await warnIfNotProfileable(ctx, a, input.app);
 	const clock = await deviceClock(ctx, a);
@@ -240,7 +240,7 @@ async function stopAndroid(
 ): Promise<Result<NativeStopped, WardenError>> {
 	const state = readState(input.handle);
 	if (state === undefined) return failed("the native capturer has no Android state to stop");
-	const a: Adb = { adb: androidTools(ctx.env).adb, serial: input.target.udid };
+	const a: Adb = { adb: androidToolsLocator.locate(ctx.env).adb, serial: input.target.udid };
 	const warnings: string[] = [];
 	const signals = state.mode === "simpleperf" ? (["INT", "TERM", "KILL"] as const) : (["TERM", "KILL"] as const);
 	const gone = await stopOnDevice(ctx, io, deps, a, state.devicePid, signals);

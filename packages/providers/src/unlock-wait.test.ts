@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { resultFactory } from "@delacour/warden-types/result";
 import {
 	DEVICE_LOCKED_HINT,
-	deviceLockedMessage,
+	deviceLockedErrors,
 	UNLOCK_POLL_MS,
 	UNLOCK_PROGRESS_MS,
 	UNLOCK_WAIT_MS,
-	waitUnlocked,
+	UnlockWaiter,
 } from "./unlock-wait";
 
 /** A phone that reports `states` on successive reads (the last one repeats) and a clock that only sleeping moves. */
@@ -16,7 +16,7 @@ function rig(states: boolean[], opts: { noWait?: boolean; failRead?: boolean; ab
 	let sleeps = 0;
 	const logs: string[] = [];
 	const run = () =>
-		waitUnlocked({
+		new UnlockWaiter({
 			name: "Test iPhone",
 			noWait: opts.noWait ?? false,
 			read: async () => {
@@ -31,7 +31,7 @@ function rig(states: boolean[], opts: { noWait?: boolean; failRead?: boolean; ab
 			},
 			log: (line) => logs.push(line),
 			...(opts.abortAfter === undefined ? {} : { abort: () => sleeps >= (opts.abortAfter ?? 0) }),
-		});
+		}).wait();
 	return { run, logs, reads: () => reads, elapsed: () => at };
 }
 
@@ -64,7 +64,7 @@ describe("waitUnlocked", () => {
 	test("--no-wait fails at once without sleeping or printing", async () => {
 		const r = rig([true], { noWait: true });
 		const result = await r.run();
-		expect(!result.success && result.error).toBe(deviceLockedMessage("Test iPhone"));
+		expect(!result.success && result.error).toBe(deviceLockedErrors.message("Test iPhone"));
 		expect(r.elapsed()).toBe(0);
 		expect(r.logs).toEqual([]);
 	});

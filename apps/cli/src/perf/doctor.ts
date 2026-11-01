@@ -9,7 +9,7 @@ import {
 	parseXctraceVersion,
 	xctraceDeviceDeadlock,
 } from "@delacour/warden-perf/shared/doctor-parse";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
 import { emit } from "../output";
@@ -79,7 +79,7 @@ async function instrumentsCheck(ctx: CommandContext, deps: PerfDeps): Promise<Do
 }
 
 async function adbCheck(ctx: CommandContext): Promise<DoctorCheck> {
-	const res = await ctx.exec([androidTools(ctx.env).adb, "version"], { timeoutMs: 10_000 });
+	const res = await ctx.exec([androidToolsLocator.locate(ctx.env).adb, "version"], { timeoutMs: 10_000 });
 	const version = res.exitCode === 0 ? parseAdbVersion(res.stdout) : undefined;
 	return version === undefined
 		? check(
@@ -123,7 +123,7 @@ async function deviceToolsCheck(
 	if (device === undefined) return check("device-tools", "skip", why);
 	if (device.platform !== "android") return check("device-tools", "skip", "iOS simulator (xctrace runs on the host)");
 	const res = await ctx.exec(
-		[androidTools(ctx.env).adb, "-s", device.udid, "shell", "which", "perfetto", "simpleperf"],
+		[androidToolsLocator.locate(ctx.env).adb, "-s", device.udid, "shell", "which", "perfetto", "simpleperf"],
 		{
 			timeoutMs: 10_000,
 		}
@@ -151,7 +151,7 @@ async function appCheck(
 	if (!app.success) return check("app", "warn", app.error.message, app.error.hint);
 	if (device.platform === "ios") return check("app", "ok", `${app.data.id} (${app.data.source})`);
 	const res = await ctx.exec(
-		[androidTools(ctx.env).adb, "-s", device.udid, "shell", "dumpsys", "package", app.data.id],
+		[androidToolsLocator.locate(ctx.env).adb, "-s", device.udid, "shell", "dumpsys", "package", app.data.id],
 		{
 			timeoutMs: 15_000,
 		}

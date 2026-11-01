@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { JSON_CONFIG_FILE } from "@delacour/warden-builds/config";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-runtime/exec";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { scriptedUi, type TestContext, testContext } from "../testing";
 import { createBatchCommand, defaultBatchDeps, openOnDevices, socketEnv, startRecordings } from "./batch";
 import { harness } from "./batch.testing";
@@ -14,7 +14,9 @@ let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
 function setup(argv: string[]): TestContext {
-	ctx = testContext(argv, { exec: fakeSimctl([wardenSim(1, "Booted"), wardenSim(2, "Booted")]) });
+	ctx = testContext(argv, {
+		exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2, "Booted")]),
+	});
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
 }
@@ -488,7 +490,7 @@ describe("warden batch", () => {
 		/** Simulator.app shows both leased sims' windows; every close is logged into `events`. */
 		function windowsExec(c: TestContext, events: string[]): void {
 			const base = c.exec;
-			const sims = [wardenSim(1, "Booted"), wardenSim(2, "Booted")];
+			const sims = [simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2, "Booted")];
 			c.exec = async (cmd, opts) => {
 				if (cmd[0] === "osascript") {
 					const script = cmd[4] ?? "";
@@ -501,7 +503,7 @@ describe("warden batch", () => {
 					};
 				}
 				if (cmd.join(" ") === "xcrun simctl list devices -j") {
-					return { exitCode: 0, stdout: simctlDevicesJson({ "iOS-26-5": sims }), stderr: "" };
+					return { exitCode: 0, stdout: simctlFixtures.devicesJson({ "iOS-26-5": sims }), stderr: "" };
 				}
 				return base(cmd, opts);
 			};
@@ -524,7 +526,7 @@ describe("warden batch", () => {
 
 		test("--headless: a sim the claim booted can show its window late, so windows are closed again before the first job", async () => {
 			ctx = testContext(["ios", "--headless", "--jobs", "a", "--", "x"], {
-				exec: fakeSimctl([wardenSim(1, "Shutdown"), wardenSim(2, "Shutdown")]),
+				exec: simctlFakes.build([simctlFakes.wardenSim(1, "Shutdown"), simctlFakes.wardenSim(2, "Shutdown")]),
 			});
 			ctx.env = { ...ctx.env, ...OWNER_ENV };
 			const c = ctx;

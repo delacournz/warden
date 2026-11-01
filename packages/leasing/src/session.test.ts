@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { EnsureOptions, PreparedApp } from "@delacour/warden-builds/prepare";
 import { HEARTBEAT_INTERVAL_MS } from "@delacour/warden-config/config.defaults";
-import { fakeSimctl } from "@delacour/warden-providers/testing/simctl.testing";
+import { simctlFakes } from "@delacour/warden-providers/testing/simctl.testing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { InventoryDevice, Lease, Owner } from "@delacour/warden-store/types";
 import type { ClaimRequest } from "./claim-request";
@@ -100,7 +100,7 @@ describe("claimAll with device legs", () => {
 	) {
 		const events = o.events ?? [];
 		const gates = new Map((o.gated ?? []).map((udid) => [udid, Promise.withResolvers<void>()]));
-		const base = fakeSimctl(sims);
+		const base = simctlFakes.build(sims);
 		const exec: Exec = async (cmd, opts) => {
 			if (cmd[0] === "xcrun" && (cmd[2] === "boot" || cmd[2] === "bootstatus")) {
 				const udid = cmd[3] ?? "";

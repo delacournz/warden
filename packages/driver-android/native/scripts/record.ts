@@ -12,7 +12,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { main as buildMain } from "./build";
 
 const ANDROID_DIR = resolve(import.meta.dir, "..");
@@ -31,7 +31,7 @@ if (!serial) {
 }
 const pkg = arg("package") ?? "nz.co.delacour.warden.example";
 const out = resolve(arg("out") ?? resolve(ANDROID_DIR, "../../src/fixtures/uiad-session.ndjson"));
-const adb = androidTools(process.env).adb;
+const adb = androidToolsLocator.locate(process.env).adb;
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Bag = { [key: string]: Json };

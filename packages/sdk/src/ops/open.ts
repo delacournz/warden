@@ -1,7 +1,7 @@
 import { adbReverseArgv, DEV_CLIENT_ARGS, devClientLaunchArgs } from "@delacour/warden-builds/metro";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import type { Driver } from "@delacour/warden-driver/driver.types";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type ActionResult, finishAction } from "./act";
@@ -31,7 +31,7 @@ async function reverseMetro(session: OpSession, metroUrl: string): Promise<void>
 	}
 	if (!Number.isInteger(port) || port <= 0) return;
 	const [, ...rest] = adbReverseArgv(session.device.id, port);
-	await session.host.exec([androidTools(session.host.env).adb, ...rest]);
+	await session.host.exec([androidToolsLocator.locate(session.host.env).adb, ...rest]);
 }
 
 /** A failed or unsupported probe counts as "not running": the note is a courtesy, never a reason to fail. */

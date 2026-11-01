@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { simsCommand } from "./sims";
 
@@ -43,7 +43,7 @@ function setup(argv: string[], opts: { interactive?: boolean; confirm?: boolean[
 	ctx = testContext(argv, { now: () => NOW, ui: scriptedUi(opts) });
 	ctx.exec = fakeExec(
 		[
-			["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": SIMS }) }],
+			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson({ "iOS-26-5": SIMS }) }],
 			["xcrun simctl shutdown", {}],
 			["xcrun simctl delete", {}],
 			["xcrun simctl runtime list -j", { stdout: RUNTIMES_JSON }],
@@ -95,7 +95,9 @@ describe("warden sims audit", () => {
 		expect(out).toContain("RUNTIME");
 		expect(out).toContain("xcrun simctl runtime delete <identifier>");
 		const old = setup(["--json"]);
-		old.exec = fakeExec([["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": SIMS }) }]]);
+		old.exec = fakeExec([
+			["xcrun simctl list devices -j", { stdout: simctlFixtures.devicesJson({ "iOS-26-5": SIMS }) }],
+		]);
 		expect(await simsCommand.run(old)).toBe(0);
 		const report = JSON.parse(old.stdout.join("\n"));
 		expect(report.runtimes).toBeNull();
@@ -141,7 +143,7 @@ describe("warden sims audit", () => {
 				[
 					"xcrun simctl list devices -j",
 					{
-						stdout: simctlDevicesJson({
+						stdout: simctlFixtures.devicesJson({
 							"iOS-26-5": [
 								{ udid: "F", name: "x", state: "Shutdown", lastBootedAt: new Date(NOW - 40 * DAY).toISOString() },
 							],

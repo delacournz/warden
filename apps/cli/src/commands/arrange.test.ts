@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { arrangeJsonSchema } from "@delacour/warden-sdk/contracts/arrange";
-import { wardenSim } from "../simctl.testing";
+import { simctlFakes } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { arrangeCommand } from "./arrange";
 
@@ -117,7 +117,11 @@ describe("warden arrange", () => {
 				calls.push([...cmd]);
 				if (cmd[0] === "pgrep") return { exitCode: cmd[2] === "DeviceHub" ? 0 : 1, stdout: "", stderr: "" };
 				if (cmd.join(" ") === "xcrun simctl list devices -j") {
-					return { exitCode: 0, stdout: simctlDevicesJson({ "iOS-27-1": [wardenSim(1, "Booted")] }), stderr: "" };
+					return {
+						exitCode: 0,
+						stdout: simctlFixtures.devicesJson({ "iOS-27-1": [simctlFakes.wardenSim(1, "Booted")] }),
+						stderr: "",
+					};
 				}
 				const screen = { x: 0, y: 25, width: 1440, height: 875 };
 				const windows = [{ title: "warden-iphone-17-1 – iOS 27.1", width: 340, height: 751 }];

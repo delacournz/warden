@@ -9,7 +9,7 @@ import {
 	parsePs,
 } from "@delacour/warden-perf/metrics/ps";
 import type { MetricSample } from "@delacour/warden-perf/metrics/series";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -114,7 +114,7 @@ function iosSampler(ctx: PerfEnv, target: MetricsTarget, bundle: IosAppBundle, s
  * The pid is cached and re-resolved once when top no longer lists it (the app restarted).
  */
 function androidSampler(ctx: PerfEnv, target: MetricsTarget, startMs: number): MetricsSampler {
-	const adb = androidTools(ctx.env).adb;
+	const adb = androidToolsLocator.locate(ctx.env).adb;
 	let pid: number | undefined;
 	const top = async (p: number) => {
 		const res = await ctx.exec([adb, "-s", target.udid, "shell", "top", "-n", "1", "-b", "-p", String(p)], {

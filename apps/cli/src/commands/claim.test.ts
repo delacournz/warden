@@ -3,22 +3,24 @@ import { DEFAULT_SLIM_PROFILE, slimProfiles } from "@delacour/warden-config/slim
 import { PHONE_PROBE_SCRIPT } from "@delacour/warden-providers/android";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
-	devicectlEntry,
-	devicectlJson,
+	devicectlFixtures,
 	FAKE_IPHONE_UDID,
 } from "@delacour/warden-providers/devicectl.fixtures";
 import { PHONE_PROPS } from "@delacour/warden-providers/testing/android.fixtures";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import { claimJsonSchema } from "@delacour/warden-sdk/contracts/claim";
 import { allowAutoGc, autoGcConsidered, autoGcOrder } from "../autogc.testing";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { fakeExec, type ScriptedUi, scriptedUi, type TestContext, testContext } from "../testing";
 import { claimCommand } from "./claim";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
 
-function setup(argv: string[], exec = fakeSimctl([wardenSim(1), wardenSim(2, "Booted")])): TestContext {
+function setup(
+	argv: string[],
+	exec = simctlFakes.build([simctlFakes.wardenSim(1), simctlFakes.wardenSim(2, "Booted")])
+): TestContext {
 	ctx = testContext(argv, { exec });
 	ctx.env = { ...ctx.env, ...OWNER_ENV };
 	return ctx;
@@ -39,7 +41,10 @@ describe("warden claim", () => {
 
 	test("--count 2 boots the shutdown one; text output lists udids", async () => {
 		const calls: string[][] = [];
-		const c = setup(["ios", "--count", "2"], fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls));
+		const c = setup(
+			["ios", "--count", "2"],
+			simctlFakes.build([simctlFakes.wardenSim(1), simctlFakes.wardenSim(2, "Booted")], calls)
+		);
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(calls.map((x) => x.join(" "))).toContain("xcrun simctl bootstatus U1 -b");
 		const text = c.stdout.join("\n");
@@ -63,20 +68,20 @@ describe("warden claim", () => {
 	});
 
 	test("user owner → 30m ttl, no hint", async () => {
-		ctx = testContext(["ios"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		ctx = testContext(["ios"], { exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
 		expect(await claimCommand.run(ctx)).toBe(0);
 		expect(ctx.db.listLeases()[0]?.ttlMs).toBe(30 * 60_000);
 		expect(ctx.stderr.join("\n")).not.toContain("lease expires");
 	});
 
 	test("user owner → lease pid = parent shell", async () => {
-		ctx = testContext(["ios"], { exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		ctx = testContext(["ios"], { exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
 		expect(await claimCommand.run(ctx)).toBe(0);
 		expect(ctx.db.listLeases()[0]?.pid).toBe(process.ppid);
 	});
 
 	test("pool exhausted → exit 1 with guidance", async () => {
-		const c = setup(["ios", "--max", "1", "--no-wait"], fakeSimctl([wardenSim(1, "Booted")]));
+		const c = setup(["ios", "--max", "1", "--no-wait"], simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]));
 		c.db.insertLease(
 			{
 				resource: { kind: "device", platform: "ios", id: "U1", name: "warden-iphone-17-1" },
@@ -92,7 +97,7 @@ describe("warden claim", () => {
 	test("a full host queues: the progress line is on stderr and --json stdout is the failure envelope", async () => {
 		const c = setup(
 			["ios", "--json", "--no-wait", "--priority", "high"],
-			fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)])
+			simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2)])
 		);
 		c.env = { ...c.env, WARDEN_CAPACITY_MAX: "1" };
 		c.db.insertLease(
@@ -112,7 +117,10 @@ describe("warden claim", () => {
 	});
 
 	test("WARDEN_CAPACITY=off never queues", async () => {
-		const c = setup(["ios", "--json", "--no-wait"], fakeSimctl([wardenSim(1, "Booted"), wardenSim(2)]));
+		const c = setup(
+			["ios", "--json", "--no-wait"],
+			simctlFakes.build([simctlFakes.wardenSim(1, "Booted"), simctlFakes.wardenSim(2)])
+		);
 		c.env = { ...c.env, WARDEN_CAPACITY_MAX: "1", WARDEN_CAPACITY: "off" };
 		c.db.insertLease(
 			{
@@ -161,7 +169,10 @@ describe("warden claim", () => {
 describe("warden claim → arrange", () => {
 	test("iOS claim tiles sim windows unless WARDEN_ARRANGE=0", async () => {
 		const calls: string[][] = [];
-		const c = setup(["ios"], fakeSimctl([wardenSim(1, "Booted")], calls, [["osascript", { stdout: "{}" }]]));
+		const c = setup(
+			["ios"],
+			simctlFakes.build([simctlFakes.wardenSim(1, "Booted")], calls, [["osascript", { stdout: "{}" }]])
+		);
 		const { WARDEN_ARRANGE: _, ...env } = c.env;
 		c.env = env;
 		expect(await claimCommand.run(c)).toBe(0);
@@ -177,9 +188,12 @@ describe("warden claim → arrange", () => {
 		const calls: string[][] = [];
 		const c = setup(
 			argv,
-			fakeSimctl([wardenSim(2, "Booted")], calls, [
+			simctlFakes.build([simctlFakes.wardenSim(2, "Booted")], calls, [
 				["osascript", { stdout: windowOf("warden-iphone-17-2") }],
-				["xcrun simctl list devices -j", { stdout: simctlDevicesJson({ "iOS-26-5": [wardenSim(2, "Booted")] }) }],
+				[
+					"xcrun simctl list devices -j",
+					{ stdout: simctlFixtures.devicesJson({ "iOS-26-5": [simctlFakes.wardenSim(2, "Booted")] }) },
+				],
 			])
 		);
 		const { WARDEN_ARRANGE: _, ...rest } = c.env;
@@ -214,7 +228,7 @@ describe("warden claim → arrange", () => {
 
 	test("a recorded, already-booted sim that was never slimmed is slimmed live and recorded", async () => {
 		const calls: string[][] = [];
-		const exec = fakeSimctl([wardenSim(2, "Booted")], calls, [
+		const exec = simctlFakes.build([simctlFakes.wardenSim(2, "Booted")], calls, [
 			[
 				"xcrun simctl spawn U2 launchctl print-disabled",
 				{ stdout: printed(slimProfiles.desiredLabels(DEFAULT_SLIM_PROFILE)) },
@@ -229,7 +243,7 @@ describe("warden claim → arrange", () => {
 
 	test("an already-slimmed sim costs no launchctl spawn and is not restored", async () => {
 		const calls: string[][] = [];
-		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
+		const c = setup(["ios"], simctlFakes.build([simctlFakes.wardenSim(2, "Booted")], calls));
 		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
 		c.db.setSlimmed("ios", "U2", 5);
 		expect(await claimCommand.run(c)).toBe(0);
@@ -239,7 +253,7 @@ describe("warden claim → arrange", () => {
 
 	test("--no-slim on a slimmed sim prints the restore hint and spawns nothing", async () => {
 		const calls: string[][] = [];
-		const c = setup(["ios", "--no-slim"], fakeSimctl([wardenSim(2, "Booted")], calls));
+		const c = setup(["ios", "--no-slim"], simctlFakes.build([simctlFakes.wardenSim(2, "Booted")], calls));
 		c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
 		c.db.setSlimmed("ios", "U2", 5);
 		expect(await claimCommand.run(c)).toBe(0);
@@ -255,7 +269,7 @@ describe("warden claim → arrange", () => {
 			[["ios"], { WARDEN_SLIM: "0" }],
 		] as const) {
 			const calls: string[][] = [];
-			const c = setup([...argv], fakeSimctl([wardenSim(2, "Booted")], calls));
+			const c = setup([...argv], simctlFakes.build([simctlFakes.wardenSim(2, "Booted")], calls));
 			c.env = { ...c.env, ...env };
 			c.db.recordDevice({ platform: "ios", id: "U2", name: "warden-iphone-17-2", profile: "iphone-17" }, 0);
 			expect(await claimCommand.run(c)).toBe(0);
@@ -267,7 +281,7 @@ describe("warden claim → arrange", () => {
 
 	test("a sim the store has no record of is left alone", async () => {
 		const calls: string[][] = [];
-		const c = setup(["ios"], fakeSimctl([wardenSim(2, "Booted")], calls));
+		const c = setup(["ios"], simctlFakes.build([simctlFakes.wardenSim(2, "Booted")], calls));
 		expect(await claimCommand.run(c)).toBe(0);
 		expect(calls.some((x) => x.includes("print-disabled"))).toBe(false);
 	});
@@ -275,7 +289,7 @@ describe("warden claim → arrange", () => {
 
 describe("warden claim auto-gc (16-1)", () => {
 	test("auto-gc is considered only after the claim has leased its device", async () => {
-		const order = autoGcOrder(fakeSimctl([wardenSim(2, "Booted")]), () => c.db);
+		const order = autoGcOrder(simctlFakes.build([simctlFakes.wardenSim(2, "Booted")]), () => c.db);
 		const c = setup(["ios"], order.exec);
 		c.env = allowAutoGc(c.env);
 		expect(await claimCommand.run(c)).toBe(0);
@@ -289,7 +303,7 @@ describe("warden claim --physical", () => {
 		const calls: string[][] = [];
 		const c = setup(
 			["ios", "--physical", "--no-wait", "--json"],
-			fakeSimctl([wardenSim(1), wardenSim(2, "Booted")], calls)
+			simctlFakes.build([simctlFakes.wardenSim(1), simctlFakes.wardenSim(2, "Booted")], calls)
 		);
 		expect(await claimCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no free ready physical ios device");
@@ -299,20 +313,20 @@ describe("warden claim --physical", () => {
 
 	test("incompatible flags exit 1 before touching a device", async () => {
 		const calls: string[][] = [];
-		const c = setup(["android", "--physical", "--count", "2"], fakeSimctl([], calls));
+		const c = setup(["android", "--physical", "--count", "2"], simctlFakes.build([], calls));
 		expect(await claimCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("--count cannot be used with --physical");
 		expect(calls).toEqual([]);
 	});
 
 	test("--serial names android devices: on ios it is refused, on android it asks for those ids", async () => {
-		const wrong = setup(["ios", "--serial", "R5CT"], fakeSimctl([]));
+		const wrong = setup(["ios", "--serial", "R5CT"], simctlFakes.build([]));
 		expect(await claimCommand.run(wrong)).toBe(1);
 		expect(wrong.stderr.join("\n")).toContain("--serial is android-only");
 	});
 
 	test("WARDEN_HEADLESS in the environment does not reject --physical", async () => {
-		const c = setup(["ios", "--physical", "--no-wait"], fakeSimctl([]));
+		const c = setup(["ios", "--physical", "--no-wait"], simctlFakes.build([]));
 		c.env = { ...c.env, WARDEN_HEADLESS: "1" };
 		expect(await claimCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).not.toContain("cannot be used");
@@ -417,8 +431,8 @@ ${WIFI}      device product:husky model:Pixel_8_Pro device:husky transport_id:5
 });
 
 describe("warden claim of a locked iPhone", () => {
-	const LIST = devicectlJson([
-		devicectlEntry({
+	const LIST = devicectlFixtures.json([
+		devicectlFixtures.entry({
 			udid: FAKE_IPHONE_UDID,
 			name: "Test iPhone",
 			deviceType: "iPhone",
@@ -429,7 +443,7 @@ describe("warden claim of a locked iPhone", () => {
 	const locked = (argv: string[]): TestContext =>
 		setup(
 			argv,
-			fakeSimctl(
+			simctlFakes.build(
 				[],
 				[],
 				[

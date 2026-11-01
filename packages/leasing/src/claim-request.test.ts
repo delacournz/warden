@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "@delacour/warden-providers/testing/simctl.testing";
+import { simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
+import { OWNER_ENV, simctlFakes } from "@delacour/warden-providers/testing/simctl.testing";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { InventoryDevice, Lease } from "@delacour/warden-store/types";
 import type { ClaimedDevice } from "./claim";
@@ -92,7 +92,7 @@ function macSimulator(simctl: Exec, calls: string[][], gate: Promise<void>): Exe
 		if (cmd.join(" ") === "xcrun simctl list devices -j") {
 			// the device states after the close: held until the test has seen the claim return
 			await gate;
-			return ok(simctlDevicesJson({ "iOS-26-5": [wardenSim(1, "Booted")] }));
+			return ok(simctlFixtures.devicesJson({ "iOS-26-5": [simctlFakes.wardenSim(1, "Booted")] }));
 		}
 		return simctl(cmd, opts);
 	};
@@ -102,7 +102,7 @@ describe("headless hide wiring", () => {
 	let hctx: TestLeaseHost | undefined;
 	afterEach(() => hctx?.cleanup());
 	const make = () => {
-		hctx = testLeaseHost({ exec: fakeSimctl([wardenSim(1, "Booted")]) });
+		hctx = testLeaseHost({ exec: simctlFakes.build([simctlFakes.wardenSim(1, "Booted")]) });
 		hctx.env = { ...hctx.env, ...OWNER_ENV };
 		return hctx;
 	};
@@ -130,7 +130,7 @@ describe("headless hide wiring", () => {
 
 	test("onHide on macOS: the claim returns once the windows are closed, before the hide settles", async () => {
 		const calls: string[][] = [];
-		const simctl = fakeSimctl([wardenSim(1, "Booted")], calls);
+		const simctl = simctlFakes.build([simctlFakes.wardenSim(1, "Booted")], calls);
 		let release = () => {};
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
@@ -195,7 +195,7 @@ describe("Device Hub windows after a claim (Xcode 27)", () => {
 
 	/** `pgrep` finds only `running`; every other call goes to simctl; records `open`/`osascript` */
 	function viewer(running: "DeviceHub" | "none", calls: string[][]): Exec {
-		const simctl = fakeSimctl([wardenSim(1, "Shutdown")], calls);
+		const simctl = simctlFakes.build([simctlFakes.wardenSim(1, "Shutdown")], calls);
 		return async (cmd, opts) => {
 			if (cmd[0] === "open" || cmd[0] === "osascript") calls.push([...cmd]);
 			return viewerReply(cmd, running) ?? simctl(cmd, opts);
@@ -239,7 +239,7 @@ describe("Device Hub windows after a claim (Xcode 27)", () => {
 describe("claim options handed to the host", () => {
 	test("an iOS claim passes the resolved slim profile and physical options to providerFor", async () => {
 		const seen: unknown[] = [];
-		const simctl = fakeSimctl([wardenSim(1, "Booted")], []);
+		const simctl = simctlFakes.build([simctlFakes.wardenSim(1, "Booted")], []);
 		const c = testLeaseHost({ exec: simctl });
 		ctx = c;
 		const inner = c.providerFor;

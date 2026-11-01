@@ -1,5 +1,5 @@
 import { parseIosRunningApps, parseResumedActivity, pickIosApp } from "@delacour/warden-perf/shared/app-detect";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -14,7 +14,7 @@ type DeviceRef = { platform: Platform; id: string };
 function listArgv(ctx: PerfEnv, device: DeviceRef): string[] {
 	return device.platform === "ios"
 		? ["xcrun", "simctl", "spawn", device.id, "launchctl", "list"]
-		: [androidTools(ctx.env).adb, "-s", device.id, "shell", "dumpsys", "activity", "activities"];
+		: [androidToolsLocator.locate(ctx.env).adb, "-s", device.id, "shell", "dumpsys", "activity", "activities"];
 }
 
 type Detected = { kind: "app"; id: string } | { kind: "ambiguous"; candidates: string[] } | { kind: "none" };

@@ -1,1 +1,1 @@
-export { fakeSimctl, OWNER_ENV, wardenSim } from "@delacour/warden-providers/testing/simctl.testing";
+export { OWNER_ENV, simctlFakes } from "@delacour/warden-providers/testing/simctl.testing";

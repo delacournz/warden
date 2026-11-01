@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
@@ -33,7 +33,7 @@ function fakeExec(host: Host): Exec {
 		host.calls.push([...cmd]);
 		const line = cmd.join(" ");
 		if (line === "xcrun simctl list devices -j")
-			return { exitCode: 0, stdout: simctlDevicesJson({ "iOS-26-5": host.sims }), stderr: "" };
+			return { exitCode: 0, stdout: simctlFixtures.devicesJson({ "iOS-26-5": host.sims }), stderr: "" };
 		if (line.startsWith("xcrun simctl delete ")) {
 			const udid = cmd[3] ?? "";
 			host.onDelete?.(udid);

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { type FixtureSim, simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
+import { type FixtureSim, simctlFixtures } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { fakeSimctl, OWNER_ENV, wardenSim } from "../simctl.testing";
+import { OWNER_ENV, simctlFakes } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createBatchCommand } from "./batch";
 import { harness } from "./batch.testing";
@@ -25,10 +25,11 @@ function applySimctl(sims: FixtureSim[], cmd: readonly string[]): boolean {
 
 /** simctl with state; `testContext`'s roomy `TEST_HOST` leaves WARDEN_CAPACITY_MAX as the only binding limit. */
 function statefulSimctl(sims: FixtureSim[]): Exec {
-	const rest = fakeSimctl([]);
+	const rest = simctlFakes.build([]);
 	return async (cmd, opts) => {
 		const line = cmd.join(" ");
-		if (line === "xcrun simctl list devices available -j") return done(simctlDevicesJson({ "iOS-26-5": sims }));
+		if (line === "xcrun simctl list devices available -j")
+			return done(simctlFixtures.devicesJson({ "iOS-26-5": sims }));
 		if (applySimctl(sims, cmd)) return done();
 		if (line.startsWith("sysctl -n kern.memorystatus_vm_pressure_level")) return done("1\n");
 		return rest(cmd, opts);
@@ -37,7 +38,12 @@ function statefulSimctl(sims: FixtureSim[]): Exec {
 
 /** U1-U3 are warden sims (shut down); U4 is booted and leased by someone else, so a 3-unit host has room for 2. */
 function setup(env: Record<string, string> = {}) {
-	const sims = [wardenSim(1), wardenSim(2), wardenSim(3), wardenSim(4, "Booted")];
+	const sims = [
+		simctlFakes.wardenSim(1),
+		simctlFakes.wardenSim(2),
+		simctlFakes.wardenSim(3),
+		simctlFakes.wardenSim(4, "Booted"),
+	];
 	const c = testContext(["ios", "--count", "3", "--max", "4", "--jobs", "a,b,c,d,e", "--no-tui", "--", "x", "{job}"], {
 		exec: statefulSimctl(sims),
 	});

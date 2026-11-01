@@ -9,7 +9,7 @@ import {
 	resolveActivityArgv,
 } from "@delacour/warden-perf/startup/android-am-start";
 import { parseSimctlLaunch, simctlLaunchArgv } from "@delacour/warden-perf/startup/ios-app-launch";
-import { androidTools } from "@delacour/warden-providers/android-tools";
+import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import type { Platform } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -50,7 +50,7 @@ export type LaunchOptions = {
 };
 
 const adb = (ctx: PerfEnv, device: AppDevice, args: readonly string[]): string[] => [
-	androidTools(ctx.env).adb,
+	androidToolsLocator.locate(ctx.env).adb,
 	"-s",
 	device.id,
 	...args,
