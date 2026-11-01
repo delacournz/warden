@@ -63,6 +63,7 @@ Rust owns the token. The webview makes no network requests (CSP has no remote `c
 - The titlebar is ours: `data-tauri-drag-region` on the bar, non-interactive children `pointer-events-none`. Window controls are custom buttons plus Cmd/Ctrl+W (close) and Cmd/Ctrl+M (minimize).
 - Window capabilities are exactly `core:window:allow-start-dragging`, `allow-minimize`, `allow-close`, `allow-set-always-on-top`. Add one only with the control that needs it.
 - `TITLEBAR_HEIGHT` and `SCREEN_INSET` (`src/modules/toolbar/layout.ts`) feed `fit_window`; change them with the markup or the window no longer fits the device aspect.
+- App icon (`src-tauri/icons/`) is generated from warden-monorepo's `packages/brand/assets/warden/icon-1024.png`, never hand-edited: `bun run tauri icon <that png> -o <tmp>`, then copy back only the files `bundle.icon` lists plus `icon.png`.
 
 ## Commands
 
