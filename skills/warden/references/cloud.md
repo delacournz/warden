@@ -45,6 +45,7 @@ Org (sent as `X-Warden-Organization`): lease > `WARDEN_ORG=<slug|id>` > link > t
 - `release` / `heartbeat` stop / extend it like any lease. `heartbeat` warns `low balance ($0.30 left)` and `stopped: out of credits`.
 - A device warden cloud stopped: `warden ls` shows `stop_reason: <reason>` in STATE (`--json`: `stopReason` on the lease); `warden release --json` → `remoteStopReasons: { <remoteId>: <reason> }`. Reasons: `user` `idle` `credits_exhausted` `error`.
 - A person watches or drives it: `warden view [leaseId|remoteId] [--watch] [--detach] [--json]` or `claim --remote --view` (macOS, Windows). `WARDEN_VIEWER_PATH` = a local build, `WARDEN_VIEWER_URL` = release mirror. Agents never need it.
+- Attached viewer: closing the window asks **Keep running** (device and lease stay, lease TTL applies; reopen with `warden view`) or **Shut down device** (stops it, releases the lease). Ctrl+C in the terminal = shut down + release. `--json` then adds `released: true, remoteStopped`. `--detach` never asks or releases: `warden release <leaseId>`.
 
 ## Errors (`--json` failure `error.code`)
 

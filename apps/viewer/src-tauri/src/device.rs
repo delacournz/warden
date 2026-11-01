@@ -199,6 +199,29 @@ pub async fn fetch_device(
     Ok((status, body))
 }
 
+/// Close from the window's prompt and exit 0. Attached, it first tells the CLI the choice on stdout:
+/// `release` = Shut down (the CLI stops the device and ends the lease), otherwise Keep running. A
+/// detached viewer has no CLI listening, so it refuses `release` and closes without a line.
+#[tauri::command]
+pub fn close_viewer(
+    app: tauri::AppHandle,
+    session: State<'_, SessionState>,
+    release: bool,
+) -> CmdResult<()> {
+    if session.detached() {
+        if release {
+            return Err(ApiError::new(
+                "DETACHED",
+                "a detached viewer can't end the lease; run warden release",
+            ));
+        }
+    } else {
+        emit(&Event::Close { release });
+    }
+    app.exit(0);
+    Ok(())
+}
+
 /// Open the launch-time billing URL in the system browser. Takes no argument: JS cannot choose
 /// where this goes.
 #[tauri::command]

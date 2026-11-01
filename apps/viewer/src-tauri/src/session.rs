@@ -246,7 +246,13 @@ pub fn eof_action(detached: bool) -> EofAction {
 pub enum Event<'a> {
     Ready,
     Streaming,
-    Error { message: &'a str },
+    Error {
+        message: &'a str,
+    },
+    /// The user closed the window from its prompt; `release` = Shut down. Attached only.
+    Close {
+        release: bool,
+    },
 }
 
 pub fn event_line(event: &Event) -> String {
@@ -443,6 +449,14 @@ mod tests {
         assert_eq!(
             event_line(&Event::Error { message: "boom" }),
             r#"{"event":"error","message":"boom"}"#
+        );
+        assert_eq!(
+            event_line(&Event::Close { release: true }),
+            r#"{"event":"close","release":true}"#
+        );
+        assert_eq!(
+            event_line(&Event::Close { release: false }),
+            r#"{"event":"close","release":false}"#
         );
     }
 }

@@ -42,6 +42,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export const viewerInfo = () => call<ViewerInfo>("viewer_info");
 export const viewerStreaming = () => call<void>("viewer_streaming");
+/** Exit the window; attached, `release` tells the CLI to stop the device and end the lease. */
+export const closeViewer = (release: boolean) => call<void>("close_viewer", { release });
 export const fitWindow = (aspect: number, chromeHeight: number, padX: number) =>
 	call<void>("fit_window", { aspect, chromeHeight, padX });
 

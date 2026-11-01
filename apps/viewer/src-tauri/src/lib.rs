@@ -127,6 +127,7 @@ pub fn run() {
             device::input,
             device::open_url,
             device::open_billing,
+            device::close_viewer,
             device::screenshot,
         ])
         .build(tauri::generate_context!())
