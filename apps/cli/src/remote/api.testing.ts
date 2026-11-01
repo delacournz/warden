@@ -17,9 +17,14 @@ export type FakeServer = {
 	}>;
 	/** device-token answers, in order; then `authorization_pending` */
 	polls: Poll[];
+	/** the first session token minted; later approvals mint `<token>_2`, `<token>_3`, … */
 	token: string;
+	/** every session token minted so far (each one authenticates) */
+	issued: string[];
 	me: Me;
 	orgs: Organization[];
+	/** slugs other people's organizations hold: `check-slug` / `create` answer `ORGANIZATION_SLUG_ALREADY_TAKEN` */
+	takenSlugs: string[];
 	devices: Map<string, RemoteDevice>;
 	/** `GET /v1/devices/:id` calls before a starting device reports ready */
 	readyAfterGets: number;
@@ -49,6 +54,13 @@ const POLL_ERRORS: Record<Exclude<Poll, "approve">, string> = {
 	expired: "expired_token",
 };
 
+/** A fresh session token per approved device flow, like the real server. */
+function mint(server: FakeServer): string {
+	const token = server.issued.length === 0 ? server.token : `${server.token}_${server.issued.length + 1}`;
+	server.issued.push(token);
+	return token;
+}
+
 /** Routes that need no session. */
 const PUBLIC: Record<string, Handler> = {
 	"POST /api/auth/device/code": () =>
@@ -63,7 +75,7 @@ const PUBLIC: Record<string, Handler> = {
 	"POST /api/auth/device/token": (server) => {
 		const next = server.polls.shift() ?? "pending";
 		return next === "approve"
-			? json({ access_token: server.token, token_type: "Bearer" })
+			? json({ access_token: mint(server), token_type: "Bearer" })
 			: json({ error: POLL_ERRORS[next] }, 400);
 	},
 };
@@ -73,6 +85,20 @@ const AUTHED: Record<string, Handler> = {
 	"POST /api/auth/sign-out": () => json({ success: true }),
 	"GET /api/auth/organization/list": (server) => json(server.orgs),
 	"POST /api/auth/organization/set-active": (_, req) => json({ id: req.body.organizationId }),
+	"POST /api/auth/organization/check-slug": (server, { body }) =>
+		server.orgs.some((o) => o.slug === body.slug) || server.takenSlugs.includes(String(body.slug))
+			? json({ code: "ORGANIZATION_SLUG_ALREADY_TAKEN", message: "slug is taken" }, 400)
+			: json({ status: true }),
+	"POST /api/auth/organization/create": (server, { body }) => {
+		const slug = String(body.slug);
+		if (server.orgs.some((o) => o.slug === slug) || server.takenSlugs.includes(slug)) {
+			return json({ code: "ORGANIZATION_SLUG_ALREADY_TAKEN", message: "slug is taken" }, 400);
+		}
+		const org = { id: `o${server.orgs.length + 1}`, name: String(body.name), slug };
+		server.orgs.push(org);
+		server.me = { ...server.me, organization: org };
+		return json({ ...org, createdAt: "2026-11-01T00:00:00.000Z", members: [] });
+	},
 	"GET /v1/devices": (server) => json([...server.devices.values()]),
 	"POST /v1/machines": (server, { body }) => {
 		if (typeof body.hash !== "string" || !/^[0-9a-f]{64}$/.test(body.hash)) {
@@ -159,12 +185,15 @@ function recordCall(
 
 /** An in-memory warden-api: device-flow login, `/v1/me`, organizations and `/v1/devices`. */
 export function fakeServer(
-	overrides: Partial<Pick<FakeServer, "me" | "orgs" | "polls" | "readyAfterGets" | "billing" | "ledger">> = {}
+	overrides: Partial<
+		Pick<FakeServer, "me" | "orgs" | "polls" | "readyAfterGets" | "billing" | "ledger" | "takenSlugs">
+	> = {}
 ): FakeServer {
 	const server: FakeServer = {
 		calls: [],
 		polls: overrides.polls ?? ["approve"],
 		token: "sess_tok",
+		issued: [],
 		me: overrides.me ?? {
 			user: { id: "u1", email: "dev@acme.test", name: "Dev" },
 			organization: { id: "o1", name: "Acme", slug: "acme" },
@@ -174,6 +203,7 @@ export function fakeServer(
 			{ id: "o1", name: "Acme", slug: "acme" },
 			{ id: "o2", name: "Side", slug: "side" },
 		],
+		takenSlugs: overrides.takenSlugs ?? [],
 		devices: new Map(),
 		viewerTokens: [],
 		readyAfterGets: overrides.readyAfterGets ?? 1,
@@ -199,7 +229,7 @@ export function fakeServer(
 			const route = `${method} ${path}`;
 			const open = PUBLIC[route];
 			if (open) return open(server, req);
-			if (auth !== `Bearer ${server.token}`) {
+			if (!server.issued.concat(server.token).some((t) => auth === `Bearer ${t}`)) {
 				return json({ success: false, error: "no session", code: "UNAUTHORIZED" }, 401);
 			}
 			const handler = AUTHED[route];

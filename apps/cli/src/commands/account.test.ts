@@ -11,10 +11,12 @@ import { logoutCommand } from "./logout";
 import { whoamiCommand } from "./whoami";
 
 let ctx: TestContext | undefined;
-let current = fakeServer();
+/** One org, so a login saves just the account it names (no slug profiles). */
+const oneOrg = () => fakeServer({ orgs: [{ id: "o1", name: "Acme", slug: "acme" }] });
+let current = oneOrg();
 afterEach(() => ctx?.cleanup());
 
-function setup(server = fakeServer()): TestContext {
+function setup(server = oneOrg()): TestContext {
 	current = server;
 	ctx = testContext([], { fetch: server.fetch, sleep: async () => {}, exec: fakeExec([["open", {}]]) });
 	ctx.env = { ...ctx.env, WARDEN_API_URL: "https://api.test" };
@@ -55,7 +57,7 @@ describe("warden login --account", () => {
 	});
 
 	test("an invalid name is refused before the device flow starts", async () => {
-		const server = fakeServer();
+		const server = oneOrg();
 		const c = setup(server);
 		c.argv = ["--account", "Bad Name"];
 		expect(await loginCommand.run(c)).toBe(1);
@@ -91,7 +93,7 @@ describe("warden account", () => {
 	});
 
 	test("rm revokes and forgets one account", async () => {
-		const server = fakeServer();
+		const server = oneOrg();
 		const c = setup(server);
 		await login(c);
 		await login(c, "--account", "work");
@@ -110,7 +112,12 @@ describe("warden logout", () => {
 		await login(c, "--account", "work");
 		c.argv = ["--account", "work", "--json"];
 		expect(await logoutCommand.run(c)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ loggedOut: true, revoked: true, accounts: ["work"] });
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({
+			loggedOut: true,
+			revoked: true,
+			kept: false,
+			accounts: ["work"],
+		});
 		const saved = readAccounts(c.env);
 		expect(saved.success && Object.keys(saved.data?.accounts ?? {})).toEqual(["default"]);
 	});
@@ -130,13 +137,13 @@ describe("warden logout", () => {
 		await login(c);
 		c.argv = ["--account", "nope", "--json"];
 		expect(await logoutCommand.run(c)).toBe(0);
-		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ loggedOut: false, revoked: false, accounts: [] });
+		expect(JSON.parse(c.stdout.join("\n"))).toEqual({ loggedOut: false, revoked: false, kept: false, accounts: [] });
 	});
 });
 
 describe("warden whoami with links", () => {
 	test("a linked directory uses the link's account and sends its org", async () => {
-		const server = fakeServer();
+		const server = oneOrg();
 		const c = setup(server);
 		await login(c);
 		await login(c, "--account", "work");

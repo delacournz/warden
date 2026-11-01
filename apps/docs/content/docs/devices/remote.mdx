@@ -10,11 +10,15 @@ warden cloud runs simulators and emulators for you, so a Linux CI runner or a bu
 
 ```bash
 warden login            # opens the browser: sign in, pick or create an organization, approve the code
+warden login --org acme # skip the organization prompt
 warden whoami           # account, organization, and whether hosted devices are ready for it
 warden org list         # your organizations; * marks the active one
 warden org use acme     # hosted devices are billed to the active organization
+warden org create "Acme Mobile"   # slug acme-mobile, or acme-mobile-1a2b3c when taken
 warden logout
 ```
+
+No organization yet? `warden login` asks for a name and a slug (prefilled from the name) and creates one, so you never need the dashboard. With several organizations, `warden login` asks which one is the default and saves each of the others as its own account named by its slug, so `warden whoami --account side` or `warden org link side --account side` work straight away. The profiles share one session: `warden logout --account side` forgets just that profile.
 
 The session token is saved to `~/.warden/auth.json`, and only you can read it. In CI, set `WARDEN_TOKEN` instead. `WARDEN_API_URL` points the CLI at another warden cloud, such as staging. A saved token is only ever sent to the server that issued it.
 
@@ -27,7 +31,7 @@ warden login                           # your default account
 warden login --account client          # a second account, e.g. a client's
 warden account                         # * marks the default, > the one this directory uses
 
-warden org link acme --path ~/orca/workspaces/acme              # every worktree under it bills acme
+warden org link acme --path ~/code/acme                         # every checkout or worktree under it bills acme
 warden org link client-co --account client --path ~/code/client # this tree uses the client account
 warden org link side --remote          # any checkout of this repo's origin, wherever it lives
 warden org links                       # every link; * marks the one for this directory

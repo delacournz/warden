@@ -313,7 +313,7 @@ export const COMMANDS: readonly CommandEntry[] = [
 	{
 		name: "org",
 		group: "Account",
-		summary: "list warden cloud organizations, switch the active one or link directories to one",
+		summary: "list, create or switch warden cloud organizations, or link directories to one",
 		load: async () => (await import("./org")).orgCommand,
 	},
 ];

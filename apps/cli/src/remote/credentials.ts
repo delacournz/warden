@@ -169,3 +169,8 @@ export function clearCredentials(env: Env): boolean {
 	const removed = removeAccount(env, current.data.default);
 	return removed.success && removed.data.removed;
 }
+
+/** True when two saved logins are the same warden-api session (org profiles saved by one `warden login` share it). */
+export function sameSession(a: Credentials, b: Credentials): boolean {
+	return a.apiUrl === b.apiUrl && a.token === b.token;
+}
