@@ -1,4 +1,4 @@
-import { type Channel, invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type Scope = "view" | "drive";
 export type Platform = "ios" | "android";
@@ -75,3 +75,41 @@ export const input = (text: string, clearFirst?: boolean) => call<void>("input",
 export const openUrl = (url: string) => call<void>("open_url", { url });
 export const openBilling = () => call<void>("open_billing");
 export const screenshot = () => call<string | null>("screenshot");
+
+/** One STUN/TURN server from the stream endpoint's `iceServers`. Empty when the API sends none. */
+export type IceServer = { urls: string[]; username?: string; credential?: string };
+export const streamIceServers = () => call<IceServer[]>("stream_ice_servers");
+
+export type TouchPhase = "down" | "move" | "up";
+export type TouchGesture = "tap" | "drag" | "long_press";
+export type PinchGesture = "zoom_in" | "zoom_out";
+export type Orientation = "portrait" | "landscape";
+export type TouchPoint = { id: number; x: number; y: number };
+
+/** A client frame for the live input socket. `id` is echoed in the server's acks. */
+export type InputFrame =
+	| { type: "touch"; id?: string; phase: TouchPhase; x: number; y: number; durationMs?: number; gesture?: TouchGesture }
+	| { type: "multiTouch"; id?: string; phase: TouchPhase; touches: TouchPoint[]; gesture?: PinchGesture }
+	| { type: "goHome"; id?: string }
+	| { type: "shake"; id?: string }
+	| { type: "orientation"; id?: string; orientation: Orientation }
+	| { type: "openUrl"; id?: string; url: string }
+	| { type: "location"; id?: string; latitude: number; longitude: number }
+	| { type: "input"; id?: string; text: string; clearFirst?: boolean; paste?: boolean }
+	| { type: "key"; id?: string; key: DeviceKey };
+
+/** A server frame; `closed` is also sent by Rust when the socket drops. */
+export type InputEvent =
+	| { type: "ready" }
+	| { type: "ack"; id: string; status: "received" | "done" }
+	| { type: "error"; code: string; message: string; id?: string }
+	| { type: "closed"; reason: string };
+
+/** Open this window's input socket (drive scope). Events arrive on `onEvent` until `closed`. */
+export const inputConnect = (onEvent: (event: InputEvent) => void) => {
+	const channel = new Channel<InputEvent>();
+	channel.onmessage = onEvent;
+	return call<void>("input_connect", { channel });
+};
+export const inputSend = (frame: InputFrame) => call<void>("input_send", { frame });
+export const inputClose = () => call<void>("input_close");

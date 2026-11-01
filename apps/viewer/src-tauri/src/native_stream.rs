@@ -4,7 +4,7 @@
 //! SPS/PPS into a separate same-timestamp frame), so on WebKit the webview's RTCPeerConnection is
 //! not used at all. Signalling is the same non-trickle WHEP POST as the webview path.
 
-use crate::device::{close_resource, post_offer, ApiError};
+use crate::device::{close_resource, fetch_ice_servers, post_offer, ApiError, IceServer};
 use crate::h264::Assembler;
 use crate::registry::Registry;
 use crate::reorder::{Packet, Reorder};
@@ -12,7 +12,7 @@ use rtc::interceptor::Registry as InterceptorRegistry;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
 use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_H264};
 use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
-use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp_transceiver::rtp_sender::{
@@ -83,6 +83,18 @@ impl NativeStreams {
             None => peers.remove(label),
         }
     }
+}
+
+/// Servers for the peer configuration; an absent username or credential is the empty string.
+fn rtc_ice_servers(servers: Vec<IceServer>) -> Vec<RTCIceServer> {
+    servers
+        .into_iter()
+        .map(|s| RTCIceServer {
+            urls: s.urls,
+            username: s.username.unwrap_or_default(),
+            credential: s.credential.unwrap_or_default(),
+        })
+        .collect()
 }
 
 fn rtc_error(e: impl std::fmt::Display) -> ApiError {
@@ -219,13 +231,18 @@ pub async fn native_stream_start(
         let _ = old.close().await;
     }
 
+    let ice_servers = rtc_ice_servers(fetch_ice_servers(&registry, &label).await);
     let mut engine = media_engine()?;
     let interceptors = register_default_interceptors(InterceptorRegistry::new(), &mut engine)
         .map_err(rtc_error)?;
     let (gathered, mut gathered_rx) = rt_channel::<()>(1);
     let handler = Arc::new(Handler { channel, gathered });
     let pc = PeerConnectionBuilder::new()
-        .with_configuration(RTCConfigurationBuilder::new().build())
+        .with_configuration(
+            RTCConfigurationBuilder::new()
+                .with_ice_servers(ice_servers)
+                .build(),
+        )
         .with_media_engine(engine)
         .with_setting_engine(
             SettingEngineBuilder::new()
@@ -282,6 +299,25 @@ pub async fn native_stream_stop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_ice_servers_with_empty_defaults() {
+        let mapped = rtc_ice_servers(vec![
+            IceServer {
+                urls: vec!["stun:s".into()],
+                username: None,
+                credential: None,
+            },
+            IceServer {
+                urls: vec!["turn:t".into()],
+                username: Some("u".into()),
+                credential: Some("c".into()),
+            },
+        ]);
+        assert_eq!(mapped[0].username, "");
+        assert_eq!(mapped[1].credential, "c");
+        assert!(rtc_ice_servers(vec![]).is_empty());
+    }
 
     #[test]
     fn frames_kind_timestamp_then_body() {

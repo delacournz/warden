@@ -7,6 +7,7 @@ mod billing;
 mod device;
 mod h264;
 mod host;
+mod input_ws;
 mod ipc;
 mod native_stream;
 mod registry;
@@ -242,6 +243,7 @@ fn run_host() {
         .plugin(tauri_plugin_opener::init())
         .manage(registry.clone())
         .manage(std::sync::Arc::new(native_stream::NativeStreams::default()))
+        .manage(std::sync::Arc::new(input_ws::InputSockets::default()))
         .setup(move |app| {
             let windows = TauriWindows {
                 handle: app.handle().clone(),
@@ -298,6 +300,10 @@ fn run_host() {
             device::screenshot,
             native_stream::native_stream_start,
             native_stream::native_stream_stop,
+            device::stream_ice_servers,
+            input_ws::input_connect,
+            input_ws::input_send,
+            input_ws::input_close,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

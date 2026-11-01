@@ -48,7 +48,7 @@ fn network_error(unreachable: bool, message: &str) -> ApiError {
 type CmdResult<T> = Result<T, ApiError>;
 
 /// The calling window's viewer, or `NO_SESSION` when the window has none (closing, or unknown).
-fn viewer_for(registry: &Registry, label: &str) -> CmdResult<Arc<Viewer>> {
+pub(crate) fn viewer_for(registry: &Registry, label: &str) -> CmdResult<Arc<Viewer>> {
     registry
         .get(label)
         .ok_or_else(|| ApiError::new("NO_SESSION", "this window has no session"))
@@ -89,7 +89,7 @@ pub fn resolve_location(api_url: &str, location: &str) -> Result<String, ApiErro
     }
 }
 
-fn device_url(c: &Credentials, tail: &str) -> String {
+pub(crate) fn device_url(c: &Credentials, tail: &str) -> String {
     format!(
         "{}/v1/devices/{}{}",
         trim_slash(&c.api_url),
@@ -247,7 +247,7 @@ impl DeviceAction {
     }
 }
 
-fn require_drive(c: &Credentials) -> CmdResult<()> {
+pub(crate) fn require_drive(c: &Credentials) -> CmdResult<()> {
     if c.scope == Scope::Drive {
         Ok(())
     } else {
@@ -285,7 +285,7 @@ async fn failure(response: reqwest::Response) -> ApiError {
     error_for_status(status, &text)
 }
 
-async fn ok_or_failure(response: reqwest::Response) -> CmdResult<reqwest::Response> {
+pub(crate) async fn ok_or_failure(response: reqwest::Response) -> CmdResult<reqwest::Response> {
     if response.status().is_success() {
         Ok(response)
     } else {
@@ -422,6 +422,65 @@ pub async fn post_offer(registry: &Registry, label: &str, sdp: String) -> CmdRes
     let answer = response.text().await?;
     viewer.set_resource(Some(resource));
     Ok(answer)
+}
+
+/// One STUN/TURN server from `GET /stream`'s additive `iceServers`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IceServer {
+    pub urls: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StreamInfo {
+    #[serde(default, rename = "iceServers")]
+    ice_servers: Option<Vec<IceServer>>,
+}
+
+/// The ICE servers in a `GET /stream` body; empty when absent or unparseable.
+pub fn parse_ice_servers(body: &str) -> Vec<IceServer> {
+    serde_json::from_str::<StreamInfo>(body)
+        .ok()
+        .and_then(|info| info.ice_servers)
+        .unwrap_or_default()
+}
+
+/// `GET /v1/devices/:id/stream` for this window. Best effort: an older API, or any failure, gives
+/// no servers and the stream keeps its host-candidate-only behaviour.
+pub async fn fetch_ice_servers(registry: &Registry, label: &str) -> Vec<IceServer> {
+    let Ok(viewer) = viewer_for(registry, label) else {
+        return Vec::new();
+    };
+    let c = viewer.session.credentials();
+    let response = registry
+        .client()
+        .get(device_url(&c, "/stream"))
+        .bearer_auth(&c.token)
+        .send()
+        .await;
+    match response {
+        Ok(r) if r.status().is_success() => parse_ice_servers(&r.text().await.unwrap_or_default()),
+        Ok(r) => {
+            log::info!("ice servers: GET /stream {}", r.status().as_u16());
+            Vec::new()
+        }
+        Err(e) => {
+            log::warn!("ice servers: {}", e.without_url());
+            Vec::new()
+        }
+    }
+}
+
+/// The ICE servers for the webview's own RTCPeerConnection.
+#[tauri::command]
+pub async fn stream_ice_servers(
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<Vec<IceServer>> {
+    Ok(fetch_ice_servers(&registry, window.label()).await)
 }
 
 /// DELETE a WHEP resource. Best effort: the server expires it on its own, so a failure is logged.
@@ -782,6 +841,28 @@ fn lock_aspect(window: &tauri::WebviewWindow, lock: crate::aspect::Lock) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_ice_servers_from_the_stream_info() {
+        let body = r#"{"iceServers":[{"urls":["stun:s:3478"]},{"urls":["turn:t:3478"],"username":"u","credential":"c"}]}"#;
+        assert_eq!(
+            parse_ice_servers(body),
+            vec![
+                IceServer {
+                    urls: vec!["stun:s:3478".into()],
+                    username: None,
+                    credential: None
+                },
+                IceServer {
+                    urls: vec!["turn:t:3478".into()],
+                    username: Some("u".into()),
+                    credential: Some("c".into())
+                },
+            ]
+        );
+        assert!(parse_ice_servers(r#"{"status":"live"}"#).is_empty());
+        assert!(parse_ice_servers("nope").is_empty());
+    }
 
     #[test]
     fn action_paths_and_bodies_match_the_api_contract() {
