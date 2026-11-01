@@ -12,7 +12,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
 import { readXcode } from "@delacour/warden-runtime/xcode";
-import { wardenHome as resolveWardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { BuildConfiguration } from "./builds.defaults";
@@ -255,7 +255,7 @@ async function cacheEnv(deps: LocalBuildDeps): Promise<Record<string, string>> {
 		...prebuilt,
 		...compilerCacheEnv({
 			platform,
-			wardenHome: deps.wardenHome ?? resolveWardenHome(deps.env),
+			wardenHome: deps.wardenHome ?? storeLocator.wardenHome(deps.env),
 			gitTop: gitTop || undefined,
 			xcodeMajor: xcode?.success ? xcode.data.major : undefined,
 			enabled: true,
@@ -379,7 +379,7 @@ async function dropStaleNativeDir(deps: LocalBuildDeps, native: string): Promise
 /** The whole output of a failed build, kept for the errors the summary cannot show; best effort. */
 function keepBuildLog(deps: LocalBuildDeps, res: ExecResult): string | undefined {
 	const path = join(
-		deps.wardenHome ?? resolveWardenHome(deps.env),
+		deps.wardenHome ?? storeLocator.wardenHome(deps.env),
 		"logs",
 		`build-${deps.platform}-${deps.hash.slice(0, 12)}.log`
 	);

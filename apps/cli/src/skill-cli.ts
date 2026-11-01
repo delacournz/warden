@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "./context";
 import { SKILL_FILES, SKILL_NAME, SKILL_PATHS } from "./skill";
 
@@ -55,7 +55,7 @@ export function skillsAddArgs(source: string, opts: SkillsAddOpts): string[] {
 
 /** Stable dir holding this binary's skill copy — the skills CLI may symlink to it, so it must outlive the call. */
 export function localSkillRoot(ctx: CommandContext): string {
-	return join(wardenHome(ctx.env), "skill");
+	return join(storeLocator.wardenHome(ctx.env), "skill");
 }
 
 /**

@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
 import { type CompletionShell, completionScript, shellFromEnv } from "../completion-scripts";
@@ -284,9 +284,12 @@ function completionPaths(
 		case "fish":
 			return { script: join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "fish", "completions", "warden.fish") };
 		case "zsh":
-			return { script: join(wardenHome(env), "completion", "warden.zsh"), rc: join(env.ZDOTDIR ?? home, ".zshrc") };
+			return {
+				script: join(storeLocator.wardenHome(env), "completion", "warden.zsh"),
+				rc: join(env.ZDOTDIR ?? home, ".zshrc"),
+			};
 		case "bash":
-			return { script: join(wardenHome(env), "completion", "warden.bash"), rc: join(home, ".bashrc") };
+			return { script: join(storeLocator.wardenHome(env), "completion", "warden.bash"), rc: join(home, ".bashrc") };
 	}
 }
 

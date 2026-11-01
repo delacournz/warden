@@ -8,7 +8,7 @@ import {
 	type SimEntry,
 	type SimRuleOpts,
 } from "@delacour/warden-core/sims/rules";
-import { describeOwner } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -29,7 +29,8 @@ function fail(ctx: CommandContext, message: string): number {
 function blocker(sim: SimEntry): string | undefined {
 	if (canDelete(sim)) return undefined;
 	for (const b of sim.blockers) {
-		if (b.kind === "leased") return `leased by ${describeOwner(b.owner)}${b.stale ? " (stale — run `warden gc`)" : ""}`;
+		if (b.kind === "leased")
+			return `leased by ${leaseModel.describeOwner(b.owner)}${b.stale ? " (stale — run `warden gc`)" : ""}`;
 		if (b.kind === "golden") return "golden image — use `warden golden prune`";
 	}
 	return "not deletable";
@@ -85,7 +86,7 @@ async function deleteAll(ctx: CommandContext, sims: SimEntry[]): Promise<{ delet
 			...result.skipped.map(({ entry, heldBy }) => ({
 				id: entry.udid,
 				name: entry.name,
-				error: `leased by ${describeOwner(heldBy)}`,
+				error: `leased by ${leaseModel.describeOwner(heldBy)}`,
 			})),
 			...result.failed.map(({ entry, error }) => ({ id: entry.udid, name: entry.name, error })),
 		],

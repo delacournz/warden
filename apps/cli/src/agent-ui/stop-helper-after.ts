@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isPhysicalIosId } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import type { CommandContext } from "../context";
 import { deviceTarget } from "../hooks/claude-pretool";
 import type { stopAndroidHost, stopHelper, stopIosRunner } from "./helper";
@@ -31,12 +31,12 @@ function recordedField(host: Pick<CommandContext, "env">, id: string, field: "an
 
 /** The default `AndroidHostRecorded`: the Android host of a serial, or the runner host of a physical iPhone. */
 const recordedAndroidHost: AndroidHostRecorded = (host, id) =>
-	recordedField(host, id, isPhysicalIosId(id) ? "iosRunner" : "androidHost");
+	recordedField(host, id, leaseModel.isPhysicalIosId(id) ? "iosRunner" : "androidHost");
 
 /** Which resident helper a device has: `warden-simd` (simulators), the Android host, or a physical iPhone's runner host. */
 function helperOf(platform: "ios" | "android", udid: string): "simd" | "androidHost" | "iosRunner" {
 	if (platform === "android") return "androidHost";
-	return isPhysicalIosId(udid) ? "iosRunner" : "simd";
+	return leaseModel.isPhysicalIosId(udid) ? "iosRunner" : "simd";
 }
 
 /**

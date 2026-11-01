@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { cacheCap, cacheTotal } from "@delacour/warden-builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { androidSnapshotsDue } from "@delacour/warden-core/golden/android-snapshot-pending";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { CommandContext } from "./context";
 
 /** Background `warden gc` is considered at most this often, machine-wide. */
@@ -64,7 +64,7 @@ export function maybeAutoGc(
 		return true;
 	});
 	if (!due) return;
-	const work = store.gcWork(now, DEFAULT_IDLE_MS, opts.pidAlive ?? processAlive);
+	const work = store.gcWork(now, DEFAULT_IDLE_MS, opts.pidAlive ?? liveness.processAlive);
 	if (
 		work.staleLeases === 0 &&
 		work.idleDevices === 0 &&

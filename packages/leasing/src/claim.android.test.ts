@@ -6,7 +6,7 @@ import { BOOT_WAIT_SCRIPT, createAndroidProvider, type SpawnDetached } from "@de
 import type { ProviderDeps } from "@delacour/warden-providers/provider.types";
 import { ADB_DEVICES_EMPTY, EMULATOR_LIST_AVDS } from "@delacour/warden-providers/testing/android.fixtures";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { claimDevices } from "./claim";
@@ -24,7 +24,7 @@ let store: Store;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-claim-android-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {

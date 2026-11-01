@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
@@ -137,7 +137,7 @@ async function open(rules: Rule[], extra: Partial<ClientSeams> = {}) {
 		["dumpsys dropbox", { stdout: "" }],
 		...rules,
 	]);
-	const store = openStore(join(home, "warden.db"));
+	const store = storeLocator.open(join(home, "warden.db"));
 	stores.push(store);
 	const procs = fakeProcs(store);
 	const seams: ClientSeams = {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { recordRepack, storeArtifact } from "@delacour/warden-builds/cache";
 import { buildLockKey, buildResource } from "@delacour/warden-builds/lock";
 import { fakeApp } from "@delacour/warden-builds/testing/builds.testing";
-import { getInstall, listBuilds, recordInstall } from "@delacour/warden-store/builds-table";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
 
@@ -137,7 +137,7 @@ describe("warden builds", () => {
 		const out = JSON.parse(c.stdout.join("\n"));
 		expect(out.removed.map((b: { hash: string }) => b.hash)).toEqual(["b", "c"]);
 		expect([oldest, mid, newest].map((p) => existsSync(p))).toEqual([true, false, false]);
-		expect(listBuilds(c.db).map((b) => b.hash)).toEqual(["a"]);
+		expect(new BuildsTable(c.db).list().map((b) => b.hash)).toEqual(["a"]);
 	});
 
 	test("prune --dry-run removes nothing; bad size → exit 1", async () => {
@@ -145,7 +145,7 @@ describe("warden builds", () => {
 		await seed(c, "a", 1);
 		expect(await buildsCommand.run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toContain("would remove");
-		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(new BuildsTable(c.db).list()).toHaveLength(1);
 		c.argv = ["prune", "--max-size", "lots"];
 		expect(await buildsCommand.run(c)).toBe(1);
 	});
@@ -156,7 +156,7 @@ describe("warden builds", () => {
 		await seed(c, "a", 1);
 		expect(await buildsCommand.run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).maxBytes).toBe(1);
-		expect(listBuilds(c.db)).toEqual([]);
+		expect(new BuildsTable(c.db).list()).toEqual([]);
 		c.env.WARDEN_MAX_CACHE_SIZE = "huge";
 		expect(await buildsCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("WARDEN_MAX_CACHE_SIZE");
@@ -182,7 +182,7 @@ describe("warden builds", () => {
 		expect(c.stderr.join("\n")).toContain("will remove k ios a (12B)");
 		expect(ui.events).toEqual(["confirm: Remove 1 cached build(s) (12B)?", "spin: pruning 1 build(s)…", "stop"]);
 		expect(existsSync(oldest)).toBe(false);
-		expect(listBuilds(c.db).map((b) => b.hash)).toEqual(["b"]);
+		expect(new BuildsTable(c.db).list().map((b) => b.hash)).toEqual(["b"]);
 		expect(c.stdout.join("\n")).toContain("removed k ios a");
 	});
 
@@ -194,7 +194,7 @@ describe("warden builds", () => {
 			await seed(c, "a", 1);
 			expect(await buildsCommand.run(c)).toBe(1);
 			expect(ui.events.at(-1)).toBe("cancelled: Aborted.");
-			expect(listBuilds(c.db)).toHaveLength(1);
+			expect(new BuildsTable(c.db).list()).toHaveLength(1);
 			c.cleanup();
 			ctx = undefined;
 		}
@@ -206,7 +206,7 @@ describe("warden builds", () => {
 		c.ui = ui;
 		await seed(c, "a", 1);
 		expect(await buildsCommand.run(c)).toBe(0);
-		expect(listBuilds(c.db)).toEqual([]);
+		expect(new BuildsTable(c.db).list()).toEqual([]);
 		c.argv = ["prune"];
 		expect(await buildsCommand.run(c)).toBe(0);
 		expect(ui.events.some((e) => e.startsWith("confirm"))).toBe(false);
@@ -226,13 +226,19 @@ describe("warden builds", () => {
 		const c = setup(["rm", "cd8e2d", "--json"]);
 		const bad = await seed(c, "cd8e2dbeae5b", 1);
 		const keep = await seed(c, "aaaa1111bbbb", 2);
-		recordInstall(c.db, { platform: "ios", deviceId: "U1", bundleId: "com.x", hash: "cd8e2dbeae5b", installedAt: 1 });
+		new BuildsTable(c.db).recordInstall({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x",
+			hash: "cd8e2dbeae5b",
+			installedAt: 1,
+		});
 		expect(await buildsCommand.run(c)).toBe(0);
 		const out = JSON.parse(c.stdout.join("\n"));
 		expect(out.removed.map((b: { hash: string }) => b.hash)).toEqual(["cd8e2dbeae5b"]);
 		expect(out.forgotInstalls).toBe(1);
 		expect([bad, keep].map((p) => existsSync(p))).toEqual([false, true]);
-		expect(getInstall(c.db, "ios", "U1", "com.x")).toBeUndefined();
+		expect(new BuildsTable(c.db).getInstall("ios", "U1", "com.x")).toBeUndefined();
 	});
 
 	test("rm --dry-run removes nothing; no match / short prefix → exit 1", async () => {
@@ -240,7 +246,7 @@ describe("warden builds", () => {
 		await seed(c, "cd8e2dbeae5b", 1);
 		expect(await buildsCommand.run(c)).toBe(0);
 		expect(c.stdout.join("\n")).toContain("would remove k ios cd8e2dbeae5b");
-		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(new BuildsTable(c.db).list()).toHaveLength(1);
 		c.argv = ["rm", "999999"];
 		expect(await buildsCommand.run(c)).toBe(1);
 		expect(c.stderr.join("\n")).toContain("no cached build matches 999999");
@@ -255,10 +261,10 @@ describe("warden builds", () => {
 		await seed(c, "cd8e2dbeae5b", 1);
 		expect(await buildsCommand.run(c)).toBe(1);
 		expect(ui.events[0]).toBe("confirm: Remove 1 cached build(s) (12B)?");
-		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(new BuildsTable(c.db).list()).toHaveLength(1);
 		c.argv = ["rm", "cd8e2d", "--yes"];
 		expect(await buildsCommand.run(c)).toBe(0);
-		expect(listBuilds(c.db)).toEqual([]);
+		expect(new BuildsTable(c.db).list()).toEqual([]);
 	});
 
 	test("unknown subcommand → exit 1", async () => {

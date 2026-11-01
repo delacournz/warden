@@ -7,8 +7,8 @@ import { providerFor } from "@delacour/warden-core/host-deps";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { listPhysicalIos, readLockState } from "@delacour/warden-providers/devicectl";
 import { realTimer } from "@delacour/warden-providers/health";
-import { wardenHome } from "@delacour/warden-store/store";
-import { type InventoryDevice, physicalNotReadyReason } from "@delacour/warden-store/types";
+import { storeLocator } from "@delacour/warden-store/store";
+import { type InventoryDevice, leaseModel } from "@delacour/warden-store/types";
 import { appHostFromContext, type CommandContext } from "../context";
 import type { CheckStatus, DoctorCheck } from "./doctor";
 
@@ -34,7 +34,7 @@ function iosFacts(d: InventoryDevice): IosFacts | undefined {
 }
 
 function isReady(d: InventoryDevice): boolean {
-	return d.state === "booted" && physicalNotReadyReason(d) === undefined;
+	return d.state === "booted" && leaseModel.physicalNotReadyReason(d) === undefined;
 }
 
 async function describeIos(ctx: CommandContext, d: InventoryDevice, facts: IosFacts): Promise<string> {
@@ -118,7 +118,7 @@ function lastFailure(home: string, udid: string): string | undefined {
 }
 
 function runnerRow(ctx: CommandContext, team: string | undefined, phones: InventoryDevice[]): DoctorCheck | undefined {
-	const home = wardenHome(ctx.env);
+	const home = storeLocator.wardenHome(ctx.env);
 	const failures = phones.flatMap((d) => {
 		const failure = lastFailure(home, d.id);
 		return failure === undefined ? [] : [`last failure: ${failure} (${d.id})`];

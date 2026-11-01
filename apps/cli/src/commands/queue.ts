@@ -1,8 +1,8 @@
 import { formatDuration } from "@delacour/warden-config/duration";
 import { effectivePriority, priorityName, queueOrder } from "@delacour/warden-leasing/queue";
 import type { QueueRowJson } from "@delacour/warden-sdk/contracts/queue";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { describeOwner, ownerLocation } from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { leaseModel } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
@@ -22,11 +22,11 @@ function queue(ctx: CommandContext, json: boolean): number {
 		platform: e.platform,
 		profile: e.profile,
 		units: e.units,
-		owner: describeOwner(e.owner),
-		...(ownerLocation(e.owner) !== undefined ? { where: ownerLocation(e.owner) } : {}),
+		owner: leaseModel.describeOwner(e.owner),
+		...(leaseModel.ownerLocation(e.owner) !== undefined ? { where: leaseModel.ownerLocation(e.owner) } : {}),
 		...(e.label !== undefined ? { label: e.label } : {}),
 		...(e.pid !== undefined ? { pid: e.pid } : {}),
-		...(e.pid !== undefined && !processAlive(e.pid) ? { stale: true as const } : {}),
+		...(e.pid !== undefined && !liveness.processAlive(e.pid) ? { stale: true as const } : {}),
 	}));
 	const { color } = ctx.ui;
 	const text =

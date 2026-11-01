@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { el, type FakeDriver, failWith, fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { resultFactory } from "@delacour/warden-types/result";
 import { createWardenClient } from "./client";
@@ -21,7 +21,7 @@ let peek: Store;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-sdk-wsdx4-"));
-	peek = openStore(join(dir, "warden.db"));
+	peek = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {

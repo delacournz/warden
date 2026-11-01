@@ -3,10 +3,10 @@ import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { type Exec, type ExecOptions, execError } from "@delacour/warden-runtime/exec";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
-import { wardenHome } from "@delacour/warden-store/store";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { InventoryDevice, Lease } from "@delacour/warden-store/types";
-import { profileSlug } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { ensureUnlocked, systemReady } from "./android-keyguard";
@@ -497,7 +497,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	const tools = androidTools(deps.env);
 	const sleep = options.sleep ?? defaultSleep;
 	const pollIntervalMs = options.pollIntervalMs ?? 250;
-	const pidAlive = options.pidAlive ?? processAlive;
+	const pidAlive = options.pidAlive ?? liveness.processAlive;
 	const spawnDetached = options.spawnDetached ?? createSpawnDetached(options.earlyExitMs);
 	/** emulators this provider launched: the boot wait watches their pid */
 	type Launch = { pid: number; logPath: string; logOffset: number; avd: string; snapshot?: string };
@@ -542,7 +542,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		};
 		if (info?.sdk !== undefined) device.runtime = `android-${info.sdk}`;
 		if (info?.emulator) return device;
-		if (model !== undefined) device.profile = profileSlug(model);
+		if (model !== undefined) device.profile = leaseModel.profileSlug(model);
 		const hwSerial = info?.hwSerial;
 		device.physical = {
 			platform: "android",
@@ -585,7 +585,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 			wardenCreated: false,
 		};
 		if (golden) device.golden = true;
-		if (avdName) device.profile = profileSlug(avdName);
+		if (avdName) device.profile = leaseModel.profileSlug(avdName);
 		const level = sdk.success ? sdk.data.trim() : "";
 		if (/^\d+$/.test(level)) device.runtime = `android-${level}`;
 		return device;
@@ -594,12 +594,12 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 	/** The AVD whose `profileSlug` is `profile` (the per-process list, re-read once on a miss). */
 	async function resolveAvd(profile: string): AsyncResult<string, WardenError> {
 		let avds = await listAvds(deps);
-		if (avds.success && !avds.data.some((a) => profileSlug(a) === profile))
+		if (avds.success && !avds.data.some((a) => leaseModel.profileSlug(a) === profile))
 			avds = await listAvds(deps, { fresh: true });
 		if (!avds.success) return avds;
-		const avd = avds.data.find((a) => profileSlug(a) === profile);
+		const avd = avds.data.find((a) => leaseModel.profileSlug(a) === profile);
 		if (avd !== undefined) return resultFactory.ok(avd);
-		const available = avds.data.map((a) => `${profileSlug(a)} (${a})`).join(", ") || "none";
+		const available = avds.data.map((a) => `${leaseModel.profileSlug(a)} (${a})`).join(", ") || "none";
 		return wardenErrors.err("not_found", `no AVD matches profile "${profile}"; available: ${available}`);
 	}
 
@@ -675,7 +675,7 @@ export function createAndroidProvider(deps: ProviderDeps, options: AndroidProvid
 		snapshot: string | undefined,
 		headless: boolean
 	): AsyncResult<{ pid: number; logPath: string; logOffset: number }, WardenError> {
-		const logDir = join(wardenHome(deps.env), "logs");
+		const logDir = join(storeLocator.wardenHome(deps.env), "logs");
 		try {
 			mkdirSync(logDir, { recursive: true });
 		} catch (error) {

@@ -36,7 +36,7 @@ import { type SettleDetail, settleByHash, snapshotHash } from "@delacour/warden-
 import { noteSpanDetail } from "@delacour/warden-driver/trace/span-detail";
 import type { PastesText, SelectsAll } from "@delacour/warden-driver/typing";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { wardenHome as resolveWardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { createInjectChannel, INJECT_DYLIB_ENV, type InjectFs, injectStatePath, locateInjectDylib } from "./inject";
 import { createIosNetwork, type IosNetwork } from "./ios-network";
@@ -872,7 +872,7 @@ export async function openIosDriver(o: OpenIosDriverOptions): DriverResult<Drive
 					exec,
 					lastBundle: ctx.lastBundle,
 					...(o.bundleId ? { defaultBundle: o.bundleId } : {}),
-					staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? resolveWardenHome(process.env), o.udid),
+					staged: o.stagedSettings ?? stagedSettingsFor(o.wardenHome ?? storeLocator.wardenHome(process.env), o.udid),
 				}),
 			...(o.clockRecorder ? { clockRecorder: o.clockRecorder } : {}),
 		}),
@@ -896,7 +896,7 @@ function iosNetworkFactory(
 ): NetworkFactory | undefined {
 	const proxy = o.networkProxy;
 	if (!proxy) return undefined;
-	const wardenHome = o.wardenHome ?? resolveWardenHome(process.env);
+	const wardenHome = o.wardenHome ?? storeLocator.wardenHome(process.env);
 	return (ctx) =>
 		createIosNetwork({
 			proxy,

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type LazyLeaseProxyOptions, lazyLeaseNetworkProxy } from "./lease-network-proxy";
@@ -16,7 +16,7 @@ describe("lazyLeaseNetworkProxy", () => {
 
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), "warden-lazyproxy-"));
-		store = openStore(join(dir, "warden.db"));
+		store = storeLocator.open(join(dir, "warden.db"));
 		opened = 0;
 		lease = store.insertLease(
 			{

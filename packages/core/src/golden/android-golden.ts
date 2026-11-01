@@ -40,9 +40,9 @@ import { androidTools } from "@delacour/warden-providers/android-tools";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import type { PidAlive } from "@delacour/warden-store/liveness";
-import { type Store, wardenHome } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
-import { profileSlug } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { enrollFingerprint } from "./android-biometrics";
@@ -331,7 +331,7 @@ export function withFingerprintHardware(configText: string): string {
 /** The `--profile` slug naming `target` (`pixel-10`, or `pixel-10+bio`). */
 const targetProfile = (target: string): string => {
 	const { profile, biometrics } = splitBiometricProfile(target);
-	return biometricProfile(profileSlug(profile), biometrics);
+	return biometricProfile(leaseModel.profileSlug(profile), biometrics);
 };
 
 /** Both snapshot targets of one AVD: its plain snapshot and its biometrics one. */
@@ -505,7 +505,7 @@ async function buildSnapshot(deps: AndroidGoldenDeps, target: string, dir: strin
 	let pid: number | undefined;
 	try {
 		const serial = `emulator-${leased.data.port}`;
-		const logDir = join(wardenHome(deps.env), "logs");
+		const logDir = join(storeLocator.wardenHome(deps.env), "logs");
 		mkdirSync(logDir, { recursive: true });
 		const logPath = join(logDir, `golden-${targetProfile(target)}.log`);
 		const launched = await launchBuild(deps, avd, leased.data.port, logPath);

@@ -1,8 +1,8 @@
 import { createServer } from "node:net";
 import { checkRange } from "@delacour/warden-config/ports-spec";
-import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
-import { ownerKey } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner, PortResource } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import type { AsyncResult, Result } from "@delacour/warden-types/result";
@@ -108,7 +108,7 @@ async function probeCandidates(store: Store, plan: ClaimPlan, deps: ClaimPortsDe
 	const leased = new Set(
 		store
 			.listLeases()
-			.filter((l) => isLeaseAlive(l, now, deps.pidAlive))
+			.filter((l) => liveness.isLeaseAlive(l, now, deps.pidAlive))
 			.map(leasedPort)
 	);
 	const free: number[] = [];
@@ -197,8 +197,8 @@ export function releasePorts(
 ): PortReleaseResult {
 	return store.transaction(() => {
 		const { matched, missing } = matchSelector(listPortLeases(store), selector);
-		const allowedKey = opts.onlyOwner ? ownerKey(opts.onlyOwner) : undefined;
-		const released = matched.filter((l) => allowedKey === undefined || ownerKey(l.owner) === allowedKey);
+		const allowedKey = opts.onlyOwner ? storeLocator.ownerKey(opts.onlyOwner) : undefined;
+		const released = matched.filter((l) => allowedKey === undefined || storeLocator.ownerKey(l.owner) === allowedKey);
 		const denied = matched.filter((l) => !released.includes(l));
 		store.deleteLeases(released.map((l) => l.id));
 		return { released, denied, missing };
@@ -225,8 +225,8 @@ function matchSelector(
 		case "lease":
 			return byKey(selector.ids, (l) => l.id);
 		case "owner": {
-			const key = ownerKey(selector.owner);
-			return { matched: portLeases.filter((l) => ownerKey(l.owner) === key), missing: [] };
+			const key = storeLocator.ownerKey(selector.owner);
+			return { matched: portLeases.filter((l) => storeLocator.ownerKey(l.owner) === key), missing: [] };
 		}
 	}
 }

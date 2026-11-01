@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { DeviceResource, Lease, Owner } from "@delacour/warden-store/types";
 import { blockMessage, busyMessage, ensureCallerLease, releaseDevices } from "./device-lease";
 
@@ -19,7 +19,7 @@ let alive: boolean;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-devlease-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	now = 1_000_000;
 	alive = false;
 });

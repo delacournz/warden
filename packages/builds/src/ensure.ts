@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
-import { type BuildSource, getBuild, getInstall, recordInstall } from "@delacour/warden-store/builds-table";
+import { type BuildSource, BuildsTable } from "@delacour/warden-store/builds-table";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Owner, Platform } from "@delacour/warden-store/types";
@@ -413,8 +413,10 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 	/** an install at `recorded` is this build when both keys name the same cached files (an alias) */
 	const installedAt = (recorded: string | undefined) => {
 		if (recorded === undefined || recorded === hash) return recorded;
-		const mine = getBuild(store, projectKey, platform, hash)?.path;
-		return mine !== undefined && getBuild(store, projectKey, platform, recorded)?.path === mine ? hash : recorded;
+		const mine = new BuildsTable(store).get(projectKey, platform, hash)?.path;
+		return mine !== undefined && new BuildsTable(store).get(projectKey, platform, recorded)?.path === mine
+			? hash
+			: recorded;
 	};
 
 	const steps: ResolveSteps = {
@@ -458,13 +460,13 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 			...(input.fileDigest ? { fileDigest: input.fileDigest } : {}),
 		};
 		steps.device = {
-			installedHash: () => installedAt(getInstall(store, platform, deviceId, bundleId.data)?.hash),
+			installedHash: () => installedAt(new BuildsTable(store).getInstall(platform, deviceId, bundleId.data)?.hash),
 			confirm: () => probeApp(deps, target, bundleId.data),
 			matches: async (cachedPath, installed) => {
 				// a phone has no container to stat: the install record named this build, devicectl names its version
 				if (isPhoneIos(target)) return resultFactory.ok(await phoneAppMatches(input.exec, cachedPath, installed));
 				// the container this process recorded at install, executable untouched: that install (17-7, no plutil)
-				const record = getInstall(store, platform, deviceId, bundleId.data);
+				const record = new BuildsTable(store).getInstall(platform, deviceId, bundleId.data);
 				const container = installed.container;
 				if (container !== undefined && record?.container === container && record.exeStamp !== undefined) {
 					if ((await executableStamp(container, input.fileStamp)) === record.exeStamp) return resultFactory.ok(true);
@@ -487,7 +489,7 @@ export async function ensureApp(input: EnsureInput): AsyncResult<EnsureResult> {
 				if (!done.success) return done;
 				const { container } = done.data;
 				const exeStamp = container === undefined ? undefined : await executableStamp(container, input.fileStamp);
-				recordInstall(store, {
+				new BuildsTable(store).recordInstall({
 					platform,
 					deviceId,
 					bundleId: bundleId.data,

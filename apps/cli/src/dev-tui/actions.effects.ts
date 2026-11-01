@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { StartOptions } from "@delacour/warden-sdk/ops/perf/orchestrate";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { DevActionHost, DevReady, MetroTerminal } from "../commands/dev-ui";
 import type { CommandContext } from "../context";
@@ -99,7 +99,8 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 		},
 
 		async screenshot(info) {
-			const dir = deps.shotsDir() ?? join(wardenHome(ctx.env), "dev", info.leaseIds[0] ?? info.deviceId, "shots");
+			const dir =
+				deps.shotsDir() ?? join(storeLocator.wardenHome(ctx.env), "dev", info.leaseIds[0] ?? info.deviceId, "shots");
 			const path = nextShot(dir);
 			const [{ uiScreenshot }, { defaultUiDeps }] = await Promise.all([
 				import("../agent-ui/controls"),

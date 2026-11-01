@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { IOS_TIMEOUTS } from "@delacour/warden-providers/ios";
 import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import {
 	arrangeSimWindows,
 	autoArrangeSimWindows,
@@ -723,8 +723,8 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 	test("two concurrent hides keep the setting on for every close and restore it once, after the last", async () => {
 		setup();
 		const pref: PrefBox = { value: undefined, atClose: [] };
-		const storeA = openStore(dbPath());
-		const storeB = openStore(dbPath());
+		const storeA = storeLocator.open(dbPath());
+		const storeB = storeLocator.open(dbPath());
 		let startB = () => {};
 		const bStarted = new Promise<void>((resolve) => {
 			startB = resolve;
@@ -754,7 +754,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 	test("a hide arriving while another process restores the setting waits, then reads it afresh", async () => {
 		setup();
-		const store = openStore(dbPath());
+		const store = storeLocator.open(dbPath());
 		store.setMeta(
 			DETACH_PREF_META,
 			JSON.stringify({ phase: "restoring", before: "unset", by: `${process.pid}:other`, at: Date.now(), holders: [] })
@@ -781,7 +781,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 	test("a holder whose process died is dropped; its recorded setting is still put back", async () => {
 		setup();
-		const store = openStore(dbPath());
+		const store = storeLocator.open(dbPath());
 		// a crashed hide left `on` written over the user's `off`
 		store.setMeta(
 			DETACH_PREF_META,
@@ -814,7 +814,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 	test("a hide arriving while another process is switching the setting on joins, waits for `set`, and leaves the restore to it", async () => {
 		setup();
-		const store = openStore(dbPath());
+		const store = storeLocator.open(dbPath());
 		store.setMeta(
 			DETACH_PREF_META,
 			JSON.stringify({ phase: "setting", by: other, at: Date.now(), holders: [otherHolder] })
@@ -845,7 +845,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 	test("taking over from a restorer that died writes its recorded value back", async () => {
 		setup();
-		const store = openStore(dbPath());
+		const store = storeLocator.open(dbPath());
 		store.setMeta(
 			DETACH_PREF_META,
 			JSON.stringify({ phase: "restoring", before: "off", by: "999999:dead", at: Date.now(), holders: [] })
@@ -866,7 +866,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 	test("gives up after 200 polls behind a stuck `setting` (joined): warns, closes anyway, then leaves without restoring", async () => {
 		setup();
-		const store = openStore(dbPath());
+		const store = storeLocator.open(dbPath());
 		store.setMeta(
 			DETACH_PREF_META,
 			JSON.stringify({ phase: "setting", by: other, at: Date.now(), holders: [otherHolder] })
@@ -892,7 +892,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 	test("gives up after 200 polls behind a stuck `restoring` (not joined): warns, closes anyway, leaves the row alone", async () => {
 		setup();
-		const store = openStore(dbPath());
+		const store = storeLocator.open(dbPath());
 		const stuck = { phase: "restoring", before: "unset", by: other, at: Date.now(), holders: [] };
 		store.setMeta(DETACH_PREF_META, JSON.stringify(stuck));
 		const pref: PrefBox = { value: "1", atClose: [] };
@@ -915,7 +915,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 	test("a close that fails after the setting was taken still puts it back and clears the row", async () => {
 		setup();
-		const store = openStore(dbPath());
+		const store = storeLocator.open(dbPath());
 		const pref: PrefBox = { value: undefined, atClose: [] };
 		const f = fakeSimulator(one, ["warden-iphone-17-1 – iOS 26.5"], {}, undefined, { pref, closeFails: true });
 		const out = await hideSimWindows(
@@ -933,7 +933,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 	describe("stale rows (a crash long ago, a reused pid)", () => {
 		const T = 1_800_000_000_000;
 		const hour = 3_600_000;
-		const lockAt = (store: ReturnType<typeof openStore>, pidAlive: (pid: number) => boolean) => ({
+		const lockAt = (store: ReturnType<typeof storeLocator.open>, pidAlive: (pid: number) => boolean) => ({
 			store,
 			pid: process.pid,
 			pidAlive,
@@ -942,7 +942,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 		test("a crashed hide's `before` from long ago is not written back over the user's later `true`", async () => {
 			setup();
-			const store = openStore(dbPath());
+			const store = storeLocator.open(dbPath());
 			const old = T - hour;
 			store.setMeta(
 				DETACH_PREF_META,
@@ -965,7 +965,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 		test("a dead holder's `before` is inherited only while the setting still reads on", async () => {
 			setup();
-			const store = openStore(dbPath());
+			const store = storeLocator.open(dbPath());
 			store.setMeta(
 				DETACH_PREF_META,
 				JSON.stringify({
@@ -987,7 +987,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 		test("a holder older than any hide can last is dropped even if its pid is alive again (reused)", async () => {
 			setup();
-			const store = openStore(dbPath());
+			const store = storeLocator.open(dbPath());
 			const old = T - hour;
 			store.setMeta(
 				DETACH_PREF_META,
@@ -1010,7 +1010,7 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 		test("a `setting` row older than any hide can last is taken over at once, not waited on", async () => {
 			setup();
-			const store = openStore(dbPath());
+			const store = storeLocator.open(dbPath());
 			const old = T - hour;
 			store.setMeta(
 				DETACH_PREF_META,
@@ -1061,8 +1061,8 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 		test("a holder that heartbeats is still live past the TTL: a hide joining then leaves the restore to it", async () => {
 			setup();
-			const storeA = openStore(dbPath());
-			const storeB = openStore(dbPath());
+			const storeA = storeLocator.open(dbPath());
+			const storeB = storeLocator.open(dbPath());
 			const clock = { now: T };
 			const lock = (store: typeof storeA) => ({ store, pid: process.pid, pidAlive: alive, now: () => clock.now });
 			let b: ReturnType<typeof fakeSimulator> | undefined;
@@ -1086,8 +1086,8 @@ describe("hideSimWindows: DetachOnWindowClose across processes", () => {
 
 		test("a holder that stops heartbeating for longer than the TTL is dropped even though its pid is alive", async () => {
 			setup();
-			const storeA = openStore(dbPath());
-			const storeB = openStore(dbPath());
+			const storeA = storeLocator.open(dbPath());
+			const storeB = storeLocator.open(dbPath());
 			const clock = { now: T };
 			const lock = (store: typeof storeA) => ({ store, pid: process.pid, pidAlive: alive, now: () => clock.now });
 			let b: ReturnType<typeof fakeSimulator> | undefined;

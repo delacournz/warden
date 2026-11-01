@@ -16,9 +16,9 @@ import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { holdLeases } from "@delacour/warden-leasing/session";
 import { bunExec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache, type GitFactsCache } from "@delacour/warden-runtime/git-facts";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { defaultDbPath, openStore, type Store, supportedSchemaVersion, wardenHome } from "@delacour/warden-store/store";
-import { type DeviceRequest, type Lease, type Owner, sameOwner } from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
+import { type DeviceRequest, type Lease, leaseModel, type Owner } from "@delacour/warden-store/types";
 import type { WardenError as EngineError } from "@delacour/warden-types/error";
 import type { WardenHost, WardenLogEvent } from "@delacour/warden-types/host";
 import type { Result } from "@delacour/warden-types/result";
@@ -223,11 +223,11 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 	const host: WardenHost = {
 		env,
 		cwd,
-		home: wardenHome(env),
+		home: storeLocator.wardenHome(env),
 		now: overrides.now ?? (() => Date.now()),
 		exec: overrides.exec ?? bunExec,
 		sleep: overrides.sleep ?? ((ms) => Bun.sleep(ms)),
-		pidAlive: overrides.pidAlive ?? processAlive,
+		pidAlive: overrides.pidAlive ?? liveness.processAlive,
 		log: (event) => {
 			const mapped = eventFromLog(event);
 			if (mapped) emit(mapped);
@@ -237,14 +237,14 @@ export function createCore(options: WardenClientOptions, seams: ClientSeams = {}
 	let store: Store | undefined = seams.store;
 	const openStoreOnce = (): Store => {
 		if (store !== undefined) return store;
-		const opened = openStore(defaultDbPath(env));
+		const opened = storeLocator.open(storeLocator.defaultDbPath(env));
 		const found = opened.schemaVersion();
-		const supported = supportedSchemaVersion();
+		const supported = storeLocator.supportedSchemaVersion();
 		if (found > supported) {
 			opened.close();
 			throw new WardenError({
 				code: "store_incompatible",
-				message: `the warden store at ${defaultDbPath(env)} is schema v${found}, newer than this SDK supports (v${supported})`,
+				message: `the warden store at ${storeLocator.defaultDbPath(env)} is schema v${found}, newer than this SDK supports (v${supported})`,
 				hint: "run `warden update` (and upgrade @delacour/warden-sdk to the same version)",
 				details: { found, supported },
 			});
@@ -522,7 +522,7 @@ export function ownLeases(core: Core, ids: readonly string[]): Lease[] {
 		const lease = store.getLease(id);
 		if (!lease)
 			throw new WardenError({ code: "lease_not_found", message: `no lease ${id}`, hint: "see leases.list()" });
-		if (!sameOwner(lease.owner, core.owner)) {
+		if (!leaseModel.sameOwner(lease.owner, core.owner)) {
 			throw new WardenError({
 				code: "lease_foreign",
 				message: `lease ${id} is held by someone else`,

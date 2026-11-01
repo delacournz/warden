@@ -1,6 +1,6 @@
 import type { ConditionArea, ConditionValues } from "@delacour/warden-config/conditions.types";
 import { activeConditions, clearCondition, recordCondition } from "@delacour/warden-core/conditions/conditions";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import { type StoreOpener, sharedStoreOpener } from "./lease-store";
 
 /**
@@ -33,7 +33,7 @@ export function createLeaseRecorder(o: LeaseRecorderOptions): ConditionRecorder 
 	const open = o.openStore ?? sharedStoreOpener();
 	const now = o.now ?? Date.now;
 	const log = o.log ?? stderrLog;
-	const alive = o.pidAlive ?? processAlive;
+	const alive = o.pidAlive ?? liveness.processAlive;
 	const failed = (area: ConditionArea, reason: string): void =>
 		log(`[warden-e2e] could not record the ${area} condition on lease ${o.leaseId}: ${reason}`);
 	return {

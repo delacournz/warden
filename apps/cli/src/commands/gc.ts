@@ -12,8 +12,8 @@ import { shutdownReleasedDevices } from "@delacour/warden-leasing/device-shutdow
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { staleShutdownBlock } from "@delacour/warden-leasing/shutdown-policy";
 import type { GcJson } from "@delacour/warden-sdk/contracts/gc";
-import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
-import { type DeviceRecord, wardenHome } from "@delacour/warden-store/store";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type DeviceRecord, storeLocator } from "@delacour/warden-store/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
@@ -153,7 +153,7 @@ function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[
 			env: ctx.env,
 			maxBytes,
 			now,
-			pidAlive: processAlive,
+			pidAlive: liveness.processAlive,
 			graceMs: GC_PRUNE_GRACE_MS,
 		});
 		const removed = plan.remove.filter((b) => !isAlias(b));
@@ -189,7 +189,7 @@ function newestMtime(path: string): number {
  * newest file is over 24 h old. Returns gc's notes about it.
  */
 function sweepDevDirs(ctx: CommandContext, now: number): string[] {
-	const root = join(wardenHome(ctx.env), "dev");
+	const root = join(storeLocator.wardenHome(ctx.env), "dev");
 	const leased = new Set(
 		ctx
 			.store()
@@ -254,7 +254,9 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	const store = ctx.store();
 	const now = ctx.now();
 	const owner = resolveOwner(ctx);
-	const stale = store.listLeases().filter((l) => l.resource.kind === "device" && !isLeaseAlive(l, now, processAlive));
+	const stale = store
+		.listLeases()
+		.filter((l) => l.resource.kind === "device" && !liveness.isLeaseAlive(l, now, liveness.processAlive));
 	const shutDownIdle = async (sctx: CommandContext): Promise<GcOutcome> => {
 		// A lease that only just went stale (agent between tool calls) or has an app running keeps its device.
 		const orphaned = await shutdownReleasedDevices(leaseHostFromContext(sctx), stale, owner, async (lease) => {
@@ -267,12 +269,12 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 		});
 		const staleIds = store
 			.listLeases()
-			.filter((l) => !isLeaseAlive(l, now, processAlive))
+			.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive))
 			.map((l) => l.id);
 		const reclaimed = (
 			await releaseDevices(sctx, staleIds, {
 				touch: false,
-				only: (l) => !isLeaseAlive(l, now, processAlive),
+				only: (l) => !liveness.isLeaseAlive(l, now, liveness.processAlive),
 				after: stopHelperAfter(sctx),
 			})
 		).map((l) => l.id);

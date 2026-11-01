@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { createSession, sessionDir } from "@delacour/warden-sdk/ops/perf/session";
 import type { StartupMark } from "@delacour/warden-sdk/ops/perf/startup";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { type TestContext, testContext } from "../testing";
 import { perfStartup, type StartupIo, type StartupOptions } from "./startup";
 import { asMe, fakePerfDeps } from "./testing";
@@ -95,7 +95,7 @@ const androidRules = (start: Reply): Rule[] => [
 ];
 
 function startupFiles(c: TestContext): string[] {
-	const root = join(wardenHome(c.env), "perf");
+	const root = join(storeLocator.wardenHome(c.env), "perf");
 	return readdirSync(root).map((id) => join(root, id, "metrics", "startup.json"));
 }
 

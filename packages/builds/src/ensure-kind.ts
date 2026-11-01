@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
-import { getBuild } from "@delacour/warden-store/builds-table";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { buildsRoot, removeBuild } from "./cache";
@@ -173,7 +173,7 @@ const GENERIC_DESTINATION = "-destination generic/platform=iOS";
 
 /** Where the UDIDs registered for a cached device build are listed: beside the build, else under the builds root. */
 function registeredFile(input: KindAppInput, hash: string): string {
-	const record = getBuild(input.store, input.projectKey, input.platform, hash);
+	const record = new BuildsTable(input.store).get(input.projectKey, input.platform, hash);
 	return record
 		? join(dirname(record.path), "devices.json")
 		: join(buildsRoot(input.env), "devices", `${input.projectKey.replace(/[^\w.-]/g, "_")}-${hash}.json`);
@@ -226,7 +226,7 @@ async function registerPhone(
 		const line = `${res.stderr}\n${res.stdout}`.split("\n").find((l) => /error:/i.test(l)) ?? `exit ${res.exitCode}`;
 		return resultFactory.err(`${failure}. Registering the phone with a build for it failed: ${line.trim()}`);
 	}
-	const stale = getBuild(input.store, input.projectKey, input.platform, app.hash);
+	const stale = new BuildsTable(input.store).get(input.projectKey, input.platform, app.hash);
 	if (stale) removeBuild(input.store, input.env, stale);
 	const rebuilt = await prepareKindApp({ ...input, physical: true }, deps);
 	if (!rebuilt.success) return rebuilt;

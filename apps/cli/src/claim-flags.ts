@@ -17,7 +17,7 @@ import {
 import { biometricProfile } from "@delacour/warden-providers/biometrics";
 import { isGoldenName } from "@delacour/warden-providers/golden-name";
 import { slimSimulator } from "@delacour/warden-providers/slim";
-import { type DeviceRequest, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-store/types";
+import { type DeviceRequest, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
@@ -228,7 +228,7 @@ function physicalIds(platform: Platform, values: ClaimFlagValues): Result<string
 		return resultFactory.err("--udid is ios-only; use --serial for Android");
 	const ids = platform === "android" ? values.physicalSerial : values.physicalUdid;
 	if (ids === undefined) return resultFactory.ok(undefined);
-	const bad = platform === "ios" ? ids.find((id) => !isPhysicalIosId(id)) : undefined;
+	const bad = platform === "ios" ? ids.find((id) => !leaseModel.isPhysicalIosId(id)) : undefined;
 	if (bad !== undefined) {
 		return resultFactory.err(
 			`--udid ${bad} is not a physical iOS device id (simulators are claimed without --physical)`

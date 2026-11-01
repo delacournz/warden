@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_SLIM_PROFILE, desiredLabels } from "@delacour/warden-config/slim.profile";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import {
 	DEVICECTL_LIST_MIXED,
 	DEVICECTL_LOCKSTATE_LOCKED,
@@ -26,7 +26,7 @@ let store: Store;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-ios-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {

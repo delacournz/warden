@@ -10,7 +10,7 @@ import {
 	xctraceDeviceDeadlock,
 } from "@delacour/warden-perf/shared/doctor-parse";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
 import { emit } from "../output";
 import { SYMBOLS } from "../ui";
@@ -94,7 +94,7 @@ async function adbCheck(ctx: CommandContext): Promise<DoctorCheck> {
 function traceProcessorCheck(ctx: CommandContext): DoctorCheck {
 	let names: string[] = [];
 	try {
-		names = readdirSync(join(wardenHome(ctx.env), "tools"));
+		names = readdirSync(join(storeLocator.wardenHome(ctx.env), "tools"));
 	} catch {
 		// no tools dir yet
 	}

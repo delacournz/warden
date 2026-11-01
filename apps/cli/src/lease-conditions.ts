@@ -1,7 +1,7 @@
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
 import { undoConditions } from "@delacour/warden-core/conditions/undo";
 import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
-import { processAlive } from "@delacour/warden-store/liveness";
+import { liveness } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
 
@@ -33,12 +33,12 @@ export async function undoLeaseConditions(host: ConditionHost, lease: Lease): Pr
 			exec: host.exec ?? bunExec,
 			env,
 			now: host.now,
-			pidAlive: processAlive,
+			pidAlive: liveness.processAlive,
 			kill,
 			// imported only when a network condition is set, so release/gc stay light
 			releaseProxy: async (id) =>
 				(await import("@delacour/warden-core/netproxy/lease-proxy")).releaseLeaseProxy(
-					{ store, env, kill, pidAlive: processAlive },
+					{ store, env, kill, pidAlive: liveness.processAlive },
 					id
 				),
 		},

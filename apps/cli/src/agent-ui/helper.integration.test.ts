@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openStore } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { gcCommand } from "../commands/gc";
 import { hookCommand } from "../commands/hook";
@@ -95,7 +95,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		const marks = join(dir, "marks");
 		mkdirSync(marks);
 		const socketPath = join(dir, "simd", `${UDID}.sock`);
-		openStore(join(dir, "warden.db")).close();
+		storeLocator.open(join(dir, "warden.db")).close();
 		const startAt = Date.now() + 600;
 		const procs = Array.from({ length: 4 }, () =>
 			Bun.spawn(["bun", FIXTURE, dir, UDID, socketPath, script(), marks, String(startAt)], {

@@ -12,8 +12,8 @@ import { activeConditions, clearCondition, recordCondition } from "@delacour/war
 import type { SchedulerConfig } from "@delacour/warden-device/conditions/scheduler.config";
 import type { ClockState, NetworkState } from "@delacour/warden-driver/driver.types";
 import { physicalConditionOps } from "@delacour/warden-driver/physical-conditions";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { recordedIdentity } from "@delacour/warden-store/process-identity";
+import { liveness } from "@delacour/warden-store/liveness";
+import { processIdentity } from "@delacour/warden-store/process-identity";
 import type { Lease } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -102,12 +102,12 @@ async function stopOwned(
 	marks: readonly string[],
 	keep?: number
 ): Promise<void> {
-	const alive = env.deps.pidAlive ?? processAlive;
+	const alive = env.deps.pidAlive ?? liveness.processAlive;
 	const identity = { pidAlive: alive, command: deps.command };
 	const pids = (record?.owned ?? []).map((p) => p.pid).filter((pid) => pid !== keep);
 	const stopped: number[] = [];
 	for (const pid of pids) {
-		if (recordedIdentity(identity, pid, marks) !== "match") continue;
+		if (processIdentity.recordedIdentity(identity, pid, marks) !== "match") continue;
 		try {
 			deps.kill(pid);
 			stopped.push(pid);
@@ -422,7 +422,7 @@ async function networkStatus(
 	const { lease } = device;
 	const stored = recordOf(ctx, lease.id, "network");
 	const live = await deps.proxyStatus(ctx, lease.id);
-	const alive = env.deps.pidAlive ?? processAlive;
+	const alive = env.deps.pidAlive ?? liveness.processAlive;
 	const proxyPid = deps.proxyPid(ctx, lease.id);
 	const flapPid =
 		stored?.value.kind === "flap" ? stored.owned.map((p) => p.pid).find((pid) => pid !== proxyPid) : undefined;
@@ -618,7 +618,7 @@ async function clearLocation(
 
 function locationStatus(ctx: CommandContext, env: UiRunEnv, device: UiDevice): Result<UiSuccess, UiError> {
 	const stored = recordOf(ctx, device.lease.id, "location");
-	const alive = env.deps.pidAlive ?? processAlive;
+	const alive = env.deps.pidAlive ?? liveness.processAlive;
 	const pid = stored?.owned[0]?.pid;
 	const ticker = pid === undefined ? null : { pid, running: alive(pid) };
 	const line = stored === undefined ? "not set" : describeLocation(stored.value);

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { openStore } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { commitGeneration, type UiState, updateState, writeLastSnapshot } from "./state";
 
 /**
@@ -10,7 +10,7 @@ import { commitGeneration, type UiState, updateState, writeLastSnapshot } from "
  * times through `updateState`, the n-th time with pid / startedAt `n`, and prints `count`.
  */
 const [home = "", udid = "", count = "0", field] = process.argv.slice(2);
-const store = openStore(join(home, "warden.db"));
+const store = storeLocator.open(join(home, "warden.db"));
 const ctx = { env: { WARDEN_HOME: home }, now: () => Date.now(), store: () => store };
 
 function withField(state: UiState, name: string, n: number): UiState {

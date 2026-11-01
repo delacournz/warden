@@ -8,7 +8,7 @@ import { createInjectChannel, injectStatePath } from "@delacour/warden-driver-io
 import { createIosNetwork } from "@delacour/warden-driver-ios/ios-network";
 import { locationClearArgv, locationSetArgv } from "@delacour/warden-driver-ios/simctl";
 import { bunExec } from "@delacour/warden-runtime/exec";
-import { defaultDbPath, openStore, wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { leaseNetworkProxy } from "./lease-network-proxy";
 import type { SchedulerConfig, SchedulerPlatform } from "./scheduler.config";
 
@@ -57,8 +57,8 @@ const openIosTarget: TargetOpener = (config) => {
 	const lease = config.lease;
 	if (lease === undefined) throw new Error("scheduler: an ios target needs a lease");
 	const env = process.env;
-	const home = wardenHome(env);
-	const store = openStore(defaultDbPath(env));
+	const home = storeLocator.wardenHome(env);
+	const store = storeLocator.open(storeLocator.defaultDbPath(env));
 	const ios = createIosNetwork({
 		proxy: leaseNetworkProxy(
 			{ store, env, now: () => Date.now(), ...(config.proxyCommand ? { command: config.proxyCommand } : {}) },

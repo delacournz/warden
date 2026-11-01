@@ -7,7 +7,7 @@ import {
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { parseSimctlDevices } from "@delacour/warden-providers/ios";
 import { slimSimulator } from "@delacour/warden-providers/slim";
-import { describeOwner, sameOwner } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
@@ -39,8 +39,8 @@ async function bootedUdids(ctx: CommandContext): AsyncResult<string[]> {
 /** Why `udid` is off limits: another session holds its lease (undefined = fine). */
 function heldByOther(ctx: CommandContext, udid: string): string | undefined {
 	const lease = ctx.store().findLeaseByResource({ kind: "device", platform: "ios", id: udid, name: "" });
-	if (!lease || sameOwner(lease.owner, resolveOwner(ctx))) return undefined;
-	return `${udid} is leased by ${describeOwner(lease.owner)}`;
+	if (!lease || leaseModel.sameOwner(lease.owner, resolveOwner(ctx))) return undefined;
+	return `${udid} is leased by ${leaseModel.describeOwner(lease.owner)}`;
 }
 
 /** One simulator: refuse when another session holds it, else slim (or restore / plan) it. */

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner } from "@delacour/warden-store/types";
 import { activeConditions, recordCondition } from "./conditions";
 import { injectStatePath } from "./inject-state";
@@ -47,7 +47,7 @@ function lease(platform: "ios" | "android", id: string): Lease {
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-undo-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	calls = [];
 	killed = [];
 	alive = new Set();

@@ -3,19 +3,17 @@ import { availableParallelism, loadavg } from "node:os";
 import { DEFAULT_READY_TIMEOUT_MS } from "@delacour/warden-config/config.defaults";
 import { formatDuration } from "@delacour/warden-config/duration";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
-import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { DeviceRecord, Store } from "@delacour/warden-store/store";
 import {
 	type AllocationStep,
 	type DeviceRequest,
 	type DeviceResource,
-	deviceResourceOf,
 	type InventoryDevice,
 	type Lease,
+	leaseModel,
 	type Owner,
 	type Platform,
-	physicalNotReadyReason,
-	resourceKey,
 } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type ErrorResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -231,7 +229,7 @@ function reserve(
 		}
 		const lease = store.insertLease(
 			{
-				resource: deviceResourceOf(step.device),
+				resource: leaseModel.deviceResourceOf(step.device),
 				...common,
 				ttlMs: input.ttlMs,
 				...(input.pid !== undefined ? { pid: input.pid } : {}),
@@ -346,7 +344,9 @@ function pickEvictions(
 ): Eviction[] {
 	const { store } = input;
 	if (!cap.deps.shutdownIdle) return [];
-	const held = new Set(leases.filter((l) => isLeaseAlive(l, now, input.pidAlive)).map((l) => resourceKey(l.resource)));
+	const held = new Set(
+		leases.filter((l) => liveness.isLeaseAlive(l, now, input.pidAlive)).map((l) => leaseModel.resourceKey(l.resource))
+	);
 	const planned = new Set(steps.flatMap((s) => (s.action === "create" ? [] : [s.device.id])));
 	const records = store.listDevices();
 	const slimmed = slimmedIds(store);
@@ -362,7 +362,7 @@ function pickEvictions(
 				d.quarantined !== true &&
 				!planned.has(d.id) &&
 				!cap.noEvict.has(d.id) &&
-				!held.has(resourceKey(deviceResourceOf(d)))
+				!held.has(leaseModel.resourceKey(leaseModel.deviceResourceOf(d)))
 		)
 		.sort((a, b) => used(a) - used(b));
 	const picked: InventoryDevice[] = [];
@@ -376,7 +376,7 @@ function pickEvictions(
 				device,
 				leaseId: store.insertLease(
 					{
-						resource: deviceResourceOf(device),
+						resource: leaseModel.deviceResourceOf(device),
 						owner: input.owner,
 						label: "capacity-evict",
 						ttlMs: input.ttlMs,
@@ -523,7 +523,7 @@ async function createDevice(
 			store.deleteLeases([item.lease.id]);
 			return store.insertLease(
 				{
-					resource: deviceResourceOf(device),
+					resource: leaseModel.deviceResourceOf(device),
 					owner: input.owner,
 					ttlMs: input.ttlMs,
 					...(input.label !== undefined ? { label: input.label } : {}),
@@ -619,7 +619,7 @@ function notReadyPhysical(inventory: InventoryDevice[], request: DeviceRequest):
 	const scope = request.physical.ids ?? request.physical.allow;
 	return inventory.flatMap((d) => {
 		if (d.platform !== request.platform || (scope !== undefined && !scope.includes(d.id))) return [];
-		const reason = physicalNotReadyReason(d);
+		const reason = leaseModel.physicalNotReadyReason(d);
 		return reason === undefined ? [] : [`${d.id} (${d.name}): ${reason}`];
 	});
 }

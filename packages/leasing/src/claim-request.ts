@@ -3,7 +3,7 @@ import { resolveSlim, type SlimSetting } from "@delacour/warden-config/slim-poli
 import { listAvds } from "@delacour/warden-providers/android";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
 import type { DeviceRequest, Owner } from "@delacour/warden-store/types";
-import { profileSlug } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { maxConcurrent } from "./capacity";
@@ -71,7 +71,7 @@ export function resolvePriority(
 export function resolveAutoProfile(avds: readonly string[]): Result<string, WardenError> {
 	const first = avds[0];
 	return first
-		? resultFactory.ok(profileSlug(first))
+		? resultFactory.ok(leaseModel.profileSlug(first))
 		: wardenErrors.err("not_found", "no Android AVDs found (`emulator -list-avds`) — create one or pass --profile");
 }
 

@@ -10,8 +10,8 @@ import {
 	releasePorts,
 } from "@delacour/warden-leasing/ports";
 import type { PortLeasesJson, PortReleaseJson } from "@delacour/warden-sdk/contracts/leases";
-import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
-import { describeOwner, type Lease, type Owner, ownerLocation } from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type Lease, leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -77,7 +77,7 @@ async function claim(ctx: CommandContext, opts: PortClaimOpts): Promise<number> 
 			...(flags.data.label !== undefined ? { label: flags.data.label } : {}),
 			...(owner.kind === "user" ? { pid: owner.pid } : {}),
 		},
-		{ now: ctx.now, pidAlive: processAlive, isPortFree: (port) => isPortFree(port) }
+		{ now: ctx.now, pidAlive: liveness.processAlive, isPortFree: (port) => isPortFree(port) }
 	);
 	if (!res.success) return fail(ctx, "claim", res.error.message);
 	const claimed: PortLeasesJson = res.data;
@@ -115,7 +115,7 @@ async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOp
 	const doc: PortReleaseJson = res;
 	emit(ctx, opts.json === true, doc, lines.length > 0 ? lines.join("\n") : color.dim("nothing released"));
 	for (const l of res.denied) {
-		warn(ctx, `port ${portOf(l)} is leased by ${describeOwner(l.owner)} — use --force to release it`);
+		warn(ctx, `port ${portOf(l)} is leased by ${leaseModel.describeOwner(l.owner)} — use --force to release it`);
 	}
 	for (const m of res.missing) reportError(ctx, "port release", `no port lease for ${m}`);
 	return res.denied.length > 0 || res.missing.length > 0 ? 1 : 0;
@@ -123,12 +123,12 @@ async function release(ctx: CommandContext, ports: string[], opts: PortReleaseOp
 
 function lsRow(ctx: CommandContext, lease: Lease, now: number): string[] {
 	const { color } = ctx.ui;
-	const alive = isLeaseAlive(lease, now, processAlive);
+	const alive = liveness.isLeaseAlive(lease, now, liveness.processAlive);
 	return [
 		color.bold(String(portOf(lease))),
 		alive ? color.green("alive") : color.yellow("stale"),
-		describeOwner(lease.owner),
-		ownerLocation(lease.owner) ?? "",
+		leaseModel.describeOwner(lease.owner),
+		leaseModel.ownerLocation(lease.owner) ?? "",
 		lease.label ?? "",
 		formatDuration(now - lease.acquiredAt),
 		`${formatDuration(now - lease.heartbeatAt)} ago`,

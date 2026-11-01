@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import { BUILD_KINDS, type BuildKind } from "@delacour/warden-config/build-kinds";
 import type { GitFactsCache } from "@delacour/warden-runtime/git-facts";
-import { processAlive } from "@delacour/warden-store/liveness";
+import { liveness } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Owner, Platform } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
@@ -38,7 +38,11 @@ export type AppDeps = {
 	repackers?: Record<Platform, ApplyRepack>;
 };
 
-export const defaultAppDeps: AppDeps = { pid: process.pid, sleep: (ms) => Bun.sleep(ms), pidAlive: processAlive };
+export const defaultAppDeps: AppDeps = {
+	pid: process.pid,
+	sleep: (ms) => Bun.sleep(ms),
+	pidAlive: liveness.processAlive,
+};
 
 /** `--kind <dev|simulator|release>` values. */
 export function parseKind(value: string): Result<BuildKind, WardenError> {

@@ -11,7 +11,7 @@ import {
 } from "@delacour/warden-perf/ios/xctrace-argv";
 import { parseXcodeVersion, xctraceDeviceDeadlock } from "@delacour/warden-perf/shared/doctor-parse";
 import { parseSimctlLaunch } from "@delacour/warden-perf/startup/ios-app-launch";
-import { type PidIdentity, safeToSignal } from "@delacour/warden-store/process-identity";
+import { type PidIdentity, processIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -236,7 +236,7 @@ async function stopRecorder(io: NativeIo, handle: NativeHandle): Promise<string[
 	const identity: PidIdentity = { pidAlive: io.pidAlive, command: io.command };
 	const marks = ["xctrace", handle.out];
 	if (!io.pidAlive(pid)) return warnings;
-	if (!safeToSignal(identity, pid, marks)) {
+	if (!processIdentity.safeToSignal(identity, pid, marks)) {
 		warnings.push(`pid ${pid} is no longer the xctrace warden started: not signalled`);
 		return warnings;
 	}
@@ -246,7 +246,7 @@ async function stopRecorder(io: NativeIo, handle: NativeHandle): Promise<string[
 		await io.sleep(POLL_MS);
 		waited += POLL_MS;
 	}
-	if (io.pidAlive(pid) && safeToSignal(identity, pid, marks)) {
+	if (io.pidAlive(pid) && processIdentity.safeToSignal(identity, pid, marks)) {
 		io.kill(pid, "SIGKILL");
 		warnings.push("xctrace ignored SIGINT and was killed: the trace may be unfinished");
 	}

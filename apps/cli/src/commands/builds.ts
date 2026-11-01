@@ -7,9 +7,9 @@ import { projectStart } from "@delacour/warden-builds/prepare";
 import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-builds/prune";
 import { removeBuilds } from "@delacour/warden-builds/remove";
 import { formatDuration } from "@delacour/warden-config/duration";
-import { type BuildRecord, listBuilds } from "@delacour/warden-store/builds-table";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { wardenHome } from "@delacour/warden-store/store";
+import { type BuildRecord, BuildsTable } from "@delacour/warden-store/builds-table";
+import { liveness } from "@delacour/warden-store/liveness";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { parsePlatform } from "../claim-flags";
@@ -51,7 +51,7 @@ export function buildFacts(b: BuildRecord): BuildFacts {
 
 function lsCmd(ctx: CommandContext, json: boolean): number {
 	const { color } = ctx.ui;
-	const builds = listBuilds(ctx.store());
+	const builds = new BuildsTable(ctx.store()).list();
 	const now = ctx.now();
 	const short = (value: string | undefined, length = 8) => (value === undefined ? "-" : value.slice(0, length));
 	const rows = builds.map((b) => {
@@ -123,7 +123,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 			env: ctx.env,
 			maxBytes: max.data,
 			now: ctx.now(),
-			pidAlive: processAlive,
+			pidAlive: liveness.processAlive,
 			dryRun: dry,
 		});
 	const preview = prune(true);
@@ -138,7 +138,7 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	const plan = dryRun
 		? preview
 		: await withSpinner(ctx, `pruning ${preview.remove.length} build(s)…`, async () => prune(false));
-	if (!dryRun) await ccacheCleanup(ctx.exec, wardenHome(ctx.env));
+	if (!dryRun) await ccacheCleanup(ctx.exec, storeLocator.wardenHome(ctx.env));
 	const verb = dryRun ? "would remove" : "removed";
 	const text = [
 		...plan.remove.map((b) => (dryRun ? color.yellow : color.green)(`${verb} ${describeBuild(b)}`)),
@@ -175,7 +175,7 @@ async function rmCmd(ctx: CommandContext, prefixes: string[], opts: RmOpts): Pro
 			prefixes,
 			...(platform !== undefined ? { platform } : {}),
 			now: ctx.now(),
-			pidAlive: processAlive,
+			pidAlive: liveness.processAlive,
 			dryRun: dry,
 		});
 	const preview = remove(true);

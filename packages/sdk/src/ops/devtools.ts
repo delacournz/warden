@@ -12,7 +12,7 @@ import type { OpenDevtoolsFacetOptions } from "@delacour/warden-devtools/facet";
 import { findMetro, type MetroProbe } from "@delacour/warden-devtools/metro";
 import { formatTree } from "@delacour/warden-devtools/tree";
 import type { PidAlive } from "@delacour/warden-store/liveness";
-import { mayBeRecorded, type ProcessCommand, recordedIdentity } from "@delacour/warden-store/process-identity";
+import { type ProcessCommand, processIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type {
@@ -384,7 +384,7 @@ async function startCollector(
 	}
 	if (
 		state.collector &&
-		mayBeRecorded(d.collector, state.collector.pid, collectorMarks(host, device.id, state.collector))
+		processIdentity.mayBeRecorded(d.collector, state.collector.pid, collectorMarks(host, device.id, state.collector))
 	) {
 		return resultFactory.ok({
 			result: { action: "logs", state: "collecting", pid: state.collector.pid, already: true },
@@ -420,7 +420,11 @@ async function stopCollector(session: OpSession): OpOutcome<LogsResult> {
 	const deps = depsOf(session);
 	if (!deps.success) return deps;
 	const d = deps.data;
-	const identity = recordedIdentity(d.collector, running.pid, collectorMarks(session.host, session.device.id, running));
+	const identity = processIdentity.recordedIdentity(
+		d.collector,
+		running.pid,
+		collectorMarks(session.host, session.device.id, running)
+	);
 	if (identity === "unknown") {
 		// alive but its command line unreadable: it may still be the collector, so it is neither signalled nor forgotten
 		return resultFactory.ok({

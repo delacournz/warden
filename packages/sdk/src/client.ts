@@ -13,9 +13,9 @@ import { capacityEnabled, hostInventoryOf, readCapacityBasis } from "@delacour/w
 import { markWardenDevices } from "@delacour/warden-leasing/inventory";
 import { claimPorts, isPortFree, releasePorts } from "@delacour/warden-leasing/ports";
 import { readGitFactsSync } from "@delacour/warden-runtime/git-facts";
-import { listBuilds } from "@delacour/warden-store/builds-table";
-import { isLeaseAlive } from "@delacour/warden-store/liveness";
-import { type InventoryDevice, type Lease, type Platform, sameOwner } from "@delacour/warden-store/types";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type InventoryDevice, type Lease, leaseModel, type Platform } from "@delacour/warden-store/types";
 import {
 	type ClientSeams,
 	type Core,
@@ -166,7 +166,7 @@ function buildLeases(core: Core): LeasesNamespace {
 		list: (params, opts) =>
 			guarded(core.signalFor(opts), () => {
 				const leases = core.store().listLeases();
-				return params?.mine ? leases.filter((l) => sameOwner(l.owner, core.owner)) : leases;
+				return params?.mine ? leases.filter((l) => leaseModel.sameOwner(l.owner, core.owner)) : leases;
 			}),
 		heartbeat: (lease, opts) =>
 			guarded(core.signalFor(opts), () => {
@@ -188,11 +188,11 @@ function buildLeases(core: Core): LeasesNamespace {
 			guarded(core.signalFor(opts), (): LeaseCheck => {
 				const found = core.store().getLease(leaseId(lease));
 				if (!found) return { state: "missing" };
-				if (!sameOwner(found.owner, core.owner)) {
+				if (!leaseModel.sameOwner(found.owner, core.owner)) {
 					throw new WardenError({ code: "lease_foreign", message: `lease ${found.id} is held by someone else` });
 				}
 				const now = core.host.now();
-				if (!isLeaseAlive(found, now, core.host.pidAlive)) return { state: "stale", lease: found };
+				if (!liveness.isLeaseAlive(found, now, core.host.pidAlive)) return { state: "stale", lease: found };
 				return { state: "held", lease: found, expiresInMs: Math.max(0, found.heartbeatAt + found.ttlMs - now) };
 			}),
 	};
@@ -308,7 +308,8 @@ function buildApps(core: Core): AppsNamespace {
 		builds: {
 			list: (params, opts) =>
 				guarded(core.signalFor(opts), (): BuildInfo[] =>
-					listBuilds(core.store())
+					new BuildsTable(core.store())
+						.list()
 						.filter((b) => params?.platform === undefined || b.platform === params.platform)
 						.map((b) => ({
 							key: buildKey(b),
@@ -324,7 +325,8 @@ function buildApps(core: Core): AppsNamespace {
 					const now = core.host.now();
 					return store.transaction(() => {
 						const locked = liveBuildLocks(store, now, core.host.pidAlive);
-						const builds = listBuilds(store)
+						const builds = new BuildsTable(store)
+							.list()
 							.filter((b) => !isAlias(b) && !locked.has(buildLockKey(b.projectKey, b.platform, b.hash)))
 							.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
 						const removed = builds.filter(

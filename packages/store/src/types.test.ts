@@ -1,13 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	deviceResourceOf,
-	type InventoryDevice,
-	isPhysicalIosId,
-	isPhysicalReady,
-	physicalNotReadyReason,
-	profileSlug,
-	resourceKey,
-} from "./types";
+import { type InventoryDevice, leaseModel } from "./types";
 
 const base: InventoryDevice = {
 	platform: "android",
@@ -19,7 +11,12 @@ const base: InventoryDevice = {
 
 describe("deviceResourceOf", () => {
 	test("a virtual device has no physical field", () => {
-		expect(deviceResourceOf(base)).toEqual({ kind: "device", platform: "android", id: "R5CT", name: "Pixel 8" });
+		expect(leaseModel.deviceResourceOf(base)).toEqual({
+			kind: "device",
+			platform: "android",
+			id: "R5CT",
+			name: "Pixel 8",
+		});
 	});
 
 	test("keeps physical transport and hwSerial for an android phone", () => {
@@ -27,7 +24,7 @@ describe("deviceResourceOf", () => {
 			...base,
 			physical: { platform: "android", transport: "wifi", adbState: "device", hwSerial: "HW1" },
 		};
-		expect(deviceResourceOf(phone)).toEqual({
+		expect(leaseModel.deviceResourceOf(phone)).toEqual({
 			kind: "device",
 			platform: "android",
 			id: "R5CT",
@@ -52,19 +49,19 @@ describe("deviceResourceOf", () => {
 				ddi: true,
 			},
 		};
-		const resource = deviceResourceOf(phone);
+		const resource = leaseModel.deviceResourceOf(phone);
 		expect(resource.physical).toEqual({ transport: "wired" });
-		expect(resourceKey(resource)).toBe("device:ios:00008140-001234567890001C");
+		expect(leaseModel.resourceKey(resource)).toBe("device:ios:00008140-001234567890001C");
 	});
 });
 
 describe("isPhysicalIosId", () => {
 	test("hardware UDIDs yes, simulator UUIDs and adb serials no", () => {
-		expect(isPhysicalIosId("00008140-001234567890001C")).toBe(true);
-		expect(isPhysicalIosId("a".repeat(40))).toBe(true);
-		expect(isPhysicalIosId("5F1E9C37-2B7A-4C1D-9E0A-123456789ABC")).toBe(false);
-		expect(isPhysicalIosId("emulator-5554")).toBe(false);
-		expect(isPhysicalIosId("R5CT")).toBe(false);
+		expect(leaseModel.isPhysicalIosId("00008140-001234567890001C")).toBe(true);
+		expect(leaseModel.isPhysicalIosId("a".repeat(40))).toBe(true);
+		expect(leaseModel.isPhysicalIosId("5F1E9C37-2B7A-4C1D-9E0A-123456789ABC")).toBe(false);
+		expect(leaseModel.isPhysicalIosId("emulator-5554")).toBe(false);
+		expect(leaseModel.isPhysicalIosId("R5CT")).toBe(false);
 	});
 });
 
@@ -74,9 +71,9 @@ describe("isPhysicalReady", () => {
 			...base,
 			physical: { platform: "android", transport: "usb", adbState },
 		});
-		expect(isPhysicalReady(android("device"))).toBe(true);
-		expect(isPhysicalReady(android("unauthorized"))).toBe(false);
-		expect(isPhysicalReady(base)).toBe(false);
+		expect(leaseModel.isPhysicalReady(android("device"))).toBe(true);
+		expect(leaseModel.isPhysicalReady(android("unauthorized"))).toBe(false);
+		expect(leaseModel.isPhysicalReady(base)).toBe(false);
 	});
 });
 
@@ -100,26 +97,26 @@ describe("physicalNotReadyReason", () => {
 
 	test("an unreachable iOS device is not ready and says offline", () => {
 		const d = ios({ unreachable: "not connected" });
-		expect(isPhysicalReady({ ...d, state: "booted" })).toBe(false);
-		expect(physicalNotReadyReason(d)).toBe("offline: not connected");
+		expect(leaseModel.isPhysicalReady({ ...d, state: "booted" })).toBe(false);
+		expect(leaseModel.physicalNotReadyReason(d)).toBe("offline: not connected");
 	});
 
 	test("names the fix per cause", () => {
-		expect(physicalNotReadyReason(ios({ developerMode: false }))).toContain("developer mode off");
-		expect(physicalNotReadyReason(ios({ pairingState: "unpaired" }))).toContain("unpaired");
+		expect(leaseModel.physicalNotReadyReason(ios({ developerMode: false }))).toContain("developer mode off");
+		expect(leaseModel.physicalNotReadyReason(ios({ pairingState: "unpaired" }))).toContain("unpaired");
 		const android = (adbState: string): InventoryDevice => ({
 			...base,
 			physical: { platform: "android", transport: "usb", adbState },
 		});
-		expect(physicalNotReadyReason(android("unauthorized"))).toContain("USB debugging");
-		expect(physicalNotReadyReason(android("offline"))).toContain("offline");
-		expect(physicalNotReadyReason(android("device"))).toBeUndefined();
+		expect(leaseModel.physicalNotReadyReason(android("unauthorized"))).toContain("USB debugging");
+		expect(leaseModel.physicalNotReadyReason(android("offline"))).toContain("offline");
+		expect(leaseModel.physicalNotReadyReason(android("device"))).toBeUndefined();
 	});
 });
 
 describe("profileSlug", () => {
 	test("lowercases and hyphenates", () => {
-		expect(profileSlug("iPhone 17 Pro")).toBe("iphone-17-pro");
-		expect(profileSlug("  Pixel_8 API 35 ")).toBe("pixel-8-api-35");
+		expect(leaseModel.profileSlug("iPhone 17 Pro")).toBe("iphone-17-pro");
+		expect(leaseModel.profileSlug("  Pixel_8 API 35 ")).toBe("pixel-8-api-35");
 	});
 });

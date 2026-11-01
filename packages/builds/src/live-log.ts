@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, mkdirSync, openSync, readSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { type Store, wardenHome } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 
 /** Store meta key holding the live log path of the build running under lock `lockKey`. */
 function metaKey(lockKey: string): string {
@@ -24,7 +24,7 @@ export function openLiveLog(
 	deps: { store: Store; env: Record<string, string | undefined> },
 	lockKeys: string[]
 ): LiveLog {
-	const dir = join(wardenHome(deps.env), "logs", "live");
+	const dir = join(storeLocator.wardenHome(deps.env), "logs", "live");
 	mkdirSync(dir, { recursive: true });
 	const name = createHash("sha256")
 		.update(lockKeys[0] ?? "")

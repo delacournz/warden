@@ -2,7 +2,7 @@ import { journalRecorder, routeAfterFor as routeAfter } from "@delacour/warden-s
 import type { RecordSink } from "@delacour/warden-sdk/ops/record";
 import type { RefStore } from "@delacour/warden-sdk/ops/ref-store";
 import type { StateStore } from "@delacour/warden-sdk/ops/state-store";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
 import type { UiDeps } from "./driver";
@@ -19,7 +19,7 @@ export function recorderFor(
 	stores: { state: StateStore; refs: RefStore }
 ): RecordSink {
 	const journal = journalRecorder({
-		home: wardenHome(ctx.env),
+		home: storeLocator.wardenHome(ctx.env),
 		env: ctx.env,
 		now: ctx.now,
 		state: stores.state,

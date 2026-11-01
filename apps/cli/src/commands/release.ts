@@ -5,7 +5,7 @@ import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
 import { isEmptySelector, NOTHING_SELECTED, selectLeases } from "@delacour/warden-leasing/lease-select";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import type { ReleaseJson } from "@delacour/warden-sdk/contracts/leases";
-import { describeOwner, type Lease, sameOwner } from "@delacour/warden-store/types";
+import { type Lease, leaseModel } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { leaseHostFromContext } from "../lease-host";
@@ -56,14 +56,16 @@ async function pickLeases(ctx: CommandContext, opts: ReleaseOpts): Promise<Picke
 		return { kind: "exit", code: 1 };
 	}
 	const me = resolveOwner(ctx);
-	const mineFirst = [...all].sort((a, b) => Number(sameOwner(b.owner, me)) - Number(sameOwner(a.owner, me)));
+	const mineFirst = [...all].sort(
+		(a, b) => Number(leaseModel.sameOwner(b.owner, me)) - Number(leaseModel.sameOwner(a.owner, me))
+	);
 	const answer = await ui.multiselect(
 		"Release which leases?",
 		mineFirst.map((l) => ({
 			value: l.id,
 			label: `${describeResource(l.resource)}${l.label ? ` [${l.label}]` : ""}`,
-			hint: `${describeOwner(l.owner)} · ${l.id}`,
-			selected: sameOwner(l.owner, me),
+			hint: `${leaseModel.describeOwner(l.owner)} · ${l.id}`,
+			selected: leaseModel.sameOwner(l.owner, me),
 		}))
 	);
 	if (answer === undefined) {

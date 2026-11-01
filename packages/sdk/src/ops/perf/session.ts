@@ -10,13 +10,12 @@ import {
 	SESSION_FILE,
 	type STOP_REASONS,
 } from "@delacour/warden-perf/shared/session.schema";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import {
 	type PidIdentity,
 	type ProcessCommand,
 	processCommand,
-	recordedIdentity,
-	safeToSignal,
+	processIdentity,
 } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -40,7 +39,7 @@ export type SessionDeps = {
 };
 
 export const defaultSessionDeps: SessionDeps = {
-	pidAlive: processAlive,
+	pidAlive: liveness.processAlive,
 	command: processCommand,
 	kill: (pid, signal) => {
 		try {
@@ -71,7 +70,7 @@ export function collectorPid(session: PerfSession): number | undefined {
 function collectorAlive(deps: SessionDeps, session: PerfSession): boolean {
 	const pid = collectorPid(session);
 	if (pid === undefined) return true;
-	const identity = recordedIdentity(identityOf(deps), pid, collectorMarks(session.id));
+	const identity = processIdentity.recordedIdentity(identityOf(deps), pid, collectorMarks(session.id));
 	return identity === "match" || identity === "unknown";
 }
 
@@ -154,7 +153,8 @@ function finish(
  */
 export function signalCollector(deps: SessionDeps, session: PerfSession): number | undefined {
 	const pid = collectorPid(session);
-	if (pid === undefined || !safeToSignal(identityOf(deps), pid, collectorMarks(session.id))) return undefined;
+	if (pid === undefined || !processIdentity.safeToSignal(identityOf(deps), pid, collectorMarks(session.id)))
+		return undefined;
 	deps.kill(pid, "SIGTERM");
 	return pid;
 }

@@ -57,7 +57,7 @@ import { revealSimWindow } from "@delacour/warden-leasing/sim-windows";
 import type { DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { bunExec } from "@delacour/warden-runtime/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -682,7 +682,7 @@ function registerDevSession(ctx: CommandContext, deps: DevDeps, r: Running, metr
 		deviceId: r.session.deviceId,
 		port: r.session.port,
 		metroUrl,
-		logDir: join(wardenHome(ctx.env), "dev", leaseId),
+		logDir: join(storeLocator.wardenHome(ctx.env), "dev", leaseId),
 		projectRoot: r.project.root,
 		startedAt: new Date(ctx.now()).toISOString(),
 	});
@@ -712,7 +712,7 @@ async function startDevBroker(
 			...(r.platform === "ios" ? { deviceName: r.session.deviceName } : {}),
 			...(appId !== undefined ? { appId } : {}),
 		},
-		logDir: join(wardenHome(ui.ctx.env), "dev", leaseId),
+		logDir: join(storeLocator.wardenHome(ui.ctx.env), "dev", leaseId),
 		log: (line) => task.log(line),
 		onState: (state) => {
 			if (state.phase === "attached" && !attached) {
@@ -778,10 +778,12 @@ function devExtras(ui: DevUi, deps: DevDeps, r: Running, metroUrl: string, appId
 async function serveDevExtras(ctx: CommandContext, r: Running, extras: DevExtras): Promise<() => Promise<void>> {
 	const leaseId = r.session.leaseIds[0];
 	if (leaseId === undefined) return async () => undefined;
-	const served = await serveDevControl(controlSocketPath(join(wardenHome(ctx.env), "dev", leaseId)), (request) =>
-		request.op === "status"
-			? Promise.resolve({ ok: true, features: extras.features() })
-			: extras.set(request.feature, request.on)
+	const served = await serveDevControl(
+		controlSocketPath(join(storeLocator.wardenHome(ctx.env), "dev", leaseId)),
+		(request) =>
+			request.op === "status"
+				? Promise.resolve({ ok: true, features: extras.features() })
+				: extras.set(request.feature, request.on)
 	);
 	if (!served.success) {
 		warn(ctx, `warden dev: no control socket (${served.error}); warden dev enable|disable won't reach this session`);

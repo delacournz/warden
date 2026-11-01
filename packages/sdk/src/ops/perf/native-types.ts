@@ -1,7 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import type { Finding } from "@delacour/warden-perf/shared/findings.types";
 import type { ReportSection } from "@delacour/warden-perf/shared/render-md";
-import { processAlive } from "@delacour/warden-store/liveness";
+import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import type { Result } from "@delacour/warden-types/result";
@@ -37,7 +37,7 @@ export const defaultNativeIo: NativeIo = {
 			// already gone
 		}
 	},
-	pidAlive: processAlive,
+	pidAlive: liveness.processAlive,
 	command: processCommand,
 	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };

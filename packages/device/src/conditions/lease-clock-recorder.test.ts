@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { leaseClockRecorder } from "./lease-clock-recorder";
 
 let dir: string;
@@ -12,7 +12,7 @@ let leaseId: string;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-clock-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	leaseId = store.insertLease(
 		{
 			resource: { kind: "device", platform: "ios", id: "U1", name: "sim" },

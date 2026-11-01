@@ -6,8 +6,8 @@ import type { DumpRoute } from "@delacour/warden-driver-android/android-dump";
 import { androidStateDir, createAndroidStateStore } from "@delacour/warden-driver-android/android-state";
 import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { wardenHome } from "@delacour/warden-store/store";
-import { isPhysicalIosId } from "@delacour/warden-store/types";
+import { storeLocator } from "@delacour/warden-store/store";
+import { leaseModel } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
@@ -33,7 +33,7 @@ export function androidHostFromEnv(env: Readonly<Record<string, string | undefin
  */
 export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
 	if (device.platform === "ios") {
-		if (isPhysicalIosId(device.udid)) return connectIosRunner(ctx, device.udid);
+		if (leaseModel.isPhysicalIosId(device.udid)) return connectIosRunner(ctx, device.udid);
 		const { leaseDriverExtras } = await import("./conditions-real");
 		return connectHelper(ctx, device.udid, {}, leaseDriverExtras(ctx, device));
 	}
@@ -71,7 +71,7 @@ export async function openAndroidInProcess(
 			serial,
 			adb: androidTools(ctx.env).adb,
 			exec: ctx.exec,
-			state: createAndroidStateStore({ dir: androidStateDir(wardenHome(ctx.env)) }),
+			state: createAndroidStateStore({ dir: androidStateDir(storeLocator.wardenHome(ctx.env)) }),
 			ownedPackages: ownedPackages(ctx, serial),
 			...(uiadFromEnv(ctx.env) ? { uiad: true } : {}),
 			...(remembered ? { dumpRoute: remembered } : {}),

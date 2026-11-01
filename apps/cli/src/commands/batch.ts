@@ -50,8 +50,8 @@ import { hideSimWindows } from "@delacour/warden-leasing/sim-windows";
 import { slimSimulator } from "@delacour/warden-providers/slim";
 import { bunExec, execError } from "@delacour/warden-runtime/exec";
 import { readGitFacts, readGitFactsSync } from "@delacour/warden-runtime/git-facts";
-import { wardenHome } from "@delacour/warden-store/store";
-import { isPhysicalDevice, isPhysicalIosId, type Owner, type Platform } from "@delacour/warden-store/types";
+import { storeLocator } from "@delacour/warden-store/store";
+import { leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
 import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
@@ -795,7 +795,7 @@ const deviceNameEnv = (name: string | undefined): Record<string, string> =>
  */
 export const socketEnv = (udid: string, socketPath: string | undefined): Record<string, string> => {
 	if (socketPath === undefined) return {};
-	return { [isPhysicalIosId(udid) ? ENV_NAMES.iosRunnerSocket : ENV_NAMES.simdSocket]: socketPath };
+	return { [leaseModel.isPhysicalIosId(udid) ? ENV_NAMES.iosRunnerSocket : ENV_NAMES.simdSocket]: socketPath };
 };
 
 /** `WARDEN_DEVICE_KIND=physical` for a job on a real phone (a mixed run's other jobs get none: `childEnv` leaves it out). */
@@ -1079,7 +1079,7 @@ const recordedSlim =
 	(ctx: CommandContext, deps: BatchDeps, fixed?: SlimProfile) =>
 	async (udid: string, profile?: SlimProfile): AsyncResult<string[]> => {
 		// a physical iPhone has no simulator daemons to switch off
-		if (isPhysicalIosId(udid)) return resultFactory.ok([]);
+		if (leaseModel.isPhysicalIosId(udid)) return resultFactory.ok([]);
 		const res = await deps.slim(udid, profile ?? fixed);
 		if (res.success) ctx.store().setSlimmed("ios", udid, ctx.now());
 		return res;
@@ -1113,7 +1113,7 @@ function buildPools(session: LeaseSession, args: BatchArgs): Pool[] {
 				worker: worker++,
 				udid: c.device.id,
 				name: c.device.name,
-				...(isPhysicalDevice(c.device) ? { physical: true as const } : {}),
+				...(leaseModel.isPhysicalDevice(c.device) ? { physical: true as const } : {}),
 				leaseId: c.lease.id,
 				...(leg ? { leg: leg.name } : {}),
 			})),
@@ -1932,7 +1932,7 @@ async function supervise(
 			return fail(`setup failed on every device (logs: ${failedLogs.join(", ")})`, { batchDir, setups });
 		}
 		// a phone's jobs reach its runner only through the warm socket: no runner, no specs
-		const phones = run.warm ? r.devices.map((d) => d.udid).filter(isPhysicalIosId) : [];
+		const phones = run.warm ? r.devices.map((d) => d.udid).filter((id) => leaseModel.isPhysicalIosId(id)) : [];
 		const stopped = run.warm && phones.length > 0 ? await warmGate(phones, run.warm) : undefined;
 		if (stopped) {
 			const failed = fail(`${stopped.udid}: ${stopped.code}: ${stopped.message}`, { batchDir, error: stopped });
@@ -2301,7 +2301,7 @@ export async function runSession(
 		.map((flags) => `${flags.request.count} ${flags.request.profile}`)
 		.join(" + ");
 	const batchId = deps.newId();
-	const batchDir = lease.record ?? join(wardenHome(ctx.env), "batches", batchId);
+	const batchDir = lease.record ?? join(storeLocator.wardenHome(ctx.env), "batches", batchId);
 	const logDir = lease.logs ?? join(batchDir, "logs");
 	const controller = new AbortController();
 	const interrupted = () => controller.signal.aborted;
@@ -2312,7 +2312,7 @@ export async function runSession(
 		hooks.setup?.slim && platform === "ios"
 			? startEarlySlim<ClaimedDevice>({
 					slim: recordedSlim(ctx, deps, typeof hooks.setup.slim === "object" ? hooks.setup.slim : undefined),
-					skip: (c) => isPhysicalDevice(c.device) || alreadySlimmed(ctx, c),
+					skip: (c) => leaseModel.isPhysicalDevice(c.device) || alreadySlimmed(ctx, c),
 				})
 			: undefined;
 	// the early warm-up closed and the early slim done, once (before a failed claim releases the devices)

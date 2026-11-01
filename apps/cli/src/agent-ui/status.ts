@@ -1,5 +1,5 @@
 import { activeConditions } from "@delacour/warden-core/conditions/conditions";
-import { describeOwner, isPhysicalIosId } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { conditionsLine } from "./condition-text";
@@ -20,7 +20,7 @@ import { readState } from "./state";
 /** The resident helper a device has: the Android host, a physical iPhone's runner host, or `warden-simd`. */
 function helperKindOf(device: Pick<UiDevice, "platform" | "udid">): HelperKind {
 	if (device.platform === "android") return ANDROID_HOST_KIND;
-	return isPhysicalIosId(device.udid) ? IOS_RUNNER_KIND : SIMD_KIND;
+	return leaseModel.isPhysicalIosId(device.udid) ? IOS_RUNNER_KIND : SIMD_KIND;
 }
 
 /** `warden ui status`: the device, the caller's lease on it, the helper and the recording in progress. */
@@ -34,7 +34,7 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 				id: lease.id,
 				action: device.action,
 				source: device.source,
-				owner: describeOwner(lease.owner),
+				owner: leaseModel.describeOwner(lease.owner),
 				label: lease.label ?? null,
 				ttlMs: lease.ttlMs,
 				heartbeatAt: lease.heartbeatAt,
@@ -46,7 +46,7 @@ export function uiStatus(ctx: CommandContext, deps: UiDeps, opts: UiOptionValues
 		const { color } = ctx.ui;
 		const text = [
 			`${color.bold(device.udid)} ${device.name ?? ""} ${color.dim(`(${device.platform})`)}`.trimEnd(),
-			`lease     ${lease.id} ${color.dim(`${device.action}, ${describeOwner(lease.owner)}`)}`,
+			`lease     ${lease.id} ${color.dim(`${device.action}, ${leaseModel.describeOwner(lease.owner)}`)}`,
 			`helper    ${helperLine(result.helper)}`,
 			`recording ${result.recording === null ? "none" : `${result.recording.name} → ${result.recording.target} (${result.recording.steps ?? "?"} steps)`}`,
 			...(conditionsText === undefined ? [] : [`conditions ${conditionsText}`]),

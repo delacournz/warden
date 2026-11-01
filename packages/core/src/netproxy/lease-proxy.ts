@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import type { NetworkCondition } from "@delacour/warden-config/conditions.types";
 import type { ProxyConditions } from "@delacour/warden-config/shaping";
 import { claimPorts, isPortFree, releasePorts } from "@delacour/warden-leasing/ports";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -91,7 +91,7 @@ export async function ensureLeaseProxy(
 	lease: Pick<Lease, "id" | "owner" | "ttlMs">,
 	input: EnsureProxyInput
 ): AsyncResult<LeaseProxy> {
-	const alive = deps.pidAlive ?? processAlive;
+	const alive = deps.pidAlive ?? liveness.processAlive;
 	const path = handlePath(lease.id, deps.env);
 	const record = (handle: ProxyHandle) =>
 		recordCondition(deps.store, lease.id, "network", input.condition, deps.now(), [{ kind: "pid", pid: handle.pid }]);
@@ -174,7 +174,7 @@ export async function releaseLeaseProxy(
 	const file = readHandleFile(path);
 	if (!file) return false;
 	const stopped = await stopProxy(file);
-	if (!stopped.success && (deps.pidAlive ?? processAlive)(file.pid)) killQuietly(deps.kill, file.pid);
+	if (!stopped.success && (deps.pidAlive ?? liveness.processAlive)(file.pid)) killQuietly(deps.kill, file.pid);
 	removeHandleFile(path);
 	if (file.portLeaseId) releasePorts(deps.store, { by: "lease", ids: [file.portLeaseId] });
 	return true;

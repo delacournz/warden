@@ -13,8 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { bunExec, type Exec, type ExecResult } from "@delacour/warden-runtime/exec";
-import { getBuild } from "@delacour/warden-store/builds-table";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
 import { findRepack, kindDir, kindHash, storeArtifact } from "./cache";
 import { computeKindKey } from "./kind-key";
@@ -58,7 +58,7 @@ beforeEach(async () => {
 	await git("init", "-q", "-b", "main");
 	await git("add", "-A");
 	await git("commit", "-q", "-m", "init");
-	store = openStore(join(dir, "home", "warden.db"));
+	store = storeLocator.open(join(dir, "home", "warden.db"));
 	clock = 10_000;
 });
 afterEach(() => {
@@ -205,7 +205,7 @@ describe("repackApp", () => {
 			)
 		);
 		expect(first.data.hash).toBe(`${first.data.baseHash.split(":")[0]}:${first.data.jsKey}`);
-		const record = getBuild(store, KEY, "ios", first.data.hash);
+		const record = new BuildsTable(store).get(KEY, "ios", first.data.hash);
 		expect(record).toMatchObject({
 			kind: "simulator-repack",
 			baseHash: first.data.baseHash,
@@ -230,7 +230,9 @@ describe("repackApp", () => {
 		expect(second.success && second.data.kind === "reused" && second.data.bundleMs).toBe(first.data.bundleMs);
 		expect(applied.count).toBe(1);
 		expect(h.calls).toEqual([]);
-		expect(getBuild(store, KEY, "ios", first.data.hash)?.lastUsedAt).toBeGreaterThan(record?.lastUsedAt ?? 0);
+		expect(new BuildsTable(store).get(KEY, "ios", first.data.hash)?.lastUsedAt).toBeGreaterThan(
+			record?.lastUsedAt ?? 0
+		);
 	});
 
 	test("a JS edit makes a new repack over the same base", async () => {

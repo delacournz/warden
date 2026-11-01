@@ -1,5 +1,5 @@
 import type { OpDone, OpSession } from "@delacour/warden-sdk/ops/session";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -30,7 +30,7 @@ export function opSessionFor(
 	const host = {
 		env: ctx.env,
 		cwd: ctx.cwd,
-		home: wardenHome(ctx.env),
+		home: storeLocator.wardenHome(ctx.env),
 		now: ctx.now,
 		exec: ctx.exec,
 		sleep: deps.sleep,

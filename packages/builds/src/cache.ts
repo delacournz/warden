@@ -6,17 +6,12 @@ import {
 	type BuildBase,
 	type BuildRecord,
 	type BuildSource,
-	deleteBuildRecord,
-	getBuild,
-	listBuilds,
+	BuildsTable,
 	type SimulatorBaseRecord,
 	type SimulatorRepackRecord,
-	touchBuild,
-	touchBuildsByPath,
-	upsertBuild,
 } from "@delacour/warden-store/builds-table";
 import type { Store } from "@delacour/warden-store/store";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { DeviceTarget } from "./kinds";
@@ -52,7 +47,7 @@ export function buildKindOfKey(key: KindKey): BuildKind {
 
 /** `$WARDEN_HOME/builds`. */
 export function buildsRoot(env: Record<string, string | undefined>): string {
-	return join(wardenHome(env), "builds");
+	return join(storeLocator.wardenHome(env), "builds");
 }
 
 /** `$WARDEN_HOME/builds/<safe projectKey>/<platform>/<hash>`. */
@@ -162,15 +157,15 @@ export function diskSize(path: string): number {
 
 /** Register a repack (its files are already in `repackDir`): the row `findRepack` and the prune read. */
 export function recordRepack(store: Store, record: SimulatorRepackRecord): void {
-	upsertBuild(store, record);
+	new BuildsTable(store).upsert(record);
 }
 
 /** A row whose kind is `kind` and whose files still exist; a row whose files vanished is dropped. */
 function findKind(store: Store, projectKey: string, platform: Platform, key: KindKey): BuildRecord | undefined {
-	const record = getBuild(store, projectKey, platform, kindHash(key));
+	const record = new BuildsTable(store).get(projectKey, platform, kindHash(key));
 	if (!record || record.kind !== key.kind) return undefined;
 	if (!existsSync(record.path)) {
-		deleteBuildRecord(store, projectKey, platform, record.hash);
+		new BuildsTable(store).remove(projectKey, platform, record.hash);
 		return undefined;
 	}
 	return record;
@@ -226,15 +221,15 @@ export function cachedBuild(
 	hash: string,
 	now: number
 ): BuildRecord | undefined {
-	const record = getBuild(store, key, platform, hash);
+	const record = new BuildsTable(store).get(key, platform, hash);
 	if (!record) return undefined;
 	if (!existsSync(record.path)) {
-		deleteBuildRecord(store, key, platform, hash);
+		new BuildsTable(store).remove(key, platform, hash);
 		return undefined;
 	}
-	touchBuild(store, key, platform, hash, now);
+	new BuildsTable(store).touch(key, platform, hash, now);
 	// an alias shares the path: keep its primary (the row that owns the files) as recent for the LRU prune
-	touchBuildsByPath(store, record.path, now);
+	new BuildsTable(store).touchByPath(record.path, now);
 	return { ...record, lastUsedAt: now };
 }
 
@@ -245,9 +240,9 @@ export function cachedBuild(
  */
 export function aliasBuild(store: Store, record: BuildRecord, hash: string, now: number): boolean {
 	if (hash === record.hash) return false;
-	const existing = getBuild(store, record.projectKey, record.platform, hash);
+	const existing = new BuildsTable(store).get(record.projectKey, record.platform, hash);
 	if (existing && existsSync(existing.path)) return false;
-	upsertBuild(store, { ...record, hash, size: 0, createdAt: now, lastUsedAt: now });
+	new BuildsTable(store).upsert({ ...record, hash, size: 0, createdAt: now, lastUsedAt: now });
 	return true;
 }
 
@@ -322,7 +317,7 @@ export async function storeArtifact(input: StoreArtifactInput): AsyncResult<Buil
 			: layout === "dev" || layout === "simulator-base"
 				? { ...base, kind: layout }
 				: { ...base, kind: "release", jsKey: layout.jsKey };
-	upsertBuild(input.store, record);
+	new BuildsTable(input.store).upsert(record);
 	return resultFactory.ok(record);
 }
 
@@ -347,16 +342,16 @@ export function removeBuild(store: Store, env: Record<string, string | undefined
 	const dir = legacy ? buildDir(env, record.projectKey, record.platform, record.hash) : dirname(record.path);
 	if (legacy) removeLegacyFiles(dir);
 	else rmSync(dir, { recursive: true, force: true });
-	deleteBuildRecord(store, record.projectKey, record.platform, record.hash);
+	new BuildsTable(store).remove(record.projectKey, record.platform, record.hash);
 	if (record.kind === "simulator-base") {
-		for (const repack of repacksOf(listBuilds(store), record.projectKey, record.platform, record.hash)) {
+		for (const repack of repacksOf(new BuildsTable(store).list(), record.projectKey, record.platform, record.hash)) {
 			removeBuild(store, env, repack);
 		}
 		rmSync(join(dirname(dir), "repacks"), { recursive: true, force: true });
 	}
 	// aliases of the removed files (`aliasBuild`) go with them
-	for (const alias of listBuilds(store)) {
-		if (dirname(alias.path) === dir) deleteBuildRecord(store, alias.projectKey, alias.platform, alias.hash);
+	for (const alias of new BuildsTable(store).list()) {
+		if (dirname(alias.path) === dir) new BuildsTable(store).remove(alias.projectKey, alias.platform, alias.hash);
 	}
 }
 

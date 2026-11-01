@@ -12,7 +12,7 @@ import {
 import { interactiveFilter, parseUiautomatorXml } from "@delacour/warden-driver-android/uiautomator";
 import { toSnapshot } from "@delacour/warden-driver-ios/normalize";
 import { preorder } from "@delacour/warden-sdk/ops/ref-store";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { readLastSnapshot } from "./state";
 import { createFileRefStore } from "./state-stores";
 
@@ -52,7 +52,7 @@ afterEach(() => {
 
 function context() {
 	home = mkdtempSync(join(tmpdir(), "warden-ui-real-"));
-	const store = openStore(join(home, "warden.db"));
+	const store = storeLocator.open(join(home, "warden.db"));
 	stores.push(store);
 	return { env: { WARDEN_HOME: home }, now: () => 1234, store: () => store };
 }

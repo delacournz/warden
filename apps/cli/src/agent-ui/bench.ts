@@ -5,7 +5,7 @@ import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import { devtoolsError, withFacet } from "@delacour/warden-sdk/ops/devtools";
 import { takeSnapshot } from "@delacour/warden-sdk/ops/snapshot";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -211,7 +211,7 @@ async function defaultOpenSecond(
 	const opened = await openDriver({
 		platform: device.platform,
 		id: device.udid,
-		host: { exec: ctx.exec, home: wardenHome(ctx.env) },
+		host: { exec: ctx.exec, home: storeLocator.wardenHome(ctx.env) },
 		ios: { socketPath },
 		android: { adb: androidTools(ctx.env).adb, uiad: uiadFromEnv(ctx.env) ?? false },
 	});

@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { findNodeBin } from "@delacour/warden-runtime/node-bin";
-import { touchBuild } from "@delacour/warden-store/builds-table";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { diskSize, findRepack, findSimulatorBase, kindHash, recordRepack, repackDir } from "./cache";
@@ -281,7 +281,7 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	const reuse = async (): Promise<RepackResult | undefined> => {
 		const hit = findRepack(store, query);
 		if (!hit || (input.force && hit.createdAt < startedAt)) return undefined;
-		touchBuild(store, projectKey, platform, hit.hash, input.now());
+		new BuildsTable(store).touch(projectKey, platform, hit.hash, input.now());
 		const meta = await readRepackMeta(dirname(hit.path));
 		return {
 			kind: "reused",
@@ -306,7 +306,7 @@ export async function repackApp(input: RepackInput): AsyncResult<RepackResult> {
 	const baseArtifact = baseRecord?.path ?? base.data.appPath;
 	if (!baseArtifact || !existsSync(baseArtifact))
 		return resultFactory.err(`repack: the simulator base build is missing (${baseHash})`);
-	touchBuild(store, projectKey, platform, baseHash, input.now());
+	new BuildsTable(store).touch(projectKey, platform, baseHash, input.now());
 
 	const lock = {
 		store,

@@ -3,7 +3,7 @@ import { PENDING_PREFIX } from "@delacour/warden-leasing/claim";
 import { androidTools } from "@delacour/warden-providers/android-tools";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import type { PidAlive } from "@delacour/warden-store/liveness";
-import { type Store, wardenHome } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { activeConditions, clearCondition } from "./conditions";
@@ -164,12 +164,12 @@ export async function resetRecord(
 	const resets = await runResets(deps.exec, cmds);
 	// an injected iOS app that is still running keeps reading its state file: put it back online on the real clock
 	if (device?.platform === "ios" && (record.area === "clock" || record.area === "network")) {
-		const failed = neutralizeInjectState(injectStatePath(wardenHome(deps.env), device.id));
+		const failed = neutralizeInjectState(injectStatePath(storeLocator.wardenHome(deps.env), device.id));
 		if (failed) resets.push(failed);
 	}
 	// iOS has no device-side timezone or locale: only the staged launch settings go
 	if (device?.platform === "ios" && record.area === "locale") {
-		const failed = writeLaunchSettings(launchSettingsPath(wardenHome(deps.env), device.id), {});
+		const failed = writeLaunchSettings(launchSettingsPath(storeLocator.wardenHome(deps.env), device.id), {});
 		if (failed) resets.push(failed);
 	}
 	const released = await releaseProxy(deps, leaseId, record);

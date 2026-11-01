@@ -1,6 +1,6 @@
 import { execError } from "@delacour/warden-runtime/exec";
 import { readXcode } from "@delacour/warden-runtime/xcode";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { buildLockKey, withBuildLock } from "../lock";
 import {
@@ -104,7 +104,7 @@ async function runBuild(argv: string[], input: EnsureRunnerBuildInput): Promise<
 export async function expectedRunnerDerivedData(
 	input: Pick<EnsureRunnerBuildInput, "team" | "configTeamId" | "env" | "home" | "exec" | "loadSources">
 ): AsyncResult<string, RunnerBuildError> {
-	const home = input.home ?? wardenHome(input.env);
+	const home = input.home ?? storeLocator.wardenHome(input.env);
 	const xcode = await readXcode(input.exec, input.env);
 	if (!xcode.success) return failed(buildFailed(`no usable Xcode: ${xcode.error}`));
 	const team = await resolveTeam({
@@ -131,7 +131,7 @@ export async function expectedRunnerDerivedData(
  */
 export async function ensureRunnerBuild(input: EnsureRunnerBuildInput): AsyncResult<RunnerBuild, RunnerBuildError> {
 	const now = input.now ?? Date.now;
-	const home = input.home ?? wardenHome(input.env);
+	const home = input.home ?? storeLocator.wardenHome(input.env);
 	const xcode = await readXcode(input.exec, input.env);
 	if (!xcode.success) return failed(buildFailed(`no usable Xcode: ${xcode.error}`));
 

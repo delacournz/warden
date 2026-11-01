@@ -1,6 +1,6 @@
 import { providerFor } from "@delacour/warden-core/host-deps";
-import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
-import { type InventoryDevice, isPhysicalReady, type Owner, type Platform } from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type InventoryDevice, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type ClaimFlags, withPhysicalAllowlist } from "./claim-flags";
 import { appHostFromContext, type CommandContext } from "./context";
 import { formatTable } from "./output";
@@ -72,7 +72,7 @@ async function candidatesFor(
 	const now = ctx.now();
 	const held = new Set<string>();
 	for (const l of ctx.store().listLeases()) {
-		if (l.resource.kind === "device" && isLeaseAlive(l, now, processAlive)) {
+		if (l.resource.kind === "device" && liveness.isLeaseAlive(l, now, liveness.processAlive)) {
 			held.add(`${l.resource.platform}:${l.resource.id}`);
 		}
 	}
@@ -81,7 +81,7 @@ async function candidatesFor(
 		.filter(
 			(d) =>
 				d.platform === request.platform &&
-				isPhysicalReady(d) &&
+				leaseModel.isPhysicalReady(d) &&
 				(allow === undefined || allow.includes(d.id)) &&
 				!held.has(`${d.platform}:${d.id}`) &&
 				!taken.has(d.id)

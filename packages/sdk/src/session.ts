@@ -11,7 +11,7 @@ import { connectHelper } from "@delacour/warden-driver-ios/helper";
 import { type CallerLease, ensureCallerLease } from "@delacour/warden-leasing/device-lease";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { formatSelector } from "@delacour/warden-screen/selector";
-import { getInstall, listBuilds } from "@delacour/warden-store/builds-table";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Lease, Platform } from "@delacour/warden-store/types";
 import { type WardenError as EngineError, wardenErrors } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -687,9 +687,9 @@ export class WardenSession implements Session {
 	/** The cached build the store says is installed for `app` on this device. */
 	private cachedBuildFor(app: string): string {
 		const store = this.core.store();
-		const installed = getInstall(store, this.dev.platform, this.dev.id, app);
+		const installed = new BuildsTable(store).getInstall(this.dev.platform, this.dev.id, app);
 		const build = installed
-			? listBuilds(store).find((b) => b.platform === this.dev.platform && b.hash === installed.hash)
+			? new BuildsTable(store).list().find((b) => b.platform === this.dev.platform && b.hash === installed.hash)
 			: undefined;
 		if (!build) {
 			throw new WardenError({

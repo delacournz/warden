@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DOCTOR_HINT, locateHelper } from "@delacour/warden-driver-ios/locate-helper";
 import { parseSimctlDevices } from "@delacour/warden-providers/ios";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { CommandContext } from "../context";
 import { HELPER_MANIFEST, HELPER_TARGET, type HelperInfo, parseHelperManifest } from "../npm/helper";
 import { type BuildInfo, currentBuild } from "../update/build-info";
@@ -231,7 +231,7 @@ export async function helperChecks(ctx: CommandContext, deps: HelperDeps): Promi
 		env: ctx.env,
 		execPath: deps.execPath,
 		importDir: deps.importDir,
-		wardenHome: wardenHome(ctx.env),
+		wardenHome: storeLocator.wardenHome(ctx.env),
 		version: deps.version,
 		exists: deps.exists,
 		realpath: deps.realpath,
@@ -250,7 +250,7 @@ export async function helperChecks(ctx: CommandContext, deps: HelperDeps): Promi
 	if (!udid) return [...rows, row("sim-helper-health", "ok", "no booted iOS simulator to probe")];
 	const health = await ctx.exec([path, "--health", "--udid", udid], { timeoutMs: HEALTH_TIMEOUT_MS });
 	const standalone = healthRow(health.stdout, health.exitCode, health.stderr, udid);
-	const socketPath = join(wardenHome(ctx.env), "simd", `${udid}.sock`);
+	const socketPath = join(storeLocator.wardenHome(ctx.env), "simd", `${udid}.sock`);
 	const { status, detail } =
 		(standalone.status === "ok" && (await runningHelperRow(deps, socketPath, udid))) || standalone;
 	return [...rows, row("sim-helper-health", status, detail)];

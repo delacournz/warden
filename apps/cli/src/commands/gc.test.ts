@@ -5,7 +5,7 @@ import { storeArtifact } from "@delacour/warden-builds/cache";
 import { recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { gcJsonSchema } from "@delacour/warden-sdk/contracts/gc";
-import { listBuilds } from "@delacour/warden-store/builds-table";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { Owner } from "@delacour/warden-store/types";
 import { fakeSimctl, wardenSim } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
@@ -266,7 +266,8 @@ describe("warden gc: build cache prune (17-11)", () => {
 		await seed(c, "new", 100, 3);
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(
-			listBuilds(c.db)
+			new BuildsTable(c.db)
+				.list()
 				.map((b) => b.hash)
 				.sort()
 		).toEqual(["mid", "new"]);
@@ -282,14 +283,14 @@ describe("warden gc: build cache prune (17-11)", () => {
 		await seed(c, "old", 100, NOW - 31 * MIN);
 		await seed(c, "hot", 100, NOW - 29 * MIN);
 		expect(await gcCommand.run(c)).toBe(0);
-		expect(listBuilds(c.db).map((b) => b.hash)).toEqual(["hot"]);
+		expect(new BuildsTable(c.db).list().map((b) => b.hash)).toEqual(["hot"]);
 	});
 
 	test("under the default 20 GB cap nothing is pruned and nothing is reported", async () => {
 		const c = setup(["--json"], []);
 		await seed(c, "a", 100, 1);
 		expect(await gcCommand.run(c)).toBe(0);
-		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(new BuildsTable(c.db).list()).toHaveLength(1);
 		expect(JSON.parse(c.stdout.join("\n")).notes.join("\n")).not.toContain("pruned");
 	});
 
@@ -297,14 +298,14 @@ describe("warden gc: build cache prune (17-11)", () => {
 		const c = setup(["--quiet", "--max-cache-size", "0"], []);
 		await seed(c, "a", 100, 1);
 		expect(await gcCommand.run(c)).toBe(0);
-		expect(listBuilds(c.db)).toEqual([]);
+		expect(new BuildsTable(c.db).list()).toEqual([]);
 	});
 
 	test("a bad --max-cache-size → exit 1, nothing pruned", async () => {
 		const c = setup(["--max-cache-size", "lots"], []);
 		await seed(c, "a", 100, 1);
 		expect(await gcCommand.run(c)).toBe(1);
-		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(new BuildsTable(c.db).list()).toHaveLength(1);
 	});
 
 	test("a bad WARDEN_MAX_CACHE_SIZE skips only the prune, with a note: leases and idle devices are still handled (R5)", async () => {
@@ -312,7 +313,7 @@ describe("warden gc: build cache prune (17-11)", () => {
 		c.env.WARDEN_MAX_CACHE_SIZE = "20GBs";
 		await seed(c, "a", 100, 1);
 		expect(await gcCommand.run(c)).toBe(0);
-		expect(listBuilds(c.db)).toHaveLength(1);
+		expect(new BuildsTable(c.db).list()).toHaveLength(1);
 		const out = JSON.parse(c.stdout.join("\n"));
 		gcJsonSchema.parse(out);
 		expect(out.reclaimed).toHaveLength(1);

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { activeConditions } from "../conditions/conditions";
 import { getProxyStatus } from "./control";
@@ -20,7 +20,7 @@ const spawned: number[] = [];
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-netproxy-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	leaseId = store.insertLease(
 		{ resource: { kind: "device", platform: "android", id: "emulator-5554", name: "emu" }, owner, ttlMs: 60_000 },
 		Date.now()
@@ -53,7 +53,7 @@ describe("ensureLeaseProxy", () => {
 		spawned.push(result.data.handle.pid);
 		const { handle, portLeaseId } = result.data;
 		expect(result.data.reused).toBe(false);
-		expect(processAlive(handle.pid)).toBe(true);
+		expect(liveness.processAlive(handle.pid)).toBe(true);
 		expect(handle.pid).not.toBe(process.pid);
 
 		const portLease = store.getLease(portLeaseId);
@@ -98,8 +98,8 @@ describe("ensureLeaseProxy", () => {
 		const { handle, portLeaseId } = result.data;
 		spawned.push(handle.pid);
 		expect(await releaseLeaseProxy(deps, leaseId)).toBe(true);
-		for (let i = 0; i < 40 && processAlive(handle.pid); i++) await Bun.sleep(25);
-		expect(processAlive(handle.pid)).toBe(false);
+		for (let i = 0; i < 40 && liveness.processAlive(handle.pid); i++) await Bun.sleep(25);
+		expect(liveness.processAlive(handle.pid)).toBe(false);
 		expect(store.getLease(portLeaseId)).toBeUndefined();
 		expect(existsSync(handlePath(leaseId, deps.env))).toBe(false);
 		expect(await releaseLeaseProxy(deps, leaseId)).toBe(false);

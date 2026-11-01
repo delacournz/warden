@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { wardenHome } from "@delacour/warden-store/store";
+import { liveness } from "@delacour/warden-store/liveness";
+import { storeLocator } from "@delacour/warden-store/store";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /**
@@ -68,7 +68,7 @@ export type DevSessionQuery = { udid?: string; projectRoot?: string };
 
 type Env = Record<string, string | undefined>;
 
-const defaultDeps: DevSessionDeps = { isAlive: processAlive };
+const defaultDeps: DevSessionDeps = { isAlive: liveness.processAlive };
 
 const sessionError = (code: DevSessionErrorCode, message: string, hint?: string): DevSessionError => ({
 	code,
@@ -78,7 +78,7 @@ const sessionError = (code: DevSessionErrorCode, message: string, hint?: string)
 
 /** `<WARDEN_HOME>/dev`, the parent of every session directory. */
 export function devSessionsDir(env: Env): string {
-	return join(wardenHome(env), "dev");
+	return join(storeLocator.wardenHome(env), "dev");
 }
 
 /** `<WARDEN_HOME>/dev/<leaseId>/session.json` */

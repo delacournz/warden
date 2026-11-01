@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { type Store, wardenHome } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { z } from "zod";
 
 /**
@@ -37,12 +37,12 @@ export type HelperStateHost = {
 
 /** `$WARDEN_HOME/ui/<udid>`: everything `warden ui` remembers about one device between invocations. */
 function deviceDir(host: Pick<HelperStateHost, "env">, udid: string): string {
-	return join(wardenHome(host.env), "ui", udid);
+	return join(storeLocator.wardenHome(host.env), "ui", udid);
 }
 
 /** `$WARDEN_HOME/simd`: the resident `warden-simd` helpers' sockets and logs. */
 export function simdDir(host: Pick<HelperStateHost, "env">): string {
-	return join(wardenHome(host.env), "simd");
+	return join(storeLocator.wardenHome(host.env), "simd");
 }
 
 function readRaw(path: string): Record<string, unknown> {
@@ -106,7 +106,7 @@ export function knownUdids(host: Pick<HelperStateHost, "env">): string[] {
 	if (existsSync(sockets)) {
 		for (const name of readdirSync(sockets)) if (name.endsWith(".sock")) udids.add(basename(name, ".sock"));
 	}
-	const root = join(wardenHome(host.env), "ui");
+	const root = join(storeLocator.wardenHome(host.env), "ui");
 	if (existsSync(root)) for (const name of readdirSync(root)) udids.add(name);
 	return [...udids];
 }

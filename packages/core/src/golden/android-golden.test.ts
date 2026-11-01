@@ -11,7 +11,7 @@ import {
 } from "@delacour/warden-providers/android";
 import { STAY_AWAKE_COMMAND } from "@delacour/warden-providers/android-keyguard";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import {
@@ -82,7 +82,7 @@ beforeEach(() => {
 		"ro.build.fingerprint=google/sdk_gphone64_arm64/emu64a:16/BP22/1:userdebug/dev-keys\n"
 	);
 	writeAvd("Pixel_10");
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {

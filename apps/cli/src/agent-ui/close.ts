@@ -1,5 +1,5 @@
 import { releaseDevices } from "@delacour/warden-leasing/device-lease";
-import { isPhysicalIosId, type Lease } from "@delacour/warden-store/types";
+import { type Lease, leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import { releaseAfter } from "../perf/release-after";
@@ -27,7 +27,7 @@ export function stopperFor(
 	device: UiDevice
 ): (host: Parameters<typeof stopHelper>[0], id: string) => ReturnType<typeof stopHelper> {
 	if (device.platform === "android") return stopAndroidHost;
-	return isPhysicalIosId(device.udid) ? stopIosRunner : stopHelper;
+	return leaseModel.isPhysicalIosId(device.udid) ? stopIosRunner : stopHelper;
 }
 
 /** Release the lease (its `after` stops the helper) or just stop the helper. */

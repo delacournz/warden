@@ -5,8 +5,8 @@ import { createAndroidProvider } from "@delacour/warden-providers/android";
 import { createIosProvider } from "@delacour/warden-providers/ios";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { WardenLogEvent } from "@delacour/warden-types/host";
 import type { HostFacts } from "../host";
 import type { LeaseHost } from "../lease-host";
@@ -27,7 +27,7 @@ export type TestLeaseHost = LeaseHost & {
 /** A temp-store lease host with captured log events and plain (golden-free) providers. Call `cleanup()` in afterEach. */
 export function testLeaseHost(overrides: Partial<LeaseHost> = {}): TestLeaseHost {
 	const dir = mkdtempSync(join(tmpdir(), "warden-lease-host-"));
-	const db = openStore(join(dir, "warden.db"));
+	const db = storeLocator.open(join(dir, "warden.db"));
 	const events: WardenLogEvent[] = [];
 	const stopped: string[] = [];
 	const exec: Exec = async () => ({ exitCode: 0, stdout: "", stderr: "" });
@@ -38,7 +38,7 @@ export function testLeaseHost(overrides: Partial<LeaseHost> = {}): TestLeaseHost
 		now: () => 1_000_000,
 		exec,
 		sleep: async () => {},
-		pidAlive: processAlive,
+		pidAlive: liveness.processAlive,
 		log: (event) => events.push(event),
 		store: () => db,
 		git: createGitFactsCache(),

@@ -1,8 +1,8 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
-import { MIGRATIONS, wardenHome } from "@delacour/warden-store/store";
+import { liveness } from "@delacour/warden-store/liveness";
+import { MIGRATIONS, storeLocator } from "@delacour/warden-store/store";
 import { type Command, defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { codexDetected } from "../hooks/agents";
@@ -174,7 +174,7 @@ function staleLeases(ctx: CommandContext): Probe {
 	return attempt(() => {
 		const now = ctx.now();
 		const leases = ctx.store().listLeases();
-		const stale = leases.filter((l) => !isLeaseAlive(l, now, processAlive)).length;
+		const stale = leases.filter((l) => !liveness.isLeaseAlive(l, now, liveness.processAlive)).length;
 		if (stale === 0) return { ok: true, detail: `${leases.length} active` };
 		return { ok: false, detail: `${stale} stale lease${stale === 1 ? "" : "s"} — run \`warden gc\`` };
 	});
@@ -219,7 +219,7 @@ export async function runChecks(ctx: CommandContext, helper: HelperDeps = realHe
 		physicalChecks(ctx),
 	]);
 	return [
-		check("home", "core", homeWritable(wardenHome(ctx.env))),
+		check("home", "core", homeWritable(storeLocator.wardenHome(ctx.env))),
 		check("db", "core", dbSchema(ctx)),
 		check("simctl", "optional", simctl),
 		...xcode,
@@ -281,7 +281,7 @@ async function doctor(
 			platform: deps.helper.platform,
 			arch: deps.helper.arch,
 			version: deps.helper.version,
-			wardenHome: wardenHome(ctx.env),
+			wardenHome: storeLocator.wardenHome(ctx.env),
 		});
 		if (!result.success) {
 			ctx.err(color.red(`warden doctor: --fetch-helper: ${result.error}`));

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PENDING_PREFIX } from "@delacour/warden-leasing/claim";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner } from "@delacour/warden-store/types";
 import { recordCondition } from "./conditions";
 import { orphanConditions, orphanedDevices, undoOrphans } from "./orphans";
@@ -48,7 +48,7 @@ function lease(platform: "ios" | "android", id: string, resourceId = id): Lease 
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-orphans-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	calls = [];
 	proxied = [];
 	fail = () => false;

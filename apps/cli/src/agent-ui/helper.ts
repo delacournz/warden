@@ -18,16 +18,10 @@ import type { Driver, DriverError } from "@delacour/warden-driver/driver.types";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import { resolveHelper } from "@delacour/warden-driver-ios/locate-helper";
 import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
-import { installedBundleIds } from "@delacour/warden-store/builds-table";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
-import {
-	mayBeRecorded,
-	type ProcessCommand,
-	processCommand,
-	recordedIdentity,
-	safeToSignal,
-} from "@delacour/warden-store/process-identity";
-import { type Store, wardenHome } from "@delacour/warden-store/store";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
+import { type ProcessCommand, processCommand, processIdentity } from "@delacour/warden-store/process-identity";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -237,7 +231,7 @@ export const defaultHelperDeps: HelperDeps<SimdClient> = {
 			closeSync(log);
 		}
 	},
-	pidAlive: processAlive,
+	pidAlive: liveness.processAlive,
 	kill: (pid, signal) => {
 		try {
 			process.kill(pid, signal);
@@ -282,7 +276,7 @@ export function socketPathFor(host: Pick<CommandContext, "env">, udid: string): 
 export function socketPathOf(kind: HelperKind, host: Pick<CommandContext, "env">, id: string): string {
 	const preferred = join(kind.dir(host), `${fsSafeId(id)}.sock`);
 	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
-	const tag = Bun.hash(wardenHome(host.env)).toString(36).slice(0, 8);
+	const tag = Bun.hash(storeLocator.wardenHome(host.env)).toString(36).slice(0, 8);
 	// the id's own hash, not just its first 8 characters: `192.168.*` / `adb-*` serials share those
 	const idTag = `${id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8)}${id.length > 8 ? `-${Bun.hash(id).toString(36).slice(0, 8)}` : ""}`;
 	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `${kind.socketTag}-${tag}-${idTag}.sock`);
@@ -623,7 +617,7 @@ function locateHelperBinary(
 		exec: async () => ({ exitCode: 1, stdout: "", stderr: "" }),
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
 		env: { simd: host.env.WARDEN_SIMD, simdSocket: undefined, helperDir: host.env.WARDEN_HELPER_DIR },
-		wardenHome: wardenHome(host.env),
+		wardenHome: storeLocator.wardenHome(host.env),
 		...(deps.exists ? { exists: deps.exists } : {}),
 	});
 }
@@ -684,7 +678,7 @@ function spawnHelper(
 	if (
 		previous?.socket === socketPath &&
 		previous.pid !== stopped &&
-		mayBeRecorded(deps, previous.pid, kind.marks(udid, socketPath))
+		processIdentity.mayBeRecorded(deps, previous.pid, kind.marks(udid, socketPath))
 	) {
 		return unavailable(`${kind.label} (pid ${previous.pid}) is still running for ${udid}; not starting a second one`);
 	}
@@ -817,7 +811,7 @@ function liveRecordedPid<C extends HelperClient>(a: Attempt<C>): number | undefi
 	const record = readState(a.host, a.udid)[a.kind.field];
 	return record !== undefined &&
 		record.socket === a.socketPath &&
-		mayBeRecorded(a.deps, record.pid, a.kind.marks(a.udid, record.socket))
+		processIdentity.mayBeRecorded(a.deps, record.pid, a.kind.marks(a.udid, record.socket))
 		? record.pid
 		: undefined;
 }
@@ -1109,7 +1103,8 @@ async function shutDown<C extends HelperClient>(
 	if (await waitUntil(target.gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps)) {
 		return "shutdown";
 	}
-	if (target.pid !== undefined && safeToSignal(deps, target.pid, target.marks)) deps.kill(target.pid, "SIGTERM");
+	if (target.pid !== undefined && processIdentity.safeToSignal(deps, target.pid, target.marks))
+		deps.kill(target.pid, "SIGTERM");
 	await waitUntil(target.gone, KILL_WAIT_MS, deps);
 	return "sigterm";
 }
@@ -1129,14 +1124,14 @@ async function stopRecorded<C extends HelperClient>(
 	const marks = kind.marks(udid, record?.socket ?? socketPath);
 	// alive but its command line unreadable: it may still be the helper, so it is neither signalled nor forgotten,
 	// whether or not its socket file is there (no socket file must not read as "already gone")
-	if (record !== undefined && recordedIdentity(deps, record.pid, marks) === "unknown") {
+	if (record !== undefined && processIdentity.recordedIdentity(deps, record.pid, marks) === "unknown") {
 		return {
 			stopped: false,
 			how: "none",
 			warning: `could not stop ${kind.label} (pid ${record.pid}): its command line could not be read, so it was left running`,
 		};
 	}
-	const ours = record !== undefined && mayBeRecorded(deps, record.pid, marks);
+	const ours = record !== undefined && processIdentity.mayBeRecorded(deps, record.pid, marks);
 	const running = found !== undefined || ours;
 	if (!running) {
 		forgetRecorded(host, kind, udid, record);
@@ -1180,7 +1175,7 @@ export function helperStatus(
 ): HelperStatus {
 	const record = readState(host, udid)[kind.field];
 	if (record === undefined) return { running: false, pid: null, socket: null };
-	const alive = mayBeRecorded(deps, record.pid, kind.marks(udid, record.socket));
+	const alive = processIdentity.mayBeRecorded(deps, record.pid, kind.marks(udid, record.socket));
 	return { running: alive && existsSync(record.socket), pid: record.pid, socket: record.socket };
 }
 
@@ -1308,7 +1303,7 @@ export async function connectIosRunner(
 		...(client ? { client } : {}),
 		...(bundleId ? { bundleId } : {}),
 		...(appPath ? { appPath } : {}),
-		ownedBundles: installedBundleIds(ctx.store(), "ios", udid),
+		ownedBundles: new BuildsTable(ctx.store()).installedBundleIds("ios", udid),
 		now: ctx.now,
 	});
 	if (driver.success) return driver;

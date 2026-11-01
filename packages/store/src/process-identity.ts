@@ -10,74 +10,81 @@ export type PidIdentity = { pidAlive: PidAlive; command?: ProcessCommand | undef
 /** Where `ps` lives (macOS and Linux: `/bin/ps`; some Linux: `/usr/bin/ps`), so no lookup depends on the caller's PATH. */
 const PS_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
 
-/**
- * `ps -ww -o command= -p <pid>`: the full, untruncated command line of `pid`, run by absolute path. Without a usable
- * `ps`, Linux's `/proc/<pid>/cmdline` (NUL-separated argv) is read instead.
- */
-export const processCommand: ProcessCommand = (pid) => processCommandVia(PS_PATHS)(pid);
+type Identity = "match" | "mismatch" | "unknown";
 
-/** `processCommand` over the given `ps` paths; a `ps` that fails or prints nothing falls through to the next way. */
-export function processCommandVia(psPaths: readonly string[]): ProcessCommand {
-	return (pid) => {
-		for (const ps of psPaths) {
-			if (!existsSync(ps)) continue;
-			try {
-				const run = Bun.spawnSync([ps, "-ww", "-o", "command=", "-p", String(pid)], {
-					stdout: "pipe",
-					stderr: "ignore",
-				});
-				const text = run.exitCode === 0 ? run.stdout.toString().trim() : "";
-				if (text !== "") return text;
-			} catch {
-				// try the next way
+/** Reads and checks the identity of recorded pids (liveness plus command-line marks). */
+export class ProcessIdentity {
+	/**
+	 * `ps -ww -o command= -p <pid>`: the full, untruncated command line of `pid`, run by absolute path. Without a usable
+	 * `ps`, Linux's `/proc/<pid>/cmdline` (NUL-separated argv) is read instead.
+	 */
+	readonly command: ProcessCommand = (pid) => this.commandVia(PS_PATHS)(pid);
+
+	/** `processCommand` over the given `ps` paths; a `ps` that fails or prints nothing falls through to the next way. */
+	commandVia(psPaths: readonly string[]): ProcessCommand {
+		return (pid) => {
+			for (const ps of psPaths) {
+				if (!existsSync(ps)) continue;
+				try {
+					const run = Bun.spawnSync([ps, "-ww", "-o", "command=", "-p", String(pid)], {
+						stdout: "pipe",
+						stderr: "ignore",
+					});
+					const text = run.exitCode === 0 ? run.stdout.toString().trim() : "";
+					if (text !== "") return text;
+				} catch {
+					// try the next way
+				}
 			}
-		}
-		return procCommand(pid);
-	};
-}
+			return this.procCommand(pid);
+		};
+	}
 
-function procCommand(pid: number): string | undefined {
-	try {
-		const text = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").join(" ").trim();
-		return text === "" ? undefined : text;
-	} catch {
-		return undefined;
+	private procCommand(pid: number): string | undefined {
+		try {
+			const text = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").join(" ").trim();
+			return text === "" ? undefined : text;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * What a recorded `pid` is now: `gone` (dead), `match` (alive and its command line carries every one of `marks`, or
+	 * alive with no `command` reader), `mismatch` (alive, reused by another program) or `unknown` (alive, command line
+	 * unreadable). A stop path keeps the record of an `unknown` pid: it may still be the process warden started.
+	 */
+	recordedIdentity(id: PidIdentity, pid: number, marks: readonly string[]): "gone" | Identity {
+		if (!id.pidAlive(pid)) return "gone";
+		return id.command === undefined ? "match" : this.identify(id, pid, marks);
+	}
+
+	private identify(id: PidIdentity, pid: number, marks: readonly string[]): Identity {
+		if (id.command === undefined) return "unknown";
+		const command = id.command(pid);
+		if (command === undefined) return "unknown";
+		return marks.every((mark) => command.includes(mark)) ? "match" : "mismatch";
+	}
+
+	/**
+	 * Whether `pid` may be signalled as the process warden recorded: it is alive and its command line carries every one of
+	 * `marks` (the argv warden started it with). A pid reused by another process, or one whose command line cannot be read,
+	 * is never signalled (foreign = read-only). Without a `command` reader (test fakes) liveness alone decides.
+	 */
+	safeToSignal(id: PidIdentity, pid: number, marks: readonly string[]): boolean {
+		return id.pidAlive(pid) && (id.command === undefined || this.identify(id, pid, marks) === "match");
+	}
+
+	/**
+	 * Whether the recorded `pid` may still be the process warden started: alive, and not known to be something else. An
+	 * unreadable command line counts as maybe (so a caller never starts a second helper or recorder beside a live one);
+	 * a definite mismatch (a reused pid) counts as gone.
+	 */
+	mayBeRecorded(id: PidIdentity, pid: number, marks: readonly string[]): boolean {
+		return id.pidAlive(pid) && this.identify(id, pid, marks) !== "mismatch";
 	}
 }
 
-type Identity = "match" | "mismatch" | "unknown";
+export const processIdentity = new ProcessIdentity();
 
-/**
- * What a recorded `pid` is now: `gone` (dead), `match` (alive and its command line carries every one of `marks`, or
- * alive with no `command` reader), `mismatch` (alive, reused by another program) or `unknown` (alive, command line
- * unreadable). A stop path keeps the record of an `unknown` pid: it may still be the process warden started.
- */
-export function recordedIdentity(id: PidIdentity, pid: number, marks: readonly string[]): "gone" | Identity {
-	if (!id.pidAlive(pid)) return "gone";
-	return id.command === undefined ? "match" : identify(id, pid, marks);
-}
-
-function identify(id: PidIdentity, pid: number, marks: readonly string[]): Identity {
-	if (id.command === undefined) return "unknown";
-	const command = id.command(pid);
-	if (command === undefined) return "unknown";
-	return marks.every((mark) => command.includes(mark)) ? "match" : "mismatch";
-}
-
-/**
- * Whether `pid` may be signalled as the process warden recorded: it is alive and its command line carries every one of
- * `marks` (the argv warden started it with). A pid reused by another process, or one whose command line cannot be read,
- * is never signalled (foreign = read-only). Without a `command` reader (test fakes) liveness alone decides.
- */
-export function safeToSignal(id: PidIdentity, pid: number, marks: readonly string[]): boolean {
-	return id.pidAlive(pid) && (id.command === undefined || identify(id, pid, marks) === "match");
-}
-
-/**
- * Whether the recorded `pid` may still be the process warden started: alive, and not known to be something else. An
- * unreadable command line counts as maybe (so a caller never starts a second helper or recorder beside a live one);
- * a definite mismatch (a reused pid) counts as gone.
- */
-export function mayBeRecorded(id: PidIdentity, pid: number, marks: readonly string[]): boolean {
-	return id.pidAlive(pid) && identify(id, pid, marks) !== "mismatch";
-}
+export const processCommand: ProcessCommand = processIdentity.command;

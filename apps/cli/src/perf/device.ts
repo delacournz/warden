@@ -1,7 +1,7 @@
 import { ensureCallerLease } from "@delacour/warden-leasing/device-lease";
 import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
-import { isLeaseAlive, type PidAlive, processAlive } from "@delacour/warden-store/liveness";
-import { describeOwner, type Lease, type Owner, type Platform, sameOwner } from "@delacour/warden-store/types";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
+import { type Lease, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { UiDeviceFlags, UiDeviceSource } from "../agent-ui/device";
 import { type UiDeviceInfo, type UiError, uiError } from "../agent-ui/output";
@@ -49,7 +49,7 @@ export type PerfDeviceDeps = {
 };
 
 export const defaultPerfDeviceDeps: PerfDeviceDeps = {
-	pidAlive: processAlive,
+	pidAlive: liveness.processAlive,
 	booted: async (ctx) => {
 		const { providerFor } = await import("@delacour/warden-core/host-deps");
 		const { appHostFromContext } = await import("../context");
@@ -112,12 +112,12 @@ function knownDevices(ctx: CommandContext): Known[] {
 
 function liveLease(ctx: CommandContext, deps: PerfDeviceDeps, platform: Platform, id: string): Lease | undefined {
 	const lease = ctx.store().findLeaseByResource({ kind: "device", platform, id, name: id });
-	return lease && isLeaseAlive(lease, ctx.now(), deps.pidAlive) ? lease : undefined;
+	return lease && liveness.isLeaseAlive(lease, ctx.now(), deps.pidAlive) ? lease : undefined;
 }
 
 function holderOf(lease: Lease | undefined, owner: Owner): string | undefined {
-	if (lease === undefined || sameOwner(lease.owner, owner)) return undefined;
-	return `${describeOwner(lease.owner)}${lease.label ? ` (${lease.label})` : ""}`;
+	if (lease === undefined || leaseModel.sameOwner(lease.owner, owner)) return undefined;
+	return `${leaseModel.describeOwner(lease.owner)}${lease.label ? ` (${lease.label})` : ""}`;
 }
 
 /** Booted devices that are warden's (known to the store), optionally of one platform. */
@@ -305,7 +305,10 @@ export async function resolvePerfDevice(
 		mode,
 	} as const;
 	if (mode === "observe") {
-		return resultFactory.ok({ ...base, ownedByCaller: lease !== undefined && sameOwner(lease.owner, owner) });
+		return resultFactory.ok({
+			...base,
+			ownedByCaller: lease !== undefined && leaseModel.sameOwner(lease.owner, owner),
+		});
 	}
 	const mutable = leaseForMutation(ctx, deps, owner, flags, device);
 	if (!mutable.success) return mutable;

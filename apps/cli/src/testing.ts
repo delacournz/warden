@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { HostFacts } from "@delacour/warden-leasing/host";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { Chalk } from "chalk";
 import type { CommandContext } from "./context";
 import type { Choice, Spinner, Ui } from "./ui";
@@ -79,7 +79,7 @@ export type TestContext = CommandContext & {
 /** Temp-store command context with captured output. Call `cleanup()` in afterEach. */
 export function testContext(argv: string[], overrides: Partial<CommandContext> = {}): TestContext {
 	const dir = mkdtempSync(join(tmpdir(), "warden-cli-"));
-	const db = openStore(join(dir, "warden.db"));
+	const db = storeLocator.open(join(dir, "warden.db"));
 	const stdout: string[] = [];
 	const stderr: string[] = [];
 	const exec: Exec = async () => ({ exitCode: 0, stdout: "", stderr: "" });

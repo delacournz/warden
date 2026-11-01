@@ -15,8 +15,8 @@ import {
 } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { GoldenDeps } from "@delacour/warden-core/golden/ios-golden";
 import { splitBiometricProfile } from "@delacour/warden-providers/biometrics";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { type Owner, profileSlug } from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "./context";
 
@@ -31,7 +31,7 @@ export function goldenDeps(ctx: CommandContext, owner: Owner, sleep: Sleep = Bun
 		pid: process.pid,
 		env: ctx.env,
 		now: ctx.now,
-		pidAlive: processAlive,
+		pidAlive: liveness.processAlive,
 		sleep,
 		log: (line) => ctx.err(`warden ${line}`),
 	};
@@ -120,7 +120,7 @@ export async function androidSnapshotPass(
 	}
 	const notes = givenUp.map(
 		(avd) =>
-			`android snapshot of ${avd} does not load on this host: gc no longer rebuilds it (warden golden ensure --platform android --profile ${profileSlug(avd)} does)`
+			`android snapshot of ${avd} does not load on this host: gc no longer rebuilds it (warden golden ensure --platform android --profile ${leaseModel.profileSlug(avd)} does)`
 	);
 	if (!due) return notes;
 	const pass: Result<SnapshotPass> = await build(androidGoldenDeps(ctx, owner));

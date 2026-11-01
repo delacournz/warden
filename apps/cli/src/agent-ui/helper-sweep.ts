@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { CommandContext } from "../context";
 import { androidHostDir, iosRunnerDir, simdDir, uiDir, uiRoot } from "./paths";
 
@@ -39,7 +39,10 @@ export function knownUdids(host: Pick<CommandContext, "env">): string[] {
 }
 
 /** Devices whose `state.json` records a helper pid that no longer runs (plain file reads: no schema, no driver). */
-export function findDeadHelpers(host: Pick<CommandContext, "env">, pidAlive: PidAlive = processAlive): string[] {
+export function findDeadHelpers(
+	host: Pick<CommandContext, "env">,
+	pidAlive: PidAlive = liveness.processAlive
+): string[] {
 	return knownUdids(host).filter((udid) =>
 		(["helper", "androidHost", "iosRunner"] as const).some((field) => {
 			const pid = recordedPid(host, udid, field);
@@ -59,7 +62,7 @@ export type SweepDeps = {
  * (the e2e iOS driver, its wire schemas and zod) is imported only when one names a helper that is gone.
  */
 export async function sweepDeadHelpersLazily(host: Host, deps: SweepDeps = {}): Promise<string[]> {
-	const pidAlive = deps.pidAlive ?? processAlive;
+	const pidAlive = deps.pidAlive ?? liveness.processAlive;
 	if (findDeadHelpers(host, pidAlive).length === 0) return [];
 	const { sweepDeadHelpers } = await (deps.load ?? (() => import("./helper")))();
 	return sweepDeadHelpers(host, { pidAlive });

@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getInstall, listBuilds, recordInstall } from "./builds-table";
-import { MIGRATIONS, openStore, QUEUE_TTL_MS, type Store, wardenHome } from "./store";
+import { BuildsTable } from "./builds-table";
+import { MIGRATIONS, QUEUE_TTL_MS, type Store, storeLocator } from "./store";
 import type { Owner, QueueEntry } from "./types";
 
 let dir: string;
@@ -13,7 +13,7 @@ const owner: Owner = { kind: "agent", sessionId: "s1", cwd: "/tmp" };
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-store-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {
@@ -23,8 +23,8 @@ afterEach(() => {
 
 describe("wardenHome", () => {
 	test("WARDEN_HOME overrides ~/.warden", () => {
-		expect(wardenHome({ WARDEN_HOME: "/x" })).toBe("/x");
-		expect(wardenHome({ HOME: "/home/me" })).toBe("/home/me/.warden");
+		expect(storeLocator.wardenHome({ WARDEN_HOME: "/x" })).toBe("/x");
+		expect(storeLocator.wardenHome({ HOME: "/home/me" })).toBe("/home/me/.warden");
 	});
 });
 
@@ -160,7 +160,7 @@ describe("devices", () => {
 describe("concurrency", () => {
 	test("concurrent claim processes never receive the same port", async () => {
 		const dbPath = join(dir, "race.db");
-		openStore(dbPath).close();
+		storeLocator.open(dbPath).close();
 		const script = join(import.meta.dir, "store.race-fixture.ts");
 		const procs = Array.from({ length: 6 }, () =>
 			Bun.spawn(["bun", script, dbPath], { stdout: "pipe", stderr: "inherit" })
@@ -183,7 +183,7 @@ describe("reclaim versus heartbeat", () => {
 
 	test("a dead-pid supervised lease is never reclaimed while another process keeps heartbeating it", async () => {
 		const dbPath = join(dir, "hb-race.db");
-		const local = openStore(dbPath);
+		const local = storeLocator.open(dbPath);
 		const lease = local.insertLease({ resource: { kind: "port", port: 1 }, owner, ttlMs: 60_000, pid: 7 }, Date.now());
 		const proc = holder(dbPath, lease.id, { periodMs: 100, everyMs: 10, beats: 30 });
 		const reclaimed: string[] = [];
@@ -208,7 +208,7 @@ describe("reclaim versus heartbeat", () => {
 
 	test("once reclaimed, the holder's next heartbeat updates nothing and does not bring the lease back", async () => {
 		const dbPath = join(dir, "hb-lost.db");
-		const local = openStore(dbPath);
+		const local = storeLocator.open(dbPath);
 		const lease = local.insertLease({ resource: { kind: "port", port: 1 }, owner, ttlMs: 60_000, pid: 7 }, Date.now());
 		const proc = holder(dbPath, lease.id, { periodMs: 100, everyMs: 10, beats: 2_000 });
 		while (local.getLease(lease.id)?.heartbeatMs === undefined) await Bun.sleep(5);
@@ -257,7 +257,7 @@ describe("device quarantine + slim state", () => {
 		db.exec("PRAGMA user_version = 3");
 		db.exec("INSERT INTO devices VALUES ('ios', 'U9', 'warden-iphone-17-9', 'iphone-17', NULL, 1, 1)");
 		db.close();
-		const migrated = openStore(old);
+		const migrated = storeLocator.open(old);
 		expect(migrated.listDevices()[0]).toMatchObject({ id: "U9" });
 		migrated.quarantineDevice(dev, "x", 2);
 		expect(migrated.listDevices().find((d) => d.id === "U1")?.quarantinedAt).toBe(2);
@@ -276,7 +276,7 @@ describe("lease heartbeat period migration", () => {
 			 VALUES ('l_old', 'port:1', '{"kind":"port","port":1}', 'agent:s1', '{"kind":"agent","sessionId":"s1","cwd":"/tmp"}', NULL, 0, 0, 60000, 7)`
 		);
 		db.close();
-		const migrated = openStore(old);
+		const migrated = storeLocator.open(old);
 		const column = migrated.db
 			.query<{ name: string; notnull: number }, []>("PRAGMA table_info(leases)")
 			.all()
@@ -298,7 +298,7 @@ describe("build kinds migration", () => {
 		db.exec(`PRAGMA user_version = ${beforeKinds}`);
 		db.exec("INSERT INTO builds VALUES ('k', 'ios', 'p', 'H', '/c/H/A.app', 'build', 5, 1, 2)");
 		db.close();
-		const migrated = openStore(old);
+		const migrated = storeLocator.open(old);
 		const columns = migrated.db
 			.query<{ name: string }, []>("PRAGMA table_info(builds)")
 			.all()
@@ -326,7 +326,7 @@ describe("build kinds migration", () => {
 			worktree: null,
 			branch: null,
 		});
-		expect(listBuilds(migrated)).toEqual([
+		expect(new BuildsTable(migrated).list()).toEqual([
 			{
 				projectKey: "k",
 				platform: "ios",
@@ -350,7 +350,7 @@ describe("fingerprints memo migration (17-5)", () => {
 		for (const sql of MIGRATIONS.slice(0, 5)) db.exec(sql);
 		db.exec("PRAGMA user_version = 5");
 		db.close();
-		const migrated = openStore(old);
+		const migrated = storeLocator.open(old);
 		const columns = migrated.db
 			.query<{ name: string }, []>("PRAGMA table_info(fingerprints)")
 			.all()
@@ -368,15 +368,15 @@ describe("installs identity migration (17-7)", () => {
 		db.exec("PRAGMA user_version = 6");
 		db.exec("INSERT INTO installs VALUES ('ios', 'U1', 'com.x', 'H', 1)");
 		db.close();
-		const migrated = openStore(old);
-		expect(getInstall(migrated, "ios", "U1", "com.x")).toEqual({
+		const migrated = storeLocator.open(old);
+		expect(new BuildsTable(migrated).getInstall("ios", "U1", "com.x")).toEqual({
 			platform: "ios",
 			deviceId: "U1",
 			bundleId: "com.x",
 			hash: "H",
 			installedAt: 1,
 		});
-		recordInstall(migrated, {
+		new BuildsTable(migrated).recordInstall({
 			platform: "ios",
 			deviceId: "U1",
 			bundleId: "com.x",
@@ -385,9 +385,18 @@ describe("installs identity migration (17-7)", () => {
 			container: "/c/App.app",
 			exeStamp: "1:2",
 		});
-		expect(getInstall(migrated, "ios", "U1", "com.x")).toMatchObject({ container: "/c/App.app", exeStamp: "1:2" });
-		recordInstall(migrated, { platform: "ios", deviceId: "U1", bundleId: "com.x", hash: "H3", installedAt: 3 });
-		expect(getInstall(migrated, "ios", "U1", "com.x")?.container).toBeUndefined();
+		expect(new BuildsTable(migrated).getInstall("ios", "U1", "com.x")).toMatchObject({
+			container: "/c/App.app",
+			exeStamp: "1:2",
+		});
+		new BuildsTable(migrated).recordInstall({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x",
+			hash: "H3",
+			installedAt: 3,
+		});
+		expect(new BuildsTable(migrated).getInstall("ios", "U1", "com.x")?.container).toBeUndefined();
 		migrated.close();
 	});
 });
@@ -524,7 +533,7 @@ describe("boot queue", () => {
 		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
 		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
 		db.close();
-		const migrated = openStore(old);
+		const migrated = storeLocator.open(old);
 		const lease = migrated.insertLease({ resource: { kind: "port", port: 9003 }, owner, ttlMs: 1000 }, 0);
 		migrated.setLeaseProvider([lease.id], "farm");
 		expect(migrated.getLease(lease.id)?.provider).toBe("farm");
@@ -538,7 +547,7 @@ describe("boot queue", () => {
 		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
 		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
 		db.close();
-		const migrated = openStore(old);
+		const migrated = storeLocator.open(old);
 		expect(migrated.listQueue()).toEqual([]);
 		migrated.enqueue(newEntry("q1", 1));
 		expect(migrated.listQueue()).toHaveLength(1);
@@ -551,7 +560,7 @@ describe("boot queue", () => {
 		for (const sql of MIGRATIONS.slice(0, -1)) db.exec(sql);
 		db.exec(`PRAGMA user_version = ${MIGRATIONS.length - 1}`);
 		db.close();
-		const migrated = openStore(old);
+		const migrated = storeLocator.open(old);
 		const lease = migrated.insertLease(
 			{
 				resource: { kind: "device", platform: "ios", id: "U1", name: "n" },
@@ -572,13 +581,13 @@ describe("boot queue", () => {
 
 	test("concurrent enqueues from many processes all land", async () => {
 		const dbPath = join(dir, "queue-race.db");
-		openStore(dbPath).close();
+		storeLocator.open(dbPath).close();
 		const script = join(import.meta.dir, "queue.race-fixture.ts");
 		const procs = Array.from({ length: 6 }, (_, i) =>
 			Bun.spawn(["bun", script, dbPath, `r${i}`], { stdout: "pipe", stderr: "inherit" })
 		);
 		expect(await Promise.all(procs.map((p) => p.exited))).toEqual([0, 0, 0, 0, 0, 0]);
-		const local = openStore(dbPath);
+		const local = storeLocator.open(dbPath);
 		expect(
 			local
 				.listQueue()

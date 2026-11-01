@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type BuildLockDeps, buildLockKey, buildTreeLockKey, liveBuildLocks, withBuildLock } from "./lock";
@@ -15,7 +15,7 @@ const other: Owner = { kind: "agent", sessionId: "other", cwd: "/" };
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-lock-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 afterEach(() => {
 	store.close();
@@ -127,7 +127,7 @@ describe("build-lock race (two processes)", () => {
 		const home = join(dir, "home");
 		const counter = join(dir, "downloads.txt");
 		writeFileSync(counter, "");
-		openStore(join(home, "warden.db")).close();
+		storeLocator.open(join(home, "warden.db")).close();
 		const fixture = join(import.meta.dir, "lock.race-fixture.ts");
 		const procs = [0, 1].map(() => Bun.spawn(["bun", fixture, home, counter], { stdout: "pipe", stderr: "pipe" }));
 		const outs = await Promise.all(
@@ -147,7 +147,7 @@ describe("build-lock race (two processes)", () => {
 		const [a, b] = outs.map((o) => o.data);
 		expect(a?.appPath).toBe(b?.appPath ?? "");
 		expect([a?.source, b?.source].sort()).toEqual(["cache", "eas"]);
-		const check = openStore(join(home, "warden.db"));
+		const check = storeLocator.open(join(home, "warden.db"));
 		expect(check.listLeases()).toEqual([]);
 		check.close();
 	}, 20_000);

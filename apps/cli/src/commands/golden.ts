@@ -10,7 +10,7 @@ import { resolveAutoProfile } from "@delacour/warden-leasing/claim-request";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { listAvds } from "@delacour/warden-providers/android";
 import { biometricProfile, splitBiometricProfile } from "@delacour/warden-providers/biometrics";
-import { profileSlug } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { type Command, defineCommand } from "../command";
@@ -37,7 +37,7 @@ async function avdFor(ctx: CommandContext, profile: string): AsyncResult<string>
 	const { profile: base, biometrics } = splitBiometricProfile(profile);
 	const slug = base === "auto" ? wardenErrors.toText(resolveAutoProfile(avds.data)) : resultFactory.ok(base);
 	if (!slug.success) return slug;
-	const avd = avds.data.find((a) => profileSlug(a) === slug.data);
+	const avd = avds.data.find((a) => leaseModel.profileSlug(a) === slug.data);
 	return avd !== undefined
 		? resultFactory.ok(biometricProfile(avd, biometrics))
 		: resultFactory.err(`no AVD matches profile "${slug.data}"`);

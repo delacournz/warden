@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { uiDir } from "../paths";
 import type { PerfEnv } from "./env";
 
@@ -14,7 +14,7 @@ export function writeFileAtomic(path: string, text: string): void {
 type StateFile = Record<string, unknown>;
 
 const stateFile = (env: Pick<PerfEnv, "env">, udid: string): string =>
-	join(uiDir(wardenHome(env.env), udid), "state.json");
+	join(uiDir(storeLocator.wardenHome(env.env), udid), "state.json");
 
 function readStateFile(path: string): StateFile {
 	try {
@@ -51,7 +51,7 @@ export function setPerfPointer(
 			...(sessionId === undefined ? {} : { perf: { sessionId } }),
 			updatedAt: env.now(),
 		};
-		mkdirSync(uiDir(wardenHome(env.env), udid), { recursive: true });
+		mkdirSync(uiDir(storeLocator.wardenHome(env.env), udid), { recursive: true });
 		writeFileAtomic(path, `${JSON.stringify(next, null, 2)}\n`);
 	});
 }

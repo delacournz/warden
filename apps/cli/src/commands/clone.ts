@@ -3,7 +3,7 @@ import { isGoldenName } from "@delacour/warden-providers/golden-name";
 import { shortRuntime } from "@delacour/warden-providers/ios";
 import { parseAllSims, type SimctlSim } from "@delacour/warden-providers/simctl-list";
 import { execError } from "@delacour/warden-runtime/exec";
-import { profileSlug } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
@@ -25,7 +25,9 @@ function findSource(sims: SimctlSim[], ref: string): Result<SimctlSim> {
 
 function profileOf(sim: SimctlSim): string | undefined {
 	const type = sim.deviceTypeIdentifier;
-	return type?.startsWith(DEVICE_TYPE_PREFIX) ? profileSlug(type.slice(DEVICE_TYPE_PREFIX.length)) : undefined;
+	return type?.startsWith(DEVICE_TYPE_PREFIX)
+		? leaseModel.profileSlug(type.slice(DEVICE_TYPE_PREFIX.length))
+		: undefined;
 }
 
 /** Lowest free `warden-<profile>-N`. */
@@ -58,7 +60,7 @@ async function clone(ctx: CommandContext, ref: string, opts: { name?: string; js
 			`${source.data.name} is ${source.data.state.toLowerCase()} — shut it down first (simctl clone needs a shut-down source)`
 		);
 	}
-	const profile = profileOf(source.data) ?? profileSlug(source.data.name);
+	const profile = profileOf(source.data) ?? leaseModel.profileSlug(source.data.name);
 	const name = opts.name ?? nextPoolName(sims.data, profile);
 	const cloneCmd = ["xcrun", "simctl", "clone", source.data.udid, name];
 	if (!opts.json) heading(ctx, "clone", `${source.data.name} → ${name}`);

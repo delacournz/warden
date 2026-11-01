@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { fakeHost, IPHONE_17, RUNTIME_BUILD, RUNTIME_ID } from "../testing/golden.testing";
 import { GOLDEN_RECIPE, goldenKey, goldenName, wipName } from "./golden";
 import { cloneFromGolden, ensureGolden, type GoldenDeps, pruneGoldens } from "./ios-golden";
@@ -13,7 +13,7 @@ let store: Store;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-golden-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {

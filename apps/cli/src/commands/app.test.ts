@@ -7,7 +7,7 @@ import { type AppDeps, kindAppInput } from "@delacour/warden-builds/prepare";
 import { fakeApp, testProject } from "@delacour/warden-builds/testing/builds.testing";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { appEnsureJsonSchema, appFingerprintJsonSchema } from "@delacour/warden-sdk/contracts/dev";
-import { getInstall, recordInstall } from "@delacour/warden-store/builds-table";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { appHostFromContext } from "../context";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
@@ -207,7 +207,7 @@ describe("warden app ensure", () => {
 			source: "cache",
 			installed: true,
 		});
-		expect(getInstall(c.db, "ios", "U1", "com.demo")?.hash).toBe(HASH);
+		expect(new BuildsTable(c.db).getInstall("ios", "U1", "com.demo")?.hash).toBe(HASH);
 
 		c.stdout.length = 0;
 		calls.length = 0;
@@ -230,7 +230,13 @@ describe("warden app ensure", () => {
 			return { exitCode: probe && !present ? 1 : 0, stdout: probe ? "/x" : "", stderr: "" };
 		};
 		await seed(c);
-		recordInstall(c.db, { platform: "ios", deviceId: "U1", bundleId: "com.demo", hash: HASH, installedAt: 1 });
+		new BuildsTable(c.db).recordInstall({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.demo",
+			hash: HASH,
+			installedAt: 1,
+		});
 		expect(await createAppCommand(deps).run(c)).toBe(0);
 		expect(JSON.parse(c.stdout.join("\n")).source).toBe("cache");
 		const verbs = calls.map((x) => x.join(" ")).filter((x) => /simctl (un)?install/.test(x));
@@ -273,7 +279,7 @@ describe("warden app ensure", () => {
 			c.now()
 		);
 		expect(await createAppCommand(deps).run(c)).toBe(0);
-		expect(getInstall(c.db, "ios", "U7", "com.demo")).toBeDefined();
+		expect(new BuildsTable(c.db).getInstall("ios", "U7", "com.demo")).toBeDefined();
 	});
 
 	test("--lease id resolves the device", async () => {

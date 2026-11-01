@@ -7,8 +7,8 @@ import { appendFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { openStore } from "@delacour/warden-store/store";
+import { liveness } from "@delacour/warden-store/liveness";
+import { storeLocator } from "@delacour/warden-store/store";
 import { ensureApp } from "./ensure";
 import { fakeApp, testProject } from "./testing/builds.testing";
 
@@ -36,7 +36,7 @@ const exec: Exec = async (cmd) => {
 	return { exitCode: 127, stdout: "", stderr: `unexpected ${joined}` };
 };
 
-const store = openStore(join(home, "warden.db"));
+const store = storeLocator.open(join(home, "warden.db"));
 const res = await ensureApp({
 	store,
 	exec,
@@ -44,7 +44,7 @@ const res = await ensureApp({
 	now: () => Date.now(),
 	sleep: (ms) => Bun.sleep(ms),
 	log: () => {},
-	pidAlive: processAlive,
+	pidAlive: liveness.processAlive,
 	owner: { kind: "ci", runId: `race-${process.pid}` },
 	pid: process.pid,
 	project: testProject({ eas: { profile: "development-simulator", trigger: false } }),

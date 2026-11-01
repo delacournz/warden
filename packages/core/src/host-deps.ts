@@ -4,10 +4,10 @@ import { createAndroidProvider } from "@delacour/warden-providers/android";
 import { createIosProvider, shortRuntime } from "@delacour/warden-providers/ios";
 import type { DeviceProvider, ProviderDeps } from "@delacour/warden-providers/provider.types";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { InventoryDevice, Owner, Platform } from "@delacour/warden-store/types";
-import { profileSlug } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { activeConditions } from "./conditions/conditions";
@@ -137,7 +137,7 @@ export async function androidSnapshotPass(
 	}
 	const notes = givenUp.map(
 		(avd) =>
-			`android snapshot of ${avd} does not load on this host: gc no longer rebuilds it (warden golden ensure --platform android --profile ${profileSlug(avd)} does)`
+			`android snapshot of ${avd} does not load on this host: gc no longer rebuilds it (warden golden ensure --platform android --profile ${leaseModel.profileSlug(avd)} does)`
 	);
 	if (!due) return notes;
 	const pass: Result<SnapshotPass> = await build(androidGoldenDeps(host, owner));
@@ -247,7 +247,7 @@ export async function undoOrphansWith(
 	host: OrphanHost,
 	device: { platform: Platform; id: string }
 ): Promise<OrphanUndoReport> {
-	const pidAlive = host.pidAlive ?? processAlive;
+	const pidAlive = host.pidAlive ?? liveness.processAlive;
 	const kill = host.kill ?? killProcess;
 	return undoOrphans(
 		{

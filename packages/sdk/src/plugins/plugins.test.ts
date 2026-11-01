@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDriverConformance } from "@delacour/warden-driver/testing/conformance";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { fakeFarm, fakeFarmDriver } from "../../examples/fake-provider";
 import { createWardenClient } from "../client";
 import { isWardenError } from "../errors";
@@ -23,7 +23,7 @@ let peek: Store;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-sdk-plugin-"));
-	peek = openStore(join(dir, "warden.db"));
+	peek = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {

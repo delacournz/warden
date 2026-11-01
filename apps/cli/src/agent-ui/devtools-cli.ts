@@ -20,9 +20,9 @@ import {
 	tree,
 	withFacet,
 } from "@delacour/warden-sdk/ops/devtools";
-import { processAlive } from "@delacour/warden-store/liveness";
+import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
-import { sameOwner } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { selfCommand } from "../autogc";
@@ -86,7 +86,7 @@ export const defaultDevtoolsDeps: CliDevtoolsDeps = {
 				// already gone
 			}
 		},
-		pidAlive: processAlive,
+		pidAlive: liveness.processAlive,
 		command: processCommand,
 	},
 };
@@ -107,7 +107,9 @@ export function extrasFor(ctx: CommandContext, deps: UiDeps, device: UiDevice): 
 				.store()
 				.listLeases()
 				.flatMap((lease) =>
-					lease.resource.kind === "port" && sameOwner(lease.owner, device.lease.owner) ? [lease.resource.port] : []
+					lease.resource.kind === "port" && leaseModel.sameOwner(lease.owner, device.lease.owner)
+						? [lease.resource.port]
+						: []
 				),
 	};
 }

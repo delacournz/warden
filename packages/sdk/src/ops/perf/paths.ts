@@ -1,10 +1,10 @@
 import { isAbsolute, join, relative } from "node:path";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { PerfEnv } from "./env";
 
 /** `$WARDEN_HOME/perf`: one directory per `warden perf` session. */
 export function perfRoot(ctx: Pick<PerfEnv, "env">): string {
-	return join(wardenHome(ctx.env), "perf");
+	return join(storeLocator.wardenHome(ctx.env), "perf");
 }
 
 /** `$WARDEN_HOME/perf/<id>`: session.json plus every artifact the session's capturers write. */

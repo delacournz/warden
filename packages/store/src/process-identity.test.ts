@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mayBeRecorded, processCommand, processCommandVia, recordedIdentity, safeToSignal } from "./process-identity";
+import { processCommand, processIdentity } from "./process-identity";
 
 const alive = () => true;
 const dead = () => false;
@@ -27,7 +27,7 @@ describe("processCommand", () => {
 		async () => {
 			const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
 			try {
-				expect(processCommandVia(["/bin/false"])(child.pid)).toContain("sleep 30");
+				expect(processIdentity.commandVia(["/bin/false"])(child.pid)).toContain("sleep 30");
 			} finally {
 				child.kill("SIGKILL");
 				await child.exited;
@@ -46,11 +46,11 @@ describe("processCommand", () => {
 describe("recordedIdentity", () => {
 	const marks = ["--udid U1"];
 	test("gone, match, mismatch or unknown; without a command reader a live pid matches", () => {
-		expect(recordedIdentity({ pidAlive: dead, command: () => "x --udid U1" }, 7, marks)).toBe("gone");
-		expect(recordedIdentity({ pidAlive: alive, command: () => "x --udid U1" }, 7, marks)).toBe("match");
-		expect(recordedIdentity({ pidAlive: alive, command: () => "vim" }, 7, marks)).toBe("mismatch");
-		expect(recordedIdentity({ pidAlive: alive, command: () => undefined }, 7, marks)).toBe("unknown");
-		expect(recordedIdentity({ pidAlive: alive }, 7, marks)).toBe("match");
+		expect(processIdentity.recordedIdentity({ pidAlive: dead, command: () => "x --udid U1" }, 7, marks)).toBe("gone");
+		expect(processIdentity.recordedIdentity({ pidAlive: alive, command: () => "x --udid U1" }, 7, marks)).toBe("match");
+		expect(processIdentity.recordedIdentity({ pidAlive: alive, command: () => "vim" }, 7, marks)).toBe("mismatch");
+		expect(processIdentity.recordedIdentity({ pidAlive: alive, command: () => undefined }, 7, marks)).toBe("unknown");
+		expect(processIdentity.recordedIdentity({ pidAlive: alive }, 7, marks)).toBe("match");
 	});
 });
 
@@ -61,27 +61,31 @@ describe("safeToSignal / mayBeRecorded (14-4)", () => {
 	const unreadable = () => undefined;
 
 	test("a live pid whose command line carries every mark is ours: signal it", () => {
-		expect(safeToSignal({ pidAlive: alive, command: helper }, 7, marks)).toBe(true);
-		expect(mayBeRecorded({ pidAlive: alive, command: helper }, 7, marks)).toBe(true);
+		expect(processIdentity.safeToSignal({ pidAlive: alive, command: helper }, 7, marks)).toBe(true);
+		expect(processIdentity.mayBeRecorded({ pidAlive: alive, command: helper }, 7, marks)).toBe(true);
 	});
 
 	test("a pid reused by another process is neither signalled nor counted as the recorded one", () => {
-		expect(safeToSignal({ pidAlive: alive, command: other }, 7, marks)).toBe(false);
-		expect(mayBeRecorded({ pidAlive: alive, command: other }, 7, marks)).toBe(false);
+		expect(processIdentity.safeToSignal({ pidAlive: alive, command: other }, 7, marks)).toBe(false);
+		expect(processIdentity.mayBeRecorded({ pidAlive: alive, command: other }, 7, marks)).toBe(false);
 		expect(
-			safeToSignal({ pidAlive: alive, command: () => "/opt/warden-simd --udid U2 --socket /s.sock" }, 7, marks)
+			processIdentity.safeToSignal(
+				{ pidAlive: alive, command: () => "/opt/warden-simd --udid U2 --socket /s.sock" },
+				7,
+				marks
+			)
 		).toBe(false);
 	});
 
 	test("an unreadable command line: no signal, but the pid may still be ours (never start a second one beside it)", () => {
-		expect(safeToSignal({ pidAlive: alive, command: unreadable }, 7, marks)).toBe(false);
-		expect(mayBeRecorded({ pidAlive: alive, command: unreadable }, 7, marks)).toBe(true);
+		expect(processIdentity.safeToSignal({ pidAlive: alive, command: unreadable }, 7, marks)).toBe(false);
+		expect(processIdentity.mayBeRecorded({ pidAlive: alive, command: unreadable }, 7, marks)).toBe(true);
 	});
 
 	test("a dead pid is neither; without a command reader (test fakes) liveness alone decides", () => {
-		expect(safeToSignal({ pidAlive: dead, command: helper }, 7, marks)).toBe(false);
-		expect(mayBeRecorded({ pidAlive: dead, command: helper }, 7, marks)).toBe(false);
-		expect(safeToSignal({ pidAlive: alive }, 7, marks)).toBe(true);
-		expect(mayBeRecorded({ pidAlive: alive }, 7, marks)).toBe(true);
+		expect(processIdentity.safeToSignal({ pidAlive: dead, command: helper }, 7, marks)).toBe(false);
+		expect(processIdentity.mayBeRecorded({ pidAlive: dead, command: helper }, 7, marks)).toBe(false);
+		expect(processIdentity.safeToSignal({ pidAlive: alive }, 7, marks)).toBe(true);
+		expect(processIdentity.mayBeRecorded({ pidAlive: alive }, 7, marks)).toBe(true);
 	});
 });

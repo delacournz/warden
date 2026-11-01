@@ -6,7 +6,7 @@ import { androidStateDir, createAndroidStateStore } from "@delacour/warden-drive
 import { type OpenIosDeviceDriverOptions, openIosDeviceDriver } from "@delacour/warden-driver-ios/device/device-driver";
 import { type OpenIosDriverOptions, openIosDriver } from "@delacour/warden-driver-ios/ios-driver";
 import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
-import { isPhysicalIosId } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 
 /**
  * Everything {@link openDriver} needs, as values: it reads no environment variable and no global. The edge
@@ -137,7 +137,7 @@ export async function openDriver(options: OpenDriverOptions): DriverResult<Drive
 	const debug = options.debug ?? false;
 	switch (options.platform) {
 		case "ios":
-			if (isPhysicalIosId(options.id)) return openIosDeviceDriver(iosDeviceOptions(options, debug));
+			if (leaseModel.isPhysicalIosId(options.id)) return openIosDeviceDriver(iosDeviceOptions(options, debug));
 			return openIosDriver(iosOptions(options, debug));
 		case "android":
 			return openAndroidDriver(androidOptions(options, debug));

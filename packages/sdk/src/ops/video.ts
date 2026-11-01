@@ -1,14 +1,8 @@
 import { closeSync, mkdirSync, openSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
-import {
-	mayBeRecorded,
-	type ProcessCommand,
-	processCommand,
-	recordedIdentity,
-	safeToSignal,
-} from "@delacour/warden-store/process-identity";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
+import { type ProcessCommand, processCommand, processIdentity } from "@delacour/warden-store/process-identity";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { fail, opError } from "./errors";
@@ -52,7 +46,7 @@ export const defaultVideoDeps: VideoDeps = {
 			// already gone
 		}
 	},
-	pidAlive: processAlive,
+	pidAlive: liveness.processAlive,
 	command: processCommand,
 };
 
@@ -95,7 +89,7 @@ function recorderArgv(run: VideoRun, path: string, remote: string | undefined): 
 function startVideo(run: VideoRun, pathArg: string | undefined): Result<OpDone<VideoResult>, WardenError> {
 	const { session, deps, state } = run;
 	const { host, device } = session;
-	if (state.video && mayBeRecorded(deps, state.video.pid, recorderMarks(device.id, state.video))) {
+	if (state.video && processIdentity.mayBeRecorded(deps, state.video.pid, recorderMarks(device.id, state.video))) {
 		return fail(
 			opError("usage", `already recording to ${state.video.path}`, {
 				hint: "`warden ui screen video stop` first",
@@ -155,7 +149,7 @@ async function stopHostRecorder(
 		await session.host.sleep(POLL_MS);
 		waited += POLL_MS;
 	}
-	if (!safeToSignal(deps, running.pid, marks)) return [];
+	if (!processIdentity.safeToSignal(deps, running.pid, marks)) return [];
 	deps.kill(running.pid, "SIGKILL");
 	return ["the recorder ignored SIGINT and was killed: the file may be unfinished"];
 }
@@ -168,7 +162,7 @@ async function stopVideo(run: VideoRun): Promise<Result<OpDone<VideoResult>, War
 		return fail(opError("usage", "not recording", { hint: "`warden ui screen video start` first" }));
 	}
 	const marks = recorderMarks(session.device.id, running);
-	const identity = recordedIdentity(deps, running.pid, marks);
+	const identity = processIdentity.recordedIdentity(deps, running.pid, marks);
 	if (running.remote === undefined && identity === "unknown") {
 		// alive but its command line unreadable: it may still be the recorder, so it is neither signalled nor forgotten
 		return resultFactory.ok({

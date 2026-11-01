@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { liveLogTail, openLiveLog } from "./live-log";
 
 let dir: string;
@@ -12,7 +12,7 @@ let env: Record<string, string>;
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-live-log-"));
 	env = { WARDEN_HOME: join(dir, "home") };
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 afterEach(() => {
 	store.close();

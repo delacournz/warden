@@ -15,15 +15,9 @@ import { parseDuration } from "@delacour/warden-config/duration";
 import type { Driver, DriverError } from "@delacour/warden-driver/driver.types";
 import { wardenErrorFromDriver } from "@delacour/warden-driver/warden-error";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
-import {
-	mayBeRecorded,
-	type ProcessCommand,
-	processCommand,
-	recordedIdentity,
-	safeToSignal,
-} from "@delacour/warden-store/process-identity";
-import { type Store, wardenHome } from "@delacour/warden-store/store";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
+import { type ProcessCommand, processCommand, processIdentity } from "@delacour/warden-store/process-identity";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import type { WardenHost } from "@delacour/warden-types/host";
@@ -202,7 +196,7 @@ export const defaultHelperDeps: HelperDeps = {
 			closeSync(log);
 		}
 	},
-	pidAlive: processAlive,
+	pidAlive: liveness.processAlive,
 	kill: (pid, signal) => {
 		try {
 			process.kill(pid, signal);
@@ -245,7 +239,7 @@ export type HelperHost = Pick<WardenHost, "env" | "now"> & { store?: () => Store
 export function socketPathFor(host: Pick<WardenHost, "env">, udid: string): string {
 	const preferred = join(simdDir(host), `${udid}.sock`);
 	if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH) return preferred;
-	const tag = Bun.hash(wardenHome(host.env)).toString(36).slice(0, 8);
+	const tag = Bun.hash(storeLocator.wardenHome(host.env)).toString(36).slice(0, 8);
 	return join(process.platform === "darwin" ? "/tmp" : tmpdir(), `wsimd-${tag}-${udid.slice(0, 8)}.sock`);
 }
 
@@ -399,7 +393,7 @@ function locateHelperBinary(
 		exec: async () => ({ exitCode: 1, stdout: "", stderr: "" }),
 		...(opts.helperPath !== undefined ? { helperPath: opts.helperPath } : {}),
 		env: { simd: host.env.WARDEN_SIMD, simdSocket: undefined, helperDir: host.env.WARDEN_HELPER_DIR },
-		wardenHome: wardenHome(host.env),
+		wardenHome: storeLocator.wardenHome(host.env),
 		...(deps.exists ? { exists: deps.exists } : {}),
 	});
 }
@@ -458,7 +452,7 @@ function spawnHelper(
 	if (
 		previous?.socket === socketPath &&
 		previous.pid !== stopped &&
-		mayBeRecorded(deps, previous.pid, helperMarks(udid, socketPath))
+		processIdentity.mayBeRecorded(deps, previous.pid, helperMarks(udid, socketPath))
 	) {
 		return unavailable(`warden-simd (pid ${previous.pid}) is still running for ${udid}; not starting a second one`);
 	}
@@ -552,7 +546,7 @@ function liveRecordedPid(a: Attempt): number | undefined {
 	const record = readHelperRecord(a.host, a.udid);
 	return record !== undefined &&
 		record.socket === a.socketPath &&
-		mayBeRecorded(a.deps, record.pid, helperMarks(a.udid, record.socket))
+		processIdentity.mayBeRecorded(a.deps, record.pid, helperMarks(a.udid, record.socket))
 		? record.pid
 		: undefined;
 }
@@ -812,14 +806,14 @@ async function stopRecorded(
 	const marks = helperMarks(udid, record?.socket ?? socketPath);
 	// alive but its command line unreadable: it may still be the helper, so it is neither signalled nor forgotten,
 	// whether or not its socket file is there (no socket file must not read as "already gone")
-	if (record !== undefined && recordedIdentity(deps, record.pid, marks) === "unknown") {
+	if (record !== undefined && processIdentity.recordedIdentity(deps, record.pid, marks) === "unknown") {
 		return {
 			stopped: false,
 			how: "none",
 			warning: `could not stop warden-simd (pid ${record.pid}): its command line could not be read, so it was left running`,
 		};
 	}
-	const ours = record !== undefined && mayBeRecorded(deps, record.pid, marks);
+	const ours = record !== undefined && processIdentity.mayBeRecorded(deps, record.pid, marks);
 	if (found === undefined && !ours) {
 		forgetRecorded(host, udid, record);
 		return { stopped: false, how: "none" };
@@ -857,7 +851,7 @@ async function shutDownHelper(deps: HelperDeps, target: StopTarget): Promise<Sto
 		await attached.data.close();
 	}
 	if (await waitUntil(gone, SHUTDOWN_WAIT_MS - (attached?.success ? SHUTDOWN_REQUEST_MS : 0), deps)) return "shutdown";
-	if (record !== undefined && safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
+	if (record !== undefined && processIdentity.safeToSignal(deps, record.pid, marks)) deps.kill(record.pid, "SIGTERM");
 	await waitUntil(gone, KILL_WAIT_MS, deps);
 	return "sigterm";
 }
@@ -882,7 +876,7 @@ export function helperStatus(
 ): HelperStatus {
 	const record = readHelperRecord(host, udid);
 	if (record === undefined) return { running: false, pid: null, socket: null };
-	const alive = mayBeRecorded(deps, record.pid, helperMarks(udid, record.socket));
+	const alive = processIdentity.mayBeRecorded(deps, record.pid, helperMarks(udid, record.socket));
 	return { running: alive && existsSync(record.socket), pid: record.pid, socket: record.socket };
 }
 

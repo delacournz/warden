@@ -7,7 +7,7 @@ import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types"
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { E2eEnv } from "./env";
 import type { DriverFactory } from "./session";
 
@@ -89,7 +89,7 @@ export async function openDriverFromEnv(env: E2eEnv, options: OpenDriverFromEnvO
 		id: env.udid,
 		appId: env.bundleId,
 		debug: rest.debug ?? processEnv[DEBUG_ENV] === "1",
-		host: { home: wardenHome(processEnv), ...rest.host },
+		host: { home: storeLocator.wardenHome(processEnv), ...rest.host },
 		ios: {
 			...(env.simd === undefined ? {} : { simdPath: env.simd }),
 			...(env.helperDir === undefined ? {} : { helperDir: env.helperDir }),

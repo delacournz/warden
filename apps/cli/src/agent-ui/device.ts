@@ -3,8 +3,8 @@ import { leasePidFor, resolveOwner } from "@delacour/warden-leasing/owner";
 import { PRIORITY } from "@delacour/warden-leasing/queue";
 import { isEmulatorSerial } from "@delacour/warden-providers/android";
 import { DEVICE_LOCKED_HINT } from "@delacour/warden-providers/unlock-wait";
-import { type PidAlive, processAlive } from "@delacour/warden-store/liveness";
-import { isPhysicalIosId, type Lease, type Owner, type Platform } from "@delacour/warden-store/types";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
+import { type Lease, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { claimWithFlags, parseClaimFlags, parsePlatform } from "../claim-flags";
 import type { CommandContext } from "../context";
@@ -104,7 +104,7 @@ function callerDeviceLeases(ctx: CommandContext, owner: Owner, platform: Platfor
 /** A phone (its lease says so, or an iPhone UDID): condition and biometric verbs never reach it. */
 export function physicalDevice(device: UiDevice): boolean {
 	const resource = device.lease.resource;
-	return (resource.kind === "device" && resource.physical !== undefined) || isPhysicalIosId(device.udid);
+	return (resource.kind === "device" && resource.physical !== undefined) || leaseModel.isPhysicalIosId(device.udid);
 }
 
 export function sharedNote(lease: Lease): string {
@@ -213,7 +213,7 @@ async function leaseCandidate(
 			? await checkPhone(ctx, candidate.id)
 			: { kind: "other" };
 	// `--claim` of a physical iPhone takes a lease: wait for it to be unlocked first (stderr; no lease is held meanwhile)
-	if (claim && platform.data === "ios" && isPhysicalIosId(candidate.id)) {
+	if (claim && platform.data === "ios" && leaseModel.isPhysicalIosId(candidate.id)) {
 		const unlocked = await awaitPhonesUnlocked(
 			ctx,
 			owner,
@@ -225,7 +225,7 @@ async function leaseCandidate(
 	const pid = leasePidFor(owner);
 	const leased = ensureCallerLease(ctx.store(), owner, platform.data, candidate.id, {
 		now: ctx.now(),
-		pidAlive: check.pidAlive ?? processAlive,
+		pidAlive: check.pidAlive ?? liveness.processAlive,
 		claim,
 		label: UI_LEASE_LABEL,
 		...(pid !== undefined ? { pid } : {}),
@@ -283,7 +283,7 @@ export async function resolveUiDevice(
 	if (platformFlag && !platformFlag.success) return fail(uiError("usage", platformFlag.error));
 	let candidate: Candidate | "claim" | undefined = named.data ?? fromEnv(ctx.env);
 	if (candidate === undefined) {
-		const held = pickHeld(ctx, owner, flags, platformFlag?.data, check.pidAlive ?? processAlive);
+		const held = pickHeld(ctx, owner, flags, platformFlag?.data, check.pidAlive ?? liveness.processAlive);
 		if (!held.success) return held;
 		candidate = held.data;
 	}

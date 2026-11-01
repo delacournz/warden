@@ -13,7 +13,7 @@ import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import { resolveOwner } from "@delacour/warden-leasing/owner";
 import type { AppEnsureJson } from "@delacour/warden-sdk/contracts/dev";
-import { isPhysicalIosId, type Platform } from "@delacour/warden-store/types";
+import { leaseModel, type Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { parsePlatform, resolvePlatform } from "../claim-flags";
@@ -100,7 +100,7 @@ async function ensureCmd(
 	if (!device.success) return fail(ctx, "ensure", device.error.message);
 	const flags = ensureFlags(opts, device.data);
 	if (!flags.success) return fail(ctx, "ensure", flags.error);
-	const phone = platform.data === "ios" && device.data !== undefined && isPhysicalIosId(device.data);
+	const phone = platform.data === "ios" && device.data !== undefined && leaseModel.isPhysicalIosId(device.data);
 	const { install, kind } = flags.data;
 	if (!opts.json) heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {

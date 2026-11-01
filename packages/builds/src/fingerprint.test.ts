@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { bunExec, type Exec } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import {
 	computeCacheKey,
 	computeFingerprint,
@@ -228,7 +228,7 @@ describe("computeCacheKey fingerprint memo (17-5)", () => {
 		writeFileSync(join(root, "bun.lock"), "lock-v1");
 		writeFileSync(join(root, "node_modules", ".bun-tag"), "");
 		for (const f of ["app.json", "bun.lock", "node_modules/.bun-tag", "node_modules"]) touch(join(root, f), 1000);
-		store = openStore(join(dir, "warden.db"));
+		store = storeLocator.open(join(dir, "warden.db"));
 		status = "";
 		head = "aaaa";
 		spawns = 0;
@@ -699,7 +699,7 @@ describe("computeCacheKey fingerprint memo on a real git checkout (R9)", () => {
 		write("index.ts", "export {};");
 		git(root, "add", ".");
 		git(root, "commit", "-q", "-m", "init");
-		store = openStore(join(dir, "warden.db"));
+		store = storeLocator.open(join(dir, "warden.db"));
 		spawns = 0;
 	});
 	afterEach(() => {

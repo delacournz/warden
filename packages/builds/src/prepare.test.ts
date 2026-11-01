@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import type { WardenLogEvent } from "@delacour/warden-types/host";
 import { type AppHost, fingerprint, loadProject, pickDevice, prepareApp, projectStart } from "./prepare";
@@ -24,7 +24,7 @@ const owner: Owner = { kind: "agent", sessionId: "me", cwd: "/" };
 /** A host over a temp dir holding a one-project warden.config.json whose fingerprint command prints HASH. */
 function setup(): { host: AppHost; events: WardenLogEvent[]; cwd: string } {
 	dir = mkdtempSync(join(tmpdir(), "warden-prepare-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	const db = store;
 	mkdirSync(join(dir, "app"), { recursive: true });
 	writeFileSync(

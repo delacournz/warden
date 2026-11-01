@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type BuildRecord, listBuilds, upsertBuild } from "@delacour/warden-store/builds-table";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type BuildRecord, BuildsTable } from "@delacour/warden-store/builds-table";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
 import { aliasBuild, recordRepack, storeArtifact } from "./cache";
 import { buildLockKey, buildResource } from "./lock";
@@ -102,7 +102,7 @@ describe("pruneBuilds", () => {
 	let store: Store;
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), "warden-prune-"));
-		store = openStore(join(dir, "warden.db"));
+		store = storeLocator.open(join(dir, "warden.db"));
 	});
 	afterEach(() => {
 		store.close();
@@ -137,10 +137,10 @@ describe("pruneBuilds", () => {
 		);
 		const dry = pruneBuilds({ store, env, maxBytes: 12, now: 100, pidAlive: () => false, dryRun: true });
 		expect(dry.remove.map((b) => b.hash)).toEqual(["b", "c"]);
-		expect(listBuilds(store)).toHaveLength(3);
+		expect(new BuildsTable(store).list()).toHaveLength(3);
 
 		pruneBuilds({ store, env, maxBytes: 12, now: 100, pidAlive: () => false });
-		expect(listBuilds(store).map((b) => b.hash)).toEqual(["a"]);
+		expect(new BuildsTable(store).list().map((b) => b.hash)).toEqual(["a"]);
 		expect(paths.map((p) => existsSync(p))).toEqual([true, false, false]);
 	});
 
@@ -170,7 +170,7 @@ describe("pruneBuilds", () => {
 		aliasBuild(store, a, "a-post", 1);
 		const plan = pruneBuilds({ store, env, maxBytes: 0, now: 100, pidAlive: () => false, graceMs: 50 });
 		expect(plan.remove.map((b) => b.hash)).toEqual(["a", "a-post"]);
-		expect(listBuilds(store).map((b) => b.hash)).toEqual(["b"]);
+		expect(new BuildsTable(store).list().map((b) => b.hash)).toEqual(["b"]);
 	});
 });
 
@@ -310,7 +310,7 @@ describe("pruneBuilds with repacks", () => {
 	let store: Store;
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), "warden-prune-kinds-"));
-		store = openStore(join(dir, "warden.db"));
+		store = storeLocator.open(join(dir, "warden.db"));
 	});
 	afterEach(() => {
 		store.close();
@@ -321,7 +321,7 @@ describe("pruneBuilds with repacks", () => {
 		const env = { WARDEN_HOME: dir };
 		const baseApp = fakeApp(join(dir, "builds", "k", "ios", "fp", "simulator", "base"));
 		const repackApp = fakeApp(join(dir, "builds", "k", "ios", "fp", "simulator", "repacks", "j1"));
-		upsertBuild(store, { ...rec("fp:base", 100, 1), path: baseApp, kind: "simulator-base" });
+		new BuildsTable(store).upsert({ ...rec("fp:base", 100, 1), path: baseApp, kind: "simulator-base" });
 		recordRepack(store, {
 			...rec("fp:j1", 10, 2),
 			path: repackApp,
@@ -330,7 +330,7 @@ describe("pruneBuilds with repacks", () => {
 			jsKey: "j1",
 		});
 		pruneBuilds({ store, env, maxBytes: 0, now: 100, pidAlive: () => false });
-		expect(listBuilds(store)).toEqual([]);
+		expect(new BuildsTable(store).list()).toEqual([]);
 		expect(existsSync(baseApp)).toBe(false);
 		expect(existsSync(repackApp)).toBe(false);
 	});

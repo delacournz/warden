@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { deviceTarget, type HookDeps, handleSessionEnd } from "./claude-pretool";
 
@@ -17,7 +17,7 @@ let shutdowns: string[][];
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-hook-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	now = 1_000_000;
 	pidAlive = () => false;
 	shutdowns = [];

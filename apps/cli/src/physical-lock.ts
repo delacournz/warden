@@ -7,8 +7,8 @@ import {
 	isDeviceLockedError,
 	waitUnlocked,
 } from "@delacour/warden-providers/unlock-wait";
-import { isLeaseAlive, processAlive } from "@delacour/warden-store/liveness";
-import { type DeviceRequest, isPhysicalReady, type Owner } from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type DeviceRequest, leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { appHostFromContext, type CommandContext } from "./context";
 import { reportError } from "./output";
@@ -28,14 +28,16 @@ async function phonesToClaim(ctx: CommandContext, owner: Owner, request: DeviceR
 		...(ids ? { namedPhysical: ids } : {}),
 	}).inventory();
 	if (!inventory.success) return [];
-	const ready = inventory.data.filter((d) => d.platform === "ios" && isPhysicalReady(d));
+	const ready = inventory.data.filter((d) => d.platform === "ios" && leaseModel.isPhysicalReady(d));
 	if (ids) return ready.filter((d) => ids.includes(d.id)).map(({ id, name }) => ({ id, name }));
 	const now = ctx.now();
 	const held = new Set(
 		ctx
 			.store()
 			.listLeases()
-			.flatMap((l) => (l.resource.kind === "device" && isLeaseAlive(l, now, processAlive) ? [l.resource.id] : []))
+			.flatMap((l) =>
+				l.resource.kind === "device" && liveness.isLeaseAlive(l, now, liveness.processAlive) ? [l.resource.id] : []
+			)
 	);
 	const allow = request.physical?.allow;
 	const free = ready.filter((d) => !held.has(d.id) && (allow === undefined || allow.includes(d.id)));

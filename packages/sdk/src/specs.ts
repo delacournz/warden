@@ -8,7 +8,7 @@ import {
 	type SuiteError,
 } from "@delacour/warden-core/affected/affected";
 import { scanSpecs, specPlatforms, specSettings } from "@delacour/warden-core/affected/specs";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { e2eReportSchema } from "./contracts/e2e-report.schema";
 import type { Core } from "./core";
 import { guard, guarded } from "./core";
@@ -122,7 +122,7 @@ async function affectedSpecs(core: Core, params: SpecsAffectedParams | undefined
 		cwd: core.host.cwd,
 		git: core.git,
 		env: core.host.env,
-		cacheDir: join(wardenHome(core.host.env), "affected"),
+		cacheDir: join(storeLocator.wardenHome(core.host.env), "affected"),
 		suite: suite.name,
 		...(params?.base !== undefined ? { base: params.base } : {}),
 		...(params?.platform ? { platform: params.platform } : {}),

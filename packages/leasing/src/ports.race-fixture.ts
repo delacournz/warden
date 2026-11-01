@@ -3,12 +3,12 @@
  * sleeps to widen the race window). Prints the port. Run as a separate process.
  */
 
-import { openStore } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { claimPorts } from "./ports";
 
 const dbPath = process.argv[2];
 if (!dbPath) throw new Error("usage: ports.race-fixture.ts <db>");
-const store = openStore(dbPath);
+const store = storeLocator.open(dbPath);
 const res = await claimPorts(
 	store,
 	{ owner: { kind: "ci", runId: `${process.pid}` }, from: 47_100, span: 20, ttlMs: 60_000 },

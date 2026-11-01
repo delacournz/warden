@@ -14,7 +14,7 @@ import { wardenNameProfile } from "@delacour/warden-leasing/inventory";
 import { isGoldenName } from "@delacour/warden-providers/golden-name";
 import { shortRuntime } from "@delacour/warden-providers/ios";
 import type { SimctlSim } from "@delacour/warden-providers/simctl-list";
-import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { DeviceRecord } from "@delacour/warden-store/store";
 import type { Lease, Owner } from "@delacour/warden-store/types";
 
@@ -184,7 +184,11 @@ function blockersOf(sim: SimctlSim, owner: SimOwner, lease: Lease | undefined, i
 	const blockers: SimBlocker[] = [];
 	if (owner === "golden") blockers.push({ kind: "golden" });
 	if (lease)
-		blockers.push({ kind: "leased", owner: lease.owner, stale: !isLeaseAlive(lease, input.now, input.pidAlive) });
+		blockers.push({
+			kind: "leased",
+			owner: lease.owner,
+			stale: !liveness.isLeaseAlive(lease, input.now, input.pidAlive),
+		});
 	if (sim.state !== "Shutdown") blockers.push({ kind: "booted" });
 	return blockers;
 }

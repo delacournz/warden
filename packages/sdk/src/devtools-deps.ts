@@ -1,7 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { metroOwner } from "@delacour/warden-builds/metro";
 import { openDevtoolsFacet } from "@delacour/warden-devtools/facet";
-import { processAlive } from "@delacour/warden-store/liveness";
+import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
 import type { DevtoolsDeps } from "./ops/devtools";
 
@@ -37,7 +37,7 @@ export function defaultDevtoolsDeps(env: Record<string, string | undefined>): De
 					// already gone
 				}
 			},
-			pidAlive: processAlive,
+			pidAlive: liveness.processAlive,
 			command: processCommand,
 		},
 	};

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
-import { getBuild, getInstall, recordInstall } from "@delacour/warden-store/builds-table";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { EXPO_CONFIG_ARGV } from "./app-config";
 import { cachedBuild, devDir, kindHash, simulatorBaseDir, storeArtifact } from "./cache";
 import { JSON_CONFIG_FILE } from "./config";
@@ -30,7 +30,7 @@ const KEY = "github.com/o/r:app";
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-ensure-"));
 	env = { WARDEN_HOME: join(dir, "home"), HOME: join(dir, "user") };
-	store = openStore(join(dir, "home", "warden.db"));
+	store = storeLocator.open(join(dir, "home", "warden.db"));
 });
 afterEach(() => {
 	store.close();
@@ -122,7 +122,7 @@ describe("ensureApp on a physical iPhone", () => {
 		const { exec, deviceIo } = phoneHost(calls);
 		const first = await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo }));
 		expect(first).toEqual({ success: true, data: { appPath: path, hash: "H", source: "cache", installed: true } });
-		expect(getInstall(store, "ios", PHONE, "com.x.app")?.hash).toBe("H");
+		expect(new BuildsTable(store).getInstall("ios", PHONE, "com.x.app")?.hash).toBe("H");
 		expect(calls.some((c) => c.startsWith(`xcrun devicectl device install app --device ${PHONE} ${path}`))).toBe(true);
 
 		calls.length = 0;
@@ -134,17 +134,29 @@ describe("ensureApp on a physical iPhone", () => {
 
 	test("a build key that differs reinstalls over the phone's old app", async () => {
 		await seedCache("NEW");
-		recordInstall(store, { platform: "ios", deviceId: PHONE, bundleId: "com.x.app", hash: "OLD", installedAt: 1 });
+		new BuildsTable(store).recordInstall({
+			platform: "ios",
+			deviceId: PHONE,
+			bundleId: "com.x.app",
+			hash: "OLD",
+			installedAt: 1,
+		});
 		const calls: string[] = [];
 		const { exec, deviceIo } = phoneHost(calls);
 		const res = await ensureApp(input(exec, { hash: "NEW", deviceId: PHONE, physical: true, deviceIo }));
 		expect(res.success && res.data.source).toBe("cache");
-		expect(getInstall(store, "ios", PHONE, "com.x.app")?.hash).toBe("NEW");
+		expect(new BuildsTable(store).getInstall("ios", PHONE, "com.x.app")?.hash).toBe("NEW");
 	});
 
 	test("--install-mode clean on a phone falls back to uninstall + install (data cannot be wiped in place)", async () => {
 		await seedCache();
-		recordInstall(store, { platform: "ios", deviceId: PHONE, bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		new BuildsTable(store).recordInstall({
+			platform: "ios",
+			deviceId: PHONE,
+			bundleId: "com.x.app",
+			hash: "H",
+			installedAt: 1,
+		});
 		const calls: string[] = [];
 		const { exec, deviceIo } = phoneHost(calls);
 		await ensureApp(input(exec, { deviceId: PHONE, physical: true, deviceIo })); // puts the app on the phone
@@ -192,8 +204,8 @@ describe("ensureApp", () => {
 		);
 		const first = await ensureApp(input(exec, { fileSize }));
 		expect(first).toEqual({ success: true, data: { appPath: path, hash: "H", source: "cache", installed: true } });
-		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("H");
-		expect(getBuild(store, KEY, "ios", "H")?.lastUsedAt).toBe(5_000);
+		expect(new BuildsTable(store).getInstall("ios", "U1", "com.x.app")?.hash).toBe("H");
+		expect(new BuildsTable(store).get(KEY, "ios", "H")?.lastUsedAt).toBe(5_000);
 
 		calls.length = 0;
 		const second = await ensureApp(input(exec, { fileSize }));
@@ -218,7 +230,7 @@ describe("ensureApp", () => {
 			now: 1,
 		});
 		if (!stored.success) throw new Error(stored.error);
-		recordInstall(store, {
+		new BuildsTable(store).recordInstall({
 			platform: "android",
 			deviceId: "emulator-5554",
 			bundleId: "com.x.app",
@@ -255,7 +267,13 @@ describe("ensureApp", () => {
 
 	test("the already-installed check is three spawns: one get_app_container, two plutil, no stat", async () => {
 		await seedCache();
-		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		new BuildsTable(store).recordInstall({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x.app",
+			hash: "H",
+			installedAt: 1,
+		});
 		const calls: string[] = [];
 		const exec = fake(
 			[
@@ -302,7 +320,7 @@ describe("ensureApp", () => {
 		test("install records the container and the executable's ino+mtime", async () => {
 			await seedCache();
 			await ensureApp(input(device([]), { fileSize, fileStamp }));
-			expect(getInstall(store, "ios", "U1", "com.x.app")).toMatchObject({
+			expect(new BuildsTable(store).getInstall("ios", "U1", "com.x.app")).toMatchObject({
 				hash: "H",
 				container: "/data/App.app",
 				exeStamp: "11:100",
@@ -342,7 +360,7 @@ describe("ensureApp", () => {
 			await seedCache();
 			stamps = {};
 			await ensureApp(input(device([]), { fileSize, fileStamp }));
-			expect(getInstall(store, "ios", "U1", "com.x.app")?.exeStamp).toBeUndefined();
+			expect(new BuildsTable(store).getInstall("ios", "U1", "com.x.app")?.exeStamp).toBeUndefined();
 			const calls: string[] = [];
 			await ensureApp(input(device(calls), { fileSize, fileStamp }));
 			expect(calls.filter((c) => c.startsWith("plutil"))).toHaveLength(2);
@@ -378,16 +396,28 @@ describe("ensureApp", () => {
 			],
 			calls
 		);
-		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "OLD", installedAt: 1 });
+		new BuildsTable(store).recordInstall({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x.app",
+			hash: "OLD",
+			installedAt: 1,
+		});
 		const res = await ensureApp(input(exec, { hash: "NEW" }));
 		expect(res.success && res.data.source).toBe("cache");
 		expect(calls.filter((c) => c.startsWith("xcrun simctl install"))).toHaveLength(1);
-		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("NEW");
+		expect(new BuildsTable(store).getInstall("ios", "U1", "com.x.app")?.hash).toBe("NEW");
 	});
 
 	test("installMode reinstall: uninstalls then installs even though the device is already at this hash", async () => {
 		await seedCache();
-		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		new BuildsTable(store).recordInstall({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x.app",
+			hash: "H",
+			installedAt: 1,
+		});
 		const calls: string[] = [];
 		let present = true;
 		const exec: Exec = async (cmd) => {
@@ -406,12 +436,18 @@ describe("ensureApp", () => {
 		expect(res.data.installed).toBe(true);
 		const verbs = calls.filter((c) => /simctl (un)?install/.test(c)).map((c) => c.split(" ")[2]);
 		expect(verbs).toEqual(["uninstall", "install"]);
-		expect(getInstall(store, "ios", "U1", "com.x.app")?.installedAt).toBe(5_000);
+		expect(new BuildsTable(store).getInstall("ios", "U1", "com.x.app")?.installedAt).toBe(5_000);
 	});
 
 	test("installMode clean: already at this hash → no install, the app's data is reset (keychain when asked)", async () => {
 		await seedCache();
-		recordInstall(store, { platform: "ios", deviceId: "U1", bundleId: "com.x.app", hash: "H", installedAt: 1 });
+		new BuildsTable(store).recordInstall({
+			platform: "ios",
+			deviceId: "U1",
+			bundleId: "com.x.app",
+			hash: "H",
+			installedAt: 1,
+		});
 		const calls: string[] = [];
 		const exec = fake(
 			[
@@ -473,7 +509,7 @@ describe("ensureApp", () => {
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("cache");
 		expect(res.data.installed).toBe(false);
-		expect(getBuild(store, KEY, "ios", "H")?.source).toBe("legacy");
+		expect(new BuildsTable(store).get(KEY, "ios", "H")?.source).toBe("legacy");
 	});
 
 	test("--no-eas → local build, verified + cached with source build", async () => {
@@ -502,7 +538,7 @@ describe("ensureApp", () => {
 		);
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("build");
-		const record = getBuild(store, KEY, "ios", "H");
+		const record = new BuildsTable(store).get(KEY, "ios", "H");
 		expect(record?.source).toBe("build");
 		expect(record?.profile).toBe("development-simulator");
 		expect(res.data.appPath).toBe(record?.path ?? "");
@@ -689,7 +725,7 @@ describe("ensureApp", () => {
 			input(exec, { project, deviceId: undefined, build: true, eas: false, now: () => Date.now() })
 		);
 		if (!res.success) throw new Error(res.error);
-		expect(getBuild(store, KEY, "ios", "H")?.profile).toBe("local:dev");
+		expect(new BuildsTable(store).get(KEY, "ios", "H")?.profile).toBe("local:dev");
 		expect(envs[0]?.USE_CCACHE).toBeUndefined();
 		expect(calls.some((c) => c.startsWith("xcodebuild"))).toBe(false);
 	});
@@ -817,7 +853,7 @@ describe("ensureApp: one build per session", () => {
 		expect(requested?.path).toBe(first.data.appPath);
 		expect(alias?.path).toBe(first.data.appPath);
 		expect(alias?.size).toBe(0);
-		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe("H2");
+		expect(new BuildsTable(store).getInstall("ios", "U1", "com.x.app")?.hash).toBe("H2");
 
 		// device 2 of the same session (pre-build key): the cache, no second build
 		const second = await ensureApp(input(s.exec, { ...over, deviceId: "U2" }));
@@ -839,7 +875,7 @@ describe("ensureApp: one build per session", () => {
 			input(s.exec, { project: s.project, build: true, deviceId: undefined, now: () => Date.now() })
 		);
 		expect(res.success).toBe(true);
-		expect(getBuild(store, KEY, "ios", "H2")?.path).toBe(real);
+		expect(new BuildsTable(store).get(KEY, "ios", "H2")?.path).toBe(real);
 	});
 
 	test("two devices on a failing cache miss: one build, two errors, no lock poll (17-4)", async () => {
@@ -959,7 +995,7 @@ describe("ensureApp: one build per checkout (two processes)", () => {
 		expect(s.calls.filter((c) => c === "sh -c make-ios")).toHaveLength(1);
 		expect(ra.data.source).toBe("build");
 		expect(rb.data).toMatchObject({ source: "cache", installed: true, appPath: ra.data.appPath });
-		expect(getInstall(store, "ios", "U2", "com.x.app")?.hash).toBe("H2");
+		expect(new BuildsTable(store).getInstall("ios", "U2", "com.x.app")?.hash).toBe("H2");
 		expect(aLines).toEqual(["compiling A", "linking A"]);
 		expect(bLines).toEqual(["compiling A", "linking A"]);
 		expect(bPhases[0]).toEqual({ phase: "waiting" });
@@ -1138,7 +1174,7 @@ describe("ensureKindBuild", () => {
 			success: true,
 			data: { appPath: path, hash: `${FP}:dev`, source: "cache", installed: true },
 		});
-		expect(getInstall(store, "ios", "U1", "com.x.app")?.hash).toBe(`${FP}:dev`);
+		expect(new BuildsTable(store).getInstall("ios", "U1", "com.x.app")?.hash).toBe(`${FP}:dev`);
 	});
 
 	test("a flat legacy build of the same fingerprint is not the dev build", async () => {
@@ -1158,7 +1194,7 @@ describe("ensureKindBuild", () => {
 		const res = await ensureKindBuild(kindInput(exec, { deviceId: undefined, build: true, now: () => Date.now() }));
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("build");
-		const record = getBuild(store, KEY, "ios", `${FP}:dev`);
+		const record = new BuildsTable(store).get(KEY, "ios", `${FP}:dev`);
 		expect(record).toMatchObject({
 			kind: "dev",
 			path: join(devDir(env, KEY, "ios", FP), "Built.app"),
@@ -1196,7 +1232,7 @@ describe("ensureKindBuild", () => {
 		);
 		if (!res.success) throw new Error(res.error);
 		expect(calls.some((c) => c.includes("SKIP_BUNDLING=1") && c.includes("--configuration Release"))).toBe(true);
-		expect(getBuild(store, KEY, "ios", `${nativeFp}:base`)).toMatchObject({
+		expect(new BuildsTable(store).get(KEY, "ios", `${nativeFp}:base`)).toMatchObject({
 			kind: "simulator-base",
 			path: join(simulatorBaseDir(env, KEY, "ios", nativeFp), "Built.app"),
 		});

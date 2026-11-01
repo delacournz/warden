@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type ClaimPortsDeps, claimPorts, classifyBindError, isPortFree, listPortLeases, releasePorts } from "./ports";
@@ -23,7 +23,7 @@ function ports(leases: Lease[]): number[] {
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-ports-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {
@@ -216,7 +216,7 @@ describe("isPortFree (real sockets)", () => {
 describe("concurrency", () => {
 	test("concurrent claimPorts processes get distinct ports", async () => {
 		const dbPath = join(dir, "race.db");
-		openStore(dbPath).close();
+		storeLocator.open(dbPath).close();
 		const script = join(import.meta.dir, "ports.race-fixture.ts");
 		const procs = Array.from({ length: 6 }, () =>
 			Bun.spawn(["bun", script, dbPath], { stdout: "pipe", stderr: "inherit" })

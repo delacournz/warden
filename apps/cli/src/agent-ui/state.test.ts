@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { el, snapshotOf } from "@delacour/warden-driver/testing/driver";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { uiDir } from "./paths";
 import {
 	commitGeneration,
@@ -26,7 +26,7 @@ afterEach(() => {
 
 /** Another process's view of the same `WARDEN_HOME`: its own store connection. */
 function connect(dir: string) {
-	const store = openStore(join(dir, "warden.db"));
+	const store = storeLocator.open(join(dir, "warden.db"));
 	stores.push(store);
 	return { env: { WARDEN_HOME: dir }, now: () => 42, store: () => store };
 }

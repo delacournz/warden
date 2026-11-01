@@ -8,7 +8,7 @@ import { spawnDetachedScheduler, spawnDetachedSchedulerVia } from "@delacour/war
 import { driverErr } from "@delacour/warden-driver/errors";
 import { proxyConditionsFor } from "@delacour/warden-driver/network-proxy";
 import { androidTools } from "@delacour/warden-providers/android-tools";
-import { processAlive } from "@delacour/warden-store/liveness";
+import { liveness } from "@delacour/warden-store/liveness";
 import { processCommand } from "@delacour/warden-store/process-identity";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -134,13 +134,13 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 	},
 	proxyStatus: async (ctx, leaseId) => {
 		const handle = readHandleFile(handlePath(leaseId, ctx.env));
-		if (!handle || !processAlive(handle.pid)) return undefined;
+		if (!handle || !liveness.processAlive(handle.pid)) return undefined;
 		const status = await getProxyStatus(handle);
 		return status.success ? { ...status.data, port: handle.port } : undefined;
 	},
 	proxyPid: (ctx, leaseId) => {
 		const handle = readHandleFile(handlePath(leaseId, ctx.env));
-		return handle && processAlive(handle.pid) ? handle.pid : undefined;
+		return handle && liveness.processAlive(handle.pid) ? handle.pid : undefined;
 	},
 	command: processCommand,
 	adb: (ctx) => androidTools(ctx.env).adb,

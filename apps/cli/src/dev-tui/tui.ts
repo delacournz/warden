@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { DevMetroMode, DevReady, DevTaskHandle, DevTaskId, DevUi, MetroTerminal } from "../commands/dev-ui";
 import type { CommandContext } from "../context";
@@ -231,7 +231,7 @@ export function createDevTui(deps: DevTuiDeps): DevTui {
 	function sessionReady(info: DevReady): void {
 		const lease = info.leaseIds[0];
 		if (lease !== undefined) {
-			logDir = join(wardenHome(deps.ctx.env), "dev", lease);
+			logDir = join(storeLocator.wardenHome(deps.ctx.env), "dev", lease);
 			sessionLog.attach(logDir);
 		}
 		if (info.bundleId !== undefined) hudTarget = { udid: info.deviceId, platform: info.platform, app: info.bundleId };

@@ -2,19 +2,9 @@ import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isLeaseAlive, type PidAlive } from "./liveness";
+import { liveness, type PidAlive } from "./liveness";
 import type { Lease, Owner, Platform, QueueEntry, Resource } from "./types";
-import { resourceKey } from "./types";
-
-/** `$WARDEN_HOME`, else `~/.warden`. */
-export function wardenHome(env: Record<string, string | undefined>): string {
-	if (env.WARDEN_HOME) return env.WARDEN_HOME;
-	return join(env.HOME ?? "~", ".warden");
-}
-
-export function defaultDbPath(env: Record<string, string | undefined>): string {
-	return join(wardenHome(env), "warden.db");
-}
+import { leaseModel } from "./types";
 
 /**
  * Ordered schema migrations; index + 1 = `PRAGMA user_version` after applying. Append only — never
@@ -137,17 +127,6 @@ export const MIGRATIONS: readonly string[] = [
 /** A queued claim that has not refreshed within this long is dead (its waiter polls every few seconds). */
 export const QUEUE_TTL_MS = 60_000;
 
-export function ownerKey(owner: Owner): string {
-	switch (owner.kind) {
-		case "agent":
-			return `agent:${owner.sessionId}`;
-		case "user":
-			return `user:${owner.pid}`;
-		case "ci":
-			return `ci:${owner.runId}`;
-	}
-}
-
 export type NewLease = {
 	resource: Resource;
 	owner: Owner;
@@ -202,22 +181,6 @@ type QueueRow = {
 	pid: number | null;
 };
 
-function toQueueEntry(row: QueueRow): QueueEntry {
-	const entry: QueueEntry = {
-		id: row.id,
-		platform: row.platform,
-		profile: row.profile,
-		units: row.units,
-		priority: row.priority,
-		enqueuedAt: row.enqueued_at,
-		heartbeatAt: row.heartbeat_at,
-		owner: JSON.parse(row.owner) as Owner,
-	};
-	if (row.label !== null) entry.label = row.label;
-	if (row.pid !== null) entry.pid = row.pid;
-	return entry;
-}
-
 type DeviceRow = {
 	platform: Platform;
 	id: string;
@@ -231,43 +194,60 @@ type DeviceRow = {
 	slimmed_at: number | null;
 };
 
-function toLease(row: LeaseRow): Lease {
-	const lease: Lease = {
-		id: row.id,
-		resource: JSON.parse(row.resource) as Resource,
-		owner: JSON.parse(row.owner) as Owner,
-		acquiredAt: row.acquired_at,
-		heartbeatAt: row.heartbeat_at,
-		ttlMs: row.ttl_ms,
-	};
-	if (row.label !== null) lease.label = row.label;
-	if (row.pid !== null) lease.pid = row.pid;
-	if (row.booted_by_owner) lease.bootedByOwner = true;
-	if (row.heartbeat_ms !== null) lease.heartbeatMs = row.heartbeat_ms;
-	if (row.shared) lease.shared = true;
-	if (row.provider !== null) lease.provider = row.provider;
-	return lease;
+/** Row to domain-record mappers for the sqlite tables. */
+class RowMapper {
+	queueEntry(row: QueueRow): QueueEntry {
+		const entry: QueueEntry = {
+			id: row.id,
+			platform: row.platform,
+			profile: row.profile,
+			units: row.units,
+			priority: row.priority,
+			enqueuedAt: row.enqueued_at,
+			heartbeatAt: row.heartbeat_at,
+			owner: JSON.parse(row.owner) as Owner,
+		};
+		if (row.label !== null) entry.label = row.label;
+		if (row.pid !== null) entry.pid = row.pid;
+		return entry;
+	}
+
+	lease(row: LeaseRow): Lease {
+		const lease: Lease = {
+			id: row.id,
+			resource: JSON.parse(row.resource) as Resource,
+			owner: JSON.parse(row.owner) as Owner,
+			acquiredAt: row.acquired_at,
+			heartbeatAt: row.heartbeat_at,
+			ttlMs: row.ttl_ms,
+		};
+		if (row.label !== null) lease.label = row.label;
+		if (row.pid !== null) lease.pid = row.pid;
+		if (row.booted_by_owner) lease.bootedByOwner = true;
+		if (row.heartbeat_ms !== null) lease.heartbeatMs = row.heartbeat_ms;
+		if (row.shared) lease.shared = true;
+		if (row.provider !== null) lease.provider = row.provider;
+		return lease;
+	}
+
+	device(row: DeviceRow): DeviceRecord {
+		const device: DeviceRecord = {
+			platform: row.platform,
+			id: row.id,
+			name: row.name,
+			createdAt: row.created_at,
+			lastUsedAt: row.last_used_at,
+		};
+		if (row.profile !== null) device.profile = row.profile;
+		if (row.runtime !== null) device.runtime = row.runtime;
+		if (row.quarantined_at !== null) device.quarantinedAt = row.quarantined_at;
+		if (row.quarantine_reason !== null) device.quarantineReason = row.quarantine_reason;
+		if (row.slimmed_at !== null) device.slimmedAt = row.slimmed_at;
+		return device;
+	}
 }
 
-function toDevice(row: DeviceRow): DeviceRecord {
-	const device: DeviceRecord = {
-		platform: row.platform,
-		id: row.id,
-		name: row.name,
-		createdAt: row.created_at,
-		lastUsedAt: row.last_used_at,
-	};
-	if (row.profile !== null) device.profile = row.profile;
-	if (row.runtime !== null) device.runtime = row.runtime;
-	if (row.quarantined_at !== null) device.quarantinedAt = row.quarantined_at;
-	if (row.quarantine_reason !== null) device.quarantineReason = row.quarantine_reason;
-	if (row.slimmed_at !== null) device.slimmedAt = row.slimmed_at;
-	return device;
-}
-
-export function newLeaseId(): string {
-	return `l_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-}
+const rowMapper = new RowMapper();
 
 /**
  * The lease registry. One sqlite file (WAL) shared by every warden process on the machine;
@@ -297,7 +277,7 @@ export class Store {
 
 	insertLease(input: NewLease, now: number): Lease {
 		const lease: Lease = {
-			id: newLeaseId(),
+			id: storeLocator.newLeaseId(),
 			resource: input.resource,
 			owner: input.owner,
 			acquiredAt: now,
@@ -315,9 +295,9 @@ export class Store {
 			)
 			.run(
 				lease.id,
-				resourceKey(lease.resource),
+				leaseModel.resourceKey(lease.resource),
 				JSON.stringify(lease.resource),
-				ownerKey(lease.owner),
+				storeLocator.ownerKey(lease.owner),
 				JSON.stringify(lease.owner),
 				lease.label ?? null,
 				now,
@@ -374,25 +354,28 @@ export class Store {
 
 	getLease(id: string): Lease | undefined {
 		const row = this.db.query<LeaseRow, [string]>("SELECT * FROM leases WHERE id = ?").get(id);
-		return row ? toLease(row) : undefined;
+		return row ? rowMapper.lease(row) : undefined;
 	}
 
 	listLeases(): Lease[] {
-		return this.db.query<LeaseRow, []>("SELECT * FROM leases ORDER BY acquired_at, id").all().map(toLease);
+		return this.db
+			.query<LeaseRow, []>("SELECT * FROM leases ORDER BY acquired_at, id")
+			.all()
+			.map((r) => rowMapper.lease(r));
 	}
 
 	listLeasesByOwner(owner: Owner): Lease[] {
 		return this.db
 			.query<LeaseRow, [string]>("SELECT * FROM leases WHERE owner_key = ? ORDER BY acquired_at, id")
-			.all(ownerKey(owner))
-			.map(toLease);
+			.all(storeLocator.ownerKey(owner))
+			.map((r) => rowMapper.lease(r));
 	}
 
 	findLeaseByResource(resource: Resource): Lease | undefined {
 		const row = this.db
 			.query<LeaseRow, [string]>("SELECT * FROM leases WHERE resource_key = ?")
-			.get(resourceKey(resource));
-		return row ? toLease(row) : undefined;
+			.get(leaseModel.resourceKey(resource));
+		return row ? rowMapper.lease(row) : undefined;
 	}
 
 	deleteLeases(ids: readonly string[]): number {
@@ -418,7 +401,7 @@ export class Store {
 	reclaimStale(now: number, pidAlive: PidAlive): string[] {
 		return this.transaction(() => {
 			const stale = this.listLeases()
-				.filter((l) => !isLeaseAlive(l, now, pidAlive))
+				.filter((l) => !liveness.isLeaseAlive(l, now, pidAlive))
 				.map((l) => l.id);
 			this.deleteLeases(stale);
 			return stale;
@@ -443,14 +426,14 @@ export class Store {
 					entry.priority,
 					entry.enqueuedAt,
 					entry.heartbeatAt,
-					ownerKey(entry.owner),
+					storeLocator.ownerKey(entry.owner),
 					JSON.stringify(entry.owner),
 					entry.label ?? null,
 					entry.pid ?? null
 				);
 			const row = this.db.query<QueueRow, [string]>("SELECT * FROM boot_queue WHERE id = ?").get(entry.id);
 			if (!row) throw new Error(`boot_queue row ${entry.id} vanished`);
-			return toQueueEntry(row);
+			return rowMapper.queueEntry(row);
 		});
 	}
 
@@ -465,7 +448,10 @@ export class Store {
 
 	/** Raw insertion order (`enqueued_at`, id); use `queueOrder` for admission order. */
 	listQueue(): QueueEntry[] {
-		return this.db.query<QueueRow, []>("SELECT * FROM boot_queue ORDER BY enqueued_at, id").all().map(toQueueEntry);
+		return this.db
+			.query<QueueRow, []>("SELECT * FROM boot_queue ORDER BY enqueued_at, id")
+			.all()
+			.map((r) => rowMapper.queueEntry(r));
 	}
 
 	/** Delete queue rows whose waiter is gone: pid dead, or heartbeat older than `QUEUE_TTL_MS`. */
@@ -494,7 +480,7 @@ export class Store {
 			platform === undefined
 				? this.db.query<DeviceRow, []>("SELECT * FROM devices ORDER BY platform, name").all()
 				: this.db.query<DeviceRow, [string]>("SELECT * FROM devices WHERE platform = ? ORDER BY name").all(platform);
-		return rows.map(toDevice);
+		return rows.map((r) => rowMapper.device(r));
 	}
 
 	touchDevice(platform: Platform, id: string, now: number): void {
@@ -554,7 +540,7 @@ export class Store {
 	 *   ran after the device went idle has dealt with it, so it is not work again until it is used.
 	 */
 	gcWork(now: number, idleMs: number, pidAlive: PidAlive): { staleLeases: number; idleDevices: number } {
-		const staleLeases = this.listLeases().filter((l) => !isLeaseAlive(l, now, pidAlive)).length;
+		const staleLeases = this.listLeases().filter((l) => !liveness.isLeaseAlive(l, now, pidAlive)).length;
 		const lastGc = Number(this.getMeta("last_gc_at") ?? 0);
 		const row = this.db
 			.query<{ n: number }, [number, number, number]>(
@@ -567,33 +553,63 @@ export class Store {
 	}
 }
 
-/** The newest schema this build reads and writes; a store with a higher `schemaVersion()` belongs to a newer warden. */
-export function supportedSchemaVersion(): number {
-	return MIGRATIONS.length;
-}
+/** Locates, opens and migrates the store file; also the pure id/key helpers of the registry. */
+export class StoreLocator {
+	/** `$WARDEN_HOME`, else `~/.warden`. */
+	wardenHome(env: Record<string, string | undefined>): string {
+		if (env.WARDEN_HOME) return env.WARDEN_HOME;
+		return join(env.HOME ?? "~", ".warden");
+	}
 
-function migrate(db: Database): void {
-	const row = db.query<{ user_version: number }, []>("PRAGMA user_version").get();
-	const current = row?.user_version ?? 0;
-	if (current >= MIGRATIONS.length) return;
-	db.transaction(() => {
-		const again = db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
-		for (let v = again; v < MIGRATIONS.length; v++) {
-			const sql = MIGRATIONS[v];
-			if (sql !== undefined) db.exec(sql);
+	defaultDbPath(env: Record<string, string | undefined>): string {
+		return join(this.wardenHome(env), "warden.db");
+	}
+
+	ownerKey(owner: Owner): string {
+		switch (owner.kind) {
+			case "agent":
+				return `agent:${owner.sessionId}`;
+			case "user":
+				return `user:${owner.pid}`;
+			case "ci":
+				return `ci:${owner.runId}`;
 		}
-		db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
-	}).immediate();
+	}
+
+	newLeaseId(): string {
+		return `l_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+	}
+
+	/** The newest schema this build reads and writes; a store with a higher `schemaVersion()` belongs to a newer warden. */
+	supportedSchemaVersion(): number {
+		return MIGRATIONS.length;
+	}
+
+	private migrate(db: Database): void {
+		const row = db.query<{ user_version: number }, []>("PRAGMA user_version").get();
+		const current = row?.user_version ?? 0;
+		if (current >= MIGRATIONS.length) return;
+		db.transaction(() => {
+			const again = db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+			for (let v = again; v < MIGRATIONS.length; v++) {
+				const sql = MIGRATIONS[v];
+				if (sql !== undefined) db.exec(sql);
+			}
+			db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
+		}).immediate();
+	}
+
+	/** Open (creating + migrating) the store at `path`, callers resolve it with `defaultDbPath(env)`. */
+	open(path: string): Store {
+		mkdirSync(dirname(path), { recursive: true });
+		const db = new Database(path, { create: true, strict: true });
+		db.exec("PRAGMA busy_timeout = 15000");
+		db.exec("PRAGMA journal_mode = WAL");
+		db.exec("PRAGMA synchronous = NORMAL");
+		db.exec("PRAGMA foreign_keys = ON");
+		this.migrate(db);
+		return new Store(db);
+	}
 }
 
-/** Open (creating + migrating) the store at `path`, callers resolve it with `defaultDbPath(env)`. */
-export function openStore(path: string): Store {
-	mkdirSync(dirname(path), { recursive: true });
-	const db = new Database(path, { create: true, strict: true });
-	db.exec("PRAGMA busy_timeout = 15000");
-	db.exec("PRAGMA journal_mode = WAL");
-	db.exec("PRAGMA synchronous = NORMAL");
-	db.exec("PRAGMA foreign_keys = ON");
-	migrate(db);
-	return new Store(db);
-}
+export const storeLocator = new StoreLocator();

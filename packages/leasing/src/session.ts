@@ -10,7 +10,7 @@ import {
 import type { AppPhase, EnsureResult } from "@delacour/warden-builds/resolve";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-config/config.defaults";
 import { parsePortSpec } from "@delacour/warden-config/ports-spec";
-import { isPhysicalDevice, type Owner, type Platform } from "@delacour/warden-store/types";
+import { leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ClaimOutcome, ClaimResult } from "./claim";
@@ -101,7 +101,7 @@ export function childEnv(
 		env[`WARDEN_UDID_${i}`] = udid;
 	});
 	// a run on phones only says so; a mixed run is told per device by the jobs' own env (batch / e2e)
-	if (outcome.claimed.length > 0 && outcome.claimed.every((c) => isPhysicalDevice(c.device))) {
+	if (outcome.claimed.length > 0 && outcome.claimed.every((c) => leaseModel.isPhysicalDevice(c.device))) {
 		env.WARDEN_DEVICE_KIND = "physical";
 	} else delete env.WARDEN_DEVICE_KIND;
 	env.WARDEN_LEASE_IDS = [...outcome.claimed.map((c) => c.lease.id), ...ports.map((p) => p.leaseId)].join(",");
@@ -211,7 +211,7 @@ export async function installLegApp(
 		claim.claimed.map(async (c) => {
 			// a device the hide could not boot again is not installed on (batch-pipeline R5)
 			if (!(await ready(c.device.id))) return undefined;
-			const phone = isPhysicalDevice(c.device);
+			const phone = leaseModel.isPhysicalDevice(c.device);
 			// a phone gets a build made for it: Android checks the APK's ABIs first (`-r` over the same bundle id, never an
 			// uninstall of another app); an iPhone gets the signed device build through devicectl
 			const target = phone ? { ...opts, physical: true } : opts;

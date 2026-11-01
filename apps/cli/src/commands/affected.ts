@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { type Affected, type AffectedInput, computeAffected } from "@delacour/warden-core/affected/affected";
 import type { Reason, Selection } from "@delacour/warden-core/affected/select";
 import { parseJobList } from "@delacour/warden-core/batch/expand";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import type { ChalkInstance } from "chalk";
@@ -45,7 +45,7 @@ export function affectedInput(
 		cwd: ctx.cwd,
 		git: ctx.git,
 		env: ctx.env,
-		cacheDir: join(wardenHome(ctx.env), "affected"),
+		cacheDir: join(storeLocator.wardenHome(ctx.env), "affected"),
 		...(suite !== undefined ? { suite } : {}),
 		...(opts.base !== undefined ? { base: opts.base } : {}),
 		...(platform ? { platform } : {}),

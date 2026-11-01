@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { activeConditions, clearCondition, clearConditions, recordCondition } from "./conditions";
 
@@ -14,7 +14,7 @@ let leaseId: string;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-cond-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	leaseId = store.insertLease(
 		{ resource: { kind: "device", platform: "ios", id: "U1", name: "sim" }, owner, ttlMs: 1000 },
 		1

@@ -1,4 +1,4 @@
-import { isPhysicalIosId } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { UiError } from "../agent-ui/output";
 import type { WarmConnect } from "../batch/warm-drivers";
@@ -20,7 +20,7 @@ export function runnerWarmError(error: UiError): string {
  */
 export function warmConnect(ctx: CommandContext): WarmConnect {
 	return async (udid) => {
-		if (isPhysicalIosId(udid)) return warmRunner(ctx, udid);
+		if (leaseModel.isPhysicalIosId(udid)) return warmRunner(ctx, udid);
 		const { ensureHelper } = await import("../agent-ui/helper");
 		const { openIosDriver } = await import("@delacour/warden-driver-ios/ios-driver");
 		const helper = await ensureHelper(ctx, udid, { keepClient: true });

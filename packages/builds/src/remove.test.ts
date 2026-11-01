@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type BuildRecord, getInstall, listBuilds, recordInstall } from "@delacour/warden-store/builds-table";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type BuildRecord, BuildsTable } from "@delacour/warden-store/builds-table";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { aliasBuild, storeArtifact } from "./cache";
 import { buildLockKey, buildResource } from "./lock";
 import { planRemove, removeBuilds } from "./remove";
@@ -69,7 +69,7 @@ describe("removeBuilds", () => {
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), "warden-remove-"));
 		env = { WARDEN_HOME: join(dir, "home") };
-		store = openStore(join(dir, "home", "warden.db"));
+		store = storeLocator.open(join(dir, "home", "warden.db"));
 	});
 	afterEach(() => {
 		store.close();
@@ -93,7 +93,7 @@ describe("removeBuilds", () => {
 	}
 
 	const install = (deviceId: string, hash: string) =>
-		recordInstall(store, { platform: "ios", deviceId, bundleId: "com.x", hash, installedAt: 1 });
+		new BuildsTable(store).recordInstall({ platform: "ios", deviceId, bundleId: "com.x", hash, installedAt: 1 });
 
 	test("deletes the files, its aliases and the install records at those hashes", async () => {
 		const bad = await seed("cd8e2dbeae5b");
@@ -106,10 +106,10 @@ describe("removeBuilds", () => {
 		expect(res.success && res.data.forgotInstalls).toBe(2);
 		expect(existsSync(bad.path)).toBe(false);
 		expect(existsSync(keep.path)).toBe(true);
-		expect(listBuilds(store).map((b) => b.hash)).toEqual(["aaaa1111bbbb"]);
-		expect(getInstall(store, "ios", "U1", "com.x")).toBeUndefined();
-		expect(getInstall(store, "ios", "U2", "com.x")).toBeUndefined();
-		expect(getInstall(store, "ios", "U3", "com.x")?.hash).toBe("aaaa1111bbbb");
+		expect(new BuildsTable(store).list().map((b) => b.hash)).toEqual(["aaaa1111bbbb"]);
+		expect(new BuildsTable(store).getInstall("ios", "U1", "com.x")).toBeUndefined();
+		expect(new BuildsTable(store).getInstall("ios", "U2", "com.x")).toBeUndefined();
+		expect(new BuildsTable(store).getInstall("ios", "U3", "com.x")?.hash).toBe("aaaa1111bbbb");
 	});
 
 	test("an alias whose build is already gone is removed by its own hash", async () => {
@@ -118,7 +118,7 @@ describe("removeBuilds", () => {
 		store.db.query("DELETE FROM builds WHERE hash = ?").run("cd8e2dbeae5b");
 		const res = removeBuilds({ store, env, prefixes: ["ffff0000"], now: 5, pidAlive: () => false });
 		expect(res.success).toBe(true);
-		expect(listBuilds(store)).toEqual([]);
+		expect(new BuildsTable(store).list()).toEqual([]);
 	});
 
 	test("dry run touches nothing", async () => {
@@ -128,7 +128,7 @@ describe("removeBuilds", () => {
 		expect(res.success && res.data.remove.map((b) => b.hash)).toEqual(["cd8e2dbeae5b"]);
 		expect(res.success && res.data.forgotInstalls).toBe(1);
 		expect(existsSync(bad.path)).toBe(true);
-		expect(getInstall(store, "ios", "U1", "com.x")).toBeDefined();
+		expect(new BuildsTable(store).getInstall("ios", "U1", "com.x")).toBeDefined();
 	});
 
 	test("a build being built is refused", async () => {
@@ -143,6 +143,6 @@ describe("removeBuilds", () => {
 		);
 		const res = removeBuilds({ store, env, prefixes: ["cd8e2d"], now: 5, pidAlive: () => false });
 		expect(res.success).toBe(false);
-		expect(listBuilds(store)).toHaveLength(1);
+		expect(new BuildsTable(store).list()).toHaveLength(1);
 	});
 });

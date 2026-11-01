@@ -1,10 +1,5 @@
 import { basename, dirname } from "node:path";
-import {
-	type BuildRecord,
-	listBuilds,
-	type SimulatorRepackRecord,
-	totalBuildBytes,
-} from "@delacour/warden-store/builds-table";
+import { type BuildRecord, BuildsTable, type SimulatorRepackRecord } from "@delacour/warden-store/builds-table";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
@@ -49,7 +44,7 @@ export function cacheCap(
 
 /** Total bytes of the cached builds, summed like `planPrune` does (one aggregate query, no fs walk). */
 export function cacheTotal(store: Store): number {
-	return totalBuildBytes(store);
+	return new BuildsTable(store).totalBytes();
 }
 
 export type PrunePlan = { remove: BuildRecord[]; keep: BuildRecord[]; total: number; after: number };
@@ -151,7 +146,7 @@ export type PruneInput = {
 export function pruneBuilds(input: PruneInput): PrunePlan {
 	const plan = input.store.transaction(() =>
 		planPrune(
-			listBuilds(input.store),
+			new BuildsTable(input.store).list(),
 			input.maxBytes,
 			liveBuildLocks(input.store, input.now, input.pidAlive),
 			input.graceMs === undefined ? undefined : { now: input.now, graceMs: input.graceMs }

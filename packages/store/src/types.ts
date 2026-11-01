@@ -111,42 +111,6 @@ export type AllocationPlan =
 	| { kind: "assign"; steps: AllocationStep[]; stale: string[] }
 	| { kind: "wait"; available: number; needed: number; stale: string[] };
 
-export function resourceKey(resource: Resource): string {
-	switch (resource.kind) {
-		case "device":
-			return `device:${resource.platform}:${resource.id}`;
-		case "port":
-			return `port:${resource.port}`;
-		case "build":
-			return `build:${resource.key}`;
-	}
-}
-
-export function describeOwner(owner: Owner): string {
-	switch (owner.kind) {
-		case "agent":
-			return `agent ${owner.sessionId}`;
-		case "user":
-			return `user pid ${owner.pid}`;
-		case "ci":
-			return `ci ${owner.runId}`;
-	}
-}
-
-/** Owner location for messages: `repo/worktree` when known. */
-export function ownerLocation(owner: Owner): string | undefined {
-	if (owner.kind === "ci") return undefined;
-	const parts = [owner.repo, owner.worktree].filter((p): p is string => Boolean(p));
-	return parts.length > 0 ? parts.join("/") : owner.cwd;
-}
-
-export function sameOwner(a: Owner, b: Owner): boolean {
-	if (a.kind === "agent" && b.kind === "agent") return a.sessionId === b.sessionId;
-	if (a.kind === "user" && b.kind === "user") return a.pid === b.pid;
-	if (a.kind === "ci" && b.kind === "ci") return a.runId === b.runId;
-	return false;
-}
-
 /** A claim waiting for host capacity to boot devices (`boot_queue` row). */
 export type QueueEntry = {
 	id: string;
@@ -163,59 +127,100 @@ export type QueueEntry = {
 	pid?: number;
 };
 
-/** The one constructor of a device lease resource: carries `physical` for real devices. */
-export function deviceResourceOf(d: InventoryDevice): DeviceResource {
-	const resource: DeviceResource = { kind: "device", platform: d.platform, id: d.id, name: d.name };
-	if (d.physical) {
-		resource.physical = {
-			transport: d.physical.transport,
-			...(d.physical.platform === "android" && d.physical.hwSerial !== undefined
-				? { hwSerial: d.physical.hwSerial }
-				: {}),
-		};
-	}
-	return resource;
-}
-
 const PHYSICAL_IOS_ID = /^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9a-f]{40})$/i;
 
-/** An iPhone/iPad hardware UDID: `XXXXXXXX-XXXXXXXXXXXXXXXX` or 40 hex (older devices); a simulator UUID is neither. */
-export function isPhysicalIosId(id: string): boolean {
-	return PHYSICAL_IOS_ID.test(id);
-}
-
-/** A device warden may not boot, shut down, create, erase or count in host capacity. */
-export function isPhysicalDevice(d: Pick<InventoryDevice, "physical">): boolean {
-	return d.physical !== undefined;
-}
-
-/** Is a physical device usable now: an Android phone in adb state `device`, an iOS device its provider reports `booted` (paired and available). */
-export function isPhysicalReady(d: InventoryDevice): boolean {
-	if (!d.physical) return false;
-	if (d.physical.platform === "android") return d.physical.adbState === "device";
-	return d.state === "booted" && d.physical.unreachable === undefined;
-}
-
-/** Why a physical device cannot be used now (undefined = ready, or not a phone), as `<label>: <hint>`; `devices` and a failed claim print it. */
-export function physicalNotReadyReason(d: InventoryDevice): string | undefined {
-	const p = d.physical;
-	if (!p || isPhysicalReady(d)) return undefined;
-	if (p.platform === "android") {
-		if (p.adbState === "unauthorized") return "unauthorized: accept the USB debugging prompt on the phone";
-		if (p.adbState === "offline") return "offline: reconnect the cable or re-run adb connect";
-		return `${p.adbState}: adb does not list it as ready`;
+/** Pure helpers over the lease domain types: resource keys, owners, physical-device readiness. */
+export class LeaseModel {
+	resourceKey(resource: Resource): string {
+		switch (resource.kind) {
+			case "device":
+				return `device:${resource.platform}:${resource.id}`;
+			case "port":
+				return `port:${resource.port}`;
+			case "build":
+				return `build:${resource.key}`;
+		}
 	}
-	if (p.pairingState !== undefined) return `unpaired: ${p.pairingState}; pair and trust it in Xcode`;
-	if (!p.developerMode) return "developer mode off: enable it in Settings > Privacy & Security";
-	if (p.unreachable !== undefined) return `offline: ${p.unreachable}`;
-	return "not available";
+
+	describeOwner(owner: Owner): string {
+		switch (owner.kind) {
+			case "agent":
+				return `agent ${owner.sessionId}`;
+			case "user":
+				return `user pid ${owner.pid}`;
+			case "ci":
+				return `ci ${owner.runId}`;
+		}
+	}
+
+	/** Owner location for messages: `repo/worktree` when known. */
+	ownerLocation(owner: Owner): string | undefined {
+		if (owner.kind === "ci") return undefined;
+		const parts = [owner.repo, owner.worktree].filter((p): p is string => Boolean(p));
+		return parts.length > 0 ? parts.join("/") : owner.cwd;
+	}
+
+	sameOwner(a: Owner, b: Owner): boolean {
+		if (a.kind === "agent" && b.kind === "agent") return a.sessionId === b.sessionId;
+		if (a.kind === "user" && b.kind === "user") return a.pid === b.pid;
+		if (a.kind === "ci" && b.kind === "ci") return a.runId === b.runId;
+		return false;
+	}
+
+	/** The one constructor of a device lease resource: carries `physical` for real devices. */
+	deviceResourceOf(d: InventoryDevice): DeviceResource {
+		const resource: DeviceResource = { kind: "device", platform: d.platform, id: d.id, name: d.name };
+		if (d.physical) {
+			resource.physical = {
+				transport: d.physical.transport,
+				...(d.physical.platform === "android" && d.physical.hwSerial !== undefined
+					? { hwSerial: d.physical.hwSerial }
+					: {}),
+			};
+		}
+		return resource;
+	}
+
+	/** An iPhone/iPad hardware UDID: `XXXXXXXX-XXXXXXXXXXXXXXXX` or 40 hex (older devices); a simulator UUID is neither. */
+	isPhysicalIosId(id: string): boolean {
+		return PHYSICAL_IOS_ID.test(id);
+	}
+
+	/** A device warden may not boot, shut down, create, erase or count in host capacity. */
+	isPhysicalDevice(d: Pick<InventoryDevice, "physical">): boolean {
+		return d.physical !== undefined;
+	}
+
+	/** Is a physical device usable now: an Android phone in adb state `device`, an iOS device its provider reports `booted` (paired and available). */
+	isPhysicalReady(d: InventoryDevice): boolean {
+		if (!d.physical) return false;
+		if (d.physical.platform === "android") return d.physical.adbState === "device";
+		return d.state === "booted" && d.physical.unreachable === undefined;
+	}
+
+	/** Why a physical device cannot be used now (undefined = ready, or not a phone), as `<label>: <hint>`; `devices` and a failed claim print it. */
+	physicalNotReadyReason(d: InventoryDevice): string | undefined {
+		const p = d.physical;
+		if (!p || this.isPhysicalReady(d)) return undefined;
+		if (p.platform === "android") {
+			if (p.adbState === "unauthorized") return "unauthorized: accept the USB debugging prompt on the phone";
+			if (p.adbState === "offline") return "offline: reconnect the cable or re-run adb connect";
+			return `${p.adbState}: adb does not list it as ready`;
+		}
+		if (p.pairingState !== undefined) return `unpaired: ${p.pairingState}; pair and trust it in Xcode`;
+		if (!p.developerMode) return "developer mode off: enable it in Settings > Privacy & Security";
+		if (p.unreachable !== undefined) return `offline: ${p.unreachable}`;
+		return "not available";
+	}
+
+	/** `iPhone 17 Pro` → `iphone-17-pro`. */
+	profileSlug(name: string): string {
+		return name
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "");
+	}
 }
 
-/** `iPhone 17 Pro` → `iphone-17-pro`. */
-export function profileSlug(name: string): string {
-	return name
-		.trim()
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-}
+export const leaseModel = new LeaseModel();

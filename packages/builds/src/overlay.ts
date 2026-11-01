@@ -1,13 +1,13 @@
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache, type GitFactsCache, readGitFacts } from "@delacour/warden-runtime/git-facts";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { hasRepoConfig } from "./config";
 import { readProjectKey, safeKey } from "./project-key";
 
 /** `<WARDEN_HOME>/projects/<key>/`: warden config + e2e specs kept outside the repo (private mode). */
 export function overlayDir(env: Record<string, string | undefined>, projectKey: string): string {
-	return join(wardenHome(env), "projects", safeKey(projectKey));
+	return join(storeLocator.wardenHome(env), "projects", safeKey(projectKey));
 }
 
 /**

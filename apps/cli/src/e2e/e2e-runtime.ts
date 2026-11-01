@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { bundleRuntime } from "../npm/e2e-runtime-pack";
 import type { BuildInfo } from "../update/build-info";
@@ -168,7 +168,7 @@ export async function loadEmbeddedRuntime(embedded: readonly Blob[] = Bun.embedd
 export function stageBundledRuntime(env: Record<string, string | undefined>, build: BuildInfo): AsyncResult<string> {
 	const { version } = build;
 	return stageRuntime({
-		home: wardenHome(env),
+		home: storeLocator.wardenHome(env),
 		version,
 		keyed: build.channel === "release" ? "release" : "content",
 		load:

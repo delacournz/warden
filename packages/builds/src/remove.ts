@@ -1,4 +1,4 @@
-import { type BuildRecord, deleteBuildRecord, forgetInstallsAt, listBuilds } from "@delacour/warden-store/builds-table";
+import { type BuildRecord, BuildsTable } from "@delacour/warden-store/builds-table";
 import type { PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
@@ -73,7 +73,7 @@ export function removeBuilds(input: RemoveInput): Result<RemoveOutcome> {
 	const { store } = input;
 	return store.transaction(() => {
 		const plan = planRemove(
-			listBuilds(store),
+			new BuildsTable(store).list(),
 			input.prefixes,
 			input.platform,
 			liveBuildLocks(store, input.now, input.pidAlive)
@@ -83,12 +83,12 @@ export function removeBuilds(input: RemoveInput): Result<RemoveOutcome> {
 		let forgotInstalls = 0;
 		for (const platform of new Set(plan.data.map((b) => b.platform))) {
 			const hashes = plan.data.filter((b) => b.platform === platform).map((b) => b.hash);
-			forgotInstalls += forgetInstallsAt(store, platform, hashes, dryRun);
+			forgotInstalls += new BuildsTable(store).forgetInstallsAt(platform, hashes, dryRun);
 		}
 		if (!dryRun) {
 			// an alias goes with its primary; an orphan one (its primary already gone) only owns its row
 			for (const b of plan.data) {
-				if (isAlias(b)) deleteBuildRecord(store, b.projectKey, b.platform, b.hash);
+				if (isAlias(b)) new BuildsTable(store).remove(b.projectKey, b.platform, b.hash);
 				else removeBuild(store, input.env, b);
 			}
 		}

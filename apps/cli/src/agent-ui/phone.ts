@@ -1,5 +1,5 @@
 import { classifyOther, isEmulatorSerial, listAdbDevices } from "@delacour/warden-providers/android";
-import { installedBundleIds } from "@delacour/warden-store/builds-table";
+import { BuildsTable } from "@delacour/warden-store/builds-table";
 import type { DeviceResource } from "@delacour/warden-store/types";
 import type { CommandContext } from "../context";
 import { type UiError, uiError } from "./output";
@@ -53,7 +53,7 @@ export function phoneStateError(serial: string, adbState: string): UiError | und
  * records for that serial. Anything else on a physical device is the owner's.
  */
 export function ownedPackages(ctx: Pick<CommandContext, "env" | "store">, serial: string): string[] {
-	const owned = new Set(installedBundleIds(ctx.store(), "android", serial));
+	const owned = new Set(new BuildsTable(ctx.store()).installedBundleIds("android", serial));
 	const bundleId = ctx.env.WARDEN_BUNDLE_ID?.trim();
 	if (bundleId) owned.add(bundleId);
 	return [...owned];

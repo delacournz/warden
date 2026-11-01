@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { bunExec } from "@delacour/warden-runtime/exec";
 import { createGitFactsCache } from "@delacour/warden-runtime/git-facts";
-import { openStore } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { fakeFarm } from "../../examples/fake-provider";
 import { createWardenClient } from "../client";
 import { isWardenError } from "../errors";
@@ -83,7 +83,7 @@ describe("providers in warden.config.ts", () => {
 		writeConfig([EXAMPLE]);
 		await using warden = createWardenClient(options());
 		const [lease] = await warden.leases.claim({ platform: "android", provider: "fake-farm" });
-		const peek = openStore(join(home, "warden.db"));
+		const peek = storeLocator.open(join(home, "warden.db"));
 		try {
 			expect(peek.getLease(lease?.id ?? "")?.provider).toBe("fake-farm");
 		} finally {

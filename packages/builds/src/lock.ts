@@ -1,6 +1,6 @@
-import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
-import { type BuildResource, describeOwner, type Lease, type Owner, type Platform } from "@delacour/warden-store/types";
+import { type BuildResource, type Lease, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { BUILD_LOCK_POLL_MS, BUILD_LOCK_TTL_MS, BUILD_LOCK_WAIT_MS } from "./builds.defaults";
 
@@ -68,7 +68,7 @@ function attempt(deps: BuildLockDeps, resource: BuildResource): Attempt | undefi
 /** One poll while another owner holds the lock: the wait line the first time, `onWait` every time. */
 function noticeHolder(deps: BuildLockDeps, held: Lease, first: boolean): void {
 	if (first) {
-		const holder = describeOwner(held.owner);
+		const holder = leaseModel.describeOwner(held.owner);
 		deps.log?.(deps.waitLine?.(holder) ?? `another warden (${holder}) is fetching/building this app — waiting`);
 	}
 	deps.onWait?.(held);
@@ -95,7 +95,7 @@ export async function withBuildLock<T>(deps: BuildLockDeps, key: string, fn: () 
 		}
 		if (deps.now() - started >= waitMs) {
 			return resultFactory.err(
-				`timed out waiting for build lock ${key}${got ? ` (held by ${describeOwner(got.lease.owner)})` : ""}`
+				`timed out waiting for build lock ${key}${got ? ` (held by ${leaseModel.describeOwner(got.lease.owner)})` : ""}`
 			);
 		}
 		if (got) {
@@ -111,7 +111,7 @@ export function liveBuildLocks(store: Store, now: number, pidAlive: PidAlive): S
 	return new Set(
 		store
 			.listLeases()
-			.filter((l) => isLeaseAlive(l, now, pidAlive))
+			.filter((l) => liveness.isLeaseAlive(l, now, pidAlive))
 			.flatMap((l) => (l.resource.kind === "build" ? [l.resource.key] : []))
 	);
 }

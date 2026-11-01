@@ -6,8 +6,8 @@ import { createIosProvider } from "@delacour/warden-providers/ios";
 import type { BootReady, DeviceProvider } from "@delacour/warden-providers/provider.types";
 import { simctlDevicesJson } from "@delacour/warden-providers/testing/ios.fixture";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
-import { type DeviceRequest, type InventoryDevice, type Owner, resourceKey } from "@delacour/warden-store/types";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
+import { type DeviceRequest, type InventoryDevice, leaseModel, type Owner } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import { type ClaimInput, claimAborted, claimDevices, PENDING_PREFIX, QUARANTINE_TTL_MS } from "./claim";
@@ -26,7 +26,7 @@ const other: Owner = { kind: "agent", sessionId: "s2", cwd: "/x" };
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-claim-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 
 afterEach(() => {
@@ -766,7 +766,7 @@ describe("claim under host load: pool of one (ios-claim-path-R1, R2)", () => {
 		const leasedAtShutdown: string[][] = [];
 		provider.shutdown = async (id) => {
 			provider.calls.push(`shutdown ${id}`);
-			leasedAtShutdown.push(store.listLeases().map((l) => resourceKey(l.resource)));
+			leasedAtShutdown.push(store.listLeases().map((l) => leaseModel.resourceKey(l.resource)));
 			return resultFactory.ok(undefined);
 		};
 		await claimDevices(input(provider, { request: request({ max: 1 }), load: overloaded }));

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { Exec, ExecOptions, ExecResult } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { BuildLockDeps } from "../lock";
@@ -23,7 +23,7 @@ let dir: string;
 let store: Store;
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-runner-build-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 });
 afterEach(() => {
 	store.close();

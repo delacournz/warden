@@ -7,7 +7,7 @@ import {
 	traceProcessorPin,
 	traceProcessorUrl,
 } from "@delacour/warden-perf/android/trace-processor.data";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import type { WardenError } from "@delacour/warden-types/error";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { opError } from "../errors";
@@ -42,7 +42,7 @@ export const INSTALL_HINT = "warden perf tools install trace-processor --yes";
 export function traceProcessorPath(ctx: Pick<PerfEnv, "env">): string {
 	const override = ctx.env.WARDEN_TRACE_PROCESSOR;
 	if (override !== undefined && override !== "") return override;
-	return join(wardenHome(ctx.env), "tools", traceProcessorFileName());
+	return join(storeLocator.wardenHome(ctx.env), "tools", traceProcessorFileName());
 }
 
 const MB = 1024 * 1024;
@@ -105,7 +105,7 @@ export async function downloadTraceProcessor(
 	}
 	const { pin } = pinned;
 	const url = traceProcessorUrl(pin);
-	const dest = join(wardenHome(ctx.env), "tools", traceProcessorFileName());
+	const dest = join(storeLocator.wardenHome(ctx.env), "tools", traceProcessorFileName());
 	const label = `trace_processor ${TRACE_PROCESSOR_VERSION}`;
 	const tmp = `${dest}.${deps.now()}.tmp`;
 	mkdirSync(dirname(dest), { recursive: true });

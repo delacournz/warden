@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 
 /**
  * Where a standalone binary came from, when that can't be read off its path: `warden install` run via
@@ -10,7 +10,7 @@ import { wardenHome } from "@delacour/warden-store/store";
 export type InstallOrigin = "npm";
 
 function originFile(env: Record<string, string | undefined>): string {
-	return join(wardenHome(env), "install-origin.json");
+	return join(storeLocator.wardenHome(env), "install-origin.json");
 }
 
 function readOrigins(env: Record<string, string | undefined>): Record<string, InstallOrigin> {
@@ -40,7 +40,7 @@ export function recordInstallOrigin(
 	if (origin) origins[binary] = origin;
 	else delete origins[binary];
 	const path = originFile(env);
-	mkdirSync(wardenHome(env), { recursive: true });
+	mkdirSync(storeLocator.wardenHome(env), { recursive: true });
 	const tmp = `${path}.tmp-${process.pid}`;
 	writeFileSync(tmp, `${JSON.stringify(origins, null, 2)}\n`);
 	renameSync(tmp, path);

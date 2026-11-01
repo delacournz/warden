@@ -6,7 +6,7 @@ import { activeConditions, recordCondition } from "@delacour/warden-core/conditi
 import { undoConditions } from "@delacour/warden-core/conditions/undo";
 import { fakeDriver, snapshotOf } from "@delacour/warden-driver/testing/driver";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Lease } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type ConditionsEnv, createDeviceConditions } from "./device-conditions";
@@ -19,7 +19,7 @@ let lease: Lease;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "warden-recorder-"));
-	store = openStore(join(dir, "warden.db"));
+	store = storeLocator.open(join(dir, "warden.db"));
 	lease = store.insertLease(
 		{
 			resource: { kind: "device", platform: "android", id: "emulator-5554", name: "Pixel" },

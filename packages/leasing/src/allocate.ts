@@ -1,4 +1,4 @@
-import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type {
 	AllocationPlan,
 	AllocationStep,
@@ -6,7 +6,7 @@ import type {
 	InventoryDevice,
 	Lease,
 } from "@delacour/warden-store/types";
-import { isPhysicalReady, profileSlug, resourceKey } from "@delacour/warden-store/types";
+import { leaseModel } from "@delacour/warden-store/types";
 
 export type AllocateInput = {
 	inventory: InventoryDevice[];
@@ -49,7 +49,7 @@ function runtimeMatches(device: InventoryDevice, runtime: string | undefined): b
 }
 
 function profileMatches(device: InventoryDevice, profile: string): boolean {
-	return (device.profile ?? profileSlug(device.name)) === profile;
+	return (device.profile ?? leaseModel.profileSlug(device.name)) === profile;
 }
 
 const STATE_RANK: Record<InventoryDevice["state"], number> = { booted: 0, booting: 1, shutdown: 2 };
@@ -61,9 +61,9 @@ const STATE_RANK: Record<InventoryDevice["state"], number> = { booted: 0, bootin
  * `request.physical` asks for them: then only ready ones, no profile match, and nothing is created. Stale leases are ignored and returned for reclaim.
  */
 export function allocate({ inventory, leases, request, now, pidAlive, skip }: AllocateInput): AllocationPlan {
-	const stale = leases.filter((l) => !isLeaseAlive(l, now, pidAlive)).map((l) => l.id);
+	const stale = leases.filter((l) => !liveness.isLeaseAlive(l, now, pidAlive)).map((l) => l.id);
 	const staleSet = new Set(stale);
-	const held = new Set(leases.filter((l) => !staleSet.has(l.id)).map((l) => resourceKey(l.resource)));
+	const held = new Set(leases.filter((l) => !staleSet.has(l.id)).map((l) => leaseModel.resourceKey(l.resource)));
 
 	const candidate = (d: InventoryDevice): boolean => {
 		if (d.platform !== request.platform || d.golden === true || d.quarantined === true || skip?.has(d.id) === true) {
@@ -72,7 +72,11 @@ export function allocate({ inventory, leases, request, now, pidAlive, skip }: Al
 		if (request.physical) {
 			// naming devices beats the allowlist; with neither, any ready physical device
 			const pick = request.physical.ids ?? request.physical.allow;
-			return isPhysicalReady(d) && (pick === undefined || pick.includes(d.id)) && runtimeMatches(d, request.runtime);
+			return (
+				leaseModel.isPhysicalReady(d) &&
+				(pick === undefined || pick.includes(d.id)) &&
+				runtimeMatches(d, request.runtime)
+			);
 		}
 		return (
 			d.physical === undefined &&
@@ -83,7 +87,7 @@ export function allocate({ inventory, leases, request, now, pidAlive, skip }: Al
 	};
 	const matching = inventory.filter(candidate);
 	const free = matching
-		.filter((d) => !held.has(resourceKey({ kind: "device", platform: d.platform, id: d.id, name: d.name })))
+		.filter((d) => !held.has(leaseModel.resourceKey({ kind: "device", platform: d.platform, id: d.id, name: d.name })))
 		.sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state] || compareRuntimeDesc(a, b));
 
 	const steps: AllocationStep[] = free

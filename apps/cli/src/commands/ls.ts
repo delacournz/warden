@@ -1,8 +1,8 @@
 import { formatDuration } from "@delacour/warden-config/duration";
 import type { LsJson } from "@delacour/warden-sdk/contracts/leases";
 import { withLeaseState } from "@delacour/warden-sdk/lease-view";
-import { processAlive } from "@delacour/warden-store/liveness";
-import { describeOwner, ownerLocation, type Resource } from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { leaseModel, type Resource } from "@delacour/warden-store/types";
 import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, plural, table } from "../output";
@@ -23,15 +23,15 @@ const HEADERS = ["LEASE", "RESOURCE", "STATE", "OWNER", "REPO/WORKTREE", "LABEL"
 function list(ctx: CommandContext, json: boolean): number {
 	const { color } = ctx.ui;
 	const now = ctx.now();
-	const leases: LsJson["leases"] = withLeaseState(ctx.store().listLeases(), now, processAlive);
+	const leases: LsJson["leases"] = withLeaseState(ctx.store().listLeases(), now, liveness.processAlive);
 	const withProvider = leases.some((l) => l.provider !== undefined);
 	const rows = leases.map((l) => [
 		l.id,
 		describeResource(l.resource),
 		...(withProvider ? [l.provider ?? "bundled"] : []),
 		l.state === "alive" ? color.green(l.state) : color.yellow(l.state),
-		describeOwner(l.owner),
-		ownerLocation(l.owner) ?? "",
+		leaseModel.describeOwner(l.owner),
+		leaseModel.ownerLocation(l.owner) ?? "",
 		l.label ?? "",
 		formatDuration(now - l.acquiredAt),
 		`${formatDuration(now - l.heartbeatAt)} ago`,

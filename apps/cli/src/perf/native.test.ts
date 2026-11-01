@@ -5,7 +5,7 @@ import type { NativeProfilers } from "@delacour/warden-sdk/ops/perf/native";
 import { findRunningOneShot, readHandleFile } from "@delacour/warden-sdk/ops/perf/native-state";
 import type { NativeAnalysis, NativeIo, NativeProfiler } from "@delacour/warden-sdk/ops/perf/native-types";
 import { createSession } from "@delacour/warden-sdk/ops/perf/session";
-import { wardenHome } from "@delacour/warden-store/store";
+import { storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
 import { perfNative } from "./native";
@@ -87,7 +87,7 @@ describe("warden perf native", () => {
 		expect(s.log.map((l) => l.split(" ")[0])).toEqual(["start", "stop"]);
 		const doc = JSON.parse(s.c.stdout.join("\n"));
 		expect(doc.result.findings[0].kind).toBe("native-hotspot");
-		const root = join(wardenHome(s.c.env), "perf");
+		const root = join(storeLocator.wardenHome(s.c.env), "perf");
 		const dir: string = doc.result.dir;
 		expect(dir).toContain(root);
 		expect(readFileSync(join(dir, "..", "report.md"), "utf8")).toContain("parseCatalog");
@@ -129,16 +129,18 @@ describe("warden perf native", () => {
 		const doc = JSON.parse(s.c.stdout.join("\n"));
 		expect(doc.result.sessionId).toBe(made.data.id);
 		const sessionJson = JSON.parse(
-			readFileSync(join(wardenHome(s.c.env), "perf", made.data.id, "session.json"), "utf8")
+			readFileSync(join(storeLocator.wardenHome(s.c.env), "perf", made.data.id, "session.json"), "utf8")
 		);
 		expect(sessionJson.capturers).toContainEqual(
 			expect.objectContaining({ kind: "native", pid: 900, state: "running" })
 		);
 		s.c.stdout.length = 0;
 		expect(await run(s, "stop")).toBe(0);
-		const after = JSON.parse(readFileSync(join(wardenHome(s.c.env), "perf", made.data.id, "session.json"), "utf8"));
+		const after = JSON.parse(
+			readFileSync(join(storeLocator.wardenHome(s.c.env), "perf", made.data.id, "session.json"), "utf8")
+		);
 		expect(after.capturers.find((c: { kind: string }) => c.kind === "native").state).toBe("stopped");
-		expect(existsSync(join(wardenHome(s.c.env), "perf", made.data.id, "report.md"))).toBe(false);
+		expect(existsSync(join(storeLocator.wardenHome(s.c.env), "perf", made.data.id, "report.md"))).toBe(false);
 	});
 
 	test("--leaks mutates: refused without the lease", async () => {

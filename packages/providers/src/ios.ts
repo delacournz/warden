@@ -1,6 +1,6 @@
 import { DEFAULT_SLIM_PROFILE, desiredLabels, type SlimProfile } from "@delacour/warden-config/slim.profile";
 import { type Exec, type ExecResult, execError } from "@delacour/warden-runtime/exec";
-import { type DeviceState, type InventoryDevice, isPhysicalIosId, profileSlug } from "@delacour/warden-store/types";
+import { type DeviceState, type InventoryDevice, leaseModel } from "@delacour/warden-store/types";
 import { type WardenError, wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
 import { splitBiometricProfile } from "./biometrics";
@@ -116,7 +116,7 @@ function toInventoryDevice(sim: RawSim, runtime: string): InventoryDevice {
 	};
 	if (isGoldenName(sim.name)) device.golden = true;
 	if (sim.deviceTypeIdentifier?.startsWith(DEVICE_TYPE_PREFIX)) {
-		device.profile = profileSlug(sim.deviceTypeIdentifier.slice(DEVICE_TYPE_PREFIX.length));
+		device.profile = leaseModel.profileSlug(sim.deviceTypeIdentifier.slice(DEVICE_TYPE_PREFIX.length));
 	}
 	return device;
 }
@@ -215,9 +215,9 @@ export function resolveCreateTarget(
 	profile: string,
 	runtime: string | undefined
 ): Result<{ type: SimDeviceType; runtime: SimRuntime }, WardenError> {
-	const type = types.find((t) => profileSlug(t.name) === profile);
+	const type = types.find((t) => leaseModel.profileSlug(t.name) === profile);
 	if (!type) {
-		const known = types.map((t) => profileSlug(t.name)).join(", ");
+		const known = types.map((t) => leaseModel.profileSlug(t.name)).join(", ");
 		return wardenErrors.err("not_found", `no iOS device type for profile "${profile}" (known: ${known})`);
 	}
 	const candidates = runtimes.filter((r) => runtimeMatches(r, runtime));
@@ -432,7 +432,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		return parsed.success ? parsed.data.find((d) => d.id === id)?.runtime : undefined;
 	};
 	const prepareBoot = async (id: string): Promise<void> => {
-		if (isPhysicalIosId(id)) return;
+		if (leaseModel.isPhysicalIosId(id)) return;
 		const target = slim === false ? undefined : slimTarget(id);
 		if (slim === false || !target) return;
 		const runtime = await runtimeOf(id, target.runtime);
@@ -474,7 +474,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		note(`${rec.name} biometrics enroll did not take after ${ENROLL_ATTEMPTS} attempts`);
 	};
 	const afterReady = async (id: string): Promise<void> => {
-		if (isPhysicalIosId(id)) return;
+		if (leaseModel.isPhysicalIosId(id)) return;
 		await enrollBiometrics(id);
 		if (slim === false) return;
 		const target = slimTarget(id);
@@ -547,9 +547,9 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		},
 
 		boot: async (id) =>
-			isPhysicalIosId(id) ? errorOf(physicalRefusal("boot", id)) : bootAfterShutdown(runner, id, sleep),
+			leaseModel.isPhysicalIosId(id) ? errorOf(physicalRefusal("boot", id)) : bootAfterShutdown(runner, id, sleep),
 
-		waitReady: (id, timeoutMs) => (isPhysicalIosId(id) ? probePhone(id) : waitReady(id, timeoutMs)),
+		waitReady: (id, timeoutMs) => (leaseModel.isPhysicalIosId(id) ? probePhone(id) : waitReady(id, timeoutMs)),
 
 		/**
 		 * `bootstatus -b` boots a shut-down sim itself, so a separate `simctl boot` is one CoreSimulator
@@ -558,7 +558,7 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		 * is left of `timeoutMs`, so the whole call stays within one ready budget.
 		 */
 		async bootReady(id, timeoutMs): Promise<BootReady> {
-			if (isPhysicalIosId(id)) return { kind: "boot-failed", error: physicalRefusal("boot", id) };
+			if (leaseModel.isPhysicalIosId(id)) return { kind: "boot-failed", error: physicalRefusal("boot", id) };
 			const started = deps.now();
 			const cmd = ["xcrun", "simctl", "bootstatus", id, "-b"];
 			const status = await runCmd(runner, cmd, timeoutMs);
@@ -591,16 +591,16 @@ export function createIosProvider(deps: ProviderDeps, options: IosProviderOption
 		},
 
 		shutdown: async (id) =>
-			isPhysicalIosId(id)
+			leaseModel.isPhysicalIosId(id)
 				? errorOf(physicalRefusal("shut down", id))
 				: idempotent(runner, ["shutdown", id], "Shutdown", IOS_TIMEOUTS.shutdownMs),
 
 		/** A phone: `devicectl device info lockState` answers (locked or not). A sim: SpringBoard health. */
-		probe: (id) => (isPhysicalIosId(id) ? probePhone(id) : probeIosHealth(runner, id)),
+		probe: (id) => (leaseModel.isPhysicalIosId(id) ? probePhone(id) : probeIosHealth(runner, id)),
 
-		verifyWarm: (id) => (isPhysicalIosId(id) ? probePhone(id) : probeIosWarm(runner, id)),
+		verifyWarm: (id) => (leaseModel.isPhysicalIosId(id) ? probePhone(id) : probeIosWarm(runner, id)),
 
 		/** After a `bootstatus` that saw the boot finish, launchd is up: SpringBoard running is all that is left to prove. */
-		probeBooted: (id) => (isPhysicalIosId(id) ? probePhone(id) : probeIosWarm(runner, id)),
+		probeBooted: (id) => (leaseModel.isPhysicalIosId(id) ? probePhone(id) : probeIosWarm(runner, id)),
 	};
 }

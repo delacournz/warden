@@ -1,4 +1,4 @@
-import { defaultDbPath, openStore, type Store } from "@delacour/warden-store/store";
+import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 
 /** Opens the lease store; a failure is a `Result`, never a throw. */
@@ -12,11 +12,11 @@ const shared = new Map<string, Store>();
  */
 export function sharedStoreOpener(env: Readonly<Record<string, string | undefined>> = process.env): StoreOpener {
 	return () => {
-		const path = defaultDbPath({ ...env });
+		const path = storeLocator.defaultDbPath({ ...env });
 		const open = shared.get(path);
 		if (open) return resultFactory.ok(open);
 		try {
-			const store = openStore(path);
+			const store = storeLocator.open(path);
 			shared.set(path, store);
 			return resultFactory.ok(store);
 		} catch (error) {

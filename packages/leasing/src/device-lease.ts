@@ -1,15 +1,7 @@
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
-import { isLeaseAlive, type PidAlive } from "@delacour/warden-store/liveness";
+import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
 import type { Store } from "@delacour/warden-store/store";
-import {
-	type DeviceResource,
-	describeOwner,
-	type Lease,
-	type Owner,
-	ownerLocation,
-	type Platform,
-	sameOwner,
-} from "@delacour/warden-store/types";
+import { type DeviceResource, type Lease, leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import type { LeaseConditions } from "./lease-host";
 
@@ -50,9 +42,9 @@ export type EnsureLeaseOptions = {
 
 /** Message shown to the model/user when a device is held by someone else. */
 export function blockMessage(id: string, platform: Platform, owner: Owner): string {
-	const where = ownerLocation(owner);
+	const where = leaseModel.ownerLocation(owner);
 	const noun = platform === "ios" ? "udid" : "serial";
-	return `device ${id} leased by ${describeOwner(owner)}${where ? ` (${where})` : ""} — run \`warden claim ${platform}\` and use the returned ${noun}`;
+	return `device ${id} leased by ${leaseModel.describeOwner(owner)}${where ? ` (${where})` : ""} — run \`warden claim ${platform}\` and use the returned ${noun}`;
 }
 
 /** Message for `device_busy`: who holds the device, the holding pid and the lease label. */
@@ -61,7 +53,7 @@ export function busyMessage(lease: Lease): string {
 	const id = lease.resource.kind === "device" ? lease.resource.id : lease.id;
 	const holder = [`pid ${lease.pid}`, lease.label].filter((part): part is string => Boolean(part)).join(", ");
 	const device = name && name !== id ? `${name} (${id})` : id;
-	return `device ${device} is in use by ${describeOwner(lease.owner)} (${holder}); re-run with --force to drive it anyway`;
+	return `device ${device} is in use by ${leaseModel.describeOwner(lease.owner)} (${holder}); re-run with --force to drive it anyway`;
 }
 
 /** An own lease another live process holds: its pid is set, is not the caller's liveness pid, and is alive. */
@@ -84,8 +76,8 @@ export function ensureCallerLease(
 	const probe: DeviceResource = { kind: "device", platform, id, name: opts.name ?? id };
 	return store.transaction((): Result<CallerLease, DeviceLeaseError> => {
 		const existing = store.findLeaseByResource(probe);
-		if (existing && sameOwner(existing.owner, owner)) return ownLease(store, existing, opts);
-		if (existing && isLeaseAlive(existing, opts.now, opts.pidAlive)) {
+		if (existing && leaseModel.sameOwner(existing.owner, owner)) return ownLease(store, existing, opts);
+		if (existing && liveness.isLeaseAlive(existing, opts.now, opts.pidAlive)) {
 			return { success: false, error: { code: "device_foreign", message: blockMessage(id, platform, existing.owner) } };
 		}
 		if (!opts.claim) {
@@ -94,7 +86,7 @@ export function ensureCallerLease(
 				error: {
 					code: "device_not_leased",
 					message: existing
-						? `device ${id} has a stale lease (${describeOwner(existing.owner)})`
+						? `device ${id} has a stale lease (${leaseModel.describeOwner(existing.owner)})`
 						: `device ${id} is not leased`,
 				},
 			};

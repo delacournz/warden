@@ -3,12 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpat
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { type Exec, execError } from "@delacour/warden-runtime/exec";
 import { findNodeBin } from "@delacour/warden-runtime/node-bin";
-import {
-	type FingerprintMemoKey,
-	type FingerprintMemoRow,
-	getFingerprintMemoRow,
-	putFingerprintMemoRow,
-} from "@delacour/warden-store/builds-table";
+import { BuildsTable, type FingerprintMemoKey, type FingerprintMemoRow } from "@delacour/warden-store/builds-table";
 import type { Store } from "@delacour/warden-store/store";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
@@ -96,7 +91,7 @@ function memoKey(project: Project, platform: Platform): FingerprintMemoKey {
 }
 
 export function getFingerprintMemo(store: Store, project: Project, platform: Platform): FingerprintMemoRow | undefined {
-	return getFingerprintMemoRow(store, memoKey(project, platform));
+	return new BuildsTable(store).getFingerprint(memoKey(project, platform));
 }
 
 function putFingerprintMemo(
@@ -106,7 +101,7 @@ function putFingerprintMemo(
 	signature: string,
 	native: string
 ) {
-	putFingerprintMemoRow(memo.store, memoKey(project, platform), signature, native, memo.now);
+	new BuildsTable(memo.store).putFingerprint(memoKey(project, platform), signature, native, memo.now);
 }
 
 const LOCKFILES = ["bun.lock", "bun.lockb", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"];

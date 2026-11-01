@@ -5,15 +5,8 @@ import { resolveOwner } from "@delacour/warden-leasing/owner";
 import { listAvds } from "@delacour/warden-providers/android";
 import type { DeviceRowJson } from "@delacour/warden-sdk/contracts/devices";
 import { aliveDeviceLeases } from "@delacour/warden-sdk/lease-view";
-import { processAlive } from "@delacour/warden-store/liveness";
-import {
-	describeOwner,
-	type InventoryDevice,
-	type Lease,
-	ownerLocation,
-	type Platform,
-	physicalNotReadyReason,
-} from "@delacour/warden-store/types";
+import { liveness } from "@delacour/warden-store/liveness";
+import { type InventoryDevice, type Lease, leaseModel, type Platform } from "@delacour/warden-store/types";
 import type { ChalkInstance } from "chalk";
 import { defineCommand } from "../command";
 import { appHostFromContext, type CommandContext } from "../context";
@@ -25,8 +18,8 @@ const BYTES_PER_MB = 1024 ** 2;
 export type DeviceRow = DeviceRowJson;
 
 function leaseInfo(lease: Lease): NonNullable<DeviceRow["lease"]> {
-	const where = ownerLocation(lease.owner);
-	return { id: lease.id, owner: describeOwner(lease.owner), ...(where ? { where } : {}) };
+	const where = leaseModel.ownerLocation(lease.owner);
+	return { id: lease.id, owner: leaseModel.describeOwner(lease.owner), ...(where ? { where } : {}) };
 }
 
 /** A phone whose reachability probe answered `passcodeRequired`: reachable, but `warden ui` reports `device_locked` until it is unlocked. */
@@ -50,7 +43,7 @@ async function platformRows(ctx: CommandContext, platform: Platform, leases: Map
 	const rows: DeviceRow[] = markWardenDevices(inventory.data, [...records.values()]).map((d) => {
 		const lease = leases.get(`${platform}:${d.id}`);
 		const record = records.get(d.id);
-		const hint = physicalNotReadyReason(d) ?? lockedHint(d);
+		const hint = leaseModel.physicalNotReadyReason(d) ?? lockedHint(d);
 		return {
 			platform,
 			kind: d.physical ? ("physical" as const) : ("virtual" as const),
@@ -133,7 +126,7 @@ async function devices(
 		return 1;
 	}
 	const now = ctx.now();
-	const leases = aliveDeviceLeases(ctx.store().listLeases(), now, processAlive);
+	const leases = aliveDeviceLeases(ctx.store().listLeases(), now, liveness.processAlive);
 	const platforms: readonly Platform[] = filter ? [filter] : PLATFORMS;
 	const all: DeviceRow[] = [];
 	for (const platform of platforms) all.push(...(await platformRows(ctx, platform, leases)));
