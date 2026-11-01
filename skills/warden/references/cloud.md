@@ -6,7 +6,8 @@ Hosted iOS / Android devices you lease like a local sim. Local sims and emulator
 
 | Need | Command |
 |---|---|
-| log in (a person, once per machine) | `warden login` (`--no-browser` prints the code; `--api-url <url>` for staging; `--json` → `{ apiUrl, user, organization, machine }`) |
+| log in (a person, once per machine) | `warden login` (`--no-browser` prints the code; `--api-url <url>` for staging; `--org <slug\|id>` = default org, no prompt; `--json` → `{ account, apiUrl, user, organization, profiles: [{ account, organization }], machine }`) |
+| login's orgs | one org → used. Several → a terminal asks which is the default; no terminal / `--json` → the session's active org, else the first. That org is made active and saved on the account; every other org is saved as a profile: account named by its slug, same session (`--account <slug>` or `warden org link <slug> --account <slug>`). An existing account of another user / api is never overwritten (warning). Unknown `--org` → exit 1, nothing saved |
 | who am I, balance | `warden whoami [--json]` → account, org, remote status, `billing: { balanceUsd, ratePerMinuteUsd, estMinutesLeft, lowBalance, trial: { state, amountUsd }, billingUrl }` (`null` when billing can't be read) |
 | Revyl approval | `remote.state: awaiting_approval` = the org owner already has a Revyl account; `warden whoami` prints `approve in Revyl with code <code>  <uri>` (`--json`: `remote.approval: { userCode, uri, expiresAt }`, owner only). Devices can't start until a person approves it in Revyl |
 | Revyl dashboard | warden-web's **Open in Revyl** (`remote.dashboard: true`). A person signs in to Revyl themselves; agents never need it |
@@ -14,7 +15,7 @@ Hosted iOS / Android devices you lease like a local sim. Local sims and emulator
 | more accounts | `warden login --account <name>` (name: `[a-z0-9-]`, ≤32; first login = `default`, and becomes the default) · `warden account [list] [--json]` (`*` default, `>` this directory) · `warden account default <name>` · `warden account rm <name>` |
 | bind a directory to an org | `warden org link [org] [--account <name>] [--path <dir>] [--remote] [--json]`: default target = git top-level of cwd (else cwd); `--path` for a parent (every Orca worktree under `~/orca/workspaces/<repo>` matches); `--remote` = any checkout of `origin`. Longest path wins; path beats remote. No `<org>` = picker at a terminal (agents must pass one) |
 | list / remove links | `warden org links [--json]` (`*` = the link matching cwd) · `warden org unlink [--path <dir>\|--remote]` |
-| log out | `warden logout` (the account this directory uses) · `--account <name>` · `--all` → `--json` `{ loggedOut, revoked, accounts }` |
+| log out | `warden logout` (the account this directory uses) · `--account <name>` · `--all` → `--json` `{ loggedOut, revoked, kept, accounts }`; `kept: true` = another account (an org profile from the same login) still uses the session, so it was not revoked |
 | CI | `WARDEN_TOKEN` (+ `WARDEN_API_URL`, `WARDEN_ORG`); no login, no machine id |
 
 ### Which account and org a command uses

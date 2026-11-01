@@ -17,7 +17,10 @@ export type FakeServer = {
 	}>;
 	/** device-token answers, in order; then `authorization_pending` */
 	polls: Poll[];
+	/** the first session token minted; later approvals mint `<token>_2`, `<token>_3`, … */
 	token: string;
+	/** every session token minted so far (each one authenticates) */
+	issued: string[];
 	me: Me;
 	orgs: Organization[];
 	devices: Map<string, RemoteDevice>;
@@ -49,6 +52,13 @@ const POLL_ERRORS: Record<Exclude<Poll, "approve">, string> = {
 	expired: "expired_token",
 };
 
+/** A fresh session token per approved device flow, like the real server. */
+function mint(server: FakeServer): string {
+	const token = server.issued.length === 0 ? server.token : `${server.token}_${server.issued.length + 1}`;
+	server.issued.push(token);
+	return token;
+}
+
 /** Routes that need no session. */
 const PUBLIC: Record<string, Handler> = {
 	"POST /api/auth/device/code": () =>
@@ -63,7 +73,7 @@ const PUBLIC: Record<string, Handler> = {
 	"POST /api/auth/device/token": (server) => {
 		const next = server.polls.shift() ?? "pending";
 		return next === "approve"
-			? json({ access_token: server.token, token_type: "Bearer" })
+			? json({ access_token: mint(server), token_type: "Bearer" })
 			: json({ error: POLL_ERRORS[next] }, 400);
 	},
 };
@@ -165,6 +175,7 @@ export function fakeServer(
 		calls: [],
 		polls: overrides.polls ?? ["approve"],
 		token: "sess_tok",
+		issued: [],
 		me: overrides.me ?? {
 			user: { id: "u1", email: "dev@acme.test", name: "Dev" },
 			organization: { id: "o1", name: "Acme", slug: "acme" },
@@ -199,7 +210,7 @@ export function fakeServer(
 			const route = `${method} ${path}`;
 			const open = PUBLIC[route];
 			if (open) return open(server, req);
-			if (auth !== `Bearer ${server.token}`) {
+			if (!server.issued.concat(server.token).some((t) => auth === `Bearer ${t}`)) {
 				return json({ success: false, error: "no session", code: "UNAUTHORIZED" }, 401);
 			}
 			const handler = AUTHED[route];

@@ -2,7 +2,7 @@ import { defineCommand } from "../command";
 import type { CommandContext } from "../context";
 import { emit, note, reportError, success } from "../output";
 import { createWardenApi } from "../remote/api";
-import { type Credentials, readAccounts, removeAccount } from "../remote/credentials";
+import { type Credentials, readAccounts, removeAccount, sameSession } from "../remote/credentials";
 import { authContext } from "../remote/session";
 
 type LogoutOpts = { account?: string; all?: true; json?: true };
@@ -29,7 +29,36 @@ function targets(ctx: CommandContext, opts: LogoutOpts): { names: string[]; erro
 	return { names: [] };
 }
 
-/** Revoke and forget `--account <name>`, every account (`--all`), or the account this directory resolves to. */
+/**
+ * The distinct sessions to revoke when `names` go; one another remaining account shares is kept (`kept: true`).
+ */
+function sessionsToRevoke(
+	accounts: Record<string, Credentials>,
+	names: string[]
+): { toRevoke: Credentials[]; kept: boolean } {
+	const staying = Object.entries(accounts)
+		.filter(([name]) => !names.includes(name))
+		.map(([, c]) => c);
+	const toRevoke: Credentials[] = [];
+	let kept = false;
+	for (const name of names) {
+		const credentials = accounts[name];
+		if (!credentials) continue;
+		if (staying.some((c) => sameSession(c, credentials))) kept = true;
+		else if (!toRevoke.some((c) => sameSession(c, credentials))) toRevoke.push(credentials);
+	}
+	return { toRevoke, kept };
+}
+
+function outcome(kept: boolean, revoked: boolean, tried: boolean): string {
+	if (kept) return " (session kept: other accounts from the same login still use it)";
+	return revoked || !tried ? "" : " (the server could not be reached to revoke the session)";
+}
+
+/**
+ * Revoke and forget `--account <name>`, every account (`--all`), or the account this directory resolves to.
+ * A session another remaining account shares (org profiles from one login) is kept, not revoked (`kept`).
+ */
 async function logout(ctx: CommandContext, opts: LogoutOpts): Promise<number> {
 	if (opts.all && opts.account) {
 		reportError(ctx, "logout", "pass --account or --all, not both");
@@ -41,11 +70,10 @@ async function logout(ctx: CommandContext, opts: LogoutOpts): Promise<number> {
 		return 1;
 	}
 	const saved = readAccounts(ctx.env);
-	const accounts = saved.success ? (saved.data?.accounts ?? {}) : {};
-	let revoked = names.length > 0;
+	const { toRevoke, kept } = sessionsToRevoke(saved.success ? (saved.data?.accounts ?? {}) : {}, names);
+	let revoked = toRevoke.length > 0;
+	for (const credentials of toRevoke) if (!(await revoke(ctx, credentials))) revoked = false;
 	for (const name of names) {
-		const credentials = accounts[name];
-		if (credentials && !(await revoke(ctx, credentials))) revoked = false;
 		const removed = removeAccount(ctx.env, name);
 		if (!removed.success) {
 			reportError(ctx, "logout", removed.error);
@@ -54,16 +82,13 @@ async function logout(ctx: CommandContext, opts: LogoutOpts): Promise<number> {
 	}
 	const loggedOut = names.length > 0;
 	if (opts.json) {
-		emit(ctx, true, { loggedOut, revoked, accounts: names }, "");
+		emit(ctx, true, { loggedOut, revoked, kept, accounts: names }, "");
 		return 0;
 	}
 	if (!loggedOut) note(ctx, opts.account ? `no account ${opts.account}` : "not logged in");
 	else {
 		const which = names.length === 1 ? ` of ${names[0]}` : ` of ${names.join(", ")}`;
-		success(
-			ctx,
-			revoked ? `logged out${which}` : `logged out${which} (the server could not be reached to revoke the session)`
-		);
+		success(ctx, `logged out${which}${outcome(kept, revoked, toRevoke.length > 0)}`);
 	}
 	return 0;
 }

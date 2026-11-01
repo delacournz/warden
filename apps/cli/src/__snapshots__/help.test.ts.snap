@@ -4378,6 +4378,8 @@ Options:
   --account <name>  save this login as a named account (default: default)
   --api-url <url>   warden-api to log in to (default: $WARDEN_API_URL or
                     https://api.warden.co.nz)
+  --org <org>       default organization for this login, slug or id (asks when
+                    you have several)
   --no-browser      print the approval link instead of opening it
   --json            machine-readable output
   -h, --help        display help for command"

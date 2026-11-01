@@ -10,11 +10,14 @@ warden cloud runs simulators and emulators for you, so a Linux CI runner or a bu
 
 ```bash
 warden login            # opens the browser: sign in, pick or create an organization, approve the code
+warden login --org acme # skip the organization prompt
 warden whoami           # account, organization, and whether hosted devices are ready for it
 warden org list         # your organizations; * marks the active one
 warden org use acme     # hosted devices are billed to the active organization
 warden logout
 ```
+
+With several organizations, `warden login` asks which one is the default and saves each of the others as its own account named by its slug, so `warden whoami --account side` or `warden org link side --account side` work straight away. The profiles share one session: `warden logout --account side` forgets just that profile.
 
 The session token is saved to `~/.warden/auth.json`, and only you can read it. In CI, set `WARDEN_TOKEN` instead. `WARDEN_API_URL` points the CLI at another warden cloud, such as staging. A saved token is only ever sent to the server that issued it.
 
