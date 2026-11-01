@@ -98,6 +98,155 @@ fn device_url(c: &Credentials, tail: &str) -> String {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SwipeDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PinchScale {
+    ZoomIn,
+    ZoomOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum DeviceKey {
+    Enter,
+    Backspace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScreenUnits {
+    Points,
+    Pixels,
+}
+
+/// `GET /screen`: the size input coordinates are in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeviceScreen {
+    pub width: f64,
+    pub height: f64,
+    pub units: ScreenUnits,
+}
+
+/// One drive verb: its path under `/v1/devices/:id` and its JSON body.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeviceAction {
+    Tap {
+        x: i64,
+        y: i64,
+    },
+    DoubleTap {
+        x: i64,
+        y: i64,
+    },
+    LongPress {
+        x: i64,
+        y: i64,
+        duration_ms: Option<u32>,
+    },
+    Swipe {
+        x: i64,
+        y: i64,
+        direction: SwipeDirection,
+        duration_ms: Option<u32>,
+    },
+    Drag {
+        from_x: i64,
+        from_y: i64,
+        to_x: i64,
+        to_y: i64,
+        duration_ms: Option<u32>,
+    },
+    Pinch {
+        x: i64,
+        y: i64,
+        scale: PinchScale,
+    },
+    Key {
+        key: DeviceKey,
+    },
+    GoHome,
+    Shake,
+    SetLocation {
+        latitude: f64,
+        longitude: f64,
+    },
+}
+
+impl DeviceAction {
+    pub fn path(&self) -> &'static str {
+        match self {
+            Self::Tap { .. } => "/tap",
+            Self::DoubleTap { .. } => "/double-tap",
+            Self::LongPress { .. } => "/long-press",
+            Self::Swipe { .. } => "/swipe",
+            Self::Drag { .. } => "/drag",
+            Self::Pinch { .. } => "/pinch",
+            Self::Key { .. } => "/key",
+            Self::GoHome => "/go-home",
+            Self::Shake => "/shake",
+            Self::SetLocation { .. } => "/set-location",
+        }
+    }
+
+    /// Bodyless verbs send `{}`; `durationMs` is omitted when not given.
+    pub fn body(&self) -> serde_json::Value {
+        use serde_json::json;
+        let mut body = match self {
+            Self::Tap { x, y } | Self::DoubleTap { x, y } | Self::LongPress { x, y, .. } => {
+                json!({ "x": x, "y": y })
+            }
+            Self::Swipe {
+                x, y, direction, ..
+            } => {
+                json!({ "x": x, "y": y, "direction": direction })
+            }
+            Self::Drag {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                ..
+            } => {
+                json!({ "fromX": from_x, "fromY": from_y, "toX": to_x, "toY": to_y })
+            }
+            Self::Pinch { x, y, scale } => json!({ "x": x, "y": y, "scale": scale }),
+            Self::Key { key } => json!({ "key": key }),
+            Self::GoHome | Self::Shake => json!({}),
+            Self::SetLocation {
+                latitude,
+                longitude,
+            } => {
+                json!({ "latitude": latitude, "longitude": longitude })
+            }
+        };
+        if let Self::LongPress {
+            duration_ms: Some(ms),
+            ..
+        }
+        | Self::Swipe {
+            duration_ms: Some(ms),
+            ..
+        }
+        | Self::Drag {
+            duration_ms: Some(ms),
+            ..
+        } = self
+        {
+            body["durationMs"] = (*ms).into();
+        }
+        body
+    }
+}
+
 fn require_drive(c: &Credentials) -> CmdResult<()> {
     if c.scope == Scope::Drive {
         Ok(())
@@ -302,6 +451,18 @@ pub async fn close_resource(registry: &Registry, label: &str) -> CmdResult<()> {
     Ok(())
 }
 
+/// Run one drive verb for the calling window: resolve its session, refuse `view` scope, POST.
+async fn drive(
+    window: &tauri::WebviewWindow,
+    registry: &Registry,
+    action: DeviceAction,
+) -> CmdResult<()> {
+    let viewer = viewer_for(registry, window.label())?;
+    let c = viewer.session.credentials();
+    require_drive(&c)?;
+    post_json(registry.client(), &c, action.path(), action.body()).await
+}
+
 #[tauri::command]
 pub async fn tap(
     x: i64,
@@ -309,21 +470,60 @@ pub async fn tap(
     window: tauri::WebviewWindow,
     registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
-    let viewer = viewer_for(&registry, window.label())?;
-    let c = viewer.session.credentials();
-    require_drive(&c)?;
-    post_json(
-        registry.client(),
-        &c,
-        "/tap",
-        serde_json::json!({ "x": x, "y": y }),
+    drive(&window, &registry, DeviceAction::Tap { x, y }).await
+}
+
+#[tauri::command]
+pub async fn double_tap(
+    x: i64,
+    y: i64,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(&window, &registry, DeviceAction::DoubleTap { x, y }).await
+}
+
+#[tauri::command]
+pub async fn long_press(
+    x: i64,
+    y: i64,
+    duration_ms: Option<u32>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(
+        &window,
+        &registry,
+        DeviceAction::LongPress { x, y, duration_ms },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn swipe(
+    x: i64,
+    y: i64,
+    direction: SwipeDirection,
+    duration_ms: Option<u32>,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(
+        &window,
+        &registry,
+        DeviceAction::Swipe {
+            x,
+            y,
+            direction,
+            duration_ms,
+        },
     )
     .await
 }
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn swipe(
+pub async fn drag(
     from_x: i64,
     from_y: i64,
     to_x: i64,
@@ -332,16 +532,90 @@ pub async fn swipe(
     window: tauri::WebviewWindow,
     registry: State<'_, Arc<Registry>>,
 ) -> CmdResult<()> {
+    drive(
+        &window,
+        &registry,
+        DeviceAction::Drag {
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            duration_ms,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn pinch(
+    x: i64,
+    y: i64,
+    scale: PinchScale,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(&window, &registry, DeviceAction::Pinch { x, y, scale }).await
+}
+
+#[tauri::command]
+pub async fn key(
+    key: DeviceKey,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(&window, &registry, DeviceAction::Key { key }).await
+}
+
+#[tauri::command]
+pub async fn go_home(
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(&window, &registry, DeviceAction::GoHome).await
+}
+
+#[tauri::command]
+pub async fn shake(
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(&window, &registry, DeviceAction::Shake).await
+}
+
+#[tauri::command]
+pub async fn set_location(
+    latitude: f64,
+    longitude: f64,
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<()> {
+    drive(
+        &window,
+        &registry,
+        DeviceAction::SetLocation {
+            latitude,
+            longitude,
+        },
+    )
+    .await
+}
+
+/// The device screen size and its unit, which input coordinates are in. View scope may read it.
+#[tauri::command]
+pub async fn device_screen(
+    window: tauri::WebviewWindow,
+    registry: State<'_, Arc<Registry>>,
+) -> CmdResult<DeviceScreen> {
     let viewer = viewer_for(&registry, window.label())?;
     let c = viewer.session.credentials();
-    require_drive(&c)?;
-    let mut body = serde_json::json!({
-        "fromX": from_x, "fromY": from_y, "toX": to_x, "toY": to_y,
-    });
-    if let Some(ms) = duration_ms {
-        body["durationMs"] = ms.into();
-    }
-    post_json(registry.client(), &c, "/swipe", body).await
+    let response = registry
+        .client()
+        .get(device_url(&c, "/screen"))
+        .bearer_auth(&c.token)
+        .send()
+        .await?;
+    let text = ok_or_failure(response).await?.text().await?;
+    serde_json::from_str(&text).map_err(|e| ApiError::new("BAD_RESPONSE", e.to_string()))
 }
 
 #[tauri::command]
@@ -508,6 +782,133 @@ fn lock_aspect(window: &tauri::WebviewWindow, lock: crate::aspect::Lock) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_paths_and_bodies_match_the_api_contract() {
+        use serde_json::json;
+        let cases: Vec<(DeviceAction, &str, serde_json::Value)> = vec![
+            (
+                DeviceAction::Tap { x: 1, y: 2 },
+                "/tap",
+                json!({"x":1,"y":2}),
+            ),
+            (
+                DeviceAction::DoubleTap { x: 1, y: 2 },
+                "/double-tap",
+                json!({"x":1,"y":2}),
+            ),
+            (
+                DeviceAction::LongPress {
+                    x: 1,
+                    y: 2,
+                    duration_ms: None,
+                },
+                "/long-press",
+                json!({"x":1,"y":2}),
+            ),
+            (
+                DeviceAction::LongPress {
+                    x: 1,
+                    y: 2,
+                    duration_ms: Some(800),
+                },
+                "/long-press",
+                json!({"x":1,"y":2,"durationMs":800}),
+            ),
+            (
+                DeviceAction::Swipe {
+                    x: 5,
+                    y: 6,
+                    direction: SwipeDirection::Up,
+                    duration_ms: Some(300),
+                },
+                "/swipe",
+                json!({"x":5,"y":6,"direction":"up","durationMs":300}),
+            ),
+            (
+                DeviceAction::Drag {
+                    from_x: 1,
+                    from_y: 2,
+                    to_x: 3,
+                    to_y: 4,
+                    duration_ms: None,
+                },
+                "/drag",
+                json!({"fromX":1,"fromY":2,"toX":3,"toY":4}),
+            ),
+            (
+                DeviceAction::Drag {
+                    from_x: 1,
+                    from_y: 2,
+                    to_x: 3,
+                    to_y: 4,
+                    duration_ms: Some(50),
+                },
+                "/drag",
+                json!({"fromX":1,"fromY":2,"toX":3,"toY":4,"durationMs":50}),
+            ),
+            (
+                DeviceAction::Pinch {
+                    x: 9,
+                    y: 8,
+                    scale: PinchScale::ZoomOut,
+                },
+                "/pinch",
+                json!({"x":9,"y":8,"scale":"zoom_out"}),
+            ),
+            (
+                DeviceAction::Key {
+                    key: DeviceKey::Enter,
+                },
+                "/key",
+                json!({"key":"ENTER"}),
+            ),
+            (
+                DeviceAction::Key {
+                    key: DeviceKey::Backspace,
+                },
+                "/key",
+                json!({"key":"BACKSPACE"}),
+            ),
+            (DeviceAction::GoHome, "/go-home", json!({})),
+            (DeviceAction::Shake, "/shake", json!({})),
+            (
+                DeviceAction::SetLocation {
+                    latitude: -36.85,
+                    longitude: 174.76,
+                },
+                "/set-location",
+                json!({"latitude":-36.85,"longitude":174.76}),
+            ),
+        ];
+        for (action, path, body) in cases {
+            assert_eq!(action.path(), path);
+            assert_eq!(action.body(), body, "{path}");
+        }
+    }
+
+    #[test]
+    fn enums_reject_unknown_values_from_the_webview() {
+        assert!(serde_json::from_str::<SwipeDirection>("\"diagonal\"").is_err());
+        assert!(serde_json::from_str::<PinchScale>("\"zoom_in\"").is_ok());
+        assert!(serde_json::from_str::<PinchScale>("\"big\"").is_err());
+        assert!(serde_json::from_str::<DeviceKey>("\"ENTER\"").is_ok());
+        assert!(serde_json::from_str::<DeviceKey>("\"enter\"").is_err());
+    }
+
+    #[test]
+    fn parses_the_screen_response() {
+        let screen: DeviceScreen =
+            serde_json::from_str(r#"{"width":393,"height":852,"units":"points"}"#).unwrap();
+        assert_eq!(
+            screen,
+            DeviceScreen {
+                width: 393.0,
+                height: 852.0,
+                units: ScreenUnits::Points
+            }
+        );
+    }
 
     #[test]
     fn joins_a_relative_location() {

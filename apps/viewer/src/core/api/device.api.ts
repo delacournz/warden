@@ -53,8 +53,24 @@ export const nativeStreamStart = (channel: Channel<ArrayBuffer>) => call<void>("
 export const nativeStreamStop = () => call<void>("native_stream_stop");
 
 export const tap = (x: number, y: number) => call<void>("tap", { x, y });
-export const swipe = (fromX: number, fromY: number, toX: number, toY: number, durationMs?: number) =>
-	call<void>("swipe", { fromX, fromY, toX, toY, durationMs });
+export type SwipeDirection = "up" | "down" | "left" | "right";
+export type PinchScale = "zoom_in" | "zoom_out";
+export type DeviceKey = "ENTER" | "BACKSPACE";
+/** The size input coordinates are in; `units` says whether they are points or pixels. */
+export type DeviceScreen = { width: number; height: number; units: "points" | "pixels" };
+
+export const doubleTap = (x: number, y: number) => call<void>("double_tap", { x, y });
+export const longPress = (x: number, y: number, durationMs?: number) => call<void>("long_press", { x, y, durationMs });
+export const swipe = (args: { x: number; y: number; direction: SwipeDirection; durationMs?: number }) =>
+	call<void>("swipe", args);
+export const drag = (args: { fromX: number; fromY: number; toX: number; toY: number; durationMs?: number }) =>
+	call<void>("drag", args);
+export const pinch = (x: number, y: number, scale: PinchScale) => call<void>("pinch", { x, y, scale });
+export const key = (key: DeviceKey) => call<void>("key", { key });
+export const goHome = () => call<void>("go_home");
+export const shake = () => call<void>("shake");
+export const setLocation = (latitude: number, longitude: number) => call<void>("set_location", { latitude, longitude });
+export const deviceScreen = () => call<DeviceScreen>("device_screen");
 export const input = (text: string, clearFirst?: boolean) => call<void>("input", { text, clearFirst });
 export const openUrl = (url: string) => call<void>("open_url", { url });
 export const openBilling = () => call<void>("open_billing");

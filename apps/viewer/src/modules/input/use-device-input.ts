@@ -42,7 +42,13 @@ function isTextField(target: EventTarget | null): boolean {
 function send(gesture: Gesture): Promise<void> {
 	return gesture.kind === "tap"
 		? device.tap(gesture.x, gesture.y)
-		: device.swipe(gesture.fromX, gesture.fromY, gesture.toX, gesture.toY, gesture.durationMs);
+		: device.drag({
+				fromX: gesture.fromX,
+				fromY: gesture.fromY,
+				toX: gesture.toX,
+				toY: gesture.toY,
+				durationMs: gesture.durationMs,
+			});
 }
 
 /**
