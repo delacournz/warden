@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore, type SessionDeps } from "@delacour/warden-sdk/ops/perf/session";
-import { readState } from "../agent-ui/state";
+import { uiStatePersistence } from "../agent-ui/state";
 import { type TestContext, testContext } from "../testing";
 
 let ctx: TestContext | undefined;
@@ -63,7 +63,7 @@ describe("createSession", () => {
 		expect(s.maxDurationMs).toBe(30_000);
 		expect(perfPaths.sessionDir(c, s.id)).toBe(join(c.env.WARDEN_HOME ?? "", "perf", s.id));
 		expect(JSON.parse(readFileSync(join(perfPaths.sessionDir(c, s.id), "session.json"), "utf8")).id).toBe(s.id);
-		expect(readState(c, "U1").perf).toEqual({ sessionId: s.id });
+		expect(uiStatePersistence.readState(c, "U1").perf).toEqual({ sessionId: s.id });
 		expect(perfSessionStore.readSession(c, s.id)).toEqual(s);
 	});
 
@@ -155,7 +155,7 @@ describe("stopSession (safeToSignal)", () => {
 		const stopped = perfSessionStore.stopSession(c, deps, id, "user");
 		expect(deps.killed).toEqual([[4242, "SIGTERM"]]);
 		expect(stopped).toMatchObject({ status: "stopped", stopReason: "user" });
-		expect(readState(c, "U1").perf).toBeUndefined();
+		expect(uiStatePersistence.readState(c, "U1").perf).toBeUndefined();
 	});
 
 	test("never signals a reused pid (a different program)", () => {
@@ -193,7 +193,7 @@ describe("sweepSessions (cap + stale)", () => {
 			stopReason: "max-duration",
 			stoppedAt: clock.now,
 		});
-		expect(readState(c, "U1").perf).toBeUndefined();
+		expect(uiStatePersistence.readState(c, "U1").perf).toBeUndefined();
 	});
 
 	test("marks a dead collector's session stale and leaves live ones alone", () => {

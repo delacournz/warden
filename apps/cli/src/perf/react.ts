@@ -8,7 +8,7 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { type ReactCaptureResult, reactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
 import { type ReactOut, reactOutPaths } from "@delacour/warden-sdk/ops/perf/react-out";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
+import { type UiError, type UiSuccess, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "./device";
 import { connectJs } from "./js";
@@ -25,7 +25,7 @@ function planDuration(opts: PerfReactOptions): Result<number, UiError> {
 	if (duration === undefined) {
 		return {
 			success: false,
-			error: uiError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
+			error: uiOutput.uiError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
 		};
 	}
 	return resultFactory.ok(Math.min(duration, HARD_MAX_DURATION_MS));

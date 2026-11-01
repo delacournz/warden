@@ -6,7 +6,7 @@ import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import type { VideoSpec } from "@delacour/warden-sdk/ops/video";
 import { wardenErrors } from "@delacour/warden-types/error";
 import type { UiDeps } from "../agent-ui/driver";
-import { readState, updateState } from "../agent-ui/state";
+import { uiStatePersistence } from "../agent-ui/state";
 import { cleanupHarnesses, doc, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -575,7 +575,7 @@ describe("scroll", () => {
 		expect(out.result).toMatchObject({ action: "scroll", swipes: 2, target: { selector: "id=footer" } });
 		expect(out.result.target.ref).toMatch(/^@e\d+$/);
 		expect(out.generation).toBeUndefined();
-		expect(readState(h.c, UDID).generation).toBe(1);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(1);
 	});
 
 	test("--until finds an already visible element without swiping", async () => {
@@ -746,7 +746,7 @@ describe("open", () => {
 		expect(h.driver.callsOf("app.launch")).toEqual([
 			{ method: "app.launch", bundleId: "com.example.app", opts: { relaunch: false } },
 		]);
-		expect(readState(h.c, UDID).app).toBe("com.example.app");
+		expect(uiStatePersistence.readState(h.c, UDID).app).toBe("com.example.app");
 		expect(doc(h.c).result).toMatchObject({ action: "open", bundleId: "com.example.app", relaunch: false });
 	});
 
@@ -774,7 +774,10 @@ describe("open", () => {
 				},
 			},
 		]);
-		expect(readState(h.c, UDID)).toMatchObject({ app: "com.example.app", metroUrl: "http://localhost:8081" });
+		expect(uiStatePersistence.readState(h.c, UDID)).toMatchObject({
+			app: "com.example.app",
+			metroUrl: "http://localhost:8081",
+		});
 	});
 
 	test("without --relaunch an already running app is attached to, and the output says so", async () => {
@@ -815,7 +818,7 @@ describe("open", () => {
 		expect(await h.run("open", "myapp://settings", "--json")).toBe(0);
 		expect(h.driver.callsOf("app.openUrl")).toEqual([{ method: "app.openUrl", url: "myapp://settings" }]);
 		expect(h.driver.callsOf("tap").map((call) => call.point)).toEqual([{ x: 250, y: 620 }]);
-		expect(readState(h.c, UDID).app).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).app).toBeUndefined();
 	});
 
 	test("--metro with a url is a usage error", async () => {
@@ -831,7 +834,7 @@ describe("open", () => {
 		});
 		expect(await h.run("open", "com.example.app", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toBe("E_APP_UNAVAILABLE: not installed");
-		expect(readState(h.c, UDID).app).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).app).toBeUndefined();
 	});
 });
 
@@ -950,7 +953,7 @@ describe("video", () => {
 			"--force",
 			path,
 		]);
-		expect(readState(h.c, UDID).video).toMatchObject({ pid: 4242, path });
+		expect(uiStatePersistence.readState(h.c, UDID).video).toMatchObject({ pid: 4242, path });
 
 		expect(await h.run("screen", "video", "start", "--json")).toBe(1);
 		expect(doc(h.c).error.message).toContain("already recording");
@@ -958,7 +961,7 @@ describe("video", () => {
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual(["SIGINT"]);
 		expect(doc(h.c).result).toEqual({ action: "video", state: "stopped", path });
-		expect(readState(h.c, UDID).video).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).video).toBeUndefined();
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(1);
 	});
 
@@ -968,12 +971,12 @@ describe("video", () => {
 		const kill = fake.video.kill;
 		fake.video.kill = (pid, signal) => {
 			kill(pid, signal);
-			updateState(h.c, UDID, (state) => ({ ...state, collector: { pid: 5151, startedAt: 1 } }));
+			uiStatePersistence.updateState(h.c, UDID, (state) => ({ ...state, collector: { pid: 5151, startedAt: 1 } }));
 		};
 		await h.run("screen", "video", "start");
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
-		expect(readState(h.c, UDID).video).toBeUndefined();
-		expect(readState(h.c, UDID).collector).toEqual({ pid: 5151, startedAt: 1 });
+		expect(uiStatePersistence.readState(h.c, UDID).video).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).collector).toEqual({ pid: 5151, startedAt: 1 });
 	});
 
 	test("a recorder pid now running another program is never signalled: stop forgets it, start records anew (14-4)", async () => {
@@ -986,20 +989,20 @@ describe("video", () => {
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual([]);
 		expect(doc(h.c).warnings?.[0]).toContain("had already ended");
-		expect(readState(h.c, UDID).video).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).video).toBeUndefined();
 	});
 
 	test("a live recorder whose command line cannot be read is not signalled and stays recorded, with a warning", async () => {
 		const fake = fakeVideo();
 		const h = harness([driverFixtures.snapshotOf(LOGIN)], { video: fake.video });
 		await h.run("screen", "video", "start");
-		const recorded = readState(h.c, UDID).video;
+		const recorded = uiStatePersistence.readState(h.c, UDID).video;
 		fake.video.command = () => undefined;
 		expect(await h.run("screen", "video", "stop", "--json")).toBe(0);
 		expect(fake.signals).toEqual([]);
 		expect(doc(h.c).result).toMatchObject({ action: "video", state: "recording", pid: 4242 });
 		expect(doc(h.c).warnings?.[0]).toContain("could not stop the recorder (pid 4242)");
-		expect(readState(h.c, UDID).video).toEqual(recorded);
+		expect(uiStatePersistence.readState(h.c, UDID).video).toEqual(recorded);
 	});
 
 	test("the recorder is signalled while its command line is still this device's recordVideo into the file", async () => {

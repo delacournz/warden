@@ -1,6 +1,6 @@
 import { defaultSessionDeps, type SessionDeps } from "@delacour/warden-sdk/ops/perf/session";
 import type { Result } from "@delacour/warden-types/result";
-import { reportError, reportOk, type UiError, type UiExitCode, type UiSuccess, uiError } from "../agent-ui/output";
+import { type UiError, type UiExitCode, type UiSuccess, uiOutput } from "../agent-ui/output";
 import type { UiOptionValues } from "../agent-ui/run";
 import { DEFAULT_UI_TIMEOUT_MS } from "../agent-ui/ui-options";
 import type { CommandContext } from "../context";
@@ -37,7 +37,10 @@ export type PerfRunEnv = { timeoutMs: number; deps: PerfDeps };
 function parseTimeout(raw: string | undefined): Result<number, UiError> {
 	if (raw === undefined) return { success: true, data: DEFAULT_UI_TIMEOUT_MS };
 	if (!/^\d+$/.test(raw) || Number(raw) < 1) {
-		return { success: false, error: uiError("usage", `--timeout must be a positive integer (ms), got "${raw}"`) };
+		return {
+			success: false,
+			error: uiOutput.uiError("usage", `--timeout must be a positive integer (ms), got "${raw}"`),
+		};
 	}
 	return { success: true, data: Number(raw) };
 }
@@ -63,15 +66,15 @@ export async function runPerf(
 	};
 	try {
 		const timeout = parseTimeout(opts.timeout);
-		if (!timeout.success) return reportError(ctx, report, timeout.error);
+		if (!timeout.success) return uiOutput.reportError(ctx, report, timeout.error);
 		const target = await resolvePerfDevice(ctx, opts, mode, deps.device);
-		if (!target.success) return reportError(ctx, report, target.error);
+		if (!target.success) return uiOutput.reportError(ctx, report, target.error);
 		const info = { udid: target.data.udid, platform: target.data.platform, name: target.data.name };
 		const done = await work(target.data, { timeoutMs: timeout.data, deps });
 		await settleBrokerResumes();
-		if (!done.success) return reportError(ctx, report, done.error, info);
-		return reportOk(ctx, report, done.data);
+		if (!done.success) return uiOutput.reportError(ctx, report, done.error, info);
+		return uiOutput.reportOk(ctx, report, done.data);
 	} catch (error) {
-		return reportError(ctx, report, uiError("failed", errorMessage(error)));
+		return uiOutput.reportError(ctx, report, uiOutput.uiError("failed", errorMessage(error)));
 	}
 }

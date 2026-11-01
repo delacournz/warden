@@ -10,16 +10,8 @@ import { createUiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { defaultUiDeps } from "./driver";
-import {
-	defaultHelperDeps,
-	ensureHelper,
-	type HelperDeps,
-	helperStatus,
-	ownerKey,
-	simdEnvKey,
-	stopHelper,
-} from "./helper";
-import { readState } from "./state";
+import { defaultHelperDeps, type HelperDeps, uiHelper } from "./helper";
+import { uiStatePersistence } from "./state";
 
 /**
  * Real processes: `native/scripts/fake-simd.ts --socket` stands in for the `warden-simd` daemon. Unix socket
@@ -85,7 +77,7 @@ function setup(argv: string[] = []): TestContext {
 async function startHelper(c: TestContext, body: object = {}) {
 	const socketPath = join(dir, "simd", `${UDID}.sock`);
 	const deps = fakeDeps(script(body));
-	const res = await ensureHelper(c, UDID, { socketPath, helperPath: "/fake/warden-simd", deps });
+	const res = await uiHelper.ensureHelper(c, UDID, { socketPath, helperPath: "/fake/warden-simd", deps });
 	if (!res.success) throw new Error(res.error.message);
 	return { socketPath, deps, info: res.data };
 }
@@ -111,8 +103,8 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		const pid = JSON.parse(readFileTextSafe(join(dir, "ui", UDID, "state.json"))).helper.pid;
 		pids.push(pid);
 		const c = setup();
-		expect(helperStatus(c, UDID)).toMatchObject({ running: true, pid });
-		expect((await stopHelper(c, UDID)).stopped).toBe(true);
+		expect(uiHelper.helperStatus(c, UDID)).toMatchObject({ running: true, pid });
+		expect((await uiHelper.stopHelper(c, UDID)).stopped).toBe(true);
 	});
 
 	test("a stale socket file with nobody behind it is replaced by a live helper", async () => {
@@ -122,7 +114,11 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		const started = await startHelper(c);
 		expect(started.info.spawned).toBe(true);
 		expect(existsSync(socketPath)).toBe(true);
-		const again = await ensureHelper(c, UDID, { socketPath, helperPath: "/fake/warden-simd", deps: started.deps });
+		const again = await uiHelper.ensureHelper(c, UDID, {
+			socketPath,
+			helperPath: "/fake/warden-simd",
+			deps: started.deps,
+		});
 		expect(again).toMatchObject({ success: true, data: { spawned: false } });
 	});
 
@@ -130,11 +126,11 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		const c = setup();
 		const { socketPath } = await startHelper(c);
 		const began = Date.now();
-		expect(await stopHelper(c, UDID)).toEqual({ stopped: true, how: "shutdown" });
+		expect(await uiHelper.stopHelper(c, UDID)).toEqual({ stopped: true, how: "shutdown" });
 		expect(Date.now() - began).toBeLessThan(1500);
 		expect(existsSync(socketPath)).toBe(false);
-		expect(readState(c, UDID).helper).toBeUndefined();
-		expect(await stopHelper(c, UDID)).toEqual({ stopped: false, how: "none" });
+		expect(uiStatePersistence.readState(c, UDID).helper).toBeUndefined();
+		expect(await uiHelper.stopHelper(c, UDID)).toEqual({ stopped: false, how: "none" });
 	});
 
 	test("`warden ui close` finishes within 2.5 s even when the helper ignores shutdown (SIGTERM fallback)", async () => {
@@ -178,8 +174,8 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		expect(await releaseCommand.run(c)).toBe(0);
 		expect(c.db.listLeases()).toHaveLength(0);
 		expect(existsSync(socketPath)).toBe(true);
-		expect(helperStatus(c, UDID)).toMatchObject({ running: true, pid: info.pid });
-		expect(readState(c, UDID).helper).toMatchObject({ pid: info.pid });
+		expect(uiHelper.helperStatus(c, UDID)).toMatchObject({ running: true, pid: info.pid });
+		expect(uiStatePersistence.readState(c, UDID).helper).toMatchObject({ pid: info.pid });
 	});
 
 	test("`warden release --shutdown` stops the helper and forgets it", async () => {
@@ -193,7 +189,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		expect(await releaseCommand.run(c)).toBe(0);
 		expect(c.db.listLeases()).toHaveLength(0);
 		expect(existsSync(socketPath)).toBe(false);
-		expect(readState(c, UDID).helper).toBeUndefined();
+		expect(uiStatePersistence.readState(c, UDID).helper).toBeUndefined();
 	});
 
 	test("SessionEnd releases the session's leases but leaves the device's helper resident", async () => {
@@ -226,7 +222,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 				return first.deps.spawnDetached(spec);
 			},
 		};
-		const again = await ensureHelper(c, UDID, {
+		const again = await uiHelper.ensureHelper(c, UDID, {
 			socketPath: first.socketPath,
 			helperPath: "/fake/warden-simd",
 			keepClient: true,
@@ -235,7 +231,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		expect(again).toMatchObject({ success: true, data: { spawned: false } });
 		expect(connects.spawnedAgain).toBe(0);
 		if (again.success) await again.data.client?.close();
-		expect(helperStatus(c, UDID).pid).toBe(first.info.pid ?? null);
+		expect(uiHelper.helperStatus(c, UDID).pid).toBe(first.info.pid ?? null);
 	});
 
 	test("the lease passing to another owner keeps the resident helper; a changed WARDEN_SIMD_* env replaces it", async () => {
@@ -247,22 +243,22 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 			c.now()
 		);
 		const first = await startHelper(c);
-		expect(readState(c, UDID).helper?.owner).toBe(ownerKey(a));
+		expect(uiStatePersistence.readState(c, UDID).helper?.owner).toBe(uiHelper.ownerKey(a));
 		c.db.deleteLeases([lease.id]);
 		c.db.insertLease(
 			{ resource: { kind: "device", platform: "ios", id: UDID, name: "sim" }, owner: b, ttlMs: 3_600_000 },
 			c.now()
 		);
-		const kept = await ensureHelper(c, UDID, {
+		const kept = await uiHelper.ensureHelper(c, UDID, {
 			socketPath: first.socketPath,
 			helperPath: "/fake/warden-simd",
 			deps: first.deps,
 		});
 		expect(kept).toMatchObject({ success: true, data: { spawned: false } });
-		expect(helperStatus(c, UDID).pid).toBe(first.info.pid ?? null);
+		expect(uiHelper.helperStatus(c, UDID).pid).toBe(first.info.pid ?? null);
 
 		c.env = { ...c.env, WARDEN_SIMD_PACE_MS: "40" };
-		const second = await ensureHelper(c, UDID, {
+		const second = await uiHelper.ensureHelper(c, UDID, {
 			socketPath: first.socketPath,
 			helperPath: "/fake/warden-simd",
 			deps: first.deps,
@@ -270,7 +266,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		expect(second).toMatchObject({ success: true, data: { spawned: true } });
 		expect(second.success && second.data.pid).not.toBe(first.info.pid);
 		expect(() => process.kill(first.info.pid ?? 0, 0)).toThrow();
-		expect(readState(c, UDID).helper?.env).toBe(simdEnvKey(c.env));
+		expect(uiStatePersistence.readState(c, UDID).helper?.env).toBe(uiHelper.simdEnvKey(c.env));
 	});
 
 	test("a resident helper slow to send `ready` (busy) is waited for, not replaced: same pid, nothing spawned", async () => {
@@ -285,10 +281,14 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 				return first.deps.spawnDetached(spec);
 			},
 		};
-		const again = await ensureHelper(c, UDID, { socketPath: first.socketPath, helperPath: "/fake/warden-simd", deps });
+		const again = await uiHelper.ensureHelper(c, UDID, {
+			socketPath: first.socketPath,
+			helperPath: "/fake/warden-simd",
+			deps,
+		});
 		expect(again).toMatchObject({ success: true, data: { spawned: false } });
 		expect(spawns.count).toBe(0);
-		expect(helperStatus(c, UDID)).toMatchObject({ running: true, pid: first.info.pid });
+		expect(uiHelper.helperStatus(c, UDID)).toMatchObject({ running: true, pid: first.info.pid });
 	}, 10_000);
 
 	/** `ensureHelper` against a fake helper that announces itself as `announce`; counts connects made after the spawn. */
@@ -309,7 +309,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 			},
 		};
 		const began = Date.now();
-		const res = await ensureHelper(c, UDID, { socketPath, helperPath: "/fake/warden-simd", deps });
+		const res = await uiHelper.ensureHelper(c, UDID, { socketPath, helperPath: "/fake/warden-simd", deps });
 		return { c, res, seen, ms: Date.now() - began };
 	}
 
@@ -317,7 +317,7 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		const { c, res, seen } = await startAnnouncing("ready");
 		expect(res).toMatchObject({ success: true, data: { spawned: true } });
 		expect(seen.connectsAfterSpawn).toBe(1);
-		expect(readState(c, UDID).helper?.pid).toBeGreaterThan(0);
+		expect(uiStatePersistence.readState(c, UDID).helper?.pid).toBeGreaterThan(0);
 	});
 
 	test("an older helper that only logs `listening on …` is just as fast", async () => {
@@ -336,11 +336,15 @@ describe("helper lifecycle (real fake-simd --socket)", () => {
 		const c = setup(["--json"]);
 		const socketPath = join(dir, "simd", `${UDID}.sock`);
 		writeFileSync(socketPath, "");
-		const { writeState } = await import("./state");
-		writeState(c, UDID, { generation: 0, updatedAt: 0, helper: { pid: 2_000_000_000, socket: socketPath } });
+		const { uiStatePersistence } = await import("./state");
+		uiStatePersistence.writeState(c, UDID, {
+			generation: 0,
+			updatedAt: 0,
+			helper: { pid: 2_000_000_000, socket: socketPath },
+		});
 		expect(await gcCommand.run(c)).toBe(0);
 		expect(existsSync(socketPath)).toBe(false);
-		expect(readState(c, UDID).helper).toBeUndefined();
+		expect(uiStatePersistence.readState(c, UDID).helper).toBeUndefined();
 	});
 });
 

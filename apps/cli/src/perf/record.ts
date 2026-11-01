@@ -3,7 +3,7 @@ import { perfDuration } from "@delacour/warden-perf/metrics/duration";
 import { HARD_MAX_DURATION_MS } from "@delacour/warden-perf/shared/caps";
 import { perfOrchestrator, type SessionKit } from "@delacour/warden-sdk/ops/perf/orchestrate";
 import { resultFactory } from "@delacour/warden-types/result";
-import { UI_EXIT, uiError } from "../agent-ui/output";
+import { UI_EXIT, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { type PerfDeps, runPerf } from "./run";
 import { defaultSessionKit, startHooks } from "./session-kit";
@@ -55,7 +55,10 @@ export function perfRecord(
 		if (durationMs === undefined || durationMs > HARD_MAX_DURATION_MS) {
 			return {
 				success: false,
-				error: uiError("usage", `--duration must be a duration like 10s or 2m, at most 5m, got "${opts.duration}"`),
+				error: uiOutput.uiError(
+					"usage",
+					`--duration must be a duration like 10s or 2m, at most 5m, got "${opts.duration}"`
+				),
 			};
 		}
 		const maxDuration = opts.maxDuration ?? `${Math.ceil((durationMs + CAP_SLACK_MS) / 1000)}s`;

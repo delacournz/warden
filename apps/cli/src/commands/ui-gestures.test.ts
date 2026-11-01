@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { ScreenInfo } from "@delacour/warden-driver/driver.types";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { gestureOps } from "@delacour/warden-sdk/ops/gestures";
-import { splitAmount } from "../agent-ui/gestures";
+import { uiGestures } from "../agent-ui/gestures";
 import { cleanupHarnesses, doc, harness, LOGIN } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -17,13 +17,16 @@ const CENTRE = { x: 195, y: 422 };
 
 describe("splitAmount", () => {
 	test("the last word is the amount, the rest the target", () => {
-		expect(splitAmount(["2"], "scale")).toEqual({ success: true, data: { target: [], amount: 2 } });
-		expect(splitAmount(["@e1", "0.5"], "scale")).toEqual({ success: true, data: { target: ["@e1"], amount: 0.5 } });
-		expect(splitAmount(["10", "20", "1.5"], "scale")).toEqual({
+		expect(uiGestures.splitAmount(["2"], "scale")).toEqual({ success: true, data: { target: [], amount: 2 } });
+		expect(uiGestures.splitAmount(["@e1", "0.5"], "scale")).toEqual({
+			success: true,
+			data: { target: ["@e1"], amount: 0.5 },
+		});
+		expect(uiGestures.splitAmount(["10", "20", "1.5"], "scale")).toEqual({
 			success: true,
 			data: { target: ["10", "20"], amount: 1.5 },
 		});
-		expect(splitAmount(["id=list", "-45"], "degrees")).toEqual({
+		expect(uiGestures.splitAmount(["id=list", "-45"], "degrees")).toEqual({
 			success: true,
 			data: { target: ["id=list"], amount: -45 },
 		});
@@ -41,7 +44,7 @@ describe("splitAmount", () => {
 			[["@e1", "721"], "degrees"],
 			[[], "scale"],
 		] as const) {
-			const split = splitAmount(words, kind);
+			const split = uiGestures.splitAmount(words, kind);
 			expect(split.success).toBe(false);
 			if (!split.success) expect(split.error.hint).toContain("warden ui gesture");
 		}

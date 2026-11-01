@@ -4,17 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
-import { uiDir } from "./paths";
-import {
-	commitGeneration,
-	readDumpRoute,
-	readLastSnapshot,
-	readState,
-	updateState,
-	writeDumpRoute,
-	writeLastSnapshot,
-	writeState,
-} from "./state";
+import { cliUiPaths } from "./paths";
+import { uiStatePersistence } from "./state";
 
 let home: string | undefined;
 const stores: Store[] = [];
@@ -39,28 +30,32 @@ function setup() {
 describe("ui state", () => {
 	test("lives under $WARDEN_HOME/ui/<udid>; defaults to generation 0", () => {
 		const ctx = setup();
-		expect(uiDir(ctx, "U1")).toBe(join(home ?? "", "ui", "U1"));
-		expect(readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
-		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
+		expect(cliUiPaths.uiDir(ctx, "U1")).toBe(join(home ?? "", "ui", "U1"));
+		expect(uiStatePersistence.readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
+		expect(uiStatePersistence.readLastSnapshot(ctx, "U1")).toBeUndefined();
 	});
 
 	test("commitGeneration counts per device in the store, seeded by an older state.json", () => {
 		const ctx = setup();
-		writeState(ctx, "U1", { generation: 3, metroUrl: "http://localhost:8081", updatedAt: 0 });
-		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(4);
-		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(5);
-		expect(commitGeneration(ctx, "U2", (generation) => generation)).toBe(1);
-		expect(readState(ctx, "U1")).toEqual({ generation: 5, metroUrl: "http://localhost:8081", updatedAt: 42 });
+		uiStatePersistence.writeState(ctx, "U1", { generation: 3, metroUrl: "http://localhost:8081", updatedAt: 0 });
+		expect(uiStatePersistence.commitGeneration(ctx, "U1", (generation) => generation)).toBe(4);
+		expect(uiStatePersistence.commitGeneration(ctx, "U1", (generation) => generation)).toBe(5);
+		expect(uiStatePersistence.commitGeneration(ctx, "U2", (generation) => generation)).toBe(1);
+		expect(uiStatePersistence.readState(ctx, "U1")).toEqual({
+			generation: 5,
+			metroUrl: "http://localhost:8081",
+			updatedAt: 42,
+		});
 	});
 
 	test("a failing write does not spend the generation", () => {
 		const ctx = setup();
 		expect(() =>
-			commitGeneration(ctx, "U1", () => {
+			uiStatePersistence.commitGeneration(ctx, "U1", () => {
 				throw new Error("disk full");
 			})
 		).toThrow("disk full");
-		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(1);
+		expect(uiStatePersistence.commitGeneration(ctx, "U1", (generation) => generation)).toBe(1);
 	});
 
 	test("two processes taking generations on one WARDEN_HOME never share one, and the stored snapshot is the newest", async () => {
@@ -75,8 +70,8 @@ describe("ui state", () => {
 			taken.push(...(JSON.parse(await new Response(child.stdout).text()) as number[]));
 		}
 		expect([...taken].sort((a, b) => a - b)).toEqual(Array.from({ length: 100 }, (_, n) => n + 1));
-		expect(readLastSnapshot(ctx, "U1")?.generation).toBe(100);
-		expect(commitGeneration(ctx, "U1", (generation) => generation)).toBe(101);
+		expect(uiStatePersistence.readLastSnapshot(ctx, "U1")?.generation).toBe(100);
+		expect(uiStatePersistence.commitGeneration(ctx, "U1", (generation) => generation)).toBe(101);
 	});
 
 	test("four processes each setting a different record through updateState on one WARDEN_HOME keep all four (14-6)", async () => {
@@ -87,7 +82,7 @@ describe("ui state", () => {
 			Bun.spawn([process.execPath, worker, home ?? "", "U1", "40", field], { stdout: "pipe", stderr: "inherit" })
 		);
 		for (const child of workers) expect(await child.exited).toBe(0);
-		const state = readState(ctx, "U1");
+		const state = uiStatePersistence.readState(ctx, "U1");
 		expect(state.helper).toEqual({ pid: 40, socket: "/s" });
 		expect(state.video).toEqual({ pid: 40, path: "/v.mp4", startedAt: 40 });
 		expect(state.collector).toEqual({ pid: 40, startedAt: 40 });
@@ -97,7 +92,7 @@ describe("ui state", () => {
 	test("updateState re-reads under the store's transaction, writes what the update returns, and returns it", () => {
 		const first = setup();
 		const second = connect(home ?? "");
-		writeState(first, "U1", { generation: 0, updatedAt: 0, app: "com.acme" });
+		uiStatePersistence.writeState(first, "U1", { generation: 0, updatedAt: 0, app: "com.acme" });
 		let inTransaction = false;
 		const store = first.store();
 		const transaction = store.transaction.bind(store);
@@ -111,9 +106,9 @@ describe("ui state", () => {
 				}
 			});
 		// another process wrote between our read and our update: its record survives
-		const stale = readState(first, "U1");
-		updateState(second, "U1", (state) => ({ ...state, collector: { pid: 9, startedAt: 1 } }));
-		const written = updateState(first, "U1", (state) => {
+		const stale = uiStatePersistence.readState(first, "U1");
+		uiStatePersistence.updateState(second, "U1", (state) => ({ ...state, collector: { pid: 9, startedAt: 1 } }));
+		const written = uiStatePersistence.updateState(first, "U1", (state) => {
 			expect(inTransaction).toBe(true);
 			return { ...state, video: { pid: 8, path: "/v", startedAt: 2 } };
 		});
@@ -125,23 +120,23 @@ describe("ui state", () => {
 			collector: { pid: 9, startedAt: 1 },
 			video: { pid: 8, path: "/v", startedAt: 2 },
 		});
-		expect(readState(first, "U1")).toEqual(written);
+		expect(uiStatePersistence.readState(first, "U1")).toEqual(written);
 	});
 
 	test("updateState writes nothing when the update returns the state it was given; it works without a store", () => {
 		const ctx = setup();
-		updateState(ctx, "U1", (state) => state);
-		expect(existsSync(join(uiDir(ctx, "U1"), "state.json"))).toBe(false);
+		uiStatePersistence.updateState(ctx, "U1", (state) => state);
+		expect(existsSync(join(cliUiPaths.uiDir(ctx, "U1"), "state.json"))).toBe(false);
 		const plain = { env: ctx.env, now: ctx.now };
-		updateState(plain, "U1", (state) => ({ ...state, app: "com.acme" }));
-		expect(readState(ctx, "U1").app).toBe("com.acme");
+		uiStatePersistence.updateState(plain, "U1", (state) => ({ ...state, app: "com.acme" }));
+		expect(uiStatePersistence.readState(ctx, "U1").app).toBe("com.acme");
 	});
 
 	test("concurrent connections in one process also stay in step", () => {
 		const first = setup();
 		const second = connect(home ?? "");
 		const seen = [1, 2, 3, 4].map((n) =>
-			commitGeneration(n % 2 === 0 ? first : second, "U1", (generation) => generation)
+			uiStatePersistence.commitGeneration(n % 2 === 0 ? first : second, "U1", (generation) => generation)
 		);
 		expect(seen).toEqual([1, 2, 3, 4]);
 	});
@@ -151,56 +146,60 @@ describe("ui state", () => {
 		const snapshot = driverFixtures.snapshotOf([
 			driverFixtures.el("window", { children: [driverFixtures.el("button", { label: "Go", id: "go" })] }),
 		]);
-		writeLastSnapshot(ctx, "U1", { generation: 2, takenAt: 7, hash: "h", snapshot });
-		const back = readLastSnapshot(ctx, "U1");
+		uiStatePersistence.writeLastSnapshot(ctx, "U1", { generation: 2, takenAt: 7, hash: "h", snapshot });
+		const back = uiStatePersistence.readLastSnapshot(ctx, "U1");
 		expect(back?.generation).toBe(2);
 		expect(back?.snapshot.flat.map((e) => e.id)).toEqual(["0", "0.0"]);
 		expect(back?.snapshot.elements).toEqual(snapshot.elements);
-		expect(readdirSync(uiDir(ctx, "U1"))).toEqual(["last-snapshot.json"]);
+		expect(readdirSync(cliUiPaths.uiDir(ctx, "U1"))).toEqual(["last-snapshot.json"]);
 	});
 
 	test("a file of the wrong shape reads as empty state, not as a half-typed object", () => {
 		const ctx = setup();
-		writeState(ctx, "U1", { generation: 1, updatedAt: 0 });
-		const state = join(uiDir(ctx, "U1"), "state.json");
+		uiStatePersistence.writeState(ctx, "U1", { generation: 1, updatedAt: 0 });
+		const state = join(cliUiPaths.uiDir(ctx, "U1"), "state.json");
 		writeFileSync(state, JSON.stringify({ generation: 5, helper: { pid: "x" } }));
-		expect(readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
+		expect(uiStatePersistence.readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
 		writeFileSync(state, JSON.stringify({ generation: "5" }));
-		expect(readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
+		expect(uiStatePersistence.readState(ctx, "U1")).toEqual({ generation: 0, updatedAt: 0 });
 		writeFileSync(state, JSON.stringify({ generation: 5, helper: { pid: 7, socket: "/s" }, extra: true }));
-		expect(readState(ctx, "U1")).toEqual({ generation: 5, helper: { pid: 7, socket: "/s" }, updatedAt: 0 });
+		expect(uiStatePersistence.readState(ctx, "U1")).toEqual({
+			generation: 5,
+			helper: { pid: 7, socket: "/s" },
+			updatedAt: 0,
+		});
 
 		const snapshot = driverFixtures.snapshotOf([driverFixtures.el("button", { label: "Go", id: "go" })]);
-		writeLastSnapshot(ctx, "U1", { generation: 2, takenAt: 7, hash: "h", snapshot });
-		const file = join(uiDir(ctx, "U1"), "last-snapshot.json");
+		uiStatePersistence.writeLastSnapshot(ctx, "U1", { generation: 2, takenAt: 7, hash: "h", snapshot });
+		const file = join(cliUiPaths.uiDir(ctx, "U1"), "last-snapshot.json");
 		const stored = JSON.parse(readFileSync(file, "utf8"));
 		stored.snapshot.elements[0].frame = "wide";
 		writeFileSync(file, JSON.stringify(stored));
-		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
+		expect(uiStatePersistence.readLastSnapshot(ctx, "U1")).toBeUndefined();
 		stored.snapshot.elements[0].frame = snapshot.elements[0]?.frame;
 		stored.snapshot.elements[0].children = [{ id: "x" }];
 		writeFileSync(file, JSON.stringify(stored));
-		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
+		expect(uiStatePersistence.readLastSnapshot(ctx, "U1")).toBeUndefined();
 	});
 
 	test("a torn or foreign file reads as absent", () => {
 		const ctx = setup();
-		writeState(ctx, "U1", { generation: 1, updatedAt: 0 });
-		writeFileSync(join(uiDir(ctx, "U1"), "state.json"), "{ nope");
-		writeFileSync(join(uiDir(ctx, "U1"), "last-snapshot.json"), '{"generation":1}');
-		expect(readState(ctx, "U1").generation).toBe(0);
-		expect(readLastSnapshot(ctx, "U1")).toBeUndefined();
+		uiStatePersistence.writeState(ctx, "U1", { generation: 1, updatedAt: 0 });
+		writeFileSync(join(cliUiPaths.uiDir(ctx, "U1"), "state.json"), "{ nope");
+		writeFileSync(join(cliUiPaths.uiDir(ctx, "U1"), "last-snapshot.json"), '{"generation":1}');
+		expect(uiStatePersistence.readState(ctx, "U1").generation).toBe(0);
+		expect(uiStatePersistence.readLastSnapshot(ctx, "U1")).toBeUndefined();
 	});
 });
 
 describe("android dump route memory", () => {
 	test("round-trips per device and ignores garbage", () => {
 		const ctx = setup();
-		expect(readDumpRoute(ctx, "emulator-5554")).toBeUndefined();
-		writeDumpRoute(ctx, "emulator-5554", "file");
-		expect(readDumpRoute(ctx, "emulator-5554")).toBe("file");
-		expect(readDumpRoute(ctx, "emulator-5556")).toBeUndefined();
-		writeFileSync(join(uiDir(ctx, "emulator-5554"), "android-dump-route"), "bogus\n");
-		expect(readDumpRoute(ctx, "emulator-5554")).toBeUndefined();
+		expect(uiStatePersistence.readDumpRoute(ctx, "emulator-5554")).toBeUndefined();
+		uiStatePersistence.writeDumpRoute(ctx, "emulator-5554", "file");
+		expect(uiStatePersistence.readDumpRoute(ctx, "emulator-5554")).toBe("file");
+		expect(uiStatePersistence.readDumpRoute(ctx, "emulator-5556")).toBeUndefined();
+		writeFileSync(join(cliUiPaths.uiDir(ctx, "emulator-5554"), "android-dump-route"), "bogus\n");
+		expect(uiStatePersistence.readDumpRoute(ctx, "emulator-5554")).toBeUndefined();
 	});
 });

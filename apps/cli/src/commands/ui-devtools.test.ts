@@ -8,8 +8,8 @@ import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driv
 import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
-import { uiDir } from "../agent-ui/paths";
-import { readState, writeState } from "../agent-ui/state";
+import { cliUiPaths } from "../agent-ui/paths";
+import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createUiCommand } from "./ui";
@@ -263,7 +263,7 @@ describe("Metro discovery", () => {
 
 	test("the Metro `warden ui open --metro` remembered in state.json", async () => {
 		const h = harness();
-		writeState(h.c, UDID, { ...readState(h.c, UDID), metroUrl: h.fake.url });
+		uiStatePersistence.writeState(h.c, UDID, { ...uiStatePersistence.readState(h.c, UDID), metroUrl: h.fake.url });
 		expect(await h.run("eval", "1 + 1")).toBe(0);
 	});
 
@@ -307,12 +307,12 @@ describe("Metro discovery", () => {
 });
 
 describe("warden ui logs", () => {
-	const consoleFile = (h: { c: TestContext }) => join(uiDir(h.c, UDID), "console.jsonl");
+	const consoleFile = (h: { c: TestContext }) => join(cliUiPaths.uiDir(h.c, UDID), "console.jsonl");
 	const line = (ts: number, text: string, level: ConsoleLine["level"] = "log"): string =>
 		JSON.stringify({ ts, level, kind: "console", text } satisfies ConsoleLine);
 
 	function seed(h: { c: TestContext }, rows: string[]): void {
-		mkdirSync(uiDir(h.c, UDID), { recursive: true });
+		mkdirSync(cliUiPaths.uiDir(h.c, UDID), { recursive: true });
 		writeFileSync(consoleFile(h), `${rows.join("\n")}\n`);
 	}
 
@@ -326,19 +326,19 @@ describe("warden ui logs", () => {
 			"--metro",
 			h.fake.url,
 			"--out",
-			uiDir(h.c, UDID),
+			cliUiPaths.uiDir(h.c, UDID),
 			"--device-name",
 			"sim",
 		]);
-		expect(spawn?.logPath).toBe(join(uiDir(h.c, UDID), "collector.log"));
-		const pid = readState(h.c, UDID).collector?.pid;
+		expect(spawn?.logPath).toBe(join(cliUiPaths.uiDir(h.c, UDID), "collector.log"));
+		const pid = uiStatePersistence.readState(h.c, UDID).collector?.pid;
 		expect(pid).toBeDefined();
 		expect(result(h.json())).toMatchObject({ state: "collecting", pid });
 	});
 
 	test("start passes the app and --bodies; a second start reuses the live collector", async () => {
 		const h = harness();
-		writeState(h.c, UDID, { ...readState(h.c, UDID), app: "com.acme.app" });
+		uiStatePersistence.writeState(h.c, UDID, { ...uiStatePersistence.readState(h.c, UDID), app: "com.acme.app" });
 		await h.run("logs", "start", "--metro", h.fake.url, "--bodies");
 		expect(h.spawned[0]?.cmd).toContain("--include-bodies");
 		expect(h.spawned[0]?.cmd.slice(-5, -1)).toEqual(["--app-id", "com.acme.app", "--device-name", "sim"]);
@@ -356,10 +356,10 @@ describe("warden ui logs", () => {
 	test("stop ends the collector; stopping twice is a usage error", async () => {
 		const h = harness();
 		await h.run("logs", "start", "--metro", h.fake.url);
-		const pid = readState(h.c, UDID).collector?.pid ?? 0;
+		const pid = uiStatePersistence.readState(h.c, UDID).collector?.pid ?? 0;
 		expect(await h.run("logs", "stop")).toBe(0);
 		expect(h.killed).toEqual([[pid, "SIGTERM"]]);
-		expect(readState(h.c, UDID).collector).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).collector).toBeUndefined();
 		expect(await h.run("logs", "stop")).toBe(1);
 	});
 
@@ -371,14 +371,14 @@ describe("warden ui logs", () => {
 		expect(h.spawned).toHaveLength(2);
 		expect(await h.run("logs", "stop")).toBe(0);
 		expect(h.killed).toEqual([]);
-		expect(readState(h.c, UDID).collector).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).collector).toBeUndefined();
 	});
 
 	test("the collector is SIGTERMed while its command line is still `ui-collect --out <this device's dir>`", async () => {
 		const h = harness();
 		h.devtools.collector.command = () => h.spawned.at(-1)?.cmd.join(" ");
 		await h.run("logs", "start", "--metro", h.fake.url);
-		const pid = readState(h.c, UDID).collector?.pid ?? 0;
+		const pid = uiStatePersistence.readState(h.c, UDID).collector?.pid ?? 0;
 		expect(await h.run("logs", "stop")).toBe(0);
 		expect(h.killed).toEqual([[pid, "SIGTERM"]]);
 	});
@@ -386,7 +386,7 @@ describe("warden ui logs", () => {
 	test("a live collector whose command line cannot be read is not signalled and stays recorded, with a warning", async () => {
 		const h = harness();
 		await h.run("logs", "start", "--metro", h.fake.url);
-		const recorded = readState(h.c, UDID).collector;
+		const recorded = uiStatePersistence.readState(h.c, UDID).collector;
 		h.devtools.collector.command = () => undefined;
 		expect(await h.run("logs", "stop", "--json")).toBe(0);
 		expect(h.killed).toEqual([]);
@@ -395,14 +395,14 @@ describe("warden ui logs", () => {
 		expect((out.warnings as string[] | undefined)?.[0]).toContain(
 			`could not stop the collector (pid ${recorded?.pid})`
 		);
-		expect(readState(h.c, UDID).collector).toEqual(recorded);
+		expect(uiStatePersistence.readState(h.c, UDID).collector).toEqual(recorded);
 	});
 
 	test("the collector is told by the --out it was started with, not by today's WARDEN_HOME spelling", async () => {
 		const h = harness();
 		h.devtools.collector.command = () => h.spawned.at(-1)?.cmd.join(" ");
 		await h.run("logs", "start", "--metro", h.fake.url);
-		const pid = readState(h.c, UDID).collector?.pid ?? 0;
+		const pid = uiStatePersistence.readState(h.c, UDID).collector?.pid ?? 0;
 		const home = h.c.env.WARDEN_HOME ?? "";
 		const alias = `${home}-alias`;
 		symlinkSync(home, alias);
@@ -448,10 +448,10 @@ describe("warden ui logs", () => {
 	test("clear empties the console and network logs", async () => {
 		const h = harness();
 		seed(h, [line(1000, "one")]);
-		appendFileSync(join(uiDir(h.c, UDID), "network.jsonl"), "{}\n");
+		appendFileSync(join(cliUiPaths.uiDir(h.c, UDID), "network.jsonl"), "{}\n");
 		expect(await h.run("logs", "clear")).toBe(0);
 		expect(readFileSync(consoleFile(h), "utf8")).toBe("");
-		expect(readFileSync(join(uiDir(h.c, UDID), "network.jsonl"), "utf8")).toBe("");
+		expect(readFileSync(join(cliUiPaths.uiDir(h.c, UDID), "network.jsonl"), "utf8")).toBe("");
 	});
 
 	test("an unknown action is a usage error", async () => {
@@ -475,8 +475,11 @@ describe("warden ui network", () => {
 	});
 
 	function seed(h: { c: TestContext }, entries: NetworkEntry[]): void {
-		mkdirSync(uiDir(h.c, UDID), { recursive: true });
-		writeFileSync(join(uiDir(h.c, UDID), "network.jsonl"), `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
+		mkdirSync(cliUiPaths.uiDir(h.c, UDID), { recursive: true });
+		writeFileSync(
+			join(cliUiPaths.uiDir(h.c, UDID), "network.jsonl"),
+			`${entries.map((e) => JSON.stringify(e)).join("\n")}\n`
+		);
 	}
 
 	test("lists the last n entries one per line", async () => {

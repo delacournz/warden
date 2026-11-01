@@ -10,7 +10,7 @@ import {
 } from "@delacour/warden-sdk/ops/perf/js-capture";
 import { type JsOut, jsOutPaths } from "@delacour/warden-sdk/ops/perf/js-out";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { type UiError, type UiSuccess, uiError } from "../agent-ui/output";
+import { type UiError, type UiSuccess, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
 import { resumeBrokerOnClose } from "./broker-resume";
@@ -65,7 +65,7 @@ async function brokeredProfile(
 	if (!started.success) {
 		return {
 			success: false,
-			error: uiError("failed", started.error.message, started.error.hint ? { hint: started.error.hint } : {}),
+			error: uiOutput.uiError("failed", started.error.message, started.error.hint ? { hint: started.error.hint } : {}),
 		};
 	}
 	await sleep(plan.durationMs);
@@ -73,11 +73,12 @@ async function brokeredProfile(
 	if (!stopped.success) {
 		return {
 			success: false,
-			error: uiError("failed", stopped.error.message, stopped.error.hint ? { hint: stopped.error.hint } : {}),
+			error: uiOutput.uiError("failed", stopped.error.message, stopped.error.hint ? { hint: stopped.error.hint } : {}),
 		};
 	}
 	const summary = stopped.data.summary;
-	if (summary.kind !== "cpu") return { success: false, error: uiError("failed", "broker returned a non-CPU profile") };
+	if (summary.kind !== "cpu")
+		return { success: false, error: uiOutput.uiError("failed", "broker returned a non-CPU profile") };
 	try {
 		const hotspots: Hotspots = JSON.parse(readFileSync(summary.hotspotsPath, "utf8"));
 		const result: JsProfileResult = {
@@ -92,12 +93,15 @@ async function brokeredProfile(
 			perfJsOps.jsSuccess(ctx, target, app.success ? app.data.id : "app", out, result, plan.durationMs)
 		);
 	} catch (error) {
-		return { success: false, error: uiError("failed", `cannot read ${summary.hotspotsPath}: ${String(error)}`) };
+		return {
+			success: false,
+			error: uiOutput.uiError("failed", `cannot read ${summary.hotspotsPath}: ${String(error)}`),
+		};
 	}
 }
 
 function capturingError(out: JsOut, udid: string): UiError {
-	return uiError("session_active", `session ${out.sessionId} already holds the JS profiler on ${udid}`, {
+	return uiOutput.uiError("session_active", `session ${out.sessionId} already holds the JS profiler on ${udid}`, {
 		hint: "its profile lands in js/cpu.cpuprofile when it stops (warden perf stop)",
 	});
 }

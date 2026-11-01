@@ -19,14 +19,14 @@ async function restart(ctx: CommandContext, deps: IosRunnerRestartDeps, udid: st
 	const stop =
 		deps.stop ??
 		(async (c, id) => {
-			const { stopIosRunner } = await import("../agent-ui/helper");
-			return stopIosRunner(c, id);
+			const { uiHelper } = await import("../agent-ui/helper");
+			return uiHelper.stopIosRunner(c, id);
 		});
 	const ensure =
 		deps.ensure ??
 		(async (c, id) => {
-			const { ensureIosRunner } = await import("../agent-ui/helper");
-			const host = await ensureIosRunner(c, id);
+			const { uiHelper } = await import("../agent-ui/helper");
+			const host = await uiHelper.ensureIosRunner(c, id);
 			return host.success ? { success: true as const } : { success: false as const, error: host.error.message };
 		});
 	const stopped = await stop(ctx, udid);

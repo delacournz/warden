@@ -12,73 +12,77 @@ import type { Result } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
 import type { UiDevice } from "./device";
 import { opErrors } from "./driver";
-import { connectAndroidHost, connectHelper, connectIosRunner, stopAndroidHost } from "./helper";
+import { uiHelper } from "./helper";
 import type { UiError } from "./output";
-import { ownedPackages } from "./phone";
-import { readDumpRoute, writeDumpRoute } from "./state";
+import { uiPhone } from "./phone";
+import { uiStatePersistence } from "./state";
 
-/** `WARDEN_ANDROID_HOST=0` drives an Android device in-process (the way before the resident host), else through it. */
-export function androidHostFromEnv(env: Readonly<Record<string, string | undefined>>): boolean {
-	return env.WARDEN_ANDROID_HOST !== "0";
-}
-
-/**
- * The real driver for a device. iOS: the device's `warden-simd` daemon (`connectHelper` spawns it on first
- * use, closing the driver only disconnects); a physical iPhone's runner host instead (`connectIosRunner`, same shape). Android: the device's resident host (`warden __android-host`,
- * `connectAndroidHost`), which keeps the adb shell, `warden-uiad` and the animation scales open between calls, so a
- * call pays ~10-40 ms for its op instead of ~500 ms of open and close; when the host cannot be started (or
- * `WARDEN_ANDROID_HOST=0`) an in-process driver owned by this command, as before (`openAndroidInProcess`).
- * Lives apart from `driver.ts` and is imported on first use, so a `warden ui` call that never opens a driver
- * (`--help`, no lease, `status`) never loads the engines.
- */
-export async function uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
-	if (device.platform === "ios") {
-		if (leaseModel.isPhysicalIosId(device.udid)) return connectIosRunner(ctx, device.udid);
-		const { leaseDriverExtras } = await import("./conditions-real");
-		return connectHelper(ctx, device.udid, {}, leaseDriverExtras(ctx, device));
+export class UiDriverFactory {
+	/** `WARDEN_ANDROID_HOST=0` drives an Android device in-process (the way before the resident host), else through it. */
+	androidHostFromEnv(env: Readonly<Record<string, string | undefined>>): boolean {
+		return env.WARDEN_ANDROID_HOST !== "0";
 	}
-	if (androidHostFromEnv(ctx.env)) {
-		const hosted = await connectAndroidHost(ctx, device.udid);
-		if (hosted.success) return hosted;
-		// an in-process driver would probe (and wake) the same locked phone again
-		if (hosted.error.code === "device_locked") return hosted;
-		ctx.err(`warden: android host unavailable (${hosted.error.message}); driving ${device.udid} in-process`);
+
+	/**
+	 * The real driver for a device. iOS: the device's `warden-simd` daemon (`connectHelper` spawns it on first
+	 * use, closing the driver only disconnects); a physical iPhone's runner host instead (`connectIosRunner`, same shape). Android: the device's resident host (`warden __android-host`,
+	 * `connectAndroidHost`), which keeps the adb shell, `warden-uiad` and the animation scales open between calls, so a
+	 * call pays ~10-40 ms for its op instead of ~500 ms of open and close; when the host cannot be started (or
+	 * `WARDEN_ANDROID_HOST=0`) an in-process driver owned by this command, as before (`openAndroidInProcess`).
+	 * Lives apart from `driver.ts` and is imported on first use, so a `warden ui` call that never opens a driver
+	 * (`--help`, no lease, `status`) never loads the engines.
+	 */
+	async uiDriver(ctx: CommandContext, device: UiDevice): Promise<Result<Driver, UiError>> {
+		if (device.platform === "ios") {
+			if (leaseModel.isPhysicalIosId(device.udid)) return uiHelper.connectIosRunner(ctx, device.udid);
+			const { uiConditionsReal } = await import("./conditions-real");
+			return uiHelper.connectHelper(ctx, device.udid, {}, uiConditionsReal.leaseDriverExtras(ctx, device));
+		}
+		if (this.androidHostFromEnv(ctx.env)) {
+			const hosted = await uiHelper.connectAndroidHost(ctx, device.udid);
+			if (hosted.success) return hosted;
+			// an in-process driver would probe (and wake) the same locked phone again
+			if (hosted.error.code === "device_locked") return hosted;
+			ctx.err(`warden: android host unavailable (${hosted.error.message}); driving ${device.udid} in-process`);
+		}
+		// a resident host and this driver would evict each other's `warden-uiad`, and this one's close would put the
+		// animation scales back under the host: one driver per emulator
+		const { warning } = await uiHelper.stopAndroidHost(ctx, device.udid);
+		if (warning !== undefined) ctx.err(`warden: ${warning}`);
+		const { uiConditionsReal } = await import("./conditions-real");
+		return this.openAndroidInProcess(ctx, device.udid, undefined, uiConditionsReal.leaseDriverExtras(ctx, device));
 	}
-	// a resident host and this driver would evict each other's `warden-uiad`, and this one's close would put the
-	// animation scales back under the host: one driver per emulator
-	const { warning } = await stopAndroidHost(ctx, device.udid);
-	if (warning !== undefined) ctx.err(`warden: ${warning}`);
-	const { leaseDriverExtras } = await import("./conditions-real");
-	return openAndroidInProcess(ctx, device.udid, undefined, leaseDriverExtras(ctx, device));
+
+	/**
+	 * An adb-backed Android driver owned by the caller (closed with it): what `warden __android-host` serves, and the
+	 * fallback when there is no host. The uiautomator dump route that worked is remembered per device
+	 * (`android-dump-route`), and the driver's own per-serial state (`$WARDEN_HOME/android/<serial>.json`) keeps the
+	 * animation scales it must put back when it closes. The resident `warden-uiad` server is on unless
+	 * `WARDEN_ANDROID_UIAD=0`.
+	 */
+	async openAndroidInProcess(
+		ctx: CommandContext,
+		serial: string,
+		log?: (line: string) => void,
+		extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
+	): Promise<Result<Driver, UiError>> {
+		const remembered = uiStatePersistence.readDumpRoute(ctx, serial);
+		return opErrors.fromDriver(
+			await androidDrivers.open({
+				serial,
+				adb: androidToolsLocator.locate(ctx.env).adb,
+				exec: ctx.exec,
+				state: new FileAndroidStateStore({ dir: androidState.androidStateDir(storeLocator.wardenHome(ctx.env)) }),
+				ownedPackages: uiPhone.ownedPackages(ctx, serial),
+				...(uiadBackendRules.uiadFromEnv(ctx.env) ? { uiad: true } : {}),
+				...(remembered ? { dumpRoute: remembered } : {}),
+				...(log ? { log } : {}),
+				...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
+				...(extras.clockRecorder ? { clockRecorder: extras.clockRecorder } : {}),
+				onDumpRoute: (route: DumpRoute) => uiStatePersistence.writeDumpRoute(ctx, serial, route),
+			})
+		);
+	}
 }
 
-/**
- * An adb-backed Android driver owned by the caller (closed with it): what `warden __android-host` serves, and the
- * fallback when there is no host. The uiautomator dump route that worked is remembered per device
- * (`android-dump-route`), and the driver's own per-serial state (`$WARDEN_HOME/android/<serial>.json`) keeps the
- * animation scales it must put back when it closes. The resident `warden-uiad` server is on unless
- * `WARDEN_ANDROID_UIAD=0`.
- */
-export async function openAndroidInProcess(
-	ctx: CommandContext,
-	serial: string,
-	log?: (line: string) => void,
-	extras: { networkProxy?: NetworkProxyPort; clockRecorder?: ClockRecorder } = {}
-): Promise<Result<Driver, UiError>> {
-	const remembered = readDumpRoute(ctx, serial);
-	return opErrors.fromDriver(
-		await androidDrivers.open({
-			serial,
-			adb: androidToolsLocator.locate(ctx.env).adb,
-			exec: ctx.exec,
-			state: new FileAndroidStateStore({ dir: androidState.androidStateDir(storeLocator.wardenHome(ctx.env)) }),
-			ownedPackages: ownedPackages(ctx, serial),
-			...(uiadBackendRules.uiadFromEnv(ctx.env) ? { uiad: true } : {}),
-			...(remembered ? { dumpRoute: remembered } : {}),
-			...(log ? { log } : {}),
-			...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),
-			...(extras.clockRecorder ? { clockRecorder: extras.clockRecorder } : {}),
-			onDumpRoute: (route: DumpRoute) => writeDumpRoute(ctx, serial, route),
-		})
-	);
-}
+export const uiDriverFactory = new UiDriverFactory();

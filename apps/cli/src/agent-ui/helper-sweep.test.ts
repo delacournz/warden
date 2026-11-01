@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, testContext } from "../testing";
-import { findDeadHelpers, sweepDeadHelpersLazily } from "./helper-sweep";
-import { uiDir } from "./paths";
+import { uiHelperSweep } from "./helper-sweep";
+import { cliUiPaths } from "./paths";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -16,15 +16,15 @@ function host(): TestContext {
 
 /** `state.json` for `udid`, written as plain JSON (the sweep must not need the state schema to read it). */
 function writeRecord(c: TestContext, udid: string, body: unknown): void {
-	mkdirSync(uiDir(c, udid), { recursive: true });
-	writeFileSync(join(uiDir(c, udid), "state.json"), typeof body === "string" ? body : JSON.stringify(body));
+	mkdirSync(cliUiPaths.uiDir(c, udid), { recursive: true });
+	writeFileSync(join(cliUiPaths.uiDir(c, udid), "state.json"), typeof body === "string" ? body : JSON.stringify(body));
 }
 
 const alive = (pids: number[]) => (pid: number) => pids.includes(pid);
 
 describe("findDeadHelpers", () => {
 	test("nothing recorded: no udids, no dirs needed", () => {
-		expect(findDeadHelpers(host(), alive([]))).toEqual([]);
+		expect(uiHelperSweep.findDeadHelpers(host(), alive([]))).toEqual([]);
 	});
 
 	test("a record whose pid is gone is dead; a live pid, no helper, garbage and a missing file are not", () => {
@@ -34,8 +34,8 @@ describe("findDeadHelpers", () => {
 		writeRecord(c, "NONE", { generation: 1 });
 		writeRecord(c, "JUNK", "{ nope");
 		writeRecord(c, "ODD", { generation: 1, helper: { pid: "x", socket: 3 } });
-		mkdirSync(uiDir(c, "EMPTY"), { recursive: true });
-		expect(findDeadHelpers(c, alive([20]))).toEqual(["DEAD"]);
+		mkdirSync(cliUiPaths.uiDir(c, "EMPTY"), { recursive: true });
+		expect(uiHelperSweep.findDeadHelpers(c, alive([20]))).toEqual(["DEAD"]);
 	});
 
 	test("udids come from both the simd sockets and the ui dirs, each once", () => {
@@ -45,7 +45,7 @@ describe("findDeadHelpers", () => {
 		writeFileSync(join(c.cwd, "simd", "A.log"), "");
 		writeRecord(c, "A", { generation: 0, helper: { pid: 1, socket: join(c.cwd, "simd", "A.sock") } });
 		writeRecord(c, "B", { generation: 0, helper: { pid: 2, socket: "/s/B.sock" } });
-		expect(findDeadHelpers(c, alive([])).sort()).toEqual(["A", "B"]);
+		expect(uiHelperSweep.findDeadHelpers(c, alive([])).sort()).toEqual(["A", "B"]);
 	});
 });
 
@@ -63,7 +63,7 @@ describe("sweepDeadHelpersLazily", () => {
 		const c = host();
 		const l = loader();
 		writeRecord(c, "LIVE", { generation: 1, helper: { pid: 20, socket: "/s/LIVE.sock" } });
-		expect(await sweepDeadHelpersLazily(c, { pidAlive: alive([20]), load: l.load })).toEqual([]);
+		expect(await uiHelperSweep.sweepDeadHelpersLazily(c, { pidAlive: alive([20]), load: l.load })).toEqual([]);
 		expect(l.loads.count).toBe(0);
 	});
 
@@ -78,10 +78,10 @@ describe("sweepDeadHelpersLazily", () => {
 		writeFileSync(live, "");
 		writeRecord(c, "DEAD", { generation: 0, updatedAt: 0, helper: { pid: 1, socket: dead } });
 		writeRecord(c, "LIVE", { generation: 0, updatedAt: 0, helper: { pid: 2, socket: live } });
-		expect(await sweepDeadHelpersLazily(c, { pidAlive: alive([2]), load: l.load })).toEqual([dead]);
+		expect(await uiHelperSweep.sweepDeadHelpersLazily(c, { pidAlive: alive([2]), load: l.load })).toEqual([dead]);
 		expect(l.loads.count).toBe(1);
 		expect(existsSync(dead)).toBe(false);
 		expect(existsSync(live)).toBe(true);
-		expect(findDeadHelpers(c, alive([2]))).toEqual([]);
+		expect(uiHelperSweep.findDeadHelpers(c, alive([2]))).toEqual([]);
 	});
 });

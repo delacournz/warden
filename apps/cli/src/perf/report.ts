@@ -3,7 +3,7 @@ import { MAX_TEXT_LINES } from "@delacour/warden-perf/shared/caps";
 import { reportBuilder } from "@delacour/warden-perf/shared/report";
 import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
-import { reportError, reportOk, uiError } from "../agent-ui/output";
+import { uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { withPerfOptions } from "./options";
@@ -26,13 +26,13 @@ export async function perfReport(
 	const meta = { command: "perf report", label: "perf report", json: opts.json === true, startedAt: ctx.now() };
 	try {
 		const picked = await pickSession(ctx, deps, opts, id);
-		if (!picked.success) return reportError(ctx, meta, picked.error);
+		if (!picked.success) return uiOutput.reportError(ctx, meta, picked.error);
 		const session = picked.data;
 		if (session.status === "running") {
-			return reportError(
+			return uiOutput.reportError(
 				ctx,
 				meta,
-				uiError("session_active", `session ${session.id} is still running`, { hint: "warden perf stop" })
+				uiOutput.uiError("session_active", `session ${session.id} is still running`, { hint: "warden perf stop" })
 			);
 		}
 		const report =
@@ -40,13 +40,13 @@ export async function perfReport(
 				? reportReader.writeSessionReport(ctx, session)
 				: (reportReader.readSessionReport(ctx, session.id) ?? reportReader.writeSessionReport(ctx, session));
 		const text = reportBuilder.renderReportMarkdown(report, opts.full === true ? {} : { maxLines: MAX_TEXT_LINES });
-		return reportOk(ctx, meta, {
+		return uiOutput.reportOk(ctx, meta, {
 			device: { udid: report.device.udid, platform: report.device.platform, name: report.device.name },
 			result: { sessionId: session.id, dir: perfPaths.sessionDir(ctx, session.id), report },
 			text,
 		});
 	} catch (error) {
-		return reportError(ctx, meta, uiError("failed", errorMessage(error)));
+		return uiOutput.reportError(ctx, meta, uiOutput.uiError("failed", errorMessage(error)));
 	}
 }
 

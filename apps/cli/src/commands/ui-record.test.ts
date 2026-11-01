@@ -10,8 +10,8 @@ import type { DevtoolsDeps } from "@delacour/warden-sdk/ops/devtools";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { VerifyInput, VerifyReport } from "../agent-ui/authoring-verify";
 import type { UiDeps } from "../agent-ui/driver";
-import { recordingFile } from "../agent-ui/paths";
-import { readState, updateState } from "../agent-ui/state";
+import { cliUiPaths } from "../agent-ui/paths";
+import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createUiCommand } from "./ui";
@@ -148,7 +148,7 @@ function harness(
 			return command.run(c);
 		},
 		doc: () => JSON.parse(c.stdout[0] ?? "null"),
-		journal: () => readFileSync(recordingFile(c, UDID), "utf8"),
+		journal: () => readFileSync(cliUiPaths.recordingFile(c, UDID), "utf8"),
 		read: (path) => readFileSync(path, "utf8"),
 	};
 }
@@ -199,9 +199,12 @@ describe("record start", () => {
 			name: "Sign in!",
 			kind: "spec",
 			target: join(h.c.cwd, "e2e", "sign-in.e2e.ts"),
-			journal: recordingFile(h.c, UDID),
+			journal: cliUiPaths.recordingFile(h.c, UDID),
 		});
-		expect(readState(h.c, UDID).recording).toMatchObject({ name: "Sign in!", target: { kind: "spec" } });
+		expect(uiStatePersistence.readState(h.c, UDID).recording).toMatchObject({
+			name: "Sign in!",
+			target: { kind: "spec" },
+		});
 		const journal = recordingSchema.parse(JSON.parse(h.journal()));
 		expect(journal).toMatchObject({ name: "Sign in!", recordedOn: { platform: "ios", device: "sim" }, steps: [] });
 	});
@@ -226,7 +229,7 @@ describe("record start", () => {
 		expect(h.doc().error.message).toContain("mobile, web");
 		expect(await h.run("record", "start", "onboarding", "--suite", "web", "--json")).toBe(0);
 		expect(h.doc().result.target).toBe(join(repo.dir, "web-specs", "onboarding.e2e.ts"));
-		expect(readState(h.c, UDID).recording?.suite).toBe("web");
+		expect(uiStatePersistence.readState(h.c, UDID).recording?.suite).toBe("web");
 	});
 
 	test("--to with several suites still needs --suite: fails at start, not at `use` or `stop`", async () => {
@@ -239,7 +242,7 @@ describe("record start", () => {
 		expect(await h.run("record", "start", "x", "--to", "scratch/x.e2e.ts", "--json")).toBe(1);
 		expect(h.doc().error.code).toBe("usage");
 		expect(h.doc().error.hint).toContain("--suite");
-		expect(readState(h.c, UDID).recording).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).recording).toBeUndefined();
 		expect(await h.run("record", "start", "x", "--to", "scratch/x.e2e.ts", "--suite", "web", "--json")).toBe(0);
 	});
 
@@ -250,7 +253,7 @@ describe("record start", () => {
 		writeFileSync(target, "// mine\n");
 		expect(await h.run("record", "start", "taken", "--json")).toBe(1);
 		expect(h.doc().error.code).toBe("target_exists");
-		expect(readState(h.c, UDID).recording).toBeUndefined();
+		expect(uiStatePersistence.readState(h.c, UDID).recording).toBeUndefined();
 		expect(await h.run("record", "start", "taken", "--overwrite")).toBe(0);
 		expect(await h.run("record", "start", "other", "--json")).toBe(1);
 		expect(h.doc().error.code).toBe("recording_active");
@@ -309,7 +312,7 @@ describe("recording", () => {
 	test("--no-record skips one action; nothing is journaled when no recording is active", async () => {
 		const h = harness();
 		expect(await h.run("press", "id=sign-in-submit")).toBe(0);
-		expect(existsSync(recordingFile(h.c, UDID))).toBe(false);
+		expect(existsSync(cliUiPaths.recordingFile(h.c, UDID))).toBe(false);
 		await h.run("record", "start", "x");
 		await h.run("press", "id=sign-in-submit", "--no-record");
 		expect(recordingSchema.parse(JSON.parse(h.journal())).steps).toHaveLength(0);
@@ -354,8 +357,8 @@ describe("recording", () => {
 		await recordSignIn(h);
 		expect(await h.run("record", "cancel", "--json")).toBe(0);
 		expect(h.doc().result).toMatchObject({ outcome: "cancelled", name: "sign in", steps: 5 });
-		expect(existsSync(recordingFile(h.c, UDID))).toBe(false);
-		expect(readState(h.c, UDID).recording).toBeUndefined();
+		expect(existsSync(cliUiPaths.recordingFile(h.c, UDID))).toBe(false);
+		expect(uiStatePersistence.readState(h.c, UDID).recording).toBeUndefined();
 	});
 
 	test("ui status shows the recording; snapshot -i marks interactive elements without a testID only while recording", async () => {
@@ -407,8 +410,8 @@ describe("record stop", () => {
 		expect(source).toContain("// enter credentials");
 		expect(source).toContain("process.env.WARDEN_UI_SECRET_PASSWORD");
 		expect(source).not.toContain("hunter22");
-		expect(existsSync(recordingFile(h.c, UDID))).toBe(false);
-		expect(readState(h.c, UDID).recording).toBeUndefined();
+		expect(existsSync(cliUiPaths.recordingFile(h.c, UDID))).toBe(false);
+		expect(uiStatePersistence.readState(h.c, UDID).recording).toBeUndefined();
 	});
 
 	test("verifies by default on this device and reports it; the journal goes with a pass", async () => {
@@ -420,7 +423,7 @@ describe("record stop", () => {
 		expect(input).toMatchObject({ udid: UDID, platform: "ios", specPath: join(h.c.cwd, "specs", "sign-in.e2e.ts") });
 		expect(input?.outDir.startsWith(join(h.c.env.WARDEN_HOME ?? "", "ui", UDID, "verify"))).toBe(true);
 		expect(h.c.stdout.join("\n")).toContain("verified: 1 test passed");
-		expect(existsSync(recordingFile(h.c, UDID))).toBe(false);
+		expect(existsSync(cliUiPaths.recordingFile(h.c, UDID))).toBe(false);
 	});
 
 	test("a failed verify exits 1 and keeps the file, the journal and the pointer; undo + stop again recovers", async () => {
@@ -434,14 +437,14 @@ describe("record stop", () => {
 		expect(error.details).toMatchObject({ file, verify: { status: "failed", exitCode: 1 } });
 		expect(error.details?.evidence).toContain(join(verifyOutDir(error.details), "attempt-1", "screen-at-failure.txt"));
 		expect(existsSync(file)).toBe(true);
-		expect(existsSync(recordingFile(h.c, UDID))).toBe(true);
-		expect(readState(h.c, UDID).recording?.wrote).toBe(true);
+		expect(existsSync(cliUiPaths.recordingFile(h.c, UDID))).toBe(true);
+		expect(uiStatePersistence.readState(h.c, UDID).recording?.wrote).toBe(true);
 
 		expect(await h.run("record", "undo")).toBe(0);
 		h.verifier.current = passing;
 		expect(await h.run("record", "stop", "--json")).toBe(0);
 		expect(h.doc().result).toMatchObject({ outcome: "verified", steps: 4 });
-		expect(existsSync(recordingFile(h.c, UDID))).toBe(false);
+		expect(existsSync(cliUiPaths.recordingFile(h.c, UDID))).toBe(false);
 	});
 
 	test("a failed verify prints the failing test and its evidence in text mode", async () => {
@@ -461,7 +464,7 @@ describe("record stop", () => {
 		expect(await h.run("record", "stop", "--json")).toBe(1);
 		expect(h.doc().error.code).toBe("verify_unavailable");
 		expect(h.doc().error.hint).toContain("--no-verify");
-		expect(existsSync(recordingFile(h.c, UDID))).toBe(true);
+		expect(existsSync(cliUiPaths.recordingFile(h.c, UDID))).toBe(true);
 		expect(await h.run("record", "stop", "--no-verify")).toBe(0);
 	});
 
@@ -566,7 +569,7 @@ describe("route capture", () => {
 		repo.write("warden.config.json", JSON.stringify(config));
 		for (const file of ["welcome", "sign-in", "(tabs)/todos"]) repo.write(`src/app/${file}.tsx`, "export {};\n");
 		const h = harness({ cwd: repo.dir, exec: true, route });
-		updateState(h.c, UDID, (current) => ({ ...current, metroUrl: "http://127.0.0.1:8081" }));
+		uiStatePersistence.updateState(h.c, UDID, (current) => ({ ...current, metroUrl: "http://127.0.0.1:8081" }));
 		return h;
 	}
 
@@ -574,7 +577,10 @@ describe("route capture", () => {
 		const route: { current: string[] | "release" } = { current: ["welcome"] };
 		const h = await routeHarness(route);
 		expect(await h.run("record", "start", "sign in", "--json")).toBe(0);
-		expect(readState(h.c, UDID).recording?.routes).toMatchObject({ initial: "welcome", last: "welcome" });
+		expect(uiStatePersistence.readState(h.c, UDID).recording?.routes).toMatchObject({
+			initial: "welcome",
+			last: "welcome",
+		});
 		expect(await h.run("snapshot", "-i")).toBe(0);
 		expect(await h.run("press", "id=sign-in-submit")).toBe(0);
 		route.current = ["sign-in"];
@@ -612,7 +618,7 @@ describe("route capture", () => {
 		await h.run("record", "start", "sign in");
 		await h.run("snapshot", "-i");
 		for (let i = 0; i < 4; i++) expect(await h.run("press", "id=sign-in-submit")).toBe(0);
-		expect(readState(h.c, UDID).recording?.routes?.misses).toBe(3);
+		expect(uiStatePersistence.readState(h.c, UDID).recording?.routes?.misses).toBe(3);
 		expect(await h.run("record", "stop", "--no-verify", "--json")).toBe(0);
 		const { config } = h.doc().result as {
 			config: { captured: boolean; entries: string[]; snippet: string; hints: string[] };
@@ -655,7 +661,8 @@ describe("record use", () => {
 		mkdirSync(join(repo.dir, "e2e"), { recursive: true });
 		writeFileSync(join(repo.dir, "e2e", "helpers.ts"), HELPERS);
 		const h = harness({ cwd: repo.dir, exec: true, ...(route ? { route } : {}) });
-		if (route) updateState(h.c, UDID, (current) => ({ ...current, metroUrl: "http://127.0.0.1:8081" }));
+		if (route)
+			uiStatePersistence.updateState(h.c, UDID, (current) => ({ ...current, metroUrl: "http://127.0.0.1:8081" }));
 		const ran: string[] = [];
 		const inner = h.verifier.current;
 		h.verifier.current = (input) => {
@@ -755,16 +762,16 @@ describe("record use", () => {
 		route.current = ["(tabs)", "todos"];
 		expect(await h.run("record", "use", "e2e/helpers#signIn")).toBe(0);
 		expect(recordingSchema.parse(JSON.parse(h.journal())).steps[0]?.route).toBe("(tabs)/todos");
-		expect(readState(h.c, UDID).recording?.routes?.last).toBe("(tabs)/todos");
+		expect(uiStatePersistence.readState(h.c, UDID).recording?.routes?.last).toBe("(tabs)/todos");
 	});
 
 	test("the screen the helper leaves is snapshotted so earlier refs are stale", async () => {
 		const h = await useHarness();
 		await h.run("snapshot", "-i");
-		const before = readState(h.c, UDID).generation;
+		const before = uiStatePersistence.readState(h.c, UDID).generation;
 		await h.run("record", "start", "todos");
 		await h.run("record", "use", "e2e/helpers#signIn");
-		expect(readState(h.c, UDID).generation).toBeGreaterThan(before);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBeGreaterThan(before);
 	});
 });
 
@@ -848,7 +855,7 @@ describe("shared spec options and launch", () => {
 		expect(await h.run("record", "start", "sign in", "--options", "nope#X", "--json")).toBe(1);
 		expect(h.doc().error.code).toBe("usage");
 		expect(await h.run("record", "start", "sign in", "--options", "specs/helpers/slow#SLOW")).toBe(0);
-		expect(readState(h.c, UDID).recording?.options).toEqual({
+		expect(uiStatePersistence.readState(h.c, UDID).recording?.options).toEqual({
 			module: join(h.c.cwd, "specs", "helpers", "slow.ts"),
 			name: "SLOW",
 		});
@@ -890,7 +897,7 @@ describe("helper routes", () => {
 			repo.write(`src/app/${file}.tsx`, "export {};\n");
 		}
 		const h = harness({ cwd: repo.dir, exec: true, route });
-		updateState(h.c, UDID, (current) => ({ ...current, metroUrl: "http://127.0.0.1:8081" }));
+		uiStatePersistence.updateState(h.c, UDID, (current) => ({ ...current, metroUrl: "http://127.0.0.1:8081" }));
 		return h;
 	}
 

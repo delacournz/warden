@@ -1,6 +1,6 @@
 import { hostDeps } from "@delacour/warden-core/host-deps";
 import type { LeaseHost } from "@delacour/warden-leasing/lease-host";
-import { stopHelperAfter } from "./agent-ui/stop-helper-after";
+import { uiStopHelperAfter } from "./agent-ui/stop-helper-after";
 import { type CommandContext, contextBuilder } from "./context";
 
 export class LeaseHostBuilder {
@@ -14,7 +14,7 @@ export class LeaseHostBuilder {
 			...host,
 			...(ctx.hostFacts ? { hostFacts: ctx.hostFacts } : {}),
 			providerFor: (platform, owner, opts) => hostDeps.providerFor(platform, host, owner, opts),
-			stopHelper: (udid) => stopHelperAfter(ctx)(udid),
+			stopHelper: (udid) => uiStopHelperAfter.stopHelperAfter(ctx)(udid),
 		};
 	}
 }

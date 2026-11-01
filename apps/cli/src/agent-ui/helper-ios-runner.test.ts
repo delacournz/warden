@@ -6,21 +6,9 @@ import type { SimdClient } from "@delacour/warden-driver-ios/simd-client";
 import type { Owner } from "@delacour/warden-store/types";
 import type { Result } from "@delacour/warden-types/result";
 import { type TestContext, testContext } from "../testing";
-import {
-	connectIosRunner,
-	ensureIosRunner,
-	type HelperDeps,
-	helperStatus,
-	IOS_RUNNER_KIND,
-	IOS_RUNNER_STARTUP_MS,
-	iosRunnerEnvKey,
-	type SpawnSpec,
-	socketPathOf,
-	stopIosRunner,
-	sweepDeadHelpers,
-} from "./helper";
-import { findDeadHelpers, knownUdids, stopIosRunnersLazily } from "./helper-sweep";
-import { readState } from "./state";
+import { type HelperDeps, IOS_RUNNER_KIND, IOS_RUNNER_STARTUP_MS, type SpawnSpec, uiHelper } from "./helper";
+import { uiHelperSweep } from "./helper-sweep";
+import { uiStatePersistence } from "./state";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -80,22 +68,26 @@ function setup(upAfterMs = 0) {
 
 describe("ios runner kind", () => {
 	test("lives under $WARDEN_HOME/ios-runner, keyed by udid", () => {
-		expect(socketPathOf(IOS_RUNNER_KIND, { env: { WARDEN_HOME: "/h" } }, UDID)).toBe(`/h/ios-runner/${UDID}.sock`);
+		expect(uiHelper.socketPathOf(IOS_RUNNER_KIND, { env: { WARDEN_HOME: "/h" } }, UDID)).toBe(
+			`/h/ios-runner/${UDID}.sock`
+		);
 	});
 
 	test("its env key follows WARDEN_IOS_* knobs but not the client-only runner socket", () => {
-		const base = iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "5m" });
-		expect(iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "5m", WARDEN_IOS_RUNNER_SOCKET: "/x.sock" })).toBe(base);
-		expect(iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "9m" })).not.toBe(base);
-		expect(iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "5m", WARDEN_SIMD_PACE_MS: "9" })).toBe(base);
+		const base = uiHelper.iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "5m" });
+		expect(
+			uiHelper.iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "5m", WARDEN_IOS_RUNNER_SOCKET: "/x.sock" })
+		).toBe(base);
+		expect(uiHelper.iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "9m" })).not.toBe(base);
+		expect(uiHelper.iosRunnerEnvKey({ WARDEN_IOS_RUNNER_IDLE_TIMEOUT: "5m", WARDEN_SIMD_PACE_MS: "9" })).toBe(base);
 	});
 });
 
 describe("ensureIosRunner", () => {
 	test("spawns warden itself as __ios-runner-host and records it as iosRunner", async () => {
 		const { c, deps, spawns } = setup();
-		const socketPath = socketPathOf(IOS_RUNNER_KIND, c, UDID);
-		const res = await ensureIosRunner(c, UDID, { deps });
+		const socketPath = uiHelper.socketPathOf(IOS_RUNNER_KIND, c, UDID);
+		const res = await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(res).toEqual({ success: true, data: { socketPath, spawned: true, pid: 4343 } });
 		expect(spawns[0]?.cmd).toEqual([
 			...SELF,
@@ -109,12 +101,12 @@ describe("ensureIosRunner", () => {
 		]);
 		expect(spawns[0]?.logPath).toBe(join(c.cwd, "ios-runner", `${UDID}.log`));
 		expect(spawns[0]?.signalMs).toBe(IOS_RUNNER_STARTUP_MS);
-		const state = readState(c, UDID);
+		const state = uiStatePersistence.readState(c, UDID);
 		expect(state.iosRunner).toEqual({
 			pid: 4343,
 			socket: socketPath,
 			binary: { path: SELF[0] ?? "", mtimeMs: 42 },
-			env: iosRunnerEnvKey(c.env),
+			env: uiHelper.iosRunnerEnvKey(c.env),
 		});
 		expect(state.helper).toBeUndefined();
 		expect(c.db.getMeta(`ios_runner_spawn:${UDID}`)).toBeUndefined();
@@ -123,13 +115,13 @@ describe("ensureIosRunner", () => {
 	test("$WARDEN_IOS_RUNNER_IDLE_TIMEOUT sets the host's idle timeout (default 10 min)", async () => {
 		const { c, deps, spawns } = setup();
 		c.env.WARDEN_IOS_RUNNER_IDLE_TIMEOUT = "2m";
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(spawns[0]?.cmd.slice(-2)).toEqual(["--idle-timeout", "120"]);
 	});
 
 	test("a runner that takes 40 s to come up is waited for, not abandoned at the 15 s simd limit", async () => {
 		const { c, deps, spawns, kills } = setup(40_000);
-		const res = await ensureIosRunner(c, UDID, { deps });
+		const res = await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(res.success).toBe(true);
 		expect(spawns).toHaveLength(1);
 		expect(kills).toEqual([]);
@@ -137,10 +129,10 @@ describe("ensureIosRunner", () => {
 
 	test("a runner that never comes up is abandoned after the startup window, with its child stopped", async () => {
 		const { c, deps, kills } = setup(10 * IOS_RUNNER_STARTUP_MS);
-		const res = await ensureIosRunner(c, UDID, { deps });
+		const res = await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(res.success).toBe(false);
 		expect(kills).toEqual([4343]);
-		expect(readState(c, UDID).iosRunner).toBeUndefined();
+		expect(uiStatePersistence.readState(c, UDID).iosRunner).toBeUndefined();
 	});
 
 	test("a host that died before ready (locked phone) reports the log's last lines", async () => {
@@ -152,7 +144,7 @@ describe("ensureIosRunner", () => {
 			alive.delete(4343);
 			return spawned;
 		};
-		const res = await ensureIosRunner(c, UDID, { deps });
+		const res = await uiHelper.ensureIosRunner(c, UDID, { deps });
 		if (res.success) throw new Error("expected failure");
 		expect(res.error.message).toContain("E_DEVICE_LOCKED");
 		expect(res.error.code).toBe("device_locked");
@@ -160,10 +152,10 @@ describe("ensureIosRunner", () => {
 
 	test("a runner already answering is reused, and a changed warden binary replaces it", async () => {
 		const { c, deps, spawns } = setup();
-		await ensureIosRunner(c, UDID, { deps });
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(spawns).toHaveLength(1);
-		await ensureIosRunner(c, UDID, { deps: { ...deps, mtime: () => 43 } });
+		await uiHelper.ensureIosRunner(c, UDID, { deps: { ...deps, mtime: () => 43 } });
 		expect(spawns).toHaveLength(2);
 	});
 });
@@ -171,28 +163,28 @@ describe("ensureIosRunner", () => {
 describe("stopping and sweeping the ios runner", () => {
 	test("stopIosRunner asks for shutdown and forgets the record", async () => {
 		const { c, deps, requests } = setup();
-		await ensureIosRunner(c, UDID, { deps });
-		const stop = await stopIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
+		const stop = await uiHelper.stopIosRunner(c, UDID, { deps });
 		expect(stop.stopped).toBe(true);
 		expect(requests).toContain("shutdown");
-		expect(readState(c, UDID).iosRunner).toBeUndefined();
+		expect(uiStatePersistence.readState(c, UDID).iosRunner).toBeUndefined();
 	});
 
 	test("helperStatus reads the iosRunner record when asked for that kind", async () => {
 		const { c, deps } = setup();
-		await ensureIosRunner(c, UDID, { deps });
-		expect(helperStatus(c, UDID, { pidAlive: deps.pidAlive }, IOS_RUNNER_KIND).pid).toBe(4343);
-		expect(helperStatus(c, UDID, { pidAlive: deps.pidAlive }).pid).toBeNull();
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
+		expect(uiHelper.helperStatus(c, UDID, { pidAlive: deps.pidAlive }, IOS_RUNNER_KIND).pid).toBe(4343);
+		expect(uiHelper.helperStatus(c, UDID, { pidAlive: deps.pidAlive }).pid).toBeNull();
 	});
 
 	test("gc finds and drops a dead runner host's record, and knows the udid from its socket", async () => {
 		const { c, deps, alive } = setup();
-		await ensureIosRunner(c, UDID, { deps });
-		expect(knownUdids(c)).toContain(UDID);
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
+		expect(uiHelperSweep.knownUdids(c)).toContain(UDID);
 		alive.delete(4343);
-		expect(findDeadHelpers(c, deps.pidAlive)).toEqual([UDID]);
-		sweepDeadHelpers(c, { pidAlive: deps.pidAlive });
-		expect(readState(c, UDID).iosRunner).toBeUndefined();
+		expect(uiHelperSweep.findDeadHelpers(c, deps.pidAlive)).toEqual([UDID]);
+		uiHelper.sweepDeadHelpers(c, { pidAlive: deps.pidAlive });
+		expect(uiStatePersistence.readState(c, UDID).iosRunner).toBeUndefined();
 	});
 
 	test("stopIosRunnersLazily loads the helper only for udids with a recorded runner", async () => {
@@ -202,16 +194,18 @@ describe("stopping and sweeping the ios runner", () => {
 		const load = async () => {
 			loads += 1;
 			return {
-				stopIosRunner: async (_host: unknown, udid: string) => {
-					stopped.push(udid);
-					return { stopped: true, how: "shutdown" as const };
+				uiHelper: {
+					stopIosRunner: async (_host: unknown, udid: string) => {
+						stopped.push(udid);
+						return { stopped: true, how: "shutdown" as const };
+					},
 				},
 			};
 		};
-		expect(await stopIosRunnersLazily(c, [UDID], { load })).toEqual([]);
+		expect(await uiHelperSweep.stopIosRunnersLazily(c, [UDID], { load })).toEqual([]);
 		expect(loads).toBe(0);
-		await ensureIosRunner(c, UDID, { deps });
-		await stopIosRunnersLazily(c, [UDID, "00008140-0000000000000000"], { load });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
+		await uiHelperSweep.stopIosRunnersLazily(c, [UDID, "00008140-0000000000000000"], { load });
 		expect(loads).toBe(1);
 		expect(stopped).toEqual([UDID]);
 	});
@@ -221,7 +215,7 @@ describe("connectIosRunner", () => {
 	test("starts the runner host and answers the physical-iPhone driver on its client", async () => {
 		const { c, deps, requests } = setup();
 		c.env.WARDEN_BUNDLE_ID = "nz.co.x";
-		const res = await connectIosRunner(c, UDID, { deps });
+		const res = await uiHelper.connectIosRunner(c, UDID, { deps });
 		if (!res.success) throw new Error(res.error.message);
 		expect(res.data.id).toBe(UDID);
 		expect(res.data.capabilities).toMatchObject({
@@ -236,7 +230,7 @@ describe("connectIosRunner", () => {
 
 	test("a runner that cannot start is the host's error (a locked phone stays device_locked)", async () => {
 		const { c, deps } = setup(10 * IOS_RUNNER_STARTUP_MS);
-		const res = await connectIosRunner(c, UDID, { deps });
+		const res = await uiHelper.connectIosRunner(c, UDID, { deps });
 		expect(res.success).toBe(false);
 	});
 });
@@ -279,50 +273,53 @@ function leaseFor(c: TestContext, owner: Owner): void {
 describe("ensureIosRunner: a runner that changed", () => {
 	test("a host serving the build the sources still describe is reused, with no note", async () => {
 		const { c, deps, spawns, notes } = identitySetup();
-		await ensureIosRunner(c, UDID, { deps });
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(spawns).toHaveLength(1);
 		expect(notes).toEqual([]);
 	});
 
 	test("changed runner sources replace the host once, with one note", async () => {
 		const { c, deps, spawns, requests, notes, build } = identitySetup();
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		build.expected = BUILD_NEW;
-		const res = await ensureIosRunner(c, UDID, { deps });
+		const res = await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(res.success).toBe(true);
 		expect(requests).toContain("shutdown");
 		expect(spawns).toHaveLength(2);
 		expect(notes).toEqual(["runner changed; restarting the iPhone runner host"]);
 		expect(build.served).toBe(BUILD_NEW);
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(spawns).toHaveLength(2);
 	});
 
 	test("a host that predates identities (serves none) counts as changed", async () => {
 		const { c, deps, spawns, notes, build } = identitySetup();
 		build.writes = false;
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		build.writes = true;
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(spawns).toHaveLength(2);
 		expect(notes).toHaveLength(1);
 	});
 
 	test("an identity that cannot be computed (no team, no Xcode) leaves the host alone", async () => {
 		const { c, deps, spawns, build } = identitySetup();
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		build.expected = undefined;
-		const res = await ensureIosRunner(c, UDID, { deps });
+		const res = await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(res.success).toBe(true);
 		expect(spawns).toHaveLength(1);
 	});
 
 	test("two clients seeing the change at once restart the host once", async () => {
 		const { c, deps, spawns, notes, build } = identitySetup();
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		build.expected = BUILD_NEW;
-		const [a, b] = await Promise.all([ensureIosRunner(c, UDID, { deps }), ensureIosRunner(c, UDID, { deps })]);
+		const [a, b] = await Promise.all([
+			uiHelper.ensureIosRunner(c, UDID, { deps }),
+			uiHelper.ensureIosRunner(c, UDID, { deps }),
+		]);
 		expect(a.success && b.success).toBe(true);
 		expect(spawns).toHaveLength(2);
 		expect(notes).toHaveLength(1);
@@ -331,19 +328,19 @@ describe("ensureIosRunner: a runner that changed", () => {
 	test("the caller's own lease does not stop the restart", async () => {
 		const { c, deps, spawns, build } = identitySetup(agentA);
 		leaseFor(c, agentA);
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		build.expected = BUILD_NEW;
-		await ensureIosRunner(c, UDID, { deps });
+		await uiHelper.ensureIosRunner(c, UDID, { deps });
 		expect(spawns).toHaveLength(2);
 	});
 
 	test("a phone leased to another session keeps its host: device_busy, nothing stopped, nothing spawned", async () => {
 		const first = identitySetup(agentB);
 		leaseFor(first.c, agentB);
-		await ensureIosRunner(first.c, UDID, { deps: first.deps });
+		await uiHelper.ensureIosRunner(first.c, UDID, { deps: first.deps });
 		first.build.expected = BUILD_NEW;
 		first.deps.runner = { ...(first.deps.runner as NonNullable<HelperDeps["runner"]>), caller: async () => "agent:A" };
-		const res = await ensureIosRunner(first.c, UDID, { deps: first.deps });
+		const res = await uiHelper.ensureIosRunner(first.c, UDID, { deps: first.deps });
 		if (res.success) throw new Error("expected device_busy");
 		expect(res.error.code).toBe("device_busy");
 		expect(res.error.message).toContain("runner changed");

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { uiDir } from "../agent-ui/paths";
-import { stopHelperAfter } from "../agent-ui/stop-helper-after";
+import { cliUiPaths } from "../agent-ui/paths";
+import { uiStopHelperAfter } from "../agent-ui/stop-helper-after";
 import type { CommandContext } from "../context";
 
 type Host = Pick<CommandContext, "env" | "now" | "err">;
@@ -9,7 +9,7 @@ type Host = Pick<CommandContext, "env" | "now" | "err">;
 /** The session id the device's `state.json` points at, read as plain JSON (no schema, no perf package). */
 export function recordedPerfSession(host: Pick<CommandContext, "env">, udid: string): string | undefined {
 	try {
-		const state: unknown = JSON.parse(readFileSync(join(uiDir(host, udid), "state.json"), "utf8"));
+		const state: unknown = JSON.parse(readFileSync(join(cliUiPaths.uiDir(host, udid), "state.json"), "utf8"));
 		if (typeof state !== "object" || state === null || !("perf" in state)) return undefined;
 		const { perf } = state;
 		if (typeof perf !== "object" || perf === null || !("sessionId" in perf)) return undefined;
@@ -55,7 +55,7 @@ export function stopPerfAfter(ctx: Host, run: StopRunner = finalizeRecorded): (u
 /** `stopPerfAfter` then, when `helper`, the `warden-simd` stop that `release --shutdown` / `ui close --release` do. */
 export function releaseAfter(ctx: Host, opts: { helper: boolean }): (udid: string) => Promise<void> {
 	const perf = stopPerfAfter(ctx);
-	const helper = opts.helper ? stopHelperAfter(ctx) : undefined;
+	const helper = opts.helper ? uiStopHelperAfter.stopHelperAfter(ctx) : undefined;
 	return async (udid) => {
 		await perf(udid);
 		await helper?.(udid);

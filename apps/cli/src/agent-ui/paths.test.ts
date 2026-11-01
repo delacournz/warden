@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { uiPaths } from "@delacour/warden-sdk/ops/paths";
-import { uiDir } from "./paths";
+import { cliUiPaths } from "./paths";
 
 describe("fsSafeId / uiDir", () => {
 	test("simulator UUIDs, physical UDIDs and emulator serials are unchanged", () => {
@@ -12,7 +12,7 @@ describe("fsSafeId / uiDir", () => {
 		]) {
 			expect(uiPaths.fsSafeId(id)).toBe(id);
 		}
-		expect(uiDir({ env: { WARDEN_HOME: "/h" } }, "emulator-5554")).toBe("/h/ui/emulator-5554");
+		expect(cliUiPaths.uiDir({ env: { WARDEN_HOME: "/h" } }, "emulator-5554")).toBe("/h/ui/emulator-5554");
 	});
 
 	test("a wifi serial loses its colon and stays distinct from a lookalike", () => {
@@ -20,7 +20,7 @@ describe("fsSafeId / uiDir", () => {
 		const b = uiPaths.fsSafeId("192.168.1.20_5555");
 		expect(a).not.toContain(":");
 		expect(a).not.toBe(b);
-		expect(uiDir({ env: { WARDEN_HOME: "/h" } }, "192.168.1.20:5555")).toBe(`/h/ui/${a}`);
+		expect(cliUiPaths.uiDir({ env: { WARDEN_HOME: "/h" } }, "192.168.1.20:5555")).toBe(`/h/ui/${a}`);
 	});
 
 	test("path-like ids cannot escape the ui root", () => {

@@ -17,7 +17,7 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { reportError, reportOk, type UiError, type UiSuccess, uiError } from "../agent-ui/output";
+import { type UiError, type UiSuccess, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
 import type { PerfTarget } from "./device";
@@ -114,7 +114,7 @@ function planDuration(opts: PerfNativeOptions): Result<number, UiError> {
 	if (ms === undefined) {
 		return {
 			success: false,
-			error: uiError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
+			error: uiOutput.uiError("usage", `--duration must be a duration like 10s or 1m, got "${opts.duration}"`),
 		};
 	}
 	return resultFactory.ok(Math.min(ms, HARD_MAX_DURATION_MS));
@@ -141,7 +141,7 @@ async function reanalyze(
 			trace,
 			...(opts.yes === true ? { yes: true } : {}),
 		});
-		if (!analysis.success) return reportError(ctx, report, analysis.error);
+		if (!analysis.success) return uiOutput.reportError(ctx, report, analysis.error);
 		const success = nativeSuccess(ctx, target, {
 			app: "(from trace)",
 			dir,
@@ -150,9 +150,13 @@ async function reanalyze(
 			warnings: analysis.data.warnings,
 			writeReport: false,
 		});
-		return reportOk(ctx, report, { ...success, device: { udid: "-", platform } });
+		return uiOutput.reportOk(ctx, report, { ...success, device: { udid: "-", platform } });
 	} catch (error) {
-		return reportError(ctx, report, uiError("failed", error instanceof Error ? error.message : String(error)));
+		return uiOutput.reportError(
+			ctx,
+			report,
+			uiOutput.uiError("failed", error instanceof Error ? error.message : String(error))
+		);
 	}
 }
 
@@ -220,7 +224,10 @@ export function perfNative(
 	const mode = action !== "stop" && opts.leaks === true ? "mutate" : "observe";
 	return runPerf(ctx, deps, label, mode, opts, async (target) => {
 		if (!isNativeAction(action)) {
-			return { success: false, error: uiError("usage", `unknown native action "${action}"`, { hint: "start | stop" }) };
+			return {
+				success: false,
+				error: uiOutput.uiError("usage", `unknown native action "${action}"`, { hint: "start | stop" }),
+			};
 		}
 		const analyze = opts.skipAnalysis !== true;
 		if (action === "stop") return stopAndReport(ctx, deps, io, profilers, target, analyze, opts.yes);

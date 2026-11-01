@@ -102,12 +102,12 @@ export function createActionEffects(deps: EffectsDeps): ActionEffects {
 			const dir =
 				deps.shotsDir() ?? join(storeLocator.wardenHome(ctx.env), "dev", info.leaseIds[0] ?? info.deviceId, "shots");
 			const path = nextShot(dir);
-			const [{ uiScreenshot }, { defaultUiDeps }] = await Promise.all([
+			const [{ uiControls }, { defaultUiDeps }] = await Promise.all([
 				import("../agent-ui/controls"),
 				import("../agent-ui/driver"),
 			]);
 			const done = await captured(ctx, (c) =>
-				uiScreenshot(c, defaultUiDeps, path, { udid: info.deviceId, force: true, record: false })
+				uiControls.uiScreenshot(c, defaultUiDeps, path, { udid: info.deviceId, force: true, record: false })
 			);
 			return done.code === 0 ? resultFactory.ok(path) : failure(stripAnsi(done.err.at(-1) ?? `exit ${done.code}`));
 		},

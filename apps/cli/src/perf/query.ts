@@ -12,7 +12,7 @@ import { perfPaths } from "@delacour/warden-sdk/ops/perf/paths";
 import { reactCapture } from "@delacour/warden-sdk/ops/perf/react-capture";
 import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { reportError, reportOk, type UiError, uiError } from "../agent-ui/output";
+import { type UiError, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { withPerfOptions } from "./options";
@@ -50,7 +50,7 @@ function readJson(path: string): unknown {
 
 const missing = (what: string, hint: string): { success: false; error: UiError } => ({
 	success: false,
-	error: uiError("failed", `this session has no ${what}`, { hint }),
+	error: uiOutput.uiError("failed", `this session has no ${what}`, { hint }),
 });
 
 /** A window may start at the session start; `parseDuration` itself rejects 0. */
@@ -137,7 +137,7 @@ function commitsComponentAnswer({ commits, limit }: CommitsQuery): Result<Answer
 function commitsWindowAnswer({ commits, opts, limit }: CommitsQuery): Result<Answer, UiError> {
 	const size = opts.size === undefined ? 1000 : perfDuration.parseDuration(opts.size);
 	if (size === undefined)
-		return { success: false, error: uiError("usage", `--size must be a duration, got "${opts.size}"`) };
+		return { success: false, error: uiOutput.uiError("usage", `--size must be a duration, got "${opts.size}"`) };
 	const rows = sessionQuery.commitsByWindow(commits, size, limit);
 	return resultFactory.ok({
 		result: { by: "window", windowMs: size, rows },
@@ -153,12 +153,13 @@ function commitsIndexAnswer({ commits, opts, rest, limit }: CommitsQuery): Resul
 	const raw = opts.index ?? rest[0];
 	const only = raw === undefined ? undefined : Number(raw);
 	if (only !== undefined && !Number.isInteger(only))
-		return { success: false, error: uiError("usage", `commit index must be an integer, got "${raw}"`) };
+		return { success: false, error: uiOutput.uiError("usage", `commit index must be an integer, got "${raw}"`) };
 	const rows = sessionQuery.commitsByIndex(commits, {
 		...(only === undefined ? {} : { only }),
 		...(limit === undefined ? {} : { limit }),
 	});
-	if (rows.length === 0) return { success: false, error: uiError("failed", `no commit #${only} in this session`) };
+	if (rows.length === 0)
+		return { success: false, error: uiOutput.uiError("failed", `no commit #${only} in this session`) };
 	return resultFactory.ok({
 		result: { by: "index", rows },
 		lines: rows.flatMap((r) => [
@@ -194,7 +195,10 @@ function commitsAnswer(dir: string, opts: PerfQueryOptions, rest: readonly strin
 	const by = opts.by ?? "component";
 	const answer = COMMIT_ANSWERS.get(by);
 	if (answer === undefined)
-		return { success: false, error: uiError("usage", `--by must be component, window, index or cascade, got "${by}"`) };
+		return {
+			success: false,
+			error: uiOutput.uiError("usage", `--by must be component, window, index or cascade, got "${by}"`),
+		};
 	return answer({ commits: file.commits, opts, rest, limit });
 }
 
@@ -220,7 +224,7 @@ function cpuWindowAnswer(
 ): Result<Answer, UiError> {
 	const window = parseWindow(rawWindow ?? "");
 	if (window === undefined)
-		return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${rawWindow}"`) };
+		return { success: false, error: uiOutput.uiError("usage", `--window must look like 2s-5s, got "${rawWindow}"`) };
 	const anchor = isRecord(hotspots) && isRecord(hotspots.anchor) ? num(hotspots.anchor.hostWallMs) : undefined;
 	if (anchor === undefined) return missing("clock anchor for the JS profile", "re-record with --js");
 	const rows = sessionQuery.cpuWindow(
@@ -304,7 +308,7 @@ async function rerunHangs(
 ): Promise<Result<unknown, UiError>> {
 	const window = opts.window === undefined ? undefined : parseWindow(opts.window);
 	if (opts.window !== undefined && window === undefined)
-		return { success: false, error: uiError("usage", `--window must look like 2s-5s, got "${opts.window}"`) };
+		return { success: false, error: uiOutput.uiError("usage", `--window must look like 2s-5s, got "${opts.window}"`) };
 	const profiler = await profilers.android();
 	const trace = join(nativeStateFiles.sessionNativeDir(ctx, session.id), "android.perfetto-trace");
 	const analysis = await profiler.analyze(ctx, deps, {
@@ -338,7 +342,10 @@ async function hangStackAnswer(
 	let report = native.report;
 	if (opts.rerun === true) {
 		if (native.platform !== "android")
-			return { success: false, error: uiError("usage", "--rerun re-runs the Perfetto SQL: Android sessions only") };
+			return {
+				success: false,
+				error: uiOutput.uiError("usage", "--rerun re-runs the Perfetto SQL: Android sessions only"),
+			};
 		const rerun = await rerunHangs(ctx, deps, session, opts, profilers);
 		if (!rerun.success) return rerun;
 		report = rerun.data;
@@ -367,7 +374,8 @@ function callersStackAnswer(
 	native: NativeReport | undefined,
 	fn: string | undefined
 ): Result<Answer, UiError> {
-	if (fn === undefined) return { success: false, error: uiError("usage", "stacks callers needs a function name") };
+	if (fn === undefined)
+		return { success: false, error: uiOutput.uiError("usage", "stacks callers needs a function name") };
 	const profile = readProfile(dir);
 	const lines: string[] = [];
 	const result: Record<string, unknown> = { sub: "callers", fn };
@@ -441,7 +449,7 @@ async function stacksAnswer(
 	if (sub === "callers") return callersStackAnswer(dir, native, rest[1]);
 	if (sub === "thread") return threadStackAnswer(native);
 	if (sub === "leaks") return leaksStackAnswer(native);
-	return { success: false, error: uiError("usage", `stacks <hang|callers <fn>|thread|leaks>, got "${sub}"`) };
+	return { success: false, error: uiOutput.uiError("usage", `stacks <hang|callers <fn>|thread|leaks>, got "${sub}"`) };
 }
 
 /** One jank window of the frame stats as a line. */
@@ -490,7 +498,7 @@ export async function perfQuery(
 	const meta = { command: "perf query", label: "perf query", json: opts.json === true, startedAt: ctx.now() };
 	try {
 		const picked = await pickSession(ctx, deps, opts, id);
-		if (!picked.success) return reportError(ctx, meta, picked.error);
+		if (!picked.success) return uiOutput.reportError(ctx, meta, picked.error);
 		const session = picked.data;
 		const dir = perfPaths.sessionDir(ctx, session.id);
 		let answer: Result<Answer, UiError>;
@@ -501,10 +509,10 @@ export async function perfQuery(
 		else
 			answer = {
 				success: false,
-				error: uiError("usage", `unknown query "${topic}"`, { hint: "commits | cpu | stacks | frames" }),
+				error: uiOutput.uiError("usage", `unknown query "${topic}"`, { hint: "commits | cpu | stacks | frames" }),
 			};
-		if (!answer.success) return reportError(ctx, meta, answer.error);
-		return reportOk(ctx, meta, {
+		if (!answer.success) return uiOutput.reportError(ctx, meta, answer.error);
+		return uiOutput.reportOk(ctx, meta, {
 			device: { udid: session.device.udid, platform: session.device.platform, name: session.device.name },
 			result: {
 				sessionId: session.id,
@@ -514,7 +522,7 @@ export async function perfQuery(
 			text: answer.data.lines.join("\n"),
 		});
 	} catch (error) {
-		return reportError(ctx, meta, uiError("failed", errorMessage(error)));
+		return uiOutput.reportError(ctx, meta, uiOutput.uiError("failed", errorMessage(error)));
 	}
 }
 

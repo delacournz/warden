@@ -21,106 +21,112 @@ import type { UiError } from "./output";
 
 const GEO_FIX_MS = 10_000;
 
-function proxyDeps(ctx: CommandContext) {
-	const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
-	return { store: ctx.store(), env: ctx.env, now: ctx.now, ...(command ? { command } : {}) };
-}
-
-/** What a `warden ui` driver gets for the caller's lease: its shaping proxy (touched only when a condition needs it) and the clock recorder. */
-export function leaseDriverExtras(ctx: CommandContext, device: UiDevice) {
-	const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
-	return {
-		networkProxy: new LazyLeaseNetworkProxy({
-			leaseId: device.lease.id,
-			env: ctx.env,
-			now: ctx.now,
-			openStore: () => ({ success: true, data: ctx.store() }),
-			...(command ? { command } : {}),
-		}),
-		clockRecorder: new LeaseClockRecorder(ctx.store(), device.lease.id, ctx.now).record,
-	};
-}
-
-/** iOS: the device helper's driver, with the lease's shaping proxy so `network` / `networkFaults` work. */
-async function openIos(ctx: CommandContext, device: UiDevice): Promise<Result<ConditionsPort, UiError>> {
-	const { connectHelper } = await import("./helper");
-	return connectHelper(ctx, device.udid, {}, leaseDriverExtras(ctx, device));
-}
-
-/**
- * Android without the full driver (no animation changes, no uiad, no host): the resident adb shell for network and
- * `adb emu geo fix` for a point. A moving location is the route ticker's job.
- */
-async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Result<ConditionsPort, UiError>> {
-	const [{ adbSessions }, { AndroidNetwork }, { androidArgv }, { realClock }, { AndroidClock }, { AndroidSettings }] =
-		await Promise.all([
-			import("@delacour/warden-driver-android/adb-session"),
-			import("@delacour/warden-driver-android/android-network"),
-			import("@delacour/warden-driver-android/android-argv"),
-			import("@delacour/warden-driver-android/android-device"),
-			import("@delacour/warden-driver-android/android-clock"),
-			import("@delacour/warden-driver-android/android-settings"),
-		]);
-	const serial = device.udid;
-	const { adb } = androidToolsLocator.locate(ctx.env);
-	const session = adbSessions.open({ adb, serial });
-	const net = new AndroidNetwork({
-		session,
-		exec: ctx.exec,
-		adb,
-		serial,
-		clock: realClock,
-		proxy: new LeaseNetworkProxy(proxyDeps(ctx), device.lease),
-	});
-	const settings = new AndroidSettings({ session, serial }).ops();
-	return resultFactory.ok({
-		...settings,
-		network: net.network,
-		networkFaults: net.networkFaults,
-		location: async (op) => {
-			if (!serial.startsWith("emulator-")) {
-				return driverErrors.err("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
-			}
-			if (op.kind === "clear") return { success: true, data: undefined };
-			if (op.kind !== "point") {
-				return driverErrors.err(
-					"E_BAD_REQUEST",
-					`a ${op.kind} location is played by the route ticker, not set directly`
-				);
-			}
-			const res = await ctx.exec(androidArgv.geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS });
-			const failure = androidArgv.geoFixFailure(res);
-			return failure === undefined ? { success: true, data: undefined } : driverErrors.err("E_IO", failure);
-		},
-		clock: (op) => new AndroidClock({ session, exec: ctx.exec, adb, serial }).apply(op),
-		close: () => session.close(),
-	});
-}
-
 type Spawn = Parameters<typeof routeTickerSpawner.via>[2];
 
-/**
- * How the detached scheduler / ticker start: a compiled warden has no script to hand `bun`, so it runs its own hidden
- * `__scheduler` / `__route-ticker`; from source they run `bun scheduler.main.ts` / `route-ticker.main.ts` (no second CLI start).
- */
-export function conditionSpawners(main: string = Bun.main, execPath: string = process.execPath, spawn?: Spawn) {
-	return {
-		spawnScheduler: (config: Parameters<typeof schedulerSpawner.detached>[0]) => {
-			const via = compiledSubcommand("__scheduler", main, execPath);
-			return via ? schedulerSpawner.via(config, via, spawn) : schedulerSpawner.detached(config, spawn);
-		},
-		spawnTicker: (config: Parameters<typeof routeTickerSpawner.detached>[0]) => {
-			const via = compiledSubcommand("__route-ticker", main, execPath);
-			return via ? routeTickerSpawner.via(config, via, spawn) : routeTickerSpawner.detached(config, spawn);
-		},
-	};
+export class UiConditionsReal {
+	proxyDeps(ctx: CommandContext) {
+		const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
+		return { store: ctx.store(), env: ctx.env, now: ctx.now, ...(command ? { command } : {}) };
+	}
+
+	/** What a `warden ui` driver gets for the caller's lease: its shaping proxy (touched only when a condition needs it) and the clock recorder. */
+	leaseDriverExtras(ctx: CommandContext, device: UiDevice) {
+		const command = compiledSubcommand(NETPROXY_SUBCOMMAND);
+		return {
+			networkProxy: new LazyLeaseNetworkProxy({
+				leaseId: device.lease.id,
+				env: ctx.env,
+				now: ctx.now,
+				openStore: () => ({ success: true, data: ctx.store() }),
+				...(command ? { command } : {}),
+			}),
+			clockRecorder: new LeaseClockRecorder(ctx.store(), device.lease.id, ctx.now).record,
+		};
+	}
+
+	/** iOS: the device helper's driver, with the lease's shaping proxy so `network` / `networkFaults` work. */
+	async openIos(ctx: CommandContext, device: UiDevice): Promise<Result<ConditionsPort, UiError>> {
+		const { uiHelper } = await import("./helper");
+		return uiHelper.connectHelper(ctx, device.udid, {}, this.leaseDriverExtras(ctx, device));
+	}
+
+	/**
+	 * Android without the full driver (no animation changes, no uiad, no host): the resident adb shell for network and
+	 * `adb emu geo fix` for a point. A moving location is the route ticker's job.
+	 */
+	async openAndroid(ctx: CommandContext, device: UiDevice): Promise<Result<ConditionsPort, UiError>> {
+		const [{ adbSessions }, { AndroidNetwork }, { androidArgv }, { realClock }, { AndroidClock }, { AndroidSettings }] =
+			await Promise.all([
+				import("@delacour/warden-driver-android/adb-session"),
+				import("@delacour/warden-driver-android/android-network"),
+				import("@delacour/warden-driver-android/android-argv"),
+				import("@delacour/warden-driver-android/android-device"),
+				import("@delacour/warden-driver-android/android-clock"),
+				import("@delacour/warden-driver-android/android-settings"),
+			]);
+		const serial = device.udid;
+		const { adb } = androidToolsLocator.locate(ctx.env);
+		const session = adbSessions.open({ adb, serial });
+		const net = new AndroidNetwork({
+			session,
+			exec: ctx.exec,
+			adb,
+			serial,
+			clock: realClock,
+			proxy: new LeaseNetworkProxy(this.proxyDeps(ctx), device.lease),
+		});
+		const settings = new AndroidSettings({ session, serial }).ops();
+		return resultFactory.ok({
+			...settings,
+			network: net.network,
+			networkFaults: net.networkFaults,
+			location: async (op) => {
+				if (!serial.startsWith("emulator-")) {
+					return driverErrors.err("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
+				}
+				if (op.kind === "clear") return { success: true, data: undefined };
+				if (op.kind !== "point") {
+					return driverErrors.err(
+						"E_BAD_REQUEST",
+						`a ${op.kind} location is played by the route ticker, not set directly`
+					);
+				}
+				const res = await ctx.exec(androidArgv.geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS });
+				const failure = androidArgv.geoFixFailure(res);
+				return failure === undefined ? { success: true, data: undefined } : driverErrors.err("E_IO", failure);
+			},
+			clock: (op) => new AndroidClock({ session, exec: ctx.exec, adb, serial }).apply(op),
+			close: () => session.close(),
+		});
+	}
+
+	/**
+	 * How the detached scheduler / ticker start: a compiled warden has no script to hand `bun`, so it runs its own hidden
+	 * `__scheduler` / `__route-ticker`; from source they run `bun scheduler.main.ts` / `route-ticker.main.ts` (no second CLI start).
+	 */
+	conditionSpawners(main: string = Bun.main, execPath: string = process.execPath, spawn?: Spawn) {
+		return {
+			spawnScheduler: (config: Parameters<typeof schedulerSpawner.detached>[0]) => {
+				const via = compiledSubcommand("__scheduler", main, execPath);
+				return via ? schedulerSpawner.via(config, via, spawn) : schedulerSpawner.detached(config, spawn);
+			},
+			spawnTicker: (config: Parameters<typeof routeTickerSpawner.detached>[0]) => {
+				const via = compiledSubcommand("__route-ticker", main, execPath);
+				return via ? routeTickerSpawner.via(config, via, spawn) : routeTickerSpawner.detached(config, spawn);
+			},
+		};
+	}
 }
+
+export const uiConditionsReal = new UiConditionsReal();
 
 /** Real side effects of the condition verbs. */
 export const realConditionsDeps: Required<ConditionsDeps> = {
 	open: async (ctx, device) => {
 		try {
-			return device.platform === "ios" ? await openIos(ctx, device) : await openAndroid(ctx, device);
+			return device.platform === "ios"
+				? await uiConditionsReal.openIos(ctx, device)
+				: await uiConditionsReal.openAndroid(ctx, device);
 		} catch (error) {
 			return {
 				success: false,
@@ -128,7 +134,7 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 			};
 		}
 	},
-	...conditionSpawners(),
+	...uiConditionsReal.conditionSpawners(),
 	kill: (pid) => {
 		process.kill(pid, "SIGTERM");
 	},
@@ -145,7 +151,7 @@ export const realConditionsDeps: Required<ConditionsDeps> = {
 	command: processCommand,
 	adb: (ctx) => androidToolsLocator.locate(ctx.env).adb,
 	ensureProxy: async (ctx, lease) => {
-		const started = await new LeaseProxyService(proxyDeps(ctx)).ensure(lease, {
+		const started = await new LeaseProxyService(uiConditionsReal.proxyDeps(ctx)).ensure(lease, {
 			condition: { kind: "online" },
 			conditions: networkProxyShaping.conditionsFor({ kind: "online" }, []),
 		});

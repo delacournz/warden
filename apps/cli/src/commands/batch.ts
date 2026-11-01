@@ -47,9 +47,9 @@ import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { storeLocator } from "@delacour/warden-store/store";
 import { leaseModel, type Owner, type Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
-import { stopAndroidHostsLazily } from "../agent-ui/helper-sweep";
+import { uiHelperSweep } from "../agent-ui/helper-sweep";
 import { UI_ERROR_EXIT, type UiErrorCode } from "../agent-ui/output";
-import { stopHelperAfter } from "../agent-ui/stop-helper-after";
+import { uiStopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc, selfCommand } from "../autogc";
 import { type Cast, createCast } from "../batch/cast";
 import { type EarlyWarm, startEarlyWarm } from "../batch/early-warm";
@@ -1471,7 +1471,8 @@ type PreparedPool = { pool: Pool; live: Device[]; setups?: DeviceSetup[] };
 /** A resident `warden ui` host would fight the jobs' own drivers for an emulator's one `warden-uiad` slot: stop it. */
 async function stopResidentHosts(ctx: CommandContext, name: string, devices: readonly Device[]): Promise<void> {
 	const serials = devices.map((d) => d.udid);
-	for (const warning of await stopAndroidHostsLazily(ctx, serials)) output.warn(ctx, `warden ${name}: ${warning}`);
+	for (const warning of await uiHelperSweep.stopAndroidHostsLazily(ctx, serials))
+		output.warn(ctx, `warden ${name}: ${warning}`);
 }
 
 /**
@@ -1702,7 +1703,7 @@ async function hideLateWindows(
 		sleep: deps.sleep,
 		warn,
 		detachLock: claimRequestRules.detachLockFor(contextBuilder.appHostFromContext(ctx)),
-		onShutDown: stopHelperAfter(ctx),
+		onShutDown: uiStopHelperAfter.stopHelperAfter(ctx),
 	}).hide(live);
 }
 

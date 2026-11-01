@@ -8,7 +8,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { storeLocator } from "@delacour/warden-store/store";
-import { defaultHelperDeps, ensureHelper } from "./helper";
+import { defaultHelperDeps, uiHelper } from "./helper";
 
 const [home, udid, socketPath, script, markerDir, startAt] = process.argv.slice(2);
 if (!home || !udid || !socketPath || !script || !markerDir || !startAt) {
@@ -19,7 +19,7 @@ const store = storeLocator.open(join(home, "warden.db"));
 const wait = Number(startAt) - Date.now();
 if (wait > 0) await Bun.sleep(wait);
 
-const result = await ensureHelper({ env: { WARDEN_HOME: home }, now: Date.now, store: () => store }, udid, {
+const result = await uiHelper.ensureHelper({ env: { WARDEN_HOME: home }, now: Date.now, store: () => store }, udid, {
 	socketPath,
 	helperPath: "/fake/warden-simd",
 	deps: {

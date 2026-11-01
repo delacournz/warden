@@ -16,8 +16,8 @@ import { liveness } from "@delacour/warden-store/liveness";
 import { type DeviceRecord, storeLocator } from "@delacour/warden-store/store";
 import type { DeviceResource, Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { sweepDeadHelpersLazily } from "../agent-ui/helper-sweep";
-import { stopHelperAfter } from "../agent-ui/stop-helper-after";
+import { uiHelperSweep } from "../agent-ui/helper-sweep";
+import { uiStopHelperAfter } from "../agent-ui/stop-helper-after";
 import { defineCommand } from "../command";
 import { type CommandContext, contextBuilder } from "../context";
 import { leaseHostBuilder } from "../lease-host";
@@ -124,7 +124,7 @@ async function gcPlatform(
 		if (!hold) return { record, result: undefined };
 		try {
 			const result = await provider.shutdown(record.id);
-			if (result.success) await stopHelperAfter(ctx)(record.id);
+			if (result.success) await uiStopHelperAfter.stopHelperAfter(ctx)(record.id);
 			return { record, result };
 		} finally {
 			ctx.store().deleteLeases([hold.id]);
@@ -280,11 +280,11 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 			await new DeviceReleaser(sctx).release(staleIds, {
 				touch: false,
 				only: (l) => !liveness.isLeaseAlive(l, now, liveness.processAlive),
-				after: stopHelperAfter(sctx),
+				after: uiStopHelperAfter.stopHelperAfter(sctx),
 			})
 		).map((l) => l.id);
 		// resident helpers (a live pid on a live socket) are not residue: only records whose process is gone are swept
-		await sweepDeadHelpersLazily(sctx);
+		await uiHelperSweep.sweepDeadHelpersLazily(sctx);
 		const leased = new Set(
 			store
 				.listLeases()

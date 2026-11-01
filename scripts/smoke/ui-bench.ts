@@ -12,7 +12,7 @@
  * Runs this checkout's CLI source, not whatever `warden` is on PATH.
  */
 import { join } from "node:path";
-import { type BenchResult, renderBenchTable } from "../../apps/cli/src/agent-ui/bench";
+import { type BenchResult, uiBench } from "../../apps/cli/src/agent-ui/bench";
 
 const CLI = join(import.meta.dir, "../../apps/cli/src/cli.ts");
 const DEFAULT_BUNDLE = "nz.co.delacour.warden.example";
@@ -144,7 +144,7 @@ async function main(): Promise<number> {
 			console.error(`ui-bench: bench failed: ${bench.error}`);
 			return 1;
 		}
-		console.log(renderBenchTable(bench.metrics));
+		console.log(uiBench.renderBenchTable(bench.metrics));
 		const over = overTolerance(bench.metrics);
 		if (over.length > 0) {
 			console.error(`ui-bench: over target x1.5: ${over.join(", ")}`);

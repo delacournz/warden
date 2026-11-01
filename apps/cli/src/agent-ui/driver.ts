@@ -37,7 +37,7 @@ export type UiDeps = {
 
 /** The real deps. The driver module (engines, zod) is imported when a subcommand first opens a device. */
 export const defaultUiDeps: UiDeps = {
-	driver: async (ctx, device) => (await import("./ui-driver")).uiDriver(ctx, device),
+	driver: async (ctx, device) => (await import("./ui-driver")).uiDriverFactory.uiDriver(ctx, device),
 	sleep: (ms) => Bun.sleep(ms),
 };
 

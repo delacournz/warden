@@ -5,7 +5,7 @@ import { perfOrchestrator, type SessionKit, type StopOutcome } from "@delacour/w
 import { perfSessionStore } from "@delacour/warden-sdk/ops/perf/session";
 import { perfSessionOps } from "@delacour/warden-sdk/ops/perf/session-ops";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type UiSuccess, uiError } from "../agent-ui/output";
+import { type UiSuccess, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfTarget } from "./device";
 import { withPerfOptions } from "./options";
@@ -42,7 +42,7 @@ export function perfStop(
 		if (session === undefined) {
 			return {
 				success: false,
-				error: uiError("session_not_found", `no running perf session on ${target.udid}`, {
+				error: uiOutput.uiError("session_not_found", `no running perf session on ${target.udid}`, {
 					hint: "warden perf start (warden perf ls lists finished ones)",
 				}),
 			};

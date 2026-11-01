@@ -7,7 +7,7 @@ import { processExec } from "@delacour/warden-runtime/exec";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { ProcHandle, SpawnOptions } from "../commands/batch";
 import { type TestContext, testContext } from "../testing";
-import { runVerify, type VerifyDeps } from "./authoring-verify";
+import { uiAuthoringVerify, type VerifyDeps } from "./authoring-verify";
 
 let cleanup: (() => void)[] = [];
 afterEach(() => {
@@ -74,7 +74,7 @@ const input = (suite: Awaited<ReturnType<typeof setup>>["suite"]) => ({
 
 test("runs the spec with the argv and env a warden e2e spec process gets, plus the device identity", async () => {
 	const { ctx, deps, suite, spawned, timers } = await setup(0, RESULT("/s", "passed"));
-	const ran = await runVerify(ctx, deps, input(suite));
+	const ran = await uiAuthoringVerify.runVerify(ctx, deps, input(suite));
 	expect(ran).toMatchObject({ success: true, data: { passed: true, exitCode: 0, results: "/out/results.jsonl" } });
 	const [proc] = spawned;
 	expect(proc?.argv.slice(0, 4)).toEqual([
@@ -101,7 +101,7 @@ test("runs the spec with the argv and env a warden e2e spec process gets, plus t
 
 test("a failed test reports its error and evidence files", async () => {
 	const { ctx, deps, suite } = await setup(1, RESULT("/s", "failed"));
-	const ran = await runVerify(ctx, deps, input(suite));
+	const ran = await uiAuthoringVerify.runVerify(ctx, deps, input(suite));
 	expect(ran).toMatchObject({
 		success: true,
 		data: {
@@ -114,7 +114,7 @@ test("a failed test reports its error and evidence files", async () => {
 
 test("exit 0 with no results is not a pass", async () => {
 	const { ctx, deps, suite } = await setup(0, undefined);
-	const ran = await runVerify(ctx, deps, input(suite));
+	const ran = await uiAuthoringVerify.runVerify(ctx, deps, input(suite));
 	expect(ran).toMatchObject({ success: true, data: { passed: false, tests: [] } });
 });
 
@@ -128,12 +128,12 @@ test("hands the spec process the lease id of the device it runs on", async () =>
 		},
 		ctx.now()
 	);
-	await runVerify(ctx, deps, input(suite));
+	await uiAuthoringVerify.runVerify(ctx, deps, input(suite));
 	expect(spawned[0]?.opts.env.WARDEN_LEASE_ID).toBe(lease.id);
 });
 
 test("no lease on the device: no WARDEN_LEASE_ID", async () => {
 	const { ctx, deps, suite, spawned } = await setup(0, RESULT("/s", "passed"));
-	await runVerify(ctx, deps, input(suite));
+	await uiAuthoringVerify.runVerify(ctx, deps, input(suite));
 	expect("WARDEN_LEASE_ID" in (spawned[0]?.opts.env ?? {})).toBe(false);
 });

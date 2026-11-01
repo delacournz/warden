@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { conditionSpawners } from "./conditions-real";
+import { uiConditionsReal } from "./conditions-real";
 
 const scheduler = {
 	platform: "android",
@@ -12,7 +12,7 @@ const ticker = { adb: "adb", serial: "emulator-5554", points: [{ lat: 1, lon: 2 
 
 function spawned(main: string, execPath: string) {
 	const argvs: string[][] = [];
-	const spawners = conditionSpawners(main, execPath, (argv) => {
+	const spawners = uiConditionsReal.conditionSpawners(main, execPath, (argv) => {
 		argvs.push([...argv]);
 		return { pid: 10 + argvs.length };
 	});

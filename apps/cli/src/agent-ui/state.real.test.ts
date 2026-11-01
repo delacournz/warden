@@ -13,8 +13,8 @@ import { uiautomatorParser } from "@delacour/warden-driver-android/uiautomator";
 import { elementNormalizer } from "@delacour/warden-driver-ios/normalize";
 import { refStores } from "@delacour/warden-sdk/ops/ref-store";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
-import { readLastSnapshot } from "./state";
-import { createFileRefStore } from "./state-stores";
+import { uiStatePersistence } from "./state";
+import { uiStateStores } from "./state-stores";
 
 /**
  * `last-snapshot.json` is validated with zod when read back. These tests push the snapshots the real backends
@@ -24,7 +24,9 @@ import { createFileRefStore } from "./state-stores";
 
 /** Store `snapshot` as the device's next generation through the CLI's file-backed ref store. */
 function storeSnapshot(ctx: ReturnType<typeof context>, udid: string, snapshot: Snapshot): { generation: number } {
-	return createFileRefStore(ctx, udid).commit({ takenAt: ctx.now(), hash: settler.snapshotHash(snapshot), snapshot });
+	return uiStateStores
+		.createFileRefStore(ctx, udid)
+		.commit({ takenAt: ctx.now(), hash: settler.snapshotHash(snapshot), snapshot });
 }
 
 const goldens = join(
@@ -103,7 +105,7 @@ describe("last-snapshot.json against real captures", () => {
 			const taken = snapshot();
 			expect(taken.flat.length).toBeGreaterThan(0);
 			const { generation } = storeSnapshot(ctx, "U1", taken);
-			const back = readLastSnapshot(ctx, "U1");
+			const back = uiStatePersistence.readLastSnapshot(ctx, "U1");
 			expect(back).toBeDefined();
 			expect(back?.generation).toBe(generation);
 			expect(back?.snapshot.flat).toEqual(refStores.preorder(back?.snapshot.elements ?? []));
@@ -149,7 +151,7 @@ describe("last-snapshot.json against real captures", () => {
 			modal: { pid: 7, description: "Alert" },
 		};
 		storeSnapshot(ctx, "U2", taken);
-		expect(onDisk(readLastSnapshot(ctx, "U2")?.snapshot ?? taken)).toEqual(onDisk(taken));
+		expect(onDisk(uiStatePersistence.readLastSnapshot(ctx, "U2")?.snapshot ?? taken)).toEqual(onDisk(taken));
 	});
 
 	test("the real captures cover the optional element fields the schema has to keep", () => {

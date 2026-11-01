@@ -61,26 +61,6 @@ export type UiDeviceInfo = UiDeviceInfoJson;
 /** `--json` envelope: exactly one document on stdout, success or failure (schema: `uiJsonSchema` in `@delacour/warden-sdk/contracts`). */
 export type UiJson = UiJsonDoc;
 
-const isUiErrorCode = (code: WardenErrorCode): code is UiErrorCode => code in UI_ERROR_EXIT;
-
-/** The exit code of an error; a code `warden ui` has no entry for (an SDK-only code) is a plain failure. */
-export function exitCodeFor(error: UiError): UiExitCode {
-	return isUiErrorCode(error.code) ? UI_ERROR_EXIT[error.code] : UI_EXIT.failed;
-}
-
-export function uiError(
-	code: UiErrorCode,
-	message: string,
-	extra: { hint?: string; details?: Record<string, unknown> } = {}
-): UiError {
-	return opErrors.opError(code, message, extra);
-}
-
-/** Human form of an error: `message — hint`. */
-export function errorText(error: UiError): string {
-	return error.hint === undefined ? error.message : `${error.message} — ${error.hint}`;
-}
-
 /** What one subcommand run reports; `startedAt` is `ctx.now()` at the start. */
 export type UiReport = {
 	command: string;
@@ -103,34 +83,60 @@ export type UiSuccess = {
 	attachedTo?: string;
 };
 
-/** Print a success (JSON envelope, or `text` on stdout; warnings on stderr in text mode) and return exit 0 (or `success.exit`). */
-export function reportOk(ctx: CommandContext, report: UiReport, success: UiSuccess): UiExitCode {
-	if (report.json) {
-		const doc: UiJson = {
-			ok: true,
-			command: report.command,
-			device: success.device,
-			...(success.generation !== undefined ? { generation: success.generation } : {}),
-			durationMs: Math.max(0, ctx.now() - report.startedAt),
-			...(success.attachedTo !== undefined ? { attachedTo: success.attachedTo } : {}),
-			result: success.result,
-			...(success.warnings && success.warnings.length > 0 ? { warnings: success.warnings } : {}),
-		};
-		ctx.out(JSON.stringify(doc));
+export class UiOutput {
+	private isUiErrorCode(code: WardenErrorCode): code is UiErrorCode {
+		return code in UI_ERROR_EXIT;
+	}
+
+	/** The exit code of an error; a code `warden ui` has no entry for (an SDK-only code) is a plain failure. */
+	exitCodeFor(error: UiError): UiExitCode {
+		return this.isUiErrorCode(error.code) ? UI_ERROR_EXIT[error.code] : UI_EXIT.failed;
+	}
+
+	uiError(
+		code: UiErrorCode,
+		message: string,
+		extra: { hint?: string; details?: Record<string, unknown> } = {}
+	): UiError {
+		return opErrors.opError(code, message, extra);
+	}
+
+	/** Human form of an error: `message — hint`. */
+	errorText(error: UiError): string {
+		return error.hint === undefined ? error.message : `${error.message} — ${error.hint}`;
+	}
+
+	/** Print a success (JSON envelope, or `text` on stdout; warnings on stderr in text mode) and return exit 0 (or `success.exit`). */
+	reportOk(ctx: CommandContext, report: UiReport, success: UiSuccess): UiExitCode {
+		if (report.json) {
+			const doc: UiJson = {
+				ok: true,
+				command: report.command,
+				device: success.device,
+				...(success.generation !== undefined ? { generation: success.generation } : {}),
+				durationMs: Math.max(0, ctx.now() - report.startedAt),
+				...(success.attachedTo !== undefined ? { attachedTo: success.attachedTo } : {}),
+				result: success.result,
+				...(success.warnings && success.warnings.length > 0 ? { warnings: success.warnings } : {}),
+			};
+			ctx.out(JSON.stringify(doc));
+			return success.exit ?? UI_EXIT.ok;
+		}
+		if (success.text.length > 0) ctx.out(success.text);
+		for (const w of success.warnings ?? []) ctx.err(ctx.ui.color.yellow(`warden ${report.label ?? "ui"}: ${w}`));
 		return success.exit ?? UI_EXIT.ok;
 	}
-	if (success.text.length > 0) ctx.out(success.text);
-	for (const w of success.warnings ?? []) ctx.err(ctx.ui.color.yellow(`warden ${report.label ?? "ui"}: ${w}`));
-	return success.exit ?? UI_EXIT.ok;
+
+	/** Print a failure (JSON envelope on stdout, or a red line on stderr) and return its exit code. */
+	reportError(ctx: CommandContext, report: UiReport, error: UiError, device?: UiDeviceInfo): UiExitCode {
+		if (report.json) {
+			const doc: UiJson = { ok: false, command: report.command, ...(device ? { device } : {}), error };
+			ctx.out(JSON.stringify(doc));
+		} else {
+			ctx.err(ctx.ui.color.red(`warden ${report.label ?? `ui ${report.command}`}: ${this.errorText(error)}`));
+		}
+		return this.exitCodeFor(error);
+	}
 }
 
-/** Print a failure (JSON envelope on stdout, or a red line on stderr) and return its exit code. */
-export function reportError(ctx: CommandContext, report: UiReport, error: UiError, device?: UiDeviceInfo): UiExitCode {
-	if (report.json) {
-		const doc: UiJson = { ok: false, command: report.command, ...(device ? { device } : {}), error };
-		ctx.out(JSON.stringify(doc));
-	} else {
-		ctx.err(ctx.ui.color.red(`warden ${report.label ?? `ui ${report.command}`}: ${errorText(error)}`));
-	}
-	return exitCodeFor(error);
-}
+export const uiOutput = new UiOutput();

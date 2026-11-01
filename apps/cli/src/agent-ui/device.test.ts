@@ -6,7 +6,7 @@ import type { Exec } from "@delacour/warden-runtime/exec";
 import type { Owner } from "@delacour/warden-store/types";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { resolveUiDevice } from "./device";
+import { uiDeviceResolver } from "./device";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -19,13 +19,13 @@ function setup(): TestContext {
 
 describe("resolveUiDevice platform from the id", () => {
 	test("an id that is no device says simulator, emulator or physical device", async () => {
-		const result = await resolveUiDevice(setup(), { udid: "chromium-cdp-9222" });
+		const result = await uiDeviceResolver.resolveUiDevice(setup(), { udid: "chromium-cdp-9222" });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("is not a simulator, emulator or physical device");
 	});
 
 	test("a physical iOS UDID is ios, so an unleased one asks for a lease rather than failing on its shape", async () => {
-		const result = await resolveUiDevice(setup(), { udid: "00008140-001234567890001C" });
+		const result = await uiDeviceResolver.resolveUiDevice(setup(), { udid: "00008140-001234567890001C" });
 		expect(result.success).toBe(false);
 		if (!result.success) expect(result.error.message).toContain("is not leased");
 	});
@@ -40,7 +40,7 @@ describe("resolveUiDevice platform from the id", () => {
 			},
 			c.now()
 		);
-		const result = await resolveUiDevice(c, { serial: "R5CT" });
+		const result = await uiDeviceResolver.resolveUiDevice(c, { serial: "R5CT" });
 		expect(result.success && result.data.lease.id).toBe(lease.id);
 		expect(result.success && result.data.platform).toBe("android");
 	});
@@ -67,7 +67,7 @@ describe("resolveUiDevice on Android phones", () => {
 	}
 
 	test("--claim on a phone stamps physical on the new lease", async () => {
-		const result = await resolveUiDevice(phoneSetup(), { serial: PHONE, claim: true });
+		const result = await uiDeviceResolver.resolveUiDevice(phoneSetup(), { serial: PHONE, claim: true });
 		expect(result.success).toBe(true);
 		const lease = ctx?.db.listLeases()[0];
 		expect(lease?.resource).toMatchObject({
@@ -78,7 +78,7 @@ describe("resolveUiDevice on Android phones", () => {
 	});
 
 	test("a qemu network emulator is not stamped physical", async () => {
-		const result = await resolveUiDevice(phoneSetup(), { serial: "localhost:5555", claim: true });
+		const result = await uiDeviceResolver.resolveUiDevice(phoneSetup(), { serial: "localhost:5555", claim: true });
 		expect(result.success).toBe(true);
 		const resource = ctx?.db.listLeases()[0]?.resource;
 		expect(resource?.kind === "device" && resource.physical).toBeUndefined();
@@ -86,20 +86,20 @@ describe("resolveUiDevice on Android phones", () => {
 
 	test("an emulator serial never asks adb what it is", async () => {
 		const calls: string[][] = [];
-		const result = await resolveUiDevice(phoneSetup(calls), { serial: "emulator-5554", claim: true });
+		const result = await uiDeviceResolver.resolveUiDevice(phoneSetup(calls), { serial: "emulator-5554", claim: true });
 		expect(result.success).toBe(true);
 		expect(calls).toEqual([]);
 	});
 
 	test("unauthorized phone: device_unauthorized (exit 2), the lease is kept", async () => {
-		const result = await resolveUiDevice(phoneSetup(), { serial: "0123456789ABCDEF", claim: true });
+		const result = await uiDeviceResolver.resolveUiDevice(phoneSetup(), { serial: "0123456789ABCDEF", claim: true });
 		expect(!result.success && result.error.code).toBe("device_unauthorized");
 		expect(!result.success && result.error.message).toContain("USB debugging");
 		expect(ctx?.db.listLeases()).toHaveLength(1);
 	});
 
 	test("offline phone: device_offline", async () => {
-		const result = await resolveUiDevice(phoneSetup(), { serial: "ZY22OFFLINE", claim: true });
+		const result = await uiDeviceResolver.resolveUiDevice(phoneSetup(), { serial: "ZY22OFFLINE", claim: true });
 		expect(!result.success && result.error.code).toBe("device_offline");
 		expect(ctx?.db.listLeases()).toHaveLength(1);
 	});
@@ -107,14 +107,18 @@ describe("resolveUiDevice on Android phones", () => {
 	test("--claim --physical with no device named claims a connected phone", async () => {
 		const c = phoneSetup();
 		c.env = { ...c.env, WARDEN_PHYSICAL_IDS: PHONE };
-		const result = await resolveUiDevice(c, { claim: true, physical: true, platform: "android" });
+		const result = await uiDeviceResolver.resolveUiDevice(c, { claim: true, physical: true, platform: "android" });
 		expect(result.success && result.data.udid).toBe(PHONE);
 		const resource = ctx?.db.listLeases()[0]?.resource;
 		expect(resource?.kind === "device" && resource.physical?.transport).toBe("usb");
 	});
 
 	test("--claim --physical with several ready phones is ambiguous_device with the candidates, and leases nothing", async () => {
-		const result = await resolveUiDevice(phoneSetup(), { claim: true, physical: true, platform: "android" });
+		const result = await uiDeviceResolver.resolveUiDevice(phoneSetup(), {
+			claim: true,
+			physical: true,
+			platform: "android",
+		});
 		expect(!result.success && result.error.code).toBe("ambiguous_device");
 		if (result.success) return;
 		expect(result.error.hint).toContain("WARDEN_PHYSICAL_IDS");
@@ -142,7 +146,11 @@ describe("resolveUiDevice --claim: leftover conditions", () => {
 			0
 		);
 		leaseConditions.record(ctx.db, stale.id, "battery", { level: 5, charging: false, cosmetic: true }, 1);
-		const device = await resolveUiDevice(ctx, { udid: UDID, claim: true }, { exclusive: false, pidAlive: () => false });
+		const device = await uiDeviceResolver.resolveUiDevice(
+			ctx,
+			{ udid: UDID, claim: true },
+			{ exclusive: false, pidAlive: () => false }
+		);
 		expect(device.success && device.data.action).toBe("reclaimed");
 		expect(calls).toContainEqual(["xcrun", "simctl", "status_bar", UDID, "clear"]);
 		expect(ctx.db.db.query("SELECT COUNT(*) AS n FROM orphan_conditions").get()).toEqual({ n: 0 });
@@ -157,7 +165,11 @@ describe("resolveUiDevice --claim: leftover conditions", () => {
 			},
 			env: { WARDEN_SESSION_ID: "me" },
 		});
-		await resolveUiDevice(ctx, { udid: UDID, claim: true }, { exclusive: false, pidAlive: () => false });
+		await uiDeviceResolver.resolveUiDevice(
+			ctx,
+			{ udid: UDID, claim: true },
+			{ exclusive: false, pidAlive: () => false }
+		);
 		expect(calls).toEqual([]);
 	});
 });

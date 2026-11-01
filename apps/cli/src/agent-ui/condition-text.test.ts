@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { ConditionRecord } from "@delacour/warden-config/conditions.types";
-import { conditionsLine } from "./condition-text";
+import { uiConditionText } from "./condition-text";
 
 const rec = <R extends ConditionRecord>(r: Omit<R, "owned" | "setAt">): ConditionRecord =>
 	({ ...r, owned: [], setAt: 1 }) as ConditionRecord;
 
 describe("conditionsLine", () => {
 	test("none set", () => {
-		expect(conditionsLine([])).toBeUndefined();
+		expect(uiConditionText.conditionsLine([])).toBeUndefined();
 	});
 	test("setting areas read as short phrases", () => {
-		const line = conditionsLine([
+		const line = uiConditionText.conditionsLine([
 			rec({ area: "permission", value: { grants: [{ bundleId: "x", permission: "location", state: "denied" }] } }),
 			rec({ area: "locale", value: { timezone: "Asia/Tokyo", locale: "fr-FR" } }),
 			rec({ area: "a11y", value: { textSize: "accessibility-large", boldText: true } }),

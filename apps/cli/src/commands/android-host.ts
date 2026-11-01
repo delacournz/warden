@@ -18,8 +18,8 @@ const DEFAULT_IDLE_SECONDS = 600;
 const EXIT_ENGINE = 3;
 
 async function defaultOpenDriver(ctx: CommandContext, serial: string): Promise<Result<Driver, string>> {
-	const { openAndroidInProcess } = await import("../agent-ui/ui-driver");
-	const opened = await openAndroidInProcess(ctx, serial, (line) => ctx.err(line));
+	const { uiDriverFactory } = await import("../agent-ui/ui-driver");
+	const opened = await uiDriverFactory.openAndroidInProcess(ctx, serial, (line) => ctx.err(line));
 	return opened.success ? resultFactory.ok(opened.data) : { success: false, error: opened.error.message };
 }
 

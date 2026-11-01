@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { uiDir } from "../agent-ui/paths";
+import { cliUiPaths } from "../agent-ui/paths";
 import { type TestContext, testContext } from "../testing";
 import { recordedPerfSession, stopPerfAfter } from "./release-after";
 
@@ -12,8 +12,8 @@ function setup(state?: string) {
 	const c = testContext([]);
 	ctx = c;
 	if (state !== undefined) {
-		mkdirSync(uiDir(c, "U1"), { recursive: true });
-		writeFileSync(join(uiDir(c, "U1"), "state.json"), state);
+		mkdirSync(cliUiPaths.uiDir(c, "U1"), { recursive: true });
+		writeFileSync(join(cliUiPaths.uiDir(c, "U1"), "state.json"), state);
 	}
 	return c;
 }

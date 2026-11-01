@@ -10,7 +10,7 @@ import {
 	perfLogsOps,
 } from "@delacour/warden-sdk/ops/perf/logs";
 import type { Result } from "@delacour/warden-types/result";
-import { reportError, UI_EXIT, type UiError, uiError } from "../agent-ui/output";
+import { UI_EXIT, type UiError, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 import { resolveApp } from "./app";
@@ -49,12 +49,12 @@ async function followLogs(
 	const json = opts.json === true;
 	const report = { command: "perf logs", label: "perf logs", json, startedAt: ctx.now() };
 	try {
-		if (!flags.success) return reportError(ctx, report, flags.error);
+		if (!flags.success) return uiOutput.reportError(ctx, report, flags.error);
 		const target = await resolvePerfDevice(ctx, opts, "observe", deps.device);
-		if (!target.success) return reportError(ctx, report, target.error);
+		if (!target.success) return uiOutput.reportError(ctx, report, target.error);
 		const info = { udid: target.data.udid, platform: target.data.platform, name: target.data.name };
 		const app = await resolveApp(ctx, { platform: target.data.platform, id: target.data.udid }, opts.app);
-		if (!app.success) return reportError(ctx, report, app.error, info);
+		if (!app.success) return uiOutput.reportError(ctx, report, app.error, info);
 		const filter: LogFilter = { ...flags.data.filter };
 		const naiveNow = await perfLogsOps.deviceNaiveNow(ctx, target.data);
 		if (flags.data.sinceDurationMs !== undefined) filter.sinceMs = naiveNow - flags.data.sinceDurationMs;
@@ -75,13 +75,13 @@ async function followLogs(
 				},
 				logDeps
 			);
-			if (!done.success) return reportError(ctx, report, done.error, info);
+			if (!done.success) return uiOutput.reportError(ctx, report, done.error, info);
 			return interrupt.signal.aborted ? UI_EXIT.interrupted : UI_EXIT.ok;
 		} finally {
 			interrupt.dispose();
 		}
 	} catch (error) {
-		return reportError(ctx, report, uiError("failed", errorMessage(error)));
+		return uiOutput.reportError(ctx, report, uiOutput.uiError("failed", errorMessage(error)));
 	}
 }
 

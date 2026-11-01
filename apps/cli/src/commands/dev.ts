@@ -46,7 +46,7 @@ import { storeLocator } from "@delacour/warden-store/store";
 import type { Lease, Owner, Platform } from "@delacour/warden-store/types";
 import { wardenErrors } from "@delacour/warden-types/error";
 import { type AsyncResult, type Result, resultFactory } from "@delacour/warden-types/result";
-import { stopHelperAfter } from "../agent-ui/stop-helper-after";
+import { uiStopHelperAfter } from "../agent-ui/stop-helper-after";
 import { maybeAutoGc } from "../autogc";
 import { type ClaimFlagValues, parseClaimFlags, parsePlatform, withClaimOptions } from "../claim-flags";
 import { type Command, defineCommand } from "../command";
@@ -595,7 +595,7 @@ async function restartDevice(
 	log(`shutting down ${deviceId}`);
 	const down = await provider.shutdown(deviceId);
 	if (!down.success) return wardenErrors.toText(down);
-	await stopHelperAfter(ctx)(deviceId);
+	await uiStopHelperAfter.stopHelperAfter(ctx)(deviceId);
 	log("booting");
 	const ready = await bootAndWait(provider, deviceId);
 	if (!ready.success) return ready;

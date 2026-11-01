@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { UiDeps } from "../agent-ui/driver";
-import { uiDir } from "../agent-ui/paths";
+import { cliUiPaths } from "../agent-ui/paths";
 import { brokerErr } from "../dev-broker/broker.types";
 import { type BrokerServer, serveBroker } from "../dev-broker/ipc";
 import { writeDevSession } from "../dev-session";
@@ -146,7 +146,7 @@ async function harness(options: { broker: boolean }): Promise<Harness> {
 
 /** The collector's files as `ui logs start` leaves them. */
 function writeCollected(h: Harness): void {
-	const dir = uiDir(h.c, UDID);
+	const dir = cliUiPaths.uiDir(h.c, UDID);
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "console.jsonl"), `${LINES.map((l) => JSON.stringify(l)).join("\n")}\n`);
 	writeFileSync(join(dir, "network.jsonl"), `${ENTRIES.map((e) => JSON.stringify(e)).join("\n")}\n`);

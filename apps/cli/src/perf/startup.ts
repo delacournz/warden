@@ -11,7 +11,7 @@ import {
 } from "@delacour/warden-sdk/ops/perf/startup";
 import type { Platform } from "@delacour/warden-store/types";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { type UiError, uiError } from "../agent-ui/output";
+import { type UiError, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { resolveApp } from "./app";
 import { withPerfOptions } from "./options";
@@ -26,7 +26,7 @@ const fail = (error: UiError): { success: false; error: UiError } => ({ success:
 function parseRuns(raw: string | undefined): Result<number, UiError> {
 	if (raw === undefined) return resultFactory.ok(DEFAULT_RUNS);
 	if (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > MAX_RUNS) {
-		return fail(uiError("usage", `--runs must be an integer 1-${MAX_RUNS}, got "${raw}"`));
+		return fail(uiOutput.uiError("usage", `--runs must be an integer 1-${MAX_RUNS}, got "${raw}"`));
 	}
 	return resultFactory.ok(Number(raw));
 }
@@ -37,11 +37,11 @@ function parseMethod(raw: string | undefined, platform: Platform): Result<Startu
 	if (platform === "android") {
 		return raw === undefined || raw === "am-start"
 			? resultFactory.ok("am-start")
-			: fail(uiError("usage", `--method ${raw} is iOS only (Android always uses am start -W)`));
+			: fail(uiOutput.uiError("usage", `--method ${raw} is iOS only (Android always uses am start -W)`));
 	}
 	const method: IosMethod | undefined =
 		raw === undefined || raw === "approx" ? "approx" : raw === "xctrace" ? "xctrace" : undefined;
-	if (method === undefined) return fail(uiError("usage", `--method must be approx or xctrace, got "${raw}"`));
+	if (method === undefined) return fail(uiOutput.uiError("usage", `--method must be approx or xctrace, got "${raw}"`));
 	return resultFactory.ok(method === "approx" ? "simctl-approx" : "xctrace");
 }
 

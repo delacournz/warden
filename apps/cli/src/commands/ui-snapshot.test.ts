@@ -3,7 +3,7 @@ import type { Snapshot } from "@delacour/warden-driver/driver.types";
 import { driverFixtures, type ElementSpec, FakeDriver } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
 import { defaultUiDeps, type UiDeps } from "../agent-ui/driver";
-import { readLastSnapshot, readState } from "../agent-ui/state";
+import { uiStatePersistence } from "../agent-ui/state";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
 import { createUiCommand, uiCommand } from "./ui";
@@ -158,10 +158,10 @@ describe("warden ui snapshot", () => {
 	test("stores last-snapshot.json + state.json under $WARDEN_HOME/ui/<udid>", async () => {
 		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("snapshot");
-		const stored = readLastSnapshot(h.c, UDID);
+		const stored = uiStatePersistence.readLastSnapshot(h.c, UDID);
 		expect(stored).toMatchObject({ generation: 1, takenAt: h.clock.t });
 		expect(stored?.snapshot.flat.map((e) => e.id)).toEqual(["0", "0.0", "0.1", "0.2", "0.3"]);
-		expect(readState(h.c, UDID)).toMatchObject({ generation: 1 });
+		expect(uiStatePersistence.readState(h.c, UDID)).toMatchObject({ generation: 1 });
 	});
 
 	test("--settle: waits for two equal hashes >= 250 ms apart, then prints a +/-/= diff vs the stored snapshot", async () => {
@@ -208,18 +208,18 @@ describe("warden ui snapshot", () => {
 	test("generation bumps only on snapshot, snapshot --settle and find", async () => {
 		const h = harness([driverFixtures.snapshotOf(LOGIN)]);
 		await h.run("status");
-		expect(readState(h.c, UDID).generation).toBe(0);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(0);
 		await h.run("snapshot");
-		expect(readState(h.c, UDID).generation).toBe(1);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(1);
 		await h.run("snapshot", "-i");
-		expect(readState(h.c, UDID).generation).toBe(2);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(2);
 		await h.run("snapshot", "--settle", "500");
-		expect(readState(h.c, UDID).generation).toBe(3);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(3);
 		await h.run("find", "id=email");
-		expect(readState(h.c, UDID).generation).toBe(4);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(4);
 		await h.run("status");
 		await h.run("snapshot", "--depth", "x");
-		expect(readState(h.c, UDID).generation).toBe(4);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(4);
 	});
 
 	test("no driver in this build: engine_unavailable, exit 3, one JSON document", async () => {
@@ -286,6 +286,6 @@ describe("warden ui find", () => {
 	test("find stores the snapshot its refs belong to", async () => {
 		const h = harness([SCREEN]);
 		await h.run("find", "id=save-as");
-		expect(readLastSnapshot(h.c, UDID)?.generation).toBe(1);
+		expect(uiStatePersistence.readLastSnapshot(h.c, UDID)?.generation).toBe(1);
 	});
 });

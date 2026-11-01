@@ -5,7 +5,7 @@ import type { SchedulerConfig } from "@delacour/warden-device/conditions/schedul
 import type { TickerConfig } from "@delacour/warden-driver/conditions/route-ticker";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
-import { updateState } from "../agent-ui/state";
+import { uiStatePersistence } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -150,7 +150,7 @@ describe("net <condition>", () => {
 
 	test("the app warden ui opened is passed so iOS can check it for the dylib", async () => {
 		const s = setup();
-		updateState(s.h.c, UDID, (st) => ({ ...st, app: "com.example.app" }));
+		uiStatePersistence.updateState(s.h.c, UDID, (st) => ({ ...st, app: "com.example.app" }));
 		expect(await s.h.run("network", "set", "offline", "--relaunch")).toBe(0);
 		expect(s.networkOptions).toEqual([{ bundleId: "com.example.app", relaunch: true }]);
 	});

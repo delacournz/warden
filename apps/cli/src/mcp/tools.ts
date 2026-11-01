@@ -1,17 +1,7 @@
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
-import {
-	devtoolsResume,
-	devtoolsStatus,
-	evalExpr,
-	queryConsole,
-	queryExceptions,
-	queryNetwork,
-	readRoute,
-	readTree,
-	reloadApp,
-} from "../agent-ui/broker-client";
-import { addLogpoint, clearLogpoints, listLogpoints, logpointHits, removeLogpoint } from "../agent-ui/logpoint-cli";
+import { uiBrokerClient } from "../agent-ui/broker-client";
+import { uiLogpointCli } from "../agent-ui/logpoint-cli";
 import { parseSince } from "../commands/dev-logs";
 import { profileStatus, startProfile, stopProfile } from "../dev-broker/profile-client";
 import { listDevSessions } from "../dev-session";
@@ -115,7 +105,7 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 			run: async (env, { udid: id, since: raw, ...rest }) => {
 				const from = since(raw, deps.now());
 				if (!from.success) return from;
-				return queryConsole(target(env, id), defined({ ...rest, since: from.data }));
+				return uiBrokerClient.queryConsole(target(env, id), defined({ ...rest, since: from.data }));
 			},
 		}),
 		tool({
@@ -125,7 +115,7 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 			run: async (env, { udid: id, since: raw, limit: n }) => {
 				const from = since(raw, deps.now());
 				if (!from.success) return from;
-				return queryExceptions(target(env, id), defined({ since: from.data, limit: n }));
+				return uiBrokerClient.queryExceptions(target(env, id), defined({ since: from.data, limit: n }));
 			},
 		}),
 		tool({
@@ -144,7 +134,7 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 			run: async (env, { udid: id, since: raw, ...rest }) => {
 				const from = since(raw, deps.now());
 				if (!from.success) return from;
-				return queryNetwork(target(env, id), defined({ ...rest, since: from.data }));
+				return uiBrokerClient.queryNetwork(target(env, id), defined({ ...rest, since: from.data }));
 			},
 		}),
 		tool({
@@ -153,7 +143,7 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 				"Evaluate a JavaScript expression in the running app (Hermes) and return its JSON value; promises are awaited. Use for reading stores, globals, navigation state.",
 			input: { udid, expression: z.string().min(1), timeoutMs: z.number().int().positive().optional() },
 			run: async (env, { udid: id, expression, timeoutMs }) =>
-				evalExpr(target(env, id), { expression, ...defined({ timeoutMs }) }),
+				uiBrokerClient.evalExpr(target(env, id), { expression, ...defined({ timeoutMs }) }),
 		}),
 		tool({
 			name: "app_tree",
@@ -164,33 +154,33 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 				testID: z.string().optional().describe("only this component's subtree"),
 				max: z.number().int().positive().optional().describe("first N components"),
 			},
-			run: async (env, { udid: id, ...params }) => readTree(target(env, id), defined(params)),
+			run: async (env, { udid: id, ...params }) => uiBrokerClient.readTree(target(env, id), defined(params)),
 		}),
 		tool({
 			name: "app_route",
 			description: "The route key of the screen the app is on (Expo Router / React Navigation).",
 			input: { udid },
-			run: async (env, { udid: id }) => readRoute(target(env, id)),
+			run: async (env, { udid: id }) => uiBrokerClient.readRoute(target(env, id)),
 		}),
 		tool({
 			name: "app_reload",
 			description: "Reload the app's JavaScript bundle.",
 			input: { udid },
-			run: async (env, { udid: id }) => reloadApp(target(env, id)),
+			run: async (env, { udid: id }) => uiBrokerClient.reloadApp(target(env, id)),
 		}),
 		tool({
 			name: "devtools_status",
 			description:
 				"The dev session's CDP broker state: connecting, attached, yielded (Chrome DevTools took the page), lost.",
 			input: { udid },
-			run: async (env, { udid: id }) => devtoolsStatus(target(env, id)),
+			run: async (env, { udid: id }) => uiBrokerClient.devtoolsStatus(target(env, id)),
 		}),
 		tool({
 			name: "devtools_resume",
 			description:
 				"Reattach the broker after it yielded to Chrome DevTools. On a single-debugger Metro this disconnects DevTools.",
 			input: { udid },
-			run: async (env, { udid: id }) => devtoolsResume(target(env, id)),
+			run: async (env, { udid: id }) => uiBrokerClient.devtoolsResume(target(env, id)),
 		}),
 		tool({
 			name: "logpoint_add",
@@ -204,7 +194,7 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 				hits: z.number().int().positive().optional().describe("remove after N hits"),
 			},
 			run: async (env, { udid: device, location, expression, ...rest }) =>
-				addLogpoint(target(env, device), { location, expression, ...defined(rest) }),
+				uiLogpointCli.addLogpoint(target(env, device), { location, expression, ...defined(rest) }),
 		}),
 		tool({
 			name: "logpoint_hits",
@@ -213,14 +203,14 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 			run: async (env, { udid: device, since: raw, ...rest }) => {
 				const from = since(raw, deps.now());
 				if (!from.success) return from;
-				return logpointHits(target(env, device), defined({ ...rest, since: from.data }));
+				return uiLogpointCli.logpointHits(target(env, device), defined({ ...rest, since: from.data }));
 			},
 		}),
 		tool({
 			name: "logpoint_list",
 			description: "The session's logpoints, their hit counts and whether they are armed.",
 			input: { udid },
-			run: async (env, { udid: device }) => listLogpoints(target(env, device)),
+			run: async (env, { udid: device }) => uiLogpointCli.listLogpoints(target(env, device)),
 		}),
 		tool({
 			name: "logpoint_remove",
@@ -228,8 +218,8 @@ export function wardenTools(deps: ToolDeps = { now: () => Date.now() }): ToolDef
 			input: { udid, id: z.string().optional() },
 			run: async (env, { udid: device, id: logpoint }) =>
 				logpoint === undefined
-					? clearLogpoints(target(env, device))
-					: removeLogpoint(target(env, device), { id: logpoint }),
+					? uiLogpointCli.clearLogpoints(target(env, device))
+					: uiLogpointCli.removeLogpoint(target(env, device), { id: logpoint }),
 		}),
 		tool({
 			name: "profile_start",

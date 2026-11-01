@@ -6,7 +6,7 @@ import {
 	type TraceProcessorDeps,
 	traceProcessorService,
 } from "@delacour/warden-sdk/ops/perf/trace-processor";
-import { reportError, UI_EXIT, type UiExitCode, uiError } from "../agent-ui/output";
+import { UI_EXIT, type UiExitCode, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import type { PerfRegister } from "./register";
 
@@ -29,12 +29,16 @@ export async function perfToolsInstall(
 	const json = opts.json === true;
 	const report = { command: "tools install", label: "perf tools install", json, startedAt: ctx.now() };
 	if (tool !== "trace-processor") {
-		return reportError(ctx, report, uiError("usage", `unknown tool "${tool}" (known: ${PERF_TOOLS.join(", ")})`));
+		return uiOutput.reportError(
+			ctx,
+			report,
+			uiOutput.uiError("usage", `unknown tool "${tool}" (known: ${PERF_TOOLS.join(", ")})`)
+		);
 	}
 	const path = traceProcessorService.traceProcessorPath(ctx);
 	const had = existsSync(path);
 	const resolved = await traceProcessorService.resolveTraceProcessor(ctx, deps, { yes: opts.yes === true });
-	if (!resolved.success) return reportError(ctx, report, resolved.error);
+	if (!resolved.success) return uiOutput.reportError(ctx, report, resolved.error);
 	const bytes = statSync(resolved.data).size;
 	const result = { tool, version: TRACE_PROCESSOR_VERSION, path: resolved.data, bytes, downloaded: !had };
 	if (json) {

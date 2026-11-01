@@ -3,7 +3,7 @@ import type { ConditionArea } from "@delacour/warden-config/conditions.types";
 import { leaseConditions } from "@delacour/warden-core/conditions/conditions";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
 import { resultFactory } from "@delacour/warden-types/result";
-import { updateState } from "../agent-ui/state";
+import { uiStatePersistence } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -29,7 +29,7 @@ const row = (h: Harness, area: ConditionArea) =>
 describe("permission", () => {
 	test("set applies the pairs to the app, records them and merges a later set", async () => {
 		const h = setup();
-		updateState(h.c, UDID, (s) => ({ ...s, app: "com.example.app" }));
+		uiStatePersistence.updateState(h.c, UDID, (s) => ({ ...s, app: "com.example.app" }));
 		expect(await h.run("permission", "set", "location=denied", "camera=granted", "--json")).toBe(0);
 		expect(h.driver.callsOf("permissions")[0]).toMatchObject({
 			grants: { location: "denied", camera: "granted" },
@@ -47,7 +47,7 @@ describe("permission", () => {
 
 	test("--app wins over the opened app", async () => {
 		const h = setup();
-		updateState(h.c, UDID, (s) => ({ ...s, app: "com.example.app" }));
+		uiStatePersistence.updateState(h.c, UDID, (s) => ({ ...s, app: "com.example.app" }));
 		await h.run("permission", "set", "photos=granted", "--app", "other.app");
 		expect(h.driver.callsOf("permissions")[0]?.opts).toEqual({ bundleId: "other.app" });
 	});

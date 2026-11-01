@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Snapshot } from "@delacour/warden-driver/driver.types";
 import { driverFixtures } from "@delacour/warden-driver/testing/driver";
-import { readLastSnapshot, readState } from "../agent-ui/state";
+import { uiStatePersistence } from "../agent-ui/state";
 import { cleanupHarnesses, doc, type Harness, harness, LOGIN, UDID } from "./ui.testing";
 
 afterEach(cleanupHarnesses);
@@ -35,8 +35,8 @@ describe("wait <selector>", () => {
 			generation: 1,
 			result: { matched: true, ref: "@e4", waitedMs: 0, element: { role: "button", id: "sign-in-submit" } },
 		});
-		expect(readLastSnapshot(h.c, UDID)?.generation).toBe(1);
-		expect(readState(h.c, UDID).generation).toBe(1);
+		expect(uiStatePersistence.readLastSnapshot(h.c, UDID)?.generation).toBe(1);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(1);
 	});
 
 	test("text output: the element line with its ref and how long it took", async () => {
@@ -414,6 +414,6 @@ describe("get", () => {
 	test("does not bump the generation", async () => {
 		const h = harness([screen()]);
 		await h.run("get", "id=email", "value");
-		expect(readState(h.c, UDID).generation).toBe(0);
+		expect(uiStatePersistence.readState(h.c, UDID).generation).toBe(0);
 	});
 });

@@ -5,14 +5,7 @@ import { type BrokerResult, brokerErr } from "../dev-broker/broker.types";
 import { type DevSessionRecord, writeDevSession } from "../dev-session";
 import { type TestContext, testContext } from "../testing";
 import type { BrokerCall, BrokerClientDeps } from "./broker-client";
-import {
-	addLogpoint,
-	clearLogpoints,
-	listLogpoints,
-	logpointHits,
-	registerLogpoint,
-	removeLogpoint,
-} from "./logpoint-cli";
+import { uiLogpointCli } from "./logpoint-cli";
 
 const contexts: TestContext[] = [];
 afterEach(() => {
@@ -72,10 +65,16 @@ describe("work functions", () => {
 			return Promise.resolve({ success: true, data: { removed: ["lp1"] } });
 		});
 		const params = { location: "src/a.ts:2", expression: "n", hits: 3 };
-		expect(await addLogpoint(r.target, params, r.deps)).toEqual({ success: true, data: { logpoint: info } });
-		expect(await listLogpoints(r.target, r.deps)).toEqual({ success: true, data: { logpoints: [info] } });
-		expect(await removeLogpoint(r.target, { id: "lp1" }, r.deps)).toEqual({ success: true, data: { removed: "lp1" } });
-		expect(await clearLogpoints(r.target, r.deps)).toEqual({ success: true, data: { removed: ["lp1"] } });
+		expect(await uiLogpointCli.addLogpoint(r.target, params, r.deps)).toEqual({
+			success: true,
+			data: { logpoint: info },
+		});
+		expect(await uiLogpointCli.listLogpoints(r.target, r.deps)).toEqual({ success: true, data: { logpoints: [info] } });
+		expect(await uiLogpointCli.removeLogpoint(r.target, { id: "lp1" }, r.deps)).toEqual({
+			success: true,
+			data: { removed: "lp1" },
+		});
+		expect(await uiLogpointCli.clearLogpoints(r.target, r.deps)).toEqual({ success: true, data: { removed: ["lp1"] } });
 		expect(r.sent.filter((s) => s.method !== "status")).toEqual([
 			{ method: "logpoint.add", params },
 			{ method: "logpoint.list", params: {} },
@@ -86,7 +85,7 @@ describe("work functions", () => {
 
 	test("a broker error becomes a ui error", async () => {
 		const r = rig(async () => brokerErr("logpoints_unsupported", "legacy", "use eval"));
-		const added = await addLogpoint(r.target, { location: "a.ts:1", expression: "1" }, r.deps);
+		const added = await uiLogpointCli.addLogpoint(r.target, { location: "a.ts:1", expression: "1" }, r.deps);
 		expect(added.success).toBe(false);
 		if (added.success) return;
 		expect(added.error.message).toContain("legacy");
@@ -96,7 +95,11 @@ describe("work functions", () => {
 	test("no dev session is devtools_unavailable with the start hint", async () => {
 		const ctx = testContext([]);
 		contexts.push(ctx);
-		const added = await addLogpoint({ env: ctx.env }, { location: "a.ts:1", expression: "1" }, { isAlive: () => true });
+		const added = await uiLogpointCli.addLogpoint(
+			{ env: ctx.env },
+			{ location: "a.ts:1", expression: "1" },
+			{ isAlive: () => true }
+		);
 		expect(!added.success && added.error.code).toBe("devtools_unavailable");
 		expect(!added.success && added.error.hint).toContain("warden dev");
 	});
@@ -117,13 +120,13 @@ describe("work functions", () => {
 					}
 				: undefined
 		);
-		const all = await logpointHits(r.target, {}, r.deps);
+		const all = await uiLogpointCli.logpointHits(r.target, {}, r.deps);
 		expect(all.success && all.data.hits.map((h) => [h.id, h.value, h.error])).toEqual([
 			["a", "42", false],
 			["b", "ReferenceError: x", true],
 			["a", '{"k":1}', false],
 		]);
-		const only = await logpointHits(r.target, { id: "a", since: 5, limit: 10 }, r.deps);
+		const only = await uiLogpointCli.logpointHits(r.target, { id: "a", since: 5, limit: 10 }, r.deps);
 		expect(only.success && only.data.hits).toHaveLength(2);
 		expect(r.sent.at(-1)).toEqual({
 			method: "console.query",
@@ -136,7 +139,7 @@ describe("registerLogpoint", () => {
 	async function run(r: ReturnType<typeof rig>, argv: string[]): Promise<number> {
 		let code = -1;
 		const program = new Command().exitOverride();
-		registerLogpoint(
+		uiLogpointCli.registerLogpoint(
 			program,
 			r.ctx,
 			(c) => {

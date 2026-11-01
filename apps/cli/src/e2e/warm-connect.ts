@@ -21,9 +21,9 @@ export function runnerWarmError(error: UiError): string {
 export function warmConnect(ctx: CommandContext): WarmConnect {
 	return async (udid) => {
 		if (leaseModel.isPhysicalIosId(udid)) return warmRunner(ctx, udid);
-		const { ensureHelper } = await import("../agent-ui/helper");
+		const { uiHelper } = await import("../agent-ui/helper");
 		const { iosDriverOpener } = await import("@delacour/warden-driver-ios/ios-driver");
-		const helper = await ensureHelper(ctx, udid, { keepClient: true });
+		const helper = await uiHelper.ensureHelper(ctx, udid, { keepClient: true });
 		if (!helper.success)
 			return resultFactory.err(`${helper.error.message}${helper.error.hint ? ` (${helper.error.hint})` : ""}`);
 		const { client, socketPath } = helper.data;
@@ -49,8 +49,8 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
 			close: () => driver.data.close(),
 			stop: async () => {
 				await driver.data.close();
-				const { stopHelper } = await import("../agent-ui/helper");
-				const { warning } = await stopHelper(ctx, udid, { socketPath });
+				const { uiHelper } = await import("../agent-ui/helper");
+				const { warning } = await uiHelper.stopHelper(ctx, udid, { socketPath });
 				if (warning !== undefined) ctx.err(`warden: ${warning}`);
 			},
 		});
@@ -64,9 +64,9 @@ export function warmConnect(ctx: CommandContext): WarmConnect {
  * the host exits by its own idle timeout. `stop` ends a host whose device will run cold.
  */
 async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmConnect> {
-	const { ensureIosRunner, stopIosRunner } = await import("../agent-ui/helper");
+	const { uiHelper } = await import("../agent-ui/helper");
 	const { iosDeviceDriverOpener } = await import("@delacour/warden-driver-ios/device/device-driver");
-	const host = await ensureIosRunner(ctx, udid, { keepClient: true });
+	const host = await uiHelper.ensureIosRunner(ctx, udid, { keepClient: true });
 	if (!host.success) return resultFactory.err(runnerWarmError(host.error));
 	const { client, socketPath } = host.data;
 	const driver = await iosDeviceDriverOpener.open({
@@ -92,7 +92,7 @@ async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmCon
 		close: () => driver.data.close(),
 		stop: async () => {
 			await driver.data.close();
-			const { warning } = await stopIosRunner(ctx, udid, { socketPath });
+			const { warning } = await uiHelper.stopIosRunner(ctx, udid, { socketPath });
 			if (warning !== undefined) ctx.err(`warden: ${warning}`);
 		},
 	});
@@ -105,8 +105,8 @@ async function warmRunner(ctx: CommandContext, udid: string): ReturnType<WarmCon
  */
 export function residentSocket(host: Pick<CommandContext, "env">): (udid: string) => Promise<string | undefined> {
 	return async (udid) => {
-		const { helperStatus } = await import("../agent-ui/helper");
-		const status = helperStatus(host, udid);
+		const { uiHelper } = await import("../agent-ui/helper");
+		const status = uiHelper.helperStatus(host, udid);
 		return status.running && status.socket !== null ? status.socket : undefined;
 	};
 }

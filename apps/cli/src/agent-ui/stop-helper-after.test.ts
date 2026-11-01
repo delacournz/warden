@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { StopOutcome } from "./helper";
-import { type HelperLoader, stopHelperAfter } from "./stop-helper-after";
+import { type HelperLoader, uiStopHelperAfter } from "./stop-helper-after";
 
 const IOS = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
 const PHONE = "00008110-001A2B3C4D5E6F70";
@@ -45,15 +45,15 @@ function loader(stop: StopOutcome = { stopped: true, how: "shutdown" }): {
 describe("stopHelperAfter", () => {
 	test("stops the helper of a released iOS device", async () => {
 		const l = loader();
-		await stopHelperAfter(ctx, l.load)(IOS);
+		await uiStopHelperAfter.stopHelperAfter(ctx, l.load)(IOS);
 		expect(l.stopped).toEqual([IOS]);
 	});
 
 	test("a physical iPhone has its runner host stopped when one is recorded, and loads nothing otherwise", async () => {
 		const l = loader();
-		await stopHelperAfter(ctx, l.load, noHost)(PHONE);
+		await uiStopHelperAfter.stopHelperAfter(ctx, l.load, noHost)(PHONE);
 		expect(l.loads).toBe(0);
-		await stopHelperAfter(ctx, l.load, (_host, id) => id === PHONE)(PHONE);
+		await uiStopHelperAfter.stopHelperAfter(ctx, l.load, (_host, id) => id === PHONE)(PHONE);
 		expect(l.stopped).toEqual([`runner:${PHONE}`]);
 	});
 
@@ -61,31 +61,31 @@ describe("stopHelperAfter", () => {
 		errs.length = 0;
 		const warning = "could not stop warden-simd (pid 777): its command line could not be read, so it was left running";
 		const l = loader({ stopped: false, how: "none", warning });
-		await stopHelperAfter(ctx, l.load)(IOS);
+		await uiStopHelperAfter.stopHelperAfter(ctx, l.load)(IOS);
 		expect(errs).toEqual([`warden: ${warning}`]);
 		errs.length = 0;
-		await stopHelperAfter(ctx, loader().load)(IOS);
+		await uiStopHelperAfter.stopHelperAfter(ctx, loader().load)(IOS);
 		expect(errs).toEqual([]);
 	});
 
 	test("an Android serial with no recorded host, or a CDP target: nothing is loaded for it", async () => {
 		const l = loader();
-		await stopHelperAfter(ctx, l.load, noHost)(ANDROID);
-		await stopHelperAfter(ctx, l.load, noHost)("chromium-cdp-9222");
+		await uiStopHelperAfter.stopHelperAfter(ctx, l.load, noHost)(ANDROID);
+		await uiStopHelperAfter.stopHelperAfter(ctx, l.load, noHost)("chromium-cdp-9222");
 		expect(l.loads).toBe(0);
 		expect(l.stopped).toEqual([]);
 	});
 
 	test("an Android serial with a recorded host has it stopped", async () => {
 		const l = loader();
-		await stopHelperAfter(ctx, l.load, (_host, serial) => serial === ANDROID)(ANDROID);
+		await uiStopHelperAfter.stopHelperAfter(ctx, l.load, (_host, serial) => serial === ANDROID)(ANDROID);
 		expect(l.loads).toBe(1);
 		expect(l.stopped).toEqual([ANDROID]);
 	});
 
 	test("the helper module is loaded when a stop happens, not before", async () => {
 		const l = loader();
-		const after = stopHelperAfter(ctx, l.load);
+		const after = uiStopHelperAfter.stopHelperAfter(ctx, l.load);
 		expect(l.loads).toBe(0);
 		await after(IOS);
 		expect(l.loads).toBe(1);

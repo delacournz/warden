@@ -8,16 +8,7 @@ import { resultFactory } from "@delacour/warden-types/result";
 import { createUiCommand } from "../commands/ui";
 import { OWNER_ENV } from "../simctl.testing";
 import { type TestContext, testContext } from "../testing";
-import {
-	BENCH_TARGETS,
-	BENCH_TOLERANCE,
-	type BenchMetric,
-	type BenchResult,
-	benchPassed,
-	percentile,
-	renderBenchTable,
-	summarize,
-} from "./bench";
+import { BENCH_TARGETS, BENCH_TOLERANCE, type BenchMetric, type BenchResult, uiBench } from "./bench";
 import type { UiDeps } from "./driver";
 
 const UDID = "0A1B2C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D";
@@ -29,33 +20,33 @@ afterEach(() => ctx?.cleanup());
 describe("percentile", () => {
 	test("nearest rank", () => {
 		const sorted = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-		expect(percentile(sorted, 0.5)).toBe(50);
-		expect(percentile(sorted, 0.95)).toBe(100);
-		expect(percentile([7], 0.5)).toBe(7);
-		expect(percentile([7], 0.95)).toBe(7);
-		expect(percentile([], 0.5)).toBeNaN();
+		expect(uiBench.percentile(sorted, 0.5)).toBe(50);
+		expect(uiBench.percentile(sorted, 0.95)).toBe(100);
+		expect(uiBench.percentile([7], 0.5)).toBe(7);
+		expect(uiBench.percentile([7], 0.95)).toBe(7);
+		expect(uiBench.percentile([], 0.5)).toBeNaN();
 	});
 });
 
 describe("summarize", () => {
 	test("sorts, rounds to 0.1 ms and judges p50 against target x1.5", () => {
-		const metric = summarize([50.04, 40, 90, 45, 55], { p50Ms: 40 });
+		const metric = uiBench.summarize([50.04, 40, 90, 45, 55], { p50Ms: 40 });
 		expect(metric).toEqual({ p50: 50, p95: 90, samples: 5, targetMs: 40, ok: true });
-		const slow = summarize([61, 62, 63], { p50Ms: 40 });
+		const slow = uiBench.summarize([61, 62, 63], { p50Ms: 40 });
 		expect("ok" in slow && slow.ok).toBe(false);
 	});
 
 	test("a p95 target is checked too", () => {
 		const target = BENCH_TARGETS.ios.snapshotWarm;
 		if (!target) throw new Error("snapshotWarm target missing");
-		const fine = summarize([50, 50, 50, 50, 170], target);
+		const fine = uiBench.summarize([50, 50, 50, 50, 170], target);
 		expect(fine).toMatchObject({ p50: 50, p95: 170, targetMs: 60, targetP95Ms: 120, ok: true });
-		const spiky = summarize([50, 50, 50, 50, 181], target);
+		const spiky = uiBench.summarize([50, 50, 50, 50, 181], target);
 		expect(spiky).toMatchObject({ p95: 181, ok: false });
 	});
 
 	test("no target: no ok", () => {
-		expect(summarize([1, 2, 3], undefined)).toEqual({ p50: 2, p95: 3, samples: 3 });
+		expect(uiBench.summarize([1, 2, 3], undefined)).toEqual({ p50: 2, p95: 3, samples: 3 });
 	});
 });
 
@@ -83,7 +74,7 @@ describe("renderBenchTable and benchPassed", () => {
 	};
 
 	test("golden", () => {
-		expect(renderBenchTable(result)).toBe(
+		expect(uiBench.renderBenchTable(result)).toBe(
 			[
 				"metric           p50     p95   n    target  status",
 				"snapshotWarm    55.5   100.0  20  <60/<120  ok",
@@ -95,9 +86,9 @@ describe("renderBenchTable and benchPassed", () => {
 	});
 
 	test("skipped metrics never fail the run, an over-tolerance one does", () => {
-		expect(benchPassed(result)).toBe(false);
+		expect(uiBench.benchPassed(result)).toBe(false);
 		const { pressSettle: _slow, ...rest } = result;
-		expect(benchPassed(rest)).toBe(true);
+		expect(uiBench.benchPassed(rest)).toBe(true);
 	});
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MetricsSampler, MetricsTarget } from "@delacour/warden-sdk/ops/perf/metrics-sampler";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
-import { type UiError, uiError } from "../agent-ui/output";
+import { type UiError, uiOutput } from "../agent-ui/output";
 import { testContext } from "../testing";
 import { HUD_MIN_INTERVAL_MS, startHud } from "./hud";
 import { HUD_HISTORY, type HudFps, type HudSample } from "./model";
@@ -41,7 +41,7 @@ function rig(opts: {
 				sample: async () => {
 					if (opts.hang) return new Promise<never>(() => undefined);
 					const next = opts.readings[Math.min(reads++, opts.readings.length - 1)];
-					if (!next) return { success: false, error: uiError("failed", "no reading") };
+					if (!next) return { success: false, error: uiOutput.uiError("failed", "no reading") };
 					return next.success ? resultFactory.ok({ wallMs: 0, atMs: 0, pid: 1, ...next.data }) : next;
 				},
 			};
@@ -124,7 +124,7 @@ describe("startHud", () => {
 	});
 
 	test("an app that is not running shows app not running and keeps ticking", async () => {
-		const gone: Reading = { success: false, error: uiError("app_not_found", "nz.example is not running") };
+		const gone: Reading = { success: false, error: uiOutput.uiError("app_not_found", "nz.example is not running") };
 		const r = rig({ target: () => IOS, readings: [reading(5), gone, reading(7)] });
 		await r.tick();
 		await r.tick();
@@ -223,7 +223,10 @@ describe("startHud", () => {
 			intervalMs: 1000,
 			onSample: (sample) => samples.push(sample),
 			now: () => 0,
-			sampler: async () => ({ success: false, error: uiError("app_not_found", "nz.example is not installed") }),
+			sampler: async () => ({
+				success: false,
+				error: uiOutput.uiError("app_not_found", "nz.example is not installed"),
+			}),
 			schedule: (fn) => {
 				if (first) void fn();
 				first = false;

@@ -2,7 +2,7 @@ import type { Command as Commander } from "@commander-js/extra-typings";
 import { DEFAULT_THRESHOLD_PCT, reportDiffer } from "@delacour/warden-perf/shared/diff";
 import { reportReader } from "@delacour/warden-sdk/ops/perf/report-read";
 import { perfSessionRefs } from "@delacour/warden-sdk/ops/perf/session-ref";
-import { reportError, reportOk, UI_EXIT, uiError } from "../agent-ui/output";
+import { UI_EXIT, uiOutput } from "../agent-ui/output";
 import type { CommandContext } from "../context";
 import { errorMessage } from "../hooks/json";
 
@@ -24,32 +24,40 @@ export async function perfDiff(ctx: CommandContext, a: string, b: string, opts: 
 	const meta = { command: "perf diff", label: "perf diff", json: opts.json === true, startedAt: ctx.now() };
 	try {
 		if (opts.failOn !== undefined && opts.failOn !== "regress")
-			return reportError(ctx, meta, uiError("usage", `--fail-on must be "regress", got "${opts.failOn}"`));
-		const threshold = parseThreshold(opts.threshold);
-		if (threshold === undefined)
-			return reportError(
+			return uiOutput.reportError(
 				ctx,
 				meta,
-				uiError("usage", `--threshold must be a percentage like 10%, got "${opts.threshold}"`)
+				uiOutput.uiError("usage", `--fail-on must be "regress", got "${opts.failOn}"`)
+			);
+		const threshold = parseThreshold(opts.threshold);
+		if (threshold === undefined)
+			return uiOutput.reportError(
+				ctx,
+				meta,
+				uiOutput.uiError("usage", `--threshold must be a percentage like 10%, got "${opts.threshold}"`)
 			);
 		const sessions = [perfSessionRefs.sessionByRef(ctx, a), perfSessionRefs.sessionByRef(ctx, b)] as const;
-		for (const s of sessions) if (!s.success) return reportError(ctx, meta, s.error);
+		for (const s of sessions) if (!s.success) return uiOutput.reportError(ctx, meta, s.error);
 		const [first, second] = sessions;
 		if (!first.success || !second.success) return UI_EXIT.failed;
 		const reports = [reportReader.reportFor(ctx, first.data.id), reportReader.reportFor(ctx, second.data.id)] as const;
 		const [ra, rb] = reports;
 		if (ra === undefined || rb === undefined)
-			return reportError(ctx, meta, uiError("session_not_found", "could not build a report for one of the sessions"));
+			return uiOutput.reportError(
+				ctx,
+				meta,
+				uiOutput.uiError("session_not_found", "could not build a report for one of the sessions")
+			);
 		const diff = reportDiffer.diffReports(ra, rb, threshold);
 		const failed = opts.failOn === "regress" && diff.regressions > 0;
-		return reportOk(ctx, meta, {
+		return uiOutput.reportOk(ctx, meta, {
 			device: { udid: rb.device.udid, platform: rb.device.platform, name: rb.device.name },
 			result: { ...diff, failed },
 			text: reportDiffer.diffLines(diff).join("\n"),
 			exit: failed ? UI_EXIT.failed : UI_EXIT.ok,
 		});
 	} catch (error) {
-		return reportError(ctx, meta, uiError("failed", errorMessage(error)));
+		return uiOutput.reportError(ctx, meta, uiOutput.uiError("failed", errorMessage(error)));
 	}
 }
 
