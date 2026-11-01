@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
-import { memoryAndroidState } from "@delacour/warden-driver-android/android-state";
-import { fakeAndroidHost } from "@delacour/warden-driver-android/testing/android-host";
+import { MemoryAndroidState } from "@delacour/warden-driver-android/android-state";
+import { FakeAndroidHost } from "@delacour/warden-driver-android/testing/android-host";
 import { fakeExec } from "@delacour/warden-driver-ios/testing/exec";
 import { fakeSimd } from "@delacour/warden-driver-ios/testing/simd";
 import { androidOptions, openDriver } from "./open";
@@ -46,7 +46,7 @@ describe("openDriver", () => {
 	});
 
 	test("android opens the adb driver with the env serial and the injected host seams", async () => {
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [
 				{ match: "getprop sys.boot_completed", reply: "1\n" },
 				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
@@ -60,7 +60,7 @@ describe("openDriver", () => {
 				adb: "/sdk/platform-tools/adb",
 				spawn: host.spawn,
 				execBinary: host.execBinary,
-				state: memoryAndroidState(),
+				state: new MemoryAndroidState(),
 			},
 		});
 		expect(result.success).toBe(true);
@@ -71,7 +71,7 @@ describe("openDriver", () => {
 	});
 
 	test("android deep links target the app under test (appId)", async () => {
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [
 				{ match: "getprop sys.boot_completed", reply: "1\n" },
 				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
@@ -81,7 +81,7 @@ describe("openDriver", () => {
 		const result = await openDriver({
 			...base("android"),
 			host: { exec: host.exec },
-			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary, state: memoryAndroidState() },
+			android: { adb: "adb", spawn: host.spawn, execBinary: host.execBinary, state: new MemoryAndroidState() },
 		});
 		if (!result.success) throw new Error(result.error.message);
 		await result.data.app.openUrl("myapp://x");
@@ -91,7 +91,7 @@ describe("openDriver", () => {
 
 	test("android keeps its per-serial state under <wardenHome>/android", async () => {
 		const home = mkdtempSync(join(tmpdir(), "wdn-open-home-"));
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [
 				{ match: "getprop sys.boot_completed", reply: "1\n34\n" },
 				{ match: "wm size", reply: "Physical size: 1080x2400\n" },
@@ -157,13 +157,13 @@ describe("openDriver", () => {
 
 describe("androidOptions and the resident server", () => {
 	test("is on by default", () => {
-		expect(androidOptions({ ...base("android"), android: { state: memoryAndroidState() } }, false).uiad).toBe(true);
+		expect(androidOptions({ ...base("android"), android: { state: new MemoryAndroidState() } }, false).uiad).toBe(true);
 	});
 
 	test("an injected shell is a test: the server, which spawns its own adb, stays off", () => {
-		const host = fakeAndroidHost();
+		const host = new FakeAndroidHost();
 		const options = androidOptions(
-			{ ...base("android"), android: { spawn: host.spawn, state: memoryAndroidState() } },
+			{ ...base("android"), android: { spawn: host.spawn, state: new MemoryAndroidState() } },
 			false
 		);
 		expect(options.uiad).toBeUndefined();
@@ -171,7 +171,7 @@ describe("androidOptions and the resident server", () => {
 
 	test("a caller's own choice wins", () => {
 		const options = androidOptions(
-			{ ...base("android"), android: { uiad: false, state: memoryAndroidState() } },
+			{ ...base("android"), android: { uiad: false, state: new MemoryAndroidState() } },
 			false
 		);
 		expect(options.uiad).toBe(false);

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { ANDROID_ALLOW_IDS, ANDROID_DENY_IDS, detectAlert } from "./android-alert";
+import { ANDROID_ALLOW_IDS, ANDROID_DENY_IDS, androidAlert } from "./android-alert";
 import { REAL_ANR_DUMP, REAL_ANR_SCREEN } from "./anr.fixture";
 import { AUTOFILL_SAVE_DUMP, AUTOFILL_SAVE_SCREEN } from "./autofill-save.fixture";
-import { parseUiautomatorXml } from "./uiautomator";
+import { uiautomatorParser } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
 
 const SCREEN = { width: 1080, height: 2400 };
@@ -22,7 +22,7 @@ describe("detectAlert", () => {
 				node("android.widget.Button", "android:id/button2", "Cancel", "[0,0][10,10]", true) +
 				node("android.widget.Button", "android:id/button1", "OK", "[10,0][20,10]", true)
 		);
-		const alert = detectAlert(parseUiautomatorXml(xml, SCREEN).flat);
+		const alert = androidAlert.detectAlert(uiautomatorParser.parseUiautomatorXml(xml, SCREEN).flat);
 		expect(alert?.title).toBe("Delete?");
 		expect(alert?.message).toBe("This cannot be undone");
 		expect(alert?.buttons.map((b) => b.text)).toEqual(["Cancel", "OK"]);
@@ -50,13 +50,13 @@ describe("detectAlert", () => {
 					true
 				)
 		);
-		const alert = detectAlert(parseUiautomatorXml(xml, SCREEN).flat);
+		const alert = androidAlert.detectAlert(uiautomatorParser.parseUiautomatorXml(xml, SCREEN).flat);
 		expect(alert?.title).toBe("Allow Demo to send you notifications?");
 		expect(alert?.buttons.map((b) => b.identifier)).toEqual(["permission_allow_button", "permission_deny_button"]);
 	});
 
 	test("the real ANR dialog: Close app and Wait, titled by the app", () => {
-		const alert = detectAlert(parseUiautomatorXml(REAL_ANR_DUMP, REAL_ANR_SCREEN).flat);
+		const alert = androidAlert.detectAlert(uiautomatorParser.parseUiautomatorXml(REAL_ANR_DUMP, REAL_ANR_SCREEN).flat);
 		expect(alert?.title).toBe("hang isn't responding");
 		expect(alert?.message).toBeUndefined();
 		expect(alert?.buttons.map((b) => [b.identifier, b.text, b.hittable])).toEqual([
@@ -66,7 +66,9 @@ describe("detectAlert", () => {
 	});
 
 	test("the autofill save sheet: found by its ids, titled, both buttons listed", () => {
-		const alert = detectAlert(parseUiautomatorXml(AUTOFILL_SAVE_DUMP, AUTOFILL_SAVE_SCREEN).flat);
+		const alert = androidAlert.detectAlert(
+			uiautomatorParser.parseUiautomatorXml(AUTOFILL_SAVE_DUMP, AUTOFILL_SAVE_SCREEN).flat
+		);
 		expect(alert?.title).toBe("Save password to Google Password Manager?");
 		expect(alert?.buttons.map((b) => b.identifier)).toEqual(["autofill_save_no", "autofill_save_yes"]);
 	});
@@ -91,7 +93,7 @@ describe("detectAlert", () => {
 				) +
 				node("android.widget.Button", `${pc}permission_deny_button`, "Don't allow", "[0,20][10,30]", true)
 		);
-		const alert = detectAlert(parseUiautomatorXml(xml, SCREEN).flat);
+		const alert = androidAlert.detectAlert(uiautomatorParser.parseUiautomatorXml(xml, SCREEN).flat);
 		expect(alert?.buttons.map((b) => b.identifier)).toEqual([
 			"permission_allow_foreground_only_button",
 			"permission_allow_one_time_button",
@@ -117,7 +119,9 @@ describe("detectAlert", () => {
 	});
 
 	test("an ordinary screen has no alert", () => {
-		expect(detectAlert(parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN).flat)).toBeNull();
-		expect(detectAlert([])).toBeNull();
+		expect(
+			androidAlert.detectAlert(uiautomatorParser.parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN).flat)
+		).toBeNull();
+		expect(androidAlert.detectAlert([])).toBeNull();
 	});
 });

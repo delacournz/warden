@@ -1,10 +1,10 @@
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
-import { openAndroidDriver } from "@delacour/warden-driver-android/android-driver";
+import { androidDrivers } from "@delacour/warden-driver-android/android-driver";
 import type { DumpRoute } from "@delacour/warden-driver-android/android-dump";
-import { androidStateDir, createAndroidStateStore } from "@delacour/warden-driver-android/android-state";
-import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
+import { androidState, FileAndroidStateStore } from "@delacour/warden-driver-android/android-state";
+import { uiadBackendRules } from "@delacour/warden-driver-android/uiad-backend";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { storeLocator } from "@delacour/warden-store/store";
 import { leaseModel } from "@delacour/warden-store/types";
@@ -67,13 +67,13 @@ export async function openAndroidInProcess(
 ): Promise<Result<Driver, UiError>> {
 	const remembered = readDumpRoute(ctx, serial);
 	return fromDriver(
-		await openAndroidDriver({
+		await androidDrivers.open({
 			serial,
 			adb: androidToolsLocator.locate(ctx.env).adb,
 			exec: ctx.exec,
-			state: createAndroidStateStore({ dir: androidStateDir(storeLocator.wardenHome(ctx.env)) }),
+			state: new FileAndroidStateStore({ dir: androidState.androidStateDir(storeLocator.wardenHome(ctx.env)) }),
 			ownedPackages: ownedPackages(ctx, serial),
-			...(uiadFromEnv(ctx.env) ? { uiad: true } : {}),
+			...(uiadBackendRules.uiadFromEnv(ctx.env) ? { uiad: true } : {}),
 			...(remembered ? { dumpRoute: remembered } : {}),
 			...(log ? { log } : {}),
 			...(extras.networkProxy ? { networkProxy: extras.networkProxy } : {}),

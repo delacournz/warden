@@ -70,56 +70,6 @@ const FLAG_FIELDS = [
 
 type Bounds = UiadNode["bounds"];
 
-function isBounds(value: unknown): value is Bounds {
-	return Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === "number");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Copies the `keys` of `from` that are present onto `node`, each checked with `is`; a string is what is wrong. */
-function copyFields<K extends keyof UiadNode>(
-	node: UiadNode,
-	from: Record<string, unknown>,
-	keys: readonly K[],
-	kind: "string" | "boolean" | "number",
-	path: string
-): string | undefined {
-	for (const key of keys) {
-		const field = from[key];
-		if (field === undefined) continue;
-		if (typeof field !== kind) return `${path}.${key}: not a ${kind}`;
-		Object.assign(node, { [key]: field });
-	}
-	return undefined;
-}
-
-/**
- * A node read off the wire, or why it is not one. Hand-written rather than zod: a snapshot is hundreds of nodes and
- * this runs on every one, with no allocation beyond the node itself.
- */
-export function readNode(value: unknown, path = "elements"): UiadNode | string {
-	if (!isRecord(value)) return `${path}: not an object`;
-	if (!isBounds(value.bounds)) return `${path}.bounds: not [l, t, r, b]`;
-	const node: UiadNode = { bounds: value.bounds };
-	const wrong =
-		copyFields(node, value, STRING_FIELDS, "string", path) ??
-		copyFields(node, value, FLAG_FIELDS, "boolean", path) ??
-		copyFields(node, value, ["order"], "number", path);
-	if (wrong !== undefined) return wrong;
-	if (value.children === undefined) return node;
-	if (!Array.isArray(value.children)) return `${path}.children: not an array`;
-	const children: UiadNode[] = [];
-	for (const [index, child] of value.children.entries()) {
-		const read = readNode(child, `${path}.children[${index}]`);
-		if (typeof read === "string") return read;
-		children.push(read);
-	}
-	node.children = children;
-	return node;
-}
-
 // ---------- per-op data ----------
 
 const screenSchema = z.object({
@@ -185,22 +135,6 @@ const snapshotEnvelope = z.looseObject({
 	ms: z.number(),
 });
 
-/** The data of a `snapshot` reply, with every node checked; a string is why it is not one. */
-export function readSnapshotData(data: unknown): UiadSnapshotData | string {
-	const envelope = snapshotEnvelope.safeParse(data);
-	if (!envelope.success) {
-		const issue = envelope.error.issues[0];
-		return issue ? `${issue.path.join(".") || "(snapshot)"}: ${issue.message}` : "invalid snapshot";
-	}
-	const elements: UiadNode[] = [];
-	for (const [index, raw] of envelope.data.elements.entries()) {
-		const node = readNode(raw, `elements[${index}]`);
-		if (typeof node === "string") return node;
-		elements.push(node);
-	}
-	return { ...envelope.data, elements };
-}
-
 // ---------- events and lines ----------
 
 export const readyEventSchema = z.object({
@@ -220,33 +154,104 @@ export type UiadMessage = { kind: "event"; event: UiadEvent } | { kind: "respons
 
 export type ParsedUiadLine = { success: true; message: UiadMessage } | { success: false; reason: string };
 
-export function parseUiadLine(line: string): ParsedUiadLine {
-	let json: unknown;
-	try {
-		json = JSON.parse(line);
-	} catch {
-		return { success: false, reason: "not JSON" };
-	}
-	if (isRecord(json) && "event" in json) {
-		const event = eventSchema.safeParse(json);
-		return event.success
-			? { success: true, message: { kind: "event", event: event.data } }
-			: { success: false, reason: `bad event: ${event.error.message}` };
-	}
-	const response = responseSchema.safeParse(json);
-	return response.success
-		? { success: true, message: { kind: "response", response: response.data } }
-		: { success: false, reason: `bad response: ${response.error.message}` };
-}
-
 // ---------- fatal reasons ----------
 
 /** Why the server could not start, from `fatal.error.detail.reason`. */
 export type FatalReason = "uiautomation_busy" | "connect_failed";
 
-export function fatalReason(error: WireError): FatalReason | undefined {
-	const detail: unknown = error.detail;
-	if (!isRecord(detail)) return undefined;
-	const reason = detail.reason;
-	return reason === "uiautomation_busy" || reason === "connect_failed" ? reason : undefined;
+/** Reads and checks `warden-uiad` wire messages. */
+export class UiadProtocol {
+	private isBounds(value: unknown): value is Bounds {
+		return Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === "number");
+	}
+
+	private isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === "object" && value !== null && !Array.isArray(value);
+	}
+
+	/** Copies the `keys` of `from` that are present onto `node`, each checked with `is`; a string is what is wrong. */
+	private copyFields<K extends keyof UiadNode>(
+		node: UiadNode,
+		from: Record<string, unknown>,
+		keys: readonly K[],
+		kind: "string" | "boolean" | "number",
+		path: string
+	): string | undefined {
+		for (const key of keys) {
+			const field = from[key];
+			if (field === undefined) continue;
+			if (typeof field !== kind) return `${path}.${key}: not a ${kind}`;
+			Object.assign(node, { [key]: field });
+		}
+		return undefined;
+	}
+
+	/**
+	 * A node read off the wire, or why it is not one. Hand-written rather than zod: a snapshot is hundreds of nodes and
+	 * this runs on every one, with no allocation beyond the node itself.
+	 */
+	readNode(value: unknown, path = "elements"): UiadNode | string {
+		if (!this.isRecord(value)) return `${path}: not an object`;
+		if (!this.isBounds(value.bounds)) return `${path}.bounds: not [l, t, r, b]`;
+		const node: UiadNode = { bounds: value.bounds };
+		const wrong =
+			this.copyFields(node, value, STRING_FIELDS, "string", path) ??
+			this.copyFields(node, value, FLAG_FIELDS, "boolean", path) ??
+			this.copyFields(node, value, ["order"], "number", path);
+		if (wrong !== undefined) return wrong;
+		if (value.children === undefined) return node;
+		if (!Array.isArray(value.children)) return `${path}.children: not an array`;
+		const children: UiadNode[] = [];
+		for (const [index, child] of value.children.entries()) {
+			const read = this.readNode(child, `${path}.children[${index}]`);
+			if (typeof read === "string") return read;
+			children.push(read);
+		}
+		node.children = children;
+		return node;
+	}
+
+	/** The data of a `snapshot` reply, with every node checked; a string is why it is not one. */
+	readSnapshotData(data: unknown): UiadSnapshotData | string {
+		const envelope = snapshotEnvelope.safeParse(data);
+		if (!envelope.success) {
+			const issue = envelope.error.issues[0];
+			return issue ? `${issue.path.join(".") || "(snapshot)"}: ${issue.message}` : "invalid snapshot";
+		}
+		const elements: UiadNode[] = [];
+		for (const [index, raw] of envelope.data.elements.entries()) {
+			const node = this.readNode(raw, `elements[${index}]`);
+			if (typeof node === "string") return node;
+			elements.push(node);
+		}
+		return { ...envelope.data, elements };
+	}
+
+	parseUiadLine(line: string): ParsedUiadLine {
+		let json: unknown;
+		try {
+			json = JSON.parse(line);
+		} catch {
+			return { success: false, reason: "not JSON" };
+		}
+		if (this.isRecord(json) && "event" in json) {
+			const event = eventSchema.safeParse(json);
+			return event.success
+				? { success: true, message: { kind: "event", event: event.data } }
+				: { success: false, reason: `bad event: ${event.error.message}` };
+		}
+		const response = responseSchema.safeParse(json);
+		return response.success
+			? { success: true, message: { kind: "response", response: response.data } }
+			: { success: false, reason: `bad response: ${response.error.message}` };
+	}
+
+	fatalReason(error: WireError): FatalReason | undefined {
+		const detail: unknown = error.detail;
+		if (!this.isRecord(detail)) return undefined;
+		const reason = detail.reason;
+		return reason === "uiautomation_busy" || reason === "connect_failed" ? reason : undefined;
+	}
 }
+
+export const uiadProtocol = new UiadProtocol();

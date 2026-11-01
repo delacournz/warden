@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { realTickerClock, routeTickers } from "@delacour/warden-driver/conditions/route-ticker";
-import { geoFixArgv, geoFixFailure } from "@delacour/warden-driver-android/android-argv";
+import { androidArgv } from "@delacour/warden-driver-android/android-argv";
 /**
  * Detached route ticker: `bun route-ticker.main.ts '<TickerConfig JSON>'` plays the route against one
  * emulator with `adb emu geo fix` until it finishes or gets SIGTERM/SIGINT. The spawner records this
@@ -21,8 +21,8 @@ export async function runRouteTicker(raw: string): Promise<number> {
 	const ticker = routeTickers.start(route, {
 		...realTickerClock,
 		fix: async (point) => {
-			const res = await processExec.run(geoFixArgv(adb, serial, point), { timeoutMs: 10_000 });
-			return geoFixFailure(res);
+			const res = await processExec.run(androidArgv.geoFixArgv(adb, serial, point), { timeoutMs: 10_000 });
+			return androidArgv.geoFixFailure(res);
 		},
 	});
 	for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => ticker.stop());

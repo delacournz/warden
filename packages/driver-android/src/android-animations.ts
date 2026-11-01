@@ -1,13 +1,7 @@
 import type { Logger } from "@delacour/warden-driver/driver.types";
 import type { AdbSession } from "./adb-session";
-import {
-	type AnimationValues,
-	animationReadArgvs,
-	animationRestoreArgvs,
-	animationScaleArgvs,
-	shellCommand,
-} from "./android-argv";
-import { type AndroidStateStore, parseAnimationValues, patchFor, planAnimations } from "./android-state";
+import { type AnimationValues, androidArgv } from "./android-argv";
+import { type AndroidStateStore, androidState } from "./android-state";
 
 /**
  * Animations off for the run (a flake source in e2e) and back on afterwards. The three scales are global
@@ -32,44 +26,55 @@ export type AnimationDeps = {
 	log?: Logger;
 };
 
-const sameValues = (a: AnimationValues | undefined, b: AnimationValues | undefined): boolean =>
-	JSON.stringify(a) === JSON.stringify(b);
+export class AndroidAnimations {
+	private restorable: AnimationValues | undefined;
 
-/**
- * One shell round trip that reads the three scales and sets them to 0, then (when something has to be put
- * back) saves the originals. Never fails the open: a device that refuses just keeps its animations.
- */
-export async function disableAnimations(deps: AnimationDeps): Promise<AnimationGuard> {
-	const { session, serial, sdk, state, log } = deps;
-	const command = [...animationReadArgvs(), ...animationScaleArgvs()].map((argv) => shellCommand(argv)).join("; ");
-	let restorable = deps.pending;
-	const ran = await session.run(command);
-	if (!ran.success || ran.data.exitCode !== 0) {
-		log?.("could not disable animations");
-	} else {
-		const found = parseAnimationValues(ran.data.stdout);
-		if (found === undefined) log?.("could not read the animation scales, so they will not be restored");
-		else restorable = planAnimations(found, deps.pending);
-	}
-	if (state && !sameValues(restorable, deps.pending)) {
-		await state.update(serial, patchFor(sdk, { animations: restorable }));
+	constructor(private readonly deps: AnimationDeps) {
+		this.restorable = deps.pending;
 	}
 
-	return {
-		async restore() {
-			const originals = restorable;
-			if (originals === undefined) return;
-			restorable = undefined;
-			const put = await session.run(
-				animationRestoreArgvs(originals)
-					.map((argv) => shellCommand(argv))
-					.join("; ")
-			);
-			if (!put.success || put.data.exitCode !== 0) {
-				log?.("could not restore the animation scales; the next driver on this device will");
-				return;
-			}
-			await state?.update(serial, patchFor(sdk, { animations: undefined }));
-		},
-	};
+	/**
+	 * One shell round trip that reads the three scales and sets them to 0, then (when something has to be put
+	 * back) saves the originals. Never fails the open: a device that refuses just keeps its animations.
+	 */
+	async disable(): Promise<AnimationGuard> {
+		const { session, serial, sdk, state, log } = this.deps;
+		const command = [...androidArgv.animationReadArgvs(), ...androidArgv.animationScaleArgvs()]
+			.map((argv) => androidArgv.shellCommand(argv))
+			.join("; ");
+		const ran = await session.run(command);
+		if (!ran.success || ran.data.exitCode !== 0) {
+			log?.("could not disable animations");
+		} else {
+			const found = androidState.parseAnimationValues(ran.data.stdout);
+			if (found === undefined) log?.("could not read the animation scales, so they will not be restored");
+			else this.restorable = androidState.planAnimations(found, this.deps.pending);
+		}
+		if (state && !this.sameValues(this.restorable, this.deps.pending)) {
+			await state.update(serial, androidState.patchFor(sdk, { animations: this.restorable }));
+		}
+		return { restore: () => this.restore() };
+	}
+
+	private async restore(): Promise<void> {
+		const { session, serial, sdk, state, log } = this.deps;
+		const originals = this.restorable;
+		if (originals === undefined) return;
+		this.restorable = undefined;
+		const put = await session.run(
+			androidArgv
+				.animationRestoreArgvs(originals)
+				.map((argv) => androidArgv.shellCommand(argv))
+				.join("; ")
+		);
+		if (!put.success || put.data.exitCode !== 0) {
+			log?.("could not restore the animation scales; the next driver on this device will");
+			return;
+		}
+		await state?.update(serial, androidState.patchFor(sdk, { animations: undefined }));
+	}
+
+	private sameValues(a: AnimationValues | undefined, b: AnimationValues | undefined): boolean {
+		return JSON.stringify(a) === JSON.stringify(b);
+	}
 }

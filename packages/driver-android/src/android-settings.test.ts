@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { openAdbSession } from "./adb-session";
-import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
-import { batteryArgvs, createAndroidSettings, permissionArgv, setAppLocaleArgv } from "./android-settings";
+import { adbSessions } from "./adb-session";
+import { FakeAndroidHost, type ShellRule } from "./android-host.testing";
+import { AndroidSettings, androidSettingsArgv } from "./android-settings";
 
 const PKG = "com.example.app";
 
 function harness(rules: ShellRule[] = [], serial = "emulator-5554") {
-	const host = fakeAndroidHost({ shell: rules });
-	const session = openAdbSession({ adb: "adb", serial, spawn: host.spawn });
-	const settings = createAndroidSettings({
+	const host = new FakeAndroidHost({ shell: rules });
+	const session = adbSessions.open({ adb: "adb", serial, spawn: host.spawn });
+	const settings = new AndroidSettings({
 		session,
 		serial,
 		appPackage: PKG,
@@ -30,23 +30,30 @@ const declared = (...perms: string[]): ShellRule => ({
 
 describe("android argv", () => {
 	test("permission and locale argv", () => {
-		expect(permissionArgv("granted", PKG, "android.permission.CAMERA")).toEqual([
+		expect(androidSettingsArgv.permissionArgv("granted", PKG, "android.permission.CAMERA")).toEqual([
 			"pm",
 			"grant",
 			PKG,
 			"android.permission.CAMERA",
 		]);
-		expect(permissionArgv("denied", PKG, "p").slice(0, 2)).toEqual(["pm", "revoke"]);
-		expect(setAppLocaleArgv(PKG, "fr-FR")).toEqual(["cmd", "locale", "set-app-locales", PKG, "--locales", "fr-FR"]);
-		expect(setAppLocaleArgv(PKG, null).at(-1)).toBe("");
+		expect(androidSettingsArgv.permissionArgv("denied", PKG, "p").slice(0, 2)).toEqual(["pm", "revoke"]);
+		expect(androidSettingsArgv.setAppLocaleArgv(PKG, "fr-FR")).toEqual([
+			"cmd",
+			"locale",
+			"set-app-locales",
+			PKG,
+			"--locales",
+			"fr-FR",
+		]);
+		expect(androidSettingsArgv.setAppLocaleArgv(PKG, null).at(-1)).toBe("");
 	});
 	test("battery argv: charging, unplug and level", () => {
-		expect(batteryArgvs({ charging: true, level: 80 })).toEqual([
+		expect(androidSettingsArgv.batteryArgvs({ charging: true, level: 80 })).toEqual([
 			["dumpsys", "battery", "set", "ac", "1"],
 			["dumpsys", "battery", "set", "status", "2"],
 			["dumpsys", "battery", "set", "level", "80"],
 		]);
-		expect(batteryArgvs({ charging: false })).toEqual([
+		expect(androidSettingsArgv.batteryArgvs({ charging: false })).toEqual([
 			["dumpsys", "battery", "unplug"],
 			["dumpsys", "battery", "set", "status", "3"],
 		]);

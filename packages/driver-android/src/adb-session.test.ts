@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
-import { type AdbSession, openAdbSession, type SpawnAdb, spawnAdb } from "./adb-session";
+import { type AdbSession, adbSessions, type SpawnAdb } from "./adb-session";
 
 const FAKE_ADB = join(import.meta.dir, "../native/scripts/fake-adb.ts");
 
 const sessions: AdbSession[] = [];
 
 function open(opts: { spawn?: SpawnAdb; log?: (line: string) => void } = {}): AdbSession {
-	const session = openAdbSession({ adb: FAKE_ADB, serial: "emulator-5554", ...opts });
+	const session = adbSessions.open({ adb: FAKE_ADB, serial: "emulator-5554", ...opts });
 	sessions.push(session);
 	return session;
 }
@@ -156,7 +156,7 @@ describe("adb session", () => {
 		const s = open({
 			spawn: (argv) => {
 				spawns++;
-				return spawnAdb(argv, { FAKE_ADB_DIE_ON_START: "1" });
+				return adbSessions.spawn(argv, { FAKE_ADB_DIE_ON_START: "1" });
 			},
 		});
 		const first = await s.run("echo a");
@@ -177,10 +177,10 @@ describe("adb session", () => {
 	});
 
 	test("a missing adb binary is E_HELPER_MISSING", async () => {
-		const s = openAdbSession({
+		const s = adbSessions.open({
 			adb: "/nonexistent/adb",
 			serial: "x",
-			spawn: (argv) => spawnAdb(argv),
+			spawn: (argv) => adbSessions.spawn(argv),
 		});
 		sessions.push(s);
 		const r = await s.run("echo hi");

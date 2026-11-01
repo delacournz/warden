@@ -22,44 +22,31 @@ export const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1
 
 const WRAPPED = /^\((.*)\) 2>&1 <\/dev\/null; echo "(__WDN_.+_)\$\?__"\n$/s;
 
-export type FakeAndroidHost = {
-	spawn: SpawnAdb;
-	exec: Exec;
-	execBinary: (argv: readonly string[]) => Promise<{ exitCode: number; stdout: Uint8Array }>;
+export type FakeAndroidHostInit = { shell?: ShellRule[]; host?: HostRule[]; screencap?: Uint8Array };
+
+export class FakeAndroidHost {
 	/** shell commands received, in order */
-	shell: string[];
+	readonly shell: string[] = [];
 	/** host argv received through `exec` / `execBinary` */
-	host: string[][];
-	shellRules: ShellRule[];
-	hostRules: HostRule[];
-	/** number of times a shell process was spawned */
-	spawns: () => number;
-};
+	readonly host: string[][] = [];
+	readonly shellRules: ShellRule[];
+	readonly hostRules: HostRule[];
+	private spawnCount = 0;
+	private readonly png: Uint8Array;
 
-function matches(rule: { match: string | RegExp }, text: string): boolean {
-	return typeof rule.match === "string" ? text.startsWith(rule.match) : rule.match.test(text);
-}
-
-export function fakeAndroidHost(
-	init: { shell?: ShellRule[]; host?: HostRule[]; screencap?: Uint8Array } = {}
-): FakeAndroidHost {
-	const shellRules: ShellRule[] = [...(init.shell ?? [])];
-	const hostRules: HostRule[] = [...(init.host ?? [])];
-	const shell: string[] = [];
-	const host: string[][] = [];
-	let spawnCount = 0;
-	const png = init.screencap ?? PNG_BYTES;
-
-	function shellReply(cmd: string): { stdout: string; exitCode: number } | "crash" | "hang" {
-		const rule = shellRules.find((r) => matches(r, cmd));
-		const raw = typeof rule?.reply === "function" ? rule.reply(cmd) : rule?.reply;
-		if (raw === "crash" || raw === "hang") return raw;
-		if (raw === undefined) return { stdout: "", exitCode: 0 };
-		return typeof raw === "string" ? { stdout: raw, exitCode: 0 } : { stdout: raw.stdout, exitCode: raw.exitCode ?? 0 };
+	constructor(init: FakeAndroidHostInit = {}) {
+		this.shellRules = [...(init.shell ?? [])];
+		this.hostRules = [...(init.host ?? [])];
+		this.png = init.screencap ?? PNG_BYTES;
 	}
 
-	const spawn: SpawnAdb = () => {
-		spawnCount++;
+	/** number of times a shell process was spawned */
+	spawns(): number {
+		return this.spawnCount;
+	}
+
+	readonly spawn: SpawnAdb = () => {
+		this.spawnCount++;
 		let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
 		let resolveExit: (code: number) => void = () => undefined;
 		const exited = new Promise<number>((resolve) => {
@@ -73,12 +60,12 @@ export function fakeAndroidHost(
 		const proc: AdbProcess = {
 			stdout,
 			exited,
-			write(data) {
+			write: (data) => {
 				const m = WRAPPED.exec(data);
 				if (!m) throw new Error(`fake host: unrecognised line ${data}`);
 				const cmd = m[1] ?? "";
-				shell.push(cmd);
-				const reply = shellReply(cmd);
+				this.shell.push(cmd);
+				const reply = this.shellReply(cmd);
 				if (reply === "crash") {
 					controller?.close();
 					resolveExit(1);
@@ -99,35 +86,40 @@ export function fakeAndroidHost(
 		return proc;
 	};
 
-	function hostReply(argv: readonly string[]): ExecResult {
+	readonly exec: Exec = async (argv) => {
+		this.host.push([...argv]);
+		return this.hostReply(argv);
+	};
+
+	readonly execBinary = async (argv: readonly string[]): Promise<{ exitCode: number; stdout: Uint8Array }> => {
+		this.host.push([...argv]);
 		const text = argv.join(" ");
-		const rule = hostRules.find((r) => matches(r, text));
+		const rule = this.hostRules.find((r) => this.matches(r, text));
+		if (rule) {
+			const reply = this.hostReply(argv);
+			return { exitCode: reply.exitCode, stdout: new TextEncoder().encode(reply.stdout) };
+		}
+		return { exitCode: 0, stdout: this.png };
+	};
+
+	private matches(rule: { match: string | RegExp }, text: string): boolean {
+		return typeof rule.match === "string" ? text.startsWith(rule.match) : rule.match.test(text);
+	}
+
+	private shellReply(cmd: string): { stdout: string; exitCode: number } | "crash" | "hang" {
+		const rule = this.shellRules.find((r) => this.matches(r, cmd));
+		const raw = typeof rule?.reply === "function" ? rule.reply(cmd) : rule?.reply;
+		if (raw === "crash" || raw === "hang") return raw;
+		if (raw === undefined) return { stdout: "", exitCode: 0 };
+		return typeof raw === "string" ? { stdout: raw, exitCode: 0 } : { stdout: raw.stdout, exitCode: raw.exitCode ?? 0 };
+	}
+
+	private hostReply(argv: readonly string[]): ExecResult {
+		const text = argv.join(" ");
+		const rule = this.hostRules.find((r) => this.matches(r, text));
 		const raw = typeof rule?.reply === "function" ? rule.reply() : rule?.reply;
 		if (raw === undefined) return { exitCode: 0, stdout: "", stderr: "" };
 		if (typeof raw === "string") return { exitCode: 0, stdout: raw, stderr: "" };
 		return { exitCode: raw.exitCode ?? 0, stdout: raw.stdout ?? "", stderr: raw.stderr ?? "" };
 	}
-
-	return {
-		spawn,
-		exec: async (argv) => {
-			host.push([...argv]);
-			return hostReply(argv);
-		},
-		execBinary: async (argv) => {
-			host.push([...argv]);
-			const text = argv.join(" ");
-			const rule = hostRules.find((r) => matches(r, text));
-			if (rule) {
-				const reply = hostReply(argv);
-				return { exitCode: reply.exitCode, stdout: new TextEncoder().encode(reply.stdout) };
-			}
-			return { exitCode: 0, stdout: png };
-		},
-		shell,
-		host,
-		shellRules,
-		hostRules,
-		spawns: () => spawnCount,
-	};
 }

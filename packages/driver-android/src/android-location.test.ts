@@ -7,8 +7,8 @@ import { geoMath } from "@delacour/warden-driver/conditions/geo";
 import { ANDROID_SCENARIOS } from "@delacour/warden-driver/conditions/location-scenarios.data";
 import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type { Driver } from "@delacour/warden-driver/driver.types";
-import { openAndroidDriver } from "./android-driver";
-import { fakeAndroidHost, type HostRule } from "./android-host.testing";
+import { androidDrivers } from "./android-driver";
+import { FakeAndroidHost, type HostRule } from "./android-host.testing";
 
 const open: Driver[] = [];
 const A: LatLon = { lat: 37.3318, lon: -122.0312 };
@@ -32,13 +32,13 @@ function gatedClock() {
 }
 
 async function setup(serial = "emulator-5554", host: HostRule[] = [], tickerClock?: TickerClock) {
-	const fake = fakeAndroidHost({
+	const fake = new FakeAndroidHost({
 		shell: [{ match: "getprop sys.boot_completed", reply: "1\n34\nPhysical size: 1080x2400\nPhysical density: 420\n" }],
 		host,
 	});
 	let t = 0;
 	const lines: string[] = [];
-	const res = await openAndroidDriver({
+	const res = await androidDrivers.open({
 		serial,
 		adb: "adb",
 		exec: fake.exec,

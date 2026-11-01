@@ -9,7 +9,7 @@ import {
 	SYNTHETIC_FORM_DUMP,
 	SYNTHETIC_FORM_SCREEN,
 } from "@delacour/warden-driver-android/testing/uiautomator.fixture";
-import { parseUiautomatorXml } from "@delacour/warden-driver-android/uiautomator";
+import { uiautomatorParser } from "@delacour/warden-driver-android/uiautomator";
 import { toSnapshot } from "@delacour/warden-driver-ios/normalize";
 
 const IOS_FIXTURES = join(
@@ -41,7 +41,7 @@ export function iosGoldenSnapshots(): NamedSnapshot[] {
 }
 
 function androidSnapshot(xml: string, size: { width: number; height: number }): Snapshot {
-	const { elements, flat } = parseUiautomatorXml(xml, size);
+	const { elements, flat } = uiautomatorParser.parseUiautomatorXml(xml, size);
 	return {
 		platform: "android",
 		backend: "uiautomator",

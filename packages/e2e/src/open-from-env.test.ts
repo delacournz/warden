@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
-import { fakeAndroidHost } from "@delacour/warden-driver-android/testing/android-host";
+import { FakeAndroidHost } from "@delacour/warden-driver-android/testing/android-host";
 import { fakeExec } from "@delacour/warden-driver-ios/testing/exec";
 import { fakeSimd } from "@delacour/warden-driver-ios/testing/simd";
 import type { E2eEnv } from "./env";
@@ -42,7 +42,7 @@ describe("openDriverFromEnv", () => {
 
 	test("WARDEN_HOME from processEnv is where the Android state goes", async () => {
 		const home = mkdtempSync(join(tmpdir(), "wdn-open-env-home-"));
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [
 				{ match: "getprop sys.boot_completed", reply: "1\n34\n" },
 				{ match: "wm size", reply: "Physical size: 1080x2400\n" },

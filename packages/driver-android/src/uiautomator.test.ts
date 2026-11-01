@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Element } from "@delacour/warden-driver/driver.types";
-import { interactiveFilter, parseUiautomatorXml, UiautomatorParseError } from "./uiautomator";
+import { UiautomatorParseError, uiautomatorParser } from "./uiautomator";
 import {
 	REAL_DEV_LAUNCHER_DUMP,
 	REAL_DEV_LAUNCHER_SCREEN,
@@ -15,7 +15,7 @@ function byIdentifier(flat: Element[], identifier: string): Element {
 }
 
 describe("parseUiautomatorXml (synthetic form)", () => {
-	const { elements, flat } = parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN);
+	const { elements, flat } = uiautomatorParser.parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN);
 
 	test("strips the trailer and builds a tree with preorder ids and depth", () => {
 		expect(elements).toHaveLength(1);
@@ -95,12 +95,12 @@ describe("parseUiautomatorXml (synthetic form)", () => {
 
 	test("accepts the misspelled trailer some images print", () => {
 		const typo = SYNTHETIC_FORM_DUMP.replace("UI hierarchy dumped to", "UI hierchary dumped to");
-		expect(parseUiautomatorXml(typo, SYNTHETIC_FORM_SCREEN).flat.length).toBe(flat.length);
+		expect(uiautomatorParser.parseUiautomatorXml(typo, SYNTHETIC_FORM_SCREEN).flat.length).toBe(flat.length);
 	});
 });
 
 describe("parseUiautomatorXml (real dev-launcher capture)", () => {
-	const { elements, flat } = parseUiautomatorXml(REAL_DEV_LAUNCHER_DUMP, REAL_DEV_LAUNCHER_SCREEN);
+	const { elements, flat } = uiautomatorParser.parseUiautomatorXml(REAL_DEV_LAUNCHER_DUMP, REAL_DEV_LAUNCHER_SCREEN);
 
 	test("parses the whole tree", () => {
 		expect(elements).toHaveLength(1);
@@ -127,14 +127,14 @@ describe("parseUiautomatorXml errors and edge cases", () => {
 	const screen = { width: 100, height: 200 };
 
 	test("throws UiautomatorParseError without a hierarchy", () => {
-		expect(() => parseUiautomatorXml("ERROR: null root node returned by UiTestAutomationBridge.", screen)).toThrow(
-			UiautomatorParseError
-		);
-		expect(() => parseUiautomatorXml("", screen)).toThrow(UiautomatorParseError);
+		expect(() =>
+			uiautomatorParser.parseUiautomatorXml("ERROR: null root node returned by UiTestAutomationBridge.", screen)
+		).toThrow(UiautomatorParseError);
+		expect(() => uiautomatorParser.parseUiautomatorXml("", screen)).toThrow(UiautomatorParseError);
 	});
 
 	test("empty self-closing hierarchy yields no elements", () => {
-		expect(parseUiautomatorXml('<?xml version="1.0"?><hierarchy rotation="0" />', screen)).toEqual({
+		expect(uiautomatorParser.parseUiautomatorXml('<?xml version="1.0"?><hierarchy rotation="0" />', screen)).toEqual({
 			elements: [],
 			flat: [],
 		});
@@ -143,30 +143,35 @@ describe("parseUiautomatorXml errors and edge cases", () => {
 	test("a `>` inside an attribute value does not end the tag", () => {
 		const xml =
 			'<hierarchy><node text="a > b" resource-id="" class="android.widget.TextView" content-desc="" bounds="[0,0][10,10]" enabled="true" /></hierarchy>';
-		expect(parseUiautomatorXml(xml, screen).flat[0]?.text).toBe("a > b");
+		expect(uiautomatorParser.parseUiautomatorXml(xml, screen).flat[0]?.text).toBe("a > b");
 	});
 
 	test("numeric character references are decoded", () => {
 		const xml =
 			'<hierarchy><node text="&#65;&#x42;&apos;" resource-id="" class="android.widget.TextView" content-desc="" bounds="[0,0][10,10]" /></hierarchy>';
-		expect(parseUiautomatorXml(xml, screen).flat[0]?.text).toBe("AB'");
+		expect(uiautomatorParser.parseUiautomatorXml(xml, screen).flat[0]?.text).toBe("AB'");
 	});
 
 	test("missing or malformed bounds give a zero frame", () => {
 		const xml = '<hierarchy><node class="android.widget.TextView" bounds="nope" /></hierarchy>';
-		expect(parseUiautomatorXml(xml, screen).flat[0]?.frame).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+		expect(uiautomatorParser.parseUiautomatorXml(xml, screen).flat[0]?.frame).toEqual({
+			x: 0,
+			y: 0,
+			width: 0,
+			height: 0,
+		});
 	});
 
 	test("zero-size screen does not divide by zero", () => {
 		const xml = '<hierarchy><node class="android.widget.TextView" bounds="[0,0][10,10]" /></hierarchy>';
-		const element = parseUiautomatorXml(xml, { width: 0, height: 0 }).flat[0];
+		const element = uiautomatorParser.parseUiautomatorXml(xml, { width: 0, height: 0 }).flat[0];
 		expect(element?.normFrame).toEqual({ x: 0, y: 0, width: 0, height: 0 });
 	});
 });
 
 describe("interactiveFilter", () => {
-	const parsed = parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN);
-	const filtered = interactiveFilter(parsed.elements);
+	const parsed = uiautomatorParser.parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN);
+	const filtered = uiautomatorParser.interactiveFilter(parsed.elements);
 
 	test("keeps interactive nodes and their ancestors only", () => {
 		const ids = filtered.flat.map((e) => e.identifier ?? e.rawType.split(".").pop());
@@ -203,6 +208,6 @@ describe("interactiveFilter", () => {
 	});
 
 	test("empty input", () => {
-		expect(interactiveFilter([])).toEqual({ elements: [], flat: [] });
+		expect(uiautomatorParser.interactiveFilter([])).toEqual({ elements: [], flat: [] });
 	});
 });

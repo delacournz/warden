@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { openAdbSession } from "./adb-session";
-import { AUTO_TIME_OFF_ARGV, AUTO_TIME_ON_ARGV, applyAndroidClock, DATE_ARGV, setTimeArgv } from "./android-clock";
-import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
+import { adbSessions } from "./adb-session";
+import { AndroidClock, AUTO_TIME_OFF_ARGV, AUTO_TIME_ON_ARGV, androidClockArgv, DATE_ARGV } from "./android-clock";
+import { FakeAndroidHost, type ShellRule } from "./android-host.testing";
 
 const HOST_NOW = 1_700_000_000_000;
 const DAY = 86_400_000;
@@ -35,7 +35,7 @@ function device(opts: { stuck?: boolean; rootable?: boolean; alarmFails?: boolea
 			},
 		},
 	];
-	const host = fakeAndroidHost({
+	const host = new FakeAndroidHost({
 		shell: rules,
 		host: [
 			{
@@ -57,14 +57,12 @@ function device(opts: { stuck?: boolean; rootable?: boolean; alarmFails?: boolea
 	return { host, ms: () => deviceMs, autoTime: () => autoTime };
 }
 
-async function run(
-	d: ReturnType<typeof device>,
-	op: Parameters<typeof applyAndroidClock>[1],
-	serial = "emulator-5554"
-) {
-	const session = openAdbSession({ adb: "adb", serial, spawn: d.host.spawn });
+async function run(d: ReturnType<typeof device>, op: Parameters<AndroidClock["apply"]>[0], serial = "emulator-5554") {
+	const session = adbSessions.open({ adb: "adb", serial, spawn: d.host.spawn });
 	try {
-		return await applyAndroidClock({ session, exec: d.host.exec, adb: "adb", serial, wallNow: () => HOST_NOW }, op);
+		return await new AndroidClock({ session, exec: d.host.exec, adb: "adb", serial, wallNow: () => HOST_NOW }).apply(
+			op
+		);
 	} finally {
 		await session.close();
 	}
@@ -74,12 +72,12 @@ describe("argv", () => {
 	test("auto_time and set-time are device shell argv", () => {
 		expect(AUTO_TIME_OFF_ARGV).toEqual(["settings", "put", "global", "auto_time", "0"]);
 		expect(AUTO_TIME_ON_ARGV).toEqual(["settings", "put", "global", "auto_time", "1"]);
-		expect(setTimeArgv(1_700_000_000_123)).toEqual(["cmd", "alarm", "set-time", "1700000000123"]);
+		expect(androidClockArgv.setTimeArgv(1_700_000_000_123)).toEqual(["cmd", "alarm", "set-time", "1700000000123"]);
 		expect(DATE_ARGV).toEqual(["date", "+%s"]);
 	});
 });
 
-describe("applyAndroidClock", () => {
+describe("AndroidClock.apply", () => {
 	test("offset: auto time off, system time moved and read back", async () => {
 		const d = device();
 		const result = await run(d, { kind: "offset", ms: 2 * DAY });

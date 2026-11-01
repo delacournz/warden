@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Device } from "@delacour/warden-device/device";
 import type { AlertInfo, Snapshot } from "@delacour/warden-driver/driver.types";
 import { driverFixtures, FakeDriver } from "@delacour/warden-driver/testing/driver";
-import { detectAlert } from "@delacour/warden-driver-android/android-alert";
+import { androidAlert } from "@delacour/warden-driver-android/android-alert";
 import { LocatorAssertions } from "@delacour/warden-screen/matchers";
 import { createScreen } from "@delacour/warden-screen/screen";
 import { testHost } from "@delacour/warden-screen/testing/screen";
@@ -187,7 +187,7 @@ describe("systemAlerts on an Android-style screen (alert read from the dump)", (
 					return undefined;
 				},
 			}),
-			{ alertIn: (snapshot: Snapshot): AlertInfo | null => detectAlert(snapshot.flat) }
+			{ alertIn: (snapshot: Snapshot): AlertInfo | null => androidAlert.detectAlert(snapshot.flat) }
 		);
 	}
 
@@ -204,7 +204,7 @@ describe("systemAlerts on an Android-style screen (alert read from the dump)", (
 		const raw = Object.assign(
 			new FakeDriver({ platform: "android", screens: [driverFixtures.snapshotOf(app, { platform: "android" })] }),
 			{
-				alertIn: (snapshot: Snapshot): AlertInfo | null => detectAlert(snapshot.flat),
+				alertIn: (snapshot: Snapshot): AlertInfo | null => androidAlert.detectAlert(snapshot.flat),
 			}
 		);
 		const { screen } = wire(raw, "dismiss");

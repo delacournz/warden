@@ -13,7 +13,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Driver, DriverResult, Element, Point } from "@delacour/warden-driver/driver.types";
-import { openAndroidDriver } from "@delacour/warden-driver-android/android-driver";
+import { androidDrivers } from "@delacour/warden-driver-android/android-driver";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { processExec } from "@delacour/warden-runtime/exec";
 
@@ -51,7 +51,7 @@ async function step<T>(name: string, run: () => DriverResult<T>, required = true
 const centre = (e: Element): Point =>
 	e.tapPoint ?? { x: e.frame.x + e.frame.width / 2, y: e.frame.y + e.frame.height / 2 };
 
-const opened = await openAndroidDriver({
+const opened = await androidDrivers.open({
 	serial,
 	adb: androidToolsLocator.locate(process.env).adb,
 	exec: processExec.run,

@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import type { Element } from "@delacour/warden-driver/driver.types";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { processExec } from "@delacour/warden-runtime/exec";
-import { parseUiautomatorXml } from "../../src/uiautomator";
+import { uiautomatorParser } from "../../src/uiautomator";
 import { main as buildMain, DEX_NAME } from "./build";
 
 const DIST = resolve(import.meta.dir, "..", "dist");
@@ -476,7 +476,7 @@ if (process.argv.includes("--walk-only")) process.exit(0);
 const baselineDump = await dumpXml();
 check("baseline dump has a hierarchy", baselineDump.xml.includes("<hierarchy"), `${Math.round(baselineDump.ms)} ms`);
 const screenGuess = { width: 1080, height: 2424 };
-const fromDump = parseUiautomatorXml(baselineDump.xml, screenGuess);
+const fromDump = uiautomatorParser.parseUiautomatorXml(baselineDump.xml, screenGuess);
 
 // cold start x3
 const coldStarts: number[] = [];
@@ -499,7 +499,7 @@ for (let i = 0; i < 3; i++) {
 			`first snapshot after start (JIT cold): rtt ${Math.round(first.rttMs)} ms, ${first.ok ? num(first.data, "nodes") : "?"} nodes`
 		);
 		if (first.ok) {
-			const fromUiad = parseUiautomatorXml(snapshotToXml(first.data), screenGuess);
+			const fromUiad = uiautomatorParser.parseUiautomatorXml(snapshotToXml(first.data), screenGuess);
 			const a = fromDump.flat.map(signature);
 			const b = fromUiad.flat.map(signature);
 			const same = a.length === b.length && a.every((s, k) => s === b[k]);
@@ -538,7 +538,7 @@ for (let i = 0; i < 3; i++) {
 				serverMs.push(num(reply.data, "ms"));
 				readMs.push(num(reply.data, "readMs"));
 				const n0 = performance.now();
-				parseUiautomatorXml(snapshotToXml(reply.data), screenGuess);
+				uiautomatorParser.parseUiautomatorXml(snapshotToXml(reply.data), screenGuess);
 				normalise.push(performance.now() - n0);
 			}
 			console.log(`uiad snapshot ${label}, ${nodes} nodes`);
@@ -699,7 +699,7 @@ for (let i = 0; i < 3; i++) {
 		const d = await dumpXml();
 		ms.push(d.ms);
 		const p0 = performance.now();
-		parseUiautomatorXml(d.xml, screenGuess);
+		uiautomatorParser.parseUiautomatorXml(d.xml, screenGuess);
 		parseMs.push(performance.now() - p0);
 	}
 	console.log(`uiautomator dump (exec-out tty, host wall): ${stats(ms)}`);
@@ -708,7 +708,7 @@ for (let i = 0; i < 3; i++) {
 
 function fromUiad(reply: Reply & { rttMs: number }): { x: number; y: number; label: string } | undefined {
 	if (!reply.ok) return undefined;
-	const tree = parseUiautomatorXml(snapshotToXml(reply.data), screenGuess);
+	const tree = uiautomatorParser.parseUiautomatorXml(snapshotToXml(reply.data), screenGuess);
 	const target = tree.flat.find((e) => e.hittable && e.role === "button");
 	return target?.tapPoint
 		? { ...target.tapPoint, label: target.label ?? target.identifier ?? target.rawType }

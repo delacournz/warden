@@ -1,16 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-	fatalReason,
-	healthSchema,
-	parseUiadLine,
-	readNode,
-	readSnapshotData,
-	settleDataSchema,
-	textDataSchema,
-	type UiadMessage,
-} from "./uiad-protocol";
+import { healthSchema, settleDataSchema, textDataSchema, type UiadMessage, uiadProtocol } from "./uiad-protocol";
 
 /** What the real server said on a leased API 37 emulator (`native/scripts/record.ts`). */
 const SESSION = readFileSync(join(import.meta.dir, "fixtures/uiad-session.ndjson"), "utf8")
@@ -31,7 +22,7 @@ function messages(lines: readonly string[]): { requests: Record<string, unknown>
 			requests.push(json as Record<string, unknown>);
 			continue;
 		}
-		const parsed = parseUiadLine(line);
+		const parsed = uiadProtocol.parseUiadLine(line);
 		if (!parsed.success) throw new Error(`${parsed.reason}: ${line.slice(0, 120)}`);
 		server.push(parsed.message);
 	}
@@ -72,7 +63,7 @@ describe("the recorded session", () => {
 		const snapshots = pairs().filter((p) => p.op === "snapshot");
 		expect(snapshots.length).toBeGreaterThanOrEqual(3);
 		for (const pair of snapshots) {
-			const snapshot = readSnapshotData(dataOf(pair));
+			const snapshot = uiadProtocol.readSnapshotData(dataOf(pair));
 			if (typeof snapshot === "string") throw new Error(snapshot);
 			expect(snapshot.backend).toBe("uiad");
 			expect(snapshot.truncated).toBe(false);
@@ -92,7 +83,7 @@ describe("the recorded session", () => {
 
 	test("the welcome screen holds the React Native testID as the raw id, the platform ids with their package", () => {
 		const first = pairs().find((p) => p.op === "snapshot");
-		const snapshot = readSnapshotData(first ? dataOf(first) : undefined);
+		const snapshot = uiadProtocol.readSnapshotData(first ? dataOf(first) : undefined);
 		if (typeof snapshot === "string") throw new Error(snapshot);
 		const ids = new Set<string>();
 		const walk = (nodes: readonly { id?: string; children?: readonly unknown[] }[]): void => {
@@ -138,27 +129,31 @@ describe("a second server while one runs", () => {
 		const [fatal] = server;
 		if (fatal?.kind !== "event" || fatal.event.event !== "fatal") throw new Error("no fatal event");
 		expect(fatal.event.error.code).toBe("E_AX_UNAVAILABLE");
-		expect(fatalReason(fatal.event.error)).toBe("uiautomation_busy");
+		expect(uiadProtocol.fatalReason(fatal.event.error)).toBe("uiautomation_busy");
 	});
 });
 
 describe("parseUiadLine", () => {
 	test("tells events from responses and rejects the rest", () => {
-		expect(parseUiadLine('{"id":"1","ok":true,"data":{}}').success).toBe(true);
-		expect(parseUiadLine('{"event":"log","level":"warn","message":"x"}').success).toBe(true);
-		expect(parseUiadLine("not json")).toEqual({ success: false, reason: "not JSON" });
-		expect(parseUiadLine('{"event":"ready"}').success).toBe(false);
-		expect(parseUiadLine('{"id":1}').success).toBe(false);
+		expect(uiadProtocol.parseUiadLine('{"id":"1","ok":true,"data":{}}').success).toBe(true);
+		expect(uiadProtocol.parseUiadLine('{"event":"log","level":"warn","message":"x"}').success).toBe(true);
+		expect(uiadProtocol.parseUiadLine("not json")).toEqual({ success: false, reason: "not JSON" });
+		expect(uiadProtocol.parseUiadLine('{"event":"ready"}').success).toBe(false);
+		expect(uiadProtocol.parseUiadLine('{"id":1}').success).toBe(false);
 	});
 });
 
 describe("readNode", () => {
 	test("keeps flags and children, and names the path of what is wrong", () => {
-		const good = readNode({ bounds: [0, 1, 2, 3], clickable: true, children: [{ bounds: [0, 0, 1, 1], id: "x" }] });
+		const good = uiadProtocol.readNode({
+			bounds: [0, 1, 2, 3],
+			clickable: true,
+			children: [{ bounds: [0, 0, 1, 1], id: "x" }],
+		});
 		expect(good).toEqual({ bounds: [0, 1, 2, 3], clickable: true, children: [{ bounds: [0, 0, 1, 1], id: "x" }] });
-		expect(readNode({ bounds: [0, 1, 2] })).toBe("elements.bounds: not [l, t, r, b]");
-		expect(readNode({ bounds: [0, 0, 1, 1], clickable: "yes" })).toBe("elements.clickable: not a boolean");
-		expect(readNode({ bounds: [0, 0, 1, 1], children: [{ bounds: [0, 0, 1, 1], text: 5 }] })).toBe(
+		expect(uiadProtocol.readNode({ bounds: [0, 1, 2] })).toBe("elements.bounds: not [l, t, r, b]");
+		expect(uiadProtocol.readNode({ bounds: [0, 0, 1, 1], clickable: "yes" })).toBe("elements.clickable: not a boolean");
+		expect(uiadProtocol.readNode({ bounds: [0, 0, 1, 1], children: [{ bounds: [0, 0, 1, 1], text: 5 }] })).toBe(
 			"elements.children[0].text: not a string"
 		);
 	});
@@ -166,17 +161,19 @@ describe("readNode", () => {
 
 describe("readSnapshotData", () => {
 	test("rejects a reply from another backend or without elements", () => {
-		expect(typeof readSnapshotData({ backend: "ax", elements: [] })).toBe("string");
-		expect(typeof readSnapshotData({})).toBe("string");
+		expect(typeof uiadProtocol.readSnapshotData({ backend: "ax", elements: [] })).toBe("string");
+		expect(typeof uiadProtocol.readSnapshotData({})).toBe("string");
 	});
 });
 
 describe("fatalReason", () => {
 	test("is undefined without a known detail.reason", () => {
-		expect(fatalReason({ code: "E_INTERNAL", message: "x" })).toBeUndefined();
-		expect(fatalReason({ code: "E_AX_UNAVAILABLE", message: "x", detail: { reason: "other" } })).toBeUndefined();
-		expect(fatalReason({ code: "E_AX_UNAVAILABLE", message: "x", detail: { reason: "connect_failed" } })).toBe(
-			"connect_failed"
-		);
+		expect(uiadProtocol.fatalReason({ code: "E_INTERNAL", message: "x" })).toBeUndefined();
+		expect(
+			uiadProtocol.fatalReason({ code: "E_AX_UNAVAILABLE", message: "x", detail: { reason: "other" } })
+		).toBeUndefined();
+		expect(
+			uiadProtocol.fatalReason({ code: "E_AX_UNAVAILABLE", message: "x", detail: { reason: "connect_failed" } })
+		).toBe("connect_failed");
 	});
 });

@@ -52,164 +52,201 @@ export type FakeUiad = {
 
 type Recorded = { ready: Record<string, unknown>; health: Record<string, unknown>; replies: Map<string, FakeReply> };
 
-let recorded: Recorded | undefined;
-
-/** The recorded session, parsed once: the `ready` event, and the first reply of each op. */
-export function recordedSession(): Recorded {
-	if (recorded) return recorded;
-	const lines = readFileSync(join(import.meta.dir, "fixtures/uiad-session.ndjson"), "utf8")
-		.trim()
-		.split("\n");
-	const ops = new Map<string, string>();
-	const replies = new Map<string, FakeReply>();
-	let ready: Record<string, unknown> = {};
-	for (const line of lines) {
-		const json = JSON.parse(line) as Record<string, unknown>;
-		if (typeof json.op === "string" && typeof json.id === "string") ops.set(json.id, json.op);
-		else if (json.event === "ready") ready = json;
-		else if (typeof json.id === "string") keepFirstReply(replies, ops.get(json.id), json);
-	}
-	recorded = { ready, health: (ready.data ?? {}) as Record<string, unknown>, replies };
-	return recorded;
-}
-
-function keepFirstReply(replies: Map<string, FakeReply>, op: string | undefined, json: Record<string, unknown>): void {
-	if (op === undefined || replies.has(op)) return;
-	replies.set(op, json.ok === true ? { data: json.data } : { error: json.error as WireError });
-}
-
 const encoder = new TextEncoder();
 
-export function fakeUiad(options: FakeUiadOptions = {}): FakeUiad {
-	const session = recordedSession();
-	const commands: string[][] = [];
-	const requests: FakeRequest[] = [];
-	const counts = new Map<string, number>();
-	const live = new Set<{ stop: (code: number) => void }>();
-	let started = 0;
+/** State shared by every fake server process of one `fakeUiad()`. */
+type FakeHost = {
+	options: FakeUiadOptions;
+	session: Recorded;
+	requests: FakeRequest[];
+	counts: Map<string, number>;
+	live: Set<FakeUiadProcess>;
+};
 
-	const spawn: SimdSpawn = (cmd) => {
-		started++;
-		commands.push([...cmd]);
-		let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
-		let finish: (code: number) => void = () => undefined;
-		let stopped = false;
-		const exited = new Promise<number>((resolve) => {
-			finish = resolve;
+/** One fake server "process": speaks the NDJSON protocol on in-memory streams. */
+class FakeUiadProcess implements SimdProcess {
+	readonly stdout: ReadableStream<Uint8Array>;
+	readonly stderr: ReadableStream<Uint8Array>;
+	readonly exited: Promise<number>;
+	private controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+	private errController: ReadableStreamDefaultController<Uint8Array> | undefined;
+	private finish: (code: number) => void = () => undefined;
+	private stopped = false;
+	private readonly health: Record<string, unknown>;
+
+	constructor(private readonly host: FakeHost) {
+		const { options, session } = host;
+		this.exited = new Promise<number>((resolve) => {
+			this.finish = resolve;
 		});
-		const stdout = new ReadableStream<Uint8Array>({
-			start(c) {
-				controller = c;
+		this.stdout = new ReadableStream<Uint8Array>({
+			start: (c) => {
+				this.controller = c;
 			},
 		});
-		let errController: ReadableStreamDefaultController<Uint8Array> | undefined;
-		const stderr = new ReadableStream<Uint8Array>({
-			start(c) {
-				errController = c;
+		this.stderr = new ReadableStream<Uint8Array>({
+			start: (c) => {
+				this.errController = c;
 				for (const line of options.stderr ?? []) c.enqueue(encoder.encode(`${line}\n`));
 			},
 		});
-		const send = (value: unknown): void => {
-			if (stopped) return;
-			controller?.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
-		};
-		const stop = (code: number): void => {
-			if (stopped) return;
-			stopped = true;
-			live.delete(handle);
-			try {
-				controller?.close();
-				errController?.close();
-			} catch {
-				// already closed
-			}
-			finish(code);
-		};
-		const handle = { stop };
-		live.add(handle);
-
-		const health = { ...session.health, ...options.health };
-		const greet = (): void => {
-			send({ event: "log", level: "debug", message: "fake uiad starting" });
-			if (options.fatal) {
-				send({ event: "fatal", error: options.fatal });
-				stop(3);
-				return;
-			}
-			send({
-				...session.ready,
-				...(options.protocol !== undefined ? { protocol: options.protocol } : {}),
-				data: health,
-			});
-		};
+		host.live.add(this);
+		this.health = { ...session.health, ...options.health };
 		queueMicrotask(() => {
-			if (options.exitBeforeReady !== undefined) stop(options.exitBeforeReady);
-			else if (!options.noReady) greet();
+			if (options.exitBeforeReady !== undefined) this.stop(options.exitBeforeReady);
+			else if (!options.noReady) this.greet();
 		});
+	}
 
-		const replyTo = (request: FakeRequest, nth: number): FakeReply => {
-			const custom = options.handle?.(request, nth);
-			if (custom !== undefined) return custom;
-			if (request.op === "health") return { data: health };
-			if (request.op === "shutdown") return { data: {} };
-			return (
-				session.replies.get(request.op) ?? {
-					error: { code: "E_BAD_REQUEST", message: `unknown op: ${request.op}`, retryable: false },
-				}
-			);
-		};
+	readonly write = (data: string): void => {
+		if (this.stopped) throw new Error("fake uiad: stdin is closed");
+		for (const line of data.split("\n")) {
+			if (line.trim()) this.answer(JSON.parse(line) as FakeRequest);
+		}
+	};
 
-		const answer = (request: FakeRequest): void => {
-			const nth = counts.get(request.op) ?? 0;
-			counts.set(request.op, nth + 1);
-			requests.push(request);
-			const reply = replyTo(request, nth);
-			if (reply === "silent") return;
-			if (reply === "die") {
-				stop(137);
-				return;
+	readonly end = (): void => {
+		this.stop(0);
+	};
+
+	readonly kill = (): void => {
+		this.stop(137);
+	};
+
+	stop(code: number): void {
+		if (this.stopped) return;
+		this.stopped = true;
+		this.host.live.delete(this);
+		try {
+			this.controller?.close();
+			this.errController?.close();
+		} catch {
+			// already closed
+		}
+		this.finish(code);
+	}
+
+	private send(value: unknown): void {
+		if (this.stopped) return;
+		this.controller?.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+	}
+
+	private greet(): void {
+		const { options, session } = this.host;
+		this.send({ event: "log", level: "debug", message: "fake uiad starting" });
+		if (options.fatal) {
+			this.send({ event: "fatal", error: options.fatal });
+			this.stop(3);
+			return;
+		}
+		this.send({
+			...session.ready,
+			...(options.protocol !== undefined ? { protocol: options.protocol } : {}),
+			data: this.health,
+		});
+	}
+
+	private replyTo(request: FakeRequest, nth: number): FakeReply {
+		const custom = this.host.options.handle?.(request, nth);
+		if (custom !== undefined) return custom;
+		if (request.op === "health") return { data: this.health };
+		if (request.op === "shutdown") return { data: {} };
+		return (
+			this.host.session.replies.get(request.op) ?? {
+				error: { code: "E_BAD_REQUEST", message: `unknown op: ${request.op}`, retryable: false },
 			}
-			const out =
-				"data" in reply
-					? { id: request.id, ok: true, data: reply.data }
-					: { id: request.id, ok: false, error: reply.error };
-			const respond = (): void => {
-				send(out);
-				if (request.op === "shutdown") stop(0);
-			};
-			if (options.delayMs) setTimeout(respond, options.delayMs);
-			else respond();
-		};
+		);
+	}
 
-		const proc: SimdProcess = {
-			write(data) {
-				if (stopped) throw new Error("fake uiad: stdin is closed");
-				for (const line of data.split("\n")) {
-					if (line.trim()) answer(JSON.parse(line) as FakeRequest);
-				}
-			},
-			end() {
-				stop(0);
-			},
-			kill() {
-				stop(137);
-			},
-			stdout,
-			stderr,
-			exited,
+	private answer(request: FakeRequest): void {
+		const { counts, requests, options } = this.host;
+		const nth = counts.get(request.op) ?? 0;
+		counts.set(request.op, nth + 1);
+		requests.push(request);
+		const reply = this.replyTo(request, nth);
+		if (reply === "silent") return;
+		if (reply === "die") {
+			this.stop(137);
+			return;
+		}
+		const out =
+			"data" in reply
+				? { id: request.id, ok: true, data: reply.data }
+				: { id: request.id, ok: false, error: reply.error };
+		const respond = (): void => {
+			this.send(out);
+			if (request.op === "shutdown") this.stop(0);
 		};
-		return proc;
-	};
-
-	return {
-		spawn,
-		commands,
-		requests,
-		of: (op) => requests.filter((r) => r.op === op),
-		started: () => started,
-		running: () => live.size,
-		killAll(exitCode = 137) {
-			for (const handle of [...live]) handle.stop(exitCode);
-		},
-	};
+		if (options.delayMs) setTimeout(respond, options.delayMs);
+		else respond();
+	}
 }
+
+/** The fake server's handle: what tests inspect and drive. */
+class FakeUiadServer implements FakeUiad {
+	readonly commands: string[][] = [];
+	readonly requests: FakeRequest[] = [];
+	private readonly host: FakeHost;
+	private startedCount = 0;
+
+	constructor(options: FakeUiadOptions, session: Recorded) {
+		this.host = { options, session, requests: this.requests, counts: new Map(), live: new Set() };
+	}
+
+	readonly spawn: SimdSpawn = (cmd) => {
+		this.startedCount++;
+		this.commands.push([...cmd]);
+		return new FakeUiadProcess(this.host);
+	};
+
+	of(op: string): FakeRequest[] {
+		return this.requests.filter((r) => r.op === op);
+	}
+
+	started(): number {
+		return this.startedCount;
+	}
+
+	running(): number {
+		return this.host.live.size;
+	}
+
+	killAll(exitCode = 137): void {
+		for (const handle of [...this.host.live]) handle.stop(exitCode);
+	}
+}
+
+/** The in-process `warden-uiad` and the recorded session behind it. */
+export class UiadTesting {
+	private recorded: Recorded | undefined;
+
+	/** The recorded session, parsed once: the `ready` event, and the first reply of each op. */
+	recordedSession(): Recorded {
+		if (this.recorded) return this.recorded;
+		const lines = readFileSync(join(import.meta.dir, "fixtures/uiad-session.ndjson"), "utf8")
+			.trim()
+			.split("\n");
+		const ops = new Map<string, string>();
+		const replies = new Map<string, FakeReply>();
+		let ready: Record<string, unknown> = {};
+		for (const line of lines) {
+			const json = JSON.parse(line) as Record<string, unknown>;
+			if (typeof json.op === "string" && typeof json.id === "string") ops.set(json.id, json.op);
+			else if (json.event === "ready") ready = json;
+			else if (typeof json.id === "string") this.keepFirstReply(replies, ops.get(json.id), json);
+		}
+		this.recorded = { ready, health: (ready.data ?? {}) as Record<string, unknown>, replies };
+		return this.recorded;
+	}
+
+	fakeUiad(options: FakeUiadOptions = {}): FakeUiad {
+		return new FakeUiadServer(options, this.recordedSession());
+	}
+
+	private keepFirstReply(replies: Map<string, FakeReply>, op: string | undefined, json: Record<string, unknown>): void {
+		if (op === undefined || replies.has(op)) return;
+		replies.set(op, json.ok === true ? { data: json.data } : { error: json.error as WireError });
+	}
+}
+
+export const uiadTesting = new UiadTesting();

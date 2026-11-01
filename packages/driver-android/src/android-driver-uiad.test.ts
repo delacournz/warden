@@ -3,11 +3,11 @@ import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types"
 import { observations } from "@delacour/warden-driver/observation-cache";
 import { settler } from "@delacour/warden-driver/settle";
 import { deviceTyping } from "@delacour/warden-driver/typing";
-import { openAndroidDriver } from "./android-driver";
-import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
-import { type AndroidStateStore, memoryAndroidState } from "./android-state";
-import { type FakeUiadOptions, fakeUiad } from "./uiad.testing";
-import { uiadBuildId } from "./uiad-device";
+import { androidDrivers } from "./android-driver";
+import { FakeAndroidHost, type ShellRule } from "./android-host.testing";
+import { type AndroidStateStore, MemoryAndroidState } from "./android-state";
+import { type FakeUiadOptions, uiadTesting } from "./uiad.testing";
+import { uiadDevice } from "./uiad-device";
 import { SYNTHETIC_FORM_DUMP } from "./uiautomator.fixture";
 
 const probe = (sdk: number): string => `1\n${sdk}\nPhysical size: 1080x2400\nPhysical density: 420\n`;
@@ -18,7 +18,7 @@ type Setup = { sdk?: number; uiad?: FakeUiadOptions | false; state?: AndroidStat
 
 /** A driver over a fake shell and, unless `uiad: false`, an in-process `warden-uiad` that answers from the recorded session. */
 async function setup(opts: Setup = {}) {
-	const host = fakeAndroidHost({
+	const host = new FakeAndroidHost({
 		shell: [
 			...(opts.shell ?? []),
 			{ match: "getprop sys.boot_completed", reply: probe(opts.sdk ?? 37) },
@@ -26,7 +26,7 @@ async function setup(opts: Setup = {}) {
 			{ match: "uiautomator dump /dev/stdout", reply: SYNTHETIC_FORM_DUMP },
 		],
 	});
-	const uiad = fakeUiad(opts.uiad === false ? {} : (opts.uiad ?? {}));
+	const uiad = uiadTesting.fakeUiad(opts.uiad === false ? {} : (opts.uiad ?? {}));
 	let t = 0;
 	const clock = {
 		now: () => t,
@@ -35,7 +35,7 @@ async function setup(opts: Setup = {}) {
 		},
 	};
 	const lines: string[] = [];
-	const res = await openAndroidDriver({
+	const res = await androidDrivers.open({
 		serial: "emulator-5554",
 		adb: "adb",
 		exec: host.exec,
@@ -320,11 +320,11 @@ describe("fallbacks", () => {
 	});
 
 	test("a start that can never work is written down for the build, and the next driver does not try", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		const first = await setup({ state, uiad: { protocol: 2 } });
 		await value(first.driver.snapshot());
 		await first.driver.close();
-		expect((await state.read("emulator-5554")).uiadUnsupported).toBe(uiadBuildId());
+		expect((await state.read("emulator-5554")).uiadUnsupported).toBe(uiadDevice.uiadBuildId());
 
 		const second = await setup({ state });
 		await value(second.driver.snapshot());

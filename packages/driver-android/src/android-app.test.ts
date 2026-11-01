@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { driverErrors } from "@delacour/warden-driver/errors";
 import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
-import { type AdbSession, openAdbSession } from "./adb-session";
-import { createAppCommands, parseLauncherComponent, parseStartWait } from "./android-app";
-import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
+import { type AdbSession, adbSessions } from "./adb-session";
+import { AndroidApp, androidAppParser } from "./android-app";
+import { FakeAndroidHost, type FakeAndroidHostInit, type ShellRule } from "./android-host.testing";
 
 const RESOLVED = "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.x/.MainActivity\n";
 const STARTED =
@@ -13,10 +13,10 @@ const START = "am start -W";
 /** the launcher's intent, so a start without -S brings a running task to the front instead of stacking an instance */
 const INTENT = "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER";
 
-function setup(init: Parameters<typeof fakeAndroidHost>[0] = {}, appPackage?: string) {
-	const host = fakeAndroidHost(init);
-	const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
-	const app = createAppCommands({
+function setup(init: FakeAndroidHostInit = {}, appPackage?: string) {
+	const host = new FakeAndroidHost(init);
+	const session = adbSessions.open({ adb: "adb", serial: "s1", spawn: host.spawn });
+	const app = new AndroidApp({
 		session,
 		exec: host.exec,
 		adb: "adb",
@@ -28,31 +28,35 @@ function setup(init: Parameters<typeof fakeAndroidHost>[0] = {}, appPackage?: st
 
 describe("parseLauncherComponent", () => {
 	test("the last line of --brief is the component", () => {
-		expect(parseLauncherComponent(RESOLVED)).toBe("com.x/.MainActivity");
-		expect(parseLauncherComponent("com.x/com.x.Main$Alias\n\n")).toBe("com.x/com.x.Main$Alias");
+		expect(androidAppParser.parseLauncherComponent(RESOLVED)).toBe("com.x/.MainActivity");
+		expect(androidAppParser.parseLauncherComponent("com.x/com.x.Main$Alias\n\n")).toBe("com.x/com.x.Main$Alias");
 	});
 
 	test("no launcher, an unknown command or noise is undefined", () => {
-		expect(parseLauncherComponent("No activity found\n")).toBeUndefined();
-		expect(parseLauncherComponent("Unknown command: resolve-activity\n")).toBeUndefined();
-		expect(parseLauncherComponent("")).toBeUndefined();
+		expect(androidAppParser.parseLauncherComponent("No activity found\n")).toBeUndefined();
+		expect(androidAppParser.parseLauncherComponent("Unknown command: resolve-activity\n")).toBeUndefined();
+		expect(androidAppParser.parseLauncherComponent("")).toBeUndefined();
 	});
 });
 
 describe("parseStartWait", () => {
 	test("Status, LaunchState and TotalTime", () => {
-		expect(parseStartWait(STARTED)).toEqual({ status: "ok", launchState: "COLD", totalTimeMs: 812 });
+		expect(androidAppParser.parseStartWait(STARTED)).toEqual({ status: "ok", launchState: "COLD", totalTimeMs: 812 });
 	});
 
 	test("an older `am` without LaunchState, or a start that was brought to the front", () => {
-		expect(parseStartWait("Status: ok\nActivity: com.x/.Main\nThisTime: 400\nTotalTime: 401\nComplete\n")).toEqual({
+		expect(
+			androidAppParser.parseStartWait("Status: ok\nActivity: com.x/.Main\nThisTime: 400\nTotalTime: 401\nComplete\n")
+		).toEqual({
 			status: "ok",
 			totalTimeMs: 401,
 		});
 	});
 
 	test("an error is reported", () => {
-		const parsed = parseStartWait("Error type 3\nError: Activity class {com.x/com.x.Main} does not exist.\n");
+		const parsed = androidAppParser.parseStartWait(
+			"Error type 3\nError: Activity class {com.x/com.x.Main} does not exist.\n"
+		);
 		expect(parsed.error).toContain("does not exist");
 	});
 });
@@ -111,7 +115,7 @@ describe("app commands", () => {
 			cmd.startsWith(START)
 				? Promise.resolve(driverErrors.err("E_TIMEOUT", `\`${cmd}\` did not finish within ${opts?.timeoutMs}ms on s1`))
 				: session.run(cmd, opts);
-		const timing = createAppCommands({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
+		const timing = new AndroidApp({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
 		const notes: SpanDetail = {};
 		expect((await spanDetails.collect(notes, () => timing.launch("com.x"))).success).toBe(true);
 		expect(notes).toMatchObject({ launch: "am-start", launchState: "timeout" });
@@ -124,15 +128,15 @@ describe("app commands", () => {
 
 	/** the real session over the fake shell, with `am start -W` and the probe after it given 20 ms */
 	function timingOut(shell: ShellRule[]) {
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [
 				{ match: "cmd package resolve-activity", reply: RESOLVED },
 				{ match: START, reply: "hang" },
 				...(shell ?? []),
 			],
 		});
-		const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
-		const app = createAppCommands({
+		const session = adbSessions.open({ adb: "adb", serial: "s1", spawn: host.spawn });
+		const app = new AndroidApp({
 			session,
 			exec: host.exec,
 			adb: "adb",
@@ -180,7 +184,7 @@ describe("app commands", () => {
 		const { host, session } = setup({ shell: [{ match: "cmd package resolve-activity", reply: RESOLVED }] });
 		const run: AdbSession["run"] = (cmd, opts) =>
 			cmd.startsWith(START) ? Promise.resolve(driverErrors.err("E_IO", "adb shell exited")) : session.run(cmd, opts);
-		const failing = createAppCommands({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
+		const failing = new AndroidApp({ session: { ...session, run }, exec: host.exec, adb: "adb", serial: "s1" });
 		const res = await failing.launch("com.x");
 		expect(!res.success && res.error.code).toBe("E_IO");
 		await session.close();

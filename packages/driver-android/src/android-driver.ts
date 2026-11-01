@@ -35,72 +35,33 @@ import { DEFAULT_RADIUS, type GesturePlan, gestureGeometry } from "@delacour/war
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
 import type { DetectsAlerts } from "@delacour/warden-driver/observation-cache";
 import { physicalConditions } from "@delacour/warden-driver/physical-conditions";
-import {
-	DEFAULT_SETTLE_QUIET_MS,
-	DEFAULT_SETTLE_TIMEOUT_MS,
-	type SettleDetail,
-	settler,
-} from "@delacour/warden-driver/settle";
+import { DEFAULT_SETTLE_QUIET_MS, DEFAULT_SETTLE_TIMEOUT_MS, settler } from "@delacour/warden-driver/settle";
 import { spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { RepeatingKeys, SelectsAll, SetsText } from "@delacour/warden-driver/typing";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import { type AdbSession, openAdbSession, type SpawnAdb } from "./adb-session";
-import { detectAlert } from "./android-alert";
-import { type AnimationGuard, disableAnimations } from "./android-animations";
-import { createAppCommands } from "./android-app";
+import { type AdbSession, adbSessions, type SpawnAdb } from "./adb-session";
+import { androidAlert } from "./android-alert";
+import { AndroidAnimations, type AnimationGuard } from "./android-animations";
+import { AndroidApp } from "./android-app";
 import {
-	buttonKeycode,
+	androidArgv,
 	DRAG_STEPS,
-	dragMotionCommand,
-	dumpsysFingerprintArgv,
-	emuFingerTouchArgv,
 	GESTURE_LINE_MAX_MOVES,
-	geoFixArgv,
-	geoFixFailure,
-	gestureMotionCommand,
-	getpropArgv,
-	isEmulatorSerial,
-	keycombinationArgv,
-	keyeventArgv,
-	keyNameKeycode,
-	keyRepeatArgvs,
-	longPressArgv,
 	MOTIONEVENT_MIN_SDK,
-	modifierKeycode,
-	rotationArgvs,
 	SELECT_ALL_MIN_SDK,
-	screencapArgv,
-	selectAllArgv,
-	shellCommand,
-	swipeArgv,
-	tapArgv,
-	textArgvs,
 	UNENROLLED_FINGER_ID,
-	uimodeGetArgv,
-	uimodeSetArgv,
-	userRotationArgv,
 } from "./android-argv";
-import { applyAndroidClock } from "./android-clock";
-import {
-	type Clock,
-	hierarchyRotation,
-	orientationToRotation,
-	readScreen,
-	realClock,
-	rotatedScreen,
-	rotationToOrientation,
-	runChecked,
-	waitForBoot,
-} from "./android-device";
-import { createDumper, type DumpRoute } from "./android-dump";
-import { createAndroidNetwork } from "./android-network";
-import { createSettingsGuard, preparePhone, type SettingsGuard } from "./android-phone";
-import { createAndroidSettings } from "./android-settings";
-import { type AndroidStateStore, forSdk, patchFor } from "./android-state";
-import { createUiadBackend, type UiadOptions } from "./uiad-backend";
+import { AndroidClock } from "./android-clock";
+import { androidDevice, type BootInfo, type Clock, realClock } from "./android-device";
+import { Dumper, type DumpRoute } from "./android-dump";
+import { AndroidNetwork } from "./android-network";
+import { androidPhone, type SettingsGuard } from "./android-phone";
+import { AndroidSettings } from "./android-settings";
+import { type AndroidDeviceState, type AndroidStateStore, androidState } from "./android-state";
+import { UiadBackendService, type UiadOptions } from "./uiad-backend";
 import { UIAD_MIN_SDK } from "./uiad-device";
-import { createUiadOps, type UiadOps } from "./uiad-ops";
-import { interactiveFilter, parseUiautomatorXml, UiautomatorParseError } from "./uiautomator";
+import { type UiadOps, UiadOpsService } from "./uiad-ops";
+import { UiautomatorParseError, uiautomatorParser } from "./uiautomator";
 
 /** Binary-safe host process runner (screenshots); `Exec` is text-only. */
 export type ExecBinary = (
@@ -109,15 +70,19 @@ export type ExecBinary = (
 ) => Promise<{ exitCode: number; stdout: Uint8Array }>;
 
 /** Default {@link ExecBinary}: `Bun.spawn`, stderr dropped, never throws (a spawn failure is exit 127). */
-export const bunExecBinary: ExecBinary = async (argv, opts = {}) => {
-	try {
-		const proc = Bun.spawn([...argv], { stdin: "ignore", stdout: "pipe", stderr: "ignore", timeout: opts.timeoutMs });
-		const [bytes, exitCode] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited]);
-		return { exitCode, stdout: new Uint8Array(bytes) };
-	} catch {
-		return { exitCode: 127, stdout: new Uint8Array() };
-	}
-};
+class BunExecBinary {
+	readonly run: ExecBinary = async (argv, opts = {}) => {
+		try {
+			const proc = Bun.spawn([...argv], { stdin: "ignore", stdout: "pipe", stderr: "ignore", timeout: opts.timeoutMs });
+			const [bytes, exitCode] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited]);
+			return { exitCode, stdout: new Uint8Array(bytes) };
+		} catch {
+			return { exitCode: 127, stdout: new Uint8Array() };
+		}
+	};
+}
+
+export const bunExecBinary: ExecBinary = new BunExecBinary().run;
 
 export type AndroidDriverOptions = {
 	serial: string;
@@ -198,89 +163,29 @@ const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 const unit = { success: true as const, data: undefined };
 
 /** Deepest hittable element containing `point` (later in preorder wins ties: drawn on top); else deepest any. */
-export function elementAt(flat: readonly Element[], point: Point): Element | null {
-	const inside = flat.filter(
-		(e) =>
-			point.x >= e.frame.x &&
-			point.x < e.frame.x + e.frame.width &&
-			point.y >= e.frame.y &&
-			point.y < e.frame.y + e.frame.height
-	);
-	const deepest = (list: readonly Element[]): Element | undefined =>
-		list.reduce<Element | undefined>((best, e) => (best === undefined || e.depth >= best.depth ? e : best), undefined);
-	return deepest(inside.filter((e) => e.hittable)) ?? deepest(inside) ?? null;
-}
-
-/**
- * Android `Driver`: one resident `adb shell` (inputs, `am`, `pm`, dumps), host `adb` for install and
- * `exec-out` (binary screenshots never touch the session). `settle` is implemented here over snapshots (one dump,
- * or `settleByHash` for a long quiet window), so the TS layer needs no fallback (`nativeSettle: false`). The
- * animation scales it turns off on open are put back by `close`.
- */
-export async function openAndroidDriver(options: AndroidDriverOptions): DriverResult<Driver> {
-	const { serial, adb, log } = options;
-	const clock = options.clock ?? realClock;
-	const execBinary = options.execBinary ?? bunExecBinary;
-	const session = openAdbSession({
-		adb,
-		serial,
-		...(options.spawn ? { spawn: options.spawn } : {}),
-		...(log ? { log } : {}),
-	});
-
-	const failed = async (error: DriverError): DriverResult<never> => {
-		await session.close();
-		return { success: false, error };
-	};
-
-	const savedState = options.state?.read(serial);
-	const booted = await waitForBoot(session, serial, clock, {
-		...(options.bootTimeoutMs !== undefined ? { timeoutMs: options.bootTimeoutMs } : {}),
-		...(log ? { log } : {}),
-	});
-	if (!booted.success) return failed(booted.error);
-	const sdk = booted.data.sdk;
-	const phone = booted.data.physical;
-	if (phone) {
-		const awake = await preparePhone(session, clock, phone, log);
-		if (!awake.success) return failed(awake.error);
+class ElementHitTest {
+	at(flat: readonly Element[], point: Point): Element | null {
+		const inside = flat.filter(
+			(e) =>
+				point.x >= e.frame.x &&
+				point.x < e.frame.x + e.frame.width &&
+				point.y >= e.frame.y &&
+				point.y < e.frame.y + e.frame.height
+		);
+		return this.deepest(inside.filter((e) => e.hittable)) ?? this.deepest(inside) ?? null;
 	}
-	const probed = options.screen ?? booted.data.screen;
-	const screen = probed ? { success: true as const, data: probed } : await readScreen(session, serial);
-	if (!screen.success) return failed(screen.error);
-	const saved = forSdk((await savedState) ?? {}, sdk);
-	const animations = await disableAnimations({
-		session,
-		serial,
-		sdk,
-		pending: saved.animations,
-		...(options.state ? { state: options.state } : {}),
-		...(log ? { log } : {}),
-	});
-	const settings = phone
-		? await createSettingsGuard({
-				session,
-				serial,
-				sdk,
-				pending: { rotation: saved.rotation, uimode: saved.uimode },
-				...(options.state ? { state: options.state } : {}),
-				...(log ? { log } : {}),
-			})
-		: undefined;
-	return {
-		success: true,
-		data: buildDriver(options, session, screen.data, clock, execBinary, {
-			sdk,
-			savedRoute: saved.dumpRoute,
-			savedUiadUnsupported: saved.uiadUnsupported,
-			animations,
-			settings,
-			physical: phone !== undefined,
-		}),
-	};
+
+	private deepest(list: readonly Element[]): Element | undefined {
+		return list.reduce<Element | undefined>(
+			(best, e) => (best === undefined || e.depth >= best.depth ? e : best),
+			undefined
+		);
+	}
 }
 
-/** What `openAndroidDriver` learned about the device that the driver needs: its API level, saved route, animation guard. */
+const elementHitTest = new ElementHitTest();
+
+/** What `AndroidDrivers.open` learned about the device that the driver needs: its API level, saved route, animation guard. */
 type DeviceFacts = {
 	sdk: number | undefined;
 	savedRoute: DumpRoute | undefined;
@@ -297,117 +202,164 @@ type DeviceFacts = {
  * `undefined` means the dump and `input` do everything. A start that can never work on this device is written to
  * the state file (`uiadUnsupported`) so the next process does not try it.
  */
-function openUiad(input: {
-	options: AndroidDriverOptions;
-	session: AdbSession;
-	baseScreen: ScreenInfo;
-	clock: Clock;
-	facts: DeviceFacts;
-	saving: Promise<void>[];
-}): UiadOps | undefined {
-	const { options, session, baseScreen, clock, facts, saving } = input;
-	const { sdk } = facts;
-	const asked = options.uiad === true ? {} : options.uiad || undefined;
-	if (asked === undefined || sdk === undefined || sdk < UIAD_MIN_SDK) return undefined;
-	const { serial, adb, log, state } = options;
-	const backend = createUiadBackend({
-		session,
-		adb,
-		serial,
-		clock,
-		options: asked,
-		...(log ? { log } : {}),
-		...(facts.savedUiadUnsupported !== undefined ? { unsupportedBuild: facts.savedUiadUnsupported } : {}),
-		onUnsupported: (buildId) => {
-			if (state) saving.push(state.update(serial, patchFor(sdk, { uiadUnsupported: buildId })));
-		},
-	});
-	return createUiadOps({ backend, baseScreen, clock, ...(log ? { log } : {}) });
+class UiadOpener {
+	open(input: {
+		options: AndroidDriverOptions;
+		session: AdbSession;
+		baseScreen: ScreenInfo;
+		clock: Clock;
+		facts: DeviceFacts;
+		saving: Promise<void>[];
+	}): UiadOps | undefined {
+		const { options, session, baseScreen, clock, facts, saving } = input;
+		const { sdk } = facts;
+		const asked = options.uiad === true ? {} : options.uiad || undefined;
+		if (asked === undefined || sdk === undefined || sdk < UIAD_MIN_SDK) return undefined;
+		const { serial, adb, log, state } = options;
+		const backend = new UiadBackendService({
+			session,
+			adb,
+			serial,
+			clock,
+			options: asked,
+			...(log ? { log } : {}),
+			...(facts.savedUiadUnsupported !== undefined ? { unsupportedBuild: facts.savedUiadUnsupported } : {}),
+			onUnsupported: (buildId) => {
+				if (state) saving.push(state.update(serial, androidState.patchFor(sdk, { uiadUnsupported: buildId })));
+			},
+		});
+		return new UiadOpsService({ backend, baseScreen, clock, ...(log ? { log } : {}) });
+	}
 }
 
-function buildDriver(
-	options: AndroidDriverOptions,
-	session: AdbSession,
-	baseScreen: ScreenInfo,
-	clock: Clock,
-	execBinary: ExecBinary,
-	facts: DeviceFacts
-): Driver & RepeatingKeys & DetectsAlerts & Partial<SelectsAll> & Partial<SetsText> {
-	const { serial, adb, exec, log } = options;
-	const { sdk } = facts;
-	const initialRoute = options.dumpRoute ?? facts.savedRoute;
-	const saving: Promise<void>[] = [];
-	const dumper = createDumper({
-		session,
-		exec,
-		adb,
-		serial,
-		...(sdk !== undefined ? { sdk } : {}),
-		...(log ? { log } : {}),
-		...(initialRoute ? { initialRoute } : {}),
-		onRoute: (route) => {
-			options.onDumpRoute?.(route);
-			if (options.state) saving.push(options.state.update(serial, patchFor(sdk, { dumpRoute: route })));
-		},
-	});
+/**
+ * Android `Driver`: one resident `adb shell` (inputs, `am`, `pm`, dumps), host `adb` for install and
+ * `exec-out` (binary screenshots never touch the session). `settle` is implemented here over snapshots (one dump,
+ * or `settleByHash` for a long quiet window), so the TS layer needs no fallback (`nativeSettle: false`). The
+ * animation scales it turns off on open are put back by `close`. Built by {@link AndroidDrivers.open}.
+ *
+ * The driver ops are arrow-function properties (own, enumerable, detachable) so a wrapper may spread or proxy them.
+ */
+export class AndroidDriver implements Driver, RepeatingKeys, DetectsAlerts, Partial<SelectsAll>, Partial<SetsText> {
+	readonly platform = "android" as const;
+	readonly id: string;
+	declare readonly networkFaults: Driver["networkFaults"];
+	declare readonly permissions: Driver["permissions"];
+	declare readonly timezone: Driver["timezone"];
+	declare readonly locale: Driver["locale"];
+	declare readonly a11y: Driver["a11y"];
+	declare readonly battery: Driver["battery"];
+	declare readonly memoryWarning: Driver["memoryWarning"];
+	declare readonly push: Driver["push"];
+	readonly app: Driver["app"];
+	readonly selectAll?: SelectsAll["selectAll"];
+	readonly setText?: SetsText["setText"];
 
-	const uiad = openUiad({ options, session, baseScreen, clock, facts, saving });
+	private readonly serial: string;
+	private readonly adb: string;
+	private readonly sdk: number | undefined;
+	private readonly saving: Promise<void>[] = [];
+	private readonly dumper: Dumper;
+	private readonly uiad: UiadOps | undefined;
+	private readonly applyNetwork: Driver["network"];
+	private readonly radius: number;
+	private flapper: Scheduler | undefined;
+	private ticker: RouteTicker | undefined;
 
-	async function dumpWithRetry(): ReturnType<typeof dumper.dump> {
-		let dumped = await dumper.dump();
-		for (
-			let attempt = 1;
-			attempt < SNAPSHOT_ATTEMPTS && !dumped.success && dumped.error.code === "E_AX_UNAVAILABLE";
-			attempt++
-		) {
-			log?.(`uiautomator unavailable, retrying (${attempt}/${SNAPSHOT_ATTEMPTS - 1})`);
-			await clock.sleep(SNAPSHOT_RETRY_MS);
-			dumped = await dumper.dump();
-		}
-		return dumped;
+	constructor(
+		private readonly options: AndroidDriverOptions,
+		private readonly session: AdbSession,
+		private readonly baseScreen: ScreenInfo,
+		private readonly time: Clock,
+		private readonly execBinary: ExecBinary,
+		private readonly facts: DeviceFacts
+	) {
+		const { serial, adb, exec, log } = options;
+		const sdk = facts.sdk;
+		this.id = serial;
+		this.serial = serial;
+		this.adb = adb;
+		this.sdk = sdk;
+		this.radius = DEFAULT_RADIUS * baseScreen.scale;
+		const initialRoute = options.dumpRoute ?? facts.savedRoute;
+		this.dumper = new Dumper({
+			session,
+			exec,
+			adb,
+			serial,
+			...(sdk !== undefined ? { sdk } : {}),
+			...(log ? { log } : {}),
+			...(initialRoute ? { initialRoute } : {}),
+			onRoute: (route) => {
+				options.onDumpRoute?.(route);
+				if (options.state)
+					this.saving.push(options.state.update(serial, androidState.patchFor(sdk, { dumpRoute: route })));
+			},
+		});
+		this.uiad = new UiadOpener().open({ options, session, baseScreen, clock: time, facts, saving: this.saving });
+		const net = new AndroidNetwork({
+			session,
+			exec,
+			adb,
+			serial,
+			clock: time,
+			...(options.networkProxy ? { proxy: options.networkProxy } : {}),
+		});
+		this.applyNetwork = net.network;
+		if (this.uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK)) this.selectAll = this.runSelectAll;
+		if (this.uiad !== undefined) this.setText = this.runSetText;
+		this.app = new AndroidApp({
+			session,
+			exec,
+			adb,
+			serial,
+			...(log ? { log } : {}),
+			...(options.appPackage ? { appPackage: options.appPackage } : {}),
+			...(facts.physical ? { physical: true, ownedPackages: options.ownedPackages ?? [] } : {}),
+		});
+		Object.assign(
+			this,
+			{ networkFaults: net.networkFaults },
+			new AndroidSettings({
+				session,
+				serial,
+				...(options.appPackage ? { appPackage: options.appPackage } : {}),
+			}).ops(),
+			facts.physical ? physicalConditions.ops(`physical Android device ${serial}`) : {}
+		);
 	}
 
-	async function dumpSnapshot(): DriverResult<Snapshot> {
-		spanDetails.note("backend", "dump");
-		const dumped = await dumpWithRetry();
-		if (!dumped.success) return dumped;
-		let parsed: ReturnType<typeof parseUiautomatorXml>;
-		const rotation = hierarchyRotation(dumped.data.xml);
-		const screen = rotatedScreen(baseScreen, rotation);
-		try {
-			parsed = parseUiautomatorXml(dumped.data.xml, screen);
-		} catch (error) {
-			if (error instanceof UiautomatorParseError) return driverErrors.err("E_AX_UNAVAILABLE", error.message);
-			throw error;
-		}
-		const taken: Snapshot = {
+	get capabilities(): DriverCapabilities {
+		return this.uiad?.enabled()
+			? { ...CAPABILITIES, pinch: true, maxPointers: 2, unicodeText: true, nativeSettle: true }
+			: { ...CAPABILITIES, maxPointers: this.maxPointers() };
+	}
+
+	readonly health: Driver["health"] = async () => {
+		const [release, sdk, model] = await Promise.all(
+			["ro.build.version.release", "ro.build.version.sdk", "ro.product.model"].map((k) =>
+				this.session.run(androidArgv.shellCommand(androidArgv.getpropArgv(k)))
+			)
+		);
+		const text = (r: typeof release): string => (r?.success ? r.data.stdout.trim() : "");
+		const info: HealthInfo = {
 			platform: "android",
-			backend: "uiautomator",
-			takenAt: clock.now(),
-			screen,
-			...parsed,
-			truncated: false,
+			id: this.serial,
+			version: `Android ${text(release)} (sdk ${text(sdk)})`,
+			transport: "adb",
+			screen: this.baseScreen,
+			detail: { model: text(model), dumpRoute: this.dumper.route() ?? null, uiad: this.uiad?.status() ?? "off" },
 		};
-		return { success: true, data: taken };
-	}
-
-	/** The server's snapshot when it is running (tens of ms); else, or when it cannot be used, `uiautomator dump` (about 2 s). */
-	async function takeSnapshot(): DriverResult<Snapshot> {
-		return (await uiad?.snapshot()) ?? dumpSnapshot();
-	}
-
-	const input = async (cmd: string, timeoutMs?: number): DriverResult<void> => {
-		const res = await runChecked(session, cmd, "E_HID", timeoutMs);
-		return res.success ? unit : res;
+		return { success: true, data: info };
 	};
 
-	const snapshot: Driver["snapshot"] = async (opts) => {
+	readonly snapshot: Driver["snapshot"] = async (opts) => {
 		if (opts?.backend !== undefined && opts.backend !== "uiautomator") {
 			return driverErrors.err("E_UNSUPPORTED", `Android only has the uiautomator backend, not ${opts.backend}`);
 		}
-		const taken = await takeSnapshot();
+		const taken = await this.takeSnapshot();
 		if (!taken.success || !opts?.interactiveOnly) return taken;
-		return { success: true, data: { ...taken.data, ...interactiveFilter(taken.data.elements) } };
+		return { success: true, data: { ...taken.data, ...uiautomatorParser.interactiveFilter(taken.data.elements) } };
 	};
 
 	/**
@@ -415,39 +367,53 @@ function buildDriver(
 	 * needs each read to be a new look at the field (a stale one defeats the check that the value held); screen reads
 	 * that can share a snapshot go through the runtime's observation cache (`observation-cache.ts`) instead.
 	 */
-	const elementAtPoint: Driver["elementAtPoint"] = async (point) => {
-		const snap = await takeSnapshot();
-		return snap.success ? { success: true, data: elementAt(snap.data.flat, point) } : snap;
+	readonly elementAtPoint: Driver["elementAtPoint"] = async (point) => {
+		const snap = await this.takeSnapshot();
+		return snap.success ? { success: true, data: elementHitTest.at(snap.data.flat, point) } : snap;
 	};
 
-	const tap: Driver["tap"] = async (point, opts) => {
-		const t0 = clock.now();
+	readonly tap: Driver["tap"] = async (point, opts) => {
+		const t0 = this.time.now();
 		const count = Math.max(1, opts?.count ?? 1);
-		const once = opts?.durationMs ? longPressArgv(point, opts.durationMs) : tapArgv(point);
+		const once = opts?.durationMs ? androidArgv.longPressArgv(point, opts.durationMs) : androidArgv.tapArgv(point);
 		const res =
-			(await uiad?.tap(point, { count, ...(opts?.durationMs ? { durationMs: opts.durationMs } : {}) })) ??
-			(await input(Array.from({ length: count }, () => shellCommand(once)).join("; ")));
-		log?.(`tap ${Math.round(point.x)},${Math.round(point.y)} x${count} in ${clock.now() - t0}ms`);
+			(await this.uiad?.tap(point, { count, ...(opts?.durationMs ? { durationMs: opts.durationMs } : {}) })) ??
+			(await this.input(Array.from({ length: count }, () => androidArgv.shellCommand(once)).join("; ")));
+		this.options.log?.(`tap ${Math.round(point.x)},${Math.round(point.y)} x${count} in ${this.time.now() - t0}ms`);
 		return res;
 	};
 
-	const typeText: Driver["typeText"] = async (text) => {
-		const fast = text === "" ? undefined : await uiad?.typeText(text);
+	readonly longPress: Driver["longPress"] = async (point, opts) =>
+		(await this.uiad?.longPress(point, opts?.durationMs)) ??
+		this.input(androidArgv.shellCommand(androidArgv.longPressArgv(point, opts?.durationMs)));
+
+	readonly swipe: Driver["swipe"] = async (from, to, opts) =>
+		(await this.uiad?.swipe(from, to, opts?.durationMs)) ??
+		this.input(androidArgv.shellCommand(androidArgv.swipeArgv(from, to, opts?.durationMs)));
+
+	readonly typeText: Driver["typeText"] = async (text) => {
+		const fast = text === "" ? undefined : await this.uiad?.typeText(text);
 		if (fast !== undefined) return fast;
-		const argvs = textArgvs(text);
+		const argvs = androidArgv.textArgvs(text);
 		if (!argvs.success) return argvs;
 		if (argvs.data.length === 0) return unit;
 		// every `input text` is its own JVM start (hundreds of ms, seconds under load): budget per piece
-		return input(
-			argvs.data.map((argv) => shellCommand(argv)).join(" && "),
+		return this.input(
+			argvs.data.map((argv) => androidArgv.shellCommand(argv)).join(" && "),
 			INPUT_TEXT_BASE_MS + INPUT_TEXT_PIECE_MS * argvs.data.length
 		);
 	};
 
-	const key: Driver["key"] = async (name: KeyName, modifiers: readonly Modifier[] = []) => {
-		const code = keyNameKeycode(name);
-		if (modifiers.length === 0) return (await uiad?.key(code)) ?? input(shellCommand(keyeventArgv(code)));
-		const res = await session.run(shellCommand(keycombinationArgv([...modifiers.map(modifierKeycode), code])));
+	readonly key: Driver["key"] = async (name: KeyName, modifiers: readonly Modifier[] = []) => {
+		const code = androidArgv.keyNameKeycode(name);
+		if (modifiers.length === 0) {
+			return (await this.uiad?.key(code)) ?? this.input(androidArgv.shellCommand(androidArgv.keyeventArgv(code)));
+		}
+		const res = await this.session.run(
+			androidArgv.shellCommand(
+				androidArgv.keycombinationArgv([...modifiers.map((m) => androidArgv.modifierKeycode(m)), code])
+			)
+		);
 		if (!res.success) return res;
 		return res.data.exitCode === 0
 			? unit
@@ -455,118 +421,68 @@ function buildDriver(
 	};
 
 	/** See `RepeatingKeys`: N presses in one round trip (`input keyevent 67 67 67 …`). */
-	const pressKeyRepeat: RepeatingKeys["pressKeyRepeat"] = async (name, times) => {
-		const argvs = keyRepeatArgvs(keyNameKeycode(name), times);
+	readonly pressKeyRepeat: RepeatingKeys["pressKeyRepeat"] = async (name, times) => {
+		const argvs = androidArgv.keyRepeatArgvs(androidArgv.keyNameKeycode(name), times);
 		if (argvs.length === 0) return unit;
-		const fast = await uiad?.key(keyNameKeycode(name), Math.floor(times));
+		const fast = await this.uiad?.key(androidArgv.keyNameKeycode(name), Math.floor(times));
 		if (fast !== undefined) return fast;
-		return input(
-			argvs.map((argv) => shellCommand(argv)).join(" && "),
+		return this.input(
+			argvs.map((argv) => androidArgv.shellCommand(argv)).join(" && "),
 			INPUT_TEXT_BASE_MS + INPUT_TEXT_PIECE_MS * argvs.length
 		);
 	};
 
 	/**
-	 * See `SelectsAll`: the server selects the focused field's text whole; without it, Ctrl+A on the Androids that
-	 * have `input keycombination`. A refusal here is not an error for the caller, which presses Backspace per character.
-	 */
-	const selectAll: SelectsAll["selectAll"] = async () => {
-		const fast = await uiad?.selectAll();
-		if (fast !== undefined) return fast;
-		if (sdk === undefined || sdk < SELECT_ALL_MIN_SDK) {
-			return driverErrors.err(
-				"E_UNSUPPORTED",
-				"select-all needs the warden-uiad server or Android 13+ (`input keycombination`)"
-			);
-		}
-		return input(shellCommand(selectAllArgv()));
-	};
-
-	/**
-	 * See `SetsText`: the server replaces the focused field's text (`ACTION_SET_TEXT`, the action its `typeText` inserts
-	 * with). There is no shell fallback: a refusal or a server that is off is `E_UNSUPPORTED`, and the caller types.
-	 */
-	const setText: SetsText["setText"] = async (text) =>
-		(await uiad?.setText(text)) ?? driverErrors.err("E_UNSUPPORTED", "setText needs the warden-uiad server");
-
-	/**
 	 * Hold-then-move on sdk 26+ (`input motionevent` DOWN, interpolated MOVEs, UP, one shell line); older images
 	 * and an unreadable sdk fall back to a long `input swipe` (no hold).
 	 */
-	const drag: Driver["drag"] = async (from, to, opts) => {
+	readonly drag: Driver["drag"] = async (from, to, opts) => {
 		const timing = {
 			pressMs: opts?.pressMs ?? DRAG_PRESS_MS,
 			durationMs: opts?.durationMs ?? DRAG_MOVE_MS,
 			releaseMs: opts?.releaseMs ?? 0,
 		};
-		const fast = await uiad?.drag(from, to, timing);
+		const fast = await this.uiad?.drag(from, to, timing);
 		if (fast !== undefined) return fast;
-		if (sdk === undefined || sdk < MOTIONEVENT_MIN_SDK) {
-			return input(shellCommand(swipeArgv(from, to, timing.pressMs + timing.durationMs + timing.releaseMs)));
-		}
 		const total = timing.pressMs + timing.durationMs + timing.releaseMs;
-		return input(
-			dragMotionCommand(from, to, timing),
+		if (this.sdk === undefined || this.sdk < MOTIONEVENT_MIN_SDK) {
+			return this.input(androidArgv.shellCommand(androidArgv.swipeArgv(from, to, total)));
+		}
+		return this.input(
+			androidArgv.dragMotionCommand(from, to, timing),
 			INPUT_TEXT_BASE_MS + total + (DRAG_STEPS + 2) * DRAG_PROCESS_BUDGET_MS
 		);
 	};
 
-	/**
-	 * Replays a plan. With the server: one multi-pointer MotionEvent stream. Without it (or when it refuses): one
-	 * finger as a downsampled `input motionevent` line on sdk 26+; two fingers cannot be injected by `input`.
-	 */
-	const runGesture = async (plan: GesturePlan): DriverResult<void> => {
-		const fast = await uiad?.gesture(plan);
-		if (fast !== undefined) return fast;
-		if (plan.paths.length > 1) {
-			return driverErrors.err(
-				"E_UNSUPPORTED",
-				"two-finger gestures need the warden-uiad server (API 26+, WARDEN_ANDROID_UIAD not 0)"
-			);
-		}
-		if (sdk === undefined || sdk < MOTIONEVENT_MIN_SDK) {
-			return driverErrors.err(
-				"E_UNSUPPORTED",
-				"gestures need Android 8+ (`input motionevent`) or the warden-uiad server"
-			);
-		}
-		return input(
-			gestureMotionCommand(plan),
-			INPUT_TEXT_BASE_MS + plan.totalMs + (GESTURE_LINE_MAX_MOVES + 2) * DRAG_PROCESS_BUDGET_MS
-		);
+	readonly pinch: Driver["pinch"] = async (center, scale, opts) => {
+		const plan = gestureGeometry.pinchPlan(center, scale, opts, this.radius);
+		return plan.success ? this.runGesture(plan.data) : plan;
 	};
 
-	/** pointers `gesture` takes: 2 with the server, 1 where `input motionevent` exists (sdk is known at open), else 0 */
-	const maxPointers = (): 0 | 1 | 2 => {
-		if (uiad?.enabled()) return 2;
-		return sdk !== undefined && sdk >= MOTIONEVENT_MIN_SDK ? 1 : 0;
-	};
-	const radius = DEFAULT_RADIUS * baseScreen.scale;
-	const pinch: Driver["pinch"] = async (center, scale, opts) => {
-		const plan = gestureGeometry.pinchPlan(center, scale, opts, radius);
-		return plan.success ? runGesture(plan.data) : plan;
-	};
-	const rotate: Driver["rotate"] = async (center, degrees, opts) => {
-		const plan = gestureGeometry.rotatePlan(center, degrees, opts, radius);
-		return plan.success ? runGesture(plan.data) : plan;
-	};
-	const gesture: Driver["gesture"] = async (paths, opts) => {
-		const plan = gestureGeometry.planGesture(paths, opts, maxPointers());
-		return plan.success ? runGesture(plan.data) : plan;
+	readonly rotate: Driver["rotate"] = async (center, degrees, opts) => {
+		const plan = gestureGeometry.rotatePlan(center, degrees, opts, this.radius);
+		return plan.success ? this.runGesture(plan.data) : plan;
 	};
 
-	const pressButton: Driver["pressButton"] = async (button: HardwareButton) => {
-		const code = buttonKeycode(button);
+	readonly gesture: Driver["gesture"] = async (paths, opts) => {
+		const plan = gestureGeometry.planGesture(paths, opts, this.maxPointers());
+		return plan.success ? this.runGesture(plan.data) : plan;
+	};
+
+	readonly pressButton: Driver["pressButton"] = async (button: HardwareButton) => {
+		const code = androidArgv.buttonKeycode(button);
 		if (code === undefined) return driverErrors.err("E_UNSUPPORTED", `Android has no ${button} button`);
-		return (await uiad?.key(code)) ?? input(shellCommand(keyeventArgv(code)));
+		return (await this.uiad?.key(code)) ?? this.input(androidArgv.shellCommand(androidArgv.keyeventArgv(code)));
 	};
 
-	const screenshot: Driver["screenshot"] = async (opts) => {
-		const res = await execBinary(screencapArgv(adb, serial), { timeoutMs: SCREENSHOT_TIMEOUT_MS });
+	readonly screenshot: Driver["screenshot"] = async (opts) => {
+		const res = await this.execBinary(androidArgv.screencapArgv(this.adb, this.serial), {
+			timeoutMs: SCREENSHOT_TIMEOUT_MS,
+		});
 		if (res.exitCode !== 0 || !PNG_MAGIC.every((b, i) => res.stdout[i] === b)) {
 			return driverErrors.err(
 				"E_IO",
-				`screencap on ${serial} gave no PNG (exit ${res.exitCode}, ${res.stdout.length} bytes)`
+				`screencap on ${this.serial} gave no PNG (exit ${res.exitCode}, ${res.stdout.length} bytes)`
 			);
 		}
 		if (!opts?.path) return { success: true, data: { png: res.stdout } };
@@ -582,20 +498,20 @@ function buildDriver(
 		return { success: true, data: { path: opts.path } };
 	};
 
-	const orientation: Driver["orientation"] = async (set?: Orientation) => {
+	readonly orientation: Driver["orientation"] = async (set?: Orientation) => {
 		if (set) {
-			const saved = await facts.settings?.beforeRotate();
+			const saved = await this.facts.settings?.beforeRotate();
 			if (saved && !saved.success) return saved;
-			for (const argv of rotationArgvs(orientationToRotation(set))) {
-				const res = await input(shellCommand(argv));
+			for (const argv of androidArgv.rotationArgvs(androidDevice.orientationToRotation(set))) {
+				const res = await this.input(androidArgv.shellCommand(argv));
 				if (!res.success) return res;
 			}
 			return { success: true, data: set };
 		}
-		const res = await session.run(shellCommand(userRotationArgv()));
+		const res = await this.session.run(androidArgv.shellCommand(androidArgv.userRotationArgv()));
 		if (!res.success) return res;
 		const n = Number.parseInt(res.data.stdout.trim(), 10);
-		return { success: true, data: rotationToOrientation(Number.isNaN(n) ? 0 : n) };
+		return { success: true, data: androidDevice.rotationToOrientation(Number.isNaN(n) ? 0 : n) };
 	};
 
 	/**
@@ -607,116 +523,93 @@ function buildDriver(
 	 * events to stop by itself, for any `quietMs`. (The single dump is the dump's idle wait, which a server snapshot
 	 * does not have, so it is always a real dump here.)
 	 */
-	const settle = async (opts?: { quietMs?: number; timeoutMs?: number }): DriverResult<SettleDetail> => {
+	readonly settle: Driver["settle"] = async (opts) => {
 		const quietMs = opts?.quietMs ?? DEFAULT_SETTLE_QUIET_MS;
 		const timeoutMs = opts?.timeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS;
-		const fast = await uiad?.settle({ quietMs, timeoutMs });
+		const fast = await this.uiad?.settle({ quietMs, timeoutMs });
 		if (fast !== undefined) return fast;
 		if (quietMs <= DUMP_IDLE_MS) {
-			const start = clock.now();
-			const taken = await dumpSnapshot();
-			const waitedMs = clock.now() - start;
+			const start = this.time.now();
+			const taken = await this.dumpSnapshot();
+			const waitedMs = this.time.now() - start;
 			spanDetails.note("via", "snapshot");
 			return {
 				success: true,
 				data: { quiet: taken.success && waitedMs < DUMP_IDLE_TIMEOUT_MS, waitedMs, via: "snapshot" },
 			};
 		}
-		const poll = async (): Promise<string> => {
-			const taken = await takeSnapshot();
-			if (!taken.success) return "unavailable";
-			// snapshotHash ignores `text`; on Android static text lives there, so fold it into `value`
-			return settler.snapshotHash({ flat: taken.data.flat.map((e) => ({ ...e, value: e.value ?? e.text })) });
-		};
-		const outcome = await settler.byHash(poll, {
+		const outcome = await settler.byHash(() => this.pollHash(), {
 			quietMs,
 			timeoutMs,
-			now: clock.now,
-			sleep: clock.sleep,
+			now: this.time.now,
+			sleep: this.time.sleep,
 		});
 		spanDetails.note("via", "hash");
 		return { success: true, data: { ...outcome, via: "hash" } };
 	};
 
-	const alert: Driver["alert"] = async (): DriverResult<AlertInfo | null> => {
-		const taken = await takeSnapshot();
-		return taken.success ? { success: true, data: detectAlert(taken.data.flat) } : taken;
+	readonly alert: Driver["alert"] = async (): DriverResult<AlertInfo | null> => {
+		const taken = await this.takeSnapshot();
+		return taken.success ? { success: true, data: androidAlert.detectAlert(taken.data.flat) } : taken;
 	};
 
-	const appearance: Driver["appearance"] = async (set) => {
+	readonly alertIn: DetectsAlerts["alertIn"] = (snapshot) => androidAlert.detectAlert(snapshot.flat);
+
+	readonly appearance: Driver["appearance"] = async (set) => {
 		if (set) {
-			const saved = await facts.settings?.beforeAppearance();
+			const saved = await this.facts.settings?.beforeAppearance();
 			if (saved && !saved.success) return saved;
-			const res = await runChecked(session, shellCommand(uimodeSetArgv(set === "dark")), "E_UNSUPPORTED");
+			const res = await androidDevice.runChecked(
+				this.session,
+				androidArgv.shellCommand(androidArgv.uimodeSetArgv(set === "dark")),
+				"E_UNSUPPORTED"
+			);
 			return res.success ? { success: true, data: set } : res;
 		}
-		const res = await runChecked(session, shellCommand(uimodeGetArgv()), "E_UNSUPPORTED");
+		const res = await androidDevice.runChecked(
+			this.session,
+			androidArgv.shellCommand(androidArgv.uimodeGetArgv()),
+			"E_UNSUPPORTED"
+		);
 		if (!res.success) return res;
 		return { success: true, data: /Night mode:\s*yes/i.test(res.data) ? "dark" : "light" };
 	};
 
-	const { network: applyNetwork, networkFaults } = createAndroidNetwork({
-		session,
-		exec,
-		adb,
-		serial,
-		clock,
-		...(options.networkProxy ? { proxy: options.networkProxy } : {}),
-	});
-	let flapper: Scheduler | undefined;
-	const stopFlap = async (): Promise<void> => {
-		const running = flapper;
-		flapper = undefined;
-		running?.stop();
-		await running?.done;
-	};
+	readonly clipboard: Driver["clipboard"] = async () =>
+		driverErrors.err("E_UNSUPPORTED", "Android has no public shell clipboard access; type ASCII with typeText");
+
 	/**
 	 * Any network op ends a running flap first (which puts its base back). `flap` itself applies the base, then
 	 * the scheduler alternates it with offline in this process until the next network op or `close()`.
 	 */
-	const network: Driver["network"] = async (op, opts) => {
-		await stopFlap();
-		if (op.kind !== "flap") return applyNetwork(op, opts);
+	readonly network: Driver["network"] = async (op, opts) => {
+		await this.stopFlap();
+		if (op.kind !== "flap") return this.applyNetwork(op, opts);
 		const base = op.base ?? { kind: "online" };
 		if (base.kind === "flap") return driverErrors.err("E_BAD_REQUEST", "flap base cannot itself be a flap");
 		if (!(op.upMs > 0 && op.downMs > 0)) return driverErrors.err("E_BAD_REQUEST", "flap needs upMs and downMs above 0");
-		const applied = await applyNetwork(base, opts);
+		const applied = await this.applyNetwork(base, opts);
 		if (!applied.success) return applied;
 		const running = schedulers.startFlap(
-			{ network: (condition) => applyNetwork(condition, opts) },
+			{ network: (condition) => this.applyNetwork(condition, opts) },
 			{ ...op, base, applyInitial: false },
 			{
-				...(options.tickerClock ?? realTickerClock),
-				...(options.conditionSink ? { sink: options.conditionSink } : {}),
+				...(this.options.tickerClock ?? realTickerClock),
+				...(this.options.conditionSink ? { sink: this.options.conditionSink } : {}),
 			}
 		);
-		flapper = running;
+		this.flapper = running;
 		void running.done.then((outcome) => {
-			if (outcome.stopped === "failed") log?.(`network flap stopped: ${outcome.error}`);
+			if (outcome.stopped === "failed") this.options.log?.(`network flap stopped: ${outcome.error}`);
 		});
 		return { success: true, data: { ...applied.data, condition: op } };
 	};
-	const settings = createAndroidSettings({
-		session,
-		serial,
-		...(options.appPackage ? { appPackage: options.appPackage } : {}),
-	});
-	const clockOp: Driver["clock"] = async (op) => {
-		const applied = await applyAndroidClock({ session, exec, adb, serial }, op);
+
+	readonly clock: Driver["clock"] = async (op) => {
+		const { session, options, adb, serial } = this;
+		const applied = await new AndroidClock({ session, exec: options.exec, adb, serial }).apply(op);
 		if (applied.success) options.clockRecorder?.(op);
 		return applied;
-	};
-	let ticker: RouteTicker | undefined;
-	const stopTicker = async (): Promise<void> => {
-		const running = ticker;
-		ticker = undefined;
-		running?.stop();
-		await running?.done;
-	};
-	const geoFix = async (point: LatLon, altM?: number): DriverResult<void> => {
-		const res = await exec(geoFixArgv(adb, serial, point, altM), { timeoutMs: GEO_FIX_MS });
-		const failure = geoFixFailure(res);
-		return failure === undefined ? unit : driverErrors.err("E_IO", failure);
 	};
 
 	/**
@@ -725,50 +618,40 @@ function buildDriver(
 	 * `conditions/route-ticker.main.ts`. The emulator has no way to un-set a fix, so `clear` stops the ticker and
 	 * the last fix stays.
 	 */
-	const location: Driver["location"] = async (op) => {
-		if (!serial.startsWith("emulator-")) {
-			return driverErrors.err("E_UNSUPPORTED", `location needs an emulator; ${serial} has no emulator console`);
+	readonly location: Driver["location"] = async (op) => {
+		if (!this.serial.startsWith("emulator-")) {
+			return driverErrors.err("E_UNSUPPORTED", `location needs an emulator; ${this.serial} has no emulator console`);
 		}
-		await stopTicker();
+		await this.stopTicker();
 		if (op.kind === "clear") return unit;
-		if (op.kind === "point") return geoFix(op, op.altM);
+		if (op.kind === "point") return this.geoFix(op, op.altM);
 		const planned = await locationPlanner.planRoute(op, (path) => readFile(path, "utf8"));
 		if (!planned.success) return driverErrors.err("E_BAD_REQUEST", planned.error);
 		const plan = planned.data;
 		const first = plan.points[0] as LatLon;
-		const placed = await geoFix(first);
+		const placed = await this.geoFix(first);
 		if (!placed.success || plan.points.length < 2) return placed;
-		ticker = routeTickers.start(plan, {
-			...(options.tickerClock ?? realTickerClock),
+		const running = routeTickers.start(plan, {
+			...(this.options.tickerClock ?? realTickerClock),
 			fix: async (point) => {
-				const res = await geoFix(point);
+				const res = await this.geoFix(point);
 				return res.success ? undefined : res.error.message;
 			},
 		});
-		const running = ticker;
+		this.ticker = running;
 		void running.done.then((outcome) => {
-			if (outcome.stopped === "failed") log?.(`location route stopped: ${outcome.error}`);
+			if (outcome.stopped === "failed") this.options.log?.(`location route stopped: ${outcome.error}`);
 		});
 		return unit;
-	};
-
-	const touchSensor = async (fingerId: number): DriverResult<void> => {
-		const touched = await options.exec(emuFingerTouchArgv(adb, serial, fingerId), { timeoutMs: 10_000 });
-		// the console answers `KO: …` (and some builds still exit 0) when the sensor is missing
-		if (touched.exitCode === 0 && !/^KO\b/m.test(touched.stdout)) return { success: true, data: undefined };
-		return driverErrors.err(
-			"E_IO",
-			`adb emu finger touch failed: ${`${touched.stdout}${touched.stderr}`.trim().slice(0, 200)}`
-		);
 	};
 
 	/**
 	 * `emu finger touch <id>` on the emulator console presents a fingerprint (id 1 is the enrolled one, 99 matches
 	 * nothing); `dumpsys fingerprint` says whether any is enrolled. Enrollment itself is baked into the golden snapshot.
 	 */
-	const biometrics: Driver["biometrics"] = async (op) => {
-		if (!isEmulatorSerial(serial)) {
-			return driverErrors.err("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${serial}`);
+	readonly biometrics: Driver["biometrics"] = async (op) => {
+		if (!androidArgv.isEmulatorSerial(this.serial)) {
+			return driverErrors.err("E_UNSUPPORTED", `biometrics need an emulator, not the physical device ${this.serial}`);
 		}
 		if (op === "enroll" || op === "unenroll") {
 			return driverErrors.err(
@@ -777,93 +660,266 @@ function buildDriver(
 			);
 		}
 		if (op !== "status") {
-			const touched = await touchSensor(op === "match" ? 1 : UNENROLLED_FINGER_ID);
+			const touched = await this.touchSensor(op === "match" ? 1 : UNENROLLED_FINGER_ID);
 			if (!touched.success) return touched;
 		}
-		const dump = await runChecked(session, shellCommand(dumpsysFingerprintArgv()), "E_UNSUPPORTED");
+		const dump = await androidDevice.runChecked(
+			this.session,
+			androidArgv.shellCommand(androidArgv.dumpsysFingerprintArgv()),
+			"E_UNSUPPORTED"
+		);
 		if (!dump.success) return dump;
 		const state: BiometricState = { enrolled: androidBiometrics.isEnrolled(dump.data), modality: "fingerprint" };
 		return { success: true, data: state };
 	};
 
-	const clipboard: Driver["clipboard"] = async () =>
-		driverErrors.err("E_UNSUPPORTED", "Android has no public shell clipboard access; type ASCII with typeText");
-
-	const health: Driver["health"] = async () => {
-		const [release, sdk, model] = await Promise.all(
-			["ro.build.version.release", "ro.build.version.sdk", "ro.product.model"].map((k) =>
-				session.run(shellCommand(getpropArgv(k)))
-			)
-		);
-		const text = (r: typeof release): string => (r?.success ? r.data.stdout.trim() : "");
-		const info: HealthInfo = {
-			platform: "android",
-			id: serial,
-			version: `Android ${text(release)} (sdk ${text(sdk)})`,
-			transport: "adb",
-			screen: baseScreen,
-			detail: { model: text(model), dumpRoute: dumper.route() ?? null, uiad: uiad?.status() ?? "off" },
-		};
-		return { success: true, data: info };
+	readonly close = async (): Promise<void> => {
+		await this.stopFlap();
+		await this.stopTicker();
+		await this.uiad?.stop();
+		await this.facts.animations.restore();
+		await this.facts.settings?.restore();
+		await Promise.all(this.saving.splice(0));
+		await this.session.close();
 	};
 
-	return {
-		platform: "android",
-		id: serial,
-		get capabilities(): DriverCapabilities {
-			return uiad?.enabled()
-				? { ...CAPABILITIES, pinch: true, maxPointers: 2, unicodeText: true, nativeSettle: true }
-				: { ...CAPABILITIES, maxPointers: maxPointers() };
-		},
-		health,
-		snapshot,
-		elementAtPoint,
-		tap,
-		longPress: async (point, opts) =>
-			(await uiad?.longPress(point, opts?.durationMs)) ?? input(shellCommand(longPressArgv(point, opts?.durationMs))),
-		swipe: async (from, to, opts) =>
-			(await uiad?.swipe(from, to, opts?.durationMs)) ?? input(shellCommand(swipeArgv(from, to, opts?.durationMs))),
-		drag,
-		pinch,
-		rotate,
-		gesture,
-		typeText,
-		key,
-		pressKeyRepeat,
-		...(uiad !== undefined || (sdk !== undefined && sdk >= SELECT_ALL_MIN_SDK) ? { selectAll } : {}),
-		...(uiad !== undefined ? { setText } : {}),
-		pressButton,
-		screenshot,
-		orientation,
-		settle,
-		alert,
-		alertIn: (snapshot) => detectAlert(snapshot.flat),
-		appearance,
-		clipboard,
-		network,
-		networkFaults,
-		location,
-		clock: clockOp,
-		...settings,
-		...(facts.physical ? physicalConditions.ops(`physical Android device ${serial}`) : {}),
-		biometrics,
-		app: createAppCommands({
-			session,
-			exec,
+	/**
+	 * See `SelectsAll`: the server selects the focused field's text whole; without it, Ctrl+A on the Androids that
+	 * have `input keycombination`. A refusal here is not an error for the caller, which presses Backspace per character.
+	 */
+	private readonly runSelectAll: SelectsAll["selectAll"] = async () => {
+		const fast = await this.uiad?.selectAll();
+		if (fast !== undefined) return fast;
+		if (this.sdk === undefined || this.sdk < SELECT_ALL_MIN_SDK) {
+			return driverErrors.err(
+				"E_UNSUPPORTED",
+				"select-all needs the warden-uiad server or Android 13+ (`input keycombination`)"
+			);
+		}
+		return this.input(androidArgv.shellCommand(androidArgv.selectAllArgv()));
+	};
+
+	/**
+	 * See `SetsText`: the server replaces the focused field's text (`ACTION_SET_TEXT`, the action its `typeText` inserts
+	 * with). There is no shell fallback: a refusal or a server that is off is `E_UNSUPPORTED`, and the caller types.
+	 */
+	private readonly runSetText: SetsText["setText"] = async (text) =>
+		(await this.uiad?.setText(text)) ?? driverErrors.err("E_UNSUPPORTED", "setText needs the warden-uiad server");
+
+	private async dumpWithRetry(): ReturnType<Dumper["dump"]> {
+		let dumped = await this.dumper.dump();
+		for (
+			let attempt = 1;
+			attempt < SNAPSHOT_ATTEMPTS && !dumped.success && dumped.error.code === "E_AX_UNAVAILABLE";
+			attempt++
+		) {
+			this.options.log?.(`uiautomator unavailable, retrying (${attempt}/${SNAPSHOT_ATTEMPTS - 1})`);
+			await this.time.sleep(SNAPSHOT_RETRY_MS);
+			dumped = await this.dumper.dump();
+		}
+		return dumped;
+	}
+
+	private async dumpSnapshot(): DriverResult<Snapshot> {
+		spanDetails.note("backend", "dump");
+		const dumped = await this.dumpWithRetry();
+		if (!dumped.success) return dumped;
+		let parsed: ReturnType<typeof uiautomatorParser.parseUiautomatorXml>;
+		const rotation = androidDevice.hierarchyRotation(dumped.data.xml);
+		const screen = androidDevice.rotatedScreen(this.baseScreen, rotation);
+		try {
+			parsed = uiautomatorParser.parseUiautomatorXml(dumped.data.xml, screen);
+		} catch (error) {
+			if (error instanceof UiautomatorParseError) return driverErrors.err("E_AX_UNAVAILABLE", error.message);
+			throw error;
+		}
+		const taken: Snapshot = {
+			platform: "android",
+			backend: "uiautomator",
+			takenAt: this.time.now(),
+			screen,
+			...parsed,
+			truncated: false,
+		};
+		return { success: true, data: taken };
+	}
+
+	/** The server's snapshot when it is running (tens of ms); else, or when it cannot be used, `uiautomator dump` (about 2 s). */
+	private async takeSnapshot(): DriverResult<Snapshot> {
+		return (await this.uiad?.snapshot()) ?? this.dumpSnapshot();
+	}
+
+	private async pollHash(): Promise<string> {
+		const taken = await this.takeSnapshot();
+		if (!taken.success) return "unavailable";
+		// snapshotHash ignores `text`; on Android static text lives there, so fold it into `value`
+		return settler.snapshotHash({ flat: taken.data.flat.map((e) => ({ ...e, value: e.value ?? e.text })) });
+	}
+
+	private async input(cmd: string, timeoutMs?: number): DriverResult<void> {
+		const res = await androidDevice.runChecked(this.session, cmd, "E_HID", timeoutMs);
+		return res.success ? unit : res;
+	}
+
+	/**
+	 * Replays a plan. With the server: one multi-pointer MotionEvent stream. Without it (or when it refuses): one
+	 * finger as a downsampled `input motionevent` line on sdk 26+; two fingers cannot be injected by `input`.
+	 */
+	private async runGesture(plan: GesturePlan): DriverResult<void> {
+		const fast = await this.uiad?.gesture(plan);
+		if (fast !== undefined) return fast;
+		if (plan.paths.length > 1) {
+			return driverErrors.err(
+				"E_UNSUPPORTED",
+				"two-finger gestures need the warden-uiad server (API 26+, WARDEN_ANDROID_UIAD not 0)"
+			);
+		}
+		if (this.sdk === undefined || this.sdk < MOTIONEVENT_MIN_SDK) {
+			return driverErrors.err(
+				"E_UNSUPPORTED",
+				"gestures need Android 8+ (`input motionevent`) or the warden-uiad server"
+			);
+		}
+		return this.input(
+			androidArgv.gestureMotionCommand(plan),
+			INPUT_TEXT_BASE_MS + plan.totalMs + (GESTURE_LINE_MAX_MOVES + 2) * DRAG_PROCESS_BUDGET_MS
+		);
+	}
+
+	/** pointers `gesture` takes: 2 with the server, 1 where `input motionevent` exists (sdk is known at open), else 0 */
+	private maxPointers(): 0 | 1 | 2 {
+		if (this.uiad?.enabled()) return 2;
+		return this.sdk !== undefined && this.sdk >= MOTIONEVENT_MIN_SDK ? 1 : 0;
+	}
+
+	private async stopFlap(): Promise<void> {
+		const running = this.flapper;
+		this.flapper = undefined;
+		running?.stop();
+		await running?.done;
+	}
+
+	private async stopTicker(): Promise<void> {
+		const running = this.ticker;
+		this.ticker = undefined;
+		running?.stop();
+		await running?.done;
+	}
+
+	private async geoFix(point: LatLon, altM?: number): DriverResult<void> {
+		const res = await this.options.exec(androidArgv.geoFixArgv(this.adb, this.serial, point, altM), {
+			timeoutMs: GEO_FIX_MS,
+		});
+		const failure = androidArgv.geoFixFailure(res);
+		return failure === undefined ? unit : driverErrors.err("E_IO", failure);
+	}
+
+	private async touchSensor(fingerId: number): DriverResult<void> {
+		const touched = await this.options.exec(androidArgv.emuFingerTouchArgv(this.adb, this.serial, fingerId), {
+			timeoutMs: 10_000,
+		});
+		// the console answers `KO: …` (and some builds still exit 0) when the sensor is missing
+		if (touched.exitCode === 0 && !/^KO\b/m.test(touched.stdout)) return { success: true, data: undefined };
+		return driverErrors.err(
+			"E_IO",
+			`adb emu finger touch failed: ${`${touched.stdout}${touched.stderr}`.trim().slice(0, 200)}`
+		);
+	}
+}
+
+/** Opens {@link AndroidDriver}s. Use the shared {@link androidDrivers} singleton. */
+export class AndroidDrivers {
+	/** Deepest hittable element containing `point` (later in preorder wins ties: drawn on top); else deepest any. */
+	elementAt(flat: readonly Element[], point: Point): Element | null {
+		return elementHitTest.at(flat, point);
+	}
+
+	/**
+	 * Opens the shell session, waits for the device, turns animations off and returns the {@link AndroidDriver}. A
+	 * failure after the shell opened closes it again.
+	 */
+	async open(options: AndroidDriverOptions): DriverResult<Driver> {
+		const { serial, adb, log } = options;
+		const clock = options.clock ?? realClock;
+		const execBinary = options.execBinary ?? bunExecBinary;
+		const session = adbSessions.open({
 			adb,
 			serial,
+			...(options.spawn ? { spawn: options.spawn } : {}),
 			...(log ? { log } : {}),
-			...(options.appPackage ? { appPackage: options.appPackage } : {}),
-			...(facts.physical ? { physical: true, ownedPackages: options.ownedPackages ?? [] } : {}),
-		}),
-		close: async () => {
-			await stopFlap();
-			await stopTicker();
-			await uiad?.stop();
-			await facts.animations.restore();
-			await facts.settings?.restore();
-			await Promise.all(saving.splice(0));
+		});
+
+		const failed = async (error: DriverError): DriverResult<never> => {
 			await session.close();
-		},
-	};
+			return { success: false, error };
+		};
+
+		const prepared = await this.prepare(options, session, clock);
+		if (!prepared.success) return failed(prepared.error);
+		const { sdk, phone, screen, savedState } = prepared.data;
+		const saved = androidState.forSdk(savedState, sdk);
+		const animations = await new AndroidAnimations({
+			session,
+			serial,
+			sdk,
+			pending: saved.animations,
+			...(options.state ? { state: options.state } : {}),
+			...(log ? { log } : {}),
+		}).disable();
+		const settings = phone
+			? await androidPhone.createSettingsGuard({
+					session,
+					serial,
+					sdk,
+					pending: { rotation: saved.rotation, uimode: saved.uimode },
+					...(options.state ? { state: options.state } : {}),
+					...(log ? { log } : {}),
+				})
+			: undefined;
+		return {
+			success: true,
+			data: new AndroidDriver(options, session, screen, clock, execBinary, {
+				sdk,
+				savedRoute: saved.dumpRoute,
+				savedUiadUnsupported: saved.uiadUnsupported,
+				animations,
+				settings,
+				physical: phone !== undefined,
+			}),
+		};
+	}
+
+	/** Waits for boot, wakes a physical phone, reads the screen and the saved state; what the driver needs before it is built. */
+	private async prepare(
+		options: AndroidDriverOptions,
+		session: AdbSession,
+		clock: Clock
+	): DriverResult<{
+		sdk: number | undefined;
+		phone: BootInfo["physical"];
+		screen: ScreenInfo;
+		savedState: AndroidDeviceState;
+	}> {
+		const { serial, log } = options;
+		const savedState = options.state?.read(serial);
+		const booted = await androidDevice.waitForBoot(session, serial, clock, {
+			...(options.bootTimeoutMs !== undefined ? { timeoutMs: options.bootTimeoutMs } : {}),
+			...(log ? { log } : {}),
+		});
+		if (!booted.success) return booted;
+		const phone = booted.data.physical;
+		if (phone) {
+			const awake = await androidPhone.preparePhone(session, clock, phone, log);
+			if (!awake.success) return awake;
+		}
+		const probed = options.screen ?? booted.data.screen;
+		const screen = probed ? { success: true as const, data: probed } : await androidDevice.readScreen(session, serial);
+		if (!screen.success) return screen;
+		return {
+			success: true,
+			data: { sdk: booted.data.sdk, phone, screen: screen.data, savedState: (await savedState) ?? {} },
+		};
+	}
 }
+
+export const androidDrivers = new AndroidDrivers();

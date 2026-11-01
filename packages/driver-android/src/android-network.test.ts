@@ -1,24 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { FakeProxy } from "@delacour/warden-driver/testing/network-proxy";
-import { openAdbSession } from "./adb-session";
-import { fakeAndroidHost, type ShellRule } from "./android-host.testing";
-import {
-	airplaneArgv,
-	applyAndroidNetwork,
-	createAndroidNetwork,
-	DUMPSYS_CONNECTIVITY_ARGV,
-	EMULATOR_HOST_ALIAS,
-	emuNetworkArgv,
-	emuReplyError,
-	httpProxyPutArgv,
-	parseActiveNetwork,
-	svcArgvs,
-} from "./android-network";
+import { adbSessions } from "./adb-session";
+import { FakeAndroidHost, type ShellRule } from "./android-host.testing";
+import { AndroidNetwork, androidNetworkArgv, DUMPSYS_CONNECTIVITY_ARGV, EMULATOR_HOST_ALIAS } from "./android-network";
 import { DUMPSYS_AIRPLANE, DUMPSYS_ONLINE, DUMPSYS_SVC_OFF } from "./network.fixture";
 
 describe("argv builders", () => {
 	test("emu network speed / delay are host adb argv on the serial", () => {
-		expect(emuNetworkArgv("/sdk/adb", "emulator-5554", "speed", "200:240")).toEqual([
+		expect(androidNetworkArgv.emuNetworkArgv("/sdk/adb", "emulator-5554", "speed", "200:240")).toEqual([
 			"/sdk/adb",
 			"-s",
 			"emulator-5554",
@@ -27,17 +16,22 @@ describe("argv builders", () => {
 			"speed",
 			"200:240",
 		]);
-		expect(emuNetworkArgv("adb", "s", "delay", "none").slice(3)).toEqual(["emu", "network", "delay", "none"]);
+		expect(androidNetworkArgv.emuNetworkArgv("adb", "s", "delay", "none").slice(3)).toEqual([
+			"emu",
+			"network",
+			"delay",
+			"none",
+		]);
 	});
 
 	test("airplane mode and svc argv", () => {
-		expect(airplaneArgv(true)).toEqual(["cmd", "connectivity", "airplane-mode", "enable"]);
-		expect(airplaneArgv(false)).toEqual(["cmd", "connectivity", "airplane-mode", "disable"]);
-		expect(svcArgvs(false)).toEqual([
+		expect(androidNetworkArgv.airplaneArgv(true)).toEqual(["cmd", "connectivity", "airplane-mode", "enable"]);
+		expect(androidNetworkArgv.airplaneArgv(false)).toEqual(["cmd", "connectivity", "airplane-mode", "disable"]);
+		expect(androidNetworkArgv.svcArgvs(false)).toEqual([
 			["svc", "wifi", "disable"],
 			["svc", "data", "disable"],
 		]);
-		expect(svcArgvs(true)).toEqual([
+		expect(androidNetworkArgv.svcArgvs(true)).toEqual([
 			["svc", "wifi", "enable"],
 			["svc", "data", "enable"],
 		]);
@@ -47,30 +41,30 @@ describe("argv builders", () => {
 
 describe("emuReplyError", () => {
 	test("the console answers KO with exit 0", () => {
-		expect(emuReplyError("KO: invalid <speed> argument, see 'help network speed' for valid values\n")).toContain(
-			"invalid <speed>"
-		);
-		expect(emuReplyError("OK\n")).toBeUndefined();
-		expect(emuReplyError("")).toBeUndefined();
+		expect(
+			androidNetworkArgv.emuReplyError("KO: invalid <speed> argument, see 'help network speed' for valid values\n")
+		).toContain("invalid <speed>");
+		expect(androidNetworkArgv.emuReplyError("OK\n")).toBeUndefined();
+		expect(androidNetworkArgv.emuReplyError("")).toBeUndefined();
 	});
 });
 
 describe("parseActiveNetwork (real dumpsys connectivity)", () => {
 	test("online: a network id", () => {
-		expect(parseActiveNetwork(DUMPSYS_ONLINE)).toEqual({ online: true, netId: 105 });
+		expect(androidNetworkArgv.parseActiveNetwork(DUMPSYS_ONLINE)).toEqual({ online: true, netId: 105 });
 	});
 
 	test("airplane mode: none", () => {
-		expect(parseActiveNetwork(DUMPSYS_AIRPLANE)).toEqual({ online: false });
+		expect(androidNetworkArgv.parseActiveNetwork(DUMPSYS_AIRPLANE)).toEqual({ online: false });
 	});
 
 	test("wifi and data disabled by svc: none", () => {
-		expect(parseActiveNetwork(DUMPSYS_SVC_OFF)).toEqual({ online: false });
+		expect(androidNetworkArgv.parseActiveNetwork(DUMPSYS_SVC_OFF)).toEqual({ online: false });
 	});
 
 	test("anything else is unreadable", () => {
-		expect(parseActiveNetwork("")).toBeUndefined();
-		expect(parseActiveNetwork("Can't find service: connectivity\n")).toBeUndefined();
+		expect(androidNetworkArgv.parseActiveNetwork("")).toBeUndefined();
+		expect(androidNetworkArgv.parseActiveNetwork("Can't find service: connectivity\n")).toBeUndefined();
 	});
 });
 
@@ -114,7 +108,7 @@ function device(opts: { airplane?: "ok" | "unsupported"; settleAfterPolls?: numb
 			},
 		},
 	];
-	const host = fakeAndroidHost({
+	const host = new FakeAndroidHost({
 		shell: rules,
 		host: [{ match: /emu network/, reply: opts.emu ?? "OK\n" }],
 	});
@@ -133,20 +127,20 @@ function fakeClock() {
 
 async function run(
 	d: ReturnType<typeof device>,
-	condition: Parameters<typeof applyAndroidNetwork>[1],
+	condition: Parameters<AndroidNetwork["apply"]>[0],
 	serial = "emulator-5554"
 ) {
-	const session = openAdbSession({ adb: "adb", serial, spawn: d.host.spawn });
+	const session = adbSessions.open({ adb: "adb", serial, spawn: d.host.spawn });
 	const clock = fakeClock();
 	try {
-		const result = await applyAndroidNetwork({ session, exec: d.host.exec, adb: "adb", serial, clock }, condition);
+		const result = await new AndroidNetwork({ session, exec: d.host.exec, adb: "adb", serial, clock }).apply(condition);
 		return { result, clock };
 	} finally {
 		await session.close();
 	}
 }
 
-describe("applyAndroidNetwork", () => {
+describe("AndroidNetwork.apply", () => {
 	test("offline: airplane on, verified through dumpsys", async () => {
 		const d = device();
 		const { result } = await run(d, { kind: "offline" });
@@ -265,7 +259,7 @@ describe("applyAndroidNetwork", () => {
 	});
 });
 
-describe("createAndroidNetwork: loss and faults through the lease proxy", () => {
+describe("AndroidNetwork: loss and faults through the lease proxy", () => {
 	/** the device model plus a `settings` store for http_proxy */
 	function proxied(opts: { proxy?: boolean; live?: boolean } = {}) {
 		const d = device();
@@ -281,8 +275,8 @@ describe("createAndroidNetwork: loss and faults through the lease proxy", () => 
 			{ match: "settings get global http_proxy", reply: () => `${httpProxy}\n` }
 		);
 		const proxy = new FakeProxy(19_555, opts.live);
-		const session = openAdbSession({ adb: "adb", serial: "emulator-5554", spawn: d.host.spawn });
-		const net = createAndroidNetwork({
+		const session = adbSessions.open({ adb: "adb", serial: "emulator-5554", spawn: d.host.spawn });
+		const net = new AndroidNetwork({
 			session,
 			exec: d.host.exec,
 			adb: "adb",
@@ -294,7 +288,13 @@ describe("createAndroidNetwork: loss and faults through the lease proxy", () => 
 	}
 
 	test("argv", () => {
-		expect(httpProxyPutArgv("10.0.2.2:19555")).toEqual(["settings", "put", "global", "http_proxy", "10.0.2.2:19555"]);
+		expect(androidNetworkArgv.httpProxyPutArgv("10.0.2.2:19555")).toEqual([
+			"settings",
+			"put",
+			"global",
+			"http_proxy",
+			"10.0.2.2:19555",
+		]);
 		expect(EMULATOR_HOST_ALIAS).toBe("10.0.2.2");
 	});
 

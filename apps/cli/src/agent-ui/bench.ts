@@ -1,7 +1,7 @@
 import { openDriver } from "@delacour/warden-device/open";
 import type { Driver, Point } from "@delacour/warden-driver/driver.types";
 import { DEFAULT_SETTLE_TIMEOUT_MS } from "@delacour/warden-driver/settle";
-import { uiadFromEnv } from "@delacour/warden-driver-android/uiad-backend";
+import { uiadBackendRules } from "@delacour/warden-driver-android/uiad-backend";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
 import { devtoolsError, withFacet } from "@delacour/warden-sdk/ops/devtools";
 import { takeSnapshot } from "@delacour/warden-sdk/ops/snapshot";
@@ -213,7 +213,7 @@ async function defaultOpenSecond(
 		id: device.udid,
 		host: { exec: ctx.exec, home: storeLocator.wardenHome(ctx.env) },
 		ios: { socketPath },
-		android: { adb: androidToolsLocator.locate(ctx.env).adb, uiad: uiadFromEnv(ctx.env) ?? false },
+		android: { adb: androidToolsLocator.locate(ctx.env).adb, uiad: uiadBackendRules.uiadFromEnv(ctx.env) ?? false },
 	});
 	return opened.success ? opened : { success: false, error: driverUiError(opened.error) };
 }

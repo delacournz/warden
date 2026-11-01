@@ -52,25 +52,19 @@ async function openIos(ctx: CommandContext, device: UiDevice): Promise<Result<Co
  * `adb emu geo fix` for a point. A moving location is the route ticker's job.
  */
 async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Result<ConditionsPort, UiError>> {
-	const [
-		{ openAdbSession },
-		{ createAndroidNetwork },
-		{ geoFixArgv, geoFixFailure },
-		{ realClock },
-		{ applyAndroidClock },
-		{ createAndroidSettings },
-	] = await Promise.all([
-		import("@delacour/warden-driver-android/adb-session"),
-		import("@delacour/warden-driver-android/android-network"),
-		import("@delacour/warden-driver-android/android-argv"),
-		import("@delacour/warden-driver-android/android-device"),
-		import("@delacour/warden-driver-android/android-clock"),
-		import("@delacour/warden-driver-android/android-settings"),
-	]);
+	const [{ adbSessions }, { AndroidNetwork }, { androidArgv }, { realClock }, { AndroidClock }, { AndroidSettings }] =
+		await Promise.all([
+			import("@delacour/warden-driver-android/adb-session"),
+			import("@delacour/warden-driver-android/android-network"),
+			import("@delacour/warden-driver-android/android-argv"),
+			import("@delacour/warden-driver-android/android-device"),
+			import("@delacour/warden-driver-android/android-clock"),
+			import("@delacour/warden-driver-android/android-settings"),
+		]);
 	const serial = device.udid;
 	const { adb } = androidToolsLocator.locate(ctx.env);
-	const session = openAdbSession({ adb, serial });
-	const net = createAndroidNetwork({
+	const session = adbSessions.open({ adb, serial });
+	const net = new AndroidNetwork({
 		session,
 		exec: ctx.exec,
 		adb,
@@ -78,7 +72,7 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 		clock: realClock,
 		proxy: leaseNetworkProxy(proxyDeps(ctx), device.lease),
 	});
-	const settings = createAndroidSettings({ session, serial });
+	const settings = new AndroidSettings({ session, serial }).ops();
 	return resultFactory.ok({
 		...settings,
 		network: net.network,
@@ -94,11 +88,11 @@ async function openAndroid(ctx: CommandContext, device: UiDevice): Promise<Resul
 					`a ${op.kind} location is played by the route ticker, not set directly`
 				);
 			}
-			const res = await ctx.exec(geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS });
-			const failure = geoFixFailure(res);
+			const res = await ctx.exec(androidArgv.geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS });
+			const failure = androidArgv.geoFixFailure(res);
 			return failure === undefined ? { success: true, data: undefined } : driverErrors.err("E_IO", failure);
 		},
-		clock: (op) => applyAndroidClock({ session, exec: ctx.exec, adb, serial }, op),
+		clock: (op) => new AndroidClock({ session, exec: ctx.exec, adb, serial }).apply(op),
 		close: () => session.close(),
 	});
 }

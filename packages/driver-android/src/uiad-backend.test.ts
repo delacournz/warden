@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { DriverError, DriverResult } from "@delacour/warden-driver/driver.types";
 import { driverErrors } from "@delacour/warden-driver/errors";
 import type { AdbSession } from "./adb-session";
-import { fakeUiad } from "./uiad.testing";
-import { createUiadBackend, isPersistentStartFailure, type UiadBackendDeps, uiadFromEnv } from "./uiad-backend";
-import { startUiad, type UiadClient } from "./uiad-client";
-import { launchUiad, uiadBuildId } from "./uiad-device";
+import { uiadTesting } from "./uiad.testing";
+import { type UiadBackendDeps, UiadBackendService, uiadBackendRules } from "./uiad-backend";
+import { type UiadClient, uiadClients } from "./uiad-client";
+import { uiadDevice } from "./uiad-device";
 
 const SESSION: AdbSession = {
 	async run() {
@@ -39,12 +39,12 @@ function fakeClock() {
 type Launch = NonNullable<UiadBackendDeps["launch"]>;
 
 /** A launcher that connects to `fake` (a real client over the in-process server), counting starts. */
-function connecting(fake: ReturnType<typeof fakeUiad>): { launch: Launch; starts: () => number } {
+function connecting(fake: ReturnType<typeof uiadTesting.fakeUiad>): { launch: Launch; starts: () => number } {
 	let starts = 0;
 	return {
 		launch: async () => {
 			starts++;
-			return startUiad({ cmd: ["adb", "shell", "x"], spawn: fake.spawn, graceMs: 20 });
+			return uiadClients.startUiad({ cmd: ["adb", "shell", "x"], spawn: fake.spawn, graceMs: 20 });
 		},
 		starts: () => starts,
 	};
@@ -54,9 +54,9 @@ function connecting(fake: ReturnType<typeof fakeUiad>): { launch: Launch; starts
 function scripted(...results: Array<DriverError | "ok">): {
 	launch: Launch;
 	starts: () => number;
-	fake: ReturnType<typeof fakeUiad>;
+	fake: ReturnType<typeof uiadTesting.fakeUiad>;
 } {
-	const fake = fakeUiad();
+	const fake = uiadTesting.fakeUiad();
 	let starts = 0;
 	return {
 		fake,
@@ -65,7 +65,7 @@ function scripted(...results: Array<DriverError | "ok">): {
 			const next = results[Math.min(starts, results.length - 1)];
 			starts++;
 			if (next === undefined || next === "ok") {
-				return startUiad({ cmd: ["adb", "shell", "x"], spawn: fake.spawn, graceMs: 20 });
+				return uiadClients.startUiad({ cmd: ["adb", "shell", "x"], spawn: fake.spawn, graceMs: 20 });
 			}
 			return { success: false, error: next };
 		},
@@ -78,7 +78,7 @@ function backendWith(launch: Launch, extra: Partial<UiadBackendDeps> = {}) {
 	const clock = fakeClock();
 	const lines: string[] = [];
 	const unsupported: string[] = [];
-	const backend = createUiadBackend({
+	const backend = new UiadBackendService({
 		session: SESSION,
 		adb: "adb",
 		serial: "emulator-5554",
@@ -99,7 +99,7 @@ afterEach(async () => {
 
 describe("starting", () => {
 	test("nothing is started until a call needs the server, and one start is shared by calls made together", async () => {
-		const server = connecting(fakeUiad());
+		const server = connecting(uiadTesting.fakeUiad());
 		const { backend } = backendWith(server.launch);
 		expect(server.starts()).toBe(0);
 		expect(backend.status()).toBe("idle");
@@ -114,7 +114,7 @@ describe("starting", () => {
 	});
 
 	test("a server that died is started again by the next call", async () => {
-		const fake = fakeUiad();
+		const fake = uiadTesting.fakeUiad();
 		const server = connecting(fake);
 		const { backend } = backendWith(server.launch);
 		const first = await backend.server();
@@ -127,7 +127,7 @@ describe("starting", () => {
 	});
 
 	test("a call that failed stops the server so the dump can have the slot, and the next call starts a new one", async () => {
-		const fake = fakeUiad();
+		const fake = uiadTesting.fakeUiad();
 		const server = connecting(fake);
 		const { backend, lines } = backendWith(server.launch);
 		await backend.server();
@@ -140,7 +140,7 @@ describe("starting", () => {
 	});
 
 	test("a server that keeps dying is given up on, and the driver goes on with the dump", async () => {
-		const server = connecting(fakeUiad());
+		const server = connecting(uiadTesting.fakeUiad());
 		const { backend, lines } = backendWith(server.launch);
 		for (let i = 0; i < 4; i++) {
 			expect(await backend.server()).toBeDefined();
@@ -180,7 +180,7 @@ describe("start failures", () => {
 		const { backend, unsupported } = backendWith(scripts.launch);
 		expect(await backend.server()).toBeUndefined();
 		expect(backend.wanted()).toBe(false);
-		expect(unsupported).toEqual([uiadBuildId()]);
+		expect(unsupported).toEqual([uiadDevice.uiadBuildId()]);
 		expect(await backend.server()).toBeUndefined();
 		expect(scripts.starts()).toBe(1);
 	});
@@ -202,7 +202,7 @@ describe("start failures", () => {
 		expect(await backend.server()).toBeUndefined();
 		expect(unsupported).toEqual([]);
 		expect(await backend.server()).toBeUndefined();
-		expect(unsupported).toEqual([uiadBuildId()]);
+		expect(unsupported).toEqual([uiadDevice.uiadBuildId()]);
 		expect(backend.wanted()).toBe(false);
 		expect(await backend.server()).toBeUndefined();
 		expect(scripts.starts()).toBe(2);
@@ -221,7 +221,7 @@ describe("start failures", () => {
 
 	test("a build recorded as unsupported is not started at all; another build is", async () => {
 		const scripts = scripted("ok");
-		const skipped = backendWith(scripts.launch, { unsupportedBuild: uiadBuildId() });
+		const skipped = backendWith(scripts.launch, { unsupportedBuild: uiadDevice.uiadBuildId() });
 		expect(skipped.backend.wanted()).toBe(false);
 		expect(await skipped.backend.server()).toBeUndefined();
 		expect(scripts.starts()).toBe(0);
@@ -278,7 +278,7 @@ describe("a busy UiAutomation slot", () => {
 
 describe("stop", () => {
 	test("ends the running server and is safe to call twice", async () => {
-		const fake = fakeUiad();
+		const fake = uiadTesting.fakeUiad();
 		const { backend } = backendWith(connecting(fake).launch);
 		await backend.server();
 		await backend.stop();
@@ -287,7 +287,7 @@ describe("stop", () => {
 	});
 
 	test("ends a server that was still starting", async () => {
-		const fake = fakeUiad();
+		const fake = uiadTesting.fakeUiad();
 		const { backend } = backendWith(connecting(fake).launch);
 		const pending = backend.server();
 		await backend.stop();
@@ -296,7 +296,7 @@ describe("stop", () => {
 	});
 
 	test("without a server there is nothing to do", async () => {
-		const { backend } = backendWith(connecting(fakeUiad()).launch);
+		const { backend } = backendWith(connecting(uiadTesting.fakeUiad()).launch);
 		await backend.stop();
 		expect(backend.status()).toBe("idle");
 	});
@@ -304,20 +304,22 @@ describe("stop", () => {
 
 describe("isPersistentStartFailure", () => {
 	test("is true for an unsupported device and for UiAutomation that cannot connect, false for a crash or a timeout", () => {
-		expect(isPersistentStartFailure(driverErrors.make("E_UNSUPPORTED", "x"))).toBe(true);
+		expect(uiadBackendRules.isPersistentStartFailure(driverErrors.make("E_UNSUPPORTED", "x"))).toBe(true);
 		expect(
-			isPersistentStartFailure(driverErrors.make("E_AX_UNAVAILABLE", "x", { detail: { reason: "connect_failed" } }))
+			uiadBackendRules.isPersistentStartFailure(
+				driverErrors.make("E_AX_UNAVAILABLE", "x", { detail: { reason: "connect_failed" } })
+			)
 		).toBe(true);
-		expect(isPersistentStartFailure(driverErrors.make("E_HELPER_CRASHED", "x"))).toBe(false);
-		expect(isPersistentStartFailure(driverErrors.make("E_TIMEOUT", "x"))).toBe(false);
-		expect(isPersistentStartFailure(driverErrors.make("E_AX_UNAVAILABLE", "x"))).toBe(false);
+		expect(uiadBackendRules.isPersistentStartFailure(driverErrors.make("E_HELPER_CRASHED", "x"))).toBe(false);
+		expect(uiadBackendRules.isPersistentStartFailure(driverErrors.make("E_TIMEOUT", "x"))).toBe(false);
+		expect(uiadBackendRules.isPersistentStartFailure(driverErrors.make("E_AX_UNAVAILABLE", "x"))).toBe(false);
 	});
 });
 
 describe("with the real launcher", () => {
 	test("starts the server the device way and reports it up", async () => {
-		const fake = fakeUiad();
-		const { backend } = backendWith(launchUiad, {
+		const fake = uiadTesting.fakeUiad();
+		const { backend } = backendWith((deps) => uiadDevice.launchUiad(deps), {
 			options: { spawn: fake.spawn, push: async () => ({ exitCode: 0, output: "" }) },
 			session: {
 				async run() {
@@ -335,9 +337,9 @@ describe("with the real launcher", () => {
 
 describe("uiadFromEnv", () => {
 	test("the server is on unless WARDEN_ANDROID_UIAD is 0", () => {
-		expect(uiadFromEnv({})).toBe(true);
-		expect(uiadFromEnv({ WARDEN_ANDROID_UIAD: "1" })).toBe(true);
-		expect(uiadFromEnv({ WARDEN_ANDROID_UIAD: "" })).toBe(true);
-		expect(uiadFromEnv({ WARDEN_ANDROID_UIAD: "0" })).toBeUndefined();
+		expect(uiadBackendRules.uiadFromEnv({})).toBe(true);
+		expect(uiadBackendRules.uiadFromEnv({ WARDEN_ANDROID_UIAD: "1" })).toBe(true);
+		expect(uiadBackendRules.uiadFromEnv({ WARDEN_ANDROID_UIAD: "" })).toBe(true);
+		expect(uiadBackendRules.uiadFromEnv({ WARDEN_ANDROID_UIAD: "0" })).toBeUndefined();
 	});
 });

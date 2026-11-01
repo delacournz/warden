@@ -13,7 +13,7 @@ import { driverErrors } from "@delacour/warden-driver/errors";
 import { simdTransports, type Transport } from "@delacour/warden-driver/helper/simd-transport";
 import type { DetectsAlerts } from "@delacour/warden-driver/observation-cache";
 import type { RepeatingKeys, SelectsAll, SetsText } from "@delacour/warden-driver/typing";
-import { detectAlert } from "@delacour/warden-driver-android/android-alert";
+import { androidAlert } from "@delacour/warden-driver-android/android-alert";
 import type { Result } from "@delacour/warden-types/result";
 import {
 	REMOTE_PROTOCOL,
@@ -233,7 +233,7 @@ export async function connectRemoteDriver(options: ConnectRemoteOptions): Promis
 			offered.has("setText") ? { setText: (text: string) => call<void>("setText", text) } : {},
 			offered.has("alertOn") ? { alertOn: (backend: AlertBackend) => call<AlertInfo | null>("alertOn", backend) } : {},
 			offered.has("isFrontmost") ? { isFrontmost: (bundleId: string) => call<boolean>("isFrontmost", bundleId) } : {},
-			hello.alertIn === "android" ? { alertIn: (shot: Snapshot) => detectAlert(shot.flat) } : {}
+			hello.alertIn === "android" ? { alertIn: (shot: Snapshot) => androidAlert.detectAlert(shot.flat) } : {}
 		);
 	};
 

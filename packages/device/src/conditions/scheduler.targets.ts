@@ -1,9 +1,9 @@
 import type { SchedulerTarget } from "@delacour/warden-driver/conditions/scheduler";
 import { driverErrors } from "@delacour/warden-driver/errors";
-import { openAdbSession } from "@delacour/warden-driver-android/adb-session";
-import { geoFixArgv, geoFixFailure } from "@delacour/warden-driver-android/android-argv";
+import { adbSessions } from "@delacour/warden-driver-android/adb-session";
+import { androidArgv } from "@delacour/warden-driver-android/android-argv";
 import { realClock } from "@delacour/warden-driver-android/android-device";
-import { applyAndroidNetwork } from "@delacour/warden-driver-android/android-network";
+import { AndroidNetwork } from "@delacour/warden-driver-android/android-network";
 import { createInjectChannel, injectStatePath } from "@delacour/warden-driver-ios/inject";
 import { createIosNetwork } from "@delacour/warden-driver-ios/ios-network";
 import { locationClearArgv, locationSetArgv } from "@delacour/warden-driver-ios/simctl";
@@ -26,13 +26,16 @@ export type TargetOpener = (config: SchedulerConfig) => OpenedTarget;
 const openAndroidTarget: TargetOpener = (config) => {
 	const adb = config.adb as string;
 	const serial = config.id;
-	const session = openAdbSession({ adb, serial });
+	const session = adbSessions.open({ adb, serial });
 	const target: SchedulerTarget = {
 		network: async (condition) => {
-			const res = await applyAndroidNetwork(
-				{ session, exec: processExec.run, adb, serial, clock: realClock },
-				condition
-			);
+			const res = await new AndroidNetwork({
+				session,
+				exec: processExec.run,
+				adb,
+				serial,
+				clock: realClock,
+			}).apply(condition);
 			return res.success ? { success: true } : res;
 		},
 		location: async (op) => {
@@ -43,8 +46,8 @@ const openAndroidTarget: TargetOpener = (config) => {
 					error: { message: `a ${op.kind} location cannot run inside a scheduler step; use the route ticker` },
 				};
 			}
-			const failure = geoFixFailure(
-				await processExec.run(geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS })
+			const failure = androidArgv.geoFixFailure(
+				await processExec.run(androidArgv.geoFixArgv(adb, serial, op, op.altM), { timeoutMs: GEO_FIX_MS })
 			);
 			return failure === undefined ? { success: true } : { success: false, error: { message: failure } };
 		},

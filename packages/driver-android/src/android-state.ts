@@ -83,145 +83,157 @@ export type AndroidStateStore = {
 	update(serial: string, change: (state: AndroidDeviceState) => AndroidDeviceState): Promise<void>;
 };
 
-/** `$WARDEN_HOME/android`. */
-export function androidStateDir(home: string): string {
-	return join(home, "android");
-}
-
-/** `<dir>/<serial>.json`; anything in a serial that is not a plain file-name character becomes `_`. */
-export function androidStateFile(dir: string, serial: string): string {
-	return join(dir, `${serial.replace(/[^A-Za-z0-9._:-]/g, "_")}.json`);
-}
-
 export type AndroidStateStoreOptions = {
 	dir: string;
 	fs?: StateFs;
 	log?: Logger;
 };
 
-export function createAndroidStateStore(options: AndroidStateStoreOptions): AndroidStateStore {
-	const { dir, log } = options;
-	const fs = options.fs ?? nodeStateFs;
-	let queue: Promise<void> = Promise.resolve();
+const SCALE_LINE = /^(null|\d+(\.\d+)?)$/;
 
-	async function load(serial: string): Promise<AndroidDeviceState> {
+/** Pure helpers over the saved device state and the animation scales. */
+export class AndroidState {
+	/** `$WARDEN_HOME/android`. */
+	androidStateDir(home: string): string {
+		return join(home, "android");
+	}
+
+	/** `<dir>/<serial>.json`; anything in a serial that is not a plain file-name character becomes `_`. */
+	androidStateFile(dir: string, serial: string): string {
+		return join(dir, `${serial.replace(/[^A-Za-z0-9._:-]/g, "_")}.json`);
+	}
+
+	/** `state` when it was learned on this API level (`undefined` = unknown matches unknown), else nothing is known. */
+	forSdk(state: AndroidDeviceState, sdk: number | undefined): AndroidDeviceState {
+		return state.sdk === sdk ? state : {};
+	}
+
+	/** An `update` callback: keep what was learned on this API level, record the level, apply `patch` (`undefined` removes a field). */
+	patchFor(
+		sdk: number | undefined,
+		patch: Omit<AndroidDeviceState, "sdk">
+	): (state: AndroidDeviceState) => AndroidDeviceState {
+		return (state) => ({ ...this.forSdk(state, sdk), ...(sdk !== undefined ? { sdk } : {}), ...patch });
+	}
+
+	/** `state` without its `undefined` fields. */
+	stripUndefined(state: AndroidDeviceState): AndroidDeviceState {
+		return {
+			...(state.sdk !== undefined ? { sdk: state.sdk } : {}),
+			...(state.dumpRoute !== undefined ? { dumpRoute: state.dumpRoute } : {}),
+			...(state.uiadUnsupported !== undefined ? { uiadUnsupported: state.uiadUnsupported } : {}),
+			...(state.animations !== undefined ? { animations: state.animations } : {}),
+			...(state.rotation !== undefined ? { rotation: state.rotation } : {}),
+			...(state.uimode !== undefined ? { uimode: state.uimode } : {}),
+		};
+	}
+
+	/**
+	 * The three values `settings get global` printed, one per line in {@link ANIMATION_SETTINGS} order. Lines that are
+	 * not a value (an error message) are skipped; anything but exactly three values is unreadable (`undefined`).
+	 */
+	parseAnimationValues(stdout: string): AnimationValues | undefined {
+		const lines = stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => SCALE_LINE.test(line));
+		const [window, transition, animator] = lines;
+		if (
+			lines.length !== ANIMATION_SETTINGS.length ||
+			window === undefined ||
+			transition === undefined ||
+			animator === undefined
+		) {
+			return undefined;
+		}
+		return {
+			window_animation_scale: window,
+			transition_animation_scale: transition,
+			animator_duration_scale: animator,
+		};
+	}
+
+	/**
+	 * What to put back when the driver closes, given the scales as found now (just before warden turns them off) and
+	 * the originals a previous process saved and never restored (`pending`).
+	 *
+	 * A scale that reads `0` while `pending` has a value for it is warden's own leftover, so the saved value is the
+	 * original; any other value was set by someone else since, and is kept as it is. `undefined` when every original is
+	 * already `0` (animations were off before warden came: nothing to restore).
+	 */
+	planAnimations(current: AnimationValues, pending: AnimationValues | undefined): AnimationValues | undefined {
+		const original = (key: AnimationSetting): string => (current[key] === "0" && pending ? pending[key] : current[key]);
+		const originals: AnimationValues = {
+			window_animation_scale: original("window_animation_scale"),
+			transition_animation_scale: original("transition_animation_scale"),
+			animator_duration_scale: original("animator_duration_scale"),
+		};
+		return ANIMATION_SETTINGS.every((key) => originals[key] === "0") ? undefined : originals;
+	}
+}
+
+export const androidState = new AndroidState();
+
+/** The state store backed by `<dir>/<serial>.json` files. */
+export class FileAndroidStateStore implements AndroidStateStore {
+	private readonly dir: string;
+	private readonly fs: StateFs;
+	private readonly log: Logger | undefined;
+	private queue: Promise<void> = Promise.resolve();
+
+	constructor(options: AndroidStateStoreOptions) {
+		this.dir = options.dir;
+		this.fs = options.fs ?? nodeStateFs;
+		this.log = options.log;
+	}
+
+	async read(serial: string): Promise<AndroidDeviceState> {
 		let text: string;
 		try {
-			text = await fs.readFile(androidStateFile(dir, serial));
+			text = await this.fs.readFile(androidState.androidStateFile(this.dir, serial));
 		} catch {
 			return {};
 		}
 		try {
 			const parsed = stateSchema.safeParse(JSON.parse(text));
-			return parsed.success ? stripUndefined(parsed.data) : {};
+			return parsed.success ? androidState.stripUndefined(parsed.data) : {};
 		} catch {
 			return {};
 		}
 	}
 
-	async function save(serial: string, change: (state: AndroidDeviceState) => AndroidDeviceState): Promise<void> {
-		const before = await load(serial);
-		const after = stripUndefined(change(before));
-		const text = JSON.stringify(after);
-		if (text === JSON.stringify(before)) return;
-		const file = androidStateFile(dir, serial);
-		try {
-			await fs.mkdir(dir);
-			const temp = `${file}.${process.pid}.tmp`;
-			await fs.writeFile(temp, text);
-			await fs.rename(temp, file);
-		} catch (error) {
-			log?.(`could not save ${file}: ${error instanceof Error ? error.message : String(error)}`);
-		}
+	update(serial: string, change: (state: AndroidDeviceState) => AndroidDeviceState): Promise<void> {
+		const run = this.queue.then(() => this.save(serial, change));
+		this.queue = run.catch(() => undefined);
+		return run.catch(() => undefined);
 	}
 
-	return {
-		read: load,
-		update(serial, change) {
-			const run = queue.then(() => save(serial, change));
-			queue = run.catch(() => undefined);
-			return run.catch(() => undefined);
-		},
-	};
+	private async save(serial: string, change: (state: AndroidDeviceState) => AndroidDeviceState): Promise<void> {
+		const before = await this.read(serial);
+		const after = androidState.stripUndefined(change(before));
+		const text = JSON.stringify(after);
+		if (text === JSON.stringify(before)) return;
+		const file = androidState.androidStateFile(this.dir, serial);
+		try {
+			await this.fs.mkdir(this.dir);
+			const temp = `${file}.${process.pid}.tmp`;
+			await this.fs.writeFile(temp, text);
+			await this.fs.rename(temp, file);
+		} catch (error) {
+			this.log?.(`could not save ${file}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
 }
 
 /** A store that lives in memory (tests, and callers that want no file). */
-export function memoryAndroidState(): AndroidStateStore {
-	const states = new Map<string, AndroidDeviceState>();
-	return {
-		async read(serial) {
-			return structuredClone(states.get(serial) ?? {});
-		},
-		async update(serial, change) {
-			states.set(serial, stripUndefined(change(structuredClone(states.get(serial) ?? {}))));
-		},
-	};
-}
+export class MemoryAndroidState implements AndroidStateStore {
+	private readonly states = new Map<string, AndroidDeviceState>();
 
-/** `state` when it was learned on this API level (`undefined` = unknown matches unknown), else nothing is known. */
-export function forSdk(state: AndroidDeviceState, sdk: number | undefined): AndroidDeviceState {
-	return state.sdk === sdk ? state : {};
-}
-
-/** An `update` callback: keep what was learned on this API level, record the level, apply `patch` (`undefined` removes a field). */
-export function patchFor(
-	sdk: number | undefined,
-	patch: Omit<AndroidDeviceState, "sdk">
-): (state: AndroidDeviceState) => AndroidDeviceState {
-	return (state) => ({ ...forSdk(state, sdk), ...(sdk !== undefined ? { sdk } : {}), ...patch });
-}
-
-function stripUndefined(state: AndroidDeviceState): AndroidDeviceState {
-	return {
-		...(state.sdk !== undefined ? { sdk: state.sdk } : {}),
-		...(state.dumpRoute !== undefined ? { dumpRoute: state.dumpRoute } : {}),
-		...(state.uiadUnsupported !== undefined ? { uiadUnsupported: state.uiadUnsupported } : {}),
-		...(state.animations !== undefined ? { animations: state.animations } : {}),
-		...(state.rotation !== undefined ? { rotation: state.rotation } : {}),
-		...(state.uimode !== undefined ? { uimode: state.uimode } : {}),
-	};
-}
-
-const SCALE_LINE = /^(null|\d+(\.\d+)?)$/;
-
-/**
- * The three values `settings get global` printed, one per line in {@link ANIMATION_SETTINGS} order. Lines that are
- * not a value (an error message) are skipped; anything but exactly three values is unreadable (`undefined`).
- */
-export function parseAnimationValues(stdout: string): AnimationValues | undefined {
-	const lines = stdout
-		.split("\n")
-		.map((line) => line.trim())
-		.filter((line) => SCALE_LINE.test(line));
-	const [window, transition, animator] = lines;
-	if (
-		lines.length !== ANIMATION_SETTINGS.length ||
-		window === undefined ||
-		transition === undefined ||
-		animator === undefined
-	) {
-		return undefined;
+	async read(serial: string): Promise<AndroidDeviceState> {
+		return structuredClone(this.states.get(serial) ?? {});
 	}
-	return { window_animation_scale: window, transition_animation_scale: transition, animator_duration_scale: animator };
-}
 
-/**
- * What to put back when the driver closes, given the scales as found now (just before warden turns them off) and
- * the originals a previous process saved and never restored (`pending`).
- *
- * A scale that reads `0` while `pending` has a value for it is warden's own leftover, so the saved value is the
- * original; any other value was set by someone else since, and is kept as it is. `undefined` when every original is
- * already `0` (animations were off before warden came: nothing to restore).
- */
-export function planAnimations(
-	current: AnimationValues,
-	pending: AnimationValues | undefined
-): AnimationValues | undefined {
-	const original = (key: AnimationSetting): string => (current[key] === "0" && pending ? pending[key] : current[key]);
-	const originals: AnimationValues = {
-		window_animation_scale: original("window_animation_scale"),
-		transition_animation_scale: original("transition_animation_scale"),
-		animator_duration_scale: original("animator_duration_scale"),
-	};
-	return ANIMATION_SETTINGS.every((key) => originals[key] === "0") ? undefined : originals;
+	async update(serial: string, change: (state: AndroidDeviceState) => AndroidDeviceState): Promise<void> {
+		this.states.set(serial, androidState.stripUndefined(change(structuredClone(this.states.get(serial) ?? {}))));
+	}
 }

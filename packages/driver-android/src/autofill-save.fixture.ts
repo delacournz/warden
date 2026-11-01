@@ -8,23 +8,33 @@ export const AUTOFILL_SAVE_SCREEN = { width: 720, height: 1600 };
 
 type Spec = { cls: string; bounds: string; id?: string; text?: string; clickable?: boolean; children?: Spec[] };
 
-const esc = (v: string): string => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+/** Renders `Spec` trees as `uiautomator dump` XML. */
+class AutofillSaveFixture {
+	private esc(v: string): string {
+		return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+	}
 
-function render(spec: Spec, index: number): string {
-	const attrs =
-		`index="${index}" text="${esc(spec.text ?? "")}" resource-id="${spec.id ?? ""}" class="${spec.cls}" ` +
-		`package="com.google.android.gms" content-desc="" checkable="false" checked="false" ` +
-		`clickable="${spec.clickable === true}" enabled="true" focusable="${spec.clickable === true}" focused="false" ` +
-		`scrollable="false" long-clickable="false" password="false" selected="false" bounds="${spec.bounds}"`;
-	if (spec.children === undefined) return `<node ${attrs} />`;
-	return `<node ${attrs}>${spec.children.map(render).join("")}</node>`;
+	render(spec: Spec, index: number): string {
+		const attrs =
+			`index="${index}" text="${this.esc(spec.text ?? "")}" resource-id="${spec.id ?? ""}" class="${spec.cls}" ` +
+			`package="com.google.android.gms" content-desc="" checkable="false" checked="false" ` +
+			`clickable="${spec.clickable === true}" enabled="true" focusable="${spec.clickable === true}" focused="false" ` +
+			`scrollable="false" long-clickable="false" password="false" selected="false" bounds="${spec.bounds}"`;
+		if (spec.children === undefined) return `<node ${attrs} />`;
+		return `<node ${attrs}>${spec.children.map((child, i) => this.render(child, i)).join("")}</node>`;
+	}
+
+	pkg(id: string): string {
+		return `com.google.android.gms:id/${id}`;
+	}
 }
+
+const autofillSaveFixture = new AutofillSaveFixture();
 
 const GROUP = "android.view.ViewGroup";
 const TEXT = "android.widget.TextView";
 const IMAGE = "android.widget.ImageView";
 const BUTTON = "android.widget.Button";
-const pkg = (id: string): string => `com.google.android.gms:id/${id}`;
 
 const tree: Spec = {
 	cls: GROUP,
@@ -33,44 +43,44 @@ const tree: Spec = {
 		{
 			cls: GROUP,
 			bounds: "[48,379][672,1504]",
-			id: pkg("autofill_save"),
+			id: autofillSaveFixture.pkg("autofill_save"),
 			children: [
 				{
 					cls: GROUP,
 					bounds: "[48,379][672,1308]",
 					children: [
-						{ cls: IMAGE, bounds: "[48,379][672,491]", id: pkg("autofill_save_icon") },
+						{ cls: IMAGE, bounds: "[48,379][672,491]", id: autofillSaveFixture.pkg("autofill_save_icon") },
 						{
 							cls: TEXT,
 							bounds: "[48,523][672,693]",
-							id: pkg("autofill_save_title"),
+							id: autofillSaveFixture.pkg("autofill_save_title"),
 							text: "Save password to Google Password Manager?",
 						},
 						{
 							cls: GROUP,
 							bounds: "[48,693][672,1308]",
-							id: pkg("autofill_save_custom_subtitle"),
+							id: autofillSaveFixture.pkg("autofill_save_custom_subtitle"),
 							children: [
 								{
 									cls: GROUP,
 									bounds: "[48,693][672,1308]",
-									id: pkg("save_credential"),
+									id: autofillSaveFixture.pkg("save_credential"),
 									children: [
 										{
 											cls: GROUP,
 											bounds: "[48,693][672,1104]",
-											id: pkg("description_layout"),
+											id: autofillSaveFixture.pkg("description_layout"),
 											children: [
 												{
 													cls: TEXT,
 													bounds: "[48,693][672,764]",
-													id: pkg("description_title"),
+													id: autofillSaveFixture.pkg("description_title"),
 													text: "Passwords are saved to Google Password Manager",
 												},
 												{
 													cls: TEXT,
 													bounds: "[100,796][467,834]",
-													id: pkg("description1"),
+													id: autofillSaveFixture.pkg("description1"),
 													text: "Keep track of your passwords",
 												},
 											],
@@ -78,19 +88,39 @@ const tree: Spec = {
 										{
 											cls: GROUP,
 											bounds: "[48,1104][672,1188]",
-											id: pkg("username_layout"),
+											id: autofillSaveFixture.pkg("username_layout"),
 											children: [
-												{ cls: TEXT, bounds: "[48,1104][157,1137]", id: pkg("username_text_view"), text: "Username" },
-												{ cls: TEXT, bounds: "[48,1145][326,1188]", id: pkg("text1"), text: "test@example.com" },
+												{
+													cls: TEXT,
+													bounds: "[48,1104][157,1137]",
+													id: autofillSaveFixture.pkg("username_text_view"),
+													text: "Username",
+												},
+												{
+													cls: TEXT,
+													bounds: "[48,1145][326,1188]",
+													id: autofillSaveFixture.pkg("text1"),
+													text: "test@example.com",
+												},
 											],
 										},
 										{
 											cls: GROUP,
 											bounds: "[48,1188][672,1308]",
-											id: pkg("password_layout"),
+											id: autofillSaveFixture.pkg("password_layout"),
 											children: [
-												{ cls: TEXT, bounds: "[48,1224][154,1257]", id: pkg("password_text_view"), text: "Password" },
-												{ cls: TEXT, bounds: "[48,1265][147,1308]", id: pkg("text2"), text: "•••••••••" },
+												{
+													cls: TEXT,
+													bounds: "[48,1224][154,1257]",
+													id: autofillSaveFixture.pkg("password_text_view"),
+													text: "Password",
+												},
+												{
+													cls: TEXT,
+													bounds: "[48,1265][147,1308]",
+													id: autofillSaveFixture.pkg("text2"),
+													text: "•••••••••",
+												},
 											],
 										},
 									],
@@ -103,11 +133,17 @@ const tree: Spec = {
 					cls: GROUP,
 					bounds: "[48,1372][672,1468]",
 					children: [
-						{ cls: BUTTON, bounds: "[48,1384][256,1456]", id: pkg("autofill_save_no"), text: "Never", clickable: true },
+						{
+							cls: BUTTON,
+							bounds: "[48,1384][256,1456]",
+							id: autofillSaveFixture.pkg("autofill_save_no"),
+							text: "Never",
+							clickable: true,
+						},
 						{
 							cls: BUTTON,
 							bounds: "[464,1387][672,1459]",
-							id: pkg("autofill_save_yes"),
+							id: autofillSaveFixture.pkg("autofill_save_yes"),
 							text: "Continue",
 							clickable: true,
 						},
@@ -118,7 +154,7 @@ const tree: Spec = {
 	],
 };
 
-export const AUTOFILL_SAVE_DUMP = `<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">${render(
+export const AUTOFILL_SAVE_DUMP = `<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">${autofillSaveFixture.render(
 	{ cls: "android.widget.FrameLayout", bounds: "[0,0][720,1600]", children: [tree] },
 	0
 )}</hierarchy>`;

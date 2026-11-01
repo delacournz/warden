@@ -1,8 +1,8 @@
 import type { ClockRecorder } from "@delacour/warden-driver/clock-recorder";
 import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types";
 import type { NetworkProxyPort } from "@delacour/warden-driver/network-proxy";
-import { type AndroidDriverOptions, openAndroidDriver } from "@delacour/warden-driver-android/android-driver";
-import { androidStateDir, createAndroidStateStore } from "@delacour/warden-driver-android/android-state";
+import { type AndroidDriverOptions, androidDrivers } from "@delacour/warden-driver-android/android-driver";
+import { androidState, FileAndroidStateStore } from "@delacour/warden-driver-android/android-state";
 import { type OpenIosDeviceDriverOptions, openIosDeviceDriver } from "@delacour/warden-driver-ios/device/device-driver";
 import { type OpenIosDriverOptions, openIosDriver } from "@delacour/warden-driver-ios/ios-driver";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
@@ -82,7 +82,9 @@ export function androidOptions(options: OpenDriverOptions, debug: boolean): Andr
 	const home = options.host?.home;
 	const state =
 		android.state ??
-		(home === undefined ? undefined : createAndroidStateStore({ dir: androidStateDir(home), ...(log ? { log } : {}) }));
+		(home === undefined
+			? undefined
+			: new FileAndroidStateStore({ dir: androidState.androidStateDir(home), ...(log ? { log } : {}) }));
 	const appPackage = android.appPackage ?? options.appId;
 	return {
 		...android,
@@ -140,6 +142,6 @@ export async function openDriver(options: OpenDriverOptions): DriverResult<Drive
 			if (leaseModel.isPhysicalIosId(options.id)) return openIosDeviceDriver(iosDeviceOptions(options, debug));
 			return openIosDriver(iosOptions(options, debug));
 		case "android":
-			return openAndroidDriver(androidOptions(options, debug));
+			return androidDrivers.open(androidOptions(options, debug));
 	}
 }

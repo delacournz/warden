@@ -29,27 +29,33 @@ type NodeSpec = {
 	children?: NodeSpec[];
 };
 
-function esc(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/\n/g, "&#10;");
+/** Renders `NodeSpec` trees as `uiautomator dump` XML. */
+class UiautomatorFixture {
+	private esc(value: string): string {
+		return value
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/\n/g, "&#10;");
+	}
+
+	renderNode(spec: NodeSpec, index: number): string {
+		const f = spec.flags ?? {};
+		const flag = (name: keyof typeof f) => (f[name] ? "true" : "false");
+		const esc = (value: string): string => this.esc(value);
+		const attrs =
+			`index="${index}" text="${esc(spec.text ?? "")}" resource-id="${esc(spec.id ?? "")}" class="${spec.cls}" ` +
+			`package="com.example.app" content-desc="${esc(spec.desc ?? "")}" checkable="${flag("checkable")}" ` +
+			`checked="${flag("checked")}" clickable="${flag("clickable")}" enabled="${spec.enabled === false ? "false" : "true"}" ` +
+			`focusable="true" focused="${flag("focused")}" scrollable="${flag("scrollable")}" long-clickable="${flag("long-clickable")}" ` +
+			`password="${flag("password")}" selected="${flag("selected")}" bounds="${spec.bounds}" hint="${esc(spec.hint ?? "")}"`;
+		if (!spec.children?.length) return `<node ${attrs} />`;
+		return `<node ${attrs}>${spec.children.map((child, i) => this.renderNode(child, i)).join("")}</node>`;
+	}
 }
 
-function renderNode(spec: NodeSpec, index: number): string {
-	const f = spec.flags ?? {};
-	const flag = (name: keyof typeof f) => (f[name] ? "true" : "false");
-	const attrs =
-		`index="${index}" text="${esc(spec.text ?? "")}" resource-id="${esc(spec.id ?? "")}" class="${spec.cls}" ` +
-		`package="com.example.app" content-desc="${esc(spec.desc ?? "")}" checkable="${flag("checkable")}" ` +
-		`checked="${flag("checked")}" clickable="${flag("clickable")}" enabled="${spec.enabled === false ? "false" : "true"}" ` +
-		`focusable="true" focused="${flag("focused")}" scrollable="${flag("scrollable")}" long-clickable="${flag("long-clickable")}" ` +
-		`password="${flag("password")}" selected="${flag("selected")}" bounds="${spec.bounds}" hint="${esc(spec.hint ?? "")}"`;
-	if (!spec.children?.length) return `<node ${attrs} />`;
-	return `<node ${attrs}>${spec.children.map(renderNode).join("")}</node>`;
-}
+const uiautomatorFixture = new UiautomatorFixture();
 
 export const SYNTHETIC_FORM_SCREEN = { width: 1080, height: 2400 };
 
@@ -59,7 +65,7 @@ export const SYNTHETIC_FORM_SCREEN = { width: 1080, height: 2400 };
  * a disabled button, an off-screen button, XML entities in text/content-desc, and a long-clickable row.
  * Ends with the `UI hierarchy dumped to:` trailer exactly as `uiautomator dump /dev/stdout` prints it.
  */
-export const SYNTHETIC_FORM_DUMP = `<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">${renderNode(
+export const SYNTHETIC_FORM_DUMP = `<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0">${uiautomatorFixture.renderNode(
 	{
 		cls: "android.widget.FrameLayout",
 		bounds: "[0,0][1080,2400]",

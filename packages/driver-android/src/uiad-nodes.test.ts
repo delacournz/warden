@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readSnapshotData, type UiadNode } from "./uiad-protocol";
-import { parseUiadNodes, parseUiautomatorXml } from "./uiautomator";
+import { type UiadNode, uiadProtocol } from "./uiad-protocol";
+import { uiautomatorParser } from "./uiautomator";
 
 const SESSION = readFileSync(join(import.meta.dir, "fixtures/uiad-session.ndjson"), "utf8")
 	.trim()
@@ -14,7 +14,7 @@ function snapshots(): UiadNode[][] {
 	for (const line of SESSION) {
 		const json: unknown = JSON.parse(line);
 		if (typeof json !== "object" || json === null || !("data" in json)) continue;
-		const data = readSnapshotData(json.data);
+		const data = uiadProtocol.readSnapshotData(json.data);
 		if (typeof data !== "string") found.push(data.elements);
 	}
 	return found;
@@ -56,8 +56,8 @@ describe("parseUiadNodes", () => {
 		const all = snapshots();
 		expect(all.length).toBeGreaterThanOrEqual(3);
 		for (const nodes of all) {
-			const viaXml = parseUiautomatorXml(toDumpXml(nodes), SCREEN);
-			const viaNodes = parseUiadNodes(nodes, SCREEN);
+			const viaXml = uiautomatorParser.parseUiautomatorXml(toDumpXml(nodes), SCREEN);
+			const viaNodes = uiautomatorParser.parseUiadNodes(nodes, SCREEN);
 			expect(viaNodes.flat.length).toBeGreaterThan(5);
 			expect(viaNodes).toEqual(viaXml);
 		}
@@ -65,14 +65,14 @@ describe("parseUiadNodes", () => {
 
 	test("maps testIDs and platform ids like the dump: the package prefix is dropped, a bare id stays", () => {
 		const [welcome] = snapshots();
-		const tree = parseUiadNodes(welcome ?? [], SCREEN);
+		const tree = uiautomatorParser.parseUiadNodes(welcome ?? [], SCREEN);
 		const identifiers = new Set(tree.flat.map((e) => e.identifier));
 		expect(identifiers.has("welcome-screen")).toBe(true);
 		expect(identifiers.has("content")).toBe(true);
 	});
 
 	test("a disabled node is not enabled and not hittable; checkable nodes report checked", () => {
-		const tree = parseUiadNodes(
+		const tree = uiautomatorParser.parseUiadNodes(
 			[
 				{ bounds: [0, 0, 100, 100], class: "android.widget.Button", clickable: true, disabled: true },
 				{

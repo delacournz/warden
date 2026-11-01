@@ -1,35 +1,35 @@
 import { describe, expect, test } from "bun:test";
 import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
-import { openAdbSession } from "./adb-session";
-import { createDumper, type DumpRoute, routeOrder } from "./android-dump";
-import { fakeAndroidHost } from "./android-host.testing";
+import { adbSessions } from "./adb-session";
+import { Dumper, type DumpRoute, dumpRoutes } from "./android-dump";
+import { FakeAndroidHost, type FakeAndroidHostInit } from "./android-host.testing";
 
 const XML = '<?xml version="1.0"?><hierarchy rotation="0"><node class="x" bounds="[0,0][1,1]" /></hierarchy>';
 const TRAILER = "UI hierchary dumped to: /dev/stdout\n";
 const TTY = /exec-out uiautomator dump \/dev\/tty$/;
 
-function setup(init: Parameters<typeof fakeAndroidHost>[0]) {
-	const host = fakeAndroidHost(init);
-	const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
+function setup(init: FakeAndroidHostInit) {
+	const host = new FakeAndroidHost(init);
+	const session = adbSessions.open({ adb: "adb", serial: "s1", spawn: host.spawn });
 	const lines: string[] = [];
-	const dumper = createDumper({ session, exec: host.exec, adb: "adb", serial: "s1", log: (l) => lines.push(l) });
+	const dumper = new Dumper({ session, exec: host.exec, adb: "adb", serial: "s1", log: (l) => lines.push(l) });
 	return { host, session, dumper, lines };
 }
 
 describe("route order", () => {
 	test("tty first from API 30, where the resident shell's stdout route is the one that comes back empty", () => {
-		expect(routeOrder(30)).toEqual(["tty", "stdout", "file"]);
-		expect(routeOrder(36)).toEqual(["tty", "stdout", "file"]);
+		expect(dumpRoutes.routeOrder(30)).toEqual(["tty", "stdout", "file"]);
+		expect(dumpRoutes.routeOrder(36)).toEqual(["tty", "stdout", "file"]);
 	});
 
 	test("stdout first below API 30 and when the level is unknown", () => {
-		expect(routeOrder(29)).toEqual(["stdout", "tty", "file"]);
-		expect(routeOrder(undefined)).toEqual(["stdout", "tty", "file"]);
+		expect(dumpRoutes.routeOrder(29)).toEqual(["stdout", "tty", "file"]);
+		expect(dumpRoutes.routeOrder(undefined)).toEqual(["stdout", "tty", "file"]);
 	});
 
 	test("a remembered route goes first and the others keep their order", () => {
-		expect(routeOrder(34, "file")).toEqual(["file", "tty", "stdout"]);
-		expect(routeOrder(28, "tty")).toEqual(["tty", "stdout", "file"]);
+		expect(dumpRoutes.routeOrder(34, "file")).toEqual(["file", "tty", "stdout"]);
+		expect(dumpRoutes.routeOrder(28, "tty")).toEqual(["tty", "stdout", "file"]);
 	});
 });
 
@@ -121,12 +121,12 @@ describe("dump routes", () => {
 
 	test("an initial route is tried first; a discovery is reported once", async () => {
 		const routes: DumpRoute[] = [];
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [{ match: "uiautomator dump /dev/stdout", reply: TRAILER }],
 			host: [{ match: TTY, reply: XML }],
 		});
-		const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
-		const dumper = createDumper({
+		const session = adbSessions.open({ adb: "adb", serial: "s1", spawn: host.spawn });
+		const dumper = new Dumper({
 			session,
 			exec: host.exec,
 			adb: "adb",
@@ -139,7 +139,7 @@ describe("dump routes", () => {
 		expect(host.shell).toEqual([]);
 		expect(routes).toEqual([]);
 
-		const fresh = createDumper({ session, exec: host.exec, adb: "adb", serial: "s1", onRoute: (r) => routes.push(r) });
+		const fresh = new Dumper({ session, exec: host.exec, adb: "adb", serial: "s1", onRoute: (r) => routes.push(r) });
 		await fresh.dump();
 		await fresh.dump();
 		expect(routes).toEqual(["tty"]);
@@ -148,12 +148,12 @@ describe("dump routes", () => {
 
 	test("sdk 30+ with nothing remembered probes tty first and reports it once", async () => {
 		const routes: DumpRoute[] = [];
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [{ match: "uiautomator dump /dev/stdout", reply: TRAILER }],
 			host: [{ match: TTY, reply: XML }],
 		});
-		const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
-		const dumper = createDumper({
+		const session = adbSessions.open({ adb: "adb", serial: "s1", spawn: host.spawn });
+		const dumper = new Dumper({
 			session,
 			exec: host.exec,
 			adb: "adb",
@@ -171,13 +171,13 @@ describe("dump routes", () => {
 
 	test("a remembered route that fails re-probes the rest and reports the one that works", async () => {
 		const routes: DumpRoute[] = [];
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [{ match: "uiautomator dump /dev/stdout", reply: XML }],
 			host: [{ match: TTY, reply: TRAILER }],
 		});
-		const session = openAdbSession({ adb: "adb", serial: "s1", spawn: host.spawn });
+		const session = adbSessions.open({ adb: "adb", serial: "s1", spawn: host.spawn });
 		const lines: string[] = [];
-		const dumper = createDumper({
+		const dumper = new Dumper({
 			session,
 			exec: host.exec,
 			adb: "adb",

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { type ConditionEvent, conditionEvents } from "@delacour/warden-driver/conditions/condition-events";
 import type { TickerClock } from "@delacour/warden-driver/conditions/route-ticker";
 import type { Driver } from "@delacour/warden-driver/driver.types";
-import { openAndroidDriver } from "./android-driver";
-import { fakeAndroidHost } from "./android-host.testing";
+import { androidDrivers } from "./android-driver";
+import { FakeAndroidHost } from "./android-host.testing";
 import { DUMPSYS_AIRPLANE, DUMPSYS_ONLINE } from "./network.fixture";
 
 const open: Driver[] = [];
@@ -21,7 +21,7 @@ const flapClock: TickerClock = {
 
 async function setup(conditionSink?: (e: ConditionEvent) => void) {
 	let airplane = false;
-	const fake = fakeAndroidHost({
+	const fake = new FakeAndroidHost({
 		shell: [
 			{ match: "getprop sys.boot_completed", reply: "1\n34\nPhysical size: 1080x2400\nPhysical density: 420\n" },
 			{
@@ -36,7 +36,7 @@ async function setup(conditionSink?: (e: ConditionEvent) => void) {
 		host: [{ match: /emu network/, reply: "OK\n" }],
 	});
 	let t = 0;
-	const res = await openAndroidDriver({
+	const res = await androidDrivers.open({
 		serial: "emulator-5554",
 		adb: "adb",
 		exec: fake.exec,

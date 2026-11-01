@@ -6,17 +6,11 @@ import type { Driver, DriverResult } from "@delacour/warden-driver/driver.types"
 import { observations } from "@delacour/warden-driver/observation-cache";
 import { settler } from "@delacour/warden-driver/settle";
 import { deviceTyping } from "@delacour/warden-driver/typing";
-import { elementAt, openAndroidDriver } from "./android-driver";
-import {
-	type FakeAndroidHost,
-	fakeAndroidHost,
-	type HostRule,
-	PNG_BYTES,
-	type ShellRule,
-} from "./android-host.testing";
-import { type AndroidStateStore, memoryAndroidState } from "./android-state";
+import { androidDrivers } from "./android-driver";
+import { FakeAndroidHost, type HostRule, PNG_BYTES, type ShellRule } from "./android-host.testing";
+import { type AndroidStateStore, MemoryAndroidState } from "./android-state";
 import { DUMPSYS_ONLINE } from "./network.fixture";
-import { parseUiautomatorXml } from "./uiautomator";
+import { uiautomatorParser } from "./uiautomator";
 import { SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN } from "./uiautomator.fixture";
 
 const SCREEN = { width: 1080, height: 2400, scale: 2.625 };
@@ -59,13 +53,13 @@ async function setup(
 		onDumpRoute?: (route: "stdout" | "tty" | "file") => void;
 	} = {}
 ) {
-	const host = fakeAndroidHost({
+	const host = new FakeAndroidHost({
 		shell: [...(opts.shell ?? []), ...BASE_RULES],
 		...(opts.host ? { host: opts.host } : {}),
 	});
 	const lines: string[] = [];
 	const clock = fakeClock();
-	const res = await openAndroidDriver({
+	const res = await androidDrivers.open({
 		serial: opts.serial ?? "emulator-5554",
 		adb: "adb",
 		exec: host.exec,
@@ -122,7 +116,7 @@ describe("open", () => {
 
 	test("a remembered dump route is tried first and a new one is reported", async () => {
 		const routes: string[] = [];
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: [
 				...BASE_RULES,
 				{ match: "uiautomator dump /dev/stdout", reply: "UI hierchary dumped to: /dev/stdout\n" },
@@ -130,7 +124,7 @@ describe("open", () => {
 			],
 			host: [{ match: "adb", reply: "ERROR: null root node\n" }],
 		});
-		const opened = await openAndroidDriver({
+		const opened = await androidDrivers.open({
 			serial: "s",
 			adb: "adb",
 			exec: host.exec,
@@ -153,9 +147,9 @@ describe("open", () => {
 	});
 
 	test("E_NOT_BOOTED when sys.boot_completed never reaches 1", async () => {
-		const host = fakeAndroidHost({ shell: [{ match: "getprop sys.boot_completed", reply: "\n" }] });
+		const host = new FakeAndroidHost({ shell: [{ match: "getprop sys.boot_completed", reply: "\n" }] });
 		const clock = fakeClock();
-		const res = await openAndroidDriver({
+		const res = await androidDrivers.open({
 			serial: "s",
 			adb: "adb",
 			exec: host.exec,
@@ -307,8 +301,8 @@ describe("elementAtPoint", () => {
 	});
 
 	test("elementAt prefers later siblings at equal depth", () => {
-		const { flat } = parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN);
-		expect(elementAt(flat, { x: 540, y: 280 })?.identifier).toBe("email-input");
+		const { flat } = uiautomatorParser.parseUiautomatorXml(SYNTHETIC_FORM_DUMP, SYNTHETIC_FORM_SCREEN);
+		expect(androidDrivers.elementAt(flat, { x: 540, y: 280 })?.identifier).toBe("email-input");
 	});
 });
 
@@ -567,8 +561,8 @@ describe("screenshot", () => {
 	});
 
 	test("non-PNG output is E_IO", async () => {
-		const host = fakeAndroidHost({ shell: BASE_RULES, screencap: new Uint8Array([1, 2, 3]) });
-		const res = await openAndroidDriver({
+		const host = new FakeAndroidHost({ shell: BASE_RULES, screencap: new Uint8Array([1, 2, 3]) });
+		const res = await androidDrivers.open({
 			serial: "s",
 			adb: "adb",
 			exec: host.exec,
@@ -837,7 +831,7 @@ const routeProbes = (host: FakeAndroidHost): number =>
 
 describe("remembered dump route", () => {
 	test("a route found in one driver is not probed for again by the next, per serial", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		const first = await setup({ ...ONLY_FILE_ROUTE, state });
 		await value(first.driver.snapshot());
 		expect(routeProbes(first.host)).toBe(3);
@@ -853,7 +847,7 @@ describe("remembered dump route", () => {
 	});
 
 	test("another serial has its own route", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		await state.update("emulator-9999", (s) => ({ ...s, sdk: 34, dumpRoute: "file" }));
 		const { driver, host } = await setup({ ...ONLY_FILE_ROUTE, state });
 		await value(driver.snapshot());
@@ -861,7 +855,7 @@ describe("remembered dump route", () => {
 	});
 
 	test("a remembered route that no longer works is re-probed and the working one is saved", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		await state.update("emulator-5554", (s) => ({ ...s, sdk: 34, dumpRoute: "tty" }));
 		const { driver, host } = await setup({
 			state,
@@ -875,7 +869,7 @@ describe("remembered dump route", () => {
 	});
 
 	test("a different API level means a different image: the old route is not trusted", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		await state.update("emulator-5554", (s) => ({ ...s, sdk: 28, dumpRoute: "file" }));
 		const { driver, host } = await setup({ ...ONLY_FILE_ROUTE, state });
 		await value(driver.snapshot());
@@ -885,7 +879,7 @@ describe("remembered dump route", () => {
 	});
 
 	test("a route the caller passes wins over the saved one and is still reported when it changes", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		await state.update("emulator-5554", (s) => ({ ...s, sdk: 34, dumpRoute: "file" }));
 		const routes: string[] = [];
 		const { driver, host } = await setup({
@@ -937,7 +931,7 @@ const ONES = {
 describe("animation scales", () => {
 	test("opening turns them off, closing puts the recorded values back", async () => {
 		const values = scalesAt("1.0");
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		const { driver, host } = await setup({ shell: [settingsRule(values)], state });
 		expect([...values.values()]).toEqual(["0", "0", "0"]);
 		expect((await state.read("emulator-5554")).animations).toEqual(ONES);
@@ -952,7 +946,7 @@ describe("animation scales", () => {
 
 	test("a scale that was never set is deleted again, not set to a guess", async () => {
 		const values = new Map<string, string>([["window_animation_scale", "0.5"]]);
-		const { driver } = await setup({ shell: [settingsRule(values)], state: memoryAndroidState() });
+		const { driver } = await setup({ shell: [settingsRule(values)], state: new MemoryAndroidState() });
 		expect(values.get("transition_animation_scale")).toBe("0");
 		await driver.close();
 		expect([...values.entries()]).toEqual([["window_animation_scale", "0.5"]]);
@@ -960,7 +954,7 @@ describe("animation scales", () => {
 
 	test("scales that were already off are left alone and nothing is saved", async () => {
 		const values = scalesAt("0");
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		const { driver, host } = await setup({ shell: [settingsRule(values)], state });
 		await driver.close();
 		expect(host.shell.filter((c) => c.startsWith("settings")).length).toBe(1);
@@ -977,9 +971,9 @@ describe("animation scales", () => {
 
 	test("a crash that never closed the driver leaves the originals in the file for the next open to restore", async () => {
 		const values = scalesAt("1.0");
-		const state = memoryAndroidState();
-		const crashed = fakeAndroidHost({ shell: [settingsRule(values), ...BASE_RULES] });
-		const opened = await openAndroidDriver({
+		const state = new MemoryAndroidState();
+		const crashed = new FakeAndroidHost({ shell: [settingsRule(values), ...BASE_RULES] });
+		const opened = await androidDrivers.open({
 			serial: "emulator-5554",
 			adb: "adb",
 			exec: crashed.exec,
@@ -1000,7 +994,7 @@ describe("animation scales", () => {
 
 	test("a restore that fails keeps the originals in the file", async () => {
 		const values = scalesAt("1.0");
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		const { driver, lines } = await setup({
 			shell: [
 				{ match: /^settings put global window_animation_scale 1\.0/, reply: { stdout: "Error\n", exitCode: 1 } },
@@ -1014,7 +1008,7 @@ describe("animation scales", () => {
 	});
 
 	test("scales that cannot be read are neither recorded nor 'restored'", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		const { driver, host } = await setup({ state });
 		await driver.close();
 		expect(host.shell.filter((c) => c.startsWith("settings")).length).toBe(1);
@@ -1066,10 +1060,10 @@ describe("physical phone safety (PHY-2.4)", () => {
 	});
 
 	test("a phone behind a secure keyguard fails the open with E_DEVICE_LOCKED and changes nothing", async () => {
-		const host = fakeAndroidHost({
+		const host = new FakeAndroidHost({
 			shell: phoneRules("wdn_qemu:\nmWakefulness=Awake\n  showing=true\n  secure=true\n"),
 		});
-		const opened = await openAndroidDriver({
+		const opened = await androidDrivers.open({
 			serial: PHONE,
 			adb: "adb",
 			exec: host.exec,
@@ -1081,7 +1075,7 @@ describe("physical phone safety (PHY-2.4)", () => {
 	});
 
 	test("rotation and dark mode are saved before the first write and restored on close", async () => {
-		const state = memoryAndroidState();
+		const state = new MemoryAndroidState();
 		const { driver, host } = await setup({ serial: PHONE, state, shell: [...settingsReads, ...phoneRules()] });
 		await value(driver.orientation("landscapeLeft"));
 		expect(await state.read(PHONE)).toMatchObject({ rotation: { accelerometer_rotation: "1", user_rotation: "0" } });

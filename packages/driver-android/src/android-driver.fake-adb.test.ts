@@ -3,8 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
-import { spawnAdb } from "./adb-session";
-import { openAndroidDriver } from "./android-driver";
+import { adbSessions } from "./adb-session";
+import { androidDrivers } from "./android-driver";
 import { SYNTHETIC_FORM_DUMP } from "./uiautomator.fixture";
 
 /** End to end through real child processes: default spawn, `processExec.run`, `bunExecBinary` against fake-adb.ts. */
@@ -36,11 +36,11 @@ const exec: Exec = (cmd, opts) => processExec.run(cmd, { ...opts, env });
 describe("android driver against fake-adb.ts", () => {
 	test("open, snapshot via the tty route, tap, screenshot, install", async () => {
 		const lines: string[] = [];
-		const opened = await openAndroidDriver({
+		const opened = await androidDrivers.open({
 			serial: "emulator-5554",
 			adb: FAKE_ADB,
 			exec,
-			spawn: (argv) => spawnAdb(argv, env),
+			spawn: (argv) => adbSessions.spawn(argv, env),
 			log: (l) => lines.push(l),
 		});
 		if (!opened.success) throw new Error(opened.error.message);

@@ -26,21 +26,27 @@ const ALERT_BUTTON_IDS: ReadonlySet<string> = new Set([
 	...ANDROID_AUTOFILL_SAVE_IDS,
 ]);
 
-function textOf(element: Element | undefined): string | undefined {
-	return element?.text || element?.label || undefined;
+/** Pure alert detection over a flattened snapshot. */
+export class AndroidAlert {
+	/** The alert on screen, or null. Title/message are best effort; at least one known button is required. */
+	detectAlert(flat: readonly Element[]): AlertInfo | null {
+		const buttons = flat.filter((e) => e.identifier !== undefined && ALERT_BUTTON_IDS.has(e.identifier));
+		if (buttons.length === 0) return null;
+		const title =
+			this.textOf(this.byIdentifier(flat, "alertTitle")) ??
+			this.textOf(this.byIdentifier(flat, "permission_message")) ??
+			this.textOf(this.byIdentifier(flat, "autofill_save_title"));
+		const message = this.textOf(this.byIdentifier(flat, "message"));
+		return { ...(title ? { title } : {}), ...(message ? { message } : {}), buttons };
+	}
+
+	private textOf(element: Element | undefined): string | undefined {
+		return element?.text || element?.label || undefined;
+	}
+
+	private byIdentifier(flat: readonly Element[], id: string): Element | undefined {
+		return flat.find((e) => e.identifier === id);
+	}
 }
 
-const byIdentifier = (flat: readonly Element[], id: string): Element | undefined =>
-	flat.find((e) => e.identifier === id);
-
-/** The alert on screen, or null. Title/message are best effort; at least one known button is required. */
-export function detectAlert(flat: readonly Element[]): AlertInfo | null {
-	const buttons = flat.filter((e) => e.identifier !== undefined && ALERT_BUTTON_IDS.has(e.identifier));
-	if (buttons.length === 0) return null;
-	const title =
-		textOf(byIdentifier(flat, "alertTitle")) ??
-		textOf(byIdentifier(flat, "permission_message")) ??
-		textOf(byIdentifier(flat, "autofill_save_title"));
-	const message = textOf(byIdentifier(flat, "message"));
-	return { ...(title ? { title } : {}), ...(message ? { message } : {}), buttons };
-}
+export const androidAlert = new AndroidAlert();

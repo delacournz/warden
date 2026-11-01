@@ -3,11 +3,11 @@ import type { DriverError } from "@delacour/warden-driver/driver.types";
 import { driverErrors } from "@delacour/warden-driver/errors";
 import { type SpanDetail, spanDetails } from "@delacour/warden-driver/trace/span-detail";
 import type { AdbSession } from "./adb-session";
-import { type FakeUiadOptions, fakeUiad, recordedSession } from "./uiad.testing";
-import { createUiadBackend } from "./uiad-backend";
-import { startUiad } from "./uiad-client";
-import { createUiadOps, snapshotFromUiad } from "./uiad-ops";
-import { readSnapshotData } from "./uiad-protocol";
+import { type FakeUiadOptions, uiadTesting } from "./uiad.testing";
+import { UiadBackendService } from "./uiad-backend";
+import { uiadClients } from "./uiad-client";
+import { UiadOpsService, uiadSnapshots } from "./uiad-ops";
+import { uiadProtocol } from "./uiad-protocol";
 
 const SCREEN = { width: 1080, height: 2400, scale: 2.625 };
 
@@ -27,7 +27,7 @@ const open: Array<{ stop(): Promise<void> }> = [];
 
 /** The ops over a real client talking to an in-process server, with a clock that only moves when told to. */
 function setup(options: FakeUiadOptions = {}, launchFailure?: DriverError) {
-	const fake = fakeUiad(options);
+	const fake = uiadTesting.fakeUiad(options);
 	let t = 1_000;
 	const slept: number[] = [];
 	const clock = {
@@ -38,7 +38,7 @@ function setup(options: FakeUiadOptions = {}, launchFailure?: DriverError) {
 		},
 	};
 	const lines: string[] = [];
-	const backend = createUiadBackend({
+	const backend = new UiadBackendService({
 		session: SESSION,
 		adb: "adb",
 		serial: "emulator-5554",
@@ -48,9 +48,9 @@ function setup(options: FakeUiadOptions = {}, launchFailure?: DriverError) {
 		launch: async () =>
 			launchFailure
 				? { success: false as const, error: launchFailure }
-				: startUiad({ cmd: ["adb", "shell", "x"], spawn: fake.spawn, graceMs: 20 }),
+				: uiadClients.startUiad({ cmd: ["adb", "shell", "x"], spawn: fake.spawn, graceMs: 20 }),
 	});
-	const ops = createUiadOps({ backend, baseScreen: SCREEN, clock, log: (line) => lines.push(line) });
+	const ops = new UiadOpsService({ backend, baseScreen: SCREEN, clock, log: (line) => lines.push(line) });
 	open.push(ops);
 	return { fake, ops, backend, lines, slept };
 }
@@ -83,11 +83,11 @@ describe("snapshot", () => {
 	});
 
 	test("takes the rotation from the reply, not from what was measured at open", () => {
-		const reply = recordedSession().replies.get("snapshot");
+		const reply = uiadTesting.recordedSession().replies.get("snapshot");
 		if (typeof reply !== "object" || !("data" in reply)) throw new Error("no recorded snapshot");
-		const data = readSnapshotData(reply.data);
+		const data = uiadProtocol.readSnapshotData(reply.data);
 		if (typeof data === "string") throw new Error(data);
-		const landscape = snapshotFromUiad({ ...data, screen: { ...data.screen, rotation: 1 } }, SCREEN, 5);
+		const landscape = uiadSnapshots.snapshotFromUiad({ ...data, screen: { ...data.screen, rotation: 1 } }, SCREEN, 5);
 		expect(landscape.screen).toMatchObject({ width: 2400, height: 1080, rotation: 1 });
 		expect(landscape.takenAt).toBe(5);
 	});
@@ -135,18 +135,18 @@ describe("snapshot", () => {
 	});
 
 	test("a server that hangs is ended, not waited for twice", async () => {
-		const fake = fakeUiad({ handle: (request) => (request.op === "snapshot" ? "silent" : undefined) });
+		const fake = uiadTesting.fakeUiad({ handle: (request) => (request.op === "snapshot" ? "silent" : undefined) });
 		let t = 0;
 		const clock = { now: () => t++, sleep: async () => undefined };
-		const backend = createUiadBackend({
+		const backend = new UiadBackendService({
 			session: SESSION,
 			adb: "adb",
 			serial: "s",
 			clock,
 			options: {},
-			launch: async () => startUiad({ cmd: ["x"], spawn: fake.spawn, graceMs: 20, requestTimeoutMs: 30 }),
+			launch: async () => uiadClients.startUiad({ cmd: ["x"], spawn: fake.spawn, graceMs: 20, requestTimeoutMs: 30 }),
 		});
-		const ops = createUiadOps({ backend, baseScreen: SCREEN, clock });
+		const ops = new UiadOpsService({ backend, baseScreen: SCREEN, clock });
 		open.push(ops);
 		expect(await ops.snapshot()).toBeUndefined();
 		expect(fake.running()).toBe(0);

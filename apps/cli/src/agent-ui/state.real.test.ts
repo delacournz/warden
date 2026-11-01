@@ -9,7 +9,7 @@ import {
 	REAL_DEV_LAUNCHER_DUMP,
 	REAL_DEV_LAUNCHER_SCREEN,
 } from "@delacour/warden-driver-android/testing/uiautomator.fixture";
-import { interactiveFilter, parseUiautomatorXml } from "@delacour/warden-driver-android/uiautomator";
+import { uiautomatorParser } from "@delacour/warden-driver-android/uiautomator";
 import { toSnapshot } from "@delacour/warden-driver-ios/normalize";
 import { preorder } from "@delacour/warden-sdk/ops/ref-store";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
@@ -63,8 +63,8 @@ function iosGolden(name: string): Snapshot {
 }
 
 function androidDump(interactiveOnly: boolean): Snapshot {
-	const tree = parseUiautomatorXml(REAL_DEV_LAUNCHER_DUMP, REAL_DEV_LAUNCHER_SCREEN);
-	const { elements, flat } = interactiveOnly ? interactiveFilter(tree.elements) : tree;
+	const tree = uiautomatorParser.parseUiautomatorXml(REAL_DEV_LAUNCHER_DUMP, REAL_DEV_LAUNCHER_SCREEN);
+	const { elements, flat } = interactiveOnly ? uiautomatorParser.interactiveFilter(tree.elements) : tree;
 	return {
 		platform: "android",
 		backend: "uiautomator",
