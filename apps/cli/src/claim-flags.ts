@@ -293,8 +293,8 @@ export async function withPhysicalAllowlist(ctx: CommandContext, request: Device
 	let configAllow: string[] | undefined;
 	if (parsePhysicalIds(ctx.env.WARDEN_PHYSICAL_IDS) === undefined) {
 		// loaded here only: a plain claim never pays for the config loader
-		const { findWardenConfig } = await import("@delacour/warden-builds/config");
-		const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
+		const { projectConfig } = await import("@delacour/warden-builds/config");
+		const found = projectConfig.find(ctx.cwd, undefined, ctx.env);
 		if (!found.success)
 			return resultFactory.err(`cannot read the physical-device allowlist from warden.config: ${found.error}`);
 		configAllow = found.data?.config.physical?.allow;

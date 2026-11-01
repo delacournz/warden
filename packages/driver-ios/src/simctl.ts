@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { nodeResetFs, type ResetFs, resetAppData } from "@delacour/warden-builds/install";
+import { installer, nodeResetFs, type ResetFs } from "@delacour/warden-builds/install";
 import type { LatLon, LocationCondition } from "@delacour/warden-config/conditions.types";
 import { geoMath } from "@delacour/warden-driver/conditions/geo";
 import { locationPlanner } from "@delacour/warden-driver/conditions/location-plan";
@@ -443,7 +443,7 @@ export function createSimctl(deps: SimctlDeps): Simctl {
 			return result.ok ? ok(parseRunning(result.res.stdout, bundleId)) : { success: false, error: result.error };
 		},
 		async clearData(bundleId, opts = {}) {
-			const reset = await resetAppData(
+			const reset = await installer.resetAppData(
 				{ exec, env, fs: deps.resetFs ?? nodeResetFs },
 				{ platform: "ios", deviceId: udid },
 				bundleId,

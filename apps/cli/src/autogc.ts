@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cacheCap, cacheTotal } from "@delacour/warden-builds/prune";
+import { prune } from "@delacour/warden-builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { androidSnapshotsDue } from "@delacour/warden-core/golden/android-snapshot-pending";
 import { liveness, type PidAlive } from "@delacour/warden-store/liveness";
@@ -77,6 +77,6 @@ export function maybeAutoGc(
 
 /** The build cache is over the cap gc would prune it to; a bad `WARDEN_MAX_CACHE_SIZE` (gc skips the prune) is not. */
 function cacheOverCap(ctx: CommandContext): boolean {
-	const cap = cacheCap(undefined, ctx.env).bytes;
-	return cap.success && cacheTotal(ctx.store()) > cap.data;
+	const cap = prune.cacheCap(undefined, ctx.env).bytes;
+	return cap.success && prune.cacheTotal(ctx.store()) > cap.data;
 }

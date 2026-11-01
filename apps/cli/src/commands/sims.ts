@@ -1,4 +1,4 @@
-import { formatSize } from "@delacour/warden-builds/prune";
+import { prune } from "@delacour/warden-builds/prune";
 import { deleteSims } from "@delacour/warden-core/sims/delete";
 import { judgeMachineSims } from "@delacour/warden-core/sims/prune";
 import {
@@ -51,7 +51,7 @@ function choice(ctx: CommandContext, sim: SimEntry): Choice<string> {
 		sim.state !== "Shutdown" ? sim.state.toLowerCase() : undefined,
 		sim.runtime,
 		sim.owner === "warden" ? "warden" : undefined,
-		sim.bytes > 0 ? formatSize(sim.bytes) : undefined,
+		sim.bytes > 0 ? prune.formatSize(sim.bytes) : undefined,
 	];
 	const hint = why ?? tags.filter((t) => t !== undefined).join(", ");
 	return {

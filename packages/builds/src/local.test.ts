@@ -14,10 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
-import { releaseKey } from "./fingerprint";
-import { combineKey, jsInputsHash } from "./js-inputs";
-import { artifactCandidates, locateArtifact, runLocalBuild, snapshotArtifacts } from "./local";
-import { fakeApp, testProject } from "./testing/builds.testing";
+import { fingerprint as fingerprints } from "./fingerprint";
+import { jsInputs } from "./js-inputs";
+import { artifactLocator, type LocalBuildDeps, LocalBuilder } from "./local";
+import { buildsTesting } from "./testing/builds.testing";
+
+const runLocalBuild = (deps: LocalBuildDeps) => new LocalBuilder(deps).run();
+const fakeApp = buildsTesting.fakeApp.bind(buildsTesting);
+const testProject = buildsTesting.project.bind(buildsTesting);
 
 let dir: string;
 beforeEach(() => {
@@ -79,8 +83,8 @@ describe("locateArtifact", () => {
 		age(old, 3600);
 		age(local, 60);
 		age(fresh, 5);
-		expect(artifactCandidates(root, "ios", dd).sort()).toEqual([fresh, local, old].sort());
-		expect(locateArtifact(root, "ios", dd, NOTHING)).toEqual({ kind: "rebuilt", path: fresh });
+		expect(artifactLocator.candidates(root, "ios", dd).sort()).toEqual([fresh, local, old].sort());
+		expect(artifactLocator.locate(root, "ios", dd, NOTHING)).toEqual({ kind: "rebuilt", path: fresh });
 	});
 
 	test("a device target looks in -iphoneos, never in -iphonesimulator", () => {
@@ -88,10 +92,10 @@ describe("locateArtifact", () => {
 		const dd = join(dir, "DerivedData");
 		const phone = fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphoneos"), "App.app");
 		fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator"), "Sim.app");
-		expect(artifactCandidates(root, "ios", dd, "Release", "device")).toEqual([phone]);
-		expect(artifactCandidates(root, "ios", dd, "Release").map((p) => p.endsWith("Sim.app"))).toEqual([true]);
-		const before = snapshotArtifacts(root, "ios", dd, "Release", "device");
-		expect(locateArtifact(root, "ios", dd, before, "Release", new Set(), "device")).toEqual({
+		expect(artifactLocator.candidates(root, "ios", dd, "Release", "device")).toEqual([phone]);
+		expect(artifactLocator.candidates(root, "ios", dd, "Release").map((p) => p.endsWith("Sim.app"))).toEqual([true]);
+		const before = artifactLocator.snapshot(root, "ios", dd, "Release", "device");
+		expect(artifactLocator.locate(root, "ios", dd, before, "Release", new Set(), "device")).toEqual({
 			kind: "up-to-date",
 			path: phone,
 		});
@@ -105,9 +109,9 @@ describe("locateArtifact", () => {
 		const rebuilt = fakeApp(join(dd, "App-xyz", SIM), "App.app");
 		age(rebuilt, 60);
 		age(kept, 5);
-		const before = snapshotArtifacts(root, "ios", dd);
+		const before = artifactLocator.snapshot(root, "ios", dd);
 		age(rebuilt, 30);
-		expect(locateArtifact(root, "ios", dd, before)).toEqual({ kind: "rebuilt", path: rebuilt });
+		expect(artifactLocator.locate(root, "ios", dd, before)).toEqual({ kind: "rebuilt", path: rebuilt });
 	});
 
 	test("Android: an up-to-date apk the build did not rewrite is still found", () => {
@@ -116,9 +120,9 @@ describe("locateArtifact", () => {
 		const apk = join(out, "app-release.apk");
 		writeFileSync(apk, "apk");
 		age(apk, 3600);
-		const before = snapshotArtifacts(dir, "android", join(dir, "dd"), "Release");
+		const before = artifactLocator.snapshot(dir, "android", join(dir, "dd"), "Release");
 		expect(before.get(apk)).toBeGreaterThan(0);
-		expect(locateArtifact(dir, "android", join(dir, "dd"), before, "Release")).toEqual({
+		expect(artifactLocator.locate(dir, "android", join(dir, "dd"), before, "Release")).toEqual({
 			kind: "up-to-date",
 			path: apk,
 		});
@@ -131,14 +135,14 @@ describe("locateArtifact", () => {
 		derivedFor(dd, "Nested-def", join(root, ".claude", "worktrees", "x", "ios", "App.xcworkspace"));
 		const foreign = fakeApp(join(dd, "Other-abc", SIM), "Other.app");
 		const nested = fakeApp(join(dd, "Nested-def", SIM), "App.app");
-		expect(locateArtifact(root, "ios", dd, snapshotArtifacts(root, "ios", dd))).toBeUndefined();
+		expect(artifactLocator.locate(root, "ios", dd, artifactLocator.snapshot(root, "ios", dd))).toBeUndefined();
 
 		derivedFor(dd, "App-xyz", join(root, "ios", "App&amp;Co.xcworkspace"));
 		const own = fakeApp(join(dd, "App-xyz", SIM), "App.app");
 		age(own, 60);
 		age(foreign, 5);
 		age(nested, 5);
-		expect(locateArtifact(root, "ios", dd, snapshotArtifacts(root, "ios", dd))).toEqual({
+		expect(artifactLocator.locate(root, "ios", dd, artifactLocator.snapshot(root, "ios", dd))).toEqual({
 			kind: "up-to-date",
 			path: own,
 		});
@@ -152,7 +156,7 @@ describe("locateArtifact", () => {
 		symlinkSync(root, link);
 		derivedFor(dd, "App-xyz", join(realpathSync(root), "ios", "App.xcworkspace"));
 		const own = fakeApp(join(dd, "App-xyz", SIM), "App.app");
-		expect(locateArtifact(link, "ios", dd, snapshotArtifacts(link, "ios", dd))).toEqual({
+		expect(artifactLocator.locate(link, "ios", dd, artifactLocator.snapshot(link, "ios", dd))).toEqual({
 			kind: "up-to-date",
 			path: own,
 		});
@@ -166,17 +170,17 @@ describe("locateArtifact", () => {
 		const own = fakeApp(join(root, "ios", "build", SIM), "App.app");
 		age(own, 3600);
 		age(foreign, 3600);
-		const before = snapshotArtifacts(root, "ios", dd);
+		const before = artifactLocator.snapshot(root, "ios", dd);
 		age(foreign, 1);
-		expect(locateArtifact(root, "ios", dd, before)).toEqual({ kind: "up-to-date", path: own });
+		expect(artifactLocator.locate(root, "ios", dd, before)).toEqual({ kind: "up-to-date", path: own });
 	});
 
 	test("rewritten output of unknown owner is still taken when nothing of ours is there", () => {
 		const root = join(dir, "app");
 		const dd = join(dir, "DerivedData");
-		const before = snapshotArtifacts(root, "ios", dd);
+		const before = artifactLocator.snapshot(root, "ios", dd);
 		const fresh = fakeApp(join(dd, "App-xyz", SIM), "App.app");
-		expect(locateArtifact(root, "ios", dd, before)).toEqual({ kind: "rebuilt", path: fresh });
+		expect(artifactLocator.locate(root, "ios", dd, before)).toEqual({ kind: "rebuilt", path: fresh });
 	});
 
 	test("Android: two unchanged release flavors are ambiguous", () => {
@@ -187,7 +191,13 @@ describe("locateArtifact", () => {
 			return join(apks, v, `app-${v}.apk`);
 		});
 		const dd = join(dir, "dd");
-		const res = locateArtifact(dir, "android", dd, snapshotArtifacts(dir, "android", dd, "Release"), "Release");
+		const res = artifactLocator.locate(
+			dir,
+			"android",
+			dd,
+			artifactLocator.snapshot(dir, "android", dd, "Release"),
+			"Release"
+		);
 		expect(res?.kind).toBe("ambiguous");
 		if (res?.kind === "ambiguous") expect(res.paths.sort()).toEqual(paths.sort());
 	});
@@ -196,7 +206,7 @@ describe("locateArtifact", () => {
 		const root = join(dir, "app");
 		const dd = join(dir, "DerivedData");
 		fakeApp(join(dd, "App-xyz", SIM), "App.app");
-		expect(locateArtifact(root, "ios", dd, snapshotArtifacts(root, "ios", dd))).toBeUndefined();
+		expect(artifactLocator.locate(root, "ios", dd, artifactLocator.snapshot(root, "ios", dd))).toBeUndefined();
 	});
 
 	test("iOS: Release looks in Release-iphonesimulator only", () => {
@@ -205,8 +215,8 @@ describe("locateArtifact", () => {
 		const debug = fakeApp(join(dd, "App-xyz", SIM), "Debug.app");
 		const release = fakeApp(join(dd, "App-xyz", join("Build", "Products", "Release-iphonesimulator")), "Rel.app");
 		const local = fakeApp(join(root, "ios", "build", join("Build", "Products", "Release-iphonesimulator")), "Loc.app");
-		expect(artifactCandidates(root, "ios", dd, "Release").sort()).toEqual([local, release].sort());
-		expect(artifactCandidates(root, "ios", dd).sort()).toEqual([debug]);
+		expect(artifactLocator.candidates(root, "ios", dd, "Release").sort()).toEqual([local, release].sort());
+		expect(artifactLocator.candidates(root, "ios", dd).sort()).toEqual([debug]);
 	});
 
 	test("Android: Release picks only release apks", () => {
@@ -215,17 +225,19 @@ describe("locateArtifact", () => {
 			mkdirSync(join(apk, variant), { recursive: true });
 			writeFileSync(join(apk, variant, `app-${variant}.apk`), "apk");
 		}
-		expect(artifactCandidates(dir, "android", join(dir, "dd"), "Release")).toEqual([
+		expect(artifactLocator.candidates(dir, "android", join(dir, "dd"), "Release")).toEqual([
 			join(apk, "release", "app-release.apk"),
 		]);
-		expect(artifactCandidates(dir, "android", join(dir, "dd"), "Debug")).toEqual([join(apk, "debug", "app-debug.apk")]);
+		expect(artifactLocator.candidates(dir, "android", join(dir, "dd"), "Debug")).toEqual([
+			join(apk, "debug", "app-debug.apk"),
+		]);
 	});
 
 	test("Android: .apk under android/app/build/outputs/apk", () => {
 		const out = join(dir, "android", "app", "build", "outputs", "apk", "debug");
 		mkdirSync(out, { recursive: true });
 		writeFileSync(join(out, "app-debug.apk"), "apk");
-		expect(locateArtifact(dir, "android", join(dir, "dd"), NOTHING)).toEqual({
+		expect(artifactLocator.locate(dir, "android", join(dir, "dd"), NOTHING)).toEqual({
 			kind: "rebuilt",
 			path: join(out, "app-debug.apk"),
 		});
@@ -259,7 +271,7 @@ describe("runLocalBuild", () => {
 			exec,
 			project,
 			platform: "ios",
-			hash: releaseKey("h1"),
+			hash: fingerprints.releaseKey("h1"),
 			env: { HOME: dir },
 			log: () => {},
 		});
@@ -351,7 +363,7 @@ describe("runLocalBuild", () => {
 				exec,
 				project,
 				platform: "android",
-				hash: releaseKey("h1"),
+				hash: fingerprints.releaseKey("h1"),
 				env: { HOME: "/nope" },
 				log: (line) => logs.push(line),
 			});
@@ -627,7 +639,7 @@ describe("runLocalBuild: a fresh checkout's prebuild moves the fingerprint (17-1
 				cmd.includes("-s")
 					? { exitCode: 0, stdout: `H 100644 ${id} 0\tsrc/a.ts\0`, stderr: "" }
 					: { exitCode: 0, stdout: "", stderr: "" };
-			const js = await jsInputsHash({ exec, root: "/r", jsInputs: ["src/**"] });
+			const js = await jsInputs.hash({ exec, root: "/r", jsInputs: ["src/**"] });
 			if (!js.success) throw new Error(js.error);
 			return js.data;
 		};
@@ -640,12 +652,12 @@ describe("runLocalBuild: a fresh checkout's prebuild moves the fingerprint (17-1
 				exec: s.exec,
 				project: s.project,
 				platform: "android",
-				hash: combineKey("n1", js),
+				hash: jsInputs.combineKey("n1", js),
 				native: "n1",
 			});
 			expect(res).toEqual({
 				success: true,
-				data: { artifact: join(apkDir(s.root), "app-debug.apk"), postKey: combineKey("n2", js) },
+				data: { artifact: join(apkDir(s.root), "app-debug.apk"), postKey: jsInputs.combineKey("n2", js) },
 			});
 			expect(s.calls.some((c) => c.startsWith("git status"))).toBe(false);
 		});
@@ -658,7 +670,7 @@ describe("runLocalBuild: a fresh checkout's prebuild moves the fingerprint (17-1
 				exec: s.exec,
 				project: s.project,
 				platform: "android",
-				hash: combineKey("n1", js),
+				hash: jsInputs.combineKey("n1", js),
 				native: "n1",
 			});
 			expect(res.success).toBe(false);
@@ -697,7 +709,7 @@ describe("runLocalBuild: an up-to-date build leaves an old artifact (17-2)", () 
 			exec,
 			project,
 			platform: "android" as const,
-			hash: releaseKey("h1"),
+			hash: fingerprints.releaseKey("h1"),
 			env: { HOME: "/nope" },
 			log: (line: string) => logs.push(line),
 		};
@@ -860,18 +872,19 @@ describe("runLocalBuild: a stale CNG native dir is regenerated before the build"
 		writeFileSync(join(root, "android", "stale"), "old prebuild");
 		const command = opts.command ?? EXPO_RUN;
 		const seen = { staleAtBuild: undefined as boolean | undefined };
+		const checkIgnoreExit = opts.ignored === false ? 1 : 0;
+		const build = (): ExecResult => {
+			seen.staleAtBuild = existsSync(join(root, "android", "stale"));
+			if ((opts.buildExit ?? 0) !== 0) return { exitCode: opts.buildExit ?? 1, stdout: "", stderr: "BUILD FAILED" };
+			mkdirSync(apkDir(root), { recursive: true });
+			writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
-			if (cmd[2] === command) {
-				seen.staleAtBuild = existsSync(join(root, "android", "stale"));
-				if ((opts.buildExit ?? 0) !== 0) return { exitCode: opts.buildExit ?? 1, stdout: "", stderr: "BUILD FAILED" };
-				mkdirSync(apkDir(root), { recursive: true });
-				writeFileSync(join(apkDir(root), "app-debug.apk"), "apk");
-				return { exitCode: 0, stdout: "", stderr: "" };
-			}
+			if (cmd[2] === command) return build();
 			if (cmd[2] === "fp") return { exitCode: 0, stdout: '{"hash":"h1"}', stderr: "" };
-			if (joined === "git check-ignore -q android")
-				return { exitCode: opts.ignored === false ? 1 : 0, stdout: "", stderr: "" };
+			if (joined === "git check-ignore -q android") return { exitCode: checkIgnoreExit, stdout: "", stderr: "" };
 			if (joined.startsWith("git status --porcelain")) return { exitCode: 0, stdout: "", stderr: "" };
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};

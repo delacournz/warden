@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resultFactory } from "@delacour/warden-types/result";
-import { collectRunnerSources, isSafeSourcePath, loadEmbeddedRunnerSources, parseRunnerBlob } from "./pack";
-import { runnerSourceHash, stageRunnerSources } from "./stage";
+import { runnerPack } from "./pack";
+import { runnerStage } from "./stage";
 
 let home: string;
 beforeEach(() => {
@@ -20,22 +20,22 @@ const FILES = {
 
 describe("stageRunnerSources", () => {
 	test("writes the tree under src/<version>-<hash> with a ready marker", async () => {
-		const staged = await stageRunnerSources({
+		const staged = await runnerStage.stage({
 			home,
 			version: "1.2.3",
 			loadSources: async () => resultFactory.ok(FILES),
 		});
 		if (!staged.success) throw new Error(staged.error);
-		expect(staged.data.dir).toBe(join(home, "ios-runner", "src", `1.2.3-${runnerSourceHash(FILES)}`));
+		expect(staged.data.dir).toBe(join(home, "ios-runner", "src", `1.2.3-${runnerStage.sourceHash(FILES)}`));
 		expect(staged.data.project).toBe(join(staged.data.dir, "ios-runner", "WardenRunner.xcodeproj"));
 		expect(readFileSync(join(staged.data.dir, "ios/Sources/warden-simd/Protocol/Wire.swift"), "utf8")).toBe("wire");
 		expect(existsSync(join(staged.data.dir, ".ready"))).toBe(true);
 	});
 
 	test("the same sources reuse the copy; changed sources get their own", async () => {
-		const a = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
-		const again = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
-		const changed = await stageRunnerSources({
+		const a = await runnerStage.stage({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
+		const again = await runnerStage.stage({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
+		const changed = await runnerStage.stage({
 			home,
 			version: "1",
 			loadSources: async () => resultFactory.ok({ ...FILES, "ios-runner/Host/App.swift": "app2" }),
@@ -49,23 +49,23 @@ describe("stageRunnerSources", () => {
 	});
 
 	test("a copy without the marker (crashed run) is rewritten", async () => {
-		const a = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
+		const a = await runnerStage.stage({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
 		if (!a.success) throw new Error(a.error);
 		rmSync(join(a.data.dir, ".ready"));
 		rmSync(join(a.data.dir, "ios-runner/Host/App.swift"));
-		const b = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
+		const b = await runnerStage.stage({ home, version: "1", loadSources: async () => resultFactory.ok(FILES) });
 		expect(b.success).toBe(true);
 		expect(existsSync(join(a.data.dir, "ios-runner/Host/App.swift"))).toBe(true);
 	});
 
 	test("refuses paths that leave the directory, and sources without a project", async () => {
-		const outside = await stageRunnerSources({
+		const outside = await runnerStage.stage({
 			home,
 			version: "1",
 			loadSources: async () => resultFactory.ok({ ...FILES, "../evil": "x" }),
 		});
 		expect(outside.success).toBe(false);
-		const noProject = await stageRunnerSources({
+		const noProject = await runnerStage.stage({
 			home,
 			version: "1",
 			loadSources: async () => resultFactory.ok({ a: "b" }),
@@ -74,35 +74,36 @@ describe("stageRunnerSources", () => {
 	});
 
 	test("a failing loader is passed through", async () => {
-		const got = await stageRunnerSources({ home, version: "1", loadSources: async () => resultFactory.err("no blob") });
+		const got = await runnerStage.stage({ home, version: "1", loadSources: async () => resultFactory.err("no blob") });
 		expect(got).toEqual({ success: false, error: "no blob" });
 	});
 });
 
 describe("blob", () => {
 	test("parseRunnerBlob checks shape and paths", () => {
-		expect(parseRunnerBlob(JSON.stringify(FILES)).success).toBe(true);
-		expect(parseRunnerBlob("nope").success).toBe(false);
-		expect(parseRunnerBlob("[]").success).toBe(false);
-		expect(parseRunnerBlob(JSON.stringify({ a: 1 })).success).toBe(false);
-		expect(parseRunnerBlob(JSON.stringify({ "../x": "y" })).success).toBe(false);
+		expect(runnerPack.parseBlob(JSON.stringify(FILES)).success).toBe(true);
+		expect(runnerPack.parseBlob("nope").success).toBe(false);
+		expect(runnerPack.parseBlob("[]").success).toBe(false);
+		expect(runnerPack.parseBlob(JSON.stringify({ a: 1 })).success).toBe(false);
+		expect(runnerPack.parseBlob(JSON.stringify({ "../x": "y" })).success).toBe(false);
 	});
 
 	test("isSafeSourcePath", () => {
-		expect(isSafeSourcePath("ios-runner/Host/App.swift")).toBe(true);
-		for (const bad of ["", "/abs", "a/../b", "a//b", "a\\b", "./a"]) expect(isSafeSourcePath(bad)).toBe(false);
+		expect(runnerPack.isSafeSourcePath("ios-runner/Host/App.swift")).toBe(true);
+		for (const bad of ["", "/abs", "a/../b", "a//b", "a\\b", "./a"])
+			expect(runnerPack.isSafeSourcePath(bad)).toBe(false);
 	});
 
 	test("loadEmbeddedRunnerSources finds the hashed blob name", async () => {
 		const blob = Object.assign(new Blob([JSON.stringify(FILES)]), { name: "ios-runner-abc123.bin" });
-		expect((await loadEmbeddedRunnerSources([blob])).success).toBe(true);
-		expect((await loadEmbeddedRunnerSources([])).success).toBe(false);
+		expect((await runnerPack.loadEmbedded([blob])).success).toBe(true);
+		expect((await runnerPack.loadEmbedded([])).success).toBe(false);
 	});
 });
 
 describe("collectRunnerSources (this checkout)", () => {
 	const native = join(import.meta.dir, "..", "..", "..", "driver-ios", "native");
-	const collected = collectRunnerSources(native);
+	const collected = runnerPack.collect(native);
 
 	test("has the project, host, tests, core sources and the shared simd files, none of the symlinks", () => {
 		if (!collected.success) throw new Error(collected.error);

@@ -4,7 +4,7 @@
  * process never races another — a clone never sees a half-built or deleted golden.
  */
 import { join } from "node:path";
-import { withBuildLock } from "@delacour/warden-builds/lock";
+import { buildLock } from "@delacour/warden-builds/lock";
 import { GOLDEN_PREFIX } from "@delacour/warden-providers/golden-name";
 import { BoundedExec, type Timer, timers } from "@delacour/warden-providers/health";
 import { IOS_TIMEOUTS, Simctl } from "@delacour/warden-providers/ios";
@@ -380,7 +380,7 @@ function lockDeps(deps: GoldenDeps) {
 export async function ensureGolden(deps: GoldenDeps, profile: string, runtime?: string): AsyncResult<EnsuredGolden> {
 	const target = await readGoldenTarget(deps, profile, runtime);
 	if (!target.success) return target;
-	return withBuildLock(lockDeps(deps), GOLDEN_LOCK_KEY, () => ensureLocked(deps, target.data));
+	return buildLock.hold(lockDeps(deps), GOLDEN_LOCK_KEY, () => ensureLocked(deps, target.data));
 }
 
 /** `simctl clone` the golden to `name`; held under the lock so the golden can't be booted, rebuilt or deleted mid-clone. */
@@ -392,7 +392,7 @@ export async function cloneFromGolden(
 ): AsyncResult<ClonedDevice> {
 	const target = await readGoldenTarget(deps, profile, runtime);
 	if (!target.success) return target;
-	return withBuildLock(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
+	return buildLock.hold(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
 		const golden = await ensureLocked(deps, target.data);
 		if (!golden.success) return golden;
 		const cloned = await simctl(deps, ["clone", golden.data.udid, name], IOS_TIMEOUTS.cloneMs);
@@ -424,7 +424,7 @@ export async function listGoldens(deps: GoldenDeps): AsyncResult<SimctlSim[]> {
  * every golden with `all`. A newer recipe's golden (another warden version's) is kept without `all`.
  */
 export async function pruneGoldens(deps: GoldenDeps, opts: { all: boolean }): AsyncResult<SimctlSim[]> {
-	return withBuildLock(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
+	return buildLock.hold(lockDeps(deps), GOLDEN_LOCK_KEY, async () => {
 		const goldens = await listGoldens(deps);
 		if (!goldens.success) return goldens;
 		if (opts.all) return deleteSims(deps, goldens.data);

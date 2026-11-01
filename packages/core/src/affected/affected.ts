@@ -1,13 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import {
-	CONFIG_FILE,
-	type ConfigSource,
-	type FoundConfig,
-	findWardenConfig,
-	loadProject,
-} from "@delacour/warden-builds/config";
-import { overlayDirUnlessRepoConfig } from "@delacour/warden-builds/overlay";
+import { CONFIG_FILE, type ConfigSource, type FoundConfig, projectConfig } from "@delacour/warden-builds/config";
+import { overlay as overlays } from "@delacour/warden-builds/overlay";
 import { type E2eSuiteConfig, e2eSuiteSchema } from "@delacour/warden-config/affected.schema";
 import { type ConditionsConfig, conditionsConfigs } from "@delacour/warden-config/conditions.config";
 import type { Exec } from "@delacour/warden-runtime/exec";
@@ -105,7 +99,7 @@ function defaultSuite(
 	overlayDir: string | undefined,
 	slim?: NonNullable<E2eSuiteConfig["slim"]>
 ): Result<Suite> {
-	const project = loadProject({
+	const project = projectConfig.load({
 		start: cwd,
 		env: {},
 		...(overlayDir ? { overlayDir } : {}),
@@ -153,8 +147,8 @@ export async function findSuite(
 	env: Record<string, string | undefined>
 ): AsyncResult<Suite, SuiteError> {
 	const stopAt = (await gitFactsReader.read(exec, cwd, git ?? new GitFactsCache()))?.toplevel;
-	const overlay = await overlayDirUnlessRepoConfig(exec, cwd, stopAt, env, git);
-	const found = findWardenConfig(cwd, stopAt, env, overlay);
+	const overlay = await overlays.dirUnlessRepoConfig(exec, cwd, stopAt, env, git);
+	const found = projectConfig.find(cwd, stopAt, env, overlay);
 	if (!found.success) return suiteError("config", found.error);
 	const suites = found.data?.config.e2e ?? {};
 	const names = Object.keys(suites);

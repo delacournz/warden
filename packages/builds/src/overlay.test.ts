@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
-import { findWardenConfig, loadProject } from "./config";
-import { overlayDir, overlayDirFor, overlayDirUnlessRepoConfig } from "./overlay";
+import { projectConfig } from "./config";
+import { overlay as overlays } from "./overlay";
 
 let dir: string;
 let home: string;
@@ -33,7 +33,7 @@ async function git(cwd: string, ...args: string[]): Promise<void> {
 
 describe("overlayDir", () => {
 	test("lives under <WARDEN_HOME>/projects", () => {
-		expect(overlayDir(env, "github.com/o/r:.")).toStartWith(join(home, "projects"));
+		expect(overlays.dir(env, "github.com/o/r:.")).toStartWith(join(home, "projects"));
 	});
 });
 
@@ -43,7 +43,7 @@ describe("loadProject with an overlay", () => {
 		const overlay = join(home, "projects", "k");
 		write(join(checkout, "apps/app/app.json"), { expo: { name: "x" } });
 		write(join(overlay, "warden.config.json"), config("app", "apps/app"));
-		const res = loadProject({ start: join(checkout, "apps/app"), stopAt: checkout, env, overlayDir: overlay });
+		const res = projectConfig.load({ start: join(checkout, "apps/app"), stopAt: checkout, env, overlayDir: overlay });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("overlay");
 		expect(res.data.origin).toBe("config");
@@ -54,7 +54,7 @@ describe("loadProject with an overlay", () => {
 		const overlay = join(home, "projects", "k");
 		write(join(dir, "warden.config.json"), config("repo"));
 		write(join(overlay, "warden.config.json"), config("overlay"));
-		const res = loadProject({ start: dir, stopAt: dir, env, overlayDir: overlay });
+		const res = projectConfig.load({ start: dir, stopAt: dir, env, overlayDir: overlay });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.name).toBe("repo");
 		expect(res.data.source).toBe("repo");
@@ -62,7 +62,7 @@ describe("loadProject with an overlay", () => {
 
 	test("no config anywhere: autodetect, source auto (an empty overlay is ignored)", () => {
 		write(join(dir, "app.json"), { expo: { slug: "auto", ios: { bundleIdentifier: "com.x.auto" } } });
-		const res = loadProject({ start: dir, stopAt: dir, env, overlayDir: join(home, "projects", "none") });
+		const res = projectConfig.load({ start: dir, stopAt: dir, env, overlayDir: join(home, "projects", "none") });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("auto");
 	});
@@ -73,7 +73,7 @@ describe("loadProject with an overlay", () => {
 			join(overlay, "warden.config.js"),
 			`module.exports = (ctx) => ({ projects: [{ name: ctx.configDir, bundleId: { ios: "com.x.a" } }] });`
 		);
-		const found = findWardenConfig(dir, dir, env, overlay);
+		const found = projectConfig.find(dir, dir, env, overlay);
 		if (!found.success) throw new Error(found.error);
 		expect(found.data?.dir).toBe(overlay);
 		expect(found.data?.rootDir).toBe(dir);
@@ -83,7 +83,7 @@ describe("loadProject with an overlay", () => {
 	test("a broken overlay config is an error, not a silent fallback", () => {
 		const overlay = join(home, "projects", "k");
 		write(join(overlay, "warden.config.json"), { nope: true });
-		expect(findWardenConfig(dir, dir, env, overlay).success).toBe(false);
+		expect(projectConfig.find(dir, dir, env, overlay).success).toBe(false);
 	});
 });
 
@@ -95,8 +95,8 @@ describe("overlayDirFor", () => {
 		await git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i");
 		const wt = join(dir, "wt");
 		await git(main, "worktree", "add", "-q", wt, "-b", "other");
-		const a = await overlayDirFor(processExec.run, main, env);
-		const b = await overlayDirFor(processExec.run, wt, env);
+		const a = await overlays.dirFor(processExec.run, main, env);
+		const b = await overlays.dirFor(processExec.run, wt, env);
 		expect(a).toBeDefined();
 		expect(a).toBe(b);
 	});
@@ -105,8 +105,8 @@ describe("overlayDirFor", () => {
 		const repo = join(dir, "repo");
 		mkdirSync(join(repo, "apps/a"), { recursive: true });
 		await git(repo, "init", "-q");
-		expect(await overlayDirFor(processExec.run, join(repo, "apps/a"), env)).toBe(
-			await overlayDirFor(processExec.run, repo, env)
+		expect(await overlays.dirFor(processExec.run, join(repo, "apps/a"), env)).toBe(
+			await overlays.dirFor(processExec.run, repo, env)
 		);
 	});
 
@@ -115,8 +115,8 @@ describe("overlayDirFor", () => {
 			mkdirSync(join(dir, n));
 			await git(join(dir, n), "init", "-q");
 		}
-		expect(await overlayDirFor(processExec.run, join(dir, "r1"), env)).not.toBe(
-			await overlayDirFor(processExec.run, join(dir, "r2"), env)
+		expect(await overlays.dirFor(processExec.run, join(dir, "r1"), env)).not.toBe(
+			await overlays.dirFor(processExec.run, join(dir, "r2"), env)
 		);
 	});
 });
@@ -129,15 +129,15 @@ describe("overlayDirUnlessRepoConfig", () => {
 			calls.push([...cmd]);
 			return processExec.run(cmd, opts);
 		};
-		expect(await overlayDirUnlessRepoConfig(exec, dir, dir, env)).toBeUndefined();
+		expect(await overlays.dirUnlessRepoConfig(exec, dir, dir, env)).toBeUndefined();
 		expect(calls).toEqual([]);
 	});
 
 	test("no repo config: the overlay dir", async () => {
 		mkdirSync(join(dir, "r"));
 		await git(join(dir, "r"), "init", "-q");
-		expect(await overlayDirUnlessRepoConfig(processExec.run, join(dir, "r"), join(dir, "r"), env)).toBe(
-			await overlayDirFor(processExec.run, join(dir, "r"), env)
+		expect(await overlays.dirUnlessRepoConfig(processExec.run, join(dir, "r"), join(dir, "r"), env)).toBe(
+			await overlays.dirFor(processExec.run, join(dir, "r"), env)
 		);
 	});
 });

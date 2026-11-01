@@ -1,5 +1,5 @@
-import { type AppDeps, defaultAppDeps, kindAppInput, projectStart } from "@delacour/warden-builds/prepare";
-import { type RepackResult, repackApp } from "@delacour/warden-builds/repack";
+import { type AppDeps, AppPreparer, appLookup, defaultAppDeps } from "@delacour/warden-builds/prepare";
+import { Repacker, type RepackInput, type RepackResult } from "@delacour/warden-builds/repack";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
@@ -9,6 +9,11 @@ import { appHostFromContext, type CommandContext } from "../context";
 import { emit, heading, reportError } from "../output";
 import { projectContextFor } from "../project-context";
 import { withSpinner } from "../spinner-context";
+
+/** Runs one repack; the real one is `new Repacker(input).run()`. */
+export type RepackRun = (input: RepackInput) => AsyncResult<RepackResult>;
+
+const runRepack: RepackRun = (input) => new Repacker(input).run();
 
 type RepackOpts = { project?: string; force?: true; json?: true };
 
@@ -42,17 +47,15 @@ function report(platform: Platform, result: RepackResult): RepackReport {
 async function repack(
 	ctx: CommandContext,
 	deps: AppDeps,
-	run: typeof repackApp,
+	run: RepackRun,
 	platform: Platform,
 	opts: RepackOpts
 ): AsyncResult<RepackReport> {
-	const start = projectStart(ctx, opts.project);
+	const start = appLookup.projectStart(ctx, opts.project);
 	if (!start.success) return start;
 	const project = await projectContextFor(ctx, { start: start.data });
 	if (!project.success) return project;
-	const { kind: _kind, ...input } = kindAppInput(
-		appHostFromContext(ctx),
-		deps,
+	const { kind: _kind, ...input } = new AppPreparer(appHostFromContext(ctx), deps).kindAppInput(
 		ownerResolver.resolve(ctx),
 		platform,
 		project.data,
@@ -83,7 +86,7 @@ function text(ctx: CommandContext, r: RepackReport): string {
 async function repackCmd(
 	ctx: CommandContext,
 	deps: AppDeps,
-	run: typeof repackApp,
+	run: RepackRun,
 	platformArg: string | undefined,
 	opts: RepackOpts
 ): Promise<number> {
@@ -108,7 +111,7 @@ async function repackCmd(
 	return res.data.result === "fallback" ? 1 : 0;
 }
 
-export function createRepackCommand(deps: AppDeps, run: typeof repackApp = repackApp): Command {
+export function createRepackCommand(deps: AppDeps, run: RepackRun = runRepack): Command {
 	return defineCommand({
 		name: "repack",
 		group: "Builds",

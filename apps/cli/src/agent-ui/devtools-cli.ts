@@ -1,6 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { metroOwner } from "@delacour/warden-builds/metro";
+import { metroTools } from "@delacour/warden-builds/metro";
 import type { ConsoleLine, NetworkEntry } from "@delacour/warden-devtools/devtools.types";
 import { devtoolsFacetOpener } from "@delacour/warden-devtools/facet";
 import { routeReader } from "@delacour/warden-devtools/route";
@@ -63,7 +63,7 @@ export type CliDevtoolsDeps = DevtoolsDeps & { brokerClient?: BrokerClientDeps }
 export const defaultDevtoolsDeps: CliDevtoolsDeps = {
 	open: (options) => devtoolsFacetOpener.open(options),
 	probe: async (host, port) => {
-		const owner = await metroOwner(host.exec, port, host.cwd);
+		const owner = await metroTools.owner(host.exec, port, host.cwd);
 		if (owner.kind === "ours") return "ours";
 		return owner.kind === "foreign" ? "foreign" : "none";
 	},

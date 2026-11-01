@@ -16,19 +16,13 @@ import { type Exec, type ExecResult, processExec } from "@delacour/warden-runtim
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
-import { findRepack, kindDir, kindHash, storeArtifact } from "./cache";
-import { computeKindKey } from "./kind-key";
-import {
-	bundlerFlags,
-	detectHermes,
-	findHermesc,
-	hasHbcMagic,
-	type RepackInput,
-	repackApp,
-	resolveEntryFile,
-} from "./repack";
+import { buildCache } from "./cache";
+import { kindKeyResolver } from "./kind-key";
+import { Repacker, type RepackInput, repackTools } from "./repack";
 import type { ApplyRepack } from "./repack.types";
-import { fakeApp, testProject } from "./testing/builds.testing";
+import { buildsTesting } from "./testing/builds.testing";
+
+const repackApp = (input: RepackInput) => new Repacker(input).run();
 
 let dir: string;
 let root: string;
@@ -68,6 +62,25 @@ afterEach(() => {
 
 type Host = { exec: Exec; calls: string[][] };
 
+const DONE: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
+
+function fakeBundler(fails: boolean, flag: (name: string) => string): ExecResult {
+	if (fails) return { exitCode: 1, stdout: "", stderr: "metro exploded" };
+	writeFileSync(flag("--bundle-output"), "JS");
+	writeFileSync(flag("--sourcemap-output"), "{}");
+	return DONE;
+}
+
+function fakeHermesc(
+	over: { hermescFails?: boolean; hermescBadMagic?: boolean },
+	flag: (name: string) => string
+): ExecResult {
+	if (over.hermescFails) return { exitCode: 1, stdout: "", stderr: "hermesc boom" };
+	writeFileSync(flag("-out"), over.hermescBadMagic ? new Uint8Array(10) : HBC);
+	writeFileSync(`${flag("-out")}.map`, "{}");
+	return DONE;
+}
+
 /** git is real; the project's fingerprint command, the bundler, hermesc and the compose script are fake */
 function host(over: { bundleFails?: boolean; hermescFails?: boolean; hermescBadMagic?: boolean } = {}): Host {
 	const calls: string[][] = [];
@@ -78,18 +91,9 @@ function host(over: { bundleFails?: boolean; hermescFails?: boolean; hermescBadM
 		if (bin === "git") return processExec.run(cmd, opts);
 		calls.push([...cmd]);
 		const flag = (name: string) => args[args.indexOf(name) + 1] ?? "";
-		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native")) {
-			if (over.bundleFails) return { exitCode: 1, stdout: "", stderr: "metro exploded" };
-			writeFileSync(flag("--bundle-output"), "JS");
-			writeFileSync(flag("--sourcemap-output"), "{}");
-			return done;
-		}
-		if (bin.endsWith("/hermesc")) {
-			if (over.hermescFails) return { exitCode: 1, stdout: "", stderr: "hermesc boom" };
-			writeFileSync(flag("-out"), over.hermescBadMagic ? new Uint8Array(10) : HBC);
-			writeFileSync(`${flag("-out")}.map`, "{}");
-			return done;
-		}
+		if (bin.endsWith("/.bin/expo") || bin.endsWith("/.bin/react-native"))
+			return fakeBundler(over.bundleFails === true, flag);
+		if (bin.endsWith("/hermesc")) return fakeHermesc(over, flag);
 		if (bin === "node") {
 			writeFileSync(args[args.indexOf("-o") + 1] ?? "", "{}");
 			return done;
@@ -120,26 +124,26 @@ function applier(applied: Applied, over: { fail?: boolean; fallback?: string } =
 }
 
 async function seedBase(): Promise<void> {
-	const keys = await computeKindKey({
+	const keys = await kindKeyResolver.compute({
 		exec: host().exec,
-		project: testProject({ root, fingerprintCommand: "fp" }),
+		project: buildsTesting.project({ root, fingerprintCommand: "fp" }),
 		platform: "ios",
 		kind: "simulator",
 		env: {},
 	});
 	if (!keys.success) throw new Error(keys.error);
-	const app = fakeApp(join(dir, "src"));
+	const app = buildsTesting.fakeApp(join(dir, "src"));
 	mkdirSync(join(app, "Frameworks", "hermesvm.framework"), { recursive: true });
-	const stored = await storeArtifact({
+	const stored = await buildCache.storeArtifact({
 		store,
 		env,
 		projectKey: KEY,
 		platform: "ios",
 		profile: "local:simulator",
-		hash: kindHash(keys.data.key),
+		hash: buildCache.kindHash(keys.data.key),
 		artifact: app,
 		source: "import",
-		layout: { dir: kindDir(env, KEY, "ios", keys.data.key), kind: "simulator-base" },
+		layout: { dir: buildCache.kindDir(env, KEY, "ios", keys.data.key), kind: "simulator-base" },
 		now: 1,
 	});
 	if (!stored.success) throw new Error(stored.error);
@@ -156,7 +160,7 @@ function input(h: Host, applied: Applied, over: Partial<RepackInput> = {}): Repa
 		pidAlive: () => false,
 		owner: { kind: "agent", sessionId: "me", cwd: dir },
 		pid: 1,
-		project: testProject({ root, fingerprintCommand: "fp" }),
+		project: buildsTesting.project({ root, fingerprintCommand: "fp" }),
 		projectKey: KEY,
 		platform: "ios",
 		eas: false,
@@ -196,7 +200,7 @@ describe("repackApp", () => {
 		expect(applied).toEqual({ count: 1, bundles: [true] });
 		expect(first.data.artifact).toBe(
 			join(
-				kindDir(env, KEY, "ios", {
+				buildCache.kindDir(env, KEY, "ios", {
 					kind: "simulator-repack",
 					nativeFp: first.data.baseHash.split(":")[0] ?? "",
 					jsKey: first.data.jsKey,
@@ -287,7 +291,7 @@ describe("repackApp", () => {
 		const applied = fresh();
 		const probe = await repackApp(input(h, fresh(), { hermes: async () => false }));
 		if (!probe.success || probe.data.kind !== "repacked") throw new Error("seed repack");
-		const hit = findRepack(store, {
+		const hit = buildCache.findRepack(store, {
 			projectKey: KEY,
 			platform: "ios",
 			nativeFp: probe.data.hash.split(":")[0] ?? "",
@@ -384,7 +388,7 @@ describe("repackApp", () => {
 		const res = await repackApp(
 			input(h, fresh(), {
 				hermes: async () => false,
-				project: testProject({ root, fingerprintCommand: "fp", framework: "react-native" }),
+				project: buildsTesting.project({ root, fingerprintCommand: "fp", framework: "react-native" }),
 			})
 		);
 		expect(res.success).toBe(true);
@@ -394,18 +398,18 @@ describe("repackApp", () => {
 
 describe("helpers", () => {
 	test("resolveEntryFile: main file, extension-less main, index fallback, none", () => {
-		expect(resolveEntryFile(root)).toBe(join(root, "index.js"));
+		expect(repackTools.resolveEntryFile(root)).toBe(join(root, "index.js"));
 		writeFileSync(join(root, "package.json"), JSON.stringify({ main: "entry" }));
 		writeFileSync(join(root, "entry.tsx"), "");
-		expect(resolveEntryFile(root)).toBe(join(root, "entry.tsx"));
+		expect(repackTools.resolveEntryFile(root)).toBe(join(root, "entry.tsx"));
 		writeFileSync(join(root, "package.json"), "{}");
-		expect(resolveEntryFile(root)).toBe(join(root, "index.js"));
+		expect(repackTools.resolveEntryFile(root)).toBe(join(root, "index.js"));
 		rmSync(join(root, "index.js"));
-		expect(resolveEntryFile(root)).toBeUndefined();
+		expect(repackTools.resolveEntryFile(root)).toBeUndefined();
 	});
 
 	test("bundlerFlags carry no scratch path; the entry is root-relative", () => {
-		const flags = bundlerFlags("android", "expo", "index.ts");
+		const flags = repackTools.bundlerFlags("android", "expo", "index.ts");
 		expect(flags.join(" ")).toBe(
 			"export:embed --platform android --dev false --minify true --entry-file index.ts --reset-cache"
 		);
@@ -414,23 +418,31 @@ describe("helpers", () => {
 	test("findHermesc prefers hermes-compiler, falls back to react-native/sdks", () => {
 		const present = new Set<string>();
 		const exists = (p: string) => present.has(p);
-		expect(findHermesc("/r/app", "osx-bin", exists)).toBeUndefined();
+		expect(repackTools.findHermesc("/r/app", "osx-bin", exists)).toBeUndefined();
 		present.add("/r/node_modules/react-native/sdks/hermesc/osx-bin/hermesc");
-		expect(findHermesc("/r/app", "osx-bin", exists)).toBe("/r/node_modules/react-native/sdks/hermesc/osx-bin/hermesc");
+		expect(repackTools.findHermesc("/r/app", "osx-bin", exists)).toBe(
+			"/r/node_modules/react-native/sdks/hermesc/osx-bin/hermesc"
+		);
 		present.add("/r/node_modules/hermes-compiler/hermesc/osx-bin/hermesc");
-		expect(findHermesc("/r/app", "osx-bin", exists)).toBe("/r/node_modules/hermes-compiler/hermesc/osx-bin/hermesc");
+		expect(repackTools.findHermesc("/r/app", "osx-bin", exists)).toBe(
+			"/r/node_modules/hermes-compiler/hermesc/osx-bin/hermesc"
+		);
 	});
 
 	test("detectHermes: iOS frameworks, Android libhermes in the apk", async () => {
 		const app = join(dir, "H.app");
 		mkdirSync(join(app, "Frameworks", "hermesvm.framework"), { recursive: true });
-		expect(await detectHermes(host().exec, "ios", app)).toBe(true);
-		expect(await detectHermes(host().exec, "ios", join(dir, "none.app"))).toBe(false);
+		expect(await repackTools.detectHermes(host().exec, "ios", app)).toBe(true);
+		expect(await repackTools.detectHermes(host().exec, "ios", join(dir, "none.app"))).toBe(false);
 		const apk =
 			(stdout: string): Exec =>
 			async () => ({ exitCode: 0, stdout, stderr: "" });
-		expect(await detectHermes(apk("classes.dex\nlib/arm64-v8a/libhermes.so\n"), "android", "a.apk")).toBe(true);
-		expect(await detectHermes(apk("classes.dex\nlib/arm64-v8a/libjsc.so\n"), "android", "a.apk")).toBe(false);
+		expect(await repackTools.detectHermes(apk("classes.dex\nlib/arm64-v8a/libhermes.so\n"), "android", "a.apk")).toBe(
+			true
+		);
+		expect(await repackTools.detectHermes(apk("classes.dex\nlib/arm64-v8a/libjsc.so\n"), "android", "a.apk")).toBe(
+			false
+		);
 	});
 
 	test("hasHbcMagic", () => {
@@ -438,9 +450,9 @@ describe("helpers", () => {
 		const bad = join(dir, "bad");
 		writeFileSync(good, HBC);
 		writeFileSync(bad, "// js");
-		expect(hasHbcMagic(good)).toBe(true);
-		expect(hasHbcMagic(bad)).toBe(false);
-		expect(hasHbcMagic(join(dir, "missing"))).toBe(false);
+		expect(repackTools.hasHbcMagic(good)).toBe(true);
+		expect(repackTools.hasHbcMagic(bad)).toBe(false);
+		expect(repackTools.hasHbcMagic(join(dir, "missing"))).toBe(false);
 		chmodSync(good, 0o644);
 	});
 });

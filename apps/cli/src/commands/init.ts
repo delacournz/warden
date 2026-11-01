@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { projectStart } from "@delacour/warden-builds/prepare";
+import { appLookup } from "@delacour/warden-builds/prepare";
 import { DEFAULT_SPECS_DIR } from "@delacour/warden-core/affected/affected.defaults";
 import { type Result, resultFactory } from "@delacour/warden-types/result";
 import { z } from "zod";
@@ -125,7 +125,7 @@ function init(ctx: CommandContext, opts: InitOpts): number {
 		reportError(ctx, "init", message);
 		return 1;
 	};
-	const start = projectStart(ctx, opts.project);
+	const start = appLookup.projectStart(ctx, opts.project);
 	if (!start.success) return fail(start.error);
 	const root = start.data;
 	const planned = plan(root, opts);

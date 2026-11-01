@@ -1,16 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import {
-	type BuildDecision,
-	buildListArgv,
-	decideBuild,
-	decidePoll,
-	type EasBuild,
-	type PollPolicy,
-	parseBuildList,
-	parseDownloadPath,
-	resolveFromEas,
-} from "./eas";
+import { type BuildDecision, type EasBuild, type EasDeps, EasResolver, eas, type PollPolicy } from "./eas";
+
+const resolveFromEas = (d: EasDeps) => new EasResolver(d).resolveFromEas();
 
 const build = (over: Partial<EasBuild> & Pick<EasBuild, "id" | "status">): EasBuild => ({
 	createdAt: "2026-09-01T00:00:00.000Z",
@@ -32,17 +24,17 @@ describe("parsing", () => {
 				project: { id: "p" },
 			},
 		]);
-		const res = parseBuildList(stdout);
+		const res = eas.parseBuildList(stdout);
 		expect(res.success && res.data[0]?.id).toBe("b1");
 	});
 
 	test("parseBuildList rejects junk", () => {
-		expect(parseBuildList("not json").success).toBe(false);
-		expect(parseBuildList(JSON.stringify([{ id: "x", status: "WAT", createdAt: "" }])).success).toBe(false);
+		expect(eas.parseBuildList("not json").success).toBe(false);
+		expect(eas.parseBuildList(JSON.stringify([{ id: "x", status: "WAT", createdAt: "" }])).success).toBe(false);
 	});
 
 	test("buildListArgv: a commit lookup replaces the fingerprint hash", () => {
-		const argv = buildListArgv("ios", "dev-sim", "h", "abc123");
+		const argv = eas.buildListArgv("ios", "dev-sim", "h", "abc123");
 		expect(argv).not.toContain("--fingerprint-hash");
 		expect(argv.slice(argv.indexOf("--git-commit-hash"), argv.indexOf("--git-commit-hash") + 2)).toEqual([
 			"--git-commit-hash",
@@ -51,21 +43,21 @@ describe("parsing", () => {
 	});
 
 	test("parseDownloadPath", () => {
-		expect(parseDownloadPath('{"path":"/tmp/eas/App.app"}')).toEqual({ success: true, data: "/tmp/eas/App.app" });
-		expect(parseDownloadPath("{}").success).toBe(false);
+		expect(eas.parseDownloadPath('{"path":"/tmp/eas/App.app"}')).toEqual({ success: true, data: "/tmp/eas/App.app" });
+		expect(eas.parseDownloadPath("{}").success).toBe(false);
 	});
 
 	test("buildListArgv: --simulator only for iOS", () => {
-		expect(buildListArgv("ios", "dev-sim", "h")).toContain("--simulator");
-		expect(buildListArgv("android", "dev-sim", "h")).not.toContain("--simulator");
-		expect(buildListArgv("ios", "dev-sim", "h")).toContain("--fingerprint-hash");
-		expect(buildListArgv("ios", "dev-sim", "h").slice(0, 3)).toEqual(["bunx", "eas-cli", "build:list"]);
+		expect(eas.buildListArgv("ios", "dev-sim", "h")).toContain("--simulator");
+		expect(eas.buildListArgv("android", "dev-sim", "h")).not.toContain("--simulator");
+		expect(eas.buildListArgv("ios", "dev-sim", "h")).toContain("--fingerprint-hash");
+		expect(eas.buildListArgv("ios", "dev-sim", "h").slice(0, 3)).toEqual(["bunx", "eas-cli", "build:list"]);
 	});
 });
 
 describe("decideBuild", () => {
 	test("finished with archive wins over newer in-flight", () => {
-		const d = decideBuild(
+		const d = eas.decideBuild(
 			[
 				build({ id: "new", status: "IN_PROGRESS", createdAt: "2026-09-02T00:00:00Z" }),
 				build({ id: "old", status: "FINISHED" }),
@@ -77,15 +69,15 @@ describe("decideBuild", () => {
 
 	test("iOS device builds never count; Android ignores the flag", () => {
 		const device = build({ id: "dev", status: "FINISHED", isForIosSimulator: false });
-		expect(decideBuild([device], "ios")).toEqual({ kind: "missing" });
-		expect(decideBuild([device], "android").kind).toBe("ready");
+		expect(eas.decideBuild([device], "ios")).toEqual({ kind: "missing" });
+		expect(eas.decideBuild([device], "android").kind).toBe("ready");
 	});
 
 	test("building / failed / missing", () => {
-		expect(decideBuild([build({ id: "q", status: "IN_QUEUE" })], "ios").kind).toBe("building");
-		expect(decideBuild([build({ id: "e", status: "ERRORED" })], "ios").kind).toBe("failed");
-		expect(decideBuild([build({ id: "f", status: "FINISHED", artifacts: null })], "ios").kind).toBe("missing");
-		expect(decideBuild([], "ios").kind).toBe("missing");
+		expect(eas.decideBuild([build({ id: "q", status: "IN_QUEUE" })], "ios").kind).toBe("building");
+		expect(eas.decideBuild([build({ id: "e", status: "ERRORED" })], "ios").kind).toBe("failed");
+		expect(eas.decideBuild([build({ id: "f", status: "FINISHED", artifacts: null })], "ios").kind).toBe("missing");
+		expect(eas.decideBuild([], "ios").kind).toBe("missing");
 	});
 });
 
@@ -101,30 +93,30 @@ describe("decidePoll", () => {
 	};
 
 	test("ready → download", () => {
-		expect(decidePoll(ready, fresh, off).kind).toBe("download");
+		expect(eas.decidePoll(ready, fresh, off).kind).toBe("download");
 	});
 
 	test("building → wait until timeout, then miss", () => {
-		expect(decidePoll(building, fresh, off).kind).toBe("wait");
-		expect(decidePoll(building, { elapsedMs: off.timeoutMs, triggeredAt: null }, off).kind).toBe("miss");
+		expect(eas.decidePoll(building, fresh, off).kind).toBe("wait");
+		expect(eas.decidePoll(building, { elapsedMs: off.timeoutMs, triggeredAt: null }, off).kind).toBe("miss");
 	});
 
 	test("missing / failed without trigger → miss immediately (local build next)", () => {
-		expect(decidePoll({ kind: "missing" }, fresh, off).kind).toBe("miss");
-		expect(decidePoll(failed, fresh, off).kind).toBe("miss");
+		expect(eas.decidePoll({ kind: "missing" }, fresh, off).kind).toBe("miss");
+		expect(eas.decidePoll(failed, fresh, off).kind).toBe("miss");
 	});
 
 	test("with trigger: wait out the grace, then trigger, then wait", () => {
-		expect(decidePoll({ kind: "missing" }, fresh, on).kind).toBe("wait");
-		expect(decidePoll({ kind: "missing" }, { elapsedMs: on.graceMs, triggeredAt: null }, on).kind).toBe("trigger");
-		expect(decidePoll({ kind: "missing" }, { elapsedMs: on.graceMs, triggeredAt: 1 }, on).kind).toBe("wait");
+		expect(eas.decidePoll({ kind: "missing" }, fresh, on).kind).toBe("wait");
+		expect(eas.decidePoll({ kind: "missing" }, { elapsedMs: on.graceMs, triggeredAt: null }, on).kind).toBe("trigger");
+		expect(eas.decidePoll({ kind: "missing" }, { elapsedMs: on.graceMs, triggeredAt: 1 }, on).kind).toBe("wait");
 	});
 
 	test("failure older than our trigger is retried; newer is final", () => {
 		const createdAt = Date.parse("2026-09-01T00:10:00Z");
-		expect(decidePoll(failed, { elapsedMs: 0, triggeredAt: createdAt + 1 }, on).kind).toBe("wait");
-		expect(decidePoll(failed, { elapsedMs: 0, triggeredAt: createdAt - 1 }, on).kind).toBe("miss");
-		expect(decidePoll(failed, { elapsedMs: on.graceMs, triggeredAt: null }, on).kind).toBe("trigger");
+		expect(eas.decidePoll(failed, { elapsedMs: 0, triggeredAt: createdAt + 1 }, on).kind).toBe("wait");
+		expect(eas.decidePoll(failed, { elapsedMs: 0, triggeredAt: createdAt - 1 }, on).kind).toBe("miss");
+		expect(eas.decidePoll(failed, { elapsedMs: on.graceMs, triggeredAt: null }, on).kind).toBe("trigger");
 	});
 });
 
@@ -149,7 +141,7 @@ describe("resolveFromEas", () => {
 	const eas = { profile: "development-simulator", trigger: false };
 	const list = (...builds: EasBuild[]) => ({ stdout: JSON.stringify(builds) });
 
-	function deps(exec: Exec, over: Partial<Parameters<typeof resolveFromEas>[0]> = {}) {
+	function deps(exec: Exec, over: Partial<EasDeps> = {}) {
 		let clock = 0;
 		const sleeps: number[] = [];
 		return {

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
-import { normaliseRemote, projectKey, readProjectKey, safeKey } from "./project-key";
+import { ProjectKeys } from "./project-key";
+
+const projectKeys = new ProjectKeys();
 
 describe("normaliseRemote", () => {
 	test("ssh scp-style, https and ssh:// all agree", () => {
@@ -17,22 +19,22 @@ describe("normaliseRemote", () => {
 			"ssh://git@github.com:22/delacournz/warden.git",
 			"  git@github.com:delacournz/warden.git\n",
 		]) {
-			expect(normaliseRemote(url)).toBe(want);
+			expect(projectKeys.normalise(url)).toBe(want);
 		}
 	});
 
 	test("different repos / hosts differ", () => {
-		expect(normaliseRemote("git@github.com:o/a.git")).not.toBe(normaliseRemote("git@github.com:o/b.git"));
-		expect(normaliseRemote("git@gitlab.com:o/a.git")).not.toBe(normaliseRemote("git@github.com:o/a.git"));
+		expect(projectKeys.normalise("git@github.com:o/a.git")).not.toBe(projectKeys.normalise("git@github.com:o/b.git"));
+		expect(projectKeys.normalise("git@gitlab.com:o/a.git")).not.toBe(projectKeys.normalise("git@github.com:o/a.git"));
 	});
 });
 
-describe("projectKey", () => {
+describe("projectKeys", () => {
 	const remote = "git@github.com:o/mono.git";
 
 	test("same app in two worktrees → same key", () => {
-		const a = projectKey({ remote, toplevel: "/w/cowrie", root: "/w/cowrie/apps/salient/app" });
-		const b = projectKey({
+		const a = projectKeys.of({ remote, toplevel: "/w/cowrie", root: "/w/cowrie/apps/salient/app" });
+		const b = projectKeys.of({
 			remote: "https://github.com/o/mono",
 			toplevel: "/Users/x/orca/needlefish",
 			root: "/Users/x/orca/needlefish/apps/salient/app",
@@ -42,27 +44,27 @@ describe("projectKey", () => {
 	});
 
 	test("different subpaths / repos never collide", () => {
-		const app = projectKey({ remote, toplevel: "/w", root: "/w/apps/a" });
-		expect(projectKey({ remote, toplevel: "/w", root: "/w/apps/b" })).not.toBe(app);
-		expect(projectKey({ remote: "git@github.com:o/other.git", toplevel: "/w", root: "/w/apps/a" })).not.toBe(app);
-		expect(projectKey({ remote, toplevel: "/w", root: "/w" })).toBe("github.com/o/mono:.");
+		const app = projectKeys.of({ remote, toplevel: "/w", root: "/w/apps/a" });
+		expect(projectKeys.of({ remote, toplevel: "/w", root: "/w/apps/b" })).not.toBe(app);
+		expect(projectKeys.of({ remote: "git@github.com:o/other.git", toplevel: "/w", root: "/w/apps/a" })).not.toBe(app);
+		expect(projectKeys.of({ remote, toplevel: "/w", root: "/w" })).toBe("github.com/o/mono:.");
 	});
 
 	test("no remote → shared git dir; outside git → path", () => {
-		expect(projectKey({ toplevel: "/w/wt2", commonDir: "/w/main/.git", root: "/w/wt2/app" })).toBe(
+		expect(projectKeys.of({ toplevel: "/w/wt2", commonDir: "/w/main/.git", root: "/w/wt2/app" })).toBe(
 			"git:/w/main/.git:app"
 		);
-		expect(projectKey({ root: "/tmp/x" })).toBe("path:/tmp/x");
+		expect(projectKeys.of({ root: "/tmp/x" })).toBe("path:/tmp/x");
 	});
 });
 
 describe("safeKey", () => {
 	test("filesystem-safe and distinct for keys that sanitise alike", () => {
-		const a = safeKey("github.com/o/r:apps/a");
+		const a = projectKeys.safe("github.com/o/r:apps/a");
 		expect(a).toMatch(/^[A-Za-z0-9._-]+$/);
 		expect(a.startsWith("github.com_o_r_apps_a-")).toBe(true);
-		expect(safeKey("github.com/o/r:apps_a")).not.toBe(a);
-		expect(safeKey("github.com/o/r:apps/a")).toBe(a);
+		expect(projectKeys.safe("github.com/o/r:apps_a")).not.toBe(a);
+		expect(projectKeys.safe("github.com/o/r:apps/a")).toBe(a);
 	});
 });
 
@@ -79,7 +81,7 @@ describe("readProjectKey", () => {
 				return { exitCode: 0, stdout: "git@github.com:o/r.git\n", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
 		};
-		expect(await readProjectKey(exec, "/w/wt/app", new GitFactsCache())).toEqual({
+		expect(await projectKeys.read(exec, "/w/wt/app", new GitFactsCache())).toEqual({
 			success: true,
 			data: "github.com/o/r:app",
 		});
@@ -93,7 +95,7 @@ describe("readProjectKey", () => {
 			if (cmd.join(" ") === COMBINED) return { exitCode: 0, stdout: "/w\n/w/.git\nrefs/heads/main\n", stderr: "" };
 			return { exitCode: 0, stdout: "https://github.com/o/r\n", stderr: "" };
 		};
-		await readProjectKey(exec, "/w", new GitFactsCache());
+		await projectKeys.read(exec, "/w", new GitFactsCache());
 		expect(calls).toEqual([COMBINED, "git config --get remote.origin.url"]);
 	});
 
@@ -106,7 +108,7 @@ describe("readProjectKey", () => {
 		};
 		const cache = new GitFactsCache();
 		await gitFactsReader.read(exec, "/w", cache);
-		await readProjectKey(exec, "/w", cache);
+		await projectKeys.read(exec, "/w", cache);
 		expect(calls.filter((c) => c === COMBINED)).toHaveLength(1);
 		expect(calls).toHaveLength(2);
 	});
@@ -120,12 +122,12 @@ describe("readProjectKey", () => {
 				return { exitCode: 0, stdout: "https://github.com/o/r", stderr: "" };
 			return { exitCode: 1, stdout: "", stderr: "" };
 		};
-		expect(await readProjectKey(exec, "/w", new GitFactsCache())).toEqual({
+		expect(await projectKeys.read(exec, "/w", new GitFactsCache())).toEqual({
 			success: true,
 			data: "github.com/o/r:.",
 		});
 		const none: Exec = async () => ({ exitCode: 128, stdout: "", stderr: "not a git repo" });
-		expect(await readProjectKey(none, "/nonexistent-warden-test/x", new GitFactsCache())).toEqual({
+		expect(await projectKeys.read(none, "/nonexistent-warden-test/x", new GitFactsCache())).toEqual({
 			success: true,
 			data: "path:/nonexistent-warden-test/x",
 		});
@@ -136,7 +138,7 @@ describe("readProjectKey", () => {
 			cmd.join(" ") === COMBINED
 				? { exitCode: 0, stdout: "/w/wt\n/w/main/.git\nHEAD\n", stderr: "" }
 				: { exitCode: 1, stdout: "", stderr: "" };
-		expect(await readProjectKey(exec, "/w/wt", new GitFactsCache())).toEqual({
+		expect(await projectKeys.read(exec, "/w/wt", new GitFactsCache())).toEqual({
 			success: true,
 			data: "git:/w/main/.git:.",
 		});

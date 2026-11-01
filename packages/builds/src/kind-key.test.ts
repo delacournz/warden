@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
-import { kindHash } from "./cache";
-import { computeKindKey, type KindKeyDeps, type KindKeys } from "./kind-key";
-import { testProject } from "./testing/builds.testing";
+import { buildCache } from "./cache";
+import { type KindKeyDeps, type KindKeys, kindKeyResolver } from "./kind-key";
+import { buildsTesting } from "./testing/builds.testing";
 
 let dir: string;
 let root: string;
@@ -37,7 +37,7 @@ const exec: Exec = async (cmd, opts) =>
 
 const deps = (over: Partial<KindKeyDeps> = {}): KindKeyDeps => ({
 	exec,
-	project: testProject({ root, fingerprintCommand: "fp" }),
+	project: buildsTesting.project({ root, fingerprintCommand: "fp" }),
 	platform: "ios",
 	kind: "dev",
 	env: {},
@@ -45,7 +45,7 @@ const deps = (over: Partial<KindKeyDeps> = {}): KindKeyDeps => ({
 });
 
 async function keys(over: Partial<KindKeyDeps> = {}): Promise<KindKeys> {
-	const res = await computeKindKey(deps(over));
+	const res = await kindKeyResolver.compute(deps(over));
 	if (!res.success) throw new Error(res.error);
 	return res.data;
 }
@@ -68,7 +68,7 @@ describe("computeKindKey", () => {
 		expect(k.native).toBe("native-1");
 		expect(k.repack).toMatchObject({ kind: "simulator-repack", nativeFp: k.key.nativeFp });
 		expect(k.repack?.jsKey).toMatch(/^[0-9a-f]{40}$/);
-		expect(kindHash(k.repack ?? k.key)).toBe(`${k.key.nativeFp}:${k.repack?.jsKey}`);
+		expect(buildCache.kindHash(k.repack ?? k.key)).toBe(`${k.key.nativeFp}:${k.repack?.jsKey}`);
 	});
 
 	test("simulator: a JS edit changes the repack key and nothing else", async () => {
@@ -112,7 +112,11 @@ describe("computeKindKey", () => {
 	});
 
 	test("kinds.<kind>.jsInputs narrows the JS key", async () => {
-		const project = testProject({ root, fingerprintCommand: "fp", kinds: { simulator: { jsInputs: ["src/**"] } } });
+		const project = buildsTesting.project({
+			root,
+			fingerprintCommand: "fp",
+			kinds: { simulator: { jsInputs: ["src/**"] } },
+		});
 		const before = await keys({ kind: "simulator", project });
 		writeFileSync(join(root, "app.json"), '{"changed":true}');
 		expect((await keys({ kind: "simulator", project })).repack?.jsKey).toBe(before.repack?.jsKey);
@@ -122,13 +126,17 @@ describe("computeKindKey", () => {
 
 	test("kinds.<kind>.env joins the key", async () => {
 		const plain = await keys({ kind: "simulator" });
-		const project = testProject({ root, fingerprintCommand: "fp", kinds: { simulator: { env: { API: "x" } } } });
+		const project = buildsTesting.project({
+			root,
+			fingerprintCommand: "fp",
+			kinds: { simulator: { env: { API: "x" } } },
+		});
 		expect((await keys({ kind: "simulator", project })).repack?.jsKey).not.toBe(plain.repack?.jsKey);
 	});
 
 	test("a failing fingerprint is an error", async () => {
 		const failing: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "boom" });
-		const res = await computeKindKey(deps({ exec: failing }));
+		const res = await kindKeyResolver.compute(deps({ exec: failing }));
 		expect(res.success).toBe(false);
 	});
 });
@@ -145,8 +153,8 @@ describe("computeKindKey for a physical iPhone", () => {
 			jsKey: (sim.key as { jsKey: string }).jsKey,
 			device,
 		});
-		expect(kindHash(phone.key)).not.toBe(kindHash(sim.key));
-		expect(kindHash(phone.key)).toContain(":device-ABCDE12345:release:");
+		expect(buildCache.kindHash(phone.key)).not.toBe(buildCache.kindHash(sim.key));
+		expect(buildCache.kindHash(phone.key)).toContain(":device-ABCDE12345:release:");
 		expect(phone.project.target).toBe("device");
 		expect(phone.settings.build.ios).toContain("DEVELOPMENT_TEAM=ABCDE12345");
 	});
@@ -154,11 +162,11 @@ describe("computeKindKey for a physical iPhone", () => {
 	test("another team is another key", async () => {
 		const a = await keys({ kind: "dev", device });
 		const b = await keys({ kind: "dev", device: { team: "ZZZZZ99999", salt: "ZZZZZ99999" } });
-		expect(kindHash(a.key)).not.toBe(kindHash(b.key));
+		expect(buildCache.kindHash(a.key)).not.toBe(buildCache.kindHash(b.key));
 	});
 
 	test("the simulator kind is refused on a device", async () => {
-		const res = await computeKindKey(deps({ kind: "simulator", device }));
+		const res = await kindKeyResolver.compute(deps({ kind: "simulator", device }));
 		expect(res.success).toBe(false);
 		expect(!res.success && res.error).toContain("simulator kind is not supported on a physical iPhone");
 	});

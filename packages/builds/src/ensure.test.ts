@@ -7,20 +7,24 @@ import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { EXPO_CONFIG_ARGV } from "./app-config";
-import { cachedBuild, devDir, kindHash, simulatorBaseDir, storeArtifact } from "./cache";
+import { buildCache } from "./cache";
 import { JSON_CONFIG_FILE } from "./config";
 import {
+	AppEnsurer,
 	type EnsureInput,
 	type EnsureKindInput,
-	ensureApp,
-	ensureKindBuild,
-	prebuildStamp,
-	projectContext,
+	KindBuildEnsurer,
+	prebuildStamps,
+	projectContextLoader,
 } from "./ensure";
-import { computeCacheKey } from "./fingerprint";
-import { projectForKind } from "./kinds";
+import { fingerprint } from "./fingerprint";
+import { kinds } from "./kinds";
 import type { AppPhase } from "./resolve";
-import { fakeApp, testProject } from "./testing/builds.testing";
+import { buildsTesting } from "./testing/builds.testing";
+
+const ensureApp = (input: EnsureInput) => new AppEnsurer(input).ensure();
+const ensureKindBuild = (input: EnsureKindInput) => new KindBuildEnsurer(input).ensure();
+const projectContext = projectContextLoader.load.bind(projectContextLoader);
 
 let dir: string;
 let store: Store;
@@ -63,7 +67,7 @@ function input(exec: Exec, over: Partial<EnsureInput> = {}): EnsureInput {
 		pidAlive: () => false,
 		owner: { kind: "agent", sessionId: "me", cwd: dir },
 		pid: 1,
-		project: testProject({ root: join(dir, "app") }),
+		project: buildsTesting.project({ root: join(dir, "app") }),
 		projectKey: KEY,
 		platform: "ios",
 		hash: "H",
@@ -75,14 +79,14 @@ function input(exec: Exec, over: Partial<EnsureInput> = {}): EnsureInput {
 }
 
 async function seedCache(hash = "H"): Promise<string> {
-	const res = await storeArtifact({
+	const res = await buildCache.storeArtifact({
 		store,
 		env,
 		projectKey: KEY,
 		platform: "ios",
 		profile: "local",
 		hash,
-		artifact: fakeApp(join(dir, "src")),
+		artifact: buildsTesting.fakeApp(join(dir, "src")),
 		source: "import",
 		now: 1,
 	});
@@ -101,16 +105,17 @@ describe("ensureApp on a physical iPhone", () => {
 			read: async (path: string) => files.get(path) ?? "",
 			remove: async () => {},
 		};
+		const devicectl = (cmd: readonly string[], out: string) => {
+			if (cmd[3] === "uninstall") apps = [];
+			if (cmd[3] === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
+			files.set(out, JSON.stringify({ result: cmd[3] === "info" ? { apps } : {} }));
+			return { exitCode: 0, stdout: "", stderr: "" };
+		};
 		const exec: Exec = async (cmd) => {
 			calls.push(cmd.join(" "));
 			if (cmd[0] === "plutil") return { exitCode: 0, stdout: "7\n", stderr: "" };
 			const out = cmd[cmd.indexOf("--json-output") + 1];
-			if (cmd[1] === "devicectl" && out !== undefined) {
-				if (cmd[3] === "uninstall") apps = [];
-				if (cmd[3] === "install") apps = [{ bundleIdentifier: "com.x.app", bundleVersion: "7" }];
-				files.set(out, JSON.stringify({ result: cmd[3] === "info" ? { apps } : {} }));
-				return { exitCode: 0, stdout: "", stderr: "" };
-			}
+			if (cmd[1] === "devicectl" && out !== undefined) return devicectl(cmd, out);
 			return { exitCode: 127, stdout: "", stderr: cmd.join(" ") };
 		};
 		return { exec, deviceIo };
@@ -179,14 +184,14 @@ describe("ensureKindBuild for a device target", () => {
 		};
 		const key = { kind: "release" as const, nativeFp: "fp", jsKey: "js", device };
 		const res = await ensureKindBuild({
-			...input(exec, { project: testProject({ root: app }), deviceId: undefined, eas: true, build: false }),
+			...input(exec, { project: buildsTesting.project({ root: app }), deviceId: undefined, eas: true, build: false }),
 			key,
 			buildKey: "bk",
 		});
 		expect(res.success).toBe(false);
 		expect(!res.success && res.error).toContain("EAS skipped");
 		expect(calls.some((c) => c.includes("eas"))).toBe(false);
-		expect(kindHash(key)).toBe("fp:device-ABCDE12345:release:js");
+		expect(buildCache.kindHash(key)).toBe("fp:device-ABCDE12345:release:js");
 	});
 });
 
@@ -218,7 +223,7 @@ describe("ensureApp", () => {
 		const apk = join(dir, "src", "app.apk");
 		mkdirSync(join(dir, "src"), { recursive: true });
 		writeFileSync(apk, "new build");
-		const stored = await storeArtifact({
+		const stored = await buildCache.storeArtifact({
 			store,
 			env,
 			projectKey: KEY,
@@ -251,7 +256,7 @@ describe("ensureApp", () => {
 				input(exec, {
 					platform: "android",
 					deviceId: "emulator-5554",
-					project: testProject({ root: join(dir, "app"), bundleId: { android: "com.x.app" } }),
+					project: buildsTesting.project({ root: join(dir, "app"), bundleId: { android: "com.x.app" } }),
 					fileDigest: async () => "new",
 				})
 			);
@@ -501,10 +506,13 @@ describe("ensureApp", () => {
 
 	test("legacy cache dir → imported (copied) into the warden cache", async () => {
 		const legacy = join(dir, "legacy");
-		fakeApp(join(legacy, "H"), "Salient.app");
+		buildsTesting.fakeApp(join(legacy, "H"), "Salient.app");
 		const exec = fake([], []);
 		const res = await ensureApp(
-			input(exec, { deviceId: undefined, project: testProject({ root: join(dir, "app"), cacheDirs: [legacy] }) })
+			input(exec, {
+				deviceId: undefined,
+				project: buildsTesting.project({ root: join(dir, "app"), cacheDirs: [legacy] }),
+			})
 		);
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.source).toBe("cache");
@@ -520,14 +528,14 @@ describe("ensureApp", () => {
 			const joined = cmd.join(" ");
 			calls.push(joined);
 			if (joined === "sh -c make-ios") {
-				fakeApp(products, "Built.app");
+				buildsTesting.fakeApp(products, "Built.app");
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
 			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
-		const project = testProject({
+		const project = buildsTesting.project({
 			root,
 			fingerprintCommand: "fp",
 			build: { ios: "make-ios", android: "x" },
@@ -551,14 +559,14 @@ describe("ensureApp", () => {
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
 			if (joined === "sh -c make-ios") {
-				fakeApp(products, "Built.app");
+				buildsTesting.fakeApp(products, "Built.app");
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
 			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
-		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const project = buildsTesting.project({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
 		const phases: AppPhase[] = [];
 		const res = await ensureApp(
 			input(exec, {
@@ -580,18 +588,18 @@ describe("ensureApp", () => {
 		const exec: Exec = async (cmd) => {
 			const joined = cmd.join(" ");
 			if (joined === "sh -c make-ios") {
-				fakeApp(products, "Built.app");
+				buildsTesting.fakeApp(products, "Built.app");
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
 			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
-		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const project = buildsTesting.project({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
 		const res = await ensureApp(input(exec, { project, deviceId: undefined, build: true, now: () => Date.now() }));
 		if (!res.success) throw new Error(res.error);
-		expect(prebuildStamp(store, root, "ios").read()).toBe("H");
-		expect(prebuildStamp(store, root, "android").read()).toBeUndefined();
+		expect(prebuildStamps.of(store, root, "ios").read()).toBe("H");
+		expect(prebuildStamps.of(store, root, "android").read()).toBeUndefined();
 	});
 
 	test("the local build reads the git toplevel through the git cache projectContext used", async () => {
@@ -602,14 +610,14 @@ describe("ensureApp", () => {
 			const joined = cmd.join(" ");
 			calls.push(joined);
 			if (joined === "sh -c make-ios") {
-				fakeApp(products, "Built.app");
+				buildsTesting.fakeApp(products, "Built.app");
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
 			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
-		const project = testProject({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const project = buildsTesting.project({ root, fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
 		mkdirSync(join(root, "ios"), { recursive: true }); // prebuilt: no mid-build `git status` snapshot
 		const git = new GitFactsCache();
 		git.store(root, { toplevel: root, commonDir: join(root, ".git"), branch: "main" });
@@ -622,7 +630,7 @@ describe("ensureApp", () => {
 
 	describe("JS-aware project (fingerprint.include native+js)", () => {
 		const eas = { profile: "development-simulator", trigger: true, workflow: ".eas/wf.yml" };
-		const jsProject = () => testProject({ root: join(dir, "app"), jsInputs: ["src/**"], eas });
+		const jsProject = () => buildsTesting.project({ root: join(dir, "app"), jsInputs: ["src/**"], eas });
 
 		function gitHost(status: string, calls: string[]): Exec {
 			return fake(
@@ -668,7 +676,7 @@ describe("ensureApp", () => {
 			const calls: string[] = [];
 			await ensureApp(
 				input(gitHost("", calls), {
-					project: testProject({ root: join(dir, "app"), eas: { ...eas, trigger: false } }),
+					project: buildsTesting.project({ root: join(dir, "app"), eas: { ...eas, trigger: false } }),
 					deviceId: undefined,
 					build: false,
 					eas: true,
@@ -681,7 +689,7 @@ describe("ensureApp", () => {
 			const calls: string[] = [];
 			await ensureApp(
 				input(gitHost("", calls), {
-					project: testProject({
+					project: buildsTesting.project({
 						root: join(dir, "app"),
 						buildConfiguration: "Release",
 						eas: { ...eas, trigger: false },
@@ -707,14 +715,14 @@ describe("ensureApp", () => {
 			calls.push(joined);
 			if (joined === "sh -c make-ios") {
 				envs.push(opts?.env);
-				fakeApp(products, "Built.app");
+				buildsTesting.fakeApp(products, "Built.app");
 				return { exitCode: 0, stdout: "", stderr: "" };
 			}
 			if (joined === "sh -c fp") return { exitCode: 0, stdout: '{"hash":"H"}', stderr: "" };
 			if (joined.startsWith("plutil -extract CFBundleIdentifier")) return BUNDLE_ID;
 			return { exitCode: 127, stdout: "", stderr: joined };
 		};
-		const project = testProject({
+		const project = buildsTesting.project({
 			root,
 			fingerprintCommand: "fp",
 			build: { ios: "make-ios", android: "x" },
@@ -733,7 +741,7 @@ describe("ensureApp", () => {
 	test("missing bundle id for a device install → error", async () => {
 		await seedCache();
 		const res = await ensureApp(
-			input(fake([], []), { project: testProject({ root: join(dir, "app"), bundleId: { android: "a" } }) })
+			input(fake([], []), { project: buildsTesting.project({ root: join(dir, "app"), bundleId: { android: "a" } }) })
 		);
 		expect(res.success).toBe(false);
 	});
@@ -830,14 +838,18 @@ describe("ensureApp: one build per session", () => {
 			if (joined === "sh -c make-ios") {
 				await opts.during?.((line) => execOpts?.onLine?.(line));
 				if (opts.fail) return { exitCode: 65, stdout: "", stderr: "BUILD FAILED" };
-				fakeApp(products(), "Built.app");
+				buildsTesting.fakeApp(products(), "Built.app");
 				built = true;
 				return ok();
 			}
 			const hit = handlers.find(([prefix]) => joined.startsWith(prefix));
 			return hit ? hit[1]() : { exitCode: 127, stdout: "", stderr: joined };
 		};
-		const project = testProject({ root: root(), fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const project = buildsTesting.project({
+			root: root(),
+			fingerprintCommand: "fp",
+			build: { ios: "make-ios", android: "x" },
+		});
 		return { calls, exec, project };
 	}
 	const builds = (calls: string[]) => calls.filter((c) => c === "sh -c make-ios").length;
@@ -848,8 +860,8 @@ describe("ensureApp: one build per session", () => {
 		const first = await ensureApp(input(s.exec, { ...over, deviceId: "U1" }));
 		if (!first.success) throw new Error(first.error);
 		expect(first.data).toMatchObject({ hash: "H", source: "build", installed: true });
-		const requested = cachedBuild(store, KEY, "ios", "H", Date.now());
-		const alias = cachedBuild(store, KEY, "ios", "H2", Date.now());
+		const requested = buildCache.cached(store, KEY, "ios", "H", Date.now());
+		const alias = buildCache.cached(store, KEY, "ios", "H2", Date.now());
 		expect(requested?.path).toBe(first.data.appPath);
 		expect(alias?.path).toBe(first.data.appPath);
 		expect(alias?.size).toBe(0);
@@ -936,11 +948,15 @@ describe("ensureApp: one build per checkout (two processes)", () => {
 				return hit ? hit[1]() : { exitCode: 127, stdout: "", stderr: joined };
 			}
 			await during((line) => execOpts?.onLine?.(line));
-			fakeApp(products(), "Built.app");
+			buildsTesting.fakeApp(products(), "Built.app");
 			tree.fp = tree.after;
 			return ok();
 		};
-		const project = testProject({ root: root(), fingerprintCommand: "fp", build: { ios: "make-ios", android: "x" } });
+		const project = buildsTesting.project({
+			root: root(),
+			fingerprintCommand: "fp",
+			build: { ios: "make-ios", android: "x" },
+		});
 		return { calls, exec, project };
 	}
 
@@ -1122,7 +1138,7 @@ describe("ensureKindBuild", () => {
 		const { hash: _hash, project: _project, ...rest } = input(exec, { fileSize });
 		return {
 			...rest,
-			project: testProject({ root: join(dir, "app"), fingerprintCommand: "fp" }),
+			project: buildsTesting.project({ root: join(dir, "app"), fingerprintCommand: "fp" }),
 			key: { kind: "dev", nativeFp: FP },
 			buildKey: FP,
 			...over,
@@ -1151,14 +1167,14 @@ describe("ensureKindBuild", () => {
 		};
 
 	async function seedKind(key: { kind: "dev" | "simulator-base"; nativeFp: string }, layoutDir: string) {
-		const res = await storeArtifact({
+		const res = await buildCache.storeArtifact({
 			store,
 			env,
 			projectKey: KEY,
 			platform: "ios",
 			profile: "local",
-			hash: kindHash(key),
-			artifact: fakeApp(join(dir, "seed")),
+			hash: buildCache.kindHash(key),
+			artifact: buildsTesting.fakeApp(join(dir, "seed")),
 			source: "import",
 			layout: { dir: layoutDir, kind: key.kind },
 			now: 1,
@@ -1168,7 +1184,7 @@ describe("ensureKindBuild", () => {
 	}
 
 	test("a cached dev build is found by its kind hash and installed; the install record keys by it", async () => {
-		const path = await seedKind({ kind: "dev", nativeFp: FP }, devDir(env, KEY, "ios", FP));
+		const path = await seedKind({ kind: "dev", nativeFp: FP }, buildCache.devDir(env, KEY, "ios", FP));
 		const res = await ensureKindBuild(kindInput(fpExec([])));
 		expect(res).toEqual({
 			success: true,
@@ -1189,7 +1205,7 @@ describe("ensureKindBuild", () => {
 		const root = join(dir, "app");
 		const calls: string[] = [];
 		const exec = fpExec(calls, () => {
-			fakeApp(join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator"), "Built.app");
+			buildsTesting.fakeApp(join(root, "ios", "build", "Build", "Products", "Debug-iphonesimulator"), "Built.app");
 		});
 		const res = await ensureKindBuild(kindInput(exec, { deviceId: undefined, build: true, now: () => Date.now() }));
 		if (!res.success) throw new Error(res.error);
@@ -1197,7 +1213,7 @@ describe("ensureKindBuild", () => {
 		const record = new BuildsTable(store).get(KEY, "ios", `${FP}:dev`);
 		expect(record).toMatchObject({
 			kind: "dev",
-			path: join(devDir(env, KEY, "ios", FP), "Built.app"),
+			path: join(buildCache.devDir(env, KEY, "ios", FP), "Built.app"),
 			profile: "local:dev",
 		});
 		expect(calls.some((c) => c.includes("expo run:ios") && !c.includes("--configuration Release"))).toBe(true);
@@ -1205,10 +1221,10 @@ describe("ensureKindBuild", () => {
 
 	test("the simulator base builds the Release configuration with SKIP_BUNDLING into simulator/base", async () => {
 		const root = join(dir, "app");
-		const project = testProject({ root, fingerprintCommand: "fp" });
-		const buildKeyOf = await computeCacheKey(
+		const project = buildsTesting.project({ root, fingerprintCommand: "fp" });
+		const buildKeyOf = await fingerprint.computeCacheKey(
 			fpExec([]),
-			projectForKind(project, "simulator"),
+			kinds.projectFor(project, "simulator"),
 			"ios",
 			undefined,
 			undefined,
@@ -1218,7 +1234,7 @@ describe("ensureKindBuild", () => {
 		const nativeFp = buildKeyOf.data.key;
 		const calls: string[] = [];
 		const exec = fpExec(calls, () => {
-			fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator"), "Built.app");
+			buildsTesting.fakeApp(join(root, "ios", "build", "Build", "Products", "Release-iphonesimulator"), "Built.app");
 		});
 		const res = await ensureKindBuild(
 			kindInput(exec, {
@@ -1234,13 +1250,13 @@ describe("ensureKindBuild", () => {
 		expect(calls.some((c) => c.includes("SKIP_BUNDLING=1") && c.includes("--configuration Release"))).toBe(true);
 		expect(new BuildsTable(store).get(KEY, "ios", `${nativeFp}:base`)).toMatchObject({
 			kind: "simulator-base",
-			path: join(simulatorBaseDir(env, KEY, "ios", nativeFp), "Built.app"),
+			path: join(buildCache.simulatorBaseDir(env, KEY, "ios", nativeFp), "Built.app"),
 		});
 	});
 
 	test("EAS never supplies the simulator base", async () => {
 		const calls: string[] = [];
-		const project = testProject({
+		const project = buildsTesting.project({
 			root: join(dir, "app"),
 			fingerprintCommand: "fp",
 			eas: { profile: "p", trigger: false },
@@ -1259,7 +1275,7 @@ describe("ensureKindBuild", () => {
 
 	test("EAS still serves a dev build", async () => {
 		const calls: string[] = [];
-		const project = testProject({
+		const project = buildsTesting.project({
 			root: join(dir, "app"),
 			fingerprintCommand: "fp",
 			eas: { profile: "p", trigger: false },

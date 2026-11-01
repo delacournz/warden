@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { storeArtifact } from "@delacour/warden-builds/cache";
+import { buildCache } from "@delacour/warden-builds/cache";
 import { recordCondition } from "@delacour/warden-core/conditions/conditions";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { gcJsonSchema } from "@delacour/warden-sdk/contracts/gc";
@@ -244,7 +244,7 @@ describe("warden gc: build cache prune (17-11)", () => {
 		const app = join(c.cwd, "src", hash, "App.app");
 		mkdirSync(app, { recursive: true });
 		writeFileSync(join(app, "App"), "x".repeat(bytes));
-		const res = await storeArtifact({
+		const res = await buildCache.storeArtifact({
 			store: c.db,
 			env: c.env,
 			projectKey: "k",

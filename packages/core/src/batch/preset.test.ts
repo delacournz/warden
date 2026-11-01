@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CONFIG_FILE, JSON_CONFIG_FILE, parseWardenConfig } from "@delacour/warden-builds/config";
+import { CONFIG_FILE, JSON_CONFIG_FILE, projectConfig } from "@delacour/warden-builds/config";
 import { findBatchPreset } from "./preset";
 
 let dir: string;
@@ -38,13 +38,13 @@ const salientProject = { name: "salient", root: "apps/salient/app", bundleId: { 
 
 describe("batches in parseWardenConfig", () => {
 	test("accepts the salient preset as-is", () => {
-		const res = parseWardenConfig({ projects: [salientProject], batches: { e2e: salientPreset } });
+		const res = projectConfig.parse({ projects: [salientProject], batches: { e2e: salientPreset } });
 		if (!res.success) throw new Error(res.error);
 		expect(res.data.batches?.e2e).toEqual({ ...salientPreset, platform: "ios" });
 	});
 
 	test("label + projects[].eas.trigger: true (salient's real config)", () => {
-		const res = parseWardenConfig({
+		const res = projectConfig.parse({
 			projects: [{ ...salientProject, eas: { profile: "development-simulator", workflow: "w.yml", trigger: true } }],
 			batches: { "salient-e2e": { ...salientPreset, label: "salient-e2e" } },
 		});
@@ -55,7 +55,7 @@ describe("batches in parseWardenConfig", () => {
 	});
 
 	test("batches without projects is a valid config", () => {
-		expect(parseWardenConfig({ batches: { smoke: { platform: "android", cmd: ["true"] } } }).success).toBe(true);
+		expect(projectConfig.parse({ batches: { smoke: { platform: "android", cmd: ["true"] } } }).success).toBe(true);
 	});
 
 	test("rejects bad presets with a path", () => {
@@ -79,7 +79,7 @@ describe("batches in parseWardenConfig", () => {
 			[{}, "(root)"],
 		];
 		for (const [raw, path] of cases) {
-			const res = parseWardenConfig(raw);
+			const res = projectConfig.parse(raw);
 			expect(res.success).toBe(false);
 			if (!res.success) expect(res.error).toContain(`${CONFIG_FILE}: ${path}`);
 		}
@@ -171,10 +171,10 @@ describe("findBatchPreset", () => {
 	});
 
 	test("headless must be a boolean", () => {
-		const bad = parseWardenConfig({ headless: "yes", batches: { a: { platform: "ios", cmd: ["x"] } } });
+		const bad = projectConfig.parse({ headless: "yes", batches: { a: { platform: "ios", cmd: ["x"] } } });
 		expect(bad.success).toBe(false);
 		if (!bad.success) expect(bad.error).toContain("headless");
-		expect(parseWardenConfig({ batches: { a: { platform: "ios", headless: 1, cmd: ["x"] } } }).success).toBe(false);
+		expect(projectConfig.parse({ batches: { a: { platform: "ios", headless: 1, cmd: ["x"] } } }).success).toBe(false);
 	});
 
 	test("no config → no preset, no names", () => {

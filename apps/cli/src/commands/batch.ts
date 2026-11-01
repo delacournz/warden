@@ -1,16 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Command as Commander, OptionValues } from "@commander-js/extra-typings";
-import {
-	devClientLaunchArgv,
-	type Metro,
-	type MetroOwner,
-	metroOwner,
-	prewarmMetro,
-	resolveExpoBin,
-	reverseMetroPort,
-	startMetro,
-} from "@delacour/warden-builds/metro";
+import { type Metro, type MetroOwner, MetroRunner, metroTools } from "@delacour/warden-builds/metro";
 import { durationParser } from "@delacour/warden-config/duration";
 import type { SlimProfile } from "@delacour/warden-config/slim.profile";
 import { claimLateWorkers, type ElasticPlan, type LateWorker, planElastic } from "@delacour/warden-core/batch/elastic";
@@ -1200,24 +1191,21 @@ function launchRunMetro(
 		},
 	};
 	const run = async (): AsyncResult<Metro> => {
-		const started = await startMetro(
-			{
-				probe: deps.metroProbe,
-				now: ctx.now,
-				sleep: deps.sleep,
-				spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
-				expoBin: (root) => resolveExpoBin(root, deps.which),
-				git: (root) => gitFactsReader.readSync(root, { cache: ctx.git }),
-			},
-			{
-				projectRoot: plan.projectRoot,
-				port: o.port,
-				// CI: no interactive prompts (a busy port fails instead of asking) and no file watching
-				env: { ...o.env, ...plan.env, CI: "1" },
-				readyTimeoutMs: plan.readyTimeoutMs,
-				aborted: () => cancelled || o.interrupted(),
-			}
-		);
+		const started = await new MetroRunner({
+			probe: deps.metroProbe,
+			now: ctx.now,
+			sleep: deps.sleep,
+			spawn: (cmd, env, cwd) => deps.spawn(cmd, { env, log: o.log, cwd, group: true, metro: true }),
+			expoBin: (root) => metroTools.expoBin(root, deps.which),
+			git: (root) => gitFactsReader.readSync(root, { cache: ctx.git }),
+		}).start({
+			projectRoot: plan.projectRoot,
+			port: o.port,
+			// CI: no interactive prompts (a busy port fails instead of asking) and no file watching
+			env: { ...o.env, ...plan.env, CI: "1" },
+			readyTimeoutMs: plan.readyTimeoutMs,
+			aborted: () => cancelled || o.interrupted(),
+		});
 		if (!started.success) return started;
 		launch.started = started.data;
 		if (plan.prewarm) {
@@ -1276,11 +1264,11 @@ export async function openOnDevices(
 	const unreachable = await Promise.all(
 		devices.map(async (d): Promise<{ udid: string; error: string } | undefined> => {
 			if (platform === "android") {
-				const reversed = await reverseMetroPort(ctx.exec, d.udid, metro.port);
+				const reversed = await metroTools.reversePort(ctx.exec, d.udid, metro.port);
 				return reversed.success ? undefined : { udid: d.udid, error: reversed.error };
 			}
 			if (plan.bundleId === undefined) return undefined;
-			const argv = devClientLaunchArgv(d.udid, plan.bundleId, metro.url, plan.launchArgs);
+			const argv = metroTools.devClientLaunchArgv(d.udid, plan.bundleId, metro.url, plan.launchArgs);
 			const res = await ctx.exec(argv, { timeoutMs: OPEN_LAUNCH_MS });
 			if (res.exitCode !== 0) warn(ctx, `warden ${name}: ${execErrors.format(argv, res)}`);
 			return undefined;
@@ -2542,8 +2530,8 @@ export const defaultBatchDeps: BatchDeps = {
 		const timer = setTimeout(fn, ms);
 		return () => clearTimeout(timer);
 	},
-	metroProbe: (port, projectRoot) => metroOwner(processExec.run, port, projectRoot),
-	prewarm: prewarmMetro,
+	metroProbe: (port, projectRoot) => metroTools.owner(processExec.run, port, projectRoot),
+	prewarm: (url, platform, signal) => metroTools.prewarm(url, platform, signal),
 	warmConnect,
 	residentSocket,
 	which: (cmd) => Bun.which(cmd),

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { certificatesFromPem, sha1Hex } from "@delacour/warden-builds/ios-runner/signing";
+import { signing } from "@delacour/warden-builds/ios-runner/signing";
 import { CERT_TEAM_A, CERT_TEAM_B } from "@delacour/warden-builds/ios-runner/signing.testing";
 import {
 	DEVICECTL_LOCKSTATE_LOCKED,
@@ -70,9 +70,9 @@ describe("physicalChecks", () => {
 	});
 
 	test("ios-team: several teams in the keychain is ambiguous and says what to set", async () => {
-		const derA = certificatesFromPem(CERT_TEAM_A)[0] as Uint8Array;
-		const derB = certificatesFromPem(CERT_TEAM_B)[0] as Uint8Array;
-		const identities = `  1) ${sha1Hex(derA)} "Apple Development: Test A"\n  2) ${sha1Hex(derB)} "Apple Development: Test B"\n     2 valid identities found\n`;
+		const derA = signing.certificatesFromPem(CERT_TEAM_A)[0] as Uint8Array;
+		const derB = signing.certificatesFromPem(CERT_TEAM_B)[0] as Uint8Array;
+		const identities = `  1) ${signing.sha1Hex(derA)} "Apple Development: Test A"\n  2) ${signing.sha1Hex(derB)} "Apple Development: Test B"\n     2 valid identities found\n`;
 		const rows = await physicalChecks(
 			setup([
 				...IOS_HANDLERS,

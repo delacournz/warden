@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import { resultFactory } from "@delacour/warden-types/result";
-import { type EasStepOutcome, type InstalledApp, type ResolveSource, type ResolveSteps, resolveApp } from "./resolve";
+import { AppResolver, type EasStepOutcome, type InstalledApp, type ResolveSource, type ResolveSteps } from "./resolve";
 
 type World = {
 	installedHash?: string;
@@ -252,7 +252,7 @@ describe("resolveApp decision table", () => {
 	for (const row of rows) {
 		test(row.name, async () => {
 			const { s, calls } = steps(row.world);
-			const res = await resolveApp(s);
+			const res = await new AppResolver(s).resolve();
 			if (row.source === "error") {
 				expect(res.success).toBe(false);
 			} else {
@@ -269,21 +269,21 @@ describe("resolveApp decision table", () => {
 	test("install failure is an error", async () => {
 		const { s } = steps({ cache: "/c/A.app" });
 		if (s.device) s.device.install = async () => resultFactory.err("simctl install failed");
-		const res = await resolveApp(s);
+		const res = await new AppResolver(s).resolve();
 		expect(res).toEqual({ success: false, error: "simctl install failed" });
 	});
 
 	test("installMode reinstall: an uninstall failure stops before the install", async () => {
 		const { s, calls } = steps({ cache: "/c/A.app", installMode: "reinstall" });
 		if (s.device) s.device.uninstall = async () => resultFactory.err("simctl uninstall failed");
-		const res = await resolveApp(s);
+		const res = await new AppResolver(s).resolve();
 		expect(res).toEqual({ success: false, error: "simctl uninstall failed" });
 		expect(calls.some((c) => c.startsWith("install"))).toBe(false);
 	});
 
 	test("error message lists what was skipped", async () => {
 		const { s } = steps({ eas: "skip", build: "skip" });
-		const res = await resolveApp(s);
+		const res = await new AppResolver(s).resolve();
 		expect(res.success).toBe(false);
 		if (!res.success)
 			expect(res.error).toBe("no build for fingerprint H: EAS skipped; local build skipped (--no-build)");
@@ -296,7 +296,7 @@ describe("resolveApp phases", () => {
 		const seen: string[] = [];
 		s.onPhase = (p) => seen.push(p.phase);
 		tweak(s);
-		await resolveApp(s);
+		await new AppResolver(s).resolve();
 		return seen;
 	}
 
@@ -323,8 +323,8 @@ describe("resolveApp phases", () => {
 		second.s.flightKey = "same";
 		const seen: string[] = [];
 		second.s.onPhase = (p) => seen.push(p.phase);
-		const one = resolveApp(first.s);
-		const two = resolveApp(second.s);
+		const one = new AppResolver(first.s).resolve();
+		const two = new AppResolver(second.s).resolve();
 		await Promise.all([one, two]);
 		expect(seen).toEqual(["waiting", "ready"]);
 	});

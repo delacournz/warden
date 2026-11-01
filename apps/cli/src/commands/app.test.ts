@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { storeArtifact } from "@delacour/warden-builds/cache";
-import { type AppDeps, kindAppInput } from "@delacour/warden-builds/prepare";
-import { fakeApp, testProject } from "@delacour/warden-builds/testing/builds.testing";
+import { buildCache } from "@delacour/warden-builds/cache";
+import { type AppDeps, AppPreparer } from "@delacour/warden-builds/prepare";
+import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import type { ExecResult } from "@delacour/warden-runtime/exec";
 import { appEnsureJsonSchema, appFingerprintJsonSchema } from "@delacour/warden-sdk/contracts/dev";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
@@ -24,7 +24,7 @@ afterEach(() => {
 /** A real `.app` for `simctl get_app_container` to point at: the installed-app identity check reads its files. */
 function installedApp(): string {
 	deviceDir = mkdtempSync(join(tmpdir(), "warden-app-device-"));
-	return fakeApp(deviceDir);
+	return buildsTesting.fakeApp(deviceDir);
 }
 
 const HASH = "abc123def456";
@@ -61,14 +61,14 @@ function setup(argv: string[], extra: Array<[string, Partial<ExecResult>]> = [],
 }
 
 async function seed(c: TestContext): Promise<string> {
-	const res = await storeArtifact({
+	const res = await buildCache.storeArtifact({
 		store: c.db,
 		env: c.env,
 		projectKey: `path:${realpathSync(join(c.cwd, "app"))}`,
 		platform: "ios",
 		profile: "local",
 		hash: HASH,
-		artifact: fakeApp(join(c.cwd, "src")),
+		artifact: buildsTesting.fakeApp(join(c.cwd, "src")),
 		source: "import",
 		now: 1,
 	});
@@ -163,7 +163,7 @@ describe("git facts of one command", () => {
 		const recorded = c.exec;
 		c.exec = async (cmd, opts) => {
 			if (cmd.join(" ") !== "sh -c make-ios") return recorded(cmd, opts);
-			fakeApp(products, "Built.app");
+			buildsTesting.fakeApp(products, "Built.app");
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
 		for (const dir of [c.cwd, join(c.cwd, "app"), realpathSync(join(c.cwd, "app"))]) c.git.store(dir, factsOf(c));
@@ -396,16 +396,19 @@ describe("warden app ensure on a physical iPhone", () => {
 	});
 
 	test("kindAppInput carries the team from warden.config.ts only for an iPhone", () => {
-		const base = { project: testProject(), projectKey: "k" };
+		const base = { project: buildsTesting.project(), projectKey: "k" };
 		const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
 		const c = testContext([], { env: { HOME: "/h" } });
 		writeFileSync(join(c.cwd, "warden.config.json"), JSON.stringify({ ios: { teamId: "ABCDE12345" }, e2e: {} }));
-		const phone = kindAppInput(appHostFromContext(c), deps, owner, "ios", base, "release", {
+		const phone = new AppPreparer(appHostFromContext(c), deps).kindAppInput(owner, "ios", base, "release", {
 			eas: false,
 			build: true,
 			physical: true,
 		});
-		const sim = kindAppInput(appHostFromContext(c), deps, owner, "ios", base, "release", { eas: false, build: true });
+		const sim = new AppPreparer(appHostFromContext(c), deps).kindAppInput(owner, "ios", base, "release", {
+			eas: false,
+			build: true,
+		});
 		expect(phone.configTeamId).toBe("ABCDE12345");
 		expect(phone.physical).toBe(true);
 		expect(sim.configTeamId).toBeUndefined();
@@ -414,12 +417,12 @@ describe("warden app ensure on a physical iPhone", () => {
 });
 
 describe("kindAppInput bundle env", () => {
-	const project = { project: testProject(), projectKey: "k" };
+	const project = { project: buildsTesting.project(), projectKey: "k" };
 	const owner = { kind: "user", pid: 1, cwd: "/repo" } as const;
 	const bundleEnv = { EXPO_PUBLIC_API: "http://fake" };
 	const input = (kind: "dev" | "simulator" | "release") => {
 		const c = testContext([], { env: { HOME: "/h", EXPO_PUBLIC_API: "http://real" } });
-		return kindAppInput(appHostFromContext(c), deps, owner, "ios", project, kind, {
+		return new AppPreparer(appHostFromContext(c), deps).kindAppInput(owner, "ios", project, kind, {
 			eas: false,
 			build: true,
 			bundleEnv,

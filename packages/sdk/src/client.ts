@@ -1,11 +1,11 @@
 import { resolve } from "node:path";
-import { removeBuild } from "@delacour/warden-builds/cache";
-import { bundleIdFor } from "@delacour/warden-builds/config";
-import { installArgv } from "@delacour/warden-builds/install";
-import { buildLockKey, liveBuildLocks } from "@delacour/warden-builds/lock";
-import { type Metro, metroOwner, metroUrl, resolveExpoBin, startMetro } from "@delacour/warden-builds/metro";
-import { defaultAppDeps, type EnsureOptions, ensurePreparedApp, prepareApp } from "@delacour/warden-builds/prepare";
-import { isAlias } from "@delacour/warden-builds/prune";
+import { buildCache } from "@delacour/warden-builds/cache";
+import { projectConfig } from "@delacour/warden-builds/config";
+import { installer } from "@delacour/warden-builds/install";
+import { buildLock } from "@delacour/warden-builds/lock";
+import { type Metro, MetroRunner, metroTools } from "@delacour/warden-builds/metro";
+import { AppPreparer, defaultAppDeps, type EnsureOptions } from "@delacour/warden-builds/prepare";
+import { prune } from "@delacour/warden-builds/prune";
 import { DEFAULT_TTL_MS } from "@delacour/warden-config/config.defaults";
 import { DEFAULT_PORT_SPAN, portSpecParser } from "@delacour/warden-config/ports-spec";
 import { capacityMath } from "@delacour/warden-leasing/capacity";
@@ -266,19 +266,10 @@ function buildApps(core: Core): AppsNamespace {
 				requireLease(core, device);
 				const options = ensureOptions(params);
 				const host = core.appHost();
-				const prepared = unwrap(await prepareApp(host, options, device.platform));
-				const bundleId = unwrap(bundleIdFor(prepared.project.project, device.platform));
-				const result = unwrap(
-					await ensurePreparedApp(
-						host,
-						core.seams.appDeps ?? defaultAppDeps,
-						core.owner,
-						device.platform,
-						device.id,
-						options,
-						prepared
-					)
-				);
+				const preparer = new AppPreparer(host, core.seams.appDeps ?? defaultAppDeps);
+				const prepared = unwrap(await preparer.prepare(options, device.platform));
+				const bundleId = unwrap(projectConfig.bundleIdFor(prepared.project.project, device.platform));
+				const result = unwrap(await preparer.ensurePrepared(core.owner, device.platform, device.id, options, prepared));
 				return {
 					bundleId,
 					buildKey: result.hash,
@@ -290,7 +281,7 @@ function buildApps(core: Core): AppsNamespace {
 			guarded(core.signalFor(opts), async () => {
 				const device = deviceOf(core, params);
 				requireLease(core, device);
-				const argv = installArgv(
+				const argv = installer.installArgv(
 					{ platform: device.platform, deviceId: device.id },
 					resolve(core.host.cwd, params.path),
 					core.host.env
@@ -326,17 +317,17 @@ function buildApps(core: Core): AppsNamespace {
 					const store = core.store();
 					const now = core.host.now();
 					return store.transaction(() => {
-						const locked = liveBuildLocks(store, now, core.host.pidAlive);
+						const locked = buildLock.live(store, now, core.host.pidAlive);
 						const builds = new BuildsTable(store)
 							.list()
-							.filter((b) => !isAlias(b) && !locked.has(buildLockKey(b.projectKey, b.platform, b.hash)))
+							.filter((b) => !prune.isAlias(b) && !locked.has(buildLock.key(b.projectKey, b.platform, b.hash)))
 							.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
 						const removed = builds.filter(
 							(b, index) =>
 								(params?.keep !== undefined && index >= params.keep) ||
 								(params?.olderThanMs !== undefined && now - b.lastUsedAt > params.olderThanMs)
 						);
-						for (const b of removed) removeBuild(store, core.host.env, b);
+						for (const b of removed) buildCache.remove(store, core.host.env, b);
 						return removed.map(buildKey);
 					});
 				}),
@@ -347,9 +338,9 @@ function buildApps(core: Core): AppsNamespace {
 type RunningMetro = { metro: Metro; portLease: Lease; project: string };
 
 /** What `startMetro` needs from the host: who owns a port, the clock, spawning the dev server, Expo and git lookups. */
-function metroDeps(core: Core): Parameters<typeof startMetro>[0] {
+function metroDeps(core: Core): ConstructorParameters<typeof MetroRunner>[0] {
 	return {
-		probe: (port, projectRoot) => metroOwner(core.host.exec, port, projectRoot),
+		probe: (port, projectRoot) => metroTools.owner(core.host.exec, port, projectRoot),
 		now: core.host.now,
 		sleep: core.host.sleep,
 		spawn: (cmd, env, cwd) => {
@@ -369,7 +360,7 @@ function metroDeps(core: Core): Parameters<typeof startMetro>[0] {
 				},
 			};
 		},
-		expoBin: (projectRoot) => resolveExpoBin(projectRoot, (cmd) => Bun.which(cmd)),
+		expoBin: (projectRoot) => metroTools.expoBin(projectRoot, (cmd) => Bun.which(cmd)),
 		git: (projectRoot) => gitFactsReader.readSync(projectRoot, { cache: core.git }),
 	};
 }
@@ -434,7 +425,7 @@ function buildMetro(core: Core): MetroNamespace {
 				if (existing) return metroStatusOf(existing.metro.port, existing.metro.url, root);
 				const portLease = await claimMetroPort(core, params?.port);
 				const signal = core.signalFor(opts);
-				const started = await startMetro(metroDeps(core), {
+				const started = await new MetroRunner(metroDeps(core)).start({
 					projectRoot: root,
 					port: portLease.resource.kind === "port" ? portLease.resource.port : 0,
 					env: { ...core.host.env, CI: "1" },
@@ -448,7 +439,7 @@ function buildMetro(core: Core): MetroNamespace {
 					throw new WardenError({ code: signal?.aborted ? "interrupted" : "failed", message: started.error });
 				}
 				running.set(root, { metro: started.data, portLease, project: root });
-				return metroStatusOf(started.data.port, metroUrl(started.data.port), root);
+				return metroStatusOf(started.data.port, metroTools.url(started.data.port), root);
 			}),
 		stop: (params, opts) => guarded(core.signalFor(opts), () => stop(rootOf(params?.project))),
 		status: (params, opts) => guarded(core.signalFor(opts), () => status(running.get(rootOf(params?.project)))),

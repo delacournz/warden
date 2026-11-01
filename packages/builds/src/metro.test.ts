@@ -4,24 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
-import {
-	adbReverseArgv,
-	bareAppLaunchArgvs,
-	devClientLaunchArgs,
-	devClientLaunchArgv,
-	launchMetro,
-	type MetroDeps,
-	type MetroProc,
-	metroArgv,
-	metroOwner,
-	metroUrl,
-	prewarmMetro,
-	READY_POLL_MS,
-	resolveExpoBin,
-	resolveNodeBin,
-	reverseMetroPort,
-	startMetro,
-} from "./metro";
+import { type MetroDeps, type MetroProc, MetroRunner, metroTools, READY_POLL_MS } from "./metro";
 
 type Server = { port: number; stop: () => void };
 
@@ -75,46 +58,46 @@ describe("metroOwner (the verify matrix)", () => {
 	test("header names this project root → ours", async () => {
 		const root = tempDir();
 		const s = serve(metroStatus(root));
-		expect(await metroOwner(noExec, s.port, root)).toEqual({ kind: "ours" });
+		expect(await metroTools.owner(noExec, s.port, root)).toEqual({ kind: "ours" });
 	});
 
 	test("header names another checkout → foreign, with its root", async () => {
 		const root = tempDir();
 		const other = tempDir();
 		const s = serve(metroStatus(other));
-		expect(await metroOwner(noExec, s.port, root)).toEqual({ kind: "foreign", root: other });
+		expect(await metroTools.owner(noExec, s.port, root)).toEqual({ kind: "foreign", root: other });
 	});
 
 	test("a root with spaces survives the header's URI encoding", async () => {
 		const root = join(tempDir(), "my app");
 		const s = serve(metroStatus(root));
-		expect(await metroOwner(noExec, s.port, root)).toEqual({ kind: "ours" });
+		expect(await metroTools.owner(noExec, s.port, root)).toEqual({ kind: "ours" });
 	});
 
 	test("no header: the listening pid's cwd decides", async () => {
 		const root = tempDir();
 		const other = tempDir();
 		const s = serve(metroStatus());
-		expect(await metroOwner(lsof(s.port, root), s.port, root)).toEqual({ kind: "ours" });
-		expect(await metroOwner(lsof(s.port, other), s.port, root)).toEqual({ kind: "foreign", root: other });
+		expect(await metroTools.owner(lsof(s.port, root), s.port, root)).toEqual({ kind: "ours" });
+		expect(await metroTools.owner(lsof(s.port, other), s.port, root)).toEqual({ kind: "foreign", root: other });
 	});
 
 	test("no header and no listener cwd → unknown (never reported as ours)", async () => {
 		const root = tempDir();
 		const s = serve(metroStatus());
-		expect(await metroOwner(lsof(s.port, undefined), s.port, root)).toEqual({ kind: "unknown" });
+		expect(await metroTools.owner(lsof(s.port, undefined), s.port, root)).toEqual({ kind: "unknown" });
 	});
 
 	test("something that is not Metro answers → not-metro", async () => {
 		const root = tempDir();
 		const s = serve(() => new Response("<html>hello</html>"));
-		expect(await metroOwner(noExec, s.port, root)).toEqual({ kind: "not-metro" });
+		expect(await metroTools.owner(noExec, s.port, root)).toEqual({ kind: "not-metro" });
 	});
 
 	test("nothing listening → down", async () => {
 		const s = serve(metroStatus());
 		s.stop();
-		expect(await metroOwner(noExec, s.port, tempDir())).toEqual({ kind: "down" });
+		expect(await metroTools.owner(noExec, s.port, tempDir())).toEqual({ kind: "down" });
 	});
 });
 
@@ -135,7 +118,7 @@ function harness(exec = noExec): Harness {
 		clock,
 		exit: (code) => resolveExit(code),
 		deps: {
-			probe: (port, root) => metroOwner(exec, port, root),
+			probe: (port, root) => metroTools.owner(exec, port, root),
 			now: () => clock.now,
 			sleep: async (ms) => {
 				clock.now += ms;
@@ -162,7 +145,7 @@ describe("startMetro", () => {
 		const root = tempDir();
 		const s = serve(metroStatus(root));
 		const h = harness();
-		const metro = await startMetro(h.deps, {
+		const metro = await new MetroRunner(h.deps).start({
 			projectRoot: root,
 			port: s.port,
 			env: { A: "1" },
@@ -171,9 +154,9 @@ describe("startMetro", () => {
 		});
 		if (!metro.success) throw new Error(metro.error);
 		expect(h.spawned).toEqual([
-			{ cmd: metroArgv(s.port, ["--clear"]), env: { A: "1", EXPO_NO_TELEMETRY: "1" }, cwd: root },
+			{ cmd: metroTools.argv(s.port, ["--clear"]), env: { A: "1", EXPO_NO_TELEMETRY: "1" }, cwd: root },
 		]);
-		expect(metro.data.url).toBe(metroUrl(s.port));
+		expect(metro.data.url).toBe(metroTools.url(s.port));
 		await metro.data.stop();
 		expect(h.kills).toEqual(["SIGTERM"]);
 	});
@@ -189,7 +172,7 @@ describe("startMetro", () => {
 					? { toplevel: "/ws/delacour-ui/firefish", commonDir: "/repo/.git", branch: "feature/x" }
 					: undefined,
 		};
-		const metro = await startMetro(deps, {
+		const metro = await new MetroRunner(deps).start({
 			projectRoot: root,
 			port: s.port,
 			env: { WARDEN_WORKTREE: "stale" },
@@ -209,7 +192,12 @@ describe("startMetro", () => {
 		const other = tempDir();
 		const s = serve(metroStatus(other));
 		const h = harness();
-		const metro = await startMetro(h.deps, { projectRoot: root, port: s.port, env: {}, readyTimeoutMs: 5_000 });
+		const metro = await new MetroRunner(h.deps).start({
+			projectRoot: root,
+			port: s.port,
+			env: {},
+			readyTimeoutMs: 5_000,
+		});
 		expect(metro).toEqual({
 			success: false,
 			error: `port ${s.port} is served by ${other}, not this worktree (${root})`,
@@ -221,7 +209,12 @@ describe("startMetro", () => {
 		const root = tempDir();
 		const s = serve(metroStatus());
 		const h = harness(lsof(s.port, undefined));
-		const metro = await startMetro(h.deps, { projectRoot: root, port: s.port, env: {}, readyTimeoutMs: 2_000 });
+		const metro = await new MetroRunner(h.deps).start({
+			projectRoot: root,
+			port: s.port,
+			env: {},
+			readyTimeoutMs: 2_000,
+		});
 		expect(metro.success).toBe(false);
 		if (!metro.success) expect(metro.error).toContain("could not verify");
 		expect(h.kills).toEqual(["SIGTERM"]);
@@ -237,7 +230,12 @@ describe("startMetro", () => {
 			h.exit(1);
 			await sleep(ms);
 		};
-		const metro = await startMetro(h.deps, { projectRoot: root, port: s.port, env: {}, readyTimeoutMs: 60_000 });
+		const metro = await new MetroRunner(h.deps).start({
+			projectRoot: root,
+			port: s.port,
+			env: {},
+			readyTimeoutMs: 60_000,
+		});
 		expect(metro).toEqual({ success: false, error: "Metro exited (1) before it was ready" });
 		expect(h.kills).toEqual([]);
 	});
@@ -247,7 +245,12 @@ describe("startMetro", () => {
 		const s = serve(metroStatus());
 		s.stop();
 		const h = harness();
-		const metro = await startMetro(h.deps, { projectRoot: root, port: s.port, env: {}, readyTimeoutMs: 3_000 });
+		const metro = await new MetroRunner(h.deps).start({
+			projectRoot: root,
+			port: s.port,
+			env: {},
+			readyTimeoutMs: 3_000,
+		});
 		expect(metro).toEqual({ success: false, error: `Metro did not answer on :${s.port} within 3s` });
 		expect(h.kills).toEqual(["SIGTERM"]);
 	});
@@ -257,7 +260,7 @@ describe("startMetro", () => {
 		const s = serve(metroStatus());
 		s.stop();
 		const h = harness();
-		const metro = await startMetro(h.deps, {
+		const metro = await new MetroRunner(h.deps).start({
 			projectRoot: root,
 			port: s.port,
 			env: {},
@@ -282,7 +285,12 @@ describe("startMetro", () => {
 				},
 			};
 		};
-		const metro = await startMetro(h.deps, { projectRoot: root, port: s.port, env: {}, readyTimeoutMs: 5_000 });
+		const metro = await new MetroRunner(h.deps).start({
+			projectRoot: root,
+			port: s.port,
+			env: {},
+			readyTimeoutMs: 5_000,
+		});
 		if (!metro.success) throw new Error(metro.error);
 		await metro.data.stop();
 		expect(h.kills).toEqual(["SIGTERM", "SIGKILL"]);
@@ -301,7 +309,12 @@ describe("Metro readiness poll", () => {
 		};
 		let probes = 0;
 		h.deps.probe = async () => (++probes > 4 ? { kind: "ours" } : { kind: "down" });
-		const metro = await startMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 60_000 });
+		const metro = await new MetroRunner(h.deps).start({
+			projectRoot: root,
+			port: 8081,
+			env: {},
+			readyTimeoutMs: 60_000,
+		});
 		expect(metro.success).toBe(true);
 		expect(READY_POLL_MS).toBe(150);
 		expect(sleeps).toEqual([150, 150, 150, 150]);
@@ -310,7 +323,7 @@ describe("Metro readiness poll", () => {
 
 describe("metroArgv", () => {
 	test("without a local bin: bunx expo", () => {
-		expect(metroArgv(8081, ["--clear"])).toEqual([
+		expect(metroTools.argv(8081, ["--clear"])).toEqual([
 			"bunx",
 			"expo",
 			"start",
@@ -322,7 +335,7 @@ describe("metroArgv", () => {
 	});
 
 	test("with the project's own expo bin: run it directly, no bunx", () => {
-		expect(metroArgv(8081, ["--clear"], "/proj/node_modules/.bin/expo")).toEqual([
+		expect(metroTools.argv(8081, ["--clear"], "/proj/node_modules/.bin/expo")).toEqual([
 			"/proj/node_modules/.bin/expo",
 			"start",
 			"--dev-client",
@@ -335,7 +348,7 @@ describe("metroArgv", () => {
 
 describe("metroArgv for a bare React Native app", () => {
 	test("react-native start on the port (no --dev-client), through npx or the project's own bin", () => {
-		expect(metroArgv(8082, ["--reset-cache"], undefined, "react-native")).toEqual([
+		expect(metroTools.argv(8082, ["--reset-cache"], undefined, "react-native")).toEqual([
 			"npx",
 			"react-native",
 			"start",
@@ -343,7 +356,7 @@ describe("metroArgv for a bare React Native app", () => {
 			"8082",
 			"--reset-cache",
 		]);
-		expect(metroArgv(8082, [], "/p/node_modules/.bin/react-native", "react-native")).toEqual([
+		expect(metroTools.argv(8082, [], "/p/node_modules/.bin/react-native", "react-native")).toEqual([
 			"/p/node_modules/.bin/react-native",
 			"start",
 			"--port",
@@ -353,7 +366,7 @@ describe("metroArgv for a bare React Native app", () => {
 
 	test("resolveNodeBin finds the react-native bin the same way", () => {
 		const exists = (path: string) => path === "/repo/node_modules/.bin/react-native";
-		expect(resolveNodeBin("/repo/apps/a", "react-native", () => "/usr/bin/node", exists)).toBe(
+		expect(metroTools.nodeBin("/repo/apps/a", "react-native", () => "/usr/bin/node", exists)).toBe(
 			"/repo/node_modules/.bin/react-native"
 		);
 	});
@@ -364,15 +377,15 @@ describe("resolveExpoBin", () => {
 	const exists = (path: string) => present.has(path);
 
 	test("node is installed and the project (or a parent) has the bin → that bin", () => {
-		expect(resolveExpoBin("/repo/apps/a", () => "/usr/bin/node", exists)).toBe("/repo/node_modules/.bin/expo");
+		expect(metroTools.expoBin("/repo/apps/a", () => "/usr/bin/node", exists)).toBe("/repo/node_modules/.bin/expo");
 	});
 
 	test("no node on PATH: its shebang could not run, so bunx expo", () => {
-		expect(resolveExpoBin("/repo/apps/a", () => null, exists)).toBeUndefined();
+		expect(metroTools.expoBin("/repo/apps/a", () => null, exists)).toBeUndefined();
 	});
 
 	test("no local expo bin: bunx expo", () => {
-		expect(resolveExpoBin("/other/a", () => "/usr/bin/node", exists)).toBeUndefined();
+		expect(metroTools.expoBin("/other/a", () => "/usr/bin/node", exists)).toBeUndefined();
 	});
 });
 
@@ -382,7 +395,7 @@ describe("startMetro spawn command", () => {
 		const h = harness();
 		h.deps.probe = async () => ({ kind: "ours" });
 		h.deps.expoBin = (projectRoot) => `${projectRoot}/node_modules/.bin/expo`;
-		const metro = await startMetro(h.deps, {
+		const metro = await new MetroRunner(h.deps).start({
 			projectRoot: root,
 			port: 8081,
 			env: {},
@@ -405,7 +418,7 @@ describe("startMetro spawn command", () => {
 		const h = harness();
 		h.deps.probe = async () => ({ kind: "ours" });
 		h.deps.expoBin = () => undefined;
-		await startMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
+		await new MetroRunner(h.deps).start({ projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
 		expect(h.spawned[0]?.cmd).toEqual(["bunx", "expo", "start", "--dev-client", "--port", "8081"]);
 	});
 });
@@ -415,7 +428,12 @@ describe("launchMetro", () => {
 		const root = tempDir();
 		const h = harness();
 		h.deps.probe = async () => ({ kind: "down" });
-		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 60_000 });
+		const launch = new MetroRunner(h.deps).launch({
+			projectRoot: root,
+			port: 8081,
+			env: {},
+			readyTimeoutMs: 60_000,
+		});
 		await launch.stop();
 		const result = await launch.pending;
 		expect(result.success).toBe(false);
@@ -427,7 +445,12 @@ describe("launchMetro", () => {
 		const root = tempDir();
 		const h = harness();
 		h.deps.probe = async () => ({ kind: "ours" });
-		const launch = launchMetro(h.deps, { projectRoot: root, port: 8081, env: {}, readyTimeoutMs: 5_000 });
+		const launch = new MetroRunner(h.deps).launch({
+			projectRoot: root,
+			port: 8081,
+			env: {},
+			readyTimeoutMs: 5_000,
+		});
 		const result = await launch.pending;
 		expect(result.success).toBe(true);
 		expect(launch.started?.port).toBe(8081);
@@ -440,7 +463,7 @@ describe("launchMetro", () => {
 		const root = tempDir();
 		const h = harness();
 		h.deps.probe = async () => ({ kind: "down" });
-		const launch = launchMetro(h.deps, {
+		const launch = new MetroRunner(h.deps).launch({
 			projectRoot: root,
 			port: 8081,
 			env: {},
@@ -461,7 +484,10 @@ describe("prewarmMetro", () => {
 				return Response.json({ launchAsset: { url: `http://127.0.0.1:${s.port}/index.bundle?platform=ios` } });
 			return new Response("bundle");
 		});
-		expect(await prewarmMetro(metroUrl(s.port), "ios")).toEqual({ success: true, data: { bundled: true } });
+		expect(await metroTools.prewarm(metroTools.url(s.port), "ios")).toEqual({
+			success: true,
+			data: { bundled: true },
+		});
 		expect(seen).toEqual(["/ [ios]", "/index.bundle?platform=ios []"]);
 	});
 
@@ -471,7 +497,7 @@ describe("prewarmMetro", () => {
 				? Response.json({ launchAsset: { url: `http://127.0.0.1:${s.port}/index.bundle` } })
 				: new Response("SyntaxError: app.tsx: Unexpected token", { status: 500 })
 		);
-		const res = await prewarmMetro(metroUrl(s.port), "ios");
+		const res = await metroTools.prewarm(metroTools.url(s.port), "ios");
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("SyntaxError: app.tsx: Unexpected token");
 	});
@@ -483,7 +509,7 @@ describe("prewarmMetro", () => {
 				: new Promise<Response>(() => {})
 		);
 		const controller = new AbortController();
-		const pending = prewarmMetro(metroUrl(s.port), "ios", controller.signal);
+		const pending = metroTools.prewarm(metroTools.url(s.port), "ios", controller.signal);
 		await Bun.sleep(20);
 		controller.abort();
 		const started = Date.now();
@@ -494,7 +520,7 @@ describe("prewarmMetro", () => {
 	test("an abort before the manifest answers is an interrupt too, not a skipped prewarm", async () => {
 		const s = serve(() => new Promise<Response>(() => {}));
 		const controller = new AbortController();
-		const pending = prewarmMetro(metroUrl(s.port), "ios", controller.signal);
+		const pending = metroTools.prewarm(metroTools.url(s.port), "ios", controller.signal);
 		await Bun.sleep(20);
 		controller.abort();
 		expect(await pending).toEqual({ success: false, error: "interrupted while building the ios bundle" });
@@ -502,7 +528,10 @@ describe("prewarmMetro", () => {
 
 	test("no readable manifest → skipped, not an error", async () => {
 		const s = serve(() => new Response("nope", { status: 404 }));
-		expect(await prewarmMetro(metroUrl(s.port), "ios")).toEqual({ success: true, data: { bundled: false } });
+		expect(await metroTools.prewarm(metroTools.url(s.port), "ios")).toEqual({
+			success: true,
+			data: { bundled: false },
+		});
 	});
 });
 
@@ -517,25 +546,25 @@ describe("reverseMetroPort (12-7)", () => {
 
 	test("a reverse that works first time is the only call", async () => {
 		const calls: string[][] = [];
-		expect(await reverseMetroPort(fakeAdb([0], calls), "emulator-5554", 8081)).toEqual({
+		expect(await metroTools.reversePort(fakeAdb([0], calls), "emulator-5554", 8081)).toEqual({
 			success: true,
 			data: undefined,
 		});
-		expect(calls).toEqual([adbReverseArgv("emulator-5554", 8081)]);
+		expect(calls).toEqual([metroTools.adbReverseArgv("emulator-5554", 8081)]);
 	});
 
 	test("a failed reverse is retried once after a bounded adb wait-for-device", async () => {
 		const calls: string[][] = [];
-		expect((await reverseMetroPort(fakeAdb([1, 0], calls), "emulator-5554", 8081)).success).toBe(true);
+		expect((await metroTools.reversePort(fakeAdb([1, 0], calls), "emulator-5554", 8081)).success).toBe(true);
 		expect(calls).toEqual([
-			adbReverseArgv("emulator-5554", 8081),
+			metroTools.adbReverseArgv("emulator-5554", 8081),
 			["adb", "-s", "emulator-5554", "wait-for-device", "timeout=30000"],
-			adbReverseArgv("emulator-5554", 8081),
+			metroTools.adbReverseArgv("emulator-5554", 8081),
 		]);
 	});
 
 	test("failing twice is an error naming the command", async () => {
-		const res = await reverseMetroPort(fakeAdb([1, 1], []), "emulator-5554", 8081);
+		const res = await metroTools.reversePort(fakeAdb([1, 1], []), "emulator-5554", 8081);
 		expect(res.success).toBe(false);
 		if (!res.success)
 			expect(res.error).toContain("adb -s emulator-5554 reverse tcp:8081 tcp:8081` exited 1: error: device offline");
@@ -544,8 +573,8 @@ describe("reverseMetroPort (12-7)", () => {
 
 describe("devClientLaunchArgs", () => {
 	test("--initialUrl first, then the extra launch args", () => {
-		expect(devClientLaunchArgs("http://127.0.0.1:8090")).toEqual(["--initialUrl", "http://127.0.0.1:8090"]);
-		expect(devClientLaunchArgs("http://127.0.0.1:8090", ["-Flag", "YES"])).toEqual([
+		expect(metroTools.devClientLaunchArgs("http://127.0.0.1:8090")).toEqual(["--initialUrl", "http://127.0.0.1:8090"]);
+		expect(metroTools.devClientLaunchArgs("http://127.0.0.1:8090", ["-Flag", "YES"])).toEqual([
 			"--initialUrl",
 			"http://127.0.0.1:8090",
 			"-Flag",
@@ -556,7 +585,7 @@ describe("devClientLaunchArgs", () => {
 
 describe("devClientLaunchArgv", () => {
 	test("relaunches the app pointed at Metro, with the suite's launch args", () => {
-		expect(devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8090", ["-Flag", "YES"])).toEqual([
+		expect(metroTools.devClientLaunchArgv("U1", "com.demo", "http://127.0.0.1:8090", ["-Flag", "YES"])).toEqual([
 			"xcrun",
 			"simctl",
 			"launch",
@@ -573,7 +602,7 @@ describe("devClientLaunchArgv", () => {
 
 describe("bareAppLaunchArgvs", () => {
 	test("iOS: relaunch with RCT_jsLocation in the argument domain, so the app's bundle URL points at the leased port", () => {
-		expect(bareAppLaunchArgvs("ios", "UDID", "com.x", 8083)).toEqual([
+		expect(metroTools.bareAppLaunchArgvs("ios", "UDID", "com.x", 8083)).toEqual([
 			[
 				"xcrun",
 				"simctl",
@@ -588,7 +617,7 @@ describe("bareAppLaunchArgvs", () => {
 	});
 
 	test("Android: the app's compiled-in 8081 is reversed to the leased port, then the launcher activity starts", () => {
-		expect(bareAppLaunchArgvs("android", "emulator-5554", "com.x", 8083)).toEqual([
+		expect(metroTools.bareAppLaunchArgvs("android", "emulator-5554", "com.x", 8083)).toEqual([
 			["adb", "-s", "emulator-5554", "reverse", "tcp:8081", "tcp:8083"],
 			["adb", "-s", "emulator-5554", "shell", "am", "force-stop", "com.x"],
 			["adb", "-s", "emulator-5554", "shell", "monkey", "-p", "com.x", "-c", "android.intent.category.LAUNCHER", "1"],

@@ -51,8 +51,8 @@ async function installKind(
 	const ensure =
 		deps.ensureApp ??
 		(async (...args: Parameters<NonNullable<UiDeps["ensureApp"]>>) => {
-			const { defaultAppDeps, ensureAppFor } = await import("@delacour/warden-builds/prepare");
-			return ensureAppFor(args[0], defaultAppDeps, args[1], args[2], args[3], args[4]);
+			const { AppPreparer, defaultAppDeps } = await import("@delacour/warden-builds/prepare");
+			return new AppPreparer(args[0], defaultAppDeps).ensureFor(args[1], args[2], args[3], args[4]);
 		});
 	const done = await ensure(leaseHostFromContext(ctx), ownerResolver.resolve(ctx), device.platform, device.udid, {
 		eas: true,

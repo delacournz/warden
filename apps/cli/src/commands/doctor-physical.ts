@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { PROFILE_MARGIN_MS, type RunnerMeta, readRunnerMeta } from "@delacour/warden-builds/ios-runner/cache";
-import { resolveTeam } from "@delacour/warden-builds/ios-runner/signing";
-import { runnerRoot } from "@delacour/warden-builds/ios-runner/stage";
+import { PROFILE_MARGIN_MS, type RunnerMeta, runnerCache } from "@delacour/warden-builds/ios-runner/cache";
+import { signing } from "@delacour/warden-builds/ios-runner/signing";
+import { runnerStage } from "@delacour/warden-builds/ios-runner/stage";
 import { providerFor } from "@delacour/warden-core/host-deps";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { Devicectl } from "@delacour/warden-providers/devicectl";
@@ -53,17 +53,17 @@ async function describeIos(ctx: CommandContext, d: InventoryDevice, facts: IosFa
 	return `${d.id} ${facts.deviceType} ${facts.osVersion}: ${parts.join(", ")}`;
 }
 
-function configTeamId(ctx: CommandContext, find: typeof import("@delacour/warden-builds/config").findWardenConfig) {
+function configTeamId(ctx: CommandContext, find: typeof import("@delacour/warden-builds/config").projectConfig.find) {
 	const found = find(ctx.cwd, undefined, ctx.env);
 	return found.success ? found.data?.config.ios?.teamId : undefined;
 }
 
 async function teamRow(ctx: CommandContext, hasPhones: boolean): Promise<{ row?: DoctorCheck; team?: string }> {
-	const { findWardenConfig } = await import("@delacour/warden-builds/config");
-	const resolved = await resolveTeam({
+	const { projectConfig } = await import("@delacour/warden-builds/config");
+	const resolved = await signing.resolveTeam({
 		env: ctx.env,
 		exec: ctx.exec,
-		configTeamId: configTeamId(ctx, findWardenConfig),
+		configTeamId: configTeamId(ctx, (...a) => projectConfig.find(...a)),
 	});
 	if (resolved.success) {
 		const { team, source } = resolved.data;
@@ -81,14 +81,14 @@ type CachedBuild = { dir: string; meta: RunnerMeta };
 
 /** The newest cached runner build for `team` (any team when unresolved) (`<home>/ios-runner/<team>/<xcode>-<hash>/meta.json`). */
 function newestBuild(home: string, team: string | undefined): CachedBuild | undefined {
-	const root = runnerRoot(home);
+	const root = runnerStage.root(home);
 	if (!existsSync(root)) return undefined;
 	const teamDirs = team === undefined ? readdirSync(root).map((name) => join(root, name)) : [join(root, team)];
 	const builds = teamDirs.flatMap((teamDir) => {
 		if (!existsSync(teamDir) || !statSync(teamDir).isDirectory()) return [];
 		return readdirSync(teamDir).flatMap((name) => {
 			const dir = join(teamDir, name);
-			const meta = readRunnerMeta(dir);
+			const meta = runnerCache.readMeta(dir);
 			return meta === undefined ? [] : [{ dir, meta }];
 		});
 	});
@@ -106,7 +106,7 @@ function describeExpiry(expires: number | null, now: number): { text: string; wa
 /** The last runner failure the host recorded for a phone (`$WARDEN_HOME/ios-runner/<udid>.json`), if any. */
 function lastFailure(home: string, udid: string): string | undefined {
 	try {
-		const raw: unknown = JSON.parse(readFileSync(join(runnerRoot(home), `${udid}.json`), "utf8"));
+		const raw: unknown = JSON.parse(readFileSync(join(runnerStage.root(home), `${udid}.json`), "utf8"));
 		if (typeof raw !== "object" || raw === null) return undefined;
 		const { code, message } = raw as Record<string, unknown>;
 		const text = [typeof code === "string" ? code : undefined, typeof message === "string" ? message : undefined];

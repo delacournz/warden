@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AppDeps } from "@delacour/warden-builds/prepare";
-import type { RepackInput, repackApp } from "@delacour/warden-builds/repack";
+import type { RepackInput } from "@delacour/warden-builds/repack";
 import { resultFactory } from "@delacour/warden-types/result";
 import { OWNER_ENV } from "../simctl.testing";
 import { fakeExec, type TestContext, testContext } from "../testing";
-import { createRepackCommand } from "./repack";
+import { createRepackCommand, type RepackRun } from "./repack";
 
 let ctx: TestContext | undefined;
 afterEach(() => ctx?.cleanup());
@@ -25,7 +25,7 @@ function setup(argv: string[]): TestContext {
 	return ctx;
 }
 
-type Run = typeof repackApp;
+type Run = RepackRun;
 const repacked: Awaited<ReturnType<Run>> = resultFactory.ok({
 	kind: "repacked",
 	artifact: "/cache/App.app",

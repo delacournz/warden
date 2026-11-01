@@ -4,7 +4,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type Exec, processExec } from "@delacour/warden-runtime/exec";
-import { combineKey, jsInputsHash, matchJsInputs, type ReadFile, readFileOrUndefined } from "./js-inputs";
+import { JsInputs, type ReadFile } from "./js-inputs";
+
+const js = new JsInputs();
 
 const INDEX_ARGV = "git ls-files -z -v -s --cached --others --exclude-standard -- .";
 const MODIFIED_ARGV = "git ls-files -z -m -- .";
@@ -54,26 +56,23 @@ type Host = ReturnType<typeof host>;
 describe("matchJsInputs", () => {
 	test("globs relative to the project root", () => {
 		const paths = ["src/a.ts", "src/deep/b.tsx", "app.json", "ios/Podfile", "README.md"];
-		expect(matchJsInputs(paths, ["src/**", "app.json"])).toEqual(["src/a.ts", "src/deep/b.tsx", "app.json"]);
+		expect(js.match(paths, ["src/**", "app.json"])).toEqual(["src/a.ts", "src/deep/b.tsx", "app.json"]);
 	});
 
 	test("a `!` glob excludes what the others matched", () => {
 		const paths = ["src/a.ts", "ios/Podfile", "android/app/build.gradle", "node_modules/x/i.js", "app.json"];
-		expect(matchJsInputs(paths, ["**", "!ios/**", "!android/**", "!node_modules/**"])).toEqual([
-			"src/a.ts",
-			"app.json",
-		]);
+		expect(js.match(paths, ["**", "!ios/**", "!android/**", "!node_modules/**"])).toEqual(["src/a.ts", "app.json"]);
 	});
 
 	test("only `!` globs match nothing", () => {
-		expect(matchJsInputs(["src/a.ts"], ["!src/**"])).toEqual([]);
+		expect(js.match(["src/a.ts"], ["!src/**"])).toEqual([]);
 	});
 });
 
 describe("jsInputsHash", () => {
 	const inputs = ["src/**"];
 	const run = (h: Host, jsInputs: readonly string[] = inputs) =>
-		jsInputsHash({ exec: h.exec, readFile: h.readFile, root: "/repo/app", jsInputs });
+		js.hash({ exec: h.exec, readFile: h.readFile, root: "/repo/app", jsInputs });
 	const hash = async (h: Host, jsInputs: readonly string[] = inputs) => {
 		const res = await run(h, jsInputs);
 		if (!res.success) throw new Error(res.error);
@@ -95,7 +94,7 @@ describe("jsInputsHash", () => {
 			await gate.promise;
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const pending = jsInputsHash({ exec, root: "/repo/app", jsInputs: inputs });
+		const pending = js.hash({ exec, root: "/repo/app", jsInputs: inputs });
 		await Bun.sleep(0);
 		expect(started.sort()).toEqual([INDEX_ARGV, MODIFIED_ARGV].sort());
 		gate.resolve();
@@ -152,7 +151,7 @@ describe("jsInputsHash", () => {
 
 	test("git failure → error", async () => {
 		const exec: Exec = async () => ({ exitCode: 128, stdout: "", stderr: "not a git repository" });
-		const res = await jsInputsHash({ exec, readFile: async () => undefined, root: "/repo/app", jsInputs: inputs });
+		const res = await js.hash({ exec, readFile: async () => undefined, root: "/repo/app", jsInputs: inputs });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("not a git repository");
 	});
@@ -163,7 +162,7 @@ describe("jsInputsHash", () => {
 			stdout: cmd.join(" ") === INDEX_ARGV ? "surprise format" : "",
 			stderr: "",
 		});
-		const res = await jsInputsHash({ exec, root: "/repo/app", jsInputs: inputs });
+		const res = await js.hash({ exec, root: "/repo/app", jsInputs: inputs });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("surprise format");
 	});
@@ -201,7 +200,7 @@ describe("jsInputsHash", () => {
 		for (const [name, line] of cases) {
 			test(name, async () => {
 				const h = withEntry(line, "on disk");
-				const res = await jsInputsHash({ exec: h.exec, readFile: h.readFile, root: "/repo/app", jsInputs: inputs });
+				const res = await js.hash({ exec: h.exec, readFile: h.readFile, root: "/repo/app", jsInputs: inputs });
 				expect(res.success).toBe(true);
 				expect(h.reads).toEqual(["/repo/app/src/a.ts"]);
 			});
@@ -209,7 +208,7 @@ describe("jsInputsHash", () => {
 
 		test("a plain executable file is trusted", async () => {
 			const h = withEntry(`H 100755 ${id} 0`, "on disk");
-			await jsInputsHash({ exec: h.exec, readFile: h.readFile, root: "/repo/app", jsInputs: inputs });
+			await js.hash({ exec: h.exec, readFile: h.readFile, root: "/repo/app", jsInputs: inputs });
 			expect(h.reads).toEqual([]);
 		});
 
@@ -223,7 +222,7 @@ describe("jsInputsHash", () => {
 						: "src/a.ts",
 				stderr: "",
 			});
-			const dirty = await jsInputsHash({
+			const dirty = await js.hash({
 				exec,
 				readFile: async () => new TextEncoder().encode("new"),
 				root: "/repo/app",
@@ -234,7 +233,7 @@ describe("jsInputsHash", () => {
 				stdout: cmd.join(" ") === INDEX_ARGV ? `H 100644 ${sha256Id} 0\tsrc/a.ts` : "",
 				stderr: "",
 			});
-			const committed = await jsInputsHash({ exec: committedExec, root: "/repo/app", jsInputs: inputs });
+			const committed = await js.hash({ exec: committedExec, root: "/repo/app", jsInputs: inputs });
 			expect(dirty).toEqual(committed);
 		});
 	});
@@ -252,7 +251,7 @@ describe("jsInputsHash", () => {
 			inFlight--;
 			return h.readFile(path);
 		};
-		const res = await jsInputsHash({ exec: h.exec, readFile, root: "/repo/app", jsInputs: inputs });
+		const res = await js.hash({ exec: h.exec, readFile, root: "/repo/app", jsInputs: inputs });
 		expect(res.success).toBe(true);
 		expect(h.reads).toHaveLength(100);
 		expect(peak).toBeGreaterThan(1);
@@ -262,10 +261,10 @@ describe("jsInputsHash", () => {
 
 describe("combineKey", () => {
 	test("deterministic, depends on both halves, hex of the native hash's length class", () => {
-		const k = combineKey("native1", "js1");
-		expect(k).toBe(combineKey("native1", "js1"));
-		expect(k).not.toBe(combineKey("native2", "js1"));
-		expect(k).not.toBe(combineKey("native1", "js2"));
+		const k = js.combineKey("native1", "js1");
+		expect(k).toBe(js.combineKey("native1", "js1"));
+		expect(k).not.toBe(js.combineKey("native2", "js1"));
+		expect(k).not.toBe(js.combineKey("native1", "js2"));
 		expect(k).toMatch(/^[0-9a-f]{40}$/);
 	});
 });
@@ -293,7 +292,7 @@ describe("jsInputsHash with ../ globs", () => {
 	}
 	const globs = ["src/**", "../packages/engine/src/**"];
 	const run = (h: ReturnType<typeof twoDirs>, jsInputs: readonly string[] = globs) =>
-		jsInputsHash({ exec: h.exec, root: "/repo/app", jsInputs });
+		js.hash({ exec: h.exec, root: "/repo/app", jsInputs });
 
 	test("files outside the root are listed from where they live and move the hash", async () => {
 		const a = twoDirs({ "x.ts": "1" });
@@ -318,7 +317,7 @@ describe("jsInputsHash with ../ globs", () => {
 			await gate.promise;
 			return { exitCode: 0, stdout: "", stderr: "" };
 		};
-		const pending = jsInputsHash({ exec, root: "/repo/app", jsInputs: globs });
+		const pending = js.hash({ exec, root: "/repo/app", jsInputs: globs });
 		await Bun.sleep(0);
 		expect(new Set(started)).toEqual(new Set(["/repo/app", "/repo/packages/engine/src"]));
 		gate.resolve();
@@ -388,10 +387,10 @@ describe("jsInputsHash on a real git repo", () => {
 	});
 	const spy: ReadFile = async (path) => {
 		reads.push(path);
-		return readFileOrUndefined(path);
+		return js.readFileOrUndefined(path);
 	};
 	const hashOf = async (root: string, jsInputs: readonly string[] = ["src/**"]): Promise<string> => {
-		const res = await jsInputsHash({ exec: processExec.run, readFile: spy, root, jsInputs });
+		const res = await js.hash({ exec: processExec.run, readFile: spy, root, jsInputs });
 		if (!res.success) throw new Error(res.error);
 		return res.data;
 	};
@@ -486,12 +485,12 @@ describe("jsInputsHash on a real git repo", () => {
 
 	test("no file matches → error; not a git repository → error", async () => {
 		const dir = await repo();
-		const none = await jsInputsHash({ exec: processExec.run, root: dir, jsInputs: ["nothing/**"] });
+		const none = await js.hash({ exec: processExec.run, root: dir, jsInputs: ["nothing/**"] });
 		expect(none.success).toBe(false);
 		if (!none.success) expect(none.error).toContain("matched no files");
 		const bare = realpathSync(mkdtempSync(join(tmpdir(), "warden-not-git-")));
 		dirs.push(bare);
-		const res = await jsInputsHash({ exec: processExec.run, root: bare, jsInputs: ["src/**"] });
+		const res = await js.hash({ exec: processExec.run, root: bare, jsInputs: ["src/**"] });
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("could not list JS inputs");
 	});

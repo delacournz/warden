@@ -1,4 +1,4 @@
-import { formatSize, parseSize } from "@delacour/warden-builds/prune";
+import { prune } from "@delacour/warden-builds/prune";
 import { durationParser } from "@delacour/warden-config/duration";
 import type { SimAudit } from "@delacour/warden-core/sims/audit";
 import { auditMachineSims, pruneSims, type SimsDeps, type SimsPruneResult } from "@delacour/warden-core/sims/prune";
@@ -49,7 +49,7 @@ export function parseRuleOpts(opts: { idle?: string; stale?: string; maxSize?: s
 	if (!stale.success) return stale;
 	const thresholds = { idleMs: idle.data, staleMs: stale.data };
 	if (opts.maxSize === undefined) return resultFactory.ok(thresholds);
-	const max = parseSize(opts.maxSize);
+	const max = prune.parseSize(opts.maxSize);
 	return max.success
 		? resultFactory.ok({ ...thresholds, maxBytes: max.data })
 		: resultFactory.err(`--max-size: ${max.error}`);
@@ -104,7 +104,7 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimEn
 		e.leased ? color.cyan("leased") : e.state === "Booted" ? color.green(e.state) : color.dim(e.state),
 		e.owner,
 		lastUsed(e, now),
-		formatSize(e.bytes),
+		prune.formatSize(e.bytes),
 		describeVerdict(e, color),
 	]);
 	const lines = [
@@ -113,21 +113,25 @@ function auditText(ctx: CommandContext, audit: SimAudit, entries: readonly SimEn
 			{ column: 1, min: 9 },
 		]),
 		"",
-		`total ${color.bold(formatSize(audit.totalBytes))} across ${audit.entries.length} sim(s)`,
+		`total ${color.bold(prune.formatSize(audit.totalBytes))} across ${audit.entries.length} sim(s)`,
 	];
 	if (audit.reclaimableBytes > 0)
-		lines.push(color.yellow(`warden can free ${formatSize(audit.reclaimableBytes)} → run \`warden sims prune\``));
+		lines.push(color.yellow(`warden can free ${prune.formatSize(audit.reclaimableBytes)} → run \`warden sims prune\``));
 	if (audit.foreignReclaimableBytes > 0)
 		lines.push(
 			color.cyan(
-				`${formatSize(audit.foreignReclaimableBytes)} in foreign sims prune won't touch — review, then \`warden sims delete\` (they're pre-ticked)`
+				`${prune.formatSize(audit.foreignReclaimableBytes)} in foreign sims prune won't touch — review, then \`warden sims delete\` (they're pre-ticked)`
 			)
 		);
 	if (audit.maxBytes !== undefined)
 		lines.push(
 			audit.overBudget
-				? color.red(`over budget: ${formatSize(audit.afterBytes)} after pruning > max ${formatSize(audit.maxBytes)}`)
-				: color.dim(`within budget: ${formatSize(audit.afterBytes)} after pruning ≤ max ${formatSize(audit.maxBytes)}`)
+				? color.red(
+						`over budget: ${prune.formatSize(audit.afterBytes)} after pruning > max ${prune.formatSize(audit.maxBytes)}`
+					)
+				: color.dim(
+						`within budget: ${prune.formatSize(audit.afterBytes)} after pruning ≤ max ${prune.formatSize(audit.maxBytes)}`
+					)
 		);
 	return lines.join("\n");
 }
@@ -159,7 +163,7 @@ function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
 		color.dim(r.identifier),
 		String(r.sims),
 		r.lastUsedAt === undefined ? "never" : `${durationParser.format(Math.max(0, now - r.lastUsedAt))} ago`,
-		formatSize(r.sizeBytes),
+		prune.formatSize(r.sizeBytes),
 		describeRuntimeVerdict(r.verdict, color),
 	]);
 	const lines = [
@@ -169,18 +173,18 @@ function runtimesText(ctx: CommandContext, section: RuntimeSection): string {
 			min: 16,
 		}),
 		"",
-		`runtimes ${color.bold(formatSize(audit.totalBytes))} across ${audit.entries.length} runtime(s)`,
+		`runtimes ${color.bold(prune.formatSize(audit.totalBytes))} across ${audit.entries.length} runtime(s)`,
 	];
 	if (audit.unusedBytes > 0)
 		lines.push(
 			color.cyan(
-				`${formatSize(audit.unusedBytes)} in unused runtimes — machine-wide, warden won't touch them: \`xcrun simctl runtime delete <identifier>\``
+				`${prune.formatSize(audit.unusedBytes)} in unused runtimes — machine-wide, warden won't touch them: \`xcrun simctl runtime delete <identifier>\``
 			)
 		);
 	if (audit.unusedAfterPruneBytes > audit.unusedBytes)
 		lines.push(
 			color.yellow(
-				`${formatSize(audit.unusedAfterPruneBytes - audit.unusedBytes)} more becomes unused after \`warden sims prune\``
+				`${prune.formatSize(audit.unusedAfterPruneBytes - audit.unusedBytes)} more becomes unused after \`warden sims prune\``
 			)
 		);
 	return lines.join("\n");
@@ -218,13 +222,16 @@ async function auditCmd(ctx: CommandContext, opts: AuditOpts): Promise<number> {
 	return 0;
 }
 
-const describeSim = (e: SimEntry) => `${e.name} ${e.udid} (${formatSize(e.bytes)}, ${describeReasons(e.reasons)})`;
+const describeSim = (e: SimEntry) =>
+	`${e.name} ${e.udid} (${prune.formatSize(e.bytes)}, ${describeReasons(e.reasons)})`;
 
 /** Terminal confirm of the preview's deletes; true = go ahead. */
 async function confirmDeletes(ctx: CommandContext, preview: SimsPruneResult): Promise<boolean> {
 	const { ui } = ctx;
 	for (const e of preview.removed) warn(ctx, `will delete ${describeSim(e)}`);
-	const answer = await ui.confirm(`Delete ${preview.removed.length} simulator(s) (${formatSize(preview.freedBytes)})?`);
+	const answer = await ui.confirm(
+		`Delete ${preview.removed.length} simulator(s) (${prune.formatSize(preview.freedBytes)})?`
+	);
 	if (answer === true) return true;
 	ui.cancelled("Aborted.");
 	return false;
@@ -240,7 +247,7 @@ function pruneText(ctx: CommandContext, result: SimsPruneResult): string {
 		...failed.map((f) => color.red(`failed ${f.entry.name} ${f.entry.udid}: ${f.error}`)),
 		removed.length === 0
 			? color.dim("nothing to delete")
-			: `${dryRun ? "would free" : "freed"} ${color.bold(formatSize(freedBytes))}`,
+			: `${dryRun ? "would free" : "freed"} ${color.bold(prune.formatSize(freedBytes))}`,
 	].join("\n");
 }
 

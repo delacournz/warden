@@ -7,10 +7,10 @@ import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import { resultFactory } from "@delacour/warden-types/result";
 import type { BuildLockDeps } from "../lock";
-import { buildRunnerArgv, ensureRunnerBuild, expectedRunnerDerivedData } from "./build";
-import { readRunnerMeta } from "./cache";
+import { runnerBuilder } from "./build";
+import { runnerCache } from "./cache";
 import type { EnsureRunnerBuildInput, RunnerBuildError } from "./runner-build.types";
-import { certificatesFromPem, sha1Hex } from "./signing";
+import { signing } from "./signing";
 import { CERT_TEAM_A, CERT_TEAM_B } from "./signing.testing";
 
 const UDID = "00008140-000A0B0C0D0E0F10";
@@ -101,7 +101,7 @@ function input(
 	};
 }
 
-async function failure(p: ReturnType<typeof ensureRunnerBuild>): Promise<RunnerBuildError> {
+async function failure(p: ReturnType<typeof runnerBuilder.ensure>): Promise<RunnerBuildError> {
 	const res = await p;
 	if (res.success) throw new Error("expected a failure");
 	return res.error;
@@ -110,7 +110,7 @@ async function failure(p: ReturnType<typeof ensureRunnerBuild>): Promise<RunnerB
 describe("buildRunnerArgv", () => {
 	test("golden: -destination id= registers the phone; the bundle id goes through WARDEN_RUNNER_BUNDLE_ID", () => {
 		expect(
-			buildRunnerArgv({
+			runnerBuilder.argv({
 				project: "/h/ios-runner/src/k/ios-runner/WardenRunner.xcodeproj",
 				derivedData: "/h/ios-runner/T/B-h/dd",
 				udid: UDID,
@@ -134,9 +134,9 @@ describe("buildRunnerArgv", () => {
 			"WARDEN_RUNNER_BUNDLE_ID=nz.co.delacour.warden.runner.ln69p7n673",
 		]);
 		expect(
-			buildRunnerArgv({ project: "p", derivedData: "d", udid: "u", team: TEAM, bundleId: "x" }).some((a) =>
-				a.startsWith("PRODUCT_BUNDLE_IDENTIFIER")
-			)
+			runnerBuilder
+				.argv({ project: "p", derivedData: "d", udid: "u", team: TEAM, bundleId: "x" })
+				.some((a) => a.startsWith("PRODUCT_BUNDLE_IDENTIFIER"))
 		).toBe(false);
 	});
 });
@@ -144,7 +144,7 @@ describe("buildRunnerArgv", () => {
 describe("ensureRunnerBuild", () => {
 	test("cold: stages, builds once with the golden argv, records the phone and the profile expiry", async () => {
 		const tools = fakeTools();
-		const res = await ensureRunnerBuild(input(tools));
+		const res = await runnerBuilder.ensure(input(tools));
 		if (!res.success) throw new Error(JSON.stringify(res.error));
 		expect(res.data).toMatchObject({
 			bundleId: "nz.co.delacour.warden.runner.ln69p7n673",
@@ -164,7 +164,7 @@ describe("ensureRunnerBuild", () => {
 		expect(argv).toContain(`id=${UDID}`);
 		expect(argv).toContain(`DEVELOPMENT_TEAM=${TEAM}`);
 		expect(argv.find((a) => a.endsWith("WardenRunner.xcodeproj"))).toContain(join(dir, "ios-runner", "src", "0.7.0-"));
-		const meta = readRunnerMeta(join(res.data.derivedData, ".."));
+		const meta = runnerCache.readMeta(join(res.data.derivedData, ".."));
 		expect(meta).toEqual({
 			udids: [UDID],
 			profileExpires: clock + 7 * DAY,
@@ -175,35 +175,35 @@ describe("ensureRunnerBuild", () => {
 
 	test("warm: same phone reuses the build without running xcodebuild", async () => {
 		const tools = fakeTools();
-		await ensureRunnerBuild(input(tools));
-		const again = await ensureRunnerBuild(input(tools));
+		await runnerBuilder.ensure(input(tools));
+		const again = await runnerBuilder.ensure(input(tools));
 		expect(again.success && again.data.cached).toBe(true);
 		expect(tools.builds()).toHaveLength(1);
 	});
 
 	test("a new UDID rebuilds and keeps the earlier phone in the profile list", async () => {
 		const tools = fakeTools();
-		await ensureRunnerBuild(input(tools));
-		const second = await ensureRunnerBuild(input(tools, { udid: "00008110-000A11111111801E" }));
+		await runnerBuilder.ensure(input(tools));
+		const second = await runnerBuilder.ensure(input(tools, { udid: "00008110-000A11111111801E" }));
 		expect(second.success && second.data.rebuiltBecause).toBe("new_udid");
 		expect(tools.builds()).toHaveLength(2);
 		const cache = second.success ? join(second.data.derivedData, "..") : "";
-		expect(readRunnerMeta(cache)?.udids).toEqual([UDID, "00008110-000A11111111801E"]);
+		expect(runnerCache.readMeta(cache)?.udids).toEqual([UDID, "00008110-000A11111111801E"]);
 	});
 
 	test("a profile ending within 24 h rebuilds", async () => {
 		const tools = fakeTools();
-		await ensureRunnerBuild(input(tools));
+		await runnerBuilder.ensure(input(tools));
 		clock += 6.5 * DAY;
-		const again = await ensureRunnerBuild(input(tools));
+		const again = await runnerBuilder.ensure(input(tools));
 		expect(again.success && again.data.rebuiltBecause).toBe("profile_expiring");
 		expect(tools.builds()).toHaveLength(2);
 	});
 
 	test("changed runner sources get their own cache (no rebuild of the old one)", async () => {
 		const tools = fakeTools();
-		const a = await ensureRunnerBuild(input(tools));
-		const b = await ensureRunnerBuild(
+		const a = await runnerBuilder.ensure(input(tools));
+		const b = await runnerBuilder.ensure(
 			input(tools, { loadSources: async () => resultFactory.ok({ ...SOURCES, "ios-runner/Host/App.swift": "v2" }) })
 		);
 		expect(a.success && b.success && a.data.derivedData !== b.data.derivedData).toBe(true);
@@ -211,24 +211,26 @@ describe("ensureRunnerBuild", () => {
 
 	test("the configured bundle id is used", async () => {
 		const tools = fakeTools();
-		const res = await ensureRunnerBuild(input(tools, { configBundleId: "com.me.runner" }));
+		const res = await runnerBuilder.ensure(input(tools, { configBundleId: "com.me.runner" }));
 		expect(res.success && res.data.bundleId).toBe("com.me.runner");
 		expect(tools.builds()[0]).toContain("WARDEN_RUNNER_BUNDLE_ID=com.me.runner");
 	});
 
 	test("releases the build lease", async () => {
-		await ensureRunnerBuild(input(fakeTools()));
+		await runnerBuilder.ensure(input(fakeTools()));
 		expect(store.listLeases()).toEqual([]);
 	});
 
 	test("two teams in the keychain and none chosen: ios_team_ambiguous, nothing built", async () => {
-		const [derA, derB] = [certificatesFromPem(CERT_TEAM_A)[0], certificatesFromPem(CERT_TEAM_B)[0]];
+		const [derA, derB] = [signing.certificatesFromPem(CERT_TEAM_A)[0], signing.certificatesFromPem(CERT_TEAM_B)[0]];
 		if (!derA || !derB) throw new Error("fixtures");
 		const tools = fakeTools({
-			identities: `  1) ${sha1Hex(derA)} "Apple Development: A (UA)"\n  2) ${sha1Hex(derB)} "Apple Development: B (UB)"\n`,
+			identities: `  1) ${signing.sha1Hex(derA)} "Apple Development: A (UA)"\n  2) ${signing.sha1Hex(derB)} "Apple Development: B (UB)"\n`,
 			certs: CERT_TEAM_A + CERT_TEAM_B,
 		});
-		const error = await failure(ensureRunnerBuild(input(tools, { env: { DEVELOPER_DIR: "/x/Contents/Developer" } })));
+		const error = await failure(
+			runnerBuilder.ensure(input(tools, { env: { DEVELOPER_DIR: "/x/Contents/Developer" } }))
+		);
 		expect(error.code).toBe("ios_team_ambiguous");
 		expect(tools.builds()).toHaveLength(0);
 	});
@@ -241,17 +243,17 @@ describe("ensureRunnerBuild", () => {
 				stderr: `error: No Account for Team "${TEAM}". Add a new account in Accounts settings.`,
 			}),
 		});
-		const error = await failure(ensureRunnerBuild(input(tools)));
+		const error = await failure(runnerBuilder.ensure(input(tools)));
 		expect(error.code).toBe("no_account");
 		expect(store.listLeases()).toEqual([]);
-		expect(await ensureRunnerBuild(input(fakeTools()))).toMatchObject({ success: true });
+		expect(await runnerBuilder.ensure(input(fakeTools()))).toMatchObject({ success: true });
 	});
 
 	test("an unknown failure is build_failed with the output tail", async () => {
 		const tools = fakeTools({
 			xcodebuild: async () => ({ exitCode: 65, stdout: "line1\nld: symbol(s) not found", stderr: "" }),
 		});
-		const error = await failure(ensureRunnerBuild(input(tools)));
+		const error = await failure(runnerBuilder.ensure(input(tools)));
 		expect(error.code).toBe("build_failed");
 		expect(error.code === "build_failed" && error.output).toContain("symbol(s) not found");
 	});
@@ -264,7 +266,7 @@ describe("ensureRunnerBuild", () => {
 					opts.signal?.addEventListener("abort", () => resolve({ exitCode: 143, stdout: "", stderr: "" }));
 				}),
 		});
-		const error = await failure(ensureRunnerBuild(input(tools, { lockGraceMs: 5 })));
+		const error = await failure(runnerBuilder.ensure(input(tools, { lockGraceMs: 5 })));
 		expect(error.code).toBe("device_locked");
 		expect(error.message).toContain("Unlock");
 	});
@@ -277,24 +279,24 @@ describe("ensureRunnerBuild", () => {
 				return base.exec(argv, opts);
 			},
 		});
-		const res = await ensureRunnerBuild(input(tools, { lockGraceMs: 60_000 }));
+		const res = await runnerBuilder.ensure(input(tools, { lockGraceMs: 60_000 }));
 		expect(res.success).toBe(true);
 	});
 
 	test("success without an xctestrun is build_failed", async () => {
 		const tools = fakeTools({ xcodebuild: async () => ({ exitCode: 0, stdout: "", stderr: "" }) });
-		expect((await failure(ensureRunnerBuild(input(tools)))).code).toBe("build_failed");
+		expect((await failure(runnerBuilder.ensure(input(tools)))).code).toBe("build_failed");
 	});
 
 	test("unreadable sources are build_failed", async () => {
 		const error = await failure(
-			ensureRunnerBuild(input(fakeTools(), { loadSources: async () => resultFactory.err("no blob") }))
+			runnerBuilder.ensure(input(fakeTools(), { loadSources: async () => resultFactory.err("no blob") }))
 		);
 		expect(error).toMatchObject({ code: "build_failed", message: "no blob" });
 	});
 
 	test("readFileSync of the staged project is the embedded text", async () => {
-		const res = await ensureRunnerBuild(input(fakeTools()));
+		const res = await runnerBuilder.ensure(input(fakeTools()));
 		if (!res.success) throw new Error("build");
 		const staged = join(dir, "ios-runner", "src");
 		const hash = basename(dirname(res.data.derivedData)).split("-")[1];
@@ -305,15 +307,15 @@ describe("ensureRunnerBuild", () => {
 describe("expectedRunnerDerivedData", () => {
 	test("names the derived data ensureRunnerBuild uses, without building or staging", async () => {
 		const tools = fakeTools();
-		const expected = await expectedRunnerDerivedData(input(tools));
-		const built = await ensureRunnerBuild(input(tools));
+		const expected = await runnerBuilder.expectedDerivedData(input(tools));
+		const built = await runnerBuilder.ensure(input(tools));
 		if (!expected.success || !built.success) throw new Error("expected both to succeed");
 		expect(expected.data).toBe(built.data.derivedData);
 	});
 
 	test("runs no xcodebuild and writes nothing", async () => {
 		const tools = fakeTools();
-		const expected = await expectedRunnerDerivedData(input(tools));
+		const expected = await runnerBuilder.expectedDerivedData(input(tools));
 		expect(expected.success).toBe(true);
 		expect(tools.builds()).toHaveLength(0);
 		expect(existsSync(join(dir, "ios-runner", "src"))).toBe(false);
@@ -321,11 +323,11 @@ describe("expectedRunnerDerivedData", () => {
 
 	test("changes with the runner sources, the Xcode build and the team", async () => {
 		const tools = fakeTools();
-		const base = await expectedRunnerDerivedData(input(tools));
-		const edited = await expectedRunnerDerivedData(
+		const base = await runnerBuilder.expectedDerivedData(input(tools));
+		const edited = await runnerBuilder.expectedDerivedData(
 			input(tools, { loadSources: async () => resultFactory.ok({ ...SOURCES, "ios-runner/Host/App.swift": "app2" }) })
 		);
-		const otherTeam = await expectedRunnerDerivedData(
+		const otherTeam = await runnerBuilder.expectedDerivedData(
 			input(tools, { env: { DEVELOPER_DIR: "/x", WARDEN_IOS_TEAM_ID: "ABCDE12345" } })
 		);
 		if (!base.success || !edited.success || !otherTeam.success) throw new Error("expected success");
@@ -334,7 +336,7 @@ describe("expectedRunnerDerivedData", () => {
 	});
 
 	test("a source set without the project fails like the build", async () => {
-		const res = await expectedRunnerDerivedData(
+		const res = await runnerBuilder.expectedDerivedData(
 			input(fakeTools(), { loadSources: async () => resultFactory.ok({ a: "b" }) })
 		);
 		expect(res.success).toBe(false);

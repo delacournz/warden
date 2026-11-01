@@ -65,8 +65,8 @@ export function androidGoldenDeps(host: GoldenHost, owner: Owner, sleep: Sleep =
  * Loaded lazily: the config loader pulls in zod, which the claim's cold start must not.
  */
 async function configuredAndroidSnapshot(host: Pick<GoldenHost, "cwd" | "env">): Promise<boolean | undefined> {
-	const { findWardenConfig } = await import("@delacour/warden-builds/config");
-	const found = findWardenConfig(host.cwd, configSearchBound(host.cwd, host.env), host.env);
+	const { projectConfig } = await import("@delacour/warden-builds/config");
+	const found = projectConfig.find(host.cwd, configSearchBound(host.cwd, host.env), host.env);
 	return found.success ? found.data?.config.android?.snapshot : undefined;
 }
 

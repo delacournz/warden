@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { findWardenConfig } from "@delacour/warden-builds/config";
+import { projectConfig } from "@delacour/warden-builds/config";
 import { DEV_MENU_OFF_ARGS } from "@delacour/warden-core/affected/affected.defaults";
 import { type TestContext, testContext } from "../testing";
 import { currentBuild } from "../update/build-info";
@@ -37,7 +37,7 @@ describe("warden init", () => {
 			},
 		});
 
-		const found = findWardenConfig(c.cwd, c.cwd, {});
+		const found = projectConfig.find(c.cwd, c.cwd, {});
 		if (!found.success || !found.data) throw new Error(found.success ? "no config written" : found.error);
 		expect(found.data.config.projects).toMatchObject([
 			{ name: "fresh", bundleId: { ios: "com.demo.fresh", android: "com.demo.fresh" } },

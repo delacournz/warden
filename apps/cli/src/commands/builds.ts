@@ -1,11 +1,11 @@
 import { basename, resolve } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-builds/builds.defaults";
-import { storeArtifact } from "@delacour/warden-builds/cache";
-import { ccacheCleanup } from "@delacour/warden-builds/compiler-cache";
+import { buildCache } from "@delacour/warden-builds/cache";
+import { compilerCache } from "@delacour/warden-builds/compiler-cache";
 import { LOCAL_PROFILE } from "@delacour/warden-builds/ensure";
-import { projectStart } from "@delacour/warden-builds/prepare";
-import { cacheCap, formatSize, pruneBuilds } from "@delacour/warden-builds/prune";
-import { removeBuilds } from "@delacour/warden-builds/remove";
+import { appLookup } from "@delacour/warden-builds/prepare";
+import { prune as pruneTools } from "@delacour/warden-builds/prune";
+import { remove as removeTools } from "@delacour/warden-builds/remove";
 import { durationParser } from "@delacour/warden-config/duration";
 import { type BuildRecord, BuildsTable } from "@delacour/warden-store/builds-table";
 import { liveness } from "@delacour/warden-store/liveness";
@@ -65,7 +65,7 @@ function lsCmd(ctx: CommandContext, json: boolean): number {
 			short(facts.jsKey),
 			facts.worktree === undefined ? "-" : basename(facts.worktree),
 			facts.branch ?? "-",
-			formatSize(b.size),
+			pruneTools.formatSize(b.size),
 			`${durationParser.format(Math.max(0, now - b.lastUsedAt))} ago`,
 			color.dim(b.path),
 		];
@@ -80,11 +80,11 @@ function lsCmd(ctx: CommandContext, json: boolean): number {
 					{ column: 0, keep: "end", min: 20 },
 					{ column: 7, min: 12 },
 					{ column: 6, min: 12 },
-				])}\n\ntotal ${color.bold(formatSize(total))}`;
+				])}\n\ntotal ${color.bold(pruneTools.formatSize(total))}`;
 	const listed = builds.map((b) => ({ ...b, ...buildFacts(b) }));
 	emit(ctx, json, { builds: listed, totalBytes: total }, text, {
 		scope: "builds",
-		detail: `${plural(builds.length, "build")} · ${formatSize(total)}`,
+		detail: `${plural(builds.length, "build")} · ${pruneTools.formatSize(total)}`,
 	});
 	return 0;
 }
@@ -92,14 +92,15 @@ function lsCmd(ctx: CommandContext, json: boolean): number {
 type PruneOpts = { maxSize?: string; dryRun?: true; yes?: true; json?: true };
 
 const describeBuild = (b: { projectKey: string; platform: string; hash: string; size: number }) =>
-	`${b.projectKey} ${b.platform} ${b.hash} (${formatSize(b.size)})`;
+	`${b.projectKey} ${b.platform} ${b.hash} (${pruneTools.formatSize(b.size)})`;
 
 /** List what an LRU prune removes and ask; true = go ahead (nothing to remove counts as yes). */
 async function confirmPrune(ctx: CommandContext, remove: readonly BuildRecord[]): Promise<boolean> {
 	if (remove.length === 0) return true;
 	for (const b of remove) warn(ctx, `will remove ${describeBuild(b)}`);
 	const freed = remove.reduce((sum, b) => sum + b.size, 0);
-	if ((await ctx.ui.confirm(`Remove ${remove.length} cached build(s) (${formatSize(freed)})?`)) === true) return true;
+	if ((await ctx.ui.confirm(`Remove ${remove.length} cached build(s) (${pruneTools.formatSize(freed)})?`)) === true)
+		return true;
 	ctx.ui.cancelled("Aborted.");
 	return false;
 }
@@ -112,13 +113,13 @@ async function confirmPrune(ctx: CommandContext, remove: readonly BuildRecord[])
 async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 	const { ui } = ctx;
 	const { color } = ui;
-	const cap = cacheCap(opts.maxSize, ctx.env);
+	const cap = pruneTools.cacheCap(opts.maxSize, ctx.env);
 	const max = cap.bytes;
 	if (!max.success)
 		return fail(ctx, "prune", `${cap.source === "env" ? "WARDEN_MAX_CACHE_SIZE" : "--max-size"}: ${max.error}`);
 	const dryRun = opts.dryRun === true;
 	const prune = (dry: boolean) =>
-		pruneBuilds({
+		pruneTools.builds({
 			store: ctx.store(),
 			env: ctx.env,
 			maxBytes: max.data,
@@ -131,18 +132,18 @@ async function pruneCmd(ctx: CommandContext, opts: PruneOpts): Promise<number> {
 		heading(
 			ctx,
 			"builds prune",
-			`${plural(preview.remove.length, "build")} over ${formatSize(max.data)}${dryRun ? " · dry run" : ""}`
+			`${plural(preview.remove.length, "build")} over ${pruneTools.formatSize(max.data)}${dryRun ? " · dry run" : ""}`
 		);
 	}
 	if (!dryRun && ui.interactive && !opts.yes && !(await confirmPrune(ctx, preview.remove))) return 1;
 	const plan = dryRun
 		? preview
 		: await withSpinner(ctx, `pruning ${preview.remove.length} build(s)…`, async () => prune(false));
-	if (!dryRun) await ccacheCleanup(ctx.exec, storeLocator.wardenHome(ctx.env));
+	if (!dryRun) await compilerCache.ccacheCleanup(ctx.exec, storeLocator.wardenHome(ctx.env));
 	const verb = dryRun ? "would remove" : "removed";
 	const text = [
 		...plan.remove.map((b) => (dryRun ? color.yellow : color.green)(`${verb} ${describeBuild(b)}`)),
-		`${formatSize(plan.total)} → ${color.bold(formatSize(plan.after))} ${color.dim(`(max ${formatSize(max.data)})`)}`,
+		`${pruneTools.formatSize(plan.total)} → ${color.bold(pruneTools.formatSize(plan.after))} ${color.dim(`(max ${pruneTools.formatSize(max.data)})`)}`,
 	].join("\n");
 	emit(
 		ctx,
@@ -169,7 +170,7 @@ async function rmCmd(ctx: CommandContext, prefixes: string[], opts: RmOpts): Pro
 	}
 	const dryRun = opts.dryRun === true;
 	const remove = (dry: boolean) =>
-		removeBuilds({
+		removeTools.builds({
 			store: ctx.store(),
 			env: ctx.env,
 			prefixes,
@@ -219,7 +220,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 	const artifact = resolve(ctx.cwd, raw).replace(/\/+$/, "");
 	const platform = inferPlatform(artifact, opts.platform);
 	if (!platform.success) return fail(ctx, "import", platform.error);
-	const start = projectStart(ctx, opts.project);
+	const start = appLookup.projectStart(ctx, opts.project);
 	if (!start.success) return fail(ctx, "import", start.error);
 	const bundle = opts.bundleId;
 	const project = await projectContextFor(ctx, {
@@ -228,7 +229,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 	});
 	if (!project.success) return fail(ctx, "import", project.error);
 	const stored = await withSpinner(ctx, `importing ${raw} into the build cache…`, () =>
-		storeArtifact({
+		buildCache.storeArtifact({
 			store: ctx.store(),
 			env: ctx.env,
 			projectKey: project.data.projectKey,
@@ -246,7 +247,7 @@ async function importCmd(ctx: CommandContext, raw: string, opts: ImportOpts): Pr
 		ctx,
 		opts.json === true,
 		b,
-		`${ctx.ui.color.green("imported")} ${b.platform} ${b.hash} → ${b.path} ${ctx.ui.color.dim(`(${formatSize(b.size)})`)}`
+		`${ctx.ui.color.green("imported")} ${b.platform} ${b.hash} → ${b.path} ${ctx.ui.color.dim(`(${pruneTools.formatSize(b.size)})`)}`
 	);
 	return 0;
 }

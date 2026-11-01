@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatBuildFailure, parseBuildDiagnostics } from "./diagnostics";
+import { buildDiagnostics } from "./diagnostics";
 
 /** Shape of real `swiftc` / `xcodebuild` output (Xcode 27.1): path:line:col diagnostics, source excerpts, a summary repeat. */
 const OUTPUT = `CompileSwift normal arm64 /Users/x/app/ios/App/Bad.swift (in target 'App' from project 'App')
@@ -25,7 +25,7 @@ The following build commands failed:
 
 describe("parseBuildDiagnostics", () => {
 	test("file:line:col errors, file-less errors, deduplicated, warnings dropped", () => {
-		expect(parseBuildDiagnostics(OUTPUT)).toEqual([
+		expect(buildDiagnostics.parse(OUTPUT)).toEqual([
 			{
 				file: "/Users/x/app/ios/App/Bad.swift",
 				line: 2,
@@ -38,14 +38,14 @@ describe("parseBuildDiagnostics", () => {
 		]);
 	});
 	test("nothing recognisable is an empty list", () => {
-		expect(parseBuildDiagnostics("all fine\n")).toEqual([]);
+		expect(buildDiagnostics.parse("all fine\n")).toEqual([]);
 	});
 });
 
 describe("formatBuildFailure", () => {
-	const diags = parseBuildDiagnostics(OUTPUT);
+	const diags = buildDiagnostics.parse(OUTPUT);
 	test("headline of the first errors with file:line, count, log path", () => {
-		const text = formatBuildFailure(diags, "/h/logs/build.log", 2);
+		const text = buildDiagnostics.formatFailure(diags, "/h/logs/build.log", 2);
 		expect(text).toContain("4 errors");
 		expect(text).toContain("/Users/x/app/ios/App/Bad.swift:2:14: cannot convert value");
 		expect(text).toContain("/Users/x/app/ios/App/Bad.swift:3:12");
@@ -53,6 +53,6 @@ describe("formatBuildFailure", () => {
 		expect(text).toContain("/h/logs/build.log");
 	});
 	test("no diagnostics: undefined so the caller keeps its own message", () => {
-		expect(formatBuildFailure([], "/log")).toBeUndefined();
+		expect(buildDiagnostics.formatFailure([], "/log")).toBeUndefined();
 	});
 });

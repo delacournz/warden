@@ -2,13 +2,7 @@ import { createHash } from "node:crypto";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import type { Platform } from "@delacour/warden-store/types";
 
-import {
-	type BuildConfiguration,
-	DEFAULT_JS_INPUTS,
-	defaultBuildCommand,
-	iosDeviceBuildCommand,
-	simulatorBuildCommand,
-} from "./builds.defaults";
+import { type BuildConfiguration, buildDefaults, DEFAULT_JS_INPUTS } from "./builds.defaults";
 import type { Project } from "./config";
 import type { AppFramework } from "./native-ids";
 
@@ -23,19 +17,6 @@ export type BuildTarget = "simulator" | "device";
  * override when `projects[].ios.device.bundleIdentifier` is set) that goes into the cache key and the cache path.
  */
 export type DeviceTarget = { team: string; salt: string };
-
-/** The device target of `project` signed by `team`: a changed team or bundle id override is a different build. */
-export function deviceTarget(project: Project, team: string): DeviceTarget {
-	const override = project.iosDeviceBundleId;
-	if (override === undefined) return { team, salt: team };
-	return { team, salt: `${team}-${createHash("sha1").update(override).digest("hex").slice(0, 8)}` };
-}
-
-/** `project` with the bundle id a device build installs under (`projects[].ios.device.bundleIdentifier`, else its own). */
-export function withDeviceBundleId(project: Project): Project {
-	const override = project.iosDeviceBundleId;
-	return override === undefined ? project : { ...project, bundleId: { ...project.bundleId, ios: override } };
-}
 
 /** The kind `warden e2e` installs when the suite's `app` names none. */
 export const DEFAULT_E2E_KIND: BuildKind = "simulator";
@@ -80,73 +61,91 @@ const KIND_DEFAULTS: Record<BuildKind, KindDefaults> = {
 		configuration: "Debug",
 		embedsJs: false,
 		fingerprint: "native",
-		command: (platform, framework) => defaultBuildCommand(platform, "Debug", framework),
+		command: (platform, framework) => buildDefaults.defaultCommand(platform, "Debug", framework),
 	},
 	simulator: {
 		configuration: "Release",
 		embedsJs: false,
 		fingerprint: "native",
-		command: simulatorBuildCommand,
+		command: (platform, framework) => buildDefaults.simulatorCommand(platform, framework),
 	},
 	release: {
 		configuration: "Release",
 		embedsJs: true,
 		fingerprint: "native+js",
-		command: (platform, framework) => defaultBuildCommand(platform, "Release", framework),
+		command: (platform, framework) => buildDefaults.defaultCommand(platform, "Release", framework),
 	},
 };
 
-/** The built-in build command of `kind` (the default `projects[].kinds.<kind>.build` replaces). */
-export function kindBuildCommand(kind: BuildKind, platform: Platform, framework: AppFramework): string {
-	return KIND_DEFAULTS[kind].command(platform, framework);
+/** Per-kind build settings of a project. Pure; singleton `kinds`. */
+export class Kinds {
+	/** The device target of `project` signed by `team`: a changed team or bundle id override is a different build. */
+	deviceTarget(project: Project, team: string): DeviceTarget {
+		const override = project.iosDeviceBundleId;
+		if (override === undefined) return { team, salt: team };
+		return { team, salt: `${team}-${createHash("sha1").update(override).digest("hex").slice(0, 8)}` };
+	}
+
+	/** `project` with the bundle id a device build installs under (`projects[].ios.device.bundleIdentifier`, else its own). */
+	withDeviceBundleId(project: Project): Project {
+		const override = project.iosDeviceBundleId;
+		return override === undefined ? project : { ...project, bundleId: { ...project.bundleId, ios: override } };
+	}
+
+	/** The built-in build command of `kind` (the default `projects[].kinds.<kind>.build` replaces). */
+	buildCommand(kind: BuildKind, platform: Platform, framework: AppFramework): string {
+		return KIND_DEFAULTS[kind].command(platform, framework);
+	}
+
+	/**
+	 * `kind`'s settings for `project`. Precedence: `kinds.<kind>.build` > the built-in default. The project's top-level
+	 * `build` / `fingerprint.include` / `fingerprint.jsInputs` belong to the kind-less flow and are not read here
+	 * (`fingerprint.command`, `build.cache` and `build.prebuiltReactNative` still apply: they are not about the kind).
+	 * JS inputs: `kinds.<kind>.jsInputs`, else `DEFAULT_JS_INPUTS` (all tracked files but `ios/`, `android/`, `node_modules`).
+	 */
+	resolve(project: Project, kind: BuildKind, device?: DeviceTarget): KindSettings {
+		const defaults = KIND_DEFAULTS[kind];
+		const config = project.kinds?.[kind];
+		const deviceBuild = device
+			? buildDefaults.iosDeviceCommand(defaults.configuration, project.framework, {
+					team: device.team,
+					bundleIdentifier: project.iosDeviceBundleId,
+				})
+			: undefined;
+		const settings: KindSettings = {
+			kind,
+			build: {
+				ios: config?.build?.ios ?? deviceBuild ?? defaults.command("ios", project.framework),
+				android: config?.build?.android ?? defaults.command("android", project.framework),
+			},
+			buildConfiguration: defaults.configuration,
+			embedsJs: defaults.embedsJs,
+			fingerprint: defaults.fingerprint,
+			env: { ...config?.env },
+		};
+		if (kind !== "dev") settings.jsInputs = config?.jsInputs ?? [...DEFAULT_JS_INPUTS];
+		return settings;
+	}
+
+	/**
+	 * `project` as `kind` builds it: the build commands, configuration and env of `resolve`, and `jsInputs` set only
+	 * when the kind's cache key covers the JS (`release`), so `runLocalBuild` / `computeCacheKey` run unchanged. With a
+	 * `device` target the project builds for a physical iPhone: the signed `xcodebuild` command, the device bundle id.
+	 */
+	projectFor(project: Project, kind: BuildKind, device?: DeviceTarget): Project {
+		const settings = this.resolve(project, kind, device);
+		const { jsInputs: _own, ...rest } = device ? this.withDeviceBundleId(project) : project;
+		const resolved: Project = {
+			...rest,
+			...(device ? { target: "device" as const } : {}),
+			build: settings.build,
+			buildConfiguration: settings.buildConfiguration,
+			kind,
+		};
+		if (settings.env && Object.keys(settings.env).length > 0) resolved.buildEnv = settings.env;
+		if (settings.fingerprint === "native+js" && settings.jsInputs) resolved.jsInputs = settings.jsInputs;
+		return resolved;
+	}
 }
 
-/**
- * `kind`'s settings for `project`. Precedence: `kinds.<kind>.build` > the built-in default. The project's top-level
- * `build` / `fingerprint.include` / `fingerprint.jsInputs` belong to the kind-less flow and are not read here
- * (`fingerprint.command`, `build.cache` and `build.prebuiltReactNative` still apply: they are not about the kind).
- * JS inputs: `kinds.<kind>.jsInputs`, else `DEFAULT_JS_INPUTS` (all tracked files but `ios/`, `android/`, `node_modules`).
- */
-export function resolveKind(project: Project, kind: BuildKind, device?: DeviceTarget): KindSettings {
-	const defaults = KIND_DEFAULTS[kind];
-	const config = project.kinds?.[kind];
-	const deviceBuild = device
-		? iosDeviceBuildCommand(defaults.configuration, project.framework, {
-				team: device.team,
-				bundleIdentifier: project.iosDeviceBundleId,
-			})
-		: undefined;
-	const settings: KindSettings = {
-		kind,
-		build: {
-			ios: config?.build?.ios ?? deviceBuild ?? defaults.command("ios", project.framework),
-			android: config?.build?.android ?? defaults.command("android", project.framework),
-		},
-		buildConfiguration: defaults.configuration,
-		embedsJs: defaults.embedsJs,
-		fingerprint: defaults.fingerprint,
-		env: { ...config?.env },
-	};
-	if (kind !== "dev") settings.jsInputs = config?.jsInputs ?? [...DEFAULT_JS_INPUTS];
-	return settings;
-}
-
-/**
- * `project` as `kind` builds it: the build commands, configuration and env of `resolveKind`, and `jsInputs` set only
- * when the kind's cache key covers the JS (`release`), so `runLocalBuild` / `computeCacheKey` run unchanged. With a
- * `device` target the project builds for a physical iPhone: the signed `xcodebuild` command, the device bundle id.
- */
-export function projectForKind(project: Project, kind: BuildKind, device?: DeviceTarget): Project {
-	const settings = resolveKind(project, kind, device);
-	const { jsInputs: _own, ...rest } = device ? withDeviceBundleId(project) : project;
-	const resolved: Project = {
-		...rest,
-		...(device ? { target: "device" as const } : {}),
-		build: settings.build,
-		buildConfiguration: settings.buildConfiguration,
-		kind,
-	};
-	if (settings.env && Object.keys(settings.env).length > 0) resolved.buildEnv = settings.env;
-	if (settings.fingerprint === "native+js" && settings.jsInputs) resolved.jsInputs = settings.jsInputs;
-	return resolved;
-}
+export const kinds = new Kinds();

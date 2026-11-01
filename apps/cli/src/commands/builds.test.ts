@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { recordRepack, storeArtifact } from "@delacour/warden-builds/cache";
-import { buildLockKey, buildResource } from "@delacour/warden-builds/lock";
-import { fakeApp } from "@delacour/warden-builds/testing/builds.testing";
+import { buildCache } from "@delacour/warden-builds/cache";
+import { buildLock } from "@delacour/warden-builds/lock";
+import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import { BuildsTable } from "@delacour/warden-store/builds-table";
 import { fakeExec, scriptedUi, type TestContext, testContext } from "../testing";
 import { buildsCommand, inferPlatform } from "./builds";
@@ -29,14 +29,14 @@ function setup(argv: string[]): TestContext {
 }
 
 async function seed(c: TestContext, hash: string, lastUsed: number): Promise<string> {
-	const res = await storeArtifact({
+	const res = await buildCache.storeArtifact({
 		store: c.db,
 		env: c.env,
 		projectKey: "k",
 		platform: "ios",
 		profile: "p",
 		hash,
-		artifact: fakeApp(join(c.cwd, "src", hash)),
+		artifact: buildsTesting.fakeApp(join(c.cwd, "src", hash)),
 		source: "eas",
 		now: lastUsed,
 	});
@@ -56,7 +56,7 @@ describe("inferPlatform", () => {
 describe("warden builds", () => {
 	test("import copies into the cache keyed by the git remote; ls shows it", async () => {
 		const c = setup(["import", "src/App.app", "--hash", "H1", "--json"]);
-		fakeApp(join(c.cwd, "src"));
+		buildsTesting.fakeApp(join(c.cwd, "src"));
 		expect(await buildsCommand.run(c)).toBe(0);
 		const imported = JSON.parse(c.stdout.join("\n"));
 		expect(imported).toMatchObject({
@@ -80,7 +80,7 @@ describe("warden builds", () => {
 	test("ls shows kind, base, jsKey, worktree, branch; --json carries them, legacy rows say legacy", async () => {
 		const c = setup(["ls"]);
 		await seed(c, "legacyhash0001", 1000);
-		recordRepack(c.db, {
+		buildCache.recordRepack(c.db, {
 			kind: "simulator-repack",
 			projectKey: "k",
 			platform: "ios",
@@ -130,7 +130,11 @@ describe("warden builds", () => {
 		const mid = await seed(c, "b", 2);
 		const newest = await seed(c, "c", 3);
 		c.db.insertLease(
-			{ resource: buildResource(buildLockKey("k", "ios", "a")), owner: { kind: "ci", runId: "x" }, ttlMs: 60_000 },
+			{
+				resource: buildLock.resource(buildLock.key("k", "ios", "a")),
+				owner: { kind: "ci", runId: "x" },
+				ttlMs: 60_000,
+			},
 			c.now()
 		);
 		expect(await buildsCommand.run(c)).toBe(0);
@@ -216,7 +220,7 @@ describe("warden builds", () => {
 		const c = setup(["import", "src/App.app", "--hash", "H1"]);
 		const ui = scriptedUi();
 		c.ui = ui;
-		fakeApp(join(c.cwd, "src"));
+		buildsTesting.fakeApp(join(c.cwd, "src"));
 		expect(await buildsCommand.run(c)).toBe(0);
 		expect(ui.events[0]).toStartWith("spin: importing");
 		expect(c.stdout.join("\n")).toContain("imported ios H1");

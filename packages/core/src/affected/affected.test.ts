@@ -219,8 +219,8 @@ describe("computeAffected", () => {
 		cleanup.push(home);
 		const env = { WARDEN_HOME: home };
 		rmSync(join(dir, "warden.config.json"));
-		const { overlayDirFor } = await import("@delacour/warden-builds/overlay");
-		const overlay = await overlayDirFor(processExec.run, dir, env);
+		const { overlay: overlays } = await import("@delacour/warden-builds/overlay");
+		const overlay = await overlays.dirFor(processExec.run, dir, env);
 		if (!overlay) throw new Error("no overlay dir");
 		mkdirSync(join(overlay, "e2e"), { recursive: true });
 		writeFileSync(

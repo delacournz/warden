@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadProject } from "@delacour/warden-builds/config";
+import { projectConfig } from "@delacour/warden-builds/config";
 import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import { fakeExec, type ScriptedUi, scriptedUi, testContext } from "../testing";
 import { describeIssue, diagnoseDev, offerDevSetup } from "./dev-setup";
@@ -168,7 +168,7 @@ describe("declining the config offer", () => {
 		await offerDevSetup(c, diagnoseDev(context(root, { appConfig: {} }), where), { interactive: true });
 		const worktree = join(checkout, "..", "worktree");
 		mkdirSync(join(worktree, "apps", "mobile"), { recursive: true });
-		const fromWorktree = loadProject({
+		const fromWorktree = projectConfig.load({
 			start: join(worktree, "apps", "mobile"),
 			stopAt: worktree,
 			env: {},
@@ -180,7 +180,7 @@ describe("declining the config offer", () => {
 			join(root, "warden.config.ts"),
 			'export default { projects: [{ name: "mine", bundleId: { ios: "com.repo" } }] };'
 		);
-		const repoWins = loadProject({ start: root, stopAt: checkout, env: {}, overlayDir: where.overlayDir });
+		const repoWins = projectConfig.load({ start: root, stopAt: checkout, env: {}, overlayDir: where.overlayDir });
 		expect(repoWins.success && repoWins.data.name).toBe("mine");
 		expect(repoWins.success && repoWins.data.source).toBe("repo");
 	});

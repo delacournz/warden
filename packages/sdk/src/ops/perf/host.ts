@@ -1,4 +1,4 @@
-import { metroOwner } from "@delacour/warden-builds/metro";
+import { metroTools } from "@delacour/warden-builds/metro";
 import { metroFinder } from "@delacour/warden-devtools/metro";
 import { ownerResolver } from "@delacour/warden-leasing/owner";
 import { leaseModel } from "@delacour/warden-store/types";
@@ -20,7 +20,7 @@ export const defaultPerfHostDeps: PerfHostDeps = {
 			...(stateUrl === undefined ? {} : { stateMetroUrl: stateUrl }),
 			portLeases,
 			probe: async (port) => {
-				const probed = await metroOwner(env.exec, port, env.cwd);
+				const probed = await metroTools.owner(env.exec, port, env.cwd);
 				return probed.kind === "ours" ? "ours" : probed.kind === "foreign" ? "foreign" : "none";
 			},
 		});

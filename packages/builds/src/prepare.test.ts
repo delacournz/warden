@@ -7,7 +7,7 @@ import { fakeExec } from "@delacour/warden-runtime/testing/exec.testing";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import type { Owner } from "@delacour/warden-store/types";
 import type { WardenLogEvent } from "@delacour/warden-types/host";
-import { type AppHost, fingerprint, loadProject, pickDevice, prepareApp, projectStart } from "./prepare";
+import { type AppHost, AppPreparer, appLookup } from "./prepare";
 
 let dir: string | undefined;
 let store: Store | undefined;
@@ -62,9 +62,9 @@ function setup(): { host: AppHost; events: WardenLogEvent[]; cwd: string } {
 describe("projectStart", () => {
 	test("no project is the cwd; a directory is resolved against it; a missing one is an error", () => {
 		const { host, cwd } = setup();
-		expect(projectStart(host, undefined)).toEqual({ success: true, data: cwd });
-		expect(projectStart(host, "app")).toEqual({ success: true, data: join(cwd, "app") });
-		const missing = projectStart(host, "nope");
+		expect(appLookup.projectStart(host, undefined)).toEqual({ success: true, data: cwd });
+		expect(appLookup.projectStart(host, "app")).toEqual({ success: true, data: join(cwd, "app") });
+		const missing = appLookup.projectStart(host, "nope");
 		expect(!missing.success && missing.error).toContain("no such directory");
 	});
 });
@@ -72,7 +72,7 @@ describe("projectStart", () => {
 describe("prepareApp", () => {
 	test("loads the project, fingerprints it and announces the key as a fingerprint event", async () => {
 		const { host, events } = setup();
-		const prepared = await prepareApp(host, { eas: false, build: false }, "ios");
+		const prepared = await new AppPreparer(host).prepare({ eas: false, build: false }, "ios");
 		expect(prepared.success && prepared.data.hash?.key).toBe(HASH);
 		expect(events).toEqual([
 			expect.objectContaining({ kind: "fingerprint", platform: "ios", key: HASH, project: "demo" }),
@@ -81,7 +81,7 @@ describe("prepareApp", () => {
 
 	test("a project the options cannot find is an error, nothing announced", async () => {
 		const { host, events } = setup();
-		const prepared = await prepareApp(host, { project: "missing", eas: false, build: false }, "ios");
+		const prepared = await new AppPreparer(host).prepare({ project: "missing", eas: false, build: false }, "ios");
 		expect(prepared.success).toBe(false);
 		expect(events).toEqual([]);
 	});
@@ -90,9 +90,9 @@ describe("prepareApp", () => {
 describe("fingerprint", () => {
 	test("the event names the project key so a hash that differs from EAS's can be traced", async () => {
 		const { host, events } = setup();
-		const project = await loadProject(host, {}, "ios");
+		const project = await new AppPreparer(host).loadProject({}, "ios");
 		if (!project.success) throw new Error(project.error);
-		const hash = await fingerprint(host, project.data, "ios");
+		const hash = await new AppPreparer(host).fingerprint(project.data, "ios");
 		expect(hash.success).toBe(true);
 		expect(events[0]).toMatchObject({ kind: "fingerprint", projectKey: project.data.projectKey });
 	});
@@ -106,21 +106,27 @@ describe("pickDevice", () => {
 		const { host } = setup();
 		const db = host.store();
 		const l = lease(db, "ios", "U1");
-		expect(pickDevice(host, owner, "ios", { noInstall: true })).toEqual({ success: true, data: undefined });
-		expect(pickDevice(host, owner, "ios", { noInstall: false, udid: "X" })).toEqual({ success: true, data: "X" });
-		expect(pickDevice(host, owner, "ios", { noInstall: false, lease: l.id })).toEqual({ success: true, data: "U1" });
-		expect(pickDevice(host, owner, "android", { noInstall: false, lease: l.id }).success).toBe(false);
+		expect(appLookup.pickDevice(host, owner, "ios", { noInstall: true })).toEqual({ success: true, data: undefined });
+		expect(appLookup.pickDevice(host, owner, "ios", { noInstall: false, udid: "X" })).toEqual({
+			success: true,
+			data: "X",
+		});
+		expect(appLookup.pickDevice(host, owner, "ios", { noInstall: false, lease: l.id })).toEqual({
+			success: true,
+			data: "U1",
+		});
+		expect(appLookup.pickDevice(host, owner, "android", { noInstall: false, lease: l.id }).success).toBe(false);
 	});
 
 	test("without flags: the caller's single device of the platform, else a message saying what to pass", () => {
 		const { host } = setup();
 		const db = host.store();
-		const none = pickDevice(host, owner, "ios", { noInstall: false });
+		const none = appLookup.pickDevice(host, owner, "ios", { noInstall: false });
 		expect(!none.success && none.error.message).toContain("you hold no ios device lease");
 		lease(db, "ios", "U1");
-		expect(pickDevice(host, owner, "ios", { noInstall: false })).toEqual({ success: true, data: "U1" });
+		expect(appLookup.pickDevice(host, owner, "ios", { noInstall: false })).toEqual({ success: true, data: "U1" });
 		lease(db, "ios", "U2");
-		const several = pickDevice(host, owner, "ios", { noInstall: false });
+		const several = appLookup.pickDevice(host, owner, "ios", { noInstall: false });
 		expect(!several.success && several.error.message).toContain("you hold several ios devices");
 	});
 });

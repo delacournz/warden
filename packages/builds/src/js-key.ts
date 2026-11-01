@@ -5,7 +5,7 @@ import type { Exec } from "@delacour/warden-runtime/exec";
 import { GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import type { Platform } from "@delacour/warden-store/types";
 import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
-import { jsInputsHash, type ReadFile, readFileOrUndefined } from "./js-inputs";
+import { jsInputs, type ReadFile } from "./js-inputs";
 
 /**
  * Salt of the hashed text. Bump it whenever what the key covers changes, so an old key can only miss, never collide
@@ -37,40 +37,6 @@ export type JsKeyDeps = {
 	bundlerFlags?: readonly string[];
 };
 
-/** The env that reaches the bundle, sorted by name: `NAME=value` lines. */
-function bundleEnvLines(env: Record<string, string | undefined>, kindEnv: Record<string, string> = {}): string[] {
-	const merged = new Map<string, string>();
-	for (const [name, value] of Object.entries(env))
-		if (value !== undefined && BUNDLE_ENV.test(name)) merged.set(name, value);
-	for (const [name, value] of Object.entries(kindEnv)) merged.set(name, value);
-	return [...merged.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([name, value]) => `${name}=${value}`);
-}
-
-/**
- * The content key of a JS bundle: `sha256(salt, js-inputs v2 key, sorted bundle env, bundler flags, platform, native
- * fingerprint)`, 40 hex chars. The JS half is `jsInputsHash` (git blob ids, so committing an edit changes nothing);
- * worktree path, branch and HEAD are never part of it, so two checkouts with the same JS share one repack and a branch
- * with a new commit that changed no input reuses its bundle. Errors as `jsInputsHash` does (globs matching nothing).
- */
-export async function computeJsKey(deps: JsKeyDeps): AsyncResult<string> {
-	const js = await jsInputsHash({
-		exec: deps.exec,
-		root: deps.root,
-		jsInputs: deps.jsInputs,
-		...(deps.readFile ? { readFile: deps.readFile } : {}),
-	});
-	if (!js.success) return js;
-	const text = [
-		`${KEY_FORMAT} ${deps.kind}`,
-		`js:${js.data}`,
-		`env:${bundleEnvLines(deps.env, deps.kindEnv).join("\0")}`,
-		`flags:${(deps.bundlerFlags ?? []).join("\0")}`,
-		`platform:${deps.platform}`,
-		`native:${deps.nativeFp}`,
-	].join("\n");
-	return resultFactory.ok(createHash("sha256").update(text).digest("hex").slice(0, 40));
-}
-
 /** Where a checkout is: what a repack's `meta.json` and the `worktree` / `branch` columns record. Metadata, never a key. */
 export type GitContext = {
 	/** `git rev-parse --show-toplevel` of the project */
@@ -79,20 +45,6 @@ export type GitContext = {
 	branch?: string;
 	head: string;
 };
-
-/** The checkout `root` is in. Errors outside a git checkout or before the first commit. */
-export async function gitContext(exec: Exec, root: string, git?: GitFactsCache): AsyncResult<GitContext> {
-	const facts = await gitFactsReader.read(exec, root, git ?? new GitFactsCache());
-	if (!facts) return resultFactory.err(`not a git checkout: ${root}`);
-	const head = await exec(["git", "rev-parse", "HEAD"], { cwd: root });
-	const sha = head.stdout.trim();
-	if (head.exitCode !== 0 || sha === "") return resultFactory.err(`could not read HEAD of ${facts.toplevel}`);
-	return resultFactory.ok({
-		worktree: facts.toplevel,
-		...(facts.branch !== "" ? { branch: facts.branch } : {}),
-		head: sha,
-	});
-}
 
 /** `<repackDir>/meta.json`: who made this repack, from where, and what the bundle step cost. */
 export type RepackMeta = {
@@ -106,30 +58,85 @@ export type RepackMeta = {
 
 export const REPACK_META_FILE = "meta.json";
 
-/** Write `<dir>/meta.json` (creating `dir`). */
-export function writeRepackMeta(dir: string, meta: RepackMeta): void {
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(join(dir, REPACK_META_FILE), `${JSON.stringify(meta, null, 2)}\n`);
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
-
-/** `<dir>/meta.json`, or undefined when it is missing, unreadable or not a repack meta. */
-export async function readRepackMeta(
-	dir: string,
-	readFile: ReadFile = readFileOrUndefined
-): Promise<RepackMeta | undefined> {
-	const bytes = await readFile(join(dir, REPACK_META_FILE));
-	if (bytes === undefined) return undefined;
-	let raw: unknown;
-	try {
-		raw = JSON.parse(new TextDecoder().decode(bytes));
-	} catch {
-		return undefined;
+/** JS bundle content keys, plus the git context and `meta.json` a repack records beside them. Deps arrive per call, so callers share one instance. */
+export class JsKey {
+	/**
+	 * The content key of a JS bundle: `sha256(salt, js-inputs v2 key, sorted bundle env, bundler flags, platform, native
+	 * fingerprint)`, 40 hex chars. The JS half is `jsInputs.hash` (git blob ids, so committing an edit changes nothing);
+	 * worktree path, branch and HEAD are never part of it, so two checkouts with the same JS share one repack and a branch
+	 * with a new commit that changed no input reuses its bundle. Errors as `jsInputs.hash` does (globs matching nothing).
+	 */
+	async compute(deps: JsKeyDeps): AsyncResult<string> {
+		const js = await jsInputs.hash({
+			exec: deps.exec,
+			root: deps.root,
+			jsInputs: deps.jsInputs,
+			...(deps.readFile ? { readFile: deps.readFile } : {}),
+		});
+		if (!js.success) return js;
+		const text = [
+			`${KEY_FORMAT} ${deps.kind}`,
+			`js:${js.data}`,
+			`env:${this.bundleEnvLines(deps.env, deps.kindEnv).join("\0")}`,
+			`flags:${(deps.bundlerFlags ?? []).join("\0")}`,
+			`platform:${deps.platform}`,
+			`native:${deps.nativeFp}`,
+		].join("\n");
+		return resultFactory.ok(createHash("sha256").update(text).digest("hex").slice(0, 40));
 	}
-	if (!isRecord(raw)) return undefined;
-	const { worktree, branch, head, createdAt, bundleMs } = raw;
-	if (typeof worktree !== "string" || typeof head !== "string") return undefined;
-	if (typeof createdAt !== "number" || typeof bundleMs !== "number") return undefined;
-	return { worktree, ...(typeof branch === "string" ? { branch } : {}), head, createdAt, bundleMs };
+
+	/** The checkout `root` is in. Errors outside a git checkout or before the first commit. */
+	async gitContext(exec: Exec, root: string, git?: GitFactsCache): AsyncResult<GitContext> {
+		const facts = await gitFactsReader.read(exec, root, git ?? new GitFactsCache());
+		if (!facts) return resultFactory.err(`not a git checkout: ${root}`);
+		const head = await exec(["git", "rev-parse", "HEAD"], { cwd: root });
+		const sha = head.stdout.trim();
+		if (head.exitCode !== 0 || sha === "") return resultFactory.err(`could not read HEAD of ${facts.toplevel}`);
+		return resultFactory.ok({
+			worktree: facts.toplevel,
+			...(facts.branch !== "" ? { branch: facts.branch } : {}),
+			head: sha,
+		});
+	}
+
+	/** Write `<dir>/meta.json` (creating `dir`). */
+	writeRepackMeta(dir: string, meta: RepackMeta): void {
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, REPACK_META_FILE), `${JSON.stringify(meta, null, 2)}\n`);
+	}
+
+	/** `<dir>/meta.json`, or undefined when it is missing, unreadable or not a repack meta. */
+	async readRepackMeta(
+		dir: string,
+		readFile: ReadFile = jsInputs.readFileOrUndefined
+	): Promise<RepackMeta | undefined> {
+		const bytes = await readFile(join(dir, REPACK_META_FILE));
+		if (bytes === undefined) return undefined;
+		let raw: unknown;
+		try {
+			raw = JSON.parse(new TextDecoder().decode(bytes));
+		} catch {
+			return undefined;
+		}
+		if (!this.isRecord(raw)) return undefined;
+		const { worktree, branch, head, createdAt, bundleMs } = raw;
+		if (typeof worktree !== "string" || typeof head !== "string") return undefined;
+		if (typeof createdAt !== "number" || typeof bundleMs !== "number") return undefined;
+		return { worktree, ...(typeof branch === "string" ? { branch } : {}), head, createdAt, bundleMs };
+	}
+
+	private isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === "object" && value !== null;
+	}
+
+	/** The env that reaches the bundle, sorted by name: `NAME=value` lines. */
+	private bundleEnvLines(env: Record<string, string | undefined>, kindEnv: Record<string, string> = {}): string[] {
+		const merged = new Map<string, string>();
+		for (const [name, value] of Object.entries(env))
+			if (value !== undefined && BUNDLE_ENV.test(name)) merged.set(name, value);
+		for (const [name, value] of Object.entries(kindEnv)) merged.set(name, value);
+		return [...merged.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([name, value]) => `${name}=${value}`);
+	}
 }
+
+export const jsKey = new JsKey();

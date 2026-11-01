@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
 import type { BundleOutput } from "./repack.types";
-import { applyIosRepack } from "./repack-ios";
+import { iosRepacker } from "./repack-ios";
 
 let dir: string;
 let base: string;
@@ -40,44 +40,53 @@ type Opts = {
 	idAfter?: string;
 };
 
+const okResult: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
+
+function cpAnswer(args: string[], opts: Opts): ExecResult {
+	if (args[0] === "-c" && opts.cloneFails) return { ...okResult, exitCode: 1, stderr: "clone unsupported" };
+	const [from, to] = args.slice(-2) as [string, string];
+	cpSync(from, to, { recursive: true });
+	return okResult;
+}
+
+function plutilAnswer(args: string[], opts: Opts): ExecResult {
+	if (args[0] === "-extract") {
+		const afterRepack = args.at(-1)?.startsWith(outDir) === true;
+		return { ...okResult, stdout: `${afterRepack ? (opts.idAfter ?? "com.x.app") : "com.x.app"}\n` };
+	}
+	if (args[0] === "-create") writeFileSync(args[2] ?? "", "");
+	return okResult;
+}
+
+function codesignAnswer(args: string[], opts: Opts): ExecResult {
+	if (args[0] === "-d") {
+		return { ...okResult, stdout: opts.entitlements ?? '<?xml version="1.0"?><plist><dict></dict></plist>' };
+	}
+	if (args[0] === "--force" && opts.signFails) return { ...okResult, exitCode: 1, stderr: "no identity" };
+	return okResult;
+}
+
 /** a fake host: `cp` copies for real (nothing else touches the machine); plutil / codesign answer from `opts` */
 function host(opts: Opts, calls: string[][]): Exec {
 	return async (cmd) => {
 		calls.push([...cmd]);
-		const ok: ExecResult = { exitCode: 0, stdout: "", stderr: "" };
 		const [bin, ...args] = cmd;
-		if (bin === "cp") {
-			if (args[0] === "-c" && opts.cloneFails) return { ...ok, exitCode: 1, stderr: "clone unsupported" };
-			const [from, to] = args.slice(-2) as [string, string];
-			cpSync(from, to, { recursive: true });
-			return ok;
-		}
-		if (bin === "plutil" && args[0] === "-extract") {
-			const afterRepack = args.at(-1)?.startsWith(outDir) === true;
-			return { ...ok, stdout: `${afterRepack ? (opts.idAfter ?? "com.x.app") : "com.x.app"}\n` };
-		}
-		if (bin === "plutil" && args[0] === "-create") {
-			writeFileSync(args[2] ?? "", "");
-			return ok;
-		}
-		if (bin === "codesign" && args[0] === "-d") {
-			return { ...ok, stdout: opts.entitlements ?? '<?xml version="1.0"?><plist><dict></dict></plist>' };
-		}
-		if (bin === "codesign" && args[0] === "--force")
-			return opts.signFails ? { ...ok, exitCode: 1, stderr: "no identity" } : ok;
-		return ok;
+		if (bin === "cp") return cpAnswer(args, opts);
+		if (bin === "plutil") return plutilAnswer(args, opts);
+		if (bin === "codesign") return codesignAnswer(args, opts);
+		return okResult;
 	};
 }
 
 const run = (opts: Opts = {}) => {
 	const calls: string[][] = [];
-	return applyIosRepack({ exec: host(opts, calls), baseArtifact: base, outDir, bundle }).then((res) => ({
+	return iosRepacker.apply({ exec: host(opts, calls), baseArtifact: base, outDir, bundle }).then((res) => ({
 		res,
 		calls,
 	}));
 };
 
-describe("applyIosRepack", () => {
+describe("apply", () => {
 	test("clones the base, swaps bundle + assets, keeps the map beside the app, re-signs ad-hoc", async () => {
 		const { res, calls } = await run();
 		const app = join(outDir, "App.app");

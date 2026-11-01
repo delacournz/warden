@@ -1,13 +1,10 @@
 import type { KindApp } from "@delacour/warden-builds/ensure-kind";
 import {
 	type AppDeps,
+	AppPreparer,
+	appLookup,
 	defaultAppDeps,
 	type EnsureOptions,
-	ensureAppFor,
-	fingerprint,
-	loadProject,
-	parseKind,
-	pickDevice,
 } from "@delacour/warden-builds/prepare";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
@@ -73,7 +70,7 @@ function ensureFlags(
 ): Result<{ install: { installMode?: InstallMode; resetKeychain?: true }; kind?: BuildKind }> {
 	const install = parseInstallFlags(opts);
 	if (!install.success) return install;
-	const kind = opts.kind === undefined ? undefined : parseKind(opts.kind);
+	const kind = opts.kind === undefined ? undefined : appLookup.parseKind(opts.kind);
 	if (kind && !kind.success) return wardenErrors.toText(kind);
 	if (install.data.installMode !== undefined && device === undefined) {
 		return resultFactory.err("--install-mode needs a device (drop --no-install)");
@@ -92,7 +89,7 @@ async function ensureCmd(
 	const platform = await resolvePlatform(ctx, platformArg);
 	if (!platform.success) return fail(ctx, "ensure", platform.error);
 	const owner = ownerResolver.resolve(ctx);
-	const device = pickDevice(ctx, owner, platform.data, {
+	const device = appLookup.pickDevice(ctx, owner, platform.data, {
 		...(opts.udid !== undefined ? { udid: opts.udid } : {}),
 		...(opts.lease !== undefined ? { lease: opts.lease } : {}),
 		noInstall: !opts.install,
@@ -104,7 +101,7 @@ async function ensureCmd(
 	const { install, kind } = flags.data;
 	if (!opts.json) heading(ctx, "app ensure", `${platform.data}${device.data ? ` · ${device.data}` : ""}`);
 	const res = await withSpinner(ctx, `ensuring the ${platform.data} app…`, async (sctx, spinner) => {
-		const result = await ensureAppFor(appHostFromContext(sctx), deps, owner, platform.data, device.data, {
+		const result = await new AppPreparer(appHostFromContext(sctx), deps).ensureFor(owner, platform.data, device.data, {
 			...projectOptions(opts),
 			...(kind !== undefined ? { kind } : {}),
 			...(phone ? { physical: true } : {}),
@@ -141,8 +138,7 @@ async function fingerprintCmd(
 		if (!p.success) return fail(ctx, "fingerprint", p.error);
 		platforms.push(p.data);
 	}
-	const project = await loadProject(
-		appHostFromContext(ctx),
+	const project = await new AppPreparer(appHostFromContext(ctx)).loadProject(
 		projectOptions(opts),
 		platforms.length === 1 ? platforms[0] : undefined
 	);
@@ -151,7 +147,7 @@ async function fingerprintCmd(
 	const native: Partial<Record<Platform, string>> = {};
 	const failed = await withSpinner(ctx, `fingerprinting ${platforms.join(" + ")}…`, async (sctx) => {
 		for (const platform of platforms) {
-			const hash = await fingerprint(appHostFromContext(sctx), project.data, platform);
+			const hash = await new AppPreparer(appHostFromContext(sctx)).fingerprint(project.data, platform);
 			if (!hash.success) return hash.error;
 			fingerprints[platform] = hash.data.key;
 			if (hash.data.js !== undefined) native[platform] = hash.data.native;

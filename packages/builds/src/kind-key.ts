@@ -5,10 +5,10 @@ import { type AsyncResult, resultFactory } from "@delacour/warden-types/result";
 import type { KindKey } from "./cache";
 import type { Project } from "./config";
 import type { KindBuildKey } from "./ensure";
-import { computeCacheKey, type FingerprintMemo } from "./fingerprint";
+import { type CacheKey, type FingerprintMemo, fingerprint } from "./fingerprint";
 import type { ReadFile } from "./js-inputs";
-import { computeJsKey } from "./js-key";
-import { type DeviceTarget, type KindSettings, projectForKind, resolveKind } from "./kinds";
+import { jsKey } from "./js-key";
+import { type DeviceTarget, type KindSettings, kinds } from "./kinds";
 
 /** Why the `simulator` kind never runs on a physical device: its repack swaps JS into a build made for the simulator. */
 export const SIMULATOR_ON_DEVICE =
@@ -43,45 +43,73 @@ export type KindKeys = {
 	settings: KindSettings;
 };
 
+/** The pieces every kind's result shares. */
+type KindBase = Pick<KindKeys, "buildKey" | "native" | "project" | "settings">;
+
 /**
- * The cache keys of `kind` for `project` on `platform`. `nativeFp` is the cache key of the kind's native build with no JS
- * mixed in (Release-salted for `simulator` / `release`); `jsKey` (`simulator`: the repack, `release`: the build) is the
- * content key of `kinds.<kind>.jsInputs` + bundle env + native fingerprint (`computeJsKey`).
+ * Computes the cache keys of a build kind. Deps arrive per call, so callers share the `kindKeyResolver` instance
+ * (named so, not `KindKey`, because that is the key union exported by `cache.ts`).
  */
-export async function computeKindKey(deps: KindKeyDeps): AsyncResult<KindKeys> {
-	const { exec, platform, kind, device } = deps;
-	if (device && kind === "simulator") return resultFactory.err(SIMULATOR_ON_DEVICE);
-	const settings = resolveKind(deps.project, kind, device);
-	const project = projectForKind(deps.project, kind, device);
-	const native = await computeCacheKey(exec, project, platform, deps.readFile, deps.memo, deps.env);
-	if (!native.success) return native;
-	const { jsInputs: _jsInputs, ...withoutJs } = project;
-	const nativeOnly = settings.embedsJs
-		? await computeCacheKey(exec, withoutJs, platform, deps.readFile, deps.memo, deps.env)
-		: native;
-	if (!nativeOnly.success) return nativeOnly;
-	const nativeFp = nativeOnly.data.key;
-	const base = { buildKey: native.data.key, native: native.data.native, project, settings };
-	const onDevice = device ? { device } : {};
-	if (kind === "dev") return resultFactory.ok({ ...base, key: { kind: "dev", nativeFp, ...onDevice } });
-	const jsKey = await computeJsKey({
-		exec,
-		root: project.root,
-		jsInputs: settings.jsInputs ?? [],
-		kind: kind === "release" ? "release" : "simulator",
-		platform,
-		nativeFp,
-		env: deps.env,
-		kindEnv: settings.env,
-		...(deps.readFile ? { readFile: deps.readFile } : {}),
-		...(deps.bundlerFlags ? { bundlerFlags: deps.bundlerFlags } : {}),
-	});
-	if (!jsKey.success) return jsKey;
-	if (kind === "release")
-		return resultFactory.ok({ ...base, key: { kind: "release", nativeFp, jsKey: jsKey.data, ...onDevice } });
-	return resultFactory.ok({
-		...base,
-		key: { kind: "simulator-base", nativeFp },
-		repack: { kind: "simulator-repack", nativeFp, jsKey: jsKey.data },
-	});
+export class KindKeyResolver {
+	/**
+	 * The cache keys of `kind` for `project` on `platform`. `nativeFp` is the cache key of the kind's native build with no JS
+	 * mixed in (Release-salted for `simulator` / `release`); `jsKey` (`simulator`: the repack, `release`: the build) is the
+	 * content key of `kinds.<kind>.jsInputs` + bundle env + native fingerprint (`jsKey.compute`).
+	 */
+	async compute(deps: KindKeyDeps): AsyncResult<KindKeys> {
+		const { platform, kind, device } = deps;
+		if (device && kind === "simulator") return resultFactory.err(SIMULATOR_ON_DEVICE);
+		const settings = kinds.resolve(deps.project, kind, device);
+		const project = kinds.projectFor(deps.project, kind, device);
+		const native = await this.cacheKey(deps, project, platform);
+		if (!native.success) return native;
+		const nativeOnly = await this.nativeOnly(deps, project, settings, native.data);
+		if (!nativeOnly.success) return nativeOnly;
+		const nativeFp = nativeOnly.data.key;
+		const base: KindBase = { buildKey: native.data.key, native: native.data.native, project, settings };
+		const onDevice = device ? { device } : {};
+		if (kind === "dev") return resultFactory.ok({ ...base, key: { kind: "dev", nativeFp, ...onDevice } });
+		const js = await this.jsKeyOf(deps, project, settings, nativeFp);
+		if (!js.success) return js;
+		if (kind === "release")
+			return resultFactory.ok({ ...base, key: { kind: "release", nativeFp, jsKey: js.data, ...onDevice } });
+		return resultFactory.ok({
+			...base,
+			key: { kind: "simulator-base", nativeFp },
+			repack: { kind: "simulator-repack", nativeFp, jsKey: js.data },
+		});
+	}
+
+	private cacheKey(deps: KindKeyDeps, project: Project, platform: Platform): AsyncResult<CacheKey> {
+		return fingerprint.computeCacheKey(deps.exec, project, platform, deps.readFile, deps.memo, deps.env);
+	}
+
+	/** The native key with no JS mixed in: a kind that embeds JS needs a second key over the project without `jsInputs`. */
+	private async nativeOnly(
+		deps: KindKeyDeps,
+		project: Project,
+		settings: KindSettings,
+		native: CacheKey
+	): AsyncResult<CacheKey> {
+		if (!settings.embedsJs) return resultFactory.ok(native);
+		const { jsInputs: _jsInputs, ...withoutJs } = project;
+		return this.cacheKey(deps, withoutJs, deps.platform);
+	}
+
+	private jsKeyOf(deps: KindKeyDeps, project: Project, settings: KindSettings, nativeFp: string): AsyncResult<string> {
+		return jsKey.compute({
+			exec: deps.exec,
+			root: project.root,
+			jsInputs: settings.jsInputs ?? [],
+			kind: deps.kind === "release" ? "release" : "simulator",
+			platform: deps.platform,
+			nativeFp,
+			env: deps.env,
+			kindEnv: settings.env,
+			...(deps.readFile ? { readFile: deps.readFile } : {}),
+			...(deps.bundlerFlags ? { bundlerFlags: deps.bundlerFlags } : {}),
+		});
+	}
 }
+
+export const kindKeyResolver = new KindKeyResolver();

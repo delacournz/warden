@@ -1,14 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bundleIdFor, type Project } from "@delacour/warden-builds/config";
+import { type Project, projectConfig } from "@delacour/warden-builds/config";
 import {
-	adbReverseArgv,
-	devClientLaunchArgv,
-	launchMetro,
 	type MetroLaunchHandle,
 	type MetroOwner,
 	type MetroProc,
-	metroUrl,
+	MetroRunner,
+	metroTools,
 } from "@delacour/warden-builds/metro";
 import type { EnsureOptions } from "@delacour/warden-builds/prepare";
 import { gitFactsReader } from "@delacour/warden-runtime/git-facts";
@@ -342,10 +340,11 @@ export class DevSessionRunner {
 		scheme: SchemeOf,
 		port: number
 	): AsyncResult<void> {
-		const bundle = bundleIdFor(project, platform);
+		const bundle = projectConfig.bundleIdFor(project, platform);
 		if (!bundle.success) return wardenErrors.toText(bundle);
-		if (platform === "ios") return this.runArgv(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port)));
-		const reverse = await this.runArgv(adbReverseArgv(deviceId, port));
+		if (platform === "ios")
+			return this.runArgv(metroTools.devClientLaunchArgv(deviceId, bundle.data, metroTools.url(port)));
+		const reverse = await this.runArgv(metroTools.adbReverseArgv(deviceId, port));
 		if (!reverse.success) return reverse;
 		const resolved = await scheme();
 		if (!resolved.success) return resolved;
@@ -387,24 +386,21 @@ export class DevSessionRunner {
 					env.WARDEN_UDID_0 = deviceId;
 				}
 				sessionRules.setHeadlessEnv(env, req.headless);
-				const handle = launchMetro(
-					{
-						probe: deps.probe,
-						now: host.now,
-						sleep: deps.sleep,
-						spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, req.json ? "stderr" : "inherit"),
-						...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
-						git: (root) => gitFactsReader.readSync(root, { cache: host.git }),
-					},
-					{
-						projectRoot: req.project.root,
-						port,
-						env,
-						args: req.expoArgs,
-						readyTimeoutMs: req.readyTimeoutMs,
-						aborted: () => aborted.now,
-					}
-				);
+				const handle = new MetroRunner({
+					probe: deps.probe,
+					now: host.now,
+					sleep: deps.sleep,
+					spawn: (cmd, metroEnv, cwd) => deps.spawn(cmd, metroEnv, cwd, req.json ? "stderr" : "inherit"),
+					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
+					git: (root) => gitFactsReader.readSync(root, { cache: host.git }),
+				}).launch({
+					projectRoot: req.project.root,
+					port,
+					env,
+					args: req.expoArgs,
+					readyTimeoutMs: req.readyTimeoutMs,
+					aborted: () => aborted.now,
+				});
 				launch = handle;
 				void handle.pending.then((result) => {
 					if (!result.success) metroFailed = true;

@@ -5,15 +5,7 @@ import { join } from "node:path";
 import { processExec } from "@delacour/warden-runtime/exec";
 import { GitFactsCache } from "@delacour/warden-runtime/git-facts";
 import { DEFAULT_JS_INPUTS } from "./builds.defaults";
-import {
-	computeJsKey,
-	gitContext,
-	type JsKeyDeps,
-	REPACK_META_FILE,
-	type RepackMeta,
-	readRepackMeta,
-	writeRepackMeta,
-} from "./js-key";
+import { type JsKeyDeps, jsKey, REPACK_META_FILE, type RepackMeta } from "./js-key";
 
 let dir: string;
 
@@ -59,7 +51,7 @@ const deps = (root: string, over: Partial<JsKeyDeps> = {}): JsKeyDeps => ({
 });
 
 const key = async (d: JsKeyDeps): Promise<string> => {
-	const res = await computeJsKey(d);
+	const res = await jsKey.compute(d);
 	if (!res.success) throw new Error(res.error);
 	return res.data;
 };
@@ -128,7 +120,7 @@ describe("computeJsKey", () => {
 
 	test("globs that match nothing are an error, not an empty key", async () => {
 		const root = await repo("a", APP);
-		const res = await computeJsKey(deps(root, { jsInputs: ["nothing/**"] }));
+		const res = await jsKey.compute(deps(root, { jsInputs: ["nothing/**"] }));
 		expect(res.success).toBe(false);
 	});
 });
@@ -137,27 +129,27 @@ describe("gitContext", () => {
 	test("worktree, branch and head", async () => {
 		const root = await repo("a", APP);
 		const head = await git(root, "rev-parse", "HEAD");
-		const ctx = await gitContext(processExec.run, root, new GitFactsCache());
+		const ctx = await jsKey.gitContext(processExec.run, root, new GitFactsCache());
 		expect(ctx).toEqual({ success: true, data: { worktree: root, branch: "main", head } });
 	});
 
 	test("a subdirectory reports the checkout's toplevel", async () => {
 		const root = await repo("a", APP);
-		const ctx = await gitContext(processExec.run, join(root, "src"), new GitFactsCache());
+		const ctx = await jsKey.gitContext(processExec.run, join(root, "src"), new GitFactsCache());
 		expect(ctx.success && ctx.data.worktree).toBe(root);
 	});
 
 	test("a detached HEAD has no branch", async () => {
 		const root = await repo("a", APP);
 		await git(root, "checkout", "-q", "--detach");
-		const ctx = await gitContext(processExec.run, root, new GitFactsCache());
+		const ctx = await jsKey.gitContext(processExec.run, root, new GitFactsCache());
 		expect(ctx.success && "branch" in ctx.data).toBe(false);
 	});
 
 	test("outside a checkout is an error", async () => {
 		const plain = join(dir, "plain");
 		mkdirSync(plain);
-		const ctx = await gitContext(processExec.run, plain, new GitFactsCache());
+		const ctx = await jsKey.gitContext(processExec.run, plain, new GitFactsCache());
 		expect(ctx.success).toBe(false);
 	});
 });
@@ -167,26 +159,26 @@ describe("repack meta", () => {
 
 	test("write then read round-trips, creating the dir", async () => {
 		const target = join(dir, "repacks", "js1");
-		writeRepackMeta(target, meta);
-		expect(await readRepackMeta(target)).toEqual(meta);
+		jsKey.writeRepackMeta(target, meta);
+		expect(await jsKey.readRepackMeta(target)).toEqual(meta);
 	});
 
 	test("a missing branch stays missing", async () => {
 		const { branch: _branch, ...detached } = meta;
-		writeRepackMeta(dir, detached);
-		expect(await readRepackMeta(dir)).toEqual(detached);
+		jsKey.writeRepackMeta(dir, detached);
+		expect(await jsKey.readRepackMeta(dir)).toEqual(detached);
 	});
 
 	test("missing, malformed or foreign files read as undefined", async () => {
-		expect(await readRepackMeta(join(dir, "none"))).toBeUndefined();
+		expect(await jsKey.readRepackMeta(join(dir, "none"))).toBeUndefined();
 		writeFileSync(join(dir, REPACK_META_FILE), "{not json");
-		expect(await readRepackMeta(dir)).toBeUndefined();
+		expect(await jsKey.readRepackMeta(dir)).toBeUndefined();
 		writeFileSync(join(dir, REPACK_META_FILE), JSON.stringify({ worktree: 1 }));
-		expect(await readRepackMeta(dir)).toBeUndefined();
+		expect(await jsKey.readRepackMeta(dir)).toBeUndefined();
 	});
 
 	test("reads through an injected readFile", async () => {
 		const read = async () => new TextEncoder().encode(JSON.stringify(meta));
-		expect(await readRepackMeta("/anywhere", read)).toEqual(meta);
+		expect(await jsKey.readRepackMeta("/anywhere", read)).toEqual(meta);
 	});
 });

@@ -5,19 +5,12 @@ import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { type Store, storeLocator } from "@delacour/warden-store/store";
 import { resultFactory } from "@delacour/warden-types/result";
-import {
-	ensureKindApp,
-	type KindAppDeps,
-	type KindAppInput,
-	kindWarnings,
-	prepareKindApp,
-	projectRepackers,
-} from "./ensure-kind";
+import { type KindAppDeps, type KindAppInput, KindApps, kindApps } from "./ensure-kind";
 import type { KindKeys } from "./kind-key";
 import type { RepackResult } from "./repack";
-import { applyAndroidRepack } from "./repack-android";
+import { androidRepacker } from "./repack-android";
 import type { EnsureResult } from "./resolve";
-import { testProject } from "./testing/builds.testing";
+import { buildsTesting } from "./testing/builds.testing";
 
 let dir: string;
 let store: Store;
@@ -49,7 +42,7 @@ function input(kind: KindAppInput["kind"], over: Partial<KindAppInput> = {}): { 
 			owner: { kind: "agent", sessionId: "s", cwd: "/" },
 			pid: 1,
 			platform: "ios",
-			project: testProject(),
+			project: buildsTesting.project(),
 			projectKey: "k",
 			eas: false,
 			build: true,
@@ -66,7 +59,7 @@ const keys = (kind: "dev" | "release"): KindKeys => ({
 	key: kind === "dev" ? { kind: "dev", nativeFp: "fp" } : { kind: "release", nativeFp: "fp", jsKey: "js" },
 	buildKey: "bk",
 	native: "n",
-	project: testProject(),
+	project: buildsTesting.project(),
 	settings: {
 		kind,
 		build: { ios: "", android: "" },
@@ -121,7 +114,7 @@ describe("prepareKindApp", () => {
 	test("simulator repacks once and reports the jsKey", async () => {
 		const c = calls();
 		const run = input("simulator");
-		const res = await prepareKindApp(run.input, deps(repacked, c));
+		const res = await new KindApps(deps(repacked, c)).prepare(run.input);
 		expect(res).toEqual({
 			success: true,
 			data: {
@@ -139,14 +132,14 @@ describe("prepareKindApp", () => {
 	});
 
 	test("a reused repack is reported as reused", async () => {
-		const res = await prepareKindApp(input("simulator").input, deps({ ...repacked, kind: "reused" }, calls()));
+		const res = await new KindApps(deps({ ...repacked, kind: "reused" }, calls())).prepare(input("simulator").input);
 		expect(res.success && res.data.kind === "simulator" && res.data.repack.reused).toBe(true);
 	});
 
 	test("fallback builds the release kind and says why", async () => {
 		const c = calls();
 		const run = input("simulator");
-		const res = await prepareKindApp(run.input, deps({ kind: "fallback", reason: "images changed" }, c));
+		const res = await new KindApps(deps({ kind: "fallback", reason: "images changed" }, c)).prepare(run.input);
 		expect(res).toEqual({
 			success: true,
 			data: {
@@ -165,7 +158,7 @@ describe("prepareKindApp", () => {
 
 	test("dev builds the dev kind without repacking", async () => {
 		const c = calls();
-		const res = await prepareKindApp(input("dev").input, deps(repacked, c));
+		const res = await new KindApps(deps(repacked, c)).prepare(input("dev").input);
 		expect(res.success && res.data.kind).toBe("dev");
 		expect(c.repack).toBe(0);
 		expect(c.builds).toEqual(["dev"]);
@@ -173,7 +166,10 @@ describe("prepareKindApp", () => {
 
 	test("a repack error is returned as is", async () => {
 		const failing: KindAppDeps = { ...deps(repacked, calls()), repack: async () => resultFactory.err("repack: boom") };
-		expect(await prepareKindApp(input("simulator").input, failing)).toEqual({ success: false, error: "repack: boom" });
+		expect(await new KindApps(failing).prepare(input("simulator").input)).toEqual({
+			success: false,
+			error: "repack: boom",
+		});
 	});
 });
 
@@ -190,7 +186,7 @@ describe("a physical iPhone", () => {
 			seen.push(k.device);
 			return resultFactory.ok(keys("release"));
 		};
-		const res = await prepareKindApp(phone("release").input, d);
+		const res = await new KindApps(d).prepare(phone("release").input);
 		expect(seen).toEqual([{ team: TEAM, salt: TEAM }]);
 		expect(res.success && res.data.device).toEqual({ team: TEAM, salt: TEAM });
 		expect(c.repack).toBe(0);
@@ -203,7 +199,7 @@ describe("a physical iPhone", () => {
 			seen.push(k.device?.team);
 			return resultFactory.ok(keys("dev"));
 		};
-		await prepareKindApp(phone("dev", { env: {}, configTeamId: "ZZZZZ99999" }).input, d);
+		await new KindApps(d).prepare(phone("dev", { env: {}, configTeamId: "ZZZZZ99999" }).input);
 		expect(seen).toEqual(["ZZZZZ99999"]);
 		const two = [
 			'  1) 1111111111111111111111111111111111111111 "Apple Development: A (AAAAAAAAAA)"',
@@ -211,20 +207,22 @@ describe("a physical iPhone", () => {
 		].join("\n");
 		const keychain: Exec = async (cmd) =>
 			cmd[1] === "find-identity" ? { exitCode: 0, stdout: two, stderr: "" } : { exitCode: 0, stdout: "", stderr: "" };
-		const res = await prepareKindApp(phone("release", { env: {}, exec: keychain }).input, deps(repacked, calls()));
+		const res = await new KindApps(deps(repacked, calls())).prepare(
+			phone("release", { env: {}, exec: keychain }).input
+		);
 		expect(!res.success && res.error).toContain("WARDEN_IOS_TEAM_ID");
 	});
 
 	test("the simulator kind is refused: nothing is repacked or built", async () => {
 		const c = calls();
-		const res = await prepareKindApp(phone("simulator").input, deps(repacked, c));
+		const res = await new KindApps(deps(repacked, c)).prepare(phone("simulator").input);
 		expect(!res.success && res.error).toContain("simulator kind is not supported on a physical iPhone");
 		expect(c.repack + c.builds.length).toBe(0);
 	});
 
 	test("an Android phone keeps the host-built kinds", async () => {
 		const c = calls();
-		const res = await prepareKindApp(phone("simulator", { platform: "android" }).input, deps(repacked, c));
+		const res = await new KindApps(deps(repacked, c)).prepare(phone("simulator", { platform: "android" }).input);
 		expect(res.success && res.data.kind).toBe("simulator");
 		expect(c.repack).toBe(1);
 	});
@@ -236,8 +234,8 @@ describe("a physical iPhone", () => {
 			seen.push({ ios: i.project.bundleId.ios, physical: i.physical });
 			return resultFactory.ok({ appPath: "/x", hash: i.hash, source: "cache", installed: true });
 		};
-		const project = testProject({ iosDeviceBundleId: "com.me.app" });
-		const res = await ensureKindApp(phone("release", { project, deviceId: "UDID" }).input, d);
+		const project = buildsTesting.project({ iosDeviceBundleId: "com.me.app" });
+		const res = await new KindApps(d).ensure(phone("release", { project, deviceId: "UDID" }).input);
 		expect(res.success && res.data.installed).toBe(true);
 		expect(seen).toEqual([{ ios: "com.me.app", physical: true }]);
 	});
@@ -276,7 +274,7 @@ describe("a phone the provisioning profile does not list", () => {
 
 	test("registers the phone with a build for its destination, rebuilds and installs once more", async () => {
 		const { c, d, commands, run } = flow([NOT_IN_PROFILE]);
-		const res = await ensureKindApp(run.input, d);
+		const res = await new KindApps(d).ensure(run.input);
 		expect(res.success && res.data.installed).toBe(true);
 		const registering = commands.filter((cmd) => cmd.includes("xcodebuild"));
 		expect(registering).toHaveLength(1);
@@ -290,10 +288,10 @@ describe("a phone the provisioning profile does not list", () => {
 
 	test("a phone registered before is not registered again: the install error stands", async () => {
 		const { c, d, commands, run } = flow([NOT_IN_PROFILE]);
-		const first = await ensureKindApp(run.input, d);
+		const first = await new KindApps(d).ensure(run.input);
 		expect(first.success).toBe(true);
 		const again = flow([NOT_IN_PROFILE]);
-		const second = await ensureKindApp(again.run.input, again.d);
+		const second = await new KindApps(again.d).ensure(again.run.input);
 		expect(!second.success && second.error).toContain("device_not_in_profile");
 		expect(again.commands.filter((cmd) => cmd.includes("xcodebuild"))).toHaveLength(0);
 		expect(commands.filter((cmd) => cmd.includes("xcodebuild"))).toHaveLength(1);
@@ -303,14 +301,14 @@ describe("a phone the provisioning profile does not list", () => {
 	test("the registration build failing reports why, with the original code", async () => {
 		const { d, run } = flow([NOT_IN_PROFILE]);
 		run.input.exec = async () => ({ exitCode: 65, stdout: "", stderr: "error: No account for team" });
-		const res = await ensureKindApp(run.input, d);
+		const res = await new KindApps(d).ensure(run.input);
 		expect(!res.success && res.error).toContain("device_not_in_profile");
 		expect(!res.success && res.error).toContain("No account for team");
 	});
 
 	test("any other install failure is not retried", async () => {
 		const { c, d, commands, run } = flow(["devicectl install app failed: device_locked: unlock"]);
-		const res = await ensureKindApp(run.input, d);
+		const res = await new KindApps(d).ensure(run.input);
 		expect(!res.success && res.error).toContain("device_locked");
 		expect(commands).toEqual([]);
 		expect(c.installs).toHaveLength(1);
@@ -320,14 +318,14 @@ describe("a phone the provisioning profile does not list", () => {
 describe("ensureKindApp", () => {
 	test("without a device nothing is installed", async () => {
 		const c = calls();
-		const res = await ensureKindApp(input("simulator").input, deps(repacked, c));
+		const res = await new KindApps(deps(repacked, c)).ensure(input("simulator").input);
 		expect(res.success && res.data.installed).toBe(false);
 		expect(c.installs).toEqual([]);
 	});
 
 	test("with a device the repack is installed by its hash, never rebuilt", async () => {
 		const c = calls();
-		const res = await ensureKindApp(input("simulator", { deviceId: "UDID" }).input, deps(repacked, c));
+		const res = await new KindApps(deps(repacked, c)).ensure(input("simulator", { deviceId: "UDID" }).input);
 		expect(res.success && res.data.installed).toBe(true);
 		expect(c.installs).toEqual([{ hash: "fp:js", deviceId: "UDID", build: false }]);
 	});
@@ -336,15 +334,14 @@ describe("ensureKindApp", () => {
 		const c = calls();
 		const d = deps(repacked, c);
 		d.ensureApp = async (i) => resultFactory.ok({ appPath: "", hash: i.hash, source: "installed", installed: true });
-		const res = await ensureKindApp(input("simulator", { deviceId: "UDID" }).input, d);
+		const res = await new KindApps(d).ensure(input("simulator", { deviceId: "UDID" }).input);
 		expect(res.success && res.data.source).toBe("installed");
 	});
 
 	test("a fallback installs the release build", async () => {
 		const c = calls();
-		const res = await ensureKindApp(
-			input("simulator", { deviceId: "UDID" }).input,
-			deps({ kind: "fallback", reason: "r" }, c)
+		const res = await new KindApps(deps({ kind: "fallback", reason: "r" }, c)).ensure(
+			input("simulator", { deviceId: "UDID" }).input
 		);
 		expect(res.success && res.data.kind).toBe("release");
 		expect(c.installs[0]?.hash).toBe("fp:release");
@@ -352,25 +349,25 @@ describe("ensureKindApp", () => {
 });
 
 describe("kindWarnings", () => {
-	const aware = testProject({ jsInputs: ["src/**"] });
+	const aware = buildsTesting.project({ jsInputs: ["src/**"] });
 
 	test("a JS-aware project warns for dev and simulator, naming the way out", () => {
-		expect(kindWarnings(aware, "simulator")[0]).toContain("kinds.simulator.jsInputs");
-		expect(kindWarnings(aware, "dev")[0]).toContain("--kind dev");
+		expect(kindApps.warnings(aware, "simulator")[0]).toContain("kinds.simulator.jsInputs");
+		expect(kindApps.warnings(aware, "dev")[0]).toContain("--kind dev");
 	});
 
 	test("release keys on the JS anyway, and a native-only project has nothing to contradict", () => {
-		expect(kindWarnings(aware, "release")).toEqual([]);
-		expect(kindWarnings(testProject(), "simulator")).toEqual([]);
+		expect(kindApps.warnings(aware, "release")).toEqual([]);
+		expect(kindApps.warnings(buildsTesting.project(), "simulator")).toEqual([]);
 	});
 });
 
 describe("projectRepackers", () => {
 	test("Android signs with the project's debug keystore when it exists, else the default repacker", () => {
-		const withKey = projectRepackers("/repo/app", (path) => path === "/repo/app/android/app/debug.keystore");
-		const without = projectRepackers("/repo/app", () => false);
-		expect(without.android).toBe(applyAndroidRepack);
-		expect(withKey.android).not.toBe(applyAndroidRepack);
+		const withKey = kindApps.repackers("/repo/app", (path) => path === "/repo/app/android/app/debug.keystore");
+		const without = kindApps.repackers("/repo/app", () => false);
+		expect(without.android).toBe(androidRepacker.apply);
+		expect(withKey.android).not.toBe(androidRepacker.apply);
 		expect(withKey.ios).toBe(without.ios);
 	});
 });

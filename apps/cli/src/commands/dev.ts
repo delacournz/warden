@@ -1,31 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { Option } from "@commander-js/extra-typings";
-import { appChoices, bundleIdFor, type Project } from "@delacour/warden-builds/config";
+import { type Project, projectConfig } from "@delacour/warden-builds/config";
 import type { ProjectContext } from "@delacour/warden-builds/ensure";
 import {
-	adbReverseArgv,
-	bareAppLaunchArgvs,
 	DEV_CLIENT_ARGS,
-	devClientLaunchArgv,
-	launchMetro,
 	type Metro,
 	type MetroLaunchHandle,
 	type MetroOwner,
 	type MetroProc,
-	metroOwner,
-	metroUrl,
-	resolveExpoBin,
-	resolveNodeBin,
+	MetroRunner,
+	metroTools,
 } from "@delacour/warden-builds/metro";
-import { overlayDirFor, overlayDirUnlessRepoConfig } from "@delacour/warden-builds/overlay";
-import {
-	defaultAppDeps,
-	type EnsureOptions,
-	ensureAppFor,
-	projectContextFor,
-	projectStart,
-} from "@delacour/warden-builds/prepare";
+import { overlay as overlayTools } from "@delacour/warden-builds/overlay";
+import { AppPreparer, appLookup, defaultAppDeps, type EnsureOptions } from "@delacour/warden-builds/prepare";
 import type { InstallMode } from "@delacour/warden-config/app-option.schema";
 import {
 	DEFAULT_METRO_PORT_SPEC,
@@ -497,17 +485,18 @@ async function openDevClient(
 			? resultFactory.ok(undefined)
 			: resultFactory.err(`${argv.join(" ")}: ${res.stderr.trim() || `exit ${res.exitCode}`}`);
 	};
-	const bundle = bundleIdFor(project, platform);
+	const bundle = projectConfig.bundleIdFor(project, platform);
 	if (!bundle.success) return wardenErrors.toText(bundle);
 	if (project.framework === "react-native") {
-		for (const argv of bareAppLaunchArgvs(platform, deviceId, bundle.data, port)) {
+		for (const argv of metroTools.bareAppLaunchArgvs(platform, deviceId, bundle.data, port)) {
 			const step = await run(argv);
 			if (!step.success) return step;
 		}
 		return resultFactory.ok(undefined);
 	}
-	if (platform === "ios") return run(devClientLaunchArgv(deviceId, bundle.data, metroUrl(port), DEV_CLIENT_ARGS));
-	const reverse = await run(adbReverseArgv(deviceId, port));
+	if (platform === "ios")
+		return run(metroTools.devClientLaunchArgv(deviceId, bundle.data, metroTools.url(port), DEV_CLIENT_ARGS));
+	const reverse = await run(metroTools.adbReverseArgv(deviceId, port));
 	if (!reverse.success) return reverse;
 	const resolved = await scheme();
 	if (!resolved.success) return resolved;
@@ -532,7 +521,7 @@ async function openDevClient(
  * built: the platform's bundle id, and `expo-dev-client` (Metro is started with `--dev-client`).
  */
 function preflight(project: Project, platform: Platform): Result<void> {
-	const bundle = bundleIdFor(project, platform);
+	const bundle = projectConfig.bundleIdFor(project, platform);
 	if (!bundle.success) return wardenErrors.toText(bundle);
 	if (project.framework === "expo" && missingPackages(project.root, ["expo-dev-client"]).length > 0)
 		return resultFactory.err(
@@ -844,7 +833,7 @@ async function runMetro(ui: DevUi, deps: DevDeps, opts: DevOpts, r: Running): Pr
 				warn(ctx, `warden dev: couldn't open the dev client (${opened.error})${link}`);
 			}
 		}
-		const bundle = bundleIdFor(r.project, r.platform);
+		const bundle = projectConfig.bundleIdFor(r.project, r.platform);
 		closeExtras = await startDevExtras(ui, deps, opts, r, metro.data.url, bundle.success ? bundle.data : undefined);
 		// one line, not `emit`'s indented document: warden dev keeps running, so readers take the first stdout line
 		if (json)
@@ -923,26 +912,23 @@ function earlyMetro(
 		start: (port, deviceId, extraArgs = []) => {
 			const base = splitCommand(ctx.argv).cmd;
 			const metroTask = ui.task("metro", "Metro");
-			const handle = launchMetro(
-				{
-					probe: deps.probe,
-					now: ctx.now,
-					sleep: deps.sleep,
-					spawn: (cmd, metroEnv, cwd) => spawnMetro(ui, deps, cmd, metroEnv, cwd, json),
-					...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
-					...(deps.reactNativeBin ? { reactNativeBin: deps.reactNativeBin } : {}),
-					git: (root) => gitFactsReader.readSync(root, { cache: ctx.git }),
-				},
-				{
-					projectRoot,
-					port,
-					env: earlyMetroEnv(ctx, port, deviceId, opts.headless === true),
-					args: [...base, ...extraArgs.filter((arg) => !base.includes(arg))],
-					readyTimeoutMs,
-					aborted: () => run.aborted.now,
-					...(project.framework === "react-native" ? { framework: "react-native" as const } : {}),
-				}
-			);
+			const handle = new MetroRunner({
+				probe: deps.probe,
+				now: ctx.now,
+				sleep: deps.sleep,
+				spawn: (cmd, metroEnv, cwd) => spawnMetro(ui, deps, cmd, metroEnv, cwd, json),
+				...(deps.expoBin ? { expoBin: deps.expoBin } : {}),
+				...(deps.reactNativeBin ? { reactNativeBin: deps.reactNativeBin } : {}),
+				git: (root) => gitFactsReader.readSync(root, { cache: ctx.git }),
+			}).launch({
+				projectRoot,
+				port,
+				env: earlyMetroEnv(ctx, port, deviceId, opts.headless === true),
+				args: [...base, ...extraArgs.filter((arg) => !base.includes(arg))],
+				readyTimeoutMs,
+				aborted: () => run.aborted.now,
+				...(project.framework === "react-native" ? { framework: "react-native" as const } : {}),
+			});
 			run.launch = handle;
 			void handle.pending.then((result) => {
 				if (result.success) metroTask.ok(result.data.url);
@@ -982,8 +968,8 @@ function noteAppBelow(ctx: CommandContext, start: string, project: Project): voi
  */
 async function pickApp(ctx: CommandContext, start: string, opts: DevOpts): AsyncResult<string> {
 	const stopAt = (await gitFactsReader.read(ctx.exec, start, ctx.git))?.toplevel;
-	const overlay = await overlayDirUnlessRepoConfig(ctx.exec, start, stopAt, ctx.env, ctx.git);
-	const choices = appChoices(start, stopAt, overlay);
+	const overlay = await overlayTools.dirUnlessRepoConfig(ctx.exec, start, stopAt, ctx.env, ctx.git);
+	const choices = projectConfig.appChoices(start, stopAt, overlay);
 	if (choices.length === 0 || !ctx.ui.interactive || opts.json === true) return resultFactory.ok(start);
 	const answer = await ctx.ui.select(
 		`Which app? (several under ${start}; --project <dir> skips this)`,
@@ -998,7 +984,7 @@ async function pickApp(ctx: CommandContext, start: string, opts: DevOpts): Async
 
 /** The project the dev build is for: the `--bundle-id` override applies to this platform, an unset `--variant` is optional. */
 function devProjectContext(ctx: CommandContext, platform: Platform, opts: DevOpts, start: string, variant: string) {
-	return projectContextFor(ctx, {
+	return appLookup.projectContextFor(ctx, {
 		start,
 		...(opts.bundleId !== undefined ? { bundleId: { [platform]: opts.bundleId } } : {}),
 		variant,
@@ -1082,7 +1068,7 @@ type Prepared = {
 /** The repo's `~/.warden` overlay (shared by its worktrees) and the checkout root an overlay config's `root` is relative to. */
 async function devOverlay(ctx: CommandContext, start: string): Promise<DevOverlay> {
 	const checkoutRoot = (await gitFactsReader.read(ctx.exec, start, ctx.git))?.toplevel;
-	const overlayDir = await overlayDirFor(ctx.exec, start, ctx.env, ctx.git);
+	const overlayDir = await overlayTools.dirFor(ctx.exec, start, ctx.env, ctx.git);
 	return { ...(overlayDir ? { overlayDir } : {}), ...(checkoutRoot ? { checkoutRoot } : {}) };
 }
 
@@ -1097,7 +1083,7 @@ async function prepareDev(ctx: CommandContext, platformArg: string | undefined, 
 	const timeout = durationParser.parse(opts.readyTimeout);
 	if (!timeout.success) return resultFactory.err(`--ready-timeout: ${timeout.error}`);
 	const owner = ownerResolver.resolve(ctx);
-	const start = projectStart(ctx, opts.project);
+	const start = appLookup.projectStart(ctx, opts.project);
 	if (!start.success) return start;
 	const picked = opts.project === undefined ? await pickApp(ctx, start.data, opts) : resultFactory.ok(start.data);
 	if (!picked.success) return picked;
@@ -1329,12 +1315,12 @@ export const defaultDevDeps: DevDeps = {
 	},
 	onSignal: sessionSignals.onSignal,
 	every: sessionSignals.every,
-	probe: (port, projectRoot) => metroOwner(processExec.run, port, projectRoot),
+	probe: (port, projectRoot) => metroTools.owner(processExec.run, port, projectRoot),
 	sleep: (ms) => Bun.sleep(ms),
 	ensureApp: (host, owner, platform, deviceId, opts) =>
-		ensureAppFor(host, defaultAppDeps, owner, platform, deviceId, opts),
-	expoBin: (projectRoot) => resolveExpoBin(projectRoot, (cmd) => Bun.which(cmd)),
-	reactNativeBin: (projectRoot) => resolveNodeBin(projectRoot, "react-native", (cmd) => Bun.which(cmd)),
+		new AppPreparer(host, defaultAppDeps).ensureFor(owner, platform, deviceId, opts),
+	expoBin: (projectRoot) => metroTools.expoBin(projectRoot, (cmd) => Bun.which(cmd)),
+	reactNativeBin: (projectRoot) => metroTools.nodeBin(projectRoot, "react-native", (cmd) => Bun.which(cmd)),
 };
 
 export const devCommand: Command = createDevCommand(defaultDevDeps);

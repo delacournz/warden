@@ -1,5 +1,5 @@
-import { bundleIdFor } from "@delacour/warden-builds/config";
-import { devClientLaunchArgs } from "@delacour/warden-builds/metro";
+import { projectConfig } from "@delacour/warden-builds/config";
+import { metroTools } from "@delacour/warden-builds/metro";
 import { appOptionReader } from "@delacour/warden-config/app-option.schema";
 import type { Suite } from "@delacour/warden-core/affected/affected";
 import type { Platform } from "@delacour/warden-store/types";
@@ -38,7 +38,7 @@ export async function specBundleId(
 	const deviceId = phone && project.success ? project.data.project.iosDeviceBundleId : undefined;
 	if (deviceId !== undefined) return resultFactory.ok(deviceId);
 	if (explicit !== undefined) return resultFactory.ok(explicit);
-	const bundleId = project.success ? bundleIdFor(project.data.project, platform) : undefined;
+	const bundleId = project.success ? projectConfig.bundleIdFor(project.data.project, platform) : undefined;
 	if (bundleId?.success) return bundleId;
 	return resultFactory.err(`e2e.${suite.name}: no bundle id — set spec.bundleId or projects[].bundleId.${platform}`);
 }
@@ -49,5 +49,5 @@ export async function specBundleId(
  */
 export function specLaunchArgs(plan: LaunchPlan, metroUrl: string | undefined): string[] {
 	const extra = [...plan.metroLaunchArgs, ...plan.launchArgs];
-	return metroUrl === undefined ? extra : devClientLaunchArgs(metroUrl, extra);
+	return metroUrl === undefined ? extra : metroTools.devClientLaunchArgs(metroUrl, extra);
 }

@@ -1,4 +1,4 @@
-import { adbReverseArgv, DEV_CLIENT_ARGS, devClientLaunchArgs } from "@delacour/warden-builds/metro";
+import { DEV_CLIENT_ARGS, metroTools } from "@delacour/warden-builds/metro";
 import type { BuildKind } from "@delacour/warden-config/build-kinds";
 import type { Driver } from "@delacour/warden-driver/driver.types";
 import { androidToolsLocator } from "@delacour/warden-providers/android-tools";
@@ -30,7 +30,7 @@ async function reverseMetro(session: OpSession, metroUrl: string): Promise<void>
 		return;
 	}
 	if (!Number.isInteger(port) || port <= 0) return;
-	const [, ...rest] = adbReverseArgv(session.device.id, port);
+	const [, ...rest] = metroTools.adbReverseArgv(session.device.id, port);
 	await session.host.exec([androidToolsLocator.locate(session.host.env).adb, ...rest]);
 }
 
@@ -51,7 +51,7 @@ export async function launchBundle(
 	if (opts.metro !== undefined) await reverseMetro(session, opts.metro);
 	// an iOS dev client opens as `warden dev` opens it: no dev menu onboarding sheet or menu at launch
 	const devClient = session.device.platform === "ios" ? [...DEV_CLIENT_ARGS, ...extra] : extra;
-	const args = opts.metro === undefined ? [...extra] : devClientLaunchArgs(opts.metro, devClient);
+	const args = opts.metro === undefined ? [...extra] : metroTools.devClientLaunchArgs(opts.metro, devClient);
 	const wasRunning = opts.relaunch === true ? false : await isRunning(driver, bundleId);
 	const launched = fromDriver(
 		await driver.app.launch(bundleId, {

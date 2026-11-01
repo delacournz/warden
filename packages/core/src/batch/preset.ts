@@ -1,5 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
-import { findWardenConfig } from "@delacour/warden-builds/config";
+import { projectConfig } from "@delacour/warden-builds/config";
 import { appOptionReader, type InstallMode } from "@delacour/warden-config/app-option.schema";
 import type { BatchPresetConfig } from "@delacour/warden-config/preset.schema";
 import type { Platform } from "@delacour/warden-store/types";
@@ -131,7 +131,7 @@ export type FindBatchPresetInput = {
  * undefined when there is no config or no such preset; `names` lists the presets that exist.
  */
 export function findBatchPreset(input: FindBatchPresetInput): Result<{ preset?: BatchPreset; names: string[] }> {
-	const found = findWardenConfig(input.start, input.stopAt, input.env);
+	const found = projectConfig.find(input.start, input.stopAt, input.env);
 	if (!found.success) return found;
 	if (!found.data) return resultFactory.ok({ names: [] });
 	const { dir, config } = found.data;

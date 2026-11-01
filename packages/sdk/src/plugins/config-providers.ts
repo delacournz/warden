@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { findWardenConfig } from "@delacour/warden-builds/config";
+import { projectConfig } from "@delacour/warden-builds/config";
 import type { Exec } from "@delacour/warden-runtime/exec";
 import { type GitFactsCache, gitFactsReader } from "@delacour/warden-runtime/git-facts";
 import { WardenError } from "../errors";
@@ -68,7 +68,7 @@ export async function loadConfigProviders(
 	env: Record<string, string | undefined>,
 	stopAt?: string
 ): Promise<ProviderPlugin[]> {
-	const found = findWardenConfig(cwd, stopAt ?? resolve(cwd), env);
+	const found = projectConfig.find(cwd, stopAt ?? resolve(cwd), env);
 	if (!found.success) throw new WardenError({ code: "config_invalid", message: found.error });
 	const specifiers = found.data?.config.providers ?? [];
 	const dir = found.data?.dir ?? dirname(cwd);

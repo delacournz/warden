@@ -1,7 +1,7 @@
 import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_MAX_CACHE_SIZE } from "@delacour/warden-builds/builds.defaults";
-import { cacheCap, formatSize, GC_PRUNE_GRACE_MS, isAlias, pruneBuilds } from "@delacour/warden-builds/prune";
+import { GC_PRUNE_GRACE_MS, prune } from "@delacour/warden-builds/prune";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { durationParser } from "@delacour/warden-config/duration";
 import { androidSnapshotPass, providerFor } from "@delacour/warden-core/host-deps";
@@ -145,7 +145,7 @@ function parseIdle(raw: string | undefined): Result<number> {
  */
 function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[] {
 	try {
-		const plan = pruneBuilds({
+		const plan = prune.builds({
 			store: ctx.store(),
 			env: ctx.env,
 			maxBytes,
@@ -153,11 +153,11 @@ function pruneCache(ctx: CommandContext, maxBytes: number, now: number): string[
 			pidAlive: liveness.processAlive,
 			graceMs: GC_PRUNE_GRACE_MS,
 		});
-		const removed = plan.remove.filter((b) => !isAlias(b));
+		const removed = plan.remove.filter((b) => !prune.isAlias(b));
 		if (removed.length === 0) return [];
 		const freed = removed.reduce((sum, b) => sum + b.size, 0);
 		return [
-			`pruned ${plural(removed.length, "cached build")} (${formatSize(freed)}; cache ${formatSize(plan.total)} → ${formatSize(plan.after)}, max ${formatSize(maxBytes)})`,
+			`pruned ${plural(removed.length, "cached build")} (${prune.formatSize(freed)}; cache ${prune.formatSize(plan.total)} → ${prune.formatSize(plan.after)}, max ${prune.formatSize(maxBytes)})`,
 		];
 	} catch (e) {
 		return [`build cache prune failed: ${e instanceof Error ? e.message : String(e)}`];
@@ -243,7 +243,7 @@ async function gc(ctx: CommandContext, opts: GcOpts): Promise<number> {
 	}
 	// a bad --max-cache-size is the caller's typo: fail. A bad WARDEN_MAX_CACHE_SIZE must not stop lease
 	// reclaim or device shutdown (auto-gc would fail silently every pass): it skips the prune, with a note.
-	const cap = cacheCap(opts.maxCacheSize, ctx.env);
+	const cap = prune.cacheCap(opts.maxCacheSize, ctx.env);
 	if (!cap.bytes.success && cap.source === "flag") {
 		reportError(ctx, "gc", `--max-cache-size: ${cap.bytes.error}`);
 		return 1;

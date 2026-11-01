@@ -1,12 +1,6 @@
 import { constants } from "node:os";
 import type { KindApp } from "@delacour/warden-builds/ensure-kind";
-import {
-	defaultAppDeps,
-	type EnsureOptions,
-	ensurePreparedApp,
-	type PreparedApp,
-	prepareApp,
-} from "@delacour/warden-builds/prepare";
+import { AppPreparer, defaultAppDeps, type EnsureOptions, type PreparedApp } from "@delacour/warden-builds/prepare";
 import type { AppPhase, EnsureResult } from "@delacour/warden-builds/resolve";
 import { DEFAULT_TTL_MS, HEARTBEAT_INTERVAL_MS } from "@delacour/warden-config/config.defaults";
 import { portSpecParser } from "@delacour/warden-config/ports-spec";
@@ -168,9 +162,9 @@ export const LEASES_LOST =
 	"leases were released by another process: warden release or SessionEnd — stopping so the devices are not driven by two owners";
 
 const defaultSessionAppDeps: SessionAppDeps = {
-	prepare: prepareApp,
+	prepare: (host, opts, platform) => new AppPreparer(host, defaultAppDeps).prepare(opts, platform),
 	install: (host, owner, platform, deviceId, opts, app) =>
-		ensurePreparedApp(host, defaultAppDeps, owner, platform, deviceId, opts, app),
+		new AppPreparer(host, defaultAppDeps).ensurePrepared(owner, platform, deviceId, opts, app),
 };
 
 /** The default signal and timer seams of a lease session (processes subscribe on `process`, ticks are `setInterval`). */

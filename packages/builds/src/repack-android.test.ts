@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Exec, ExecResult } from "@delacour/warden-runtime/exec";
-import { androidRepacker, parseResourceFiles } from "./repack-android";
+import { AndroidRepacker, androidRepacker } from "./repack-android";
 
 let dir: string;
 let sdk: string;
@@ -68,6 +68,33 @@ const RESOURCES = `Package name=nz.co.app id=7f
       () (file) res/P1.ttf
 `;
 
+/** Answer for the `unzip -Z1` listing: the base lists `entries`, any other apk also has the bundle. */
+function unzipAnswer(cmd: readonly string[], options: FakeOptions): ExecResult {
+	const listed = options.entries ?? BASE_ENTRIES;
+	const entries = cmd.at(-1) === base ? listed : [...listed, "assets/index.android.bundle"];
+	return { ...ok, stdout: `${entries.join("\n")}\n` };
+}
+
+/** Answer for `aapt2`: the resource table, or `badging` output. */
+function aapt2Answer(cmd: readonly string[], options: FakeOptions): ExecResult {
+	if (cmd[1] === "dump" && cmd[2] === "resources") return { ...ok, stdout: RESOURCES };
+	const badging = options.badging ?? (() => "package: name='nz.co.app' versionCode='1'\n");
+	return { ...ok, stdout: badging(String(cmd.at(-1))) };
+}
+
+/** Tools that write a file: `zipalign -p` copies, `apksigner sign` writes `--out`. */
+function copyingAnswer(tool: string, cmd: readonly string[]): ExecResult | undefined {
+	if (tool === "zipalign" && cmd[1] === "-p") {
+		copyFileSync(String(cmd.at(-2)), String(cmd.at(-1)));
+		return ok;
+	}
+	if (tool === "apksigner" && cmd[1] === "sign") {
+		copyFileSync(String(cmd.at(-1)), String(cmd[cmd.indexOf("--out") + 1]));
+		return ok;
+	}
+	return undefined;
+}
+
 /** A fake host: `unzip -Z1` lists `entries`, `zipalign` copies, `apksigner sign` writes `--out`; everything is recorded. */
 function fakeExec(options: FakeOptions = {}): { exec: Exec; calls: Call[] } {
 	const calls: Call[] = [];
@@ -75,36 +102,19 @@ function fakeExec(options: FakeOptions = {}): { exec: Exec; calls: Call[] } {
 		calls.push({ cmd, cwd: opts?.cwd });
 		const tool = basename(cmd[0] ?? "");
 		if (options.failTool === tool) return { exitCode: 1, stdout: "", stderr: `${tool} exploded` };
-		if (tool === "unzip") {
-			const listed = options.entries ?? BASE_ENTRIES;
-			const entries = cmd.at(-1) === base ? listed : [...listed, "assets/index.android.bundle"];
-			return { ...ok, stdout: `${entries.join("\n")}\n` };
-		}
-		if (tool === "zipalign" && cmd[1] === "-p") {
-			copyFileSync(String(cmd.at(-2)), String(cmd.at(-1)));
-			return ok;
-		}
-		if (tool === "apksigner" && cmd[1] === "sign") {
-			const out = cmd[cmd.indexOf("--out") + 1];
-			copyFileSync(String(cmd.at(-1)), String(out));
-			return ok;
-		}
-		if (tool === "aapt2" && cmd[1] === "dump" && cmd[2] === "resources") return { ...ok, stdout: RESOURCES };
-		if (tool === "aapt2") {
-			const badging = options.badging ?? (() => "package: name='nz.co.app' versionCode='1'\n");
-			return { ...ok, stdout: badging(String(cmd.at(-1))) };
-		}
-		return ok;
+		if (tool === "unzip") return unzipAnswer(cmd, options);
+		if (tool === "aapt2") return aapt2Answer(cmd, options);
+		return copyingAnswer(tool, cmd) ?? ok;
 	};
 	return { exec, calls };
 }
 
 function repacker(env: Record<string, string | undefined> = {}) {
-	return androidRepacker({
+	return new AndroidRepacker({
 		sdkRoot: sdk,
 		keystore: { path: keystore, alias: "key", storePass: "sp", keyPass: "kp" },
 		env,
-	});
+	}).apply;
 }
 
 function input(exec: Exec) {
@@ -236,9 +246,12 @@ describe("androidRepacker", () => {
 
 	test("missing build-tools names where it looked", async () => {
 		const { exec } = fakeExec();
-		const res = await androidRepacker({ sdkRoot: join(dir, "nope"), keystore: undefined, env: {}, home: dir })(
-			input(exec)
-		);
+		const res = await new AndroidRepacker({
+			sdkRoot: join(dir, "nope"),
+			keystore: undefined,
+			env: {},
+			home: dir,
+		}).apply(input(exec));
 		expect(res.success).toBe(false);
 		if (!res.success) {
 			expect(res.error).toContain("build-tools");
@@ -248,22 +261,24 @@ describe("androidRepacker", () => {
 
 	test("sdk root falls back to ANDROID_HOME, then ANDROID_SDK_ROOT", async () => {
 		const { exec, calls } = fakeExec();
-		const res = await androidRepacker({
+		const res = await new AndroidRepacker({
 			keystore: { path: keystore, alias: "k", storePass: "p", keyPass: "p" },
 			env: { ANDROID_SDK_ROOT: sdk },
 			home: join(dir, "home"),
-		})(input(exec));
+		}).apply(input(exec));
 		expect(res.success).toBe(true);
 		expect(toolCalls(calls, "zipalign")[0]?.cmd[0]).toBe(join(sdk, "build-tools", "35.0.0", "zipalign"));
 	});
 
 	test("no keystore reads the debug keystore under home and says so when absent", async () => {
 		const { exec } = fakeExec();
-		const res = await androidRepacker({ sdkRoot: sdk, env: {}, home: join(dir, "home") })(input(exec));
+		const res = await new AndroidRepacker({ sdkRoot: sdk, env: {}, home: join(dir, "home") }).apply(input(exec));
 		expect(res.success).toBe(false);
 		if (!res.success) expect(res.error).toContain("debug.keystore");
 		put(join(dir, "home", ".android", "debug.keystore"), "ks");
-		const again = await androidRepacker({ sdkRoot: sdk, env: {}, home: join(dir, "home") })(input(fakeExec().exec));
+		const again = await new AndroidRepacker({ sdkRoot: sdk, env: {}, home: join(dir, "home") }).apply(
+			input(fakeExec().exec)
+		);
 		expect(again.success).toBe(true);
 	});
 
@@ -317,7 +332,7 @@ describe("androidRepacker", () => {
 
 describe("parseResourceFiles", () => {
 	test("maps type/name/config to the file, ignoring non-file values", () => {
-		const files = parseResourceFiles(`${RESOURCES}    resource 0x7f130000 string/app_name
+		const files = androidRepacker.parseResourceFiles(`${RESOURCES}    resource 0x7f130000 string/app_name
       () "warden"
       (de-v21) "x"
 `);
@@ -328,7 +343,7 @@ describe("parseResourceFiles", () => {
 	});
 
 	test("an API qualifier on the config is dropped", () => {
-		const files = parseResourceFiles(
+		const files = androidRepacker.parseResourceFiles(
 			"    resource 0x7f070001 drawable/a\n      (mdpi-v4) (file) res/drawable-mdpi-v4/a.png type=PNG\n"
 		);
 		expect(files.get("drawable/a/mdpi")?.entry).toBe("res/drawable-mdpi-v4/a.png");

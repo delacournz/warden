@@ -20,7 +20,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { withBuildLock } from "@delacour/warden-builds/lock";
+import { buildLock } from "@delacour/warden-builds/lock";
 import {
 	Adb,
 	type AdbEmulator,
@@ -670,7 +670,7 @@ export async function ensureAndroidSnapshot(
 	const { dir, key, name, present } = current.data;
 	const ensured: Result<EnsuredSnapshot | undefined> = present
 		? resultFactory.ok({ avd, name, key, built: false })
-		: await withBuildLock(lockDeps(deps), androidGoldenLockKey(biometricProfiles.split(avd).profile), () =>
+		: await buildLock.hold(lockDeps(deps), androidGoldenLockKey(biometricProfiles.split(avd).profile), () =>
 				ensureLocked(deps, avd, dir, key)
 			);
 	if (!ensured.success) markAndroidSnapshotFailed(deps.store, avd, deps.now());
@@ -708,7 +708,7 @@ export async function buildPendingAndroidSnapshot(deps: AndroidGoldenDeps): Asyn
 export async function invalidateAndroidSnapshot(deps: AndroidGoldenDeps, avd: string, name: string): AsyncResult<void> {
 	if (!isWardenSnapshot(name)) return resultFactory.err(`${name} is not a warden snapshot`);
 	const real = biometricProfiles.split(avd).profile;
-	return withBuildLock({ ...lockDeps(deps), waitMs: 0 }, androidGoldenLockKey(real), async () => {
+	return buildLock.hold({ ...lockDeps(deps), waitMs: 0 }, androidGoldenLockKey(real), async () => {
 		const deleted = deleteSnapshot(deps, real, avdDir(deps.env, real), name);
 		if (deleted.success) {
 			const { loadFailures, deferred } = recordAndroidSnapshotLoadFailure(deps.store, avd, deps.now());
@@ -756,7 +756,7 @@ export async function pruneAndroidSnapshots(
 	for (const avd of new Set(listed.data.map((e) => e.avd))) {
 		const targets = listed.data.filter((e) => e.avd === avd && (opts.all || !e.current));
 		if (targets.length === 0) continue;
-		const pruned = await withBuildLock(lockDeps(deps), androidGoldenLockKey(avd), async () => {
+		const pruned = await buildLock.hold(lockDeps(deps), androidGoldenLockKey(avd), async () => {
 			const busy = await instancesOf(deps, avd);
 			if (!busy.success) return busy;
 			if (busy.data.length > 0) {

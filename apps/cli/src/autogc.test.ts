@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { storeArtifact } from "@delacour/warden-builds/cache";
-import { fakeApp } from "@delacour/warden-builds/testing/builds.testing";
+import { buildCache } from "@delacour/warden-builds/cache";
+import { buildsTesting } from "@delacour/warden-builds/testing/builds.testing";
 import { DEFAULT_IDLE_MS } from "@delacour/warden-config/config.defaults";
 import { markAndroidSnapshotPending } from "@delacour/warden-core/golden/android-snapshot-pending";
 import type { Owner } from "@delacour/warden-store/types";
@@ -94,14 +94,14 @@ describe("maybeAutoGc", () => {
 		const clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1", WARDEN_MAX_CACHE_SIZE: "10" };
-		const stored = await storeArtifact({
+		const stored = await buildCache.storeArtifact({
 			store: ctx.db,
 			env: ctx.env,
 			projectKey: "k",
 			platform: "ios",
 			profile: "local",
 			hash: "h",
-			artifact: fakeApp(ctx.cwd),
+			artifact: buildsTesting.fakeApp(ctx.cwd),
 			source: "build",
 			now: clock,
 		});
@@ -115,14 +115,14 @@ describe("maybeAutoGc", () => {
 		let clock = 5 * AUTO_GC_INTERVAL_MS;
 		ctx = testContext([], { now: () => clock });
 		ctx.env = { ...ctx.env, WARDEN_BACKGROUND: "1" };
-		await storeArtifact({
+		await buildCache.storeArtifact({
 			store: ctx.db,
 			env: ctx.env,
 			projectKey: "k",
 			platform: "ios",
 			profile: "local",
 			hash: "h",
-			artifact: fakeApp(ctx.cwd),
+			artifact: buildsTesting.fakeApp(ctx.cwd),
 			source: "build",
 			now: clock,
 		});

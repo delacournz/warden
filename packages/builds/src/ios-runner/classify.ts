@@ -64,25 +64,30 @@ const RULES: readonly Rule[] = [
 	},
 ];
 
-function firstMatchingLine(text: string, match: RegExp): string {
-	const line = text.split("\n").find((l) => match.test(l)) ?? text;
-	return line
-		.trim()
-		.replace(/^error:\s*/i, "")
-		.slice(0, 300);
-}
-
-/** The known failure in xcodebuild's / devicectl's output, or undefined for one warden has no fix for. */
-export function classifyRunnerOutput(text: string): RunnerBuildError | undefined {
-	for (const rule of RULES) {
-		if (rule.match.test(text)) {
-			return { code: rule.code, message: firstMatchingLine(text, rule.match), hint: rule.hint };
+/** Maps xcodebuild / devicectl output to the failures warden knows a fix for. Pure: use the `runnerOutputClassifier` singleton. */
+export class RunnerOutputClassifier {
+	/** The known failure in xcodebuild's / devicectl's output, or undefined for one warden has no fix for. */
+	classify(text: string): RunnerBuildError | undefined {
+		for (const rule of RULES) {
+			if (rule.match.test(text)) {
+				return { code: rule.code, message: this.firstMatchingLine(text, rule.match), hint: rule.hint };
+			}
 		}
+		return undefined;
 	}
-	return undefined;
+
+	/** The last `lines` lines of the output: what `build_failed` shows when nothing classifies. */
+	tail(text: string, lines = 12): string {
+		return text.trim().split("\n").slice(-lines).join("\n");
+	}
+
+	private firstMatchingLine(text: string, match: RegExp): string {
+		const line = text.split("\n").find((l) => match.test(l)) ?? text;
+		return line
+			.trim()
+			.replace(/^error:\s*/i, "")
+			.slice(0, 300);
+	}
 }
 
-/** The last `lines` lines of the output: what `build_failed` shows when nothing classifies. */
-export function outputTail(text: string, lines = 12): string {
-	return text.trim().split("\n").slice(-lines).join("\n");
-}
+export const runnerOutputClassifier = new RunnerOutputClassifier();

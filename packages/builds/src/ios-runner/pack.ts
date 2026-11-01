@@ -27,73 +27,77 @@ const SIMD_FILES = [
 
 const SKIPPED = new Set(["xcuserdata", ".build", ".DS_Store", "build"]);
 
-function walk(root: string, rel: string, out: Record<string, string>): void {
-	if (rel === SHARED_DIR) return;
-	for (const name of readdirSync(join(root, rel)).sort()) {
-		if (SKIPPED.has(name)) continue;
-		const path = `${rel}/${name}`;
-		const stat = lstatSync(join(root, path));
-		if (stat.isSymbolicLink()) continue;
-		if (stat.isDirectory()) walk(root, path, out);
-		else out[path] = readFileSync(join(root, path), "utf8");
+/** Reads, writes and validates the runner source blob. Pure: use the `runnerPack` singleton. */
+export class RunnerPack {
+	/** Read the runner sources from a checkout's `packages/driver-ios/native` directory. */
+	collect(nativeDir: string): Result<RunnerSourceFiles> {
+		try {
+			const files: Record<string, string> = {};
+			for (const dir of [...RUNNER_DIRS, RUNNER_CORE]) this.walk(nativeDir, dir, files);
+			for (const file of SIMD_FILES) files[file] = readFileSync(join(nativeDir, file), "utf8");
+			return resultFactory.ok(files);
+		} catch (cause) {
+			return resultFactory.err(`cannot read the iOS runner sources in ${nativeDir}: ${String(cause)}`);
+		}
 	}
-}
 
-/** Read the runner sources from a checkout's `packages/driver-ios/native` directory. */
-export function collectRunnerSources(nativeDir: string): Result<RunnerSourceFiles> {
-	try {
+	writeBlob(nativeDir: string, outFile: string): Result<void> {
+		const files = this.collect(nativeDir);
+		if (!files.success) return files;
+		writeFileSync(outFile, JSON.stringify(files.data));
+		return resultFactory.ok(undefined);
+	}
+
+	/** A path inside the staged root: relative, `/`-separated, no `..`. */
+	isSafeSourcePath(path: string): boolean {
+		return (
+			path !== "" &&
+			!path.startsWith("/") &&
+			!path.includes("\\") &&
+			!path.split("/").some((p) => p === ".." || p === "" || p === ".")
+		);
+	}
+
+	parseBlob(text: string): Result<RunnerSourceFiles> {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(text);
+		} catch {
+			return resultFactory.err("embedded iOS runner sources are not valid JSON");
+		}
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+			return resultFactory.err("embedded iOS runner sources are not an object");
 		const files: Record<string, string> = {};
-		for (const dir of [...RUNNER_DIRS, RUNNER_CORE]) walk(nativeDir, dir, files);
-		for (const file of SIMD_FILES) files[file] = readFileSync(join(nativeDir, file), "utf8");
+		for (const [path, content] of Object.entries(parsed)) {
+			if (typeof content !== "string") return resultFactory.err(`embedded iOS runner sources: ${path} is not text`);
+			if (!this.isSafeSourcePath(path))
+				return resultFactory.err(`embedded iOS runner sources: bad path ${JSON.stringify(path)}`);
+			files[path] = content;
+		}
 		return resultFactory.ok(files);
-	} catch (cause) {
-		return resultFactory.err(`cannot read the iOS runner sources in ${nativeDir}: ${String(cause)}`);
+	}
+
+	/** The blob embedded in the compiled binary (`Bun.embeddedFiles`, name `ios-runner-<hash>.bin`). */
+	async loadEmbedded(embedded: readonly Blob[] = Bun.embeddedFiles): AsyncResult<RunnerSourceFiles> {
+		const blob = embedded.find(
+			(file) => "name" in file && typeof file.name === "string" && /^ios-runner(-[^.]*)?\.bin$/.test(file.name)
+		);
+		if (blob === undefined)
+			return resultFactory.err("this warden build has no embedded iOS runner sources; rebuild it");
+		return this.parseBlob(await blob.text());
+	}
+
+	private walk(root: string, rel: string, out: Record<string, string>): void {
+		if (rel === SHARED_DIR) return;
+		for (const name of readdirSync(join(root, rel)).sort()) {
+			if (SKIPPED.has(name)) continue;
+			const path = `${rel}/${name}`;
+			const stat = lstatSync(join(root, path));
+			if (stat.isSymbolicLink()) continue;
+			if (stat.isDirectory()) this.walk(root, path, out);
+			else out[path] = readFileSync(join(root, path), "utf8");
+		}
 	}
 }
 
-export function writeRunnerBlob(nativeDir: string, outFile: string): Result<void> {
-	const files = collectRunnerSources(nativeDir);
-	if (!files.success) return files;
-	writeFileSync(outFile, JSON.stringify(files.data));
-	return resultFactory.ok(undefined);
-}
-
-/** A path inside the staged root: relative, `/`-separated, no `..`. */
-export function isSafeSourcePath(path: string): boolean {
-	return (
-		path !== "" &&
-		!path.startsWith("/") &&
-		!path.includes("\\") &&
-		!path.split("/").some((p) => p === ".." || p === "" || p === ".")
-	);
-}
-
-export function parseRunnerBlob(text: string): Result<RunnerSourceFiles> {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch {
-		return resultFactory.err("embedded iOS runner sources are not valid JSON");
-	}
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-		return resultFactory.err("embedded iOS runner sources are not an object");
-	const files: Record<string, string> = {};
-	for (const [path, content] of Object.entries(parsed)) {
-		if (typeof content !== "string") return resultFactory.err(`embedded iOS runner sources: ${path} is not text`);
-		if (!isSafeSourcePath(path))
-			return resultFactory.err(`embedded iOS runner sources: bad path ${JSON.stringify(path)}`);
-		files[path] = content;
-	}
-	return resultFactory.ok(files);
-}
-
-/** The blob embedded in the compiled binary (`Bun.embeddedFiles`, name `ios-runner-<hash>.bin`). */
-export async function loadEmbeddedRunnerSources(
-	embedded: readonly Blob[] = Bun.embeddedFiles
-): AsyncResult<RunnerSourceFiles> {
-	const blob = embedded.find(
-		(file) => "name" in file && typeof file.name === "string" && /^ios-runner(-[^.]*)?\.bin$/.test(file.name)
-	);
-	if (blob === undefined) return resultFactory.err("this warden build has no embedded iOS runner sources; rebuild it");
-	return parseRunnerBlob(await blob.text());
-}
+export const runnerPack = new RunnerPack();

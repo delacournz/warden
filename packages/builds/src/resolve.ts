@@ -88,151 +88,189 @@ export type ResolveSteps = {
 
 type Found = { path: string; source: Exclude<ResolveSource, "installed"> };
 
-/** Steps 4–5 under the build lock: re-check the cache (another process may have filled it), EAS, local. */
-async function fetchOrBuild(steps: ResolveSteps): AsyncResult<Found> {
-	const again = steps.cached();
-	if (again) return resultFactory.ok({ path: again, source: "cache" });
-	const misses: string[] = [];
-	if (steps.eas) {
-		const eas = await steps.eas();
-		if (!eas.success) return eas;
-		if (eas.data.kind === "hit") return resultFactory.ok({ path: eas.data.path, source: "eas" });
-		steps.log(`EAS: ${eas.data.reason}`);
-		misses.push(`EAS: ${eas.data.reason}`);
-	} else {
-		misses.push("EAS skipped");
+/** In-flight locked fetch/builds of this process, by `ResolveSteps.flightKey`; shared by every `AppResolver`. */
+class InFlightFetches {
+	private readonly running = new Map<string, AsyncResult<Found>>();
+
+	/** The running fetch/build for `key`, if any. */
+	get(key: string): AsyncResult<Found> | undefined {
+		return this.running.get(key);
 	}
-	if (steps.build) {
-		const built = await steps.build();
-		if (!built.success) return built;
-		return resultFactory.ok({ path: built.data.path, source: built.data.kind === "built" ? "build" : "cache" });
+
+	/** Track `started` under `key` until it settles. */
+	track(key: string, started: AsyncResult<Found>): void {
+		this.running.set(key, started);
+		const done = () => {
+			this.running.delete(key);
+		};
+		started.then(done, done);
 	}
-	misses.push("local build skipped (--no-build)");
-	return resultFactory.err(`no build for fingerprint ${steps.hash}: ${misses.join("; ")}`);
 }
 
-async function locate(steps: ResolveSteps): AsyncResult<Found> {
-	const cached = steps.cached();
-	if (cached) return resultFactory.ok({ path: cached, source: "cache" });
-	const legacy = await steps.legacy();
-	if (!legacy.success) return legacy;
-	if (legacy.data) {
-		steps.log(`imported legacy build ${legacy.data}`);
-		return resultFactory.ok({ path: legacy.data, source: "cache" });
-	}
-	return fetchOrBuildOnce(steps);
-}
-
-/** In-flight locked fetch/builds of this process, by `ResolveSteps.flightKey`. */
-const inFlight = new Map<string, AsyncResult<Found>>();
-
-function fetchOrBuildOnce(steps: ResolveSteps): AsyncResult<Found> {
-	const key = steps.flightKey;
-	if (key === undefined) return steps.lock(() => fetchOrBuild(steps));
-	const running = inFlight.get(key);
-	if (running) {
-		steps.log("this fetch/build is already running for another device — waiting for it");
-		steps.onPhase?.({ phase: "waiting" });
-		return running;
-	}
-	const started = steps.lock(() => fetchOrBuild(steps));
-	inFlight.set(key, started);
-	const done = () => {
-		inFlight.delete(key);
-	};
-	started.then(done, done);
-	return started;
-}
-
-async function alreadyInstalled(steps: ResolveSteps, device: DeviceSteps): Promise<Result<boolean>> {
-	if (device.installedHash() !== steps.hash) return resultFactory.ok(false);
-	const confirmed = await device.confirm();
-	if (!confirmed.success) return confirmed;
-	if (!confirmed.data.present) {
-		steps.log("install record is stale (app missing on device) — reinstalling");
-		return resultFactory.ok(false);
-	}
-	const cached = device.matches ? steps.cached() : undefined;
-	if (device.matches && cached) {
-		const same = await device.matches(cached, confirmed.data);
-		if (!same.success) return same;
-		if (!same.data) steps.log("app on device differs from the cached build — reinstalling");
-		return resultFactory.ok(same.data);
-	}
-	return resultFactory.ok(true);
-}
-
-/** `reinstall`: uninstall first; `clean`: install over, then reset (falling back to uninstall + install); else install over. */
-async function installOnDevice(steps: ResolveSteps, device: DeviceSteps, path: string): AsyncResult<void> {
-	if (steps.installMode === "reinstall") return reinstall(device, path);
-	const done = await device.install(path);
-	if (!done.success || steps.installMode !== "clean") return done;
-	return resetOrReinstall(steps, device, path);
-}
-
-async function reinstall(device: DeviceSteps, path: string): AsyncResult<void> {
-	const gone = await device.uninstall();
-	return gone.success ? device.install(path) : gone;
-}
-
-/** Reset the app's data; when that fails, start over with an uninstall + install of `path`. */
-async function resetOrReinstall(steps: ResolveSteps, device: DeviceSteps, path: string): AsyncResult<void> {
-	const reset = await device.reset();
-	if (reset.success) return reset;
-	steps.log(`resetting app data failed (${reset.error}) — reinstalling`);
-	return reinstall(device, path);
-}
-
-/** Already at `hash`: keep the install; `clean` resets its data, falling back to uninstall + install. */
-async function keepInstalled(steps: ResolveSteps, device: DeviceSteps): AsyncResult<EnsureResult> {
-	const kept: EnsureResult = { appPath: steps.cached() ?? "", hash: steps.hash, source: "installed", installed: true };
-	if (steps.installMode !== "clean") return resultFactory.ok(kept);
-	const reset = await device.reset();
-	if (reset.success) return resultFactory.ok(kept);
-	steps.log(`resetting app data failed (${reset.error}) — reinstalling`);
-	return reinstallFound(steps, device);
-}
-
-/** The `clean` fallback for an app already at `hash`: locate the artifact again, then uninstall + install it. */
-async function reinstallFound(steps: ResolveSteps, device: DeviceSteps): AsyncResult<EnsureResult> {
-	const found = await locate(steps);
-	if (!found.success) return found;
-	const done = await reinstall(device, found.data.path);
-	if (!done.success) return done;
-	return resultFactory.ok({ appPath: found.data.path, hash: steps.hash, source: found.data.source, installed: true });
-}
+const inFlight = new InFlightFetches();
 
 /**
- * The 5-step resolver, first hit wins: (1) already installed at this hash → nothing to do;
- * (2) warden cache; (3) legacy cache import; then under the build lock (4) EAS, (5) local build.
- * Whatever was found is installed over the old app (a hash mismatch reinstalls). `installMode: "clean"` keeps
- * step 1 but resets the app's data either way; `reinstall` skips step 1 and uninstalls first. A new fingerprint
- * misses 1–3 by construction, so it never gets a stale binary.
+ * The 5-step resolver over one `ResolveSteps` bag (the effects, each a thin closure): construct with the steps, call
+ * `resolveApp()`.
  */
-export async function resolveApp(steps: ResolveSteps): AsyncResult<EnsureResult> {
-	const resolved = await resolveInner(steps);
-	if (resolved.success) steps.onPhase?.({ phase: "ready" });
-	return resolved;
-}
+export class AppResolver {
+	constructor(private readonly steps: ResolveSteps) {}
 
-async function resolveInner(steps: ResolveSteps): AsyncResult<EnsureResult> {
-	const { device, hash } = steps;
-	if (device && steps.installMode !== "reinstall") {
-		const installed = await alreadyInstalled(steps, device);
-		if (!installed.success) return installed;
-		if (installed.data) return keepInstalled(steps, device);
+	/**
+	 * The 5-step resolver, first hit wins: (1) already installed at this hash → nothing to do;
+	 * (2) warden cache; (3) legacy cache import; then under the build lock (4) EAS, (5) local build.
+	 * Whatever was found is installed over the old app (a hash mismatch reinstalls). `installMode: "clean"` keeps
+	 * step 1 but resets the app's data either way; `reinstall` skips step 1 and uninstalls first. A new fingerprint
+	 * misses 1–3 by construction, so it never gets a stale binary.
+	 */
+	async resolve(): AsyncResult<EnsureResult> {
+		const resolved = await this.resolveInner();
+		if (resolved.success) this.steps.onPhase?.({ phase: "ready" });
+		return resolved;
 	}
-	const found = await locate(steps);
-	if (!found.success) return found;
-	if (device) {
-		steps.onPhase?.({ phase: "installing" });
-		const done = await installOnDevice(steps, device, found.data.path);
+
+	private async resolveInner(): AsyncResult<EnsureResult> {
+		const { steps } = this;
+		const { device, hash } = steps;
+		if (device && steps.installMode !== "reinstall") {
+			const installed = await this.alreadyInstalled(device);
+			if (!installed.success) return installed;
+			if (installed.data) return this.keepInstalled(device);
+		}
+		const found = await this.locate();
+		if (!found.success) return found;
+		if (device) {
+			steps.onPhase?.({ phase: "installing" });
+			const done = await this.installOnDevice(device, found.data.path);
+			if (!done.success) return done;
+		}
+		return resultFactory.ok({
+			appPath: found.data.path,
+			hash,
+			source: found.data.source,
+			installed: device !== undefined,
+		});
+	}
+
+	/** Steps 4–5 under the build lock: re-check the cache (another process may have filled it), EAS, local. */
+	private async fetchOrBuild(): AsyncResult<Found> {
+		const { steps } = this;
+		const again = steps.cached();
+		if (again) return resultFactory.ok({ path: again, source: "cache" });
+		const misses: string[] = [];
+		if (steps.eas) {
+			const eas = await steps.eas();
+			if (!eas.success) return eas;
+			if (eas.data.kind === "hit") return resultFactory.ok({ path: eas.data.path, source: "eas" });
+			steps.log(`EAS: ${eas.data.reason}`);
+			misses.push(`EAS: ${eas.data.reason}`);
+		} else {
+			misses.push("EAS skipped");
+		}
+		if (steps.build) {
+			const built = await steps.build();
+			if (!built.success) return built;
+			return resultFactory.ok({ path: built.data.path, source: built.data.kind === "built" ? "build" : "cache" });
+		}
+		misses.push("local build skipped (--no-build)");
+		return resultFactory.err(`no build for fingerprint ${steps.hash}: ${misses.join("; ")}`);
+	}
+
+	private async locate(): AsyncResult<Found> {
+		const { steps } = this;
+		const cached = steps.cached();
+		if (cached) return resultFactory.ok({ path: cached, source: "cache" });
+		const legacy = await steps.legacy();
+		if (!legacy.success) return legacy;
+		if (legacy.data) {
+			steps.log(`imported legacy build ${legacy.data}`);
+			return resultFactory.ok({ path: legacy.data, source: "cache" });
+		}
+		return this.fetchOrBuildOnce();
+	}
+
+	private fetchOrBuildOnce(): AsyncResult<Found> {
+		const { steps } = this;
+		const key = steps.flightKey;
+		if (key === undefined) return steps.lock(() => this.fetchOrBuild());
+		const running = inFlight.get(key);
+		if (running) {
+			steps.log("this fetch/build is already running for another device — waiting for it");
+			steps.onPhase?.({ phase: "waiting" });
+			return running;
+		}
+		const started = steps.lock(() => this.fetchOrBuild());
+		inFlight.track(key, started);
+		return started;
+	}
+
+	private async alreadyInstalled(device: DeviceSteps): Promise<Result<boolean>> {
+		const { steps } = this;
+		if (device.installedHash() !== steps.hash) return resultFactory.ok(false);
+		const confirmed = await device.confirm();
+		if (!confirmed.success) return confirmed;
+		if (!confirmed.data.present) {
+			steps.log("install record is stale (app missing on device) — reinstalling");
+			return resultFactory.ok(false);
+		}
+		const cached = device.matches ? steps.cached() : undefined;
+		if (device.matches && cached) {
+			const same = await device.matches(cached, confirmed.data);
+			if (!same.success) return same;
+			if (!same.data) steps.log("app on device differs from the cached build — reinstalling");
+			return resultFactory.ok(same.data);
+		}
+		return resultFactory.ok(true);
+	}
+
+	/** `reinstall`: uninstall first; `clean`: install over, then reset (falling back to uninstall + install); else install over. */
+	private async installOnDevice(device: DeviceSteps, path: string): AsyncResult<void> {
+		if (this.steps.installMode === "reinstall") return this.reinstall(device, path);
+		const done = await device.install(path);
+		if (!done.success || this.steps.installMode !== "clean") return done;
+		return this.resetOrReinstall(device, path);
+	}
+
+	private async reinstall(device: DeviceSteps, path: string): AsyncResult<void> {
+		const gone = await device.uninstall();
+		return gone.success ? device.install(path) : gone;
+	}
+
+	/** Reset the app's data; when that fails, start over with an uninstall + install of `path`. */
+	private async resetOrReinstall(device: DeviceSteps, path: string): AsyncResult<void> {
+		const reset = await device.reset();
+		if (reset.success) return reset;
+		this.steps.log(`resetting app data failed (${reset.error}) — reinstalling`);
+		return this.reinstall(device, path);
+	}
+
+	/** Already at `hash`: keep the install; `clean` resets its data, falling back to uninstall + install. */
+	private async keepInstalled(device: DeviceSteps): AsyncResult<EnsureResult> {
+		const { steps } = this;
+		const kept: EnsureResult = {
+			appPath: steps.cached() ?? "",
+			hash: steps.hash,
+			source: "installed",
+			installed: true,
+		};
+		if (steps.installMode !== "clean") return resultFactory.ok(kept);
+		const reset = await device.reset();
+		if (reset.success) return resultFactory.ok(kept);
+		steps.log(`resetting app data failed (${reset.error}) — reinstalling`);
+		return this.reinstallFound(device);
+	}
+
+	/** The `clean` fallback for an app already at `hash`: locate the artifact again, then uninstall + install it. */
+	private async reinstallFound(device: DeviceSteps): AsyncResult<EnsureResult> {
+		const found = await this.locate();
+		if (!found.success) return found;
+		const done = await this.reinstall(device, found.data.path);
 		if (!done.success) return done;
+		return resultFactory.ok({
+			appPath: found.data.path,
+			hash: this.steps.hash,
+			source: found.data.source,
+			installed: true,
+		});
 	}
-	return resultFactory.ok({
-		appPath: found.data.path,
-		hash,
-		source: found.data.source,
-		installed: device !== undefined,
-	});
 }

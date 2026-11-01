@@ -3,20 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Exec } from "@delacour/warden-runtime/exec";
-import {
-	decideReuse,
-	derivedDataDir,
-	embeddedProfiles,
-	findXctestrun,
-	PROFILE_MARGIN_MS,
-	parseProfileExpiry,
-	type RunnerMeta,
-	readProfileExpiry,
-	readRunnerMeta,
-	runnerCacheDir,
-	UNKNOWN_PROFILE_LIFETIME_MS,
-	writeRunnerMeta,
-} from "./cache";
+import { PROFILE_MARGIN_MS, type RunnerMeta, runnerCache, UNKNOWN_PROFILE_LIFETIME_MS } from "./cache";
 
 let dir: string;
 beforeEach(() => {
@@ -36,27 +23,36 @@ const meta = (over: Partial<RunnerMeta> = {}): RunnerMeta => ({
 const base = { xctestrun: "/x.xctestrun", udid: "U1", bundleId: "b.id", now: NOW };
 
 describe("decideReuse", () => {
-	test("hit", () => expect(decideReuse({ ...base, meta: meta() })).toEqual({ reuse: true }));
-	test("no meta", () => expect(decideReuse({ ...base, meta: undefined })).toEqual({ reuse: false, because: "none" }));
+	test("hit", () => expect(runnerCache.decideReuse({ ...base, meta: meta() })).toEqual({ reuse: true }));
+	test("no meta", () =>
+		expect(runnerCache.decideReuse({ ...base, meta: undefined })).toEqual({ reuse: false, because: "none" }));
 	test("new udid", () =>
-		expect(decideReuse({ ...base, meta: meta(), udid: "U2" })).toEqual({ reuse: false, because: "new_udid" }));
+		expect(runnerCache.decideReuse({ ...base, meta: meta(), udid: "U2" })).toEqual({
+			reuse: false,
+			because: "new_udid",
+		}));
 	test("another bundle id", () =>
-		expect(decideReuse({ ...base, meta: meta({ bundleId: "other" }) })).toEqual({
+		expect(runnerCache.decideReuse({ ...base, meta: meta({ bundleId: "other" }) })).toEqual({
 			reuse: false,
 			because: "bundle_id",
 		}));
 	test("products gone", () =>
-		expect(decideReuse({ ...base, meta: meta(), xctestrun: undefined })).toEqual({ reuse: false, because: "missing" }));
+		expect(runnerCache.decideReuse({ ...base, meta: meta(), xctestrun: undefined })).toEqual({
+			reuse: false,
+			because: "missing",
+		}));
 	test("profile ends within 24 h", () => {
 		const soon = meta({ profileExpires: NOW + PROFILE_MARGIN_MS - 1 });
-		expect(decideReuse({ ...base, meta: soon })).toEqual({ reuse: false, because: "profile_expiring" });
+		expect(runnerCache.decideReuse({ ...base, meta: soon })).toEqual({ reuse: false, because: "profile_expiring" });
 		const fine = meta({ profileExpires: NOW + PROFILE_MARGIN_MS + 1 });
-		expect(decideReuse({ ...base, meta: fine })).toEqual({ reuse: true });
+		expect(runnerCache.decideReuse({ ...base, meta: fine })).toEqual({ reuse: true });
 	});
 	test("unreadable expiry counts from the build time", () => {
 		const unknown = (age: number) => meta({ profileExpires: null, builtAt: NOW - age });
-		expect(decideReuse({ ...base, meta: unknown(UNKNOWN_PROFILE_LIFETIME_MS - 2 * DAY) })).toEqual({ reuse: true });
-		expect(decideReuse({ ...base, meta: unknown(UNKNOWN_PROFILE_LIFETIME_MS - DAY / 2) })).toEqual({
+		expect(runnerCache.decideReuse({ ...base, meta: unknown(UNKNOWN_PROFILE_LIFETIME_MS - 2 * DAY) })).toEqual({
+			reuse: true,
+		});
+		expect(runnerCache.decideReuse({ ...base, meta: unknown(UNKNOWN_PROFILE_LIFETIME_MS - DAY / 2) })).toEqual({
 			reuse: false,
 			because: "profile_expiring",
 		});
@@ -65,19 +61,19 @@ describe("decideReuse", () => {
 
 describe("meta.json", () => {
 	test("round trips and lives under <team>/<xcode>-<hash>", () => {
-		const cache = runnerCacheDir(dir, "LN69P7N673", "27A9275", "abc");
+		const cache = runnerCache.cacheDir(dir, "LN69P7N673", "27A9275", "abc");
 		expect(cache).toBe(join(dir, "ios-runner", "LN69P7N673", "27A9275-abc"));
-		expect(derivedDataDir(cache)).toBe(join(cache, "dd"));
-		writeRunnerMeta(cache, meta());
-		expect(readRunnerMeta(cache)).toEqual(meta());
+		expect(runnerCache.derivedDataDir(cache)).toBe(join(cache, "dd"));
+		runnerCache.writeMeta(cache, meta());
+		expect(runnerCache.readMeta(cache)).toEqual(meta());
 	});
 
 	test("missing, torn or foreign files read as no meta", () => {
-		expect(readRunnerMeta(join(dir, "nope"))).toBeUndefined();
+		expect(runnerCache.readMeta(join(dir, "nope"))).toBeUndefined();
 		writeFileSync(join(dir, "meta.json"), '{"udids":[');
-		expect(readRunnerMeta(dir)).toBeUndefined();
+		expect(runnerCache.readMeta(dir)).toBeUndefined();
 		writeFileSync(join(dir, "meta.json"), JSON.stringify({ udids: "U1" }));
-		expect(readRunnerMeta(dir)).toBeUndefined();
+		expect(runnerCache.readMeta(dir)).toBeUndefined();
 	});
 });
 
@@ -94,14 +90,14 @@ describe("products", () => {
 	}
 
 	test("findXctestrun", () => {
-		expect(findXctestrun(join(dir, "dd"))).toBeUndefined();
+		expect(runnerCache.findXctestrun(join(dir, "dd"))).toBeUndefined();
 		const p = products(join(dir, "dd"));
-		expect(findXctestrun(join(dir, "dd"))).toBe(join(p, "WardenRunner_iphoneos27.2-arm64.xctestrun"));
+		expect(runnerCache.findXctestrun(join(dir, "dd"))).toBe(join(p, "WardenRunner_iphoneos27.2-arm64.xctestrun"));
 	});
 
 	test("embeddedProfiles lists both apps", () => {
 		products(join(dir, "dd"));
-		expect(embeddedProfiles(join(dir, "dd")).map((p) => p.split("/").slice(-2, -1)[0])).toEqual([
+		expect(runnerCache.embeddedProfiles(join(dir, "dd")).map((p) => p.split("/").slice(-2, -1)[0])).toEqual([
 			"WardenRunnerHost.app",
 			"WardenRunnerUITests-Runner.app",
 		]);
@@ -109,8 +105,8 @@ describe("products", () => {
 
 	test("parseProfileExpiry reads ExpirationDate", () => {
 		const plist = `<dict><key>CreationDate</key><date>2026-10-29T00:00:00Z</date>\n<key>ExpirationDate</key>\n<date>2026-11-05T01:02:03Z</date></dict>`;
-		expect(parseProfileExpiry(plist)).toBe(Date.parse("2026-11-05T01:02:03Z"));
-		expect(parseProfileExpiry("<dict/>")).toBeUndefined();
+		expect(runnerCache.parseProfileExpiry(plist)).toBe(Date.parse("2026-11-05T01:02:03Z"));
+		expect(runnerCache.parseProfileExpiry("<dict/>")).toBeUndefined();
 	});
 
 	test("readProfileExpiry takes the earliest, skipping unreadable profiles", async () => {
@@ -125,8 +121,8 @@ describe("products", () => {
 				? { exitCode: 1, stdout: "", stderr: "" }
 				: { exitCode: 0, stdout: `<key>ExpirationDate</key><date>${dates.get(app)}</date>`, stderr: "" };
 		};
-		expect(await readProfileExpiry(exec, join(dir, "dd"))).toBe(Date.parse("2026-11-03T00:00:00Z"));
+		expect(await runnerCache.readProfileExpiry(exec, join(dir, "dd"))).toBe(Date.parse("2026-11-03T00:00:00Z"));
 		const broken: Exec = async () => ({ exitCode: 1, stdout: "", stderr: "" });
-		expect(await readProfileExpiry(broken, join(dir, "dd"))).toBeNull();
+		expect(await runnerCache.readProfileExpiry(broken, join(dir, "dd"))).toBeNull();
 	});
 });

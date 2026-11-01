@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { findWardenConfig } from "@delacour/warden-builds/config";
-import { collectRunnerSources, loadEmbeddedRunnerSources } from "@delacour/warden-builds/ios-runner/pack";
+import { projectConfig } from "@delacour/warden-builds/config";
+import { runnerPack } from "@delacour/warden-builds/ios-runner/pack";
 import type { EnsureRunnerBuildInput, RunnerBuildError } from "@delacour/warden-builds/ios-runner/runner-build.types";
 import type { AsyncResult } from "@delacour/warden-types/result";
 import type { CommandContext } from "../context";
@@ -27,18 +27,21 @@ export async function expectedRunnerIdentity(
 	const ios =
 		deps.iosConfig?.() ??
 		(() => {
-			const found = findWardenConfig(ctx.cwd, undefined, ctx.env);
+			const found = projectConfig.find(ctx.cwd, undefined, ctx.env);
 			return found.success ? (found.data?.config.ios ?? {}) : {};
 		})();
-	const run = deps.expected ?? (await import("@delacour/warden-builds/ios-runner/build")).expectedRunnerDerivedData;
+	const run =
+		deps.expected ??
+		(async (input: ExpectedInput) =>
+			(await import("@delacour/warden-builds/ios-runner/build")).runnerBuilder.expectedDerivedData(input));
 	const res = await run({
 		configTeamId: ios.teamId,
 		env: { ...ctx.env },
 		exec: ctx.exec,
 		loadSources: async () =>
 			info.channel === "dev"
-				? collectRunnerSources(join(info.sourceDir, "packages", "e2e", "native"))
-				: loadEmbeddedRunnerSources(),
+				? runnerPack.collect(join(info.sourceDir, "packages", "e2e", "native"))
+				: runnerPack.loadEmbedded(),
 	});
 	return res.success ? res.data : undefined;
 }
